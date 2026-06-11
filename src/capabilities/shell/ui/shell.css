@@ -1,0 +1,377 @@
+/* M4-T6 (YUK-319)：/inbox 收件箱样式，scope 在 .inbox-loom 下。
+   摘取源 docs/design/loom-refresh/project/screens.css：
+   proposals 段 L99-112 · inbox lanes 段 L171-176 · Inbox 专属段
+   L293-305 · readable filters/evidence 段 L310-320 · 响应式 L352-363
+   相关行。M5 样式收编时并入统一样式层（globals 拆解）。
+   两处偏差：
+   ① keyframe 复用 globals.css 的 loom-rise（namespace 惯例；原稿名
+     rise 未在 globals 定义），并按既有惯例包 prefers-reduced-motion。
+   ② .proposal 防御性 display:block——globals.css L4445 有旧版裸
+     .proposal（coral 卡形态，唯一用户 app/(app)/inbox 旧页）会命中
+     同名元素；.card(L6182) 源顺序已压住其配色，但 display:flex +
+     gap:8px 残余仍需压住。旧段随 T7 拆旧壳连同旧页一并删除。 */
+
+/* ---- proposals (screens.css L99-112) ---- */
+.inbox-loom .proposal {
+  display: block;
+}
+@media screen and (prefers-reduced-motion: no-preference) {
+  .inbox-loom .proposal {
+    animation: loom-rise var(--dur-slow) var(--ease-out) both;
+  }
+}
+.inbox-loom .proposal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+  flex-wrap: wrap;
+}
+.inbox-loom .proposal-title {
+  font-weight: 500;
+  font-size: var(--fs-body-lg);
+  flex: 1;
+  min-width: 0;
+}
+.inbox-loom .ai-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+}
+.inbox-loom .proposal-body {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  line-height: var(--lh-prose);
+  padding: var(--s-3) var(--s-4);
+  background: var(--paper-sunk);
+  border-radius: var(--r-2);
+  border: 1px solid var(--line-soft);
+}
+.inbox-loom .proposal-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+  flex-wrap: wrap;
+}
+.inbox-loom .proposal-foot .meta-row {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.inbox-loom .conf-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.inbox-loom .conf-track {
+  width: 54px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--paper-sunk);
+  overflow: hidden;
+}
+.inbox-loom .conf-track > span {
+  display: block;
+  height: 100%;
+  background: var(--good);
+  border-radius: 999px;
+}
+.inbox-loom .proposal.resolved {
+  opacity: 0.5;
+}
+.inbox-loom .proposal.resolved .proposal-actions {
+  display: none;
+}
+.inbox-loom .resolved-stamp {
+  display: none;
+}
+.inbox-loom .proposal.resolved .resolved-stamp {
+  display: inline-flex;
+}
+
+/* ---- inbox lanes (screens.css L171-176) ---- */
+.inbox-loom .inbox-lane-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.inbox-loom .lane-ic {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-1);
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid transparent;
+}
+.inbox-loom .lane-ic.tone-info {
+  background: var(--info-soft);
+  color: var(--info);
+  border-color: var(--info-line);
+}
+.inbox-loom .lane-ic.tone-coral {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border-color: var(--coral-line);
+}
+.inbox-loom .lane-ic.tone-hard {
+  background: var(--hard-soft);
+  color: var(--hard);
+  border-color: var(--hard-line);
+}
+.inbox-loom .lane-ic.tone-neutral {
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  border-color: var(--line);
+}
+
+/* ---- inbox blocks (screens.css L293-305) ---- */
+.inbox-loom .kind-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  flex: none;
+}
+/* 偏差③：原稿 inbox-summary-row 只有 gap（screens.css L295），flex 布局
+   依赖设计稿全局 .row 辅助类（globals 不存在），故补全 flex 三件。 */
+.inbox-loom .inbox-summary-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+.inbox-loom .edge-preview {
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+}
+.inbox-loom .rel-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--info-ink);
+  background: var(--info-soft);
+  border: 1px solid var(--info-line);
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+  flex: none;
+}
+.inbox-loom .merge-preview {
+  margin-top: var(--s-3);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: var(--s-2);
+  align-items: stretch;
+}
+.inbox-loom .merge-block {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  padding: var(--s-3);
+  min-width: 0;
+}
+.inbox-loom .merge-into {
+  border-style: dashed;
+}
+.inbox-loom .merge-label {
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-bottom: 6px;
+}
+.inbox-loom .merge-text {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-snug);
+  color: var(--ink-2);
+}
+.inbox-loom .merge-join {
+  display: grid;
+  place-items: center;
+  color: var(--coral);
+}
+.inbox-loom .merge-reason {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  margin-top: var(--s-1);
+}
+/* 偏差⑤：原稿 proposal-evidence 只有 margin/border（演示单枚 evidence）；
+   真 evidence_refs 是数组渲多枚，补 flex wrap。 */
+.inbox-loom .proposal-evidence {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+/* ---- segmented control（globals .knowledge-loom .seg L7677 同款） ----
+   loom 版 seg 容器只 scoped 在 .knowledge-loom / .coach-loom；裸 .seg
+   (globals L647) 是 legacy 单按钮样式，吃不到。「改关系」展开条需要，
+   故自摘一份。 */
+.inbox-loom .seg {
+  display: inline-flex;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 2px;
+}
+.inbox-loom .seg button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  padding: 6px 14px;
+  border-radius: var(--r-1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.inbox-loom .seg button.on {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---- tone chips (screens.css L217-221) ----
+   globals.css 的 tone-chip-* 只 scoped 在 .today-loom（L8376+，注释明示
+   bare 版不存在），故 inbox 自摘一份。 */
+.inbox-loom .tone-chip-info {
+  color: var(--info-ink);
+  background: var(--info-soft);
+  border-color: var(--info-line);
+}
+.inbox-loom .tone-chip-coral {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.inbox-loom .tone-chip-good {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border-color: var(--good-line);
+}
+.inbox-loom .tone-chip-hard {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+}
+.inbox-loom .tone-chip-neutral {
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border-color: var(--line);
+}
+
+/* ---- readable filters + evidence (screens.css L310-320) ---- */
+.inbox-loom .filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px dashed var(--line);
+}
+.inbox-loom .filter-row .chip {
+  white-space: nowrap;
+}
+.inbox-loom .filter-row-l {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  min-width: 32px;
+}
+.inbox-loom .evidence-readable {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out);
+}
+.inbox-loom .evidence-readable:hover {
+  border-color: var(--info-line, var(--info));
+  background: var(--info-soft);
+}
+.inbox-loom .evidence-readable .er-ic {
+  color: var(--ink-4);
+  flex: none;
+  display: flex;
+}
+.inbox-loom .evidence-readable:hover .er-ic {
+  color: var(--info-ink);
+}
+.inbox-loom .evidence-readable .er-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-loom .evidence-readable .er-go {
+  flex: none;
+  font-size: var(--fs-meta);
+  color: var(--info-ink);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.inbox-loom .evidence-readable:hover .er-go {
+  opacity: 1;
+}
+/* 偏差④：无路由可跳的 evidence（event/record 类）渲为 disabled，原稿
+   一律可点（演示数据全有跳转目标）。 */
+.inbox-loom .evidence-readable:disabled {
+  cursor: default;
+}
+.inbox-loom .evidence-readable:disabled:hover {
+  border-color: var(--line);
+  background: var(--paper-raised);
+}
+.inbox-loom .evidence-readable:disabled:hover .er-ic {
+  color: var(--ink-4);
+}
+.inbox-loom .evidence-readable:disabled .er-go {
+  display: none;
+}
+
+/* ---- responsive (screens.css L352-363 相关行) ---- */
+@media (max-width: 720px) {
+  .inbox-loom .proposal-foot .meta-row {
+    margin-left: 0;
+    width: 100%;
+  }
+  .inbox-loom .merge-preview {
+    grid-template-columns: 1fr;
+  }
+  .inbox-loom .merge-join {
+    transform: rotate(90deg);
+    justify-self: center;
+  }
+}

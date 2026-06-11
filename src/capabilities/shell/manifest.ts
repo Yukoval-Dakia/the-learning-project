@@ -35,4 +35,10 @@ export const shellCapability = defineCapability({
       },
     ],
   },
+  // M4-T6 (YUK-319)：工作台 + 收件箱两 surface；todayBlocks 是工作台自有块
+  //（agency 的 agent-notes-board、notes 的 ai-changes-strip 各自声明）。
+  ui: {
+    pages: [{ route: '/today' }, { route: '/inbox' }],
+    todayBlocks: ['loom-hero', 'kpi-row', 'sessions-strip', 'proposal-strip', 'week-heat'],
+  },
 });

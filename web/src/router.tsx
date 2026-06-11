@@ -7,6 +7,8 @@ import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
 import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
+import InboxPage from '@/capabilities/shell/ui/InboxPage';
+import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import {
   Outlet,
   createRootRoute,
@@ -18,12 +20,37 @@ import {
 
 const rootRoute = createRootRoute({ component: Outlet });
 
+// M4-T6 (YUK-319)：工作台上线后 / 落到 /today（旧 SPA 默认 /agent-notes 退位，
+// 该页仍在路由表）。
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   beforeLoad: () => {
-    throw redirect({ to: '/agent-notes' });
+    throw redirect({ to: '/today' });
   },
+});
+
+// M4-T6 (YUK-319/YUK-318) — 工作台 + 提议收件箱。
+function TodayRoute() {
+  const router = useRouter();
+  return <TodayPage navigate={(to) => router.history.push(to)} />;
+}
+
+const todayRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/today',
+  component: TodayRoute,
+});
+
+function InboxRoute() {
+  const router = useRouter();
+  return <InboxPage navigate={(to) => router.history.push(to)} />;
+}
+
+const inboxRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/inbox',
+  component: InboxRoute,
 });
 
 function AgentNotesRoute() {
@@ -131,6 +158,8 @@ const noteReaderRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  todayRoute,
+  inboxRoute,
   agentNotesRoute,
   recordRoute,
   practiceRoute,
