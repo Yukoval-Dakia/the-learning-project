@@ -124,6 +124,22 @@ export const practiceCapability = defineCapability({
       },
     ],
   },
+  jobs: {
+    // M4-T3 (YUK-319)：practice 域 job 归属声明。review_plan 链式/按需
+    // （coach_daily 跑完 boss.send 链投 + on-demand 重跑），无 cron（D5:29
+    // 「不要另开独立 cron」）；handler 本体随 T3 迁入 ./jobs/review_plan。
+    // rejudge（M2/D15 申诉自动重判）注册留在 handlers.ts 渐缩簿：其注册形态
+    // 是非默认 1s polling + inline 动态 import handleRejudge（非 buildXHandler
+    // 工厂），不走注册器统一配方——此处声明无 load 纯归属元数据。
+    handlers: [
+      {
+        name: 'review_plan',
+        queue: 'llm',
+        load: () => import('./jobs/review_plan').then((m) => m.buildReviewPlanHandler),
+      },
+      { name: 'rejudge', queue: 'llm' },
+    ],
+  },
   // M2-T6 将把旧 /review、/practice 页重生为单一练习面 /practice（流+卷架）。
   ui: { pages: [{ route: '/practice' }] },
 });
