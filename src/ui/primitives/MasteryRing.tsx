@@ -9,7 +9,7 @@
 // so this synchronously-rendered primitive doesn't drag cytoscape — which the knowledge
 // page code-splits via dynamic() — into the initial bundle.
 
-import { masteryTone } from '@/ui/knowledge-graph/mastery-tone';
+import { masteryTone } from '@/capabilities/knowledge/ui/mastery-tone';
 
 interface MasteryRingProps {
   /** 0-1 mastery (knowledge_mastery view); null / undefined = never practiced → 0. */
