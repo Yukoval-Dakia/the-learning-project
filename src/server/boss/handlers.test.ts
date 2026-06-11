@@ -1,9 +1,19 @@
+import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import type { PgBoss } from 'pg-boss';
 import { describe, expect, it, vi } from 'vitest';
 import { registerHandlers } from './handlers';
+import { registerCapabilityJobs } from './register-capability-jobs';
 
-describe('registerHandlers', () => {
+// M4-T3 (YUK-319)：注册分两段——registerHandlers（渐缩簿）+
+// registerCapabilityJobs（manifest jobs 声明）。测试驱动与 start-worker.ts
+// 相同的组合序列，断言对两段产生的全部队列生效（原语义不变）。
+async function registerAll(boss: PgBoss): Promise<void> {
+  await registerHandlers(boss, {} as Db);
+  await registerCapabilityJobs(boss, {} as Db, capabilities);
+}
+
+describe('registerHandlers + registerCapabilityJobs', () => {
   it('registers and schedules knowledge_maintenance_nightly with expiry + DLQ (YUK-237)', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),
@@ -12,7 +22,7 @@ describe('registerHandlers', () => {
       schedule: vi.fn(async () => undefined),
     } as unknown as PgBoss;
 
-    await registerHandlers(boss, {} as Db);
+    await registerAll(boss);
 
     // YUK-237: AGENT-tier queue — explicit 2h expire, 7-day retention, dead-letter.
     expect(boss.createQueue).toHaveBeenCalledWith('knowledge_maintenance_nightly', {
@@ -62,12 +72,12 @@ describe('registerHandlers', () => {
       schedule: vi.fn(async () => undefined),
     } as unknown as PgBoss;
 
-    await registerHandlers(boss, {} as Db);
+    await registerAll(boss);
 
     // The `memory_*` queues are registered by registerMemoryHandlers (the memory
     // module, NOT this file) and intentionally excluded — their expire/retention
-    // tuning is tracked separately. Assert the invariant only on the queues this
-    // file owns.
+    // tuning is tracked separately. Assert the invariant on the queues owned by
+    // the 渐缩簿 + the capability jobs registry.
     const ownedCalls = createQueue.mock.calls.filter(
       ([name]) => !(name as string).startsWith('memory_'),
     );
@@ -112,6 +122,8 @@ describe('registerHandlers', () => {
   // YUK-203 U4 / D5 — review_plan is chain-triggered (no schedule) and its
   // queue must be created BEFORE coach_daily so the worker is ready when
   // buildCoachDailyHandler chains the coach_daily → review_plan send.
+  // M4-T3：两者都由注册器挂载；顺序由「无 schedule 先于 cron」两遍遍历保证，
+  // 不依赖 capabilities 数组顺序（agency 在 practice 前）。
   it('registers review_plan (no schedule) before coach_daily', async () => {
     const createQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const updateQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
@@ -119,7 +131,7 @@ describe('registerHandlers', () => {
     const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
 
-    await registerHandlers(boss, {} as Db);
+    await registerAll(boss);
 
     // YUK-237: review_plan is now created with explicit LLM-tier opts + DLQ.
     expect(createQueue).toHaveBeenCalledWith('review_plan', {
@@ -152,7 +164,7 @@ describe('registerHandlers', () => {
 // and raise a 23505 `queue_pkey` violation, which previously crashed the worker
 // mid-registration. The fix swallows that benign race and STILL reconciles the
 // queue config via updateQueue (#329 semantics preserved).
-describe('registerHandlers — concurrent create race (YUK-259)', () => {
+describe('registerHandlers + registerCapabilityJobs — concurrent create race (YUK-259)', () => {
   // Mimic the raw node-postgres error pg-boss raises (pg.Pool → `.code`/`.detail`
   // /`.constraint` live directly on the thrown object — no Drizzle wrapper).
   function pgDuplicateQueueError(queueName: string): Error {
@@ -176,8 +188,9 @@ describe('registerHandlers — concurrent create race (YUK-259)', () => {
     const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
     const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
 
-    // The whole point of the fix: this must not reject.
+    // The whole point of the fix: this must not reject — both segments.
     await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
+    await expect(registerCapabilityJobs(boss, {} as Db, capabilities)).resolves.toBeUndefined();
 
     // Despite every createQueue failing with the benign race, updateQueue still
     // runs for each owned queue so the YUK-237 config lands on the existing rows.
@@ -208,6 +221,9 @@ describe('registerHandlers — concurrent create race (YUK-259)', () => {
     await expect(registerHandlers(boss, {} as Db)).rejects.toThrow(
       'connection terminated unexpectedly',
     );
+    await expect(registerCapabilityJobs(boss, {} as Db, capabilities)).rejects.toThrow(
+      'connection terminated unexpectedly',
+    );
   });
 
   it('two concurrent registrations both resolve (trigger ①+② — app-boss + worker cold start / warm race)', async () => {
@@ -227,10 +243,7 @@ describe('registerHandlers — concurrent create race (YUK-259)', () => {
       return { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
     };
 
-    const results = await Promise.allSettled([
-      registerHandlers(makeBoss(), {} as Db),
-      registerHandlers(makeBoss(), {} as Db),
-    ]);
+    const results = await Promise.allSettled([registerAll(makeBoss()), registerAll(makeBoss())]);
     expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
   });
 
@@ -256,9 +269,9 @@ describe('registerHandlers — concurrent create race (YUK-259)', () => {
 
     // First registration seeds the rows; the next two simulate HMR recompiles
     // re-running registration against the now-warm queue table.
-    await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
-    await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
-    await expect(registerHandlers(boss, {} as Db)).resolves.toBeUndefined();
+    await expect(registerAll(boss)).resolves.toBeUndefined();
+    await expect(registerAll(boss)).resolves.toBeUndefined();
+    await expect(registerAll(boss)).resolves.toBeUndefined();
 
     // updateQueue keeps running on every pass so config stays reconciled even
     // when createQueue is a no-op/raise on the warm table.
