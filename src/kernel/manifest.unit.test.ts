@@ -5,18 +5,30 @@ const base = (over: Partial<CapabilityManifest> & { name: string }): CapabilityM
   defineCapability({ description: 'test capability', ...over });
 
 describe('validateComposition', () => {
-  it('accepts unique names, actions and routes', () => {
+  it('accepts unique names, actions, routes, jobs and proposal kinds', () => {
     expect(() =>
       validateComposition([
         base({
           name: 'a',
           events: { actions: ['experimental:x'] },
           api: { routes: [{ method: 'GET', path: '/api/a' }] },
+          jobs: { handlers: [{ name: 'job_a', queue: 'fast' }] },
+          proposals: { kinds: [{ kind: 'kind_a' }] },
         }),
         base({
           name: 'b',
           events: { actions: ['experimental:y'] },
           api: { routes: [{ method: 'GET', path: '/api/b' }] },
+          jobs: {
+            handlers: [
+              {
+                name: 'job_b',
+                queue: 'llm',
+                schedule: { cron: '15 3 * * *', tz: 'Asia/Shanghai' },
+              },
+            ],
+          },
+          proposals: { kinds: [{ kind: 'kind_b' }] },
         }),
       ]),
     ).not.toThrow();
@@ -63,5 +75,23 @@ describe('validateComposition', () => {
         base({ name: 'b', api: { routes: [{ method: 'GET', path: '/api/x' }] } }),
       ]),
     ).toThrow(/declared by both 'a' and 'b'/);
+  });
+
+  it('rejects one job name declared by two capabilities', () => {
+    expect(() =>
+      validateComposition([
+        base({ name: 'a', jobs: { handlers: [{ name: 'dreaming_nightly', queue: 'agent' }] } }),
+        base({ name: 'b', jobs: { handlers: [{ name: 'dreaming_nightly', queue: 'llm' }] } }),
+      ]),
+    ).toThrow(/job 'dreaming_nightly' declared by both 'a' and 'b'/);
+  });
+
+  it('rejects one proposal kind declared by two capabilities', () => {
+    expect(() =>
+      validateComposition([
+        base({ name: 'a', proposals: { kinds: [{ kind: 'learning_item' }] } }),
+        base({ name: 'b', proposals: { kinds: [{ kind: 'learning_item' }] } }),
+      ]),
+    ).toThrow(/proposal kind 'learning_item' declared by both 'a' and 'b'/);
   });
 });
