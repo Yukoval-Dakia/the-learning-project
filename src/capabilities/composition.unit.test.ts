@@ -32,10 +32,11 @@ describe('composition root', () => {
     expect(declared.filter((kind) => !known.has(kind))).toEqual([]);
   });
 
-  // T4 各包补齐 proposals.kinds 归属声明后升级为真测试（plan Task 4「kernel 对账测试
-  // 此时转绿」——T1 落 todo 占位保持逐 commit 全绿）。断言形态：
-  //   全包声明并集 === new Set(aiProposalKinds) − LEGACY_TOMBSTONE_KINDS
-  it.todo(
-    `every live proposal kind (schema minus ${LEGACY_TOMBSTONE_KINDS.join('/')}) is declared by exactly one capability`,
-  );
+  // M4-T4：sort 后数组相等同时覆盖「每 kind 恰好一包」——并集缺失或跨包重复声明
+  // 都会让两侧排序数组不等。
+  it(`every live proposal kind (schema minus ${LEGACY_TOMBSTONE_KINDS.join('/')}) is declared by exactly one capability`, () => {
+    const declared = capabilities.flatMap((c) => c.proposals?.kinds.map((d) => d.kind) ?? []);
+    const expected = aiProposalKinds.filter((k) => !LEGACY_TOMBSTONE_KINDS.includes(k));
+    expect([...declared].sort()).toEqual([...expected].sort());
+  });
 });
