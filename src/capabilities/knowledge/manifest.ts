@@ -104,4 +104,17 @@ export const knowledgeCapability = defineCapability({
       },
     ],
   },
+  // M4-T4 (YUK-319)：proposal kind 归属声明。knowledge_node / knowledge_mutation 的
+  // accept 委托 ./server/proposals（M3 起）；knowledge_edge 的决策器
+  // decideKnowledgeEdgeProposal 仍在壳层（写 knowledge_edge 行 + 链式 event，
+  // plan 裁决 T4 只补声明不迁体）；archive 按 producer 域归属本包
+  // （./server/review.ts 在产），无 accept applier——壳层 default throw 注 YUK-44。
+  proposals: {
+    kinds: [
+      { kind: 'knowledge_node' },
+      { kind: 'knowledge_mutation' },
+      { kind: 'knowledge_edge' },
+      { kind: 'archive' },
+    ],
+  },
 });
