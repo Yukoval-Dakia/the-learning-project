@@ -16,8 +16,8 @@
 
 import { parseEvent } from '@/core/schema/event';
 import { event, knowledge, question } from '@/db/schema';
-import { runAttributionAndWriteJudgeEvent } from '@/server/knowledge/attribute';
-import { runWriteProposal } from '@/server/knowledge/review';
+import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
+import { runWriteProposal } from '@/capabilities/knowledge/server/review';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../helpers/db';

@@ -1,0 +1,215 @@
+/* M3 笔记面（YUK-317）— globals.css 缺口补充。
+   框架词汇（note-reader-page/note-topbar/note-reader-grid/note-outline/
+   note-context/note-prop-row/note-label-row/note-ver/nol-item/note-doc）已在
+   app/globals.css（旧轮次按设计稿 note-reader.css 移植，scoped
+   .note-reader-page）；此处补编辑器块词汇（设计稿 note-editor.jsx 的 nb-* 族）
+   与 M3 新块型（nb-qref 题目引用 / nb-tombstone D6 墓碑）。 */
+
+/* ── 编辑器块行（note-editor.jsx nb-wrap/gutter/grip/plus） ── */
+.note-reader-page .nb-wrap {
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: var(--s-2);
+  padding: 3px 0;
+  border-radius: var(--r-2);
+}
+.note-reader-page .nb-wrap.is-over {
+  box-shadow: inset 0 2px 0 var(--coral);
+}
+.note-reader-page .nb-wrap.is-dragging {
+  opacity: 0.45;
+}
+.note-reader-page .nb-gutter {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+  padding-top: 4px;
+}
+.note-reader-page .nb-wrap:hover .nb-gutter,
+.note-reader-page .nb-gutter:focus-within {
+  opacity: 1;
+}
+.note-reader-page .nb-grip,
+.note-reader-page .nb-plus {
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  padding: 3px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+.note-reader-page .nb-grip {
+  cursor: grab;
+}
+.note-reader-page .nb-grip:hover,
+.note-reader-page .nb-plus:hover {
+  background: var(--paper-sunk);
+  color: var(--ink-2);
+}
+
+/* ── semanticBlock 渲染（阅读 + 编辑共用） ── */
+.note-reader-page .nb-sem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--s-2) 0;
+}
+.note-reader-page .nb-sem-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  align-self: flex-start;
+}
+.note-reader-page .nb-sem-body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink);
+}
+.note-reader-page .nb-sem-pitfall .nb-sem-body {
+  border-left: 3px solid var(--again-line);
+  padding-left: var(--s-3);
+}
+.note-reader-page .nb-sem-example .nb-sem-body {
+  background: var(--paper-sunk);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+}
+.note-reader-page .nb-edit-area {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  padding: var(--s-2) var(--s-3);
+  resize: vertical;
+}
+.note-reader-page .nb-edit-area:focus-visible {
+  outline: none;
+  border-color: var(--coral-line);
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── 交叉链 atom（设计稿 .xlink） ── */
+.note-reader-page .xlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--info-line);
+  background: var(--info-soft);
+  color: var(--info-ink);
+  font-size: var(--fs-meta);
+  border-radius: var(--r-pill);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.note-reader-page .xlink:hover {
+  border-color: var(--info);
+}
+
+/* ── questionRefBlock（M3 用户增量：note 引用题，纯引用零作答交互） ── */
+.note-reader-page .nb-qref {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--coral-line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-3) var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: var(--s-2) 0;
+}
+.note-reader-page .nb-qref-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-4);
+}
+.note-reader-page .nb-qref-tag {
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+}
+.note-reader-page .nb-qref-body {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  cursor: pointer;
+  padding: 0;
+}
+.note-reader-page .nb-qref-body:hover {
+  color: var(--coral-ink);
+}
+
+/* ── D6 墓碑占位（存量 check 块） ── */
+.note-reader-page .nb-tombstone {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  border: 1px dashed var(--line);
+  background: var(--paper-sunk);
+  color: var(--ink-4);
+  font-size: var(--fs-caption);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+  margin: var(--s-2) 0;
+}
+
+/* ── 斜杠菜单（note-editor.jsx slash-*；globals 的 slash-menu 是
+      copilot scoped 版本，此处补本面词汇） ── */
+.note-reader-page .slash-menu {
+  position: absolute;
+  z-index: 30;
+  left: 70px;
+  top: 100%;
+  min-width: 240px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-2);
+  padding: var(--s-1);
+}
+.note-reader-page .slash-head,
+.note-reader-page .slash-foot {
+  padding: var(--s-1) var(--s-2);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.note-reader-page .slash-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  text-align: left;
+  padding: var(--s-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+.note-reader-page .slash-item:hover {
+  background: var(--paper-sunk);
+}
+.note-reader-page .slash-key {
+  margin-left: auto;
+  color: var(--ink-5);
+  font-size: 10px;
+}
+
+/* 大纲折叠态网格（globals 的 note-reader-grid 是三栏定义） */
+.note-reader-page .note-reader-grid.no-outline {
+  grid-template-columns: 1fr 280px;
+}

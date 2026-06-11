@@ -114,8 +114,11 @@
 - Modify: `web/src/router.tsx`（/notes/$id 登记）
 
 **Steps:**
-- [ ] **design-doc pre-flight** → **等用户批准**
-- [ ] 实现（保存走 PATCH body-blocks 乐观锁；AI 痕迹/correction 状态渲染；**不渲染 embedded check 块**——D6）
+- [ ] **design-doc pre-flight** → **等用户批准**（2026-06-11 已批，含一条用户增量：
+  **quiz 块删除后允许 note 引用 question**——纯引用块（题面预览 + kind 徽章），
+  无作答判分交互；@ 选择器扩展可选题；M3 不做跳转（题库面 M5 收口）；
+  存量 check 块渲染灰色墓碑占位）
+- [ ] 实现（保存走 PATCH body-blocks 乐观锁；AI 痕迹/correction 状态渲染；**不渲染 embedded check 块**——D6；question 引用块按用户增量落地）
 - [ ] 视觉环：含「编辑→保存→version bump→AI refine 痕迹」的真数据回路 → commit
 
 ### Task 8: 退役 + 全 gate + PR

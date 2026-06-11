@@ -5,6 +5,7 @@ import AgentNotesPage from '@/capabilities/agent-notes/ui/page';
 import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
+import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
 import {
   Outlet,
@@ -115,6 +116,19 @@ const knowledgeDetailRoute = createRoute({
   component: KnowledgeDetailRouteC,
 });
 
+// M3-T7 (YUK-317) — 笔记阅读器/编辑器。
+function NoteReaderRouteC() {
+  const router = useRouter();
+  const { id } = noteReaderRoute.useParams();
+  return <NoteReaderPage id={id} navigate={(to) => router.history.push(to)} />;
+}
+
+const noteReaderRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/notes/$id',
+  component: NoteReaderRouteC,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   agentNotesRoute,
@@ -122,6 +136,7 @@ const routeTree = rootRoute.addChildren([
   practiceRoute,
   knowledgeRoute,
   knowledgeDetailRoute,
+  noteReaderRoute,
 ]);
 
 export const router = createRouter({ routeTree });

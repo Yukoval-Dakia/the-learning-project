@@ -1,0 +1,356 @@
+// M3 笔记面 — 阅读器宿主（YUK-317）。
+// 设计基准 docs/design/loom-refresh/project/screen-note-reader.jsx：三栏
+//（大纲 rail / 正文 / Context 右栏四区：属性 · labels 命中 · 相关学习项 ·
+// 活动版本）+ topbar（返回入口感知 + /notes/{id} pill + 阅读/编辑 seg）。
+// 编辑保存 = PATCH body-blocks 乐观锁（409 → 提示刷新，pre-flight B 偏离②）；
+// AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
+
+import { Btn } from '@/ui/primitives/Btn';
+import { IconBtn } from '@/ui/primitives/IconBtn';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import './note-reader.css';
+
+import { NoteBlockView, blockOutlineLabel } from './NoteBlocks';
+import { NoteEditor } from './NoteEditor';
+import {
+  type BodyBlock,
+  getAiChanges,
+  getNotePage,
+  saveBodyBlocks,
+  undoAiChange,
+} from './notes-api';
+
+export default function NoteReaderPage({
+  id,
+  navigate,
+}: {
+  id: string;
+  navigate: (to: string) => void;
+}) {
+  const qc = useQueryClient();
+  const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => getNotePage(id) });
+  const changesQ = useQuery({ queryKey: ['note-ai-changes', id], queryFn: () => getAiChanges(id) });
+
+  const [mode, setMode] = useState<'read' | 'edit'>('read');
+  const [outlineOpen, setOutlineOpen] = useState(true);
+  const [draft, setDraft] = useState<BodyBlock[] | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const note = noteQ.data;
+  const blocks = note?.body_blocks?.content ?? [];
+
+  // 进入编辑态时从服务端快照拉草稿；切回阅读丢弃未保存改动。
+  useEffect(() => {
+    if (mode === 'edit' && note) setDraft(note.body_blocks?.content ?? []);
+    if (mode === 'read') setDraft(null);
+  }, [mode, note]);
+
+  const say = (text: string) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 5000);
+  };
+
+  const saveM = useMutation({
+    mutationFn: () =>
+      saveBodyBlocks(id, {
+        artifact_version: note?.version ?? 0,
+        body_blocks: { type: 'doc', content: draft ?? [] },
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['note-page', id] });
+      void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
+      setMode('read');
+      say('已保存——版本推进，refine 痕迹照常累积。');
+    },
+    onError: (e) => {
+      const msg = (e as Error).message;
+      say(
+        msg.includes('409') || msg.includes('conflict')
+          ? '版本冲突：这篇笔记在别处被改过（可能是 AI refine）——刷新后再编辑。'
+          : `保存失败：${msg}`,
+      );
+    },
+  });
+
+  const undoM = useMutation({
+    mutationFn: (eventId: string) => undoAiChange(id, eventId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['note-page', id] });
+      void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
+      say('已还原该次 AI 修订。');
+    },
+  });
+
+  if (noteQ.isLoading)
+    return (
+      <main className="page wide">
+        <p className="quiet-empty">取笔记…</p>
+      </main>
+    );
+  if (!note)
+    return (
+      <main className="page wide">
+        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
+          返回知识
+        </Btn>
+        <p className="quiet-empty">笔记不存在或已归档。</p>
+      </main>
+    );
+
+  const entryLabel = note.labels[0] ?? null;
+  const verified = note.verification_status === 'verified';
+  const shown = mode === 'edit' ? (draft ?? []) : blocks;
+
+  return (
+    <main className="page wide note-reader-page">
+      <div className="note-topbar">
+        <button
+          type="button"
+          className="back-link"
+          style={{ margin: 0 }}
+          onClick={() => navigate(entryLabel ? `/knowledge/${entryLabel.id}` : '/knowledge')}
+        >
+          <LoomIcon name="arrowL" size={14} />
+          {entryLabel ? '返回知识点' : '知识'}
+        </button>
+        <span className="meta mono note-id-pill">/notes/{note.id}</span>
+        <span className="topbar-spacer" />
+        <IconBtn
+          icon="panelLeft"
+          size={16}
+          title="大纲"
+          onClick={() => setOutlineOpen((o) => !o)}
+        />
+        <div className="seg seg-sm note-mode" role="tablist" aria-label="阅读模式">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'read'}
+            className={mode === 'read' ? 'on' : ''}
+            onClick={() => setMode('read')}
+          >
+            <LoomIcon name="eye" size={14} />
+            阅读
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'edit'}
+            className={mode === 'edit' ? 'on' : ''}
+            onClick={() => setMode('edit')}
+          >
+            <LoomIcon name="pencil" size={14} />
+            编辑
+          </button>
+        </div>
+        {mode === 'edit' && (
+          <Btn
+            size="sm"
+            variant="primary"
+            icon="check"
+            disabled={saveM.isPending}
+            onClick={() => saveM.mutate()}
+          >
+            {saveM.isPending ? '保存中…' : '保存'}
+          </Btn>
+        )}
+      </div>
+
+      <div className={`note-reader-grid${outlineOpen ? '' : ' no-outline'}`}>
+        {outlineOpen && (
+          <nav className="note-outline">
+            <div className="note-rail-h">
+              <LoomIcon name="panelLeft" size={14} />
+              大纲 · block tree
+            </div>
+            {shown.map((b, i) => (
+              <button
+                type="button"
+                key={b.attrs?.id ?? i}
+                className="nol-item"
+                onClick={() => {
+                  document
+                    .getElementById(`nb-${b.attrs?.id ?? i}`)
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }}
+              >
+                <span className="nol-glyph mono">
+                  {b.type === 'crossLinkBlock' ? '@' : b.type === 'questionRefBlock' ? '?' : '·'}
+                </span>
+                <span className="nol-label">{blockOutlineLabel(b)}</span>
+              </button>
+            ))}
+          </nav>
+        )}
+
+        <article className="note-doc-col">
+          <h1 className="page-title serif" style={{ marginBottom: 'var(--s-2)' }}>
+            {note.title}
+          </h1>
+          <div className="nowrap-meta" style={{ marginBottom: 'var(--s-5)' }}>
+            <span className="note-kind-tag note-kind-atomic">{note.type}</span>
+            <span className={`verify-badge ${verified ? 'verified' : 'draft'}`}>
+              <LoomIcon name={verified ? 'check' : 'sparkle'} size={11} />
+              {verified ? '已校验' : '草稿'}
+            </span>
+            <span className="meta mono">v{note.version}</span>
+          </div>
+
+          {mode === 'edit' && draft ? (
+            <NoteEditor blocks={draft} labels={note.labels} noteId={note.id} onChange={setDraft} />
+          ) : (
+            <div className="note-doc">
+              {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
+              {blocks.map((b, i) => (
+                <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
+                  <NoteBlockView
+                    block={b}
+                    onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
+                    onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+
+        <aside className="note-context">
+          <div className="drawer-sec">
+            <div className="drawer-sec-h">
+              <LoomIcon name="doc" size={13} />
+              属性
+            </div>
+            <div className="note-prop-row">
+              <span className="meta">状态</span>
+              <span className={`verify-badge ${verified ? 'verified' : 'draft'}`}>
+                <LoomIcon name={verified ? 'check' : 'sparkle'} size={11} />
+                {verified ? '已校验' : '草稿'}
+              </span>
+            </div>
+            <div className="note-prop-row">
+              <span className="meta">版本</span>
+              <span className="mono tnum">v{note.version}</span>
+            </div>
+            <div className="note-prop-row">
+              <span className="meta">块数</span>
+              <span className="mono tnum">{blocks.length}</span>
+            </div>
+          </div>
+
+          <div className="drawer-sec">
+            <div className="drawer-sec-h">
+              <LoomIcon name="link" size={13} />
+              被这些 knowledge 标签命中 · {note.labels.length}
+            </div>
+            <div className="note-label-list">
+              {note.labels.map((l) => (
+                <button
+                  type="button"
+                  key={l.id}
+                  className={`note-label-row${entryLabel?.id === l.id ? ' is-entry' : ''}`}
+                  onClick={() => navigate(`/knowledge/${l.id}`)}
+                >
+                  <span className="chip chip-k mono">{l.id.slice(0, 10)}</span>
+                  <span className="wenyan">{l.name}</span>
+                  {entryLabel?.id === l.id && <span className="entry-tag mono">入口</span>}
+                  <LoomIcon name="arrow" size={13} className="thread-arrow" />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="drawer-sec">
+            <div className="drawer-sec-h">
+              <LoomIcon name="items" size={13} />
+              相关学习项 · {note.related_learning_items.length}
+            </div>
+            {note.related_learning_items.length === 0 ? (
+              <div className="meta">暂无共享标签的学习项</div>
+            ) : (
+              <div className="note-label-list">
+                {note.related_learning_items.map((it) => (
+                  <button
+                    type="button"
+                    key={it.id}
+                    className="note-label-row"
+                    onClick={() => say('学习项 surface 还在旧栈——M4/M5 收口后可跳转。')}
+                  >
+                    <LoomIcon name="items" size={13} />
+                    <span className="wenyan">{it.title}</span>
+                    <span className="meta mono">{it.relation}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="drawer-sec">
+            <div className="drawer-sec-h">
+              <LoomIcon name="history" size={13} />
+              活动 · AI 修订
+            </div>
+            <div className="note-versions">
+              {(changesQ.data?.rows ?? []).map((c) => (
+                <div key={c.event_id} className={`note-ver${c.undone ? '' : ' is-current'}`}>
+                  <span className="note-ver-dot" />
+                  <div className="note-ver-body">
+                    <div className="note-ver-top">
+                      <span className="mono note-ver-v">
+                        v{c.previous_artifact_version}→v{c.next_artifact_version}
+                      </span>
+                      <span className="adm-actor mono">
+                        <LoomIcon name="sparkle" size={11} />
+                        {c.actor_ref}
+                      </span>
+                      <span className="meta" style={{ marginLeft: 'auto' }}>
+                        {new Date(c.created_at).toLocaleString('zh-CN', {
+                          month: 'numeric',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                    <div className="note-ver-note meta">
+                      {c.ops_count} ops · {c.new_blocks} 新块
+                      {c.undone ? (
+                        <span className="badge tone-neutral" style={{ marginLeft: 8 }}>
+                          已还原
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="xlink mono"
+                          style={{ marginLeft: 8 }}
+                          disabled={undoM.isPending}
+                          onClick={() => undoM.mutate(c.event_id)}
+                        >
+                          <LoomIcon name="undo" size={10} />
+                          还原
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {(changesQ.data?.rows ?? []).length === 0 && (
+                <div className="meta">暂无 AI 修订记录</div>
+              )}
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {toast && (
+        <div className="pf-toasts" aria-live="polite">
+          <div className="pf-toast t-info">
+            <LoomIcon name="sparkle" size={15} className="ico" />
+            <span>{toast}</span>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
