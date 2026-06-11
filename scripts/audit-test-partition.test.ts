@@ -33,10 +33,6 @@ describe('classify — .tsx files land in a real partition, never unmatched', ()
     expect(classify('src/ui/components/VisionTab.test.tsx')).toBe('unit');
   });
 
-  it('routes the explicitly-allowlisted inbox .test.tsx to the unit partition', () => {
-    expect(classify('app/(app)/inbox/inbox.test.tsx')).toBe('unit');
-  });
-
   it('falls a NON-allowlisted app/ .test.tsx through to the db partition (not unmatched)', () => {
     // This is the previously-broken path: a component test outside the unit
     // allowlist must be swept up by allTestInclude's `app/**/*.test.tsx` glob and

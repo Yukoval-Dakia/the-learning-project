@@ -784,87 +784,6 @@
     ]
   },
   {
-    "path": "/api/proposals",
-    "methods": [
-      {
-        "method": "GET",
-        "summary": "列出提案收件箱（分页，支持 status/limit/cursor）",
-        "query": [
-          {
-            "name": "status",
-            "required": false,
-            "example": "pending"
-          },
-          {
-            "name": "limit",
-            "required": false,
-            "example": "50"
-          },
-          {
-            "name": "cursor",
-            "required": false,
-            "example": "evt_xyz789"
-          }
-        ],
-        "contentType": null,
-        "bodyExample": null,
-        "notes": "status：pending|accepted|dismissed|stale|rubric_rejected；limit 默认 200 上限 500；返回分页 page 对象"
-      }
-    ]
-  },
-  {
-    "path": "/api/proposals/:id/accept",
-    "methods": [
-      {
-        "method": "POST",
-        "summary": "接受 AI 提案，支持 accept/reverse/change_type 三种模式",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "decision": "accept",
-          "user_note": "approved"
-        },
-        "notes": "decision 可省略（=accept）；change_type 须传 new_relation_type；relation_type 枚举同 /api/knowledge/edges POST"
-      }
-    ]
-  },
-  {
-    "path": "/api/proposals/:id/dismiss",
-    "methods": [
-      {
-        "method": "POST",
-        "summary": "驳回 AI 提案",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "user_note": "not relevant"
-        },
-        "notes": "user_note 可选 max 2000；body 为空 {} 也合法"
-      }
-    ]
-  },
-  {
-    "path": "/api/proposals/:id/retract",
-    "methods": [
-      {
-        "method": "POST",
-        "summary": "撤回 AI 提案",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "reason_md": "superseded by newer proposal",
-          "affected_refs": [
-            {
-              "kind": "question",
-              "id": "q_abc123"
-            }
-          ]
-        },
-        "notes": "reason_md 可选 trim 后 1-2000；affected_refs 可选至少 1 项 { kind, id }；body 为空 {} 也合法"
-      }
-    ]
-  },
-  {
     "path": "/api/question-blocks/:id/figures/:asset_id",
     "methods": [
       {
@@ -1276,29 +1195,6 @@
     ]
   },
   {
-    "path": "/api/today/ai-changes",
-    "methods": [
-      {
-        "method": "GET",
-        "summary": "列出近 24 小时内的 note-refine apply 变更记录",
-        "query": [],
-        "contentType": null,
-        "bodyExample": null,
-        "notes": "响应：{ window_hours: 24, rows: [...] }，最多 25 条"
-      },
-      {
-        "method": "POST",
-        "summary": "撤销一批 note-refine apply 事件（undo）",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "event_ids": ["evt_abc123", "evt_def456"]
-        },
-        "notes": "event_ids 数组 min 1 max 25，每条非空字符串；响应 { results: [...] }"
-      }
-    ]
-  },
-  {
     "path": "/api/today/copilot-summary",
     "methods": [
       {
@@ -1308,19 +1204,6 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "响应为 CopilotSummary JSON"
-      }
-    ]
-  },
-  {
-    "path": "/api/today/proposals",
-    "methods": [
-      {
-        "method": "GET",
-        "summary": "获取今日提案 KPI 数据",
-        "query": [],
-        "contentType": null,
-        "bodyExample": null,
-        "notes": "响应为 proposal KPI JSON"
       }
     ]
   }
