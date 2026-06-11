@@ -1,19 +1,15 @@
-import { buildCoachDailyHandler } from '@/capabilities/agency/jobs/coach_daily';
-import { buildCoachWeeklyHandler } from '@/capabilities/agency/jobs/coach_weekly';
-import { buildDreamingNightlyHandler } from '@/capabilities/agency/jobs/dreaming_nightly';
-import { buildGoalScopeProposeNightlyHandler } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
 import { buildAutoEnrollHandler } from '@/capabilities/ingestion/jobs/auto_enroll';
 import { buildTencentOcrHandler } from '@/capabilities/ingestion/jobs/tencent_ocr_extract';
-import { buildAttributionFollowupHandler } from '@/capabilities/knowledge/jobs/attribution_followup';
-import { buildKnowledgeEdgeProposeNightlyHandler } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
-import { buildKnowledgeMaintenanceNightlyHandler } from '@/capabilities/knowledge/jobs/knowledge_maintenance_nightly';
-import { buildKnowledgePropoNightlyHandler } from '@/capabilities/knowledge/jobs/knowledge_propose_nightly';
-import { buildHubAutoSyncNightlyHandler } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
-import { buildNoteRefineHandler } from '@/capabilities/notes/jobs/note-refine';
 import { buildNoteGenerateHandler } from '@/capabilities/notes/jobs/note_generate';
 import { buildNoteVerifyHandler } from '@/capabilities/notes/jobs/note_verify';
 import type { Db } from '@/db/client';
-import { isQueueCreateRace } from '@/server/boss/client';
+import {
+  EXPIRE_AGENT,
+  EXPIRE_LLM,
+  FAST_QUEUE_OPTS,
+  createJobQueue,
+  createOrUpdateQueue,
+} from '@/server/boss/queue-config';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
@@ -26,134 +22,36 @@ import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_or
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import { buildQuizGenHandler } from './handlers/quiz_gen';
 import { buildQuizVerifyHandler } from './handlers/quiz_verify';
-import { buildReviewPlanHandler } from './handlers/review_plan';
 import { buildSessionSummaryHandler } from './handlers/session_summary';
 import { buildSourceVerifyHandler } from './handlers/source_verify';
 import { buildSourcingHandler } from './handlers/sourcing';
 import { buildVariantGenHandler } from './handlers/variant_gen';
 import { buildVariantVerifyHandler } from './handlers/variant_verify';
 
-// YUK-237 [STB-3]: per-queue expiration / retention / dead-letter config.
+// M4-T3 (YUK-319)：本文件已渐缩为「未迁域 job 注册簿」。建队配方（YUK-237 三档
+// expire/retention/DLQ + YUK-259 race 防护）抽到 queue-config.ts，与 capability
+// jobs 注册器（register-capability-jobs.ts）共用。已迁入 manifest jobs 声明并由
+// 注册器挂载的 job 不再出现在这里：knowledge 夜链三 cron + attribution_followup、
+// notes 的 hub_auto_sync_nightly + note_refine、practice 的 review_plan、agency
+// 四 cron（dreaming/coach_daily/coach_weekly/goal_scope）。
 //
-// Background: pg-boss v12 sets these at the QUEUE level (createQueue options),
-// inherited by each job. Defaults are `expireInSeconds: 900` (15 min — a job is
-// retried/failed if it stays active longer) and `retentionSeconds: 1209600`
-// (14 days a created/retry job survives before deletion). The 15-min active
-// ceiling is too tight for our long tool-calling LLM jobs (quiz_gen / sourcing /
-// dreaming can run multi-step agent loops), so an over-running job was being
-// silently retried mid-flight. We raise expiry per workload tier and add a
-// dead-letter queue for the expensive LLM producers so a job that exhausts its
-// retries is preserved for inspection instead of vanishing.
-//
-// Tiers (expireInSeconds is the max time a job may stay `active`):
-//   FAST  — sub-second housekeeping (echo / prune_* / promote_idle). Brief floor
-//           of 1h is overkill for these but keeps a single safe minimum.
-//   LLM   — single ~30-90s LLM call handlers (note_*, variant_*, coach_*,
-//           session_summary, embedded_check, attribution_followup, review_plan,
-//           goal_scope, hub_auto_sync, auto_enroll). 1h ceiling.
-//   AGENT — multi-step tool-calling agents that can legitimately run for many
-//           minutes (quiz_gen / quiz_verify / sourcing / source_verify /
-//           dreaming_nightly / knowledge_maintenance / tencent_ocr). 2h ceiling.
-//
-// retentionSeconds: 7 days everywhere (brief floor; below the 14-day default so
-// we don't keep stuck created/retry jobs around for two weeks).
-//
-// Dead-letter: only the AGENT + LLM producers route exhausted jobs to
-// `<queue>_dlq`. We create the DLQ first (createQueue is idempotent on name) so
-// the failed payload lands somewhere queryable. FAST housekeeping queues skip
-// the DLQ — a dropped prune tick just re-runs on the next cron.
-const RETENTION_7D = 604_800; // 7 days, brief floor
-const EXPIRE_FAST = 3_600; // 1h — brief minimum floor for cheap jobs
-const EXPIRE_LLM = 3_600; // 1h — single LLM call handlers
-const EXPIRE_AGENT = 7_200; // 2h — multi-step tool-calling agent loops
-
-const FAST_QUEUE_OPTS = {
-  expireInSeconds: EXPIRE_FAST,
-  retentionSeconds: RETENTION_7D,
-} as const;
+// 仍留簿的注册（M5 拆除采石场时清账）：
+//   - echo（golden E2E，0.5s polling）
+//   - rejudge（非默认 1s polling + inline 动态 import，非工厂形态）
+//   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
+//   - registerMemoryHandlers（memory_* 队列归 memory 模块）
+//   - session_summary / embedded_check_generate（链式 LLM）
+//   - note_verify / note_generate（工厂带 boss 二参链式回调，不符 JobHandlerFactory 单参签名）
+//   - quiz_gen / quiz_verify / sourcing / source_verify / variant_gen / variant_verify
+//   - tencent_ocr_extract（0.5s polling + lazy r2 getter）/ auto_enroll
+//   - 未迁域：ingestion（auto_enroll / tencent_ocr_extract 待 ingestion 包 jobs 声明）
 
 /**
- * Build createQueue options for an LLM/agent queue, wiring a dead-letter queue.
- * Caller MUST create the returned `deadLetter` queue first (see createJobQueue).
- */
-function jobQueueOpts(queueName: string, expireInSeconds: number) {
-  return {
-    expireInSeconds,
-    retentionSeconds: RETENTION_7D,
-    deadLetter: `${queueName}_dlq`,
-  } as const;
-}
-
-/**
- * Create a queue AND reconcile its config if it already exists.
+ * Register pg-boss queue handlers + schedules for jobs NOT yet owned by a
+ * capability manifest（渐缩簿）。
  *
- * pg-boss `createQueue` is `INSERT ... ON CONFLICT DO NOTHING` (plans.js
- * `create_queue` plpgsql) — on an upgrade where the queue was already created by
- * an older worker, it leaves the *old* expire/retention/dead-letter untouched.
- * That silently no-ops the YUK-237 stability tuning on every existing prod DB
- * (the only DBs that matter for a long-running NAS worker). `updateQueue` runs
- * `UPDATE ${schema}.queue SET expire_seconds/retention_seconds/dead_letter ...
- * WHERE name = $1` (plans.js `updateQueue`), so calling it right after
- * createQueue forces the live config onto both brand-new and pre-existing
- * queues. On a fresh queue updateQueue is a harmless self-update; on a missing
- * queue it is a no-op UPDATE (0 rows) — but we always createQueue first, so the
- * row exists. Keeping the SAME opts object for both calls keeps them in lockstep.
- *
- * YUK-259: concurrency-safe. When the app's in-process boss (instrumentation,
- * getStartedBoss) and the worker both register/start against the same DB during
- * a cold start, pg-boss's queue INSERT can race past its own ON CONFLICT and
- * raise a 23505 `queue_pkey` violation (observed repeatedly in the test env —
- * worker crashed in registration with `Key (name)=(...) already exists`). A
- * 23505 here means the queue already exists, which is the desired end state, so
- * we swallow it and STILL run `updateQueue` — the reconcile that lands the
- * YUK-237 config onto the (now confirmed-existing) row. #329 semantics are
- * preserved: an already-existing queue still gets the new config. Any other
- * error is re-thrown.
- */
-async function createOrUpdateQueue(
-  boss: PgBoss,
-  name: string,
-  opts: { expireInSeconds: number; retentionSeconds: number; deadLetter?: string },
-): Promise<void> {
-  try {
-    await boss.createQueue(name, opts);
-  } catch (err) {
-    if (!isQueueCreateRace(err)) throw err;
-    // Benign create race — the queue row exists; fall through to updateQueue so
-    // the YUK-237 config still gets reconciled onto it.
-    console.warn(
-      `[boss] createQueue('${name}') hit a concurrent create race (23505 queue_pkey) — queue already exists, reconciling config (YUK-259)`,
-    );
-  }
-  await boss.updateQueue(name, opts);
-}
-
-/**
- * Create an LLM/agent producer queue together with its dead-letter queue.
- *
- * Order matters: the DLQ must exist before the main queue references it as
- * `deadLetter`. createQueue is idempotent on name, so re-running registration is
- * safe; createOrUpdateQueue additionally reconciles config onto an existing
- * queue (see its docblock — required so YUK-237 tuning lands on upgraded prod
- * DBs, not just fresh ones). The DLQ itself uses FAST opts (7-day retention, 1h
- * expire) — it only holds inert failed payloads, never runs a worker.
- */
-async function createJobQueue(boss: PgBoss, name: string, expireInSeconds: number): Promise<void> {
-  await createOrUpdateQueue(boss, `${name}_dlq`, FAST_QUEUE_OPTS);
-  await createOrUpdateQueue(boss, name, jobQueueOpts(name, expireInSeconds));
-}
-
-/**
- * Register all pg-boss queue handlers + schedules.
- *
- * 在 worker entrypoint 启动时调一次（Step 14）。
- *   - Step 4 ✓: echo (golden E2E)
- *   - Step 5 ✓: knowledge_propose_nightly + prune_job_events (cron)
- *   - Step 9 ✓: tencent_ocr_extract (生产 OCR async job)
- *   - Phase 2 ✓: knowledge_edge_propose_nightly (cron — dreaming mesh)
- *
- * YUK-237: every createQueue below now carries explicit expire/retention (and a
- * dead-letter queue for the LLM/agent producers) — see the tier constants above.
+ * 在 worker entrypoint 启动时调一次（start-worker.ts），随后必须紧跟
+ * registerCapabilityJobs 挂载各包声明的 job。
  */
 export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // Step 4: echo golden E2E queue (FAST — trivial round-trip)
@@ -161,8 +59,9 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.work('echo', { pollingIntervalSeconds: 0.5, batchSize: 1 }, buildEchoHandler(db));
 
   // M2 (YUK-316, D15) — 申诉自动重判。appeal API 投递（singletonKey=appeal
-  // event id）；handler 本体在 practice capability 包（kernel jobs 契约 M4 立，
-  // 此处沿用旧 registry 挂载——与 ingestion jobs 同一过渡模式，M1-T3）。
+  // event id）；handler 本体在 practice capability 包，manifest 声明无 load
+  // （注册形态是非默认 1s polling + inline 动态 import，非工厂，不走注册器
+  // 统一配方）——注册留簿，M5 清账。
   await createJobQueue(boss, 'rejudge', EXPIRE_LLM);
   await boss.work('rejudge', { pollingIntervalSeconds: 1, batchSize: 1 }, async (jobs) => {
     const { handleRejudge } = await import('@/capabilities/practice/jobs/rejudge');
@@ -171,12 +70,10 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     }
   });
 
-  // Step 5: nightly cron tasks
-  await createJobQueue(boss, 'knowledge_propose_nightly', EXPIRE_LLM);
-  await boss.work('knowledge_propose_nightly', buildKnowledgePropoNightlyHandler(db));
+  // Step 5: nightly housekeeping cron（同区段的 knowledge_propose_nightly 已迁
+  // knowledge manifest jobs 声明，由注册器挂载）
   await createOrUpdateQueue(boss, 'prune_job_events', FAST_QUEUE_OPTS); // FAST — bulk DELETE housekeeping, re-runs next cron
   await boss.work('prune_job_events', buildPruneJobEventsHandler(db));
-  await boss.schedule('knowledge_propose_nightly', '0 2 * * *', {}, { tz: 'Asia/Shanghai' });
   await boss.schedule('prune_job_events', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // T-37 / YUK-185: Mem0 fact ingest + per-scope brief regen queues. Station 2A
@@ -185,102 +82,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // defaultGenerateBrief (triggers.ts). I-1: was a stale `YUK-37` comment — this
   // wiring is YUK-185 / T-37.
   await registerMemoryHandlers(boss, db, { generateBrief: buildBriefGenerator({ db }) });
-
-  // Phase 2 Dreaming: knowledge_edge mesh propose (BJT 02:30, after node propose)
-  await createJobQueue(boss, 'knowledge_edge_propose_nightly', EXPIRE_LLM);
-  await boss.work('knowledge_edge_propose_nightly', buildKnowledgeEdgeProposeNightlyHandler(db));
-  await boss.schedule('knowledge_edge_propose_nightly', '30 2 * * *', {}, { tz: 'Asia/Shanghai' });
-
-  // Wave 7 / YUK-95 P5 Lane-C: nightly hub auto-sync (ADR-0020 §9 iii-curated
-  // mesh). Runs BJT 02:45 — 15 min AFTER knowledge_edge_propose_nightly
-  // (`30 2 * * *`) so it sees the same-night fresh edges before recomputing each
-  // hub's AutoLinksContainer auto-zone. Cross-process: relies on
-  // persistNoteRefineApply's optimistic version lock, NOT the in-memory editing
-  // heartbeat (Wave 7 D5).
-  //
-  // Concurrency: like every nightly here, this queue runs with pg-boss defaults
-  // (localConcurrency 1, batchSize 1) and no `singleton` — a single worker
-  // serializes runs within the process, so a scheduled fire won't overlap itself.
-  // The version lock above is the cross-process safety net. Deliberately NOT
-  // singling out this queue with a singleton the other nightlies don't use.
-  await createJobQueue(boss, 'hub_auto_sync_nightly', EXPIRE_LLM);
-  await boss.work(
-    'hub_auto_sync_nightly',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildHubAutoSyncNightlyHandler(db),
-  );
-  await boss.schedule('hub_auto_sync_nightly', '45 2 * * *', {}, { tz: 'Asia/Shanghai' });
-
-  // YUK-48: broader KnowledgeReviewTask maintenance producer (BJT 03:00,
-  // after the cheaper node/edge structured-output proposers).
-  await createJobQueue(boss, 'knowledge_maintenance_nightly', EXPIRE_AGENT);
-  await boss.work(
-    'knowledge_maintenance_nightly',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildKnowledgeMaintenanceNightlyHandler(db),
-  );
-  await boss.schedule('knowledge_maintenance_nightly', '0 3 * * *', {}, { tz: 'Asia/Shanghai' });
-
-  // YUK-114 / T-DR: bounded Dreaming producer using DomainTool MCP bridge.
-  // Runs after cheaper graph maintenance so it can see same-night proposal state.
-  await createJobQueue(boss, 'dreaming_nightly', EXPIRE_AGENT);
-  await boss.work(
-    'dreaming_nightly',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildDreamingNightlyHandler(db),
-  );
-  await boss.schedule('dreaming_nightly', '15 3 * * *', {}, { tz: 'Asia/Shanghai' });
-
-  // YUK-203 U4 / D5: review_plan — the tactical ReviewPlanTask queue. Registered
-  // BEFORE coach_daily so the worker is ready to accept the chained
-  // coach_daily → review_plan send (buildCoachDailyHandler enqueues it after a
-  // successful coach run; runtime map bullet 4). NO `schedule` — it is
-  // chain-triggered (and on-demand re-run), NOT a cron (D5:29 "不要另开独立 cron").
-  await createJobQueue(boss, 'review_plan', EXPIRE_LLM);
-  await boss.work(
-    'review_plan',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildReviewPlanHandler(db),
-  );
-
-  // Wave 5 / T-D6/B (YUK-119): coach_daily + coach_weekly.
-  // coach_daily runs nightly at BJT 03:45 — 30 min after dreaming_nightly
-  // (`15 3 * * *`) so Coach can read Dreaming's same-night proposals, and
-  // 15 min before prune_job_events (`0 4 * * *`) to avoid IO contention with
-  // the bulk DELETE pass. coach_weekly runs Sunday BJT 04:30 to produce the
-  // weekly_reflection slot in TodayPlan (after the prune storm settles).
-  await createJobQueue(boss, 'coach_daily', EXPIRE_LLM);
-  await boss.work(
-    'coach_daily',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildCoachDailyHandler(db),
-  );
-  await boss.schedule('coach_daily', '45 3 * * *', {}, { tz: 'Asia/Shanghai' });
-
-  await createJobQueue(boss, 'coach_weekly', EXPIRE_LLM);
-  await boss.work(
-    'coach_weekly',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildCoachWeeklyHandler(db),
-  );
-  await boss.schedule('coach_weekly', '30 4 * * 0', {}, { tz: 'Asia/Shanghai' });
-
-  // Station 2B / YUK-186: nightly goal-scope propose. Runs BJT 03:50 — AFTER
-  // coach_daily (`45 3`) so it reads same-night materialized goals + active
-  // subjects (steady by 03:50), and BEFORE prune_job_events (`0 4`) to avoid IO
-  // contention with the bulk DELETE pass. Picks the single most-active subject
-  // with ≥1 weak node and (cap=1) proposes at most one goal_scope into the
-  // inbox; idempotent via gates on a live goal / pending proposal (subject_id).
-  // Like every nightly here: defaults (localConcurrency 1, batchSize 1), no
-  // singleton — a single worker serializes runs so a scheduled fire won't
-  // overlap itself. The LLM call needs XIAOMI_API_KEY in the worker env (F-2).
-  await createJobQueue(boss, 'goal_scope_propose_nightly', EXPIRE_LLM);
-  await boss.work(
-    'goal_scope_propose_nightly',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildGoalScopeProposeNightlyHandler(db),
-  );
-  await boss.schedule('goal_scope_propose_nightly', '50 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
   // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
@@ -408,32 +209,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
         await boss.send('note_verify', { artifact_id: artifactId });
       },
     }),
-  );
-
-  // Wave 6 / T-88 P4-A (YUK-127): NoteRefineTask — Living Note refine pass.
-  // Producers (P4-E, YUK-131) enqueue { artifact_id, trigger } when one of
-  // the 5 trigger signals fires (mark_wrong / mastery_change / 错误率 /
-  // dwell / dreaming). Handler loads context, calls NoteRefineTask, and
-  // routes the resulting NotePatch to apply (mutator) or proposal (propose)
-  // per the locked threshold `≤ 3 ops AND ≤ 2 new blocks → mutator`.
-  //
-  // PHASE-DEFERRED: P4-B (YUK-128) plugs the real gate + editing-session
-  // deferral; P4-A ships mutator-only default so the apply path is wired.
-  await createJobQueue(boss, 'note_refine', EXPIRE_LLM);
-  await boss.work(
-    'note_refine',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildNoteRefineHandler(db),
-  );
-
-  // Task #16: async attribution for new failure attempts. Replaces the
-  // inline `next/server.after()` call in /api/mistakes + /api/ingestion/[id]/
-  // import. Worker process, durable, retryable.
-  await createJobQueue(boss, 'attribution_followup', EXPIRE_LLM);
-  await boss.work(
-    'attribution_followup',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildAttributionFollowupHandler(db),
   );
 
   // Task #17: variant generation. Enqueued by attribution_followup after

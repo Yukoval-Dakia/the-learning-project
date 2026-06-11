@@ -6,9 +6,11 @@
 
 import type { PgBoss } from 'pg-boss';
 
+import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import { createBoss, isQueueCreateRace } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
+import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 
 export async function startBossWorker(db: Db): Promise<PgBoss> {
   // F-2 (YUK-185) / PR #232 review (FIX #6) — the brief regen handler calls the
@@ -71,5 +73,9 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
     );
   }
   await registerHandlers(boss, db);
+  // M4-T3 (YUK-319)：渐缩簿之后挂载各 capability manifest 声明的 job（建队 +
+  // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标
+  // （embedded_check_generate / note_verify）先 ready，注册器再挂链式源。
+  await registerCapabilityJobs(boss, db, capabilities);
   return boss;
 }

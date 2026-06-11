@@ -67,4 +67,31 @@ export const notesCapability = defineCapability({
       },
     ],
   },
+  jobs: {
+    // M4-T3 (YUK-319)：notes 域 job 归属声明。注册由 server/boss/
+    // register-capability-jobs.ts 收集挂载（有 load 的两条）；note_generate /
+    // note_verify 的工厂带 boss 依赖二参（onReady/onPassed 链式 boss.send 回调，
+    // note_generate→note_verify→embedded_check_generate），不符 kernel
+    // JobHandlerFactory 单参签名——注册留在 handlers.ts 渐缩簿（M5 拆簿时
+    // 链式回调依赖随容器方案一并收编），此处声明无 load 纯归属元数据。
+    handlers: [
+      {
+        // Wave 7 / YUK-95 P5 Lane-C：nightly hub auto-sync（BJT 02:45，edge propose 后 15min）。
+        name: 'hub_auto_sync_nightly',
+        schedule: { cron: '45 2 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubAutoSyncNightlyHandler),
+      },
+      {
+        // Wave 6 / T-88 P4-A (YUK-127)：Living Note refine。链式/按需（触发器投递），无 cron。
+        name: 'note_refine',
+        queue: 'llm',
+        load: () => import('./jobs/note-refine').then((m) => m.buildNoteRefineHandler),
+      },
+      // 纯归属元数据（无 load，注册在 handlers.ts 渐缩簿——见上）：
+      { name: 'note_generate', queue: 'llm' },
+      { name: 'note_verify', queue: 'llm' },
+    ],
+  },
 });
