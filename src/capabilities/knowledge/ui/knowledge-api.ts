@@ -1,6 +1,6 @@
 // M3 知识面（YUK-317）— ui 数据层：图谱/节点页对真 API 的调用与 wire 类型。
-// 路由宿主（dev）：/api/knowledge 经 vite proxy → Hono(:8787)；
-// /api/events（边提议读，events 域未迁）经 catch-all → 旧栈，随 M4/M5 收编。
+// 路由宿主（dev）：/api/knowledge、/api/proposals 经 vite proxy → Hono(:8787)。
+// M4-T5 (YUK-318)：边提议读已从 /api/events 裸查换源到统一收件箱。
 
 import { apiJson } from '@/ui/lib/api';
 
@@ -120,24 +120,27 @@ export const decideNodeProposal = (id: string, decision: 'accept' | 'reject') =>
     body: JSON.stringify({ decision }),
   });
 
-// 边提议事件（events 域查询，旧栈 catch-all；M4 提议生命周期真身后收编）。
-export interface EdgeProposalEvent {
+// 边提议（M4-T5 / YUK-318：统一收件箱投影。旧 /api/events 裸查不感知决策，
+// 已决提议会复返、靠客户端 decided 集合补救；新源服务端按 status=pending
+// 过滤，accept/dismiss 后自然退出列表）。wire = shell 包 ProposalInboxRow
+// 的 UI 投影：payload 是 AiProposalPayload，边字段在 proposed_change 内。
+export interface EdgeProposalInboxRow {
   id: string;
+  status: string;
+  proposed_at: string;
   payload: {
-    from_knowledge_id?: string;
-    to_knowledge_id?: string;
-    relation_type?: string;
-    weight?: number;
     reason_md?: string;
+    proposed_change: {
+      from_knowledge_id?: string;
+      to_knowledge_id?: string;
+      relation_type?: string;
+      weight?: number;
+    };
   };
-  outcome: string | null;
-  created_at: string;
 }
 
 export const getEdgeProposals = () =>
-  apiJson<{ rows: EdgeProposalEvent[] }>(
-    '/api/events?action=propose&subject_kind=knowledge_edge&limit=100',
-  );
+  apiJson<{ rows: EdgeProposalInboxRow[] }>('/api/proposals?kind=knowledge_edge&status=pending');
 
 export const decideEdgeProposal = (
   eventId: string,
