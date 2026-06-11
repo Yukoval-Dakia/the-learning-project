@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
-import { editArtifactSection } from '@/server/artifacts/sections';
+import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

@@ -28,8 +28,8 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { listBacklinks, resolveOwningLearningItemIds } from '@/server/artifacts/block-refs';
-import { extractCrossLinkSnippet } from '@/server/artifacts/body-blocks';
+import { listBacklinks, resolveOwningLearningItemIds } from '@/capabilities/notes/server/block-refs';
+import { extractCrossLinkSnippet } from '@/capabilities/notes/server/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { ApiError, errorResponse } from '@/server/http/errors';
 

@@ -1,5 +1,5 @@
 import { artifact } from '@/db/schema';
-import { noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
+import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';

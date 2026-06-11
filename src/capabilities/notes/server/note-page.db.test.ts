@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact, artifact_block_ref, knowledge, learning_item } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadNotePage } from './note-page';
 
 const A_BASE = {

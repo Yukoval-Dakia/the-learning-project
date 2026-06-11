@@ -39,7 +39,7 @@ import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { enqueueMasteryNoteRefine } from '@/server/artifacts/note-refine-triggers';
+import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';

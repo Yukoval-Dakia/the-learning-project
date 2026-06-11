@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { noteBodyBlockContractFailure } from '@/server/boss/handlers/note_verify';
+import { noteBodyBlockContractFailure } from './note_verify';
 
 describe('note body block verifier contract', () => {
   it('returns a needs_review result when atomic notes miss required semantic kinds', () => {

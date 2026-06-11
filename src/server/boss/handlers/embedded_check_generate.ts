@@ -30,7 +30,7 @@ import {
   bodyBlocksToBlockSummaries,
   bodyBlocksToNoteSections,
   setNoteSectionEmbeddedCheckArtifactRef,
-} from '@/server/artifacts/body-blocks';
+} from '@/capabilities/notes/server/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

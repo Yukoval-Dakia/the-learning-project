@@ -6,7 +6,7 @@ import {
   enqueueNoteRefineTrigger,
   noteRefineTriggerEnabled,
   resetNoteRefineTriggerStateForTests,
-} from '@/server/artifacts/note-refine-triggers';
+} from '@/capabilities/notes/server/note-refine-triggers';
 
 describe('note refine trigger producer', () => {
   beforeEach(() => {
@@ -20,16 +20,16 @@ describe('note refine trigger producer', () => {
     await expect(
       enqueueNoteRefineTrigger({
         artifactId: 'art_1',
-        kind: 'error_rate',
+        kind: 'mark_wrong',
         triggerEventId: 'evt_attempt_1',
         now,
         bossSend,
       }),
-    ).resolves.toMatchObject({ status: 'enqueued', artifact_id: 'art_1', kind: 'error_rate' });
+    ).resolves.toMatchObject({ status: 'enqueued', artifact_id: 'art_1', kind: 'mark_wrong' });
     await expect(
       enqueueNoteRefineTrigger({
         artifactId: 'art_1',
-        kind: 'error_rate',
+        kind: 'mark_wrong',
         now: new Date(now.getTime() + 10_000),
         bossSend,
       }),
@@ -37,7 +37,7 @@ describe('note refine trigger producer', () => {
     await expect(
       enqueueNoteRefineTrigger({
         artifactId: 'art_1',
-        kind: 'error_rate',
+        kind: 'mark_wrong',
         now: new Date(now.getTime() + NOTE_REFINE_TRIGGER_DEBOUNCE_MS + 1),
         bossSend,
       }),
@@ -47,7 +47,7 @@ describe('note refine trigger producer', () => {
     expect(bossSend).toHaveBeenCalledWith('note_refine', {
       artifact_id: 'art_1',
       trigger: {
-        kind: 'error_rate',
+        kind: 'mark_wrong',
         context_md: undefined,
         evidence_ids: undefined,
         trigger_event_id: 'evt_attempt_1',

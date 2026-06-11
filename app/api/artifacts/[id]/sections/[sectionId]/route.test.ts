@@ -1,5 +1,5 @@
 import { artifact, event, learning_item } from '@/db/schema';
-import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
+import { bodyBlocksToNoteSections, noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../../../tests/helpers/db';

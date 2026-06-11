@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
-import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

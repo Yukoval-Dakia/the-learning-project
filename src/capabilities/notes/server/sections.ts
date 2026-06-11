@@ -5,7 +5,7 @@ import type { z } from 'zod';
 import { ArtifactBodyBlocks, type NoteSection } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { bodyBlocksToNoteSections, replaceNoteSectionBody } from '@/server/artifacts/body-blocks';
+import { bodyBlocksToNoteSections, replaceNoteSectionBody } from '@/capabilities/notes/server/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 

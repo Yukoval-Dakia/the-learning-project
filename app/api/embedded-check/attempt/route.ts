@@ -18,7 +18,6 @@ import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { enqueueErrorRateNoteRefine } from '@/server/artifacts/note-refine-triggers';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -179,14 +178,9 @@ export async function POST(req: Request): Promise<Response> {
         console.warn(`attribution_followup enqueue failed for ${attemptEventId}:`, err);
       }
     }
-    if (outcome === 'failure' && attemptSource === 'embedded_check' && q.source_ref) {
-      await enqueueErrorRateNoteRefine({
-        db,
-        artifactId: q.source_ref,
-        questionId: q.id,
-        triggerEventId: attemptEventId,
-      });
-    }
+    // M3 (YUK-317, D6)：error_rate → note_refine 触发线已删（内嵌自测链路裁撤，
+    // Living Note 流作答信号 = mastery_change）。本 route 其余部分（teaching_check
+    // 分支 + learning_record 写）原地墓碑，M5 拆除采石场统一清。
 
     return Response.json({
       outcome,

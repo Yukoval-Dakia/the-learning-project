@@ -23,7 +23,7 @@ import {
   mistake_variant,
   question,
 } from '@/db/schema';
-import { persistNoteRefineApply } from '@/server/artifacts/note-refine-apply';
+import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import { writeEvent } from '@/server/events/queries';
 // ADR-0031 / YUK-304 (lane B) — question_draft accept promotes draft→active +
 // FSRS-enrolls (决定5). Same enroll-if-absent primitives quiz_verify uses.
