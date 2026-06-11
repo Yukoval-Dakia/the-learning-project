@@ -1,36 +1,13 @@
-import { db } from '@/db/client';
-import {
-  listNoteRefineChanges,
-  undoNoteRefineApplyEvent,
-} from '@/capabilities/notes/server/note-refine-apply';
-import { ApiError, errorResponse } from '@/server/http/errors';
+// 外壳挂载 — handler 本体在 notes capability 包（M3 上 Hono，YUK-317）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M3-T8 拆除。
+import { POST as POSTHandler } from '@/capabilities/notes/api/ai-change-undo';
 
 export const runtime = 'nodejs';
 
-interface RouteParams {
-  params: Promise<{ id: string; eventId: string }>;
-}
-
-export async function POST(_req: Request, { params }: RouteParams): Promise<Response> {
-  try {
-    const { id: artifactId, eventId } = await params;
-    if (!artifactId) {
-      throw new ApiError('validation_error', 'artifact id is required', 400);
-    }
-    if (!eventId) {
-      throw new ApiError('validation_error', 'event id is required', 400);
-    }
-    const changes = await listNoteRefineChanges(db, { artifactId, limit: 200 });
-    if (!changes.some((row) => row.event_id === eventId)) {
-      throw new ApiError(
-        'not_found',
-        `note refine apply event ${eventId} was not found for artifact ${artifactId}`,
-        404,
-      );
-    }
-    const result = await undoNoteRefineApplyEvent(db, { applyEventId: eventId });
-    return Response.json(result);
-  } catch (err) {
-    return errorResponse(err);
-  }
+export async function POST(
+  req: Request,
+  ctx: { params: Promise<Record<string, string>> },
+): Promise<Response> {
+  return POSTHandler(req, await ctx.params);
 }

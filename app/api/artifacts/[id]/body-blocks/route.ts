@@ -1,42 +1,13 @@
-import { z } from 'zod';
-
-import { ArtifactBodyBlocks } from '@/core/schema/business';
-import { db } from '@/db/client';
-import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
-import { ApiError, errorResponse } from '@/server/http/errors';
+// 外壳挂载 — handler 本体在 notes capability 包（M3 上 Hono，YUK-317）。
+// param 路由 shim：Next ctx.params (Promise) 解包为 kernel RouteHandler v2 的
+// params Record。双栈期保留至 M3-T8 拆除。
+import { PATCH as PATCHHandler } from '@/capabilities/notes/api/body-blocks-route';
 
 export const runtime = 'nodejs';
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
-
-const PatchBody = z.object({
-  artifact_version: z.number().int().nonnegative(),
-  body_blocks: ArtifactBodyBlocks,
-});
-
-export async function PATCH(req: Request, { params }: RouteParams): Promise<Response> {
-  try {
-    const { id: artifactId } = await params;
-    if (!artifactId) throw new ApiError('validation_error', 'artifact id is required', 400);
-    const rawBody = await req.json().catch(() => null);
-    const parsed = PatchBody.safeParse(rawBody);
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-        400,
-      );
-    }
-    const result = await editArtifactBodyBlocks({
-      db,
-      artifactId,
-      expectedArtifactVersion: parsed.data.artifact_version,
-      bodyBlocks: parsed.data.body_blocks,
-    });
-    return Response.json(result);
-  } catch (err) {
-    return errorResponse(err);
-  }
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<Record<string, string>> },
+): Promise<Response> {
+  return PATCHHandler(req, await ctx.params);
 }

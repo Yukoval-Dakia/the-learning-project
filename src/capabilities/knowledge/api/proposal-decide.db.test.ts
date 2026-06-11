@@ -3,8 +3,8 @@
 import { event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST } from './proposal-decide';
 
 const KNOWLEDGE_BASE = {
   merged_from: [] as string[],
@@ -86,7 +86,7 @@ async function decide(id: string, body: unknown) {
       body: JSON.stringify(body),
       headers: { 'content-type': 'application/json' },
     }),
-    { params: Promise.resolve({ id }) },
+    { id },
   );
 }
 

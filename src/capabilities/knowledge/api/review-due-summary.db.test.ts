@@ -7,7 +7,7 @@
 import { material_fsrs_state } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './review-due-summary';
 
 function makeFsrsState(dueIso: string) {
   return {
