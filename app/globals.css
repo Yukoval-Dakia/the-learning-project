@@ -4442,47 +4442,6 @@ ol {
   color: var(--ink-4);
 }
 
-.proposal {
-  border: 1px solid var(--coral-line);
-  border-radius: var(--r-2);
-  padding: 12px 14px;
-  background: var(--coral-soft);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.proposal-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.proposal-head .title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--ink);
-}
-
-.proposal .body {
-  font-family: var(--font-wenyan);
-  font-size: 14px;
-  color: var(--ink-2);
-  line-height: 1.55;
-  background: var(--paper);
-  padding: 8px 12px;
-  border-radius: var(--r-2);
-  border-left: 2px solid var(--coral-line);
-}
-
-.proposal-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
 .dd-activity-row {
   padding: 6px 10px;
   border-radius: var(--r-2);
