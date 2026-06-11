@@ -4,7 +4,7 @@ import {
   bodyBlocksToBlockSummaries,
   replaceNoteSectionBody,
   setNoteSectionEmbeddedCheckArtifactRef,
-} from '@/server/artifacts/body-blocks';
+} from '@/capabilities/notes/server/body-blocks';
 import { describe, expect, it } from 'vitest';
 
 describe('body block helpers', () => {

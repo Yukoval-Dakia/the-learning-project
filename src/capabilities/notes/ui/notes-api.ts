@@ -1,0 +1,151 @@
+// M3 笔记面（YUK-317）— ui 数据层。
+// 读：GET /api/notes/[id]（note-page 聚合）；保存：PATCH /api/artifacts/[id]/
+// body-blocks（乐观锁 artifact_version）；@ 交叉链：GET /api/artifacts/search；
+// @ 题目引用（pre-flight B 用户增量）：GET /api/questions?knowledge_id=…（quiz
+// 域旧栈，proxy catch-all，M5 收编）。
+
+import { apiJson } from '@/ui/lib/api';
+
+// ── body_blocks 块模型（ArtifactBodyBlocks passthrough doc） ────────
+// 已知块型：semanticBlock（文本块，kind ∈ definition/mechanism/example/
+// pitfall —— check 为 D6 墓碑，只读渲染占位不可插入）、crossLinkBlock
+//（atom，target {artifact_id,kind}）、questionRefBlock（atom，M3 新增：
+// note 引用题库题，纯引用无作答交互——D6 裁的是内嵌自测全链路）。
+export type SemanticKind = 'definition' | 'mechanism' | 'example' | 'pitfall' | 'check';
+
+export const SEMANTIC_KIND_LABEL: Record<Exclude<SemanticKind, 'check'>, string> = {
+  definition: '定义',
+  mechanism: '机制',
+  example: '例子',
+  pitfall: '易错点',
+};
+
+export interface BodyBlock {
+  type: string; // semanticBlock | crossLinkBlock | questionRefBlock | …
+  attrs?: {
+    id?: string;
+    semantic_kind?: SemanticKind;
+    source_tier?: string;
+    user_verified?: boolean;
+    version?: number;
+    source_markdown?: string;
+    // crossLinkBlock
+    target?: { artifact_id: string; kind: string };
+    label?: string;
+    // questionRefBlock
+    question_id?: string;
+    prompt_preview?: string;
+    [k: string]: unknown;
+  };
+  content?: unknown[];
+}
+
+export interface BodyBlocksDoc {
+  type: 'doc';
+  content: BodyBlock[];
+}
+
+// ── NotePage wire（server/note-page.ts） ─────────────────────────
+export interface NotePageLabel {
+  id: string;
+  name: string;
+}
+
+export interface NotePageBacklink {
+  from_artifact_id: string;
+  from_learning_item_id: string | null;
+  from_title: string;
+  from_type: string;
+  from_block_id: string;
+}
+
+export interface NotePageRelatedItem {
+  id: string;
+  title: string;
+  status: string;
+  relation: string;
+}
+
+export interface NotePage {
+  id: string;
+  type: string;
+  title: string;
+  knowledge_ids: string[];
+  labels: NotePageLabel[];
+  body_blocks: BodyBlocksDoc | null;
+  generation_status: string;
+  verification_status: string;
+  embedded_check_status: string;
+  version: number;
+  history: Array<{ version: number; at: string; actor?: string; note?: string }>;
+  backlinks: NotePageBacklink[];
+  related_learning_items: NotePageRelatedItem[];
+  created_at: string;
+  updated_at?: string;
+}
+
+export const getNotePage = (id: string) =>
+  apiJson<NotePage>(`/api/notes/${encodeURIComponent(id)}`);
+
+export const saveBodyBlocks = (
+  artifactId: string,
+  input: { artifact_version: number; body_blocks: BodyBlocksDoc },
+) =>
+  apiJson<{ artifact_id: string; artifact_version: number; body_blocks: BodyBlocksDoc }>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}/body-blocks`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+
+// ── @ 选择器数据源 ───────────────────────────────────────────────
+export interface ArtifactSearchRow {
+  id: string;
+  title: string;
+  type: string;
+}
+
+export const searchArtifacts = (q: string, exclude?: string) =>
+  apiJson<{ rows: ArtifactSearchRow[] }>(
+    `/api/artifacts/search?q=${encodeURIComponent(q)}${exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''}`,
+  );
+
+export interface QuestionPickRow {
+  id: string;
+  kind: string;
+  prompt_md: string;
+}
+
+// 题库无文本搜索参数——按笔记 labels 的知识点过滤（贴本笔记语境）。
+// 响应形 = ListQuestionsResult（items 轴，src/server/questions/list.ts）。
+export const questionsForKnowledge = (knowledgeIds: string[], limit = 20) => {
+  const sp = new URLSearchParams();
+  for (const kid of knowledgeIds) sp.append('knowledge_id', kid);
+  sp.set('limit', String(limit));
+  return apiJson<{ items: QuestionPickRow[] }>(`/api/questions?${sp.toString()}`);
+};
+
+// ── AI refine 痕迹（T5 验过的 ai-changes 链） ────────────────────
+export interface AiChangeRow {
+  event_id: string;
+  artifact_id: string;
+  created_at: string;
+  actor_ref: string;
+  ops_count: number;
+  new_blocks: number;
+  previous_artifact_version: number;
+  next_artifact_version: number;
+  undone: boolean;
+}
+
+export const getAiChanges = (artifactId: string) =>
+  apiJson<{ artifact_id: string; rows: AiChangeRow[] }>(
+    `/api/artifacts/${encodeURIComponent(artifactId)}/ai-changes`,
+  );
+
+export const undoAiChange = (artifactId: string, eventId: string) =>
+  apiJson(
+    `/api/artifacts/${encodeURIComponent(artifactId)}/ai-changes/${encodeURIComponent(eventId)}/undo`,
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+  );
