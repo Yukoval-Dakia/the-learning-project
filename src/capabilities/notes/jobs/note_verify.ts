@@ -17,7 +17,7 @@ import {
   bodyBlocksHaveSemanticKinds,
   bodyBlocksToBlockSummaries,
   bodyBlocksToNoteSections,
-} from '@/server/artifacts/body-blocks';
+} from '@/capabilities/notes/server/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { writeNoteUpdateProposal } from '@/server/proposals/producers';
 import { resolveNoteSkill } from '@/subjects/note-skills';

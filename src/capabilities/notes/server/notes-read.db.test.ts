@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifact, knowledge } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { interactiveForKnowledge, notesForItem, notesForKnowledge } from './notes-read';
 
 const A_BASE = {

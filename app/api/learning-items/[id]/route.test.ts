@@ -6,7 +6,7 @@ import {
   learning_item,
   question,
 } from '@/db/schema';
-import { noteSectionsToBodyBlocks } from '@/server/artifacts/body-blocks';
+import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

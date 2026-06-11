@@ -9,7 +9,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
-import { loadNotePage } from '@/server/artifacts/note-page';
+import { loadNotePage } from '@/capabilities/notes/server/note-page';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

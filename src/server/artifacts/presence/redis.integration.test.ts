@@ -9,7 +9,7 @@ import { RedisPresenceStore } from './redis';
 
 // The DB write side effect is irrelevant to the cross-process presence
 // question — mock it so this test exercises only the shared-state behavior.
-vi.mock('@/server/artifacts/note-refine-apply', () => ({
+vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
   persistNoteRefineApply: vi.fn(async (args: { artifactId: string }) => ({
     status: 'applied' as const,
     artifact_id: args.artifactId,

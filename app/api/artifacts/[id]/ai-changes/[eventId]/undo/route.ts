@@ -2,7 +2,7 @@ import { db } from '@/db/client';
 import {
   listNoteRefineChanges,
   undoNoteRefineApplyEvent,
-} from '@/server/artifacts/note-refine-apply';
+} from '@/capabilities/notes/server/note-refine-apply';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

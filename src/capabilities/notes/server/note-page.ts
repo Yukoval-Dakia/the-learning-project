@@ -24,8 +24,8 @@ import {
   groupBacklinksByArtifactType,
   listBacklinks,
   resolveOwningLearningItemIds,
-} from '@/server/artifacts/block-refs';
-import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
+} from '@/capabilities/notes/server/block-refs';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';

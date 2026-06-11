@@ -116,17 +116,13 @@ export const fastTestInclude = [
   // P5.1 / YUK-143 — pure (no-DB) budget constants + per-message context throttle.
   'src/server/ai/tools/budgets.test.ts',
   'src/server/ai/tools/context-throttle.test.ts',
-  'src/server/artifacts/body-blocks-snippet.test.ts',
+  // M3 (YUK-317) — body-blocks-snippet / hub-dismiss / note-refine-triggers 三条
+  // unit 条目已随 notes 域迁入 src/capabilities/notes/（重命名 *.unit.test.ts），
+  // 由约定 glob 接管。editing-session / presence 留旧位置（dwell ⚖️ 争议行未裁）。
   // In-memory editing-session state machine (heartbeat / idle timeout /
   // force-apply / defer-and-flush). persistNoteRefineApply is vi.mock'd, so
   // no live DB is touched — fast unit. (YUK-97 P7)
   'src/server/artifacts/editing-session.test.ts',
-  // Pure (no-DB) coverage for the hub-dismiss helpers (appendSuppressedRef /
-  // buildRemoveAutoLinkPatch). The sibling DB tests (boss/handlers/
-  // hub_auto_sync_nightly, app/api/hubs/[id]/dismiss-link/route) stay in the db
-  // partition because they hit live Postgres.
-  'src/server/artifacts/hub-dismiss.test.ts',
-  'src/server/artifacts/note-refine-triggers.test.ts',
   // YUK-171 fail-safe degradation unit: a MOCKED ioredis client (no container) +
   // vi.mock'd persistNoteRefineApply, so no live Redis / Postgres is touched —
   // fast no-DB unit. The sibling redis.integration.test.ts (real testcontainer)

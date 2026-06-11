@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
-import { parseNoteGenerateOutput } from '@/server/boss/handlers/note_generate';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
+import { parseNoteGenerateOutput } from './note_generate';
 
 const BODY_BLOCKS_OUTPUT = JSON.stringify({
   body_blocks: {

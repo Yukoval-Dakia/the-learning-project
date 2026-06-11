@@ -25,13 +25,13 @@ import {
   groupBacklinksByArtifactType,
   listBacklinks,
   resolveOwningLearningItemIds,
-} from '@/server/artifacts/block-refs';
-import { bodyBlocksToNoteSections } from '@/server/artifacts/body-blocks';
+} from '@/capabilities/notes/server/block-refs';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import {
   type NoteSummary,
   interactiveForKnowledge,
   notesForKnowledge,
-} from '@/server/artifacts/notes-read';
+} from '@/capabilities/notes/server/notes-read';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { listKnowledgeEdges } from '@/server/knowledge/edges';
 import { resolveSubjectProfileForKnowledgeIds } from '@/server/knowledge/subject-profile';

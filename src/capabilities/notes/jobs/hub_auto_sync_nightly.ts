@@ -40,7 +40,7 @@ import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { persistNoteRefineApply } from '@/server/artifacts/note-refine-apply';
+import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import { listKnowledgeEdges } from '@/server/knowledge/edges';
 import {
   type CuratedAtomic,

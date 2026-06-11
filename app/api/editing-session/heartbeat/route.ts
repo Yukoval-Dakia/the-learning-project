@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { recordEditingHeartbeat } from '@/server/artifacts/editing-session';
-import { enqueueDwellNoteRefine } from '@/server/artifacts/note-refine-triggers';
+import { enqueueDwellNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

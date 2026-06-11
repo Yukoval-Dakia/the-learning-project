@@ -1,7 +1,7 @@
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
-import type { PersistNoteRefineApplyResult } from '@/server/artifacts/note-refine-apply';
+import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/server/note-refine-apply';
 
 // How long a recorded `editing` heartbeat stays "live" before isArtifactIdle
 // flips the session to idle. The Redis store also uses this as the per-artifact
