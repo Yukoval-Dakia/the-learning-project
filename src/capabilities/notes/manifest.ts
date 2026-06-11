@@ -94,4 +94,10 @@ export const notesCapability = defineCapability({
       { name: 'note_verify', queue: 'llm' },
     ],
   },
+  // M4-T4 (YUK-319)：proposal kind 归属声明。note_update 的 accept 持久化委托
+  // ./server/note-refine-apply（persistNoteRefineApply，M3 起）；壳层
+  // acceptNoteUpdateProposal 只做校验 + rate event 编排（plan 裁决 T4 只补声明不迁体）。
+  proposals: {
+    kinds: [{ kind: 'note_update' }],
+  },
 });
