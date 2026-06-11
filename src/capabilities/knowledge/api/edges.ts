@@ -16,11 +16,10 @@
 
 import { z } from 'zod';
 
+import { createKnowledgeEdge, listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { createKnowledgeEdge, listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
-
 
 const QuerySchema = z.object({
   from: z.string().min(1).optional(),

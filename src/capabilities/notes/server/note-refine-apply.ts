@@ -16,12 +16,12 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 
+import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { applyNotePatch } from '@/core/blocks/apply-note-patch';
 import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { writeEvent } from '@/server/events/queries';
 
 type DbLike = Db | Tx;

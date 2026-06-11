@@ -22,14 +22,14 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
+import { decideNoteRefineMode } from '@/capabilities/notes/server/note-refine-policy';
+import { writeNoteRefineProposal } from '@/capabilities/notes/server/note-refine-proposals';
 import { NotePatch, type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
 import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
-import { decideNoteRefineMode } from '@/capabilities/notes/server/note-refine-policy';
-import { writeNoteRefineProposal } from '@/capabilities/notes/server/note-refine-proposals';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

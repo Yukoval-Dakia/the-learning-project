@@ -32,6 +32,9 @@
 
 import { z } from 'zod';
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { FsrsRating, JudgeKind as JudgeKindZ } from '@/core/schema/business';
@@ -39,8 +42,6 @@ import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
-import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
@@ -48,7 +49,6 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';

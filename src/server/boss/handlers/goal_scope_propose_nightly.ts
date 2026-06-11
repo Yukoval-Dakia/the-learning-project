@@ -33,11 +33,11 @@
 
 import type { Job } from 'pg-boss';
 
+import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { listActiveGoals } from '@/server/goals/queries';
 import { runGoalScopeAndWrite } from '@/server/goals/scope';
-import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { KNOWN_SUBJECT_IDS, resolveSubjectProfile } from '@/subjects/profile';
 import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 

@@ -10,12 +10,12 @@
 //   - no answer (response_md null/empty) → no judge invoked, no payload.judge
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 // YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
 // threaded through (student_image_refs).
 import * as invokerModule from '@/server/judge/invoker';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,7 +33,8 @@ vi.mock('@/server/ai/runner', () => ({
 // profiles) for every other test in this file; only the D6 e2e test overrides
 // the return with mockResolvedValueOnce.
 vi.mock('@/capabilities/knowledge/server/subject-profile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/capabilities/knowledge/server/subject-profile')>();
+  const actual =
+    await importOriginal<typeof import('@/capabilities/knowledge/server/subject-profile')>();
   return {
     ...actual,
     resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),

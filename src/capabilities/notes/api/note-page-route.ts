@@ -8,13 +8,13 @@
 
 import { z } from 'zod';
 
-import { db } from '@/db/client';
 import { loadNotePage } from '@/capabilities/notes/server/note-page';
+import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
-export async function GET(_req: Request, params: Record<string, string>,): Promise<Response> {
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const parsed = ParamsSchema.safeParse(params);
     if (!parsed.success) {

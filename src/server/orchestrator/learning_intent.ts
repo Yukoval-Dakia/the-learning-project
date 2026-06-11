@@ -18,10 +18,10 @@ import { newId } from '@/core/ids';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { summaryBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { summaryBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { writeEvent } from '@/server/events/queries';
 import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';

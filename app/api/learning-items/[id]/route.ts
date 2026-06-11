@@ -1,10 +1,10 @@
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { getEffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 import { db } from '@/db/client';
 import { artifact, completion_evidence, learning_item, question } from '@/db/schema';
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { errorResponse } from '@/server/http/errors';
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import {
   type SlimSubjectProfile,
   resolveSubjectProfile,

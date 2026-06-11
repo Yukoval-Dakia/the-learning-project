@@ -1,7 +1,6 @@
+import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
-
 
 export async function GET(): Promise<Response> {
   try {

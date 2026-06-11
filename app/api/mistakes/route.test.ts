@@ -229,7 +229,9 @@ describe('POST /api/mistakes', () => {
 
   it('queues both propose + attribution when cause is null', async () => {
     const { runProposeAndWrite } = await import('@/capabilities/knowledge/server/propose');
-    const { runAttributionAndWriteJudgeEvent } = await import('@/capabilities/knowledge/server/attribute');
+    const { runAttributionAndWriteJudgeEvent } = await import(
+      '@/capabilities/knowledge/server/attribute'
+    );
     vi.mocked(runProposeAndWrite).mockClear();
     vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
 
@@ -256,7 +258,9 @@ describe('POST /api/mistakes', () => {
   });
 
   it('queues only propose when cause is provided manually', async () => {
-    const { runAttributionAndWriteJudgeEvent } = await import('@/capabilities/knowledge/server/attribute');
+    const { runAttributionAndWriteJudgeEvent } = await import(
+      '@/capabilities/knowledge/server/attribute'
+    );
     vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
 
     const res = await postMistake(

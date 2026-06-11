@@ -1,3 +1,4 @@
+import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 /**
  * Dev / bootstrap endpoint —— seed knowledge tree from `src/subjects/wenyan/curriculum.json`.
  *
@@ -11,7 +12,6 @@
  */
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 
 export async function POST(_req: Request) {
   try {

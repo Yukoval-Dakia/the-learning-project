@@ -15,6 +15,14 @@
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
+// T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
+// pool is round-robin balanced across the learning-subjects that have due items
+// so one busy subject can't dominate the page. batchResolveSubjectIds walks
+// knowledge_ids → parent chain → domain → SubjectProfile (default fallback for
+// orphan ids, YUK-56), memoised across the pool to avoid an N+1 on the
+// parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
+// so the brief-refresh layer shares the SAME canonical bridge.
+import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import type { EffectiveTruth } from '@/capabilities/practice/server/effective-truth';
 // YUK-282 / ADR-0030 — by-kind variant-rotation probe selection. Replaces the
 // inline single-question-avoidance ORDER BY (ADR-0028 seam) with a routed pick:
@@ -33,14 +41,6 @@ import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries
 // only — never touches the FSRS due path, the returned set, counts, or due_at.
 import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { errorResponse } from '@/server/http/errors';
-// T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
-// pool is round-robin balanced across the learning-subjects that have due items
-// so one busy subject can't dominate the page. batchResolveSubjectIds walks
-// knowledge_ids → parent chain → domain → SubjectProfile (default fallback for
-// orphan ids, YUK-56), memoised across the pool to avoid an N+1 on the
-// parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
-// so the brief-refresh layer shares the SAME canonical bridge.
-import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import { and, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal

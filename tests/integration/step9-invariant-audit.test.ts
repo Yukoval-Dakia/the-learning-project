@@ -109,13 +109,13 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // session → event mapper (delegates to writeEvent)
       'src/server/session/events.ts',
       // knowledge tree mutation propose events
-      'src/server/knowledge/proposals.ts',
+      'src/capabilities/knowledge/server/proposals.ts',
       // knowledge edges direct writers (Lane B GenerateKnowledgeEdge / ProposeKnowledgeEdge)
-      'src/server/knowledge/edges.ts',
+      'src/capabilities/knowledge/server/edges.ts',
       // knowledge attribute (judge event writer)
-      'src/server/knowledge/attribute.ts',
+      'src/capabilities/knowledge/server/attribute.ts',
       // knowledge review stream task tool
-      'src/server/knowledge/review.ts',
+      'src/capabilities/knowledge/server/review.ts',
       // Test fixture helpers
       'tests/helpers/',
     ] as const;
@@ -191,20 +191,20 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     //     proposal tombstones the paired artifact stubs alongside the materialized
     //     hub + atomic learning_items (archived_at + version+1 only — no semantic
     //     content rewrite). Mirrors the variant_question retract tombstone policy.
-    //   - YUK-54 `src/server/artifacts/sections.ts`: the single owner-service for
+    //   - YUK-54 `src/capabilities/notes/server/sections.ts`: the single owner-service for
     //     user section edits. Routes must call this service so sections/history
     //     updates and `experimental:artifact_section_edit` stay atomic.
-    //   - YUK-92 `src/server/artifacts/body-blocks-edit.ts`: the single owner-service
+    //   - YUK-92 `src/capabilities/notes/server/body-blocks-edit.ts`: the single owner-service
     //     for whole-document block tree edits, keeping artifact.version, history,
     //     and `experimental:artifact_body_blocks_edit` in one transaction.
-    //   - YUK-127 (T-88 P4-A) `src/server/artifacts/note-refine-apply.ts`: the
+    //   - YUK-127 (T-88 P4-A) `src/capabilities/notes/server/note-refine-apply.ts`: the
     //     single owner-service for AI-side Living Note block-level patch
     //     application — applies a NotePatch to body_blocks + bumps version +
     //     writes `experimental:note_refine_apply` in one transaction.
     //   - YUK-203 U4 (D5 / CO §7.1) `src/server/ai/tools/review-plan-tools.ts`:
     //     write_review_plan emits the review-plan `tool_quiz` artifact (the
     //     paper) — the ReviewPlanTask planner's only write.
-    //   - YUK-95 (P5 Lane-D) `src/server/artifacts/hub-dismiss.ts`: the single
+    //   - YUK-95 (P5 Lane-D) `src/capabilities/notes/server/hub-dismiss.ts`: the single
     //     owner-service for dismissing a hub auto-link — appends
     //     `attrs.suppressed_block_refs` (no version bump) alongside the paired
     //     suppress event + the immediate-removal `note_refine_apply`, all atomic
@@ -224,15 +224,15 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
     const ALLOWED = [
       'src/server/orchestrator/learning_intent.ts',
-      'src/server/boss/handlers/note_generate.ts',
-      'src/server/boss/handlers/note_verify.ts',
+      'src/capabilities/notes/jobs/note_generate.ts',
+      'src/capabilities/notes/jobs/note_verify.ts',
       'src/server/boss/handlers/embedded_check_generate.ts',
       'src/server/boss/handlers/quiz_gen.ts',
       'src/server/proposals/actions.ts',
-      'src/server/artifacts/sections.ts',
-      'src/server/artifacts/body-blocks-edit.ts',
-      'src/server/artifacts/note-refine-apply.ts',
-      'src/server/artifacts/hub-dismiss.ts',
+      'src/capabilities/notes/server/sections.ts',
+      'src/capabilities/notes/server/body-blocks-edit.ts',
+      'src/capabilities/notes/server/note-refine-apply.ts',
+      'src/capabilities/notes/server/hub-dismiss.ts',
       // ADR-0032 RP-2 / YUK-304 (lane B) — the shared tool_quiz artifact INSERT
       // core. write_review_plan (review-plan-tools.ts) + write_quiz
       // (write-quiz.ts) delegate their single INSERT here; review-plan-tools.ts

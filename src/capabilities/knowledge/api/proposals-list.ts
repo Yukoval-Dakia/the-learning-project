@@ -7,7 +7,6 @@ import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
 import { type ProposalStatus, listLegacyKnowledgeProposals } from '@/server/proposals/inbox';
 
-
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);

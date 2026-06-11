@@ -4,8 +4,8 @@
 // single-node metadata, mastery join, mesh neighbors, primary atomic,
 // backlinks read-time filter (XC-5), timeline, and not-found path.
 
-import { artifact, artifact_block_ref, event, knowledge, learning_item } from '@/db/schema';
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
+import { artifact, artifact_block_ref, event, knowledge, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

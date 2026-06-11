@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
-import { db } from '@/db/client';
 import {
   listNoteRefineChanges,
   undoNoteRefineApplyEvent,
 } from '@/capabilities/notes/server/note-refine-apply';
+import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

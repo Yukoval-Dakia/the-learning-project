@@ -11,6 +11,14 @@
 
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import {
+  type BacklinksByArtifactType,
+  groupBacklinksByArtifactType,
+  listBacklinks,
+  resolveOwningLearningItemIds,
+} from '@/capabilities/notes/server/block-refs';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import type {
   ArtifactBodyBlocksT,
   ArtifactHistoryEntryT,
@@ -19,15 +27,7 @@ import type {
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, question } from '@/db/schema';
-import {
-  type BacklinksByArtifactType,
-  groupBacklinksByArtifactType,
-  listBacklinks,
-  resolveOwningLearningItemIds,
-} from '@/capabilities/notes/server/block-refs';
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';

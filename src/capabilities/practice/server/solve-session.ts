@@ -8,6 +8,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import type { JudgeAnswerParams } from '@/server/ai/judges/question-contract';
@@ -18,7 +19,6 @@ import {
 } from '@/server/ai/solution-generate';
 import { writeEvent } from '@/server/events/queries';
 import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from '@/server/judge/invoker';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { createLearningRecord } from '@/server/records/queries';
 import { Tutor } from '@/server/session';

@@ -7,12 +7,12 @@
 
 import { eq } from 'drizzle-orm';
 
+import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import { newId } from '@/core/ids';
 import { SuppressArtifactLink } from '@/core/schema/event';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 

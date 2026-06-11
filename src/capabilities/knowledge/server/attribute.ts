@@ -14,10 +14,10 @@ import { CauseSchema, validateCauseAgainstProfile } from '@/core/schema/business
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { getJudgeForAttempt, writeEvent } from '@/server/events/queries';
 import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getJudgeForAttempt, writeEvent } from '@/server/events/queries';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
 
 // Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
