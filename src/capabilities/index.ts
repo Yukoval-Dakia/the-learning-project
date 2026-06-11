@@ -5,10 +5,14 @@
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { agentNotesCapability } from './agent-notes/manifest';
 import { ingestionCapability } from './ingestion/manifest';
+import { knowledgeCapability } from './knowledge/manifest';
+import { notesCapability } from './notes/manifest';
 import { practiceCapability } from './practice/manifest';
 
 export const capabilities: CapabilityManifest[] = [
   agentNotesCapability,
   ingestionCapability,
   practiceCapability,
+  knowledgeCapability,
+  notesCapability,
 ];
