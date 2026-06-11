@@ -12,14 +12,14 @@
 // `*.db.test.ts` under tests/** lands in the db partition (allTestInclude minus
 // fastTestInclude); it imports the testDb helper, so it must NOT be a unit test.
 
-import { event, goal } from '@/db/schema';
 import {
   buildGoalScopeProposeNightlyHandler,
   hasWeakNodeInDomain,
   runGoalScopeProposeNightly,
-} from '@/server/boss/handlers/goal_scope_propose_nightly';
-import { listActiveGoals } from '@/server/goals/queries';
-import { runGoalScopeAndWrite } from '@/server/goals/scope';
+} from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
+import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { runGoalScopeAndWrite } from '@/capabilities/agency/server/goals/scope';
+import { event, goal } from '@/db/schema';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { and, eq } from 'drizzle-orm';

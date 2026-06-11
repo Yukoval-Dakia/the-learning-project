@@ -15,6 +15,10 @@
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
+// YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
+// SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
+// only — never touches the FSRS due path, the returned set, counts, or due_at.
+import { type ActiveGoal, listActiveGoals } from '@/capabilities/agency/server/goals/queries';
 // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items
 // so one busy subject can't dominate the page. batchResolveSubjectIds walks
@@ -36,10 +40,6 @@ import { type Db, db } from '@/db/client';
 import { material_fsrs_state, question } from '@/db/schema';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
-// YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
-// SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
-// only — never touches the FSRS due path, the returned set, counts, or due_at.
-import { type ActiveGoal, listActiveGoals } from '@/server/goals/queries';
 import { errorResponse } from '@/server/http/errors';
 import { and, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 

@@ -3,14 +3,14 @@
 // validateComposition 保证包名 / event action / 路由声明全局无冲突。
 // 反框架护栏：静态数组、类型检查、无动态加载。
 import type { CapabilityManifest } from '@/kernel/manifest';
-import { agentNotesCapability } from './agent-notes/manifest';
+import { agencyCapability } from './agency/manifest';
 import { ingestionCapability } from './ingestion/manifest';
 import { knowledgeCapability } from './knowledge/manifest';
 import { notesCapability } from './notes/manifest';
 import { practiceCapability } from './practice/manifest';
 
 export const capabilities: CapabilityManifest[] = [
-  agentNotesCapability,
+  agencyCapability,
   ingestionCapability,
   practiceCapability,
   knowledgeCapability,

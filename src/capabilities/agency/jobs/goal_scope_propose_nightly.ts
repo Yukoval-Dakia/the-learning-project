@@ -2,7 +2,7 @@
 //
 // Structurally a clone of knowledge_edge_propose_nightly.ts: a thin
 // candidate-picker + dedup gate + ONE call into runGoalScopeAndWrite (the
-// PROPOSE half, src/server/goals/scope.ts). The cron does NOT re-implement the
+// PROPOSE half, ../server/goals/scope.ts). The cron does NOT re-implement the
 // propose logic — runGoalScopeAndWrite already owns load-snapshot + the single
 // structured-output GoalScopeTask call + parse + id-subset filter +
 // writeAiProposal + failure-swallowing.
@@ -33,11 +33,13 @@
 
 import type { Job } from 'pg-boss';
 
+import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { runGoalScopeAndWrite } from '@/capabilities/agency/server/goals/scope';
+// M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
+// 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { listActiveGoals } from '@/server/goals/queries';
-import { runGoalScopeAndWrite } from '@/server/goals/scope';
 import { KNOWN_SUBJECT_IDS, resolveSubjectProfile } from '@/subjects/profile';
 import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 

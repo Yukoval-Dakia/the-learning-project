@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ActiveGoal } from '@/capabilities/agency/server/goals/queries';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -11,8 +12,7 @@ import {
   DREAMING_MAX_PROPOSALS,
   DREAMING_OBJECTIVE,
   runDreamingNightly,
-} from '@/server/boss/handlers/dreaming_nightly';
-import type { ActiveGoal } from '@/server/goals/queries';
+} from './dreaming_nightly';
 
 describe('runDreamingNightly', () => {
   it('runs DreamingTask with the generic MCP bridge and dreaming allowlist', async () => {
