@@ -22,6 +22,19 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
 });
 
+// M5-T3 (YUK-321)：copilotTools 贡献制——启动期把各包声明的工具注册进 DomainTool
+// registry。失败不拖死 API 面（mcp-bridge 的 registerCoreTools 幂等兜底仍覆盖全集，
+// 该兜底何时退役见 Task 3 的 allowlists 注记）。
+void (async () => {
+  const { registerCapabilityCopilotTools } = await import(
+    '@/server/ai/tools/register-capability-tools'
+  );
+  await registerCapabilityCopilotTools(capabilities);
+  console.log('[rw:api] capability copilot tools registered');
+})().catch((err) => {
+  console.error('[rw:api] copilot tool registration failed — CORE_TOOLS fallback covers', err);
+});
+
 if (process.env.RW_WORKER === '1') {
   // db client / boss 在 loadEnv() 之后才能 import（模块顶层读 DATABASE_URL），
   // 所以走动态 import，不进文件头 import 区。
