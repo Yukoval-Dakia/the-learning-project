@@ -93,4 +93,18 @@ export const ingestionCapability = defineCapability({
   },
   // M1-T6：录入面（学习记录 mode 按 D11 不迁）。
   ui: { pages: [{ route: '/record' }] },
+  // M5-T3 (YUK-321) — copilot 工具归属声明。D11 已裁 record 渐废（裁决 d）：
+  // 两工具等价平移不删；record 域退役时随本声明一并摘除（查 spec §1 D11 行）。
+  copilotTools: {
+    tools: [
+      {
+        name: 'query_records',
+        load: () => import('@/server/ai/tools/context-readers').then((m) => m.queryRecordsTool),
+      },
+      {
+        name: 'get_record_context',
+        load: () => import('@/server/ai/tools/context-readers').then((m) => m.getRecordContextTool),
+      },
+    ],
+  },
 });

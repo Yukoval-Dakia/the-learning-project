@@ -150,4 +150,39 @@ export const practiceCapability = defineCapability({
   },
   // M2-T6 将把旧 /review、/practice 页重生为单一练习面 /practice（流+卷架）。
   ui: { pages: [{ route: '/practice' }] },
+  // M5-T3 (YUK-321) — copilot 工具归属声明（题/错题/复习读 4 + 出题组卷写 3）。
+  copilotTools: {
+    tools: [
+      {
+        name: 'get_question_context',
+        load: () =>
+          import('@/server/ai/tools/context-readers').then((m) => m.getQuestionContextTool),
+      },
+      {
+        name: 'get_review_due',
+        load: () => import('@/server/ai/tools/context-readers').then((m) => m.getReviewDueTool),
+      },
+      {
+        name: 'get_attempt_context',
+        load: () =>
+          import('@/server/ai/tools/get-attempt-context').then((m) => m.getAttemptContextTool),
+      },
+      {
+        name: 'query_mistakes',
+        load: () => import('@/server/ai/tools/query-mistakes').then((m) => m.queryMistakesTool),
+      },
+      {
+        name: 'author_question',
+        load: () => import('@/server/ai/tools/proposal-tools').then((m) => m.authorQuestionTool),
+      },
+      {
+        name: 'query_questions',
+        load: () => import('@/server/ai/tools/query-questions').then((m) => m.queryQuestionsTool),
+      },
+      {
+        name: 'write_quiz',
+        load: () => import('@/server/ai/tools/write-quiz').then((m) => m.writeQuizTool),
+      },
+    ],
+  },
 });

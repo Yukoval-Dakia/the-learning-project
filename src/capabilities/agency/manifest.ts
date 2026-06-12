@@ -67,4 +67,36 @@ export const agencyCapability = defineCapability({
     ],
   },
   ui: { pages: [{ route: '/agent-notes' }], todayBlocks: ['agent-notes-board'] },
+  // M5-T3 (YUK-321) — copilot 工具归属声明（learning_item 上下文读 1 + 生命周期提议 4）。
+  copilotTools: {
+    tools: [
+      {
+        name: 'get_learning_item_context',
+        load: () =>
+          import('@/server/ai/tools/context-readers').then((m) => m.getLearningItemContextTool),
+      },
+      {
+        name: 'propose_learning_item_completion',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then(
+            (m) => m.proposeLearningItemCompletionTool,
+          ),
+      },
+      {
+        name: 'propose_learning_item_relearn',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeLearningItemRelearnTool),
+      },
+      {
+        name: 'propose_learning_item_defer',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeLearningItemDeferTool),
+      },
+      {
+        name: 'propose_learning_item_archive',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeLearningItemArchiveTool),
+      },
+    ],
+  },
 });
