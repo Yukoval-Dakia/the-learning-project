@@ -82,6 +82,18 @@ export const ingestionCapability = defineCapability({
         path: '/api/assets/[id]/content',
         load: () => import('./api/asset-content').then((m) => m.GET),
       },
+      // M5-T5a (YUK-321) — 手输错题通道收编（D11：错题是题目的标记不是通道，
+      // 录入域持有写入口；next/server after() 已改写 fire-and-forget，见 api/mistakes.ts）。
+      {
+        method: 'POST',
+        path: '/api/mistakes',
+        load: () => import('./api/mistakes').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/mistakes',
+        load: () => import('./api/mistakes').then((m) => m.GET),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。block_merge 的 accept applier 真身

@@ -7,8 +7,8 @@
 import { newId } from '@/core/ids';
 import { knowledge, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { GET } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET } from './questions-list';
 
 async function seedKnowledge(id: string, domain: string): Promise<string> {
   await testDb()

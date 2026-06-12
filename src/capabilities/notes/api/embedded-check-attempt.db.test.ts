@@ -6,7 +6,7 @@ import { runTask } from '@/server/ai/runner';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST } from './route';
+import { POST } from './embedded-check-attempt';
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: vi.fn(),

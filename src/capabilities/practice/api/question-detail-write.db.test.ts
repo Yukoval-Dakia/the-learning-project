@@ -11,7 +11,7 @@ import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { DELETE, PATCH } from './route';
+import { DELETE, PATCH } from './question-detail';
 
 const NOW = new Date('2026-06-07T00:00:00Z');
 
@@ -157,7 +157,7 @@ describe('PATCH /api/questions/[id]', () => {
         kind: 'choice',
         draft_status: 'draft',
       }),
-      { params: Promise.resolve({ id }) },
+      { id },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; version: number; event_id: string };
@@ -177,9 +177,7 @@ describe('PATCH /api/questions/[id]', () => {
 
   it('writes an experimental:question_edit event with before/after', async () => {
     const id = await seedQuestion({});
-    await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'new' }), {
-      params: Promise.resolve({ id }),
-    });
+    await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'new' }), { id });
 
     const evs = await testDb()
       .select()
@@ -202,9 +200,7 @@ describe('PATCH /api/questions/[id]', () => {
     ['part_index', 2],
   ])('rejects bloodline field %s with 400', async (field, value) => {
     const id = await seedQuestion({});
-    const res = await PATCH(mkPatchReq(id, { version: 0, [field]: value }), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await PATCH(mkPatchReq(id, { version: 0, [field]: value }), { id });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe('validation_error');
@@ -218,30 +214,24 @@ describe('PATCH /api/questions/[id]', () => {
 
   it('409s on version mismatch (optimistic lock)', async () => {
     const id = await seedQuestion({ version: 3 });
-    const res = await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'x' }), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'x' }), { id });
     expect(res.status).toBe(409);
   });
 
   it('400s on unknown knowledge_ids', async () => {
     const id = await seedQuestion({});
-    const res = await PATCH(mkPatchReq(id, { version: 0, knowledge_ids: ['k_missing'] }), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await PATCH(mkPatchReq(id, { version: 0, knowledge_ids: ['k_missing'] }), { id });
     expect(res.status).toBe(400);
   });
 
   it('404s on a missing question', async () => {
-    const res = await PATCH(mkPatchReq('q_nope', { version: 0, prompt_md: 'x' }), {
-      params: Promise.resolve({ id: 'q_nope' }),
-    });
+    const res = await PATCH(mkPatchReq('q_nope', { version: 0, prompt_md: 'x' }), { id: 'q_nope' });
     expect(res.status).toBe(404);
   });
 
   it('400s when no editable field is provided (version only)', async () => {
     const id = await seedQuestion({});
-    const res = await PATCH(mkPatchReq(id, { version: 0 }), { params: Promise.resolve({ id }) });
+    const res = await PATCH(mkPatchReq(id, { version: 0 }), { id });
     expect(res.status).toBe(400);
   });
 
@@ -250,7 +240,7 @@ describe('PATCH /api/questions/[id]', () => {
     // Resubmit the seeded values verbatim — nothing actually changed.
     const res = await PATCH(
       mkPatchReq(id, { version: 0, prompt_md: 'original prompt', reference_md: 'original ref' }),
-      { params: Promise.resolve({ id }) },
+      { id },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; noop: boolean; version: number };
@@ -274,7 +264,7 @@ describe('PATCH /api/questions/[id]', () => {
     // prompt_md changes; reference_md is resubmitted unchanged.
     await PATCH(
       mkPatchReq(id, { version: 0, prompt_md: 'new prompt', reference_md: 'original ref' }),
-      { params: Promise.resolve({ id }) },
+      { id },
     );
     const evs = await testDb()
       .select()
@@ -304,7 +294,7 @@ describe('DELETE /api/questions/[id]', () => {
     await seedQuestionFsrs(id);
     await seedPaperRef(id);
 
-    const res = await DELETE(mkDeleteReq(id, '?version=0'), { params: Promise.resolve({ id }) });
+    const res = await DELETE(mkDeleteReq(id, '?version=0'), { id });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
       error: string;
@@ -326,9 +316,7 @@ describe('DELETE /api/questions/[id]', () => {
   it('soft-archives (re-drafts) on confirm=true', async () => {
     const id = await seedQuestion({ draft_status: 'active' });
 
-    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; archived: boolean; event_id: string };
     expect(body.ok).toBe(true);
@@ -345,9 +333,7 @@ describe('DELETE /api/questions/[id]', () => {
 
   it('writes an experimental:question_archive event', async () => {
     const id = await seedQuestion({ draft_status: 'active' });
-    await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), {
-      params: Promise.resolve({ id }),
-    });
+    await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
     const evs = await testDb()
       .select()
       .from(event)
@@ -378,9 +364,7 @@ describe('DELETE /api/questions/[id]', () => {
       parent_question_id: otherParent,
     });
 
-    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), {
-      params: Promise.resolve({ id: parentId }),
-    });
+    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { cascaded_part_ids: string[] };
     expect(new Set(body.cascaded_part_ids)).toEqual(new Set([partA, partB]));
@@ -393,9 +377,7 @@ describe('DELETE /api/questions/[id]', () => {
 
   it('400s when version query param is missing on a CONFIRMED delete', async () => {
     const id = await seedQuestion({});
-    const res = await DELETE(mkDeleteReq(id, '?confirm=true'), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await DELETE(mkDeleteReq(id, '?confirm=true'), { id });
     expect(res.status).toBe(400);
   });
 
@@ -404,7 +386,7 @@ describe('DELETE /api/questions/[id]', () => {
     // can render the confirm dialog — it must NOT 400 on the missing version.
     const id = await seedQuestion({});
     await seedAttempt(id, 'failure');
-    const res = await DELETE(mkDeleteReq(id, ''), { params: Promise.resolve({ id }) });
+    const res = await DELETE(mkDeleteReq(id, ''), { id });
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string; has_associations: boolean };
     expect(body.error).toBe('confirm_required');
@@ -412,17 +394,13 @@ describe('DELETE /api/questions/[id]', () => {
   });
 
   it('404s on a missing question with confirm', async () => {
-    const res = await DELETE(mkDeleteReq('q_nope', '?version=0&confirm=true'), {
-      params: Promise.resolve({ id: 'q_nope' }),
-    });
+    const res = await DELETE(mkDeleteReq('q_nope', '?version=0&confirm=true'), { id: 'q_nope' });
     expect(res.status).toBe(404);
   });
 
   it('409s on version mismatch with confirm', async () => {
     const id = await seedQuestion({ version: 5 });
-    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await DELETE(mkDeleteReq(id, '?version=0&confirm=true'), { id });
     expect(res.status).toBe(409);
   });
 });

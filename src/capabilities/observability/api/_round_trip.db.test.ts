@@ -8,10 +8,10 @@ import { writeEvent } from '@/server/events/queries';
 import { eq } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { memR2 } from '../../../tests/helpers/r2';
-import { GET } from './export/route';
-import { POST } from './import/route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { memR2 } from '../../../../tests/helpers/r2';
+import { GET } from './backup-export';
+import { POST } from './backup-import';
 
 const r2 = memR2();
 vi.mock('@/server/r2', () => ({

@@ -12,8 +12,8 @@ export const notesCapability = defineCapability({
     'mutator|propose，D6 后信号源 = mark_wrong/mastery_change/dwell/dreaming）。',
   api: {
     // M3-T4 (YUK-317)：9 条路由全带 load 懒加载 thunk（M1/M2 配方）。
-    // /api/editing-session/*、/api/embedded-check/* 不在此（前者 ⚖️ 争议行留
-    // 旧栈，后者 D6 墓碑）。
+    // M5-T5a (YUK-321)：/api/editing-session/*、/api/embedded-check/* 收编
+    //（M3 时前者 ⚖️ 争议行留旧栈、后者 D6 墓碑；M5 收口等价平移，裁决 g）。
     routes: [
       {
         method: 'GET',
@@ -71,6 +71,23 @@ export const notesCapability = defineCapability({
         method: 'POST',
         path: '/api/hubs/[id]/dismiss-link',
         load: () => import('./api/hub-dismiss-link').then((m) => m.POST),
+      },
+      // M5-T5a (YUK-321) — editing-session（dwell 信号源）+ embedded-check
+      // attempt（D6 墓碑，等价平移待 feature 级裁撤）收编。
+      {
+        method: 'POST',
+        path: '/api/editing-session/heartbeat',
+        load: () => import('./api/editing-heartbeat').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/editing-session/blur',
+        load: () => import('./api/editing-blur').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/embedded-check/attempt',
+        load: () => import('./api/embedded-check-attempt').then((m) => m.POST),
       },
     ],
   },

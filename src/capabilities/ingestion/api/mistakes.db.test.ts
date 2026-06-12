@@ -3,8 +3,8 @@
 import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import { GET, POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET, POST } from './mistakes';
 
 // Mock the AI background tasks so tests don't call Anthropic
 vi.mock('@/capabilities/knowledge/server/propose', () => ({
@@ -26,13 +26,8 @@ vi.mock('@/capabilities/knowledge/server/tree', () => ({
   ]),
 }));
 
-// Mock next/server `after` to run synchronously in tests
-const afterCallbacks: Array<() => Promise<void>> = [];
-vi.mock('next/server', () => ({
-  after: vi.fn((cb: () => Promise<void>) => {
-    afterCallbacks.push(cb);
-  }),
-}));
+// M5-T5a (YUK-321)：路由 after() 已改写为 fire-and-forget（POST 内同步发起，
+// mock 立即 resolve），不再需要 next/server after mock / runAfterCallbacks 钩子。
 
 const KNOWLEDGE_BASE = {
   domain: 'wenyan',
@@ -66,14 +61,8 @@ async function postMistake(body: unknown) {
   );
 }
 
-async function runAfterCallbacks() {
-  const callbacks = afterCallbacks.splice(0);
-  await Promise.all(callbacks.map((cb) => cb()));
-}
-
 describe('POST /api/mistakes', () => {
   beforeEach(async () => {
-    afterCallbacks.length = 0;
     await resetDb();
     const db = testDb();
     const now = new Date();
@@ -249,7 +238,7 @@ describe('POST /api/mistakes', () => {
 
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(200);
-    await runAfterCallbacks();
+    await new Promise((r) => setTimeout(r, 50));
 
     const params = vi.mocked(runProposeAndWrite).mock.calls[0]?.[0] as
       | { subjectProfile?: { id: string } }
