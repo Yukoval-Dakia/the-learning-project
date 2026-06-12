@@ -44,6 +44,15 @@ export default defineConfig({
       // M5-T4 (YUK-321)：observability 域收编新栈（admin 四页 + subjects + cost/today）。
       '/api/admin': 'http://localhost:8787',
       '/api/cost': 'http://localhost:8787',
+      // M5-T5a (YUK-321)：残余活路由收编——questions CRUD（M2 注释的 D16 留旧栈项）、
+      // mistakes、editing-session/embedded-check（M3 注释的留旧栈项）、备份恢复
+      // /api/_/{export,import} 与事件撤回 /api/events/[id]/correct 全部切新栈。
+      '/api/questions': 'http://localhost:8787',
+      '/api/mistakes': 'http://localhost:8787',
+      '/api/editing-session': 'http://localhost:8787',
+      '/api/embedded-check': 'http://localhost:8787',
+      '/api/_': 'http://localhost:8787',
+      '/api/events': 'http://localhost:8787',
       '/api': process.env.RW_OLD_STACK ?? 'http://localhost:3000',
     },
   },

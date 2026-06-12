@@ -1,8 +1,8 @@
 import { event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { POST } from './route';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST } from './event-correct';
 
 async function seedAttempt(id = 'evt_target'): Promise<void> {
   await testDb()
@@ -35,7 +35,7 @@ async function correctEvent(id: string, body: unknown): Promise<Response> {
       body: JSON.stringify(body),
       headers: { 'content-type': 'application/json' },
     }),
-    { params: Promise.resolve({ id }) },
+    { id },
   );
 }
 

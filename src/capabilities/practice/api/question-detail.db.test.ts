@@ -7,7 +7,7 @@ import { newId } from '@/core/ids';
 import { question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET } from './route';
+import { GET } from './question-detail';
 
 const NOW = new Date('2026-06-07T00:00:00Z');
 
@@ -37,7 +37,7 @@ describe('GET /api/questions/[id]', () => {
     const id = newId();
     await seedQuestion(id);
 
-    const res = await GET(mkReq(id), { params: Promise.resolve({ id }) });
+    const res = await GET(mkReq(id), { id });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       id: string;
@@ -53,16 +53,14 @@ describe('GET /api/questions/[id]', () => {
   });
 
   it('404s on a missing question', async () => {
-    const res = await GET(mkReq('q_nope'), { params: Promise.resolve({ id: 'q_nope' }) });
+    const res = await GET(mkReq('q_nope'), { id: 'q_nope' });
     expect(res.status).toBe(404);
   });
 
   it('rejects an invalid timeline_limit with 400', async () => {
     const id = newId();
     await seedQuestion(id);
-    const res = await GET(mkReq(id, '?timeline_limit=abc'), {
-      params: Promise.resolve({ id }),
-    });
+    const res = await GET(mkReq(id, '?timeline_limit=abc'), { id });
     expect(res.status).toBe(400);
   });
 
@@ -73,9 +71,7 @@ describe('GET /api/questions/[id]', () => {
     const id = newId();
     await seedQuestion(id);
     for (const raw of ['10abc', '1.5', '0', '-1', ' 10']) {
-      const res = await GET(mkReq(id, `?timeline_limit=${encodeURIComponent(raw)}`), {
-        params: Promise.resolve({ id }),
-      });
+      const res = await GET(mkReq(id, `?timeline_limit=${encodeURIComponent(raw)}`), { id });
       expect(res.status).toBe(400);
     }
   });

@@ -1,0 +1,199 @@
+// POST /api/embedded-check/attempt
+//
+// M5-T5a (YUK-321)：平移自 app/api/embedded-check/attempt/route.ts（Hono manifest
+// 挂载；旧壳 Task 9 拆）。裁决 g：等价平移，D6 三刀（feature 级裁撤）不在 M5。
+//
+// Accepts an answer to an inline check question, judges it through the Judge v2
+// light service, writes an attempt event, and — on failure — creates a
+// learning_record (kind='mistake') and enqueues attribution_followup via pg-boss.
+//
+// Design invariants:
+//   - Does NOT write material_fsrs_state. Inline checks stay out of FSRS.
+//   - Each call creates a new event row + (on failure) a new learning_record row.
+//     No de-dup; UI shows latest verdict per question from event history.
+//   - attribution_followup enqueue happens AFTER the DB transaction, not inside it.
+//   - boss.send is gated by the shared shouldEnqueueBackgroundJobs() (YUK-239),
+//     same posture as /api/mistakes.
+
+import { eq } from 'drizzle-orm';
+import { z } from 'zod';
+
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { newId } from '@/core/ids';
+import { db } from '@/db/client';
+import { question } from '@/db/schema';
+import { getStartedBoss } from '@/server/boss/client';
+import { writeEvent } from '@/server/events/queries';
+import { ApiError, errorResponse } from '@/server/http/errors';
+import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
+import { createLearningRecord } from '@/server/records/queries';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
+
+const Body = z.object({
+  question_id: z.string().min(1),
+  answer_md: z.string().min(1).max(2000),
+  latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
+});
+
+function eventOutcomeForJudge(
+  coarseOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported',
+): 'success' | 'partial' | 'failure' {
+  if (coarseOutcome === 'correct') return 'success';
+  if (coarseOutcome === 'incorrect') return 'failure';
+  return 'partial';
+}
+
+function inlineAttemptSource(questionSource: string): 'embedded_check' | 'teaching_check' | null {
+  if (questionSource === 'embedded') return 'embedded_check';
+  if (questionSource === 'teaching_check') return 'teaching_check';
+  return null;
+}
+
+export async function POST(req: Request): Promise<Response> {
+  try {
+    const raw = await req.json().catch(() => null);
+    const parsed = Body.safeParse(raw);
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ');
+      throw new ApiError('validation_error', message, 400);
+    }
+    const body = parsed.data;
+
+    // Load the question row
+    const qRows = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, body.question_id))
+      .limit(1);
+    const q = qRows[0];
+    if (!q) {
+      throw new ApiError('not_found', `question ${body.question_id} not found`, 404);
+    }
+    const attemptSource = inlineAttemptSource(q.source);
+    if (!attemptSource) {
+      throw new ApiError(
+        'question_not_embedded',
+        'this endpoint only accepts embedded or teaching check questions',
+        422,
+      );
+    }
+
+    // Judge the answer
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+    const judged = await createDefaultJudgeInvoker().invoke({
+      db,
+      question: q,
+      answer_md: body.answer_md,
+      subjectProfile,
+    });
+    const judgeKind = judged.route;
+    const judgeResult = judged.result;
+
+    // Map judge coarse_outcome → event outcome
+    const outcome = eventOutcomeForJudge(judgeResult.coarse_outcome);
+    const responseJudge = {
+      route: judgeKind,
+      score: judgeResult.score,
+      coarse_outcome: judgeResult.coarse_outcome,
+      confidence: judgeResult.confidence,
+      reason_md: judgeResult.feedback_md,
+      evidence_json: judgeResult.evidence_json,
+      telemetry: judged.telemetry,
+    };
+
+    const now = new Date();
+    const attemptEventId = newId();
+    let recordId: string | undefined;
+
+    await db.transaction(async (tx) => {
+      // Write the attempt event. Payload must satisfy AttemptOnQuestion schema:
+      // answer_md, answer_image_refs, referenced_knowledge_ids are required.
+      // Extra keys (source, latency_ms, judge_route, judge_score) are stored
+      // in the DB via jsonb — Zod strips them on parse but the raw payload
+      // is what gets inserted (writeEvent inserts input.payload directly).
+      await writeEvent(tx, {
+        id: attemptEventId,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: q.id,
+        outcome,
+        payload: {
+          answer_md: body.answer_md,
+          answer_image_refs: [],
+          referenced_knowledge_ids: q.knowledge_ids,
+          // Extra provenance fields — stored in jsonb, not part of Zod contract
+          source: attemptSource,
+          latency_ms: body.latency_ms ?? null,
+          judge_route: judgeKind,
+          judge_score: judgeResult.score,
+          judge_elapsed_ms: judged.telemetry.elapsed_ms,
+          judge: responseJudge,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+
+      if (outcome === 'failure') {
+        recordId = newId();
+        await createLearningRecord(tx, {
+          id: recordId,
+          kind: 'mistake',
+          title: null,
+          content_md: body.answer_md,
+          source: 'manual', // user-driven attempt — same provenance class as /api/mistakes POST
+          capture_mode: 'text',
+          activity_kind: 'attempt',
+          processing_status: 'raw',
+          origin_event_id: attemptEventId,
+          knowledge_ids: q.knowledge_ids,
+          question_id: q.id,
+          attempt_event_id: attemptEventId,
+          asset_refs: [],
+          payload: {
+            from: attemptSource,
+            wrong_answer_md: body.answer_md,
+            judge_route: judgeKind,
+            judge_score: judgeResult.score,
+            judge_elapsed_ms: judged.telemetry.elapsed_ms,
+            judge: responseJudge,
+          },
+        });
+      }
+    });
+
+    // Enqueue attribution after the transaction commits. Gated by the shared
+    // shouldEnqueueBackgroundJobs() (YUK-239), mirroring /api/mistakes, to
+    // prevent boss state accumulation in the test suite.
+    if (outcome === 'failure' && shouldEnqueueBackgroundJobs()) {
+      try {
+        const boss = await getStartedBoss();
+        await boss.send('attribution_followup', { attempt_event_id: attemptEventId });
+      } catch (err) {
+        console.warn(`attribution_followup enqueue failed for ${attemptEventId}:`, err);
+      }
+    }
+    // M3 (YUK-317, D6)：error_rate → note_refine 触发线已删（内嵌自测链路裁撤，
+    // Living Note 流作答信号 = mastery_change）。本 route 其余部分（teaching_check
+    // 分支 + learning_record 写）原地墓碑，M5 拆除采石场统一清。
+
+    return Response.json({
+      outcome,
+      judge: responseJudge,
+      // M2.3: surface attempt event id so the UI can wire appeals
+      // (POST /api/review/appeal with judge_event_id = attempt_event_id;
+      // embedded-check flow embeds judge result inside the attempt event's
+      // payload rather than writing a separate judge event).
+      attempt_event_id: attemptEventId,
+      ...(recordId !== undefined ? { mistake_id: recordId } : {}),
+    });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}

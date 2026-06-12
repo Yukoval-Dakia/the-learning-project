@@ -40,6 +40,24 @@ export const observabilityCapability = defineCapability({
         path: '/api/cost/today',
         load: () => import('./api/cost-today').then((m) => m.GET),
       },
+      // M5-T5a (YUK-321) — 内核运维面收编：备份恢复（spec keep 行，路径沿旧
+      // /api/_/{export,import}）+ 统一事件流撤回面（correction 内核不变量，
+      // 原 app/api/events/[id]/correct）。裸查/rate 面退役见 Task 9。
+      {
+        method: 'GET',
+        path: '/api/_/export',
+        load: () => import('./api/backup-export').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/_/import',
+        load: () => import('./api/backup-import').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/events/[id]/correct',
+        load: () => import('./api/event-correct').then((m) => m.POST),
+      },
     ],
   },
   // M5-T4b (YUK-321)：admin 四页迁 SPA（ui/observability.tsx + ui/subjects.tsx）。
