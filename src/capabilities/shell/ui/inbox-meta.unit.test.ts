@@ -2,10 +2,10 @@
 // KIND_META 与 core aiProposalKinds 对账（新增 kind 必须同步补 UI 元数据）、
 // kindMeta/evidenceReadable fallback 语义、heatLevel 分桶边界。
 
-import { aiProposalKinds } from '@/core/schema/proposal';
+import { acceptSupportedProposalKinds, aiProposalKinds } from '@/core/schema/proposal';
 import { describe, expect, it } from 'vitest';
 
-import { KIND_META, evidenceReadable, kindMeta } from './inbox-api';
+import { KIND_META, evidenceReadable, isAcceptSupported, kindMeta } from './inbox-api';
 import { heatLevel } from './workbench-api';
 
 describe('KIND_META vs aiProposalKinds 对账', () => {
@@ -27,6 +27,34 @@ describe('KIND_META vs aiProposalKinds 对账', () => {
       expect(meta.icon, kind).not.toBe('');
       expect(tones.has(meta.tone), `${kind} tone=${meta.tone}`).toBe(true);
     }
+  });
+});
+
+// M4 review fix (YUK-319, codex P2)：dispatchAccept 未实现 kind 的分区钉测。
+// dispatchAccept（src/server/proposals/actions.ts）新增/移除 case 时，必须同步
+// 更新 core 的 acceptSupportedProposalKinds，否则这里漂移警报。
+describe('acceptSupportedProposalKinds 分区对账', () => {
+  const unsupported = ['defer', 'archive', 'judge_retraction'] as const;
+
+  it('acceptSupported ∪ {defer, archive, judge_retraction} === aiProposalKinds', () => {
+    const union = new Set<string>([...acceptSupportedProposalKinds, ...unsupported]);
+    expect([...union].sort()).toEqual([...aiProposalKinds].sort());
+    // 两个分区不相交（unsupported 不得混进 supported 集合）。
+    for (const k of unsupported) {
+      expect(
+        (acceptSupportedProposalKinds as readonly string[]).includes(k),
+        `${k} 不应在 acceptSupported`,
+      ).toBe(false);
+    }
+  });
+
+  it('isAcceptSupported 按分区判定（含未知 kind = false）', () => {
+    expect(isAcceptSupported('knowledge_edge')).toBe(true);
+    expect(isAcceptSupported('block_merge')).toBe(true);
+    for (const k of unsupported) {
+      expect(isAcceptSupported(k), k).toBe(false);
+    }
+    expect(isAcceptSupported('brand_new_kind')).toBe(false);
   });
 });
 

@@ -20,6 +20,7 @@ import {
   REL_LABEL,
   decideProposal,
   evidenceReadable,
+  isAcceptSupported,
   kindMeta,
 } from './inbox-api';
 
@@ -142,15 +143,19 @@ export function ProposalCard({
           className="proposal-actions"
           style={{ display: 'flex', gap: 'var(--s-2)', flexWrap: 'wrap' }}
         >
-          <Btn
-            size="sm"
-            variant="good"
-            icon="check"
-            disabled={busy}
-            onClick={() => void decide('accept', '已接受')}
-          >
-            {p.kind === 'block_merge' ? '接受合并' : '接受'}
-          </Btn>
+          {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
+              在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
+          {isAcceptSupported(p.kind) && (
+            <Btn
+              size="sm"
+              variant="good"
+              icon="check"
+              disabled={busy}
+              onClick={() => void decide('accept', '已接受')}
+            >
+              {p.kind === 'block_merge' ? '接受合并' : '接受'}
+            </Btn>
+          )}
           {isEdge && (
             <>
               <Btn
