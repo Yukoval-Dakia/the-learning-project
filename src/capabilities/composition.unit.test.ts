@@ -28,6 +28,10 @@ describe('composition root', () => {
     expect(capabilities.map((c) => c.name)).toContain('ingestion');
   });
 
+  it('includes the observability capability', () => {
+    expect(capabilities.map((c) => c.name)).toContain('observability');
+  });
+
   it('declares only schema-known proposal kinds', () => {
     const declared = capabilities.flatMap((c) => c.proposals?.kinds.map((d) => d.kind) ?? []);
     const known = new Set<string>(aiProposalKinds);
