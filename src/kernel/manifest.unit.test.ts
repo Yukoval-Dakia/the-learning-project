@@ -94,4 +94,37 @@ describe('validateComposition', () => {
       ]),
     ).toThrow(/proposal kind 'learning_item' declared by both 'a' and 'b'/);
   });
+
+  it('copilotTools 工具名跨包重复 → throw', () => {
+    const a: CapabilityManifest = {
+      name: 'a',
+      description: 'a',
+      copilotTools: { tools: [{ name: 'query_events' }] },
+    };
+    const b: CapabilityManifest = {
+      name: 'b',
+      description: 'b',
+      copilotTools: { tools: [{ name: 'query_events' }] },
+    };
+    expect(() => validateComposition([a, b])).toThrow(/query_events.*declared by both/);
+  });
+
+  it('copilotTools 工具名唯一时通过', () => {
+    const a: CapabilityManifest = {
+      name: 'a',
+      description: 'a',
+      copilotTools: { tools: [{ name: 'query_events' }] },
+    };
+    const b: CapabilityManifest = {
+      name: 'b',
+      description: 'b',
+      copilotTools: { tools: [{ name: 'query_mistakes' }] },
+    };
+    expect(() => validateComposition([a, b])).not.toThrow();
+  });
+
+  it('未声明 copilotTools 的包不参与第 6 循环', () => {
+    const a: CapabilityManifest = { name: 'a', description: 'a' };
+    expect(() => validateComposition([a])).not.toThrow();
+  });
 });

@@ -54,6 +54,19 @@ export interface JobDecl {
 }
 
 /**
+ * M5-T3 (YUK-321) — Copilot 工具声明（贡献制）。
+ * name = DomainTool.name（全局唯一，validateComposition 第 6 循环守护）。
+ * load 是懒加载 thunk（api.routes / jobs.handlers 同款先例）；缺省时为纯归属
+ * 元数据，不被组合根挂载。返回类型用最小结构 { name }——kernel 不依赖
+ * src/server 的 DomainTool 类型，类型窄化集中在组合根聚合器一处
+ * （JobHandlerFactory 同约）。
+ */
+export interface CopilotToolDecl {
+  name: string;
+  load?: () => Promise<{ name: string }>;
+}
+
+/**
  * 本包拥有的 proposal kind（AiProposalPayload 判别值）。归属按 producer 域定；
  * applier 实现在包 server/proposal-appliers.ts，dispatch 见 server/proposals/
  * actions.ts 瘦壳。归属与 accept-applier 存在性解耦——有 producer 无 applier
@@ -74,6 +87,8 @@ export interface CapabilityManifest {
   jobs?: { handlers: JobDecl[] };
   /** 本包拥有的 proposal kinds（M4 第一实例）：组合期查全局唯一 + 与 schema 枚举对账 */
   proposals?: { kinds: ProposalKindDecl[] };
+  /** 本包贡献的 Copilot 工具（M5-T3 第一实例）：组合期查全局唯一，挂载由组合根聚合器收集 */
+  copilotTools?: { tools: CopilotToolDecl[] };
   /** 本包的 UI 面：页面路由 + today/工作台贡献块标识 */
   ui?: { pages?: UiPageDecl[]; todayBlocks?: string[] };
 }
@@ -83,7 +98,7 @@ export function defineCapability(manifest: CapabilityManifest): CapabilityManife
   return manifest;
 }
 
-/** 组合期校验：包名、event action、API 路由、job 名、proposal kind 声明全局唯一，冲突即抛错。 */
+/** 组合期校验：包名、event action、API 路由、job 名、proposal kind、copilot 工具名声明全局唯一，冲突即抛错。 */
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
   for (const cap of capabilities) {
@@ -131,6 +146,19 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
         );
       }
       kindOwner.set(decl.kind, cap.name);
+    }
+  }
+  // 6) copilot 工具名唯一（M5-T3 / YUK-321）
+  const copilotToolOwners = new Map<string, string>();
+  for (const cap of capabilities) {
+    for (const tool of cap.copilotTools?.tools ?? []) {
+      const owner = copilotToolOwners.get(tool.name);
+      if (owner) {
+        throw new Error(
+          `validateComposition: copilot tool '${tool.name}' declared by both '${owner}' and '${cap.name}'`,
+        );
+      }
+      copilotToolOwners.set(tool.name, cap.name);
     }
   }
 }
