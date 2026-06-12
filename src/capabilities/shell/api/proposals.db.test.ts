@@ -161,7 +161,9 @@ describe('GET /api/proposals (shell)', () => {
     expect(first.next_cursor).not.toBeNull();
 
     const secondRes = await listProposals(
-      listRequest(`?kind=knowledge_edge&limit=2&cursor=${encodeURIComponent(first.next_cursor as string)}`),
+      listRequest(
+        `?kind=knowledge_edge&limit=2&cursor=${encodeURIComponent(first.next_cursor as string)}`,
+      ),
     );
     expect(secondRes.status).toBe(200);
     const second = (await secondRes.json()) as Page;
