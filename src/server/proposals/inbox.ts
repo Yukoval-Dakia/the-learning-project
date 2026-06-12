@@ -38,6 +38,13 @@ export interface ProposalInboxRow {
 
 export interface ListProposalInboxOpts {
   status?: ProposalStatus;
+  // M4 review fix (YUK-318/YUK-319) — kind 在投影层过滤（与 status 同位）：
+  // legacy 事件的 kind 由 deriveLegacyAiProposal 从 action/subject_kind 派生，
+  // SQL 层的 payload->'ai_proposal'->>'kind' 表达式覆盖不了 legacy 形态。
+  // 投影层过滤吃到 listProposalInboxPage 的补批 loop，跨页分页语义正确
+  // （之前在路由层做页内 post-filter，next_cursor 指向未过滤流——codex P2 /
+  // coderabbit major）。
+  kind?: AiProposalPayloadT['kind'];
   limit?: number;
   cursor?: string;
 }
@@ -453,8 +460,9 @@ export async function listProposalInboxRows(
 async function projectLoadedProposalRows(
   db: DbLike,
   loadedProposalRows: LoadedProposalEvent[],
-  status?: ProposalStatus,
+  filters: Pick<ListProposalInboxOpts, 'status' | 'kind'> = {},
 ): Promise<ProposalInboxRow[]> {
+  const { status, kind } = filters;
   const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
@@ -473,6 +481,7 @@ async function projectLoadedProposalRows(
     if (status && rowStatus !== status) continue;
     const payload = safeDeriveLegacyAiProposal(row);
     if (!payload) continue;
+    if (kind && payload.kind !== kind) continue;
     out.push({
       id: row.id,
       kind: payload.kind,
@@ -509,7 +518,7 @@ export async function listProposalInboxPage(
       nowIso: rankingNowIso,
     });
     return {
-      rows: await projectLoadedProposalRows(db, loadedProposalRows, opts.status),
+      rows: await projectLoadedProposalRows(db, loadedProposalRows, opts),
       next_cursor: null,
     };
   }
@@ -530,7 +539,7 @@ export async function listProposalInboxPage(
     for (const loaded of loadedProposalRows) {
       cursorById.set(loaded.row.id, loaded.cursor);
     }
-    out.push(...(await projectLoadedProposalRows(db, loadedProposalRows, opts.status)));
+    out.push(...(await projectLoadedProposalRows(db, loadedProposalRows, opts)));
     if (loadedProposalRows.length < batchLimit) break;
     cursor = encodeProposalCursor(loadedProposalRows[loadedProposalRows.length - 1].cursor);
   }
