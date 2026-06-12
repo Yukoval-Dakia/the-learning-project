@@ -39,7 +39,6 @@ import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
-import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
@@ -195,7 +194,14 @@ async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator
   if (tail) yield tail;
 }
 
-export function CopilotDock() {
+export interface CopilotDockProps {
+  /** M5-T3 (YUK-321) — current route, forwarded to ambient_context.route (C2). */
+  pathname: string;
+  /** M5-T3 (YUK-321) — route push, forwarded to CopilotHeroCard for hero href jumps. */
+  navigate: (to: string) => void;
+}
+
+export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   const { open, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
   const summaryQ = useQuery({
     queryKey: ['copilot-summary'],
@@ -211,9 +217,9 @@ export function CopilotDock() {
   // YUK-267 (C2) — the current page route, sent as ambient_context.route so the
   // agent can scope its answer to where the user is. Held in a ref + synced each
   // render so `send` stays stable (its deps are []), matching the activeSkillRef
-  // pattern. usePathname is the established client-component route source in this
-  // repo (MobileTabBar / AppSidebar).
-  const pathname = usePathname();
+  // pattern. M5-T3 (YUK-321) — pathname is now a prop (no usePathname import;
+  // the old-tree mount passes usePathname() and the SPA root shell passes
+  // useRouterState().location.pathname).
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
   // YUK-272 (C3) — the in-scope knowledge node id, when one exists. The quiz chip
@@ -776,7 +782,7 @@ export function CopilotDock() {
                       turns carry one; absent ⇒ nothing rendered (the common
                       case). T5 ribbon dosage: no technical ribbon on a hero. */}
                   {m.role === 'ai' && m.primary_view ? (
-                    <CopilotHeroCard primaryView={m.primary_view} />
+                    <CopilotHeroCard primaryView={m.primary_view} navigate={navigate} />
                   ) : null}
                 </div>
               </div>
