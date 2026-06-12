@@ -1,4 +1,13 @@
-'use client';
+// M5-T4b (YUK-321) — admin 三页（Runs/Cost/Failures）迁 observability 包，
+// SPA 路由 /admin/*。等价平移：视觉/行为与旧 src/ui/admin 版一致，next/link
+// 换 navigate prop（capability ui 不 import 路由库——web/src/router.tsx 规则）。
+//
+// Phase-deferred（壳形态决策点）：设计真理源
+// docs/design/loom-refresh/project/app.jsx:106-114 裁决「admin is a separate
+// shell — no main app chrome」；与未来 SPA 收编主 chrome 存在形态决策点（见
+// docs/audit/2026-06-13-visual-gap.md §5 决策点③），收编 chrome 前须 owner
+// 显式拍板。本次平移仅做路由收编，不改壳形态——admin 页保持 pre-loom legacy
+// 视觉与无主 app chrome 形态。
 
 import { apiJson } from '@/ui/lib/api';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
@@ -6,8 +15,11 @@ import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import Link from 'next/link';
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+
+export interface AdminSurfaceProps {
+  navigate: (to: string) => void;
+}
 
 interface AdminRunRow {
   id: string;
@@ -160,17 +172,45 @@ function Kpi({ label, value, note }: { label: string; value: string | number; no
   );
 }
 
-function AdminLinks() {
+function AdminLink({
+  to,
+  navigate,
+  children,
+}: {
+  to: string;
+  navigate: (to: string) => void;
+  children: string;
+}) {
+  return (
+    <a
+      href={to}
+      onClick={(e) => {
+        e.preventDefault();
+        navigate(to);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function AdminLinks({ navigate }: AdminSurfaceProps) {
   return (
     <div style={linkRowStyle}>
-      <Link href="/admin/runs">runs</Link>
-      <Link href="/admin/cost">cost</Link>
-      <Link href="/admin/failures">failures</Link>
+      <AdminLink to="/admin/runs" navigate={navigate}>
+        runs
+      </AdminLink>
+      <AdminLink to="/admin/cost" navigate={navigate}>
+        cost
+      </AdminLink>
+      <AdminLink to="/admin/failures" navigate={navigate}>
+        failures
+      </AdminLink>
     </div>
   );
 }
 
-export function AdminRunsSurface() {
+export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
   const queryClient = useQueryClient();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [staleRunId, setStaleRunId] = useState<string | null>(null);
@@ -229,7 +269,7 @@ export function AdminRunsSurface() {
         eyebrow="ADMIN · runtime evidence"
         sub="AI task run 列表、单 run 时间线、pg-boss job id 与 tool_call_log 串联视图。"
       >
-        <AdminLinks />
+        <AdminLinks navigate={navigate} />
         <Button variant="secondary" icon="refresh" onClick={refreshRuns}>
           刷新
         </Button>
@@ -347,7 +387,7 @@ export function AdminRunsSurface() {
   );
 }
 
-export function AdminCostSurface() {
+export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
   const queryClient = useQueryClient();
   const costQ = useQuery({
     queryKey: ['admin-cost'],
@@ -369,7 +409,7 @@ export function AdminCostSurface() {
         eyebrow="ADMIN · cost ledger"
         sub="按日与 task kind 聚合 `cost_ledger`，用于观察预算趋势和高成本任务。"
       >
-        <AdminLinks />
+        <AdminLinks navigate={navigate} />
         <Button
           variant="secondary"
           icon="refresh"
@@ -434,7 +474,7 @@ export function AdminCostSurface() {
   );
 }
 
-export function AdminFailuresSurface() {
+export function AdminFailuresSurface({ navigate }: AdminSurfaceProps) {
   const queryClient = useQueryClient();
   const failuresQ = useQuery({
     queryKey: ['admin-failures'],
@@ -452,7 +492,7 @@ export function AdminFailuresSurface() {
         eyebrow="ADMIN · failure clusters"
         sub="按 `finish_reason` 与 error message 前缀聚类失败样本，先看重复失败而不是逐条翻日志。"
       >
-        <AdminLinks />
+        <AdminLinks navigate={navigate} />
         <Button
           variant="secondary"
           icon="refresh"
