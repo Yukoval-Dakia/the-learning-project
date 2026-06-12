@@ -39,7 +39,9 @@ export function LoomHero({
       </svg>
       <div className="hero-inner">
         <div className="eyebrow">
-          <span className="dot-sep">●</span>TODAY · {new Date().toISOString().slice(0, 10)}
+          {/* 偏离设计稿：原型用 toISOString()（UTC 日历日），UTC+8 在本地
+              00:00-07:59 会显示昨天；sv-SE locale 输出本地日的 YYYY-MM-DD。 */}
+          <span className="dot-sep">●</span>TODAY · {new Date().toLocaleDateString('sv-SE')}
         </div>
         <h1 className="page-title hero-title">{greet}。</h1>
         <p className="page-lead">这是你的工作台：复习队列、AI 的提议与改动都汇在这里。</p>
