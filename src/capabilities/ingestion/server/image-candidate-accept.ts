@@ -605,8 +605,8 @@ export async function acceptImageCandidateProposal(
     // the reference / confidence / wrong-answer context so the overlap is no longer an
     // identity. We mark single_source_grounding: true so the limitation is explicit:
     // true independent grounding (re-verifying the prompt against the IMAGE via a second
-    // multimodal pass) is deliberately NOT done here (avoiding over-engineering for a
-    // single-user tool — see plan §4); the standard source_verify gate still runs.
+    // multimodal pass) is deliberately NOT done here (single-user tool — see plan §4);
+    // the standard source_verify gate still runs.
     const extractRaw = visionRawText.trim().length > 0 ? visionRawText : promptMd;
     const webSourced: WebSourcedProvenanceT = {
       url: change.source_url,

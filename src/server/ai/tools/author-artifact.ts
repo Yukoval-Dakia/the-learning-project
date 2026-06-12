@@ -65,8 +65,8 @@ const AuthorArtifactInputSchema = z.object({
   // Size cap only. NO sanitizer/linter here: the render-side sandbox owns
   // security (ADR-0033 D4) — the backend stores the source opaquely.
   html: z.string().min(1).max(INTERACTIVE_HTML_MAX_CHARS),
-  // Topic-discovery tags (化学节点 ↔ 周期表). Deliberately NO existence check
-  // (反过度工程): a dangling id degrades discovery, it breaks nothing.
+  // Topic-discovery tags (化学节点 ↔ 周期表). Deliberately NO existence check:
+  // a dangling id degrades discovery, it breaks nothing.
   knowledge_ids: z.array(z.string().min(1)).optional(),
   summary: z.string().max(500).optional(),
 });
@@ -197,7 +197,7 @@ async function executeUpdateArtifact(
   //     tool_call_log.mirrored_event_id instead.
   //   - NO caller-supplied expected_version: the in-tx read supplies it and the
   //     `WHERE version =` guard still protects against concurrent writers
-  //     (single-user tool, 反过度工程 — the model shouldn't have to track
+  //     (single-user tool — the model shouldn't have to track
   //     version numbers across turns).
   return ctx.db.transaction(async (tx) => {
     const rows = await tx

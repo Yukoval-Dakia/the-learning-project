@@ -11,6 +11,27 @@
 - ⚠️ Codex 项目 Stop hook 只承担编辑检查；Claude 侧的 `linear-closeout-reminder.sh` 没有迁移到 Codex hooks，在 codex 会话里**不会自动跑**。codex 会话交付前请手动按 `docs/agents/issue-tracker.md` "Closeout issue capture gate" 检查 Linear 状态同步。
 - 如果 hooks 尚未被当前 Codex 会话加载或 trust，仍需手动遵守上述约束，并在交付前对 touched files 运行等价检查。
 
+## Agent 记忆契约（mem0 fusion · SPIKE）
+
+> 适用对象：**编码 agent 跨会话的项目记忆**，不是 loom 产品的学习者事实层。repo 里有两个 mem0，严禁混用。
+
+三层所有权，**每条事实只有一个家，禁止双写**：
+
+1. **产品事实层（既有，碰都不碰）** — `mem0ai/oss` + pgvector，collection `learning_project_memories`（ADR-0017，`src/server/memory/`）。这是 **loom 的功能**，记学习者的学习事件。Agent 记忆**绝不写入此 collection**，也不直接调它的 write path（学习者事实只经 worker `memory_event_ingest`）。
+2. **Agent 宪法** — Magic Context `ctx_memory` / `<project-memory>`。少量、高重要性、**每会话必注入**的项目不变量：模型路由、gateway 配置、架构 invariant、硬约束。
+3. **Agent 情景记忆** — mem0 **hosted** cloud（`mcp.mem0.ai`，独立云账户）。高频长尾事实：代码位置、一次性发现、per-feature 决策、bug 根因。语义 top-k 按需召回。
+
+**写入路由：**
+- 代码位置 / 情景事实 / 某处怎么实现 → mem0 hosted（MCP `add`）。
+- 项目不变量 / 路由规则 / 跨会话硬约束 → `ctx_memory`。
+- 产品学习者事实 → 只经 ADR-0017 write path，agent 不直接写。
+
+**晋升单向**：mem0 情景 → 宪法（高频/高置信的少数条目手动提升），**永不反向**。晋升机器未建（spike 阶段）。
+
+**权衡（H 决定）**：agent 情景记忆数据**出本机进 mem0 云**——这是对 agent 记忆的有意例外；产品事实层仍 local-first 不变。hosted key 放 `~/.config/opencode/opencode.json`（全局配置，不进项目 git），不写入本仓任何文件。
+
+**SPIKE 目标**：验证 mem0 hosted 语义召回是否真比 Magic Context `ctx_search` 强。不强则拔掉 MCP，省得白养一套。
+
 <!-- context7 -->
 Use Context7 MCP to fetch current documentation whenever the user asks about a library, framework, SDK, API, CLI tool, or cloud service -- even well-known ones like React, Next.js, Prisma, Express, Tailwind, Django, or Spring Boot. This includes API syntax, configuration, version migration, library-specific debugging, setup instructions, and CLI tool usage. Use even when you think you know the answer -- your training data may not reflect recent changes. Prefer this over web search for library docs.
 
@@ -86,6 +107,6 @@ PR 前还需：`pnpm audit:schema` / `audit:partition` / `audit:profile`。
 - 别经 generic `/api/ai/[task]` 暴露 profile-driven / manual-rescue / tool task——走领域 route 或 worker（仅 `ReviewIntentTask` 走 generic 入口）。
 - 浏览器代码**不持** provider key——所有 AI 调用走 route handler 或 worker。
 - 别把派生 lifecycle 字段回写源表——建 reader / projection。
-- 别引入第二个具体实例之前的抽象（YAGNI）；bug fix 不顺手 refactor。
+- bug fix 不顺手 refactor。
 - 加新表/字段必须有 write path，否则进 `scripts/audit-schema-allowlist.json` 标注可检查解除条件。
 <!-- init-deep:END -->

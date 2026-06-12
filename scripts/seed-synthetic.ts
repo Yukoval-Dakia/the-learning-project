@@ -6,8 +6,8 @@
 // time-distributed event history so the FSRS / proposal / detection slices of
 // Layer-8 light up and become observable on a LOCAL dev DB only.
 //
-// This is a FOCUSED dev script, NOT a framework (anti-over-engineering, scope
-// discipline). It writes via the production chokepoints where they exist
+// This is a FOCUSED dev script, NOT a framework (scope discipline). It writes
+// via the production chokepoints where they exist
 // (`writeEvent` for events, `recordProposalDecisionSignal` for signals,
 // `upsertFsrsState` for FSRS state) and markered direct-insert for the rest
 // (knowledge / knowledge_edge / question). All synthetic events carry

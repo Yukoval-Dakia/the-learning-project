@@ -178,13 +178,13 @@ The integration does not know when **you start** a task. These transitions stay 
 
 After `Closes YUK-XX` lands in a commit and the PR merges, the integration **should** finish the loop. If the issue is still `In Progress` an hour after merge, that's a real desync — file it as feedback so this doc can be tightened.
 
-### What we don't auto-sync (intentional YAGNI)
+### What we don't auto-sync (intentional)
 
-These would add infra without solving an observed problem; do **not** build them unless a concrete failure forces it:
+Do **not** build these without an explicit owner decision:
 
 - **No reverse sync** (Linear → git). E.g. moving an issue to In Progress should not auto-create a branch / checkout. Treats git as the source of truth; Linear UI actions shouldn't have repo side-effects.
 - **No commit-hook parser** that calls Linear API on every commit. The integration already covers magic words; doubling up causes duplicate attachments / re-toggled state.
-- **No cron reconcile**. If a desync is observed, write it in plain text first; introduce automation after the second instance, not the first.
+- **No cron reconcile**. If a desync is observed, write it in plain text first; whether to introduce automation is an owner decision.
 
 ## Migration note (2026-05-23)
 

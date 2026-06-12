@@ -11,7 +11,7 @@
 //   1. "for a question of source-tier N, which checks apply?" (CHECK_SETS_BY_TIER)
 //   2. "does this question survive solve-check?" (runSolveCheck)
 //
-// Reuse over invention (反过度工程, plan 实证旁证): solve-check does NOT add a new
+// Reuse over invention (plan 实证旁证): solve-check does NOT add a new
 // AI task. It reuses the shipped SolutionGenerateTask as an INDEPENDENT solver
 // (different task/prompt dimension than the generator, YUK-193) and the shipped
 // SemanticJudge for the open-question comparison. OWNER-FORK OF-4 (plan §12):
