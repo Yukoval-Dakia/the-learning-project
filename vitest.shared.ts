@@ -130,13 +130,6 @@ export const fastTestInclude = [
   // fast no-DB unit. The sibling redis.integration.test.ts (real testcontainer)
   // stays in the db partition.
   'src/server/artifacts/presence/redis.test.ts',
-  // Pure dependency-injection unit: runCopilotChat takes runAgentTaskFn /
-  // buildMcpServerFn / writeEventFn as injected vi.fn() deps, so no live DB /
-  // AI is touched. The transitive `@/db/client` import (via events/queries +
-  // effective-truth) is type-only; only `@/db/schema` (pure table objects) +
-  // drizzle-orm (query builder) load at runtime — same safe surface the
-  // sibling mcp-bridge / allowlists unit tests already exercise. (YUK-97 P7)
-  'src/server/copilot/chat.test.ts',
   'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',

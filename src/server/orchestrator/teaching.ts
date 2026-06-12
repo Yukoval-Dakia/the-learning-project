@@ -158,7 +158,7 @@ export function parseTurnOutput(text: string): TeachingTurnOutputT {
 }
 
 // AF S4 / YUK-203 U6 — exported (was private) so the Copilot teaching-skill
-// (src/server/copilot/skills/teaching-skill.ts) reuses the SINGLE impl rather
+// (src/capabilities/copilot/server/skills/teaching-skill.ts) reuses the SINGLE impl rather
 // than forking the context-load. Pure visibility change; still the only loader,
 // used by both planTeachingTurn (below) and the skill.
 export async function loadTeachingContext(db: Db, learningItemId: string) {

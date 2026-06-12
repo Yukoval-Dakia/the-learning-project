@@ -1,7 +1,7 @@
 // Wave 5 / T-D3/C — POST /api/copilot/chat
 //
 // Single endpoint that handles both surfaces ('chat' default | 'chip' direct
-// trigger) via `triggered_by` field. See src/server/copilot/chat.ts for the
+// trigger) via `triggered_by` field. See src/capabilities/copilot/server/chat.ts for the
 // two-surface routing contract.
 //
 // YUK-266 (C1) — the POST now streams over SSE (text/event-stream). Two event
@@ -16,8 +16,8 @@
 // Zod parse errors happen BEFORE the stream is constructed and fall back to the
 // existing errorResponse (NOT streamed).
 
+import { CopilotChatRequest, runCopilotChatStreaming } from '@/capabilities/copilot/server/chat';
 import { db } from '@/db/client';
-import { CopilotChatRequest, runCopilotChatStreaming } from '@/server/copilot/chat';
 import { errorResponse } from '@/server/http/errors';
 
 export const runtime = 'nodejs';

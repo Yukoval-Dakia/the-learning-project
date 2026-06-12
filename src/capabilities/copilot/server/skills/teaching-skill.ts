@@ -22,6 +22,7 @@
 // copilot_reply event write AND the question INSERT in a single db.transaction,
 // preventing a dangling question row if the reply event write fails mid-flight.
 
+import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import {
@@ -30,7 +31,6 @@ import {
   loadTeachingContext,
   parseTurnOutput,
 } from '@/server/orchestrator/teaching';
-import type { MaterializeAskCheckParams } from '@/server/teaching/materialize-ask-check';
 
 // Same injectable runner seam the orchestrator uses (kind, input, ctx) → { text }.
 // Defaults to runAgentTask; unit tests inject a fixture so the {}-stub db is
