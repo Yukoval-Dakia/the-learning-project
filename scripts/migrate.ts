@@ -1,6 +1,6 @@
 // YUK-65 — Drizzle migration runner for docker compose init container.
 //
-// Bundled to .next/standalone/migrate.cjs via `pnpm build:migrate` (esbuild)
+// Bundled to dist/migrate.cjs via `pnpm build:migrate` (esbuild)
 // alongside server.js + worker.cjs. The `migrate` compose service runs this
 // once at startup; app + worker services wait on
 // `depends_on: { migrate: { condition: service_completed_successfully } }`

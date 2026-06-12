@@ -1,7 +1,7 @@
 // Phase 2 (Task #16) — async attribution for failure attempts.
 //
 // Previously /api/mistakes + /api/ingestion/[id]/import ran the
-// AttributionTask inline via `next/server.after()` — non-blocking from the
+// AttributionTask inline via the fire-and-forget pattern — non-blocking from the
 // response perspective, but tied to the Next.js process lifecycle (crash mid-
 // LLM call = work lost) and consuming web-tier resources for an LLM call.
 // This handler moves that work to the worker process via pg-boss.

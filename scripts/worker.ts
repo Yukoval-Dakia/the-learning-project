@@ -1,9 +1,9 @@
-// pg-boss worker entrypoint —— 独立进程，与 Next.js app 进程解耦。
+// pg-boss worker entrypoint —— 独立进程，与 Hono app 进程（server/index.ts）解耦。
 //
-// 启动方式：`pnpm worker:dev`（tsx）或 docker container 用 `node dist/scripts/worker.js`。
+// 启动方式：`pnpm worker:dev`（tsx）或 docker container 用 `node dist/worker.cjs`。
 //
 // 与 app process 的区别：
-//   - app process 启 instrumentation.ts → startListenLoop（消费 NOTIFY → SSE 推送）
+//   - app process（server/index.ts）启 startListenLoop（消费 NOTIFY → SSE 推送）
 //   - worker process **不**启 listen loop（自己发出的 NOTIFY 不必自己消费）
 //   - worker process 只跑 pg-boss handlers（boss.work），handler 内部写 DB + NOTIFY
 //

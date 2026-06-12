@@ -41,10 +41,6 @@ export const allTestInclude = [
   '*.test.tsx',
   'src/**/*.test.ts',
   'src/**/*.test.tsx',
-  'app/**/*.test.ts',
-  'app/**/*.test.tsx',
-  'workers/src/**/*.test.ts',
-  'workers/src/**/*.test.tsx',
   'tests/**/*.test.ts',
   'tests/**/*.test.tsx',
   'scripts/**/*.test.ts',
@@ -67,7 +63,6 @@ export const fastTestInclude = [
   // M1 (YUK-314) — ingestion 19 条 allowlist 条目已随簇迁入 capabilities，由约定 glob 接管。
   'server/**/*.unit.test.ts',
   'web/**/*.unit.test.ts',
-  'middleware.test.ts',
   'scripts/**/*.test.ts',
   // YUK-263 — pure (no-DB) unit for the globalThis pool-cache HMR guard in
   // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
@@ -121,15 +116,10 @@ export const fastTestInclude = [
   // M3 (YUK-317) — body-blocks-snippet / hub-dismiss / note-refine-triggers 三条
   // unit 条目已随 notes 域迁入 src/capabilities/notes/（重命名 *.unit.test.ts），
   // 由约定 glob 接管。editing-session / presence 留旧位置（dwell ⚖️ 争议行未裁）。
-  // In-memory editing-session state machine (heartbeat / idle timeout /
-  // force-apply / defer-and-flush). persistNoteRefineApply is vi.mock'd, so
-  // no live DB is touched — fast unit. (YUK-97 P7)
+  // Editing-session state machine (heartbeat / idle timeout / force-apply /
+  // defer-and-flush). Both @/db/client and presence/pg are vi.mock'd (PgPresenceStore
+  // swapped for InMemoryPresenceStore), so no live DB is touched — fast unit. (YUK-97 P7)
   'src/server/artifacts/editing-session.test.ts',
-  // YUK-171 fail-safe degradation unit: a MOCKED ioredis client (no container) +
-  // vi.mock'd persistNoteRefineApply, so no live Redis / Postgres is touched —
-  // fast no-DB unit. The sibling redis.integration.test.ts (real testcontainer)
-  // stays in the db partition.
-  'src/server/artifacts/presence/redis.test.ts',
   'src/server/events/cause-policy.test.ts',
   'src/server/export/**/*.test.ts',
   'src/server/http/**/*.test.ts',
@@ -238,27 +228,6 @@ export const fastTestInclude = [
   'src/subjects/serialize.test.ts',
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
-  'app/api/ai/*/route.test.ts',
-  // Health route test mocks @/db/client before importing the route, so it has no
-  // live-Postgres dependency and belongs in the no-Docker unit partition (YUK-134).
-  'app/api/health/route.test.ts',
-  'app/api/study-log/route.test.ts',
-  // Revert route mocks @/db/client + the revert primitive before importing the
-  // route, so it has no file-level DB import → unit partition (B1b, YUK-164).
-  // `*` matches the literal `[id]` dynamic segment (mirrors app/api/ai/*/...).
-  'app/api/ingestion/*/revert/route.test.ts',
-  // Coach TodayPlan read route mocks @/db/client + the reader before import →
-  // no live DB → unit partition (YUK-143, P0.4).
-  'app/api/coach/today-plan/route.test.ts',
-  // T-SQ Q4 — QuizGen trigger route mocks @/server/boss/client before importing
-  // the route; it only validates + enqueues (no @/db/client import), so it has
-  // no live-Postgres dependency → unit partition (search-grounded QuizGen wave).
-  'app/api/questions/quiz-gen/route.test.ts',
-  // YUK-234 (SEC-4) — pure Zod-parse unit for the import request-body bounds
-  // (per-array .max() ceilings). schema.ts has no DB / R2 / AI import; the
-  // route's DB-backed behavior stays in import/route.test.ts (db partition).
-  // `*` matches the literal `[id]` dynamic segment (mirrors the revert glob).
-  'app/api/ingestion/*/import/schema.test.ts',
   'tests/core/**/*.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',

@@ -1,7 +1,5 @@
 import type { PgBoss } from 'pg-boss';
 
-import { closeRedis } from '@/server/redis/client';
-
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
 /**
@@ -42,9 +40,6 @@ function snapshotActiveQueues(boss: PgBoss): { name: string; count: number }[] {
  * graceful=true 让正在执行的 job 跑完（最长 30s），expire 之后才退出进程。
  * pg-boss 会在 stop 后释放连接池，所有 SQL listen 也会断开。
  *
- * YUK-148: 若 worker 用了 Redis-backed editing presence（REDIS_URL 已设），
- * 同时优雅关闭共享 ioredis 连接。closeRedis() 在没创建过 client 时是 no-op。
- *
  * YUK-241: 在 graceful stop 前后各拍一张 in-flight 快照 —— stop 返回后仍标记为
  * active 的 queue 说明 30s 超时强制中断了它们的 job（这些 job 是 durable 的，
  * 下次 worker 启动会重试或进 dead-letter），把它们的 queue 名 + 活跃数记进日志，
@@ -73,7 +68,6 @@ export function installShutdownHandler(boss: PgBoss): void {
           { interrupted },
         );
       }
-      await closeRedis();
       console.log('[boss] stopped cleanly');
       process.exit(0);
     } catch (err) {

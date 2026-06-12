@@ -74,11 +74,12 @@ export interface MarkIdleAndFlushResult {
 }
 
 // Cross-process editing presence (YUK-148 / ADR-0023). Two concrete impls:
-//   - InMemoryPresenceStore  — process-local Map; default for dev + fast unit tests.
-//   - RedisPresenceStore     — shared across web + worker processes when REDIS_URL set.
+//   - InMemoryPresenceStore  — process-local Map; default for fast unit tests.
+//   - PgPresenceStore        — shared via the editing_presence PG table across
+//     separate web + worker processes (YUK-321 gate 选项 b).
 // Both preserve EXACT current semantics of the original editing-session.ts state
 // machine (encoded by editing-session.test.ts). All reads/writes are async to
-// accommodate Redis I/O; the in-memory impl resolves synchronously.
+// accommodate PG I/O; the in-memory impl resolves synchronously.
 export interface PresenceStore {
   // Record a heartbeat. Stamps editingStartedAt only on the FIRST editing
   // heartbeat (so the force-apply clock isn't reset by subsequent heartbeats);

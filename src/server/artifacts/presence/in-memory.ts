@@ -29,7 +29,7 @@ function cloneDate(date: Date): Date {
 
 // Process-local presence store. This is the original editing-session.ts Map
 // behavior, preserved verbatim — it is the DEFAULT for dev + the fast unit
-// suite (no REDIS_URL needed). It is intentionally NOT cross-process; the Redis
+// suite (unit suite mocks presence/pg to InMemoryPresenceStore). It is intentionally NOT cross-process; the Redis
 // store is what makes presence shared between the web + worker processes.
 export class InMemoryPresenceStore implements PresenceStore {
   private readonly sessions = new Map<string, EditingSessionState>();

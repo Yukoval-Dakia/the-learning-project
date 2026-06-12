@@ -1,7 +1,6 @@
-import { getRedis } from '@/server/redis/client';
+import { db } from '@/db/client';
 
-import { InMemoryPresenceStore } from './presence/in-memory';
-import { RedisPresenceStore } from './presence/redis';
+import { PgPresenceStore } from './presence/pg';
 import type {
   EditingSessionSnapshot,
   EnqueueOrApplyInput,
@@ -18,17 +17,17 @@ export {
   type EditingStatus,
 } from './presence/types';
 
-// Editing presence is cross-process (web + worker) when REDIS_URL is set, and
-// process-local (in-memory Map) otherwise — the dev + fast-unit-test default.
-// See ADR-0023 and docs/superpowers/plans/2026-05-30-yuk148-redis-lane.md.
+// M5-T5c (YUK-321) — Redis 退役（gate 选项 b）：prod 拓扑保持双进程
+// （app + worker），跨进程 presence 改走 PG 表——恒用 PgPresenceStore
+// （gate 前置子任务实施的第三实现，ADR-0023 的 PresenceStore seam 保留）。
+// RedisPresenceStore 已随旧依赖一并移除。
 //
-// Lazy singleton: the store is selected once by REDIS_URL presence and reused
-// for the life of the process. Don't open a Redis connection per call.
+// Lazy singleton: the store is created once and reused for the life of the
+// process. Don't open a PG connection per call (db is the shared singleton).
 let store: PresenceStore | undefined;
 
 function getPresenceStore(): PresenceStore {
-  if (store) return store;
-  store = process.env.REDIS_URL ? new RedisPresenceStore(getRedis()) : new InMemoryPresenceStore();
+  store ??= new PgPresenceStore(db);
   return store;
 }
 
@@ -58,9 +57,9 @@ export function getEditingSessionSnapshot(
   return getPresenceStore().getEditingSessionSnapshot(artifactId);
 }
 
-// Resets whichever impl is active. The fast unit suite has no REDIS_URL, so this
-// clears the in-memory Map; an integration test with REDIS_URL clears the Redis
-// namespace.
+// Resets the active store. In the fast unit suite, @/db/client + presence/pg
+// are vi.mock'd so PgPresenceStore resolves to InMemoryPresenceStore (clears
+// the in-memory Map). In pg.db.test.ts, resets the editing_presence table.
 export function resetEditingSessionStateForTests(): Promise<void> {
   return getPresenceStore().reset();
 }

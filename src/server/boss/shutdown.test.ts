@@ -1,12 +1,6 @@
 import type { PgBoss } from 'pg-boss';
 import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// closeRedis is a no-op when no client was ever created, but we mock it so the
-// shutdown handler doesn't reach into ioredis during the unit test.
-vi.mock('@/server/redis/client', () => ({
-  closeRedis: vi.fn(async () => undefined),
-}));
-
 import { installShutdownHandler } from './shutdown';
 
 type WorkerState = 'created' | 'active' | 'stopping' | 'stopped';

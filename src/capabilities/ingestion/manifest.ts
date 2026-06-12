@@ -83,7 +83,7 @@ export const ingestionCapability = defineCapability({
         load: () => import('./api/asset-content').then((m) => m.GET),
       },
       // M5-T5a (YUK-321) — 手输错题通道收编（D11：错题是题目的标记不是通道，
-      // 录入域持有写入口；next/server after() 已改写 fire-and-forget，见 api/mistakes.ts）。
+      // 录入域持有写入口；the old after() pattern 已改写 fire-and-forget，见 api/mistakes.ts）。
       {
         method: 'POST',
         path: '/api/mistakes',

@@ -28,7 +28,7 @@ import type { ReplayPrimaryView } from './replay';
 
 export interface CopilotHeroCardProps {
   primaryView: ReplayPrimaryView;
-  /** M5-T3 (YUK-321) — route push injected by CopilotDock (replaces next/link). */
+  /** M5-T3 (YUK-321) — route push injected by CopilotDock (replaces the old link import). */
   navigate: (to: string) => void;
 }
 

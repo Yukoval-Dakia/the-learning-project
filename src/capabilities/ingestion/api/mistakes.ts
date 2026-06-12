@@ -1,5 +1,5 @@
 // M5-T5a (YUK-321)：平移自 app/api/mistakes/route.ts（Hono manifest 挂载；旧壳
-// Task 9 拆）。唯一非机械点：next/server after() 改写为 fire-and-forget（见 POST 内注释）。
+// Task 9 拆）。唯一非机械点：the old after() pattern 改写为 fire-and-forget（见 POST 内注释）。
 
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
