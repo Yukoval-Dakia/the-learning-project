@@ -6,6 +6,7 @@
 
 import { capabilities } from '@/capabilities';
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { buildHonoApp } from './app';
 import { loadEnv } from './env';
 
@@ -13,6 +14,16 @@ loadEnv();
 
 const port = Number(process.env.API_PORT ?? 8787);
 const app = buildHonoApp(capabilities);
+
+// M5-T5b (YUK-321) — prod 静态面：RW_STATIC_DIR 指向 vite build 产物（web/dist）。
+// dev 不设此变量（Vite dev server 承担静态 + /api proxy）。serveStatic 未命中
+// 文件时 next() 放行 /api/*；catch-all GET 回 index.html（TanStack Router
+// 客户端路由 fallback），注册在 manifest 路由之后所以不抢任何 API 端点。
+if (process.env.RW_STATIC_DIR) {
+  const root = process.env.RW_STATIC_DIR;
+  app.use('*', serveStatic({ root }));
+  app.get('*', serveStatic({ root, path: 'index.html' }));
+}
 
 serve({ fetch: app.fetch, port }, (info) => {
   const mounted = capabilities.flatMap((c) =>
