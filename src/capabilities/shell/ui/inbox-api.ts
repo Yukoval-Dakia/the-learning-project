@@ -123,6 +123,25 @@ export const decideProposal = (
 export const retractProposal = (id: string) =>
   apiJson(`/api/proposals/${encodeURIComponent(id)}/retract`, { method: 'POST' });
 
+// YUK-271 行为恢复（codex 验证轮 P2）：block_merge accept 在目标题块已离开
+// draft 时，applier 软拒——返回 200 { stale: true } 且不写 rate event，提议
+// 保持 pending。UI 不能把它当已接受；旧 inbox 的 isBlockMergeStale 随旧壳
+// 删除，这里随新收件箱恢复。
+export interface BlockMergeStaleResult {
+  kind: 'block_merge';
+  stale: true;
+  skip_reason?: string;
+}
+
+export function isBlockMergeStale(data: unknown): data is BlockMergeStaleResult {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { kind?: unknown }).kind === 'block_merge' &&
+    (data as { stale?: unknown }).stale === true
+  );
+}
+
 // ── evidence 白话（设计稿 evidenceReadable 的真 wire 适配） ─────────
 // 真 ProposalEvidenceRef 无策展 label，按 kind 给白话来源说明；knowledge /
 // artifact 有 SPA 详情页可导航，其余 kind（event/question/record）的详情页

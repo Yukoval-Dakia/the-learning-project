@@ -5,7 +5,13 @@
 import { acceptSupportedProposalKinds, aiProposalKinds } from '@/core/schema/proposal';
 import { describe, expect, it } from 'vitest';
 
-import { KIND_META, evidenceReadable, isAcceptSupported, kindMeta } from './inbox-api';
+import {
+  KIND_META,
+  evidenceReadable,
+  isAcceptSupported,
+  isBlockMergeStale,
+  kindMeta,
+} from './inbox-api';
 import { heatLevel } from './workbench-api';
 
 describe('KIND_META vs aiProposalKinds 对账', () => {
@@ -83,6 +89,27 @@ describe('heatLevel 分桶边界', () => {
     expect(heatLevel(6)).toBe(3);
     expect(heatLevel(9)).toBe(3);
     expect(heatLevel(10)).toBe(4);
+  });
+});
+
+// YUK-271 行为恢复（codex 验证轮 P2）：旧 inbox.test.tsx 的等价测试随旧壳删除，
+// 随 isBlockMergeStale 回归——窄化只命中 stale 的 block_merge accept 响应。
+describe('isBlockMergeStale', () => {
+  it('stale 的 block_merge accept 响应命中', () => {
+    expect(
+      isBlockMergeStale({ kind: 'block_merge', stale: true, skip_reason: 'skipped:not_draft' }),
+    ).toBe(true);
+  });
+
+  it('已写入 / 幂等的 block_merge accept 不命中', () => {
+    expect(isBlockMergeStale({ kind: 'block_merge', stale: false })).toBe(false);
+    expect(isBlockMergeStale({ kind: 'block_merge', idempotent: true })).toBe(false);
+  });
+
+  it('其它 kind 或非对象输入不命中', () => {
+    expect(isBlockMergeStale({ kind: 'knowledge_node', stale: true })).toBe(false);
+    expect(isBlockMergeStale(null)).toBe(false);
+    expect(isBlockMergeStale('block_merge')).toBe(false);
   });
 });
 
