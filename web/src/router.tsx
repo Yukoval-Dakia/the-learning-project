@@ -2,6 +2,7 @@
 // 路由库；导航以 (to: string) => void prop 注入——路由耦合只存在于本壳层。
 // M0 仅 /agent-notes 一条 surface；后续 surface 随各 M 在此登记。
 import AgentNotesPage from '@/capabilities/agency/ui/page';
+import { CopilotDock } from '@/capabilities/copilot/ui/CopilotDock';
 import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
@@ -16,9 +17,23 @@ import {
   createRouter,
   redirect,
   useRouter,
+  useRouterState,
 } from '@tanstack/react-router';
 
-const rootRoute = createRootRoute({ component: Outlet });
+// M5-T3 (YUK-321) — 根壳：全路由共享一个 CopilotDock 实例（裁决 c：组件归
+// copilot 包，路由耦合只存在于本壳层）。
+function RootShell() {
+  const router = useRouter();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  return (
+    <>
+      <Outlet />
+      <CopilotDock pathname={pathname} navigate={(to) => router.history.push(to)} />
+    </>
+  );
+}
+
+const rootRoute = createRootRoute({ component: RootShell });
 
 // M4-T6 (YUK-319)：工作台上线后 / 落到 /today（旧 SPA 默认 /agent-notes 退位，
 // 该页仍在路由表）。

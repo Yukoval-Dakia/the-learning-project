@@ -15,11 +15,12 @@
 // it by clicking that trigger — no fork of the drawer logic. Admin is its own
 // (admin) route group, so the sidebar only links to /admin/runs.
 
+import { CopilotDock } from '@/capabilities/copilot/ui/CopilotDock';
 import { TokenGate } from '@/ui/components/TokenGate';
-import { CopilotDock } from '@/ui/copilot/CopilotDock';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
+import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const RAIL_KEY = 'loom-rail';
@@ -105,6 +106,14 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     trigger?.click();
   }, []);
 
+  // PHASE-DEFERRED (M5-T9 / YUK-321) — temporary shim: CopilotDock now takes
+  // pathname + navigate props instead of calling usePathname/next-link directly.
+  // This entire layout file (old Next tree) is deleted when app/ is torn down in
+  // Task 9; the SPA root shell (web/src/router.tsx RootShell) is the real mount.
+  const pathname = usePathname();
+  const nextRouter = useRouter();
+  const navigate = useCallback((to: string) => nextRouter.push(to), [nextRouter]);
+
   return (
     <TokenGate>
       <div className={`app${railCollapsed ? ' rail-collapsed' : ''}`}>
@@ -141,7 +150,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
         {/* Self-contained Copilot drawer. Its visible trigger is hidden — the
             shell's sidebar/topbar Copilot buttons drive it via openCopilot. */}
         <div ref={copilotTriggerRef} className="shell-copilot-mount">
-          <CopilotDock />
+          <CopilotDock pathname={pathname} navigate={navigate} />
         </div>
       </div>
     </TokenGate>

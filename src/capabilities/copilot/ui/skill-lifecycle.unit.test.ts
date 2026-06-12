@@ -1,6 +1,7 @@
 // YUK-272 (C3) — pure unit for the one-shot-skill lifecycle rule. Lives under
-// src/ui/ so it is auto-allowlisted into the unit partition by the
-// src/ui/**/*.test.ts(x) glob (no manual fastTestInclude edit). No DOM needed.
+// src/capabilities/copilot/ui/ (M5-T3 / YUK-321 — moved from src/ui/copilot/) and is
+// auto-allowlisted into the unit partition by the src/capabilities/**/*.unit.test.ts
+// convention glob (no manual fastTestInclude edit). No DOM needed.
 
 import { describe, expect, it } from 'vitest';
 import { ONE_SHOT_SKILLS, isOneShotSkill } from './skill-lifecycle';

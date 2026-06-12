@@ -23,11 +23,16 @@
 
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import Link from 'next/link';
 import { resolveArtifactHero } from './hero';
 import type { ReplayPrimaryView } from './replay';
 
-export function CopilotHeroCard({ primaryView }: { primaryView: ReplayPrimaryView }) {
+export interface CopilotHeroCardProps {
+  primaryView: ReplayPrimaryView;
+  /** M5-T3 (YUK-321) — route push injected by CopilotDock (replaces next/link). */
+  navigate: (to: string) => void;
+}
+
+export function CopilotHeroCard({ primaryView, navigate }: CopilotHeroCardProps) {
   if (primaryView.source === 'ephemeral_html') {
     return (
       <div className="copilot-hero" data-testid="copilot-hero-ephemeral">
@@ -47,8 +52,9 @@ export function CopilotHeroCard({ primaryView }: { primaryView: ReplayPrimaryVie
       );
     }
     return (
-      <Link
-        href={hero.href}
+      <button
+        type="button"
+        onClick={() => navigate(hero.href)}
         className="copilot-hero copilot-hero-ref"
         data-testid="copilot-hero-artifact"
       >
@@ -58,7 +64,7 @@ export function CopilotHeroCard({ primaryView }: { primaryView: ReplayPrimaryVie
           打开
           <LoomIcon name="arrow" size={13} />
         </span>
-      </Link>
+      </button>
     );
   }
 
