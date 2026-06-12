@@ -58,7 +58,9 @@ export function AppSidebar({
 
   return (
     <aside ref={sidebarRef} className={`sidebar${mobileOpen ? ' open' : ''}`}>
-      <button type="button" className="brand" onClick={() => go('/today')}>
+      {/* /today 已迁 SPA（M4, YUK-319），Next 侧无此路由——brand 与 nav 同语义
+          回退 /mistakes（coderabbit 验证轮指摘：原 go('/today') 是死链）。 */}
+      <button type="button" className="brand" onClick={() => go('/mistakes')}>
         <span className="brand-mark">
           <BrandMark size={32} />
         </span>
