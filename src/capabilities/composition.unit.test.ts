@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { capabilities } from './index';
 
 // M4 (YUK-319) 提议契约对账——subtract-from-expected 豁免（plan 裁决，注 D11）：
-// record_links / record_promotion 无活 producer（D11 墓碑，applier 留
+// record_links / record_promotion 在 capability 声明层无归属（D11 墓碑，applier 留
 // src/server/proposals/legacy-record-appliers.ts 兜历史数据），从期望全集减除，
-// 不要求任何包声明归属。
+// 不要求任何包声明归属。注意「无 producer」仅指 manifest/契约归属层——工具层
+// src/server/ai/tools/proposal-tools.ts 的 propose_record_links /
+// propose_record_promotion 仍可写出这两个 kind（review 澄清，coderabbit minor）。
 const LEGACY_TOMBSTONE_KINDS = ['record_links', 'record_promotion'];
 
 describe('composition root', () => {
