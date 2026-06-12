@@ -15,6 +15,8 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
+import { capabilities } from '@/capabilities';
+
 interface QueryParam {
   name: string;
   required?: boolean;
@@ -44,6 +46,29 @@ const FOLDER_LABELS: Record<string, string> = {
 };
 
 const endpoints: EndpointSpec[] = JSON.parse(readFileSync(SOURCE, 'utf8'));
+
+// M5-T5c (YUK-321) — manifest 对账层：spec 条目必须存在于组合根路由清单，
+// 死条目（旧 app/ 独有路由）进不了 collection；manifest 有而 spec 缺的路由
+// 打印 WARN 鼓励补 spec（不 fail——内部调试端点允许不进 collection）。
+
+// 路径风格归一化：manifest 路由参数写 `[id]`（如 /api/ingestion/[id]/blocks），
+// api-endpoints.json 写 `:id`（如 /api/_/logs/jobs/:id）——不归一化 Set 永不命中。
+const normalize = (p: string) => p.replace(/\[([^\]]+)\]/g, ':$1');
+
+const manifestRoutes = new Set(
+  capabilities.flatMap((c) => (c.api?.routes ?? []).map((r) => `${r.method} ${normalize(r.path)}`)),
+);
+manifestRoutes.add('GET /api/health'); // 组合根直挂（server/app.ts，token 豁免），不在任何 manifest——缺此行对账层会误杀健康探针条目
+for (const ep of endpoints) {
+  for (const m of ep.methods) {
+    const key = `${m.method} ${ep.path}`;
+    if (!manifestRoutes.has(key)) {
+      throw new Error(
+        `gen-postman: '${key}' 不在任何 capability manifest 中（死条目，请从 api-endpoints.json 删除）`,
+      );
+    }
+  }
+}
 
 function folderKey(path: string): string {
   return path.split('/').filter(Boolean)[1] ?? 'root';
@@ -170,9 +195,9 @@ const collection = {
     _postman_id: 'c1d2e3f4-a5b6-47c8-9d0e-1f2a3b4c5d6e',
     name: 'learning-api',
     description:
-      'The Learning Project — Next.js App Router backend (app/api/**).\n\n' +
+      'The Learning Project — Hono backend (server/app.ts).\n\n' +
       'Auth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health`.\n\n' +
-      'Base URL: `{{baseUrl}}` (default http://localhost:3001 — the fresh `pnpm dev:local` port, NOT the :3000 container).\n\n' +
+      'Base URL: `{{baseUrl}}` (default http://localhost:8787 — the Hono dev port).\n\n' +
       'Path vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\n' +
       'Generated from postman/api-endpoints.json by `pnpm gen:postman` — do not hand-edit. Run headlessly: `pnpm api:smoke [folder]`.',
     schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
@@ -185,7 +210,7 @@ const collection = {
       { key: 'in', value: 'header', type: 'string' },
     ],
   },
-  variable: [{ key: 'baseUrl', value: 'http://localhost:3001', type: 'string' }],
+  variable: [{ key: 'baseUrl', value: 'http://localhost:8787', type: 'string' }],
   item: items,
 };
 

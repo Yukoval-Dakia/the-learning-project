@@ -27,7 +27,7 @@ vi.mock('@/capabilities/knowledge/server/tree', () => ({
 }));
 
 // M5-T5a (YUK-321)：路由 after() 已改写为 fire-and-forget（POST 内同步发起，
-// mock 立即 resolve），不再需要 next/server after mock / runAfterCallbacks 钩子。
+// mock 立即 resolve），不再需要 the old after mock / runAfterCallbacks 钩子。
 
 const KNOWLEDGE_BASE = {
   domain: 'wenyan',

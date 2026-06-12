@@ -3,14 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NotePatchT } from '@/core/schema/note-patch';
 
 // editing-session enqueues/applies via persistNoteRefineApply. We mock that
-// DB-touching dependency so the in-memory state machine (heartbeat / idle
+// DB-touching dependency so the state machine (heartbeat / idle
 // timeout / force-apply / defer-and-flush) can be exercised as a fast unit
 // test without a live Postgres. (YUK-97 P7)
 //
-// No REDIS_URL is set in this suite, so the editing-session façade selects the
-// in-memory PresenceStore — this stays a fast, no-DB, cross-process-free unit
-// test. (YUK-148: the Redis impl is exercised by the db-partition integration
-// test redis.integration.test.ts.)
+// M5-T5c (YUK-321): editing-session façade now always uses PgPresenceStore (which
+// imports @/db/client). We mock both @/db/client (prevents module-load throw) and
+// presence/pg (swaps in InMemoryPresenceStore as the test double) so the unit
+// suite stays no-DB. The PgPresenceStore DB-path is exercised by pg.db.test.ts.
+vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('@/server/artifacts/presence/pg', async () => {
+  const mod = await import('@/server/artifacts/presence/in-memory');
+  return { PgPresenceStore: mod.InMemoryPresenceStore };
+});
+
 const persistNoteRefineApply = vi.fn(async (args: { artifactId: string }) => ({
   status: 'applied' as const,
   artifact_id: args.artifactId,

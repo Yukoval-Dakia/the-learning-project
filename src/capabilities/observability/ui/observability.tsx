@@ -1,5 +1,5 @@
 // M5-T4b (YUK-321) — admin 三页（Runs/Cost/Failures）迁 observability 包，
-// SPA 路由 /admin/*。等价平移：视觉/行为与旧 src/ui/admin 版一致，next/link
+// SPA 路由 /admin/*。等价平移：视觉/行为与旧 src/ui/admin 版一致，旧 link import
 // 换 navigate prop（capability ui 不 import 路由库——web/src/router.tsx 规则）。
 //
 // Phase-deferred（壳形态决策点）：设计真理源

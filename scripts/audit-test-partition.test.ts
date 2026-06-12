@@ -33,12 +33,12 @@ describe('classify — .tsx files land in a real partition, never unmatched', ()
     expect(classify('src/ui/components/VisionTab.test.tsx')).toBe('unit');
   });
 
-  it('falls a NON-allowlisted app/ .test.tsx through to the db partition (not unmatched)', () => {
-    // This is the previously-broken path: a component test outside the unit
-    // allowlist must be swept up by allTestInclude's `app/**/*.test.tsx` glob and
-    // land in db — exactly like a `.test.ts` would. Before the vitest.shared.ts
-    // fix it matched no glob and was collected by NEITHER config.
-    const partition = classify('app/(app)/some-feature/widget.test.tsx');
+  it('falls a NON-allowlisted web/ .test.tsx through to the db partition (not unmatched)', () => {
+    // M5-T5c: app/** globs removed (app/ deleted). The same fall-through
+    // guarantee now applies to web/ .tsx files: allTestInclude has
+    // `web/**/*.test.tsx` but fastTestInclude has no web/** non-unit glob,
+    // so a plain .test.tsx (not *.unit.test.tsx) lands in db.
+    const partition = classify('web/src/some-feature/widget.test.tsx');
     expect(partition).toBe('db');
     expect(partition).not.toBe('unmatched');
   });
