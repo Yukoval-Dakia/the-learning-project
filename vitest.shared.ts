@@ -106,6 +106,8 @@ export const fastTestInclude = [
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  // M5-T3 (YUK-321) — copilotTools 组合根聚合器：纯 registry 操作，无 DB。
+  'src/server/ai/tools/register-capability-tools.unit.test.ts',
   // YUK-203 U4 / L-memtool — search_memory_facts DomainTool. Pure DI unit: the
   // MemoryClient factory is stubbed, so no live Mem0 / pgvector / OpenAI env is
   // touched (the real createMemoryClient is never constructed in tests).
