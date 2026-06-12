@@ -1,15 +1,13 @@
-import { getAdminRunTimeline } from '@/capabilities/observability/server/ai-observability';
+import { z } from 'zod';
+
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
 
-export const runtime = 'nodejs';
+import { getAdminRunTimeline } from '../server/ai-observability';
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> },
-): Promise<Response> {
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const { id } = await params;
+    const { id } = z.object({ id: z.string().min(1) }).parse(params);
     const detail = await getAdminRunTimeline(db, id);
     if (!detail) {
       return Response.json({ error: 'not_found', message: `no run ${id}` }, { status: 404 });

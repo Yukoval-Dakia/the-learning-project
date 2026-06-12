@@ -1,8 +1,7 @@
-import { getAdminFailureClusters } from '@/capabilities/observability/server/ai-observability';
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
 
-export const runtime = 'nodejs';
+import { getAdminFailureClusters } from '../server/ai-observability';
 
 export async function GET(req: Request): Promise<Response> {
   try {

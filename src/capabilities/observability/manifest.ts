@@ -1,0 +1,45 @@
+import { defineCapability } from '@/kernel/manifest';
+
+// M5-T4 (YUK-321) — observability 包：AI 运行可观测性（admin 四页数据面）+
+// 今日成本条。核心实现 server/ai-observability.ts（纯 drizzle，整体迁自
+// src/server/admin）。ui.pages 在 T4b（admin 四页 SPA）落地时声明。
+export const observabilityCapability = defineCapability({
+  name: 'observability',
+  description:
+    'AI 可观测性：runs 列表/时间线、cost 汇总、failure 聚类、subject registry ' +
+    '只读视图、今日成本条（cost_ledger + tool_call_log）。',
+  api: {
+    routes: [
+      {
+        method: 'GET',
+        path: '/api/admin/runs',
+        load: () => import('./api/admin-runs').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/admin/runs/[id]',
+        load: () => import('./api/admin-run-detail').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/admin/cost',
+        load: () => import('./api/admin-cost').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/admin/failures',
+        load: () => import('./api/admin-failures').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/admin/subjects',
+        load: () => import('./api/admin-subjects').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/cost/today',
+        load: () => import('./api/cost-today').then((m) => m.GET),
+      },
+    ],
+  },
+});

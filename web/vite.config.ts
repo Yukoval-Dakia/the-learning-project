@@ -41,6 +41,9 @@ export default defineConfig({
       '/api/copilot': 'http://localhost:8787',
       '/api/today': 'http://localhost:8787',
       '/api/teaching-sessions': 'http://localhost:8787',
+      // M5-T4 (YUK-321)：observability 域收编新栈（admin 四页 + subjects + cost/today）。
+      '/api/admin': 'http://localhost:8787',
+      '/api/cost': 'http://localhost:8787',
       '/api': process.env.RW_OLD_STACK ?? 'http://localhost:3000',
     },
   },
