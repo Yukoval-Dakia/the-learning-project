@@ -5,7 +5,9 @@
 // agency 包 agent-notes（limit=20 紧凑档）+ notes 包 AI 改动近 24h。
 // 偏差（today 重生设计自由）：①「今日之线」真数据无 threads 源，从 summary
 // 派生（due>0 复习缕 / proposals>0 裁决缕），全零不渲染该 section；②成本面
-// （设计稿 CostRibbon）数据端点未迁，占位 quiet-empty，随 M5 Copilot 收编。
+// （设计稿 CostRibbon）已于 M5-T4b (YUK-321) 接通 /api/cost/today
+// （observability 包端点）；设计稿的预算线（budget + bar 占比）无数据源，
+// 见 CostRibbon 组件注释。
 
 import { AgentNotesBoard } from '@/capabilities/agency/ui/AgentNotesBoard';
 import type { AgentNotesResponse } from '@/capabilities/agency/ui/types';
@@ -75,6 +77,77 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
     });
   }
   return threads;
+}
+
+// 成本面（设计稿 CostRibbon，screen-today.jsx L153-178）：M5-T4b (YUK-321)
+// 接通 /api/cost/today（observability 包）。字段对齐
+// src/capabilities/observability/api/cost-today.ts 的 Response.json 形状。
+// Phase-deferred：设计稿的预算线（card-head 预算 meta + bar 占比条）无数据源
+// ——预算配置尚不存在，不 mock；随预算护栏（warning 水位）落地后补，届时回
+// 设计稿 screen-today.jsx CostRibbon 取 DOM。quiet-empty 语义保留：零成本不噪。
+interface CostTodayResponse {
+  window: { from: number; to: number; label: string };
+  today: {
+    spend: number;
+    tokens_in: number;
+    tokens_out: number;
+    ledger_rows: number;
+    tool_calls: number;
+    by_task: Array<{ task_kind: string; spend: number; calls: number }>;
+  };
+}
+
+function CostRibbon() {
+  const q = useQuery({
+    queryKey: ['cost-today'],
+    queryFn: () => apiJson<CostTodayResponse>('/api/cost/today'),
+  });
+  const t = q.data?.today;
+  const isEmpty = t !== undefined && t.ledger_rows === 0 && t.tool_calls === 0;
+  const status: StatefulStatus = q.isLoading
+    ? 'loading'
+    : q.isError
+      ? 'error'
+      : isEmpty
+        ? 'empty'
+        : 'ok';
+  return (
+    <LoomCard pad>
+      <div className="card-head">
+        <span className="card-icon">
+          <LoomIcon name="bolt" size={18} />
+        </span>
+        <div className="card-title">今日 AI 成本</div>
+      </div>
+      <Stateful
+        status={status}
+        onRetry={() => void q.refetch()}
+        errorText="成本服务暂不可用。"
+        skeleton={<SkLines rows={1} />}
+        empty={<div className="quiet-empty">今日尚无 AI 花费。</div>}
+      >
+        {t && (
+          <>
+            <div className="cost-top">
+              <div className="cost-amt serif tnum">${t.spend.toFixed(2)}</div>
+            </div>
+            <div className="cost-tasks">
+              {t.by_task.map((row) => (
+                <span key={row.task_kind} className="chip">
+                  <span className="mono">{row.task_kind}</span>{' '}
+                  <b className="mono">${row.spend.toFixed(2)}</b>
+                </span>
+              ))}
+            </div>
+            <div className="cost-foot nowrap-meta mono">
+              tokens {(t.tokens_in / 1000).toFixed(1)}k in · {(t.tokens_out / 1000).toFixed(1)}k out
+              · {t.tool_calls} tool calls
+            </div>
+          </>
+        )}
+      </Stateful>
+    </LoomCard>
+  );
 }
 
 function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => void }) {
@@ -164,17 +237,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
               </div>
               <div className="dash-col">
                 <ProposalStrip proposals={s.proposals} navigate={navigate} />
-                {/* 成本面（设计稿 CostRibbon）：/api/cost/today 留旧栈，随 M5
-                    Copilot 域收编后接通。 */}
-                <LoomCard pad>
-                  <div className="card-head">
-                    <span className="card-icon">
-                      <LoomIcon name="bolt" size={18} />
-                    </span>
-                    <div className="card-title">今日 AI 成本</div>
-                  </div>
-                  <div className="quiet-empty">成本面随 M5 Copilot 收编后接通。</div>
-                </LoomCard>
+                <CostRibbon />
               </div>
             </div>
           </>

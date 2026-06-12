@@ -37,8 +37,17 @@ export const shellCapability = defineCapability({
   },
   // M4-T6 (YUK-319)：工作台 + 收件箱两 surface；todayBlocks 是工作台自有块
   //（agency 的 agent-notes-board、notes 的 ai-changes-strip 各自声明）。
+  // M5-T4b (YUK-321)：+/coach（spec §3.6「Coach 周报 keep · 归工作台/复盘面」）；
+  // +cost-ribbon todayBlock（CostRibbon 接通 /api/cost/today，observability 端点）。
   ui: {
-    pages: [{ route: '/today' }, { route: '/inbox' }],
-    todayBlocks: ['loom-hero', 'kpi-row', 'sessions-strip', 'proposal-strip', 'week-heat'],
+    pages: [{ route: '/today' }, { route: '/inbox' }, { route: '/coach' }],
+    todayBlocks: [
+      'loom-hero',
+      'kpi-row',
+      'sessions-strip',
+      'proposal-strip',
+      'cost-ribbon',
+      'week-heat',
+    ],
   },
 });
