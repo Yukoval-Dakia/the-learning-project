@@ -256,7 +256,7 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
     // C1 review LOW fix — over-cap ephemeral_html fails the zod parse and the
     // HTML (which lives only inside the marker) is stripped with it, so the
     // model must be told the bound up front. Literal mirrors
-    // EPHEMERAL_HTML_REF_MAX_CHARS in src/server/copilot/turns.ts (32_000);
+    // EPHEMERAL_HTML_REF_MAX_CHARS in src/capabilities/copilot/server/turns.ts (32_000);
     // change them together.
     const p = tasks.CopilotTask.systemPrompt;
     expect(p).toMatch(/32000 字符/);

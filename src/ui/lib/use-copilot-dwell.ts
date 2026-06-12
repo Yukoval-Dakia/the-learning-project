@@ -24,7 +24,7 @@
 
 'use client';
 
-import type { CopilotSkillContextT } from '@/server/copilot/chat';
+import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 

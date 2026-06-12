@@ -53,7 +53,7 @@ export interface ReplaySkillContext {
 }
 
 // YUK-307 — the agent-nominated hero deliverable persisted on a reply turn
-// (presentation layer §2.3). Mirrors CopilotPrimaryView (src/server/copilot/
+// (presentation layer §2.3). Mirrors CopilotPrimaryView (src/capabilities/copilot/server/
 // turns.ts), declared inline so replay.ts stays self-contained (same precedent
 // as ReplaySkillTurn / ReplaySkillContext above). replayToMessages forwards it
 // untouched; RENDERING the nomination (hero card density / Dock policy) is the

@@ -12,11 +12,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getActiveQuestionState } from '@/capabilities/copilot/server/teaching/active-question';
+import { materializeAskCheckQuestion } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import { learning_item, learning_session, question } from '@/db/schema';
 import { Conversation } from '@/server/session';
-import { getActiveQuestionState } from '@/server/teaching/active-question';
-import { materializeAskCheckQuestion } from '@/server/teaching/materialize-ask-check';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runTeachingSkill } from './teaching-skill';
 
 const db = testDb();

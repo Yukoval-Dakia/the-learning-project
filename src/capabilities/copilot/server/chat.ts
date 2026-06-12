@@ -18,6 +18,37 @@
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
+// ADR-0031 / YUK-304 (quiz C→A, lane B) — the YUK-275 C-form quiz pre-dispatch
+// (detectQuizIntent 粗筛 + resolveQuizIntent 参数解析 + runQuizSkill service
+// out-port) is RETIRED: 判断+编排权交回模型. Quiz turns (free-text 求卷 AND the
+// chip's skill_context:{skill:'quiz'}) now flow through the free-form
+// CopilotTask loop, where the copilot orchestrates query_questions /
+// author_question / write_quiz itself (methodology in
+// src/subjects/_shared/skills/quiz-gen/SKILL.md).
+// YUK-284 (C3) — solve-skill is no longer imported here: it was extracted from the
+// skill_context protocol (chat.ts no longer routes solve). runSolveSkill stays an
+// independent service in src/capabilities/copilot/server/skills/solve-skill.ts for a future
+// 题目页 inline入口.
+import {
+  type TeachingSkillResult,
+  runTeachingSkill,
+} from '@/capabilities/copilot/server/skills/teaching-skill';
+import {
+  type MaterializedAskCheckQuestion,
+  materializeAskCheckQuestion,
+} from '@/capabilities/copilot/server/teaching/materialize-ask-check';
+// YUK-267 (C2) — the SAME session-scoped turn reader the drawer replay uses. The
+// free-form run input reuses it to assemble conversation_history (防循环 ①: history
+// = persisted ask原文 + reply正文 only). NO new schema, NO new read source.
+// YUK-307 — CopilotPrimaryView (+ the ephemeral_html cap) lives in turns.ts (the
+// payload-shape home; same direction as CopilotTurnSkillTurn — chat.ts → turns.ts,
+// never back). The zod parse schema lives HERE at the extraction point.
+import {
+  type CopilotPrimaryView,
+  type CopilotTurn,
+  EPHEMERAL_HTML_REF_MAX_CHARS,
+  getRecentCopilotTurns,
+} from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
 // YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
 // Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
@@ -46,30 +77,6 @@ import {
 } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-// ADR-0031 / YUK-304 (quiz C→A, lane B) — the YUK-275 C-form quiz pre-dispatch
-// (detectQuizIntent 粗筛 + resolveQuizIntent 参数解析 + runQuizSkill service
-// out-port) is RETIRED: 判断+编排权交回模型. Quiz turns (free-text 求卷 AND the
-// chip's skill_context:{skill:'quiz'}) now flow through the free-form
-// CopilotTask loop, where the copilot orchestrates query_questions /
-// author_question / write_quiz itself (methodology in
-// src/subjects/_shared/skills/quiz-gen/SKILL.md).
-// YUK-284 (C3) — solve-skill is no longer imported here: it was extracted from the
-// skill_context protocol (chat.ts no longer routes solve). runSolveSkill stays an
-// independent service in src/server/copilot/skills/solve-skill.ts for a future
-// 题目页 inline入口.
-import { type TeachingSkillResult, runTeachingSkill } from '@/server/copilot/skills/teaching-skill';
-// YUK-267 (C2) — the SAME session-scoped turn reader the drawer replay uses. The
-// free-form run input reuses it to assemble conversation_history (防循环 ①: history
-// = persisted ask原文 + reply正文 only). NO new schema, NO new read source.
-// YUK-307 — CopilotPrimaryView (+ the ephemeral_html cap) lives in turns.ts (the
-// payload-shape home; same direction as CopilotTurnSkillTurn — chat.ts → turns.ts,
-// never back). The zod parse schema lives HERE at the extraction point.
-import {
-  type CopilotPrimaryView,
-  type CopilotTurn,
-  EPHEMERAL_HTML_REF_MAX_CHARS,
-  getRecentCopilotTurns,
-} from '@/server/copilot/turns';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 // P5.4-L2 / YUK-174 (Facet A, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Copilot run input, EDGE-scoped (Copilot
@@ -85,10 +92,6 @@ import {
 // the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays
 // in src/server/session/conversation.ts (ADR-0005 single-owner).
 import { Conversation } from '@/server/session';
-import {
-  type MaterializedAskCheckQuestion,
-  materializeAskCheckQuestion,
-} from '@/server/teaching/materialize-ask-check';
 // YUK-284 (C2) — cross-subject Copilot dialogue-methodology Agent Skill resolver.
 // resolveCopilotSkills() returns ['copilot'] when the shared SKILL.md exists, else
 // undefined (降级链: free-form ctx omits skills → runner skills ?? [] → systemPrompt
@@ -862,7 +865,7 @@ async function runCopilotChatImpl(
   // YUK-284 (C3) — the former runSolveBehaviorPack handler is removed. solve is no
   // longer a chat-routed behavior pack: it was a dead入口 (no UI seed ever produced
   // skill_context:{skill:'solve'}). runSolveSkill remains an independent service
-  // (src/server/copilot/skills/solve-skill.ts) for a future题目页 inline入口; chat.ts
+  // (src/capabilities/copilot/server/skills/solve-skill.ts) for a future题目页 inline入口; chat.ts
   // no longer dispatches to it. A persisted-old / anomalous skill:'solve' falls
   // through to the free-form CopilotTask path (see the dispatch降级 below).
 

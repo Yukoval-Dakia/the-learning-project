@@ -8,10 +8,10 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { runCopilotChat } from '@/capabilities/copilot/server/chat';
+import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
-import { runCopilotChat } from '@/server/copilot/chat';
-import { getRecentCopilotTurns } from '@/server/copilot/turns';
 import { writeEvent } from '@/server/events/queries';
 import { Conversation } from '@/server/session';
 
