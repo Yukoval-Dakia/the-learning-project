@@ -24,7 +24,7 @@
 // (src/core/schema/event/experimental.ts) so it parses through the generic
 // ExperimentalEvent escape hatch — no new Zod schema, no new table/column.
 //
-// MCP DomainTool WRAPPER IS DEFERRED (YAGNI — AF §4 conceptual `leave_agent_note`
+// MCP DomainTool WRAPPER IS DEFERRED (AF §4 conceptual `leave_agent_note`
 // is a *tool* shape, but no tool-loop agent needs it yet). Narrow task handlers
 // (quiz_verify, etc.) call writeAgentNote() DIRECTLY. When a tool-loop agent
 // genuinely needs to emit notes mid-loop, wrap this helper as a DomainTool then.

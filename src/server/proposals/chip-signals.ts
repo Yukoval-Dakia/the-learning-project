@@ -1,7 +1,7 @@
 // P5.6 / YUK-178 (call-site 13, §5.2, SK-7) — chip-accept KPI reader.
 //
 // The "用户接受 AI 建议" chip metric is an EVENT-TABLE reader (no materialized
-// `chip_accept_signals` table — YAGNI / anti-overengineering, SK-7). It
+// `chip_accept_signals` table — SK-7). It
 // aggregates `action='accept_suggestion'` events (the AcceptSuggestionChip event
 // the new POST .../accept-chip endpoint writes) GROUP BY
 // payload->>'suggestion_kind', and excludes `corrective` from the acceptance

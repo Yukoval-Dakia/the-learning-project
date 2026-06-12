@@ -4,7 +4,7 @@
  * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4) +
  * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §6 + ADR-0026.
  *
- * Per spec §7 Q1 + §8 (single-user → YAGNI), this is a DETERMINISTIC single-pass
+ * Per spec §7 Q1 + §8 (single-user), this is a DETERMINISTIC single-pass
  * confidence aggregator, NOT a second LLM / multi-agent vote. It combines the
  * extraction confidence (from extraction) with the TaggingTask confidence and
  * decides whether a captured block can be auto-enrolled (high confidence) or must
