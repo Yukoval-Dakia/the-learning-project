@@ -23,6 +23,18 @@ export interface QueuedPatch {
   queuedAt: Date;
 }
 
+// Serialized shape used by BOTH cross-process stores (Redis string value +
+// editing_presence.pending jsonb column) — YUK-321 M5 gate option b. Dates
+// travel as ms-since-epoch numbers so the Lua scripts (Redis) and JS (PG)
+// can do arithmetic without date parsing. Lifted here from redis.ts so the PG
+// store shares the exact same serialization shape (subplan §2 偏差 2).
+export interface SerializedQueuedPatch {
+  patch: unknown;
+  taskResult?: unknown;
+  triggerEventId: string | null;
+  queuedAtMs: number;
+}
+
 export interface EditingSessionSnapshot {
   artifact_id: string;
   status: EditingStatus;

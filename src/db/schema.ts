@@ -24,6 +24,7 @@ import type {
   ToolState,
 } from '../core/schema/business';
 import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_question';
+import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 
 // Drizzle schema (Postgres) — single source of truth.
 // Per architecture-review.md § Stack Pivot: Postgres types throughout;
@@ -850,3 +851,22 @@ export const practice_stream_item = pgTable(
     uniqueIndex('practice_stream_date_ref_unique').on(t.date, t.ref_id),
   ],
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editing presence（YUK-321 M5 gate 选项 b）：web 进程写心跳、worker 进程读
+// idle 决策的跨进程契约，Redis 退役（Task 9）后由本表承载。一 artifact 一行；
+// pending 为编辑期被 defer 的 note-refine patch FIFO 队列（jsonb，日期用 ms
+// epoch，沿 Redis 序列化形状）。本表是纯状态机存储非业务实体，不设
+// created_at/updated_at——时间真相即 last_heartbeat_at。
+//
+// 行堆积：一 artifact 一行（upsert 不增行），单用户量级可忽略，不做清理 job
+// （YAGNI）。陈旧 pending 在 load 时按 §4 裁决 (i) 丢弃（见 pg.ts）。
+// ─────────────────────────────────────────────────────────────────────────────
+export const editing_presence = pgTable('editing_presence', {
+  artifact_id: text('artifact_id').primaryKey(),
+  status: text('status').$type<'editing' | 'idle'>().notNull(),
+  last_heartbeat_at: timestamp('last_heartbeat_at', { withTimezone: true }).notNull(),
+  // force-apply 时钟：首个 editing 心跳盖戳、idle 清空（types.ts L71-73 契约）。
+  editing_started_at: timestamp('editing_started_at', { withTimezone: true }),
+  pending: jsonb('pending').$type<SerializedQueuedPatch[]>().notNull().default([]),
+});

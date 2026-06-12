@@ -36,6 +36,8 @@ const ALL_TABLES = [
   'mistake_variant',
   // M2 (YUK-316) — 练习流日程表。
   'practice_stream_item',
+  // YUK-321 M5 gate 选项 b — editing presence 跨进程状态机表。
+  'editing_presence',
   // YUK-143 / ADR-0024 — North-Star goal entity.
   'goal',
   'question_block',
