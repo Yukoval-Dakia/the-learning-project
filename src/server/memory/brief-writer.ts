@@ -8,7 +8,7 @@
 // (`goals/scope.ts`): build input → runTask('MemoryBriefTask', …) → brace-slice
 // + Zod-parse → defensive id-subset filter. No tool loop, no proposal write.
 //
-// Reuse-first (CLAUDE.md anti-over-engineering): the LLM loop, logging, and cost
+// Reuse-first: the LLM loop, logging, and cost
 // ledger all live inside `runTask`; this file never hand-rolls them. The writer
 // stays LOUD on failure (re-throws); the graceful "log + leave old brief" posture
 // is delivered one layer up by the per-scope try/catch in the regen-handler loop

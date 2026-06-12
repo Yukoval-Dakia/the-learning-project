@@ -67,7 +67,7 @@ Artifact (AI 产出物)
 1. **Tool 可独立存在**：每日 quiz / final quiz / 用户存的模拟卷 / 复习 session 都是独立的 `tool_quiz` Artifact，不需要嵌在 Note 里。
 2. **Tool 也可以嵌入 Note**：note 的 `check` section 是 **inline embedded** 的迷你 quiz——直接在 section 里持 `question_ids[]`，不另建独立 `tool_quiz` Artifact 行（避免数据膨胀，因为 embedded check 跟 section 1:1 强耦合）。
 
-**不抽通用 Tool interface**：Phase 1 只有 quiz 一种 tool kind，搞 generic Tool base 是 YAGNI。等 Phase 3 真出现第二种 tool（visualizer 等）时再抽两者共有的 `mount() / emit() / serialize()`。
+**通用 Tool interface 暂未抽**：Phase 1 只有 quiz 一种 tool kind。Phase 3 出现第二种 tool（visualizer 等）时再抽两者共有的 `mount() / emit() / serialize()`，时机由 owner 决策。
 
 ---
 
@@ -274,13 +274,13 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 | 部署 | Docker compose on NAS：`app` + `worker` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
 | 后台任务 | pg-boss + `scripts/worker.ts` | schedules、queues、OCR、proposal、note generation |
 | AI 调用 | Claude Agent SDK runner + AI SDK v6 package + provider packages | 见上节任务层 |
-| Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 不自建 loop；当前由领域 route 手动注入 MCP，未来再抽 DomainTool registry |
+| Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 当前由领域 route 手动注入 MCP，未来再抽 DomainTool registry |
 | Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
 | Note 渲染 | react-markdown / markdown-it | |
 | 数学公式 | KaTeX | |
 | 图表 | Mermaid | |
 | 视觉录入 | Tencent QuestionMarkAgent async OCR + manual vision rescue | OCR 主路径已落地；vision rescue 手动触发 |
-| 复习算法 | `ts-fsrs` | 成熟 OSS |
+| 复习算法 | `ts-fsrs` | 现成 FSRS 实现 |
 
 **反模式**：
 
@@ -288,9 +288,7 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 - 不要自建账号系统（自用没必要；当前用 `INTERNAL_TOKEN` 单用户内网/隧道保护）
 - 不要把 AI 调用做成「聊天框」，做成后台管线
 - LLM 抽象层不要按 `chat()` 抽象，按任务抽象
-- 不自建 tool-calling 循环，用 OSS
 - 不嵌 Obsidian 当 note 框架（详见 [`modules/notes.md`](modules/notes.md)）
-- 不抽通用 Tool interface（YAGNI，等第二种 tool kind 出现再抽）
 - 不在 Mistake 表里复制题面（题面只在 Question 表）
 - 不在 schema 或 pipeline 里做不必要的分类细化（如批改痕迹类型、跨页 passage 关系等）—— 交给 prompt engineering
 - schema 第一天就加 `updated_at` / `version` 字段，给同步留位

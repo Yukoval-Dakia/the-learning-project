@@ -101,7 +101,7 @@ pnpm audit:schema
 
 - 先 `git status` + `git log --oneline -5` 摸现状，再读这个文件就够了。
 - 用户问"下一步"时，**默认问一句要做上面 1–6 哪条**，不要自作主张挑大坑。
-- 用户偏好：中文回复 / scope discipline / 反过度工程 / 已成熟问题用 OSS / Evidence 留痕 / UI 必须按 design 系统执行。
+- 用户偏好：中文回复 / scope discipline / Evidence 留痕 / UI 必须按 design 系统执行。
 - 本会话用户压了一句「按你的顺序走，避免飘逸」——做新 Phase 前**先写 brainstorm doc 列 IN-SCOPE / OUT-OF-SCOPE / 最可能漂移点**，这是已经验证有效的 discipline。模板见 `docs/superpowers/brainstorms/2026-05-17-phase2b-learning-intent.md` 和 `2026-05-17-phase2c-active-teaching.md`。
 - pnpm dev 前先 `lsof -nP -iTCP:3000` —— OrbStack 容器爱占 :3000，curl :3000 拿到的是容器旧 build。
 - xiaomi/mimo token 在 `.env`（gitignored），别 echo / commit。Provider Manager 只 wire 了 anthropic + xiaomi，其他 throw "not implemented"。

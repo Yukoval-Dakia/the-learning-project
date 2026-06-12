@@ -68,7 +68,7 @@ export type TaggingOutputT = z.infer<typeof TaggingOutput>;
 
 // ---------- WorkflowJudge output (deterministic single-pass aggregate) ----------
 //
-// WorkflowJudge is NOT a second LLM (spec §7 Q1 — single-user, YAGNI). It is a
+// WorkflowJudge is NOT a second LLM (spec §7 Q1 — single-user). It is a
 // deterministic aggregator over extraction_confidence (from extraction) +
 // TaggingTask confidence, producing a route decision + prefilled fields the
 // auto-enroll path consumes. See src/server/ingestion/workflow-judge.ts.

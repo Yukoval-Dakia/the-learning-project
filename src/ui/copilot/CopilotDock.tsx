@@ -21,7 +21,7 @@
 //   • The route does NOT return tool-call details (RunTaskResult is text-only),
 //     so tool-use cards are phase-deferred (no mock fixtures in production).
 //   • Turn persistence + replay-last-N is AF Slice 3a. Rolling summary is S3b
-//     (YAGNI-gated, NOT built here).
+//     (deferred, NOT built here).
 //   • Token never touches the client: requests go through apiJson, which adds
 //     the x-internal-token header; the Anthropic key stays server-side.
 //   • Replay is best-effort: a turns-fetch failure degrades to the prior

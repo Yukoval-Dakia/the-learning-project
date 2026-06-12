@@ -122,8 +122,6 @@ docs/            # architecture.md, modules/, design/
 
 ### Design principles (from `docs/architecture.md` and project memory)
 
-- Use mature OSS for solved problems (tool-calling loops, FSRS, AI SDK). Do not hand-roll.
-- Don't introduce abstractions until a second concrete instance demands them.
 - Evidence-first: AI actions should be traceable and reversible — runs log to `src/server/ai/log.ts`. Preserve this when adding AI features.
 
 ## Planning & Architecture Workflow

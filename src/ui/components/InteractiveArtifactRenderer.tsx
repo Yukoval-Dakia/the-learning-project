@@ -71,7 +71,7 @@ const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${CSP_POLI
  * mode), and any embedded second CSP meta can only TIGHTEN (policies
  * intersect, never loosen). Cost: original head-only children (<title>,
  * <style>) parse in body context — <style> still applies document-wide;
- * acceptable for self-contained content (ADR-0033 反过度工程).
+ * acceptable for self-contained content (ADR-0033).
  */
 function withCsp(html: string): string {
   return `<!doctype html><html><head>${CSP_META}</head><body>${html}</body></html>`;
