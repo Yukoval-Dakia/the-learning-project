@@ -290,10 +290,13 @@ describe('learning_item proposal lifecycle', () => {
     await acceptAiProposal(testDb(), proposalId);
     await retractAiProposal(testDb(), proposalId, { reason_md: 'first' });
 
+    // orderBy 钉行序：proposal 落 3 行 learning_item，无序 select 两次可能拿到
+    // 不同首行，比较 [0] 即假阳性（coderabbit minor）。
     const firstSnapshot = await testDb()
       .select()
       .from(learning_item)
-      .where(eq(learning_item.source_ref, proposalId));
+      .where(eq(learning_item.source_ref, proposalId))
+      .orderBy(learning_item.id);
     const firstArchivedAt = firstSnapshot[0].archived_at;
     const firstVersion = firstSnapshot[0].version;
 
@@ -302,7 +305,8 @@ describe('learning_item proposal lifecycle', () => {
     const secondSnapshot = await testDb()
       .select()
       .from(learning_item)
-      .where(eq(learning_item.source_ref, proposalId));
+      .where(eq(learning_item.source_ref, proposalId))
+      .orderBy(learning_item.id);
     // archived_at + version should not change because we only tombstone rows
     // that are not already archived.
     expect(secondSnapshot[0].archived_at).toEqual(firstArchivedAt);
