@@ -1,11 +1,7 @@
-import {
-  type AdminRunStatus,
-  listAdminRunsPage,
-} from '@/capabilities/observability/server/ai-observability';
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
 
-export const runtime = 'nodejs';
+import { type AdminRunStatus, listAdminRunsPage } from '../server/ai-observability';
 
 function parseStatus(value: string | null): AdminRunStatus | undefined {
   if (value === 'running' || value === 'success' || value === 'failure') return value;
