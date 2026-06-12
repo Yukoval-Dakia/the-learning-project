@@ -5,7 +5,6 @@ import {
 import { artifact, event, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { GET as getLearningItem } from '../../../../app/api/learning-items/[id]/route';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH } from './section-edit';
 
@@ -121,19 +120,11 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
       section: { id: 's1', body_md: '新定义\n\n- 第一条', version: 2 },
     });
 
-    // learning-items 是未迁的 Next 壳（M3 出范围），仍按 Next ctx 形态调用。
-    const reload = await getLearningItem(new Request('http://localhost/api/learning-items/li1'), {
-      params: Promise.resolve({ id: 'li1' }),
-    });
-    expect(reload.status).toBe(200);
-    const detail = (await reload.json()) as {
-      primary_artifact: {
-        version: number;
-        sections: Array<{ id: string; body_md: string; version: number }>;
-      };
-    };
-    expect(detail.primary_artifact.version).toBe(1);
-    expect(detail.primary_artifact.sections[0]).toMatchObject({
+    // 旧 learning-items HTTP 面已随 app/ 拆除退役（M5-T5c）——直接查 artifact 表验证。
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1')).limit(1);
+    expect(art.version).toBe(1);
+    const sections = bodyBlocksToNoteSections(art.body_blocks);
+    expect(sections[0]).toMatchObject({
       id: 's1',
       body_md: '新定义\n\n- 第一条',
       version: 2,

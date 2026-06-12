@@ -35,7 +35,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 /**
- * M1-T6 (YUK-314)：路由耦合从组件里抽出 —— VisionTab 不再 import next/navigation，
+ * M1-T6 (YUK-314)：路由耦合从组件里抽出 —— VisionTab 不再 import 路由库，
  * 由调用方注入实现：旧 Next record 页传 useRouter/useSearchParams 适配（双栈期，
  * T7 拆除），新 Vite SPA 壳（web/src/router.tsx）传 TanStack history 适配。
  */

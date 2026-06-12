@@ -4,7 +4,7 @@
 // unit/DB-tested: Next App Router route modules may ONLY export route handlers
 // (GET/POST/...) + recognized config (runtime/dynamic/...), so an injectable
 // helper or a `Deps` interface cannot live in route.ts (Next's generated
-// .next/types route validator rejects any extra export — see YUK-67 / YUK-167).
+// tsc route validator rejects any extra export — see YUK-67 / YUK-167).
 //
 // Pre-Step-9 the route SELECTed mistake rows where fsrs_state.due <= now() OR
 // fsrs_state IS NULL. Post-Step-9 the legacy mistake table is gone; the FSRS

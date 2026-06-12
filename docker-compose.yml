@@ -8,7 +8,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["node", "migrate.cjs"]
+    command: ["node", "dist/migrate.cjs"]
     env_file:
       - .env
     depends_on:
@@ -25,15 +25,9 @@ services:
     image: the-learning-project-app
     env_file:
       - .env
-    # YUK-148: cross-process editing presence. app (heartbeats) + worker
-    # (note-refine idle checks) share this Redis so the worker doesn't apply an
-    # AI patch mid-edit. Overrides any REDIS_URL in .env so both services agree.
-    environment:
-      REDIS_URL: redis://redis:6379
+    # M5-T5c (YUK-321): presence 走 PgPresenceStore（PG 表），不再依赖 Redis。
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -41,31 +35,26 @@ services:
       - internal
     restart: unless-stopped
     # YUK-137 [M2]: pure LIVENESS probe against the unauthenticated /api/health
-    # route (see middleware.ts — /api/health is exempt from the internal-token
-    # gate). The runner image is node:24-bookworm-slim with no curl/wget
-    # guaranteed, so probe with node's built-in fetch. start_period covers
-    # Next.js cold start. NOTE: success = ANY HTTP response (the Next server is
-    # up), NOT r.ok — /api/health intentionally returns 503 when Postgres is
-    # unreachable, but DB readiness is the postgres container's own healthcheck;
-    # coupling the app's liveness to DB would mark a perfectly-alive app
-    # unhealthy whenever the DB blips.
+    # route (server/app.ts, token 豁免). The runner image is node:24-slim with
+    # no curl/wget guaranteed, so probe with node's built-in fetch.
+    # success = ANY HTTP response (the Hono server is up), NOT r.ok —
+    # /api/health intentionally returns 503 when Postgres is unreachable.
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/api/health').then(()=>process.exit(0)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:8787/api/health').then(()=>process.exit(0)).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 15s
 
   worker:
-    # Same image as `app` — esbuild bundles scripts/worker.ts to worker.cjs
-    # alongside the Next standalone server.js (see Dockerfile + pnpm
-    # build:worker). Runs pg-boss queues + crons:
+    # Same image as `app` — esbuild bundles scripts/worker.ts to dist/worker.cjs.
+    # Runs pg-boss queues + crons:
     #   - knowledge_propose_nightly (cron BJT 02:00)
     #   - knowledge_edge_propose_nightly (cron BJT 02:30)
     #   - prune_orphan_review_sessions (cron BJT 04:15)
@@ -76,17 +65,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["node", "worker.cjs"]
+    command: ["node", "dist/worker.cjs"]
     env_file:
       - .env
-    # YUK-148: same Redis as `app` so editing presence is shared across the two
-    # processes (see app service note).
-    environment:
-      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -110,21 +93,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-
-  redis:
-    # YUK-148: shared editing-presence store for app + worker. Presence is
-    # ephemeral best-effort state — lost presence on restart safely reads as
-    # idle — so no persistence (AOF/RDB) and no volume are configured. Keys
-    # self-expire via a TTL aligned to the heartbeat timeout (see ADR-0023).
-    image: redis:7-alpine
-    networks:
-      - internal
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
 
   postgres:
     # YUK-137 [M2]: pin the floating `pg16` tag to an immutable digest-stable

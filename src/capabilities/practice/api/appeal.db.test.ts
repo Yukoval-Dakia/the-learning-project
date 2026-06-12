@@ -1,7 +1,6 @@
 import { event } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './appeal';
@@ -25,8 +24,8 @@ async function seedJudgeEvent(): Promise<string> {
   return id;
 }
 
-function makeReq(body: unknown): NextRequest {
-  return new NextRequest('http://localhost/api/review/appeal', {
+function makeReq(body: unknown): Request {
+  return new Request('http://localhost/api/review/appeal', {
     method: 'POST',
     body: JSON.stringify(body),
     headers: { 'content-type': 'application/json' },
