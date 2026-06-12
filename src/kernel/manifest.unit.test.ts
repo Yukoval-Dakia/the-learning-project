@@ -106,7 +106,9 @@ describe('validateComposition', () => {
       description: 'b',
       copilotTools: { tools: [{ name: 'query_events' }] },
     };
-    expect(() => validateComposition([a, b])).toThrow(/query_events.*declared by both/);
+    expect(() => validateComposition([a, b])).toThrow(
+      /copilot tool 'query_events' declared by both 'a' and 'b'/,
+    );
   });
 
   it('copilotTools 工具名唯一时通过', () => {
