@@ -18,8 +18,13 @@ export async function registerCapabilityCopilotTools(
     .flatMap((cap) => cap.copilotTools?.tools ?? [])
     .filter((decl) => decl.load);
   for (const decl of decls) {
+    // load 在调用点已被过滤非空；这里再守一道（TS 窄化，对齐 mountJob 先例）。
+    if (!decl.load) continue;
     if (getTool(decl.name)) continue; // CORE_TOOLS 兜底已注册 → 跳过
-    const tool = (await decl.load?.()) as DomainTool<unknown, unknown>;
+    const tool = (await decl.load()) as DomainTool<unknown, unknown>;
+    // M5-T3a 收口：getTool 判空与 registerTool 之间隔 await 挂起点（TOCTOU），
+    // 两个并发聚合器或 bootstrap 可能在此期间注册同名 tool——await 后复查再注册。
+    if (getTool(decl.name)) continue;
     if (tool.name !== decl.name) {
       throw new Error(
         `registerCapabilityCopilotTools: manifest declares '${decl.name}' but module exports '${tool.name}'`,

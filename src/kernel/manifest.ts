@@ -148,14 +148,13 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
       kindOwner.set(decl.kind, cap.name);
     }
   }
-  // 6) copilot 工具名唯一（M5-T3 / YUK-321）
   const copilotToolOwners = new Map<string, string>();
   for (const cap of capabilities) {
     for (const tool of cap.copilotTools?.tools ?? []) {
       const owner = copilotToolOwners.get(tool.name);
-      if (owner) {
+      if (owner !== undefined) {
         throw new Error(
-          `validateComposition: copilot tool '${tool.name}' declared by both '${owner}' and '${cap.name}'`,
+          `copilot tool '${tool.name}' declared by both '${owner}' and '${cap.name}'`,
         );
       }
       copilotToolOwners.set(tool.name, cap.name);
