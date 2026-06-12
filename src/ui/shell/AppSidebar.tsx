@@ -79,7 +79,8 @@ export function AppSidebar({
               key={entry.id}
               type="button"
               className={`nav-item${active === entry.id ? ' is-active' : ''}`}
-              onClick={() => go(ROUTE_MAP[entry.id] ?? '/today')}
+              // fallback /mistakes：/today 已迁 SPA，Next 侧无此路由（M4, YUK-319）
+              onClick={() => go(ROUTE_MAP[entry.id] ?? '/mistakes')}
               title={entry.label}
             >
               <LoomIcon name={entry.icon} size={19} />
