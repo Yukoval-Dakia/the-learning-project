@@ -54,6 +54,29 @@ export const aiProposalKinds = [
 export const AiProposalKind = z.enum(aiProposalKinds);
 export type AiProposalKindT = z.infer<typeof AiProposalKind>;
 
+// M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
+// actions.ts）只为这 14 个 kind 实现了 accept applier；defer / archive /
+// judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer
+// /accept 语义归 YUK-44）。UI（ProposalCard）据此门控 Accept CTA；
+// inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现三 kind === aiProposalKinds」，
+// dispatchAccept 增删 kind 时漂移会被测试拦下。
+export const acceptSupportedProposalKinds = [
+  'knowledge_node',
+  'knowledge_edge',
+  'knowledge_mutation',
+  'learning_item',
+  'note_update',
+  'variant_question',
+  'completion',
+  'relearn',
+  'record_links',
+  'record_promotion',
+  'goal_scope',
+  'block_merge',
+  'image_candidate',
+  'question_draft',
+] as const satisfies readonly AiProposalKindT[];
+
 export const ProposalEvidenceRef = z.object({
   kind: z.enum(['event', 'question', 'knowledge', 'artifact', 'record']),
   id: z.string().min(1),

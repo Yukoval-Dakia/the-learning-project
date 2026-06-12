@@ -5,6 +5,7 @@
 // question_draft 5 个按同一 tone 语系补全（hard=节奏类、neutral=归档、
 // coral=内容生成类），icon 取自 LoomIcon 既有名。
 
+import { acceptSupportedProposalKinds } from '@/core/schema/proposal';
 import { apiJson } from '@/ui/lib/api';
 
 // ── kind 元数据（agency meta.ts 同形态：fallback-safe，绝不 throw） ──
@@ -36,6 +37,18 @@ export const KIND_META: Record<string, KindMeta> = {
 
 export function kindMeta(kind: string): KindMeta {
   return KIND_META[kind] ?? { label: kind, icon: 'inbox', tone: 'neutral' };
+}
+
+// M4 review fix (YUK-319, codex P2)：dispatchAccept 对 defer / archive /
+// judge_retraction 未实现 accept（400 unsupported_proposal_kind，归 YUK-44）；
+// 卡片对这三个 kind 不渲 Accept CTA，只留忽略（dismiss kind-无关，安全）。
+// 注意 legacy knowledge 事件可派生出 archive kind 进收件箱，门控不能省。
+// 集合真身在 core（acceptSupportedProposalKinds），与 dispatchAccept 的漂移
+// 由 inbox-meta.unit.test.ts 分区钉测拦住。
+const acceptSupported: ReadonlySet<string> = new Set(acceptSupportedProposalKinds);
+
+export function isAcceptSupported(kind: string): boolean {
+  return acceptSupported.has(kind);
 }
 
 // 关系类型白话（设计稿 REL_LABEL 原文）。
