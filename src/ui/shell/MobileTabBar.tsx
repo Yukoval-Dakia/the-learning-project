@@ -29,7 +29,8 @@ export function MobileTabBar({ onOpenMobileNav }: MobileTabBarProps) {
             key={tab.id}
             className={`mtab${isActive ? ' is-active' : ''}`}
             onClick={() =>
-              tab.id === '__more' ? onOpenMobileNav() : router.push(ROUTE_MAP[tab.id] ?? '/today')
+              // fallback /mistakes：/today 已迁 SPA，Next 侧无此路由（M4, YUK-319）
+              tab.id === '__more' ? onOpenMobileNav() : router.push(ROUTE_MAP[tab.id] ?? '/mistakes')
             }
           >
             <LoomIcon name={tab.icon} size={20} />

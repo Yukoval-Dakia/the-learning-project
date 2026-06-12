@@ -3,6 +3,12 @@
 // surfaces that actually exist under app/(app)/*. The prototype's hash router
 // (`#base/param`) becomes real routes via ROUTE_MAP; `activeFromPath` is the
 // usePathname()-driven equivalent of the prototype's `navActive = base`.
+//
+// M4 review fix (YUK-319, codex P2)：已迁 SPA 的面（M1-M3 的 review/practice/
+// record/knowledge/notes + M4 的 today/inbox）从本配置整体摘除——旧壳与 SPA
+// 不同 origin，router.push 这些路径在 Next 侧是 404 死链。旧壳只剩整理区
+// （mistakes/questions/items 及无侧栏入口的 coach/events 等），M5 拆整壳时
+// 本文件随旧壳一起删除。
 
 import type { LoomIconName } from '@/ui/primitives/LoomIcon';
 
@@ -27,64 +33,43 @@ export function isSection(entry: NavEntry): entry is NavSection {
   return 'section' in entry;
 }
 
-// Sidebar nav — two sections: 织造 (weaving: the active learning loop) and
-// 整理 (organizing: the captured corpus). Counts are static placeholders that
-// later slices will wire to real due/inbox/mistake totals.
+// Sidebar nav — the 织造 section (today/review/practice/record) and the
+// inbox/knowledge entries are gone: those surfaces live in the SPA now. Only
+// the 整理 (organizing) corpus pages remain in the old shell.
 export const NAV: NavEntry[] = [
-  { section: '织造' },
-  { id: 'today', label: '今日', icon: 'today' },
-  { id: 'review', label: '复习', icon: 'review' },
-  { id: 'practice', label: '练习', icon: 'layers' },
-  { id: 'record', label: '录入', icon: 'record' },
   { section: '整理' },
-  { id: 'inbox', label: '收件箱', icon: 'inbox' },
   { id: 'mistakes', label: '错题', icon: 'mistakes' },
   // 题库 (questions) — YUK-288 S1 已落地 /questions 列表 + 详情（只读侧）。位置按
   // 设计稿「错题与练习附近」落在「错题」后、「学习项」前（TITLES/ROUTE_MAP/
   // PATH_ACTIVE 早已就位）。
   { id: 'questions', label: '题库', icon: 'quiz' },
   { id: 'items', label: '学习项', icon: 'items' },
-  { id: 'knowledge', label: '知识', icon: 'knowledge' },
 ];
 
 /** Mobile bottom bar: ≤5 core entries; `__more` opens the sidebar drawer. */
 export const MOBILE_NAV: NavItem[] = [
-  { id: 'today', label: '今日', icon: 'today' },
-  { id: 'review', label: '复习', icon: 'review' },
-  { id: 'record', label: '录入', icon: 'record' },
-  { id: 'knowledge', label: '知识', icon: 'knowledge' },
+  { id: 'mistakes', label: '错题', icon: 'mistakes' },
+  { id: 'questions', label: '题库', icon: 'quiz' },
+  { id: 'items', label: '学习项', icon: 'items' },
   { id: '__more', label: '更多', icon: 'menu' },
 ];
 
 /** Breadcrumb title for the topbar, keyed by active id / route base. */
 export const TITLES: Record<string, string> = {
-  today: '今日',
-  review: '复习',
-  practice: '练习',
-  record: '录入',
-  inbox: '收件箱',
   mistakes: '错题',
   questions: '题库',
   items: '学习项',
-  knowledge: '知识',
   coach: 'Coach',
   events: '事件链',
   'learning-sessions': '学习会话',
-  notes: '笔记',
   'study-log': '学习日志',
 };
 
 /** Maps a nav id → the concrete App Router path to push. */
 export const ROUTE_MAP: Record<string, string> = {
-  today: '/today',
-  review: '/review',
-  practice: '/practice',
-  record: '/record',
-  inbox: '/inbox',
   mistakes: '/mistakes',
   questions: '/questions',
   items: '/learning-items',
-  knowledge: '/knowledge',
 };
 
 // Ordered, longest-prefix-first so /learning-items wins over a bare /learning,
@@ -93,17 +78,10 @@ export const ROUTE_MAP: Record<string, string> = {
 const PATH_ACTIVE: Array<[string, string]> = [
   ['/learning-items', 'items'],
   ['/learning-sessions', 'learning-sessions'],
-  ['/today', 'today'],
-  ['/review', 'review'],
-  ['/practice', 'practice'],
-  ['/record', 'record'],
-  ['/inbox', 'inbox'],
   ['/mistakes', 'mistakes'],
   ['/questions', 'questions'],
-  ['/knowledge', 'knowledge'],
   ['/coach', 'coach'],
   ['/events', 'events'],
-  ['/notes', 'notes'],
   ['/study-log', 'study-log'],
 ];
 
