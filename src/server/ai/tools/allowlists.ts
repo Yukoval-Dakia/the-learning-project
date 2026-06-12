@@ -120,7 +120,21 @@ const KNOWLEDGE_REVIEW_TOOLS = [
   'propose_knowledge_mutation',
 ] as const satisfies readonly DomainToolName[];
 
-const COPILOT_TOOLS = [
+// M5-T3 (YUK-321) — 归属真相源已移至各包 manifest.copilotTools（五包 25 工具），
+// 本数组保持字面量是因为 src/ai/registry.ts（浏览器共享面）import 本文件，
+// 不能把 @/capabilities 拉进 web bundle（plan 裁决 h）。两面一致性由
+// src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
+//
+// CORE_TOOLS 退役时点（phase-deferred）：bootstrap.ts registerCoreTools 不在 M5
+// 退役——它注册的是全工具面（含 attribute_mistake / propose_variant /
+// propose_record_links / propose_record_promotion 与题目结构编辑工具等非
+// copilot allowlist 成员），copilotTools 贡献制只覆盖本数组 25 条。退役条件 =
+// 其余 surface（mistake_action / orchestrator / dreaming 等）也完成 manifest 化
+// （post-M5 follow-up，Linear capture 见 plan Task 10 交接清单）；届时删
+// registerCoreTools 调用，由 register-capability-tools.unit.test.ts 的幂等用例
+// 守护切换。届时独立 worker 进程需自行调用 registerCapabilityCopilotTools
+// （当前 worker 走 bootstrap 全量注册，贡献制切换后不自动覆盖）。
+export const COPILOT_TOOLS = [
   'query_memory_brief',
   'get_subject_graph_overview',
   'query_knowledge',

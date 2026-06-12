@@ -41,4 +41,30 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
+  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读 + artifact authoring 写）。
+  copilotTools: {
+    tools: [
+      {
+        name: 'query_events',
+        load: () => import('@/server/ai/tools/query-events').then((m) => m.queryEventsTool),
+      },
+      {
+        name: 'query_memory_brief',
+        load: () => import('@/server/ai/tools/context-readers').then((m) => m.queryMemoryBriefTool),
+      },
+      {
+        name: 'search_memory_facts',
+        load: () =>
+          import('@/server/ai/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
+      },
+      {
+        name: 'author_artifact',
+        load: () => import('@/server/ai/tools/author-artifact').then((m) => m.authorArtifactTool),
+      },
+      {
+        name: 'update_artifact',
+        load: () => import('@/server/ai/tools/author-artifact').then((m) => m.updateArtifactTool),
+      },
+    ],
+  },
 });

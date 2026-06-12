@@ -117,4 +117,38 @@ export const knowledgeCapability = defineCapability({
       { kind: 'archive' },
     ],
   },
+  // M5-T3 (YUK-321) — copilot 工具归属声明（图谱读 4 + 知识提议写 2）。
+  copilotTools: {
+    tools: [
+      {
+        name: 'query_knowledge',
+        load: () => import('@/server/ai/tools/knowledge-readers').then((m) => m.queryKnowledgeTool),
+      },
+      {
+        name: 'get_subject_graph_overview',
+        load: () =>
+          import('@/server/ai/tools/knowledge-readers').then((m) => m.getSubjectGraphOverviewTool),
+      },
+      {
+        name: 'expand_knowledge_subgraph',
+        load: () =>
+          import('@/server/ai/tools/knowledge-readers').then((m) => m.expandKnowledgeSubgraphTool),
+      },
+      {
+        name: 'find_knowledge_paths',
+        load: () =>
+          import('@/server/ai/tools/knowledge-readers').then((m) => m.findKnowledgePathsTool),
+      },
+      {
+        name: 'propose_knowledge_edge',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeKnowledgeEdgeTool),
+      },
+      {
+        name: 'propose_knowledge_mutation',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeKnowledgeMutationTool),
+      },
+    ],
+  },
 });
