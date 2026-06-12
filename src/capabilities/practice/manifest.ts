@@ -122,6 +122,28 @@ export const practiceCapability = defineCapability({
         path: '/api/questions/[id]/solve/[sid]/hint',
         load: () => import('./api/solve-hint').then((m) => m.POST),
       },
+      // M5-T5a (YUK-321) — 题库 CRUD（D16 出 M2 范围，留旧栈至 M5 收口——
+      // vite.config M2 注释——现收编）。
+      {
+        method: 'GET',
+        path: '/api/questions',
+        load: () => import('./api/questions-list').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/questions/[id]',
+        load: () => import('./api/question-detail').then((m) => m.GET),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/questions/[id]',
+        load: () => import('./api/question-detail').then((m) => m.PATCH),
+      },
+      {
+        method: 'DELETE',
+        path: '/api/questions/[id]',
+        load: () => import('./api/question-detail').then((m) => m.DELETE),
+      },
     ],
   },
   jobs: {
