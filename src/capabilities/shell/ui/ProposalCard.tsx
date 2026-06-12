@@ -21,6 +21,7 @@ import {
   decideProposal,
   evidenceReadable,
   isAcceptSupported,
+  isBlockMergeStale,
   kindMeta,
 } from './inbox-api';
 
@@ -80,6 +81,9 @@ export function ProposalCard({
   const meta = kindMeta(p.kind);
   const [busy, setBusy] = useState(false);
   const [pickingRel, setPickingRel] = useState(false);
+  // codex 验证轮 P3：裁决留痕后按钮组整体锁定——卡片留在列表里，再点会
+  // 重复请求 / 反向操作直接 409。
+  const locked = busy || resolved !== null;
 
   const decide = async (
     decision: ProposalDecision,
@@ -88,7 +92,15 @@ export function ProposalCard({
   ) => {
     setBusy(true);
     try {
-      await decideProposal(p.id, decision, opts);
+      const result = await decideProposal(p.id, decision, opts);
+      // YUK-271（codex 验证轮 P2）：stale 的 block_merge accept 没写 rate
+      // event，提议仍 pending——不标已裁决，经页级 toast 说明后保持可操作。
+      if (isBlockMergeStale(result)) {
+        onError(
+          `该题块合并提议已失效（题块状态已变更：${result.skip_reason ?? 'unknown'}），已跳过。`,
+        );
+        return;
+      }
       onResolve(p.id, label);
     } catch (err) {
       onError(err instanceof Error ? err.message : '裁决失败，请重试。');
@@ -150,7 +162,7 @@ export function ProposalCard({
               size="sm"
               variant="good"
               icon="check"
-              disabled={busy}
+              disabled={locked}
               onClick={() => void decide('accept', '已接受')}
             >
               {p.kind === 'block_merge' ? '接受合并' : '接受'}
@@ -162,7 +174,7 @@ export function ProposalCard({
                 size="sm"
                 variant="ghost"
                 icon="reverse"
-                disabled={busy}
+                disabled={locked}
                 onClick={() => void decide('reverse', '已改方向')}
               >
                 改方向
@@ -171,7 +183,7 @@ export function ProposalCard({
                 size="sm"
                 variant="ghost"
                 icon="refresh"
-                disabled={busy}
+                disabled={locked}
                 onClick={() => setPickingRel((v) => !v)}
               >
                 改关系
@@ -182,7 +194,7 @@ export function ProposalCard({
             size="sm"
             variant="ghost"
             icon="close"
-            disabled={busy}
+            disabled={locked}
             onClick={() => void decide('dismiss', '已忽略')}
           >
             忽略
@@ -218,7 +230,7 @@ export function ProposalCard({
               role="tab"
               aria-selected={rel === k}
               className={rel === k ? 'on' : ''}
-              disabled={busy}
+              disabled={locked}
               onClick={() => void decide('change_type', '已改关系', { newRelationType: k })}
             >
               {label.split(' ')[0]}
