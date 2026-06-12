@@ -7,7 +7,14 @@ import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
 import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
+import {
+  AdminCostSurface,
+  AdminFailuresSurface,
+  AdminRunsSurface,
+} from '@/capabilities/observability/ui/observability';
+import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
+import CoachPage from '@/capabilities/shell/ui/CoachPage';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
 import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import {
@@ -171,6 +178,64 @@ const noteReaderRoute = createRoute({
   component: NoteReaderRouteC,
 });
 
+// M5-T4 (YUK-321) — observability 四页 + Coach 周报。admin 页是独立壳形态
+//（design app.jsx:106-114「admin is a separate shell — no main app chrome」，
+// 收编 chrome 须 owner 拍板——见 docs/audit/2026-06-13-visual-gap.md §5 决策点③）。
+function CoachRoute() {
+  const router = useRouter();
+  return <CoachPage navigate={(to) => router.history.push(to)} />;
+}
+
+const coachRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/coach',
+  component: CoachRoute,
+});
+
+function AdminRunsRoute() {
+  const router = useRouter();
+  return <AdminRunsSurface navigate={(to) => router.history.push(to)} />;
+}
+
+const adminRunsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/runs',
+  component: AdminRunsRoute,
+});
+
+function AdminCostRoute() {
+  const router = useRouter();
+  return <AdminCostSurface navigate={(to) => router.history.push(to)} />;
+}
+
+const adminCostRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/cost',
+  component: AdminCostRoute,
+});
+
+function AdminFailuresRoute() {
+  const router = useRouter();
+  return <AdminFailuresSurface navigate={(to) => router.history.push(to)} />;
+}
+
+const adminFailuresRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/failures',
+  component: AdminFailuresRoute,
+});
+
+function AdminSubjectsRoute() {
+  const router = useRouter();
+  return <AdminSubjectsSurface navigate={(to) => router.history.push(to)} />;
+}
+
+const adminSubjectsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/subjects',
+  component: AdminSubjectsRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   todayRoute,
@@ -181,6 +246,11 @@ const routeTree = rootRoute.addChildren([
   knowledgeRoute,
   knowledgeDetailRoute,
   noteReaderRoute,
+  coachRoute,
+  adminRunsRoute,
+  adminCostRoute,
+  adminFailuresRoute,
+  adminSubjectsRoute,
 ]);
 
 export const router = createRouter({ routeTree });
