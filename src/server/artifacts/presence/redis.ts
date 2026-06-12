@@ -15,6 +15,7 @@ import {
   type PresenceStore,
   type QueuedPatch,
   type RecordHeartbeatInput,
+  type SerializedQueuedPatch,
 } from './types';
 
 const KEY_PREFIX = 'editing:';
@@ -23,12 +24,7 @@ const KEY_PREFIX = 'editing:';
 // this JSON shape. Dates are carried as ms-since-epoch numbers so the Lua
 // scripts can do arithmetic (`now - lastHeartbeatAt > timeout`) without date
 // parsing. pending carries each QueuedPatch with queuedAt as ms epoch too.
-interface SerializedQueuedPatch {
-  patch: unknown;
-  taskResult?: unknown;
-  triggerEventId: string | null;
-  queuedAtMs: number;
-}
+// SerializedQueuedPatch is shared with the PG store (YUK-321) — see types.ts.
 interface SerializedState {
   status: EditingStatus;
   lastHeartbeatAtMs: number;
