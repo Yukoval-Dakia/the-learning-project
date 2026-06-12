@@ -97,6 +97,14 @@ interface CostTodayResponse {
   };
 }
 
+// 成本格式跟设计稿 $X.XX，但 cost_ledger.cost 常见 sub-cent 单价——直接
+// toFixed(2) 会把非零花费渲染成 $0.00，与 quiet-empty 的「真零」语义混淆。
+// 非零但不足半美分时显式标 <$0.01，金额可信度优先于格式统一。
+function fmtSpend(spend: number): string {
+  if (spend > 0 && spend < 0.005) return '<$0.01';
+  return `$${spend.toFixed(2)}`;
+}
+
 function CostRibbon() {
   const q = useQuery({
     queryKey: ['cost-today'],
@@ -129,13 +137,13 @@ function CostRibbon() {
         {t && (
           <>
             <div className="cost-top">
-              <div className="cost-amt serif tnum">${t.spend.toFixed(2)}</div>
+              <div className="cost-amt serif tnum">{fmtSpend(t.spend)}</div>
             </div>
             <div className="cost-tasks">
               {t.by_task.map((row) => (
                 <span key={row.task_kind} className="chip">
                   <span className="mono">{row.task_kind}</span>{' '}
-                  <b className="mono">${row.spend.toFixed(2)}</b>
+                  <b className="mono">{fmtSpend(row.spend)}</b>
                 </span>
               ))}
             </div>
