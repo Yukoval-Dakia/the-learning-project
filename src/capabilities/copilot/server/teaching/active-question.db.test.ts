@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { countAttemptOutcomes, getActiveQuestionState } from './active-question';
 
 async function seedTeachingQuestion(sessionId: string, createdAt: Date): Promise<string> {

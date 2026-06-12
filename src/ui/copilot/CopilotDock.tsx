@@ -29,7 +29,7 @@
 
 'use client';
 
-import type { CopilotSkillContextT } from '@/server/copilot/chat';
+import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { useCopilotDwell, useCopilotOpenSignal } from '@/ui/lib/use-copilot-dwell';
@@ -64,7 +64,7 @@ interface CopilotSummary {
 }
 
 // AF S4 / YUK-203 U6 — UI-side mirror of the server CopilotSkillTurn carrier
-// (src/server/copilot/chat.ts). Set only when a teaching/solve skill ran a
+// (src/capabilities/copilot/server/chat.ts). Set only when a teaching/solve skill ran a
 // structured turn; absent for free-form chat (so the existing text-only render
 // path is untouched). The Dock reads `structured_question` + `suggested_next`
 // to render the inline question card + corrective chip.
@@ -82,7 +82,7 @@ interface SkillTurn {
   suggested_next?: 'continue' | 'end';
 }
 
-// POST /api/copilot/chat response shape — see src/server/copilot/chat.ts
+// POST /api/copilot/chat response shape — see src/capabilities/copilot/server/chat.ts
 // (CopilotChatResult). `reply` is the complete final text (non-streaming).
 interface CopilotChatResponse {
   task_run_id: string;
@@ -104,7 +104,7 @@ interface CopilotChatResponse {
   primary_view?: ReplayPrimaryView;
 }
 
-// GET /api/copilot/turns response shape — see src/server/copilot/turns.ts.
+// GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
 interface CopilotTurnsResponse {
   turns: ReplayTurn[];
 }

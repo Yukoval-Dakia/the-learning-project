@@ -6,10 +6,10 @@
 
 import { asc, eq } from 'drizzle-orm';
 
+import { getActiveQuestionState } from '@/capabilities/copilot/server/teaching/active-question';
 import { db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { getActiveQuestionState } from '@/server/teaching/active-question';
 
 export const runtime = 'nodejs';
 

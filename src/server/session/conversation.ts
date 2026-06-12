@@ -116,7 +116,7 @@ const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
  * Resolve the single live Copilot conversation session that THIS surface would
  * reuse right now (or `null` if none). This is the SHARED reuse predicate:
  * `findOrCreateCopilotConversation` uses it to decide find-vs-create, and the
- * turns reader (src/server/copilot/turns.ts) uses it to scope replay to the
+ * turns reader (src/capabilities/copilot/server/turns.ts) uses it to scope replay to the
  * current session so a stale prior conversation's turns are never preloaded
  * into what the server treats as a fresh session (codex #3356884484). Keeping
  * one predicate prevents the two call sites from drifting.

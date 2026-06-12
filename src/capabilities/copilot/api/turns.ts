@@ -1,14 +1,8 @@
-// AF S3a / YUK-203 U3 — GET /api/copilot/turns?limit=20
-//
-// Replay-last-N: returns the recent Copilot conversation turns (ask/chip + reply
-// pairs) oldest→newest so the drawer can prefill its message list on open. Token
-// gated by middleware.ts (x-internal-token) like every other /api/* route.
+// M5-T3 (YUK-321) — GET /api/copilot/turns?limit=20（重放 last-N，等价平移）。
 
 import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-
-export const runtime = 'nodejs';
 
 export async function GET(req: Request): Promise<Response> {
   try {

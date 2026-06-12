@@ -6,16 +6,16 @@
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
+import { getActiveQuestionState } from '@/capabilities/copilot/server/teaching/active-question';
+// AF S4 / YUK-203 U6 (OQ7) — the ask_check INSERT is extracted to a shared
+// service fn so the Copilot teaching-skill reuses the SAME impl (R2: off the
+// tool surface). The legacy route calls it in-place; behavior is unchanged.
+import { materializeAskCheckQuestion } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import { db } from '@/db/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { TeachingError, planTeachingTurn } from '@/server/orchestrator/teaching';
 import { Conversation } from '@/server/session';
-import { getActiveQuestionState } from '@/server/teaching/active-question';
-// AF S4 / YUK-203 U6 (OQ7) — the ask_check INSERT is extracted to a shared
-// service fn so the Copilot teaching-skill reuses the SAME impl (R2: off the
-// tool surface). The legacy route calls it in-place; behavior is unchanged.
-import { materializeAskCheckQuestion } from '@/server/teaching/materialize-ask-check';
 
 export const runtime = 'nodejs';
 
