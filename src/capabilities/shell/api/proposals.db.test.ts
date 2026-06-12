@@ -122,7 +122,7 @@ describe('GET /api/proposals (shell)', () => {
     expect(accepted.rows.map((r) => r.id)).toContain('edge_p1');
   });
 
-  it('filters by kind within the page', async () => {
+  it('filters by kind', async () => {
     await seedKnowledge(['k1', 'k2']);
     await seedEdgeProposal('edge_p1', 'k1', 'k2');
     await seedLearningItemProposal('learning_p1');
@@ -138,6 +138,40 @@ describe('GET /api/proposals (shell)', () => {
 
     const invalidRes = await listProposals(listRequest('?kind=bogus'));
     expect(invalidRes.status).toBe(400);
+  });
+
+  // codex P2 / coderabbit major 回归：kind 过滤在读模型投影层执行，分页语义
+  // 作用于「过滤后的流」——limit 数满页、next_cursor 续页不漏不重，而不是
+  // 旧实现的页内 post-filter（next_cursor 指向未过滤流，跨页会漏行）。
+  it('kind filter paginates the filtered stream across pages (no gaps, no dupes)', async () => {
+    await seedKnowledge(['k1', 'k2', 'k3', 'k4']);
+    await seedEdgeProposal('edge_p1', 'k1', 'k2');
+    await seedLearningItemProposal('learning_p1');
+    await seedEdgeProposal('edge_p2', 'k2', 'k3');
+    await seedLearningItemProposal('learning_p2');
+    await seedEdgeProposal('edge_p3', 'k3', 'k4');
+
+    type Page = { rows: Array<{ id: string; kind: string }>; next_cursor: string | null };
+
+    const firstRes = await listProposals(listRequest('?kind=knowledge_edge&limit=2'));
+    expect(firstRes.status).toBe(200);
+    const first = (await firstRes.json()) as Page;
+    expect(first.rows).toHaveLength(2);
+    expect(first.rows.every((r) => r.kind === 'knowledge_edge')).toBe(true);
+    expect(first.next_cursor).not.toBeNull();
+
+    const secondRes = await listProposals(
+      listRequest(`?kind=knowledge_edge&limit=2&cursor=${encodeURIComponent(first.next_cursor as string)}`),
+    );
+    expect(secondRes.status).toBe(200);
+    const second = (await secondRes.json()) as Page;
+    expect(second.rows).toHaveLength(1);
+    expect(second.rows.every((r) => r.kind === 'knowledge_edge')).toBe(true);
+    expect(second.next_cursor).toBeNull();
+
+    const seen = [...first.rows, ...second.rows].map((r) => r.id);
+    expect(new Set(seen).size).toBe(3);
+    expect([...seen].sort()).toEqual(['edge_p1', 'edge_p2', 'edge_p3']);
   });
 
   it('rejects invalid status and limit', async () => {
