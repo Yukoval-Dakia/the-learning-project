@@ -1,7 +1,9 @@
 // M4-T6 (YUK-319)：进行中会话条（设计稿 screen-today.jsx SessionsStrip）。
 // 偏差：真 wire（workbench summary active_sessions）无 subject / dist 字段，
-// strip-title 用「已复习 N 题」形态；status 三态 badge（in_progress 进行中 /
-// completed 已完成 / 其它 已中断）。
+// strip-title 用「已复习 N 题」形态；status 三态 badge（started 进行中 /
+// completed 已完成 / 其它(paused/abandoned) 已中断）——wire 透传
+// learning_session.status，状态机是 started|paused|completed|abandoned
+// （codex 验证轮 P2：曾误判 'in_progress'，live 永不为真）。
 
 import { formatRelTime } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
@@ -41,7 +43,7 @@ export function SessionsStrip({
       ) : (
         <div className="strip-list">
           {sessions.map((s) => {
-            const live = s.status === 'in_progress';
+            const live = s.status === 'started';
             const statusLabel = live ? '进行中' : s.status === 'completed' ? '已完成' : '已中断';
             return (
               <div key={s.id} className="strip">
