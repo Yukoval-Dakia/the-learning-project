@@ -10922,6 +10922,10 @@ button.seg-sm {
   font-family: var(--font-mono);
   font-size: var(--fs-meta);
   color: var(--ink-4);
+  /* S2-fix (YUK-335): count 不可折成竖列（today-loom R8 同款守卫，audit「count
+     折行孤行」正是本 slice 要修的；.count 是 .rule{flex:1} 旁的 flex 子）。 */
+  flex: none;
+  white-space: nowrap;
 }
 
 /* ---- /agent-notes page-head chrome (loom.css L167-172) — scoped
@@ -10981,6 +10985,10 @@ button.seg-sm {
   font-family: var(--font-mono);
   font-size: var(--fs-meta);
   color: var(--ink-4);
+  /* S2-fix (YUK-335): /agent-notes 的 count 是双 token「N 条」——最易折行；
+     today-loom R8 同款守卫。 */
+  flex: none;
+  white-space: nowrap;
 }
 
 /* ---- /practice pface 流 page-head chrome — scoped .pface-loom (NEW class on

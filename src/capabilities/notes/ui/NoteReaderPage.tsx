@@ -7,6 +7,7 @@
 
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
+import { ErrorState } from '@/ui/primitives/ErrorState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
@@ -117,6 +118,15 @@ export default function NoteReaderPage({
     return (
       <main className="page wide note-reader-page">
         <SkLines rows={6} />
+      </main>
+    );
+  // S4-fix (YUK-335)：error 态独立分支（设计源用 Stateful 三态）——否则瞬时 fetch
+  // 失败会落进下面的 !note 分支，被误读成永久「笔记不存在」、且无重试入口。消化
+  // ported-but-idle 的 ErrorState（audit P4）。
+  if (noteQ.isError)
+    return (
+      <main className="page wide note-reader-page">
+        <ErrorState text="笔记加载失败。" onRetry={() => void noteQ.refetch()} />
       </main>
     );
   if (!note)
