@@ -10,6 +10,8 @@
 import { authorArtifactTool, updateArtifactTool } from './author-artifact';
 import {
   getLearningItemContextTool,
+  // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure reader.
+  getQuestionBlockStructureTool,
   getQuestionContextTool,
   getRecordContextTool,
   getReviewDueTool,
@@ -80,6 +82,9 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   searchMemoryFactsTool as DomainTool<unknown, unknown>,
   // ADR-0032 D9 / YUK-304 (lane B) — READ_TOOLS tail; order mirrors allowlists.ts.
   queryQuestionsTool as DomainTool<unknown, unknown>,
+  // ADR-0032 D6-draftread (YUK-203 lane L5) — READ_TOOLS tail; order mirrors
+  // allowlists.ts (the listTools() inventory assertion depends on it).
+  getQuestionBlockStructureTool as DomainTool<unknown, unknown>,
   proposeKnowledgeEdgeTool as DomainTool<unknown, unknown>,
   proposeKnowledgeMutationTool as DomainTool<unknown, unknown>,
   attributeMistakeTool as DomainTool<unknown, unknown>,
