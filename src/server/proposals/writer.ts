@@ -65,10 +65,20 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
         subject_kind: 'knowledge_edge',
         subject_id: proposalSubjectId(payload),
         event_payload: {
+          // ADR-0032 D4-E1 (YUK-203) — carry the edge_op discriminator (default
+          // 'create' for legacy/create payloads) + archive target onto the raw
+          // event payload so the accept applier (decideKnowledgeEdgeProposal,
+          // which reads proposeRow.payload directly) and the inbox derive can
+          // branch without re-parsing ai_proposal. Create-branch payloads keep
+          // the exact prior shape plus edge_op:'create' (additive, no regression).
+          edge_op: payload.proposed_change.edge_op,
           from_knowledge_id: payload.proposed_change.from_knowledge_id,
           to_knowledge_id: payload.proposed_change.to_knowledge_id,
           relation_type: payload.proposed_change.relation_type,
           weight: payload.proposed_change.weight,
+          ...(payload.proposed_change.archive_edge_id
+            ? { archive_edge_id: payload.proposed_change.archive_edge_id }
+            : {}),
           reasoning: payload.reason_md,
           ai_proposal: payload,
         },

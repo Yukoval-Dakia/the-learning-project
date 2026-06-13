@@ -422,12 +422,18 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
     });
   }
   if (row.action === 'propose' && row.subject_kind === 'knowledge_edge') {
+    // ADR-0032 D4-E1 (YUK-203) — carry the edge_op discriminator + archive target
+    // through the derive so an ARCHIVE proposal renders as archive (not create) in
+    // the inbox. Absent edge_op (legacy events written before D4-E1) defaults to
+    // 'create' in the schema parse, so the create-branch derive is unchanged.
+    const edgeOp = payload.edge_op === 'archive' ? 'archive' : 'create';
     return parseAiProposalPayload({
       kind: 'knowledge_edge',
       target: { subject_kind: 'knowledge_edge', subject_id: row.subject_id },
       reason_md: String(payload.reasoning ?? ''),
       evidence_refs: [],
       proposed_change: {
+        edge_op: edgeOp,
         from_knowledge_id: String(payload.from_knowledge_id ?? ''),
         to_knowledge_id: String(payload.to_knowledge_id ?? ''),
         relation_type: String(payload.relation_type ?? ''),
@@ -435,6 +441,9 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
           typeof payload.weight === 'number' && Number.isFinite(payload.weight)
             ? payload.weight
             : undefined,
+        ...(edgeOp === 'archive' && typeof payload.archive_edge_id === 'string'
+          ? { archive_edge_id: payload.archive_edge_id }
+          : {}),
       },
     });
   }
@@ -589,13 +598,20 @@ export async function getProposalInboxRow(
 function legacyPayloadFor(row: EventRow): { payload: Record<string, unknown>; reasoning: string } {
   const payload = toRecord(row.payload);
   if (row.subject_kind === 'knowledge_edge') {
+    // ADR-0032 D4-E1 (YUK-203) — additively carry edge_op + archive target so the
+    // legacy knowledge-proposal consumer can distinguish archive from create.
+    // Absent edge_op (pre-D4-E1 events) → 'create' default downstream.
     return {
       payload: {
         mutation: 'propose_knowledge_edge',
+        edge_op: payload.edge_op === 'archive' ? 'archive' : 'create',
         from_knowledge_id: payload.from_knowledge_id,
         to_knowledge_id: payload.to_knowledge_id,
         relation_type: payload.relation_type,
         weight: payload.weight,
+        ...(typeof payload.archive_edge_id === 'string'
+          ? { archive_edge_id: payload.archive_edge_id }
+          : {}),
       },
       reasoning: String(payload.reasoning ?? ''),
     };
