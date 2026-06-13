@@ -10801,6 +10801,193 @@ button.seg-sm {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   S2 (YUK-335) — loom 页头 chrome 漏页补 port (inbox / agentnotes / pface)
+   + note-reader page-title.  Same scoped strategy as .knowledge-loom /
+   .today-loom / .items-loom: the legacy .page-head / .eyebrow / .page-title /
+   .page-head-row / .page-lead / .section-label / .seg globals are consumed by
+   ~40 surfaces and MUST NOT change, so loom design values are scoped per page.
+   Design source: docs/design/loom-refresh/project/loom.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---- /inbox page-head chrome (loom.css L167-172) — scoped .inbox-loom ---- */
+.inbox-loom .page-head {
+  margin-bottom: var(--s-6);
+}
+.inbox-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.inbox-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.inbox-loom .page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.inbox-loom .page-lead {
+  color: var(--ink-3);
+  font-size: var(--fs-body-lg);
+  max-width: 58ch;
+  margin-top: var(--s-3);
+  line-height: var(--lh-prose);
+}
+/* SectionLabel loom flex shape (loom.css L240-243); the 4 lane headers go from
+   28px 秃标 + count 折行 → serif h2 + 横向 rule + mono count right-aligned.
+   SectionLabel.tsx already renders .rule/.count spans, so JSX is untouched.
+   margin matches the shipped today-loom / items-loom precedent (--s-8). */
+.inbox-loom .section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-8) 0 var(--s-4);
+}
+.inbox-loom .section-label h2 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.inbox-loom .section-label .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.inbox-loom .section-label .count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+/* ---- /agent-notes page-head chrome (loom.css L167-172) — scoped
+   .agentnotes-loom (globals 零命中 before this slice) ---- */
+.agentnotes-loom .page-head {
+  margin-bottom: var(--s-6);
+}
+.agentnotes-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.agentnotes-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.agentnotes-loom .page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.agentnotes-loom .page-lead {
+  color: var(--ink-3);
+  font-size: var(--fs-body-lg);
+  max-width: 58ch;
+  margin-top: var(--s-3);
+  line-height: var(--lh-prose);
+}
+/* 日分组标题用 SectionLabel primitive (renders .rule/.count) — loom flex shape
+   (loom.css L240-243); JSX untouched. */
+.agentnotes-loom .section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-8) 0 var(--s-4);
+}
+.agentnotes-loom .section-label h2 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.agentnotes-loom .section-label .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.agentnotes-loom .section-label .count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+/* ---- /practice pface 流 page-head chrome — scoped .pface-loom (NEW class on
+   <main>, grep-confirmed absent globally; .practice-loom is NOT mounted by any
+   pface component so no shelf paper-grid leak).  eyebrow loom.css L168; seg pill
+   model = loom.css / screens.css L144-146 (legacy global .seg is a single-button
+   model, hence the 图标文字分行 / 无 pill / 无选中态 before this slice);
+   page-title loom.css L170 (serif). ---- */
+.pface-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.pface-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.pface-loom .seg {
+  display: inline-flex;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 2px;
+}
+.pface-loom .seg button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  padding: 6px 14px;
+  border-radius: var(--r-1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.pface-loom .seg button.on {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---- /notes/$id reader h1 — scoped .note-reader-page .page-title.  Design
+   note-reader.css L50 (.note-doc-title) is fs-display (48px); the impl h1 uses
+   .page-title (NoteReaderPage.tsx:223) which had no rule → base h1 36px.  Only
+   page-title lifted here; entry strip / read-mode structure is S12, not this
+   slice. ---- */
+.note-reader-page .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-display);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    practice-loom — 成卷练习 screen styles.
    Ported verbatim from docs/design/loom-prototype/practice.css (additively)
    into a practice-loom scope.  Map §C5 ruling: .dist-bar / .status-tabs are

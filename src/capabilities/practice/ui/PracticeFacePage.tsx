@@ -204,7 +204,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   }
 
   return (
-    <main className="page wide">
+    <main className="page wide pface-loom">
       <div className="pface-root">{body}</div>
       {createPortal(
         <div className="pf-toasts" aria-live="polite">
