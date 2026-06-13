@@ -38,6 +38,9 @@ describe('InteractiveArtifactDiscovery', () => {
     // discovery rows reuse the note-link-row shape.
     expect(html).toContain('note-link-row');
     expect(html).toContain('互动');
+    // updated_at is formatted via toLocaleDateString — assert the year shows
+    // (TZ-robust: the UTC-midnight fixture is 2026-06-12/13 local, both contain 2026).
+    expect(html).toContain('2026');
   });
 
   it('renders nothing when there are no interactive artifacts (no empty block)', () => {

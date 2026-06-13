@@ -79,16 +79,20 @@ function ArtifactReferenceCard({
 // the row carries no renderable html (parse-fail → interactive=null), it
 // degrades to the plain reference card. copilot-hero scale CSS already in
 // globals.css (.copilot-loom .copilot-hero .note-interactive-shell).
+// `artifactRef` (NOT `ref`): a {kind,id} domain object, deliberately NOT named
+// `ref` — React reserves `ref` as a special prop channel (React 19 would forward
+// it as a prop today, but naming a domain payload `ref` is a footgun if this is
+// ever wrapped in forwardRef / given a real DOM ref).
 function InteractiveArtifactHero({
-  ref,
+  artifactRef,
   navigate,
 }: {
-  ref: { kind: string; id: string };
+  artifactRef: { kind: string; id: string };
   navigate: (to: string) => void;
 }) {
   const noteQ = useQuery({
-    queryKey: ['note-page', ref.id],
-    queryFn: () => getNotePage(ref.id),
+    queryKey: ['note-page', artifactRef.id],
+    queryFn: () => getNotePage(artifactRef.id),
   });
   const html = noteQ.data?.interactive?.html ?? null;
   if (html) {
@@ -101,8 +105,8 @@ function InteractiveArtifactHero({
   // loading / error / parse-fail → reference card.
   return (
     <ArtifactReferenceCard
-      hero={resolveArtifactHero(ref)}
-      fallbackKind={ref.kind}
+      hero={resolveArtifactHero(artifactRef)}
+      fallbackKind={artifactRef.kind}
       navigate={navigate}
     />
   );
@@ -121,7 +125,7 @@ export function CopilotHeroCard({ primaryView, navigate }: CopilotHeroCardProps)
     // Persistent interactive artifact → inline render (fetches its own html).
     // Every other artifact kind keeps the reference card (不重复取数, §2.3).
     if (isInteractiveArtifactRef(primaryView.ref.kind)) {
-      return <InteractiveArtifactHero ref={primaryView.ref} navigate={navigate} />;
+      return <InteractiveArtifactHero artifactRef={primaryView.ref} navigate={navigate} />;
     }
     return (
       <ArtifactReferenceCard
