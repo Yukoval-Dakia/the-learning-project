@@ -10,8 +10,9 @@
 // draft_status='draft' — non-destructive by the Option-B gate semantics
 // (invisible to pool / review / FSRS, quiz_gen precedent) — and a
 // `question_draft` proposal is written IN THE SAME TRANSACTION. Accept
-// (acceptQuestionDraftProposal, src/server/proposals/actions.ts) promotes
-// draft→active + FSRS-enrolls. Draft-row-at-propose-time (not insert-on-accept)
+// (acceptQuestionDraftProposal in src/capabilities/practice/server/
+// proposal-appliers.ts; actions.ts is now only the dispatch shell — M4-T4 YUK-319)
+// promotes draft→active + FSRS-enrolls. Draft-row-at-propose-time (not insert-on-accept)
 // is load-bearing for the same-turn 组卷 flow: write_quiz (RP-2 draft-allowed)
 // must reference a REAL question_id in the same copilot turn.
 //
