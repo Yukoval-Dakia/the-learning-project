@@ -113,12 +113,10 @@ export function MeshGraph({
                   if (e.key === 'Enter') onPick(byId.get(n.id) ?? n);
                 }}
               >
-                <circle
-                  className={`mesh-disc tone-${pct == null ? 'none' : tone}`}
-                  r={16}
-                  stroke={activeId === n.id ? 'var(--coral)' : 'var(--line)'}
-                  strokeWidth={activeId === n.id ? 2.5 : 1.2}
-                />
+                {/* S5 (YUK-335): stroke/选中态全交给 CSS——inline stroke presentation
+                    attribute 会被 .mesh-disc.tone-* 类规则压制（CSS 类 > SVG attr），
+                    选中态改由 <g> 的 .is-active 类 + knowledge.css 规则驱动。 */}
+                <circle className={`mesh-disc tone-${pct == null ? 'none' : tone}`} r={16} />
                 {pct != null && (
                   <text y={4} textAnchor="middle" className="mesh-node-pct mono">
                     {pct}
