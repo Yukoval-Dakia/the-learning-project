@@ -5,6 +5,11 @@
 > **组合层**（一串卡 + 成品怎么排）= 本文件定的新面。结论：组合层基本是**既有通用机制上的 caller 策略**（density / primary_view / ribbon 剂量），零新卡片基建；唯二新建 = interactive artifact（ADR-0033）+ async tracker（P3）。
 >
 > 创建：2026-06-09。Refs：YUK-276（ToolUseCard 组件）· ADR-0033（interactive artifact）· `docs/design/2026-06-07-copilot-tool-use-cards/`（design handoff）· ADR-0031（draft=proposal）· ADR-0032（工具面）· `2026-06-04-agent-framework-design.md`（agent 论点）。
+>
+> **M5 后注（YUK-321，2026-06-13）**：Copilot 收口已落地为 `src/capabilities/copilot/`
+> （capability manifest 的 copilotTools 贡献制 + Hono SSE，D14 单人格）。本文「唯二新建」中
+> interactive artifact（ADR-0033）与 async tracker（P3）**未**随 M5 落地，保留为 future work；
+> 文中 `app/api/**` 路径已随旧栈拆除迁移至 capability manifests。
 
 ---
 
