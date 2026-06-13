@@ -157,3 +157,5 @@ ADR-0017 §"Anti-storm" 6min 单例 lock 仍然 holds（针对 brief regen，不
 - `triggers.outbox.test.ts` 6 真实 db 场景全过（happy / tx-rollback / idempotency / batch-limit / recovery-drain / recovery-empty）
 - `pnpm test` 全过（含 unit / db / migration-smoke）
 - `pnpm build` 全过
+
+> **M5 路径注（YUK-321，2026-06-13）**：本文提及的 `app/api/**` Next route 路径已随旧栈拆除迁移至 capability manifests（`src/capabilities/*/manifest.ts` + 各包 `api/*.ts`），由组合根 `server/app.ts` 挂载；决策本身不受影响。

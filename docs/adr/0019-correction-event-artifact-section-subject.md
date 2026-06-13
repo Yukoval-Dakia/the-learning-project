@@ -141,3 +141,5 @@ No DB migration required: `event.payload` is `jsonb`, `event.subject_kind` alrea
 - Per-lane plan: [`docs/superpowers/plans/2026-05-26-note-appeal-mark-wrong.md`](../superpowers/plans/2026-05-26-note-appeal-mark-wrong.md)
 - API route (Sub 2): `app/api/artifacts/[id]/correct/route.ts` (not in Sub 1)
 - UI integration (Sub 3): `NoteRenderer` / `learning-items/[id]/page.tsx` (not in Sub 1; separate design-doc pre-flight)
+
+> **M5 路径注（YUK-321，2026-06-13）**：本文提及的 `app/api/**` Next route 路径已随旧栈拆除迁移至 capability manifests（`src/capabilities/*/manifest.ts` + 各包 `api/*.ts`），由组合根 `server/app.ts` 挂载；决策本身不受影响。

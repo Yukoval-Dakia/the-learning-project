@@ -70,3 +70,5 @@ slice 3 的 WorkflowJudge 高置信自动入库时会把它设成 `'workflow_jud
 ## 一句话总结
 
 > 捕获不是错题——outcome 是 signal：做对喂 mastery（不推 FSRS）、做错走错题链、没作答进题库。
+
+> **M5 路径注（YUK-321，2026-06-13）**：本文提及的 `app/api/**` Next route 路径已随旧栈拆除迁移至 capability manifests（`src/capabilities/*/manifest.ts` + 各包 `api/*.ts`），由组合根 `server/app.ts` 挂载；决策本身不受影响。

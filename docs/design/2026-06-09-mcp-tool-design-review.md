@@ -6,6 +6,11 @@
 > 已被 compact 过一次——本文档的首要目的是**让审查可在压缩后续上**。
 >
 > 创建：2026-06-09。最近一次更新：M-1/M-2/E-1 收口、crystallize 进 ADR-0032。
+>
+> **M5 后注（YUK-321，2026-06-13）**：工具面已随 M5 落地为 capability manifest 的
+> copilotTools 贡献制（`src/capabilities/*/manifest.ts`，组合根 `server/app.ts` 聚合）；
+> §1.1 基线引用的 `src/server/ai/tools/bootstrap.ts` CORE_TOOLS 清单已随旧栈退役
+> （见 M5 plan Task 3 注记）。本文继续作为审查全过程的决策账本保留。
 
 ---
 

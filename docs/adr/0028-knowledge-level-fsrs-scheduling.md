@@ -65,3 +65,5 @@ uses that generic point for the real scheduling unit.
 - Migration: `drizzle/0027_knowledge_fsrs_state.sql`
 - Code: `app/api/review/submit/route.ts`, `src/server/review/due-list.ts`,
   `src/server/boss/handlers/quiz_verify.ts`
+
+> **M5 路径注（YUK-321，2026-06-13）**：本文提及的 `app/api/**` Next route 路径已随旧栈拆除迁移至 capability manifests（`src/capabilities/*/manifest.ts` + 各包 `api/*.ts`），由组合根 `server/app.ts` 挂载；决策本身不受影响。

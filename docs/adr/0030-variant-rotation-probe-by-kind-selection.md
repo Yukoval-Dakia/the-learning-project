@@ -127,3 +127,5 @@ ADR-0012 的 `knowledge_mastery`（派生 view）当前**不进入**本轮的轮
 - Tests: `app/api/review/due/route.test.ts`（+ 可能新增 `app/api/review/due/variant-rotation.test.ts`）
 - 被消费的血缘: ADR-0018 `question.{root_question_id, parent_variant_id, variant_depth}`（variant_gen 写、本 ADR 读）
 - 不动: ADR-0028 FSRS 存储/调度/event 形状、`/api/review/due` wire 契约（纯选题逻辑替换）
+
+> **M5 路径注（YUK-321，2026-06-13）**：本文提及的 `app/api/**` Next route 路径已随旧栈拆除迁移至 capability manifests（`src/capabilities/*/manifest.ts` + 各包 `api/*.ts`），由组合根 `server/app.ts` 挂载；决策本身不受影响。
