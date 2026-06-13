@@ -49,6 +49,19 @@ export const aiProposalKinds = [
   // experimental:proposal event/inbox path (writeAiProposal default +
   // proposalWhere); no writer/inbox change.
   'question_draft',
+  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed node edit to an
+  // ACTIVE (draft_status='active', pooled) question's `structured` tree. The
+  // propose_question_edit tool addresses nodes by the SAME id/role coordinate
+  // system the L5 addressable projection reads (get_question_context
+  // include:['structure']) — read≡write coordinate parity. Proposal-only +
+  // reversible: accept (acceptQuestionEditProposal in the practice package)
+  // re-runs a mini verify gate, then applies the op to question.structured via
+  // a node-addressed mutation, bumps version, and writes an
+  // experimental:question_structure_edit audit event (before/after) so retract
+  // can correct it — never a raw structured overwrite. Flows through the
+  // existing experimental:proposal event/inbox path (writeAiProposal default +
+  // proposalWhere); no writer/inbox change.
+  'question_edit',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
@@ -75,6 +88,8 @@ export const acceptSupportedProposalKinds = [
   'block_merge',
   'image_candidate',
   'question_draft',
+  // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
+  'question_edit',
 ] as const satisfies readonly AiProposalKindT[];
 
 export const ProposalEvidenceRef = z.object({
@@ -265,6 +280,54 @@ export const QuestionDraftProposalChange = z.object({
 });
 export type QuestionDraftProposalChangeT = z.infer<typeof QuestionDraftProposalChange>;
 
+// ADR-0032 D6-B (YUK-203 lane L6) — question_edit proposed_change. The edit is a
+// NARROW, typed node operation (NOT an arbitrary JSON patch): one op per
+// proposal, addressing a node by its `node_id` in the active question's
+// `structured` tree (the same id/role coordinate the L5 addressable projection
+// exposes). Each op is intentionally scoped to a single structured-node field so
+// the accept-side verify gate can re-derive the resulting tree and re-validate
+// the StructuredQuestion invariants before persisting:
+//   - edit_node_text   — overwrite a node's prompt_text (stem passage / leaf 题面).
+//   - edit_reference    — overwrite a leaf node's answers + analysis (参考答案/解析).
+//   - set_choice        — replace the option list of a single-choice/leaf node.
+//   - set_node_kind     — set the advisory `kind` hint on a node (no pool effect).
+// `question_id` names the active question row; `node_id` names the target node.
+export const QuestionEditOp = z.discriminatedUnion('op', [
+  z.object({
+    op: z.literal('edit_node_text'),
+    node_id: z.string().min(1),
+    prompt_text: z.string().min(1),
+  }),
+  z.object({
+    op: z.literal('edit_reference'),
+    node_id: z.string().min(1),
+    // Both optional individually, but the tool/applier require at least one to be
+    // present (an edit must change something). answers replaces the full list.
+    answers: z.array(z.string()).optional(),
+    analysis: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal('set_choice'),
+    node_id: z.string().min(1),
+    options: z.array(z.object({ label: z.string().min(1), text: z.string() })).min(1),
+  }),
+  z.object({
+    op: z.literal('set_node_kind'),
+    node_id: z.string().min(1),
+    kind: QuestionKind,
+  }),
+]);
+export type QuestionEditOpT = z.infer<typeof QuestionEditOp>;
+
+export const QuestionEditProposalChange = z.object({
+  question_id: z.string().min(1),
+  edit: QuestionEditOp,
+  // Display-only excerpt for the inbox card (the question row is the source of
+  // truth — accept re-reads the live tree, never trusts this snapshot).
+  node_preview: z.string().optional(),
+});
+export type QuestionEditProposalChangeT = z.infer<typeof QuestionEditProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -350,6 +413,15 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     kind: z.literal('question_draft'),
     target: ProposalTarget.extend({ subject_kind: z.literal('question') }),
     proposed_change: QuestionDraftProposalChange,
+  }),
+  // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit. target
+  // is the live active question row (subject_id = question id, known at propose
+  // time). Accept applies the narrow op to question.structured (practice package
+  // applier) behind a mini verify gate; reversible via the audit event.
+  BaseProposal.extend({
+    kind: z.literal('question_edit'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('question') }),
+    proposed_change: QuestionEditProposalChange,
   }),
 ]);
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;

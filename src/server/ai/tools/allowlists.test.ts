@@ -42,6 +42,8 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0033 D6 (YUK-306 lane D) — interactive artifact authoring pair.
       'author_artifact',
       'update_artifact',
+      // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
+      'propose_question_edit',
     ]);
   });
 
@@ -146,6 +148,9 @@ describe('DomainTool allowlist policy', () => {
       // interactive artifacts itself (Claude Artifacts pattern).
       'author_artifact',
       'update_artifact',
+      // ADR-0032 D6-B (YUK-203 lane L6) — the copilot proposes narrow structured
+      // edits to active (pooled) questions in-conversation (user-driven).
+      'propose_question_edit',
     ]);
     // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never
     // a DomainTool — it is not in COPILOT_TOOLS (R2).
@@ -289,6 +294,26 @@ describe('DomainTool allowlist policy', () => {
       expect(DOMAIN_TOOL_ALLOWLISTS.dreaming).not.toContain(tool);
       expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain(tool);
     }
+  });
+
+  // ADR-0032 D6-B (YUK-203 lane L6) — propose_question_edit (active-question
+  // structured node edit) is a copilot-only capability (the chip surface inherits
+  // via the [...copilot, …] spread). It must NOT reach the operator/planner
+  // surfaces, and — distinct from the 6 DRAFT-layer structure-edit write tools —
+  // it must NOT be on ingestion_block_edit either (that surface edits the DRAFT
+  // layer; this one edits the ACTIVE/pooled question).
+  it('grants propose_question_edit to the copilot surfaces only (ADR-0032 D6-B)', () => {
+    expect(PROPOSE_WRITE_TOOLS).toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(
+      'propose_question_edit',
+    );
+    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.dreaming).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain('propose_question_edit');
   });
 
   it('renders MCP allowedTools names for the selected server', () => {
