@@ -16,7 +16,14 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { REL_CUE } from './MeshGraph';
+import { humanizeActivity } from './humanize-activity';
 import { type KnowledgeNodePage, type NoteSummary, getNodePage } from './knowledge-api';
+import './knowledge.css';
+
+// S8 (YUK-335 audit §3.9)：活动时间线默认只渲前 N 条，其余折叠 —— 防 kd-side
+// 被 30 条无界 event 撑爆（设计源 screen-item-detail 侧栏无长时间线处理，
+// 故按任务用更可控的 count-cap + 查看更多，而非 max-height 渐隐）。
+const TIMELINE_COLLAPSED = 6;
 
 const DECAY_BUCKET_META: Record<
   KnowledgeNodePage['mastery_decay_bucket'],
@@ -71,6 +78,7 @@ export default function KnowledgeDetailPage({
   navigate: (to: string) => void;
 }) {
   const [toast, setToast] = useState<string | null>(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const pageQ = useQuery({ queryKey: ['knowledge-node', id], queryFn: () => getNodePage(id) });
 
   const placeholder = (text: string) => {
@@ -343,38 +351,67 @@ export default function KnowledgeDetailPage({
             {node.timeline.length === 0 ? (
               <div className="quiet-empty">无活动记录</div>
             ) : (
-              <div className="event-chain">
-                {node.timeline.map((a, i) => (
-                  <div key={a.event_id} className="event-row">
-                    <span className="event-rail">
-                      <span
-                        className="event-dot"
-                        style={{
-                          background: `var(--${a.outcome === 'failure' ? 'again' : a.outcome === 'success' ? 'good' : 'info'})`,
-                        }}
-                      />
-                      {i < node.timeline.length - 1 && <span className="event-line" />}
-                    </span>
-                    <div className="event-body">
-                      <div className="event-head nowrap-meta">
-                        <span className="mono event-label">{a.action}</span>
-                        <span className="meta">
-                          {new Date(a.created_at).toLocaleString('zh-CN', {
-                            month: 'numeric',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
-                      </div>
-                      <div className="event-note meta">
-                        {a.actor_kind} · {a.subject_kind}
-                        {a.outcome ? ` · ${a.outcome}` : ''}
-                      </div>
+              (() => {
+                // 倒序已是最近在前（wire 约定）。默认只渲前 TIMELINE_COLLAPSED 条，
+                // 展开后渲全部 —— 防 kd-side 被无界时间线撑爆（S8 audit §3.9）。
+                const shown =
+                  timelineOpen || node.timeline.length <= TIMELINE_COLLAPSED
+                    ? node.timeline
+                    : node.timeline.slice(0, TIMELINE_COLLAPSED);
+                return (
+                  <>
+                    <div className="event-chain">
+                      {shown.map((a, i) => (
+                        <div key={a.event_id} className="event-row">
+                          <span className="event-rail">
+                            <span
+                              className="event-dot"
+                              style={{
+                                background: `var(--${a.outcome === 'failure' ? 'again' : a.outcome === 'success' ? 'good' : 'info'})`,
+                              }}
+                            />
+                            {i < shown.length - 1 && <span className="event-line" />}
+                          </span>
+                          <div className="event-body">
+                            {/* S8 (YUK-335 §2 P3)：event-note 渲人话句；event-head 去掉裸
+                                a.action mono 标签（避免 debug-log 味与人话句重复），只留时间。 */}
+                            <div className="event-note">{humanizeActivity(a)}</div>
+                            <div className="event-head nowrap-meta">
+                              <span className="meta">
+                                {new Date(a.created_at).toLocaleString('zh-CN', {
+                                  month: 'numeric',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
-              </div>
+                    {node.timeline.length > TIMELINE_COLLAPSED && (
+                      <button
+                        type="button"
+                        className="kd-timeline-more"
+                        onClick={() => setTimelineOpen((o) => !o)}
+                      >
+                        {timelineOpen ? (
+                          <>
+                            收起
+                            <LoomIcon name="arrow" size={12} className="kd-timeline-more-up" />
+                          </>
+                        ) : (
+                          <>
+                            查看全部 {node.timeline.length} 条
+                            <LoomIcon name="arrow" size={12} className="kd-timeline-more-down" />
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </>
+                );
+              })()
             )}
           </div>
         </div>

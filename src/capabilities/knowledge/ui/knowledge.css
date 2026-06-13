@@ -71,3 +71,30 @@
   stroke: var(--coral);
   stroke-width: 2.5px;
 }
+
+/* S8 (YUK-335 audit §3.9)：活动时间线「查看全部 / 收起」折叠触发器。
+   复用 globals 的 .event-* 链；此处只补按钮，scoped 到 .kd-timeline-more。
+   弱视觉（meta 字号 + ink-3），不抢人话句风头。 */
+.kd-timeline-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--s-2);
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.kd-timeline-more:hover {
+  color: var(--ink-2);
+}
+/* LoomIcon arrow glyph 默认指向右；转 90° 朝下（查看全部）/ -90° 朝上（收起）。 */
+.kd-timeline-more-down {
+  transform: rotate(90deg);
+}
+.kd-timeline-more-up {
+  transform: rotate(-90deg);
+}
