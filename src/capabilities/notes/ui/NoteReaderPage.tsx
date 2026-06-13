@@ -6,8 +6,10 @@
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
 
 import { Btn } from '@/ui/primitives/Btn';
+import { EmptyState } from '@/ui/primitives/EmptyState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SkLines } from '@/ui/primitives/SkLines';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import './note-reader.css';
@@ -109,19 +111,27 @@ export default function NoteReaderPage({
     },
   });
 
+  // S4 (YUK-335)：空/载态从裸 .quiet-empty 一行字升级为 SkLines/EmptyState
+  // primitives——原样式读作「故障」（14px 灰字悬空，无图形锚点/标题层级）。
   if (noteQ.isLoading)
     return (
-      <main className="page wide">
-        <p className="quiet-empty">取笔记…</p>
+      <main className="page wide note-reader-page">
+        <SkLines rows={6} />
       </main>
     );
   if (!note)
     return (
-      <main className="page wide">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
-          返回知识
-        </Btn>
-        <p className="quiet-empty">笔记不存在或已归档。</p>
+      <main className="page wide note-reader-page">
+        <EmptyState
+          icon="doc"
+          title="笔记不存在"
+          text="这篇笔记不存在或已被归档。"
+          action={
+            <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
+              返回知识
+            </Btn>
+          }
+        />
       </main>
     );
 
