@@ -2000,7 +2000,9 @@ async function proposeQuestionEditExecute(
       proposed_change: {
         question_id: input.question_id,
         edit,
-        node_preview: excerpt(gated.after.prompt_text ?? row.structured.prompt_text),
+        // gated.after is snapshotNode(editedNode); prompt_text is a required
+        // StructuredQuestion field, so the snapshot always carries it (no fallback).
+        node_preview: excerpt(gated.after.prompt_text),
       },
       rollback_plan: {
         action: 'dismiss proposal; the active question structure is unchanged',

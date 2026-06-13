@@ -425,9 +425,12 @@ function findStructuredNode(
 }
 
 /**
- * Deep-clone `node` and apply `mutate` in place to the node whose id matches
- * `target`. Returns the cloned tree + whether a node matched. The mutation runs
- * on the cloned node so the caller never aliases the persisted jsonb.
+ * Copy-on-write (path-copy) `node` and apply `mutate` to the node whose id
+ * matches `target`. NOT a deep clone of the whole tree: only the root→target
+ * path is freshly cloned (the matched node plus each of its ancestors); sibling
+ * subtrees that do not contain the target are shared by reference with the
+ * input. Because every node on the path to the match is fresh, mutating the
+ * matched clone can never alias the persisted jsonb. Returns the new tree + whether a node matched.
  */
 function mapStructuredNodeById(
   node: StructuredQuestionT,
