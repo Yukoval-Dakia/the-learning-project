@@ -2,6 +2,15 @@
 
 @import "tailwindcss";
 
+/* YUK-323 (F0) — Tailwind v4 auto content-detection bases at the Vite root
+   (web/), so it scans web/ but NOT the SPA's actual components under <root>/src
+   (mounted via the `@` → ../src alias). Without this the compiled @layer
+   utilities is empty: every arbitrary/utility class used in src/**.tsx
+   (CopilotDrawer `fixed inset-0 z-[60]`, primitives, record CTA…) emits zero CSS.
+   This stylesheet lives at <root>/web/src/globals.css, so ../../src = <root>/src.
+   (M5 teardown deleted app/, so the audit's stale `../app` source is dropped.) */
+@source "../../src";
+
 @theme {
   /* ── Color · Paper (warm whites) ───────────────────────── */
   --color-paper: #faf9f5;
