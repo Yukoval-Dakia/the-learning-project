@@ -5,6 +5,8 @@
 **Decision source**: 2026-06-09 grill 会话（owner 逐条澄清：copilot 当 orchestrator / inline 不抛后台 / 给 copilot search + write_question_draft 原语 / 重申 copilot 全工具读写）。
 **Related**: `docs/superpowers/specs/2026-06-04-agent-framework-design.md`（**full safe capability** 原则 L67/L278/L292，本 ADR 的上位依据）· ADR-0025 ND-5（proposal-only 正主，只管破坏性改动）· ADR-0028（知识级 FSRS）· ADR-0029（tool_quiz 唯一容器 / 记忆治理 §3）· ADR-0011（tool_use 事件 + 卡片）· `.omc/research/copilot-implementation-audit-2026-06-07.md`（AP-1~4 / GZ-1）· YUK-262/272/275/284（quiz 现状 C 形态）· YUK-302（材料+小题 结构，被本 ADR 吸收为工具 schema）。
 
+> **实现后注（2026-06-13，YUK-203）**：决定 1-7 **全部落地**——copilot 在自己 loop 内 `query_questions → author_question → write_quiz` 出题；`detectQuizIntent/resolveQuizIntent/runQuizSkill` pre-dispatch 已下线；方法论住 `src/subjects/_shared/skills/quiz-gen/SKILL.md`；结构由 `QuestionAuthorDraft` schema 兜（吸收 YUK-302）；draft+proposal 同事务 + user-accept gate；重 QuizGenTask/SourcingTask 降级夜间 pg-boss only。**工具命名以 ADR-0032 D8 为准**：标题与决定里的 `search` → `query_questions`（题池查重）+ Tavily MCP（联网，折进 copilot run）、`write_question_draft` → `author_question`（写）+ `write_quiz`（组卷）。D5（实现期任务）：U6 防循环红线原在 `quiz-skill.ts:51`，已随 C 形态拆除被删（文件不存在）→ 红线物理消失，无残留注待标。
+
 ---
 
 ## 背景
