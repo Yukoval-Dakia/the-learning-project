@@ -120,11 +120,34 @@ export const KnowledgeNodeProposalChange = z.object({
 });
 export type KnowledgeNodeProposalChangeT = z.infer<typeof KnowledgeNodeProposalChange>;
 
+// ADR-0032 D4-E1 (YUK-203) — edge proposal discriminator. `edge_op` distinguishes
+// CREATE (the pre-existing default: propose a new mesh edge) from ARCHIVE (soft-delete
+// a live edge — set archived_at via the accept applier, never a hard delete;守
+// 「写入仅 propose + correction 可回滚」不变量). It is an ADDITIVE marker with
+// `.default('create')`, so every payload written before this field (the nightly
+// batch path, all create-branch tool callers, every persisted proposal event)
+// parses byte-identically to the prior create shape — backward compatibility is
+// preserved by construction. `from/to/relation_type` stay required on BOTH ops:
+// for archive they NAME the edge the proposal targets (inbox card render + rubric
+// structural checks read them), while `archive_edge_id` is the authoritative id
+// the applier flips. The node omnibus (propose_knowledge_mutation: propose_new …
+// archive) is the discriminator precedent; here the discriminator lives on the
+// proposed_change rather than a separate proposal kind to keep the knowledge_edge
+// kind (and its inbox/writer/dispatch wiring) single — only one new branch.
 export const KnowledgeEdgeProposalChange = z.object({
+  // 'create' (default / absence) = propose a new edge; 'archive' = soft-delete the
+  // live edge named by archive_edge_id. Defaulted so legacy/create payloads are
+  // unchanged.
+  edge_op: z.enum(['create', 'archive']).default('create'),
   from_knowledge_id: z.string().min(1),
   to_knowledge_id: z.string().min(1),
   relation_type: RelationTypeSchema,
   weight: z.number().min(0).max(1).default(1),
+  // Authoritative target for edge_op==='archive': the live knowledge_edge.id to
+  // soft-delete. Optional on the shape so create payloads omit it; the archive
+  // PROPOSE path requires it (enforced at the tool executor, not the schema, so
+  // the create branch's parse stays untouched).
+  archive_edge_id: z.string().min(1).optional(),
 });
 export type KnowledgeEdgeProposalChangeT = z.infer<typeof KnowledgeEdgeProposalChange>;
 

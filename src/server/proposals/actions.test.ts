@@ -142,6 +142,115 @@ describe('proposal lifecycle owner service', () => {
     });
   });
 
+  // ADR-0032 D4-E1 (YUK-203) — edge ARCHIVE accept: a knowledge_edge proposal with
+  // edge_op:'archive' soft-deletes the named live edge (sets archived_at) instead
+  // of inserting one. Idempotent + create-only decisions (reverse/change_type) are
+  // rejected.
+  it('acceptAiProposal archives a live edge for an edge_op:archive proposal (idempotent)', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await db.insert(knowledge_edge).values({
+      id: 'edge_live_archive',
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: new Date(),
+    });
+
+    await writeAiProposal(db, {
+      id: 'edge_archive_p1',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: 'edge_live_archive' },
+        reason_md: 'k1—related_to→k2 only restates the tree; archive it',
+        evidence_refs: [],
+        proposed_change: {
+          edge_op: 'archive',
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+          archive_edge_id: 'edge_live_archive',
+        },
+        cooldown_key: 'knowledge_edge_archive:edge_live_archive',
+      },
+    });
+
+    const result = await acceptAiProposal(db, 'edge_archive_p1');
+    expect(result.kind).toBe('knowledge_edge');
+    if (result.kind !== 'knowledge_edge') throw new Error('unexpected result');
+    expect(result.edge_id).toBe('edge_live_archive');
+    expect(result.generate_event_id).toBeTruthy();
+
+    const archivedRows = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_live_archive'));
+    expect(archivedRows).toHaveLength(1);
+    expect(archivedRows[0].archived_at).not.toBeNull();
+
+    // Re-accept is idempotent — no new rate/edge mutation, archived_at unchanged.
+    const archivedAtFirst = archivedRows[0].archived_at;
+    const reaccept = await acceptAiProposal(db, 'edge_archive_p1');
+    expect(reaccept.kind).toBe('knowledge_edge');
+    if (reaccept.kind !== 'knowledge_edge') throw new Error('unexpected result');
+    expect(reaccept.idempotent).toBe(true);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'edge_archive_p1')));
+    expect(rateRows).toHaveLength(1);
+    const afterReaccept = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_live_archive'));
+    expect(afterReaccept[0].archived_at?.getTime()).toBe(archivedAtFirst?.getTime());
+  });
+
+  it('decideKnowledgeEdgeProposal rejects reverse/change_type on an archive proposal', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await db.insert(knowledge_edge).values({
+      id: 'edge_live_archive2',
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: new Date(),
+    });
+    await writeAiProposal(db, {
+      id: 'edge_archive_p2',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: 'edge_live_archive2' },
+        reason_md: 'archive this edge',
+        evidence_refs: [],
+        proposed_change: {
+          edge_op: 'archive',
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'related_to',
+          weight: 1,
+          archive_edge_id: 'edge_live_archive2',
+        },
+        cooldown_key: 'knowledge_edge_archive:edge_live_archive2',
+      },
+    });
+
+    await expect(
+      decideKnowledgeEdgeProposal(db, 'edge_archive_p2', { decision: 'reverse' }),
+    ).rejects.toThrow(/only supports accept\/dismiss/);
+    // The edge stays live (the rejected decision wrote nothing).
+    const stillLive = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'edge_live_archive2'));
+    expect(stillLive[0].archived_at).toBeNull();
+  });
+
   it('acceptAiProposal applies a note_update patch proposal and writes a rate event', async () => {
     const db = testDb();
     const now = new Date();

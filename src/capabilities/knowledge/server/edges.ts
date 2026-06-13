@@ -203,5 +203,54 @@ export async function createKnowledgeEdge(
   return id;
 }
 
+// ---------- Archive (soft-delete) ----------
+
+export interface ArchiveKnowledgeEdgeResult {
+  /** The edge id that was targeted. */
+  id: string;
+  /** true if THIS call flipped archived_at NULL→now; false if it was already archived (idempotent no-op). */
+  archived: boolean;
+}
+
+/**
+ * ADR-0032 D4-E1 (YUK-203) — soft-delete one knowledge_edge by setting
+ * `archived_at` (never a hard DELETE — 守「写入仅 propose + correction 可回滚」
+ * 不变量；read APIs already filter `isNull(archived_at)` so an archived edge
+ * disappears from the live mesh but the row + its provenance survive for retract).
+ *
+ * Idempotent: the UPDATE is guarded on `isNull(archived_at)`, so re-archiving an
+ * already-archived edge changes zero rows and returns `{ archived: false }` rather
+ * than erroring — the accept path can be retried safely (the proposal-accept
+ * idempotency above this layer relies on this).
+ *
+ * @throws ApiError('not_found', 404) when no edge with `id` exists at all.
+ */
+export async function archiveKnowledgeEdge(
+  db: DbLike,
+  id: string,
+): Promise<ArchiveKnowledgeEdgeResult> {
+  const existing = await db
+    .select({ id: knowledge_edge.id, archived_at: knowledge_edge.archived_at })
+    .from(knowledge_edge)
+    .where(eq(knowledge_edge.id, id))
+    .limit(1);
+  const row = existing[0];
+  if (!row) {
+    throw new ApiError('not_found', `knowledge_edge not found: ${id}`, 404);
+  }
+  if (row.archived_at !== null) {
+    // Already archived — idempotent no-op (a re-accept of the same archive
+    // proposal lands here).
+    return { id, archived: false };
+  }
+
+  await db
+    .update(knowledge_edge)
+    .set({ archived_at: new Date() })
+    .where(and(eq(knowledge_edge.id, id), isNull(knowledge_edge.archived_at)));
+
+  return { id, archived: true };
+}
+
 // suppress unused-import warning at module level
 void sql;
