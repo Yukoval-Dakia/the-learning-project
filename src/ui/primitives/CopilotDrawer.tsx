@@ -11,13 +11,22 @@
 
 'use client';
 
-import { type ReactNode, useEffect, useRef } from 'react';
-import { Button } from './Button';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { IconBtn } from './IconBtn';
+import { LoomIcon, type LoomIconName } from './LoomIcon';
 
 export interface CopilotDrawerProps {
   open: boolean;
   onClose: () => void;
   title?: string;
+  /** Head icon shown in the coral .card-icon.accent badge (copilot.jsx L106). */
+  icon?: LoomIconName;
+  /** Badge slot rendered right after the title — e.g. an 在线 status badge. */
+  headBadge?: ReactNode;
+  /** Extra head action buttons in the right cluster, before the close button. */
+  headActions?: ReactNode;
+  /** Render the maximize/minimize width toggle in the head. Defaults to true. */
+  expandable?: boolean;
   /** Summary slot rendered at the top of the drawer body. */
   summary?: ReactNode;
   /** Chat slot rendered below the summary; usually scrollable. */
@@ -32,12 +41,20 @@ export function CopilotDrawer({
   open,
   onClose,
   title = 'Copilot',
+  icon = 'copilot',
+  headBadge,
+  headActions,
+  expandable = true,
   summary,
   children,
   footer,
   ariaLabel,
 }: CopilotDrawerProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // 全屏 Copilot（copilot.jsx L109 maximize）= 宽度切换的纯 chrome 状态：
+  // 默认 420px 侧栏 ↔ 展开 min(900px, 92vw) 的宽读模式。每次关闭复位回窄，
+  // 让下次打开从默认宽度起。
+  const [expanded, setExpanded] = useState(false);
 
   // ESC closes the drawer.
   useEffect(() => {
@@ -68,6 +85,11 @@ export function CopilotDrawer({
     if (open) panelRef.current?.focus();
   }, [open]);
 
+  // Reset to the default width whenever the drawer closes (re-opens narrow).
+  useEffect(() => {
+    if (!open) setExpanded(false);
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -94,23 +116,41 @@ export function CopilotDrawer({
         tabIndex={-1}
         data-testid="copilot-drawer-panel"
         className={[
-          'absolute right-0 top-0 h-full w-full sm:w-[420px]',
+          'absolute right-0 top-0 h-full w-full',
+          expanded ? 'sm:w-[min(900px,92vw)]' : 'sm:w-[420px]',
           'bg-[var(--paper-raised)] border-l border-[var(--line)]',
           'shadow-[var(--shadow-3)] flex flex-col outline-none',
           'animate-in slide-in-from-right duration-[var(--dur-fast)]',
         ].join(' ')}
       >
-        <header className="flex items-center justify-between px-[18px] py-[14px] border-b border-[var(--line-soft)]">
-          <h2 className="text-[14px] font-[600] text-[var(--ink)]">{title}</h2>
-          <Button
-            variant="quiet"
-            size="sm"
-            onClick={onClose}
-            aria-label="关闭"
-            data-testid="copilot-drawer-close"
-          >
-            收起
-          </Button>
+        {/* drawer-head（copilot.jsx L105-112 / loom.css L285-286）：
+            coral card-icon + 19px serif 标题 + 状态徽标 + 右簇动作按钮。 */}
+        <header className="drawer-head">
+          <span className="card-icon accent">
+            <LoomIcon name={icon} size={18} />
+          </span>
+          <div className="drawer-title serif">{title}</div>
+          {headBadge}
+          <div className="ml-auto flex items-center gap-[6px]">
+            {expandable ? (
+              <IconBtn
+                icon={expanded ? 'minimize' : 'maximize'}
+                size={16}
+                title={expanded ? '还原宽度' : '全屏 Copilot'}
+                aria-label={expanded ? '还原宽度' : '全屏 Copilot'}
+                onClick={() => setExpanded((v) => !v)}
+                data-testid="copilot-drawer-expand"
+              />
+            ) : null}
+            {headActions}
+            <IconBtn
+              icon="close"
+              size={16}
+              onClick={onClose}
+              aria-label="关闭"
+              data-testid="copilot-drawer-close"
+            />
+          </div>
         </header>
         {summary ? (
           <section

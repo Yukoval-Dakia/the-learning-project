@@ -36,6 +36,7 @@ import { useCopilotDwell, useCopilotOpenSignal } from '@/ui/lib/use-copilot-dwel
 import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
 import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
+import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
@@ -574,11 +575,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     // 4-slot order per Wave 5 ready-to-launch lock §Human decision points:
     // Coach focus → review_due → brief → dreaming → footer.
     <div className="flex flex-col gap-[6px]">
-      <div className="flex items-center gap-[8px] mb-[2px]">
-        <LoomBadge tone="good" dot pulse>
-          在线
-        </LoomBadge>
-      </div>
+      {/* 在线徽标已上移到 drawer-head（copilot.jsx L107）；摘要直接从 daily_focus 起。 */}
       <p className="text-[13px] text-[var(--ink)] leading-[1.55]">{summaryQ.data.daily_focus}</p>
       {summaryQ.data.review_due_count > 0 ? (
         <p className="text-[12.5px] text-[var(--ink-2)]" data-testid="copilot-summary-review-due">
@@ -687,6 +684,25 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
         open={open}
         onClose={closeDrawer}
         title="Copilot"
+        icon="copilot"
+        headBadge={
+          <LoomBadge tone="good" dot pulse>
+            在线
+          </LoomBadge>
+        }
+        headActions={
+          // 教学模式（copilot.jsx L110）：教学是服务端 skill 驱动（skill_context），
+          // 客户端无持久「模式」开关——此按钮发一条教学意图消息触发既有教学 skill，
+          // 语义同 QUICK_CHIPS，不是死按钮也不伪造客户端状态。
+          <IconBtn
+            icon="teach"
+            size={16}
+            title="教学模式"
+            aria-label="教学模式"
+            disabled={sending}
+            onClick={() => void send('我想进入教学模式，请带我一步步学习当前内容')}
+          />
+        }
         summary={summary}
         footer={footer}
       >
