@@ -9,11 +9,11 @@
 
 ## 决策已锁（2026-06-13 owner）
 
-- **阶段范围 = B**：ADR-0033 接线（L1/L2/L3）+ L10 清理 + L7 边归档 + ADR-0032 结构活（L5→L6 + L8）。
+- **阶段范围 = B（已收窄）**：ADR-0033 接线（L1/L2/L3）+ L10 清理 + L7 边归档 + ADR-0032 结构活（**仅 L5→L6**）。
 - **D1 = 已弃**：现状（attribute_mistake 留 base 外 + 保留 CP+ chip + copilot 走 author_question(seed=variant) 出变式）是有意设计。**L4 → doc-only，并入 L10**：ADR-0032 标 D1 abandoned + 加 superseded 注，零代码。
+- **L8（D5-G6/G5/RP-4 copilot grant 扩张）= 已弃**（owner 2026-06-13）：G5(get_review_knowledge_snapshot)/RP-4(4 review_plan 工具)/G6(record_links·promotion) 上 copilot base 均**已被 author_question(seed=record)+write_quiz 取代**，不再 grant。**并入 L10 doc**：ADR-0032 标这些 grant abandoned + superseded 注。
 - **L9（D3 learning_item 4→1 收敛）= 不入本阶段**（高耦合低价值，defer）。
-- **仍待 lane 级裁决**（在各 lane pre-flight/plan 关口拍，不前置）：
-  - **L8 grant 子集**（G5 / RP-4 / G6 哪些还要，还是已被 author_question(seed=record)+write_quiz 取代）→ L8 lane plan 关口。
+- **仍待 lane 级裁决**（在各 lane pre-flight 关口拍，不前置）：
   - **L2 摆位**（KnowledgeDetailPage 主列 vs NodeDrawer 侧栏）+ **L3 渲染策略**（inline vs route）+ **CSP 签字**（首个沙盒用户内容面，L1/L2 扩大暴露）→ L1/L2/L3 UI design-doc pre-flight 关口。
 
 ---
@@ -41,7 +41,7 @@
 | **L5** D6 read≡write 坐标修复 | 0032 D6-R6 | M | not-started | get_question_context 加 `include:['structure']` 返回可寻址 StructuredQuestion 树 + get_question_block_structure 草稿层 reader。纯读 | — |
 | **L6** propose_question_edit（active 题） | 0032 D6-B | L | stale-target | 新 proposal-only 工具改 active 题 + mini verify gate。**对当前 active-题写路径建，非 ADR 命名的 YUK-281 write.ts（已不存在）** | L5 |
 | **L7** 边归档 discriminator | 0032 D4-E1 | S/M | partial | proposeKnowledgeEdge 加 propose_create\|propose_archive 分支（lib archived_at 已支持，仅 propose 路径 create-only）。自含于 knowledge | — |
-| **L8** copilot 读/grant 扩张 | 0032 D5-G6/G5/RP-4 | M | not-started | grant propose_record_links/promotion(G6) + get_review_knowledge_snapshot(G5) + 4 review_plan 工具(RP-4) 上 copilot base。机械 additive，可按 owner 批准子集拆 | **owner G5/RP-4/G6 裁决** |
+| ~~**L8** copilot 读/grant 扩张~~ **已弃** | 0032 D5-G6/G5/RP-4 | — | dropped | owner 2026-06-13 裁：G5/RP-4/G6 已被 author_question(seed=record)+write_quiz 取代，不 grant。supersession 注并入 L10 | — |
 | **L9** learning_item 收敛 | 0032 D3 | L | not-started | 4 工具 → propose_learning_item_transition(discriminated)。高耦合低用户价值，**建议 defer/drop** | **owner D3 裁决** |
 | **L10** stale 注释 + ADR supersession 清理 | 全 | S | 注释漂移确认 | 修 question-author.ts:13 / proposal-tools.ts:1341 仍指 actions.ts 的旧注释；ADR-0031 search/write_question_draft→0032 D8 / ADR-0032 D1→反转 的 superseded 注。零行为变化 | — |
 
