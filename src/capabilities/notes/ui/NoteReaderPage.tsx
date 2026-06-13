@@ -5,6 +5,7 @@
 // 编辑保存 = PATCH body-blocks 乐观锁（409 → 提示刷新，pre-flight B 偏离②）；
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
 
+import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
@@ -122,8 +123,11 @@ export default function NoteReaderPage({
     );
   // S4-fix (YUK-335)：error 态独立分支（设计源用 Stateful 三态）——否则瞬时 fetch
   // 失败会落进下面的 !note 分支，被误读成永久「笔记不存在」、且无重试入口。消化
-  // ported-but-idle 的 ErrorState（audit P4）。
-  if (noteQ.isError)
+  // ported-but-idle 的 ErrorState（audit P4）。但 404（笔记不存在/已删）语义上
+  // 是「空」非「加载失败」——让它落到下面的 EmptyState，只有瞬时错误（网络/5xx）
+  // 才示 ErrorState + 重试（视觉环实测：404 误显「加载失败」会反向坏了 not-found 态）。
+  const isNotFound = noteQ.error instanceof ApiError && noteQ.error.status === 404;
+  if (noteQ.isError && !isNotFound)
     return (
       <main className="page wide note-reader-page">
         <ErrorState text="笔记加载失败。" onRetry={() => void noteQ.refetch()} />
