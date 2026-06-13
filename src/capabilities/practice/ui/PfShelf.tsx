@@ -153,7 +153,14 @@ export function PfShelf({
             </>
           ) : (
             <>
-              <span className="paper-when mono">{sess ? 'draft · 可恢复' : '待做'}</span>
+              {/* 待做态显示估时（设计 pface-shelf.jsx L83 待做卷显示 today.est）。
+                  估算依据：PaperListItem wire 无 est/duration 字段（仅 total_slots），按题数
+                  × 1.5 分钟/题估算——沿用 PfStream etaMin 的题数系数惯例（设计点播卷示例
+                  8 题≈12 分钟，即 1.5 分钟/题）。FOLLOW-UP（phase-deferred）：补 paper 读模型
+                  est 真值后接真值，见报告。在做态仍显 draft（恢复优先于估时）。 */}
+              <span className="paper-when mono">
+                {sess ? 'draft · 可恢复' : `约 ${Math.ceil(p.total_slots * 1.5)} 分钟`}
+              </span>
               <Btn
                 size="sm"
                 variant="primary"
