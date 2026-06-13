@@ -131,24 +131,9 @@ export default function KnowledgeDetailPage({
               <h1 className="page-title serif">{node.name}</h1>
               <div className="nowrap-meta" style={{ marginTop: 4 }}>
                 <span className="meta mono">{node.effective_domain ?? node.domain ?? '—'}</span>
-                {node.parent_name && (
-                  <>
-                    <span className="dot-sep">·</span>
-                    <button
-                      type="button"
-                      className="meta"
-                      style={{
-                        border: 0,
-                        background: 'none',
-                        cursor: 'pointer',
-                        textDecoration: 'underline',
-                      }}
-                      onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
-                    >
-                      ↑ {node.parent_name}
-                    </button>
-                  </>
-                )}
+                {/* S10 (YUK-335 §3.9)：父节点不再做页头内联下划线文字链——层级关系
+                    归入下方邻居区的 design-system「层级」drawer-sec 块（parent + children
+                    同一处渲染），删去此处非 design-system 的内联链。 */}
                 <span className="dot-sep">·</span>
                 <span className={`decay-bucket tone-${db.tone}`}>
                   <LoomIcon name={db.icon as never} size={12} />
@@ -273,9 +258,46 @@ export default function KnowledgeDetailPage({
           <SectionLabel>标注笔记</SectionLabel>
           <div className="quiet-empty">无标注（标注链路随工作台收口）</div>
 
+          {/* S10 (YUK-335 §3.9)：层级块——parent + children 同处渲染，与下方 typed
+              关系块视觉分离（各自 drawer-sec）。设计源 screen-knowledge.jsx L187-200。 */}
+          <SectionLabel>层级</SectionLabel>
+          <div className="card card-pad">
+            <div className="drawer-sec">
+              <div className="drawer-sec-h">
+                <LoomIcon name="tree" size={14} />
+                层级 hierarchy
+              </div>
+              {node.parent_name ? (
+                <button
+                  type="button"
+                  className="rel-row"
+                  onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
+                >
+                  <span className="rel-kind mono">parent</span>
+                  <span className="wenyan">{node.parent_name}</span>
+                  <LoomIcon name="arrow" size={13} />
+                </button>
+              ) : (
+                <div className="quiet-empty">根节点（无父）</div>
+              )}
+              {node.children.map((c) => (
+                <button
+                  type="button"
+                  key={c.id}
+                  className="rel-row indent"
+                  onClick={() => navigate(`/knowledge/${c.id}`)}
+                >
+                  <span className="rel-kind mono">child</span>
+                  <span className="wenyan">{c.name}</span>
+                  <MasteryRing mastery={c.mastery} size={24} />
+                </button>
+              ))}
+            </div>
+          </div>
+
           <SectionLabel>邻居 · 按关系分组</SectionLabel>
           <div className="card card-pad">
-            {node.mesh_neighbors.length === 0 && !node.parent_name ? (
+            {node.mesh_neighbors.length === 0 ? (
               <div className="quiet-empty">无邻居</div>
             ) : (
               <>
