@@ -165,3 +165,56 @@ export function evidenceReadable(ref: ProposalEvidenceRefWire): {
       return { text: '来源记录', route: null };
   }
 }
+
+// S7 (YUK-335, audit §3.4)：block_merge 卡常带多枚同 kind 的 evidence_refs，
+// evidenceReadable 把同 kind 映成同一句白话 → 渲成 N 枚一模一样的灰 disabled
+// chip。按 readable 文案分组去重：每组保留首个 ref（route/disabled 逻辑不变）+
+// 组内计数，count>1 时由 EvidenceChip 把数量并进文案。
+export interface DedupedEvidence {
+  ref: ProposalEvidenceRefWire;
+  count: number;
+}
+
+export function dedupeEvidence(refs: ProposalEvidenceRefWire[]): DedupedEvidence[] {
+  const groups = new Map<string, DedupedEvidence>();
+  for (const ref of refs) {
+    const key = evidenceReadable(ref).text;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      groups.set(key, { ref, count: 1 });
+    }
+  }
+  return [...groups.values()];
+}
+
+// S7 (YUK-335, audit §3.4 + §2 P3)：block_merge reason_md（9/16 卡）含真
+// block-<cuid> 等不透明 ID，正文成 ID 墙，违设计原则「Readable evidence
+// (no raw IDs up front)」。把 reason_md 切成 prose 段 + id-token 段（display-
+// only，不改 AI 原词、不替换词义），ProposalCard 把 raw 段包进 <code .ev-rawid>
+// 视觉去权重。正题（后端 reason 生成应写人话）是 backend follow-up，本切片只 UI 缓解。
+//
+// 安全正则只命中明显不透明 ID，不碰中文 / 正常英文 prose：
+//   block-<12+ 位小写字母数字>（cuid2 = 24 位，留余量到 12）
+//   命名空间 ID <小写词>:<8+ 位 [a-z0-9:_-]>（如 synthetic:wenyan:...）
+//   裸长串 <20+ 位小写字母数字>（词边界限定，短词不误伤）
+const RAW_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b)/g;
+
+export interface ReasonSegment {
+  text: string;
+  raw: boolean;
+}
+
+export function splitReasonIds(md: string): ReasonSegment[] {
+  const out: ReasonSegment[] = [];
+  let last = 0;
+  for (const m of md.matchAll(RAW_ID_RE)) {
+    const start = m.index ?? 0;
+    if (start > last) out.push({ text: md.slice(last, start), raw: false });
+    out.push({ text: m[0], raw: true });
+    last = start + m[0].length;
+  }
+  if (last < md.length) out.push({ text: md.slice(last), raw: false });
+  return out;
+}

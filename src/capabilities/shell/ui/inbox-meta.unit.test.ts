@@ -7,10 +7,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   KIND_META,
+  dedupeEvidence,
   evidenceReadable,
   isAcceptSupported,
   isBlockMergeStale,
   kindMeta,
+  splitReasonIds,
 } from './inbox-api';
 import { heatLevel } from './workbench-api';
 
@@ -137,5 +139,77 @@ describe('evidenceReadable', () => {
       expect(r.route, kind).toBeNull();
       expect(r.text, kind).not.toBe('');
     }
+  });
+});
+
+// S7 (YUK-335, audit §3.4)：evidence chip 同 readable 文案去重 + 计数。
+describe('dedupeEvidence', () => {
+  it('同 kind（同 readable 文案）折成一组并计数', () => {
+    const out = dedupeEvidence([
+      { kind: 'event', id: 'e1' },
+      { kind: 'event', id: 'e2' },
+      { kind: 'event', id: 'e3' },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].count).toBe(3);
+    expect(out[0].ref.id).toBe('e1'); // 保留首个 ref
+  });
+
+  it('不同 kind 各成一组，保持首次出现顺序', () => {
+    const out = dedupeEvidence([
+      { kind: 'event', id: 'e1' },
+      { kind: 'question', id: 'q1' },
+      { kind: 'event', id: 'e2' },
+    ]);
+    expect(out.map((d) => d.ref.kind)).toEqual(['event', 'question']);
+    expect(out.map((d) => d.count)).toEqual([2, 1]);
+  });
+
+  it('空数组 → 空结果', () => {
+    expect(dedupeEvidence([])).toEqual([]);
+  });
+});
+
+// S7 (YUK-335, audit §3.4 + §2 P3)：reason_md raw-ID 切分（display-only，不改词）。
+describe('splitReasonIds', () => {
+  it('命中 block-<cuid>，prose 段保留原词', () => {
+    const segs = splitReasonIds('建议合并题块 block-abc123def456 与下一块');
+    expect(segs).toEqual([
+      { text: '建议合并题块 ', raw: false },
+      { text: 'block-abc123def456', raw: true },
+      { text: ' 与下一块', raw: false },
+    ]);
+  });
+
+  it('命中命名空间 ID（synthetic:wenyan:...）', () => {
+    const segs = splitReasonIds('来源 synthetic:wenyan:0001 已变更');
+    expect(segs.find((s) => s.raw)?.text).toBe('synthetic:wenyan:0001');
+    // 拼回原文逐字不变
+    expect(segs.map((s) => s.text).join('')).toBe('来源 synthetic:wenyan:0001 已变更');
+  });
+
+  it('命中裸长串（≥20 位小写字母数字）', () => {
+    const id = 'a1b2c3d4e5f6g7h8i9j0k1';
+    const segs = splitReasonIds(`引用 ${id} 记录`);
+    expect(segs.find((s) => s.raw)?.text).toBe(id);
+  });
+
+  it('不误伤中文 / 正常英文短词 / 短数字', () => {
+    const md = '这是一段正常的判定理由 with English words and code 42';
+    const segs = splitReasonIds(md);
+    expect(segs.every((s) => !s.raw)).toBe(true);
+    expect(segs.map((s) => s.text).join('')).toBe(md);
+  });
+
+  it('纯 prose 返回单个 raw=false 段，拼回原文不变', () => {
+    const md = '建议接受这个合并';
+    expect(splitReasonIds(md)).toEqual([{ text: md, raw: false }]);
+  });
+
+  it('多个 ID 全部切出，拼回逐字等于原文', () => {
+    const md = '合并 block-abcdef123456 到 block-987654fedcba 完成';
+    const segs = splitReasonIds(md);
+    expect(segs.filter((s) => s.raw)).toHaveLength(2);
+    expect(segs.map((s) => s.text).join('')).toBe(md);
   });
 });
