@@ -2,7 +2,6 @@
 /// <reference types="vite-plugin-pwa/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_INTERNAL_TOKEN?: string;
   readonly VITE_API_BASE?: string;
 }
 

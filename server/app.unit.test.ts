@@ -81,5 +81,32 @@ describe('buildHonoApp', () => {
       headers: { 'x-internal-token': 'test-token' },
     });
     expect(unknown.status).toBe(404);
+    // M5 review M1：404 由 /api/* JSON 兜底返回（非框架默认），prod 下不会
+    // 穿透到 serveStatic 的 index.html。
+    expect(await unknown.json()).toEqual({ error: 'not_found' });
+  });
+
+  // M5 review H1：fail-closed——INTERNAL_TOKEN 未设时拒绝一切 /api/*（缺 header
+  // 时 undefined !== undefined 曾放行）。/api/health 豁免不受影响。
+  it('rejects every /api request when INTERNAL_TOKEN is unset (fail-closed)', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', undefined);
+    const app = buildHonoApp([fakeCapability]);
+    const noHeader = await app.request('/api/fake');
+    expect(noHeader.status).toBe(401);
+    const withHeader = await app.request('/api/fake', {
+      headers: { 'x-internal-token': 'anything' },
+    });
+    expect(withHeader.status).toBe(401);
+    const health = await app.request('/api/health');
+    expect(health.status).toBe(200);
+  });
+
+  it('rejects an empty-string token header', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability]);
+    const res = await app.request('/api/fake', {
+      headers: { 'x-internal-token': '' },
+    });
+    expect(res.status).toBe(401);
   });
 });

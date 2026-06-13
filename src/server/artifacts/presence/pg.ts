@@ -132,6 +132,10 @@ export class PgPresenceStore implements PresenceStore {
       if (!row) {
         // 插初始 idle 行——与 in-memory currentState「未见过的 artifact 视作 idle」
         // 等价（idle ⇒ 此分支必然走 apply，初始行仅占位）。
+        // 竞插防护（M5 全分支 review L1）：select 无行 ⇒ FOR UPDATE 没锁到任何
+        // 东西，并发 heartbeat upsert / 另一 enqueue 可能抢先落行——裸 insert 会
+        // 撞 PK。onConflictDoNothing 后若没插成，重读拿对方提交的真实状态
+        //（可能已是 editing + 有 pending），不能假定 idle。
         const initial = {
           artifact_id: input.artifactId,
           status: 'idle' as EditingStatus,
@@ -139,8 +143,24 @@ export class PgPresenceStore implements PresenceStore {
           editing_started_at: null as Date | null,
           pending: [] as SerializedQueuedPatch[],
         };
-        await tx.insert(editing_presence).values(initial);
-        row = initial as PresenceRow;
+        const inserted = await tx
+          .insert(editing_presence)
+          .values(initial)
+          .onConflictDoNothing()
+          .returning();
+        if (inserted.length > 0) {
+          row = initial as PresenceRow;
+        } else {
+          [row] = await tx
+            .select()
+            .from(editing_presence)
+            .where(eq(editing_presence.artifact_id, input.artifactId))
+            .for('update')
+            .limit(1);
+          // ON CONFLICT DO NOTHING 等待竞争事务落定：没插成 ⇒ 行已提交存在，
+          // 此重读必命中；空结果只剩「行又被删」的病理路径，按占位语义兜底。
+          row ??= initial as PresenceRow;
+        }
       }
 
       // 裁决 i：丢弃陈旧 pending（超 force-apply 上限的项）。

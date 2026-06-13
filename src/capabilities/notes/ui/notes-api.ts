@@ -139,6 +139,23 @@ export interface AiChangeRow {
   undone: boolean;
 }
 
+// ── editing presence（M5 全分支 review H2 接线） ─────────────────
+// 写侧契约与被 T5c 拆除的 ArtifactBlockTree 等价：编辑中每 5s 心跳
+// { artifact_id, status: 'editing' }；离开编辑态 blur { artifact_id }（服务端
+// markArtifactIdleAndFlush 顺带 FIFO apply 编辑期被 defer 的 AI patch）。
+// 读侧 = worker note-refine 经 PgPresenceStore 判 idle（ADR-0023 M5 迁移注）。
+export const editingHeartbeat = (artifactId: string) =>
+  apiJson<{ ok: boolean }>('/api/editing-session/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({ artifact_id: artifactId, status: 'editing' }),
+  });
+
+export const editingBlur = (artifactId: string) =>
+  apiJson('/api/editing-session/blur', {
+    method: 'POST',
+    body: JSON.stringify({ artifact_id: artifactId }),
+  });
+
 export const getAiChanges = (artifactId: string) =>
   apiJson<{ artifact_id: string; rows: AiChangeRow[] }>(
     `/api/artifacts/${encodeURIComponent(artifactId)}/ai-changes`,
