@@ -17,6 +17,11 @@ import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
 import CoachPage from '@/capabilities/shell/ui/CoachPage';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
 import TodayPage from '@/capabilities/shell/ui/TodayPage';
+import { getWorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
+import { AppSidebar } from '@/ui/shell/AppSidebar';
+import { AppTopbar } from '@/ui/shell/AppTopbar';
+import { MobileTabBar } from '@/ui/shell/MobileTabBar';
+import { useQuery } from '@tanstack/react-query';
 import {
   Outlet,
   createRootRoute,
@@ -26,17 +31,142 @@ import {
   useRouter,
   useRouterState,
 } from '@tanstack/react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+// S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
+// ThemeToggle primitive 同 key（'loom-theme'），互不打架。
+const THEME_KEY = 'loom-theme';
+
+function readSavedTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'light';
+  try {
+    return window.localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+}
 
 // M5-T3 (YUK-321) — 根壳：全路由共享一个 CopilotDock 实例（裁决 c：组件归
 // copilot 包，路由耦合只存在于本壳层）。
+//
+// S13 (YUK-335 批次丙) — chrome 收编为设计的 sidebar-primary 五件套：
+// .app > AppSidebar + (.main > AppTopbar + <Outlet/>) + MobileTabBar + 根挂
+// CopilotDock。RootShell 持 paletteOpen（S14 接 CommandPalette）/ mobileNavOpen /
+// railCollapsed / theme state。admin 路由照常套主 chrome（owner override 设计
+// app.jsx:106「admin separate shell」——见 docs/audit/2026-06-13-visual-gap.md）。
 function RootShell() {
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const navigate = useCallback((to: string) => router.history.push(to), [router]);
+
+  // chrome state。paletteOpen 先留给 S14 的 CommandPalette（本 slice 只把
+  // searchbox + ⌘K 接到 setter，palette 组件 S14 补）。
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  // 主题：mount 时从 localStorage 读，应用到 <html data-theme>（SPA 此前无任何
+  // data-theme 设值，此为首处）；toggle 时持久化（设计 app.jsx:86 做法）。
+  useEffect(() => {
+    setTheme(readSavedTheme());
+  }, []);
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      window.localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // localStorage 不可用（隐私模式等）时静默——主题仍在本会话内生效。
+    }
+  }, [theme]);
+
+  // ⌘K 开命令面板（S14）。与 design app.jsx:90 同 keybind。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((p) => !p);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 收件箱 count：复用 workbench summary proposals.total（与 TodayPage 同 query
+  // key ['workbench-summary'] → React Query 去重，不增请求）。无数据时 undefined
+  // → 侧栏不渲 count（不 fabricate 假数字）。
+  const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });
+  const inboxCount = summaryQ.data?.proposals.total;
+
+  // Copilot 开启：CopilotDock 自带的 in-flow trigger（data-testid
+  // copilot-drawer-trigger，调用其 dwell openDrawer）经 .shell-copilot-mount CSS
+  // 隐藏（web/src/globals.css L5997-6000，原为本壳预留的 dead CSS）；侧栏 / topbar
+  // 的 Copilot 按钮以编程方式点击该隐藏 trigger 走既有 dock-open 路径，不造新机制。
+  const copilotMountRef = useRef<HTMLDivElement | null>(null);
+  const openCopilot = useCallback(() => {
+    copilotMountRef.current
+      ?.querySelector<HTMLButtonElement>('[data-testid="copilot-drawer-trigger"]')
+      ?.click();
+  }, []);
+
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+
   return (
-    <>
-      <Outlet />
-      <CopilotDock pathname={pathname} navigate={(to) => router.history.push(to)} />
-    </>
+    // data-palette-open 反映 paletteOpen state：S14 的 CommandPalette 会消费此
+    // state（本 slice 只接 searchbox + ⌘K 到 setter）；同时让 paletteOpen 被真实
+    // 读取，避免 dead state（属性是给 S14 的真 seam，非假占位）。
+    <div
+      className={`app${railCollapsed ? ' rail-collapsed' : ''}`}
+      data-palette-open={paletteOpen ? '' : undefined}
+    >
+      {mobileNavOpen && (
+        // 移动 nav scrim：点击关闭。用 <button>（键盘可达，沿 CopilotDrawer scrim
+        // 先例），避免 div+onClick 的 a11y 漏洞；border/padding 归零让 .scrim 视觉
+        // 不受 button 默认 chrome 影响。
+        <button
+          type="button"
+          aria-label="关闭导航"
+          className="scrim open"
+          style={{ zIndex: 25, border: 0, padding: 0 }}
+          onClick={closeMobileNav}
+        />
+      )}
+
+      <AppSidebar
+        pathname={pathname}
+        navigate={navigate}
+        mobileOpen={mobileNavOpen}
+        onOpenCopilot={openCopilot}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
+        onNavigated={closeMobileNav}
+        inboxCount={inboxCount}
+      />
+
+      <div className="main">
+        <AppTopbar
+          pathname={pathname}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+          onToggleRail={() => setRailCollapsed((c) => !c)}
+          railCollapsed={railCollapsed}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenCopilot={openCopilot}
+        />
+        <Outlet />
+      </div>
+
+      <MobileTabBar
+        pathname={pathname}
+        navigate={navigate}
+        onOpenMobileNav={() => setMobileNavOpen(true)}
+      />
+
+      {/* CopilotDock 根挂（保留既有实例 + dwell + navigate/pathname 接线）。
+          .shell-copilot-mount 隐藏其 in-flow trigger；drawer 本身 fixed 渲到根。 */}
+      <div ref={copilotMountRef} className="shell-copilot-mount">
+        <CopilotDock pathname={pathname} navigate={navigate} />
+      </div>
+    </div>
   );
 }
 
@@ -178,9 +308,10 @@ const noteReaderRoute = createRoute({
   component: NoteReaderRouteC,
 });
 
-// M5-T4 (YUK-321) — observability 四页 + Coach 周报。admin 页是独立壳形态
-//（design app.jsx:106-114「admin is a separate shell — no main app chrome」，
-// 收编 chrome 须 owner 拍板——见 docs/audit/2026-06-13-visual-gap.md §5 决策点③）。
+// M5-T4 (YUK-321) — observability 四页 + Coach 周报。
+// S13 (YUK-335)：owner override 设计 app.jsx:106「admin separate shell」——admin
+// 路由现照常套主 chrome（RootShell .app 壳），不为 admin 特判跳过 chrome
+//（见 docs/audit/2026-06-13-visual-gap.md §5 决策点③，owner 已拍板收编）。
 function CoachRoute() {
   const router = useRouter();
   return <CoachPage navigate={(to) => router.history.push(to)} />;

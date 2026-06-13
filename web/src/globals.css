@@ -452,6 +452,19 @@ body {
   font-feature-settings: "ss01", "cv11";
 }
 
+/* S13 (YUK-335 批次丙)：sidebar-primary 根壳 .app（min-height:100%）需要完整的
+   height 链才能撑满视口——补 design loom.css:57/69 漏港的两条
+   （html,body{height:100%} + #root{height:100%}）。此前 SPA 无根壳壳层，缺这两条
+   不显形；S13 收编 .app 后才暴露。height:100% 不裁剪长页（无 body overflow:hidden），
+   内容超视口仍正常滚动。 */
+html,
+body {
+  height: 100%;
+}
+#root {
+  height: 100%;
+}
+
 /* Headings — serif for display, sans for in-app */
 h1,
 .h1 {
