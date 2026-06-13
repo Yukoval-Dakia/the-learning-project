@@ -20,6 +20,7 @@ import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import { getWorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
+import { CommandPalette } from '@/ui/shell/CommandPalette';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -51,7 +52,7 @@ function readSavedTheme(): 'light' | 'dark' {
 //
 // S13 (YUK-335 批次丙) — chrome 收编为设计的 sidebar-primary 五件套：
 // .app > AppSidebar + (.main > AppTopbar + <Outlet/>) + MobileTabBar + 根挂
-// CopilotDock。RootShell 持 paletteOpen（S14 接 CommandPalette）/ mobileNavOpen /
+// CopilotDock。RootShell 持 paletteOpen（S14 已接 CommandPalette）/ mobileNavOpen /
 // railCollapsed / theme state。admin 路由照常套主 chrome（owner override 设计
 // app.jsx:106「admin separate shell」——见 docs/audit/2026-06-13-visual-gap.md）。
 function RootShell() {
@@ -59,8 +60,8 @@ function RootShell() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useCallback((to: string) => router.history.push(to), [router]);
 
-  // chrome state。paletteOpen 先留给 S14 的 CommandPalette（本 slice 只把
-  // searchbox + ⌘K 接到 setter，palette 组件 S14 补）。
+  // chrome state。paletteOpen 驱动 CommandPalette（S14）；⌘K toggle + searchbox
+  // 点击都 set 它。
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -80,7 +81,7 @@ function RootShell() {
     }
   }, [theme]);
 
-  // ⌘K 开命令面板（S14）。与 design app.jsx:90 同 keybind。
+  // ⌘K toggle 命令面板（CommandPalette, S14）。与 design app.jsx:90 同 keybind。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -112,9 +113,8 @@ function RootShell() {
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
   return (
-    // data-palette-open 反映 paletteOpen state：S14 的 CommandPalette 会消费此
-    // state（本 slice 只接 searchbox + ⌘K 到 setter）；同时让 paletteOpen 被真实
-    // 读取，避免 dead state（属性是给 S14 的真 seam，非假占位）。
+    // data-palette-open 反映 paletteOpen state（CSS 钩子）；CommandPalette（S14，
+    // 见本组件尾部根挂）直接消费 paletteOpen state 控制开合。
     <div
       className={`app${railCollapsed ? ' rail-collapsed' : ''}`}
       data-palette-open={paletteOpen ? '' : undefined}
@@ -166,6 +166,15 @@ function RootShell() {
       <div ref={copilotMountRef} className="shell-copilot-mount">
         <CopilotDock pathname={pathname} navigate={navigate} />
       </div>
+
+      {/* S14 (YUK-335) — ⌘K 命令面板，消费 S13 铺好的 paletteOpen seam（⌘K toggle
+          + searchbox 点击都 set paletteOpen）。组件 fixed 渲到根（scrim 全屏）；
+          页面组复用 nav-config，知识节点走 /api/knowledge fetch。 */}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        navigate={navigate}
+      />
     </div>
   );
 }
