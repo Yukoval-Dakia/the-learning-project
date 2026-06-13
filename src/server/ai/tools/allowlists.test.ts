@@ -56,6 +56,9 @@ describe('DomainTool allowlist policy', () => {
     ] as const;
     expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).toEqual([
       'get_question_context',
+      // ADR-0032 D6-draftread (YUK-203 lane L5) — draft-layer structure reader,
+      // granted ONLY here (read≡write coordinate fix for the block-edit agent).
+      'get_question_block_structure',
       'query_events',
       ...editTools,
     ]);
@@ -162,8 +165,15 @@ describe('DomainTool allowlist policy', () => {
       // YUK-203 U4 / D7③ — Maintenance is an operator surface and must NOT read
       // memory facts, so its read base is READ_TOOLS minus `search_memory_facts`.
       // YUK-304 (lane B) — minus `query_questions` too (copilot-only grant;
-      // widening maintenance is A2 territory). Mirrors the production chokepoint.
-      ...READ_TOOLS.filter((name) => name !== 'search_memory_facts' && name !== 'query_questions'),
+      // widening maintenance is A2 territory). ADR-0032 D6-draftread (lane L5) —
+      // minus `get_question_block_structure` (ingestion-draft-only grant). Mirrors
+      // the production chokepoint.
+      ...READ_TOOLS.filter(
+        (name) =>
+          name !== 'search_memory_facts' &&
+          name !== 'query_questions' &&
+          name !== 'get_question_block_structure',
+      ),
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
       'propose_learning_item_completion',

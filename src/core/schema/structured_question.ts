@@ -190,6 +190,80 @@ export function structuredToReferenceMarkdown(q: StructuredQuestionT): string {
   return parts.join('\n');
 }
 
+// ---------- 可寻址结构投影：read≡write 坐标修复（ADR-0032 D6-R6 / D6-draftread） ----------
+//
+// 让 AI 能像写一样按【节点】寻址地读题结构：投影只保留写路径会用到的寻址坐标
+// （id / role / sub_questions + figures[asset_id, role, attached_to_index]），
+// 丢弃 bbox / page_index / extraction_evidence —— 这些是【抽取期】像素坐标，对
+// 按节点寻址（split_stem / reassign_figure / update_prompt 用的 id 坐标系）无用，
+// 只会让 read 面与 write 面坐标错配（prose-vs-node mismatch）。
+//
+// 纯函数、不持久化、不碰任何写路径 —— get_question_context(include:['structure'])
+// 与 get_question_block_structure draft reader 共用此一处投影。
+
+export interface AddressableFigureRef {
+  asset_id: string;
+  role: string;
+  attached_to_index: string;
+}
+
+export interface AddressableStructuredQuestion {
+  id: string;
+  role: 'stem' | 'sub' | 'standalone';
+  question_no?: string;
+  prompt_text: string;
+  options?: { label: string; text: string }[];
+  answers?: string[];
+  analysis?: string;
+  kind?: z.infer<typeof QuestionKind>;
+  sub_questions?: AddressableStructuredQuestion[];
+}
+
+export interface AddressableStructure {
+  tree: AddressableStructuredQuestion;
+  figures: AddressableFigureRef[];
+}
+
+/**
+ * 递归裁剪 StructuredQuestion → 可寻址投影。保留按节点寻址需要的 id/role/
+ * sub_questions（外加供 AI 判读的 prompt_text/options/answers/analysis/kind），
+ * 显式丢弃 bbox/page_index/extraction_evidence/source/last_modified_by 等抽取期
+ * 元数据。
+ */
+export function projectAddressableNode(q: StructuredQuestionT): AddressableStructuredQuestion {
+  const node: AddressableStructuredQuestion = {
+    id: q.id,
+    role: q.role,
+    prompt_text: q.prompt_text,
+  };
+  if (q.question_no != null) node.question_no = q.question_no;
+  if (q.options != null) node.options = q.options.map((o) => ({ label: o.label, text: o.text }));
+  if (q.answers != null) node.answers = [...q.answers];
+  if (q.analysis != null) node.analysis = q.analysis;
+  if (q.kind != null) node.kind = q.kind;
+  if (q.sub_questions != null) node.sub_questions = q.sub_questions.map(projectAddressableNode);
+  return node;
+}
+
+/**
+ * 把一棵 StructuredQuestion 树 + 其 FigureRef[] 投影成可寻址结构。figures 只保留
+ * 寻址三元组（asset_id / role / attached_to_index）—— source_bbox /
+ * source_page_index / attach_confidence 是抽取期坐标，对寻址无用。
+ */
+export function projectAddressableStructure(
+  tree: StructuredQuestionT,
+  figures: readonly FigureRefT[] = [],
+): AddressableStructure {
+  return {
+    tree: projectAddressableNode(tree),
+    figures: figures.map((f) => ({
+      asset_id: f.asset_id,
+      role: f.role,
+      attached_to_index: f.attached_to_index,
+    })),
+  };
+}
+
 // ---------- 错误分类：用于 pg-boss 决定 retry / archive ----------
 //
 // RetryableError —— 暂时性失败（网络超时 / Tencent rate-limit / DB 死锁等），
