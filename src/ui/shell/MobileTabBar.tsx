@@ -30,6 +30,7 @@ export function MobileTabBar({ pathname, navigate, onOpenMobileNav }: MobileTabB
             type="button"
             key={tab.id}
             className={`mtab${isActive ? ' is-active' : ''}`}
+            aria-current={isActive ? 'page' : undefined}
             onClick={() => (tab.id === '__more' ? onOpenMobileNav() : navigate(tab.path))}
           >
             <LoomIcon name={tab.icon} size={20} />

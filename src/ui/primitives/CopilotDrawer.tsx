@@ -119,7 +119,7 @@ export function CopilotDrawer({
           'absolute right-0 top-0 h-full w-full',
           expanded ? 'sm:w-[min(900px,92vw)]' : 'sm:w-[420px]',
           'bg-[var(--paper-raised)] border-l border-[var(--line)]',
-          'shadow-[var(--shadow-3)] flex flex-col outline-none',
+          'shadow-[var(--shadow-3)] flex flex-col outline-none transition-[width]',
           'animate-in slide-in-from-right duration-[var(--dur-fast)]',
         ].join(' ')}
       >

@@ -77,7 +77,8 @@ export function AppSidebar({
         </span>
       </button>
 
-      <nav className="nav">
+      {/* aria-label 区分同页另一个 nav landmark（MobileTabBar「主导航」）。 */}
+      <nav className="nav" aria-label="侧栏导航">
         {NAV.map((entry) =>
           isSection(entry) ? (
             <div key={`section-${entry.section}`} className="nav-section-label">
@@ -88,6 +89,8 @@ export function AppSidebar({
               key={entry.id}
               type="button"
               className={`nav-item${active === entry.id ? ' is-active' : ''}`}
+              // 当前页让辅助技术可感知（.is-active 只表达视觉）。
+              aria-current={active === entry.id ? 'page' : undefined}
               onClick={() => go(entry.path)}
               title={entry.label}
             >
