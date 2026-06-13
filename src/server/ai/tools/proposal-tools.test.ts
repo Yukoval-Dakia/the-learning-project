@@ -288,6 +288,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'propose_learning_item_completion',
       'propose_learning_item_defer',
       'propose_learning_item_relearn',
+      // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit propose.
+      'propose_question_edit',
       'propose_record_links',
       'propose_record_promotion',
       'propose_variant',

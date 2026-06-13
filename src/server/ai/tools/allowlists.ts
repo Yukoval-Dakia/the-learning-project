@@ -79,6 +79,13 @@ export const PROPOSE_WRITE_TOOLS = [
   // writeQuizTool) — the listTools() inventory assertion depends on it.
   'author_artifact',
   'update_artifact',
+  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed node edit to an
+  // ACTIVE question's structured tree (proposal-only; accept applies it behind a
+  // mini verify gate, reversibly). Granted to the copilot surfaces (copilot is
+  // user-driven — editing pooled questions in-conversation is a copilot
+  // capability). TAIL position mirrors the bootstrap CORE_TOOLS order (after
+  // updateArtifactTool) — the listTools() inventory assertion depends on it.
+  'propose_question_edit',
 ] as const;
 
 // YUK-203 U4 / D5 / CO §6.1 — the 4 tools exclusive to the ReviewPlanTask
@@ -200,6 +207,13 @@ export const COPILOT_TOOLS = [
   // surface gets them.
   'author_artifact',
   'update_artifact',
+  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed structured node edit
+  // to an ACTIVE question. effect='propose' (proposal-only; accept applies behind
+  // a mini verify gate, reversibly). The copilot is the user-driven editor of
+  // pooled questions in-conversation, so this lives on the copilot base (the chip
+  // surface inherits via the [...COPILOT_TOOLS, …] spread). No other surface gets
+  // it — operator/planner surfaces do not edit active question structure.
+  'propose_question_edit',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [

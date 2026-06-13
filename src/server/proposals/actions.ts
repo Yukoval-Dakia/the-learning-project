@@ -39,8 +39,10 @@ import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-
 import {
   type EnqueueVariantVerifyFn,
   type QuestionDraftAcceptResult,
+  type QuestionEditAcceptResult,
   type VariantQuestionAcceptResult,
   acceptQuestionDraftProposal,
+  acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
 } from '@/capabilities/practice/server/proposal-appliers';
 import { newId } from '@/core/ids';
@@ -133,7 +135,8 @@ export type AcceptAiProposalResult =
   | GoalScopeAcceptResult
   | BlockMergeAcceptResult
   | ImageCandidateAcceptResult
-  | QuestionDraftAcceptResult;
+  | QuestionDraftAcceptResult
+  | QuestionEditAcceptResult;
 
 export interface NoteUpdateAcceptResult {
   kind: 'note_update';
@@ -657,6 +660,11 @@ async function dispatchAccept(
       // ADR-0031 / YUK-304 (lane B) — promote the copilot-authored draft to
       // active + FSRS-enroll (决定5: accept = promotion; the row already exists).
       return await acceptQuestionDraftProposal(db, proposalId, proposal, opts);
+    case 'question_edit':
+      // ADR-0032 D6-B (YUK-203 lane L6) — apply the narrow structured node edit to
+      // the active question behind the mini verify gate (practice package owns the
+      // pooled question lifecycle); reversible via the audit event.
+      return await acceptQuestionEditProposal(db, proposalId, proposal, opts);
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
