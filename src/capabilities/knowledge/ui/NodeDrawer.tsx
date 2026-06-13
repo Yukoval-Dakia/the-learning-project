@@ -9,9 +9,10 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryRing } from '@/ui/primitives/MasteryRing';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 
+import { InteractiveArtifactDiscovery } from './KnowledgeDetailPage';
 import { REL_CUE } from './MeshGraph';
 import {
   type EdgeProposalInboxRow,
@@ -19,6 +20,7 @@ import {
   type KnowledgeTreeNode,
   createEdge,
   decideEdgeProposal,
+  getNodePage,
 } from './knowledge-api';
 
 // decay → 非颜色 cue（设计稿 DECAY_META；bucket 与 server 的
@@ -144,6 +146,18 @@ export function NodeDrawer({
       void qc.invalidateQueries({ queryKey: ['knowledge-edges'] });
     },
   });
+
+  // ADR-0033 D5 — interactive artifact discovery in the drawer. The drawer host
+  // (KnowledgePage) only fetches the tree/edges/proposals, not per-node pages, so
+  // the drawer fetches the node page itself for the picked node to read
+  // interactive_artifacts. Best-effort: enabled only while open; on error/empty
+  // the section renders nothing (InteractiveArtifactDiscovery gates on length).
+  const nodePageQ = useQuery({
+    queryKey: ['knowledge-node', node?.id],
+    queryFn: () => getNodePage(node?.id ?? ''),
+    enabled: open && node != null,
+  });
+  const interactiveArtifacts = nodePageQ.data?.interactive_artifacts ?? [];
 
   if (!node) return null;
   const parent = nodes.find((n) => n.id === node.parent_id) ?? null;
@@ -272,6 +286,18 @@ export function NodeDrawer({
               );
             })}
           </div>
+
+          {/* ADR-0033 D5 — 互动产物 discovery（best-effort node-page 取数；空/失败
+              整块不渲染）。行链到 /notes/{id}（互动产物复用 NoteReader 阅读壳）。 */}
+          {interactiveArtifacts.length > 0 && (
+            <div className="drawer-sec">
+              <div className="drawer-sec-h">
+                <LoomIcon name="sparkle" size={14} />
+                互动产物 · {interactiveArtifacts.length}
+              </div>
+              <InteractiveArtifactDiscovery artifacts={interactiveArtifacts} go={go} />
+            </div>
+          )}
 
           {props.length > 0 && (
             <div className="drawer-sec">

@@ -65,3 +65,18 @@ export function resolveArtifactHero(ref: { kind: string; id: string }): Artifact
   if (!route) return null;
   return { label: route.label, icon: route.icon, href: route.path(ref.id) };
 }
+
+// ADR-0033 D5 — the agent's free-form kind labels that mark an INTERACTIVE
+// persistent artifact (same labels KIND_ROUTES routes to /notes/{id} with the
+// sparkle icon). The hero card uses this to decide whether to inline-render the
+// sandboxed artifact (after fetching its html) vs. show the plain reference card.
+const INTERACTIVE_KINDS = new Set(['interactive', '互动']);
+
+/**
+ * Is this `{source:'artifact'}` ref a persistent interactive artifact (ADR-0033)?
+ * Pure predicate (kind-only), so the inline-vs-reference decision is unit-testable
+ * without React/queries — the actual html fetch + sandbox render live in the card.
+ */
+export function isInteractiveArtifactRef(kind: string): boolean {
+  return INTERACTIVE_KINDS.has(kind.trim().toLowerCase());
+}

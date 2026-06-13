@@ -5,6 +5,7 @@
 // 编辑保存 = PATCH body-blocks 乐观锁（409 → 提示刷新，pre-flight B 偏离②）；
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
 
+import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { Btn } from '@/ui/primitives/Btn';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -235,18 +236,14 @@ export default function NoteReaderPage({
           {mode === 'edit' && draft ? (
             <NoteEditor blocks={draft} labels={note.labels} noteId={note.id} onChange={setDraft} />
           ) : (
-            <div className="note-doc">
-              {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
-              {blocks.map((b, i) => (
-                <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
-                  <NoteBlockView
-                    block={b}
-                    onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
-                    onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
-                  />
-                </div>
-              ))}
-            </div>
+            <NoteDocBody
+              type={note.type}
+              title={note.title}
+              interactive={note.interactive}
+              blocks={blocks}
+              navigate={navigate}
+              onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
+            />
           )}
         </article>
 
@@ -386,5 +383,63 @@ export default function NoteReaderPage({
         </div>
       )}
     </main>
+  );
+}
+
+// ADR-0033 D5 — read-mode doc body. Pure presentational (no queries/state) so it
+// is renderToString-testable on the node-only unit stack (AutoEnrolledPanel
+// PanelBody precedent). Three render modes:
+//   • type='interactive' + interactive non-null → sandboxed renderer (the
+//     interactive artifact's body_blocks is always null, so it never reaches the
+//     block branch).
+//   • type='interactive' + interactive null → parse-fail degraded notice (the
+//     server loaded the row but attrs.html failed its schema barrier; the page
+//     still shows title/labels chrome instead of 404ing).
+//   • note types → block list, or the empty-note prompt.
+export function NoteDocBody({
+  type,
+  title,
+  interactive,
+  blocks,
+  navigate,
+  onOpenQuestion,
+}: {
+  type: string;
+  title: string;
+  interactive: { html: string } | null;
+  blocks: BodyBlock[];
+  navigate: (to: string) => void;
+  onOpenQuestion: () => void;
+}) {
+  if (type === 'interactive') {
+    if (interactive) {
+      return (
+        <div className="note-doc">
+          <InteractiveArtifactRenderer html={interactive.html} title={title} />
+        </div>
+      );
+    }
+    return (
+      <div className="note-doc">
+        <p className="quiet-empty">
+          互动内容暂时无法渲染——这篇产物的内容未通过校验，已记录待修复。
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="note-doc">
+      {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
+      {blocks.map((b, i) => (
+        <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
+          <NoteBlockView
+            block={b}
+            onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
+            onOpenQuestion={onOpenQuestion}
+          />
+        </div>
+      ))}
+    </div>
   );
 }
