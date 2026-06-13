@@ -46,10 +46,18 @@ function noteKindShort(type: string): string {
   return type.replace(/^note_/, '');
 }
 
-function NoteLinkRow({ note, go }: { note: NoteSummary; go: (to: string) => void }) {
+function NoteLinkRow({
+  note,
+  go,
+}: {
+  note: NoteSummary;
+  // S12 (YUK-335 批次乙 review)：go 已带 ?entry=<当前知识节点 id>——本行永远在某
+  // 知识节点上下文里跳 note，让 NoteReader 的入口 banner/is-here/「入口」tag 真触发。
+  go: (noteId: string) => void;
+}) {
   const verified = note.verification_status === 'verified';
   return (
-    <button type="button" className="note-link-row" onClick={() => go(`/notes/${note.id}`)}>
+    <button type="button" className="note-link-row" onClick={() => go(note.id)}>
       <LoomIcon name={note.type === 'note_long' ? 'doc' : 'list'} size={15} />
       <span className="note-link-title">{note.title}</span>
       <span className={`verify-badge ${verified ? 'verified' : 'draft'}`} style={{ flex: 'none' }}>
@@ -85,6 +93,11 @@ export default function KnowledgeDetailPage({
     setToast(text);
     setTimeout(() => setToast(null), 5000);
   };
+
+  // S12 (YUK-335 批次乙 review)：凡从本知识节点上下文跳 note，都带 ?entry=<node.id>，
+  // 让 NoteReader 读 ?entry（NoteReaderPage:51）后触发入口 banner / strip .is-here /
+  // 右栏「入口」tag。consumer 侧已就绪；本页是当前唯一 live 的 kd→note 生产侧 caller。
+  const noteHref = (noteId: string) => `/notes/${noteId}?entry=${id}`;
 
   if (pageQ.isLoading)
     return (
@@ -132,7 +145,7 @@ export default function KnowledgeDetailPage({
               <div className="nowrap-meta" style={{ marginTop: 4 }}>
                 <span className="meta mono">{node.effective_domain ?? node.domain ?? '—'}</span>
                 {/* S10 (YUK-335 §3.9)：父节点不再做页头内联下划线文字链——层级关系
-                    归入下方邻居区的 design-system「层级」drawer-sec 块（parent + children
+                    归入下方「邻居 · 按关系分组」Card 内首个 kd-rel-block（parent + children
                     同一处渲染），删去此处非 design-system 的内联链。 */}
                 <span className="dot-sep">·</span>
                 <span className={`decay-bucket tone-${db.tone}`}>
@@ -230,7 +243,7 @@ export default function KnowledgeDetailPage({
                       variant="primary"
                       icon="doc"
                       iconEnd="arrow"
-                      onClick={() => navigate(`/notes/${primary.id}`)}
+                      onClick={() => navigate(noteHref(primary.id))}
                     >
                       在阅读器中打开
                     </Btn>
@@ -247,7 +260,11 @@ export default function KnowledgeDetailPage({
                     {NOTE_KIND_LABEL[kind] ?? kind} · {arr.length}
                   </div>
                   {arr.map((nt) => (
-                    <NoteLinkRow key={nt.id} note={nt} go={navigate} />
+                    <NoteLinkRow
+                      key={nt.id}
+                      note={nt}
+                      go={(noteId) => navigate(noteHref(noteId))}
+                    />
                   ))}
                 </div>
               ))}
@@ -258,16 +275,21 @@ export default function KnowledgeDetailPage({
           <SectionLabel>标注笔记</SectionLabel>
           <div className="quiet-empty">无标注（标注链路随工作台收口）</div>
 
-          {/* S10 (YUK-335 §3.9)：层级块——parent + children 同处渲染，与下方 typed
-              关系块视觉分离（各自 drawer-sec）。设计源 screen-knowledge.jsx L187-200。 */}
-          <SectionLabel>层级</SectionLabel>
+          {/* S10 (YUK-335 §3.9 + 批次乙 review)：层级 + typed 关系作为 sibling
+              kd-rel-block 并入同一个 Card（设计源 screen-knowledge-detail.jsx:152-165，
+              非图谱侧抽屉 screen-knowledge.jsx 的 drawer-sec）。层级块用 kd-rel-h
+              header（tree icon + 「层级」），与同卡内 typed 关系块 header 风格一致——
+              消除原 drawer-sec-h 与 kd-rel-h 同页打架。children 走普通 rel-row（设计源
+              无 .indent），MasteryRing size=22 对齐设计源；parent + children 都无时
+              单一「无层级邻居」quiet-empty。 */}
+          <SectionLabel>邻居 · 按关系分组</SectionLabel>
           <div className="card card-pad">
-            <div className="drawer-sec">
-              <div className="drawer-sec-h">
-                <LoomIcon name="tree" size={14} />
-                层级 hierarchy
+            <div className="kd-rel-block">
+              <div className="kd-rel-h">
+                <LoomIcon name="tree" size={13} />
+                层级
               </div>
-              {node.parent_name ? (
+              {node.parent_name && (
                 <button
                   type="button"
                   className="rel-row"
@@ -277,57 +299,48 @@ export default function KnowledgeDetailPage({
                   <span className="wenyan">{node.parent_name}</span>
                   <LoomIcon name="arrow" size={13} />
                 </button>
-              ) : (
-                <div className="quiet-empty">根节点（无父）</div>
               )}
               {node.children.map((c) => (
                 <button
                   type="button"
                   key={c.id}
-                  className="rel-row indent"
+                  className="rel-row"
                   onClick={() => navigate(`/knowledge/${c.id}`)}
                 >
                   <span className="rel-kind mono">child</span>
                   <span className="wenyan">{c.name}</span>
-                  <MasteryRing mastery={c.mastery} size={24} />
+                  <MasteryRing mastery={c.mastery} size={22} />
                 </button>
               ))}
+              {!node.parent_name && node.children.length === 0 && (
+                <div className="quiet-empty">无层级邻居</div>
+              )}
             </div>
-          </div>
-
-          <SectionLabel>邻居 · 按关系分组</SectionLabel>
-          <div className="card card-pad">
-            {node.mesh_neighbors.length === 0 ? (
-              <div className="quiet-empty">无邻居</div>
-            ) : (
-              <>
-                {[...byRel.entries()].map(([rel, arr]) => {
-                  const cue = REL_CUE[rel] ?? REL_CUE.related_to;
-                  return (
-                    <div key={rel} className="kd-rel-block">
-                      <div className="kd-rel-h">
-                        <span className={`rel-tag rel-tag-${rel}`}>
-                          <span className="mono">{cue.glyph}</span>
-                          {cue.label}
-                        </span>
-                      </div>
-                      {arr.map((o) => (
-                        <button
-                          type="button"
-                          key={o.edge_id}
-                          className="rel-row"
-                          onClick={() => navigate(`/knowledge/${o.knowledge_id}`)}
-                        >
-                          <span className="wenyan">{o.name}</span>
-                          <span className="meta mono">{o.direction === 'out' ? '→' : '←'}</span>
-                          <LoomIcon name="arrow" size={13} />
-                        </button>
-                      ))}
-                    </div>
-                  );
-                })}
-              </>
-            )}
+            {[...byRel.entries()].map(([rel, arr]) => {
+              const cue = REL_CUE[rel] ?? REL_CUE.related_to;
+              return (
+                <div key={rel} className="kd-rel-block">
+                  <div className="kd-rel-h">
+                    <span className={`rel-tag rel-tag-${rel}`}>
+                      <span className="mono">{cue.glyph}</span>
+                      {cue.label}
+                    </span>
+                  </div>
+                  {arr.map((o) => (
+                    <button
+                      type="button"
+                      key={o.edge_id}
+                      className="rel-row"
+                      onClick={() => navigate(`/knowledge/${o.knowledge_id}`)}
+                    >
+                      <span className="wenyan">{o.name}</span>
+                      <span className="meta mono">{o.direction === 'out' ? '→' : '←'}</span>
+                      <LoomIcon name="arrow" size={13} />
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -351,7 +364,7 @@ export default function KnowledgeDetailPage({
                         key={`${b.from_artifact_id}-${b.from_block_id}`}
                         className="bl-row"
                         onClick={() => {
-                          if (t === 'note') navigate(`/notes/${b.from_artifact_id}`);
+                          if (t === 'note') navigate(noteHref(b.from_artifact_id));
                           else
                             placeholder('该来源的 surface 还在旧栈/后续里程碑——M5 收口后可跳转。');
                         }}
@@ -395,9 +408,11 @@ export default function KnowledgeDetailPage({
                             {i < shown.length - 1 && <span className="event-line" />}
                           </span>
                           <div className="event-body">
-                            {/* S8 (YUK-335 §2 P3)：event-note 渲人话句；event-head 去掉裸
-                                a.action mono 标签（避免 debug-log 味与人话句重复），只留时间。 */}
-                            <div className="event-note">{humanizeActivity(a)}</div>
+                            {/* S8 (YUK-335 §2 P3 + 批次乙 review)：人话句是 event row 主叙事行，
+                                走 .kd-event-lead（fs-meta + ink-2，= 设计源 .event-label 权重）
+                                而非 globals .event-note 最弱档；event-head 去掉裸 a.action mono
+                                标签（避免 debug-log 味与人话句重复），只留时间（meta/ink-3，弱于主句）。 */}
+                            <div className="kd-event-lead">{humanizeActivity(a)}</div>
                             <div className="event-head nowrap-meta">
                               <span className="meta">
                                 {new Date(a.created_at).toLocaleString('zh-CN', {

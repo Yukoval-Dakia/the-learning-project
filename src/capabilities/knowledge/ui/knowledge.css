@@ -212,3 +212,17 @@
 .kd-timeline-more-up {
   transform: rotate(-90deg);
 }
+
+/* S8 (YUK-335 批次乙 review)：人话句是 event row 的主叙事行，须继承设计源
+   event row 主行（screen-knowledge-detail.jsx:200 .event-label = fs-meta + ink-2）
+   的视觉权重——而非落进 globals .event-note 的最弱档（fs-caption + ink-3），
+   否则「答对了一道题」这类主句以全页最弱字号呈现、时间反而更显眼。人话句改用
+   独立 .kd-event-lead（不复用 globals .event-note，避开同 (0,1,0) 特异性下
+   bundle 顺序定胜负的脆弱），自带 fs-meta + ink-2 + margin-top；不动 globals
+   .event-note base（其它面在用）。时间行仍走原 .event-head 的 meta/ink-3，
+   保持「主句强、时间弱」的层级正向。 */
+.kd-event-lead {
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  margin-top: 2px;
+}

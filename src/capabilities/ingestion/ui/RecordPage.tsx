@@ -219,7 +219,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
           onChange={(e) => setDifficulty(Number(e.target.value))}
           aria-label="难度"
         />
-        <div className="slider-ticks">
+        <div className="slider-ticks mono">
           <span>1 易</span>
           <span>3 中</span>
           <span>5 难</span>
