@@ -758,4 +758,110 @@ describe('question_edit accept (ADR-0032 D6-B)', () => {
     const short = tree.sub_questions?.find((n) => n.id === 'n_short');
     expect(short?.prompt_text).toBe('解释「之」的用法。');
   });
+
+  // ADR-0032 D6-B optimistic-lock regression — the version-guarded UPDATE
+  // (and(eq(id), eq(version, row.version)).returning() → length===0 → 409) is the
+  // head write-safety guarantee of this lane. The applier READS question.version,
+  // then writes WHERE version = <the value it read>. A concurrent structured edit
+  // that bumps the version BETWEEN that read and the guarded write must make the
+  // write match 0 rows → 409, leaving the persisted tree untouched (the stale edit
+  // never lands).
+  //
+  // The applier reads the row OUTSIDE its db.transaction(...) and writes INSIDE it
+  // (acceptQuestionEditProposal: read then `db.transaction`). So we spy on
+  // db.transaction to interpose exactly one out-of-band version bump after the
+  // read but before the guarded UPDATE runs — a deterministic stand-in for a
+  // racing concurrent edit. (A bump done BEFORE acceptAiProposal would be read by
+  // the applier and the guard would simply match the newer version — no 409.)
+  it('409s when question.version is bumped concurrently between the applier read and write (optimistic-lock guard)', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_verconflict' });
+    await seedQuestionEditProposal('qe_p11', id, {
+      op: 'edit_node_text',
+      node_id: 'n_short',
+      prompt_text: '解释「之」在此句中的具体用法（应被乐观锁挡住）。',
+    });
+
+    const realTransaction = db.transaction.bind(db);
+    let bumped = false;
+    const txSpy = vi.spyOn(db, 'transaction').mockImplementation(async (cb, cfg) => {
+      // Fire the out-of-band bump exactly once, on the applier's transaction: the
+      // applier has already read version=0, so bumping to 1 on a separate (outer)
+      // connection makes its guarded UPDATE (WHERE version = 0) match 0 rows.
+      if (!bumped) {
+        bumped = true;
+        await db.update(question).set({ version: 1 }).where(eq(question.id, id));
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: pass-through to the real overload.
+      return realTransaction(cb as any, cfg as any);
+    });
+
+    await expect(acceptAiProposal(db, 'qe_p11')).rejects.toMatchObject({ status: 409 });
+    txSpy.mockRestore();
+
+    // The structured tree is unchanged (the stale edit never landed): the bumped
+    // version (1) stands, with no further increment from the rejected applier.
+    const [after] = await db.select().from(question).where(eq(question.id, id));
+    expect(after.version).toBe(1);
+    const tree = after.structured as StructuredQuestionT;
+    const short = tree.sub_questions?.find((n) => n.id === 'n_short');
+    expect(short?.prompt_text).toBe('解释「之」的用法。');
+    expect(short?.source).toBeUndefined();
+
+    // The version-guarded UPDATE throws INSIDE the transaction, so the whole tx
+    // rolls back: no audit event, no rate event, proposal stays pending.
+    const editRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:question_structure_edit'));
+    expect(editRows).toHaveLength(0);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qe_p11')));
+    expect(rateRows).toHaveLength(0);
+  });
+
+  it('set_node_kind accept stamps the node kind + provenance and writes the audit event', async () => {
+    const db = testDb();
+    const { id } = await seedActiveStructuredQuestion({ id: 'q_active_setkind' });
+    await seedQuestionEditProposal('qe_p12', id, {
+      op: 'set_node_kind',
+      node_id: 'n_choice',
+      kind: 'choice',
+    });
+
+    const result = await acceptAiProposal(db, 'qe_p12');
+    expect(result.kind).toBe('question_edit');
+    if (result.kind !== 'question_edit') throw new Error('unreachable');
+    expect(result.version).toBe(1);
+    expect(result.edit_event_id).toBeTruthy();
+
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.version).toBe(1);
+    const tree = row.structured as StructuredQuestionT;
+    const choice = tree.sub_questions?.find((n) => n.id === 'n_choice');
+    expect(choice?.kind).toBe('choice');
+    // Provenance stamped on the edited node.
+    expect(choice?.source).toBe('agent_edit');
+    expect(choice?.last_modified_by).toBe('agent:copilot');
+
+    // Reversible audit event captures the kind before/after.
+    const editRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'experimental:question_structure_edit'), eq(event.subject_id, id)),
+      );
+    expect(editRows).toHaveLength(1);
+    expect(editRows[0].payload).toMatchObject({
+      op: 'set_node_kind',
+      node_id: 'n_choice',
+      previous_version: 0,
+      next_version: 1,
+      after: { kind: 'choice' },
+    });
+    // The original node had no kind hint (the before-snapshot omits it).
+    expect((editRows[0].payload as { before: { kind?: string } }).before.kind).toBeUndefined();
+  });
 });
