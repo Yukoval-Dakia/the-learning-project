@@ -2,8 +2,9 @@
  * gen:postman — rebuild the Postman collection from committed endpoint specs.
  *
  * Source of truth: `postman/api-endpoints.json` (array of route specs). When a
- * route under `app/api/**` changes, edit that file and run `pnpm gen:postman`
- * rather than hand-editing the generated collection.
+ * route changes (capability manifest `api.routes`, mounted via `server/app.ts`),
+ * edit that file and run `pnpm gen:postman` rather than hand-editing the
+ * generated collection.
  *
  *   spec shape: { path, methods: [{ method, summary, query, contentType,
  *                                   bodyExample, formFields, notes }] }

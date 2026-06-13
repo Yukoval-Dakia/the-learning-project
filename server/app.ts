@@ -3,6 +3,8 @@
 // 路由注册从「元数据 + Next 壳文件」变为可执行代码，壳文件仪式消失（D19）。
 // 鉴权沿用单用户不变量：/api/* 全拦 x-internal-token，/api/health 豁免。
 
+import { createHash, timingSafeEqual } from 'node:crypto';
+
 import type { CapabilityManifest, RouteHandler } from '@/kernel/manifest';
 import { Hono } from 'hono';
 
@@ -11,12 +13,23 @@ export function toHonoPath(path: string): string {
   return path.replace(/\[([^\]]+)\]/g, ':$1');
 }
 
+// Fail-closed token 比较（M5 全分支 review H1）：INTERNAL_TOKEN 未设 ⇒ 拒绝一切
+// /api/* 请求（直接 `!==` 比较在「未设 + 缺 header」时 undefined !== undefined
+// 为 false 会放行）。SHA-256 摘要定长后 timingSafeEqual——常时比较且不泄露长度，
+// 语义对齐被 M5 拆除的 middleware.ts。
+function tokenMatches(header: string | undefined, secret: string | undefined): boolean {
+  if (!header || !secret) return false;
+  const a = createHash('sha256').update(header).digest();
+  const b = createHash('sha256').update(secret).digest();
+  return timingSafeEqual(a, b);
+}
+
 export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   const app = new Hono();
 
   app.use('/api/*', async (c, next) => {
     if (c.req.path === '/api/health') return next();
-    if (c.req.header('x-internal-token') !== process.env.INTERNAL_TOKEN) {
+    if (!tokenMatches(c.req.header('x-internal-token'), process.env.INTERNAL_TOKEN)) {
       return c.json({ error: 'unauthorized' }, 401);
     }
     return next();
@@ -37,6 +50,11 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
       });
     }
   }
+
+  // 未命中的 /api/* 统一 404 JSON（M5 全分支 review M1）：注册在 manifest 路由
+  // 之后只兜未匹配项——否则 prod 下穿透到 serveStatic catch-all 回 index.html 200，
+  // 与 dev（Vite proxy → 404）行为分叉，掩盖打错的端点。
+  app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));
 
   return app;
 }

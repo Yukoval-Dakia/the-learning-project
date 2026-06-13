@@ -57,7 +57,8 @@ async function executeQueryQuestions(
 ): Promise<QueryQuestionsOutput> {
   const input = QueryQuestionsInputSchema.parse(rawInput);
 
-  // Subject → knowledge-id set, exactly like the route (app/api/questions/route.ts):
+  // Subject → knowledge-id set, exactly like the route (M5 起
+  // src/capabilities/practice/api/questions-list.ts):
   // undefined = no subject filter; [] = subject labels no questions → empty list.
   const subjectKnowledgeIds =
     input.subject !== undefined

@@ -23,6 +23,11 @@
 // resolver without dragging the barrel cluster into its chunk graph.
 // `question-contract.ts` and `invoker.ts` re-import the resolver from here, so
 // the public surface and behaviour are unchanged.
+//
+// M5 (YUK-321) 后注：上文 webpack/next build 叙述是历史语境（Next 栈已拆，
+// app/api/review/submit 现为 src/capabilities/practice/api/submit.ts）；esbuild
+// server bundle 无共享 client chunk 问题，但 leaf 拆分维持——依赖图越瘦越好，
+// 且 question-contract/invoker 的 re-import 面未变。
 
 import type { z } from 'zod';
 
