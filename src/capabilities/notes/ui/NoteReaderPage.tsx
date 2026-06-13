@@ -9,13 +9,15 @@ import { Btn } from '@/ui/primitives/Btn';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import './note-reader.css';
 
 import { NoteBlockView, blockOutlineLabel } from './NoteBlocks';
 import { NoteEditor } from './NoteEditor';
 import {
   type BodyBlock,
+  editingBlur,
+  editingHeartbeat,
   getAiChanges,
   getNotePage,
   saveBodyBlocks,
@@ -51,6 +53,24 @@ export default function NoteReaderPage({
     setMode('read');
     setDraft(null);
   }
+
+  // 编辑期 presence（M5 全分支 review H2 接线）：编辑态每 5s 心跳，worker 的
+  // note-refine 据此 defer AI patch（ADR-0023 不变量）；离开编辑态（切回阅读 /
+  // 保存成功 / 换笔记 / 卸载）blur——服务端置 idle 并 FIFO flush 被 defer 的
+  // patch。best-effort：presence 失败不打断编辑（与旧 ArtifactBlockTree 等价），
+  // 兜底是 30s 心跳超时 sticky idle + PATCH 乐观锁。
+  useEffect(() => {
+    if (mode !== 'edit') return;
+    const sendHeartbeat = () => {
+      void editingHeartbeat(id).catch(() => {});
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 5000);
+    return () => {
+      window.clearInterval(timer);
+      void editingBlur(id).catch(() => {});
+    };
+  }, [mode, id]);
 
   const say = (text: string) => {
     setToast(text);

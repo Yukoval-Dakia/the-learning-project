@@ -57,6 +57,11 @@ ephemeral 陈旧 pending 丢弃语义）与不再成立（Redis 容器 / REDIS_U
 
 ## 核查记录
 
+- **勘误（M5 全分支 review H2，2026-06-13）**：Summary 表「editing_presence 子计划↔实现
+  Aligned」当时漏判——T5c 拆除 ArtifactBlockTree 时把 heartbeat/blur 的**唯一前端调用方**
+  一并拆掉，新基建（PG 表 + PgPresenceStore）读侧活、写侧零调用点：恒 idle ⇒ AI patch
+  永即时 apply，ADR-0023 编辑期 defer 不变量实际失效。已于 review-fix commit 在 SPA
+  NoteReaderPage 编辑态接线 heartbeat（5s）/blur（等价旧契约），Aligned 判定自此成立。
 - **假阳性剔除**：drift-plans 勘察称 `practice_stream_item` 表缺失——主会话核验该表在
   `src/db/schema.ts:823-851` 完整存在（含两索引），剔除。
 - **drift-entry 反向核查 11/11 PASS**：Task 10 五件入口文档改写（README / CLAUDE.md /

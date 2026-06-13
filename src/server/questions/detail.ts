@@ -15,8 +15,8 @@
 //     value (worst-of the per-knowledge buckets), never a question-owned state.
 //   - 题级 backlink (R-P4-6): tool_state.question_ids @> [id] jsonb container
 //     query across embedded_check + tool_quiz artifacts, grouped by intent_source.
-//   - timestamps are unix seconds (`*_sec`) — matches the sibling timeline route
-//     (app/api/questions/[id]/timeline/route.ts) and the rest of /api/*.
+//   - timestamps are unix seconds (`*_sec`) — timeline 已并入本详情聚合（M5 收编
+//     至 src/capabilities/practice/api/question-detail.ts），与 /api/* 其余面一致。
 
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 

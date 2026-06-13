@@ -6,9 +6,10 @@
 // AI-maintained counterpart to Lane-A's manual cross_link picker.
 //
 // Scheduling (Wave 7 D5): runs at BJT 02:45, AFTER knowledge_edge_propose_nightly
-// (02:30) so it sees the same-night fresh edges. The user is asleep, so we do NOT
-// rely on the in-memory editing-session heartbeat (that lives in the Next app
-// process, not this worker process). Concurrency is handled purely by
+// (02:30) so it sees the same-night fresh edges. The user is asleep, so this job
+// deliberately bypasses editing-session presence（M5 起 presence 在 PG 表
+// editing_presence，跨进程可见——「worker 看不见 Next 进程内存」的旧限制已不存在，
+// 但夜间无人编辑，读 presence 不值得）. Concurrency is handled purely by
 // `persistNoteRefineApply`'s optimistic version lock: a concurrent user edit just
 // makes the nightly apply a no-op via version conflict, and we retry next night.
 //
