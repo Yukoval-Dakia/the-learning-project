@@ -62,15 +62,42 @@ export function NoteBlockView({
   block,
   onLink,
   onOpenQuestion,
+  variant = 'edit',
 }: {
   block: BodyBlock;
   onLink?: (artifactId: string) => void;
   onOpenQuestion?: (questionId: string) => void;
+  // S12 (YUK-335)：read 态把 crossLink 渲成整宽 BlockLinkCard（设计源
+  // screen-note-reader.jsx:17 BlockLinkCard）；edit 态保持 inline 小 pill 不动。
+  // 默认 'edit' 使 NoteEditor 既有调用（无 variant）零行为改动。
+  variant?: 'read' | 'edit';
 }) {
   if (block.type === 'crossLinkBlock') {
     // ADR-0022 canonical flat attrs：{ id, artifact_id, block_id?, title? }
     //（服务端 block-refs 索引器同源）——勿读嵌套 target。
     const targetId = block.attrs?.artifact_id;
+    if (variant === 'read') {
+      // 整宽链接卡（设计 .nb-linkcard，已移植 globals）。kind/mastery 在 mock 里
+      // 取自 DATA.knowledge——真实 crossLinkBlock 是 artifact 引用，无 mastery，
+      // kind 固定「交叉链」（flat attrs 无类型字段，不 fabricate）；目标名取 title，
+      // 缺则回退 artifact_id（block-refs 索引器同源字段）。
+      return (
+        <button
+          type="button"
+          className="nb-linkcard"
+          onClick={() => targetId && onLink?.(targetId)}
+        >
+          <span className="nb-linkcard-ic">
+            <LoomIcon name="link" size={16} />
+          </span>
+          <span className="nb-linkcard-body">
+            <span className="nb-linkcard-t">{block.attrs?.title ?? targetId ?? '交叉链'}</span>
+            <span className="nb-linkcard-s mono">交叉链 · {targetId ?? '—'}</span>
+          </span>
+          <LoomIcon name="arrow" size={15} className="thread-arrow" />
+        </button>
+      );
+    }
     return (
       <button type="button" className="xlink mono" onClick={() => targetId && onLink?.(targetId)}>
         <LoomIcon name="link" size={11} />

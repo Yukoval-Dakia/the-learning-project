@@ -44,6 +44,12 @@ export default function NoteReaderPage({
   const [draft, setDraft] = useState<BodyBlock[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
+  // S12 (YUK-335)：入口上下文——同一篇笔记从多个 knowledge 节点可达（设计「一篇
+  // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口，mount 读一次即可
+  // （非 reactive 订阅，同 RecordRoute 的 getQuery mount-only 读法 router.tsx:99）。
+  // 无 param → 无入口上下文（banner 不渲、strip 不高亮、返回链回退 labels[0]）。
+  const [entryKid] = useState(() => new URLSearchParams(window.location.search).get('entry'));
+
   const note = noteQ.data;
   const blocks = note?.body_blocks?.content ?? [];
 
@@ -149,7 +155,12 @@ export default function NoteReaderPage({
       </main>
     );
 
-  const entryLabel = note.labels[0] ?? null;
+  // S12 (YUK-335)：entryMatch = ?entry 严格命中的 label（有入口上下文时才 truthy，
+  // 用于 banner 文案 + strip .is-here coral 反白）；entryLabel = 返回链/右栏入口
+  // tag 的派生来源，命中则用命中 label，否则回退 labels[0]（无入口上下文也保返回链
+  // 不空——返回链是导航兜底，不是入口断言）。
+  const entryMatch = entryKid ? (note.labels.find((l) => l.id === entryKid) ?? null) : null;
+  const entryLabel = entryMatch ?? note.labels[0] ?? null;
   const verified = note.verification_status === 'verified';
   const shown = mode === 'edit' ? (draft ?? []) : blocks;
 
@@ -244,6 +255,23 @@ export default function NoteReaderPage({
         )}
 
         <article className="note-doc-col">
+          {/* S12 (YUK-335)：入口 banner（设计 screen-note-reader.jsx:201，.note-entry-banner
+              coral，CSS 已移植 globals:6819）——仅当 ?entry 命中某 label 时渲，无入口
+              上下文不占版面。文案点明「从哪扇门进来」+ 同篇笔记另有几个入口。 */}
+          {entryMatch && (
+            <div className="note-entry-banner">
+              <LoomIcon name="link" size={15} />
+              <span>
+                你从「<b>{entryMatch.name}</b>」进入这篇笔记
+                {note.labels.length > 1 && (
+                  <>
+                    {' '}
+                    · 同一篇笔记另有 <b>{note.labels.length - 1}</b> 个入口
+                  </>
+                )}
+              </span>
+            </div>
+          )}
           <h1 className="page-title serif" style={{ marginBottom: 'var(--s-2)' }}>
             {note.title}
           </h1>
@@ -256,15 +284,43 @@ export default function NoteReaderPage({
             <span className="meta mono">v{note.version}</span>
           </div>
 
+          {/* S12 (YUK-335)：入口 strip（设计 :221，.note-entries-strip + .entry-pill，
+              CSS 已移植 globals:6855）——「同一篇笔记多扇门」的主表达。遍历 note.labels
+              每个 knowledge 标签出一个 pill（点击 navigate 到该知识点）；?entry 命中的
+              当前入口加 .is-here（coral 反白）。仅 read 态渲（编辑态不占版面）。 */}
+          {mode === 'read' && note.labels.length > 0 && (
+            <div className="note-entries-strip">
+              <span className="meta">入口 · {note.labels.length}</span>
+              {note.labels.map((l) => (
+                <button
+                  type="button"
+                  key={l.id}
+                  className={`entry-pill${entryMatch?.id === l.id ? ' is-here' : ''}`}
+                  onClick={() => navigate(`/knowledge/${l.id}`)}
+                >
+                  <LoomIcon name="link" size={12} />
+                  {l.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {mode === 'edit' && draft ? (
             <NoteEditor blocks={draft} labels={note.labels} noteId={note.id} onChange={setDraft} />
           ) : (
-            <div className="note-doc">
+            // S12 (YUK-335)：read 态正文套 .note-reader-body（设计 note-reader.css:60，
+            // CSS 已移植 globals:6894）→ prose 尺度 fs-body-lg 17px（旧 .note-doc 无字号
+            // 定义，块文本落 body 基础 15px）。NoteBlockView 渲染逻辑/outline/编辑态全不动；
+            // 仅换包裹类 + read 态 variant（crossLink 渲整宽 BlockLinkCard）。
+            // 注：设计的 .nrb-gutter 悬停手柄（折叠/锚点）会触及 block 渲染结构，按规约
+            // 降级为 follow-up（先保正文 prose 尺度这个 HIGH）。
+            <div className="note-reader-body">
               {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
               {blocks.map((b, i) => (
                 <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
                   <NoteBlockView
                     block={b}
+                    variant="read"
                     onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
                     onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
                   />
@@ -307,12 +363,14 @@ export default function NoteReaderPage({
                 <button
                   type="button"
                   key={l.id}
-                  className={`note-label-row${entryLabel?.id === l.id ? ' is-entry' : ''}`}
+                  className={`note-label-row${entryMatch?.id === l.id ? ' is-entry' : ''}`}
                   onClick={() => navigate(`/knowledge/${l.id}`)}
                 >
                   <span className="chip chip-k mono">{l.id.slice(0, 10)}</span>
                   <span className="wenyan">{l.name}</span>
-                  {entryLabel?.id === l.id && <span className="entry-tag mono">入口</span>}
+                  {/* S12 (YUK-335)：右栏「入口」tag 只在真有入口上下文（?entry 命中）
+                      时显示——与顶部 strip 的 .is-here 同源 entryMatch，无 param 不误标。 */}
+                  {entryMatch?.id === l.id && <span className="entry-tag mono">入口</span>}
                   <LoomIcon name="arrow" size={13} className="thread-arrow" />
                 </button>
               ))}
