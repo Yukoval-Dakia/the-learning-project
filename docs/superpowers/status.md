@@ -306,6 +306,14 @@ Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / mi
 ✅  U8    leave_agent_note         随 U3 提前落地（ExperimentalEvent 带外 hint 通道）
 ```
 
+### 架构重设计章 — Copilot 收口 + 旧栈拆除（YUK-321，2026-06-12 起）
+
+> 机器可读 shipped 注册表：`pnpm audit:schema` 的 `resolves_when.kind='phase'` 按本 block 的 ✅ 行判定 phase 是否 shipped。叙述性细节见 plan `docs/superpowers/plans/2026-06-12-yuk-321-m5-plan.md`。M0-M4（hono 骨架 / ingestion / practice / knowledge+notes / agency+workbench 五 capability 包落地）已在 main 上 merge 但未补 shipped 行；本 block 当前只记 M5。
+
+```
+✅  M5    Copilot 收口 + 拆除      copilot+observability 两 capability 包 + kernel `copilotTools` 贡献制（D14 单人格）+ 旧栈采石场单 commit 拆除（Next.js 15 App Router 全退场，192 files −23601；gate 选项 b：双进程 + presence 进 PG 表 editing_presence，无 Redis；Hono :8787 + Vite SPA :5173 + pg-boss worker 三进程拓扑；D19 路由壳文件仪式消失）（PR #TBD，2026-06-13）
+```
+
 ### Later — Standalone MCP / Plugin / Multi-Subject 扩展
 
 ```

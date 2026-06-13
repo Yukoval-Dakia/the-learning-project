@@ -26,24 +26,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Stack note
 
-README was refreshed during Project Ops closeout and is now the project entrance for current stack + local/NAS setup. Keep it aligned with this note when the runtime stack changes. Current stack:
+README is the project entrance for current stack + local/NAS setup. Keep it aligned with this note when the runtime stack changes. Current stack (post YUK-321 M5 copilot teardown, 2026-06-13):
 
-- **Next.js 15 App Router** (`app/`), self-hosted on NAS via Docker (sub-0z) — `next dev` for dev, Next standalone build runs in container for prod
-- **Postgres + Drizzle ORM** (`postgresql` dialect, `postgres` driver) — connection from `DATABASE_URL`
-- **R2 / S3-compatible blob** via `@aws-sdk/client-s3` (`src/server/r2.ts`)
-- **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) via xiaomi/mimo Anthropic-compatible endpoint; runtime is self-hosted Node, not Vercel Functions
-- **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query, Zod, ts-fsrs**
+- **Hono API**（`server/index.ts` + 组合根 `server/app.ts`，:8787）+ **Vite SPA**（`web/`，TanStack Router + React 19，:5173，dev 经 `/api` proxy → :8787）+ **pg-boss worker** 独立进程（`scripts/worker.ts`，dev `pnpm worker:dev`、prod `node dist/worker.cjs`）三进程；`pnpm dev:local` spawn 三者齐活
+- **Postgres + Drizzle ORM**（`postgresql` dialect, `postgres` driver）— connection from `DATABASE_URL`；editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b），**无 Redis**
+- **R2 / S3-compatible blob** via `@aws-sdk/client-s3`（`src/server/r2.ts`）
+- **Claude Agent SDK**（`@anthropic-ai/claude-agent-sdk`）via xiaomi/mimo Anthropic-compatible endpoint；runtime is self-hosted Node（CMD `node dist/server.cjs`），not Vercel Functions
+- **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query + Router, Zod, ts-fsrs**
 - **pg-boss** worker (`scripts/worker.ts`) for durable background jobs
 - **Biome** for lint + format, **Vitest** for tests, **pnpm** package manager
+- **esbuild** bundles `dist/server.cjs` / `dist/worker.cjs` / `dist/migrate.cjs`；`pnpm build` = `rw:web:build` + 三 esbuild 产物
 
-Historical docs and audits may still mention the old Vite/Workers/Hono/D1 stack. Treat those as historical unless a current doc or code path says otherwise. Treat `app/api/**` as the backend surface.
+Historical docs and audits may still describe the **Next.js 15 App Router** shape（`app/`, `next dev`, `next build`, `:3000`, `middleware.ts`, `Redis/ioredis` editing presence, `Vite/Workers/Hono/D1` 旧栈）. Treat those as historical unless a current doc or code path says otherwise. Treat **capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`** as the backend surface — every route/job/copilotTool 经 manifest 贡献制登记进组合根，不再有 `app/api/**` route handler 壳。
 
 ## Commands
 
 ```bash
-pnpm dev:local        # 推荐本地入口（compose Postgres :5433 为真相源；scripts/dev-local.ts 注入 DATABASE_URL + 端口）
-pnpm dev              # 备选：裸 next dev（需自带 DATABASE_URL / 端口）
-pnpm build            # next build
+pnpm dev:local        # 推荐本地入口（compose Postgres :5433 为真相源；scripts/dev-local.ts 注入 DATABASE_URL + spawn api+web+worker 三进程）
+pnpm dev              # alias for pnpm dev:local
+pnpm rw:api           # tsx watch server/index.ts（RW_WORKER=1 同进程启 pg-boss worker）
+pnpm rw:web           # vite --config web/vite.config.ts（dev SPA + /api proxy → :8787）
+pnpm worker:dev       # tsx scripts/worker.ts（独立 pg-boss worker 进程）
+pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
 pnpm format           # biome format --write .
@@ -54,9 +58,8 @@ pnpm test:watch       # alias for pnpm test:unit:watch
 pnpm test:db          # DB/API tests with shared Postgres testcontainer
 pnpm test:db:watch    # targeted DB/API watch loop
 pnpm test:migration   # migration DDL smoke; owns its own testcontainer
-pnpm test:legacy      # old single Vitest config, retained during rollout
 pnpm db:generate      # drizzle-kit generate (migrations from src/db/schema.ts)
-pnpm db:push          # drizzle-kit push (uses DATABASE_URL from .env.local)
+pnpm db:push          # drizzle-kit push (uses DATABASE_URL from .env)
 pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 lint）
 pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-level lint）
 pnpm audit:profile    # 检查所有 SubjectProfile 是否通过 schema + capability registry 验证
@@ -68,19 +71,19 @@ pnpm audit:profile    # 检查所有 SubjectProfile 是否通过 schema + capabi
 
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema），输出到 `docs/audit/YYYY-MM-DD-drift.md`，命令式手动触发；不自动开 issue / PR / cron。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。
 
-**行为变更（2026-05-21）**：`pnpm test:watch` 不再跑全量 + 启 docker，现在是 `pnpm test:unit:watch` 的 alias。如果要 DB watch loop 请用 `pnpm test:db:watch`；如果要旧的单 config 全量行为请用 `pnpm test:legacy`（rollout 期保留的退路）。
+**行为变更（2026-05-21）**：`pnpm test:watch` 不再跑全量 + 启 docker，现在是 `pnpm test:unit:watch` 的 alias。如果要 DB watch loop 请用 `pnpm test:db:watch`。（旧的 `pnpm test:legacy` 单 config 退路已在 YUK-321 M5 删除。）
 
 Development loop:
 - UI/core/schema/prompt/parser changes: run `pnpm test:unit:watch <test-file>` and touched-file Biome.
 - API/DB/route/job changes: run `pnpm test:db:watch <test-file>`.
 - Migration SQL changes: run `pnpm test:migration`.
-- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, `pnpm audit:profile`, `pnpm test`, and `pnpm build`. `pnpm build` catches Next.js route export validation + production-only checks that `tsc --noEmit` / biome / vitest all bypass (per YUK-67).
+- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, `pnpm audit:profile`, `pnpm test`, and `pnpm build`. `pnpm build` 经 esbuild 全量 bundle（server/worker/migrate 三 .cjs）+ Vite build，catch tsc/biome/vitest 都漏的 bundle 期错误（per YUK-67）。
 
 Single test: `pnpm vitest run --config vitest.unit.config.ts path/to/file.test.ts -t 'name'` for no-DB tests, or `pnpm vitest run --config vitest.db.config.ts path/to/file.test.ts -t 'name'` for DB/API tests.
 
 ### Postman / API exploration
 
-`postman/` holds a Postman collection mirroring `app/api/**` (auth, bodies, query params) plus a secret-free environment. It is the manual-exploration layer; Vitest route tests remain the regression gate. Run headless via `pnpm api:smoke [folder]` (Newman through `pnpm dlx`, token injected from `.env` — no committed dep, no committed secret). The collection is **generated**, not hand-edited: `postman/api-endpoints.json` is the source of truth. **When you add or change a route under `app/api/**` (method, path, request body, or query params), edit `postman/api-endpoints.json` and run `pnpm gen:postman`** (idempotent; Biome-formats the output). See `postman/README.md` for the spec shape.
+`postman/` holds a Postman collection mirroring the Hono API surface（capability manifests → `server/app.ts` mounted routes）plus a secret-free environment. It is the manual-exploration layer; Vitest route tests remain the regression gate. Run headless via `pnpm api:smoke [folder]` (Newman through `pnpm dlx`, token injected from `.env` — no committed dep, no committed secret). The collection is **generated**, not hand-edited: `postman/api-endpoints.json` is the source of truth. **When you add or change a route（method, path, request body, or query params），edit `postman/api-endpoints.json` and run `pnpm gen:postman`**（idempotent; Biome-formats the output）. `scripts/gen-postman.ts` now has a **manifest 对账层**：每个 spec 条目必须存在于组合根路由清单（capabilities manifests + `/api/health`），死条目 throw——剪 spec 时跑一遍兜底。See `postman/README.md` for the spec shape.
 
 DB tests use a real Postgres via `@testcontainers/postgresql` — Docker must be running. `tests/global-setup.ts` auto-detects OrbStack / Docker Desktop socket on macOS, runs `pnpm db:migrate` against the container once, then clones the migrated database into one `test_fork_<N>` database per configured worker via `CREATE DATABASE … TEMPLATE` (YUK-252). Vitest DB config runs `pool: 'forks'` with `maxWorkers` sourced from `tests/db-fork-constants.ts`; `tests/setup.db-fork.ts` (a `setupFiles` entry) rewrites `DATABASE_URL`/`TEST_DATABASE_URL` per worker to `test_fork_<VITEST_POOL_ID>`, so each fork gets its own cloned database and files run in parallel. Within a single fork, files still share one database and run sequentially — the hermetic contract is unchanged: every DB test must reset state in `beforeEach` (`resetDb()`) and must not assume cross-file state or execution order. To change DB test parallelism or the fork database prefix, update `tests/db-fork-constants.ts`.
 
@@ -90,35 +93,49 @@ Do not put tests that import `tests/helpers/db`, `@/db/client`, `postgres`, `dri
 
 ### Request flow
 
-All backend logic is in Next App Router route handlers under `app/api/**`:
+后端逻辑全在 Hono route handlers 里，经 capability manifests 贡献制登记进组合根 `server/app.ts`（`buildHonoApp(capabilities)` 循环挂载 `cap.api.routes`，`[id]` → `:id` 转换由 `toHonoPath` 完成）：
 
-- `app/api/ai/[task]/route.ts` — streaming + JSON AI endpoint. Dispatches by `task` to handlers in `src/server/ai/` (registry in `src/ai/registry.ts`, runner in `src/server/ai/runner.ts`). Browser code never holds the Anthropic key — all AI calls funnel through here.
-- `app/api/assets/*` — multipart upload → R2 + DB row (`src/server/r2.ts`).
-- `app/api/ingestion/*` — session create + import pipeline (`src/server/ingestion/`).
-- `app/api/_/{export,import,seed,logs}` — admin/dev utilities; round-trip test lives at `app/api/_/_round_trip.test.ts`.
-- `app/api/{knowledge,learning-items,mistakes,review}/*` — domain CRUD; FSRS scheduling via `ts-fsrs` in `src/server/review/`.
-- `app/api/health` — unauthenticated liveness probe.
+- `src/capabilities/copilot/manifest.ts` — Copilot chat（SSE 4 路由，AF S4）+ D14 单人格编排者 + `copilotTools` 工具贡献制（启动期 `registerCapabilityCopilotTools` 聚合到 DomainTool registry）
+- `src/capabilities/observability/manifest.ts` — admin 四面（logs cost/jobs/jobs-by-id/tool_calls）+ subjects + today cost ribbon
+- `src/capabilities/ingestion/manifest.ts` — assets multipart upload → R2 + DB row + ingestion pipeline（`src/server/ingestion/`，`src/server/r2.ts`）
+- `src/capabilities/{knowledge,notes,practice,agency,shell}/manifest.ts` — domain CRUD + AI tasks；FSRS scheduling via `ts-fsrs` in `src/server/review/`
+- `server/app.ts` 直挂 `/api/health`（unauthenticated liveness probe）
+
+组合根侧 `/api/*` token 校验也由 `server/app.ts` 注册的 `app.use('/api/*', ...)` 中间件完成（豁免 `/api/health`）。Browser code never holds the Anthropic key — all AI calls funnel through Hono route 或 pg-boss worker。
 
 ### Auth
 
-`middleware.ts` rejects every `/api/*` request that lacks `x-internal-token === process.env.INTERNAL_TOKEN`, except `/api/health`. This is a single-user tool; there is no per-user auth.
+`server/app.ts` 的 `/api/*` 中间件 reject every request that lacks `x-internal-token === process.env.INTERNAL_TOKEN`，except `/api/health`（直挂免校验）。This is a single-user tool; there is no per-user auth.（旧的 `middleware.ts` Next.js 中间件已随 YUK-321 M5 退场——auth 逻辑现在在 Hono 组合根内。）
 
 ### Layering
 
 ```
+server/            # Hono API 入口（index.ts）+ 组合根工厂（app.ts）+ env 加载
+web/               # Vite SPA 工程（root=web/；TanStack Router；@ alias 指 ../src）
 src/
-  core/          # Zod schemas, id helpers — cross-subject, no IO
-  db/            # Drizzle schema + Postgres client (single schema.ts)
-  ai/            # Task registry + browser-side caller (fetches /api/ai/[task])
-  server/        # Server-only: ai/, ingestion/, knowledge/, review/, export/, r2.ts, http/
+  capabilities/    # Capability 包：manifest.ts 声明路由/jobs/copilotTools/ui.pages
+    copilot/       # Copilot 域（D14 + copilotTools 贡献制）
+    observability/ # Observability 域
+    ingestion/     # 录入域
+    knowledge/     # 知识图谱域
+    notes/         # Note artifact 域
+    practice/      # 练习域
+    agency/        # 代理域
+    shell/         # 工作台域
+    index.ts       # 静态组合根：按顺序聚合所有 capability manifests
+  kernel/          # CapabilityManifest 契约 + validateComposition 唯一性循环
+  core/            # Zod schemas, id helpers — cross-subject, no IO
+  db/              # Drizzle schema + Postgres client (single schema.ts)
+  ai/              # Task registry + browser-side caller
+  server/          # Server-only: ai/, ingestion/, knowledge/, review/, export/, r2.ts, http/
   subjects/
-    wenyan/      # Per-subject bundle (Phase 1 dataset: classical Chinese)
-  ui/            # Shared React components
-app/             # Next App Router pages + api/
-docs/            # architecture.md, modules/, design/
+    wenyan/        # Per-subject bundle (Phase 1 dataset: classical Chinese)
+  ui/              # Shared React components
+scripts/           # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits
+docs/              # architecture.md, modules/, design/
 ```
 
-`core/` is cross-subject; `subjects/<name>/` is single-subject specialisation. Keep that boundary — don't leak subject-specific logic into `core/` or `server/`.
+`core/` is cross-subject; `subjects/<name>/` is single-subject specialisation. Keep that boundary — don't leak subject-specific logic into `core/` or `server/`. Capability 包（`src/capabilities/<name>/`）是新增路由/jobs/tools 的唯一登记面——manifest 贡献制进组合根，不再有 Next.js 壳文件仪式。
 
 ### Design principles (from `docs/architecture.md` and project memory)
 
@@ -137,7 +154,7 @@ docs/            # architecture.md, modules/, design/
 
 ## Deployment
 
-Self-hosted on NAS via `docker-compose.yml` (sub-0z): app container (Next.js standalone build, `Dockerfile`) + Postgres + Cloudflare Tunnel for ingress. Runtime config via `.env` injected at compose level. `DATABASE_URL` points to the compose Postgres in prod / NAS, to `.env.local` for local dev, and to the testcontainer URI inside `pnpm test`. **No Vercel** — drop any `.vercel/`, `vercel env pull`, or Vercel-specific assumptions you carry from other Next.js projects.
+Self-hosted on NAS via `docker-compose.yml` (sub-0z): app container（`node:24-slim` 多阶段 `Dockerfile`，CMD `node dist/server.cjs`，:8787）+ worker container（同镜像，compose `command: ["node", "dist/worker.cjs"]` override）+ migrate init container（`node dist/migrate.cjs`）+ Postgres（pgvector）+ Cloudflare Tunnel for ingress. **无 Redis 服务**——editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。Runtime config via `.env` injected at compose level. `DATABASE_URL` points to the compose Postgres in prod / NAS, to `.env.local` for local dev, and to the testcontainer URI inside `pnpm test`. **No Vercel** — drop any `.vercel/`, `vercel env pull`, or Vercel-specific assumptions you carry from other Next.js projects（旧栈 Next.js 已于 YUK-321 M5 退场）.
 
 ## Agent skills
 

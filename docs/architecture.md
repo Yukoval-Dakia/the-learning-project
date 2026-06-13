@@ -156,9 +156,9 @@ Question (统一题库，single source of truth)
 
 > **2026-05-19 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，所有 LLM task 都走 `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 Claude Agent SDK 的 `mcpServers + allowedTools + maxTurns`。统一 Domain Tool Registry 仍是计划中设计；当前只有 `KnowledgeReviewTask` 在 `src/server/knowledge/review.ts` 内部创建本地 in-process MCP tool。
 
-**当前规则**：
+**当前规则**（YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——AI 调用全走 capability manifest 声明的领域 route 或 pg-boss worker；下述规则语义不变，仅路由入口从 `app/api/ai/[task]` 改为各 capability 包 `manifest.ts` 声明的 route）：
 
-- generic `app/api/ai/[task]` 仅接受 `ReviewIntentTask`，由 `runTask()` 返回 JSON。
+- ~~generic `app/api/ai/[task]` 仅接受 `ReviewIntentTask`，由 `runTask()` 返回 JSON。~~ 已退场；ReviewIntentTask 走 `/api/review/intent`（practice 包 manifest 声明）。
 - SubjectProfile-driven task **不能**走 generic route；必须走领域 route / worker，由该入口解析并传入正确 `SubjectProfile`。
 - `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route，由领域 route 注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 走 `/api/knowledge/review`。
 - `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口，不通过 generic route 暴露。
@@ -207,15 +207,17 @@ interface DomainTool<Input, Output> {
 
 ### 5.5 Tool calling 循环位置
 
-**决策**：tool calling 多步循环跑在 **server 端**（Next route / pg-boss worker / scripts worker），client 只负责发起请求 + 接收 JSON 或 stream。浏览器永远不持 provider key，也不直接执行 tool。
+**决策**：tool calling 多步循环跑在 **server 端**（Hono route / pg-boss worker / scripts worker），client 只负责发起请求 + 接收 JSON 或 stream。浏览器永远不持 provider key，也不直接执行 tool。
 
 #### 实现
 
-- `app/api/ai/[task]/route.ts`：
-  - `ReviewIntentTask` → `runTask()` → JSON
-  - SubjectProfile-driven task → 400 `profile_required`
-  - VisionExtract* manual-rescue task → 400 `requires_domain_route`
-  - `needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`
+> YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——下列 dispatch 规则的语义由各 capability 包 `manifest.ts` 声明的领域 route 承接（旧 `app/api/ai/[task]/route.ts` 描述保留作历史对照）。
+
+- ~~`app/api/ai/[task]/route.ts`~~（已退场；YUK-321 M5）：
+  - ~~`ReviewIntentTask` → `runTask()` → JSON~~ 走 `/api/review/intent`（practice 包）
+  - ~~SubjectProfile-driven task → 400 `profile_required`~~ 走领域 route
+  - ~~VisionExtract* manual-rescue task → 400 `requires_domain_route`~~ 走 ingestion rescue route
+  - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route
 - 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
 - Claude Agent SDK 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
 - assistant tool-use blocks 写 `tool_call_log`
@@ -268,11 +270,11 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 
 | 层 | 选型 | 理由 |
 | --- | --- | --- |
-| Web app | Next.js 15 App Router + React 19 + Tailwind v4 | 当前实现；backend surface 在 `app/api/**` |
-| 数据库 | Postgres + Drizzle ORM (`postgresql` dialect, `postgres` driver) | 本地、测试、NAS compose 同一数据库形态 |
+| Web app | Hono API（组合根 `server/app.ts`，:8787）+ Vite SPA（`web/`，React 19 + Tailwind v4 + TanStack Router，:5173） | 当前实现（YUK-321 M5 起）；backend surface = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 |
+| 数据库 | Postgres + Drizzle ORM (`postgresql` dialect, `postgres` driver) | 本地、测试、NAS compose 同一数据库形态；editing presence 走 PG 表 `editing_presence`（PgPresenceStore），无 Redis |
 | Blob 存储 | R2 / S3-compatible via `@aws-sdk/client-s3` | 图片 / 来源资产 |
-| 部署 | Docker compose on NAS：`app` + `worker` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
-| 后台任务 | pg-boss + `scripts/worker.ts` | schedules、queues、OCR、proposal、note generation |
+| 部署 | Docker compose on NAS：`app`（`node dist/server.cjs` :8787）+ `worker`（`node dist/worker.cjs`）+ `migrate` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
+| 后台任务 | pg-boss + `scripts/worker.ts`（独立进程，prod `dist/worker.cjs`） | schedules、queues、OCR、proposal、note generation |
 | AI 调用 | Claude Agent SDK runner + AI SDK v6 package + provider packages | 见上节任务层 |
 | Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 当前由领域 route 手动注入 MCP，未来再抽 DomainTool registry |
 | Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
@@ -281,6 +283,8 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 | 图表 | Mermaid | |
 | 视觉录入 | Tencent QuestionMarkAgent async OCR + manual vision rescue | OCR 主路径已落地；vision rescue 手动触发 |
 | 复习算法 | `ts-fsrs` | 现成 FSRS 实现 |
+
+> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 15 App Router 全栈已退场。下方及全文中遗留的 `app/`、`app/api/**`、`middleware.ts`、`next dev`/`next build`、`:3000`、`Redis/ioredis` 描述均为历史残留，不再适用——backend 真相源是 capability manifests + `server/app.ts` 组合根。会在后续 closeout 中继续清扫。
 
 **反模式**：
 
@@ -646,22 +650,23 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 
 ## 十、异步任务层 (pg-boss) — Sub 0c
 
-独立 worker 进程 + app process 经 LISTEN/NOTIFY 协同：
+独立 worker 进程 + app process 经 LISTEN/NOTIFY 协同（YUK-321 M5 双进程拓扑：app 跑 `node dist/server.cjs`、worker 跑 `node dist/worker.cjs`；dev 三进程由 `scripts/dev-local.ts` spawn，见 README.md）：
 
 ```
-[Web (Next.js app)]                [Worker (Node.js, scripts/worker.ts)]
+[Vite SPA (web/, :5173)]          [Worker (Node.js, dist/worker.cjs / scripts/worker.ts)]
        │                               │  boss.work('tencent_ocr_extract', handler)
-       │ POST /.../extract             │  → 拉到 job
-       │ enqueueExtraction             │  handler:
-       │   ├─ UPDATE session.status    │    IngestionSession.markExtractionStarted
-       │   ├─ writeJobEvent → NOTIFY   │    R2.get + Tencent submit/poll + parse + crop
-       │   └─ boss.send                │    IngestionSession.applyExtractionResult
-       │                               │       └─ writeJobEvent (NOTIFY)
-       ├── GET /.../events (SSE)       │    writeCostLedger(outcome, pgboss_job_id)
+       │ POST /api/.../extract         │  → 拉到 job
+       │  (proxy → Hono :8787)         │  handler:
+       │ enqueueExtraction             │    IngestionSession.markExtractionStarted
+       │   ├─ UPDATE session.status    │    R2.get + Tencent submit/poll + parse + crop
+       │   ├─ writeJobEvent → NOTIFY   │    IngestionSession.applyExtractionResult
+       │   └─ boss.send                │       └─ writeJobEvent (NOTIFY)
+       │                               │    writeCostLedger(outcome, pgboss_job_id)
+       ├── GET /api/.../events (SSE)   │
        │   replay + subscribe          │
        ↑                               │
        └─ listen_loop ←── pg_notify ──┘
-          (instrumentation.ts)
+          (server/index.ts, app process — RW_WORKER=1 时同进程 worker 也跑)
 ```
 
 **关键模块**：
@@ -696,7 +701,7 @@ started → completed | abandoned
 
 **OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
 
-**Acceptance gates**：EchoJob E2E (`app/api/echo/echo.e2e.test.ts`) + tencent_ocr_extract handler test + IngestionSession 16 transition tests。
+**Acceptance gates**：EchoJob E2E（~~`app/api/echo/echo.e2e.test.ts`~~ 已随 YUK-321 M5 退场，echo job handler 测试现位于 `src/capabilities/observability/` 下）+ tencent_ocr_extract handler test + IngestionSession 16 transition tests。
 
 **pg-boss dev harness（`echo_jobs` + `/api/echo`）**：`echo_jobs` 表 + `POST /api/echo` 路由 + `src/server/boss/handlers/echo.ts` 是 Sub 0c 的 **pg-boss E2E dev harness**，验证 enqueue → pg-boss worker → notify → SSE 全链路。这是验收门（acceptance gate），**不是生产业务路由**；不在 Phase 1c.1 DROP，但 Phase 2+ 可按需清理。（closes #34 finding 2）
 
