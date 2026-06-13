@@ -55,6 +55,45 @@ function NoteLinkRow({ note, go }: { note: NoteSummary; go: (to: string) => void
   );
 }
 
+// ADR-0033 D5 — interactive artifact discovery section. Pure presentational
+// (resolved props only, no queries) so both the node detail page (.kd-main) and
+// the graph node drawer (.drawer-sec) reuse it and it is renderToString-testable
+// (AutoEnrolledPanel PanelBody precedent). The interactive artifact reuses
+// /notes/{id} as its reader shell (note-page READER_TYPES), so rows link there;
+// the .note-kind-interactive tag distinguishes them from note kinds. Empty →
+// renders nothing in the drawer-sec form (the section header carries its own
+// count when shown) — KnowledgeDetailPage gates the SectionLabel on length so no
+// empty block appears on the page either.
+export function InteractiveArtifactDiscovery({
+  artifacts,
+  go,
+}: {
+  artifacts: NoteSummary[];
+  go: (to: string) => void;
+}) {
+  if (artifacts.length === 0) return null;
+  return (
+    <>
+      {artifacts.map((a) => (
+        <button
+          type="button"
+          key={a.id}
+          className="note-link-row"
+          onClick={() => go(`/notes/${a.id}`)}
+        >
+          <span className="note-kind-tag note-kind-interactive">
+            <LoomIcon name="sparkle" size={12} />
+            互动
+          </span>
+          <span className="note-link-title">{a.title}</span>
+          <span className="meta">{new Date(a.updated_at).toLocaleDateString('zh-CN')}</span>
+          <LoomIcon name="arrow" size={13} className="thread-arrow" />
+        </button>
+      ))}
+    </>
+  );
+}
+
 const BL_META: Record<string, { label: string; icon: string }> = {
   question: { label: '题目', icon: 'quiz' },
   note: { label: '笔记', icon: 'doc' },
@@ -258,6 +297,21 @@ export default function KnowledgeDetailPage({
                   ))}
                 </div>
               ))}
+            </>
+          )}
+
+          {/* ADR-0033 D5 — 互动产物 discovery：interactive_artifacts wire 已在
+              node-page；空则整块不渲染（gate on length），避免空块。行链到
+              /notes/{id}（互动产物复用 NoteReader 作为阅读壳）。 */}
+          {node.interactive_artifacts.length > 0 && (
+            <>
+              <SectionLabel>互动产物 · {node.interactive_artifacts.length}</SectionLabel>
+              <div className="kd-note-group">
+                <InteractiveArtifactDiscovery
+                  artifacts={node.interactive_artifacts}
+                  go={navigate}
+                />
+              </div>
             </>
           )}
 

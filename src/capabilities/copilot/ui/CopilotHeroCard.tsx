@@ -21,15 +21,91 @@
 
 'use client';
 
+import { getNotePage } from '@/capabilities/notes/ui/notes-api';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { resolveArtifactHero } from './hero';
+import { useQuery } from '@tanstack/react-query';
+import { type ArtifactHero, isInteractiveArtifactRef, resolveArtifactHero } from './hero';
 import type { ReplayPrimaryView } from './replay';
 
 export interface CopilotHeroCardProps {
   primaryView: ReplayPrimaryView;
   /** M5-T3 (YUK-321) — route push injected by CopilotDock (replaces the old link import). */
   navigate: (to: string) => void;
+}
+
+// The {source:'artifact'} reference card (§2.3): 类型 icon + label + 打开 link, or
+// a link-less kind chip when the kind is unrecognised. Extracted so the
+// interactive inline carrier can fall back to it on load/error.
+function ArtifactReferenceCard({
+  hero,
+  fallbackKind,
+  navigate,
+}: {
+  hero: ArtifactHero | null;
+  fallbackKind: string;
+  navigate: (to: string) => void;
+}) {
+  if (!hero) {
+    return (
+      <div className="copilot-hero copilot-hero-ref" data-testid="copilot-hero-artifact">
+        <LoomIcon name="doc" size={16} />
+        <span className="copilot-hero-label">{fallbackKind}</span>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(hero.href)}
+      className="copilot-hero copilot-hero-ref"
+      data-testid="copilot-hero-artifact"
+    >
+      <LoomIcon name={hero.icon} size={16} />
+      <span className="copilot-hero-label">{hero.label}</span>
+      <span className="copilot-hero-open">
+        打开
+        <LoomIcon name="arrow" size={13} />
+      </span>
+    </button>
+  );
+}
+
+// ADR-0033 D5 — persistent interactive artifact, inline in the hero (owner chose
+// inline over the reference card). Unlike ephemeral_html (the ref IS the body),
+// a persistent artifact has only {kind,id}, so this fetches its html via the
+// note-page aggregate (reuses L1's `interactive` field — /notes/{id} is the
+// artifact's reader shell). Best-effort: while loading, on fetch error, or when
+// the row carries no renderable html (parse-fail → interactive=null), it
+// degrades to the plain reference card. copilot-hero scale CSS already in
+// globals.css (.copilot-loom .copilot-hero .note-interactive-shell).
+function InteractiveArtifactHero({
+  ref,
+  navigate,
+}: {
+  ref: { kind: string; id: string };
+  navigate: (to: string) => void;
+}) {
+  const noteQ = useQuery({
+    queryKey: ['note-page', ref.id],
+    queryFn: () => getNotePage(ref.id),
+  });
+  const html = noteQ.data?.interactive?.html ?? null;
+  if (html) {
+    return (
+      <div className="copilot-hero" data-testid="copilot-hero-interactive">
+        <InteractiveArtifactRenderer html={html} title={noteQ.data?.title ?? '互动内容'} />
+      </div>
+    );
+  }
+  // loading / error / parse-fail → reference card.
+  return (
+    <ArtifactReferenceCard
+      hero={resolveArtifactHero(ref)}
+      fallbackKind={ref.kind}
+      navigate={navigate}
+    />
+  );
 }
 
 export function CopilotHeroCard({ primaryView, navigate }: CopilotHeroCardProps) {
@@ -42,29 +118,17 @@ export function CopilotHeroCard({ primaryView, navigate }: CopilotHeroCardProps)
   }
 
   if (primaryView.source === 'artifact') {
-    const hero = resolveArtifactHero(primaryView.ref);
-    if (!hero) {
-      return (
-        <div className="copilot-hero copilot-hero-ref" data-testid="copilot-hero-artifact">
-          <LoomIcon name="doc" size={16} />
-          <span className="copilot-hero-label">{primaryView.ref.kind}</span>
-        </div>
-      );
+    // Persistent interactive artifact → inline render (fetches its own html).
+    // Every other artifact kind keeps the reference card (不重复取数, §2.3).
+    if (isInteractiveArtifactRef(primaryView.ref.kind)) {
+      return <InteractiveArtifactHero ref={primaryView.ref} navigate={navigate} />;
     }
     return (
-      <button
-        type="button"
-        onClick={() => navigate(hero.href)}
-        className="copilot-hero copilot-hero-ref"
-        data-testid="copilot-hero-artifact"
-      >
-        <LoomIcon name={hero.icon} size={16} />
-        <span className="copilot-hero-label">{hero.label}</span>
-        <span className="copilot-hero-open">
-          打开
-          <LoomIcon name="arrow" size={13} />
-        </span>
-      </button>
+      <ArtifactReferenceCard
+        hero={resolveArtifactHero(primaryView.ref)}
+        fallbackKind={primaryView.ref.kind}
+        navigate={navigate}
+      />
     );
   }
 
