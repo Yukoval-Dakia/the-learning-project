@@ -171,6 +171,17 @@ describe('AiProposalPayload', () => {
           prompt_preview: '解释「之」在句中的作用',
         },
       },
+      // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
+      question_edit: {
+        ...base,
+        kind: 'question_edit',
+        target: { subject_kind: 'question', subject_id: 'question_active_1' },
+        proposed_change: {
+          question_id: 'question_active_1',
+          edit: { op: 'edit_node_text', node_id: 'n1', prompt_text: '修订后的题面' },
+          node_preview: '修订后的题面',
+        },
+      },
     } as const;
 
     expect(Object.keys(samples).sort()).toEqual([...aiProposalKinds].sort());
@@ -484,6 +495,14 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
           seed_mode: 'knowledge',
         },
       },
+      question_edit: {
+        kind: 'question_edit',
+        target: { subject_kind: 'question', subject_id: 'q1' },
+        proposed_change: {
+          question_id: 'q1',
+          edit: { op: 'edit_node_text', node_id: 'n1', prompt_text: 'x' },
+        },
+      },
     };
     // Audit-coverage guard (AC-2): the sample map covers every AiProposalKind, so
     // a future kind addition that forgets the optional-field check is caught.
@@ -561,6 +580,10 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
       // proposal (user asked for a quiz; the draft grows the bank), not a repair
       // of an observed failure.
       question_draft: false,
+      // ADR-0032 D6-B (YUK-203 lane L6) — question_edit is a proactive structured
+      // correction proposal (the agent/user refines a pooled question's tree); it
+      // is not the SK-3 "structurally corrective" variant lane.
+      question_edit: false,
     };
     // Every kind classified; exactly one structurally-corrective kind.
     expect(Object.keys(correctivePossibleByKind).sort()).toEqual([...aiProposalKinds].sort());

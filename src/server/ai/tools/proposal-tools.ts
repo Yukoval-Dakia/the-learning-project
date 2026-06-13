@@ -18,6 +18,10 @@ import {
   type RubricVerdict,
   validateProposalQuality,
 } from '@/capabilities/knowledge/server/rubric-validator';
+// ADR-0032 D6-B (YUK-203 lane L6) — the pure verify-gate is reused at PROPOSE
+// time (pre-flight against the live tree) and again at ACCEPT time (the applier).
+import { applyQuestionEdit } from '@/capabilities/practice/server/proposal-appliers';
+import { QuestionKind } from '@/core/schema/business';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 // P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
 // explicitly via the propose-tool input arg (§4.1/§4.2).
@@ -25,6 +29,8 @@ import { SuggestionKind } from '@/core/schema/event/known';
 import {
   type AiProposalPayloadInputT,
   type ProposalEvidenceRefT,
+  QuestionEditOp,
+  type QuestionEditOpT,
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -1849,6 +1855,180 @@ export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionO
   execute: authorQuestionExecute,
   summarize(input, output) {
     return `author_question[${input.seed_mode}]: ${output.status}`;
+  },
+  mirrorEvent: 'when_causal',
+};
+
+// ---------------------------------------------------------------------------
+// propose_question_edit  (ADR-0032 D6-B / YUK-203 lane L6)
+// ---------------------------------------------------------------------------
+//
+// Propose a NARROW, typed edit to one node of an ACTIVE (pooled,
+// draft_status='active') question's `structured` tree. Proposal-only: the user
+// accepts in the inbox; the accept applier (acceptQuestionEditProposal, practice
+// package) re-runs the mini verify gate and applies the edit to
+// question.structured behind a reversible audit event — never a direct write.
+//
+// Nodes are addressed by `node_id` — the SAME id/role coordinate the L5
+// addressable projection exposes via get_question_context(include:['structure']):
+// read the structure, pick a node id, edit that node id (read≡write parity).
+//
+// Bridge constraint (mcp-bridge.ts:145 — inputSchema MUST be a flat z.ZodObject):
+// the public input is a FLAT object with an `op` discriminator + per-op optional
+// fields; the typed op is resolved + validated (against the core QuestionEditOp
+// discriminated union) inside execute, OFF the schema.
+
+const ProposeQuestionEditInputSchema = z.object({
+  question_id: z.string().min(1),
+  op: z.enum(['edit_node_text', 'edit_reference', 'set_choice', 'set_node_kind']),
+  node_id: z.string().min(1),
+  // edit_node_text
+  prompt_text: z.string().min(1).optional(),
+  // edit_reference (at least one of answers/analysis required, checked in execute)
+  answers: z.array(z.string()).optional(),
+  analysis: z.string().optional(),
+  // set_choice
+  options: z
+    .array(z.object({ label: z.string().min(1), text: z.string() }))
+    .min(1)
+    .optional(),
+  // set_node_kind
+  kind: QuestionKind.optional(),
+  // optional human-readable rationale surfaced on the inbox card.
+  reason: z.string().min(1).max(2000).optional(),
+  suggestion_kind: SuggestionKind.optional(),
+});
+type ProposeQuestionEditInput = z.infer<typeof ProposeQuestionEditInputSchema>;
+
+const ProposeQuestionEditOutputSchema = z.object({
+  status: z.enum([
+    'proposed',
+    'skipped:not_found', // question row missing
+    'skipped:not_active', // question is draft / re-drafted (not pooled)
+    'skipped:no_structure', // question has no structured tree to address
+    'skipped:invalid_op', // per-op fields missing / malformed
+    'skipped:gate_rejected', // verify gate rejected (node missing / wrong shape / breaks invariants)
+    'skipped:duplicate_pending', // an identical edit proposal is already pending
+  ]),
+  question_id: z.string(),
+  node_id: z.string(),
+  op: z.string(),
+  proposal_id: z.string().optional(),
+  // The verify-gate failure code on status='skipped:gate_rejected'.
+  gate_failure: z.string().optional(),
+});
+type ProposeQuestionEditOutput = z.infer<typeof ProposeQuestionEditOutputSchema>;
+
+/**
+ * Resolve the flat tool input to the typed core QuestionEditOp, or null when the
+ * per-op required fields are missing/malformed. Validated through the core
+ * discriminated union so the proposal payload and the accept applier agree on
+ * the exact op shape.
+ */
+function resolveQuestionEditOp(input: ProposeQuestionEditInput): QuestionEditOpT | null {
+  let candidate: unknown;
+  switch (input.op) {
+    case 'edit_node_text':
+      candidate = { op: 'edit_node_text', node_id: input.node_id, prompt_text: input.prompt_text };
+      break;
+    case 'edit_reference':
+      candidate = {
+        op: 'edit_reference',
+        node_id: input.node_id,
+        ...(input.answers !== undefined ? { answers: input.answers } : {}),
+        ...(input.analysis !== undefined ? { analysis: input.analysis } : {}),
+      };
+      break;
+    case 'set_choice':
+      candidate = { op: 'set_choice', node_id: input.node_id, options: input.options };
+      break;
+    case 'set_node_kind':
+      candidate = { op: 'set_node_kind', node_id: input.node_id, kind: input.kind };
+      break;
+  }
+  const parsed = QuestionEditOp.safeParse(candidate);
+  if (!parsed.success) return null;
+  // edit_reference must change at least one of answers/analysis (the schema marks
+  // both optional individually; the cross-field requirement lives here).
+  if (
+    parsed.data.op === 'edit_reference' &&
+    parsed.data.answers === undefined &&
+    parsed.data.analysis === undefined
+  ) {
+    return null;
+  }
+  return parsed.data;
+}
+
+async function proposeQuestionEditExecute(
+  ctx: ToolContext,
+  raw: ProposeQuestionEditInput,
+): Promise<ProposeQuestionEditOutput> {
+  const input = ProposeQuestionEditInputSchema.parse(raw);
+  const base = { question_id: input.question_id, node_id: input.node_id, op: input.op };
+
+  const edit = resolveQuestionEditOp(input);
+  if (!edit) return { ...base, status: 'skipped:invalid_op' };
+
+  const row = (
+    await ctx.db.select().from(question).where(eq(question.id, input.question_id)).limit(1)
+  )[0];
+  if (!row) return { ...base, status: 'skipped:not_found' };
+  if (row.draft_status !== 'active') return { ...base, status: 'skipped:not_active' };
+  if (!row.structured) return { ...base, status: 'skipped:no_structure' };
+
+  // Pre-flight the SAME mini verify gate the accept applier runs, against the
+  // live tree — so a doomed edit never even becomes a pending proposal.
+  const gated = applyQuestionEdit(row.structured, edit, ctx.callerActor.ref);
+  if ('failure' in gated) {
+    return { ...base, status: 'skipped:gate_rejected', gate_failure: gated.failure };
+  }
+
+  // Dedup: one pending edit per (question, node, op).
+  const cooldownKey = `question_edit:${input.question_id}:${input.node_id}:${input.op}`;
+  if (await pendingProposalWithCooldown(ctx.db, 'question_edit', cooldownKey)) {
+    return { ...base, status: 'skipped:duplicate_pending' };
+  }
+
+  const proposalId = await writeAiProposal(ctx.db, {
+    actor_ref: ctx.callerActor.ref,
+    payload: {
+      kind: 'question_edit',
+      target: { subject_kind: 'question', subject_id: input.question_id },
+      reason_md: input.reason ?? `propose structured ${input.op} on question ${input.question_id}`,
+      evidence_refs: [{ kind: 'question', id: input.question_id }],
+      proposed_change: {
+        question_id: input.question_id,
+        edit,
+        node_preview: excerpt(gated.after.prompt_text ?? row.structured.prompt_text),
+      },
+      rollback_plan: {
+        action: 'dismiss proposal; the active question structure is unchanged',
+      },
+      cooldown_key: cooldownKey,
+      suggestion_kind: input.suggestion_kind ?? 'proactive',
+    },
+    task_run_id: ctx.taskRunId,
+    caused_by_event_id: ctx.causedByEventId ?? null,
+  });
+
+  return { ...base, status: 'proposed', proposal_id: proposalId };
+}
+
+export const proposeQuestionEditTool: DomainTool<
+  ProposeQuestionEditInput,
+  ProposeQuestionEditOutput
+> = {
+  name: 'propose_question_edit',
+  description:
+    'Propose a narrow, typed edit to ONE node of an ACTIVE (pooled) question\'s structured tree. Address the node by its node_id from get_question_context(include:["structure"]) — same coordinate you read. op="edit_node_text" rewrites a node\'s prompt_text (stem passage / 题面); op="edit_reference" replaces a leaf node\'s answers and/or analysis (参考答案/解析); op="set_choice" replaces a leaf node\'s option list; op="set_node_kind" sets the advisory question-type hint. Proposal-only: the user accepts in the inbox; a mini verify gate re-checks the edit (node exists, correct node shape, structure invariants hold) before it is applied, reversibly, to question.structured. Skips (does not propose) on a missing/non-active question, missing structure, an invalid op, a gate rejection, or a duplicate pending edit.',
+  effect: 'propose',
+  inputSchema: ProposeQuestionEditInputSchema,
+  outputSchema: ProposeQuestionEditOutputSchema,
+  costClass: 'local',
+  execute: proposeQuestionEditExecute,
+  summarize(input, output) {
+    return `propose_question_edit[${input.op}] ${input.node_id.slice(0, 8)}: ${output.status}`;
   },
   mirrorEvent: 'when_causal',
 };
