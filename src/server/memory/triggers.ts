@@ -1,6 +1,7 @@
 import { eq, inArray, isNull, sql } from 'drizzle-orm';
 import { type DrizzleTransactionLike, type Job, fromDrizzle } from 'pg-boss';
 
+import { RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
@@ -35,8 +36,8 @@ import {
   loadUnappliedLog,
   makePlannedRow,
   markApplied,
+  rewriteMemoryText,
   softSupersede,
-  softSupersedeWithText,
 } from './reconcile-store';
 
 // P5.2 (YUK-143) — per-subject brief refresh lookback for the nightly sweep +
@@ -244,6 +245,12 @@ export async function enqueueMemoryReconcile(
       singletonKey: `memory.reconcile.${userId}`,
       singletonSeconds: RECONCILE_SINGLETON_SECONDS,
       singletonNextSlot: true,
+      // Retry on transient failure (the handler rethrows RetryableError; planned
+      // rows replay idempotently). Without this, a rethrown RetryableError would
+      // dead-letter on the first try and the batch would never reconcile.
+      retryLimit: 3,
+      retryDelay: 30,
+      retryBackoff: true,
     },
   );
 }
@@ -529,11 +536,28 @@ export function buildMemoryReconcileHandler(
           throw err;
         }
 
+        // Dedup decisions by new_index: if GLM returns multiple decisions for the
+        // same new memory, only the first wins. A second planned row for the same
+        // new_index would apply against already-mutated state (e.g. supersede a row
+        // a prior decision already deleted), corrupting the batch. Keep the first,
+        // warn-drop the rest.
+        const seenNewIndex = new Set<number>();
+        const uniqueDecisions = decisions.filter((d) => {
+          if (seenNewIndex.has(d.new_index)) {
+            console.warn(
+              `[memory_reconcile] duplicate new_index ${d.new_index} dropped (action=${d.action}); first decision wins`,
+            );
+            return false;
+          }
+          seenNewIndex.add(d.new_index);
+          return true;
+        });
+
         // Write-ahead: insert planned rows BEFORE applying (crash safety).
         // Map decisions to log rows, resolving old_index → memory_id. Out-of-range
         // indices (LLM hallucination) degrade that decision to a safe KEEP_BOTH
         // rather than a null-id no-op or a wrong-target supersede.
-        const plannedRows = decisions.map((d) => {
+        const plannedRows = uniqueDecisions.map((d) => {
           const newMem = newMems[d.new_index];
           const cands = candidatesByNew.get(d.new_index) ?? [];
           const oldMem = d.old_index != null ? cands[d.old_index] : undefined;
@@ -559,8 +583,18 @@ export function buildMemoryReconcileHandler(
         // Apply phase: execute actions, then mark applied.
         await applyPlannedRows(db, userId, collectionName);
       } catch (err) {
-        // Leave planned rows intact for idempotent resume on next job.
-        console.error('[memory_reconcile] job failed; planned rows left for resume', err);
+        // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
+        // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
+        // retryLimit/retryDelay/retryBackoff). Any planned rows already inserted
+        // replay idempotently via applyPlannedRows on the retry, so the rethrow
+        // is safe. Swallowing here (the prior behavior) made the job report
+        // success → no retry → this batch silently never reconciled.
+        if (err instanceof RetryableError) throw err;
+        // Non-retryable: leave planned rows intact for idempotent resume on next job.
+        console.error(
+          '[memory_reconcile] job failed (non-retryable); planned rows left for resume',
+          err,
+        );
       }
     }
   };
@@ -611,12 +645,15 @@ async function applyPlannedRows(
           const mergedText =
             typeof llmRaw?.merged_text === 'string' ? llmRaw.merged_text.trim() : '';
           if (mergedText.length > 0) {
-            // Rewrite old memory text to absorb the new one, then delete new.
-            await softSupersedeWithText(db, collectionName, {
-              oldMemoryId: row.old_memory_id,
-              supersededByNewId: row.new_memory_id,
+            // Rewrite the OLD (surviving) memory's text to absorb the new one,
+            // then delete new. The survivor stays LIVE — rewriteMemoryText writes
+            // only payload.data + created_ms, NOT superseded_by/invalid_at — so
+            // the merged memory is NOT filtered out by the P3 read path (the
+            // YUK-342 PR #405 bug: softSupersedeWithText marked the survivor
+            // superseded, hiding the merge result from reads).
+            await rewriteMemoryText(db, collectionName, {
+              memoryId: row.old_memory_id,
               mergedText,
-              invalidAtMs: now,
               createdMs: newCreatedMs,
             });
             await hardDeleteMemory(db, collectionName, row.new_memory_id);

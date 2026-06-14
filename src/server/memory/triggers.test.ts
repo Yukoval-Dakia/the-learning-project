@@ -45,6 +45,10 @@ describe('enqueueMemoryReconcile', () => {
         singletonKey: 'memory.reconcile.self',
         singletonSeconds: 90,
         singletonNextSlot: true,
+        // pg-boss retry on transient failure (handler rethrows RetryableError).
+        retryLimit: 3,
+        retryDelay: 30,
+        retryBackoff: true,
       },
     );
   });
