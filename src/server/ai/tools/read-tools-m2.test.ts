@@ -11,7 +11,6 @@ import {
   question,
 } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
-import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -312,6 +311,8 @@ describe('Foundation D M2 read tools', () => {
       'find_knowledge_paths',
       'get_attempt_context',
       'get_learning_item_context',
+      // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure reader.
+      'get_question_block_structure',
       'get_question_context',
       'get_record_context',
       'get_review_due',
@@ -439,6 +440,62 @@ describe('Foundation D M2 read tools', () => {
     expect(questionContext.question?.id).toBe('q_new');
     expect(questionContext.lifecycle.attempt_counts.failure).toBe(1);
     expect(questionContext.records?.[0].record_id).toBe('rec_mistake');
+  });
+
+  // ADR-0032 D6-R6 — get_question_context(include:['structure']) projects the
+  // addressable StructuredQuestion tree (read≡write coordinate fix) clipped to
+  // id/role/sub_questions + figure addressing.
+  it('projects the addressable structure tree on include:[structure]', async () => {
+    const db = testDb();
+    const bbox = { x: 0.1, y: 0.2, width: 0.3, height: 0.4 };
+    await db.insert(question).values({
+      id: 'q_structured',
+      kind: 'short_answer',
+      prompt_md: '阅读文段，回答问题。',
+      reference_md: null,
+      source: 'manual',
+      knowledge_ids: [],
+      structured: {
+        id: 'stem_1',
+        role: 'stem',
+        prompt_text: '阅读文段。',
+        bbox,
+        page_index: 0,
+        source: 'vlm_structure',
+        sub_questions: [{ id: 'sub_1', role: 'sub', prompt_text: '解释加点字。', bbox }],
+      },
+      figures: [
+        {
+          asset_id: 'asset_a',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: bbox,
+          attached_to_index: 'sub_1',
+          attach_confidence: 'high',
+        },
+      ],
+      created_at: BASE,
+      updated_at: BASE,
+    });
+
+    const withStructure = await getQuestionContextTool.execute(ctx(), {
+      questionId: 'q_structured',
+      include: ['structure'],
+    });
+    expect(withStructure.structure?.tree.id).toBe('stem_1');
+    expect(withStructure.structure?.tree.sub_questions?.[0].id).toBe('sub_1');
+    expect(withStructure.structure?.tree).not.toHaveProperty('bbox');
+    expect(withStructure.structure?.tree).not.toHaveProperty('page_index');
+    expect(withStructure.structure?.figures).toEqual([
+      { asset_id: 'asset_a', role: 'diagram', attached_to_index: 'sub_1' },
+    ]);
+
+    // Not requested → no structure key (and a non-structured question yields none).
+    const withoutStructure = await getQuestionContextTool.execute(ctx(), {
+      questionId: 'q_structured',
+      include: ['attempts'],
+    });
+    expect(withoutStructure.structure).toBeUndefined();
   });
 
   it('reads due queue, learning item context, and memory brief', async () => {

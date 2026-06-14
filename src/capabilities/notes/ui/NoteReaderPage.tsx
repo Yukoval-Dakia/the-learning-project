@@ -5,6 +5,7 @@
 // 编辑保存 = PATCH body-blocks 乐观锁（409 → 提示刷新，pre-flight B 偏离②）；
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
 
+import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -45,10 +46,14 @@ export default function NoteReaderPage({
   const [toast, setToast] = useState<string | null>(null);
 
   // S12 (YUK-335)：入口上下文——同一篇笔记从多个 knowledge 节点可达（设计「一篇
-  // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口，mount 读一次即可
-  // （非 reactive 订阅，同 RecordRoute 的 getQuery mount-only 读法 router.tsx:99）。
+  // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口。惰性初始化读一次，
+  // 之后随 id 变化在下面 shownId 复位块重读：同一 /notes/$id 实例被复用时（正文交叉
+  // 链跳别篇笔记不 remount——见 shownId adjust 块），若不重读会沿用旧 entry，在新笔记
+  // 上误亮 banner / 返回链指向旧知识点（Codex #400 F3）。
   // 无 param → 无入口上下文（banner 不渲、strip 不高亮、返回链回退 labels[0]）。
-  const [entryKid] = useState(() => new URLSearchParams(window.location.search).get('entry'));
+  const [entryKid, setEntryKid] = useState(() =>
+    new URLSearchParams(window.location.search).get('entry'),
+  );
 
   const note = noteQ.data;
   const blocks = note?.body_blocks?.content ?? [];
@@ -62,6 +67,8 @@ export default function NoteReaderPage({
     setShownId(id);
     setMode('read');
     setDraft(null);
+    // 换笔记时重读 ?entry（缺失→null），清掉上一篇的陈旧入口（Codex #400 F3）。
+    setEntryKid(new URLSearchParams(window.location.search).get('entry'));
   }
 
   // 编辑期 presence（M5 全分支 review H2 接线）：编辑态每 5s 心跳，worker 的
@@ -132,8 +139,13 @@ export default function NoteReaderPage({
   // ported-but-idle 的 ErrorState（audit P4）。但 404（笔记不存在/已删）语义上
   // 是「空」非「加载失败」——让它落到下面的 EmptyState，只有瞬时错误（网络/5xx）
   // 才示 ErrorState + 重试（视觉环实测：404 误显「加载失败」会反向坏了 not-found 态）。
+  // 用 isLoadingError（= 出错且无缓存 data）而非 isError：笔记已加载后窗口聚焦/重连
+  // 触发的后台 refetch 若失败，TanStack v5 保留旧 data 同时把 isError 置真
+  // （isRefetchError）——只判 isError 会把仍可用的阅读/编辑界面（含未保存草稿）整页
+  // 替换成 ErrorState。isLoadingError 只在「无缓存的首次加载失败」时为真，refetch
+  // 失败时为假 → 落到下面 !note=false 继续用缓存渲染，仅丢一次刷新（Codex #399 F1）。
   const isNotFound = noteQ.error instanceof ApiError && noteQ.error.status === 404;
-  if (noteQ.isError && !isNotFound)
+  if (noteQ.isLoadingError && !isNotFound)
     return (
       <main className="page wide note-reader-page">
         <ErrorState text="笔记加载失败。" onRetry={() => void noteQ.refetch()} />
@@ -308,25 +320,14 @@ export default function NoteReaderPage({
           {mode === 'edit' && draft ? (
             <NoteEditor blocks={draft} labels={note.labels} noteId={note.id} onChange={setDraft} />
           ) : (
-            // S12 (YUK-335)：read 态正文套 .note-reader-body（设计 note-reader.css:60，
-            // CSS 已移植 globals:6894）→ prose 尺度 fs-body-lg 17px（旧 .note-doc 无字号
-            // 定义，块文本落 body 基础 15px）。NoteBlockView 渲染逻辑/outline/编辑态全不动；
-            // 仅换包裹类 + read 态 variant（crossLink 渲整宽 BlockLinkCard）。
-            // 注：设计的 .nrb-gutter 悬停手柄（折叠/锚点）会触及 block 渲染结构，按规约
-            // 降级为 follow-up（先保正文 prose 尺度这个 HIGH）。
-            <div className="note-reader-body">
-              {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
-              {blocks.map((b, i) => (
-                <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
-                  <NoteBlockView
-                    block={b}
-                    variant="read"
-                    onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
-                    onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
-                  />
-                </div>
-              ))}
-            </div>
+            <NoteDocBody
+              type={note.type}
+              title={note.title}
+              interactive={note.interactive}
+              blocks={blocks}
+              navigate={navigate}
+              onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
+            />
           )}
         </article>
 
@@ -468,5 +469,68 @@ export default function NoteReaderPage({
         </div>
       )}
     </main>
+  );
+}
+
+// ADR-0033 D5 — read-mode doc body. Pure presentational (no queries/state) so it
+// is renderToString-testable on the node-only unit stack (AutoEnrolledPanel
+// PanelBody precedent). Three render modes:
+//   • type='interactive' + interactive non-null → sandboxed renderer (the
+//     interactive artifact's body_blocks is always null, so it never reaches the
+//     block branch).
+//   • type='interactive' + interactive null → parse-fail degraded notice (the
+//     server loaded the row but attrs.html failed its schema barrier; the page
+//     still shows title/labels chrome instead of 404ing).
+//   • note types → block list, or the empty-note prompt.
+export function NoteDocBody({
+  type,
+  title,
+  interactive,
+  blocks,
+  navigate,
+  onOpenQuestion,
+}: {
+  type: string;
+  title: string;
+  interactive: { html: string } | null;
+  blocks: BodyBlock[];
+  navigate: (to: string) => void;
+  onOpenQuestion: () => void;
+}) {
+  if (type === 'interactive') {
+    if (interactive) {
+      return (
+        <div className="note-doc">
+          <InteractiveArtifactRenderer html={interactive.html} title={title} />
+        </div>
+      );
+    }
+    return (
+      <div className="note-doc">
+        <p className="quiet-empty">
+          互动内容暂时无法渲染——这篇产物的内容未通过校验，已记录待修复。
+        </p>
+      </div>
+    );
+  }
+
+  // S12 (YUK-335)：read 态正文用 .note-reader-body（prose fs-body-lg 17px）+
+  // NoteBlockView variant="read"（crossLink 渲整宽 BlockLinkCard）。批次乙合并
+  // #397 的 NoteDocBody（interactive 渲染）时，把 S12 的读态 prose 改进并入此
+  // note-types 分支——两特性共存（interactive 分支仍 .note-doc）。
+  return (
+    <div className="note-reader-body">
+      {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
+      {blocks.map((b, i) => (
+        <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
+          <NoteBlockView
+            block={b}
+            variant="read"
+            onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
+            onOpenQuestion={onOpenQuestion}
+          />
+        </div>
+      ))}
+    </div>
   );
 }

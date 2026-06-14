@@ -3,7 +3,7 @@
 // routing contract is testable without rendering CopilotHeroCard.
 
 import { describe, expect, it } from 'vitest';
-import { resolveArtifactHero } from './hero';
+import { isInteractiveArtifactRef, resolveArtifactHero } from './hero';
 
 describe('resolveArtifactHero', () => {
   it('routes note → /notes/{id} with the 笔记 reference card', () => {
@@ -65,5 +65,30 @@ describe('resolveArtifactHero', () => {
     expect(resolveArtifactHero({ kind: 'note', id: 'note_abc' })?.href).toBe('/notes/note_abc');
     expect(resolveArtifactHero({ kind: 'note', id: '../evil' })?.href).toBe('/notes/..%2Fevil');
     expect(resolveArtifactHero({ kind: 'note', id: 'a b?x=1' })?.href).toBe('/notes/a%20b%3Fx%3D1');
+  });
+});
+
+// ADR-0033 D5 (YUK-203) — predicate that decides whether a {source:'artifact'}
+// hero inline-renders the sandboxed interactive (after fetching its html) vs.
+// shows the plain reference card. Pure (kind-only); the html fetch + render live
+// in CopilotHeroCard (not unit-tested on the node-only stack).
+describe('isInteractiveArtifactRef', () => {
+  it('true for the interactive kind labels (en + zh)', () => {
+    expect(isInteractiveArtifactRef('interactive')).toBe(true);
+    expect(isInteractiveArtifactRef('互动')).toBe(true);
+  });
+
+  it('is case-insensitive and trims whitespace (matches resolveArtifactHero)', () => {
+    expect(isInteractiveArtifactRef('  INTERACTIVE  ')).toBe(true);
+    expect(isInteractiveArtifactRef(' 互动 ')).toBe(true);
+  });
+
+  it('false for non-interactive kinds (they keep the reference card)', () => {
+    expect(isInteractiveArtifactRef('note')).toBe(false);
+    expect(isInteractiveArtifactRef('笔记')).toBe(false);
+    expect(isInteractiveArtifactRef('question')).toBe(false);
+    expect(isInteractiveArtifactRef('quiz')).toBe(false);
+    expect(isInteractiveArtifactRef('')).toBe(false);
+    expect(isInteractiveArtifactRef('mystery')).toBe(false);
   });
 });

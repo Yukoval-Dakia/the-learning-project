@@ -42,6 +42,8 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0033 D6 (YUK-306 lane D) — interactive artifact authoring pair.
       'author_artifact',
       'update_artifact',
+      // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
+      'propose_question_edit',
     ]);
   });
 
@@ -56,6 +58,9 @@ describe('DomainTool allowlist policy', () => {
     ] as const;
     expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).toEqual([
       'get_question_context',
+      // ADR-0032 D6-draftread (YUK-203 lane L5) — draft-layer structure reader,
+      // granted ONLY here (read≡write coordinate fix for the block-edit agent).
+      'get_question_block_structure',
       'query_events',
       ...editTools,
     ]);
@@ -143,6 +148,9 @@ describe('DomainTool allowlist policy', () => {
       // interactive artifacts itself (Claude Artifacts pattern).
       'author_artifact',
       'update_artifact',
+      // ADR-0032 D6-B (YUK-203 lane L6) — the copilot proposes narrow structured
+      // edits to active (pooled) questions in-conversation (user-driven).
+      'propose_question_edit',
     ]);
     // The ask_check INSERT (materializeAskCheckQuestion) is a service path, never
     // a DomainTool — it is not in COPILOT_TOOLS (R2).
@@ -162,8 +170,15 @@ describe('DomainTool allowlist policy', () => {
       // YUK-203 U4 / D7③ — Maintenance is an operator surface and must NOT read
       // memory facts, so its read base is READ_TOOLS minus `search_memory_facts`.
       // YUK-304 (lane B) — minus `query_questions` too (copilot-only grant;
-      // widening maintenance is A2 territory). Mirrors the production chokepoint.
-      ...READ_TOOLS.filter((name) => name !== 'search_memory_facts' && name !== 'query_questions'),
+      // widening maintenance is A2 territory). ADR-0032 D6-draftread (lane L5) —
+      // minus `get_question_block_structure` (ingestion-draft-only grant). Mirrors
+      // the production chokepoint.
+      ...READ_TOOLS.filter(
+        (name) =>
+          name !== 'search_memory_facts' &&
+          name !== 'query_questions' &&
+          name !== 'get_question_block_structure',
+      ),
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
       'propose_learning_item_completion',
@@ -279,6 +294,26 @@ describe('DomainTool allowlist policy', () => {
       expect(DOMAIN_TOOL_ALLOWLISTS.dreaming).not.toContain(tool);
       expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain(tool);
     }
+  });
+
+  // ADR-0032 D6-B (YUK-203 lane L6) — propose_question_edit (active-question
+  // structured node edit) is a copilot-only capability (the chip surface inherits
+  // via the [...copilot, …] spread). It must NOT reach the operator/planner
+  // surfaces, and — distinct from the 6 DRAFT-layer structure-edit write tools —
+  // it must NOT be on ingestion_block_edit either (that surface edits the DRAFT
+  // layer; this one edits the ACTIVE/pooled question).
+  it('grants propose_question_edit to the copilot surfaces only (ADR-0032 D6-B)', () => {
+    expect(PROPOSE_WRITE_TOOLS).toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.copilot_user_suggested_mistake_action).toContain(
+      'propose_question_edit',
+    );
+    expect(DOMAIN_TOOL_ALLOWLISTS.maintenance).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.review_plan).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.knowledge_review).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.ingestion_block_edit).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.dreaming).not.toContain('propose_question_edit');
+    expect(DOMAIN_TOOL_ALLOWLISTS.coach).not.toContain('propose_question_edit');
   });
 
   it('renders MCP allowedTools names for the selected server', () => {
