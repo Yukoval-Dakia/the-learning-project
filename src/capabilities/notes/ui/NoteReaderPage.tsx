@@ -45,10 +45,14 @@ export default function NoteReaderPage({
   const [toast, setToast] = useState<string | null>(null);
 
   // S12 (YUK-335)：入口上下文——同一篇笔记从多个 knowledge 节点可达（设计「一篇
-  // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口，mount 读一次即可
-  // （非 reactive 订阅，同 RecordRoute 的 getQuery mount-only 读法 router.tsx:99）。
+  // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口。惰性初始化读一次，
+  // 之后随 id 变化在下面 shownId 复位块重读：同一 /notes/$id 实例被复用时（正文交叉
+  // 链跳别篇笔记不 remount——见 shownId adjust 块），若不重读会沿用旧 entry，在新笔记
+  // 上误亮 banner / 返回链指向旧知识点（Codex #400 F3）。
   // 无 param → 无入口上下文（banner 不渲、strip 不高亮、返回链回退 labels[0]）。
-  const [entryKid] = useState(() => new URLSearchParams(window.location.search).get('entry'));
+  const [entryKid, setEntryKid] = useState(() =>
+    new URLSearchParams(window.location.search).get('entry'),
+  );
 
   const note = noteQ.data;
   const blocks = note?.body_blocks?.content ?? [];
@@ -62,6 +66,8 @@ export default function NoteReaderPage({
     setShownId(id);
     setMode('read');
     setDraft(null);
+    // 换笔记时重读 ?entry（缺失→null），清掉上一篇的陈旧入口（Codex #400 F3）。
+    setEntryKid(new URLSearchParams(window.location.search).get('entry'));
   }
 
   // 编辑期 presence（M5 全分支 review H2 接线）：编辑态每 5s 心跳，worker 的

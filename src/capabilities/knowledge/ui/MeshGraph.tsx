@@ -145,7 +145,12 @@ export function MeshGraph({
               const a = pos.get(e.from_knowledge_id);
               const b = pos.get(e.to_knowledge_id);
               if (!a || !b) return null;
-              const cue = REL_CUE[e.relation_type] ?? REL_CUE.related_to;
+              // F2 (Codex #400)：未知/experimental:* 关系类型 cue 回退 related_to，
+              // class 必须同源折回——否则 className 拼出无 CSS 匹配的 rel-experimental:*，
+              // 而 .mesh-edge2 无默认 stroke → 边描边 none 不可见（cue 已折回但颜色没折，
+              // 用户看到悬空「— 相关」标签却没连线）。relKey 让 cue 与 class 共用一个键。
+              const relKey = REL_CUE[e.relation_type] ? e.relation_type : 'related_to';
+              const cue = REL_CUE[relKey];
               const mx = (a.x + b.x) / 2;
               const my = (a.y + b.y) / 2 - 18;
               return (
@@ -154,7 +159,7 @@ export function MeshGraph({
                       仍是非颜色 cue，typed 边即便色盲也能解码。 */}
                   <path
                     d={`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`}
-                    className={`mesh-edge2 rel-${e.relation_type}`}
+                    className={`mesh-edge2 rel-${relKey}`}
                     strokeDasharray={cue.dash === '0' ? undefined : cue.dash}
                     markerEnd={cue.arrow ? 'url(#mesh-arrow)' : undefined}
                   />

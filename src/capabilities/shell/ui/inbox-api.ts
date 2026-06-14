@@ -170,6 +170,10 @@ export function evidenceReadable(ref: ProposalEvidenceRefWire): {
 // evidenceReadable 把同 kind 映成同一句白话 → 渲成 N 枚一模一样的灰 disabled
 // chip。按 readable 文案分组去重：每组保留首个 ref（route/disabled 逻辑不变）+
 // 组内计数，count>1 时由 EvidenceChip 把数量并进文案。
+// F5 (Codex #400)：但 navigable（knowledge/artifact，route≠null）的不同 id 是
+// 不同可达目标，按文案折叠会只留首个 ref 的 route，用户看「源自 2 个知识点」却只能
+// 打开第一个——故 navigable ref 改按 id 各自成组，保各自的链接；route=null 的 kind
+// （event/question/record）仍按文案折叠（S7 原意不变）。
 export interface DedupedEvidence {
   ref: ProposalEvidenceRefWire;
   count: number;
@@ -178,7 +182,8 @@ export interface DedupedEvidence {
 export function dedupeEvidence(refs: ProposalEvidenceRefWire[]): DedupedEvidence[] {
   const groups = new Map<string, DedupedEvidence>();
   for (const ref of refs) {
-    const key = evidenceReadable(ref).text;
+    const { text, route } = evidenceReadable(ref);
+    const key = route ? `${text}::${ref.id}` : text;
     const existing = groups.get(key);
     if (existing) {
       existing.count += 1;

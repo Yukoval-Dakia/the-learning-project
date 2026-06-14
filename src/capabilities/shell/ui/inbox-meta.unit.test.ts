@@ -168,6 +168,28 @@ describe('dedupeEvidence', () => {
   it('空数组 → 空结果', () => {
     expect(dedupeEvidence([])).toEqual([]);
   });
+
+  // F5 (Codex #400)：navigable（route≠null）的不同 id 是不同可达目标，必须各自成
+  // chip 保各自链接——不能按白话文案折成一枚只留首个 route。
+  it('不同 id 的 navigable（knowledge）各成一组，保各自 ref', () => {
+    const out = dedupeEvidence([
+      { kind: 'knowledge', id: 'k1' },
+      { kind: 'knowledge', id: 'k2' },
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out.map((d) => d.ref.id)).toEqual(['k1', 'k2']);
+    expect(out.map((d) => d.count)).toEqual([1, 1]);
+  });
+
+  it('同 id 的 navigable 仍折叠计数（去真重复）', () => {
+    const out = dedupeEvidence([
+      { kind: 'artifact', id: 'a1' },
+      { kind: 'artifact', id: 'a1' },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].count).toBe(2);
+    expect(out[0].ref.id).toBe('a1');
+  });
 });
 
 // S7 (YUK-335, audit §3.4 + §2 P3)：reason_md raw-ID 切分（display-only，不改词）。
