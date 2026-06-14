@@ -43,6 +43,14 @@ interface Check {
 const env = process.env;
 const liveR2 = process.argv.includes('--live-r2');
 
+// OCR engine decides whether ZHIPU_API_KEY is load-bearing for extraction.
+// Default (unset) === 'glm': GLM-OCR uses ZHIPU_API_KEY and a missing key FAILS
+// every extraction permanently → REQUIRED. Only the 'tencent' rollback path
+// (YUK-253, phase-deferred) leaves ZHIPU_API_KEY needed by Mem0 alone, where it
+// degrades gracefully → recommended.
+const ocrEngine = (env.EXTRACT_OCR_ENGINE ?? 'glm').trim().toLowerCase();
+const glmOcrActive = ocrEngine !== 'tencent';
+
 // `<...>` markers come straight from .env.example placeholders; a value that
 // still contains one was copied but never substituted → treat as misconfigured.
 const hasPlaceholder = (v: string | undefined): boolean => !!v && /<[^>]+>/.test(v);
@@ -115,16 +123,19 @@ const checks: Check[] = [
   // Core — API auth + persistence.
   { group: 'Core', name: 'DATABASE_URL', severity: 'required', value: env.DATABASE_URL },
   { group: 'Core', name: 'INTERNAL_TOKEN', severity: 'required', value: env.INTERNAL_TOKEN },
-  // Memory (Mem0) — fact layer creds (YUK-341): LLM reuses ZHIPU_API_KEY (also the
-  // GLM-OCR key above), embedder needs DASHSCOPE_API_KEY (阿里百炼). Both are only
-  // 'recommended' here: the brief still generates from events if Mem0 is degraded,
-  // so ingest → review → import works without them.
+  // Memory (Mem0) + GLM-OCR — ZHIPU_API_KEY is dual-use: Mem0 LLM (GLM 5.2,
+  // degrades gracefully) AND GLM-OCR extraction (default engine, FAILS hard if
+  // unset). Severity is engine-aware: required under glm (default), recommended
+  // only on the tencent rollback. DASHSCOPE_API_KEY drives the Mem0 embedder
+  // (阿里百炼) and stays recommended (brief still generates from events).
   {
-    group: 'Memory (Mem0)',
+    group: glmOcrActive ? 'Memory (Mem0) + GLM-OCR' : 'Memory (Mem0)',
     name: 'ZHIPU_API_KEY',
-    severity: 'recommended',
+    severity: glmOcrActive ? 'required' : 'recommended',
     value: env.ZHIPU_API_KEY,
-    defaultNote: 'Mem0 LLM (GLM 5.2) degraded if unset; ingest → review → import still works',
+    defaultNote: glmOcrActive
+      ? 'GLM-OCR (default engine) FAILS every extraction if unset; also Mem0 LLM'
+      : 'Mem0 LLM (GLM 5.2) degraded if unset; ingest → review → import still works',
   },
   {
     group: 'Memory (Mem0)',
