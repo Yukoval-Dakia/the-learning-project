@@ -26,6 +26,10 @@ const ICONS = {
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/>',
   menu: '<path d="M3 6h18M3 12h18M3 18h18"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  maximize:
+    '<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/>',
+  minimize:
+    '<path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/>',
   arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
   arrowL: '<path d="M19 12H5"/><path d="m11 18-6-6 6-6"/>',
   // YUK-294 — chevron for the AgentNotes board collapse toggle (rotated 180°

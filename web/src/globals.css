@@ -452,6 +452,19 @@ body {
   font-feature-settings: "ss01", "cv11";
 }
 
+/* S13 (YUK-335 批次丙)：sidebar-primary 根壳 .app（min-height:100%）需要完整的
+   height 链才能撑满视口——补 design loom.css:57/69 漏港的两条
+   （html,body{height:100%} + #root{height:100%}）。此前 SPA 无根壳壳层，缺这两条
+   不显形；S13 收编 .app 后才暴露。height:100% 不裁剪长页（无 body overflow:hidden），
+   内容超视口仍正常滚动。 */
+html,
+body {
+  height: 100%;
+}
+#root {
+  height: 100%;
+}
+
 /* Headings — serif for display, sans for in-app */
 h1,
 .h1 {
@@ -6040,6 +6053,188 @@ progress {
   padding: 1px 5px;
 }
 
+/* ============================================================
+   S14 (YUK-335) cmdk — ⌘K command palette (port of
+   docs/design/loom-refresh/project/palette.css L9-74). palette.css L4-7's
+   button.searchbox UA-reset block is intentionally skipped: globals already
+   owns .searchbox above (L6015-6054). */
+/* S14 (YUK-335) cmdk — palette.css L9-15 */
+.cmdk-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh var(--s-4) var(--s-4);
+  animation: cmdk-fade var(--dur-fast) var(--ease-out) both;
+}
+/* S14 (YUK-335) cmdk — palette.css L16 */
+@keyframes cmdk-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* S14 (YUK-335) cmdk — palette.css L18-28 */
+.cmdk {
+  width: 100%;
+  max-width: 560px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, 70vh);
+  animation: cmdk-rise var(--dur-base) var(--ease-out) both;
+}
+/* S14 (YUK-335) cmdk — palette.css L29 */
+@keyframes cmdk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* S14 (YUK-335) cmdk — palette.css L30 */
+@media (prefers-reduced-motion: reduce) {
+  .cmdk,
+  .cmdk-scrim {
+    animation: none;
+  }
+}
+/* S14 (YUK-335) cmdk — palette.css L32-37 */
+.cmdk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-4);
+}
+/* S14 (YUK-335) cmdk — palette.css L38-41 */
+.cmdk-head input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+/* S14 (YUK-335) cmdk — palette.css L42 */
+.cmdk-head input::placeholder {
+  color: var(--ink-5);
+}
+/* S14 (YUK-335) cmdk — palette.css L43-47 */
+.cmdk-head kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 2px 6px;
+}
+/* S14 (YUK-335) cmdk — palette.css L49 */
+.cmdk-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-2);
+}
+/* S14 (YUK-335) cmdk — palette.css L50-53 */
+.cmdk-group {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  padding: var(--s-3) var(--s-3) var(--s-1);
+}
+/* S14 (YUK-335) cmdk — palette.css L54-59 */
+.cmdk-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+/* S14 (YUK-335) cmdk — palette.css L60 */
+.cmdk-row.on {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+/* S14 (YUK-335) cmdk — palette.css L61 */
+.cmdk-ic {
+  color: var(--ink-4);
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+/* S14 (YUK-335) cmdk — palette.css L62 */
+.cmdk-row.on .cmdk-ic {
+  color: var(--coral);
+}
+/* S14 (YUK-335) cmdk — palette.css L63 */
+.cmdk-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* S14 (YUK-335) cmdk — palette.css L64 */
+.cmdk-meta {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+/* S14 (YUK-335) cmdk — palette.css L65 */
+.cmdk-row.on .cmdk-meta {
+  color: var(--coral-ink);
+}
+/* S14 (YUK-335) cmdk — palette.css L66 */
+.cmdk-go {
+  flex: none;
+  opacity: 0;
+}
+/* S14 (YUK-335) cmdk — palette.css L67 */
+.cmdk-row.on .cmdk-go {
+  opacity: 1;
+}
+/* S14 (YUK-335) cmdk — palette.css L68 */
+.cmdk-empty {
+  color: var(--ink-4);
+  font-size: var(--fs-caption);
+  padding: var(--s-6) var(--s-4);
+  text-align: center;
+}
+/* S14 (YUK-335) cmdk — palette.css L70-74 */
+.cmdk-foot {
+  font-size: 11px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  padding: var(--s-2) var(--s-4);
+  border-top: 1px solid var(--line);
+  background: var(--paper-sunk);
+}
+
 /* loom .page / .page-head / .eyebrow / .page-title collide with the
    existing legacy port; only the loom-specific extras not already
    present are added here. (.page-narrow, .page-lead, .page-head-row,
@@ -6568,6 +6763,11 @@ button.seg-sm {
     border-top: 1px solid var(--line);
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
   }
+  /* F7 (Codex #401)：移动 nav 抽屉打开时收起底栏——否则 tabbar（fixed z-index:40）
+     浮在 scrim（z-index:25）/ 抽屉之上仍可点，用户能在 focus trap 仍开时触发导航。 */
+  .app[data-mobile-nav-open] .mobile-tabbar {
+    display: none;
+  }
   .mtab {
     display: flex;
     flex-direction: column;
@@ -6645,11 +6845,20 @@ button.seg-sm {
     width: 264px;
     padding: var(--s-5) var(--s-4);
     transform: translateX(-100%);
-    transition: transform var(--dur-slow) var(--ease-out);
+    /* F6 (Codex #401)：关态移动侧栏要退出 tab 序——translateX 移到屏外但仍可聚焦，
+       键盘用户会先 Tab 过一整组看不见的品牌/导航/主题按钮。visibility:hidden 摘除
+       可聚焦性；visibility 的过渡延迟到 transform 结束（0s linear <dur-slow>），让
+       滑出动画期间仍可见，结束后才隐藏（避免瞬隐切掉滑出）。仅 ≤720px 生效，桌面
+       常驻 rail（此 media 外）不受影响。 */
+    visibility: hidden;
+    transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow);
     box-shadow: var(--shadow-3);
   }
   .app .sidebar.open {
     transform: translateX(0);
+    /* 开态立即可见（无延迟），滑入期间即可聚焦。 */
+    visibility: visible;
+    transition: transform var(--dur-slow) var(--ease-out), visibility 0s;
   }
   .app .brand-name,
   .app .brand-sub,
