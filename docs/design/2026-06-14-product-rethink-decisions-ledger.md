@@ -146,3 +146,21 @@
 - 自主滑块提示具体形态(几阶递进)。
 - misconception_edge 单多态表 vs 四窄表;reconciliation_log 知识侧/个性化侧共表与否。
 - schema 落地(item_calibration / mastery_state / misconception / encompassing_weight)+ Python 微服务范围 + 各需 ADR。
+
+---
+
+## 6. gap 决策裁定(2026-06-14 续,GPT 文稿对照后)
+
+> 配套 `2026-06-14-gpt-doc-gap-analysis.md` 的 7 条 + 余下 fork。owner 逐条拍板:
+
+- **① hint event 留痕**:已开 **YUK-352**(零依赖先做,hint 计数现被丢弃)。
+- **② 故障态治理 —— 全采纳**:GPT §10.1 八行风险框架作治理 checklist + **verify 闸加第四档「练而不测」**(低置信题可练、不进掌握度估计、不进 B1 锚集)+ 每个面(空流/标定崩/mem0 异常/verify 误杀)统一退化形态列为**每个 Wave deliverable 必备项**。
+- **③ 题型证据数据化 —— 客观/计算题分化,主观题留 flat**:收益高的题型(选择/填空/计算步骤/单位/证明链)做结构化 evidence sub-schema(attempt payload 按 kind 分化);作文/论述/鉴赏等主观题留整答 + rubric。**不建独立 UTR 表**。
+- **⑤ 成效评估层 —— 先收数据后建视图**:现在靠 ①的 hint/延迟复测/迁移测 event 埋好成效采样点;延迟保持/迁移正确率/learning-gain 趋势读层等 `mastery_state` 重写后再建。
+- **自主滑块阶数 —— GPT H0-H5 全 6 阶**(元认知/方向/概念/错因/部分示范/完整解;完整解标非独立完成)。覆盖 §2 A3「提示形态待定」。
+- **技术裁定(owner 可否决)**:`misconception_edge` = 单多态边表(from_kind/to_kind discriminator,gated 一致性闸后);**四引擎估计起 Python 估计微服务**(IRT 2PL/3PL + CDM DINA/G-DINA,JS 无成熟库,worker 调用,scipy/py-irt;给 all-Node 栈加一语言运行时,是「全实例化」直接后果);schema 列形状落地定。
+- **埋点后定**:各数值阈值 +「攒够」判据。
+- **④ 专业 verifier rollout —— 两者并行**:客观题确定校验全科查漏补齐 + 数理 CAS 符号求解/物理单位量纲同期推(插件式新 `JudgeKind` + runner,复用 `defaultJudgeKindForQuestion` 分流)。
+- **⑥ 调度负向信号 —— 都现在嵌**:反舒适区结构约束(每日流必含 ≥1 个 frontier 新知或 transfer 题,不得全是高 p(L) 巩固)+ fatigue/repetition 惩罚都现在进 B3 合并引擎 mix 软层(post-filter);fatigue 先用先验阈值(接受初期不准),埋点后校准。
+- **⑦ —— my-call(不占决策位)**:review_format 5 分类作 B3 mix 输出第二维(复用 ADR-0037 mix 挂点 + RT1 边,不建映射表);复习单元 step_skill 用树叶子节点表达(不新增 `subject_kind` 轴);KG 死边审计扩 RT4 `audit:relations` 脚本加「边创建后是否真被下游消费」维度。
+- **决策状态**:产品级 fork 至此全部拍完;剩余 = 埋点后定的数值阈值 + UI/交互形态(交 claude design)+ 实施(按 Wave 切片走既有 epic)。
