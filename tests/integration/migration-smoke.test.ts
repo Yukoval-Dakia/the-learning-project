@@ -269,6 +269,41 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     await db.execute(sql`DELETE FROM answer WHERE session_id = 'sess1'`);
   });
 
+  it('creates memory_reconciliation_log table (YUK-342 P2)', async () => {
+    const rows = await db.execute<{ table_name: string }>(sql`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'memory_reconciliation_log'
+    `);
+    expect(rows.length).toBe(1);
+
+    const cols = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'memory_reconciliation_log'
+    `);
+    const names = new Set(cols.map((r) => r.column_name));
+    for (const expected of [
+      'id',
+      'user_id',
+      'new_memory_id',
+      'old_memory_id',
+      'action',
+      'reason',
+      'llm_raw',
+      'planned_at',
+      'applied_at',
+    ]) {
+      expect(names.has(expected)).toBe(true);
+    }
+
+    const indexes = await db.execute<{ indexname: string }>(sql`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'memory_reconciliation_log'
+    `);
+    const idxNames = new Set(indexes.map((r) => r.indexname));
+    expect(idxNames.has('memory_recon_user_idx')).toBe(true);
+    expect(idxNames.has('memory_recon_unapplied_idx')).toBe(true);
+  });
+
   it('knowledge_edge has FK to knowledge on both from and to', async () => {
     const rows = await db.execute<{ column_name: string; foreign_table_name: string }>(sql`
       SELECT
