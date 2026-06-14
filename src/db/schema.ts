@@ -870,3 +870,36 @@ export const editing_presence = pgTable('editing_presence', {
   editing_started_at: timestamp('editing_started_at', { withTimezone: true }),
   pending: jsonb('pending').$type<SerializedQueuedPatch[]>().notNull().default([]),
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory reconciliation log（YUK-342 P2）：mem0 调和层 write-ahead 日志。
+//
+// 每条 mem0 add() 后，reconcile handler 用 GLM 判定该新 memory 与既有候选
+// memory 的关系（KEEP_BOTH / SUPERSEDE / MERGE / RETRACT_NEW）。判定意图先写
+// 到本表（planned 行，applied_at NULL = write-ahead），apply 完成后 UPDATE
+// applied_at=now()。半途崩溃时 loadUnappliedLog 重放 applied_at IS NULL 行（幂等
+// 续跑），hardDelete 命中 'not found' 被幂等吞掉。
+//
+// action 四值枚举 P2 起独立，不套 KG 侧 CorrectionKind（对象/时点/语义不同）。
+// P4 知识侧写入期调和环是否共表 §8.5 开放。
+// ─────────────────────────────────────────────────────────────────────────────
+export const memory_reconciliation_log = pgTable(
+  'memory_reconciliation_log',
+  {
+    id: text('id').primaryKey(),
+    user_id: text('user_id').notNull(),
+    // mem0 vector row id（pgvector collection PK uuidv4）
+    new_memory_id: text('new_memory_id'),
+    old_memory_id: text('old_memory_id'),
+    action: text('action').$type<'KEEP_BOTH' | 'SUPERSEDE' | 'MERGE' | 'RETRACT_NEW'>().notNull(),
+    reason: text('reason').notNull(),
+    llm_raw: jsonb('llm_raw'),
+    // write-ahead 游标：planned_at = 意图写入时；applied_at NULL = 待重放。
+    planned_at: timestamp('planned_at', { withTimezone: true }).notNull(),
+    applied_at: timestamp('applied_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('memory_recon_user_idx').on(t.user_id),
+    index('memory_recon_unapplied_idx').on(t.applied_at),
+  ],
+);

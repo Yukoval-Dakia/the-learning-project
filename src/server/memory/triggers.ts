@@ -17,7 +17,27 @@ import {
   regenerateMemoryBrief,
   scopeHasNewEvidence,
 } from './brief';
-import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
+import {
+  type MemoryClient,
+  type MemoryEventInput,
+  createMem0Config,
+  createMemoryClient,
+} from './client';
+import {
+  type CandidateEntry,
+  type NewMemoryEntry,
+  ReconcileParseError,
+  judgeReconciliation,
+} from './reconcile-llm';
+import {
+  hardDeleteMemory,
+  insertPlannedRows,
+  loadUnappliedLog,
+  makePlannedRow,
+  markApplied,
+  softSupersede,
+  softSupersedeWithText,
+} from './reconcile-store';
 
 // P5.2 (YUK-143) — per-subject brief refresh lookback for the nightly sweep +
 // regen handler. Bounded initial-build window for never-built subjects (BR-5).
@@ -32,8 +52,16 @@ export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
 // (e.g., worker restart, single fast-burst > batch size).
 export const MEMORY_INGEST_OUTBOX_POLL_QUEUE = 'memory_ingest_outbox_poll';
 export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover';
+// P2 (YUK-342): reconcile queue — event-driven (no cron schedule). Enqueued
+// after every addEventMemory fan-out. singletonKey serializes per-user.
+export const MEMORY_RECONCILE_QUEUE = 'memory_reconcile';
 const OUTBOX_POLL_BATCH = 50;
 const REGEN_SINGLETON_SECONDS = 6 * 60;
+// Reconcile singleton window — short (reconcile is time-sensitive convergence,
+// unlike the 6-min brief). Owner directive: 90s.
+const RECONCILE_SINGLETON_SECONDS = 90;
+// Reconcile search topK — owner directive: 30.
+const RECONCILE_TOP_K = 30;
 
 type BossLike = {
   createQueue?(name: string): Promise<unknown>;
@@ -92,6 +120,58 @@ function fromPgBossDrizzleTx(tx: ProjectDrizzleTx) {
   return fromDrizzle(txWithRows, sql);
 }
 
+/**
+ * P2 (YUK-342): Deterministic (non-LLM) mapping of event.action → memory kind.
+ * Fed into mem0 metadata as payload top-level `kind`, consumed by the reconcile
+ * LLM per-kind rules.
+ *
+ * Confirmed action mappings (from src/core/schema/event/known.ts):
+ *   - attempt (AttemptOnQuestion)       → event  (episodic attempt fact)
+ *   - review (ReviewOnQuestion)          → event  (episodic review fact)
+ *   - judge (JudgeOnEvent)               → weakness (identifies mistake cause)
+ *   - propose (ProposeKnowledge/Edge)    → weakness (knowledge gap signal)
+ *   - rate (RateEvent/RateKnowledgeEdge) → preference (user accept/dismiss)
+ *   - suppress (SuppressArtifactLink)    → preference (user hides link)
+ *   - accept_suggestion (AcceptSuggestionChip) → preference (user preference)
+ *   - correct (CorrectEvent/Artifact)    → event  (correction is episodic)
+ *   - generate (GenerateArtifact/Edge)   → event  (AI output is episodic)
+ *   - extract (ExtractSourceDocument)    → event  (OCR extraction is episodic)
+ *   - tool_use (ToolUseQuery)            → event  (agent tool call is episodic)
+ *
+ * Experimental actions (src/core/schema/event/experimental.ts):
+ *   - experimental:user_cause → weakness (user fills mistake cause)
+ *   - other experimental:*    → event (conservative default)
+ *
+ * Fallback: any unmapped action → event (conservative, leans KEEP_BOTH).
+ *
+ * NOTE: `habit` is a valid kind in the reconcile prompt (paired with preference
+ * for the single-latest-truth rule) but is NOT currently produced by this
+ * deterministic mapper — reserved for a future recurring-behavior signal. Until
+ * then preference covers its rule, so the absence is harmless.
+ */
+export function mapEventActionToKind(action: string): string {
+  switch (action) {
+    case 'judge':
+    case 'propose':
+    case 'experimental:user_cause':
+      return 'weakness';
+    case 'rate':
+    case 'suppress':
+    case 'accept_suggestion':
+      return 'preference';
+    case 'attempt':
+    case 'review':
+    case 'correct':
+    case 'generate':
+    case 'extract':
+    case 'tool_use':
+      return 'event';
+    default:
+      // experimental:* (non-reserved) and any future action → event (conservative)
+      return 'event';
+  }
+}
+
 async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInput | null> {
   const rows = await db.select().from(event).where(eq(event.id, eventId)).limit(1);
   const row = rows[0];
@@ -104,6 +184,7 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
     payload: row.payload,
     affected_scopes: row.affected_scopes,
     created_at: row.created_at,
+    kind: mapEventActionToKind(row.action),
   };
 }
 
@@ -144,6 +225,29 @@ export async function enqueueBriefRegen(
   );
 }
 
+// P2 (YUK-342): the reconcile job payload threads the EXTRACTED memory text +
+// created_ms alongside the id. Searching mem0 by an opaque UUID embeds the UUID
+// string (semantic noise) and rarely retrieves the memory itself — so the text
+// (from add()'s results[].memory) must travel with the id, not be re-derived.
+export type ReconcileMemInput = { id: string; text: string; created_ms: number; kind: string };
+
+export async function enqueueMemoryReconcile(
+  boss: Pick<BossLike, 'send'>,
+  memories: ReconcileMemInput[],
+  userId: string,
+): Promise<void> {
+  if (memories.length === 0) return;
+  await boss.send(
+    MEMORY_RECONCILE_QUEUE,
+    { memories, user_id: userId },
+    {
+      singletonKey: `memory.reconcile.${userId}`,
+      singletonSeconds: RECONCILE_SINGLETON_SECONDS,
+      singletonNextSlot: true,
+    },
+  );
+}
+
 export function buildMemoryEventIngestHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
@@ -160,9 +264,28 @@ export function buildMemoryEventIngestHandler(
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
       if (!row) continue;
-      await client.addEventMemory(row);
+      // P2 (YUK-342): capture add() return — results[].id + results[].memory are
+      // the extracted memory rows (mem0 infer:true). Fan-out brief regen, then
+      // enqueue reconcile for the new memory ids.
+      const memResult = await client.addEventMemory(row);
       for (const scopeKey of row.affected_scopes) {
         await enqueueBriefRegen(boss, scopeKey);
+      }
+      // Thread the extracted memory text + created_ms (the event's time) so the
+      // reconcile job searches by text, not by an opaque UUID (see ReconcileMemInput).
+      const createdMs = row.created_at.getTime();
+      const newMemories: ReconcileMemInput[] = (memResult?.results ?? [])
+        .filter(
+          (m): m is { id: string; memory: string } => typeof m.id === 'string' && m.id.length > 0,
+        )
+        .map((m) => ({
+          id: m.id,
+          text: typeof m.memory === 'string' ? m.memory : '',
+          created_ms: createdMs,
+          kind: row.kind,
+        }));
+      if (newMemories.length > 0) {
+        await enqueueMemoryReconcile(boss, newMemories, 'self');
       }
     }
   };
@@ -277,6 +400,246 @@ export function buildMemoryBriefRegenHandler(
       }
     }
   };
+}
+
+/**
+ * P2 (YUK-342): memory reconcile handler.
+ *
+ * Consumes a batch of new memory ids, searches for existing candidates per new
+ * memory, asks GLM to judge KEEP_BOTH/SUPERSEDE/MERGE/RETRACT_NEW, writes
+ * write-ahead planned rows, then applies them.
+ *
+ * Failure modes:
+ *   1. LLM parse failure → catch ReconcileParseError → entire batch degrades to
+ *      KEEP_BOTH (no destructive actions, only log rows).
+ *   2. Write-ahead crash → loadUnappliedLog replays applied_at IS NULL rows at
+ *      the start of every job (idempotent resume).
+ *   3. Concurrency → singletonKey:'memory.reconcile.self' serializes per user.
+ */
+export function buildMemoryReconcileHandler(
+  db: Db,
+  deps: {
+    memoryClient?: MemoryClient;
+    /** Injectable for tests — defaults to judgeReconciliation */
+    judge?: typeof judgeReconciliation;
+    /** Injectable for tests — mem0 collection table name (default: from config) */
+    collectionName?: string;
+  } = {},
+): (jobs: Job<{ memories: ReconcileMemInput[]; user_id: string }>[]) => Promise<void> {
+  let memoryClient = deps.memoryClient;
+  const judge = deps.judge ?? judgeReconciliation;
+  const collectionName = deps.collectionName;
+  return async (jobs) => {
+    for (const job of jobs) {
+      // F-1 equivalent — per-job try/catch prevents retry storm.
+      try {
+        const userId = job.data.user_id;
+        const newMemInputs = job.data.memories ?? [];
+
+        // Idempotent resume: replay any unapplied planned rows from prior runs.
+        await applyPlannedRows(db, userId, collectionName);
+
+        if (newMemInputs.length === 0) continue;
+
+        // Lazily init Mem0 client here (same F-4 pattern as brief regen —
+        // missing key degrades gracefully, doesn't reject the whole job).
+        let client = memoryClient;
+        if (!client) {
+          try {
+            client = createMemoryClient();
+            memoryClient = client;
+          } catch (err) {
+            console.warn(
+              `[memory_reconcile] Mem0 client unavailable; skipping reconcile for ${newMemInputs.length} memories`,
+              err,
+            );
+            continue;
+          }
+        }
+
+        // Build the prompt inputs. The new memory's text/kind/created_ms are
+        // THREADED from the ingest job (ReconcileMemInput) — NOT re-derived by
+        // searching the opaque UUID (which embeds noise and rarely retrieves the
+        // memory itself). Candidates ARE found by searching mem0 with the new
+        // memory's extracted text (semantic neighbors), excluding this batch's
+        // own new memories.
+        const newMems: NewMemoryEntry[] = [];
+        const candidatesByNew = new Map<number, CandidateEntry[]>();
+        const newIdSet = new Set(newMemInputs.map((m) => m.id));
+
+        for (let i = 0; i < newMemInputs.length; i++) {
+          const input = newMemInputs[i];
+          newMems.push({
+            index: i,
+            kind: input.kind,
+            text: input.text,
+            memory_id: input.id,
+            created_ms: input.created_ms,
+          });
+
+          const cands: CandidateEntry[] = [];
+          // Empty text → skip search (would embed ''); leaves no candidates → KEEP_BOTH.
+          if (input.text.trim().length > 0) {
+            const searchResult = await client.search(input.text, {
+              topK: RECONCILE_TOP_K + 1,
+              filters: { user_id: userId },
+            });
+            for (const r of searchResult?.results ?? []) {
+              if (newIdSet.has(r.id)) continue; // exclude this batch's own new memories
+              const cms = (r.metadata as Record<string, unknown> | undefined)?.created_ms;
+              cands.push({
+                index: cands.length,
+                text: r.memory,
+                memory_id: r.id,
+                created_ms: typeof cms === 'number' ? cms : undefined,
+              });
+            }
+          }
+          candidatesByNew.set(i, cands);
+        }
+
+        if (newMems.length === 0) continue;
+
+        // GLM judgment — single call for all new memories + their candidates.
+        let decisions: Awaited<ReturnType<typeof judge>>;
+        try {
+          decisions = await judge(newMems, candidatesByNew);
+        } catch (err) {
+          if (err instanceof ReconcileParseError) {
+            // Failure mode 1: LLM parse failure → degrade entire batch to KEEP_BOTH.
+            console.warn(
+              `[memory_reconcile] LLM parse failed; degrading ${newMems.length} memories to KEEP_BOTH`,
+              err.message,
+            );
+            const keepRows = newMems.map((m) =>
+              makePlannedRow({
+                user_id: userId,
+                new_memory_id: m.memory_id,
+                old_memory_id: null,
+                action: 'KEEP_BOTH',
+                reason: `LLM parse failure degraded: ${err.message}`,
+                llm_raw: { error: err.message, raw: err.raw },
+              }),
+            );
+            await insertPlannedRows(db, keepRows);
+            for (const r of keepRows) await markApplied(db, r.id);
+            continue;
+          }
+          // RetryableError/PermanentError — rethrow for pg-boss retry (or archive).
+          throw err;
+        }
+
+        // Write-ahead: insert planned rows BEFORE applying (crash safety).
+        // Map decisions to log rows, resolving old_index → memory_id. Out-of-range
+        // indices (LLM hallucination) degrade that decision to a safe KEEP_BOTH
+        // rather than a null-id no-op or a wrong-target supersede.
+        const plannedRows = decisions.map((d) => {
+          const newMem = newMems[d.new_index];
+          const cands = candidatesByNew.get(d.new_index) ?? [];
+          const oldMem = d.old_index != null ? cands[d.old_index] : undefined;
+          const destructive = d.action === 'SUPERSEDE' || d.action === 'MERGE';
+          const badTarget =
+            !newMem || (destructive && !oldMem) || (d.action === 'RETRACT_NEW' && !newMem);
+          const action = badTarget ? 'KEEP_BOTH' : d.action;
+          return makePlannedRow({
+            user_id: userId,
+            new_memory_id: newMem?.memory_id ?? null,
+            old_memory_id: action === 'KEEP_BOTH' ? null : (oldMem?.memory_id ?? null),
+            action,
+            reason: badTarget
+              ? `out-of-range index degraded from ${d.action}; ${d.reason}`
+              : d.reason,
+            // Persist the new memory's created_ms (recency) + the LLM decision
+            // (incl. merged_text for MERGE) for the apply step + audit.
+            llm_raw: { ...d, new_created_ms: newMem?.created_ms ?? null },
+          });
+        });
+        await insertPlannedRows(db, plannedRows);
+
+        // Apply phase: execute actions, then mark applied.
+        await applyPlannedRows(db, userId, collectionName);
+      } catch (err) {
+        // Leave planned rows intact for idempotent resume on next job.
+        console.error('[memory_reconcile] job failed; planned rows left for resume', err);
+      }
+    }
+  };
+}
+
+/**
+ * Apply write-ahead planned rows (applied_at IS NULL) for a user.
+ * Idempotent: hardDelete 'not found' swallowed, already-applied rows skipped.
+ */
+async function applyPlannedRows(
+  db: Db,
+  userId: string,
+  injectedCollectionName?: string,
+): Promise<void> {
+  const pending = await loadUnappliedLog(db, userId);
+  if (pending.length === 0) return;
+
+  const collectionName =
+    injectedCollectionName ??
+    createMem0Config().vectorStore.config.collectionName ??
+    'learning_project_memories';
+
+  for (const row of pending) {
+    const now = Date.now();
+    const llmRaw = row.llm_raw as {
+      new_created_ms?: number | null;
+      merged_text?: string | null;
+    } | null;
+    // created_ms stamped onto the superseded row = the NEW memory's created_ms
+    // (recency of the superseding fact), threaded via llm_raw; fall back to now.
+    const newCreatedMs = typeof llmRaw?.new_created_ms === 'number' ? llmRaw.new_created_ms : now;
+    switch (row.action) {
+      case 'KEEP_BOTH':
+        // No side effects — just mark applied.
+        break;
+      case 'SUPERSEDE':
+        if (row.old_memory_id && row.new_memory_id) {
+          await softSupersede(db, collectionName, {
+            oldMemoryId: row.old_memory_id,
+            supersededByNewId: row.new_memory_id,
+            invalidAtMs: now,
+            createdMs: newCreatedMs,
+          });
+        }
+        break;
+      case 'MERGE':
+        if (row.old_memory_id && row.new_memory_id) {
+          const mergedText =
+            typeof llmRaw?.merged_text === 'string' ? llmRaw.merged_text.trim() : '';
+          if (mergedText.length > 0) {
+            // Rewrite old memory text to absorb the new one, then delete new.
+            await softSupersedeWithText(db, collectionName, {
+              oldMemoryId: row.old_memory_id,
+              supersededByNewId: row.new_memory_id,
+              mergedText,
+              invalidAtMs: now,
+              createdMs: newCreatedMs,
+            });
+            await hardDeleteMemory(db, collectionName, row.new_memory_id);
+          } else {
+            // Defensive (parse should require merged_text for MERGE): no merged
+            // text → mark old superseded WITHOUT rewriting/dropping new (no data loss).
+            await softSupersede(db, collectionName, {
+              oldMemoryId: row.old_memory_id,
+              supersededByNewId: row.new_memory_id,
+              invalidAtMs: now,
+              createdMs: newCreatedMs,
+            });
+          }
+        }
+        break;
+      case 'RETRACT_NEW':
+        if (row.new_memory_id) {
+          await hardDeleteMemory(db, collectionName, row.new_memory_id);
+        }
+        break;
+    }
+    await markApplied(db, row.id);
+  }
 }
 
 export function buildMemoryBriefSweepHandler(
@@ -436,4 +799,12 @@ export async function registerMemoryHandlers(
     buildMemoryIngestOutboxRecoverHandler(db, boss),
   );
   await boss.schedule(MEMORY_INGEST_OUTBOX_RECOVER_QUEUE, '0 * * * *', {}, { tz: 'UTC' });
+
+  // P2 (YUK-342): reconcile queue — event-driven (no cron schedule).
+  await safeCreateQueue(boss, MEMORY_RECONCILE_QUEUE);
+  await boss.work(
+    MEMORY_RECONCILE_QUEUE,
+    { pollingIntervalSeconds: 2, batchSize: 1 },
+    buildMemoryReconcileHandler(db, { memoryClient: deps.memoryClient }),
+  );
 }
