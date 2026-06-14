@@ -8,8 +8,10 @@ import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
 import { VisionTab, type VisionTabRouting } from '@/ui/components/VisionTab';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
+import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
+import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { TabBar } from '@/ui/primitives/TabBar';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -51,7 +53,7 @@ export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageP
   const routing = useMemo(() => ({ navigate, getQuery, setQuery }), [navigate, getQuery, setQuery]);
 
   return (
-    <main className="page wide record-page">
+    <main className="page record-page">
       <PageHeader title="录入" eyebrow="RECORD · attempts" sub="错题进入 /mistakes。">
         <Button variant="ghost" icon="cog">
           设置
@@ -147,212 +149,168 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
 
   return (
     <Card pad="lg" className="record-card manual-card">
-      <FieldLabel>题型</FieldLabel>
-      <div style={chipRowStyle}>
-        {QUESTION_KINDS.map((k) => (
-          <button
-            type="button"
-            key={k.id}
-            onClick={() => setQuestionKind(k.id)}
-            style={chipStyle(questionKind === k.id)}
-          >
-            {k.label}
-          </button>
-        ))}
+      <div className="form-row">
+        <span className="field-label">题型</span>
+        <div className="chip-set">
+          {QUESTION_KINDS.map((k) => {
+            const active = questionKind === k.id;
+            return (
+              <button
+                type="button"
+                key={k.id}
+                aria-pressed={active}
+                onClick={() => setQuestionKind(k.id)}
+                className={active ? 'chip is-on' : 'chip'}
+              >
+                {active && <LoomIcon name="check" size={12} />}
+                {k.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <FieldLabel>题面（必填）</FieldLabel>
-      <textarea
-        value={promptMd}
-        onChange={(e) => setPromptMd(e.target.value)}
-        rows={5}
-        style={textareaStyle}
-        placeholder="完整题目内容…"
-      />
-
-      <FieldLabel>参考答案（可选）</FieldLabel>
-      <textarea
-        value={referenceMd}
-        onChange={(e) => setReferenceMd(e.target.value)}
-        rows={3}
-        style={textareaStyle}
-        placeholder="正确答案，留空 AI 不参考"
-      />
-
-      <FieldLabel>错答（必填）</FieldLabel>
-      <textarea
-        value={wrongAnswerMd}
-        onChange={(e) => setWrongAnswerMd(e.target.value)}
-        rows={3}
-        style={textareaStyle}
-        placeholder="自己写错的答案 — AI 据此归因"
-      />
-
-      <FieldLabel>难度 ({difficulty})</FieldLabel>
-      <input
-        type="range"
-        min={1}
-        max={5}
-        step={1}
-        value={difficulty}
-        onChange={(e) => setDifficulty(Number(e.target.value))}
-        style={{ width: '100%' }}
-      />
-
-      <FieldLabel>知识点（至少 1 个，已选 {selectedKnowledge.length}）</FieldLabel>
-      <input
-        type="text"
-        value={knowledgeFilter}
-        onChange={(e) => setKnowledgeFilter(e.target.value)}
-        placeholder="按名字 / domain 搜索"
-        style={inputStyle}
-      />
-      {knowledgeQ.isLoading && <p style={mutedStyle}>正在加载知识点…</p>}
-      {knowledgeQ.isError && (
-        <p style={errorStyle}>
-          {knowledgeQ.error instanceof ApiAuthError
-            ? `${knowledgeQ.error.message} — 请重新进入页面输入 token`
-            : `加载知识点失败：${(knowledgeQ.error as Error).message}`}
-        </p>
-      )}
-      {knowledgeQ.isSuccess && filteredNodes.length === 0 && (
-        <p style={mutedStyle}>没有匹配的节点。</p>
-      )}
-      <div style={chipRowStyle}>
-        {filteredNodes.map((n) => {
-          const selected = selectedKnowledge.includes(n.id);
-          return (
-            <button
-              type="button"
-              key={n.id}
-              onClick={() => toggleKnowledge(n.id)}
-              style={chipStyle(selected)}
-              title={n.effective_domain ?? ''}
-            >
-              {n.name}
-            </button>
-          );
-        })}
+      <div className="form-row">
+        <span className="field-label">题面（必填）</span>
+        <div className="record-composer">
+          <textarea
+            value={promptMd}
+            onChange={(e) => setPromptMd(e.target.value)}
+            rows={4}
+            placeholder="完整题目内容…"
+          />
+        </div>
       </div>
 
-      <FieldLabel>错因（可选，留空 AI 兜底归因）</FieldLabel>
-      <div style={chipRowStyle}>
-        <button
-          type="button"
-          onClick={() => setCausePrimary('')}
-          style={chipStyle(causePrimary === '')}
-        >
-          不指定
-        </button>
-        {causeOptions.map((c) => (
-          <button
-            type="button"
-            key={c.id}
-            onClick={() => setCausePrimary(c.id)}
-            style={chipStyle(causePrimary === c.id)}
-          >
-            {c.label}
-          </button>
-        ))}
+      <div className="form-2col">
+        <div className="form-row">
+          <span className="field-label">参考答案（可选）</span>
+          <input
+            type="text"
+            className="field-input"
+            value={referenceMd}
+            onChange={(e) => setReferenceMd(e.target.value)}
+            placeholder="正确答案，留空 AI 不参考"
+          />
+        </div>
+        <div className="form-row">
+          <span className="field-label">错答（必填）</span>
+          <input
+            type="text"
+            className="field-input field-wrong"
+            value={wrongAnswerMd}
+            onChange={(e) => setWrongAnswerMd(e.target.value)}
+            placeholder="自己写错的答案 — AI 据此归因"
+          />
+        </div>
       </div>
-      {causePrimary && (
-        <textarea
-          value={causeNotes}
-          onChange={(e) => setCauseNotes(e.target.value)}
-          rows={2}
-          style={textareaStyle}
-          placeholder="补充说明（可选）"
+
+      <div className="form-row">
+        <span className="field-label">
+          难度 <span className="meta">{difficulty} / 5</span>
+        </span>
+        <input
+          type="range"
+          className="slider"
+          min={1}
+          max={5}
+          step={1}
+          value={difficulty}
+          onChange={(e) => setDifficulty(Number(e.target.value))}
+          aria-label="难度"
         />
-      )}
+        <div className="slider-ticks mono">
+          <span>1 易</span>
+          <span>3 中</span>
+          <span>5 难</span>
+        </div>
+      </div>
 
-      <div style={submitRowStyle}>
-        {submitM.isError && <p style={errorStyle}>提交失败：{(submitM.error as Error).message}</p>}
-        <Button variant="primary" onClick={() => submitM.mutate()} disabled={!canSubmit}>
+      <div className="form-row">
+        <span className="field-label">知识点（至少 1 个，已选 {selectedKnowledge.length}）</span>
+        <input
+          type="text"
+          className="field-input"
+          value={knowledgeFilter}
+          onChange={(e) => setKnowledgeFilter(e.target.value)}
+          placeholder="按名字 / domain 搜索"
+        />
+        {knowledgeQ.isLoading && <p className="record-note record-muted">正在加载知识点…</p>}
+        {knowledgeQ.isError && (
+          <p className="record-note record-error">
+            {knowledgeQ.error instanceof ApiAuthError
+              ? `${knowledgeQ.error.message} — 请重新进入页面输入 token`
+              : `加载知识点失败：${(knowledgeQ.error as Error).message}`}
+          </p>
+        )}
+        {knowledgeQ.isSuccess && filteredNodes.length === 0 && (
+          <p className="record-note record-muted">没有匹配的节点。</p>
+        )}
+        <div className="chip-set">
+          {filteredNodes.map((n) => {
+            const selected = selectedKnowledge.includes(n.id);
+            return (
+              <button
+                type="button"
+                key={n.id}
+                onClick={() => toggleKnowledge(n.id)}
+                className={selected ? 'chip is-on' : 'chip'}
+                title={n.effective_domain ?? ''}
+              >
+                {selected && <LoomIcon name="check" size={12} />}
+                {n.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="form-row">
+        <span className="field-label">错因（可选，留空 AI 兜底归因）</span>
+        <div className="chip-set">
+          <button
+            type="button"
+            onClick={() => setCausePrimary('')}
+            className={causePrimary === '' ? 'chip is-on' : 'chip'}
+          >
+            {causePrimary === '' && <LoomIcon name="check" size={12} />}
+            不指定
+          </button>
+          {causeOptions.map((c) => {
+            const active = causePrimary === c.id;
+            return (
+              <button
+                type="button"
+                key={c.id}
+                onClick={() => setCausePrimary(c.id)}
+                className={active ? 'chip is-on' : 'chip'}
+              >
+                {active && <LoomIcon name="check" size={12} />}
+                {c.label}
+              </button>
+            );
+          })}
+        </div>
+        {causePrimary && (
+          <div className="record-composer" style={{ marginTop: 'var(--s-2)' }}>
+            <textarea
+              value={causeNotes}
+              onChange={(e) => setCauseNotes(e.target.value)}
+              rows={2}
+              placeholder="补充说明（可选）"
+            />
+          </div>
+        )}
+      </div>
+
+      {submitM.isError && (
+        <p className="record-note record-error">提交失败：{(submitM.error as Error).message}</p>
+      )}
+      <div className="hero-cta">
+        <Btn variant="primary" icon="check" onClick={() => submitM.mutate()} disabled={!canSubmit}>
           {submitM.isPending ? '提交中…' : '提交 → /mistakes'}
-        </Button>
+        </Btn>
       </div>
     </Card>
   );
 }
-
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span style={fieldLabelStyle}>{children}</span>;
-}
-
-const fieldLabelStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  color: 'var(--ink-3)',
-  letterSpacing: 'var(--ls-wide)',
-  display: 'block',
-  marginTop: 'var(--s-4)',
-  marginBottom: 'var(--s-2)',
-};
-
-const textareaStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 12px',
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-body)',
-  lineHeight: 'var(--lh-prose)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--ink)',
-  border: '1px solid var(--line)',
-  borderRadius: 'var(--r-2)',
-  outline: 'none',
-  boxSizing: 'border-box',
-  resize: 'vertical',
-};
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '8px 12px',
-  fontFamily: 'var(--font-serif)',
-  fontSize: 'var(--fs-body)',
-  background: 'var(--paper-sunk)',
-  color: 'var(--ink)',
-  border: '1px solid var(--line)',
-  borderRadius: 'var(--r-2)',
-  outline: 'none',
-  boxSizing: 'border-box',
-};
-
-const chipRowStyle: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: 'var(--s-1)',
-  marginTop: 'var(--s-2)',
-};
-
-const chipStyle = (active: boolean): React.CSSProperties => ({
-  fontFamily: 'var(--font-mono)',
-  fontSize: 'var(--fs-meta)',
-  padding: '6px 10px',
-  borderRadius: 'var(--r-pill)',
-  border: `1px solid ${active ? 'var(--coral)' : 'var(--line)'}`,
-  background: active ? 'var(--coral-soft)' : 'var(--paper-sunk)',
-  color: active ? 'var(--coral-ink)' : 'var(--ink-2)',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-  letterSpacing: 'var(--ls-wide)',
-});
-
-const submitRowStyle: React.CSSProperties = {
-  marginTop: 'var(--s-5)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  gap: 'var(--s-3)',
-};
-
-const mutedStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--ink-3)',
-};
-
-const errorStyle: React.CSSProperties = {
-  margin: 'var(--s-2) 0 0',
-  fontSize: 'var(--fs-caption)',
-  color: 'var(--again-ink)',
-};

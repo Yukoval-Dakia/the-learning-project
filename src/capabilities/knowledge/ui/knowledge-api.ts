@@ -58,6 +58,13 @@ export interface NodePageMeshNeighbor {
   weight: number;
 }
 
+// S10 (YUK-335)：层级块直接子节点（mastery 0..1 来自 knowledge_mastery 视图）。
+export interface NodePageChild {
+  id: string;
+  name: string;
+  mastery: number | null;
+}
+
 export interface NodePageBacklink {
   from_artifact_id: string;
   from_learning_item_id: string | null;
@@ -86,6 +93,7 @@ export interface KnowledgeNodePage {
   evidence_count: number;
   last_evidence_at: string | null;
   mastery_decay_bucket: 'untrained' | 'fresh' | 'mild' | 'stale' | 'unknown';
+  children: NodePageChild[];
   mesh_neighbors: NodePageMeshNeighbor[];
   primary_atomic: {
     id: string;

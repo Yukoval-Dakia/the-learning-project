@@ -45,6 +45,16 @@ export default function NoteReaderPage({
   const [draft, setDraft] = useState<BodyBlock[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
+  // S12 (YUK-335)：入口上下文——同一篇笔记从多个 knowledge 节点可达（设计「一篇
+  // 笔记多扇门」）。read 态从 ?entry=<knowledge_id> 读当前入口。惰性初始化读一次，
+  // 之后随 id 变化在下面 shownId 复位块重读：同一 /notes/$id 实例被复用时（正文交叉
+  // 链跳别篇笔记不 remount——见 shownId adjust 块），若不重读会沿用旧 entry，在新笔记
+  // 上误亮 banner / 返回链指向旧知识点（Codex #400 F3）。
+  // 无 param → 无入口上下文（banner 不渲、strip 不高亮、返回链回退 labels[0]）。
+  const [entryKid, setEntryKid] = useState(() =>
+    new URLSearchParams(window.location.search).get('entry'),
+  );
+
   const note = noteQ.data;
   const blocks = note?.body_blocks?.content ?? [];
 
@@ -57,6 +67,8 @@ export default function NoteReaderPage({
     setShownId(id);
     setMode('read');
     setDraft(null);
+    // 换笔记时重读 ?entry（缺失→null），清掉上一篇的陈旧入口（Codex #400 F3）。
+    setEntryKid(new URLSearchParams(window.location.search).get('entry'));
   }
 
   // 编辑期 presence（M5 全分支 review H2 接线）：编辑态每 5s 心跳，worker 的
@@ -155,7 +167,12 @@ export default function NoteReaderPage({
       </main>
     );
 
-  const entryLabel = note.labels[0] ?? null;
+  // S12 (YUK-335)：entryMatch = ?entry 严格命中的 label（有入口上下文时才 truthy，
+  // 用于 banner 文案 + strip .is-here coral 反白）；entryLabel = 返回链/右栏入口
+  // tag 的派生来源，命中则用命中 label，否则回退 labels[0]（无入口上下文也保返回链
+  // 不空——返回链是导航兜底，不是入口断言）。
+  const entryMatch = entryKid ? (note.labels.find((l) => l.id === entryKid) ?? null) : null;
+  const entryLabel = entryMatch ?? note.labels[0] ?? null;
   const verified = note.verification_status === 'verified';
   const shown = mode === 'edit' ? (draft ?? []) : blocks;
 
@@ -250,6 +267,23 @@ export default function NoteReaderPage({
         )}
 
         <article className="note-doc-col">
+          {/* S12 (YUK-335)：入口 banner（设计 screen-note-reader.jsx:201，.note-entry-banner
+              coral，CSS 已移植 globals:6819）——仅当 ?entry 命中某 label 时渲，无入口
+              上下文不占版面。文案点明「从哪扇门进来」+ 同篇笔记另有几个入口。 */}
+          {entryMatch && (
+            <div className="note-entry-banner">
+              <LoomIcon name="link" size={15} />
+              <span>
+                你从「<b>{entryMatch.name}</b>」进入这篇笔记
+                {note.labels.length > 1 && (
+                  <>
+                    {' '}
+                    · 同一篇笔记另有 <b>{note.labels.length - 1}</b> 个入口
+                  </>
+                )}
+              </span>
+            </div>
+          )}
           <h1 className="page-title serif" style={{ marginBottom: 'var(--s-2)' }}>
             {note.title}
           </h1>
@@ -261,6 +295,27 @@ export default function NoteReaderPage({
             </span>
             <span className="meta mono">v{note.version}</span>
           </div>
+
+          {/* S12 (YUK-335)：入口 strip（设计 :221，.note-entries-strip + .entry-pill，
+              CSS 已移植 globals:6855）——「同一篇笔记多扇门」的主表达。遍历 note.labels
+              每个 knowledge 标签出一个 pill（点击 navigate 到该知识点）；?entry 命中的
+              当前入口加 .is-here（coral 反白）。仅 read 态渲（编辑态不占版面）。 */}
+          {mode === 'read' && note.labels.length > 0 && (
+            <div className="note-entries-strip">
+              <span className="meta">入口 · {note.labels.length}</span>
+              {note.labels.map((l) => (
+                <button
+                  type="button"
+                  key={l.id}
+                  className={`entry-pill${entryMatch?.id === l.id ? ' is-here' : ''}`}
+                  onClick={() => navigate(`/knowledge/${l.id}`)}
+                >
+                  <LoomIcon name="link" size={12} />
+                  {l.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           {mode === 'edit' && draft ? (
             <NoteEditor blocks={draft} labels={note.labels} noteId={note.id} onChange={setDraft} />
@@ -309,12 +364,14 @@ export default function NoteReaderPage({
                 <button
                   type="button"
                   key={l.id}
-                  className={`note-label-row${entryLabel?.id === l.id ? ' is-entry' : ''}`}
+                  className={`note-label-row${entryMatch?.id === l.id ? ' is-entry' : ''}`}
                   onClick={() => navigate(`/knowledge/${l.id}`)}
                 >
                   <span className="chip chip-k mono">{l.id.slice(0, 10)}</span>
                   <span className="wenyan">{l.name}</span>
-                  {entryLabel?.id === l.id && <span className="entry-tag mono">入口</span>}
+                  {/* S12 (YUK-335)：右栏「入口」tag 只在真有入口上下文（?entry 命中）
+                      时显示——与顶部 strip 的 .is-here 同源 entryMatch，无 param 不误标。 */}
+                  {entryMatch?.id === l.id && <span className="entry-tag mono">入口</span>}
                   <LoomIcon name="arrow" size={13} className="thread-arrow" />
                 </button>
               ))}
@@ -457,13 +514,18 @@ export function NoteDocBody({
     );
   }
 
+  // S12 (YUK-335)：read 态正文用 .note-reader-body（prose fs-body-lg 17px）+
+  // NoteBlockView variant="read"（crossLink 渲整宽 BlockLinkCard）。批次乙合并
+  // #397 的 NoteDocBody（interactive 渲染）时，把 S12 的读态 prose 改进并入此
+  // note-types 分支——两特性共存（interactive 分支仍 .note-doc）。
   return (
-    <div className="note-doc">
+    <div className="note-reader-body">
       {blocks.length === 0 && <p className="quiet-empty">空笔记——切到编辑写第一块。</p>}
       {blocks.map((b, i) => (
         <div key={b.attrs?.id ?? i} id={`nb-${b.attrs?.id ?? i}`}>
           <NoteBlockView
             block={b}
+            variant="read"
             onLink={(artifactId) => navigate(`/notes/${artifactId}`)}
             onOpenQuestion={onOpenQuestion}
           />

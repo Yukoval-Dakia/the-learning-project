@@ -251,6 +251,41 @@ describe('loadKnowledgeNodePage', () => {
     expect(page?.parent_name).toBe('文言文');
   });
 
+  // S10 (YUK-335 audit §3.9): hierarchy block needs direct children with mastery
+  // (from the knowledge_mastery view, null when unpracticed), name-ordered, with
+  // archived children excluded (same dead-link discipline as the parent lookup).
+  it('returns direct children with mastery, name-ordered', async () => {
+    const db = testDb();
+    await seedKnowledge('kp', { name: '文言文' });
+    // ASCII-prefixed names so ORDER BY name is deterministic regardless of the
+    // DB collation (Chinese byte-order is collation-dependent).
+    await seedKnowledge('kb', { name: 'B 之乎者也', parent_id: 'kp' });
+    await seedKnowledge('ka', { name: 'A 介词', parent_id: 'kp' });
+    const page = await loadKnowledgeNodePage(db, 'kp');
+    expect(page?.children.map((c) => c.id)).toEqual(['ka', 'kb']);
+    expect(page?.children.map((c) => c.name)).toEqual(['A 介词', 'B 之乎者也']);
+    // mastery field is wired through; null for never-practiced children
+    expect(page?.children.every((c) => c.mastery === null)).toBe(true);
+  });
+
+  it('returns an empty children array for a leaf node', async () => {
+    const db = testDb();
+    await seedKnowledge('kp', { name: '文言文' });
+    await seedKnowledge('leaf', { name: '虚词', parent_id: 'kp' });
+    const page = await loadKnowledgeNodePage(db, 'leaf');
+    expect(page?.children).toEqual([]);
+  });
+
+  it('excludes archived children from the hierarchy block', async () => {
+    const db = testDb();
+    await seedKnowledge('kp', { name: '文言文' });
+    await seedKnowledge('kc-live', { name: '虚词', parent_id: 'kp' });
+    await seedKnowledge('kc-arch', { name: '实词', parent_id: 'kp' });
+    await archiveKnowledge('kc-arch');
+    const page = await loadKnowledgeNodePage(db, 'kp');
+    expect(page?.children.map((c) => c.id)).toEqual(['kc-live']);
+  });
+
   it('returns mesh neighbors from both directions', async () => {
     const db = testDb();
     await seedKnowledge('k1', { name: '虚词' });

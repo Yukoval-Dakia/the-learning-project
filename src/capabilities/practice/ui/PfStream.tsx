@@ -38,6 +38,20 @@ export function PfSrcBadge({ source }: { source: StreamSource }) {
   );
 }
 
+// pf-item-kp / pf-paper-title 锚点名（设计 pface.css L52/67：「每张卡有自己的名字」）。
+// 数据真相：composer（stream-composer.ts）把 knowledgeLabel / paper title 织进 reasoning
+// 模板（`「${label}」`），但 StreamItem wire（stream-store.ts StreamView）未把它持久化为
+// 独立字段——故这里从 reasoning 提取首个 `「…」` 作锚点（真实数据派生，非 fabricate）。
+// 无 label 时 composer 回退到「这一块」(kpSuffix)，此情形不显示锚点（避免伪锚）。
+// FOLLOW-UP（phase-deferred）：理想是 stream item wire 直供 knowledge_name / paper title
+// 独立字段，去掉此处对 reasoning 文案格式的耦合——见交付报告缺失字段清单。
+function anchorFromReasoning(reasoning: string): string | null {
+  const m = reasoning.match(/「([^」]+)」/);
+  if (!m) return null;
+  const name = m[1].trim();
+  return name && name !== '这一块' ? name : null;
+}
+
 export function PfStream({
   stream,
   loading,
@@ -105,12 +119,19 @@ export function PfStream({
     ].join(' ');
 
     if (it.status === 'done') {
+      // done 织入行（设计 pface-stream.jsx L40-52 / pface.css L72-74）：badge + 锚点名 +
+      // verdict 三色 badge + 完成时刻。锚点名优先用 reasoning 提取的知识点名/卷标题，
+      // 回退到 source label（PfSrcBadge 已显示来源，此处给可读名）。
+      // FOLLOW-UP（phase-deferred）：verdict（again/hard/good，设计 color-is-judgment）与
+      // 完成时刻（pf-done-at）在 review event 侧，StreamItem wire 未 join——故暂不渲染
+      // verdict 三色 badge，完成时刻显示静态「已完成」。补 wire 字段后接真值，见报告。
+      const doneAnchor = anchorFromReasoning(it.reasoning) ?? SRC_META[it.source].label;
       return (
         <div key={it.id} className={cls}>
           <span className="pf-node" />
           <div className="pf-done">
             <PfSrcBadge source={it.source} />
-            <span className="pf-done-kp">{it.reasoning}</span>
+            <span className="pf-done-kp">{doneAnchor}</span>
             <span className="pf-done-at">已完成</span>
           </div>
         </div>
@@ -118,6 +139,8 @@ export function PfStream({
     }
 
     const isSkipped = it.status === 'skipped';
+    // 散题/卷卡的可读锚点名（reasoning 派生，见 anchorFromReasoning 注释）。
+    const anchor = anchorFromReasoning(it.reasoning);
     const inner = (
       <div
         className="pf-item"
@@ -133,6 +156,10 @@ export function PfStream({
       >
         <div className="pf-item-top">
           <PfSrcBadge source={it.source} />
+          {/* 散题卡知识点锚点（设计 pface.css L52 pf-item-kp，15px/600）——给每张卡
+              「自己的名字」。锚点名来源见 anchorFromReasoning 注释（reasoning 派生，
+              非 fabricate；无 label 时省略，不伪造锚点）。 */}
+          {it.item_kind === 'question' && anchor && <span className="pf-item-kp">{anchor}</span>}
           <span className="pf-item-kind mono">
             <span className="src-q">
               {it.item_kind} · {it.ref_id.slice(0, 12)}
@@ -140,10 +167,18 @@ export function PfStream({
           </span>
         </div>
         {it.item_kind === 'paper' && (
-          <span className="pf-paper-note">
-            <LoomIcon name="clock" size={12} />
-            交卷后统一判分 · 卷内无即时反馈
-          </span>
+          <>
+            {/* 卷卡 serif 标题 + facts 行（设计 pface.css L67-68 / pface-stream.jsx L71-77）。
+                标题取 reasoning 里的卷名（composer 真实注入的「${p.title}」）。
+                FOLLOW-UP（phase-deferred）：facts「N 题 · 约 X 分钟」需题数/估时——paper
+                stream item wire 仅 ref_id，未带 total_slots/est（getPapers 才有 total_slots，
+                但流不 join 卷读模型）；故 facts 行暂不渲染，不伪造题数。补 wire 字段后接真值。 */}
+            {anchor && <div className="pf-paper-title">{anchor}</div>}
+            <span className="pf-paper-note">
+              <LoomIcon name="clock" size={12} />
+              交卷后统一判分 · 卷内无即时反馈
+            </span>
+          </>
         )}
         <div className="pf-reason">
           <LoomIcon name="sparkle" size={13} className="ico" />
@@ -239,6 +274,23 @@ export function PfStream({
           </div>
           <div className="pf-thread">{skipped.map(row)}</div>
         </>
+      )}
+
+      {/* 收尾短结（设计 pface-stream.jsx L155-163 / pface.css L97-100）：今日全部织完后
+          在流尾渲一张 good-soft 收尾卡。文案为纯 UI 鼓励性短结（无数据依赖）。
+          FOLLOW-UP（phase-deferred）：设计源 meta「coach · 收尾 · $cost」需收尾 agent run
+          的成本/时刻——M2 无 closing-line 读模型（opening_line 才有模板），故 meta 用
+          中性文案，不伪造成本数字。M4 夜链 AI 化后由 composer 写真值，见报告。 */}
+      {allDone && (
+        <div className="pf-close" style={{ marginTop: 'var(--s-8)' }}>
+          <span className="pf-open-ava">
+            <LoomIcon name="checkCircle" size={18} />
+          </span>
+          <div>
+            <p className="pf-close-line">今天的线都织完了——回头看哪根还松，随时叫我补。</p>
+            <span className="pf-close-meta">coach · 收尾</span>
+          </div>
+        </div>
       )}
 
       <div className="pf-item-cta" style={{ marginTop: 'var(--s-5)' }}>
