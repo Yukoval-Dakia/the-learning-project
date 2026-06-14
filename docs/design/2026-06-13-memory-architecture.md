@@ -26,7 +26,7 @@
 
 ## 2. 总体形态
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                      学习工具内核                          │
 │                                                          │
@@ -49,8 +49,8 @@
 
 ### 3.1 运行时配置
 
-- **mem0ai TS OSS 3.0.7**（in-process，无独立服务），vectorStore 指向自家 Postgres 的 pgvector（独立 collection 表，不与业务表混用）。
-- **LLM**：抽取与调和均用 glm-x-preview（coding plan endpoint）。对照实验：质量优于 mimo（时间锚/术语保真/无幻觉），代价是更慢（11-20s vs 7-15s/段）。
+- **mem0ai TS OSS 3.0.6**（in-process，无独立服务；版本以 §8.3 锁定基线为准），vectorStore 指向自家 Postgres 的 pgvector（独立 collection 表，不与业务表混用）。
+- **LLM**：抽取与调和均用 glm-5.2（coding plan endpoint；§8.3 实施锁定值）。对照实验：质量优于 mimo（时间锚/术语保真/无幻觉），代价是更慢（11-20s vs 7-15s/段）。
 - **Embedding**：阿里百炼 text-embedding-v4（C-MTEB 领先；实测与智谱 embedding 质量等价、时延同量级）。
 - **遥测**：生产 compose 必须 `MEM0_TELEMETRY=false`（默认向 PostHog 上报每次 add/search/update/delete）。
 - **history（SQLite sidecar）**：保留 `disableHistory: false`——spike 实测 `disableHistory: true` 有隐性副作用（DummyHistoryManager 无 getLastMessages → 抽取 prompt 的 "Last k Messages" 恒空，损伤 infer:true 抽取质量）。SQLite 单写者约束靠拓扑解决（见 3.5）：**所有 mem0 写操作收敛到 worker 进程**，`memory.db` 指向挂载卷。
