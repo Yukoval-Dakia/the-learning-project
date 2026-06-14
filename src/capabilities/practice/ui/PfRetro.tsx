@@ -77,7 +77,10 @@ function PfrQRow({
           <div className="pfr-q-row">
             <span className="cmp-label">你的作答</span>
             {sub?.answer_md ? (
-              <span className="wenyan">{sub.answer_md}</span>
+              // de-wenyan: PaperSlot carries no subject profile and this is the
+              // student's own typed answer (not a classical-Chinese passage), so
+              // it renders in the neutral default font.
+              <span>{sub.answer_md}</span>
             ) : (
               <span className="quiet-empty" style={{ padding: 0 }}>
                 （未作答）

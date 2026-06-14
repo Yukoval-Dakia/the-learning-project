@@ -117,9 +117,10 @@ describe('SubjectProfile extensions', () => {
     }
   });
 
-  it('resolveSubjectProfile defaults to wenyan for unknown domains', () => {
-    expect(resolveSubjectProfile('unknown').id).toBe('wenyan');
-    expect(resolveSubjectProfile(null).id).toBe('wenyan');
+  // YUK (wenyan deprotagonist): the neutral default is `general`, not wenyan.
+  it('resolveSubjectProfile defaults to the neutral general profile for unknown domains', () => {
+    expect(resolveSubjectProfile('unknown').id).toBe('general');
+    expect(resolveSubjectProfile(null).id).toBe('general');
   });
 });
 
@@ -145,17 +146,17 @@ describe('SubjectRegistry', () => {
     expect(result.id).toBe('math');
   });
 
-  it('returns default profile for unknown subject', () => {
+  it('returns the neutral default profile for unknown subject', () => {
     const registry = new SubjectRegistry();
     const result = registry.resolve('unknown_subject');
     expect(result).toBeDefined();
-    expect(result.id).toBe('wenyan');
+    expect(result.id).toBe('general');
   });
 
-  it('returns default profile for null/undefined', () => {
+  it('returns the neutral default profile for null/undefined', () => {
     const registry = new SubjectRegistry();
-    expect(registry.resolve(null).id).toBe('wenyan');
-    expect(registry.resolve(undefined).id).toBe('wenyan');
+    expect(registry.resolve(null).id).toBe('general');
+    expect(registry.resolve(undefined).id).toBe('general');
   });
 
   it('is case-insensitive', () => {

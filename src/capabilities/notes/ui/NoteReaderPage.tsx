@@ -368,7 +368,9 @@ export default function NoteReaderPage({
                   onClick={() => navigate(`/knowledge/${l.id}`)}
                 >
                   <span className="chip chip-k mono">{l.id.slice(0, 10)}</span>
-                  <span className="wenyan">{l.name}</span>
+                  {/* de-wenyan: label rows carry no domain on the wire → neutral
+                      default font (subject-driven is a follow-up). */}
+                  <span>{l.name}</span>
                   {/* S12 (YUK-335)：右栏「入口」tag 只在真有入口上下文（?entry 命中）
                       时显示——与顶部 strip 的 .is-here 同源 entryMatch，无 param 不误标。 */}
                   {entryMatch?.id === l.id && <span className="entry-tag mono">入口</span>}
@@ -395,7 +397,8 @@ export default function NoteReaderPage({
                     onClick={() => say('学习项 surface 还在旧栈——M4/M5 收口后可跳转。')}
                   >
                     <LoomIcon name="items" size={13} />
-                    <span className="wenyan">{it.title}</span>
+                    {/* de-wenyan: related-item rows carry no domain → neutral default. */}
+                    <span>{it.title}</span>
                     <span className="meta mono">{it.relation}</span>
                   </button>
                 ))}

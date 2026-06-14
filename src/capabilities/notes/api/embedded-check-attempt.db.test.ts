@@ -92,7 +92,9 @@ describe('POST /api/embedded-check/attempt', () => {
         route: 'exact',
         coarse_outcome: 'correct',
         question_id: 'q1',
-        subject_id: 'wenyan',
+        // knowledge_ids:[] → no domain → neutral default subject (general,
+        // post wenyan-deprotagonist — was wenyan).
+        subject_id: 'general',
       },
     });
 

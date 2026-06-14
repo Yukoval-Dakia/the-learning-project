@@ -35,14 +35,15 @@ describe('resolveKnownSubjectId', () => {
     expect(resolveKnownSubjectId(undefined)).toBeNull();
     expect(resolveKnownSubjectId('')).toBeNull();
     expect(resolveKnownSubjectId('   ')).toBeNull();
-    // Contrast: the old resolver folds null → the default subject.
-    expect(resolveSubjectProfile(null).id).toBe('wenyan');
+    // Contrast: the resolver folds null → the neutral default subject
+    // (general, post wenyan-deprotagonist — was wenyan).
+    expect(resolveSubjectProfile(null).id).toBe('general');
   });
 
   it('returns null for an unrecognised non-null domain (NO default fallback)', () => {
     expect(resolveKnownSubjectId('chemistry')).toBeNull();
     expect(resolveKnownSubjectId('totally_unknown_domain')).toBeNull();
-    // Contrast: the old resolver folds an unknown string → the default subject.
-    expect(resolveSubjectProfile('totally_unknown_domain').id).toBe('wenyan');
+    // Contrast: the resolver folds an unknown string → the neutral default.
+    expect(resolveSubjectProfile('totally_unknown_domain').id).toBe('general');
   });
 });

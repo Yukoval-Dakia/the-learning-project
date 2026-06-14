@@ -1,14 +1,9 @@
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
+import { generalProfile } from './general/profile';
 import { mathProfile } from './math/profile';
 import { physicsProfile } from './physics/profile';
-import {
-  KNOWN_SUBJECT_IDS,
-  type KnownSubjectId,
-  type SlimSubjectProfile,
-  type SubjectId,
-  type SubjectProfile,
-} from './profile-schema';
+import { type SlimSubjectProfile, type SubjectId, type SubjectProfile } from './profile-schema';
 import { wenyanProfile } from './wenyan/profile';
 
 export {
@@ -24,18 +19,18 @@ export {
   type SubjectQuestionKind,
 } from './profile-schema';
 
-const DEFAULT_SUBJECT_ID: KnownSubjectId = 'wenyan';
+// YUK (wenyan deprotagonist): the neutral default is `general`, NOT a concrete
+// sample subject. A null / unknown domain resolves to `general` (system font,
+// generic voice) instead of inheriting wenyan's classical-Chinese privilege.
+// `general` is intentionally a plain SubjectId (not KnownSubjectId): it is the
+// fallback identity, never a node domain, so it stays out of KNOWN_SUBJECT_IDS
+// (goal-scope candidates / derived `?subject=` axis iterate that list).
+const DEFAULT_SUBJECT_ID: SubjectId = 'general';
 
-const DEFAULT_ALIASES: Record<string, SubjectId> = {
-  classical_chinese: 'wenyan',
-  chinese_classics: 'wenyan',
-  math: 'math',
-  mathematics: 'math',
-  maths: 'math',
-  wenyan: 'wenyan',
-  physics: 'physics',
-  physical: 'physics',
-};
+// The generic registry no longer hardcodes any concrete-subject alias. Each
+// sample subject self-declares its aliases at register() time (e.g. wenyan owns
+// classical_chinese / chinese_classics), so the framework default stays
+// subject-neutral and adding/removing a subject can't strand an orphan alias here.
 
 function normalizeSubjectKey(value: string): string {
   return value.trim().toLowerCase();
@@ -70,12 +65,13 @@ export class SubjectRegistry {
   constructor(defaultId: SubjectId = DEFAULT_SUBJECT_ID, opts: SubjectRegistryOptions = {}) {
     this.defaultId = defaultId;
     const throwOnInvalid = opts.throwOnInvalid ?? true;
-    this.register(wenyanProfile, [], { throwOnInvalid });
-    this.register(mathProfile, [], { throwOnInvalid });
-    this.register(physicsProfile, [], { throwOnInvalid });
-    for (const [alias, id] of Object.entries(DEFAULT_ALIASES)) {
-      this.aliases.set(normalizeSubjectKey(alias), normalizeSubjectKey(id));
-    }
+    // general = neutral default; registered first so it backs the default id.
+    this.register(generalProfile, [], { throwOnInvalid });
+    // Each sample subject self-declares its own aliases (归位) — the generic
+    // registry no longer hardcodes any concrete-subject alias table.
+    this.register(wenyanProfile, ['classical_chinese', 'chinese_classics'], { throwOnInvalid });
+    this.register(mathProfile, ['mathematics', 'maths'], { throwOnInvalid });
+    this.register(physicsProfile, ['physical'], { throwOnInvalid });
   }
 
   register(

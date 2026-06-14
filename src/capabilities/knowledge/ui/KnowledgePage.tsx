@@ -7,6 +7,7 @@
 // wrapper 带 .knowledge-loom：树类（know-node 族）在 globals.css 按该 scope
 // 落地（collision scoping），SPA 页复用同一 scope；M5 样式收编时统一。
 
+import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -180,7 +181,12 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
               >
                 {n.depth > 0 && <span className="know-twig">└</span>}
                 <MasteryRing mastery={n.mastery} size={30} />
-                <span className="know-title wenyan">{n.name}</span>
+                {/* subject-driven: serif-CJK only for genuine wenyan nodes */}
+                <span
+                  {...subjectContentPropsForDomain(n.effective_domain, { className: 'know-title' })}
+                >
+                  {n.name}
+                </span>
                 {n.effective_domain && (
                   <span className="chip chip-k mono">{n.effective_domain}</span>
                 )}
