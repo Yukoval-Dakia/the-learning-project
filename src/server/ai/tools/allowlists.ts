@@ -29,6 +29,12 @@ export const READ_TOOLS = [
   // copilot surfaces ONLY for now — widening maintenance is A2 territory, so the
   // MAINTENANCE_READ_TOOLS chokepoint below filters it back out.
   'query_questions',
+  // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure
+  // reader (read≡write coordinate fix). Granted ONLY on `ingestion_block_edit`
+  // below; it reads the DRAFT pool (question_block.structured) so it MUST NOT
+  // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
+  // filters it back out (same containment as query_questions).
+  'get_question_block_structure',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -73,6 +79,13 @@ export const PROPOSE_WRITE_TOOLS = [
   // writeQuizTool) — the listTools() inventory assertion depends on it.
   'author_artifact',
   'update_artifact',
+  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed node edit to an
+  // ACTIVE question's structured tree (proposal-only; accept applies it behind a
+  // mini verify gate, reversibly). Granted to the copilot surfaces (copilot is
+  // user-driven — editing pooled questions in-conversation is a copilot
+  // capability). TAIL position mirrors the bootstrap CORE_TOOLS order (after
+  // updateArtifactTool) — the listTools() inventory assertion depends on it.
+  'propose_question_edit',
 ] as const;
 
 // YUK-203 U4 / D5 / CO §6.1 — the 4 tools exclusive to the ReviewPlanTask
@@ -194,6 +207,13 @@ export const COPILOT_TOOLS = [
   // surface gets them.
   'author_artifact',
   'update_artifact',
+  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed structured node edit
+  // to an ACTIVE question. effect='propose' (proposal-only; accept applies behind
+  // a mini verify gate, reversibly). The copilot is the user-driven editor of
+  // pooled questions in-conversation, so this lives on the copilot base (the chip
+  // surface inherits via the [...COPILOT_TOOLS, …] spread). No other surface gets
+  // it — operator/planner surfaces do not edit active question structure.
+  'propose_question_edit',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [
@@ -249,9 +269,21 @@ const COACH_TOOLS = [
 // YUK-304 (lane B, scope discipline) — `query_questions` is ALSO filtered out:
 // ADR-0032 D9 grants it to the copilot surfaces only; widening maintenance is
 // A2 territory, not this lane's call.
+//
+// ADR-0032 D6-draftread (YUK-203 lane L5) — `get_question_block_structure` is
+// filtered out for the same reason: it reads the ingestion DRAFT layer and is an
+// `ingestion_block_edit`-only grant. Keeping the chokepoint here stops it leaking
+// onto the operator/evaluator (Maintenance) surface — i.e. the active題面.
 const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
-  (name): name is Exclude<ReadDomainToolName, 'search_memory_facts' | 'query_questions'> =>
-    name !== 'search_memory_facts' && name !== 'query_questions',
+  (
+    name,
+  ): name is Exclude<
+    ReadDomainToolName,
+    'search_memory_facts' | 'query_questions' | 'get_question_block_structure'
+  > =>
+    name !== 'search_memory_facts' &&
+    name !== 'query_questions' &&
+    name !== 'get_question_block_structure',
 );
 
 const MAINTENANCE_TOOLS = [
@@ -271,6 +303,11 @@ const MAINTENANCE_TOOLS = [
 // write tools live ONLY here; the broader surfaces above do not grant them.
 const INGESTION_BLOCK_EDIT_TOOLS = [
   'get_question_context',
+  // ADR-0032 D6-draftread (YUK-203 lane L5) — the draft-layer structure reader.
+  // Lets the edit agent read the block by node-id (the same coordinate system the
+  // 6 write tools below address) before mutating it. Draft-only; no other surface
+  // grants it.
+  'get_question_block_structure',
   'query_events',
   'update_prompt',
   'add_option',

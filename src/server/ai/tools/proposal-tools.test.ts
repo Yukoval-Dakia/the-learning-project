@@ -288,6 +288,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'propose_learning_item_completion',
       'propose_learning_item_defer',
       'propose_learning_item_relearn',
+      // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit propose.
+      'propose_question_edit',
       'propose_record_links',
       'propose_record_promotion',
       'propose_variant',
@@ -430,6 +432,92 @@ describe('Wave 3 proposal/action DomainTools', () => {
       reasoning: 'bad boundary',
     });
     expect(crossSubject.status).toBe('skipped:cross_subject');
+  });
+
+  // ADR-0032 D4-E1 (YUK-203) — propose_knowledge_edge op:'archive' branch.
+  it('propose_knowledge_edge op=archive proposes soft-deleting a live edge (no evidence floor)', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+    await db.insert(knowledge_edge).values({
+      id: 'edge_to_archive',
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: BASE,
+    });
+
+    // Archive carries NO evidence_event_ids — it must NOT be folded for
+    // evidence_missing (that is a create-only rubric gate).
+    const archived = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      op: 'archive',
+      edge_id: 'edge_to_archive',
+      reasoning: '这条 related_to 边其实只是树父子关系的重复，建议归档。',
+    });
+    expect(archived.status).toBe('proposed');
+    expect(archived.proposal_id).toBeTruthy();
+
+    const row = (
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.id, archived.proposal_id as string))
+    )[0];
+    expect(row).toMatchObject({ action: 'propose', subject_kind: 'knowledge_edge' });
+    expect(row.payload).toMatchObject({
+      edge_op: 'archive',
+      archive_edge_id: 'edge_to_archive',
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+    });
+
+    // A second archive of the SAME edge dedups (pending cooldown).
+    const dup = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      op: 'archive',
+      edge_id: 'edge_to_archive',
+      reasoning: '再次归档同一条边。',
+    });
+    expect(dup.status).toBe('skipped:duplicate_pending');
+  });
+
+  it('propose_knowledge_edge op=archive skips unknown or already-archived edges', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+
+    const unknown = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      op: 'archive',
+      edge_id: 'edge_does_not_exist',
+      reasoning: '归档一条不存在的边。',
+    });
+    expect(unknown.status).toBe('skipped:edge_not_found');
+
+    await db.insert(knowledge_edge).values({
+      id: 'edge_already_archived',
+      from_knowledge_id: 'k_zhi',
+      to_knowledge_id: 'k_er',
+      relation_type: 'related_to',
+      weight: 1,
+      created_by: 'user' as never,
+      created_at: BASE,
+      archived_at: BASE,
+    });
+    const alreadyArchived = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      op: 'archive',
+      edge_id: 'edge_already_archived',
+      reasoning: '归档一条已归档的边。',
+    });
+    expect(alreadyArchived.status).toBe('skipped:edge_not_found');
+  });
+
+  it('propose_knowledge_edge op=archive without edge_id is rejected', async () => {
+    await seedKnowledgeGraph();
+    const missing = await proposeKnowledgeEdgeTool.execute(ctx(), {
+      op: 'archive',
+      reasoning: '缺少 edge_id 的归档请求。',
+    });
+    expect(missing.status).toBe('skipped:edge_not_found');
   });
 
   it('propose_knowledge_mutation writes proposal-only knowledge mutation events', async () => {

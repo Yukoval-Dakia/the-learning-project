@@ -17,6 +17,8 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
+import type { QuestionEditOpT } from '@/core/schema/proposal';
+import { StructuredQuestion, type StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -59,6 +61,19 @@ export interface QuestionDraftAcceptResult {
   kind: 'question_draft';
   rate_event_id: string;
   question_id: string;
+  idempotent?: boolean;
+}
+
+// ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit accept.
+export interface QuestionEditAcceptResult {
+  kind: 'question_edit';
+  rate_event_id: string;
+  question_id: string;
+  // The structured-edit audit event id (the reversible before/after record);
+  // null on the idempotent re-accept path (the edit already committed once).
+  edit_event_id: string | null;
+  // The post-edit version of the question row.
+  version: number;
   idempotent?: boolean;
 }
 
@@ -375,4 +390,329 @@ export async function acceptQuestionDraftProposal(
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 
   return { kind: 'question_draft', rate_event_id: rateEventId, question_id: questionId };
+}
+
+// ===========================================================================
+// ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
+//
+// This is the FIRST writer that mutates an ACTIVE question's `structured` jsonb
+// tree. The flat-field active-question writer (src/server/questions/write.ts
+// editQuestion) edits prompt_md / choices_md / etc. but never touches the
+// recursive structured tree; the draft-layer structured editor
+// (capabilities/ingestion block-structured-edit) only touches DRAFT
+// question_block rows. The active-question structured write is owned HERE
+// (practice domain owns the pooled question lifecycle), kept self-contained so
+// the practice applier does not import the ingestion package (import-cycle
+// hygiene + single domain ownership).
+//
+// Coordinate parity: nodes are addressed by `id` — the same id/role the L5
+// addressable projection exposes through get_question_context(include:
+// ['structure']). So the agent reads a node id and writes the same node id
+// (read≡write).
+// ===========================================================================
+
+/** Find a node by id in a StructuredQuestion tree (read-only, no clone). */
+function findStructuredNode(
+  node: StructuredQuestionT,
+  target: string,
+): StructuredQuestionT | undefined {
+  if (node.id === target) return node;
+  for (const sub of node.sub_questions ?? []) {
+    const hit = findStructuredNode(sub, target);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * Copy-on-write (path-copy) `node` and apply `mutate` to the node whose id
+ * matches `target`. NOT a deep clone of the whole tree: only the root→target
+ * path is freshly cloned (the matched node plus each of its ancestors); sibling
+ * subtrees that do not contain the target are shared by reference with the
+ * input. Because every node on the path to the match is fresh, mutating the
+ * matched clone can never alias the persisted jsonb. Returns the new tree + whether a node matched.
+ */
+function mapStructuredNodeById(
+  node: StructuredQuestionT,
+  target: string,
+  mutate: (n: StructuredQuestionT) => void,
+): { tree: StructuredQuestionT; matched: boolean } {
+  const clone: StructuredQuestionT = {
+    ...node,
+    sub_questions: node.sub_questions ? node.sub_questions.map((s) => ({ ...s })) : undefined,
+  };
+  if (clone.id === target) {
+    mutate(clone);
+    return { tree: clone, matched: true };
+  }
+  let matched = false;
+  if (clone.sub_questions) {
+    clone.sub_questions = clone.sub_questions.map((sub) => {
+      const res = mapStructuredNodeById(sub, target, mutate);
+      if (res.matched) matched = true;
+      return res.tree;
+    });
+  }
+  return { tree: clone, matched };
+}
+
+// The narrow set of structured-node fields a question_edit op may touch, plus
+// provenance. Snapshotted before/after for the reversible audit event.
+type NodeEditableSnapshot = Pick<
+  StructuredQuestionT,
+  'prompt_text' | 'answers' | 'analysis' | 'options' | 'kind'
+>;
+
+function snapshotNode(node: StructuredQuestionT): NodeEditableSnapshot {
+  return {
+    prompt_text: node.prompt_text,
+    answers: node.answers,
+    analysis: node.analysis,
+    options: node.options,
+    kind: node.kind,
+  };
+}
+
+export type QuestionEditGateFailure =
+  | 'node_not_found'
+  | 'not_a_leaf' // set_choice targets a stem (only leaf/standalone carry options)
+  | 'empty_edit' // edit_reference with neither answers nor analysis
+  | 'invalid_structure'; // post-edit tree fails the StructuredQuestion invariants
+
+export interface QuestionEditApplyResult {
+  tree: StructuredQuestionT;
+  before: NodeEditableSnapshot;
+  after: NodeEditableSnapshot;
+}
+
+/**
+ * Mini post-edit verify gate + apply. PURE — no IO. Returns the proposed tree on
+ * success, or a typed failure code (the applier rejects without writing). The
+ * gate enforces:
+ *   1. the target node exists (node_not_found);
+ *   2. op-specific node-shape constraints (set_choice → leaf only; edit_reference
+ *      → at least one of answers/analysis);
+ *   3. the resulting whole tree still satisfies the recursive StructuredQuestion
+ *      schema (e.g. only a stem may carry sub_questions) — re-parsed, so a bad
+ *      edit can never corrupt the persisted invariant.
+ */
+export function applyQuestionEdit(
+  tree: StructuredQuestionT,
+  edit: QuestionEditOpT,
+  actorRef: string,
+): QuestionEditApplyResult | { failure: QuestionEditGateFailure } {
+  const target = findStructuredNode(tree, edit.node_id);
+  if (!target) return { failure: 'node_not_found' };
+  const before = snapshotNode(target);
+
+  // Op-specific pre-conditions (gate part 1+2).
+  if (edit.op === 'set_choice') {
+    const isLeaf = target.role !== 'stem';
+    if (!isLeaf) return { failure: 'not_a_leaf' };
+  }
+  if (edit.op === 'edit_reference' && edit.answers === undefined && edit.analysis === undefined) {
+    return { failure: 'empty_edit' };
+  }
+
+  const { tree: nextTree, matched } = mapStructuredNodeById(tree, edit.node_id, (n) => {
+    switch (edit.op) {
+      case 'edit_node_text':
+        n.prompt_text = edit.prompt_text;
+        break;
+      case 'edit_reference':
+        if (edit.answers !== undefined) n.answers = [...edit.answers];
+        if (edit.analysis !== undefined) n.analysis = edit.analysis;
+        break;
+      case 'set_choice':
+        n.options = edit.options.map((o) => ({ label: o.label, text: o.text }));
+        break;
+      case 'set_node_kind':
+        n.kind = edit.kind;
+        break;
+    }
+    n.source = 'agent_edit';
+    n.last_modified_by = actorRef;
+  });
+  // matched is guaranteed (findStructuredNode already hit), but keep the gate honest.
+  if (!matched) return { failure: 'node_not_found' };
+
+  // Gate part 3 — the resulting tree must still be a valid StructuredQuestion.
+  const parsed = StructuredQuestion.safeParse(nextTree);
+  if (!parsed.success) return { failure: 'invalid_structure' };
+
+  const editedNode = findStructuredNode(nextTree, edit.node_id);
+  // editedNode is present (we just mutated it); snapshot the after-state.
+  const after = editedNode ? snapshotNode(editedNode) : before;
+  return { tree: nextTree, before, after };
+}
+
+/**
+ * ADR-0032 D6-B (YUK-203 lane L6) — question_edit accept. Applies the narrow
+ * node op to an ACTIVE question's `structured` tree behind the mini verify gate
+ * (applyQuestionEdit), bumps the row version, and writes BOTH an
+ * `experimental:question_structure_edit` audit event (before/after node snapshot
+ * — the reversible record) AND the `rate` accept event, all in one transaction.
+ *
+ * Idempotency keys on caused_by_event_id = proposalId (existingAcceptRate), like
+ * every sibling accept handler: a re-accept returns the prior result without a
+ * second mutation or audit event.
+ *
+ * Gate / not-found policy:
+ *   - missing question row → 404;
+ *   - question not active (draft_status='draft' / other) → 409 (this tool edits
+ *     POOLED questions only; draft structure is the ingestion block-edit path);
+ *   - question has no structured tree → 422 (nothing to address);
+ *   - verify-gate failure (node missing / wrong shape / would break invariants)
+ *     → 422 with the typed reason; the proposal stays pending so the user can
+ *     retract or the agent can re-propose a corrected op.
+ */
+export async function acceptQuestionEditProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: PracticeApplierOpts,
+): Promise<QuestionEditAcceptResult> {
+  ensureAcceptOnly('question_edit', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const questionId = requiredString(change.question_id, 'question_id', proposalId);
+  const edit = change.edit as QuestionEditOpT | undefined;
+  if (!edit || typeof edit !== 'object' || typeof (edit as { op?: unknown }).op !== 'string') {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} is missing required proposed_change.edit`,
+      400,
+    );
+  }
+
+  const actorRef = proposal.actor_ref ?? 'agent:copilot';
+
+  // Already-accepted idempotency: a rate event exists (409s on a non-accept
+  // decision inside existingAcceptRate).
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    const existing = (
+      await db.select().from(question).where(eq(question.id, questionId)).limit(1)
+    )[0];
+    if (!existing) {
+      throw new ApiError(
+        'inconsistent_state',
+        `proposal ${proposalId} has an accept rate event but question ${questionId} is missing; retract + retry`,
+        500,
+      );
+    }
+    return {
+      kind: 'question_edit',
+      rate_event_id: existingRate.id,
+      question_id: questionId,
+      edit_event_id: null,
+      version: existing.version,
+      idempotent: true,
+    };
+  }
+
+  const row = (await db.select().from(question).where(eq(question.id, questionId)).limit(1))[0];
+  if (!row) {
+    throw new ApiError('not_found', `question ${questionId} not found`, 404);
+  }
+  if (row.draft_status !== 'active') {
+    // Editing the structured tree of a pooled question only. A draft question's
+    // structure is the ingestion block-edit path (draft layer); a re-drafted /
+    // archived row is not an edit target.
+    throw new ApiError(
+      'conflict',
+      `question ${questionId} is draft_status ${row.draft_status ?? 'null'}, expected 'active'`,
+      409,
+    );
+  }
+  if (!row.structured) {
+    throw new ApiError(
+      'unprocessable_entity',
+      `question ${questionId} has no structured tree to edit`,
+      422,
+    );
+  }
+
+  const applied = applyQuestionEdit(row.structured, edit, actorRef);
+  if ('failure' in applied) {
+    throw new ApiError(
+      'unprocessable_entity',
+      `question_edit verify gate rejected the edit (${applied.failure}) for question ${questionId}`,
+      422,
+    );
+  }
+
+  const now = new Date();
+  const rateEventId = newId();
+  const editEventId = newId();
+  const nextVersion = row.version + 1;
+
+  await db.transaction(async (tx) => {
+    // Optimistic write guarded by the version we read; a concurrent structured
+    // edit bumps the version and this update matches 0 rows → conflict.
+    const updated = await tx
+      .update(question)
+      .set({ structured: applied.tree, updated_at: now, version: nextVersion })
+      .where(and(eq(question.id, questionId), eq(question.version, row.version)))
+      .returning({ version: question.version });
+    if (updated.length === 0) {
+      throw new ApiError(
+        'conflict',
+        `question ${questionId} was modified concurrently; retry`,
+        409,
+      );
+    }
+
+    // Reversible audit trail (before/after node snapshot) — the structured edit
+    // is correctable from this event without trusting the proposal payload.
+    await writeEvent(tx, {
+      id: editEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:question_structure_edit',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'success',
+      payload: {
+        question_id: questionId,
+        proposal_event_id: proposalId,
+        op: edit.op,
+        node_id: edit.node_id,
+        previous_version: row.version,
+        next_version: nextVersion,
+        before: applied.before,
+        after: applied.after,
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+        materialized_question_id: questionId,
+        structure_edit_event_id: editEventId,
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+
+  return {
+    kind: 'question_edit',
+    rate_event_id: rateEventId,
+    question_id: questionId,
+    edit_event_id: editEventId,
+    version: nextVersion,
+  };
 }

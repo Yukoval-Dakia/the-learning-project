@@ -3,7 +3,15 @@
 // Composite read tools for records, questions, due review cards, learning
 // items, and Dreaming-maintained memory briefs.
 
+import { QuestionKind } from '@/core/schema/business';
 import { deriveSourceTier } from '@/core/schema/provenance';
+// ADR-0032 D6-R6 / D6-draftread — addressable-structure projection (read≡write
+// coordinate fix). Pure tree-clip; shared by get_question_context(include:
+// ['structure']) and the get_question_block_structure draft reader.
+import {
+  type AddressableStructure,
+  projectAddressableStructure,
+} from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -17,6 +25,7 @@ import {
   memory_brief_note,
   mistake_variant,
   question,
+  question_block,
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import {
@@ -479,11 +488,43 @@ const GetQuestionContextInputSchema = z.object({
         'variants',
         'knowledge_context',
         'assets',
+        // ADR-0032 D6-R6 — addressable StructuredQuestion tree (read≡write
+        // coordinate fix). Pure-read projection of question.structured; lets the
+        // agent read the question by node-id the same way the edit tools write it.
+        'structure',
       ]),
     )
     .optional(),
   attemptLimit: z.number().int().min(1).max(50).optional(),
   reviewLimit: z.number().int().min(1).max(50).optional(),
+});
+
+// ADR-0032 D6-R6 — addressable-structure output shape, shared by
+// get_question_context(include:['structure']) and get_question_block_structure.
+// figures keep only the addressing triple; tree drops bbox/page_index/evidence.
+const AddressableFigureSchema = z.object({
+  asset_id: z.string(),
+  role: z.string(),
+  attached_to_index: z.string(),
+});
+
+const AddressableNodeSchema: z.ZodType<AddressableStructure['tree']> = z.lazy(() =>
+  z.object({
+    id: z.string(),
+    role: z.enum(['stem', 'sub', 'standalone']),
+    question_no: z.string().optional(),
+    prompt_text: z.string(),
+    options: z.array(z.object({ label: z.string(), text: z.string() })).optional(),
+    answers: z.array(z.string()).optional(),
+    analysis: z.string().optional(),
+    kind: QuestionKind.optional(),
+    sub_questions: z.array(AddressableNodeSchema).optional(),
+  }),
+);
+
+const AddressableStructureSchema = z.object({
+  tree: AddressableNodeSchema,
+  figures: z.array(AddressableFigureSchema),
 });
 
 const GetQuestionContextOutputSchema = z.object({
@@ -549,6 +590,9 @@ const GetQuestionContextOutputSchema = z.object({
   source_assets: z
     .array(z.object({ asset_id: z.string(), role: z.string(), crop_ref: z.string().optional() }))
     .optional(),
+  // ADR-0032 D6-R6 — addressable StructuredQuestion tree (only when
+  // include:['structure'] and the question carries a `structured` jsonb).
+  structure: AddressableStructureSchema.optional(),
 });
 
 type GetQuestionContextInput = z.infer<typeof GetQuestionContextInputSchema>;
@@ -677,6 +721,12 @@ async function executeGetQuestionContext(
         role: fig.role ?? 'figure',
       })),
     ];
+  }
+  // ADR-0032 D6-R6 — pure-read addressable structure projection. Only emitted
+  // when explicitly requested AND the question carries a `structured` tree
+  // (non-structured questions — variant_gen / embedded_check — have none).
+  if (include.has('structure') && q?.structured) {
+    output.structure = projectAddressableStructure(q.structured, q.figures ?? []);
   }
   return GetQuestionContextOutputSchema.parse(output);
 }
@@ -1306,6 +1356,68 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
     },
     mirrorEvent: 'when_user_visible',
   };
+
+// ADR-0032 D6-draftread — draft-layer counterpart of get_question_context's
+// `structure` projection. Reads the ingestion draft `question_block.structured`
+// tree (pre-import) so the agent can read it by node-id the same way the
+// question-edit write tools (split_stem / reassign_figure / ...) address it.
+// RED LINE: this reads the DRAFT layer (question_block); it is granted ONLY on
+// the ingestion_block_edit surface (allowlists.ts) — it must NEVER reach the
+// active question face (copilot / coach / dreaming). Orphan-draft exclusion is a
+// non-concern here: question_block IS the draft pool by construction.
+const GetQuestionBlockStructureInputSchema = z.object({
+  blockId: z.string().min(1),
+});
+
+const GetQuestionBlockStructureOutputSchema = z.object({
+  // null when the block is missing OR carries no `structured` tree yet
+  // (pre-extraction / non-structured block).
+  structure: AddressableStructureSchema.nullable(),
+});
+
+type GetQuestionBlockStructureInput = z.infer<typeof GetQuestionBlockStructureInputSchema>;
+type GetQuestionBlockStructureOutput = z.infer<typeof GetQuestionBlockStructureOutputSchema>;
+
+async function executeGetQuestionBlockStructure(
+  ctx: ToolContext,
+  raw: GetQuestionBlockStructureInput,
+): Promise<GetQuestionBlockStructureOutput> {
+  const input = GetQuestionBlockStructureInputSchema.parse(raw);
+  const [block] = await ctx.db
+    .select()
+    .from(question_block)
+    .where(eq(question_block.id, input.blockId))
+    .limit(1);
+  if (!block?.structured) {
+    return GetQuestionBlockStructureOutputSchema.parse({ structure: null });
+  }
+  return GetQuestionBlockStructureOutputSchema.parse({
+    structure: projectAddressableStructure(block.structured, block.figures ?? []),
+  });
+}
+
+export const getQuestionBlockStructureTool: DomainTool<
+  GetQuestionBlockStructureInput,
+  GetQuestionBlockStructureOutput
+> = {
+  name: 'get_question_block_structure',
+  description:
+    'Read the addressable StructuredQuestion tree of one ingestion draft question_block (pre-import draft layer), clipped to id/role/sub_questions + figure addressing. Pairs with the question-edit write tools so the agent reads the block by node-id the same way it edits it.',
+  effect: 'read',
+  inputSchema: GetQuestionBlockStructureInputSchema,
+  outputSchema: GetQuestionBlockStructureOutputSchema,
+  costClass: 'local',
+  execute: executeGetQuestionBlockStructure,
+  summarize(input, output) {
+    const nodes = output.structure ? countAddressableNodes(output.structure.tree) : 0;
+    return `block structure · ${input.blockId} · ${nodes} nodes`;
+  },
+  mirrorEvent: 'when_user_visible',
+};
+
+function countAddressableNodes(node: AddressableStructure['tree']): number {
+  return 1 + (node.sub_questions?.reduce((sum, c) => sum + countAddressableNodes(c), 0) ?? 0);
+}
 
 export const getReviewDueTool: DomainTool<GetReviewDueInput, GetReviewDueOutput> = {
   name: 'get_review_due',
