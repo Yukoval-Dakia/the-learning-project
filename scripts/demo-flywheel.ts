@@ -37,7 +37,7 @@ const toolCtx: any = {
   taskRunId: 'demo',
   callerActor: { kind: 'system', ref: 'demo-flywheel' },
 };
-const searchFacts = async () => []; // Mem0 degraded (no OPENAI_API_KEY) — brief still generates from events
+const searchFacts = async () => []; // Mem0 degraded (no ZHIPU_API_KEY / DASHSCOPE_API_KEY) — brief still generates from events
 
 function show(label: string, v: unknown) {
   let s: string;

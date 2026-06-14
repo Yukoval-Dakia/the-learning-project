@@ -37,6 +37,10 @@ tsconfig.tsbuildinfo
 # Per-user local MCP server config (machine-specific tokens / paths)
 .mcp.json
 
+# mem0 history SQLite sidecar for local dev (MEM0_HISTORY_DB_PATH=./.mem0/...;
+# prod uses the compose mem0data volume / /tmp). Machine-local, never commit.
+.mem0/
+
 # Subagent worktrees (created by Agent tool with isolation:"worktree")
 .claude/worktrees/
 .playwright-mcp/
