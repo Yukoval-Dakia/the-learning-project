@@ -5,6 +5,7 @@
 //   3. Concurrency → singletonKey serializes per user
 // Also verifies the two-read-consumer passthrough after supersede injection.
 
+import { RetryableError } from '@/core/schema/structured_question';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -248,7 +249,7 @@ describe('reconcile handler — MERGE rewrites old payload.data with merged_text
     await createTestCollection();
   });
 
-  it('writes merged_text (NOT reason) to old payload.data, supersedes, hard-deletes new', async () => {
+  it('writes merged_text (NOT reason) to old payload.data, keeps old LIVE, hard-deletes new', async () => {
     const db = testDb();
     const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
     const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
@@ -284,12 +285,19 @@ describe('reconcile handler — MERGE rewrites old payload.data with merged_text
     );
 
     const oldRows = (await db.execute(sql`
-      SELECT payload->>'data' AS data, payload->>'superseded_by' AS sb
+      SELECT payload->>'data' AS data, payload->>'superseded_by' AS sb,
+             payload->>'invalid_at' AS ia, payload->>'created_ms' AS cms
       FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
-    `)) as Array<{ data: string; sb: string | null }>;
+    `)) as Array<{ data: string; sb: string | null; ia: string | null; cms: string | null }>;
     expect(oldRows[0].data).toBe('MERGED: prefers dark mode and terse feedback');
     expect(oldRows[0].data).not.toContain('explanation'); // reason did NOT leak into data
-    expect(oldRows[0].sb).toBe(newMemId);
+    // PR #405 MERGE bug regression lock: the surviving merged row must stay LIVE.
+    // Marking it superseded_by/invalid_at would hide the merge result from the P3
+    // read path (which filters rows carrying those markers).
+    expect(oldRows[0].sb).toBeNull();
+    expect(oldRows[0].ia).toBeNull();
+    // created_ms bumped to the new memory's recency (2000).
+    expect(oldRows[0].cms).toBe('2000');
 
     const newRows = (await db.execute(
       sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
@@ -405,6 +413,90 @@ describe('reconcile handler — idempotent resume skips already-applied rows', (
     const byId = Object.fromEntries(rows.map((r) => [r.id, r.sb]));
     expect(byId[appliedOld]).toBeNull(); // already-applied row did NOT re-run
     expect(byId[pendingOld]).toBe(newId_); // unapplied row was replayed
+    expect(await loadUnappliedLog(db, 'self')).toHaveLength(0);
+  });
+});
+
+describe('reconcile handler — retryable failure rethrows (pg-boss retries)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('rethrows RetryableError from judge instead of swallowing it', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'User prefers light mode', metadata: { created_ms: 1000 } },
+    ]);
+    // judge throws a transient (retryable) error — NOT a ReconcileParseError.
+    const judge = vi.fn(async () => {
+      throw new RetryableError('GLM upstream 503');
+    });
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+
+    // The outer per-job catch must rethrow RetryableError so pg-boss retries.
+    await expect(
+      handler(
+        makeJob({
+          memories: [mem(newMemId, 'User prefers dark mode', 'preference', 2000)],
+          user_id: 'self',
+        }) as never,
+      ),
+    ).rejects.toBeInstanceOf(RetryableError);
+  });
+});
+
+describe('reconcile handler — duplicate new_index decisions are deduped', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('keeps only the first decision per new_index; second is dropped', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${oldMemId}::uuid, ${JSON.stringify({ data: 'old', user_id: 'self' })}::jsonb),
+        (${newMemId}::uuid, ${JSON.stringify({ data: 'new', user_id: 'self' })}::jsonb)
+    `);
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'old', metadata: { created_ms: 1000 } },
+    ]);
+    // GLM hallucinates TWO decisions for the same new_index (0). Only the first
+    // (KEEP_BOTH) should produce a planned row; the second (SUPERSEDE) is dropped.
+    const judge = vi.fn(async () => [
+      { new_index: 0, action: 'KEEP_BOTH', old_index: null, confidence: 0.9, reason: 'first wins' },
+      { new_index: 0, action: 'SUPERSEDE', old_index: 0, confidence: 0.8, reason: 'duplicate' },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({ memories: [mem(newMemId, 'new', 'event', 2000)], user_id: 'self' }) as never,
+    );
+
+    // Exactly one planned row (the first decision); the dup SUPERSEDE never ran,
+    // so the old row was NOT superseded.
+    const logRows = (await db.execute(sql`
+      SELECT action FROM memory_reconciliation_log WHERE user_id = 'self'
+    `)) as Array<{ action: string }>;
+    expect(logRows).toHaveLength(1);
+    expect(logRows[0].action).toBe('KEEP_BOTH');
+
+    const oldRows = (await db.execute(sql`
+      SELECT payload->>'superseded_by' AS sb FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
+    `)) as Array<{ sb: string | null }>;
+    expect(oldRows[0].sb).toBeNull(); // dup SUPERSEDE was dropped, old untouched
     expect(await loadUnappliedLog(db, 'self')).toHaveLength(0);
   });
 });
