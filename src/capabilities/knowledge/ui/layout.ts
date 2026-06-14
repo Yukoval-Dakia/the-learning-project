@@ -261,7 +261,14 @@ export function tidyTree(nodes: LayoutNode[]): LayoutMap {
   const spanX = maxX - minX || 1;
   const PAD_X = 120;
   const PAD_Y = 90;
-  const rowGap = maxDepth > 0 ? (LAYOUT_HEIGHT - 2 * PAD_Y) / maxDepth : 0;
+  // S5 (YUK-335): cap rowGap so a shallow tree (maxDepth 1-2) isn't stretched full-
+  // height into a ~380px inter-row void (audit §3.8). The cap only bites shallow trees;
+  // deeper trees (rawRowGap < cap) keep the canvas-filling spread unchanged. When
+  // capped, center the used band vertically so slack falls top+bottom, not below.
+  const ROW_GAP_MAX = 150;
+  const rawRowGap = maxDepth > 0 ? (LAYOUT_HEIGHT - 2 * PAD_Y) / maxDepth : 0;
+  const rowGap = Math.min(ROW_GAP_MAX, rawRowGap);
+  const startY = (LAYOUT_HEIGHT - maxDepth * rowGap) / 2;
   const colScale = (LAYOUT_WIDTH - 2 * PAD_X) / spanX;
 
   const pos: LayoutMap = new Map();
@@ -269,7 +276,7 @@ export function tidyTree(nodes: LayoutNode[]): LayoutMap {
     const sx = slot.get(n.id) ?? 0;
     const d = depths.get(n.id) ?? 0;
     const x = maxX === minX ? LAYOUT_WIDTH / 2 : PAD_X + (sx - minX) * colScale;
-    const y = maxDepth === 0 ? LAYOUT_HEIGHT / 2 : PAD_Y + d * rowGap;
+    const y = maxDepth === 0 ? LAYOUT_HEIGHT / 2 : startY + d * rowGap;
     pos.set(n.id, { x, y });
   }
   return pos;

@@ -224,7 +224,13 @@ export default function TodayPage({ navigate }: TodayPageProps) {
       >
         {s && (
           <>
-            <KpiRow kpi={s.kpi} active={active} navigate={navigate} onPlaceholder={placeholder} />
+            <KpiRow
+              kpi={s.kpi}
+              proposalsTotal={s.proposals.total}
+              active={active}
+              navigate={navigate}
+              onPlaceholder={placeholder}
+            />
 
             {threads.length > 0 && (
               <>

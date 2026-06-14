@@ -8236,17 +8236,72 @@ button.seg-sm {
    .ai-change-strip* / .inbox-strip / .cost-ribbon are DIFFERENT
    class names (left untouched; retire in cleanup pass).
 
-   OMITTED per 7B pre-flight §4: WeekHeat 整段 — .week-heat /
-   .heat-row / .heat-cell / .heat-axis / .heat-pop keyframe are
-   NOT ported (no 7-day activity aggregation endpoint; prototype
-   data was hardcoded seed). Re-add when the endpoint lands.
-   Ref: docs/design/2026-06-04-redraw-today-7b-preflight.md §4.
+   RE-ADDED S3 (YUK-335 / YUK-207): WeekHeat 整段 — .week-heat /
+   .heat-row / .heat-cell / .heat-axis / heat-pop keyframe.
+   7B 的 OMITTED 豁免理由（无 7 天活动聚合端点）已过期：
+   /api/workbench/summary week_heat 已 ship（workbench-summary.ts），
+   TodayPage:276 已接线渲染 <WeekHeat heat={s.week_heat}/>，组件只是
+   裸 DOM 无样式。CSS 照设计源 screens.css:37-46 scoped 到 .today-loom。
+   偏差：真组件渲单行 7 cell（过去 7 天，非设计稿 4×7 演示网格）。
 
    Reused (grep-confirmed already present → NOT re-ported here):
      .card-head / .card-title / .card-icon(.accent) · .chip ·
      .bar · .quiet-empty · .nowrap-meta · .serif / .tnum / .mono
      + Stateful / SkLines primitives (slice-1).
    ============================================================ */
+
+/* ---- WeekHeat 7 天活动热力 (screens.css L37-46) ----
+   S3 re-add (was OMITTED 7B). keyframes 全局（唯一名，无冲突）；其余
+   scoped .today-loom。组件渲单行 7 cell（WeekHeat.tsx），data-lvl 0=base
+   paper-sunk，1-5 coral 渐档。 */
+.today-loom .week-heat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--s-2);
+}
+.today-loom .heat-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.today-loom .heat-cell {
+  aspect-ratio: 1;
+  border-radius: var(--r-1);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  transform: scale(0.4);
+  opacity: 0;
+  animation: heat-pop 0.5s var(--ease-out) forwards;
+}
+@keyframes heat-pop {
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.today-loom .heat-cell[data-lvl="1"] {
+  background: color-mix(in srgb, var(--coral) 14%, var(--paper-sunk));
+}
+.today-loom .heat-cell[data-lvl="2"] {
+  background: color-mix(in srgb, var(--coral) 32%, var(--paper-sunk));
+}
+.today-loom .heat-cell[data-lvl="3"] {
+  background: color-mix(in srgb, var(--coral) 52%, var(--paper));
+}
+.today-loom .heat-cell[data-lvl="4"] {
+  background: color-mix(in srgb, var(--coral) 74%, var(--paper));
+}
+.today-loom .heat-cell[data-lvl="5"] {
+  background: var(--coral);
+}
+.today-loom .heat-axis {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-top: 2px;
+  text-align: center;
+}
 
 /* ---- dash-grid two-column layout (loom.css L251) ---- */
 .today-loom .dash-grid {
@@ -10798,6 +10853,201 @@ button.seg-sm {
   .items-loom .items-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   S2 (YUK-335) — loom 页头 chrome 漏页补 port (inbox / agentnotes / pface)
+   + note-reader page-title.  Same scoped strategy as .knowledge-loom /
+   .today-loom / .items-loom: the legacy .page-head / .eyebrow / .page-title /
+   .page-head-row / .page-lead / .section-label / .seg globals are consumed by
+   ~40 surfaces and MUST NOT change, so loom design values are scoped per page.
+   Design source: docs/design/loom-refresh/project/loom.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---- /inbox page-head chrome (loom.css L167-172) — scoped .inbox-loom ---- */
+.inbox-loom .page-head {
+  margin-bottom: var(--s-6);
+}
+.inbox-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.inbox-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.inbox-loom .page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.inbox-loom .page-lead {
+  color: var(--ink-3);
+  font-size: var(--fs-body-lg);
+  max-width: 58ch;
+  margin-top: var(--s-3);
+  line-height: var(--lh-prose);
+}
+/* SectionLabel loom flex shape (loom.css L240-243); the 4 lane headers go from
+   28px 秃标 + count 折行 → serif h2 + 横向 rule + mono count right-aligned.
+   SectionLabel.tsx already renders .rule/.count spans, so JSX is untouched.
+   margin matches the shipped today-loom / items-loom precedent (--s-8). */
+.inbox-loom .section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-8) 0 var(--s-4);
+}
+.inbox-loom .section-label h2 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.inbox-loom .section-label .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.inbox-loom .section-label .count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  /* S2-fix (YUK-335): count 不可折成竖列（today-loom R8 同款守卫，audit「count
+     折行孤行」正是本 slice 要修的；.count 是 .rule{flex:1} 旁的 flex 子）。 */
+  flex: none;
+  white-space: nowrap;
+}
+
+/* ---- /agent-notes page-head chrome (loom.css L167-172) — scoped
+   .agentnotes-loom (globals 零命中 before this slice) ---- */
+.agentnotes-loom .page-head {
+  margin-bottom: var(--s-6);
+}
+.agentnotes-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.agentnotes-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.agentnotes-loom .page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.agentnotes-loom .page-lead {
+  color: var(--ink-3);
+  font-size: var(--fs-body-lg);
+  max-width: 58ch;
+  margin-top: var(--s-3);
+  line-height: var(--lh-prose);
+}
+/* 日分组标题用 SectionLabel primitive (renders .rule/.count) — loom flex shape
+   (loom.css L240-243); JSX untouched. */
+.agentnotes-loom .section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-8) 0 var(--s-4);
+}
+.agentnotes-loom .section-label h2 {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+}
+.agentnotes-loom .section-label .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.agentnotes-loom .section-label .count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  /* S2-fix (YUK-335): /agent-notes 的 count 是双 token「N 条」——最易折行；
+     today-loom R8 同款守卫。 */
+  flex: none;
+  white-space: nowrap;
+}
+
+/* ---- /practice pface 流 page-head chrome — scoped .pface-loom (NEW class on
+   <main>, grep-confirmed absent globally; .practice-loom is NOT mounted by any
+   pface component so no shelf paper-grid leak).  eyebrow loom.css L168; seg pill
+   model = loom.css / screens.css L144-146 (legacy global .seg is a single-button
+   model, hence the 图标文字分行 / 无 pill / 无选中态 before this slice);
+   page-title loom.css L170 (serif). ---- */
+.pface-loom .eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: var(--s-2);
+  display: block;
+}
+.pface-loom .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h1);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+.pface-loom .seg {
+  display: inline-flex;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 2px;
+}
+.pface-loom .seg button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+  padding: 6px 14px;
+  border-radius: var(--r-1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.pface-loom .seg button.on {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---- /notes/$id reader h1 — scoped .note-reader-page .page-title.  Design
+   note-reader.css L50 (.note-doc-title) is fs-display (48px); the impl h1 uses
+   .page-title (NoteReaderPage.tsx:223) which had no rule → base h1 36px.  Only
+   page-title lifted here; entry strip / read-mode structure is S12, not this
+   slice. ---- */
+.note-reader-page .page-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-display);
+  font-weight: 500;
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

@@ -44,11 +44,15 @@ function KpiCard({ kpi, active }: { kpi: Kpi; active: boolean }) {
 
 export function KpiRow({
   kpi,
+  proposalsTotal,
   active,
   navigate,
   onPlaceholder,
 }: {
   kpi: { due_count: number; pending_attribution_count: number; knowledge_count: number };
+  // 第 4 卡数据源 /api/workbench/summary proposals.total（KPI 网格 4 列，第 4 列
+  // 原恒空——「AI 提议·待审」最高优先级信号从 KPI 层缺席，audit §3.2 HIGH）。
+  proposalsTotal: number;
   active: boolean;
   navigate: (to: string) => void;
   onPlaceholder: (text: string) => void;
@@ -77,6 +81,14 @@ export function KpiRow({
       value: kpi.knowledge_count,
       sub: '知识网中的活跃节点',
       onGo: () => navigate('/knowledge'),
+    },
+    {
+      key: 'proposals',
+      label: 'AI 提议',
+      icon: 'inbox',
+      value: proposalsTotal,
+      sub: '等待裁决的提议',
+      onGo: () => navigate('/inbox'),
     },
   ];
   return (

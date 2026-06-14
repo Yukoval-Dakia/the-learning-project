@@ -32,13 +32,17 @@ export const getWorkbenchSummary = () => apiJson<WorkbenchSummary>('/api/workben
 export const getRecentAiChanges = () =>
   apiJson<{ window_hours: number; rows: AiChangeRow[] }>('/api/artifacts/ai-changes/recent');
 
-// ── 热力分桶（设计稿 heat-cell data-lvl 0..4；真数据按事件量分段） ──
+// ── 热力分桶（设计稿 heat-cell data-lvl 0..5；真数据按事件量分段） ──
 // 设计稿是假数据演示无分桶规则；阈值按「单日学习事件量」常识分段：
-// 0 空 / 1-2 轻 / 3-5 中 / 6-9 高 / ≥10 峰。
-export function heatLevel(count: number): 0 | 1 | 2 | 3 | 4 {
+// 0 空 / 1-2 轻 / 3-5 中 / 6-9 高 / 10-15 峰 / ≥16 满。
+// S3-fix (YUK-335): 扩到 0-5 用满设计 5 档 coral 渐档——满 coral(lvl 5) 是
+// WeekHeat「全页 coral 叙事收束高潮」(audit §3.2)；原上限 4 让峰值色永不出现、
+// .heat-cell[data-lvl="5"] 规则成死 CSS。≤15→4 保持既有边界断言不破，≥16 才点满。
+export function heatLevel(count: number): 0 | 1 | 2 | 3 | 4 | 5 {
   if (count <= 0) return 0;
   if (count <= 2) return 1;
   if (count <= 5) return 2;
   if (count <= 9) return 3;
-  return 4;
+  if (count <= 15) return 4;
+  return 5;
 }
