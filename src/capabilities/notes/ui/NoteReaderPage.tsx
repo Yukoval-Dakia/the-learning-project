@@ -6,9 +6,13 @@
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
 
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
+import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
+import { EmptyState } from '@/ui/primitives/EmptyState';
+import { ErrorState } from '@/ui/primitives/ErrorState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { SkLines } from '@/ui/primitives/SkLines';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import './note-reader.css';
@@ -110,19 +114,44 @@ export default function NoteReaderPage({
     },
   });
 
+  // S4 (YUK-335)：空/载态从裸 .quiet-empty 一行字升级为 SkLines/EmptyState
+  // primitives——原样式读作「故障」（14px 灰字悬空，无图形锚点/标题层级）。
   if (noteQ.isLoading)
     return (
-      <main className="page wide">
-        <p className="quiet-empty">取笔记…</p>
+      <main className="page wide note-reader-page">
+        <SkLines rows={6} />
+      </main>
+    );
+  // S4-fix (YUK-335)：error 态独立分支（设计源用 Stateful 三态）——否则瞬时 fetch
+  // 失败会落进下面的 !note 分支，被误读成永久「笔记不存在」、且无重试入口。消化
+  // ported-but-idle 的 ErrorState（audit P4）。但 404（笔记不存在/已删）语义上
+  // 是「空」非「加载失败」——让它落到下面的 EmptyState，只有瞬时错误（网络/5xx）
+  // 才示 ErrorState + 重试（视觉环实测：404 误显「加载失败」会反向坏了 not-found 态）。
+  // 用 isLoadingError（= 出错且无缓存 data）而非 isError：笔记已加载后窗口聚焦/重连
+  // 触发的后台 refetch 若失败，TanStack v5 保留旧 data 同时把 isError 置真
+  // （isRefetchError）——只判 isError 会把仍可用的阅读/编辑界面（含未保存草稿）整页
+  // 替换成 ErrorState。isLoadingError 只在「无缓存的首次加载失败」时为真，refetch
+  // 失败时为假 → 落到下面 !note=false 继续用缓存渲染，仅丢一次刷新（Codex #399 F1）。
+  const isNotFound = noteQ.error instanceof ApiError && noteQ.error.status === 404;
+  if (noteQ.isLoadingError && !isNotFound)
+    return (
+      <main className="page wide note-reader-page">
+        <ErrorState text="笔记加载失败。" onRetry={() => void noteQ.refetch()} />
       </main>
     );
   if (!note)
     return (
-      <main className="page wide">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
-          返回知识
-        </Btn>
-        <p className="quiet-empty">笔记不存在或已归档。</p>
+      <main className="page wide note-reader-page">
+        <EmptyState
+          icon="doc"
+          title="笔记不存在"
+          text="这篇笔记不存在或已被归档。"
+          action={
+            <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => navigate('/knowledge')}>
+              返回知识
+            </Btn>
+          }
+        />
       </main>
     );
 

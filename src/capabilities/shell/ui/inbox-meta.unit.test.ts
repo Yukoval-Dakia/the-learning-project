@@ -79,7 +79,7 @@ describe('kindMeta fallback', () => {
 });
 
 describe('heatLevel 分桶边界', () => {
-  it('0 空 / 1-2 轻 / 3-5 中 / 6-9 高 / ≥10 峰', () => {
+  it('0 空 / 1-2 轻 / 3-5 中 / 6-9 高 / 10-15 峰 / ≥16 满', () => {
     expect(heatLevel(-1)).toBe(0);
     expect(heatLevel(0)).toBe(0);
     expect(heatLevel(1)).toBe(1);
@@ -89,6 +89,9 @@ describe('heatLevel 分桶边界', () => {
     expect(heatLevel(6)).toBe(3);
     expect(heatLevel(9)).toBe(3);
     expect(heatLevel(10)).toBe(4);
+    expect(heatLevel(15)).toBe(4);
+    // S3-fix (YUK-335): 满 coral 第 5 档（设计收束高潮）现真实出现在高活跃日。
+    expect(heatLevel(16)).toBe(5);
   });
 });
 

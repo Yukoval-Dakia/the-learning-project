@@ -2,7 +2,7 @@
 // the Loom prototype's MasteryRing (screen-knowledge.jsx L11-22). Used in the
 // knowledge TREE rows so they read mastery the SAME way as the graph nodes
 // (disc/arc + design 3-tone). Tone is derived by the shared `masteryTone` (the single
-// source of the 0.7 / 0.4 thresholds) so the tree and graph never disagree. NULL
+// source of the 0.67 / 0.45 thresholds) so the tree and graph never disagree. NULL
 // mastery (never practiced) → 0 → 'again', matching the graph.
 //
 // Imported from the dep-free knowledge-graph/mastery-tone leaf (NOT from KnowledgeGraph)

@@ -64,3 +64,10 @@
   stroke: var(--coral);
   stroke-width: 3;
 }
+/* S5 (YUK-335): 选中态。原靠 circle inline stroke=coral，被 .mesh-disc.tone-*
+   类规则（0,2,0）永久压制——抽屉开着但图上看不出选中谁。改类驱动，
+   .mesh-node.is-active .mesh-disc（0,3,0）胜过 tone 规则。 */
+.mesh-node.is-active .mesh-disc {
+  stroke: var(--coral);
+  stroke-width: 2.5px;
+}
