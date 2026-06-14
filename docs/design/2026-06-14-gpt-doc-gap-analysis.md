@@ -42,7 +42,7 @@ I have complete grounding across all six rethink docs, the GPT doc verification,
 - **rethink 现状**：靶子立了，支撑信号没立。fluency-illusion 防假学习（synthesis §3.1）、延迟复测/迁移测（§8 采纳补盲点）、hint-first 自主滑块（ledger A3）、「埋 revert/escalate 率」（§7 H2 B2）都拍了——但**这些信号该怎么进 event 流，rethink 一行没碰**。三轴正交红线（synthesis §4.1）只列 R/p(L)/mem0/KG 四轴，没有「提示依赖」「自我解释」这第五类元认知信号的承载位。
 - **代码现实**：`AttemptOnQuestion` payload（`src/core/schema/event/known.ts:34-51`）只有整答 `answer_md` + 整对错 `outcome`，**无 step 容器、无 hints_used、无 confidence**。最刺眼的——**hint 运行时已经在产生计数**（`solve-session.ts` 的 `hintIndex` 客户端传参），但 `solve-skill.ts:74` 明确「writes no judge/attempt event」，**这个计数直接被丢弃**。`knowledge_mastery` view（`drizzle/0005...sql`）只吃 `action IN ('attempt','review')` 的扁平 outcome，任何步骤/提示/自我解释信号都进不了算法。
 - **为什么值得拍**：rethink 自己要「埋 revert/escalate 率」来调 hint 滑块、要 fluency-illusion 软提示——**没有 hint event 就算不出 hint_dependence，滑块的有效性永远无法事后校验**。而 hint 计数数据已经在产生只是被扔掉，补它几乎零成本。这是题型无关、**零 scope 依赖、跨簇共识最该立即拍**的一条（三路 map + 对抗核查一致点名）。
-- **建议决策框架**：分两层落。(a)【立即、零依赖】hint count 落 event——`AttemptOnQuestion.payload` 加 `hints_used: number` + `final_hint_level`，或独立 `requested_hint` event（对齐 GPT §7.1 action_type），先攒数据。(b)【gated 在 `mastery_state` 重写 Wave1 后】hint-discounted accuracy（带提示答对按折扣计入 p(L)，= GPT「reveal 记为非独立完成」）+ 延迟复测打 `review_context: delayed_retention` 标 + 迁移题打 `is_transfer_probe`/`probes_knowledge_id` 标。step-level 切分与 self-explain 暂标 future（前者撞古文开放题天花板，后者并入笔记 check 段一起拍）。
+- **建议决策框架**：分两层落。(a)【立即、零依赖】hint count 落 event——`AttemptOnQuestion.payload` 加 `hints_used: number` + `final_hint_level`，或独立 `requested_hint` event（对齐 GPT §7.1 action_type），先攒数据。(b)【gated 在 `mastery_state` 重写 Wave1 后】hint-discounted accuracy（带提示答对按折扣计入 p(L)，= GPT「reveal 记为非独立完成」）+ 延迟复测打 `review_context: delayed_retention` 标 + 迁移题打 `is_transfer_probe`/`probes_knowledge_id` 标。step-level 切分与 self-explain 暂标 future（前者撞开放/主观题型天花板，后者并入笔记 check 段一起拍）。
 - **scope-gated?** (a) 否，立即可做。(b) gated 在 Wave1 `mastery_state` 重写。
 - **严重度：高**（(a) 部分；整体 hint 留痕是单用户最想要的假学习探测器之一）。
 
@@ -62,7 +62,7 @@ I have complete grounding across all six rethink docs, the GPT doc verification,
 - **rethink 现状**：**显式采纳了哲学**（synthesis §8「通用证据层+学科插件…采纳同构」），且**降维成轻量等价物**——`task_type`→`question.kind`（RT3）、`knowledge_components`→`question.knowledge_ids[]`（已策划 Q-matrix）、`rubric`→`rubric_json`。但**「题型证据 schema 要不要做成数据」这条核心从未正面拍**。`expected_evidence`/`misconception_candidates`/`input_modalities`/`verifier_route` 四个字段**全仓零命中**（对抗核查复核确认）。注意 RT3（ADR-0036:67）只否决了「把题型升成 KG 图实体」，**没否决「题型驱动证据结构」**——别把前者当后者的拒绝。
 - **代码现实**：`rubric_json`（`schema.ts:159`）的 `reference_solution.expected_signals` 已经是 `expected_evidence` 的子集，但绑在 rubric 内、不是题级顶层证据契约；`AttemptOnQuestion` payload 单一扁平，不按题型分化（一个 `answer_md` 通吃 9 种 kind）。
 - **为什么值得拍**：全科已拍，题型分化的证据收益（客观题侧高）变实在了。但要诚实——`expected_evidence` 题级一等化 ROI 偏低（现 rubric 够用），`misconception_candidates` 不该在题上冗余（应经 RT1 `misconception_edge.caused_by` 反查），`input_modalities` 因模态已拍封口（决策 1 背景）基本无意义。
-- **建议决策框架**：**不建独立 UTR 表**（违反「收敛非重建」主线）。可选小增量：给 `question` 加可选 `expected_evidence jsonb`，把 rubric 里散落的证据契约提到题级统一客观/开放。是否让 attempt payload 按 question type 走 discriminated sub-schema，**这条需 owner 拍**（客观题分化收益高、古文开放题收益低）。
+- **建议决策框架**：**不建独立 UTR 表**（违反「收敛非重建」主线）。可选小增量：给 `question` 加可选 `expected_evidence jsonb`，把 rubric 里散落的证据契约提到题级统一客观/开放。是否让 attempt payload 按 question type 走 discriminated sub-schema，**这条需 owner 拍**（客观题分化收益高、开放/主观题型收益低）。
 - **scope-gated?** 否（全科已拍）。但 `misconception_candidates` 侧 gated 在 YUK-344 + RT1。
 - **严重度：中**（rubric.expected_signals 已部分覆盖；分化收益客观题侧）。
 
@@ -71,10 +71,10 @@ I have complete grounding across all six rethink docs, the GPT doc verification,
 - **GPT 怎么说**：§6.2 + §8.1 每题型/学科有专属确定性验证器——数学=CAS/符号求解、物理=单位/量纲、化学=守恒/配平、编程=编译器/单元测试、作文=rubric/人类校准；§10.2 实施路线图按**题型可验证性**排（客观题先 → 半开放 → 开放）。
 - **rethink 现状**：**Verifier Router 框架已采纳**（ADR-0038，三套信任闸收敛到 QuizGen 五轴），且 per-kind 判分路由比 ledger 写的更实——`defaultJudgeKindForQuestion`（`src/core/schema/judge-routing.ts:41-58`）把 9 个 `QuestionKind` 路由到 8 个 judge runner，被 5 个生产 handler 消费。**澄清一个 map 的过强措辞**：rethink 的 Verifier Router 不是「方向相反于 GPT 的 per-type 路由」——它是「**verdict 形状收敛 ⟂ 题型路由分叉**」两个正交维度并存，per-kind 路由真实存在（对抗核查 RC-1）。GPT 真正缺的只是**工具级专业 verifier**，不是路由机制。
 - **代码现实**：`QuestionKind` 恰好 9 种（choice/true_false/fill_blank/short_answer/essay/computation/reading/translation/derivation），**无 programming/speaking/experiment**（对抗核查复核全枚举）。judge runner 到 `exact/keyword/semantic/steps/multimodal_direct/unit_dimension` 为止——`steps`（数学步骤）和 `unit_dimension`（物理量纲）已证明「per-kind runner 可插件式扩」这条路能走。缺的是 CAS 符号求解（`computation/derivation` 现 fall through 到 `semantic` LLM）、编译器/单元测试（无 code 判分）。
-- **为什么值得拍**：全科已拍，理科/编程 verifier 从「期权」变「该建」。这是**纯插件式增量**（新 `JudgeKind` enum + 新 runner + profile 声明，零架构改动），但**先对哪类题型上线**是个产品决策——GPT §10.2 的可验证性排序（客观题先全量、开放题降级软轨）在 rethink 里其实已被 B1 硬轨/软轨认识论分层吸收了一半（古文开放题永久低置信，比「后做」更强），剩余的是「B5 verify / B1 标定 / RT1 晋升环这三块能力要不要按题型分批启用」。
+- **为什么值得拍**：全科已拍，理科/编程 verifier 从「期权」变「该建」。这是**纯插件式增量**（新 `JudgeKind` enum + 新 runner + profile 声明，零架构改动），但**先对哪类题型上线**是个产品决策——GPT §10.2 的可验证性排序（客观题先全量、开放题降级软轨）在 rethink 里其实已被 B1 硬轨/软轨认识论分层吸收了一半（开放/主观题型永久低置信，比「后做」更强），剩余的是「B5 verify / B1 标定 / RT1 晋升环这三块能力要不要按题型分批启用」。
 - **建议决策框架**：不新建「题型 rollout 轴」与依赖轴并列（会过度结构化）；在每个受影响 Wave deliverable 上加一个**题型 gate 维度**——该能力先只对 `QuestionKind ∈ {choice, true_false, fill_blank, computation}` 启用确定校验闭环，对 `PROSE_KINDS` 降级 propose-only 软提示。复用已实现的 `defaultJudgeKindForQuestion` 分流。CAS/编译器作为新 `JudgeKind` + runner 按需补。
 - **scope-gated?** 否（全科已拍）。节奏 gated 在 B5/B1 落地。
-- **严重度：中**（理科/编程在全科底座下成立；古文为主用不到，但全科已拍故不能 scope-out）。
+- **严重度：中**（理科/编程在全科底座下成立；纯文科/主观题为主时用不到，但全科已拍故不能 scope-out）。
 
 ### 决策 5 ——【中】学习成效评估层（n=1 自评）：工具怎么验证自己有效
 
@@ -101,7 +101,7 @@ I have complete grounding across all six rethink docs, the GPT doc verification,
 三条低优先、慎采或纯治理的，合并一组：
 
 - **复习单元随题型分化**（GPT §8.2 ReviewUnit.type ∈ {concept|misconception|step_skill|problem_type|...}）：rethink 拍了 concept（ADR-0028 知识点单元）+ misconception（ADR-0036 改向「不持独立调度，只做复习偏置」），`step_skill/problem_type` 未碰。**建议多半不照 GPT 做**——GPT 的「题型→复习单元类型」映射在 rethink 三轴正交下会制造第四个分类轴污染；step_skill 用树叶子节点表达即可（选项 A，不新增 `subject_kind='skill'`）。⚠️ 一个 map 建议「把 problem_type 作调度单元以拒绝形式归档」——**这越权了**（对抗核查 RC-3）：rethink 从未对这条裁决过，应标「owner 未决」不能预判拒绝。
-- **review_format 5 分类**（GPT §8.2/§8.3 Recall/Reconstruct/Discriminate/Transfer/Explain）：rethink 拍了 Recall/application 二分（ADR-0030）+ Discriminate 经 `confusable_with` 边（ADR-0036:28）+ Transfer 进 p(L)，Reconstruct/Explain 未碰。**建议作 B3 引擎 mix 输出第二维**（复用 ADR-0037 mix 挂点 + RT1 边，零新表），不建映射表。古文开放题 Explain/Reconstruct 自动判分撞 B1 软轨天花板。
+- **review_format 5 分类**（GPT §8.2/§8.3 Recall/Reconstruct/Discriminate/Transfer/Explain）：rethink 拍了 Recall/application 二分（ADR-0030）+ Discriminate 经 `confusable_with` 边（ADR-0036:28）+ Transfer 进 p(L)，Reconstruct/Explain 未碰。**建议作 B3 引擎 mix 输出第二维**（复用 ADR-0037 mix 挂点 + RT1 边，零新表），不建映射表。开放/主观题型 Explain/Reconstruct 自动判分撞 B1 软轨天花板。
 - **KG 死边反向审计**（GPT §10.1「只保留能影响诊断/推荐/复习的关系」）：rethink 只对单条边（confusable_with 死边）落了治理，缺「边创建后是否真被下游消费」的反向审计。**建议扩 RT4 `audit:relations` 脚本加死边检测维度**（零 scope 依赖，并进 YUK-322 关系族）。
 - **严重度：低**（三条均 gated 在 B3/RT4，或与 rethink 既有切法冲突慎采）。
 
@@ -140,11 +140,11 @@ I have complete grounding across all six rethink docs, the GPT doc verification,
 
 - **仍 gated 但 gate 是「依赖排序」不是「scope」**：决策 5 成效层 + 决策 6 fatigue（gated Wave1/Wave2 引擎落地，时间/依赖瓶颈，非 scope）；决策 3 的 misconception_candidates（gated YUK-344 + RT1）。
 
-- **仍受「有效性天花板」压制（不是 scope，是 n=1/古文认识论死路，诚实标注）**：
-  - **古文开放题**：算法层强承诺（软轨 a/c/CDM/KT + verify 闭环 + observed_in 归因）三处同时退化（ledger E1）。决策 3/4/5 里凡涉及开放题判分/迁移测的，对古文降级为「LLM 软提示 + owner 锚点为主」。全科已拍意味着古文只是众科目之一，但古文若实际是 owner 主用内容，这批算法能力对它仍基本无效——**这条不因 scope 拍全科而消失**。
+- **仍受「有效性天花板」压制（不是 scope，是 n=1/开放题认识论死路，诚实标注）**：
+  - **开放/主观题型**：算法层强承诺（软轨 a/c/CDM/KT + verify 闭环 + observed_in 归因）三处同时退化（ledger E1）。决策 3/4/5 里凡涉及开放题判分/迁移测的，对开放/主观题降级为「LLM 软提示 + owner 锚点为主」。这类题型（作文/论述/证明/实验/鉴赏）跨科都有，算法层判分软是天花板、与具体科目无关——**这条不因 scope 拍全科而消失**。
   - **n=1 无 cohort**：所有「掌握度/难度绝对值」长期低置信，只承诺相对排序（ledger §1）。决策 5 成效层只能承诺「相对自身趋势」，决策 6 fatigue 阈值可能永远停在先验值（§6.4 D1/D3 高危组：n=1 即使埋点 N 周也未必攒够样本）。
 
-**一句话给 owner**：scope 拍全科后，真正还没做的产品级决策收敛到 7 条，其中**决策 1(a) hint event 留痕（零依赖、跨簇共识最该立即拍）和决策 2 degenerate/故障态对账（命中你自承的最大横切洞）是两条该马上拍的**；决策 3/4/5/6 是全科底座下「该建但怎么建/什么节奏」的真未来工作（多数 gated 在 Wave1 引擎落地的依赖瓶颈，非 scope）；决策 7 三条低优先慎采。古文开放题的算法层无效 + n=1 绝对值低置信这两条有效性天花板**不因 scope 拍全科而消失**，须继续如实标在决策文档里。
+**一句话给 owner**：scope 拍全科后，真正还没做的产品级决策收敛到 7 条，其中**决策 1(a) hint event 留痕（零依赖、跨簇共识最该立即拍）和决策 2 degenerate/故障态对账（命中你自承的最大横切洞）是两条该马上拍的**；决策 3/4/5/6 是全科底座下「该建但怎么建/什么节奏」的真未来工作（多数 gated 在 Wave1 引擎落地的依赖瓶颈，非 scope）；决策 7 三条低优先慎采。开放/主观题型的算法层无效 + n=1 绝对值低置信这两条有效性天花板**不因 scope 拍全科而消失**，须继续如实标在决策文档里。
 
 ---
 
