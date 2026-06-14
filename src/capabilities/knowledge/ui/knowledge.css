@@ -1,19 +1,15 @@
 /* M3 知识面（YUK-317）— globals.css 缺口补充。
    词汇主体（know-node/kd-grid/rel-row/mesh-disc/drawer-sec/verify-badge 等）
-   已在 app/globals.css（round-2b 同源落地）；此处只补图谱 SVG 容器与文字。 */
+   已在 app/globals.css（round-2b 同源落地）；此处只补图谱 SVG 容器与文字。
+   S9 (YUK-335 / YUK-297)：旧 .mesh-canvas（paper-raised + border）下线——
+   mesh stage 改复用 globals 的 .kg-svg-stage（点阵底），消除「纯白双框」；
+   .mesh-edge-glyph（只 glyph）由 .mesh-edge-label（glyph + label）取代。 */
 
-.mesh-canvas {
+/* mesh stage：复用 globals .kg-svg-stage 点阵底（screens-2b.css .mesh-svg L46）。 */
+.kg-svg-stage .kg-svg {
   display: block;
   width: 100%;
-  height: clamp(420px, 62vh, 640px);
-  background: var(--paper-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-}
-
-.mesh-edge-glyph {
-  font-size: 11px;
-  fill: var(--ink-4);
+  height: 100%;
   user-select: none;
 }
 
@@ -70,4 +66,163 @@
 .mesh-node.is-active .mesh-disc {
   stroke: var(--coral);
   stroke-width: 2.5px;
+}
+
+/* ── S9 (YUK-335 / YUK-297) 图谱材质三层 — screens-2b.css 逐值照搬 ──
+   线框稿 → 设计材质：disc + track + arc 三层节点、typed 5 色边 + 中点标签、
+   缩放 controls、关系图例。点阵底复用 globals 的 .kg-svg-stage（mesh-wrap 给
+   controls 绝对定位锚点）。 */
+
+/* mesh-wrap：controls 绝对定位的 relative 锚点（screens-2b.css L36） */
+.mesh-wrap {
+  position: relative;
+}
+
+/* 缩放 controls：右上 paper-raised pill + shadow-2（screens-2b.css L37-42） */
+.mesh-controls {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 3px;
+  box-shadow: var(--shadow-2);
+}
+.mesh-zoom-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.mesh-zoom-btn:hover {
+  background: var(--paper-sunk);
+  color: var(--ink);
+}
+.mesh-zoom-btn:active {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+.mesh-ctrl-div {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 2px;
+  background: var(--line);
+}
+.mesh-zoom {
+  font-size: 12px;
+  color: var(--ink-3);
+  min-width: 40px;
+  text-align: center;
+}
+
+/* typed 边色（非颜色 cue 之外的颜色解码，screens-2b.css L20-26） */
+.rel-prerequisite {
+  stroke: var(--coral);
+}
+.rel-related_to {
+  stroke: var(--ink-4);
+}
+.rel-contrasts_with {
+  stroke: var(--info);
+}
+.rel-applied_in {
+  stroke: var(--good);
+}
+.rel-derived_from {
+  stroke: var(--hard);
+}
+.mesh-edge2 {
+  fill: none;
+  stroke-width: 2;
+}
+
+/* 节点三层：满轨底环 + 掌握度弧（screens-2b.css L54-55） */
+.mesh-track {
+  stroke: var(--paper-raised);
+  stroke-width: 3.5;
+  opacity: 0.9;
+}
+.mesh-arc {
+  transition: stroke-dashoffset 1s var(--ease-out);
+}
+
+/* 边中点标签（screens-2b.css L47） */
+.mesh-edge-label {
+  fill: var(--ink-4);
+  font-size: 11px;
+  user-select: none;
+}
+
+/* 关系图例 — typed 边的解码钥匙（screens-2b.css L60-62） */
+.mesh-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+}
+.rel-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.rel-legend svg line {
+  stroke-width: 2;
+}
+
+/* S8 (YUK-335 audit §3.9)：活动时间线「查看全部 / 收起」折叠触发器。
+   复用 globals 的 .event-* 链；此处只补按钮，scoped 到 .kd-timeline-more。
+   弱视觉（meta 字号 + ink-3），不抢人话句风头。 */
+.kd-timeline-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--s-2);
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.kd-timeline-more:hover {
+  color: var(--ink-2);
+}
+/* LoomIcon arrow glyph 默认指向右；转 90° 朝下（查看全部）/ -90° 朝上（收起）。 */
+.kd-timeline-more-down {
+  transform: rotate(90deg);
+}
+.kd-timeline-more-up {
+  transform: rotate(-90deg);
+}
+
+/* S8 (YUK-335 批次乙 review)：人话句是 event row 的主叙事行，须继承设计源
+   event row 主行（screen-knowledge-detail.jsx:200 .event-label = fs-meta + ink-2）
+   的视觉权重——而非落进 globals .event-note 的最弱档（fs-caption + ink-3），
+   否则「答对了一道题」这类主句以全页最弱字号呈现、时间反而更显眼。人话句改用
+   独立 .kd-event-lead（不复用 globals .event-note，避开同 (0,1,0) 特异性下
+   bundle 顺序定胜负的脆弱），自带 fs-meta + ink-2 + margin-top；不动 globals
+   .event-note base（其它面在用）。时间行仍走原 .event-head 的 meta/ink-3，
+   保持「主句强、时间弱」的层级正向。 */
+.kd-event-lead {
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  margin-top: 2px;
 }

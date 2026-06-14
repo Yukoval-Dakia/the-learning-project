@@ -76,6 +76,16 @@ export interface NodePageMeshNeighbor {
   weight: number;
 }
 
+// S10 (YUK-335 audit §3.9): direct children of the focal node, for the hierarchy
+// block on /knowledge/[id]. mastery comes from the knowledge_mastery view (null =
+// never practiced). Archived children are excluded (same dead-link discipline as
+// the parent-name lookup — the endpoint 404s on archived nodes).
+export interface NodePageChild {
+  id: string;
+  name: string;
+  mastery: number | null;
+}
+
 export interface NodePageBacklink {
   from_artifact_id: string;
   // owning learning_item.id for the source artifact (primary_artifact_id == from_artifact_id),
@@ -109,6 +119,8 @@ export interface KnowledgeNodePage {
   last_evidence_at: string | null;
   mastery_decay_bucket: MasteryDecayBucket;
   subject_profile: SlimSubjectProfile;
+  // S10: direct (non-archived) children for the hierarchy block, name-ordered.
+  children: NodePageChild[];
   mesh_neighbors: NodePageMeshNeighbor[];
   primary_atomic: NodePagePrimaryAtomic | null;
   // ADR-0027: all notes labeled with this node (atomic/hub/long), atomic-first.
@@ -170,6 +182,26 @@ export async function loadKnowledgeNodePage(
   if (effectiveDomain === null && node.parent_id) {
     effectiveDomain = await resolveEffectiveDomain(db, node.parent_id);
   }
+
+  // 1b. direct children — non-archived nodes whose parent_id is this node, with
+  // mastery from the knowledge_mastery view (same join as the node main query).
+  // Archived children are filtered out for the same dead-link reason as the parent
+  // lookup (the endpoint 404s on archived nodes). Name-ordered for stable display.
+  const childRows = await db
+    .select({
+      id: knowledge.id,
+      name: knowledge.name,
+      mastery: knowledge_mastery.mastery,
+    })
+    .from(knowledge)
+    .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
+    .where(and(eq(knowledge.parent_id, knowledgeId), isNull(knowledge.archived_at)))
+    .orderBy(knowledge.name);
+  const children: NodePageChild[] = childRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    mastery: row.mastery,
+  }));
 
   // 2. mesh neighbors — both directions (ADR-0010 edges). Resolve neighbor names.
   const [outEdges, inEdges] = await Promise.all([
@@ -378,6 +410,7 @@ export async function loadKnowledgeNodePage(
     last_evidence_at: node.last_evidence_at ? node.last_evidence_at.toISOString() : null,
     mastery_decay_bucket: masteryDecayBucket(node.evidence_count, node.last_evidence_at),
     subject_profile: toSlimSubjectProfile(profile),
+    children,
     mesh_neighbors: meshNeighbors,
     primary_atomic: primaryAtomic,
     notes,

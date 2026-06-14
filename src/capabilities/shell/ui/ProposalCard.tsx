@@ -19,10 +19,12 @@ import {
   type ProposalInboxRow,
   REL_LABEL,
   decideProposal,
+  dedupeEvidence,
   evidenceReadable,
   isAcceptSupported,
   isBlockMergeStale,
   kindMeta,
+  splitReasonIds,
 } from './inbox-api';
 
 const EV_ICON: Record<string, LoomIconName> = {
@@ -35,12 +37,17 @@ const EV_ICON: Record<string, LoomIconName> = {
 
 function EvidenceChip({
   er,
+  count,
   navigate,
 }: {
   er: ProposalEvidenceRefWire;
+  count: number;
   navigate: (to: string) => void;
 }) {
   const { text, route } = evidenceReadable(er);
+  // S7 (YUK-335)：去重后 count>1 时把数量并进文案（「源自 N 次 AI 判定事件」式），
+  // 单枚保持原句不动。
+  const label = count > 1 ? text.replace('一', String(count)) : text;
   return (
     <button
       type="button"
@@ -52,7 +59,7 @@ function EvidenceChip({
       <span className="er-ic">
         <LoomIcon name={EV_ICON[er.kind] ?? 'record'} size={13} />
       </span>
-      <span className="er-text">{text}</span>
+      <span className="er-text">{label}</span>
       {route && <span className="er-go">查看 →</span>}
     </button>
   );
@@ -139,7 +146,22 @@ export function ProposalCard({
         )}
       </div>
 
-      <div className="proposal-body">{p.payload.reason_md}</div>
+      {/* S7 (YUK-335, audit §3.4)：reason_md 含真 block-<cuid> 等不透明 ID，
+          视觉去权重——切成 prose 段 + raw-id 段，raw 段包进 <code .ev-rawid>
+          读作「技术引用 chip」而非正文等权（AI 原句逐字保留，display-only）。 */}
+      <div className="proposal-body">
+        {splitReasonIds(p.payload.reason_md).map((seg, i) =>
+          seg.raw ? (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 切分段顺序稳定，无重排
+            <code key={i} className="ev-rawid">
+              {seg.text}
+            </code>
+          ) : (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 切分段顺序稳定，无重排
+            <span key={i}>{seg.text}</span>
+          ),
+        )}
+      </div>
 
       {isEdge && edgeFrom && edgeTo && (
         <div className="edge-preview nowrap-meta">
@@ -241,8 +263,14 @@ export function ProposalCard({
 
       {p.payload.evidence_refs.length > 0 && (
         <div className="proposal-evidence">
-          {p.payload.evidence_refs.map((ref) => (
-            <EvidenceChip key={`${ref.kind}:${ref.id}`} er={ref} navigate={navigate} />
+          {/* S7 (YUK-335)：同 readable 文案去重 + 计数，避免 N 枚一模一样的灰 chip。 */}
+          {dedupeEvidence(p.payload.evidence_refs).map(({ ref, count }) => (
+            <EvidenceChip
+              key={`${ref.kind}:${ref.id}`}
+              er={ref}
+              count={count}
+              navigate={navigate}
+            />
           ))}
         </div>
       )}

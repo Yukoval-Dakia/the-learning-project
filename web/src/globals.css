@@ -1294,10 +1294,133 @@ ol {
 
 .record-page {
   background: transparent;
+  /* S11 (YUK-335): /record is a cap-app 960 compact work card, not the
+     880 default nor the 1140 .page.wide questionnaire. tokens.css L154
+     (--cap-app: 960px) names /record explicitly. Same specificity as
+     .page (single class) but defined after it, so 960 wins over 880. */
+  max-width: var(--cap-app);
 }
 
 .record-tab-body {
   margin-top: var(--s-4);
+}
+
+/* ── S11 (YUK-335): manual form layout — compact two-column work card.
+   Ported value-for-value from screens.css §Record (L268-280). Already in
+   globals (NOT re-ported here): .field-label (L7818), .chip-set (L7828),
+   .field-input / :focus (L7835), .chip / .chip.is-on (L6104/6128),
+   .hero-cta (L7120). ── */
+
+/* form-2col: paired answer fields side-by-side (port: screens.css L270).
+   Mobile → 1col (port: screens.css L358). */
+.form-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-4);
+}
+
+/* form-row: vertical field group with bottom rhythm (port: screens.css L269). */
+.form-row {
+  margin-bottom: var(--s-5);
+}
+.form-row:last-child {
+  margin-bottom: 0;
+}
+
+/* field-wrong: again-red semantic for the wrong-answer field (port:
+   screens.css L274). Layers onto .field-input — color + border only. */
+.field-wrong {
+  color: var(--again-ink);
+  border-color: var(--again-line);
+}
+
+/* slider: coral range track + thumb, replaces the native deep-black track
+   (port: screens.css L277-279). */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--coral);
+  border: 3px solid var(--paper-raised);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+}
+.slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--coral);
+  border: 3px solid var(--paper-raised);
+  cursor: pointer;
+}
+
+/* slider-ticks: 易/中/难 scale under the slider (port: screens.css L280). */
+.slider-ticks {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink-4);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+/* record-composer: textarea box for multi-line fields (题面/笔记/补充).
+   S11 (YUK-335): the loom screen-record.jsx uses a bare `.composer` here,
+   but that class is chat-scoped only (.teach-/.copilot-loom .composer) — no
+   shared global base exists. A record-scoped wrapper avoids re-defining or
+   polluting the scoped composer rules while matching the design box
+   (r-3 radius + line border + coral focus, mirrors .field-input:focus). */
+.record-composer {
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-raised);
+  overflow: hidden;
+}
+.record-composer textarea {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: vertical;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  box-sizing: border-box;
+}
+.record-composer:focus-within {
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+
+/* S11 (YUK-335): inline note paragraph below a field (loading / empty /
+   error hint). Caption type + top rhythm; pairs with the color-only
+   .record-muted (ink-3) / .record-error (again-ink, already at L1608). */
+.record-note {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-caption);
+}
+.record-muted {
+  color: var(--ink-3);
+}
+
+/* S11 (YUK-335): form-2col collapses to a single column on narrow
+   viewports (port: screens.css L358). */
+@media (max-width: 720px) {
+  .form-2col {
+    grid-template-columns: 1fr;
+  }
 }
 
 .record-card {

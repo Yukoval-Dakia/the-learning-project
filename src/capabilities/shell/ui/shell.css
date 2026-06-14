@@ -54,6 +54,21 @@
   border-radius: var(--r-2);
   border: 1px solid var(--line-soft);
 }
+/* S7 (YUK-335, audit §3.4)：reason_md 里切出的不透明 ID（block-<cuid> 等）
+   读作「技术引用 chip」而非正文等权——小一号 mono + 弱化墨色（ink-5）+ 轻底
+   + 圆角 padding，实现设计原则「no raw IDs up front」（视觉去权重，AI 原句
+   逐字保留）。底用 paper-raised：正文容器本身是 paper-sunk，chip 需凸一档才
+   读作独立引用而非糊进正文。 */
+.inbox-loom .proposal-body .ev-rawid {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
+  background: var(--paper-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-1);
+  padding: 1px 5px;
+  word-break: break-all;
+}
 .inbox-loom .proposal-foot {
   display: flex;
   align-items: center;
