@@ -59,6 +59,11 @@ export const fastTestInclude = [
   // *.unit.test.ts 若未 mock 就 import DB，审计直接报错。
   'src/kernel/**/*.unit.test.ts',
   'src/capabilities/**/*.unit.test.ts',
+  // ADR-0033 D5 (YUK-203) — capability UI component tests are JSX, so they need
+  // the .tsx extension; the *.unit.test.tsx naming runs them in the no-DB unit
+  // car (renderToString, node env) exactly like a *.unit.test.ts. Same P0 guard
+  // applies: a *.unit.test.tsx that imports DB unmocked fails audit:partition.
+  'src/capabilities/**/*.unit.test.tsx',
   // M0 (YUK-313) — server/web 树同享命名约定分区。
   // M1 (YUK-314) — ingestion 19 条 allowlist 条目已随簇迁入 capabilities，由约定 glob 接管。
   'server/**/*.unit.test.ts',

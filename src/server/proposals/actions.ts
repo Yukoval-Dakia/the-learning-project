@@ -29,6 +29,9 @@ import {
   type BlockMergeAcceptResult,
   acceptBlockMergeProposal,
 } from '@/capabilities/ingestion/server/proposal-appliers';
+// ADR-0032 D4-E1 (YUK-203) — edge archive accept routes through the single-owner
+// edges module (raw knowledge_edge writes outside it are forbidden).
+import { archiveKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
 import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 // M4-T4 (YUK-319) — variant_question / question_draft accept appliers live in
@@ -36,8 +39,10 @@ import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-
 import {
   type EnqueueVariantVerifyFn,
   type QuestionDraftAcceptResult,
+  type QuestionEditAcceptResult,
   type VariantQuestionAcceptResult,
   acceptQuestionDraftProposal,
+  acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
 } from '@/capabilities/practice/server/proposal-appliers';
 import { newId } from '@/core/ids';
@@ -53,9 +58,7 @@ import {
   knowledge,
   knowledge_edge,
   learning_item,
-  learning_record,
   mistake_variant,
-  question,
 } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
@@ -132,7 +135,8 @@ export type AcceptAiProposalResult =
   | GoalScopeAcceptResult
   | BlockMergeAcceptResult
   | ImageCandidateAcceptResult
-  | QuestionDraftAcceptResult;
+  | QuestionDraftAcceptResult
+  | QuestionEditAcceptResult;
 
 export interface NoteUpdateAcceptResult {
   kind: 'note_update';
@@ -245,12 +249,18 @@ export async function decideKnowledgeEdgeProposal(
   }
   const proposal = await getProposalInboxRow(db, proposeEventId);
   const proposePayload = proposeRow.payload as {
+    // ADR-0032 D4-E1 (YUK-203) — edge_op discriminator on the raw event payload
+    // (writer.ts stamps it; legacy events written before this field are absent →
+    // treated as 'create' below, the backward-compatible default).
+    edge_op?: 'create' | 'archive';
+    archive_edge_id?: string;
     from_knowledge_id: string;
     to_knowledge_id: string;
     relation_type: string;
     weight?: number;
     reasoning?: string;
   };
+  const edgeOp = proposePayload.edge_op ?? 'create';
   const proposeSubjectId = proposeRow.subject_id;
 
   const existingRate = await findExistingRateEvent(db, proposeEventId);
@@ -336,6 +346,90 @@ export async function decideKnowledgeEdgeProposal(
       rate_event_id: rateEventId,
       generate_event_id: null,
       edge_id: null,
+    };
+  }
+
+  // ADR-0032 D4-E1 (YUK-203) — ARCHIVE accept. Soft-deletes the live edge named by
+  // archive_edge_id (set archived_at via the single-owner edges module; never a
+  // hard delete — 守 propose+correction-reversible 不变量). reverse / change_type
+  // are CREATE-edge semantics and meaningless for an archive proposal; reject them.
+  // Idempotency mirrors create: the existingRate guard above short-circuits a
+  // re-accept, and archiveKnowledgeEdge itself is a NULL→now guarded no-op, so a
+  // racing/duplicate accept that slips past the guard still cannot double-archive.
+  if (edgeOp === 'archive') {
+    if (decision !== 'accept') {
+      throw new ApiError(
+        'validation_error',
+        `knowledge_edge archive proposal only supports accept/dismiss, got ${decision}`,
+        400,
+      );
+    }
+    const archiveEdgeId = proposePayload.archive_edge_id;
+    if (!archiveEdgeId) {
+      throw new ApiError(
+        'validation_error',
+        `edge archive proposal ${proposeEventId} missing archive_edge_id`,
+        400,
+      );
+    }
+
+    const generateEventId = createId();
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: rateEventId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'rate',
+        subject_kind: 'knowledge_edge',
+        subject_id: proposeSubjectId,
+        outcome: 'success',
+        payload: {
+          rating: 'accept',
+          edge_op: 'archive',
+          ...(user_note ? { user_note } : {}),
+        },
+        caused_by_event_id: proposeEventId,
+        created_at: now,
+      });
+
+      // Single-owner soft-delete. Throws not_found if the edge id is unknown;
+      // returns { archived:false } if it was already archived (idempotent).
+      await archiveKnowledgeEdge(tx, archiveEdgeId);
+
+      // Provenance + idempotency anchor: a `generate` event whose subject is the
+      // archived edge, mirroring the create path so the re-decide guard above
+      // returns a consistent { generate_event_id, edge_id }.
+      await writeEvent(tx, {
+        id: generateEventId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'generate',
+        subject_kind: 'knowledge_edge',
+        subject_id: archiveEdgeId,
+        outcome: 'success',
+        payload: {
+          edge_op: 'archive',
+          archive_edge_id: archiveEdgeId,
+          from_knowledge_id: proposePayload.from_knowledge_id,
+          to_knowledge_id: proposePayload.to_knowledge_id,
+          relation_type: proposePayload.relation_type,
+          reasoning: proposePayload.reasoning ?? '',
+          propose_event_id: proposeEventId,
+        },
+        caused_by_event_id: proposeEventId,
+        created_at: now,
+      });
+    });
+
+    if (proposal) {
+      await recordProposalDecisionSignal(db, proposal, 'accept', user_note);
+    }
+
+    return {
+      kind: 'knowledge_edge',
+      rate_event_id: rateEventId,
+      generate_event_id: generateEventId,
+      edge_id: archiveEdgeId,
     };
   }
 
@@ -566,6 +660,11 @@ async function dispatchAccept(
       // ADR-0031 / YUK-304 (lane B) — promote the copilot-authored draft to
       // active + FSRS-enroll (决定5: accept = promotion; the row already exists).
       return await acceptQuestionDraftProposal(db, proposalId, proposal, opts);
+    case 'question_edit':
+      // ADR-0032 D6-B (YUK-203 lane L6) — apply the narrow structured node edit to
+      // the active question behind the mini verify gate (practice package owns the
+      // pooled question lifecycle); reversible via the audit event.
+      return await acceptQuestionEditProposal(db, proposalId, proposal, opts);
     default:
       throw new ApiError(
         'unsupported_proposal_kind',

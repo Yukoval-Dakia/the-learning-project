@@ -167,12 +167,21 @@ export const practiceCapability = defineCapability({
   // producer（@/server/proposals/producers）但无 accept applier——accept 走
   // dispatch 壳 default throw（unsupported_proposal_kind，YUK-44 收口），归属
   // 声明与 applier 存在性解耦。
+  // ADR-0032 D6-B (YUK-203 lane L6) — question_edit accept applier
+  // （acceptQuestionEditProposal）也落在 ./server/proposal-appliers：active 题
+  // structured 节点编辑属练习域（题库生命周期）。
   proposals: {
-    kinds: [{ kind: 'variant_question' }, { kind: 'question_draft' }, { kind: 'judge_retraction' }],
+    kinds: [
+      { kind: 'variant_question' },
+      { kind: 'question_draft' },
+      { kind: 'judge_retraction' },
+      { kind: 'question_edit' },
+    ],
   },
   // M2-T6 将把旧 /review、/practice 页重生为单一练习面 /practice（流+卷架）。
   ui: { pages: [{ route: '/practice' }] },
   // M5-T3 (YUK-321) — copilot 工具归属声明（题/错题/复习读 4 + 出题组卷写 3）。
+  // ADR-0032 D6-B (YUK-203 lane L6) 追加 propose_question_edit（active 题结构编辑写）。
   copilotTools: {
     tools: [
       {
@@ -204,6 +213,13 @@ export const practiceCapability = defineCapability({
       {
         name: 'write_quiz',
         load: () => import('@/server/ai/tools/write-quiz').then((m) => m.writeQuizTool),
+      },
+      // ADR-0032 D6-B (YUK-203 lane L6) — active 题 structured 节点编辑 propose
+      // 工具（窄 typed op；accept 经 practice applier + mini verify gate 落地）。
+      {
+        name: 'propose_question_edit',
+        load: () =>
+          import('@/server/ai/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
       },
     ],
   },

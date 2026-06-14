@@ -10,6 +10,8 @@
 import { authorArtifactTool, updateArtifactTool } from './author-artifact';
 import {
   getLearningItemContextTool,
+  // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure reader.
+  getQuestionBlockStructureTool,
   getQuestionContextTool,
   getRecordContextTool,
   getReviewDueTool,
@@ -32,6 +34,8 @@ import {
   proposeLearningItemCompletionTool,
   proposeLearningItemDeferTool,
   proposeLearningItemRelearnTool,
+  // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit propose tool.
+  proposeQuestionEditTool,
   proposeRecordLinksTool,
   proposeRecordPromotionTool,
   proposeVariantTool,
@@ -80,6 +84,9 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   searchMemoryFactsTool as DomainTool<unknown, unknown>,
   // ADR-0032 D9 / YUK-304 (lane B) — READ_TOOLS tail; order mirrors allowlists.ts.
   queryQuestionsTool as DomainTool<unknown, unknown>,
+  // ADR-0032 D6-draftread (YUK-203 lane L5) — READ_TOOLS tail; order mirrors
+  // allowlists.ts (the listTools() inventory assertion depends on it).
+  getQuestionBlockStructureTool as DomainTool<unknown, unknown>,
   proposeKnowledgeEdgeTool as DomainTool<unknown, unknown>,
   proposeKnowledgeMutationTool as DomainTool<unknown, unknown>,
   attributeMistakeTool as DomainTool<unknown, unknown>,
@@ -107,6 +114,10 @@ const CORE_TOOLS: ReadonlyArray<DomainTool<unknown, unknown>> = [
   // PROPOSE_WRITE_TOOLS tail, order mirrors allowlists.ts.
   authorArtifactTool as DomainTool<unknown, unknown>,
   updateArtifactTool as DomainTool<unknown, unknown>,
+  // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit propose;
+  // PROPOSE_WRITE_TOOLS tail, order mirrors allowlists.ts (the listTools()
+  // inventory assertion depends on it).
+  proposeQuestionEditTool as DomainTool<unknown, unknown>,
   // YUK-203 U4 — ReviewPlanTask planner surface (4 tools, no memory).
   readCoachBriefTool as DomainTool<unknown, unknown>,
   getReviewKnowledgeSnapshotTool as DomainTool<unknown, unknown>,

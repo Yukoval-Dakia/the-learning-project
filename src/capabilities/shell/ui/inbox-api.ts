@@ -1,9 +1,9 @@
 // M4-T6 (YUK-319/YUK-318)：收件箱 ui 数据层——统一 /api/proposals 的 wire
-// 类型、kind 元数据（17 kind 全量）与决策 callers。
+// 类型、kind 元数据（aiProposalKinds 全量；对账见 inbox-meta.unit.test.ts）与决策 callers。
 // 设计基准 docs/design/loom-refresh/project/data.jsx（KIND_META / REL_LABEL）：
 // 设计稿只列 12 kind；defer / archive / judge_retraction / image_candidate /
-// question_draft 5 个按同一 tone 语系补全（hard=节奏类、neutral=归档、
-// coral=内容生成类），icon 取自 LoomIcon 既有名。
+// question_draft / question_edit 按同一 tone 语系补全（hard=节奏类、neutral=归档、
+// coral=内容生成/修订类），icon 取自 LoomIcon 既有名。
 
 import { acceptSupportedProposalKinds } from '@/core/schema/proposal';
 import { apiJson } from '@/ui/lib/api';
@@ -33,6 +33,8 @@ export const KIND_META: Record<string, KindMeta> = {
   judge_retraction: { label: '判定撤回', icon: 'undo', tone: 'coral' },
   image_candidate: { label: '图题候选', icon: 'image', tone: 'coral' },
   question_draft: { label: '题目草稿', icon: 'quiz', tone: 'coral' },
+  // ADR-0032 D6-B (YUK-203 lane L6) — active 题结构编辑（窄 typed 节点 op）。
+  question_edit: { label: '题目修订', icon: 'pencil', tone: 'coral' },
 };
 
 export function kindMeta(kind: string): KindMeta {

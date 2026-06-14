@@ -76,6 +76,12 @@ export interface NotePage {
   knowledge_ids: string[];
   labels: NotePageLabel[];
   body_blocks: BodyBlocksDoc | null;
+  // ADR-0033 — non-null only when type='interactive' (attrs.html feeds the
+  // sandboxed renderer). Note types are always null; an interactive row whose
+  // attrs fails server-side schema validation also arrives null while type
+  // stays 'interactive' — that pair is the parse-fail degraded signal the
+  // reader renders a notice for instead of mounting the renderer.
+  interactive: { html: string } | null;
   generation_status: string;
   verification_status: string;
   embedded_check_status: string;

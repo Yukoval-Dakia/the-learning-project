@@ -432,6 +432,23 @@ export async function validateProposalQuality(
   const fromId = change.from_knowledge_id;
   const toId = change.to_knowledge_id;
 
+  // ADR-0032 D4-E1 (YUK-203) — ARCHIVE edge proposals are the inverse of CREATE:
+  // the §4.1 G6 tree-ancestry-restate gate, §4.1 G7a reasoning-depth, the §4.2
+  // failure-evidence floor, and the §4.3 relation predicates are all CREATE
+  // semantics (they justify ADDING a new edge from observed failures). An archive
+  // proposal removes an already-live edge, so it carries no failure evidence by
+  // design and must NOT be folded for `evidence_missing`. The structural class
+  // that still matters (same-subject endpoints) is re-asserted at the accept
+  // applier against the live edge; here we accept the archive proposal so it can
+  // reach the inbox. Self-edge is impossible for a live edge (createKnowledgeEdge
+  // already rejected it), but we keep the cheap guard for shape stability.
+  if (change.edge_op === 'archive') {
+    if (fromId === toId) {
+      return { ok: false, gate: 'self_edge', reason: 'from_knowledge_id equals to_knowledge_id' };
+    }
+    return { ok: true };
+  }
+
   // ---- §4.1 structural class (G1–G6) — runs for agents AND users (RB-3) ----
 
   // G1 — self edge.

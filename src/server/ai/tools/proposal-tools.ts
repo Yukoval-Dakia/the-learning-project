@@ -7,6 +7,9 @@
 
 import { runAttributionAndWriteJudgeEvent } from '@/capabilities/knowledge/server/attribute';
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+// ADR-0032 D4-E1 (YUK-203) — archive-op edge proposal targets a live edge by id;
+// the single-owner edges module is the read authority.
+import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
 import {
   type KnowledgeMutationPayload,
   writeKnowledgeProposeEvent,
@@ -15,6 +18,10 @@ import {
   type RubricVerdict,
   validateProposalQuality,
 } from '@/capabilities/knowledge/server/rubric-validator';
+// ADR-0032 D6-B (YUK-203 lane L6) — the pure verify-gate is reused at PROPOSE
+// time (pre-flight against the live tree) and again at ACCEPT time (the applier).
+import { applyQuestionEdit } from '@/capabilities/practice/server/proposal-appliers';
+import { QuestionKind } from '@/core/schema/business';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 // P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
 // explicitly via the propose-tool input arg (§4.1/§4.2).
@@ -22,6 +29,8 @@ import { SuggestionKind } from '@/core/schema/event/known';
 import {
   type AiProposalPayloadInputT,
   type ProposalEvidenceRefT,
+  QuestionEditOp,
+  type QuestionEditOpT,
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -220,11 +229,29 @@ async function getActiveLearningItem(
 // propose_knowledge_edge
 // ---------------------------------------------------------------------------
 
+// ADR-0032 D4-E1 (YUK-203) — `op` discriminator: 'create' (default / absence)
+// proposes a NEW mesh edge from {from,to,relation_type}; 'archive' soft-deletes an
+// EXISTING live edge named by `edge_id`. FLAT z.object (the MCP bridge requires a
+// ZodObject — see mcp-bridge.ts:145; a .refine would break it), so the per-op
+// required-field check ('archive' requires edge_id; 'create' requires the edge
+// endpoints) runs in execute(), not on the schema. Mirrors the node omnibus
+// (propose_knowledge_mutation) discriminator and author_question's flat-schema +
+// in-execute validation pattern.
 const ProposeKnowledgeEdgeInputSchema = z.object({
-  from_knowledge_id: z.string().min(1),
-  to_knowledge_id: z.string().min(1),
-  relation_type: RelationTypeSchema,
+  // OPTIONAL on the schema (absence === 'create') so the tool's Input type stays a
+  // clean z.object the MCP bridge + DomainTool generic accept; the default is
+  // applied in execute() (mirrors suggestion_kind's absence→proactive). A schema
+  // .default() would diverge z.input (optional) from z.infer (required) and break
+  // the DomainTool<Input> inputSchema constraint.
+  op: z.enum(['create', 'archive']).optional(),
+  // create-op endpoints (also describe the archive target's edge for the card;
+  // optional on the schema, required-by-op in execute()).
+  from_knowledge_id: z.string().min(1).optional(),
+  to_knowledge_id: z.string().min(1).optional(),
+  relation_type: RelationTypeSchema.optional(),
   weight: z.number().min(0).max(1).optional(),
+  // archive-op target: the live knowledge_edge.id to soft-delete.
+  edge_id: z.string().min(1).optional(),
   reasoning: z.string().min(1).max(2000),
   evidence_event_ids: z.array(z.string().min(1)).optional(),
   // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator. Set
@@ -247,6 +274,10 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
     // still written, MARKED rubric-rejected (folded, not dropped); the verdict
     // is returned to the agent as primitive feedback.
     'skipped:rubric_rejected',
+    // ADR-0032 D4-E1 (YUK-203) — archive-op outcomes. The target edge id does not
+    // resolve to a live (non-archived) edge, or an archive proposal for the same
+    // edge is already pending.
+    'skipped:edge_not_found',
   ]),
   proposal_id: z.string().optional(),
   cooldown_key: z.string().optional(),
@@ -263,18 +294,44 @@ async function proposeKnowledgeEdgeExecute(
   raw: ProposeKnowledgeEdgeInput,
 ): Promise<ProposeKnowledgeEdgeOutput> {
   const input = ProposeKnowledgeEdgeInputSchema.parse(raw);
-  if (input.from_knowledge_id === input.to_knowledge_id) {
+  // ADR-0032 D4-E1 (YUK-203) — dispatch by op (absence === 'create', backward
+  // compatible). Archive is the inverse of create: it soft-deletes a live edge
+  // through the proposal→accept loop, so it shares the proposal writer + inbox +
+  // accept dispatch but skips the create-only rubric evidence floor (the validator
+  // short-circuits {ok:true} for edge_op:'archive').
+  if (input.op === 'archive') {
+    return await proposeKnowledgeEdgeArchive(ctx, input);
+  }
+  return await proposeKnowledgeEdgeCreate(ctx, input);
+}
+
+async function proposeKnowledgeEdgeCreate(
+  ctx: ToolContext,
+  input: ProposeKnowledgeEdgeInput,
+): Promise<ProposeKnowledgeEdgeOutput> {
+  // create-op required fields (optional on the flat schema — enforced here per the
+  // MCP-bridge ZodObject constraint, mirroring author_question).
+  if (!input.from_knowledge_id || !input.to_knowledge_id || !input.relation_type) {
+    return {
+      status: 'skipped:unknown_node',
+      reason: "op 'create' requires from_knowledge_id, to_knowledge_id, relation_type",
+    };
+  }
+  const fromKnowledgeId = input.from_knowledge_id;
+  const toKnowledgeId = input.to_knowledge_id;
+  const relationType = input.relation_type;
+  if (fromKnowledgeId === toKnowledgeId) {
     return { status: 'skipped:self_edge', reason: 'from_knowledge_id equals to_knowledge_id' };
   }
 
   const [fromNode, toNode] = await Promise.all([
-    getKnowledgeNode(ctx.db, input.from_knowledge_id),
-    getKnowledgeNode(ctx.db, input.to_knowledge_id),
+    getKnowledgeNode(ctx.db, fromKnowledgeId),
+    getKnowledgeNode(ctx.db, toKnowledgeId),
   ]);
   if (!fromNode || !toNode) {
     return {
       status: 'skipped:unknown_node',
-      reason: !fromNode ? input.from_knowledge_id : input.to_knowledge_id,
+      reason: !fromNode ? fromKnowledgeId : toKnowledgeId,
     };
   }
 
@@ -287,7 +344,7 @@ async function proposeKnowledgeEdgeExecute(
   }
 
   const repeatsTreeParent =
-    input.relation_type === 'related_to' &&
+    relationType === 'related_to' &&
     (fromNode.parent_id === toNode.id || toNode.parent_id === fromNode.id);
   if (repeatsTreeParent) {
     return {
@@ -302,22 +359,22 @@ async function proposeKnowledgeEdgeExecute(
       .from(knowledge_edge)
       .where(
         and(
-          isSymmetricRelation(input.relation_type)
+          isSymmetricRelation(relationType)
             ? or(
                 and(
-                  eq(knowledge_edge.from_knowledge_id, input.from_knowledge_id),
-                  eq(knowledge_edge.to_knowledge_id, input.to_knowledge_id),
+                  eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),
+                  eq(knowledge_edge.to_knowledge_id, toKnowledgeId),
                 ),
                 and(
-                  eq(knowledge_edge.from_knowledge_id, input.to_knowledge_id),
-                  eq(knowledge_edge.to_knowledge_id, input.from_knowledge_id),
+                  eq(knowledge_edge.from_knowledge_id, toKnowledgeId),
+                  eq(knowledge_edge.to_knowledge_id, fromKnowledgeId),
                 ),
               )
             : and(
-                eq(knowledge_edge.from_knowledge_id, input.from_knowledge_id),
-                eq(knowledge_edge.to_knowledge_id, input.to_knowledge_id),
+                eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),
+                eq(knowledge_edge.to_knowledge_id, toKnowledgeId),
               ),
-          eq(knowledge_edge.relation_type, input.relation_type),
+          eq(knowledge_edge.relation_type, relationType),
           isNull(knowledge_edge.archived_at),
         ),
       )
@@ -327,11 +384,7 @@ async function proposeKnowledgeEdgeExecute(
     return { status: 'skipped:duplicate_live_edge', reason: duplicateLiveEdge.id };
   }
 
-  const cooldownKeys = edgeCooldownKeys(
-    input.from_knowledge_id,
-    input.to_knowledge_id,
-    input.relation_type,
-  );
+  const cooldownKeys = edgeCooldownKeys(fromKnowledgeId, toKnowledgeId, relationType);
   const cooldownKey = cooldownKeys[0];
   if (await pendingProposalWithAnyCooldown(ctx.db, 'knowledge_edge', cooldownKeys)) {
     return { status: 'skipped:duplicate_pending', cooldown_key: cooldownKey };
@@ -343,9 +396,13 @@ async function proposeKnowledgeEdgeExecute(
     reason_md: input.reasoning,
     evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
     proposed_change: {
-      from_knowledge_id: input.from_knowledge_id,
-      to_knowledge_id: input.to_knowledge_id,
-      relation_type: input.relation_type,
+      // ADR-0032 D4-E1 — explicit create marker (the schema defaults to it, but
+      // setting it makes the create branch's payload self-describing alongside
+      // the archive branch).
+      edge_op: 'create' as const,
+      from_knowledge_id: fromKnowledgeId,
+      to_knowledge_id: toKnowledgeId,
+      relation_type: relationType,
       weight: input.weight ?? 1,
     },
     cooldown_key: cooldownKey,
@@ -371,7 +428,7 @@ async function proposeKnowledgeEdgeExecute(
     try {
       adaptive = await resolveEdgeGateBump(
         ctx.db,
-        input.relation_type,
+        relationType,
         PROPOSAL_FEEDBACK_BUDGET,
         PROPOSAL_GATE_BIAS_CONFIG,
       );
@@ -388,7 +445,7 @@ async function proposeKnowledgeEdgeExecute(
           task_kind: ctx.callerActor.ref,
           tool_name: 'propose_knowledge_edge:resolveEdgeGateBump',
           effect: 'read',
-          input_json: { relation_type: input.relation_type },
+          input_json: { relation_type: relationType },
           output_json: { adaptive_downgraded: true },
           error_reason: errorReason,
           iteration: 0,
@@ -417,7 +474,13 @@ async function proposeKnowledgeEdgeExecute(
     adaptive,
   );
   if (!verdict.ok) {
-    return await foldRubricRejectedEdge(ctx, proposalPayload, cooldownKey, verdict, input);
+    return await foldRubricRejectedEdge(ctx, proposalPayload, cooldownKey, verdict, {
+      from_knowledge_id: fromKnowledgeId,
+      to_knowledge_id: toKnowledgeId,
+      relation_type: relationType,
+      weight: input.weight ?? 1,
+      reasoning: input.reasoning,
+    });
   }
 
   const proposalId = await writeAiProposal(ctx.db, {
@@ -451,7 +514,15 @@ async function foldRubricRejectedEdge(
   proposalPayload: AiProposalPayloadInputT,
   cooldownKey: string,
   verdict: Extract<RubricVerdict, { ok: false }>,
-  input: ProposeKnowledgeEdgeInput,
+  // Narrowed create-edge fields (the create path resolves these before calling
+  // fold; fold is only reachable from create — archive bypasses the rubric).
+  edge: {
+    from_knowledge_id: string;
+    to_knowledge_id: string;
+    relation_type: string;
+    weight: number;
+    reasoning: string;
+  },
 ): Promise<ProposeKnowledgeEdgeOutput> {
   const proposalId = await writeAiProposal(ctx.db, {
     actor_ref: ctx.callerActor.ref,
@@ -461,11 +532,14 @@ async function foldRubricRejectedEdge(
       action: 'propose',
       subject_kind: 'knowledge_edge',
       payload: {
-        from_knowledge_id: input.from_knowledge_id,
-        to_knowledge_id: input.to_knowledge_id,
-        relation_type: input.relation_type,
-        weight: input.weight ?? 1,
-        reasoning: input.reasoning,
+        // ADR-0032 D4-E1 — folded rejection is a create-op edge (archive never
+        // reaches the rubric); mark it so the inbox derive reads a stable shape.
+        edge_op: 'create',
+        from_knowledge_id: edge.from_knowledge_id,
+        to_knowledge_id: edge.to_knowledge_id,
+        relation_type: edge.relation_type,
+        weight: edge.weight,
+        reasoning: edge.reasoning,
         rubric_verdict: { ok: false, gate: verdict.gate, reason: verdict.reason },
       },
     },
@@ -482,11 +556,96 @@ async function foldRubricRejectedEdge(
   };
 }
 
+// ADR-0032 D4-E1 (YUK-203) — archive-op cooldown key. One pending archive proposal
+// per live edge id; a second archive call for the same edge dedups to
+// skipped:duplicate_pending instead of stacking inbox rows.
+function edgeArchiveCooldownKey(edgeId: string): string {
+  return `knowledge_edge_archive:${edgeId}`;
+}
+
+// ADR-0032 D4-E1 (YUK-203) — archive-op executor. Proposes soft-deleting a LIVE
+// edge through the same proposal→accept loop as create (守 propose-only invariant:
+// never a direct write). Skips the create-only rubric evidence floor (the
+// validator short-circuits {ok:true} for edge_op:'archive') — an archive is the
+// inverse of proposing, so it carries no failure evidence by design.
+async function proposeKnowledgeEdgeArchive(
+  ctx: ToolContext,
+  input: ProposeKnowledgeEdgeInput,
+): Promise<ProposeKnowledgeEdgeOutput> {
+  if (!input.edge_id) {
+    return { status: 'skipped:edge_not_found', reason: "op 'archive' requires edge_id" };
+  }
+  const edge = await getKnowledgeEdgeById(ctx.db, input.edge_id);
+  // Target must be a LIVE (non-archived) edge. A missing id or an already-archived
+  // edge is a no-op — nothing to propose archiving.
+  if (!edge || edge.archived_at !== null) {
+    return { status: 'skipped:edge_not_found', reason: input.edge_id };
+  }
+
+  const cooldownKey = edgeArchiveCooldownKey(input.edge_id);
+  if (await pendingProposalWithCooldown(ctx.db, 'knowledge_edge', cooldownKey)) {
+    return { status: 'skipped:duplicate_pending', cooldown_key: cooldownKey };
+  }
+
+  const proposalPayload = {
+    kind: 'knowledge_edge' as const,
+    target: { subject_kind: 'knowledge_edge' as const, subject_id: input.edge_id },
+    reason_md: input.reasoning,
+    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
+    proposed_change: {
+      edge_op: 'archive' as const,
+      // The endpoints + relation describe the edge being archived (inbox card +
+      // structural shape); archive_edge_id is the authoritative target the accept
+      // applier flips.
+      from_knowledge_id: edge.from_knowledge_id,
+      to_knowledge_id: edge.to_knowledge_id,
+      relation_type: edge.relation_type,
+      weight: edge.weight,
+      archive_edge_id: input.edge_id,
+    },
+    cooldown_key: cooldownKey,
+    suggestion_kind: input.suggestion_kind ?? 'proactive',
+  };
+
+  // The validator runs for shape uniformity but short-circuits {ok:true} on
+  // edge_op:'archive' (no evidence floor) — archive proposals are never folded.
+  const verdict = await validateProposalQuality(parseAiProposalPayload(proposalPayload), ctx.db, {
+    isAgent: ctx.callerActor.kind === 'agent',
+    actorRef: ctx.callerActor.ref,
+  });
+  if (!verdict.ok) {
+    // Defensive: archive should never fail the rubric (the validator bypasses the
+    // evidence floor for it). If a future structural gate does reject it, surface
+    // it as rubric_rejected rather than silently swallow — but do NOT fold a
+    // create-shaped event_override (this is an archive). Reuse the create fold's
+    // marker shape minimally.
+    return {
+      status: 'skipped:rubric_rejected',
+      cooldown_key: cooldownKey,
+      gate: verdict.gate,
+      reason: verdict.reason,
+    };
+  }
+
+  const proposalId = await writeAiProposal(ctx.db, {
+    actor_ref: ctx.callerActor.ref,
+    outcome: 'success',
+    payload: proposalPayload,
+    task_run_id: ctx.taskRunId,
+    caused_by_event_id: ctx.causedByEventId ?? null,
+  });
+
+  return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
+}
+
 function proposeKnowledgeEdgeSummary(
   input: ProposeKnowledgeEdgeInput,
   output: ProposeKnowledgeEdgeOutput,
 ): string {
-  return `edge proposal ${input.from_knowledge_id}->${input.to_knowledge_id} ${input.relation_type}: ${output.status}`;
+  if (input.op === 'archive') {
+    return `edge archive proposal ${input.edge_id ?? '?'}: ${output.status}`;
+  }
+  return `edge proposal ${input.from_knowledge_id ?? '?'}->${input.to_knowledge_id ?? '?'} ${input.relation_type ?? '?'}: ${output.status}`;
 }
 
 export const proposeKnowledgeEdgeTool: DomainTool<
@@ -495,7 +654,7 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 > = {
   name: 'propose_knowledge_edge',
   description:
-    'Propose one knowledge mesh edge. Validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy.',
+    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete.',
   effect: 'propose',
   inputSchema: ProposeKnowledgeEdgeInputSchema,
   outputSchema: ProposeKnowledgeEdgeOutputSchema,
@@ -1337,8 +1496,10 @@ type AuthorQuestionSeed =
   | {
       // ADR-0031 lane B (quiz C→A, YUK-304) — implemented: delegates to
       // runQuestionAuthor (src/server/ai/question-author.ts), which owns the
-      // proposal kind (question_draft) + the accept path
-      // (acceptQuestionDraftProposal in src/server/proposals/actions.ts).
+      // proposal kind (question_draft) + the accept path. The accept applier body
+      // is acceptQuestionDraftProposal in
+      // src/capabilities/practice/server/proposal-appliers.ts (moved there in M4
+      // YUK-319); src/server/proposals/actions.ts only DISPATCHES to it.
       seed_mode: 'knowledge' | 'material';
       knowledge_ids: string[];
       requested_kind?: string;
@@ -1694,6 +1855,182 @@ export const authorQuestionTool: DomainTool<AuthorQuestionInput, AuthorQuestionO
   execute: authorQuestionExecute,
   summarize(input, output) {
     return `author_question[${input.seed_mode}]: ${output.status}`;
+  },
+  mirrorEvent: 'when_causal',
+};
+
+// ---------------------------------------------------------------------------
+// propose_question_edit  (ADR-0032 D6-B / YUK-203 lane L6)
+// ---------------------------------------------------------------------------
+//
+// Propose a NARROW, typed edit to one node of an ACTIVE (pooled,
+// draft_status='active') question's `structured` tree. Proposal-only: the user
+// accepts in the inbox; the accept applier (acceptQuestionEditProposal, practice
+// package) re-runs the mini verify gate and applies the edit to
+// question.structured behind a reversible audit event — never a direct write.
+//
+// Nodes are addressed by `node_id` — the SAME id/role coordinate the L5
+// addressable projection exposes via get_question_context(include:['structure']):
+// read the structure, pick a node id, edit that node id (read≡write parity).
+//
+// Bridge constraint (mcp-bridge.ts:145 — inputSchema MUST be a flat z.ZodObject):
+// the public input is a FLAT object with an `op` discriminator + per-op optional
+// fields; the typed op is resolved + validated (against the core QuestionEditOp
+// discriminated union) inside execute, OFF the schema.
+
+const ProposeQuestionEditInputSchema = z.object({
+  question_id: z.string().min(1),
+  op: z.enum(['edit_node_text', 'edit_reference', 'set_choice', 'set_node_kind']),
+  node_id: z.string().min(1),
+  // edit_node_text
+  prompt_text: z.string().min(1).optional(),
+  // edit_reference (at least one of answers/analysis required, checked in execute)
+  answers: z.array(z.string()).optional(),
+  analysis: z.string().optional(),
+  // set_choice
+  options: z
+    .array(z.object({ label: z.string().min(1), text: z.string() }))
+    .min(1)
+    .optional(),
+  // set_node_kind
+  kind: QuestionKind.optional(),
+  // optional human-readable rationale surfaced on the inbox card.
+  reason: z.string().min(1).max(2000).optional(),
+  suggestion_kind: SuggestionKind.optional(),
+});
+type ProposeQuestionEditInput = z.infer<typeof ProposeQuestionEditInputSchema>;
+
+const ProposeQuestionEditOutputSchema = z.object({
+  status: z.enum([
+    'proposed',
+    'skipped:not_found', // question row missing
+    'skipped:not_active', // question is draft / re-drafted (not pooled)
+    'skipped:no_structure', // question has no structured tree to address
+    'skipped:invalid_op', // per-op fields missing / malformed
+    'skipped:gate_rejected', // verify gate rejected (node missing / wrong shape / breaks invariants)
+    'skipped:duplicate_pending', // an identical edit proposal is already pending
+  ]),
+  question_id: z.string(),
+  node_id: z.string(),
+  op: z.string(),
+  proposal_id: z.string().optional(),
+  // The verify-gate failure code on status='skipped:gate_rejected'.
+  gate_failure: z.string().optional(),
+});
+type ProposeQuestionEditOutput = z.infer<typeof ProposeQuestionEditOutputSchema>;
+
+/**
+ * Resolve the flat tool input to the typed core QuestionEditOp, or null when the
+ * per-op required fields are missing/malformed. Validated through the core
+ * discriminated union so the proposal payload and the accept applier agree on
+ * the exact op shape.
+ */
+function resolveQuestionEditOp(input: ProposeQuestionEditInput): QuestionEditOpT | null {
+  let candidate: unknown;
+  switch (input.op) {
+    case 'edit_node_text':
+      candidate = { op: 'edit_node_text', node_id: input.node_id, prompt_text: input.prompt_text };
+      break;
+    case 'edit_reference':
+      candidate = {
+        op: 'edit_reference',
+        node_id: input.node_id,
+        ...(input.answers !== undefined ? { answers: input.answers } : {}),
+        ...(input.analysis !== undefined ? { analysis: input.analysis } : {}),
+      };
+      break;
+    case 'set_choice':
+      candidate = { op: 'set_choice', node_id: input.node_id, options: input.options };
+      break;
+    case 'set_node_kind':
+      candidate = { op: 'set_node_kind', node_id: input.node_id, kind: input.kind };
+      break;
+  }
+  const parsed = QuestionEditOp.safeParse(candidate);
+  if (!parsed.success) return null;
+  // edit_reference must change at least one of answers/analysis (the schema marks
+  // both optional individually; the cross-field requirement lives here).
+  if (
+    parsed.data.op === 'edit_reference' &&
+    parsed.data.answers === undefined &&
+    parsed.data.analysis === undefined
+  ) {
+    return null;
+  }
+  return parsed.data;
+}
+
+async function proposeQuestionEditExecute(
+  ctx: ToolContext,
+  raw: ProposeQuestionEditInput,
+): Promise<ProposeQuestionEditOutput> {
+  const input = ProposeQuestionEditInputSchema.parse(raw);
+  const base = { question_id: input.question_id, node_id: input.node_id, op: input.op };
+
+  const edit = resolveQuestionEditOp(input);
+  if (!edit) return { ...base, status: 'skipped:invalid_op' };
+
+  const row = (
+    await ctx.db.select().from(question).where(eq(question.id, input.question_id)).limit(1)
+  )[0];
+  if (!row) return { ...base, status: 'skipped:not_found' };
+  if (row.draft_status !== 'active') return { ...base, status: 'skipped:not_active' };
+  if (!row.structured) return { ...base, status: 'skipped:no_structure' };
+
+  // Pre-flight the SAME mini verify gate the accept applier runs, against the
+  // live tree — so a doomed edit never even becomes a pending proposal.
+  const gated = applyQuestionEdit(row.structured, edit, ctx.callerActor.ref);
+  if ('failure' in gated) {
+    return { ...base, status: 'skipped:gate_rejected', gate_failure: gated.failure };
+  }
+
+  // Dedup: one pending edit per (question, node, op).
+  const cooldownKey = `question_edit:${input.question_id}:${input.node_id}:${input.op}`;
+  if (await pendingProposalWithCooldown(ctx.db, 'question_edit', cooldownKey)) {
+    return { ...base, status: 'skipped:duplicate_pending' };
+  }
+
+  const proposalId = await writeAiProposal(ctx.db, {
+    actor_ref: ctx.callerActor.ref,
+    payload: {
+      kind: 'question_edit',
+      target: { subject_kind: 'question', subject_id: input.question_id },
+      reason_md: input.reason ?? `propose structured ${input.op} on question ${input.question_id}`,
+      evidence_refs: [{ kind: 'question', id: input.question_id }],
+      proposed_change: {
+        question_id: input.question_id,
+        edit,
+        // gated.after is snapshotNode(editedNode); prompt_text is a required
+        // StructuredQuestion field, so the snapshot always carries it (no fallback).
+        node_preview: excerpt(gated.after.prompt_text),
+      },
+      rollback_plan: {
+        action: 'dismiss proposal; the active question structure is unchanged',
+      },
+      cooldown_key: cooldownKey,
+      suggestion_kind: input.suggestion_kind ?? 'proactive',
+    },
+    task_run_id: ctx.taskRunId,
+    caused_by_event_id: ctx.causedByEventId ?? null,
+  });
+
+  return { ...base, status: 'proposed', proposal_id: proposalId };
+}
+
+export const proposeQuestionEditTool: DomainTool<
+  ProposeQuestionEditInput,
+  ProposeQuestionEditOutput
+> = {
+  name: 'propose_question_edit',
+  description:
+    'Propose a narrow, typed edit to ONE node of an ACTIVE (pooled) question\'s structured tree. Address the node by its node_id from get_question_context(include:["structure"]) — same coordinate you read. op="edit_node_text" rewrites a node\'s prompt_text (stem passage / 题面); op="edit_reference" replaces a leaf node\'s answers and/or analysis (参考答案/解析); op="set_choice" replaces a leaf node\'s option list; op="set_node_kind" sets the advisory question-type hint. Proposal-only: the user accepts in the inbox; a mini verify gate re-checks the edit (node exists, correct node shape, structure invariants hold) before it is applied, reversibly, to question.structured. Skips (does not propose) on a missing/non-active question, missing structure, an invalid op, a gate rejection, or a duplicate pending edit.',
+  effect: 'propose',
+  inputSchema: ProposeQuestionEditInputSchema,
+  outputSchema: ProposeQuestionEditOutputSchema,
+  costClass: 'local',
+  execute: proposeQuestionEditExecute,
+  summarize(input, output) {
+    return `propose_question_edit[${input.op}] ${input.node_id.slice(0, 8)}: ${output.status}`;
   },
   mirrorEvent: 'when_causal',
 };
