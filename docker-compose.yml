@@ -25,6 +25,13 @@ services:
     image: the-learning-project-app
     env_file:
       - .env
+    # YUK-341 — mem0 个性化半边运行时（compose 强制，盖过 .env）：
+    #   - MEM0_TELEMETRY=false：§3.1「生产 compose 必须」关 PostHog（默认每次 add/search 上报）。
+    #   - app 进程只做 search（read），mem0 history 永不被读，但构造 Memory 仍会开 SQLite →
+    #     指向容器内临时路径，不挂卷、不与 worker 共享文件（避开跨容器启动期 CREATE TABLE 写锁竞争）。
+    environment:
+      MEM0_TELEMETRY: "false"
+      MEM0_HISTORY_DB_PATH: /tmp/mem0/history.db
     # M5-T5c (YUK-321): presence 走 PgPresenceStore（PG 表），不再依赖 Redis。
     depends_on:
       postgres:
@@ -68,6 +75,14 @@ services:
     command: ["node", "dist/worker.cjs"]
     env_file:
       - .env
+    # YUK-341 — worker 是 mem0 唯一写者（所有 add()/infer 在此）：history 指向持久命名卷，
+    # 让抽取 prompt 的 "Last k Messages" 跨重启存活（disableHistory:false 的唯一收益）；
+    # MEM0_TELEMETRY=false 同 app（§3.1 compose 必须）。
+    environment:
+      MEM0_TELEMETRY: "false"
+      MEM0_HISTORY_DB_PATH: /var/lib/mem0/history.db
+    volumes:
+      - mem0data:/var/lib/mem0
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,3 +149,5 @@ networks:
 
 volumes:
   pgdata:
+  # YUK-341 — mem0 history SQLite（worker 唯一写者；disableHistory:false 的 Last-k sidecar）
+  mem0data:

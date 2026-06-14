@@ -115,12 +115,23 @@ const checks: Check[] = [
   // Core — API auth + persistence.
   { group: 'Core', name: 'DATABASE_URL', severity: 'required', value: env.DATABASE_URL },
   { group: 'Core', name: 'INTERNAL_TOKEN', severity: 'required', value: env.INTERNAL_TOKEN },
+  // Memory (Mem0) — fact layer creds (YUK-341): LLM reuses ZHIPU_API_KEY (also the
+  // GLM-OCR key above), embedder needs DASHSCOPE_API_KEY (阿里百炼). Both are only
+  // 'recommended' here: the brief still generates from events if Mem0 is degraded,
+  // so ingest → review → import works without them.
   {
-    group: 'Core',
-    name: 'OPENAI_API_KEY',
+    group: 'Memory (Mem0)',
+    name: 'ZHIPU_API_KEY',
     severity: 'recommended',
-    value: env.OPENAI_API_KEY,
-    defaultNote: 'Mem0 fact layer degraded if unset; ingest → review → import still works',
+    value: env.ZHIPU_API_KEY,
+    defaultNote: 'Mem0 LLM (GLM 5.2) degraded if unset; ingest → review → import still works',
+  },
+  {
+    group: 'Memory (Mem0)',
+    name: 'DASHSCOPE_API_KEY',
+    severity: 'recommended',
+    value: env.DASHSCOPE_API_KEY,
+    defaultNote: 'Mem0 embedder (百炼 v4) degraded if unset; ingest → review → import still works',
   },
 ];
 
