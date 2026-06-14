@@ -146,7 +146,7 @@ UPDATE <collection> SET payload = payload || jsonb_build_object(
 
 自家 KG 已具备：类型化边、AI 提议环（proposals + 人审）、软归档、溯源。从 Graphiti 只抄两件事：
 
-1. **bi-temporal 时效语义**：知识侧「事实性陈述」（如学习者对某知识点的状态快照、边的有效期）补 `valid_at` / `invalid_at` 两轴——「事实何时为真」与「记录何时写入」分离。落点是知识侧后续 schema 演进，不是本次实施范围。
+1. **bi-temporal 时效语义** ⚠️ **2026-06-14 已推翻（ADR-0034）**：原计划知识侧补 `valid_at`/`invalid_at` 两轴（「事实何时为真」与「记录何时写入」分离）。可行性审计裁定 n=1 下 bi-temporal 不适用于结构化 KG（事实有效期无 cohort 可校验、徒增双时间轴复杂度），改为**写入期结构一致性闸**（YUK-344 重定向）。本条及下文 §5-P4 / §7.3 / §8 中所有 `valid_at`/`invalid_at` 描述均为历史方向，**以 ADR-0034 + 一致性闸为准**。
 2. **写入期调和环形制**（resolve_extracted_edge）：AI 提议新边/新陈述时，检索既有相邻事实喂给决策 prompt，让「新提议与旧事实矛盾」在写入期被显式判定（取代/并存），而非堆积到读取端。该形制与 3.4 的调和层同构——实现时共享 prompt 骨架与 log 表设计。
 
 科目即视角、树按认知结构生长等既有 KG 原则不变（见 ADR 体系）。
