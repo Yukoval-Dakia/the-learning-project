@@ -88,32 +88,38 @@ export async function softSupersede(
 }
 
 /**
- * Soft-supersede + rewrite the existing memory text (MERGE action). In addition
- * to the supersede markers, replaces payload->>'data' (mem0 stores memory text
- * under the 'data' key, NOT 'memory').
+ * Rewrite a surviving memory's text in place (MERGE action). The MERGE outcome
+ * keeps the OLD row alive as the canonical merged memory and drops the NEW row
+ * (hardDeleteMemory) — so the survivor must stay LIVE: this writes ONLY
+ * payload->>'data' (mem0 stores memory text under the 'data' key, NOT 'memory')
+ * + bumps created_ms for recency. It deliberately does NOT write superseded_by /
+ * invalid_at, because the P3 read path filters out rows carrying those markers
+ * — marking the survivor superseded would make the merged memory vanish from
+ * reads (the YUK-342 PR #405 MERGE bug this replaces).
+ *
+ * Known limitation (Codex PR #405 :114): this is a jsonb-only text rewrite — it
+ * does NOT re-embed. The survivor's `vector` and any `text_lemmatized`-style
+ * columns still reflect the OLD text, so a semantic / lexical search keyed on
+ * mergedText's new wording may not rank-match the survivor. Re-embedding on
+ * MERGE is deferred to P3 / a future re-embed pass.
  */
-export async function softSupersedeWithText(
+export async function rewriteMemoryText(
   db: Db,
   collectionName: string,
   opts: {
-    oldMemoryId: string;
-    supersededByNewId: string;
+    memoryId: string;
     mergedText: string;
-    invalidAtMs: number;
     createdMs: number;
   },
 ): Promise<void> {
   assertSafeCollectionName(collectionName);
-  const invalidAtIso = new Date(opts.invalidAtMs).toISOString();
   await db.execute(
     sql`UPDATE ${sql.raw(`"${collectionName}"`)}
         SET payload = payload || jsonb_build_object(
-          'superseded_by', ${opts.supersededByNewId}::text,
-          'invalid_at',    ${invalidAtIso}::text,
-          'created_ms',    ${String(opts.createdMs)}::text,
-          'data',          ${opts.mergedText}::text
+          'data',       ${opts.mergedText}::text,
+          'created_ms', ${String(opts.createdMs)}::text
         )
-        WHERE id = ${opts.oldMemoryId}::uuid`,
+        WHERE id = ${opts.memoryId}::uuid`,
   );
 }
 
