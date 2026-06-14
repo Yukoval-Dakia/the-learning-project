@@ -27,10 +27,10 @@
 
 2. **出题改 plan-then-generate + 客观题确定性校验 + item-model 变式**：
    - **plan-then-generate**：出题分两段——先产出题计划（要考哪个知识点、什么题型、客观题的标准答案锚点），再据计划生成题面，而非一次性自由生成后再补验。计划段把「可机检的约束」前置，让后续校验有确定性靶子。
-   - **客观题确定性校验（接 B1 客观题 anchor）**：客观题（`fill_blank`/`translation`/`choice` 等答案对得上语料的题型）的 verdict **不烧 LLM**——答案能确定性比对语料即放行（`overall='pass'`）。这条直接接 B1 地基 §5.1 的「硬轨 = 客观题闭环可 n=1 自校验」（`docs/design/2026-06-14-b1-diagnostic-engines-foundation.md`）：客观题的确定判分既是 verify 闸的零成本通道，也是 B1 fixed-anchor 自校准的干净 ground-truth 锚——同一个 owner 客观题作答，verify 侧用它当「机检放行依据」，标定侧用它当「miscalibration 残差信号」，两侧共用一个确定性事实源。
+   - **客观题确定性校验（接 B1 客观题 anchor）**：客观题（`fill_blank`/`choice`/`true_false` 等答案能确定性比对语料的题型；**`translation` 不在此列——`src/core/schema/judge-routing.ts` 把它归 `PROSE_KINDS` 走 semantic judge，是主观题，不走确定性校验**）的 verdict **不烧 LLM**——答案能确定性比对语料即放行（`overall='pass'`）。这条直接接 B1 地基 §5.1 的「硬轨 = 客观题闭环可 n=1 自校验」（`docs/design/2026-06-14-b1-diagnostic-engines-foundation.md`）：客观题的确定判分既是 verify 闸的零成本通道，也是 B1 fixed-anchor 自校准的干净 ground-truth 锚——同一个 owner 客观题作答，verify 侧用它当「机检放行依据」，标定侧用它当「miscalibration 残差信号」，两侧共用一个确定性事实源。
    - **item-model 变式（杜绝所见≠入库）**：变式生成走「人 accept 一个模板 → 代码确定性实例化」——LLM 产模板（题干骨架 + 参数槽 + 答案生成规则），人审 accept 模板后由确定性代码实例化具体题目，而非 LLM 每次自由生成一道「看起来对、入库却变形」的题。实例化是确定性的，所见即所得即入库。
 
-3. **Variant 信任方向翻转为 verify-then-promote**：`variant_verify.ts` 现状 accept-first（先写 `active` 再异步标 `broken`，`variant_verify.ts:9-11`）翻转为——VariantGen 产出先落 `draft`/pending，过统一 verify 契约 `overall='pass'` 后才 promote 到 `active` 入 FSRS。与 ADR-0030 的关系明确：**本 ADR 只动 Variant 的写入侧信任闸，不动 ADR-0030 的 by-kind 轮换选题算法**（轮换消费的是已 `active` 的家族成员，翻转后这些成员都是 verify 通过的，轮换逻辑零改动）。
+3. **Variant 信任方向翻转为 verify-then-promote**：`variant_verify.ts` 现状 accept-first（先写 `active` 再异步标 `broken`，`variant_verify.ts:9-11`）翻转为——VariantGen 产出先落 `draft`/pending，过统一 verify 契约 `overall='pass'` 后才 promote。**promote 去向遵循出手强度表（ADR-0039），非一律直接 `active`**：客观题 + 确定性校验通过 + authentic 源走 A 档灰度自动入库（决定④）；其余进 **B 档人审 accept 才 `active` 入 FSRS**（与 ADR-0039 把 `variant_question` 归 B 档对齐——后台 verify pass 只是「够格进出手强度表」，不是绕过人审直接 active）。与 ADR-0030 的关系明确：**本 ADR 只动 Variant 的写入侧信任闸，不动 ADR-0030 的 by-kind 轮换选题算法**（轮换消费的是已 `active` 的家族成员，翻转后这些成员都是 verify 通过的，轮换逻辑零改动）。
 
 4. **auto-enroll source-tier 灰度**：把 ADR-0026 的 `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`「全 OFF / 全 ON」二态推进为按 **source-tier** 分层的灰度——**先放行 `authentic`（真品来源）+ 客观题 + 确定性校验通过**这一最保守切片自动入库，其余仍走人工 review。灰度是统一出手强度表（Phase 2 §4.2 A/B/C 契约）在出题入库面的落点：source-tier 是静态可逆性兜底的判据之一，**不靠 confidence 标量**（confidence 校准在单用户 n=1 下未经验证，ADR-0026 现状只覆盖 1/18 kind）。灰度阈值与下一档放行条件 = 「先埋点观测 N 周再定参」（Phase 2 §5.3），不在本 ADR 钉死。
 
