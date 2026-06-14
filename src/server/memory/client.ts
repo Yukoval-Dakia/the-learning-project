@@ -15,7 +15,7 @@ const DEFAULT_LLM_MODEL = 'glm-5.2'; // 智谱 GLM coding plan；可经 MEM0_LLM
 const DEFAULT_LLM_BASE_URL = 'https://open.bigmodel.cn/api/coding/paas/v4';
 const DEFAULT_HISTORY_DB_PATH = '/var/lib/mem0/history.db'; // 绝对路径（默认相对 cwd 多进程踩坑）；prod compose 挂载卷，dev 经 MEM0_HISTORY_DB_PATH 覆盖
 
-type Env = Record<string, string | undefined>;
+export type Env = Record<string, string | undefined>;
 
 type Mem0Like = {
   add(
@@ -36,6 +36,13 @@ export type MemoryEventInput = {
   payload: unknown;
   affected_scopes: string[];
   created_at: Date;
+  /**
+   * P2 (YUK-342): deterministic kind classification of the event action
+   * (preference / habit / weakness / event). Fed into mem0 metadata flat-spread
+   * as payload top-level `kind`, consumed by the reconcile LLM per-kind rules.
+   * Set by triggers.ts:mapEventActionToKind (deterministic, not LLM).
+   */
+  kind: string;
 };
 
 export type MemoryClient = {
@@ -171,6 +178,11 @@ export function createMemoryClient(
           subject_id: input.subject_id,
           affected_scopes: input.affected_scopes,
           created_at: input.created_at.toISOString(),
+          // P2 (YUK-342): created_ms (epoch milliseconds) for recency filtering;
+          // kind for per-kind reconcile rules. Both flat-spread into mem0 payload
+          // top-level by mem0's metadata handling.
+          created_ms: input.created_at.getTime(),
+          kind: input.kind,
         },
         infer: true,
       });

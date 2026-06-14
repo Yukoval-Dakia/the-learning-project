@@ -113,6 +113,7 @@ describe('createMemoryClient', () => {
       payload: { user_response_md: 'A', referenced_knowledge_ids: ['k1'] },
       affected_scopes: ['global', 'topic:k1'],
       created_at: new Date('2026-05-27T00:00:00Z'),
+      kind: 'event',
     });
     await client.search('what should I remember?', {
       topK: 3,
@@ -129,6 +130,8 @@ describe('createMemoryClient', () => {
         subject_id: 'q1',
         affected_scopes: ['global', 'topic:k1'],
         created_at: '2026-05-27T00:00:00.000Z',
+        created_ms: new Date('2026-05-27T00:00:00Z').getTime(),
+        kind: 'event',
       },
       infer: true,
     });
