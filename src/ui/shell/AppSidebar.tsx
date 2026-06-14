@@ -106,7 +106,17 @@ export function AppSidebar({
       </nav>
 
       <div className="sidebar-foot">
-        <button type="button" className="nav-item sidebar-foot-full" onClick={onOpenCopilot}>
+        <button
+          type="button"
+          className="nav-item sidebar-foot-full"
+          // F9 (Codex #401)：移动端从「更多」开侧栏后点 Copilot，先关侧栏再开 Copilot
+          // ——否则 mobileOpen + 侧栏 useFocusTrap 仍在 CopilotDrawer 背后激活，键盘
+          // Tab/Esc 被背后侧栏抢走。桌面端 onNavigated 是 noop（mobileOpen 恒 false）。
+          onClick={() => {
+            onNavigated?.();
+            onOpenCopilot();
+          }}
+        >
           <LoomIcon name="copilot" size={19} />
           <span className="nav-label">Copilot</span>
         </button>

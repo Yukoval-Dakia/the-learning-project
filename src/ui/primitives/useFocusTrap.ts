@@ -27,6 +27,11 @@ export function useFocusTrap(
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        // F11 (Codex #401)：顶层 modal 独占 Escape，不向上漏到外层（如 CopilotDrawer
+        // 的 window keydown）——否则 palette 叠在抽屉上时一次 Esc 关掉两层。本 document
+        // 监听冒泡早于 window，stopPropagation 足以拦住外层。对所有 useFocusTrap 调用方
+        // 都是期望行为（modal 关闭不应连带关外层）。
+        e.stopPropagation();
         onClose();
         return;
       }

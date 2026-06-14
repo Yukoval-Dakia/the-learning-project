@@ -118,6 +118,10 @@ function RootShell() {
     <div
       className={`app${railCollapsed ? ' rail-collapsed' : ''}`}
       data-palette-open={paletteOpen ? '' : undefined}
+      // F7 (Codex #401)：移动 nav 抽屉打开时隐藏底部 tabbar——否则 tabbar（fixed
+      // z-index:40）画在 scrim（z-index:25）/ 抽屉之上仍可点，用户能在 focus trap
+      // 仍开时触发导航。CSS 钩子（≤720px 生效；同 data-palette-open 用 undefined 关闭）。
+      data-mobile-nav-open={mobileNavOpen ? '' : undefined}
     >
       {mobileNavOpen && (
         // 移动 nav scrim：点击关闭。用 <button>（键盘可达，沿 CopilotDrawer scrim

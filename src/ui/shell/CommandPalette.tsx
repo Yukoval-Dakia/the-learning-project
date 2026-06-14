@@ -164,6 +164,9 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
       pick(results[sel]);
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      // F11 (Codex #401)：顶层 palette 独占这次 Escape，别让它继续冒泡到
+      // CopilotDrawer 的 window keydown——否则一次 Esc 同时关掉底层抽屉。
+      e.stopPropagation();
       onClose();
     }
   };
@@ -192,6 +195,12 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
       />
       <div
         className="cmdk"
+        // F10 (Codex #401)：面板必须层叠在铺满的关闭 scrim button 之上。scrim button
+        // 是 position:absolute inset:0（z-index auto 的 positioned 元素），而 .cmdk 本身
+        // 无 position/z-index——静止后会被 button 反盖，点 input/结果行先命中 button →
+        // onClose，面板只剩键盘可用。relative + z-index:1 把面板抬到 button 之上；button
+        // 仍铺在面板后方，点居中面板外的暗边距照常关闭（与设计 scrim-to-close 一致）。
+        style={{ position: 'relative', zIndex: 1 }}
         // biome-ignore lint/a11y/useSemanticElements: native <dialog> 需 imperative
         // showModal()/close() API，与受控 open prop + scrim/focus-trap 模式不兼容
         // （同 CopilotDrawer / PfSolo）。

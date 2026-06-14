@@ -6763,6 +6763,11 @@ button.seg-sm {
     border-top: 1px solid var(--line);
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
   }
+  /* F7 (Codex #401)：移动 nav 抽屉打开时收起底栏——否则 tabbar（fixed z-index:40）
+     浮在 scrim（z-index:25）/ 抽屉之上仍可点，用户能在 focus trap 仍开时触发导航。 */
+  .app[data-mobile-nav-open] .mobile-tabbar {
+    display: none;
+  }
   .mtab {
     display: flex;
     flex-direction: column;
@@ -6840,11 +6845,20 @@ button.seg-sm {
     width: 264px;
     padding: var(--s-5) var(--s-4);
     transform: translateX(-100%);
-    transition: transform var(--dur-slow) var(--ease-out);
+    /* F6 (Codex #401)：关态移动侧栏要退出 tab 序——translateX 移到屏外但仍可聚焦，
+       键盘用户会先 Tab 过一整组看不见的品牌/导航/主题按钮。visibility:hidden 摘除
+       可聚焦性；visibility 的过渡延迟到 transform 结束（0s linear <dur-slow>），让
+       滑出动画期间仍可见，结束后才隐藏（避免瞬隐切掉滑出）。仅 ≤720px 生效，桌面
+       常驻 rail（此 media 外）不受影响。 */
+    visibility: hidden;
+    transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow);
     box-shadow: var(--shadow-3);
   }
   .app .sidebar.open {
     transform: translateX(0);
+    /* 开态立即可见（无延迟），滑入期间即可聚焦。 */
+    visibility: visible;
+    transition: transform var(--dur-slow) var(--ease-out), visibility 0s;
   }
   .app .brand-name,
   .app .brand-sub,
