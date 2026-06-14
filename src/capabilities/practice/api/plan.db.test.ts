@@ -85,8 +85,10 @@ describe('GET /api/review/plan', () => {
       id: expect.any(String),
       correction_state: expect.objectContaining({ state: 'active' }),
     });
-    expect(body.queue[0].subject_profile.id).toBe('wenyan');
-    expect(body.queue[0].subject_profile.displayName).toBe('文言文');
+    // No referenced knowledge → no domain → neutral default subject
+    // (general, post wenyan-deprotagonist — was wenyan).
+    expect(body.queue[0].subject_profile.id).toBe('general');
+    expect(body.queue[0].subject_profile.displayName).toBe('通用');
   });
 
   it('returns queue item subject profile from the first knowledge id effective domain', async () => {

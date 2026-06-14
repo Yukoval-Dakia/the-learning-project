@@ -47,9 +47,11 @@ export function QuestionRefBlock({
         <span className="nb-qref-tag mono">question ref</span>
         <span className="meta mono">{block.attrs?.question_id?.slice(0, 12)}</span>
       </div>
+      {/* de-wenyan: BodyBlock carries no subject domain → neutral default font
+          (subject-driven question-ref preview is a follow-up). */}
       <button
         type="button"
-        className="nb-qref-body wenyan"
+        className="nb-qref-body"
         onClick={() => block.attrs?.question_id && onOpen?.(block.attrs.question_id)}
       >
         {block.attrs?.prompt_preview ?? '（题面预览缺失）'}

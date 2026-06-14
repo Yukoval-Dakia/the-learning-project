@@ -232,7 +232,10 @@ describe('loadNotePage', () => {
     expect(page?.sections.map((s) => [s.id, s.kind, s.body_md])).toEqual([
       ['s1', 'definition', '「之」常见作结构助词。'],
     ]);
-    expect(page?.subject_profile.id).toBe('wenyan');
+    // k1/k2 are seeded with no domain column → effective domain null → neutral
+    // default subject (general, post wenyan-deprotagonist — was wenyan; the node
+    // NAME 之 is wenyan-looking but the node carries no subject domain).
+    expect(page?.subject_profile.id).toBe('general');
     expect(page?.version).toBe(2);
     expect(page?.history.map((h) => h.version)).toEqual([1, 2]);
     expect(page?.verification_status).toBe('pass');

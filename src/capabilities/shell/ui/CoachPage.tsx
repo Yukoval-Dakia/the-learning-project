@@ -309,7 +309,9 @@ function CoachReport({
               className="fail-row"
               onClick={() => navigate(`/knowledge/${k.id}`)}
             >
-              <span className="wenyan fail-name">{k.name}</span>
+              {/* de-wenyan: top_knowledge rows carry no subject/domain field, so
+                  drop the hardcoded serif and use the neutral default font. */}
+              <span className="fail-name">{k.name}</span>
               <div className="fail-track">
                 <span
                   className="tone-again"

@@ -489,7 +489,9 @@ describe('POST /api/review/submit', () => {
       // populates question_id + subject_id on the telemetry block).
       expect(body.judge.telemetry.route).toBe('exact');
       expect(body.judge.telemetry.question_id).toBe('q_exact_correct');
-      expect(body.judge.telemetry.subject_id).toBe('wenyan');
+      // knowledge_ids:[] → no domain → neutral default subject (general,
+      // post wenyan-deprotagonist — was wenyan).
+      expect(body.judge.telemetry.subject_id).toBe('general');
 
       const events = await testDb()
         .select()

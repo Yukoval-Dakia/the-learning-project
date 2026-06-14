@@ -350,7 +350,10 @@ export default function KnowledgeDetailPage({
                   onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
                 >
                   <span className="rel-kind mono">parent</span>
-                  <span className="wenyan">{node.parent_name}</span>
+                  {/* de-wenyan: parent_name carries no domain on the node-page
+                      wire (only the page node itself has effective_domain), so
+                      fall to the neutral default font rather than hardcode serif. */}
+                  <span>{node.parent_name}</span>
                   <LoomIcon name="arrow" size={13} />
                 </button>
               )}
@@ -362,7 +365,8 @@ export default function KnowledgeDetailPage({
                   onClick={() => navigate(`/knowledge/${c.id}`)}
                 >
                   <span className="rel-kind mono">child</span>
-                  <span className="wenyan">{c.name}</span>
+                  {/* de-wenyan: NodePageChild carries no domain (see parent note). */}
+                  <span>{c.name}</span>
                   <MasteryRing mastery={c.mastery} size={22} />
                 </button>
               ))}
@@ -387,7 +391,8 @@ export default function KnowledgeDetailPage({
                       className="rel-row"
                       onClick={() => navigate(`/knowledge/${o.knowledge_id}`)}
                     >
-                      <span className="wenyan">{o.name}</span>
+                      {/* de-wenyan: NodePageMeshNeighbor carries no domain. */}
+                      <span>{o.name}</span>
                       <span className="meta mono">{o.direction === 'out' ? '→' : '←'}</span>
                       <LoomIcon name="arrow" size={13} />
                     </button>

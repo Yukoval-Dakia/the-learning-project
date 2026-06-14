@@ -35,13 +35,15 @@ describe('resolveSubjectRenderModel', () => {
     expect(model.contentStyle.fontFamily).toBe('var(--font-sans)');
   });
 
-  it('falls back safely when profile is null', () => {
+  it('falls back to the neutral general profile when profile is null', () => {
+    // YUK (wenyan deprotagonist): the slim default is subject-neutral (general,
+    // system font) — null content no longer inherits wenyan's serif-CJK.
     const model = resolveSubjectRenderModel(null);
 
-    expect(model.id).toBe('wenyan');
-    expect(model.displayName).toBe('文言文');
-    expect(model.renderConfig.font_family).toBe('serif-cjk');
-    expect(model.contentStyle.fontFamily).toBe('var(--font-wenyan)');
+    expect(model.id).toBe('general');
+    expect(model.displayName).toBe('通用');
+    expect(model.renderConfig.font_family).toBe('system');
+    expect(model.contentStyle.fontFamily).toBe('var(--font-sans)');
   });
 
   it('falls back to sans font for unknown font families', () => {

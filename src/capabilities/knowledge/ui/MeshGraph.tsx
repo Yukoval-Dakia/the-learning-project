@@ -6,6 +6,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 
+import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import type { KnowledgeEdgeRow, KnowledgeTreeNode } from './knowledge-api';
 import { LAYOUT_HEIGHT, LAYOUT_WIDTH, computeLayout } from './layout';
@@ -217,7 +218,14 @@ export function MeshGraph({
                   <text y={4} textAnchor="middle" className="mesh-node-pct mono">
                     {pct == null ? '—' : pct}
                   </text>
-                  <text y={r + 18} textAnchor="middle" className="mesh-node-label wenyan">
+                  {/* subject-driven: serif-CJK only for genuine wenyan nodes */}
+                  <text
+                    y={r + 18}
+                    textAnchor="middle"
+                    {...subjectContentPropsForDomain(n.effective_domain, {
+                      className: 'mesh-node-label',
+                    })}
+                  >
                     {n.name.length > 8 ? `${n.name.slice(0, 8)}…` : n.name}
                   </text>
                 </g>

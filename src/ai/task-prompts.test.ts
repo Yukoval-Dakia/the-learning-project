@@ -4,15 +4,30 @@ import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
 
 describe('getTaskSystemPrompt', () => {
-  it('preserves the current wenyan NoteGenerateTask prompt by default', () => {
+  // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`
+  // (was wenyan), so the default NoteGenerateTask prompt carries the general
+  // role + voice, NOT wenyan's classical-Chinese fragments.
+  it('defaults to the neutral general NoteGenerateTask prompt', () => {
     const prompt = getTaskSystemPrompt('NoteGenerateTask');
 
-    expect(prompt).toContain('你是学习笔记作者');
+    expect(prompt).toContain('你是通用学习笔记作者');
     expect(prompt).toContain('artifact_type');
     expect(prompt).toContain('body_blocks');
     expect(prompt).toContain('note_atomic');
     expect(prompt).toContain('note_long');
     expect(prompt).toContain('note_hub');
+    // general voice, not wenyan's 原文短句 special-casing
+    expect(prompt).toContain('示例贴合知识点');
+    expect(prompt).toContain('材料不足时标注不确定');
+    expect(prompt).not.toContain('古文');
+  });
+
+  // wenyan is one filled-in sample subject — its prompt is preserved when the
+  // wenyan profile is resolved explicitly (no longer the implicit default).
+  it('builds the wenyan NoteGenerateTask prompt when wenyan is resolved', () => {
+    const prompt = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('wenyan'));
+
+    expect(prompt).toContain('你是文言文学习笔记作者');
     expect(prompt).toContain('优先使用原文短句');
     expect(prompt).toContain('材料不足时标注不确定');
   });
@@ -45,7 +60,7 @@ describe('getTaskSystemPrompt', () => {
   // still contains (a) I/O JSON shape, (b) noteTemplate injection (per-subject data),
   // (c) fallback semantics sufficient for the degraded (no-skill) path.
   it('NoteGenerateTask slim: I/O shape + noteTemplate + fallback semantics intact', () => {
-    const wenyan = getTaskSystemPrompt('NoteGenerateTask');
+    const wenyan = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('wenyan'));
     const math = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('math'));
 
     for (const prompt of [wenyan, math]) {
@@ -144,7 +159,7 @@ describe('getTaskSystemPrompt', () => {
   });
 
   it('builds subject-specific TeachingTurnTask prompts', () => {
-    const wenyan = getTaskSystemPrompt('TeachingTurnTask');
+    const wenyan = getTaskSystemPrompt('TeachingTurnTask', resolveSubjectProfile('wenyan'));
     const math = getTaskSystemPrompt('TeachingTurnTask', resolveSubjectProfile('math'));
 
     expect(wenyan).toContain('你是文言文学习教练');
@@ -204,7 +219,10 @@ describe('getTaskSystemPrompt', () => {
   });
 
   it('builds EmbeddedCheckGenerateTask prompt from the subject profile', () => {
-    const wenyan = getTaskSystemPrompt('EmbeddedCheckGenerateTask');
+    const wenyan = getTaskSystemPrompt(
+      'EmbeddedCheckGenerateTask',
+      resolveSubjectProfile('wenyan'),
+    );
     const math = getTaskSystemPrompt('EmbeddedCheckGenerateTask', resolveSubjectProfile('math'));
 
     // Subject voice still flows in via displayName + checkQuestionPolicy
@@ -250,13 +268,13 @@ describe('getTaskSystemPrompt', () => {
   });
 
   it('builds a wenyan SolutionGenerateTask prompt with prose-appropriate signals', () => {
-    const prompt = getTaskSystemPrompt('SolutionGenerateTask');
+    const prompt = getTaskSystemPrompt('SolutionGenerateTask', resolveSubjectProfile('wenyan'));
     expect(prompt).toContain('expected_signals');
     expect(prompt).toContain('worked_solution_md');
   });
 
   it('builds a QuizGenTask prompt that enforces the §0 self-declared-sources contract', () => {
-    const wenyan = getTaskSystemPrompt('QuizGenTask');
+    const wenyan = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('wenyan'));
     const math = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
@@ -292,7 +310,7 @@ describe('getTaskSystemPrompt', () => {
   // generation-side coverage.
 
   it('builds a QuestionAuthorTask prompt with the one-question + structured-tree contract', () => {
-    const wenyan = getTaskSystemPrompt('QuestionAuthorTask');
+    const wenyan = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('wenyan'));
     const math = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
@@ -323,7 +341,7 @@ describe('getTaskSystemPrompt', () => {
   });
 
   it('builds a QuizVerifyTask prompt with the three §5 checks + two-axis output', () => {
-    const wenyan = getTaskSystemPrompt('QuizVerifyTask');
+    const wenyan = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile('wenyan'));
     const math = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
