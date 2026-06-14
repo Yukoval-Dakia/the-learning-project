@@ -1,3 +1,4 @@
+import { resolveSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 import type { CSSProperties } from 'react';
 
 export interface SlimSubjectProfile {
@@ -27,11 +28,16 @@ export interface SubjectContentOptions {
   style?: CSSProperties;
 }
 
+// YUK (wenyan deprotagonist): the UI slim-profile fallback is subject-NEUTRAL
+// (`general`, system font), mirroring the backend default. Content with no
+// reachable subject profile renders in the plain sans/system font instead of
+// inheriting wenyan's serif-CJK (the serif stack is reserved for genuine
+// classical-Chinese passages per the design redraw brief, not generic content).
 export const DEFAULT_SLIM_SUBJECT_PROFILE: SlimSubjectProfile = {
-  id: 'wenyan',
-  displayName: '文言文',
+  id: 'general',
+  displayName: '通用',
   renderConfig: {
-    font_family: 'serif-cjk',
+    font_family: 'system',
     notation: null,
     code_highlight: null,
   },
@@ -120,4 +126,24 @@ export function subjectContentProps(
     'data-subject': model.id,
     ...(model.renderConfig.notation ? { 'data-notation': model.renderConfig.notation } : {}),
   };
+}
+
+// YUK (wenyan deprotagonist): resolve a knowledge node's `effective_domain`
+// (the only subject signal the knowledge-tree wire carries) into a slim render
+// model, so UI render points can drive font/class from the node's REAL subject
+// instead of hardcoding `className="wenyan"`. A null / unknown domain folds to
+// the neutral default profile (system font) via the registry resolver — the
+// serif-CJK `--font-wenyan` stack only lands for genuine classical-Chinese
+// (wenyan) content. The registry resolve chain is pure data (no server-only
+// deps), so it is safe to bundle into the SPA.
+export function resolveSubjectRenderModelForDomain(domain?: string | null): SubjectRenderModel {
+  return resolveSubjectRenderModel(toSlimSubjectProfile(resolveSubjectProfile(domain)));
+}
+
+// Convenience wrapper: domain string → ready-to-spread content props.
+export function subjectContentPropsForDomain(
+  domain?: string | null,
+  options: SubjectContentOptions = {},
+): SubjectContentProps {
+  return subjectContentProps(resolveSubjectRenderModelForDomain(domain), options);
 }

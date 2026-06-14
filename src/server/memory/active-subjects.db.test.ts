@@ -218,7 +218,8 @@ describe('listActiveSubjectsSinceRefresh', () => {
 
   it('resolution matches batchResolveSubjectIds incl orphan→default fallback', async () => {
     await seedKnowledge('k-math', 'math');
-    // Orphan knowledge id (no row) resolves to the default subject (wenyan).
+    // Orphan knowledge id (no row) resolves to the neutral default subject
+    // (general, post wenyan-deprotagonist — was wenyan).
     const e1 = await insertAttempt({ knowledgeIds: ['k-math'], createdAt: daysAgo(2) });
     const e2 = await insertAttempt({ knowledgeIds: ['k-orphan'], createdAt: daysAgo(3) });
 
@@ -227,10 +228,10 @@ describe('listActiveSubjectsSinceRefresh', () => {
       { id: e2, knowledge_ids: ['k-orphan'] },
     ]);
     expect(expected.get(e1)).toBe('math');
-    expect(expected.get(e2)).toBe('wenyan'); // orphan → default
+    expect(expected.get(e2)).toBe('general'); // orphan → neutral default
 
     const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
-    expect(active.map((a) => a.subjectId).sort()).toEqual(['math', 'wenyan']);
+    expect(active.map((a) => a.subjectId).sort()).toEqual(['general', 'math']);
   });
 
   // FIX 2 (PR #218) — a record_capture carries NO referenced_knowledge_ids in its

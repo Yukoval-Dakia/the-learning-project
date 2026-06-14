@@ -4,6 +4,7 @@
 // 「关系 typed edges」视觉分离、AI 边提议四动作（接受/反向/改类型/忽略）、
 // EdgeCreateForm、foot 打开节点详情页。decay 用非颜色 cue（icon+label）。
 
+import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -68,7 +69,10 @@ function EdgeProposalRow({
           <span className="mono">{cue.glyph}</span>
           {cue.label}
         </span>
-        <span className="wenyan">
+        {/* de-wenyan: a from→to edge proposal spans two (possibly different)
+            subjects and EdgeProposalRow only has names, not domains — no single
+            subject to drive from, so fall to the neutral default font. */}
+        <span>
           {nameOf(e.payload.proposed_change.from_knowledge_id)} →{' '}
           {nameOf(e.payload.proposed_change.to_knowledge_id)}
         </span>
@@ -239,7 +243,10 @@ export function NodeDrawer({
                 onClick={() => go(`/knowledge/${parent.id}`)}
               >
                 <span className="rel-kind mono">parent</span>
-                <span className="wenyan">{parent.name}</span>
+                {/* subject-driven from the neighbour's own effective_domain */}
+                <span {...subjectContentPropsForDomain(parent.effective_domain)}>
+                  {parent.name}
+                </span>
                 <LoomIcon name="arrow" size={13} />
               </button>
             ) : (
@@ -253,7 +260,7 @@ export function NodeDrawer({
                 onClick={() => go(`/knowledge/${c.id}`)}
               >
                 <span className="rel-kind mono">child</span>
-                <span className="wenyan">{c.name}</span>
+                <span {...subjectContentPropsForDomain(c.effective_domain)}>{c.name}</span>
                 <MasteryRing mastery={c.mastery} size={24} />
               </button>
             ))}
@@ -280,7 +287,7 @@ export function NodeDrawer({
                     <span className="mono">{c.glyph}</span>
                     {c.label}
                   </span>
-                  <span className="wenyan">{o.name}</span>
+                  <span {...subjectContentPropsForDomain(o.effective_domain)}>{o.name}</span>
                   <LoomIcon name="arrow" size={13} />
                 </button>
               );

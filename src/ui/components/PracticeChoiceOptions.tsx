@@ -144,7 +144,10 @@ export function PracticeChoiceOptions({
               onClick={() => handleClick(index)}
             >
               <span className="practice-choice-label">{letter}</span>
-              <span className="wenyan practice-choice-text">{choice}</span>
+              {/* de-wenyan: choice options serve every subject and this component
+                  has no domain on props — drop the hardcoded serif and fall to
+                  the neutral default font (subject-driven is a follow-up). */}
+              <span className="practice-choice-text">{choice}</span>
               {/* 选中态 ✓ —— round2a §1.3 硬约束：状态不能只靠颜色，这是图标线索。 */}
               {isSelected && !feedback && (
                 <span className="practice-choice-mark" aria-hidden="true">

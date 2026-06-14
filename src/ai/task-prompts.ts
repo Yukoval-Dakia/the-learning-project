@@ -10,7 +10,10 @@ function assertNever(value: never): never {
 }
 
 function noteWriterRole(profile: SubjectProfile): string {
-  return profile.id === 'wenyan' ? '学习笔记作者' : `${profile.displayName}学习笔记作者`;
+  // YUK (wenyan deprotagonist): no per-subject special-casing — every subject's
+  // note-writer role is uniformly `${displayName}学习笔记作者`. wenyan is just one
+  // filled-in sample subject, not a privileged default.
+  return `${profile.displayName}学习笔记作者`;
 }
 
 function noteTemplateTable(profile: SubjectProfile): string {
