@@ -177,7 +177,7 @@ export function buildMemoryBriefRegenHandler(
 ): (jobs: Job<{ scope_key: string; now?: string }>[]) => Promise<void> {
   // F-4 (PR #232 review) — keep the injected test client here, but DO NOT init
   // the real Mem0 client at the top of the batch. `createMemoryClient()` throws
-  // when its env (OPENAI_API_KEY / XIAOMI_API_KEY / DATABASE_URL for Mem0) is
+  // when its env (ZHIPU_API_KEY / DASHSCOPE_API_KEY / DATABASE_URL for Mem0) is
   // missing; doing it before the per-scope try would reject the WHOLE pg-boss
   // job → nightly retry storm → the F-1 per-scope catch is defeated. Mem0
   // fact-search is SUPPLEMENTARY — brief regen must still run from events when

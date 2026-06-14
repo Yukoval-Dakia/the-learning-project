@@ -8,7 +8,7 @@
     "dev": "tsx scripts/dev-local.ts",
     "dev:local": "tsx scripts/dev-local.ts",
     "build": "pnpm rw:web:build && pnpm build:server && pnpm build:worker && pnpm build:migrate",
-    "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "start": "node dist/server.cjs",
     "typecheck": "tsc --noEmit",
@@ -46,7 +46,7 @@
     "rw:api": "RW_WORKER=1 tsx watch server/index.ts",
     "rw:web": "vite --config web/vite.config.ts",
     "rw:web:build": "vite build --config web/vite.config.ts",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:bufferutil --external:utf-8-validate --external:@anthropic-ai/claude-agent-sdk --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@anthropic-ai/claude-agent-sdk --define:process.env.NODE_ENV=\\\"production\\\"",
     "rw:build": "pnpm rw:web:build && pnpm build:server"
   },
   "dependencies": {
@@ -66,6 +66,7 @@
     "@tiptap/starter-kit": "^3.26.0",
     "@tiptap/suggestion": "^3.26.0",
     "ai": "^6.0.197",
+    "better-sqlite3": "^12.6.2",
     "client-zip": "^2.5.0",
     "cytoscape": "^3.34.0",
     "cytoscape-fcose": "^2.2.0",

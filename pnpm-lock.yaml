@@ -65,6 +65,9 @@ importers:
       ai:
         specifier: ^6.0.197
         version: 6.0.197(zod@3.25.76)
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.10.0
       client-zip:
         specifier: ^2.5.0
         version: 2.5.0

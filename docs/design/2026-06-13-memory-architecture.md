@@ -212,7 +212,7 @@ UPDATE <collection> SET payload = payload || jsonb_build_object(
 
 ### 8.4 P1-P4 in-place 落点（每 P 一个 Linear 子 issue，链于 YUK-322）
 
-- **P1 配置换血**：client.ts createMem0Config 按 §8.3 改 + 删 env-dance + update() 封禁 + 改 client.test.ts 硬断言 + .env.example/preflight env 名 + collection wipe（drop `learning_project_memories`，首 add 时 mem0 按新维度重建）+ 三步联调验证（GLM add / 百炼 embed 维度 / pgvector 列对齐）。
+- **P1 配置换血**：client.ts createMem0Config 按 §8.3 改 + 删 env-dance + update() 封禁 + 改 client.test.ts 硬断言 + .env.example/preflight env 名 + collection wipe（drop `learning_project_memories`，首 add 时 mem0 按新维度重建）+ 三步联调验证（GLM add / 百炼 embed 维度 / pgvector 列对齐）+ **disableHistory:false 的原生模块 plumbing（§8.6 实施期发现）**。
 - **P2 调和层**（核心新增）：add() 返回后投 `memory_reconcile` pg-boss job（singletonKey:user_id）；调和 prompt（避开「smart memory manager」「Compare newly retrieved facts」劫持措辞，per-kind 规则）；jsonb 软取代直写（`superseded_by`/`invalid_at`/`created_ms`，参数显式 ::text cast）；`memory_reconciliation_log` 表（migration + audit:schema write-path，write-ahead 行）；失败模式测试（解析失败降级 KEEP_BOTH / 半途幂等续跑 / 并发 singletonKey）。addEventMemory metadata 补 `created_ms` + `kind`（喂 per-kind 规则）。
 - **P3 读路径 + 写入面**：`searchMemories(query,opts)` wrapper（落 client 层，两消费者透明获益）——topK×2~3 召回 + `$not:[{superseded_by:'*'}]`/大写 `NOT` 过滤 + recency 重排（`score'=score×exp(-ln2·ageDays/halfLife)`，按 kind 半衰期，补 TS 端缺的 temporal boost）；两读点（search-memory-facts.ts + brief searchFacts）改走 wrapper。**写入面=产品决策**（现状是全 event 喂；要不要选择性喂 copilot 对话/练习总结——P3 时 surface）。
 - **P4 知识侧 bi-temporal**：`knowledge_edge` 补 valid_at/invalid_at（不破 unique/索引读路径）+ 写入期调和环挂 propose.ts，复用 P2 prompt 骨架 + log 设计 + 现成 getEffectiveTruth/CorrectionKind。
@@ -222,3 +222,20 @@ UPDATE <collection> SET payload = payload || jsonb_build_object(
 - P3 写入面信号选择（产品层，到 P3 surface）。
 - kind 分类法最终枚举 + per-kind 半衰期（P2 起一个起步枚举 preference/habit/weakness/event，真实数据校准）。
 - reconciliation_log 与 P4 知识侧写入期调和环是否共表（user_id 列对知识侧无意义）。
+
+### 8.6 实施期发现：disableHistory:false 的原生模块代价（2026-06-14，P1 实施中浮现）
+
+§8.3 锁 `disableHistory:false` 时把它当免费 flag，实施中发现并非如此，owner 复核后仍坚持 false：
+
+- **唯一收益 = 抽取 prompt 的 "Last k Messages" 非空**。源码实证：`getLastMessages` **只** `SQLiteManager` 有；`MemoryHistoryManager`（`historyStore.provider:'memory'`）与 `DummyHistoryManager`（disableHistory:true）**都缺该方法** → 调用点 `typeof db.getLastMessages==='function'` 守卫 false → Last-k 恒空。故「Last-k 非空」的唯一路径 = `disableHistory:false` + 默认 `sqlite` provider = **必须 `better-sqlite3` 原生模块**。`memory` provider 是陷阱（零原生但 Last-k 仍空，等同 dummy）。
+- **better-sqlite3 是 mem0ai 的 peerDependency（`^12.6.2`），不随 prod 安装**；旧 `disableHistory:true` 走 DummyHistoryManager 从不加载它。换 false = 新引入原生依赖。
+- **P2 调和层不依赖 mem0 history**（读自建 Postgres `memory_reconciliation_log`，§3.5）。所以 disableHistory 取值只影响抽取质量，对 P2-P4 零影响——若日后想撤掉原生模块，回 `true` 不破调和层。
+- **owner 决策（2026-06-14）**：坚持 `disableHistory:false`，接受原生模块进 prod 镜像 + 每次 Node 升级的脆性。
+
+落地 plumbing（全在 P1 PR）：
+- 顶层 `dependencies` 加 `better-sqlite3 ^12.6.2`；esbuild `build:server` + `build:worker` 均加 `--external:better-sqlite3`（原生 .node 不能 bundle）。
+- Dockerfile 加 `sqlitedeps` flat-install stage + runner overlay COPY `better-sqlite3` / `bindings` / `file-uri-to-path`（镜像 sharp/sdk 模式；node:24 prebuild 无需构建链）。
+- **拓扑（错开避跨容器 SQLite 写锁竞争）**：worker（唯一写者，所有 add()）→ 持久命名卷 `mem0data:/var/lib/mem0/history.db`；app（仅 search，history 永不被读但构造期仍开库）→ 容器内 `/tmp/mem0/history.db`（无卷、ephemeral）。两者 compose `environment` 强制 `MEM0_TELEMETRY=false`（§3.1）。
+- dev：`.env.example` 设 `MEM0_HISTORY_DB_PATH=./.mem0/history.db`（repo 相对、gitignore；host user 不可写 `/var/lib`）。
+- **本机 Node 26（ABI 147）无 better-sqlite3 prebuild → 源码编译**（mac Xcode CLT 即可）；Docker node:24（ABI 137）走 prebuild-install。
+- **联调凭据 gate（owner 侧）**：三步 live 验证需 `DASHSCOPE_API_KEY`（百炼，.env 暂缺）+ glm-5.2 access（当前共用的 GLM-OCR `ZHIPU_API_KEY` 对 glm-5.2 返回 403「无权访问」，`glm-5` 经 `MEM0_LLM_MODEL` 回退实测可用）。代码 default 维持 `glm-5.2`（owner 称账号有 5.2/preview access，可能在另一把 key）。
