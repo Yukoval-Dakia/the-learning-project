@@ -13,6 +13,7 @@ import {
   loadUnappliedLog,
   makePlannedRow,
   markApplied,
+  rewriteMemoryText,
   softSupersede,
 } from './reconcile-store';
 
@@ -84,6 +85,43 @@ describe('reconcile-store — softSupersede', () => {
     expect(payload?.created_ms).toBe('1718000000000');
     // superseded_by is NOT JSON null (sentinel discipline)
     expect(payload?.superseded_by).not.toBeNull();
+  });
+});
+
+describe('reconcile-store — rewriteMemoryText (MERGE survivor stays live)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('rewrites payload.data + created_ms WITHOUT marking the row superseded', async () => {
+    const oldId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    await seedMem0Row(oldId, {
+      data: 'User prefers light mode',
+      createdAt: '2026-01-01T00:00:00Z',
+      hash: 'abc123',
+      user_id: 'self',
+    });
+
+    await rewriteMemoryText(testDb(), COLLECTION, {
+      memoryId: oldId,
+      mergedText: 'MERGED: prefers dark mode and terse feedback',
+      createdMs: 1718000000000,
+    });
+
+    const payload = await getPayload(oldId);
+    expect(payload).not.toBeNull();
+    // Merged text written
+    expect(payload?.data).toBe('MERGED: prefers dark mode and terse feedback');
+    // created_ms bumped (string, like softSupersede)
+    expect(payload?.created_ms).toBe('1718000000000');
+    // Original non-data keys preserved
+    expect(payload?.hash).toBe('abc123');
+    expect(payload?.user_id).toBe('self');
+    // Regression lock (PR #405 MERGE bug): the survivor MUST stay live — no
+    // supersede markers, or the P3 read path would filter the merged memory out.
+    expect(payload).not.toHaveProperty('superseded_by');
+    expect(payload).not.toHaveProperty('invalid_at');
   });
 });
 
