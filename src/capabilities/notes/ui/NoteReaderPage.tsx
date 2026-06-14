@@ -126,8 +126,13 @@ export default function NoteReaderPage({
   // ported-but-idle 的 ErrorState（audit P4）。但 404（笔记不存在/已删）语义上
   // 是「空」非「加载失败」——让它落到下面的 EmptyState，只有瞬时错误（网络/5xx）
   // 才示 ErrorState + 重试（视觉环实测：404 误显「加载失败」会反向坏了 not-found 态）。
+  // 用 isLoadingError（= 出错且无缓存 data）而非 isError：笔记已加载后窗口聚焦/重连
+  // 触发的后台 refetch 若失败，TanStack v5 保留旧 data 同时把 isError 置真
+  // （isRefetchError）——只判 isError 会把仍可用的阅读/编辑界面（含未保存草稿）整页
+  // 替换成 ErrorState。isLoadingError 只在「无缓存的首次加载失败」时为真，refetch
+  // 失败时为假 → 落到下面 !note=false 继续用缓存渲染，仅丢一次刷新（Codex #399 F1）。
   const isNotFound = noteQ.error instanceof ApiError && noteQ.error.status === 404;
-  if (noteQ.isError && !isNotFound)
+  if (noteQ.isLoadingError && !isNotFound)
     return (
       <main className="page wide note-reader-page">
         <ErrorState text="笔记加载失败。" onRetry={() => void noteQ.refetch()} />
