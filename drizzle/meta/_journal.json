@@ -218,6 +218,13 @@
       "when": 1781306400046,
       "tag": "0030_large_the_stranger",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1781422070624,
+      "tag": "0031_fat_madelyne_pryor",
+      "breakpoints": true
     }
   ]
 }
