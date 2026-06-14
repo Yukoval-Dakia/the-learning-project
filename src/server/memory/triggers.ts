@@ -585,10 +585,13 @@ export function buildMemoryReconcileHandler(
       } catch (err) {
         // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
         // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
-        // retryLimit/retryDelay/retryBackoff). Any planned rows already inserted
-        // replay idempotently via applyPlannedRows on the retry, so the rethrow
-        // is safe. Swallowing here (the prior behavior) made the job report
-        // success → no retry → this batch silently never reconciled.
+        // retryLimit/retryDelay/retryBackoff). The retry is safe: the common
+        // RetryableError site is judge() (BEFORE any planned rows are inserted),
+        // so the batch simply re-runs; and any planned rows from a PRIOR run
+        // replay idempotently via the applyPlannedRows at job start (:584's call
+        // is end-of-apply; the load-bearing replay is the one at job start, not
+        // rows from this attempt). Swallowing here (the prior behavior) made the
+        // job report success → no retry → this batch silently never reconciled.
         if (err instanceof RetryableError) throw err;
         // Non-retryable: leave planned rows intact for idempotent resume on next job.
         console.error(

@@ -488,10 +488,12 @@ describe('reconcile handler — duplicate new_index decisions are deduped', () =
     // Exactly one planned row (the first decision); the dup SUPERSEDE never ran,
     // so the old row was NOT superseded.
     const logRows = (await db.execute(sql`
-      SELECT action FROM memory_reconciliation_log WHERE user_id = 'self'
-    `)) as Array<{ action: string }>;
+      SELECT action, reason FROM memory_reconciliation_log WHERE user_id = 'self'
+    `)) as Array<{ action: string; reason: string }>;
     expect(logRows).toHaveLength(1);
     expect(logRows[0].action).toBe('KEEP_BOTH');
+    // Lock first-wins (not last-wins): the kept row is the FIRST decision, not the dropped SUPERSEDE.
+    expect(logRows[0].reason).toBe('first wins');
 
     const oldRows = (await db.execute(sql`
       SELECT payload->>'superseded_by' AS sb FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
