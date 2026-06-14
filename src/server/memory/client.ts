@@ -8,8 +8,11 @@ const DEFAULT_COLLECTION = 'learning_project_memories';
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-v4'; // 阿里百炼 DashScope
 const DEFAULT_EMBEDDING_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'; // 含 /v1
 const DEFAULT_EMBEDDING_DIMS = 1024; // 百炼 v4 推荐性价比维度；embedder 与 vectorStore 必须同值
-const DEFAULT_LLM_MODEL = 'glm-5.2'; // 智谱 GLM；REST 未 GA 时经 MEM0_LLM_MODEL 回退 glm-5
-const DEFAULT_LLM_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4'; // 勿加 /v1
+const DEFAULT_LLM_MODEL = 'glm-5.2'; // 智谱 GLM coding plan；可经 MEM0_LLM_MODEL 切 glm-5/glm-4.6
+// coding plan 专用端点（owner 的 glm-5.2 access 在 coding plan）。**勿加 /v1**——
+// 标准开放平台端点 /api/paas/v4 对 coding-plan 模型返 403，必须走 /api/coding/paas/v4。
+// global 版是 https://api.z.ai/api/coding/paas/v4（经 MEM0_LLM_BASE_URL 切）。
+const DEFAULT_LLM_BASE_URL = 'https://open.bigmodel.cn/api/coding/paas/v4';
 const DEFAULT_HISTORY_DB_PATH = '/var/lib/mem0/history.db'; // 绝对路径（默认相对 cwd 多进程踩坑）；prod compose 挂载卷，dev 经 MEM0_HISTORY_DB_PATH 覆盖
 
 type Env = Record<string, string | undefined>;

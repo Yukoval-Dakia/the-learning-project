@@ -37,11 +37,11 @@ describe('createMem0Config', () => {
       },
     });
     expect(config.llm).toEqual({
-      provider: 'openai', // openai-compat → 智谱 GLM
+      provider: 'openai', // openai-compat → 智谱 GLM coding plan 端点
       config: {
         apiKey: 'zhipu-key',
         model: 'glm-5.2',
-        baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+        baseURL: 'https://open.bigmodel.cn/api/coding/paas/v4',
       },
     });
     // 调和层（P2）需 history；search() 已证 history-free，读端安全。

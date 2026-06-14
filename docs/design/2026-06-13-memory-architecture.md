@@ -200,7 +200,7 @@ UPDATE <collection> SET payload = payload || jsonb_build_object(
 
 | 项 | 锁定值 | 依据 |
 |---|---|---|
-| LLM | provider `openai`（**非 anthropic**），model env `MEM0_LLM_MODEL` 默认 `glm-5.2`，baseURL `https://open.bigmodel.cn/api/paas/v4`（**勿加 /v1**），key `ZHIPU_API_KEY` | openai provider 转发 `config.baseURL`（index.js:271）→ **整套 withXiaomiBaseUrl env-dance + YUK-232 mutex + 3 测试可整块删**；createMemoryClient 变回纯同步无全局副作用 |
+| LLM | provider `openai`（**非 anthropic**），model env `MEM0_LLM_MODEL` 默认 `glm-5.2`，baseURL **`https://open.bigmodel.cn/api/coding/paas/v4`**（coding plan 端点，**勿加 /v1**；global=`https://api.z.ai/api/coding/paas/v4`），key `ZHIPU_API_KEY` | openai provider 转发 `config.baseURL`（index.js:271）→ **整套 withXiaomiBaseUrl env-dance + YUK-232 mutex + 3 测试可整块删**；createMemoryClient 变回纯同步无全局副作用。**端点必须 coding 版**——标准 `/api/paas/v4` 对 coding-plan 模型返 403（owner 实测 2026-06-14） |
 | Embedding | provider `openai`（compat），model `text-embedding-v4`，baseURL `https://dashscope.aliyuncs.com/compatible-mode/v1`（含 /v1），key `DASHSCOPE_API_KEY`，**1024 维** | 反正 wipe 重建，取官方推荐性价比最优维度 |
 | 维度双写 | `embedder.config.embeddingDims` **==** `vectorStore.config.embeddingModelDims` == 1024 | 两字段名不同（前者把 `dimensions` 传百炼 v4，后者建 pgvector 列），必须同值否则插入维度不匹配 |
 | disableHistory | `false` + 显式绝对 `historyDbPath`（默认相对 cwd 多进程踩坑） | `search()` 方法体零 history 写（只 add/update/delete 写 SQLite，index.js grep 决定性）→ app 进程读端安全，单写者只管写端（已在 worker） |
@@ -238,4 +238,6 @@ UPDATE <collection> SET payload = payload || jsonb_build_object(
 - **拓扑（错开避跨容器 SQLite 写锁竞争）**：worker（唯一写者，所有 add()）→ 持久命名卷 `mem0data:/var/lib/mem0/history.db`；app（仅 search，history 永不被读但构造期仍开库）→ 容器内 `/tmp/mem0/history.db`（无卷、ephemeral）。两者 compose `environment` 强制 `MEM0_TELEMETRY=false`（§3.1）。
 - dev：`.env.example` 设 `MEM0_HISTORY_DB_PATH=./.mem0/history.db`（repo 相对、gitignore；host user 不可写 `/var/lib`）。
 - **本机 Node 26（ABI 147）无 better-sqlite3 prebuild → 源码编译**（mac Xcode CLT 即可）；Docker node:24（ABI 137）走 prebuild-install。
-- **联调凭据 gate（owner 侧）**：三步 live 验证需 `DASHSCOPE_API_KEY`（百炼，.env 暂缺）+ glm-5.2 access（当前共用的 GLM-OCR `ZHIPU_API_KEY` 对 glm-5.2 返回 403「无权访问」，`glm-5` 经 `MEM0_LLM_MODEL` 回退实测可用）。代码 default 维持 `glm-5.2`（owner 称账号有 5.2/preview access，可能在另一把 key）。
+- **联调凭据（2026-06-14 owner 提供后解决）**：
+  - 百炼：owner 的是**阿里云 workspace key**（`sk-ws-…`）+ workspace 专用端点 `https://ws-tcvd1h9009b55vr0.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`（非通用 `dashscope.aliyuncs.com`）→ `.env` 设 `DASHSCOPE_API_KEY` + `MEM0_EMBEDDING_BASE_URL`（workspace 端点）。代码 default 端点维持通用 dashscope（主账号 key 用），workspace key 经 env 覆盖。实测 `text-embedding-v4` + `dimensions:1024` → HTTP 200 返 1024 维。
+  - GLM：之前 glm-5.2 的 403 **是端点问题不是 key 问题**——同一把 `ZHIPU_API_KEY` 打 coding 端点 `…/api/coding/paas/v4`，glm-5.2/glm-5/glm-4.6 全 HTTP 200。故 GLM-OCR 与 mem0 LLM **共用同一把 key**，无需第二把；default 端点改 coding 版（见 §8.3 表）。
