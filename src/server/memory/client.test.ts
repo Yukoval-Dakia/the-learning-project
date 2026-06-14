@@ -53,7 +53,29 @@ describe('createMem0Config', () => {
     const config = createMem0Config({ ...env, MEM0_EMBEDDING_DIMS: '1536' });
     expect(config.vectorStore.config.embeddingModelDims).toBe(1536);
     // embedder config 的 embeddingDims 必须跟着同步（两字段名不同、同值，否则插入维度不匹配）。
-    expect((config.embedder.config as { embeddingDims?: number }).embeddingDims).toBe(1536);
+    expect(config.embedder.config.embeddingDims).toBe(1536);
+  });
+
+  it('空串 MEM0_EMBEDDING_DIMS 回落默认 1024（bare `KEY=` 不能变 Number("")=0 打给 embedder）', () => {
+    const config = createMem0Config({ ...env, MEM0_EMBEDDING_DIMS: '' });
+    expect(config.vectorStore.config.embeddingModelDims).toBe(1024);
+    expect(config.embedder.config.embeddingDims).toBe(1024);
+    // 空串 override 也回落默认，非 ''（否则 model/baseURL 变空字符串打给 live API）。
+    const llmCfg = createMem0Config({ ...env, MEM0_LLM_MODEL: '', MEM0_EMBEDDING_MODEL: '' });
+    expect(llmCfg.llm.config.model).toBe('glm-5.2');
+    expect(llmCfg.embedder.config.model).toBe('text-embedding-v4');
+  });
+
+  it('非法 MEM0_EMBEDDING_DIMS（非正整数）fail-fast', () => {
+    expect(() => createMem0Config({ ...env, MEM0_EMBEDDING_DIMS: 'abc' })).toThrow(
+      /MEM0_EMBEDDING_DIMS/,
+    );
+    expect(() => createMem0Config({ ...env, MEM0_EMBEDDING_DIMS: '0' })).toThrow(
+      /MEM0_EMBEDDING_DIMS/,
+    );
+    expect(() => createMem0Config({ ...env, MEM0_EMBEDDING_DIMS: '-5' })).toThrow(
+      /MEM0_EMBEDDING_DIMS/,
+    );
   });
 
   it('model id / baseURL / history path 可经 env 覆盖（GLM 5.2 未 GA 时回退 glm-5）', () => {
@@ -128,7 +150,7 @@ describe('createMemoryClient', () => {
       },
     });
     expect(seenConfig?.llm.config.apiKey).toBe('zhipu-key');
-    expect((seenConfig?.embedder.config as { apiKey?: string }).apiKey).toBe('dashscope-key');
+    expect(seenConfig?.embedder.config.apiKey).toBe('dashscope-key');
     expect(Object.hasOwn(process.env, 'ANTHROPIC_BASE_URL')).toBe(hadAnthropicBaseUrl);
   });
 
