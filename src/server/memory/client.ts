@@ -49,6 +49,14 @@ function requireEnv(env: Env, name: string): string {
   return value;
 }
 
+// `??` only falls back on null/undefined — a bare `KEY=` in .env loads as ''
+// (not unset), which would otherwise become an empty model/baseURL/collection
+// string. Treat empty (after trim) as "use the default".
+function optionalEnv(env: Env, name: string, fallback: string): string {
+  const value = env[name]?.trim();
+  return value ? value : fallback;
+}
+
 function parseDatabaseUrl(raw: string) {
   const url = new URL(raw);
   const dbname = url.pathname.replace(/^\//, '');
@@ -70,23 +78,30 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
   const dashscopeApiKey = requireEnv(env, 'DASHSCOPE_API_KEY'); // 阿里百炼 embedding
   const db = parseDatabaseUrl(databaseUrl);
   // embedder.embeddingDims（把 dimensions 传百炼 v4）与 vectorStore.embeddingModelDims
-  // （建 pgvector 列）必须同值，否则插入维度不匹配。
-  const dims = Number(env.MEM0_EMBEDDING_DIMS ?? DEFAULT_EMBEDDING_DIMS);
+  // （建 pgvector 列）必须同值，否则插入维度不匹配。空串（bare `MEM0_EMBEDDING_DIMS=`）
+  // 不能落到 Number('')=0——那会把 dimensions:0 打给 live embedder。trim 后空 = 用默认。
+  const dimsRaw = env.MEM0_EMBEDDING_DIMS?.trim();
+  const dims = dimsRaw ? Number(dimsRaw) : DEFAULT_EMBEDDING_DIMS;
+  if (!Number.isInteger(dims) || dims <= 0) {
+    throw new Error(
+      `Mem0 MEM0_EMBEDDING_DIMS must be a positive integer (got ${JSON.stringify(env.MEM0_EMBEDDING_DIMS)})`,
+    );
+  }
 
   return {
     embedder: {
       provider: 'openai', // openai-compat：转发 baseURL → 接百炼 DashScope
       config: {
         apiKey: dashscopeApiKey,
-        model: env.MEM0_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL,
-        baseURL: env.MEM0_EMBEDDING_BASE_URL ?? DEFAULT_EMBEDDING_BASE_URL,
+        model: optionalEnv(env, 'MEM0_EMBEDDING_MODEL', DEFAULT_EMBEDDING_MODEL),
+        baseURL: optionalEnv(env, 'MEM0_EMBEDDING_BASE_URL', DEFAULT_EMBEDDING_BASE_URL),
         embeddingDims: dims,
       },
     },
     vectorStore: {
       provider: 'pgvector',
       config: {
-        collectionName: env.MEM0_PGVECTOR_COLLECTION ?? DEFAULT_COLLECTION,
+        collectionName: optionalEnv(env, 'MEM0_PGVECTOR_COLLECTION', DEFAULT_COLLECTION),
         dbname: db.dbname,
         user: db.user,
         password: db.password,
@@ -101,8 +116,8 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
       provider: 'openai', // openai-compat：转发 baseURL → 接智谱 GLM（弃 anthropic env-dance）
       config: {
         apiKey: zhipuApiKey,
-        model: env.MEM0_LLM_MODEL ?? DEFAULT_LLM_MODEL,
-        baseURL: env.MEM0_LLM_BASE_URL ?? DEFAULT_LLM_BASE_URL,
+        model: optionalEnv(env, 'MEM0_LLM_MODEL', DEFAULT_LLM_MODEL),
+        baseURL: optionalEnv(env, 'MEM0_LLM_BASE_URL', DEFAULT_LLM_BASE_URL),
       },
     },
     // disableHistory:false（owner 拍板 2026-06-14，§3.1/§8.3）——唯一收益是让抽取
@@ -113,7 +128,7 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
     // search() 方法体零 history 写（只 add/update/delete 写 SQLite），写收敛 worker；
     // app(search) 与 worker(add) 各自独立 historyDbPath（compose 错开，避跨容器写锁竞争）。
     disableHistory: false,
-    historyDbPath: env.MEM0_HISTORY_DB_PATH ?? DEFAULT_HISTORY_DB_PATH,
+    historyDbPath: optionalEnv(env, 'MEM0_HISTORY_DB_PATH', DEFAULT_HISTORY_DB_PATH),
   };
 }
 
