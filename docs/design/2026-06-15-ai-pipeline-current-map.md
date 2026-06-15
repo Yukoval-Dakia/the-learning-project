@@ -7,6 +7,8 @@
 
 ---
 
+> **Supersession note (2026-06-15)**：本文是 understand 阶段快照。其「B1 校准代码侧零」类判断在 B1-W1（PR #414）后已 stale——仓库现已有 `mastery_state` / `item_calibration` / `ItemPriorTask` / θ̂ 更新接线。选题/校准/供给的应然实施序见 `docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361）。本文留作历史 pipeline 证据，非当前状态。
+
 ## 一句话现状
 
 AI 调用走**三条互不共享路由层的独立漏斗** + 一个统一 runner 收口最大那条。**主漏斗**：27+ 个 AI task 在 `src/ai/registry.ts` 声明 task×model（实跑几乎全是 xiaomi/mimo-v2.5* 文本或多模态），经 `providers.ts:resolveTaskProvider` 解析端点/key，再经 `runner.ts` 三入口（runTask/runAgentTask/streamTaskCollecting）spawn Claude Agent SDK 子进程。编排发生在两个面：① **Hono route 同步面**（copilot chat SSE、review、plan 请求内直接 streamTask）；② **pg-boss worker 异步面**（OCR extract、auto_enroll、quiz_gen/verify、sourcing、variant、记忆 brief regen 等 durable job）。两面共用同一 runner + cost/run 留痕三表（ai_task_runs/cost_ledger/tool_call_log）。**另两条漏斗完全绕开统一路由各自硬编码**：记忆个性化层（mem0 → GLM-5.2 reconcile + 百炼 embedding，写死在 `memory/client.ts`）和 OCR 录入引擎（glm-ocr via ZHIPU，`EXTRACT_OCR_ENGINE` glm 默认/tencent 兜底）。
