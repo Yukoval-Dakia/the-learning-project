@@ -729,6 +729,14 @@ export const mastery_state = pgTable(
     success_count: integer('success_count').notNull().default(0),
     fail_count: integer('fail_count').notNull().default(0),
     last_outcome_at: timestamp('last_outcome_at', { withTimezone: true }),
+    // YUK-361 Phase 2 (Urnings-Lite θ 不确定性) — θ̂ 的累积 Fisher information。
+    // 每次 attempt += weight²·p(1−p)（同 θ̂ 更新的 b 锚 + bWeight，见 state.ts）。
+    // DEFAULT 1 = 弱先验 1 单位信息（SE=1），既有行 backfill-safe。**不存 theta_se**——
+    // SE 从此列派生（thetaSe，src/core/theta.ts）。后续 MFI 用它给高不确定 θ 降权。
+    theta_precision: real('theta_precision').notNull().default(1),
+    // 本次 attempt 的 θ̂ 变化量（newTheta − thetaBefore），可观测/调试用。nullable：
+    // 冷启或从未 attempt 的行为 NULL。default 1 不适用（这是有符号增量非信息量）。
+    last_theta_delta: real('last_theta_delta'),
     // 软轨占位（本 wave 不写，进 audit allowlist，kind:'manual' 解除）:
     // fixed-anchor 慢热校准残差——Wave2 复盘/锚校准路径才写。n=1 结构性受锚质量约束。
     calibration_residual: real('calibration_residual'),

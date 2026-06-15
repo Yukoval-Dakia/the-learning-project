@@ -239,6 +239,13 @@
       "when": 1781518828661,
       "tag": "0033_large_gressill",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1781537504186,
+      "tag": "0034_mastery_theta_precision",
+      "breakpoints": true
     }
   ]
 }

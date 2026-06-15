@@ -114,3 +114,51 @@ export function difficultyToLogitB(difficulty: number, scale = 0.85): number {
 
 /** 弱锚（difficulty_proxy）的更新降权——VERIFY:difficulty-logit-map 选项2。 */
 export const DIFFICULTY_PROXY_WEIGHT = 0.3;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-361 Phase 2 (Urnings-Lite θ 不确定性) — 给点估计 θ̂ 配一个不确定性度量。
+//
+// Urnings 作不确定性「灵感」、非在线 item-half 更新（ADR-0042 amendment +
+// docs/design/2026-06-15-urnings-lite-calibration-amendment.md）。这里只做 θ̂ 的
+// Rasch Fisher information 累积，让后续 MFI 能给高不确定 θ 降权。零选题行为变更。
+//
+// 数学：1PL/Rasch 下 θ 的单观测 Fisher information I(θ) = p(1−p)（b 给定）。
+//   多次观测信息可加（独立），故 thetaPrecision 是 Σ I 的累积；θ̂ 的标准误从
+//   precision 派生 SE = 1/√(precision)。precision 越大 → SE 越小 → θ̂ 越可信。
+//   default precision = 1 让既有行 backfill-safe（弱先验 1 单位信息，SE=1）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Rasch/1PL 单观测 Fisher information for θ at item difficulty b：I(θ) = p(1−p)，
+ * 其中 p = σ(θ − b)。在 θ == b（p=0.5）时最大 0.25——题难度贴合能力时一次作答
+ * 提供最多 θ 信息；θ 远离 b（p→0 或 1）时信息趋 0（题太难/太易，作答几乎不增信）。
+ */
+export function fisherInformation(theta: number, b: number): number {
+  const p = expectedScore(theta, b);
+  return p * (1 - p);
+}
+
+/**
+ * θ̂ 标准误，从累积 precision 派生：SE = 1/√(precision)。**不持久化 SE**——只存
+ * precision，SE 由本函数现算（schema 单一真相）。floor 1e-9 防 precision=0 时除零。
+ */
+export function thetaSe(thetaPrecision: number): number {
+  return 1 / Math.sqrt(Math.max(thetaPrecision, 1e-9));
+}
+
+/**
+ * 累积 θ precision：precision' = precision + weight² · I(θ_before, b)。
+ *
+ * 用与 θ̂ 在线更新**同一个 b 锚 + 同一 bWeight** 喂信息：weight 是 caller 的
+ * bWeight（difficulty_proxy 时 ×0.3 降权 → 弱锚提供的信息也按 weight² 缩水，
+ * 信息按权重平方进 Fisher 累积，与加权 MLE 的有效样本量一致）。thetaBefore 是
+ * 这次更新前的 θ̂（信息在 θ̂ 移动之前的位置评估，与梯度同步）。
+ */
+export function updateThetaPrecision(
+  thetaPrecision: number,
+  thetaBefore: number,
+  b: number,
+  weight = 1,
+): number {
+  return thetaPrecision + weight * weight * fisherInformation(thetaBefore, b);
+}

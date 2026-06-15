@@ -341,4 +341,86 @@ describe('updateThetaForAttempt', () => {
     const rows = await db.select().from(mastery_state);
     expect(rows).toHaveLength(0);
   });
+
+  // ── YUK-361 Phase 2 — θ precision 持久化（Urnings-Lite 不确定性） ──────────────
+  it('persists theta_precision > 1 and last_theta_delta ≈ this attempt’s Δθ̂', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3, // → b=0 proxy
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const row = await readState(k);
+    // Cold-start precision = 1; one attempt adds weight²·p(1−p) > 0 → strictly > 1.
+    expect(row?.theta_precision).toBeGreaterThan(1);
+    // Cold start θ_before = 0, so the persisted delta equals the new theta_hat.
+    expect(row?.last_theta_delta).toBeCloseTo(row?.theta_hat ?? Number.NaN, 5);
+  });
+
+  it('anchored (item_calibration.b) question gains MORE precision than a difficulty-proxy question', async () => {
+    // The proxy anchor down-weights the update with bWeight = 0.3, and precision
+    // accumulates Fisher info scaled by weight² (= 0.09). The anchored question uses
+    // bWeight = 1. With both at θ=0, b=0 (p=0.5 → I=0.25), the anchored precision
+    // increment is 1·0.25 = 0.25 while the proxy is 0.09·0.25 = 0.0225 — so the
+    // anchored question's precision increment is strictly the larger of the two.
+    const kProxy = createId();
+    const kAnchored = createId();
+    const qProxy = createId();
+    const qAnchored = createId();
+    await seedKnowledge(kProxy);
+    await seedKnowledge(kAnchored);
+    await seedQuestion(qProxy, [kProxy], 3); // no calibration row → difficulty proxy
+    await seedQuestion(qAnchored, [kAnchored], 3);
+    // Anchored question gets item_calibration.b = 0 (same logit as difficulty=3 proxy)
+    // so the ONLY difference driving the precision gap is the proxy bWeight.
+    await db.insert(item_calibration).values({
+      id: newId(),
+      question_id: qAnchored,
+      b: 0,
+      confidence: 0.9,
+      track: 'hard',
+      source: 'llm_prior',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kProxy],
+        questionId: qProxy,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kAnchored],
+        questionId: qAnchored,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const proxyPrecision = (await readState(kProxy))?.theta_precision ?? 1;
+    const anchoredPrecision = (await readState(kAnchored))?.theta_precision ?? 1;
+    const proxyIncrement = proxyPrecision - 1; // cold-start base = 1
+    const anchoredIncrement = anchoredPrecision - 1;
+    expect(proxyIncrement).toBeGreaterThan(0);
+    expect(anchoredIncrement).toBeGreaterThan(proxyIncrement);
+    // Exact Fisher math: anchored 1²·0.25 = 0.25, proxy 0.3²·0.25 = 0.0225.
+    expect(anchoredIncrement).toBeCloseTo(0.25, 5);
+    expect(proxyIncrement).toBeCloseTo(0.09 * 0.25, 5);
+  });
 });
