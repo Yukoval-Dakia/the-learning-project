@@ -133,7 +133,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
   'propose_knowledge_mutation',
 ] as const satisfies readonly DomainToolName[];
 
-// M5-T3 (YUK-321) — 归属真相源已移至各包 manifest.copilotTools（五包 25 工具），
+// M5-T3 (YUK-321) — 归属真相源已移至各包 manifest.copilotTools（五包 26 工具，YUK-362 纠正：YUK-270/ADR-0032/0033 后涨到 26，旧注释 stale 写 25），
 // 本数组保持字面量是因为 src/ai/registry.ts（浏览器共享面）import 本文件，
 // 不能把 @/capabilities 拉进 web bundle（plan 裁决 h）。两面一致性由
 // src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
@@ -141,7 +141,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // CORE_TOOLS 退役时点（phase-deferred）：bootstrap.ts registerCoreTools 不在 M5
 // 退役——它注册的是全工具面（含 attribute_mistake / propose_variant /
 // propose_record_links / propose_record_promotion 与题目结构编辑工具等非
-// copilot allowlist 成员），copilotTools 贡献制只覆盖本数组 25 条。退役条件 =
+// copilot allowlist 成员），copilotTools 贡献制只覆盖本数组 26 条。退役条件 =
 // 其余 surface（mistake_action / orchestrator / dreaming 等）也完成 manifest 化
 // （post-M5 follow-up，Linear capture 见 plan Task 10 交接清单）；届时删
 // registerCoreTools 调用，由 register-capability-tools.unit.test.ts 的幂等用例
