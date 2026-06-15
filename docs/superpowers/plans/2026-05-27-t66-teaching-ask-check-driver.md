@@ -108,7 +108,7 @@ tests/server/teaching/
 ## §6 Skills / MCP usage
 
 - `superpowers:test-driven-development` —— e2e test 链 (ask_check → question → attempt → judge → mistake → variant) TDD
-- `mcp__auggie__codebase-retrieval` —— attempt 路径决策时 search "embedded-check attempt" 全引用
+- `mcp__serena__find_referencing_symbols` / `mcp__claude-context__search_code` —— attempt 路径决策时 search "embedded-check attempt" 全引用
 - UI design pre-flight per CLAUDE.md
 
 ---

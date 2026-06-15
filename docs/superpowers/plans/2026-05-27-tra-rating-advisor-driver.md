@@ -109,7 +109,7 @@ app/(app)/review/page.tsx  # 改：feedback 阶段嵌入 <RatingAdvisor>（等 U
 
 - `superpowers:test-driven-development` —— pure function 三档映射 + boundary cases
 - UI design pre-flight per CLAUDE.md（hard requirement）
-- 无 context7 / auggie 需要（在内场修改既有 review 路径，符号都已知）
+- 无 context7 / 语义检索需要（在内场修改既有 review 路径，符号都已知）
 
 ---
 

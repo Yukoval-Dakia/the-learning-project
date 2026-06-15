@@ -135,7 +135,7 @@ T-37 是 P0 critical path 关键 trigger。任何延期 compound 推 T-DR / T-D6
 
 - `superpowers:test-driven-development` —— Mem0 client + brief writer 双 path，TDD 严守
 - `mcp__context7__query-docs` —— Mem0 + pgvector API 必查（不靠 memory）
-- `mcp__auggie__codebase-retrieval` —— scope_tagger 接入点 search（哪些 event writer 需要传 scopes）
+- `mcp__claude-context__search_code` —— scope_tagger 接入点 search（哪些 event writer 需要传 scopes）
 
 其他 common rules 见 YUK-88 driver §4-§5。
 

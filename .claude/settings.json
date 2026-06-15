@@ -1,4 +1,18 @@
 {
+  "permissions": {
+    "deny": [
+      "mcp__codebase-memory__search_code",
+      "mcp__codebase-memory__search_graph",
+      "mcp__codebase-memory__get_code_snippet",
+      "mcp__codebase-memory__get_architecture",
+      "mcp__codebase-memory__manage_adr",
+      "mcp__codebase-memory__ingest_traces",
+      "mcp__codebase-memory__detect_changes",
+      "mcp__codebase-memory__delete_project",
+      "mcp__codebase-memory__list_projects",
+      "mcp__codebase-memory__index_status"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

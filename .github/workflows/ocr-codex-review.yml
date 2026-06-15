@@ -23,7 +23,7 @@ jobs:
       issues: write
       pull-requests: write
     env:
-      OCR_LLM_PROTOCOL: openai
+      OCR_LLM_PROTOCOL: anthropic
       OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
       OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
       OCR_BIN: ${{ vars.OCR_BIN }}

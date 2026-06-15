@@ -288,19 +288,19 @@ omc ultragoal checkpoint \
 - 多 issue 时不要 `Closes YUK-27 + YUK-28` 缩写，要 `Closes YUK-27` + `Closes YUK-28` 分行。
 - Issue body 用 6-section template（goal / scope / tasks / acceptance / 估算 / out-of-scope），不偏离。
 
-### 5.2 auggie（codebase 检索）
+### 5.2 serena + claude-context（codebase 检索）
 
-**Tool**：`mcp__auggie__codebase-retrieval`
+**Tools**：`mcp__serena__find_symbol` / `mcp__serena__find_referencing_symbols` / `mcp__serena__get_symbols_overview`（符号精确侧）+ `mcp__claude-context__search_code`（语义召回侧）
 
-**使用规则**（per CLAUDE.md "Codebase search (auggie)" + memory `feedback_search_strategy.md`）：
+**使用规则**（per CLAUDE.md "Codebase search (serena + claude-context)" + memory `feedback_search_strategy.md`）：
 
 | 场景 | 工具 |
 |---|---|
-| 跨文件语义检索 / 想了解某 feature 整体实现 | `mcp__auggie__codebase-retrieval` |
-| 已知确切符号 / 已知文件 / 列举所有引用 | `grep` / `Read`（auggie 是 overkill） |
-| grep 找不到不要直接断言"不存在" | **先 auggie 二次验证**（per memory，SQL / migration / view 走 auggie 才能命中） |
+| 跨文件语义检索 / 想了解某 feature 整体实现 | `mcp__claude-context__search_code` |
+| 已知确切符号 / 列举所有引用 / 文件结构 | serena（`find_symbol` / `find_referencing_symbols` / `get_symbols_overview`） |
+| grep 找不到不要直接断言"不存在" | **先 claude-context 语义检索二次验证**（per memory，SQL / migration / view 走语义检索才能命中） |
 
-**第一次用前 ToolSearch**：`select:mcp__auggie__codebase-retrieval`
+**第一次用前 ToolSearch**：`select:mcp__serena__find_symbol,...` / `select:mcp__claude-context__search_code`；serena 每 session 先调 `initial_instructions`
 
 ### 5.3 context7（外部库文档）
 
@@ -393,9 +393,9 @@ omc ultragoal checkpoint \
 
 ### 6.6 Search 顺序（per memory `feedback_search_strategy.md`）
 
-1. 已知 symbol / 文件 → `grep` / `Read`
-2. 跨文件 / 语义 / 不知道在哪 → `mcp__auggie__codebase-retrieval`
-3. grep 找不到 → **不要直接断言"不存在"** → auggie 二次验证（SQL / migration / view 容易漏）
+1. 已知 symbol → serena（`find_symbol` / `find_referencing_symbols`）；已知文件 → `Read`
+2. 跨文件 / 语义 / 不知道在哪 → `mcp__claude-context__search_code`
+3. grep 找不到 → **不要直接断言"不存在"** → claude-context 语义检索二次验证（SQL / migration / view 容易漏）
 4. 历史 commit / 谁改的 → `git log` / `git blame`，不要 mem 推
 
 ### 6.7 Subagent 调度（per memory `feedback_subagent_model.md`）
@@ -627,7 +627,7 @@ Phase 全 ship + 无回滚 → propose `docs/superpowers/status.md` update：
 | 在 atomic 内嵌 `question_ids[]` | post-grill 决定 → 改 artifact_ref block；不要 resurrect 老 schema |
 | 用 section_id 作 mark_wrong anchor | ADR-0019 整体废止；用 block_id |
 | 共用 Tool interface（YAGNI） | 等第二种 tool kind 出现再抽 |
-| `auggie` 工具不 ToolSearch 先 load | `auggie` 是 deferred；第一次用前必 `ToolSearch select:mcp__auggie__codebase-retrieval` |
+| serena / claude-context 工具不 ToolSearch 先 load | 两套均 deferred；第一次用前必 ToolSearch select 对应工具，serena 还要先 `initial_instructions` |
 | `pnpm dev` 不查 :3000 占用 | OrbStack 容器长期占；会跳 :3001，curl :3000 拿老 build |
 | commit message 用 emojis | CLAUDE.md / project conventions：用户不要求就不用 |
 | feature flags / backwards compat shims | 直接改代码，不要兜底 toggle |
