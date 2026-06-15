@@ -8,6 +8,10 @@
 
 **Tech Stack:** TypeScript, Drizzle/Postgres, Vitest unit/db tests, pg-boss worker jobs, existing practice capability package, existing Biome/tsc/test gates.
 
+> **Amendment（2026-06-15，owner 复核）**：
+> - **Phase 3 选题信号扩充**：L1 信号向量补 `exam_relevance` / `misconception_recurrence` / `transfer_gap`（GPT 研究稿 §9.2 复习推荐公式；选题不止 MFI 中心）。Task 4 `SelectionCandidateSignal` + Phase 1 signals 列纳入。详见 ADR-0042 编排档2 amendment「L1 信号集扩充」。
+> - **Phase 6 b_anchor 框定纠正**：feature→b 锚 = 当前 ItemPriorTask（LLM in-context feature→b，`source='llm_prior'` 低置信）的**训练升级版**，**不是 vs 1-5 proxy**。spike（`docs/design/2026-06-15-b-anchor-feasibility-spike.md`）裁决「仅 scale 锚可行」；**真 blocker = 数据**（无中文全科 b 标签），**非经济性**（owner「无所谓经济性」→ Phase 6 **不加经济闸**，只留数据可行性 PoC）。更轻近路 = LLaSA 学生模拟 prompt 升级 ItemPriorTask（零数据）。承重 = active-PPI firm-up，非冷启先验。详见 ADR-0043「b_anchor 来源」节。
+
 ---
 
 ## Executive Roadmap
