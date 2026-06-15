@@ -105,4 +105,19 @@ describe('softmaxProbabilities', () => {
     expect(p.every((x) => Number.isFinite(x))).toBe(true);
     expect(p.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
   });
+
+  it('temperature ≤ 0 抛错（除零 / 负温反转排序的护栏）', () => {
+    expect(() => softmaxProbabilities([2, 1], 0)).toThrow(/temperature must be > 0/);
+    expect(() => softmaxProbabilities([2, 1], -1)).toThrow(/temperature must be > 0/);
+  });
+
+  it('非有限 score 抛错（不静默产出全 NaN 的 π_i）', () => {
+    expect(() => softmaxProbabilities([1, Number.NaN])).toThrow(/non-finite score/);
+    expect(() => softmaxProbabilities([Number.POSITIVE_INFINITY, 0])).toThrow(/non-finite score/);
+  });
+
+  it('超大候选集不爆栈（不用 Math.max(...spread)）', () => {
+    const big = new Array(200_000).fill(0).map((_, i) => i % 7);
+    expect(() => softmaxProbabilities(big)).not.toThrow();
+  });
 });
