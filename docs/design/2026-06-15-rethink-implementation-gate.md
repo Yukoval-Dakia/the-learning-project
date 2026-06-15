@@ -72,6 +72,39 @@
 
 ---
 
+## §1.5 owner 裁定 + 落地（2026-06-15）
+
+owner 逐项拍定（PR #410 ratification）。grounding 后多项发现**已被既有 ADR 钉死**（审计 over-count，与 H1/H2/H3 同类）：
+
+| 项 | owner 裁定 | 落地 |
+|---|---|---|
+| ② 端到端环验收表 | 采纳,直接推进 | §1② 的 5 接缝表即《端到端冒烟验收表》(下方固化)；**②d archive.ts 反向断言已实现**(本 PR) |
+| ③H10 difficulty 桥 | 共享只读输入 | **已被 ADR-0035 §决定1 + §代价·difficulty 破口钉死**（「共享输入各自独立估计、不共享估计值、FSRS D↔PFA β linking 非等号」）——owner 裁定 = 确认既有，**无需新 ADR** |
+| ④ 故障态契约语义 | 采纳,直接推进 | verify 第四档「练而不测」/ 引擎 fail-closed / retraction 回滚 → 写进 YUK-349/350 验收标准（本 PR Linear）|
+| ⑤ note_verify 并入 B5 | 并入 | **ADR-0038 加 Amendment（2026-06-15）**：note_verify 为第四套并入统一 verify 契约；实施 follow-up 进 Linear |
+| ⑥ prior-echo 可见性 | **最强档：连置信区间一起呈现** | 见下 handoff 硬约束 |
+
+### §1.5.1 《端到端冒烟验收表》（②，固化）
+即 §1② 表的 5 接缝，每条 = 一个**端到端**（非单元）验收项，实施时逐条闭合、不得只做单面验收：a) 录入→图谱建节点可达 frontier；b) 判定→p(L) 单写路径含 retraction 回滚；c) mastery_state 从既有 event 回填/重算；d) 4 新承重墙表锁步进 `FK_ORDER`+`SCHEMA_VERSION`+备份（**②d 反向断言已落地兜这条**）；e) mem0 承重 prior 可恢复性。
+
+### §1.5.2 ⑥ claude design handoff 硬约束（owner 选最强档）
+- mastery / 难度**绝对值一律带置信区间 / 低置信标记呈现，绝不给干净数字**（不显示「掌握 78%」裸值）——数据口径 ADR-0035 §决定1 已定，本裁定**升为前端必须渲染**的 handoff 约束。
+- 数值旁**来源二态可分**：硬轨真实作答校准（firm up）vs 软轨 LLM 先验回吐（prior-echo）至少二态可视区分。
+- 节点详情页提供**诊断下钻入口**承载 CDM attribute 画像 / IRT 区分度（兑现四引擎全实例化付的「诊断丰富度」成本）。
+- 这三条作为 §2 mastery 展示 / /knowledge 探索面 claude design handoff 的**功能约束输入**（非像素层）。
+
+### §1.6 owner 裁定续（2026-06-15）—— §7 全决策面 + C 组
+
+owner 在 §1.5 之后续拍了 rethink 的**完整决策面**（不止审计的 5 项）：
+
+- **§7.1 硬决策 H5-H11**：**全采纳 synthesis 推荐**。H5（mem0 prior 只读软提示不进数值权重）/ H6（编排者输出永不进 extraction）/ H8（到期项 hard constraint）已在 ADR-0037/0039；H7（misconception 同一性 = 观测期自由文本 + pgvector 聚类先行）落 ADR-0036 范围；H9（dispatchAccept 下放押后，RT 暂中心 switch + 埋 Linear）；**H11（零成本基线 gate 矛盾）= 相对排序用合成栈（不需显著性）+ 绝对值标低置信，回退只针对「合成栈系统性差于基线」**——= owner「不计代价」立场，gate 只防系统性差不当否决。
+- **§7.2 软决策 12 条**：全采纳保守默认（含 item_calibration 分列同表 / extraction gate 落 PG / mastery_state 物化）。
+- **D17「数据可丢」前提：推翻**。慢热资产（mastery_state / item_calibration 硬轨 / mem0 个性化）从 owner 开始真实作答日用起视为**不可丢、必须可恢复**。落地：②d 已把 **7 张静默漏备份的持久业务表**（`goal`/`practice_stream_item`/`proposal_signals`/`mistake_variant`/`ai_task_runs`/`artifact_block_ref`/`memory_reconciliation_log`）纳入 `FK_ORDER`（SCHEMA_VERSION 4.1→4.2）；**mem0 collection 纳入备份策略 = follow-up Linear**（备 WAL 不备 collection 是半截，对应端到端验收表接缝 e）。
+- **A/B/C 18 行归档表：拍定（→ ADR-0039 Amendment 2026-06-15）**，15 B + 3 C + 0 A（保守，A 档只 mem0 episodic）。
+- **笔记 check 段 + 笔记形态：deferred** 到「笔记形态」专项讨论（notes-artifact 域 re-think，审计报 9 缺口；连带 note_update 终档 / note_refine 触发器 / 挂载双层图 / 进度可见性 / AI 改动撤销链）。
+
+---
+
 ## §2 形态/体验轨道（B 组）—— 转 claude design handoff + 补 Linear 工单
 审计最尖锐的 implementation-actionability 发现：**整个形态轴 A1-A4 零 Linear 工单**，被双重 punt（「待 owner 拍 §7」+「交 claude design」）。8 条形态缺口建议建一个 **form-axis epic + 子工单**，每条带「现状反模式→目标 + 空态/失信兜底/故障态为显式功能约束」：
 

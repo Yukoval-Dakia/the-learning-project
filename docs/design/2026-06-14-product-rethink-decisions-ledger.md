@@ -25,6 +25,14 @@
 - **慢热自校准**:owner 是唯一 n=1 真人,真实作答逐步成为 ground-truth 锚点。
 - 既有红线延续:evidence-first / propose-only / 不动树 / 科目是视角 / 防循环注入五防 / 护栏两层语义。
 
+### 0.1 北极星裁决锚(2026-06-15 owner 拍定·实施前收口)
+
+> 此前 §0 六条全局原则全是 HOW 约束,缺一个「成功长什么样」的目的锚。owner all-4/all-4 拍定,作所有 HOW 取舍(克制多克制/慢热多慢/E1 天花板能不能忍)的仲裁依据。详见 `2026-06-15-rethink-implementation-gate.md` §0。
+
+- **成功判据(四条全要,冲突逐案 surface 不预排序)**:留存(每天主动开来练)× 成效(某科相对自身真涨)× 代理信任(放心把今天学什么交给 AI)× 认识论诚实(不确定时如实告知)。
+- **自建存在理由(四条共成立 → 才 > 拼装 Anki+ChatGPT+Notion)**:统一认知图谱 + AI 单编排者 + 慢热掌握诊断 + 诚实可追溯。
+- **实施前收口裁定(114-agent completeness 审计)**:设计阶段 ~85%、0 blocker(骨架可起跑);两结构性缺口 = 全局锚真空(已补)+ 端到端环从没被当一个环缝过。5 项 owner 已拍(②端到端验收表 / ③H10 difficulty 共享只读输入 / ④故障态契约语义 / ⑤note_verify 并入 B5 / ⑥prior-echo 连置信区间呈现)。grounding 后 H1/H2/H3/H10 + ⑥数据口径多被既有 ADR 钉死(over-count),真改 = ADR-0038 加 note_verify 第四套 + ②d 备份反向断言。形态轴 8 条转 claude design(form-axis epic)。`2026-06-15-rethink-implementation-gate.md`(PR #410)。
+
 ---
 
 ## 1. 算法轴(B1-B5)
