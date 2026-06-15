@@ -1,22 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
+import { BACKUP_EXCLUDED_TABLES, FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.1" (P5.3: additive nullable memory_brief_note.long_term_freshness_score column)', () => {
-    expect(SCHEMA_VERSION).toBe('4.1');
+  it('SCHEMA_VERSION is "4.2" (②d backup-orphan fix: 7 persistent tables joined FK_ORDER)', () => {
+    expect(SCHEMA_VERSION).toBe('4.2');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 17 tables in topological order', () => {
-    // 16 → 17: learning_record loop dropped study_log (-1) and added
-    // learning_record + memory_brief_note (+2). knowledge_mastery view is
-    // read-only and excluded.
-    expect(FK_ORDER.length).toBe(17);
+  it('FK_ORDER lists all 24 tables in topological order', () => {
+    // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
+    // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
+    // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
+    // memory_reconciliation_log). knowledge_mastery view is read-only and excluded.
+    expect(FK_ORDER.length).toBe(24);
     expect(FK_ORDER[0]).toBe('knowledge');
-    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('cost_ledger');
+    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('memory_reconciliation_log');
   });
 
   it('FK_ORDER respects dependencies (parent before child)', () => {
@@ -25,6 +26,8 @@ describe('export constants', () => {
     expect(idx('source_document')).toBeLessThan(idx('question_block'));
     expect(idx('knowledge')).toBeLessThan(idx('knowledge_edge'));
     expect(idx('learning_session')).toBeLessThan(idx('event'));
+    // ②d: artifact_block_ref has a hard FK to artifact → must follow it.
+    expect(idx('artifact')).toBeLessThan(idx('artifact_block_ref'));
   });
 
   it('FK_ORDER includes all Phase 1c.1 Lane A new tables', () => {
@@ -52,5 +55,33 @@ describe('export constants', () => {
 
   it('FK_ORDER has no duplicates', () => {
     expect(new Set(FK_ORDER).size).toBe(FK_ORDER.length);
+  });
+
+  it('FK_ORDER includes the ②d backup-orphan fix tables (previously silent backup hole)', () => {
+    for (const t of [
+      'artifact_block_ref',
+      'ai_task_runs',
+      'mistake_variant',
+      'goal',
+      'proposal_signals',
+      'practice_stream_item',
+      'memory_reconciliation_log',
+    ]) {
+      expect(FK_ORDER).toContain(t);
+    }
+  });
+
+  it('BACKUP_EXCLUDED_TABLES holds only transient/operational tables', () => {
+    expect([...BACKUP_EXCLUDED_TABLES].sort()).toEqual([
+      'echo_jobs',
+      'editing_presence',
+      'job_events',
+    ]);
+  });
+
+  it('FK_ORDER and BACKUP_EXCLUDED_TABLES are disjoint', () => {
+    for (const t of FK_ORDER) {
+      expect(BACKUP_EXCLUDED_TABLES.has(t)).toBe(false);
+    }
   });
 });

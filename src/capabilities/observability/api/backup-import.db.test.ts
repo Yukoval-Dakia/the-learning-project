@@ -1,4 +1,4 @@
-import { FK_ORDER } from '@/server/export/constants';
+import { FK_ORDER, SCHEMA_VERSION } from '@/server/export/constants';
 import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -62,7 +62,7 @@ function buildZip(files: Record<string, string | Uint8Array>): Uint8Array {
 
 function validManifest(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
-    schema_version: '4.1',
+    schema_version: SCHEMA_VERSION,
     exported_at: 1700000000,
     include_assets: false,
     row_counts: {},
@@ -139,7 +139,7 @@ describe('POST /api/_/import — guards', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; expected: string; got: string };
     expect(body.error).toBe('schema_version_mismatch');
-    expect(body.expected).toBe('4.1');
+    expect(body.expected).toBe(SCHEMA_VERSION);
     expect(body.got).toBe('0.9');
   });
 
