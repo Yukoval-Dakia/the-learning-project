@@ -62,7 +62,7 @@ function buildZip(files: Record<string, string | Uint8Array>): Uint8Array {
 
 function validManifest(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
-    schema_version: '4.1',
+    schema_version: '4.2', // B1-W1: + mastery_state / item_calibration
     exported_at: 1700000000,
     include_assets: false,
     row_counts: {},
@@ -139,7 +139,7 @@ describe('POST /api/_/import — guards', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; expected: string; got: string };
     expect(body.error).toBe('schema_version_mismatch');
-    expect(body.expected).toBe('4.1');
+    expect(body.expected).toBe('4.2'); // B1-W1: + mastery_state / item_calibration
     expect(body.got).toBe('0.9');
   });
 
