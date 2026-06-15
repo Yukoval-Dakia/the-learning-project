@@ -1,7 +1,7 @@
 // POST /api/embedded-check/attempt
 // Tests for the embedded check attempt endpoint.
 
-import { event, learning_record, material_fsrs_state, question } from '@/db/schema';
+import { event, learning_record, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -100,6 +100,22 @@ describe('POST /api/embedded-check/attempt', () => {
 
     const records = await db.select().from(learning_record);
     expect(records).toHaveLength(0);
+  });
+
+  // B1-W1 (ADR-0035, D5 regression) — embedded checks are deliberately NOT
+  // enrolled into the diagnostic axis: they never update mastery_state.θ̂.
+  // Even with a labeled question, an embedded attempt writes zero mastery rows.
+  it('does NOT write mastery_state for an embedded-check attempt (D5)', async () => {
+    await seedEmbeddedQuestion('q_embed_theta', {
+      knowledge_ids: ['k_embed'],
+      reference_md: '答案',
+    });
+
+    const res = await postAttempt({ question_id: 'q_embed_theta', answer_md: '答案' });
+    expect(res.status).toBe(200);
+
+    const rows = await testDb().select().from(mastery_state);
+    expect(rows).toHaveLength(0);
   });
 
   // Test 2: Happy path wrong

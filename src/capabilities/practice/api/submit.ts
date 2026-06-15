@@ -49,6 +49,7 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
+import { updateThetaForAttempt } from '@/server/mastery/state';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
@@ -581,6 +582,19 @@ async function persistSubmit(
         last_review_event_id: eventId,
       });
     }
+    // B1-W1 (ADR-0035) — θ̂ 在线更新（p(L) 诊断维，与上面 FSRS R 轴正交，三轴正交
+    // 红线）。同 tx，受 question 行锁 + per-subject advisory lock（L382-386）并发
+    // 保护。outcome 复用上面的 success/failure 派生（review 路径 finalRating 二分，
+    // 无 partial）。写独立 mastery_state 表，不碰 event/learning_record count——
+    // hermetic 不破。
+    await updateThetaForAttempt(tx, {
+      knowledgeIds: q.knowledge_ids,
+      questionId,
+      outcome: outcome === 'success' ? 1 : 0,
+      difficulty: q.difficulty,
+      attemptEventId: eventId,
+      now,
+    });
   });
   // After the txn: primaryResult + primaryFsrsStateAfter were assigned inside; assert
   // non-null for TS narrowing (txn either commits and assigns, or throws).

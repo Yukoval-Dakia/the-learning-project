@@ -304,6 +304,57 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     expect(idxNames.has('memory_recon_unapplied_idx')).toBe(true);
   });
 
+  it('creates B1-W1 diagnostic tables (mastery_state, item_calibration) with expected columns (ADR-0035)', async () => {
+    const rows = await db.execute<{ table_name: string }>(sql`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        AND table_name IN ('mastery_state', 'item_calibration')
+    `);
+    const names = new Set(rows.map((r) => r.table_name));
+    expect(names.has('mastery_state')).toBe(true);
+    expect(names.has('item_calibration')).toBe(true);
+
+    const masteryCols = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'mastery_state'
+    `);
+    const masteryNames = new Set(masteryCols.map((r) => r.column_name));
+    for (const expected of [
+      'id',
+      'subject_kind',
+      'subject_id',
+      'theta_hat',
+      'evidence_count',
+      'success_count',
+      'fail_count',
+      'last_outcome_at',
+      'calibration_residual',
+      'fluency_illusion_flag',
+    ]) {
+      expect(masteryNames.has(expected)).toBe(true);
+    }
+
+    const calCols = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'item_calibration'
+    `);
+    const calNames = new Set(calCols.map((r) => r.column_name));
+    for (const expected of [
+      'id',
+      'question_id',
+      'b',
+      'confidence',
+      'track',
+      'source',
+      'irt_a',
+      'irt_c',
+      'cdm_json',
+      'kt_json',
+    ]) {
+      expect(calNames.has(expected)).toBe(true);
+    }
+  });
+
   it('knowledge_edge has FK to knowledge on both from and to', async () => {
     const rows = await db.execute<{ column_name: string; foreign_table_name: string }>(sql`
       SELECT
