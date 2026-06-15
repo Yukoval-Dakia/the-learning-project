@@ -6,7 +6,10 @@ import {
   difficultyToLogitB,
   eloK,
   expectedScore,
+  fisherInformation,
+  thetaSe,
   updateTheta,
+  updateThetaPrecision,
 } from './theta';
 
 describe('expectedScore (1PL ICC)', () => {
@@ -158,5 +161,56 @@ describe('conjunctiveCredits (multi-KC MLE, owner-ratified / SF-1 fix)', () => {
       expect(c).toBeGreaterThanOrEqual(-1);
       expect(c).toBeLessThanOrEqual(0);
     }
+  });
+});
+
+describe('fisherInformation (Rasch single-observation θ info I = p(1−p))', () => {
+  it('is maximal (0.25) when θ == b (p = 0.5)', () => {
+    expect(fisherInformation(0, 0)).toBeCloseTo(0.25, 10);
+  });
+
+  it('decays toward 0 as θ moves far from b (saturated item gives little info)', () => {
+    expect(fisherInformation(4, 0)).toBeLessThan(0.02);
+  });
+
+  it('is symmetric in |θ − b| (logistic odd symmetry)', () => {
+    expect(fisherInformation(2, 0)).toBeCloseTo(fisherInformation(-2, 0), 12);
+  });
+});
+
+describe('thetaSe (SE = 1/√precision, derived not stored)', () => {
+  it('precision=4 → SE=0.5', () => {
+    expect(thetaSe(4)).toBeCloseTo(0.5, 10);
+  });
+
+  it('precision=1 → SE=1 (backfill-safe default)', () => {
+    expect(thetaSe(1)).toBeCloseTo(1, 10);
+  });
+
+  it('higher precision → smaller SE (monotone)', () => {
+    expect(thetaSe(9)).toBeLessThan(thetaSe(4));
+  });
+
+  it('floors precision at 1e-9 to avoid division by zero', () => {
+    expect(Number.isFinite(thetaSe(0))).toBe(true);
+  });
+});
+
+describe('updateThetaPrecision (accumulate Σ I, weight² scaling)', () => {
+  it('adds full Fisher info at unit weight: 1 + 0.25 = 1.25', () => {
+    expect(updateThetaPrecision(1, 0, 0, 1)).toBeCloseTo(1.25, 10);
+  });
+
+  it('scales info by weight² (proxy bWeight=0.3 → only 0.09·0.25 added)', () => {
+    expect(updateThetaPrecision(1, 0, 0, 0.3)).toBeCloseTo(1 + 0.09 * 0.25, 10);
+  });
+
+  it('default weight is 1', () => {
+    expect(updateThetaPrecision(1, 0, 0)).toBeCloseTo(updateThetaPrecision(1, 0, 0, 1), 10);
+  });
+
+  it('a saturated item (θ ≫ b) adds almost no precision', () => {
+    const before = 2;
+    expect(updateThetaPrecision(before, 4, 0, 1) - before).toBeLessThan(0.02);
   });
 });

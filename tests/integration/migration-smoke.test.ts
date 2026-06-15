@@ -330,6 +330,9 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
       'last_outcome_at',
       'calibration_residual',
       'fluency_illusion_flag',
+      // YUK-361 Phase 2 — Urnings-Lite θ 不确定性持久化列。
+      'theta_precision',
+      'last_theta_delta',
     ]) {
       expect(masteryNames.has(expected)).toBe(true);
     }
