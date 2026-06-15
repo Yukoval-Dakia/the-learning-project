@@ -577,13 +577,16 @@ export async function submitPaperSlot(
     }
 
     // (d) B1-W1 (ADR-0035) — θ̂ 在线更新（p(L) 诊断维，与 (c) FSRS R 轴正交）。
-    // 复用 photoOnlyUnsupported 门：照片无法判分时无 outcome 信号，θ̂ 跳过（与
-    // FSRS 同步——ungraded 不调度也不诊断）。outcome 映射：success=1 / failure=0；
-    // partial→1（部分对≈成功证据，保守不扣 θ̂——占位语义，Wave2 复盘可细化为
-    // 0.5 outcome，但那需扩 updateTheta 签名，本 wave 不扩）。用 slot 的
-    // referencedKnowledgeIds（primary+secondary，无 primary 时回落 q.knowledge_ids，
-    // 与上面 FSRS / judge event 同源）。写独立 mastery_state 表——hermetic 不破。
-    if (!photoOnlyUnsupported && scheduled !== null) {
+    // 门：跳过 (i) photoOnlyUnsupported（照片无法判分）+ (ii) 任何 coarseOutcome
+    // ==='unsupported'（judge 路由未注册 / semantic provider 调用失败——可达路径，
+    // 见 embedded-check 测试）。FSRS 把 unsupported 当 'again' 是「可重评」妥协
+    // （UI 让用户重判），但 θ̂ 诊断维**没有重评回退出口**，把「系统无法判分」当
+    // 答错扣 θ̂ 会污染 p(L)——诊断维宁可不更新也不冤枉（review SF-3）。outcome
+    // 映射：success=1 / failure=0；partial→1（部分对≈成功证据，保守不扣——占位
+    // 语义，Wave2 复盘可细化为 0.5，需扩 updateTheta 签名，本 wave 不扩）。用 slot
+    // 的 referencedKnowledgeIds（primary+secondary，无 primary 回落 q.knowledge_ids，
+    // 与 FSRS / judge event 同源）。写独立 mastery_state 表——hermetic 不破。
+    if (!photoOnlyUnsupported && scheduled !== null && coarseOutcome !== 'unsupported') {
       await updateThetaForAttempt(tx, {
         knowledgeIds: referencedKnowledgeIds,
         questionId: input.questionId,
