@@ -20,9 +20,11 @@
 
 import type { Job } from 'pg-boss';
 
+import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
+  hasCancelRequest,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import type { Db } from '@/db/client';
 import { runAgentTask } from '@/server/ai/runner';
@@ -41,6 +43,12 @@ import { writeJobEvent } from '@/server/events/writer';
 export interface CopilotRunJobData {
   /** checkpoint_id = user_ask event id；既是 run handle 也是 job_events business_id。 */
   run_id: string;
+  /**
+   * YUK-364 — durable run 所属的 conversation 会话 id（dispatch 时 findOrCreate 得到、
+   * 已写在 user_ask 上）。handler 成功路径据它写 copilot_reply domain event，让回复对
+   * turns.ts 的 conversation_history 可见、user_ask 不成 phantom。
+   */
+  session_id: string;
   user_message: string;
   /** 'chat' | 'chip'——决定 surface / actorRef（与同步面 selectSurface 同语义）。 */
   triggered_by: 'chat' | 'chip';
@@ -50,6 +58,10 @@ export interface CopilotRunJobData {
 
 // 同步面 selectSurface / selectActorRef 的 worker 侧镜像（chat.ts 里是模块私有
 // 函数；durable 面在 worker 进程，内联同语义避免跨包导出私有 helper）。
+//
+// YUK-364 (forward-compat) — chip 分支当前是死代码：dispatch gate（api/chat.ts）
+// 只让 triggered_by==='chat' 入 durable 面（chip 是 UI 直触轻活，不写 user_ask）。
+// 保留 chip 分支让 handler 形态与同步面对齐，待将来 chip 也入 durable 时零改动。
 function selectSurface(triggeredBy: CopilotRunJobData['triggered_by']) {
   return triggeredBy === 'chip'
     ? ('copilot_user_suggested_mistake_action' as const)
@@ -82,15 +94,42 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const actorRef = selectActorRef(data.triggered_by);
   const taskRunId = `copilot_run_tool_${runId}`;
 
-  // 启动前查协作取消（v1：回合间早停，不做 live-steer）。run handle 是 run_id，
-  // 取消请求由别处写一条 copilot_run.cancel_requested 进同一 business_id；这里
-  // 在跑昂贵 SDK run 之前 replay 一次，已请求则早停写 failed(cancelled)。
+  // 启动前 replay 一次：F3 terminal-already-present 守卫 + 协作取消（v1：回合间
+  // 早停，不做 live-steer）。run handle 是 run_id，取消请求 / 终态事件由别处或上一
+  // 次投递写进同一 business_id。
   const priorEvents = await computeReplay(db, {
     businessTable: COPILOT_RUN_TABLE,
     businessId: runId,
     lastEventId: 0,
   });
-  if (priorEvents.some((e) => e.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED)) {
+
+  // YUK-364 (F3) — terminal-already-present 守卫（防 retry / redelivery 重复副作用）。
+  // queue 'agent' 档无显式 retryLimit（pg-boss 默认即 redeliver），且 EXPIRE_AGENT=2h
+  // 超时也会 redeliver；任一情况 re-throw / redeliver 会整个 CopilotTask 重跑 +
+  // propose_* 工具副作用重放 + 重复 STARTED/REPLY/DONE（quiz_gen:741-745 显式记过
+  // 同款 hazard）。本 run_id 若已含 DONE / FAILED（非 cancel）终态，说明已跑完或重投——
+  // 跳过，返回现有终态，不重跑、不重写。cheap，无论 retryLimit 多少都防。
+  const priorDone = priorEvents.some((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
+  const priorFailed = priorEvents.some((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
+  if (priorDone) {
+    const reply = priorEvents.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
+    const replyMd = (reply?.payload as { reply_md?: string } | undefined)?.reply_md ?? '';
+    const doneEvent = priorEvents.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
+    const priorTaskRunId =
+      (doneEvent?.payload as { task_run_id?: string } | undefined)?.task_run_id ?? taskRunId;
+    return { status: 'done', reply: replyMd, task_run_id: priorTaskRunId };
+  }
+  if (priorFailed) {
+    const failed = priorEvents.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
+    const payload = failed?.payload as { reason?: string; error?: string } | undefined;
+    // cancelled-before-start 也落在 FAILED；统一按现有终态返回，不重跑。
+    if (payload?.reason === 'cancelled') return { status: 'cancelled' };
+    return { status: 'failed', error: payload?.error ?? 'previously failed' };
+  }
+
+  // F4 — 复用 copilot-run-status 的 hasCancelRequest helper（消重内联 .some()，
+  // 救活 production 零调用的 dead helper）。已请求取消则早停写 failed(cancelled)。
+  if (hasCancelRequest(priorEvents)) {
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -140,12 +179,30 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   try {
     const result = await run('CopilotTask', runInput, { db, mcpServers, allowedTools });
 
-    // 终稿 reply 事件（done 的前序：消费者可先渲染 reply 再收 done）。
+    // YUK-364 (F1) — 写 conversation-历史可见的 copilot_reply domain event（经与
+    // inline 同一份 writeCopilotReply：extractPrimaryView 剥 primary_view marker +
+    // chained caused_by → user_ask，同 session_id）。turns.ts 的 conversation_history
+    // 只读 copilot_user_ask + copilot_reply domain event——不写它则 durable 回复对
+    // 历史不可见、user_ask 成 phantom（下一轮模型没有自己上一条 durable 答复的记忆）。
+    // job_events 的 REPLY/DONE 是另一职责（SSE 进度），两者都要：domain event 给
+    // 历史，job_events 给重连进度。terminal job_event 在 domain event 之后写，让
+    // F3 守卫据 DONE 跳过时不会漏写 domain event（domain event 已先落）。
+    const { cleanedReply } = await writeCopilotReply(db, {
+      sessionId: data.session_id,
+      userAskEventId: runId,
+      replyText: result.text,
+      actorRef,
+      taskRunId: result.task_run_id,
+      now: new Date(),
+    });
+
+    // 终稿 reply 事件（done 的前序：消费者可先渲染 reply 再收 done）。持久化 cleaned
+    // 文本（已剥 marker），与 domain event reply_md 一致。
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.REPLY,
-      payload: { reply_md: result.text, task_run_id: result.task_run_id },
+      payload: { reply_md: cleanedReply, task_run_id: result.task_run_id },
     });
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
@@ -153,7 +210,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       event_type: COPILOT_RUN_EVENTS.DONE,
       payload: { task_run_id: result.task_run_id, finish_reason: result.finishReason },
     });
-    return { status: 'done', reply: result.text, task_run_id: result.task_run_id };
+    return { status: 'done', reply: cleanedReply, task_run_id: result.task_run_id };
   } catch (err) {
     const message = String((err as Error)?.message ?? err);
     // 失败事件先写（终态可见），再 re-throw 让 pg-boss 走 DLQ/retry 配方（agent 档）。
@@ -181,8 +238,13 @@ export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[])
   return async (jobs) => {
     for (const job of jobs) {
       const data = job.data;
-      if (!data?.run_id || !data?.user_message || !data?.triggered_by) {
-        console.warn('[copilot_run] job missing run_id/user_message/triggered_by', job.id);
+      // session_id（YUK-364 F1）是成功路径写 copilot_reply domain event 的必要字段；
+      // 缺失则该 run 无法把回复挂回 conversation 会话——跳过而非半写。
+      if (!data?.run_id || !data?.session_id || !data?.user_message || !data?.triggered_by) {
+        console.warn(
+          '[copilot_run] job missing run_id/session_id/user_message/triggered_by',
+          job.id,
+        );
         continue;
       }
       const result = await runCopilotRun({ db, data });

@@ -451,6 +451,83 @@ export async function writeCopilotUserAsk(
   return userAskEventId;
 }
 
+// YUK-364 (ADR-0041 endurance W1 L2) — 共享 free-form reply 写入器。inline 路径
+// （runCopilotChatImpl free-form 收敛点）与 durable 路径（worker handler 成功路径）
+// 共用同一份写入逻辑，防止 conversation 历史可见的 copilot_reply domain event 形态
+// 在两条路径上分叉。durable run 之前只把终稿写进 job_events（SSE 进度），从不写
+// experimental:copilot_reply domain event，也不剥 primary_view marker —— turns.ts
+// 的 conversation_history 只读 copilot_user_ask + copilot_reply domain event，所以
+// durable 回复对历史不可见、user_ask 成 phantom（下一轮模型没有自己上一条 durable
+// 答复的记忆）。本 helper 收口该写入：extractPrimaryView 剥 marker + 写正确形态的
+// copilot_reply domain event（chained caused_by → userAskEventId，同 session_id）。
+//
+// 注意：teaching behavior pack（runTeachingBehaviorPack）有自己的 reply 写入（在
+// 一个 db.transaction 内 + turn_kind/skill_turn/skill_context 字段），那是确定性
+// 服务回复、不经 primary_view 收敛点，故 NOT 抽进本 helper —— 本 helper 只服务
+// free-form 路径（inline free-form 收敛点 + durable handler，两者皆 free-form 等价）。
+export interface WriteCopilotReplyResult {
+  replyEventId: string;
+  /** 剥掉 primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
+  cleanedReply: string;
+  /** 模型 nominate 的 hero（无则 undefined）。 */
+  primaryView?: CopilotPrimaryView;
+}
+
+export async function writeCopilotReply(
+  db: Db | Tx,
+  params: {
+    sessionId: string;
+    /** caused_by + in_reply_to 锚——通常是 user_ask（chat）或 chip trigger event id。 */
+    userAskEventId?: string;
+    /** 模型原始终稿（含可能的 primary_view marker；本 helper 负责剥）。 */
+    replyText: string;
+    /** copilot_reply 的 actor_ref（inline=selectActorRef；durable handler 同款）。 */
+    actorRef: string;
+    /** 真实 task_run_id（cost-trace 链锚）。 */
+    taskRunId: string;
+    /** ask 的 created_at；reply 戳 now+1ms 保证 (created_at,id) 排序里 reply 在 ask 之后。 */
+    now: Date;
+    writeFn?: WriteEventFn;
+  },
+): Promise<WriteCopilotReplyResult> {
+  const write = params.writeFn ?? writeEvent;
+  // YUK-307 — 在写入前 parse + strip primary_view marker（与 inline 同一收敛点形态）。
+  const { text: cleanedReply, primaryView } = extractPrimaryView(params.replyText, {
+    taskRunId: params.taskRunId,
+  });
+  // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
+  // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
+  // 的 ask 之前。reply 真在 ask 之后发生，1ms bump 既忠实又保 pair 顺序（与 inline 同）。
+  const replyAt = new Date(params.now.getTime() + 1);
+  const replyEventId = `copilot_reply_${createId()}`;
+  await write(db, {
+    id: replyEventId,
+    session_id: params.sessionId,
+    actor_kind: 'agent',
+    actor_ref: params.actorRef,
+    action: REPLY_EVENT_ACTION,
+    subject_kind: 'query',
+    subject_id: replyEventId,
+    outcome: null,
+    payload: {
+      surface: 'copilot',
+      session_id: params.sessionId,
+      reply_md: cleanedReply,
+      task_run_id: params.taskRunId,
+      in_reply_to_event_id: params.userAskEventId ?? null,
+      // YUK-307 (S3a additive) — persist hero nomination so Dock replay can restore
+      // it. Reply METADATA only（assembleConversationHistory 的 {role,text} strip 把
+      // 它结构性挡在每条未来 prompt 外，YUK-267 红线）。conditional spread — 无 nomination
+      // 时 payload 与 pre-YUK-307 byte-identical。
+      ...(primaryView ? { primary_view: primaryView } : {}),
+    },
+    caused_by_event_id: params.userAskEventId ?? null,
+    task_run_id: params.taskRunId,
+    created_at: replyAt,
+  });
+  return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
+}
+
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -1083,54 +1160,28 @@ async function runCopilotChatImpl(
   }
 
   // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
-  // parse + strip the primary_view marker ONCE from the collected reply. From
-  // here on, ONLY cleanedReply is used (persisted reply_md / returned reply /
-  // — via persistence — any future replayed history), so the marker text never
-  // survives the turn (YUK-267 text-channel guarantee).
-  const { text: cleanedReply, primaryView } = extractPrimaryView(replyText, {
-    taskRunId: replyRunId,
-  });
-
+  // parse + strip the primary_view marker ONCE from the collected reply, then
+  // persist the reply turn. From here on, ONLY cleanedReply is used (persisted
+  // reply_md / returned reply / — via persistence — any future replayed history),
+  // so the marker text never survives the turn (YUK-267 text-channel guarantee).
+  //
   // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
   // The reply chains to the user ask/chip event (causedByEventId) so the turn
   // pair is reconstructable. actor = the running agent (matches the chat run's
   // actorRef). Payload free-form per ExperimentalEvent (zero schema).
   //
-  // created_at is stamped strictly AFTER the ask (now + 1ms): the whole turn
-  // shares the single captured `now`, so without the offset the ask and reply
-  // tie on created_at and the turns reader's (created_at, id) sort can place the
-  // reply before its own ask. The reply genuinely follows the ask in time, so a
-  // 1ms bump is faithful and keeps the pair ordered for replay.
-  const replyAt = new Date(now.getTime() + 1);
-  const replyEventId = `copilot_reply_${createId()}`;
-  await write(db, {
-    id: replyEventId,
-    // session_id column = this event's conversation session (shared by teaching +
-    // copilot; codex #3356974269 裁决 — keep the column write, it is not teaching-
-    // exclusive). payload.session_id below is the redundant portable copy.
-    session_id: sessionId,
-    actor_kind: 'agent',
-    actor_ref: actorRef,
-    action: REPLY_EVENT_ACTION,
-    subject_kind: 'query',
-    subject_id: replyEventId,
-    outcome: null,
-    payload: {
-      surface: 'copilot',
-      session_id: sessionId,
-      reply_md: cleanedReply,
-      task_run_id: replyRunId,
-      in_reply_to_event_id: causedByEventId ?? null,
-      // YUK-307 (S3a additive) — persist the hero nomination so Dock replay can
-      // restore it (turns.ts replyPrimaryView → CopilotTurn.primary_view). Reply
-      // METADATA only: the {role,text} strip in assembleConversationHistory keeps
-      // it structurally out of every future prompt (YUK-267 红线). Conditional
-      // spread — absent nomination leaves the payload byte-identical to pre-YUK-307.
-      ...(primaryView ? { primary_view: primaryView } : {}),
-    },
-    caused_by_event_id: causedByEventId ?? null,
-    task_run_id: replyRunId,
-    created_at: replyAt,
+  // YUK-364 — 经共享 writeCopilotReply（与 durable worker handler 成功路径同一份
+  // 写入逻辑，防 copilot_reply domain event 形态分叉）。extractPrimaryView 剥 marker
+  // + created_at=now+1ms offset + payload/顶层字段形态 byte-identical（writeFn 透传
+  // deps.writeEventFn ?? writeEvent 保持既有可注入语义）。
+  const { replyEventId, cleanedReply, primaryView } = await writeCopilotReply(db, {
+    sessionId,
+    userAskEventId: causedByEventId,
+    replyText,
+    actorRef,
+    taskRunId: replyRunId,
+    now,
+    writeFn: write,
   });
 
   return {

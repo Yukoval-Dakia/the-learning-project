@@ -57,6 +57,10 @@ export interface CopilotRunStatusEvent {
  * 但消费者在 queued 事件到达前可能先订阅 → 给最保守的初态）。
  *
  * 纯 + 无依赖：unit-tested in copilot-run-status.test.ts。
+ *
+ * YUK-364 (defer) — cancel_requested 的 float 语义、以及 reconnect 时 started-vs-
+ * running 的边界，是消费端 run-card UI（后续 lane）才真正用到的呈现细节。当前无
+ * UI 消费者，这些边角语义留待消费端 lane 落地时按真实需求校准，不在本 lane 收口。
  */
 export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): CopilotRunStatus {
   let status: CopilotRunStatus = 'queued';

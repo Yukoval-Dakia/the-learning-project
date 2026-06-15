@@ -14,11 +14,23 @@ import {
   COPILOT_RUN_TABLE,
   deriveCopilotRunStatus,
 } from '@/capabilities/copilot/server/copilot-run-status';
+import { event } from '@/db/schema';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/server/ai/tools/allowlists';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
+import { and, eq } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type CopilotRunJobData, buildCopilotRunHandler, runCopilotRun } from './copilot_run';
+
+// YUK-364 (F1) — 读 conversation-历史可见的 copilot_reply domain event（turns.ts 读
+// 的就是这族 experimental:copilot_reply）。durable 成功路径必须写它，否则回复对历史
+// 不可见、user_ask 成 phantom。
+async function copilotReplyEvents(sessionId: string) {
+  return testDb()
+    .select()
+    .from(event)
+    .where(and(eq(event.session_id, sessionId), eq(event.action, 'experimental:copilot_reply')));
+}
 
 // runAgentTaskFn 的 ctx 形（db + mcpServers + allowedTools），让 mock.calls[0]
 // 携带 typed tuple。
@@ -45,6 +57,7 @@ function mcpMock() {
 
 const baseData: CopilotRunJobData = {
   run_id: 'copilot_user_ask_test_run',
+  session_id: 'sess_test_run',
   user_message: '帮我讲讲这道题',
   triggered_by: 'chat',
 };
@@ -85,6 +98,105 @@ describe('runCopilotRun', () => {
     expect(replyEvent?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
     // 状态派生 → done。
     expect(deriveCopilotRunStatus(events)).toBe('done');
+
+    // YUK-364 (F1) — 成功路径同时写 conversation-历史可见的 copilot_reply domain
+    // event（chained user_ask = run_id，同 session_id），否则回复对历史不可见。
+    const replies = await copilotReplyEvents(baseData.session_id);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      session_id: baseData.session_id,
+      action: 'experimental:copilot_reply',
+      caused_by_event_id: baseData.run_id,
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+    });
+    expect(replies[0]?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
+  });
+
+  it('F1 — primary_view marker 在 domain event 与 job_events 里都被剥掉', async () => {
+    const runId = 'run_primary_view';
+    const sessionId = 'sess_primary_view';
+    const marked =
+      '这是正文\n<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_1"}}-->';
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      runAgentTaskFn: agentMock(marked) as never,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    // handler 返回的 reply 已剥 marker。
+    expect(result).toEqual({ status: 'done', reply: '这是正文', task_run_id: 'tr_x' });
+
+    // domain event reply_md 剥了 marker + 带 primary_view metadata。
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload).toMatchObject({
+      reply_md: '这是正文',
+      primary_view: { source: 'artifact', ref: { kind: 'question', id: 'q_1' } },
+    });
+
+    // job_events REPLY 持久化的也是 cleaned 文本（与 domain event 一致，不含 marker）。
+    const events = await replay(runId);
+    const replyJobEvent = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
+    expect(replyJobEvent?.payload).toMatchObject({ reply_md: '这是正文' });
+  });
+
+  it('F3 — 已有 DONE 终态的 run 被重投 → 跳过，不重跑 AI、不重写事件/回复', async () => {
+    const runId = 'run_terminal_done';
+    const sessionId = 'sess_terminal_done';
+    const data = { ...baseData, run_id: runId, session_id: sessionId };
+
+    // 第一次：正常跑完。
+    const run = agentMock('第一次回答');
+    await runCopilotRun({
+      db: testDb(),
+      data,
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    const firstReplies = await copilotReplyEvents(sessionId);
+    expect(firstReplies).toHaveLength(1);
+    const firstEvents = await replay(runId);
+
+    // 第二次：模拟 retry / redelivery —— 同 run_id 再投一次。
+    const result2 = await runCopilotRun({
+      db: testDb(),
+      data,
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    // 返回现有终态。
+    expect(result2.status).toBe('done');
+    expect(result2).toMatchObject({ status: 'done', reply: '第一次回答', task_run_id: 'tr_x' });
+    // AI 没被再调（无重复副作用 / 重复 STARTED/REPLY/DONE）。
+    expect(run).toHaveBeenCalledTimes(1);
+    // 没有第二条 copilot_reply domain event（不重写历史）。
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
+    // job_events 序列不变（无重复 STARTED/REPLY/DONE）。
+    const secondEvents = await replay(runId);
+    expect(secondEvents.map((e) => e.event_type)).toEqual(firstEvents.map((e) => e.event_type));
+  });
+
+  it('F3 — 已有 FAILED 终态的 run 被重投 → 返回 failed，不重跑 AI', async () => {
+    const runId = 'run_terminal_failed';
+    const sessionId = 'sess_terminal_failed';
+    // 预写一条 FAILED（模拟上次失败后 pg-boss 又投了一次）。
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'error', error: 'mimo 500' },
+    });
+    const run = agentMock('不该被调用');
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result).toEqual({ status: 'failed', error: 'mimo 500' });
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('② AI throw → 写 failed 事件 + re-throw', async () => {
