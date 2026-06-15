@@ -103,7 +103,7 @@ Question (统一题库，single source of truth)
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-06-06）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 35 个 task）。
+> **Canonical source**: `src/ai/registry.ts` + `docs/adr/0004-pattern-c-two-type-agent-architecture.md` §"Task 现状"。本节为同步快照（2026-06-06）。**这是主要 task 的人读概览，不是完整清单**——精确数量与字段以 `src/ai/registry.ts` 的 `tasks` 对象为权威（当前 36 个 task）。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
 
@@ -142,6 +142,7 @@ Question (统一题库，single source of truth)
 | `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat`（AF S4 / YUK-203） | 是 | — | 唯一面向用户的对话式学习助手 |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
+| `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
 | `QuizGenTask` | mimo-v2.5-pro | pg-boss `quiz_gen` (T-SQ) | 是 | — | search-grounded 原创题（Tavily + domain MCP）|
 | `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）|
 | `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
