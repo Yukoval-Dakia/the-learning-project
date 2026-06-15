@@ -1,0 +1,1 @@
+ALTER TABLE "cost_ledger" ADD COLUMN "currency" text DEFAULT 'USD' NOT NULL;

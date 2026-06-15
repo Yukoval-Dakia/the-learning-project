@@ -182,6 +182,52 @@ describe('AI observability admin read model', () => {
     ]);
   });
 
+  it('splits cost rows by currency — never sums USD + CNY together (YUK-359)', async () => {
+    // mimo (USD) + GLM-OCR (CNY) on the same day, same task_kind would, under the
+    // old single-column SUM, produce a meaningless 0.01+0.02=0.03 mixed number.
+    await seedCost({
+      id: 'cost_usd',
+      task_run_id: 'run_a',
+      task_kind: 'AttributionTask',
+      cost: 0.01,
+      currency: 'USD',
+      occurred_at: new Date(),
+    });
+    await seedCost({
+      id: 'cost_cny',
+      task_run_id: 'run_a',
+      task_kind: 'AttributionTask',
+      cost: 0.02,
+      currency: 'CNY',
+      occurred_at: new Date(),
+    });
+
+    const cost = await getAdminCost(db, { days: 7 });
+
+    // Same day, same task_kind, two currencies → two separate rows, not one summed row.
+    expect(cost.days).toHaveLength(2);
+    const usdDay = cost.days.find((r) => r.currency === 'USD');
+    const cnyDay = cost.days.find((r) => r.currency === 'CNY');
+    expect(usdDay?.cost).toBeCloseTo(0.01, 5);
+    expect(cnyDay?.cost).toBeCloseTo(0.02, 5);
+
+    expect(cost.by_task).toHaveLength(2);
+    expect(cost.by_task).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          task_kind: 'AttributionTask',
+          currency: 'USD',
+          cost: expect.closeTo(0.01, 5),
+        }),
+        expect.objectContaining({
+          task_kind: 'AttributionTask',
+          currency: 'CNY',
+          cost: expect.closeTo(0.02, 5),
+        }),
+      ]),
+    );
+  });
+
   it('normalizes invalid cost windows to the default', async () => {
     const cost = await getAdminCost(db, { days: Number.NaN });
 

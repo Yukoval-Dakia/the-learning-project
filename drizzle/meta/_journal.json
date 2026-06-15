@@ -225,6 +225,13 @@
       "when": 1781422070624,
       "tag": "0031_fat_madelyne_pryor",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781512925450,
+      "tag": "0032_large_vertigo",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,8 @@ import { type DrizzleTransactionLike, type Job, fromDrizzle } from 'pg-boss';
 import { RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { writeCostLedger } from '@/server/ai/log';
+import { glmChatCostCny } from '@/server/ai/pricing';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { isQueueCreateRace } from '@/server/boss/client';
 import {
@@ -510,7 +512,21 @@ export function buildMemoryReconcileHandler(
         // GLM judgment — single call for all new memories + their candidates.
         let decisions: Awaited<ReturnType<typeof judge>>;
         try {
-          decisions = await judge(newMems, candidatesByNew);
+          decisions = await judge(newMems, candidatesByNew, {
+            // YUK-359: record GLM reconcile cost (CNY). Best-effort — a ledger
+            // write failure must never fail reconcile, so swallow + log.
+            onUsage: (usage) => {
+              void writeCostLedger(db, {
+                task_kind: 'memory_reconcile',
+                provider: 'glm',
+                model: 'glm-5.2',
+                cost: glmChatCostCny(usage.promptTokens, usage.completionTokens),
+                currency: 'CNY',
+                tokens_in: usage.promptTokens,
+                tokens_out: usage.completionTokens,
+              }).catch((err) => console.error('[memory_reconcile] writeCostLedger failed', err));
+            },
+          });
         } catch (err) {
           if (err instanceof ReconcileParseError) {
             // Failure mode 1: LLM parse failure → degrade entire batch to KEEP_BOTH.

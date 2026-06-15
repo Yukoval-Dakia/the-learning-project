@@ -479,6 +479,14 @@ export const tool_call_log = pgTable('tool_call_log', {
   error_reason: text('error_reason'),
   iteration: integer('iteration').notNull(),
   latency_ms: real('latency_ms').notNull(),
+  // YUK-359: always 0 by design — NOT a stub. DomainTools are local DB
+  // operations with no LLM cost; the few tools that inline-nest a runTask
+  // (e.g. author_question → QuestionAuthorTask) have their LLM cost recorded
+  // authoritatively in cost_ledger (keyed by the nested task's own run id), so
+  // recording it here too would double-count. Cost reports (/api/cost/today)
+  // read cost_ledger, never this column. The per-turn→nested-task attribution
+  // chain (which copilot turn drove which LLM spend) is the real gap, tracked
+  // in YUK-204, not solvable by filling this column.
   cost: real('cost').notNull(),
   occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
   // YUK-79: FK to event when mirrorEvent policy fires.
@@ -498,6 +506,10 @@ export const cost_ledger = pgTable(
     provider: text('provider').notNull(),
     model: text('model').notNull(),
     cost: real('cost').notNull(),
+    // YUK-359: `cost` 是原始计费值（evidence-first，不写入折算）；币种由本列标记。
+    // 历史行 + runner(mimo USD) 默认 'USD'；GLM-OCR / memory(GLM/百炼) 写 'CNY'。
+    // 读路径必须按 currency 分组聚合，绝不裸 SUM 混币（cost-today / ai-observability）。
+    currency: text('currency').notNull().default('USD'),
     tokens_in: integer('tokens_in').notNull(),
     tokens_out: integer('tokens_out').notNull(),
     outcome: text('outcome').notNull().default('success'),

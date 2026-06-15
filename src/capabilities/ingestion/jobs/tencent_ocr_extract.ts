@@ -487,10 +487,8 @@ async function processOneOcrJob(
     // 11. cost_ledger success.
     //     YUK-253: GLM is the first billable OCR point. Tencent/xiaomi report no
     //     cost, but GLM does: 0.2 元/M tokens (input = output price). cost is in
-    //     RMB 元 here (historically cost_ledger.cost carried USD for AI tasks, but
-    //     OCR always wrote 0 so the unit was never load-bearing). A single
-    //     currency column carrying mixed USD/RMB is tracked as a follow-up issue
-    //     (no schema column added this lane — audit:schema).
+    //     RMB 元 — marked by currency:'CNY' (YUK-359 added the column so read
+    //     paths group by currency instead of summing mixed USD/RMB).
     if (engine === 'glm') {
       await writeCostLedger(deps.db, {
         task_kind: TASK_KIND,
@@ -498,6 +496,7 @@ async function processOneOcrJob(
         model: 'glm-ocr',
         // cost in RMB 元 — GLM OCR 0.2元/M tokens (input=output).
         cost: calculateGlmOcrCost(glmPromptTokens, glmCompletionTokens),
+        currency: 'CNY',
         tokens_in: glmPromptTokens,
         tokens_out: glmCompletionTokens,
         outcome: 'success',
@@ -505,11 +504,13 @@ async function processOneOcrJob(
       });
     } else {
       // PHASE-DEFERRED (YUK-253): retained Tencent path bills 0 (no token report).
+      // Tencent prices in RMB, so currency:'CNY' even though cost is 0.
       await writeCostLedger(deps.db, {
         task_kind: TASK_KIND,
         provider: 'tencent',
         model: 'QuestionMarkAgent',
         cost: 0,
+        currency: 'CNY',
         tokens_in: 0,
         tokens_out: 0,
         outcome: 'success',
@@ -576,6 +577,8 @@ async function markFailedAndLogCost(
       provider: engine === 'glm' ? 'glm' : 'tencent',
       model: engine === 'glm' ? 'glm-ocr' : 'QuestionMarkAgent',
       cost: engine === 'glm' ? calculateGlmOcrCost(tokensIn, tokensOut) : 0,
+      // Both OCR engines price in RMB (YUK-359).
+      currency: 'CNY',
       tokens_in: tokensIn,
       tokens_out: tokensOut,
       outcome,
