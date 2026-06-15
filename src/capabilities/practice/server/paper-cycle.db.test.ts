@@ -20,6 +20,7 @@ import {
   artifact,
   event,
   learning_session,
+  mastery_state,
   material_fsrs_state,
   question,
 } from '@/db/schema';
@@ -227,6 +228,18 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     expect(paper?.session?.pos).toBe(1); // distinct answered slot
     expect(paper?.session?.wrong).toBe(1); // newest q1 attempt is incorrect
     expect(paper?.session?.right).toBe(0);
+
+    // B1-W1 (ADR-0035) — both graded paper attempts on k1 updated the p(L)
+    // diagnostic axis (mastery_state.θ̂) in their respective txs. Two attempts
+    // (correct then wrong) → evidence_count=2, success=1, fail=1.
+    const masteryK1 = await db
+      .select()
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_id, 'k1'));
+    expect(masteryK1).toHaveLength(1);
+    expect(masteryK1[0].evidence_count).toBe(2);
+    expect(masteryK1[0].success_count).toBe(1);
+    expect(masteryK1[0].fail_count).toBe(1);
   });
 
   it('partial index rejects a second live draft on the same slot (DB-level guard)', async () => {
@@ -470,6 +483,14 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       .from(material_fsrs_state)
       .where(eq(material_fsrs_state.subject_id, 'k1'));
     expect(fsrsRows).toHaveLength(0);
+
+    // B1-W1 (ADR-0035) — θ̂ shares the photoOnlyUnsupported gate: no outcome
+    // signal → no diagnostic update either (ungraded → not scheduled, not diagnosed).
+    const masteryRows = await db
+      .select()
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_id, 'k1'));
+    expect(masteryRows).toHaveLength(0);
 
     // getPracticeList: the slot is answered (pos=1) but counts as NEITHER right
     // nor wrong — the un-judged attempt must not pollute the summary.

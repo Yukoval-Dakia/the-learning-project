@@ -1,0 +1,43 @@
+// B1-W1 (ADR-0035 决定#3) — item_calibration 写者（硬轨 b/confidence applier）。
+//
+// 单写者契约（step9-invariant-audit.test.ts）：item_calibration 的 db.insert/update
+// 只允许出现在 src/server/mastery/。本模块是 ItemPriorTask backfill 的 applier；
+// θ̂ 更新路径（mastery/state.ts）只**读** item_calibration.b（item-半边锁死 G4）。
+//
+// 软轨列（irt_a/irt_c/cdm_json/kt_json）本 wave 不产出 → NULL（audit allowlist）。
+
+import { newId } from '@/core/ids';
+import type { ItemPriorDraftT } from '@/core/schema/item_prior';
+import type { Db, Tx } from '@/db/client';
+import { item_calibration } from '@/db/schema';
+
+type DbLike = Db | Tx;
+
+export interface ApplyItemPriorInput {
+  questionId: string;
+  draft: ItemPriorDraftT;
+  /** provenance — 默认 'llm_prior'（ItemPriorTask）。fixed_anchor 慢热校准走别的 source。 */
+  source?: string;
+}
+
+/**
+ * Persist a cold-start difficulty anchor for a question. Idempotent by
+ * `item_calibration_question_unique` (onConflictDoNothing) — re-running the
+ * backfill never double-writes. Hard track only; soft columns stay NULL.
+ */
+export async function applyItemPrior(db: DbLike, input: ApplyItemPriorInput): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(item_calibration)
+    .values({
+      id: newId(),
+      question_id: input.questionId,
+      b: input.draft.b_logit,
+      confidence: input.draft.confidence,
+      track: 'hard',
+      source: input.source ?? 'llm_prior',
+      created_at: now,
+      updated_at: now,
+    })
+    .onConflictDoNothing({ target: item_calibration.question_id });
+}

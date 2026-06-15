@@ -2,19 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.1" (P5.3: additive nullable memory_brief_note.long_term_freshness_score column)', () => {
-    expect(SCHEMA_VERSION).toBe('4.1');
+  it('SCHEMA_VERSION is "4.2" (B1-W1: additive mastery_state + item_calibration tables)', () => {
+    expect(SCHEMA_VERSION).toBe('4.2');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 17 tables in topological order', () => {
+  it('FK_ORDER lists all 19 tables in topological order', () => {
     // 16 → 17: learning_record loop dropped study_log (-1) and added
     // learning_record + memory_brief_note (+2). knowledge_mastery view is
     // read-only and excluded.
-    expect(FK_ORDER.length).toBe(17);
+    // 17 → 19 (B1-W1 / ADR-0035): added mastery_state + item_calibration
+    // (physical derived tables — in FK_ORDER for wipe/insert sweep, but NOT in
+    // the CSV body, mirroring the knowledge_mastery view's "derived" rationale).
+    expect(FK_ORDER.length).toBe(19);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('cost_ledger');
   });
@@ -25,6 +28,14 @@ describe('export constants', () => {
     expect(idx('source_document')).toBeLessThan(idx('question_block'));
     expect(idx('knowledge')).toBeLessThan(idx('knowledge_edge'));
     expect(idx('learning_session')).toBeLessThan(idx('event'));
+    // B1-W1: mastery_state after knowledge; item_calibration after question.
+    expect(idx('knowledge')).toBeLessThan(idx('mastery_state'));
+    expect(idx('question')).toBeLessThan(idx('item_calibration'));
+  });
+
+  it('FK_ORDER includes B1-W1 diagnostic tables (mastery_state, item_calibration)', () => {
+    expect(FK_ORDER).toContain('mastery_state');
+    expect(FK_ORDER).toContain('item_calibration');
   });
 
   it('FK_ORDER includes all Phase 1c.1 Lane A new tables', () => {

@@ -480,5 +480,54 @@
       "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
       "expected_by": "2026-07-31"
     }
+  },
+  "_comment_b1_w1_soft_track": "B1-W1 (ADR-0035) soft-track columns. n=1 (single learner) makes the cohort-structured IRT/CDM/KT parameters STRUCTURALLY non-estimable — this is a ceiling of the single-learner regime (Stocking 1990 / B1 foundation §6.3), NOT a 'write path not built yet' gap. They are kept NULL and NEVER feed p(L)/scheduling (ADR-0035). kind:'manual' because the Wave 2 phase is not yet named in docs/superpowers/status.md (a kind:'phase' entry would fail the phase-match check).",
+  "item_calibration.irt_a": {
+    "reason": "软轨区分度：n=1 无 cohort 结构性不可估（Stocking 1990）。慢热 firm-up 有天花板，置信上限受 n=1 约束、非纯时间问题（B1 foundation §6.3）",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "B1 Wave2 软轨估计器接通",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "item_calibration.irt_c": {
+    "reason": "软轨猜测下限：同 irt_a，n=1 结构性不可估",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "B1 Wave2 软轨估计器接通",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "item_calibration.cdm_json": {
+    "reason": "软轨 CDM slip/guess 画像：CDM 估计器 n=1 原样回吐先验，钉软轨不进 p(L)/调度（ADR-0035）",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "B1 Wave2 软轨估计器接通",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "item_calibration.kt_json": {
+    "reason": "软轨 KT 参数：同软轨族，n=1 结构性不可估",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "B1 Wave2 软轨估计器接通",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "mastery_state.calibration_residual": {
+    "reason": "fixed-anchor 慢热残差：Wave2 复盘/锚校准路径才写。残差精度继承锚质量，n=1 受结构性约束（B1 foundation）",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "B1 Wave2 fixed-anchor 残差路径",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "mastery_state.fluency_illusion_flag": {
+    "reason": "流畅度幻觉旗：A2 复盘判定才置位（Wave2）。本 wave 无复盘触发路径",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "B1 Wave2 A2 复盘判定",
+      "expected_by": "2026-09-30"
+    }
   }
 }

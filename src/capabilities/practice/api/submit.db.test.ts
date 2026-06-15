@@ -11,7 +11,7 @@
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { event, material_fsrs_state, question } from '@/db/schema';
+import { event, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 // YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
 // threaded through (student_image_refs).
@@ -142,6 +142,48 @@ describe('POST /api/review/submit', () => {
     expect(fsrs).toHaveLength(1);
     expect(fsrs[0].subject_kind).toBe('knowledge');
     expect(fsrs[0].last_review_event_id).toBe(events[0].id);
+  });
+
+  // B1-W1 (ADR-0035) — a graded review also updates the p(L) diagnostic axis
+  // (mastery_state.θ̂) in the same tx, orthogonal to the FSRS R axis above.
+  it('updates mastery_state θ̂ for the question knowledge on a graded review', async () => {
+    await seedQuestion('q_theta', { knowledge_ids: ['k_theta'], difficulty: 3 });
+
+    const res = await POST(
+      submitReq({ activity_ref: { kind: 'question', id: 'q_theta' }, rating: 'good' }),
+    );
+    expect(res.status).toBe(200);
+
+    const db = testDb();
+    const rows = await db
+      .select()
+      .from(mastery_state)
+      .where(
+        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k_theta')),
+      );
+    expect(rows).toHaveLength(1);
+    // rating 'good' → outcome=success → θ̂ rises above the cold-start 0 origin.
+    expect(rows[0].theta_hat).toBeGreaterThan(0);
+    expect(rows[0].evidence_count).toBe(1);
+    expect(rows[0].success_count).toBe(1);
+    expect(rows[0].fail_count).toBe(0);
+  });
+
+  it('lowers mastery_state θ̂ on a failed review (rating again)', async () => {
+    await seedQuestion('q_theta_fail', { knowledge_ids: ['k_theta_fail'], difficulty: 3 });
+
+    const res = await POST(
+      submitReq({ activity_ref: { kind: 'question', id: 'q_theta_fail' }, rating: 'again' }),
+    );
+    expect(res.status).toBe(200);
+
+    const rows = await testDb()
+      .select()
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_id, 'k_theta_fail'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].theta_hat).toBeLessThan(0);
+    expect(rows[0].fail_count).toBe(1);
   });
 
   it('writes FSRS projection per knowledge id, not per reviewed question', async () => {

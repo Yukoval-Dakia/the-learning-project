@@ -105,6 +105,12 @@ export const fastTestInclude = [
   'src/server/ai/output-format.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
   'src/server/ai/pricing.test.ts',
+  // B1-W1 (ADR-0035) — ItemPriorTask output parse barrier. Pure no-DB: imports
+  // only ./item-prior (→ @/core/schema/item_prior, Zod) — no @/db/client /
+  // postgres / drizzle / PgBoss. src/server/ai/** has no unit glob, so this MUST
+  // be listed explicitly or the db config's src/**/*.test.ts glob sweeps it into
+  // the testcontainer partition (pricing.test.ts lesson).
+  'src/server/ai/item-prior.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',

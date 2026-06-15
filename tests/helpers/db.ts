@@ -25,6 +25,9 @@ const ALL_TABLES = [
   'event',
   'proposal_signals',
   'material_fsrs_state',
+  // B1-W1 (ADR-0035) — diagnostic projection (θ̂/p(L)) + item difficulty anchor.
+  'mastery_state',
+  'item_calibration',
   'knowledge_edge',
   'learning_session',
   'answer',

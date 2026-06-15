@@ -35,6 +35,7 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
+import { updateThetaForAttempt } from '@/server/mastery/state';
 import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 
@@ -572,6 +573,24 @@ export async function submitPaperSlot(
         state: stateAfter,
         due_at: scheduled.dueAt,
         last_review_event_id: attemptEventId,
+      });
+    }
+
+    // (d) B1-W1 (ADR-0035) — θ̂ 在线更新（p(L) 诊断维，与 (c) FSRS R 轴正交）。
+    // 复用 photoOnlyUnsupported 门：照片无法判分时无 outcome 信号，θ̂ 跳过（与
+    // FSRS 同步——ungraded 不调度也不诊断）。outcome 映射：success=1 / failure=0；
+    // partial→1（部分对≈成功证据，保守不扣 θ̂——占位语义，Wave2 复盘可细化为
+    // 0.5 outcome，但那需扩 updateTheta 签名，本 wave 不扩）。用 slot 的
+    // referencedKnowledgeIds（primary+secondary，无 primary 时回落 q.knowledge_ids，
+    // 与上面 FSRS / judge event 同源）。写独立 mastery_state 表——hermetic 不破。
+    if (!photoOnlyUnsupported && scheduled !== null) {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: referencedKnowledgeIds,
+        questionId: input.questionId,
+        outcome: attemptOutcome === 'failure' ? 0 : 1,
+        difficulty: q.difficulty,
+        attemptEventId,
+        now,
       });
     }
 

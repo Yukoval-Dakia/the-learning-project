@@ -2,7 +2,9 @@
 // ingestion_session) DROPped — major bump.
 // P5.3 (YUK-183): additive nullable `memory_brief_note.long_term_freshness_score`
 // column — minor bump. Column rides the whole-row dump/restore automatically.
-export const SCHEMA_VERSION = '4.1';
+// B1-W1 (ADR-0035): additive `mastery_state` + `item_calibration` tables — minor
+// bump (4.1 → 4.2). Both ride the whole-row dump/restore via FK_ORDER below.
+export const SCHEMA_VERSION = '4.2';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -26,14 +28,24 @@ export const MAX_INLINE_ASSETS = 45;
 //   knowledge_edge.from/to → knowledge (FK)
 //   event.session_id → learning_session (FK, nullable)
 //   material_fsrs_state: polymorphic, no enforced FK
+//
+// B1-W1 (ADR-0035): added mastery_state (after knowledge — diagnostic projection
+// keyed by knowledge subject_id, no enforced FK) + item_calibration (after
+// question — logical dependency on question_id, no enforced FK). 17 → 19.
+// Like knowledge_mastery these are DERIVED (rebuildable from the event stream /
+// re-estimable), so they are NOT in the CSV export body — but unlike the view
+// they ARE physical tables that need wipe/insert sweep ordering, so they DO
+// belong in FK_ORDER (CSV-body membership and FK_ORDER membership are orthogonal).
 export const FK_ORDER = [
   'knowledge',
+  'mastery_state',
   'knowledge_edge',
   'source_asset',
   'source_document',
   'learning_session',
   'question_block',
   'question',
+  'item_calibration',
   'material_fsrs_state',
   'memory_brief_note',
   'learning_record',
