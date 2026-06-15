@@ -176,6 +176,13 @@ export const CopilotChatRequest = z.object({
         .optional(),
     })
     .optional(),
+  // YUK-364 (ADR-0041 endurance W1 L2) — durable run 开关。absent（默认）→ 同步面
+  // inline streamTaskCollecting 不动（短活，byte-identical）。true → route dispatch
+  // 写 user_ask（= run handle / checkpoint_id）后 boss.send('copilot_run')，返回
+  // { run_id }，run 在 worker 进程跑、进度落 job_events、SSE 经 computeReplay 重连。
+  // 判定阈值 v1 = 显式标记（最粗、最不误伤短活）；先粗、实测后调（needsToolCall /
+  // 预估多步的启发式留后续 lane）。
+  durable: z.boolean().optional(),
 });
 
 export type CopilotChatRequestT = z.infer<typeof CopilotChatRequest>;
@@ -407,6 +414,42 @@ const USER_ASK_EVENT_ACTION = 'experimental:copilot_user_ask';
 // escape hatch — zero schema change. Payload is free-form per ExperimentalEvent
 // (z.record). See L-copilot pre-flight缺口表.
 const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
+
+// YUK-364 (ADR-0041 endurance W1 L2) — 共享 user_ask 写入器。inline 路径
+// （runCopilotChatImpl chat 分支）与 durable 路径（route dispatch，enqueue 前
+// 写下作为 run handle / checkpoint_id 的 user_ask）共用同一份写入逻辑，防止两份
+// 事件形态分叉。生成 id、写事件、返回 id。session_id 列写在 user ask 上让 idle
+// 时钟把这视为本会话的一个 user turn（codex #3356884490，与 inline 同理）。
+export async function writeCopilotUserAsk(
+  db: Db,
+  params: {
+    sessionId: string;
+    userMessage: string;
+    now: Date;
+    writeFn?: (db: Db, event: WriteEventInput) => Promise<unknown>;
+  },
+): Promise<string> {
+  const write = params.writeFn ?? writeEvent;
+  const userAskEventId = `copilot_user_ask_${createId()}`;
+  await write(db, {
+    id: userAskEventId,
+    session_id: params.sessionId,
+    actor_kind: 'user',
+    actor_ref: 'user:self',
+    action: USER_ASK_EVENT_ACTION,
+    subject_kind: 'query',
+    subject_id: userAskEventId,
+    outcome: null,
+    payload: {
+      surface: 'copilot',
+      user_message: params.userMessage,
+      // AF S3a — redundant portable copy of the conversation envelope id.
+      session_id: params.sessionId,
+    },
+    created_at: params.now,
+  });
+  return userAskEventId;
+}
 
 type RunAgentTaskFn = (
   kind: string,
@@ -689,25 +732,14 @@ async function runCopilotChatImpl(
   //               so analytics + cause-chain links work.
   // ──────────────────────────────────────────────────────────────────────
   if (req.triggered_by === 'chat') {
-    userAskEventId = `copilot_user_ask_${createId()}`;
-    await write(db, {
-      id: userAskEventId,
-      // codex #3356884490 — write the session_id column on the user ask (not just
-      // payload) so the idle clock sees this as a user turn for THIS session.
-      session_id: sessionId,
-      actor_kind: 'user',
-      actor_ref: 'user:self',
-      action: USER_ASK_EVENT_ACTION,
-      subject_kind: 'query',
-      subject_id: userAskEventId,
-      outcome: null,
-      payload: {
-        surface: 'copilot',
-        user_message: req.user_message,
-        // AF S3a — redundant portable copy of the conversation envelope id.
-        session_id: sessionId,
-      },
-      created_at: now,
+    // YUK-364 — 经共享 writeCopilotUserAsk（与 durable route dispatch 同一份写入
+    // 逻辑，防事件形态分叉）。writeFn 透传 deps.writeEventFn ?? writeEvent 保持
+    // 既有可注入语义；id 生成 + session_id 列 + payload 形态 byte-identical。
+    userAskEventId = await writeCopilotUserAsk(db, {
+      sessionId,
+      userMessage: req.user_message,
+      now,
+      writeFn: write,
     });
     causedByEventId = userAskEventId;
   } else {
