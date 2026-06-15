@@ -37,6 +37,10 @@ export interface StreamPlanItem {
   ref_id: string;
   source: 'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import';
   reasoning: string;
+  // YUK-361 Phase 1（观测先行）— 选题信号快照（SelectionCandidateSignal 形态）。
+  // **零行为变更**：本 lane 不计算、不据此排序，materializeStream 落库时缺省 {}；
+  // 值由 Phase 3 候选收集层填充。
+  signals?: Record<string, unknown>;
 }
 
 export interface StreamPlan {
