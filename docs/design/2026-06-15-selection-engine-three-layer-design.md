@@ -161,8 +161,8 @@ L2 若漏列到期项（幻觉/context 不够/主动决定不列），L3 presenc
 
 三层形态（确定性信号 → LLM 编排 → 确定性约束）+ MFI 作 L1 信号 + **order 切分（到期序归 L1+L3）**收敛（rev 2 critic 修订）。14 待规约 blocker 留实施前定。
 
-**两个 owner 决策点（critic 提出，需拍）**：
-- **决策点 A（运行时形态，blocker 1）**：nightly 预产 / on-demand 实时 / hybrid。这是最根本的形态 fork，定 L2 成本/并发/缓存模型。**推荐 hybrid**（nightly 骨架 + 作答后增量重排，平衡 θ̂ 实时性与成本）。
-- **决策点 B（ADR-0042？）**：MFI 从 B1 自校准手段提升为调度信号 + 三层三明治 + order 切分，是够格 ADR 的新架构选择（adr-consistency #2/#3）。**建议另开 ADR-0042** 固化追溯链；若 owner 坚持 design-doc-only，§0/§7 已留逐问压实原文作追溯。
+**两个 owner 决策点（critic 提出）—— 已拍（2026-06-15）**：
+- **决策点 A（运行时形态，blocker 1）= hybrid**（owner 拍定）：nightly 预产骨架 + 作答后增量重排。平衡 θ̂ 实时性（MFI 要反映当前能力，纯 nightly 隔夜滞后）与 LLM 成本（纯 on-demand 每进 /practice 付一次）。现状 lazy compose on first read 是它的自然演进起点。**落地含义**：nightly job 产 `practice_stream_item` 骨架；`advanceStreamItem`（作答推进）后触发**增量重排**（只重跑受影响知识点的 L1+L2，非整流），增量重排的并发/成本/触发阈值进 blocker 1/2/9 实施规约。
+- **决策点 B = 开 ADR-0042**（owner 拍定）：MFI 从 B1 自校准手段提升为调度信号 + 三层三明治 + order 切分，固化为 ADR-0042（Related ADR-0037/0035/0030）。本 design doc 是其实施形态附件。
 
 数据前置（mastery_state + item_calibration）gated B1 载体 wave；过渡形态可用 `question.difficulty`（1-5）+ evidence_count 做 crude MFI 先 prototype。
