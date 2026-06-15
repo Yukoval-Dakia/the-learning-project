@@ -160,6 +160,16 @@ export const practiceCapability = defineCapability({
         load: () => import('./jobs/review_plan').then((m) => m.buildReviewPlanHandler),
       },
       { name: 'rejudge', queue: 'llm' },
+      // B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill。夜间扫
+      // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生
+      // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。cron 错开其它夜链 job。
+      {
+        name: 'item_prior_backfill',
+        schedule: { cron: '20 4 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/item_prior_backfill').then((m) => m.buildItemPriorBackfillHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft

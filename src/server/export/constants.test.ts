@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BACKUP_EXCLUDED_TABLES, FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.2" (②d backup-orphan fix: 7 persistent tables joined FK_ORDER)', () => {
+  it('SCHEMA_VERSION is "4.2" (②d backup-orphan 7 tables + B1-W1 mastery_state/item_calibration, all additive)', () => {
     expect(SCHEMA_VERSION).toBe('4.2');
   });
 
@@ -10,12 +10,16 @@ describe('export constants', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 24 tables in topological order', () => {
+  it('FK_ORDER lists all 26 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
-    // memory_reconciliation_log). knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(24);
+    // memory_reconciliation_log).
+    // 24 → 26 (B1-W1 / ADR-0035): added mastery_state + item_calibration (physical
+    // derived tables — in FK_ORDER for wipe/insert sweep, but NOT in the CSV body,
+    // mirroring the knowledge_mastery view's "derived" rationale).
+    // knowledge_mastery view is read-only and excluded.
+    expect(FK_ORDER.length).toBe(26);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('memory_reconciliation_log');
   });
@@ -28,6 +32,14 @@ describe('export constants', () => {
     expect(idx('learning_session')).toBeLessThan(idx('event'));
     // ②d: artifact_block_ref has a hard FK to artifact → must follow it.
     expect(idx('artifact')).toBeLessThan(idx('artifact_block_ref'));
+    // B1-W1: mastery_state after knowledge; item_calibration after question.
+    expect(idx('knowledge')).toBeLessThan(idx('mastery_state'));
+    expect(idx('question')).toBeLessThan(idx('item_calibration'));
+  });
+
+  it('FK_ORDER includes B1-W1 diagnostic tables (mastery_state, item_calibration)', () => {
+    expect(FK_ORDER).toContain('mastery_state');
+    expect(FK_ORDER).toContain('item_calibration');
   });
 
   it('FK_ORDER includes all Phase 1c.1 Lane A new tables', () => {
