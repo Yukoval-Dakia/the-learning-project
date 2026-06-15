@@ -163,7 +163,14 @@ WITH RECURSIVE cascade AS (
     AND c2.id <> ALL(cascade.path)     -- cycle guard
     AND cascade.depth < $maxDepth      -- 硬顶熔断（建议 64）
 )
-SELECT DISTINCT ON (id) * FROM cascade ORDER BY id, depth;
+-- DISTINCT ON 去重（同 id 多路径取最浅 depth），外层再按反依赖序排。
+-- Codex P2：DISTINCT ON 只能 ORDER BY id,…，**不能**直接出 depth DESC →
+-- 必须外层包一层，否则「反依赖序补偿」步骤的「已按 depth DESC 最下游优先」
+-- 假设落空，撤销顺序变成按 id 任意序、可能先撤根再撤子、破坏 FK/快照恢复。
+SELECT * FROM (
+  SELECT DISTINCT ON (id) * FROM cascade ORDER BY id, depth
+) deduped
+ORDER BY depth DESC, created_at DESC;   -- 最下游优先 = 反依赖序，喂编排器
 ```
 
 **护栏三件套**(承 CLAUDE.md「护栏两层语义」):① cycle guard(`path` 数组,与 pg 版本无关最稳);② depth limit(硬顶 64,turn 内实测≤几跳,是事故熔断非正常约束);③ node cap(外层 `LIMIT $maxNodes`,仿 `tree.ts:36` 5000;**截断时 `truncated=true` → 上层必须拒绝级联并要求人工**——截断级联 = 漏补偿 = 派生态半残)。
@@ -222,8 +229,9 @@ probe-3 实证 `author-artifact.ts:108` 的 artifact 实体写**本就不该带 
 
 | 难度 | 表 | 理由 |
 |---|---|---|
-| 最易(已半成) | material_fsrs_state / mastery_state / item_calibration | 单写者就位,零 FK,已声明 derived;只补快照算子 |
-| 中 | knowledge_edge(已禁外部 raw insert)→ knowledge(FK 序) | knowledge_edge 最自足,knowledge 补 #1 id 留痕 |
+| 最易(已半成) | material_fsrs_state / mastery_state | 单写者就位,零 FK,已声明 derived;只补快照算子 |
+| 中(需 backfill) | item_calibration | **非 attempt/review 派生**（`runItemPriorBackfill` 直接 insert，无 canonical event）→ 须补 `experimental:genesis` 锚，不能当「已半成」跳过（Codex P2，见 ADR-0044 §7 item_calibration 例外） |
+| 中 | knowledge(补 #1 id 留痕)→ knowledge_edge(已禁外部 raw insert) | **切换序 = knowledge → knowledge_edge（FK from/to→knowledge，与 §230 铁律一致）**；knowledge_edge 最自足、knowledge 补 #1 |
 | 难 | goal / mistake_variant / learning_item | 写点中等,有现成 propose/rate 路径,learning_item 7 写点跨三 capability |
 | 最难 | artifact(14 单写者跨多 capability)/ question_block(12 写点) | event-source artifact = 重设计 notes 域写契约,与 ADR-0040/YUK-358 笔记域 re-think 冲突面最大 |
 
@@ -802,7 +810,14 @@ WITH RECURSIVE cascade AS (
     AND c2.id <> ALL(cascade.path)       -- cycle guard：脏链不无限递归
     AND cascade.depth < $maxDepth        -- depth limit：硬顶（建议 64，远超 turn 内实际链深）
 )
-SELECT DISTINCT ON (id) * FROM cascade ORDER BY id, depth;
+-- DISTINCT ON 去重（同 id 多路径取最浅 depth），外层再按反依赖序排。
+-- Codex P2：DISTINCT ON 只能 ORDER BY id,…，**不能**直接出 depth DESC →
+-- 必须外层包一层，否则「反依赖序补偿」步骤的「已按 depth DESC 最下游优先」
+-- 假设落空，撤销顺序变成按 id 任意序、可能先撤根再撤子、破坏 FK/快照恢复。
+SELECT * FROM (
+  SELECT DISTINCT ON (id) * FROM cascade ORDER BY id, depth
+) deduped
+ORDER BY depth DESC, created_at DESC;   -- 最下游优先 = 反依赖序，喂编排器
 ```
 
 **护栏三件套**（CLAUDE.md「护栏两层语义」+ 防脏链）：
