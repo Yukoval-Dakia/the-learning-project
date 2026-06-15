@@ -9,15 +9,14 @@
 // 写路径：submit.ts / paper-submit.ts 的 attempt tx 内调 updateThetaForAttempt
 // （同 tx，不新开事务，守 hermetic）。
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import {
   DIFFICULTY_PROXY_WEIGHT,
+  conjunctiveCredits,
   difficultyToLogitB,
   eloK,
-  expectedScore,
-  updateTheta,
 } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, mastery_state } from '@/db/schema';
@@ -150,6 +149,19 @@ export async function updateThetaForAttempt(
   );
   if (knowledgeIds.length === 0) return;
 
+  // 0. Serialize the read-modify-write per KC (review SF-2). The caller's FSRS
+  //    advisory lock only covers fsrsSubjectIds (a possible SUBSET of these KCs —
+  //    submit.ts locks requested∩labels, paper-submit locks the slot primary
+  //    only), so KCs outside that subset would do an unlocked SELECT→compute→
+  //    upsert and lose a concurrent increment (onConflict overwrites with a value
+  //    derived from a stale read). Take our own lock on EVERY KC we update, in the
+  //    SAME `fsrs:knowledge:<id>` namespace the FSRS path uses, so same-KC attempts
+  //    serialize regardless of which path holds the lock. Sorted → stable acquire
+  //    order, no deadlock. Released at tx commit (we're inside the attempt tx).
+  for (const id of [...knowledgeIds].sort()) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
+  }
+
   // 1. Read the b anchor (item-half locked: read-only). track='hard' only —
   //    soft track never reaches p(L)/scheduling (ADR-0035).
   const calRows = await tx
@@ -186,19 +198,20 @@ export async function updateThetaForAttempt(
     };
   });
 
-  // 3. credit-assignment weights (VERIFY:multi-kc).
-  const creditWeights = computeCreditWeights(
+  // 3. 多 KC 合取 credit（owner 拍板 MLE，review SF-1）。conjunctiveCredits 直接
+  //    返回每 KC 的 log 似然梯度项（题目级 surprise × (1−p_k) 灵敏度），取代旧的
+  //    per-KC 残差权重（两端抵消、弱 KC 答错不降的反向 bug）。单 KC 退化为标准 Elo。
+  const credits = conjunctiveCredits(
     states.map((s) => s.theta),
     b,
     input.outcome,
   );
 
-  // 4 + 5. Per-KC update + upsert.
+  // 4 + 5. Per-KC update + upsert. θ̂ += k · bWeight · credit_k（弱锚 bWeight 降权）。
   for (let i = 0; i < states.length; i++) {
     const s = states[i];
     const k = eloK(s.evidence);
-    const finalWeight = creditWeights[i] * bWeight;
-    const newTheta = updateTheta(s.theta, b, input.outcome, k, finalWeight);
+    const newTheta = s.theta + k * bWeight * credits[i];
     await upsertMasteryState(tx, {
       subject_id: s.id,
       theta_hat: newTheta,
@@ -208,25 +221,4 @@ export async function updateThetaForAttempt(
       last_outcome_at: input.now,
     });
   }
-}
-
-/**
- * Credit-assignment weights across the KCs probed by ONE attempt.
- *   - single KC → [1].
- *   - correct (outcome=1) → all 1 (compensatory: a correct answer is weak
- *     evidence for every probed KC, equal small bump).
- *   - wrong (outcome=0) → normalized by (1 - p(L_k)): the KC most likely NOT
- *     mastered carries the most blame; an already-mastered KC barely moves.
- *     Degenerate guard: if every KC is fully mastered (Σ ≈ 0) fall back to equal
- *     split so a wrong answer is never silently dropped.
- */
-function computeCreditWeights(thetas: number[], b: number, outcome: 0 | 1): number[] {
-  const n = thetas.length;
-  if (n === 1) return [1];
-  if (outcome === 1) return thetas.map(() => 1);
-  // outcome === 0: blame ∝ (1 - p(L_k)), p(L_k) = σ(θ_k - b).
-  const blame = thetas.map((theta) => 1 - expectedScore(theta, b));
-  const total = blame.reduce((acc, x) => acc + x, 0);
-  if (total <= 0) return thetas.map(() => 1 / n);
-  return blame.map((x) => x / total);
 }
