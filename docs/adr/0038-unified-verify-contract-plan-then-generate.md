@@ -64,3 +64,15 @@
 - **把 copilot inline 路也纳入统一机检 verify 契约**——否决：inline 路 owner 当场人审即 gate（ADR-0031 D2 已拍板），再加机检闸是把「人在环」的优势浪费掉，且与 full-capability copilot 原则相悖。
 - **Variant 保持 accept-first 仅加事后 verify**——否决：accept-first 让未验证内容先进 `active` 池被轮换选中作答，污染 FSRS/p(L) 信号；翻转为 verify-then-promote 才与全链信任方向一致。
 - **'error' 通道并进 `fail` 不单列**——否决：瞬态故障该重试、真实 fail 该弃用/回 review，合并会让一次性故障把 draft 永久 strand（或让真实 fail 被无限重试），`quiz_verify.ts:189-192` 现有逻辑已证明二者必须分开。
+
+---
+
+## Amendment（2026-06-15）—— note_verify 并入第四套信任闸（owner 拍定）
+
+**Source**: `docs/design/2026-06-15-rethink-implementation-gate.md` §1⑤（114-agent completeness 审计 + owner 2026-06-15 裁定「并入」）。
+
+**背景**：本 ADR 决定 #1「三闸收敛」枚举了 OCR / QuizGen / Variant 三套，**漏了第四套结构同型的信任闸** `src/capabilities/notes/jobs/note_verify.ts`（产出 `NoteVerificationResult`，`src/core/schema/business.ts:298`）。它与三闸同型——`note_generate` 之后的独立 AI 第二遍信任 pass（`generation_status`「内容已生成」 vs `verification_status`「另一个 AI 信不信」），走 verify-then-promote。「一处定义 / 可统一单测 / 可统一观测」的核心承诺若把它留在契约外，等于带着未审计的第四实例出货。
+
+**决定（amends 决定 #1）**：note_verify **并入**统一 verify 契约。`NoteVerificationResult` 重定义为产出 Verifier Router 统一形状（多轴 check + `verdict` + note → rollup `overall`，含决定 #5 的 `'error'` 通道）；笔记产物走 verify-then-promote。**统一形状冻结时收敛实例 = 四套**（OCR / QuizGen / Variant / note_verify），契约外不再有信任闸实例。
+
+**边界**：笔记不 enroll 进练习池（不喂 FSRS / p(L)），故 note_verify 的 verdict **不接 auto-enroll source-tier 灰度**（决定 #4）；其 promote = 笔记从 `draft`/pending 升为 owner 可读的 active artifact，去向遵循出手强度表（ADR-0039；笔记面 AI 改动 A/B/C 归档见 gate doc §3 C 组）。实施为 follow-up（gate doc §5 + Linear），非本轮代码。
