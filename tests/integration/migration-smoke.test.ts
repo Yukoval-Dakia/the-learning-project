@@ -358,6 +358,52 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     }
   });
 
+  it('creates YUK-361 Phase 1 selection_observation table + practice_stream_item.signals (0035)', async () => {
+    // 表存在 + 期望列齐全。
+    const tableRows = await db.execute<{ table_name: string }>(sql`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        AND table_name = 'selection_observation'
+    `);
+    expect(new Set(tableRows.map((r) => r.table_name)).has('selection_observation')).toBe(true);
+
+    const obsCols = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'selection_observation'
+    `);
+    const obsNames = new Set(obsCols.map((r) => r.column_name));
+    for (const expected of [
+      'id',
+      'date',
+      'stream_item_id',
+      'ref_kind',
+      'ref_id',
+      'policy',
+      'selected',
+      'inclusion_probability',
+      'signals',
+      'created_at',
+    ]) {
+      expect(obsNames.has(expected)).toBe(true);
+    }
+
+    const obsIdx = await db.execute<{ indexname: string }>(sql`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'selection_observation'
+    `);
+    const obsIdxNames = new Set(obsIdx.map((r) => r.indexname));
+    expect(obsIdxNames.has('selection_observation_date_ref_idx')).toBe(true);
+    expect(obsIdxNames.has('selection_observation_date_idx')).toBe(true);
+
+    // practice_stream_item.signals 列存在（Task 6 零行为变更附加列）。
+    const streamCols = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'practice_stream_item'
+        AND column_name = 'signals'
+    `);
+    expect(streamCols).toHaveLength(1);
+  });
+
   it('knowledge_edge has FK to knowledge on both from and to', async () => {
     const rows = await db.execute<{ column_name: string; foreign_table_name: string }>(sql`
       SELECT

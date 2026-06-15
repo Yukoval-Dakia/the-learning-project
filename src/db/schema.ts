@@ -953,6 +953,12 @@ export const practice_stream_item = pgTable(
     added_by: text('added_by')
       .$type<'composer_nightly' | 'composer_live' | 'copilot' | 'user'>()
       .notNull(),
+    // YUK-361 Phase 1（观测先行）— 该项排入时的选题信号快照（MFI / θ̂ /
+    // theta_precision / π_i / 三个 #52 信号字段……，见 src/core/selection-signals.ts
+    // SelectionCandidateSignal）。**零行为变更**：本 lane 不改 composeDailyStream
+    // 排序，default {} 让既有 stream composer 测试零回归；值由 Phase 3 候选收集层
+    // 计算后填充。
+    signals: jsonb('signals').$type<JsonObject>().notNull().default({}),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1012,5 +1018,45 @@ export const memory_reconciliation_log = pgTable(
   (t) => [
     index('memory_recon_user_idx').on(t.user_id),
     index('memory_recon_unapplied_idx').on(t.applied_at),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Selection observation（YUK-361 Phase 1，观测先行）：选题的逐项遥测。
+//
+// 每个被选中的候选（题或卷）落一行，记录当时的策略（policy）、是否选中
+// （selected）、纳入概率 π_i（inclusion_probability，softmax 抽样产物）、以及完整
+// 信号快照（signals，SelectionCandidateSignal 形态）。π_i 是 D17 推翻后 active-PPI
+// 重标定**必需的慢热资产**（per-item 慢热校准从随机化选题的纳入概率反推暴露偏差），
+// 不可丢——故本表是承重 telemetry，进 FK_ORDER 备份（非 BACKUP_EXCLUDED）。
+//
+// **本 lane 零选题行为变更**：表 + writer helper 就位，但不接进 composeDailyStream；
+// 行为变更（随机化选题 + 真实 π_i 写入）是 Phase 3（roadmap Task 8）。default policy
+// 仍 legacy。inclusion_probability ∈ (0, 1]，writer 拒 ≤0（合法概率护栏）。
+// ─────────────────────────────────────────────────────────────────────────────
+export const selection_observation = pgTable(
+  'selection_observation',
+  {
+    id: text('id').primaryKey(),
+    // 选题发生的本地日（YYYY-MM-DD），与 practice_stream_item.date 同度量。
+    date: text('date').notNull(),
+    // 关联的流项（软引用 practice_stream_item.id）。nullable：观测可在物化流项前
+    // 落库（候选层），或对未入流的候选记录暴露偏差。
+    stream_item_id: text('stream_item_id'),
+    ref_kind: text('ref_kind').$type<'question' | 'paper'>().notNull(),
+    ref_id: text('ref_id').notNull(),
+    // 策略标识（本 lane default 'legacy'；Phase 3 起 'mfi_softmax' 等）。
+    policy: text('policy').notNull(),
+    selected: boolean('selected').notNull(),
+    // 纳入概率 π_i ∈ (0, 1]。writer 拒 ≤0（recordSelectionObservation 校验）。
+    inclusion_probability: real('inclusion_probability').notNull(),
+    // 信号快照（SelectionCandidateSignal，src/core/selection-signals.ts）。
+    signals: jsonb('signals').$type<JsonObject>().notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // 主查询路径：按日 + ref 取观测（writer test + Phase 3 重标定回放）。
+    index('selection_observation_date_ref_idx').on(t.date, t.ref_id),
+    index('selection_observation_date_idx').on(t.date),
   ],
 );
