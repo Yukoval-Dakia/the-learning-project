@@ -39,6 +39,8 @@ const ALL_TABLES = [
   'mistake_variant',
   // M2 (YUK-316) — 练习流日程表。
   'practice_stream_item',
+  // YUK-361 Phase 1（观测先行）— 选题逐项遥测（π_i 慢热资产）。
+  'selection_observation',
   // YUK-321 M5 gate 选项 b — editing presence 跨进程状态机表。
   'editing_presence',
   // YUK-342 P2 — memory reconcile write-ahead log.

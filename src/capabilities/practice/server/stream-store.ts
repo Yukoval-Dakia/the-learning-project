@@ -191,6 +191,8 @@ export async function materializeStream(
         status: 'pending' as const,
         reasoning: it.reasoning,
         added_by: addedBy,
+        // YUK-361 Phase 1：选题信号快照，缺省 {}（零行为变更）。
+        signals: it.signals ?? {},
         created_at: now,
         updated_at: now,
       })),

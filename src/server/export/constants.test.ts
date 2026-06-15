@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { BACKUP_EXCLUDED_TABLES, FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.2" (②d backup-orphan 7 tables + B1-W1 mastery_state/item_calibration, all additive)', () => {
-    expect(SCHEMA_VERSION).toBe('4.2');
+  it('SCHEMA_VERSION is "4.3" (YUK-361 Phase 1 selection_observation telemetry + practice_stream_item.signals, additive)', () => {
+    expect(SCHEMA_VERSION).toBe('4.3');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 26 tables in topological order', () => {
+  it('FK_ORDER lists all 27 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -18,10 +18,17 @@ describe('export constants', () => {
     // 24 → 26 (B1-W1 / ADR-0035): added mastery_state + item_calibration (physical
     // derived tables — in FK_ORDER for wipe/insert sweep, but NOT in the CSV body,
     // mirroring the knowledge_mastery view's "derived" rationale).
+    // 26 → 27 (YUK-361 Phase 1): added selection_observation — 承重 telemetry，π_i
+    // 是 active-PPI 重标定必需的慢热资产 (D17 推翻后)，进备份 (非 BACKUP_EXCLUDED)。
     // knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(26);
+    expect(FK_ORDER.length).toBe(27);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('memory_reconciliation_log');
+  });
+
+  it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {
+    expect(FK_ORDER).toContain('selection_observation');
+    expect(BACKUP_EXCLUDED_TABLES.has('selection_observation')).toBe(false);
   });
 
   it('FK_ORDER respects dependencies (parent before child)', () => {
