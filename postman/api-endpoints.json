@@ -141,7 +141,7 @@
     "methods": [
       {
         "method": "POST",
-        "summary": "向 Copilot 发送一条用户消息。默认响应 SSE 流（text/event-stream）；durable:true 时返回 202 JSON { run_id }",
+        "summary": "向 Copilot 发送一条用户消息。默认响应 SSE 流（text/event-stream）；durable:true 时返回 202 JSON { run_id, session_id }",
         "query": [],
         "contentType": "application/json",
         "bodyExample": {

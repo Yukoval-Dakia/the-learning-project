@@ -36,6 +36,31 @@ describe('deriveCopilotRunStatus', () => {
     ).toBe('running');
   });
 
+  // CodeRabbit fix — STEP/REPLY 首次出现（还没见过 STARTED）不应被降级为 'started'。
+  // 「取最高非终态阶段」：STEP/REPLY 是 run 正在跑的明确信号，恒为 'running'。
+  it("STEP/REPLY 首次出现（无 STARTED）→ 'running'，不降级为 'started'", () => {
+    // 只有 STEP（STARTED 乱序/丢失）。
+    expect(deriveCopilotRunStatus([{ event_type: COPILOT_RUN_EVENTS.STEP }])).toBe('running');
+    // 只有 REPLY。
+    expect(deriveCopilotRunStatus([{ event_type: COPILOT_RUN_EVENTS.REPLY }])).toBe('running');
+    // QUEUED → REPLY（STARTED 缺失）。
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED },
+        { event_type: COPILOT_RUN_EVENTS.REPLY },
+      ]),
+    ).toBe('running');
+  });
+
+  it("STARTED 在 running 之后到达（乱序）不回退为 'started'", () => {
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.STEP },
+        { event_type: COPILOT_RUN_EVENTS.STARTED },
+      ]),
+    ).toBe('running');
+  });
+
   it('done 终态 last-writer wins', () => {
     expect(
       deriveCopilotRunStatus([
