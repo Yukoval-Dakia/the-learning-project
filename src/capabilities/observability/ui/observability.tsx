@@ -70,16 +70,42 @@ interface RunDetail {
   tool_calls: Array<{ id: string; tool_name: string; latency_ms: number; iteration: number }>;
 }
 
+// YUK-359: cost rows carry a currency (USD = mimo/runner, CNY = GLM-OCR /
+// memory reconcile); each (day|task_kind, currency) is a separate row.
 interface CostResponse {
   days_window: number;
-  days: Array<{ day: string; cost: number; tokens_in: number; tokens_out: number; calls: number }>;
-  by_task: Array<{
-    task_kind: string;
+  days: Array<{
+    day: string;
+    currency: string;
     cost: number;
     tokens_in: number;
     tokens_out: number;
     calls: number;
   }>;
+  by_task: Array<{
+    task_kind: string;
+    currency: string;
+    cost: number;
+    tokens_in: number;
+    tokens_out: number;
+    calls: number;
+  }>;
+}
+
+const COST_CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥' };
+
+// Sum costs per-currency — NEVER cross-currency (YUK-359).
+function sumByCurrency(rows: Array<{ currency: string; cost: number }>): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.currency, (m.get(r.currency) ?? 0) + r.cost);
+  return m;
+}
+
+function formatMoneyByCurrency(totals: Map<string, number>): string {
+  if (totals.size === 0) return '$0.0000';
+  return [...totals.entries()]
+    .map(([currency, v]) => `${COST_CURRENCY_SYMBOL[currency] ?? `${currency} `}${v.toFixed(4)}`)
+    .join(' · ');
 }
 
 interface FailureCluster {
@@ -97,8 +123,9 @@ interface FailureCluster {
   }>;
 }
 
-function formatMoney(value: number | null | undefined): string {
-  return `$${(value ?? 0).toFixed(4)}`;
+function formatMoney(value: number | null | undefined, currency = 'USD'): string {
+  const sym = COST_CURRENCY_SYMBOL[currency] ?? `${currency} `;
+  return `${sym}${(value ?? 0).toFixed(4)}`;
 }
 
 function formatTokens(value: number): string {
@@ -396,7 +423,8 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
   });
   const days = costQ.data?.days ?? [];
   const byTask = costQ.data?.by_task ?? [];
-  const totalCost = days.reduce((sum, row) => sum + row.cost, 0);
+  // YUK-359: spend totals are per-currency (never cross-currency summed).
+  const totalByCurrency = sumByCurrency(days);
   const totalCalls = days.reduce((sum, row) => sum + row.calls, 0);
   const totalTokens = days.reduce((sum, row) => sum + row.tokens_in + row.tokens_out, 0);
   const maxDayCost = Math.max(...days.map((row) => row.cost), 0.000001);
@@ -422,7 +450,11 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
       </PageHeader>
 
       <div className="kpi-strip">
-        <Kpi label="30d spend" value={formatMoney(totalCost)} note={`${days.length} days`} />
+        <Kpi
+          label="30d spend"
+          value={formatMoneyByCurrency(totalByCurrency)}
+          note={`${days.length} rows`}
+        />
         <Kpi label="calls" value={totalCalls} note="ledger rows" />
         <Kpi label="tokens" value={formatTokens(totalTokens)} note="in + out" />
         <Kpi label="tasks" value={byTask.length} note="task kinds" />
@@ -437,12 +469,14 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
             <h2 style={sectionTitleStyle}>Daily trend</h2>
             <div style={barListStyle}>
               {days.map((row) => (
-                <div key={row.day} className="admin-bar-row">
-                  <span style={barLabelStyle}>{row.day}</span>
+                <div key={`${row.day}:${row.currency}`} className="admin-bar-row">
+                  <span style={barLabelStyle}>
+                    {row.day} · {row.currency}
+                  </span>
                   <span style={barTrackStyle} className="admin-bar-track">
                     <span style={{ ...barFillStyle, width: `${(row.cost / maxDayCost) * 100}%` }} />
                   </span>
-                  <span style={barValueStyle}>{formatMoney(row.cost)}</span>
+                  <span style={barValueStyle}>{formatMoney(row.cost, row.currency)}</span>
                 </div>
               ))}
               {days.length === 0 && <p style={mutedTextStyle}>No cost rows in the window.</p>}
@@ -453,15 +487,17 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
             <h2 style={sectionTitleStyle}>By task kind</h2>
             <div style={barListStyle}>
               {byTask.map((row) => (
-                <div key={row.task_kind} className="admin-bar-row">
-                  <span style={barLabelStyle}>{row.task_kind}</span>
+                <div key={`${row.task_kind}:${row.currency}`} className="admin-bar-row">
+                  <span style={barLabelStyle}>
+                    {row.task_kind} · {row.currency}
+                  </span>
                   <span style={barTrackStyle} className="admin-bar-track">
                     <span
                       style={{ ...barFillStyle, width: `${(row.cost / maxTaskCost) * 100}%` }}
                     />
                   </span>
                   <span style={barValueStyle}>
-                    {formatMoney(row.cost)} · {row.calls}
+                    {formatMoney(row.cost, row.currency)} · {row.calls}
                   </span>
                 </div>
               ))}

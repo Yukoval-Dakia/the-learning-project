@@ -103,6 +103,8 @@ export const fastTestInclude = [
   // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
   // Same enumeration requirement as above (no src/server/ai/** unit glob).
   'src/server/ai/output-format.test.ts',
+  // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
+  'src/server/ai/pricing.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',

@@ -74,8 +74,13 @@ type GlmChatBody = {
 
 type GlmChatResponse = {
   choices?: Array<{ message?: { content?: string } }>;
+  // YUK-359: OpenAI-compat usage — present on success, previously discarded.
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   error?: { code?: string | number; message?: string };
 };
+
+/** YUK-359 — token usage surfaced to the caller so it can write cost_ledger. */
+export type ReconcileUsage = { promptTokens: number; completionTokens: number };
 
 type GlmConfig = {
   baseURL: string;
@@ -290,7 +295,14 @@ export function applyConfidenceThreshold(
 export async function judgeReconciliation(
   newMems: NewMemoryEntry[],
   candidatesByNew: CandidatesByNew,
-  opts: { env?: Env; timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+  opts: {
+    env?: Env;
+    timeoutMs?: number;
+    fetchImpl?: typeof fetch;
+    // YUK-359: fired with token usage on a successful GLM response so the caller
+    // (triggers.ts) can write cost_ledger. Never throws into the reconcile path.
+    onUsage?: (usage: ReconcileUsage) => void;
+  } = {},
 ): Promise<ReconcileDecision[]> {
   const env = opts.env ?? process.env;
   const glmConfig = resolveGlmConfig(env);
@@ -369,6 +381,19 @@ export async function judgeReconciliation(
       'GLM reconcile response has no message content',
       JSON.stringify(json),
     );
+  }
+
+  // YUK-359: surface usage for cost_ledger. Guard so a callback throw never
+  // corrupts the reconcile result (cost tracking is best-effort observability).
+  if (opts.onUsage && json.usage) {
+    try {
+      opts.onUsage({
+        promptTokens: json.usage.prompt_tokens ?? 0,
+        completionTokens: json.usage.completion_tokens ?? 0,
+      });
+    } catch (err) {
+      console.error('[reconcile-llm] onUsage callback failed', err);
+    }
   }
 
   const decisions = parseReconcileResponse(content);

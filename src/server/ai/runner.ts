@@ -48,6 +48,7 @@ import {
   writeCostLedger,
   writeToolCallLog,
 } from './log';
+import { type TokenCounts, effectiveCostUsd } from './pricing';
 import { type ResolvedProvider, resolveTaskProvider } from './providers';
 
 // ============================================================================
@@ -456,6 +457,10 @@ export async function runTask(
 
   let resultText = '';
   let usage = { inputTokens: 0, outputTokens: 0 };
+  // YUK-359: per-token-type buckets for local cost fallback (mimo reports no
+  // total_cost_usd). `usage.inputTokens` keeps the legacy input+cache_read sum
+  // for the cost_ledger.tokens_in column; `tokenCounts` keeps them split for pricing.
+  let tokenCounts: TokenCounts = { inputTokens: 0, outputTokens: 0 };
   let cost_usd: number | undefined;
   let stopReason = 'unknown';
   // YUK-299 seam: the SDK fills this on the success result when ctx.outputFormat
@@ -475,6 +480,12 @@ export async function runTask(
           usage = {
             inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
             outputTokens: u?.output_tokens ?? 0,
+          };
+          tokenCounts = {
+            inputTokens: u?.input_tokens ?? 0,
+            outputTokens: u?.output_tokens ?? 0,
+            cacheReadTokens: u?.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
           };
           cost_usd = msg.total_cost_usd;
           stopReason = msg.stop_reason ?? 'stop';
@@ -527,13 +538,16 @@ export async function runTask(
   // CostLedger: `cost_ledger.cost` is `real`, stored in USD (consistent
   // with /api/cost/today which sums + renders as $<spend>). Write the
   // raw USD float; do NOT multiply by 1e6.
+  // YUK-359: mimo reports no total_cost_usd → effectiveCostUsd falls back to
+  // token×price (pricing.ts). currency:'USD' is the runner path's invariant.
   try {
     await writeCostLedger(ctx.db, {
       task_run_id: taskRunId,
       task_kind: kind,
       provider: resolved.provider,
       model: resolved.model,
-      cost: cost_usd ?? 0,
+      cost: effectiveCostUsd(resolved.model, tokenCounts, cost_usd),
+      currency: 'USD',
       tokens_in: usage.inputTokens,
       tokens_out: usage.outputTokens,
     });
@@ -627,6 +641,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     async start(controller) {
       const encoder = new TextEncoder();
       let usage = { inputTokens: 0, outputTokens: 0 };
+      let tokenCounts: TokenCounts = { inputTokens: 0, outputTokens: 0 }; // YUK-359 split for pricing
       let cost_usd: number | undefined;
       let stopReason = 'unknown';
       let resultText = '';
@@ -699,6 +714,12 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
                 inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
                 outputTokens: u?.output_tokens ?? 0,
               };
+              tokenCounts = {
+                inputTokens: u?.input_tokens ?? 0,
+                outputTokens: u?.output_tokens ?? 0,
+                cacheReadTokens: u?.cache_read_input_tokens ?? 0,
+                cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
+              };
               cost_usd = msg.total_cost_usd;
               stopReason = msg.stop_reason ?? 'stop';
               try {
@@ -707,8 +728,9 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
                   task_kind: kind,
                   provider: resolved.provider,
                   model: resolved.model,
-                  // USD float; see runTask comment.
-                  cost: cost_usd ?? 0,
+                  // USD float; see runTask comment. YUK-359 local fallback.
+                  cost: effectiveCostUsd(resolved.model, tokenCounts, cost_usd),
+                  currency: 'USD',
                   tokens_in: usage.inputTokens,
                   tokens_out: usage.outputTokens,
                 });
@@ -904,6 +926,7 @@ export async function streamTaskCollecting(
   }
 
   let usage = { inputTokens: 0, outputTokens: 0 };
+  let tokenCounts: TokenCounts = { inputTokens: 0, outputTokens: 0 }; // YUK-359 split for pricing
   let cost_usd: number | undefined;
   let stopReason = 'unknown';
   let resultText = '';
@@ -983,6 +1006,12 @@ export async function streamTaskCollecting(
             inputTokens: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0),
             outputTokens: u?.output_tokens ?? 0,
           };
+          tokenCounts = {
+            inputTokens: u?.input_tokens ?? 0,
+            outputTokens: u?.output_tokens ?? 0,
+            cacheReadTokens: u?.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
+          };
           cost_usd = msg.total_cost_usd;
           stopReason = msg.stop_reason ?? 'stop';
           sawTerminalResult = true;
@@ -1011,8 +1040,9 @@ export async function streamTaskCollecting(
         task_kind: kind,
         provider: resolved.provider,
         model: resolved.model,
-        // USD float; see runTask comment.
-        cost: cost_usd ?? 0,
+        // USD float; see runTask comment. YUK-359 local fallback.
+        cost: effectiveCostUsd(resolved.model, tokenCounts, cost_usd),
+        currency: 'USD',
         tokens_in: usage.inputTokens,
         tokens_out: usage.outputTokens,
       });
