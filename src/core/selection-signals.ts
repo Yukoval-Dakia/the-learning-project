@@ -10,6 +10,8 @@
 // 越高（precision 越低）的诊断价值越低，避免在噪声大的能力估计上浪费选题预算。
 // 权威 spec：docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md §Task4。
 
+import { fisherInformation } from '@/core/theta';
+
 /**
  * 选题候选信号。一条候选（题或卷）一行；选题策略据此打分 + 抽样。
  *
@@ -50,10 +52,13 @@ export interface SelectionCandidateSignal {
 /**
  * MFI 评分：2PL（a=1）的 item information = p(1−p)，p = σ(θ̂ − b)。
  * θ̂ = b 时取最大 0.25（信息量最大处 = 能力与难度匹配处）。
+ *
+ * 直接复用 theta.ts 的 `fisherInformation`（同一 Rasch item information 公式，
+ * 与 θ_precision 累积共用同一真相）——避免 core/ 里同公式两份分叉（选题评分
+ * 与 θ̂ 不确定性累积必须用同一 item information 定义，否则两端会悄悄漂移）。
  */
 export function mfiScore(thetaHat: number, b: number): number {
-  const p = 1 / (1 + Math.exp(-(thetaHat - b)));
-  return p * (1 - p);
+  return fisherInformation(thetaHat, b);
 }
 
 /**
@@ -79,10 +84,25 @@ export function diagnosticScore(thetaHat: number, b: number, thetaPrecision: num
  *
  * 这是 Phase 3 随机化选题的 π_i（inclusion probability）来源：non-due 槽按
  * 评分 softmax 抽样，π_i 是 active-PPI 重标定（D17 推翻后）必需的慢热资产。
+ *
+ * Fail-fast 护栏（π_i 慢热资产不可被静默污染，同 recordSelectionObservation 哲学）：
+ *   - temperature 必须 > 0：T≤0 会除零（→ 全 NaN π_i）或负温反转排序（抽到最差候选）。
+ *   - score 必须有限：非有限 score 是上游 bug（θ̂/b 没兜底），fail-fast 而非
+ *     产出全 NaN 的 π_i（单个 NaN 经 max/exp 会污染整批分布）。
+ *   - 用 reduce 求 max，**不用 `Math.max(...scores)`**——超大候选集 spread 会爆栈。
  */
 export function softmaxProbabilities(scores: number[], temperature = 0.25): number[] {
   if (scores.length === 0) return [];
-  const max = Math.max(...scores);
+  if (!(temperature > 0)) {
+    throw new Error(`softmaxProbabilities: temperature must be > 0, got ${temperature}`);
+  }
+  let max = Number.NEGATIVE_INFINITY;
+  for (const s of scores) {
+    if (!Number.isFinite(s)) {
+      throw new Error(`softmaxProbabilities: non-finite score ${s}`);
+    }
+    if (s > max) max = s;
+  }
   const exps = scores.map((s) => Math.exp((s - max) / temperature));
   const total = exps.reduce((a, b) => a + b, 0);
   return exps.map((e) => e / total);

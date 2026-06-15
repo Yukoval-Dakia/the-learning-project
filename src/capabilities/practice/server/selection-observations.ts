@@ -10,7 +10,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { selection_observation } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 
 export interface SelectionObservationInput {
   /** 选题发生的本地日 YYYY-MM-DD（与 practice_stream_item.date 同度量）。 */
@@ -61,10 +61,13 @@ export async function recordSelectionObservation(
 
 /**
  * 按日 + ref 取观测（Phase 3 active-PPI 重标定回放 / 调试用）。
+ * 按 created_at 升序——回放是时序语义（同一候选一天可多次观测），无 ORDER BY 时
+ * Postgres 按堆序返回（VACUUM / 并行扫描后不确定），会破坏顺序敏感的重标定回放。
  */
 export async function getSelectionObservations(db: Db, date: string, refId: string) {
   return db
     .select()
     .from(selection_observation)
-    .where(and(eq(selection_observation.date, date), eq(selection_observation.ref_id, refId)));
+    .where(and(eq(selection_observation.date, date), eq(selection_observation.ref_id, refId)))
+    .orderBy(asc(selection_observation.created_at));
 }
