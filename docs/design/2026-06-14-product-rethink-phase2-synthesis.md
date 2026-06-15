@@ -503,6 +503,28 @@ D14 单编排者对所有面（inbox kind / mem0 extraction / inline 动作 / To
 
 **一句话对账**：GPT 稿在「验证路由」「Hint Ladder」「延迟迁移测」「通用证据层哲学」四处提供了可直接借的增量并已采纳；在「三层平行 KG」「重型工程假设」「bi-temporal 隐含」三处被否决或剥离，因为它们把设计脚手架当 runtime 结构、且与单用户 n=1 无图库约束冲突。本架构 = GPT 稿候选增量 + Phase 1/1.5 双视角交叉核 + owner 拍板的三方综合。
 
+### §8.1 补充对账（2026-06-15，gpt-doc-gap-analysis 收口订正）
+
+落 `gpt-doc-gap-analysis` 推荐但此前缺的 §8 对账补全（owner 2026-06-15 授权直接补）：
+
+**GPT §10.1 风险表 8 行逐行对账：**
+| GPT 风险 | 本架构处置 |
+|---|---|
+| 变成答案机器 | 采纳——自主滑块 hint-first + 完整解 reveal 记非独立完成（ADR-0039 决定5） |
+| LLM 幻觉 | 采纳——Verifier Router verify-then-promote + 客观题确定校验（ADR-0038） |
+| 假学习 | 采纳——fluency-illusion 软提示 + 延迟复测/迁移测作诊断输入（ADR-0035 决定6 / §2.2） |
+| 评分偏差 | 部分——多评分器路由已采，人类校准=owner 自身锚点；开放题判分软是有效性天花板（E1） |
+| 知识图谱空转 | 采纳为治理项——RT4 confidence-only weight + 死边审计（决策7c → Linear） |
+| 全科复杂度爆炸 | 采纳——通用底座 + 学科插件（scope H4 中性 general，YUK-347） |
+| 过度个性化（只刷舒适区） | 采纳——B3 反舒适区软约束（每日流 ≥1 frontier/transfer，§7 调度决策H 全采纳） |
+| 隐私/未成年人 | n=1 自托管自用，数据治理在备份/恢复（D17 推翻 + YUK-355）；LMS/学校治理 N/A |
+
+**显式拒绝补行**（消「未点名=漏判」歧义）：xAPI / Caliper（学习记录交换协议）+ ASSISTments / EdNet / MOOCCubeX（公开数据集冷启）——随「学校集成剥离」+「LLM 先验替代冷启」否决，n=1 无需数据交换协议。
+
+**§9 七组 A/B 实验 → 有效性天花板 E5**：A/B 需随机分组 cohort，n=1 结构性做不了——非 gap 是天花板，补入 §6.5 作 E5（与 E1 开放题软轨、E3 gate 矛盾同列）。
+
+**RC 措辞订正**：Verifier Router =「verdict 形状收敛 ⟂ 题型路由分叉」两正交维并存（非「方向相反于 GPT per-type 路由」）；成效层 severity 高→中（依赖已规划 calibration_residual 列，非从零建）；题型作调度单元=owner 未决（非预判拒绝，见决策7a）。
+
 ---
 
 **Linear 捕获 gate 声明**：本文是「整个产品重新想」三阶段的终局 cross-统合综合（产品/feature 层架构终稿，非实现），是下游 to-issues 流程的输入而非可执行 issue 集。**本综合不创建新 Linear issue**：所有落地动作（item_calibration / mastery_state / misconception / encompassing_weight / B3 引擎 / A1-A4 形态 / 埋点遥测 / mem0 P3）须经 owner 拍定 §7 硬决策后，由 to-issues 流程统一落 tracer-bullet 切片挂 YUK-322 / YUK-203 epic，此时单独建会与统一计划重复。已核对的现存 issue：YUK-344（一致性闸地基，可立即起跑）/ YUK-203 P3（mastery 重写宿主，In Progress）/ YUK-249 与 YUK-347（scope 互斥待 H4 正式裁决，YUK-347 PR #406 已 APPROVE）/ YUK-346（GLM 评估，与 A3 解耦）/ YUK-322（记忆 epic）。唯一已可确定的 Linear 动作是 YUK-344 重定向（推翻 bi-temporal 第一条 + 拓扑闸 + 调和环），建议 owner 落地时正式补写 issue body——本综合者不越权代建。
