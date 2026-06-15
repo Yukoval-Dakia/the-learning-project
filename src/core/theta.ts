@@ -66,6 +66,43 @@ export function updateTheta(
 }
 
 /**
+ * 多 KC 合取 credit-assignment（owner 拍板 MLE，review SF-1 修复）。
+ *
+ * 一道挂多 KC 的题产生 ONE outcome，多个 θ_k 要更新 = credit assignment。模型取
+ * 合取（conjunctive / DINA 式「需要所有 KC 才做对」）：P_item = ∏ σ(θ_j − b)。
+ * 返回每 KC 的 credit 项（log 似然对 θ_k 的梯度，无量纲），caller 各乘自己的 K
+ * （+ bWeight）。
+ *
+ *   correct (x=1): credit_k = (1 − p_k)
+ *   wrong   (x=0): credit_k = −(1 − p_k) · P_item/(1 − P_item)
+ *
+ * (1−p_k) 灵敏度 ⇒ 最弱的 KC 双向都动最多（owner 拍的 MLE）。题目级 surprise
+ * 因子 (outcome−P_item 的等价) 取代了旧的 per-KC 残差 (outcome−p_k)——后者在
+ * 两端自我抵消，导致「已诊断为弱的 KC 答错几乎不降」（与意图反向，review SF-1）。
+ *
+ * n=1 精确退化为标准 Elo：correct→(1−p)=(x−p)，wrong→−p=(x−p)。
+ *
+ * 数值守护：wrong 分支 odds 比 P_item/(1−P_item) 在全强 KC（P_item→1）时是大
+ * surprise，自然趋向 normalized blame（量级 ≤ 1），但 float 下 P_item 舍入到 1.0
+ * 会让 odds 爆掉——故 (a) 分母 floor 1e-9，(b) 每 KC credit 量级 clamp 到 1（一次
+ * 意外 miss 不该比一次自信 correct 移动 θ̂ 更多）。
+ */
+export function conjunctiveCredits(thetas: number[], b: number, outcome: 0 | 1): number[] {
+  const ps = thetas.map((t) => expectedScore(t, b));
+  if (ps.length <= 1) {
+    // 单 KC（或空）→ 标准 Elo credit (outcome − p)。
+    return ps.map((p) => outcome - p);
+  }
+  if (outcome === 1) {
+    return ps.map((p) => 1 - p);
+  }
+  // wrong: −(1−p_k) · P_item/(1−P_item)，clamp 量级 ≤ 1。
+  const pItem = ps.reduce((acc, p) => acc * p, 1);
+  const odds = pItem / Math.max(1 - pItem, 1e-9);
+  return ps.map((p) => Math.max(-(1 - p) * odds, -1));
+}
+
+/**
  * difficulty(1-5) → logit b 兜底映射。
  * ⚠️ 占位、非真值（VERIFY:difficulty-logit-map REFUTED「每档1logit任意」）:
  *   序数当 interval，斜率无标定来源。caller 必须配 source='difficulty_proxy'

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DIFFICULTY_PROXY_WEIGHT,
+  conjunctiveCredits,
   difficultyToLogitB,
   eloK,
   expectedScore,
@@ -106,5 +107,56 @@ describe('DIFFICULTY_PROXY_WEIGHT', () => {
     expect(DIFFICULTY_PROXY_WEIGHT).toBeGreaterThan(0);
     expect(DIFFICULTY_PROXY_WEIGHT).toBeLessThan(1);
     expect(DIFFICULTY_PROXY_WEIGHT).toBeCloseTo(0.3, 10);
+  });
+});
+
+describe('conjunctiveCredits (multi-KC MLE, owner-ratified / SF-1 fix)', () => {
+  it('single KC reduces EXACTLY to standard Elo residual (outcome − p)', () => {
+    // correct + wrong both must equal (x − σ(θ−b)) so the n=1 path is unchanged.
+    const [cCorrect] = conjunctiveCredits([0.5], 0, 1);
+    const [cWrong] = conjunctiveCredits([0.5], 0, 0);
+    expect(cCorrect).toBeCloseTo(1 - expectedScore(0.5, 0), 12);
+    expect(cWrong).toBeCloseTo(0 - expectedScore(0.5, 0), 12);
+    // And applying it must match updateTheta's single-KC result.
+    const k = 0.12;
+    expect(0.5 + k * cWrong).toBeCloseTo(updateTheta(0.5, 0, 0, k), 12);
+  });
+
+  it('empty input returns empty (no KCs → no-op)', () => {
+    expect(conjunctiveCredits([], 0, 1)).toEqual([]);
+  });
+
+  it('correct: every KC gets a positive bump, weaker KC bumped MORE ((1−p_k))', () => {
+    // A strong θ=2 (p≈0.88), B weak θ=-1 (p≈0.27), b=0.
+    const [cA, cB] = conjunctiveCredits([2, -1], 0, 1);
+    expect(cA).toBeGreaterThan(0);
+    expect(cB).toBeGreaterThan(0);
+    expect(cB).toBeGreaterThan(cA); // weaker KC has larger (1−p) sensitivity
+  });
+
+  it('SF-1 regression: wrong answer blames the WEAKER KC more, not the mid one', () => {
+    // The old self-authored formula had Δ ∝ p_k·(1−p_k) (bell-shaped) → an
+    // already-weak KC (p→0) barely moved. MLE conjunctive credit must blame the
+    // weaker KC MORE. mid θ=0 (p=0.5) vs very-weak θ=-3 (p≈0.047), b=0, wrong.
+    const [cMid, cWeak] = conjunctiveCredits([0, -3], 0, 0);
+    expect(cMid).toBeLessThan(0); // both fall
+    expect(cWeak).toBeLessThan(0);
+    // weaker KC falls MORE (more negative) — the exact direction the bug inverted.
+    expect(cWeak).toBeLessThan(cMid);
+  });
+
+  it('wrong: mastered KC is spared relative to a neutral KC', () => {
+    // A mastered θ=2, B neutral θ=0, b=0, wrong. B (weaker) should fall more.
+    const [cA, cB] = conjunctiveCredits([2, 0], 0, 0);
+    expect(Math.abs(cB)).toBeGreaterThan(Math.abs(cA));
+  });
+
+  it('clamps each credit magnitude to ≤ 1 (all-strong KCs, big surprise)', () => {
+    // Two strong KCs both wrong → P_item small denominator, odds large; clamp.
+    const credits = conjunctiveCredits([4, 4], 0, 0);
+    for (const c of credits) {
+      expect(c).toBeGreaterThanOrEqual(-1);
+      expect(c).toBeLessThanOrEqual(0);
+    }
   });
 });

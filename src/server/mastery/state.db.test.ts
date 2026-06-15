@@ -172,11 +172,13 @@ describe('updateThetaForAttempt', () => {
     expect(row?.fail_count).toBe(1);
   });
 
-  it('multi KC, wrong answer: credit-assignment spares the mastered KC (A) and blames the weaker one (B)', async () => {
-    // Use an asymmetric pair (A mastered θ=2, B neutral θ=0). A perfectly
-    // mirror-symmetric pair (θ=±3) is a degenerate case where the credit weight
-    // (1-p_k) and the ICC residual (outcome-p_k) cancel to equal drops; the
-    // sparing is meaningful precisely when the KCs are NOT mirror-symmetric.
+  it('multi KC, wrong answer: MLE conjunctive credit spares the mastered KC (A), blames the weaker one (B)', async () => {
+    // owner 拍板 MLE / review SF-1: conjunctiveCredits uses the conjunctive
+    // log-likelihood gradient — wrong credit_k = −(1−p_k)·P_item/(1−P_item). The
+    // (1−p_k) sensitivity means the WEAKER KC falls more, the mastered KC is
+    // spared. (The old self-authored per-KC-residual formula had a p_k·(1−p_k)
+    // pathology where the bell-shape made an already-weak KC barely move — the
+    // SF-1 bug this replaces.) A mastered θ=2 / B neutral θ=0.
     const kA = createId(); // mastered (high θ̂)
     const kB = createId(); // neutral (mid θ̂)
     const q = createId();
