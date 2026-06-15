@@ -375,16 +375,11 @@ export async function judgeReconciliation(
     throw new PermanentError('GLM reconcile returned a non-JSON 2xx body', { cause: err });
   }
 
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || content.trim().length === 0) {
-    throw new ReconcileParseError(
-      'GLM reconcile response has no message content',
-      JSON.stringify(json),
-    );
-  }
-
-  // YUK-359: surface usage for cost_ledger. Guard so a callback throw never
-  // corrupts the reconcile result (cost tracking is best-effort observability).
+  // YUK-359: surface usage for cost_ledger BEFORE the content/parse guards — a
+  // GLM response that bills tokens but returns empty/unparseable content still
+  // cost money and must be recorded (else parse-failure days under-report
+  // memory_reconcile spend). Guard so a callback throw never corrupts the
+  // reconcile result (cost tracking is best-effort observability).
   if (opts.onUsage && json.usage) {
     try {
       opts.onUsage({
@@ -394,6 +389,14 @@ export async function judgeReconciliation(
     } catch (err) {
       console.error('[reconcile-llm] onUsage callback failed', err);
     }
+  }
+
+  const content = json.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || content.trim().length === 0) {
+    throw new ReconcileParseError(
+      'GLM reconcile response has no message content',
+      JSON.stringify(json),
+    );
   }
 
   const decisions = parseReconcileResponse(content);
