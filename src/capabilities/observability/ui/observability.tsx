@@ -101,6 +101,20 @@ function sumByCurrency(rows: Array<{ currency: string; cost: number }>): Map<str
   return m;
 }
 
+// YUK-359: per-currency max for bar-width normalization. A bar's width must be
+// relative to the largest spend IN ITS OWN CURRENCY — normalizing a $0.50 row
+// against a ¥10 row (same `cost` column, different currency) renders a
+// meaningless cross-currency comparison.
+function maxByCurrency(rows: Array<{ currency: string; cost: number }>): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.currency, Math.max(m.get(r.currency) ?? 0, r.cost));
+  return m;
+}
+function barWidthPct(cost: number, currency: string, maxByCur: Map<string, number>): number {
+  const max = Math.max(maxByCur.get(currency) ?? 0, 0.000001);
+  return (cost / max) * 100;
+}
+
 function formatMoneyByCurrency(totals: Map<string, number>): string {
   if (totals.size === 0) return '$0.0000';
   return [...totals.entries()]
@@ -427,8 +441,9 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
   const totalByCurrency = sumByCurrency(days);
   const totalCalls = days.reduce((sum, row) => sum + row.calls, 0);
   const totalTokens = days.reduce((sum, row) => sum + row.tokens_in + row.tokens_out, 0);
-  const maxDayCost = Math.max(...days.map((row) => row.cost), 0.000001);
-  const maxTaskCost = Math.max(...byTask.map((row) => row.cost), 0.000001);
+  // Per-currency maxima so bar widths never compare USD against CNY (YUK-359).
+  const maxDayByCurrency = maxByCurrency(days);
+  const maxTaskByCurrency = maxByCurrency(byTask);
 
   return (
     <main className="page wide">
@@ -474,7 +489,12 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
                     {row.day} · {row.currency}
                   </span>
                   <span style={barTrackStyle} className="admin-bar-track">
-                    <span style={{ ...barFillStyle, width: `${(row.cost / maxDayCost) * 100}%` }} />
+                    <span
+                      style={{
+                        ...barFillStyle,
+                        width: `${barWidthPct(row.cost, row.currency, maxDayByCurrency)}%`,
+                      }}
+                    />
                   </span>
                   <span style={barValueStyle}>{formatMoney(row.cost, row.currency)}</span>
                 </div>
@@ -493,7 +513,10 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
                   </span>
                   <span style={barTrackStyle} className="admin-bar-track">
                     <span
-                      style={{ ...barFillStyle, width: `${(row.cost / maxTaskCost) * 100}%` }}
+                      style={{
+                        ...barFillStyle,
+                        width: `${barWidthPct(row.cost, row.currency, maxTaskByCurrency)}%`,
+                      }}
                     />
                   </span>
                   <span style={barValueStyle}>

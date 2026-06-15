@@ -249,6 +249,71 @@ describe('judgeReconciliation', () => {
     expect(decisions[0].action).toBe('KEEP_BOTH');
   });
 
+  it('fires onUsage with token counts from the GLM response (YUK-359)', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        new_index: 0,
+                        action: 'KEEP_BOTH',
+                        old_index: null,
+                        confidence: 0.9,
+                        reason: 'ok',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 1234, completion_tokens: 56, total_tokens: 1290 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const seen: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await judgeReconciliation(mockNewMems(), mockCandidates(), {
+      env: MOCK_ENV,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      onUsage: (u) => seen.push(u),
+    });
+
+    expect(seen).toEqual([{ promptTokens: 1234, completionTokens: 56 }]);
+  });
+
+  it('fires onUsage even when content is empty + the parse then throws (YUK-359 cost gap)', async () => {
+    // A billed-but-empty response: usage tokens present, content empty. The cost
+    // MUST still be recorded before ReconcileParseError throws.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '' } }],
+            usage: { prompt_tokens: 800, completion_tokens: 0 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    const seen: Array<{ promptTokens: number; completionTokens: number }> = [];
+
+    await expect(
+      judgeReconciliation(mockNewMems(), mockCandidates(), {
+        env: MOCK_ENV,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        onUsage: (u) => seen.push(u),
+      }),
+    ).rejects.toThrow(ReconcileParseError);
+
+    // onUsage fired despite the subsequent throw.
+    expect(seen).toEqual([{ promptTokens: 800, completionTokens: 0 }]);
+  });
+
   it('throws RetryableError on 5xx', async () => {
     const fetchMock = vi.fn(
       async () => new Response('{"error":{"message":"down"}}', { status: 503 }),
