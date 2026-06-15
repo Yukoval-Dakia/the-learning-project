@@ -126,7 +126,14 @@ export const fastTestInclude = [
   // swapped for InMemoryPresenceStore), so no live DB is touched — fast unit. (YUK-97 P7)
   'src/server/artifacts/editing-session.test.ts',
   'src/server/events/cause-policy.test.ts',
-  'src/server/export/**/*.test.ts',
+  // src/server/export — the no-DB units (constants / csv / readme) run fast. The
+  // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain
+  // `*.test.ts` so the ②d reverse-lockstep test (reverse_lockstep.db.test.ts —
+  // imports @/db/schema for table reflection) falls through to the db partition
+  // like every other `.db.test.ts`, instead of tripping the unit-partition P0.
+  'src/server/export/constants.test.ts',
+  'src/server/export/csv.test.ts',
+  'src/server/export/readme.test.ts',
   'src/server/http/**/*.test.ts',
   // YUK-258 — DOCX ingestion units. All three are pure no-DB: route-classify is
   // zip-parse only (fflate), markdown-segment is pure string→struct, convert
@@ -213,6 +220,8 @@ export const fastTestInclude = [
   'src/server/memory/client.test.ts',
   'src/server/memory/scope_tagger.test.ts',
   'src/server/memory/triggers.test.ts',
+  // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
+  'src/server/memory/reconcile-llm.test.ts',
   'src/server/r2.test.ts',
   // P2a (YUK-312) — review 域 5 条 unit 条目已随模块迁入 src/capabilities/practice/，
   // 由约定 glob（src/capabilities/**/*.unit.test.ts）自动接管，无需再登记。
