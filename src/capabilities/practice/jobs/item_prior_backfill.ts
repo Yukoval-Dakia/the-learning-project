@@ -86,6 +86,14 @@ export async function runItemPriorBackfill(
   }
 
   for (const c of candidates) {
+    // Split the failure domains (CodeRabbit review): an LLM/parse failure is a
+    // PER-QUESTION soft skip (log + count + move on — the candidate SELECT still
+    // matches next run since no row was written). But a DB write/connection/
+    // serialization error in applyItemPrior is INFRA — it must propagate so
+    // pg-boss retries the job, NOT be swallowed as skipped_failed (which would
+    // let the job finish "successfully" and lose the retry). So the try/catch
+    // wraps ONLY the LLM call + parse; applyItemPrior throws past it.
+    let draft: Awaited<ReturnType<typeof parseItemPriorOutput>> | null = null;
     try {
       const knowledgeContext = (c.knowledge_ids ?? [])
         .map((id) => ({ name: nameById.get(id) }))
@@ -99,15 +107,16 @@ export async function runItemPriorBackfill(
         knowledge_context: knowledgeContext,
       };
       const runResult = await runTaskFn('ItemPriorTask', input, { db, subjectProfile });
-      const draft = parseItemPriorOutput(runResult.text);
-      await applyItemPrior(db, { questionId: c.id, draft });
-      result.calibrated++;
+      draft = parseItemPriorOutput(runResult.text);
     } catch (err) {
-      // One bad question must not block the rest. Logged + counted; the next run
-      // re-picks it (the candidate SELECT still matches — no row was written).
+      // LLM outage / parse failure / malformed output → per-question soft skip.
       console.error('[item_prior_backfill] question calibration failed', { questionId: c.id, err });
       result.skipped_failed++;
+      continue;
     }
+    // DB write OUTSIDE the catch: a transient infra error throws → pg-boss retry.
+    await applyItemPrior(db, { questionId: c.id, draft });
+    result.calibrated++;
   }
 
   return result;

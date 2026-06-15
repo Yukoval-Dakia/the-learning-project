@@ -1,0 +1,1 @@
+ALTER TABLE "item_calibration" ADD CONSTRAINT "item_calibration_confidence_range" CHECK ("item_calibration"."confidence" BETWEEN 0 AND 1);

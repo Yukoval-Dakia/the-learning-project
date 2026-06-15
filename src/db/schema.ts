@@ -783,6 +783,10 @@ export const item_calibration = pgTable(
   (t) => [
     uniqueIndex('item_calibration_question_unique').on(t.question_id),
     index('item_calibration_track_idx').on(t.track),
+    // YUK-203 review (CodeRabbit): DB-level guard on the 0-1 confidence range,
+    // mirroring question_block.extraction_confidence / learning_item.ai_score.
+    // NULL allowed (cold rows before ItemPriorTask writes); only out-of-range fails.
+    check('item_calibration_confidence_range', sql`${t.confidence} BETWEEN 0 AND 1`),
   ],
 );
 

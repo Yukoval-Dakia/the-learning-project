@@ -584,9 +584,11 @@ async function persistSubmit(
     }
     // B1-W1 (ADR-0035) — θ̂ 在线更新（p(L) 诊断维，与上面 FSRS R 轴正交，三轴正交
     // 红线）。同 tx。并发串行化由 updateThetaForAttempt 内部对每个 KC 自取
-    // `fsrs:knowledge:<id>` advisory lock 保证（review SF-2）——不依赖此处 FSRS 锁
-    // 的覆盖范围（FSRS 锁只覆盖 fsrsSubjectIds = requested∩labels 子集，θ̂ 用全集
-    // q.knowledge_ids，差集 KC 靠模块自锁兜住）。outcome 复用上面的 success/failure
+    // **独立 namespace** `mastery:knowledge:<id>` advisory lock 保证（review SF-2
+    // + CodeRabbit 死锁修：刻意不复用此处 FSRS 锁的 `fsrs:knowledge:` namespace，
+    // 否则「先持子集锁、再按全量重申同 namespace」会构成跨事务 lock-order 环）。
+    // FSRS 锁只覆盖 fsrsSubjectIds = requested∩labels 子集，θ̂ 用全集
+    // q.knowledge_ids，差集 KC 靠模块独立自锁兜住。outcome 复用上面的 success/failure
     // 派生（review 路径 finalRating 二分，无 partial）。写独立 mastery_state 表，
     // 不碰 event/learning_record count——hermetic 不破。
     await updateThetaForAttempt(tx, {

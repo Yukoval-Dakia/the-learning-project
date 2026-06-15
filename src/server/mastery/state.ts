@@ -154,12 +154,19 @@ export async function updateThetaForAttempt(
   //    submit.ts locks requested∩labels, paper-submit locks the slot primary
   //    only), so KCs outside that subset would do an unlocked SELECT→compute→
   //    upsert and lose a concurrent increment (onConflict overwrites with a value
-  //    derived from a stale read). Take our own lock on EVERY KC we update, in the
-  //    SAME `fsrs:knowledge:<id>` namespace the FSRS path uses, so same-KC attempts
-  //    serialize regardless of which path holds the lock. Sorted → stable acquire
-  //    order, no deadlock. Released at tx commit (we're inside the attempt tx).
+  //    derived from a stale read). Take our own lock on EVERY KC we update.
+  //
+  //    ⚠️ DEADLOCK SAFETY (CodeRabbit P2): use a DISTINCT namespace
+  //    `mastery:knowledge:<id>` — NOT the `fsrs:knowledge:<id>` the caller already
+  //    holds a subset of. Reusing the FSRS namespace would create a lock-ordering
+  //    cycle: tx-A holds fsrs:A (its FSRS subset) then re-requests fsrs:{A,B}
+  //    sorted here, while tx-B holds fsrs:B then re-requests fsrs:{A,B} → A waits
+  //    B, B waits A. A separate namespace means mastery locks form their own
+  //    acquire graph; sorted acquisition makes THAT graph acyclic, and it never
+  //    interleaves with the FSRS lock graph (different key space). Released at tx
+  //    commit (we're inside the attempt tx).
   for (const id of [...knowledgeIds].sort()) {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`mastery:knowledge:${id}`}))`);
   }
 
   // 1. Read the b anchor (item-half locked: read-only). track='hard' only —
