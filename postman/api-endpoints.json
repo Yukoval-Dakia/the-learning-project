@@ -189,7 +189,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "按 BJT（UTC+8）午夜划窗口；返回 {window, today:{spend,tokens_in,tokens_out,ledger_rows,tool_calls,by_task}}"
+        "notes": "按 BJT（UTC+8）午夜划窗口；返回 {window, today:{by_currency,tokens_in,tokens_out,ledger_rows,tool_calls,by_task}}。YUK-359：spend 按币种分组（by_currency / by_task[].by_currency），不跨币种求和"
       }
     ]
   },

@@ -61,8 +61,11 @@ export interface AdminRunTimeline {
   timeline: AdminRunTimelineEvent[];
 }
 
+// YUK-359: rows are split by currency (USD = mimo/runner, CNY = GLM-OCR /
+// memory reconcile). SUM is always within one currency — never cross-currency.
 export interface AdminCostDayRow {
   day: string;
+  currency: string;
   cost: number;
   tokens_in: number;
   tokens_out: number;
@@ -71,6 +74,7 @@ export interface AdminCostDayRow {
 
 export interface AdminCostTaskRow {
   task_kind: string;
+  currency: string;
   cost: number;
   tokens_in: number;
   tokens_out: number;
@@ -320,9 +324,11 @@ export async function getAdminCost(
   const days = normalizeDays(opts.days);
   const from = new Date(Date.now() - days * 86_400_000);
 
+  // YUK-359: GROUP BY currency too so SUM never mixes USD + CNY.
   const dailyRows = await db
     .select({
       day: sql<string>`date_trunc('day', ${cost_ledger.occurred_at})::date::text`,
+      currency: cost_ledger.currency,
       cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}), 0)::real`,
       tokens_in: sql<number>`COALESCE(SUM(${cost_ledger.tokens_in}), 0)::int`,
       tokens_out: sql<number>`COALESCE(SUM(${cost_ledger.tokens_out}), 0)::int`,
@@ -330,12 +336,13 @@ export async function getAdminCost(
     })
     .from(cost_ledger)
     .where(gte(cost_ledger.occurred_at, from))
-    .groupBy(sql`1`)
-    .orderBy(sql`1 asc`);
+    .groupBy(sql`1`, cost_ledger.currency)
+    .orderBy(sql`1 asc`, cost_ledger.currency);
 
   const taskRows = await db
     .select({
       task_kind: cost_ledger.task_kind,
+      currency: cost_ledger.currency,
       cost: sql<number>`COALESCE(SUM(${cost_ledger.cost}), 0)::real`,
       tokens_in: sql<number>`COALESCE(SUM(${cost_ledger.tokens_in}), 0)::int`,
       tokens_out: sql<number>`COALESCE(SUM(${cost_ledger.tokens_out}), 0)::int`,
@@ -343,8 +350,8 @@ export async function getAdminCost(
     })
     .from(cost_ledger)
     .where(gte(cost_ledger.occurred_at, from))
-    .groupBy(cost_ledger.task_kind)
-    .orderBy(desc(sql`SUM(${cost_ledger.cost})`), cost_ledger.task_kind);
+    .groupBy(cost_ledger.task_kind, cost_ledger.currency)
+    .orderBy(desc(sql`SUM(${cost_ledger.cost})`), cost_ledger.task_kind, cost_ledger.currency);
 
   return { days_window: days, days: dailyRows, by_task: taskRows };
 }

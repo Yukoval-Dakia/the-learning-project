@@ -85,24 +85,39 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
 // Phase-deferred：设计稿的预算线（card-head 预算 meta + bar 占比条）无数据源
 // ——预算配置尚不存在，不 mock；随预算护栏（warning 水位）落地后补，届时回
 // 设计稿 screen-today.jsx CostRibbon 取 DOM。quiet-empty 语义保留：零成本不噪。
+// YUK-359: spend is grouped by currency (USD = mimo/runner, CNY = GLM-OCR /
+// memory reconcile) — never a single cross-currency sum.
+interface CurrencySpend {
+  currency: string;
+  spend: number;
+}
 interface CostTodayResponse {
   window: { from: number; to: number; label: string };
   today: {
-    spend: number;
+    by_currency: CurrencySpend[];
     tokens_in: number;
     tokens_out: number;
     ledger_rows: number;
     tool_calls: number;
-    by_task: Array<{ task_kind: string; spend: number; calls: number }>;
+    by_task: Array<{ task_kind: string; calls: number; by_currency: CurrencySpend[] }>;
   };
 }
 
+const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥' };
+
 // 成本格式跟设计稿 $X.XX，但 cost_ledger.cost 常见 sub-cent 单价——直接
 // toFixed(2) 会把非零花费渲染成 $0.00，与 quiet-empty 的「真零」语义混淆。
-// 非零但不足半美分时显式标 <$0.01，金额可信度优先于格式统一。
-function fmtSpend(spend: number): string {
-  if (spend > 0 && spend < 0.005) return '<$0.01';
-  return `$${spend.toFixed(2)}`;
+// 非零但不足半分时显式标 <{sym}0.01，金额可信度优先于格式统一。
+function fmtSpend(spend: number, currency = 'USD'): string {
+  const sym = CURRENCY_SYMBOL[currency] ?? `${currency} `;
+  if (spend > 0 && spend < 0.005) return `<${sym}0.01`;
+  return `${sym}${spend.toFixed(2)}`;
+}
+
+// Render per-currency spend list (e.g. "$0.42 · ¥1.20"); empty → 真零 $0.00.
+function fmtByCurrency(rows: CurrencySpend[]): string {
+  if (rows.length === 0) return fmtSpend(0);
+  return rows.map((r) => fmtSpend(r.spend, r.currency)).join(' · ');
 }
 
 function CostRibbon() {
@@ -137,13 +152,13 @@ function CostRibbon() {
         {t && (
           <>
             <div className="cost-top">
-              <div className="cost-amt serif tnum">{fmtSpend(t.spend)}</div>
+              <div className="cost-amt serif tnum">{fmtByCurrency(t.by_currency)}</div>
             </div>
             <div className="cost-tasks">
               {t.by_task.map((row) => (
                 <span key={row.task_kind} className="chip">
                   <span className="mono">{row.task_kind}</span>{' '}
-                  <b className="mono">{fmtSpend(row.spend)}</b>
+                  <b className="mono">{fmtByCurrency(row.by_currency)}</b>
                 </span>
               ))}
             </div>

@@ -67,6 +67,9 @@ export interface CostLedgerEntry {
   provider: string;
   model: string;
   cost: number;
+  /** YUK-359: currency of `cost`. Defaults to 'USD' (mimo/anthropic runner path).
+   *  GLM-OCR + memory (GLM/百炼) write 'CNY'. Read paths MUST group by currency. */
+  currency?: 'USD' | 'CNY';
   tokens_in: number;
   tokens_out: number;
   /** Sub 0c: track pg-boss job correlation + outcome for OCR / async jobs. */
@@ -82,6 +85,7 @@ export async function writeCostLedger(db: DbLike, entry: CostLedgerEntry): Promi
     provider: entry.provider,
     model: entry.model,
     cost: entry.cost,
+    currency: entry.currency ?? 'USD',
     tokens_in: entry.tokens_in,
     tokens_out: entry.tokens_out,
     outcome: entry.outcome ?? 'success',
