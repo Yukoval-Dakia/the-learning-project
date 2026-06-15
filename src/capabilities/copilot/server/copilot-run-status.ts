@@ -81,10 +81,18 @@ export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): Copilot
         cancelRequested = true;
         break;
       case COPILOT_RUN_EVENTS.STARTED:
+        // 「取最高非终态阶段」：STARTED 把 queued 推到 started；若已 running（STEP/
+        // REPLY 先到，乱序/丢 STARTED）则不回退。
+        if (!terminal && status === 'queued') status = 'started';
+        break;
       case COPILOT_RUN_EVENTS.STEP:
       case COPILOT_RUN_EVENTS.REPLY:
-        // 非终态推进：started 之后任何过程事件都算 running。
-        if (!terminal) status = status === 'queued' ? 'started' : 'running';
+        // CodeRabbit fix — STEP（进度心跳）/ REPLY（终稿就位）是「run 正在跑」的明确
+        // 信号，语义上高于 started。原逻辑 `status==='queued' ? 'started' : 'running'`
+        // 会把「STEP/REPLY 首次出现但还没见过 STARTED」（如 [STEP] 或 [QUEUED, REPLY]，
+        // STARTED 乱序/丢失）错误降级为 'started'。修正：非终态时 STEP/REPLY 无条件
+        // 推到 'running'（与「取最高非终态阶段」一致）。
+        if (!terminal) status = 'running';
         break;
       case COPILOT_RUN_EVENTS.QUEUED:
         if (!terminal && status === 'queued') status = 'queued';

@@ -50,7 +50,22 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   // durable 面（chip 是 UI 直触轻活，不写 user_ask；durable 标记落在 chip 上
   // 时降级回 inline，下方守卫）。shouldEnqueueBackgroundJobs() 在测试环境为 false
   // → 即便带 durable 标记也走 inline（与 session-end 等 enqueue 守门同款）。
-  if (parsed.durable && parsed.triggered_by === 'chat' && shouldEnqueueBackgroundJobs()) {
+  //
+  // YUK-364 (bot-review C3) — **排除带 skill_context 的 turn**（`!parsed.skill_context`）。
+  // 一个 skill_context:{skill:'teaching'} turn 在 inline 路径短路到 runTeachingSkill
+  // 物化 ask_check 结构化题（turn_kind / skill_turn / skill_context 落 reply payload，
+  // 走确定性服务回复、不经 free-form 收敛点）。但 durable enqueue 只投
+  // {run_id, session_id, user_message, triggered_by, chip_kind?} —— 丢了 skill_context，
+  // worker handler 永远跑 free-form CopilotTask loop（无 teaching 短路）。若放任
+  // durable teaching turn 入队，会丢失整个结构化教学协议（ask_check 物化、suggested_next
+  // chips、corrective-chip 锚）。本 lane durable 暂不能复刻 teaching skill 短路（teaching
+  // 是 SERVICE-层 behavior pack，不是 free-form run），故 skill_context turn 一律留 inline。
+  if (
+    parsed.durable &&
+    parsed.triggered_by === 'chat' &&
+    !parsed.skill_context &&
+    shouldEnqueueBackgroundJobs()
+  ) {
     // YUK-364 (F2) — 补偿用的局部状态：只在 user_ask 已 commit 后才需要补偿（否则
     // 没有 phantom 风险），所以记录 runId / sessionId 是否已知。
     let runId: string | undefined;

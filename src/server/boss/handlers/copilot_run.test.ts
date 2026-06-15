@@ -178,15 +178,55 @@ describe('runCopilotRun', () => {
     expect(secondEvents.map((e) => e.event_type)).toEqual(firstEvents.map((e) => e.event_type));
   });
 
-  it('F3 — 已有 FAILED 终态的 run 被重投 → 返回 failed，不重跑 AI', async () => {
+  it('C1 — 已有 FAILED(transient) 的 run 被重投 → 重跑 AI（不绕过 retry）', async () => {
     const runId = 'run_terminal_failed';
     const sessionId = 'sess_terminal_failed';
-    // 预写一条 FAILED（模拟上次失败后 pg-boss 又投了一次）。
+    // 预写一条普通 FAILED（模拟上次 transient 模型/工具故障，catch 写 failed +
+    // re-throw → pg-boss redeliver 又投了一次）。
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
       payload: { reason: 'error', error: 'mimo 500' },
+    });
+    const run = agentMock('重试成功的回答');
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    // C1 红线：普通 FAILED 不跳过——pg-boss redeliver 真正重跑（retry 语义恢复），
+    // 一次 transient 故障不会被首次尝试变成永久失败。
+    expect(result).toMatchObject({ status: 'done', reply: '重试成功的回答' });
+    expect(run).toHaveBeenCalledTimes(1);
+
+    // 重跑写了新一轮 STARTED→REPLY→DONE（接在旧 FAILED 之后），末态派生为 done。
+    const events = await replay(runId);
+    const types = events.map((e) => e.event_type);
+    expect(types).toEqual([
+      COPILOT_RUN_EVENTS.FAILED,
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+    expect(deriveCopilotRunStatus(events)).toBe('done');
+    // 重跑写了 conversation-历史可见的 copilot_reply domain event。
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload).toMatchObject({ reply_md: '重试成功的回答' });
+  });
+
+  it('C1 — 已有 FAILED(reason=cancelled) 的 run 被重投 → 早停返回 cancelled，不重跑', async () => {
+    const runId = 'run_terminal_cancelled';
+    const sessionId = 'sess_terminal_cancelled';
+    // 预写 cancelled-before-start 终态（落在 FAILED(reason='cancelled')）。取消是
+    // 用户意图的 deliberate 终态——重投不应重跑（重跑违背用户意图）。
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'cancelled', cancelled_before_start: true },
     });
     const run = agentMock('不该被调用');
     const result = await runCopilotRun({
@@ -195,8 +235,73 @@ describe('runCopilotRun', () => {
       runAgentTaskFn: run as never,
       buildMcpServerFn: mcpMock() as never,
     });
-    expect(result).toEqual({ status: 'failed', error: 'mimo 500' });
+    expect(result).toEqual({ status: 'cancelled' });
     expect(run).not.toHaveBeenCalled();
+    // 早停不写新事件（序列只剩预写的那条 FAILED）。
+    const events = await replay(runId);
+    expect(events.map((e) => e.event_type)).toEqual([COPILOT_RUN_EVENTS.FAILED]);
+  });
+
+  it('C5 — 配置 TAVILY_API_KEY 时挂 Tavily MCP + allowedTools（web grounding 平价）', async () => {
+    const runId = 'run_tavily';
+    const run = agentMock('grounded reply');
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_tavily' },
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+      // 注入 Tavily fixture（不碰 process.env）。
+      buildTavilyMcpServerFn: () => ({ type: 'http', url: 'https://mcp.tavily.com/mcp/?k' }),
+    });
+    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
+    // mcpServers 含 tavily server；allowedTools 含 tavily 工具。
+    expect(Object.keys(ctx.mcpServers ?? {})).toContain('tavily');
+    expect(ctx.allowedTools).toEqual(
+      expect.arrayContaining(['mcp__tavily__tavily_search', 'mcp__tavily__tavily_extract']),
+    );
+  });
+
+  it('C5 — 未配置 Tavily（builder 返 null）→ 不挂 tavily server / tools（back-compat）', async () => {
+    const runId = 'run_no_tavily';
+    const run = agentMock('reply');
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_no_tavily' },
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+      buildTavilyMcpServerFn: () => null,
+    });
+    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
+    expect(Object.keys(ctx.mcpServers ?? {})).not.toContain('tavily');
+    expect(ctx.allowedTools ?? []).not.toContain('mcp__tavily__tavily_search');
+  });
+
+  it('C2 — copilot SKILL.md 命中时传 ctx.skills（durable 与 inline 行为平价）', async () => {
+    const runId = 'run_skills';
+    const run = agentMock('reply');
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_skills' },
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+      resolveCopilotSkillsFn: async () => ['copilot'],
+    });
+    const ctx = (run.mock.calls[0] as unknown as [string, unknown, { skills?: string[] }])[2];
+    expect(ctx.skills).toEqual(['copilot']);
+  });
+
+  it('C2 — SKILL.md 缺包（resolver 返 undefined）→ ctx 省略 skills（降级，零回归）', async () => {
+    const runId = 'run_no_skills';
+    const run = agentMock('reply');
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_no_skills' },
+      runAgentTaskFn: run as never,
+      buildMcpServerFn: mcpMock() as never,
+      resolveCopilotSkillsFn: async () => undefined,
+    });
+    const ctx = (run.mock.calls[0] as unknown as [string, unknown, { skills?: string[] }])[2];
+    expect(ctx.skills).toBeUndefined();
   });
 
   it('② AI throw → 写 failed 事件 + re-throw', async () => {

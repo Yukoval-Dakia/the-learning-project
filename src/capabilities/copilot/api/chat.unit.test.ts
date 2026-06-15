@@ -19,6 +19,14 @@ vi.mock('@/capabilities/copilot/server/chat', () => ({
     triggered_by: z.enum(['chat', 'chip']),
     chip_kind: z.string().optional(),
     durable: z.boolean().optional(),
+    // YUK-364 (bot-review C3) — 镜像 skill_context（route 用它把 teaching turn 排除
+    // 出 durable 面）；最小形态够触发分支即可。
+    skill_context: z
+      .object({
+        skill: z.enum(['teaching', 'solve', 'quiz']),
+        ref: z.object({ kind: z.string(), id: z.string() }),
+      })
+      .optional(),
   }),
   runCopilotChatStreaming: runMock,
   writeCopilotUserAsk: writeUserAskMock,
@@ -223,6 +231,24 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     runMock.mockImplementation(async () => ({ session_id: 's1', reply_event_id: 'e1' }));
 
     const res = await post({ user_message: 'hi', triggered_by: 'chat' });
+    expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
+    expect(bossSendMock).not.toHaveBeenCalled();
+    expect(runMock).toHaveBeenCalled();
+  });
+
+  it('C3 — durable:true 但带 skill_context（teaching）→ 降级回 inline（teaching 短路不入 durable 面）', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    bossSendMock.mockClear();
+    runMock.mockClear();
+    runMock.mockImplementation(async () => ({ session_id: 's1', reply_event_id: 'e1' }));
+
+    const res = await post({
+      user_message: '讲讲这道题',
+      triggered_by: 'chat',
+      durable: true,
+      skill_context: { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_1' } },
+    });
+    // teaching turn 留 inline：SSE 流，不 enqueue durable job（否则丢结构化协议）。
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
