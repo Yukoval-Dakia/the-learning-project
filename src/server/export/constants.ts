@@ -5,10 +5,13 @@
 // ②d backup-orphan fix (YUK reverse-lockstep): 7 persistent business tables that
 // had silently dropped out of the wipe-then-restore payload joined FK_ORDER
 // (artifact_block_ref, ai_task_runs, mistake_variant, goal, proposal_signals,
-// practice_stream_item, memory_reconciliation_log) — minor bump. New tables ride
-// the whole-row dump/restore automatically. Transient/operational tables
+// practice_stream_item, memory_reconciliation_log) — minor bump to 4.2. New tables
+// ride the whole-row dump/restore automatically. Transient/operational tables
 // (job_events, echo_jobs, editing_presence) were instead recorded in
 // BACKUP_EXCLUDED_TABLES below.
+// B1-W1 (ADR-0035): additive `mastery_state` + `item_calibration` tables — also
+// additive within the 4.2 generation (both ride whole-row dump/restore via
+// FK_ORDER below). 24 → 26 tables; version stays 4.2 (additive, no format break).
 export const SCHEMA_VERSION = '4.2';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
@@ -46,14 +49,24 @@ export const MAX_INLINE_ASSETS = 45;
 //   artifact_block_ref.from/to_artifact_id → artifact (FK) — MUST follow artifact
 //   All other ②d additions use loose-coupling text refs (no hard FK), so their
 //   position is unconstrained by Postgres FK enforcement (project convention).
+//
+// B1-W1 (ADR-0035): added mastery_state (after knowledge — diagnostic projection
+// keyed by knowledge subject_id, no enforced FK) + item_calibration (after
+// question — logical dependency on question_id, no enforced FK). 24 → 26.
+// Like knowledge_mastery these are DERIVED (rebuildable from the event stream /
+// re-estimable), so they are NOT in the CSV export body — but unlike the view
+// they ARE physical tables that need wipe/insert sweep ordering, so they DO
+// belong in FK_ORDER (CSV-body membership and FK_ORDER membership are orthogonal).
 export const FK_ORDER = [
   'knowledge',
+  'mastery_state',
   'knowledge_edge',
   'source_asset',
   'source_document',
   'learning_session',
   'question_block',
   'question',
+  'item_calibration',
   'material_fsrs_state',
   'memory_brief_note',
   'learning_record',

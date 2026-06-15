@@ -695,6 +695,97 @@ export const material_fsrs_state = pgTable(
   ],
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// B1-W1 (ADR-0035 决定#2) — mastery_state：诊断维 p(L) 的物化载体。
+//
+// 取代 knowledge_mastery VIEW 作为 SoT 的占位（本 wave 并存，view 消费端不切，
+// 切换在 Wave 2 派生层接通）。per-knowledge 一行，subject_kind 固定 'knowledge'
+// （与 material_fsrs_state 的 subject_kind 平行，但语义正交：FSRS=R 调度轴，
+// 这里=p(L) 诊断轴，三轴正交红线 ADR-0035）。
+//
+// 单写者：src/server/mastery/state.ts（step9-invariant-audit.test.ts 新增平行断言）。
+// 写路径：submit.ts / paper-submit.ts 的 attempt tx 内调 updateThetaForAttempt。
+//
+// 列分硬轨（本 wave 写）/ 软轨占位（本 wave NULL，进 audit allowlist）：
+//   硬轨：theta_hat, evidence_count, success_count, fail_count, last_outcome_at
+//   软轨占位：calibration_residual（fixed-anchor 残差，Wave2 复盘路径才写）,
+//             fluency_illusion_flag（流畅度幻觉，复盘触发才置位）
+// ─────────────────────────────────────────────────────────────────────────────
+export const mastery_state = pgTable(
+  'mastery_state',
+  {
+    id: text('id').primaryKey(),
+    // 固定 'knowledge'——诊断维只在知识点粒度累积（PFA per-KC，B1 foundation）。
+    // 列保留是为与 material_fsrs_state 形态平行 + 未来粒度扩展留口。
+    subject_kind: text('subject_kind').notNull().default('knowledge'),
+    subject_id: text('subject_id').notNull(),
+    // θ̂：个体能力估计，logit 尺度（与 b 同度量，B1 foundation）。
+    // DEFAULT 0 = logit 原点（先验中性），冷启首次 attempt 从此出发。
+    theta_hat: real('theta_hat').notNull().default(0),
+    // K schedule + credit-assignment 的输入。DEFAULT 0，每次 attempt +1。
+    evidence_count: integer('evidence_count').notNull().default(0),
+    // PFA 天然形态：per-KC success/fail 累积计数（B1 foundation）。
+    // 它们也是 credit-assignment 缓冲器（高 success → 该 KC 受冲击小，VERIFY:multi-kc）。
+    success_count: integer('success_count').notNull().default(0),
+    fail_count: integer('fail_count').notNull().default(0),
+    last_outcome_at: timestamp('last_outcome_at', { withTimezone: true }),
+    // 软轨占位（本 wave 不写，进 audit allowlist，kind:'manual' 解除）:
+    // fixed-anchor 慢热校准残差——Wave2 复盘/锚校准路径才写。n=1 结构性受锚质量约束。
+    calibration_residual: real('calibration_residual'),
+    // 流畅度幻觉旗——A2 复盘判定才置位（Wave2）。本 wave 恒 NULL。
+    fluency_illusion_flag: boolean('fluency_illusion_flag'),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('mastery_state_unique').on(t.subject_kind, t.subject_id),
+    index('mastery_state_subject_idx').on(t.subject_id),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B1-W1 (ADR-0035 决定#3) — item_calibration：题目标定锚。
+//
+// 硬轨 b（IRT 难度，logit 尺度）是 θ̂ 更新读的外部锚（item-更新半边锁死，
+// 永不被 Elo 回写——G4 红线）。难度来源链：item_calibration.b（有则用）→
+// 兜底 question.difficulty 经 difficultyToLogitB 映射（弱锚，降权，VERIFY:difficulty-logit-map）。
+//
+// 软轨列 irt_a/irt_c/cdm_json/kt_json：n=1 无 cohort 结构性不可估
+// （Stocking 1990 / B1 foundation §6.3）。本 wave 全 NULL，进 audit allowlist
+// （kind:'manual'，reason 诚实写「结构性天花板，非攒够时间问题」）。
+// 绝不进 p(L)/调度（ADR-0035）。
+//
+// 写者：ItemPriorTask applier（硬轨 b/confidence，source='llm_prior',track='hard'）
+//       + 未来 fixed-anchor 慢热校准。单写者断言见 step9-invariant-audit.test.ts。
+// ─────────────────────────────────────────────────────────────────────────────
+export const item_calibration = pgTable(
+  'item_calibration',
+  {
+    id: text('id').primaryKey(),
+    question_id: text('question_id').notNull(),
+    // 硬轨：IRT b（难度），logit 尺度。冷启由 ItemPriorTask 估，慢热由锚校准 firm-up。
+    // nullable：冷启前无 row，applier 写入后非空。
+    b: real('b'),
+    // 标定置信度 0-1。ItemPriorTask 产出（llm_prior 多为低置信）。
+    confidence: real('confidence'),
+    // 'hard' | 'soft'——硬轨进 p(L)/调度，软轨永不进（ADR-0035）。
+    track: text('track').notNull().default('hard'),
+    // 'llm_prior' | 'fixed_anchor' | ... ——provenance（evidence-first 红线）。
+    source: text('source').notNull(),
+    // ── 软轨占位列（本 wave NULL，audit allowlist kind:'manual'）──
+    // n=1 无 cohort 结构性不可估，不是攒够时间问题（B1 foundation §6.3）。
+    irt_a: real('irt_a'), // 区分度——Stocking 1990 不可估
+    irt_c: real('irt_c'), // 猜测下限
+    cdm_json: jsonb('cdm_json').$type<JsonObject>(), // CDM slip/guess 画像
+    kt_json: jsonb('kt_json').$type<JsonObject>(), // KT 参数
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('item_calibration_question_unique').on(t.question_id),
+    index('item_calibration_track_idx').on(t.track),
+  ],
+);
+
 // Typed mesh edges between knowledge nodes (ADR-0010).
 // Tree (knowledge.parent_id) is the backbone; this is the muscle.
 export const knowledge_edge = pgTable(

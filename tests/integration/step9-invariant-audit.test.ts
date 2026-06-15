@@ -163,6 +163,33 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     ).toEqual([]);
   });
 
+  // B1-W1 (ADR-0035) — mastery_state is the p(L) diagnostic projection; its only
+  // allowed writer is the single-owner src/server/mastery/. The hot paths
+  // (submit.ts / paper-submit.ts) only CALL updateThetaForAttempt — they never
+  // db.insert/update(mastery_state) directly, so this assertion stays clean.
+  it('db.{insert,update}(mastery_state) appears only in src/server/mastery/', async () => {
+    const ALLOWED_MASTERY_WRITERS = ['src/server/mastery/'] as const;
+    const hits = await findWriteHits('mastery_state');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_MASTERY_WRITERS));
+    expect(
+      violations,
+      `Disallowed writers of \`mastery_state\` found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  // B1-W1 (ADR-0035) — item_calibration is the item difficulty anchor (item-half
+  // locked, G4). Its only writer is the applier in src/server/mastery/
+  // (item-calibration.ts). The θ̂ update path only READS item_calibration.b.
+  it('db.{insert,update}(item_calibration) appears only in src/server/mastery/', async () => {
+    const ALLOWED_CALIBRATION_WRITERS = ['src/server/mastery/'] as const;
+    const hits = await findWriteHits('item_calibration');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_CALIBRATION_WRITERS));
+    expect(
+      violations,
+      `Disallowed writers of \`item_calibration\` found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
   for (const dropped of ['mistake', 'review_event', 'dreaming_proposal', 'ingestion_session']) {
     it(`legacy \`${dropped}\` table has ZERO write-callers in src/ + app/ (DROPped in 9.J)`, async () => {
       const hits = await findWriteHits(dropped, { roots: SCAN_RUNTIME_ROOTS });
