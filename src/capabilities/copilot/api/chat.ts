@@ -9,9 +9,21 @@
 import { SSEStreamingApi } from 'hono/streaming';
 import { ZodError } from 'zod';
 
-import { CopilotChatRequest, runCopilotChatStreaming } from '@/capabilities/copilot/server/chat';
+import {
+  CopilotChatRequest,
+  runCopilotChatStreaming,
+  writeCopilotUserAsk,
+} from '@/capabilities/copilot/server/chat';
+import {
+  COPILOT_RUN_EVENTS,
+  COPILOT_RUN_TABLE,
+} from '@/capabilities/copilot/server/copilot-run-status';
 import { db } from '@/db/client';
+import { getStartedBoss } from '@/server/boss/client';
+import { writeJobEvent } from '@/server/events/writer';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
+import { Conversation } from '@/server/session';
 
 // 签名对齐 kernel RouteHandler 双参形（path 无参数段，_params 不用）。
 export async function POST(req: Request, _params: Record<string, string>): Promise<Response> {
@@ -30,6 +42,47 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       );
     }
     return errorResponse(err);
+  }
+
+  // YUK-364 (ADR-0041 endurance W1 L2) — durable 分流。判定阈值 v1 = 显式
+  // `durable` 标记（最粗、最不误伤短活；先粗、实测后调）。仅 chat surface 入
+  // durable 面（chip 是 UI 直触轻活，不写 user_ask；durable 标记落在 chip 上
+  // 时降级回 inline，下方守卫）。shouldEnqueueBackgroundJobs() 在测试环境为 false
+  // → 即便带 durable 标记也走 inline（与 session-end 等 enqueue 守门同款）。
+  if (parsed.durable && parsed.triggered_by === 'chat' && shouldEnqueueBackgroundJobs()) {
+    try {
+      // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
+      const { sessionId } = await Conversation.findOrCreateCopilotConversation(db, {});
+      // 2) 写 user_ask domain event = run handle = checkpoint_id（与 inline 同一份
+      //    写入逻辑，防漂移）。run_id 既是 handle 也是 job_events business_id。
+      const runId = await writeCopilotUserAsk(db, {
+        sessionId,
+        userMessage: parsed.user_message,
+        now: new Date(),
+      });
+      // 3) queued 初态进度事件——消费者订阅后即见 run 已受理（worker 拾起前）。
+      await writeJobEvent(db, {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.QUEUED,
+        payload: { session_id: sessionId, triggered_by: parsed.triggered_by },
+      });
+      // 4) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经
+      //    GET /api/copilot/runs/[id]/events（消费端 UI 是后续 lane）重连。
+      const boss = await getStartedBoss();
+      await boss.send('copilot_run', {
+        run_id: runId,
+        user_message: parsed.user_message,
+        triggered_by: parsed.triggered_by,
+        ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
+      });
+      // 202 Accepted — run handle 回给客户端用于订阅；非 SSE（durable 面与同步
+      // SSE 面是两条返回契约）。
+      return Response.json({ run_id: runId, session_id: sessionId }, { status: 202 });
+    } catch (err) {
+      // enqueue 链路任一步失败 → 普通 JSON error（绝不开半截 SSE 流）。run 未受理。
+      return errorResponse(err);
+    }
   }
 
   const { readable, writable } = new TransformStream();

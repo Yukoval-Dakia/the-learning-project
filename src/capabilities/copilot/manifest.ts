@@ -41,6 +41,21 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
+  // YUK-364 (ADR-0041 endurance W1 L2) — durable copilot run job（贡献制，无
+  // schedule = 按需 job）。route dispatch（durable 标记）→ boss.send('copilot_run')
+  // → handler 在 worker 进程跑 CopilotTask + 全集工具，进度落 job_events。queue
+  // 'agent' 档（EXPIRE_AGENT，同 quiz_gen 等 tool-call agent job）；注册器固定
+  // batchSize:1 → n=1 单线程串行化。挂载由 register-capability-jobs.ts 收集。
+  jobs: {
+    handlers: [
+      {
+        name: 'copilot_run',
+        queue: 'agent',
+        load: () =>
+          import('@/server/boss/handlers/copilot_run').then((m) => m.buildCopilotRunHandler),
+      },
+    ],
+  },
   // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读 + artifact authoring 写）。
   copilotTools: {
     tools: [
