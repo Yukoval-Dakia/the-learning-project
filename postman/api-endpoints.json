@@ -141,7 +141,7 @@
     "methods": [
       {
         "method": "POST",
-        "summary": "向 Copilot 发送一条用户消息，响应为 SSE 流（text/event-stream）",
+        "summary": "向 Copilot 发送一条用户消息。默认响应 SSE 流（text/event-stream）；durable:true 时返回 202 JSON { run_id }",
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
@@ -155,9 +155,10 @@
               "kind": "knowledge_node",
               "id": "k_abc123"
             }
-          }
+          },
+          "durable": false
         },
-        "notes": "SSE 流式。triggered_by 枚举：chat|chip。响应事件：event: delta（data {text}）逐块；event: reply（data CopilotChatResult）终止。Zod 失败时返回普通 JSON 错误。需 x-internal-token"
+        "notes": "SSE 流式（默认）。triggered_by 枚举：chat|chip。响应事件：event: delta（data {text}）逐块；event: reply（data CopilotChatResult）终止。YUK-364：durable:true 且 triggered_by=chat 时改走 durable pg-boss 面——返回 202 JSON { run_id, session_id }，run 在 worker 进程跑、进度落 job_events，经 SSE replay 重连（消费端 UI 后续 lane）。Zod 失败时返回普通 JSON 错误。需 x-internal-token"
       }
     ]
   },
