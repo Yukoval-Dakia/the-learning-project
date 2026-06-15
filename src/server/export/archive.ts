@@ -11,7 +11,13 @@ import type { R2Client } from '@/server/r2';
 import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
-import { FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION, type TableName } from './constants';
+import {
+  BACKUP_EXCLUDED_TABLES,
+  FK_ORDER,
+  MAX_INLINE_ASSETS,
+  SCHEMA_VERSION,
+  type TableName,
+} from './constants';
 import { buildMistakesCsv, buildReviewEventsCsv } from './csv';
 import { type Manifest, buildReadme } from './readme';
 
@@ -58,6 +64,34 @@ function buildColumnAllowlist(): Record<TableName, ReadonlySet<string>> {
     );
   }
   return allowlist;
+}
+
+// ─── Reverse lockstep: every pgTable must be covered by the backup ───────────
+//
+// buildColumnAllowlist() above enforces FK_ORDER → schema (every backed-up table
+// has a pgTable export). This is the OTHER direction: schema → coverage. Adding a
+// pgTable to src/db/schema.ts but forgetting to wire it into FK_ORDER would make it
+// SILENTLY drop out of the wipe-then-restore backup — a data-loss hole no test or
+// lint previously caught (②d). Here we assert at module load that EVERY isTable in
+// the schema is either backed up (FK_ORDER) or explicitly excluded
+// (BACKUP_EXCLUDED_TABLES). pgViews are excluded by isTable (e.g. knowledge_mastery).
+assertEveryTableIsBackedUpOrExcluded();
+
+function assertEveryTableIsBackedUpOrExcluded(): void {
+  const covered = new Set<string>([...FK_ORDER, ...BACKUP_EXCLUDED_TABLES]);
+  const orphans: string[] = [];
+  for (const value of Object.values(schema)) {
+    if (!isTable(value)) continue;
+    const sqlName = getTableName(value);
+    if (!covered.has(sqlName)) orphans.push(sqlName);
+  }
+  if (orphans.length > 0) {
+    throw new Error(
+      `backup reverse-lockstep: pgTable(s) not covered by the backup payload: ${orphans.join(
+        ', ',
+      )}. Each new table MUST be added to FK_ORDER (and bump SCHEMA_VERSION) so it is wiped-and-restored, OR added to BACKUP_EXCLUDED_TABLES with a reason if it is transient/derived/operational state. See src/server/export/constants.ts.`,
+    );
+  }
 }
 
 // ─── Export ────────────────────────────────────────────────────────────────
