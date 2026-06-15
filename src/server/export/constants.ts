@@ -12,7 +12,11 @@
 // B1-W1 (ADR-0035): additive `mastery_state` + `item_calibration` tables — also
 // additive within the 4.2 generation (both ride whole-row dump/restore via
 // FK_ORDER below). 24 → 26 tables; version stays 4.2 (additive, no format break).
-export const SCHEMA_VERSION = '4.2';
+// YUK-361 Phase 1 (观测先行): additive `selection_observation` table — 承重 telemetry
+// (π_i 是 D17 推翻后 active-PPI 重标定必需的慢热资产，不可丢)，故进 FK_ORDER 备份
+// (非 BACKUP_EXCLUDED)。+ `practice_stream_item.signals` additive jsonb 列 (ride 整行
+// dump/restore)。26 → 27 tables；bump 4.2 → 4.3 标注 telemetry 慢热资产入备份的契约变更。
+export const SCHEMA_VERSION = '4.3';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -83,6 +87,10 @@ export const FK_ORDER = [
   'goal',
   'proposal_signals',
   'practice_stream_item',
+  // YUK-361 Phase 1 (观测先行): selection_observation — 选题逐项遥测。π_i 是 active-PPI
+  // 重标定必需的慢热资产 (D17 推翻后)，不可丢，故进备份 (非 BACKUP_EXCLUDED)。
+  // 软引用 practice_stream_item.id (text ref，no enforced FK)，位置不受 PG FK 约束。
+  'selection_observation',
   'memory_reconciliation_log',
 ] as const;
 

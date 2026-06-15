@@ -246,6 +246,13 @@
       "when": 1781537504186,
       "tag": "0034_mastery_theta_precision",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1781539580896,
+      "tag": "0035_selection_observation",
+      "breakpoints": true
     }
   ]
 }
