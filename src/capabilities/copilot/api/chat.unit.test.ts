@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 const runMock = vi.hoisted(() => vi.fn());
 const writeUserAskMock = vi.hoisted(() => vi.fn());
+const writeReplyMock = vi.hoisted(() => vi.fn());
 const bossSendMock = vi.hoisted(() => vi.fn());
 const getStartedBossMock = vi.hoisted(() => vi.fn());
 const findOrCreateMock = vi.hoisted(() => vi.fn());
@@ -21,10 +22,11 @@ vi.mock('@/capabilities/copilot/server/chat', () => ({
   }),
   runCopilotChatStreaming: runMock,
   writeCopilotUserAsk: writeUserAskMock,
+  writeCopilotReply: writeReplyMock,
 }));
 vi.mock('@/capabilities/copilot/server/copilot-run-status', () => ({
   COPILOT_RUN_TABLE: 'copilot_run',
-  COPILOT_RUN_EVENTS: { QUEUED: 'copilot_run.queued' },
+  COPILOT_RUN_EVENTS: { QUEUED: 'copilot_run.queued', FAILED: 'copilot_run.failed' },
 }));
 vi.mock('@/server/boss/client', () => ({ getStartedBoss: getStartedBossMock }));
 vi.mock('@/server/events/writer', () => ({ writeJobEvent: writeJobEventMock }));
@@ -84,11 +86,12 @@ describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
 describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
   it('durable:true + chat + enqueue-enabled → 202 JSON { run_id }，boss.send(copilot_run)，不开 SSE 流', async () => {
     shouldEnqueueMock.mockReturnValue(true);
-    findOrCreateMock.mockResolvedValue({ sessionId: 'sess_1', created: true });
-    writeUserAskMock.mockResolvedValue('copilot_user_ask_RID');
-    writeJobEventMock.mockResolvedValue(1);
-    getStartedBossMock.mockResolvedValue({ send: bossSendMock });
-    bossSendMock.mockResolvedValue('jobid');
+    // mockReset 清掉调用记录，让 invocationCallOrder happen-before 断言只看本用例。
+    findOrCreateMock.mockReset().mockResolvedValue({ sessionId: 'sess_1', created: true });
+    writeUserAskMock.mockReset().mockResolvedValue('copilot_user_ask_RID');
+    writeJobEventMock.mockReset().mockResolvedValue(1);
+    getStartedBossMock.mockReset().mockResolvedValue({ send: bossSendMock });
+    bossSendMock.mockReset().mockResolvedValue('jobid');
     runMock.mockClear();
 
     const res = await post({ user_message: '讲讲这道题', triggered_by: 'chat', durable: true });
@@ -110,16 +113,82 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
         event_type: 'copilot_run.queued',
       }),
     );
-    // 投递 durable job。
+    // 投递 durable job——session_id 透传进 job data（handler F1 写 reply 要用）。
     expect(bossSendMock).toHaveBeenCalledWith(
       'copilot_run',
       expect.objectContaining({
         run_id: 'copilot_user_ask_RID',
+        session_id: 'sess_1',
         user_message: '讲讲这道题',
         triggered_by: 'chat',
       }),
     );
     // 同步 streaming 路径不被走。
+    expect(runMock).not.toHaveBeenCalled();
+
+    // YUK-364 (F5) — happen-before 顺序：user_ask（commit run handle）→ QUEUED 进度
+    // 事件 → boss.send 投递。防未来重排成 boss.send 先于 user_ask 写入的 race
+    // （worker 拾起一个 user_ask 还没 commit 的 run）。
+    const askOrder = writeUserAskMock.mock.invocationCallOrder[0] as number;
+    const queuedOrder = writeJobEventMock.mock.invocationCallOrder[0] as number;
+    const sendOrder = bossSendMock.mock.invocationCallOrder[0] as number;
+    expect(askOrder).toBeLessThan(queuedOrder);
+    expect(queuedOrder).toBeLessThan(sendOrder);
+  });
+
+  it('F2 — boss.send throw（user_ask/QUEUED 已 commit）→ 补偿写 FAILED + reply error event，该轮不 phantom，返 500', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    findOrCreateMock.mockResolvedValue({ sessionId: 'sess_F2', created: true });
+    writeUserAskMock.mockReset().mockResolvedValue('copilot_user_ask_F2');
+    writeJobEventMock.mockReset().mockResolvedValue(1);
+    writeReplyMock.mockReset().mockResolvedValue({ replyEventId: 're_F2', cleanedReply: '' });
+    getStartedBossMock.mockResolvedValue({ send: bossSendMock });
+    bossSendMock.mockReset().mockRejectedValue(new Error('boss down'));
+    runMock.mockClear();
+
+    const res = await post({ user_message: '讲讲这道题', triggered_by: 'chat', durable: true });
+
+    // 普通 JSON error（绝不开半截 SSE 流）。
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(res.headers.get('Content-Type') ?? '').toContain('application/json');
+
+    // 补偿：FAILED job_event（status→failed 非卡死 queued）。
+    expect(writeJobEventMock).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        business_table: 'copilot_run',
+        business_id: 'copilot_user_ask_F2',
+        event_type: 'copilot_run.failed',
+        payload: expect.objectContaining({ reason: 'enqueue_failed' }),
+      }),
+    );
+    // 补偿：copilot_reply error domain event（chained user_ask）让该轮不是 phantom。
+    expect(writeReplyMock).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        sessionId: 'sess_F2',
+        userAskEventId: 'copilot_user_ask_F2',
+        actorRef: 'agent:copilot',
+      }),
+    );
+    // 同步 streaming 路径不被走。
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it('F2 — findOrCreateConversation throw（user_ask 未写）→ 无补偿（无 phantom 风险），返 500', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    findOrCreateMock.mockReset().mockRejectedValue(new Error('conv create failed'));
+    writeUserAskMock.mockReset();
+    writeReplyMock.mockReset();
+    bossSendMock.mockReset();
+    runMock.mockClear();
+
+    const res = await post({ user_message: 'hi', triggered_by: 'chat', durable: true });
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    // user_ask 没写 → 无 phantom → 不补偿（runId 未知，守卫不进补偿块）。
+    expect(writeUserAskMock).not.toHaveBeenCalled();
+    expect(writeReplyMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
   });
 

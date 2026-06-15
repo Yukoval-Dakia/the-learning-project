@@ -12,6 +12,7 @@ import { ZodError } from 'zod';
 import {
   CopilotChatRequest,
   runCopilotChatStreaming,
+  writeCopilotReply,
   writeCopilotUserAsk,
 } from '@/capabilities/copilot/server/chat';
 import {
@@ -50,12 +51,17 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   // 时降级回 inline，下方守卫）。shouldEnqueueBackgroundJobs() 在测试环境为 false
   // → 即便带 durable 标记也走 inline（与 session-end 等 enqueue 守门同款）。
   if (parsed.durable && parsed.triggered_by === 'chat' && shouldEnqueueBackgroundJobs()) {
+    // YUK-364 (F2) — 补偿用的局部状态：只在 user_ask 已 commit 后才需要补偿（否则
+    // 没有 phantom 风险），所以记录 runId / sessionId 是否已知。
+    let runId: string | undefined;
+    let sessionId: string | undefined;
     try {
       // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
-      const { sessionId } = await Conversation.findOrCreateCopilotConversation(db, {});
+      const conv = await Conversation.findOrCreateCopilotConversation(db, {});
+      sessionId = conv.sessionId;
       // 2) 写 user_ask domain event = run handle = checkpoint_id（与 inline 同一份
       //    写入逻辑，防漂移）。run_id 既是 handle 也是 job_events business_id。
-      const runId = await writeCopilotUserAsk(db, {
+      runId = await writeCopilotUserAsk(db, {
         sessionId,
         userMessage: parsed.user_message,
         now: new Date(),
@@ -72,6 +78,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       const boss = await getStartedBoss();
       await boss.send('copilot_run', {
         run_id: runId,
+        session_id: sessionId,
         user_message: parsed.user_message,
         triggered_by: parsed.triggered_by,
         ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
@@ -80,6 +87,37 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       // SSE 面是两条返回契约）。
       return Response.json({ run_id: runId, session_id: sessionId }, { status: 202 });
     } catch (err) {
+      // YUK-364 (F2) — enqueue 链路失败补偿。若 user_ask + QUEUED 已 commit 但
+      // boss.send（或之后任一步）throw，job 没投递 → user_ask 成 phantom
+      // （conversation_history 见一条无回复的 user 轮）+ deriveCopilotRunStatus 永远
+      // 卡 'queued'。补偿：写一条 FAILED job_event（status→failed 非卡死 queued）+
+      // 一条 copilot_reply error domain event（chained user_ask）让该轮不是 phantom。
+      // 只在 runId 已知（= user_ask 已写）时补偿；conversation/user_ask 写入前失败
+      // 无 phantom 风险，照旧返 error 即可。补偿本身 best-effort，不能吞原始错误。
+      if (runId && sessionId) {
+        try {
+          await writeJobEvent(db, {
+            business_table: COPILOT_RUN_TABLE,
+            business_id: runId,
+            event_type: COPILOT_RUN_EVENTS.FAILED,
+            payload: { reason: 'enqueue_failed' },
+          });
+          await writeCopilotReply(db, {
+            sessionId,
+            userAskEventId: runId,
+            replyText: 'run 未能受理（enqueue 失败）。请重试。',
+            actorRef: 'agent:copilot',
+            taskRunId: `copilot_run_enqueue_failed_${runId}`,
+            now: new Date(),
+          });
+        } catch (compErr) {
+          console.error(
+            '[copilot/chat] durable enqueue-failure compensation failed for',
+            runId,
+            compErr,
+          );
+        }
+      }
       // enqueue 链路任一步失败 → 普通 JSON error（绝不开半截 SSE 流）。run 未受理。
       return errorResponse(err);
     }
