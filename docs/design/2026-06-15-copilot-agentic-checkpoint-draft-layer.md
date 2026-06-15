@@ -1,86 +1,70 @@
-# Copilot 真正全能 · checkpoint 草稿层设计
+# Copilot 真正全能 · per-utterance checkpoint（PR 模型）
 
-**Date**: 2026-06-15
-**Status**: **Design-in-progress**（owner 与 Claude 对话推演中；conflict/merge 语义 + diff/review 面 + 与 per-event undo 共存 尚在讨论）
-**Part of**: AI pipeline re-think · D14 编排轴（主 rethink 跳过的「AI 调用编排机器」一轴）
-**Decision source**: owner 2026-06-15「成本无所谓，我希望 copilot 真正全能（像我现在用 Claude Code 一样）」+ 逐层对话推演（propose 阻塞多步 → apply+revert → checkpoint 草稿层）。
-**Grounded on**: AI-pipeline understand map（workflow `ai-pipeline-current-map`）+ 撤销基建代码核验（retractAiProposal / CorrectionKind / caused_by_event_id / archived_at / draft_status / answer 表）。
-**Related**: ADR-0039（A/B/C 出手强度——本设计是 A 档「自动+撤销」推到任务级）· ADR-0040（笔记 mutator apply+undo 先例）· ADR-0029（answer 表复活为草稿工作层先例）· ADR-0006（event 是 SoT，派生可重放——本设计的地基）· ADR-0025 ND-5（propose-only 正主——本设计是其进化非抛弃）。
+**Date**: 2026-06-15（rev 2 — owner 修正：参考 git PR + 「用户一句话=一个 checkpoint」，砍掉 v1 的 LIVE/PREVIEW 隔离 overlay）
+**Status**: **Design-in-progress**（模型已收敛；级联 revert 机制 + diff/PR 面 + cherry-pick 依赖序 待续）
+**Part of**: AI pipeline re-think · D14 编排轴 · copilot 真正全能（write-safety 这一腿；另两腿=reach「够得着全部 task」+ endurance「异步长程」另议）
+**Decision source**: owner 2026-06-15「成本无所谓，copilot 真正全能（像我用 Claude Code）」→「propose 阻塞多步，先落库但保留 revert」→「**参考 git PR，但参照 Claude Code 是『用户一句话=一个 checkpoint』**」。
+**Grounded on**: AI-pipeline understand map + 撤销基建核验（CorrectionKind / caused_by_event_id / archived_at / draft_status / answer 表 / user_ask 事件 / 乐观版本锁）。
+**Related**: ADR-0039（A/B/C——本设计是 A 档「自动+撤销」推到 turn 级）· ADR-0040（笔记 mutator apply+undo = per-event 版同款）· ADR-0006（event=SoT，派生可重放=地基）· ADR-0025 ND-5（propose-only——本设计把闸从 per-change 搬到 per-utterance）。
 
 ---
 
 ## 0. 问题
 
-owner 要 copilot **真正全能**（成本不计），像 Claude Code 那样长程多步自主。现状机器层挡在三处（understand map）：① 够得着的只有 26 个被包成 copilotTool 的（27+ task 大半碰不到）② 内联同步跑子 task，吃 6 轮父预算 + 阻塞 ③ **propose→inbox→人审是同步人类闸，从根上掐死多步**——copilot 提条边，下一步想用它，没 accept 就不是 live，链条走不通。
+owner 要 copilot 真正全能（成本不计），像 Claude Code 那样长程多步自主。`propose→inbox→人审` 是个**逐改动的同步人类闸**，从根上掐死多步——提条边，下一步想用它，没 accept 就不是 live，链条走不通。本文给写侧/安全侧的解：**per-utterance checkpoint（PR 模型）**。（reach + endurance 两腿另议。）
 
-本文专攻 ③ 的解法，并给出比「直接落库+revert」更干净的形态：**checkpoint 草稿层**。
-
-## 1. 核心 reframe：审批闸从「逐改动」搬到「逐任务」
-
-propose-only 现在把闸放在**每个改动**上（提一条审一条）→ 多步走不通。checkpoint **不取消闸，是搬闸**到任务边界：
+## 1. 核心 reframe：审批闸从「逐改动」搬到「逐句话」
 
 ```
-propose-inbox:  改①→审→改②→审→改③→审       （每步等你，多步走不通）
-checkpoint:     [改①→改②→…→改⑳] → 看净 diff → 整组 commit / discard
-                 └ copilot 在隔离层自由多步、建在自己的草稿上 ┘
+propose-inbox:  改①→审→改②→审→改③→审        每步等你，多步走不通
+per-utterance:  你说一句 → copilot 多步[改①改②…改⑳] → 一个 PR：净 diff + 一句话总结 → keep/revert/cherry-pick
+                下一句 → 建在已 live 的基础上（线性 timeline，像一串 git commit）
 ```
 
-闸还在——**你的真实学习态没经你批不会变**——但 copilot 在 checkpoint 内放开手脚，你审的是**这次任务的净效果**。**这是 propose-only 的进化，不是抛弃。**
+闸还在，但**一句话一个、而非一改动一个**——一次 review 顶整轮全部改动。这正是 Claude Code 的体感：我一轮干一堆，你看 diff 整轮 keep/revert。**这是 propose-only 的进化（闸搬到 turn 边界），不是抛弃。**
 
-## 2. 设计：在 event-sourced 架构里的形态
+## 2. 模型：live + per-utterance PR + 级联 revert（= git/Claude Code）
 
-**数据层**：一次 copilot 多步任务 = 一个 `checkpoint`（envelope）。任务内所有写**照常 append 事件，打 `checkpoint_id` + `status=draft`**。
+**改动直接落 live**（不隔离）。copilot 读 live → 看得见自己上一步刚改的 → 接着建（多步链条通）。**v1 的 LIVE/PREVIEW 隔离 overlay 不需要了**——「它看得见自己草稿」被「直接落库」自动满足，可见性 filter 是为隔离造的，而我们选的是「落库 + 事后撤」。**少一大块工程。**
 
-**可见性 scope（核心机关）**：派生读分两态——
-- **LIVE**（产品默认 + 你的真实学习态：FSRS/mastery/frontier/today 流 全看这个）：只认 committed 事件。
-- **PREVIEW(checkpoint)**：committed + 该 checkpoint 的 draft 事件叠加。
-- **copilot 任务内的读写走 PREVIEW(自己的 checkpoint)** → 它看得见、用得上上一步的草稿（多步链条通）；产品和你的真实态走 LIVE → **纹丝不动直到 commit**。
+**一句话 = 一个 checkpoint = 一个 PR**：
+- **锚**：copilot 每请求已写一条 `user_ask` 事件 → 它就是 PR 锚（`checkpoint_id = user_ask event id`），一句话一个，不用新发明。
+- **PR 的 commit 图**：turn 内所有写 `caused_by` 链回 user_ask → 既是「这个 PR 含哪些改动」，也是 revert 的依赖序来源。
+- **PR 三件套**：① 净 diff（跨实体聚合：N 节点/M 边/K 题…）② 一句话总结（copilot 自述「我干了啥/为啥」=PR description）③ keep（默认/继续对话即接受）/ revert 整 PR / cherry-pick 单条。
 
-**commit** = checkpoint draft→committed，事件并入 LIVE，派生态重算（带乐观版本冲突检查）。
-**discard** = checkpoint→abandoned，draft 事件**永不进 LIVE**——本来就没进过，discard 干净到连补偿都不用追（event-sourcing 红利）。
+**revert = event-sourcing 红利**：撤一个 PR = 对它那组事件追加补偿事件（`CorrectionKind=retract/supersede/restore`），派生态重算——**非破坏性删**。撤早期 PR 要级联（后面 `caused_by` 它的一起补），依赖序从 caused_by 链来。
 
-与 Claude Code 同构：checkpoint = copilot 的 working tree（它自己看得见、接着干），你 review 净 diff，commit=push / discard=丢分支。
+## 3. 安全模型变了（要 owner 拍，已倾向接受）
 
-## 3. 地基已有先例（不是凭空建）
+per-utterance + 落库，安全模型从 **approve-before（propose 先批后改）** → **revert-after（先改后可整撤）**。这是「真正全能」的代价。判断：对 n=1 成立——你在看、窗口短、一句话一个 diff 摆面前。它**软化 propose-only**：以前「没批不动你数据」，现在「动了但每句话可整撤」。
 
-| 现有件 | 提供的半边 |
+**唯一保留 hard 的：user_verified。** 即便 live+revert，AI 自动覆写你亲手标「已验证」的内容你可能划过没注意 → user_verified 块的改动在 PR diff **强制高亮 + 默认不 included（要你主动勾）**。其余 live+revert。
+
+## 4. 地基已就位（不是凭空建）
+
+| 现有件 | 提供的 |
 |---|---|
-| `draft_status='draft'`（question，Option B invisible to pool/review/FSRS，promote 才 live） | **「不可见直到提交」**——checkpoint 把它从单题推广到全部结构改 |
-| `answer` 表（ADR-0029 复活为答题卡草稿层，可变工作态，submit 冻结 + event 引用） | **「草稿工作区 commit 成事件」** |
-| event 是 SoT + 派生可重放（ADR-0006） | revert=追加补偿事件、派生重算，**非破坏性删** |
-| `CorrectionKind=[supersede,retract,mark_wrong,restore]` + `archived_at` 软归档 + `caused_by_event_id` | 补偿原语 + 因果链（会话关联/级联序的底座） |
-| 工具 `ctx` 已 thread `db`/`subjectProfile` | **加一个 `checkpoint_id` 进 ctx** → 26 个工具读写即 checkpoint-aware |
-| 乐观版本锁（note/artifact version，409） | commit 冲突检查可复用 |
+| `user_ask` 事件（copilot 每请求一条） | **PR 锚**（checkpoint_id），一句话一个 |
+| `caused_by_event_id`（event 因果链） | PR 的 commit 图 + 级联 revert 依赖序（**但现状未在 copilot 写路径一致设置→要补**） |
+| event=SoT + 派生可重放（ADR-0006） | revert=追加补偿事件、派生重算，非破坏删 |
+| `CorrectionKind=[supersede,retract,mark_wrong,restore]` + `archived_at` | 补偿原语（每种写的逆操作） |
+| 乐观版本锁（note/artifact version，409） | live 时并发（你同时编辑）冲突检查 |
+| `draft_status` / `answer` 表 | 「不可见草稿 / 可变工作区 commit 成事件」先例（如某些写仍想要 turn 内不 live，可选用） |
 
-**blast radius 只在 ~15 个 copilot 读工具 + 写工具 + 一个 review 面，不是全产品**——这是它可行的关键。
+blast radius：补全 caused_by 链 + 一个 per-PR diff/revert 面 + 级联 revert 器。**比 v1 的全产品可见性 filter 小得多。**
 
-## 4. 为什么对 n=1 这是「对的」而非过度工程
+## 5. 硬的部分（诚实标，待续）
 
-直觉会说：单用户没别的用户要隔离，直接落 live + 事后撤不就行？——**不行，正因为是学习数据**。copilot 多步探索里建的半成品节点/题，**落 live 就立刻进 frontier→排进练习→污染 mastery/FSRS**，你还没批。checkpoint 的隔离 = 「**copilot 的探索过程不碰你的真实学习态，直到你认可净结果**」——这恰是 propose-only 红线的本意。
+1. **级联 revert 机制**（核心待挖）：撤 PR-N → 补偿其事件 + 所有 `caused_by` 链到它的下游事件，按反依赖序。要先**补全 copilot 写路径的 caused_by 设置**（现状不一致）。
+2. **不可逆下游**：跨 turn 撤旧 PR 时，若其改动已触发副作用（题进 frontier→你已练→真 attempt 事件），revert 撤不掉已练。per-utterance 窗口内罕见（你还没练就 review 了），但「能干净撤多久前的 PR」有边界。
+3. **commit 冲突**：PR live 后你又手动编辑同实体 → 复用乐观版本锁，冲突走 409 同款。
+4. **cherry-pick 依赖序**（v2）：撤 PR 里一条但留其余，要按 caused_by DAG（撤节点必先撤引用它的边/题）。v1 先整 PR keep/discard。
+5. **GC**：废弃/超时未处理的 PR 标记回收（复用 note refine stale-drop）。
 
-**checkpoint 是唯一同时给到「多步自主 + 不污染真实态」的模型。** 直接落 live+事后撤做不到（撤之前已污染）。
+## 6. 与 ADR 的关系
+- ADR-0039 A 档（单改动 自动+撤销）→ 本设计 = **A 档推到 turn 级**（一句话内自动多步 + turn 级整撤）。
+- ADR-0040 笔记 mutator（apply+reverse_patch+undo）= **per-event 版同款机制**，本设计是 turn 级泛化。
+- propose-only（ADR-0025）：闸从 per-change 搬到 per-utterance；user_verified 硬边界（ADR-0040）保留（PR diff 强制高亮）。
 
-## 5. 硬的部分（诚实标）
-
-1. **可见性 filter 铺面**：理论上每个派生读要接受 scope。**收敛**：只让 copilot 的 ~15 读工具 + review 面 checkpoint-aware，产品其余读死守 LIVE，不全产品改。
-2. **commit 冲突**：checkpoint 开着时 LIVE 可能变（你自己编辑/别的事件）→ commit 像 git merge；复用乐观版本锁，冲突走 409 同款。**（待深挖：merge 语义。）**
-3. **commit 粒度**：v1 整组 commit/discard（原子，绕开级联）；cherry-pick（只留部分）要按 `caused_by` 依赖序——留 v2。
-4. **GC**：未 commit 的 checkpoint 要 TTL 回收（复用 note refine stale-drop 思路）。
-5. **per-event undo 与 checkpoint 共存**：小零散改仍可走 A 档 per-event undo（ADR-0040 笔记 mutator）；checkpoint 是「多步任务」的范式。两者边界待定。
-
-## 6. 与 ADR-0039/0040 的关系
-
-- ADR-0039 A 档 = 单改动「自动+撤销窗口」。checkpoint = **把 A 档推到任务级**（任务自动多步 + 任务级撤销）。
-- ADR-0040 笔记 mutator（apply + reverse_patch + undo）= **per-event 版本的同款机制**，checkpoint 是其任务级泛化。
-- propose-only 红线（ADR-0025 ND-5）：**保留**，闸移到任务边界（commit/discard）。user_verified 硬边界（ADR-0040）：**保留**，draft 也不许碰 user_verified 块（或碰了必须在 diff 里高亮待你确认）。
-
-## 7. 开放子问题（继续讨论）
-
-- **commit/merge 冲突语义**：copilot 草稿 vs 你同时的编辑，怎么合/怎么报。
-- **diff/review 面长什么样**：一次任务的净效果怎么呈现给你审（N 节点/M 边/K 题 + 下钻 + commit/discard/cherry-pick）。
-- **checkpoint 边界谁开**：copilot 自己判「这是多步任务开 checkpoint」还是所有 copilot 写默认进当前 checkpoint。
-- **够得着全部 task + 异步长程**（understand map 另两条）：checkpoint 解决「写隔离」，但「copilot 能调全部 27+ task」「长程不被 6 轮掐」是并行的两条 D14 决策。
-
-## 8. 状态
-
-设计推演中，未 ADR 化。这是**架构级**改动（新 checkpoint envelope + 可见性 scope + commit/discard + diff 面），比「propose 改 mutator」大一圈，但是「真正全能 + 守住红线」的唯一干净解。落 ADR + Linear 待 §7 子问题讨论收敛后。
+## 7. 状态 / 待续
+模型收敛（live + per-utterance PR + 级联 revert）。未 ADR 化，待级联 revert 机制 + diff/PR 面 + cherry-pick 依赖序 讨论收敛。copilot 全能另两腿（reach「够得着全部 task」+ endurance「异步长程不被 6 轮掐」）另议——见 AI-pipeline map decision_inputs #5。
