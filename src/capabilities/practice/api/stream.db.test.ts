@@ -87,6 +87,22 @@ describe('practice stream API', () => {
     expect(body2.items.map((i) => i.ref_id)).toEqual(body.items.map((i) => i.ref_id));
   });
 
+  it('零行为变更：composeDailyStream 不写 signals → 物化行 signals 默认 {}（YUK-361 Phase 1）', async () => {
+    // 承重保证：本 lane 只加 signals 存储列，不接进选题；composer 不产 signals，
+    // materializeStream `it.signals ?? {}` 必须让每行落 {}（非 null、非缺省漂移）。
+    await seedDueQuestion();
+    const res = await GET(getReq('today'));
+    expect(res.status).toBe(200);
+    const rows = await testDb()
+      .select()
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.date, TODAY));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.signals).toEqual({});
+    }
+  });
+
   it('GET a past date never lazy-composes (历史日期不凭空生流)', async () => {
     await seedDueQuestion();
     const res = await GET(getReq('2020-01-01'));
