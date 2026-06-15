@@ -103,6 +103,18 @@ owner 在 §1.5 之后续拍了 rethink 的**完整决策面**（不止审计的
 - **A/B/C 18 行归档表：拍定（→ ADR-0039 Amendment 2026-06-15）**，15 B + 3 C + 0 A（保守，A 档只 mem0 episodic）。
 - **笔记 check 段 + 笔记形态：deferred** 到「笔记形态」专项讨论（notes-artifact 域 re-think，审计报 9 缺口；连带 note_update 终档 / note_refine 触发器 / 挂载双层图 / 进度可见性 / AI 改动撤销链）。
 
+### §1.7 GPT 稿尾巴收口（2026-06-15）—— 决策 7 + §8 文档订正
+
+owner 复审 GPT 稿原文后，确认 GPT 侧仅剩一条低优先尾巴（决策 1-6 早已拍定，详见 `2026-06-14-gpt-doc-gap-analysis.md`）：
+
+- **GPT 决策 7 三条 = 采纳 gap-analysis 推荐**：
+  - **7a problem_type 作调度单元** → **不做**（会给三轴正交加第四轴污染；step_skill 用知识树叶子节点表达，不新增 `subject_kind='skill'`）。
+  - **7b review_format Reconstruct/Explain** → 作 **B3 合并引擎 mix 输出第二维**（复用 ADR-0037 mix 挂点 + RT1 边，不建映射表；开放题 Explain/Reconstruct 自动判分撞 B1 软轨天花板）→ 注记进 YUK-349。
+  - **7c KG 死边反向审计** → 扩 RT4 `audit:relations` 加「边创建后是否真被下游消费」死边检测 → Linear follow-up。
+- **§8 GPT 对账表文档订正 = 直接补**（已落 synthesis §8.1）：§10.1 风险表 8 行逐行对账 / xAPI·Caliper·公开数据集显式拒绝行 / §9 A/B 实验作 E5 有效性天花板 / RC-1·2·3 措辞订正。
+
+至此 **GPT 稿对账 100% 收口**；D1-D19 架构重设计是 M1-M5 已 ship 的前章地基（D17 已被本轮推翻），非 rethink 未完成项。
+
 ---
 
 ## §2 形态/体验轨道（B 组）—— 转 claude design handoff + 补 Linear 工单
