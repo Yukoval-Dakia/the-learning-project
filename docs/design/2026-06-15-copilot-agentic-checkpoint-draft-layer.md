@@ -67,4 +67,4 @@ blast radius：补全 caused_by 链 + 一个 per-PR diff/revert 面 + 级联 rev
 - propose-only（ADR-0025）：闸从 per-change 搬到 per-utterance；user_verified 硬边界（ADR-0040）保留（PR diff 强制高亮）。
 
 ## 7. 状态 / 待续
-模型收敛（live + per-utterance PR + 级联 revert）。未 ADR 化，待级联 revert 机制 + diff/PR 面 + cherry-pick 依赖序 讨论收敛。copilot 全能另两腿（reach「够得着全部 task」+ endurance「异步长程不被 6 轮掐」）另议——见 AI-pipeline map decision_inputs #5。
+模型收敛（live + per-utterance PR + 级联 revert）。**已 ADR 化 → ADR-0041（决策 1：写侧 checkpoint）**，与另两腿（reach + endurance，见 `2026-06-15-copilot-reach-endurance-design.md`）合一固化。实施细节 deferred（级联 revert 机制 + diff/PR 面 + cherry-pick 依赖序）见 ADR-0041「实施细节 deferred」节。
