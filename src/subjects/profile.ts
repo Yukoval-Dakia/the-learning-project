@@ -3,7 +3,7 @@ import { validateProfile } from '@/core/capability/validate-profile';
 import { generalProfile } from './general/profile';
 import { mathProfile } from './math/profile';
 import { physicsProfile } from './physics/profile';
-import { type SlimSubjectProfile, type SubjectId, type SubjectProfile } from './profile-schema';
+import type { SlimSubjectProfile, SubjectId, SubjectProfile } from './profile-schema';
 import { wenyanProfile } from './wenyan/profile';
 
 export {
