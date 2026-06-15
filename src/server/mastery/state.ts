@@ -17,6 +17,7 @@ import {
   conjunctiveCredits,
   difficultyToLogitB,
   eloK,
+  updateThetaPrecision,
 } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, mastery_state } from '@/db/schema';
@@ -31,6 +32,9 @@ export interface MasteryStateRow {
   success_count: number;
   fail_count: number;
   last_outcome_at: Date | null;
+  // YUK-361 Phase 2 — 累积 Fisher information（SE 从此派生，见 thetaSe）+ 上次 Δθ̂。
+  theta_precision: number;
+  last_theta_delta: number | null;
 }
 
 export interface UpsertMasteryStateInput {
@@ -41,6 +45,9 @@ export interface UpsertMasteryStateInput {
   success_count: number;
   fail_count: number;
   last_outcome_at: Date;
+  // YUK-361 Phase 2 — 默认让 upsert 维持既有 precision/delta 语义（不传则不更新）。
+  theta_precision?: number;
+  last_theta_delta?: number | null;
 }
 
 /**
@@ -55,6 +62,24 @@ export async function upsertMasteryState(
 ): Promise<void> {
   const now = new Date();
   const subjectKind = input.subject_kind ?? 'knowledge';
+  // YUK-361 Phase 2 — precision/delta 是可选维护：只有 caller 显式传值时才写。
+  //   INSERT 缺省走 DB default（theta_precision=1, last_theta_delta=NULL）。
+  //   UPDATE 缺省不动这两列（既有 upsert caller 如直接 seed 不该重置 precision）。
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle set 列子集动态拼装，类型在分支内已保真。
+  const updateSet: Record<string, any> = {
+    theta_hat: input.theta_hat,
+    evidence_count: input.evidence_count,
+    success_count: input.success_count,
+    fail_count: input.fail_count,
+    last_outcome_at: input.last_outcome_at,
+    updated_at: now,
+  };
+  if (input.theta_precision !== undefined) {
+    updateSet.theta_precision = input.theta_precision;
+  }
+  if (input.last_theta_delta !== undefined) {
+    updateSet.last_theta_delta = input.last_theta_delta;
+  }
   await db
     .insert(mastery_state)
     .values({
@@ -66,18 +91,13 @@ export async function upsertMasteryState(
       success_count: input.success_count,
       fail_count: input.fail_count,
       last_outcome_at: input.last_outcome_at,
+      ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
+      ...(input.last_theta_delta !== undefined ? { last_theta_delta: input.last_theta_delta } : {}),
       updated_at: now,
     })
     .onConflictDoUpdate({
       target: [mastery_state.subject_kind, mastery_state.subject_id],
-      set: {
-        theta_hat: input.theta_hat,
-        evidence_count: input.evidence_count,
-        success_count: input.success_count,
-        fail_count: input.fail_count,
-        last_outcome_at: input.last_outcome_at,
-        updated_at: now,
-      },
+      set: updateSet,
     });
 }
 
@@ -106,6 +126,8 @@ export async function getMasteryState(
     success_count: row.success_count,
     fail_count: row.fail_count,
     last_outcome_at: row.last_outcome_at ?? null,
+    theta_precision: row.theta_precision,
+    last_theta_delta: row.last_theta_delta ?? null,
   };
 }
 
@@ -195,6 +217,8 @@ export async function updateThetaForAttempt(
       evidence: row?.evidence_count ?? 0,
       success: row?.success_count ?? 0,
       fail: row?.fail_count ?? 0,
+      // YUK-361 Phase 2 — 冷启 precision = 1（弱先验 1 单位信息，SE=1），同 DB default。
+      precision: row?.theta_precision ?? 1,
     };
   });
 
@@ -212,6 +236,11 @@ export async function updateThetaForAttempt(
     const s = states[i];
     const k = eloK(s.evidence);
     const newTheta = s.theta + k * bWeight * credits[i];
+    // YUK-361 Phase 2 — 累积 θ precision，用与 θ̂ 更新**同一个 b 锚 + 同一 bWeight**
+    //   喂 Fisher information（弱锚 bWeight=0.3 → weight² 降权，信息增量小）。
+    //   thetaBefore=s.theta（信息在 θ̂ 移动前的位置评估，与梯度同步）。
+    const newPrecision = updateThetaPrecision(s.precision, s.theta, b, bWeight);
+    const delta = newTheta - s.theta;
     await upsertMasteryState(tx, {
       subject_id: s.id,
       theta_hat: newTheta,
@@ -219,6 +248,8 @@ export async function updateThetaForAttempt(
       success_count: s.success + (input.outcome === 1 ? 1 : 0),
       fail_count: s.fail + (input.outcome === 0 ? 1 : 0),
       last_outcome_at: input.now,
+      theta_precision: newPrecision,
+      last_theta_delta: delta,
     });
   }
 }
