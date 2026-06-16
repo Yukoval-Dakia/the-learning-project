@@ -32,6 +32,7 @@ import {
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
+import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface EmbeddedCheckGenerateJobData {
@@ -90,11 +91,26 @@ function parseOutput(text: string): EmbeddedCheckOutput {
   if (start === -1 || end === -1 || end < start) {
     throw new Error('parseOutput: no JSON object found in text');
   }
+  const slice = text.slice(start, end + 1);
   let json: unknown;
   try {
-    json = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new Error(`parseOutput: JSON.parse failed: ${(e as Error).message}`);
+    json = JSON.parse(slice);
+  } catch (firstErr) {
+    // LLM outputs sometimes embed bare control characters (newline/tab) inside
+    // JSON string literals instead of their escape sequences, which JSON.parse
+    // rejects. Retry once with the shared control-char sanitizer before giving
+    // up. Structurally-broken (non-control-char) JSON still falls through to the
+    // failed path with the ORIGINAL parse error message preserved so the
+    // `parseOutput: JSON.parse failed:` contract (and existing assertions) hold.
+    console.warn(
+      '[embedded_check_generate] parseOutput: JSON.parse failed, retrying with control-char sanitizer:',
+      (firstErr as Error).message,
+    );
+    try {
+      json = JSON.parse(sanitizeJsonStringLiterals(slice));
+    } catch {
+      throw new Error(`parseOutput: JSON.parse failed: ${(firstErr as Error).message}`);
+    }
   }
   const parsed = EmbeddedCheckOutputSchema.safeParse(json);
   if (!parsed.success) {
