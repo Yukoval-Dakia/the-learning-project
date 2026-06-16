@@ -7,6 +7,15 @@
 // 这层把 recordFamilyObservationForAttempt（写侧）与 candidate-signals / state（读侧）共用同一
 // 解析逻辑——避免读写两侧各自内联一份 subject 派生而漂移。format 不变（仍是 familyKey 的串）。
 //
+// 单一真相源对齐的是 **getEffectiveDomain**（archived-INCLUSIVE：按 id 点查、爬过 archived 祖先
+// 取其 domain），不是 resolveSubjectKnowledgeIds（archived-cutoff，walk 停在 archived 祖先）。
+// family_key 必须在「写/θ̂ 单题路径」（resolveFamilyKeyForQuestion → getEffectiveDomain）与
+// 「candidate-signals 批量选题路径」（batchResolveFamilyKeys 内存 walk）两侧对 archived 祖先
+// 收敛到同一键，否则「有效 domain 经 archived 中间祖先解析」的 KC 会写侧 = `<subject>:...`、
+// 读侧 = `unknown:...`，effectiveFamilyB 在选题侧静默 NO-OP（YUK-372 read/write 键漂移修复）。
+// 因此批量 walk **加载全树（不过滤 archived_at）**，让 in-memory climb 能走进 archived 祖先，
+// 与 getEffectiveDomain 的 archived-inclusive 语义一致。
+//
 // G1（NO-OP-safe foundation 的护栏）：getEffectiveDomain 对 orphan id 抛错——本模块**必须**
 // try/catch 兜成 'unknown'，让 subject 派生永不 crash 调用方（state.ts updateThetaForAttempt
 // 主路径绝不能因 subject 解析失败而 abort θ̂）。
@@ -15,21 +24,9 @@ import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { resolveKnownSubjectId } from '@/subjects/profile';
-import { isNull } from 'drizzle-orm';
+import { buildFamilyKey } from './family-key-format';
 
 type DbLike = Db | Tx;
-
-// family_key 串格式（与 personalized-difficulty.ts familyKey 同步——**不**从那里 import 以避免
-// family-key.ts ↔ personalized-difficulty.ts 循环依赖；格式是单行四段 join，此处内联是唯一例外，
-// personalized-difficulty.familyKey 改格式时这里必须同改）。
-function buildFamilyKey(
-  subject: string,
-  primaryKnowledgeId: string,
-  kind: string,
-  source: string,
-): string {
-  return `${subject}:${primaryKnowledgeId}:${kind}:${source}`;
-}
 
 export interface FamilyKeyInput {
   /** 题目的主 knowledge_id（q.knowledge_ids[0]）。空 → 无法成键 → null。 */
@@ -77,17 +74,18 @@ export async function batchResolveFamilyKeys(
   const out = new Map<string, string | null>();
   if (items.length === 0) return out;
 
-  // 一次加载活跃 knowledge 树（单用户，数百节点），内存里 climb effective domain（mirror
-  // resolveSubjectKnowledgeIds 的 in-memory walk——archived 祖先已不在 byId → walk 停在它，
-  // 与 archived-ancestor cutoff 一致）。
+  // 一次加载**全**knowledge 树（单用户，数百节点；**不**过滤 archived_at），内存里 climb
+  // effective domain。关键：与写/θ̂ 单题路径的 getEffectiveDomain（archived-INCLUSIVE，点查爬过
+  // archived 祖先）同语义——若此处沿用 resolveSubjectKnowledgeIds 的 archived-cutoff（停在
+  // archived 祖先），则「有效 domain 来自 archived 中间祖先」的 KC 在选题侧解析成 'unknown' 段、
+  // 与写侧 `<subject>:...` 键不匹配 → familyRow=null → effectiveFamilyB 静默 NO-OP（YUK-372 修复）。
   const rows = await db
     .select({
       id: knowledge.id,
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
     })
-    .from(knowledge)
-    .where(isNull(knowledge.archived_at));
+    .from(knowledge);
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   const effectiveDomain = (id: string): string | null => {
@@ -112,7 +110,8 @@ export async function batchResolveFamilyKeys(
     }
     let subject = subjectByKid.get(primaryKnowledgeId);
     if (subject === undefined) {
-      // 内存 walk；archived/orphan（不在 byId）→ effectiveDomain 返 null → 'unknown'。
+      // 内存 walk（archived-inclusive：archived 祖先在 byId 内，walk 不在其处截断，与
+      // getEffectiveDomain 一致）；真 orphan（id 完全不在树里）→ null → 'unknown'。
       const domain = effectiveDomain(primaryKnowledgeId);
       subject = resolveKnownSubjectId(domain) ?? 'unknown';
       subjectByKid.set(primaryKnowledgeId, subject);
