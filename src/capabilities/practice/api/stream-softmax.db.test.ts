@@ -245,13 +245,13 @@ describe('softmax_mfi 选题接线（YUK-361 Phase 3 Step C2）', () => {
     expect(duerow?.signals).toEqual({});
   });
 
-  it('G3 (π_i)：tight 容量 → π_i 真随机分布（< 1，非塌成 [1,1]）；高/低权 π_i 不同；fallback=none', async () => {
+  it('G3 (π_i)：tight 容量 → π_i 真随机分布（< 1，非塌成 [1,1]）；fallback=none', async () => {
     // 直接调 composeSoftmaxStream 以拿到 result.fallback + 全候选的真 π_i 向量（getStream 不
-    //   暴露这两者，且 getStream 的 sampledInclusion 经容量截断会丢掉被砍候选的 π_i）。
-    //   sampleByWeight 在截断**之前**对全部候选算 π_i，故 composeSoftmaxStream 内部的 π 是完整的；
-    //   这里用 rng 让两候选都通过 Bernoulli（π>0 全入），再读 result.sampledInclusion 截断后留下的
-    //   那个的 π——它 < 1 证明 targetCount<N（非旧 main-path 的 [1,1] 塌缩盲点）。
-    //   并用 selection-sampler.unit 的「higher weight → higher π_i」单测覆盖「两 π 不同」的 sampler 数学。
+    //   暴露这两者）。tight 容量（nonDueBudget=1 < N=2）⇒ sampler 给两候选都算出 π_i<1。
+    //   rng 让两候选都通过 Bernoulli（π>0 全入）。
+    //   FINDING 2 后：sampled 项**不再被容量截断**（截断会破坏 π_i 的 IPW 正确性），故
+    //   两个被抽中项都留在 sampledInclusion，各记真 π_i<1。
+    //   「高/低权 π_i 不同」的 sampler 数学由 selection-sampler.unit 的「higher weight → higher π_i」覆盖。
     const v1 = await seedVariantCandidate({ kind: 'choice' }); // 高权
     const v2 = await seedVariantCandidate({ kind: 'choice' }); // 低权
 
@@ -277,12 +277,144 @@ describe('softmax_mfi 选题接线（YUK-361 Phase 3 Step C2）', () => {
     expect(runTaskFn).toHaveBeenCalledTimes(1);
     expect(result.fallback).toBe('none'); // softmax 主路全程成功（非 statistical/legacy）
 
-    // 容量 nonDueBudget=1 截断 → 留下高 arrangement 的 v1（截断后 sampledInclusion 仅含 kept）。
-    //   关键回归：kept 候选的 π_i 严格 < 1（旧盲点 targetCount≥N 会塌成 π=1）。
+    // 关键回归：两被抽中项的 π_i 都严格 < 1（旧盲点 targetCount≥N 会塌成 π=1）。
     const piV1 = result.sampledInclusion.get(v1);
+    const piV2 = result.sampledInclusion.get(v2);
     expect(piV1).toBeDefined();
+    expect(piV2).toBeDefined();
     expect(piV1 as number).toBeLessThan(1);
     expect(piV1 as number).toBeGreaterThan(0);
+    expect(piV2 as number).toBeLessThan(1);
+    expect(piV2 as number).toBeGreaterThan(0);
+  });
+
+  it('FINDING 1（positivity）：LLM 只编排 samplable 的子集 → 被漏候选 floor-fill 仍被抽样 + 记 π_i>0', async () => {
+    // LLM 漏排 v2（只给 v1 权重）。修复前：v2 拿不到权重 → 不进 sampler → π_i=0（positivity
+    //   违例 + 静默丢候选）。修复后：v2 被 floor-fill 一个统计权重 → 进 sampler → π_i>0、被抽中、
+    //   记进 selection_observation。rng=0 全选 → 两者都入流。
+    await seedDueQuestion();
+    const v1 = await seedVariantCandidate({ kind: 'choice' });
+    const v2 = await seedVariantCandidate({ kind: 'choice' });
+
+    // 只编排 v1——v2 被 LLM 完全省略。
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: JSON.stringify({
+        candidates: [
+          { refId: v1, weight: 3, role: 'diagnostic', arrangement: 1, reason: 'only v1' },
+        ],
+      }),
+    }));
+
+    const view = await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi', temperature: 0.25 },
+      composeDeps: { runTaskFn, rng: RNG_ALWAYS_SELECT },
+    });
+
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const refs = view.items.map((i) => i.ref_id);
+    // 两个 samplable 都在流里——v2 没被静默丢弃（positivity 保住）。
+    expect(refs).toContain(v1);
+    expect(refs).toContain(v2);
+
+    // v2 记进 selection_observation 且 π_i>0（floor-fill 保 positivity）。
+    const obs = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(eq(selection_observation.date, TODAY));
+    const obsRefs = obs.map((o) => o.ref_id);
+    expect(obsRefs).toContain(v1);
+    expect(obsRefs).toContain(v2);
+    const v2Obs = obs.find((o) => o.ref_id === v2);
+    expect(v2Obs?.inclusion_probability).toBeGreaterThan(0);
+  });
+
+  it('FINDING 2（π_i = 真最终入选概率）：realized 抽样超容量 → sampled 项不被截断，记录 π_i = 真入选概率', async () => {
+    // nonDueBudget=1 但 rng=0 让 realized 抽样=2（Poisson 上溢，超 budget）。修复前：
+    //   capacityGuard 会按 arrangement 尾部截断（砍 v2），却为幸存的 v1 记**截断前**的 π_i
+    //   → π_i 高估真实入选概率。修复后（option b）：sampled 项不被截断，v1+v2 都留在流里，
+    //   各记自己真实的 sampler π_i（=出现在最终流的真实概率，因为没有第二重截断过滤）。
+    const v1 = await seedVariantCandidate({ kind: 'choice' });
+    const v2 = await seedVariantCandidate({ kind: 'choice' });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    // nonDueBudget = max - dues = 1 < N=2 候选 ⇒ Σπ_i=1，但 rng=0 让两者都过 Bernoulli。
+    inputs.capacity = { max: inputs.dueItems.length + 1 };
+
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: JSON.stringify({
+        candidates: [
+          { refId: v1, weight: 3, role: 'diagnostic', arrangement: 1, reason: 'hi' },
+          { refId: v2, weight: 1, role: 'diagnostic', arrangement: 2, reason: 'lo' },
+        ],
+      }),
+    }));
+
+    const result = await composeSoftmaxStream(
+      testDb(),
+      inputs,
+      { policy: 'softmax_mfi', temperature: 0.25 },
+      { runTaskFn, rng: RNG_ALWAYS_SELECT },
+    );
+
+    const planRefs = result.plan.items.map((i) => i.ref_id);
+    // realized 抽样 (2) > nonDueBudget (1)：两个 sampled 项都留在 plan（不截断）。
+    expect(planRefs).toContain(v1);
+    expect(planRefs).toContain(v2);
+
+    // 记录的 π_i ⇔ 真出现在最终流：两项都在流里 ⇒ 两者都在 sampledInclusion，
+    //   且各等于 sampler 算出的真 π_i（无截断的第二重过滤压低真实入选概率）。
+    const piV1 = result.sampledInclusion.get(v1);
+    const piV2 = result.sampledInclusion.get(v2);
+    expect(piV1).toBeDefined();
+    expect(piV2).toBeDefined();
+    expect(piV1 as number).toBeGreaterThan(0);
+    expect(piV1 as number).toBeLessThanOrEqual(1);
+    expect(piV2 as number).toBeGreaterThan(0);
+    expect(piV2 as number).toBeLessThanOrEqual(1);
+    // 关键：sampledInclusion 与 plan 里被抽中项**一一对应**（无幻影 π_i、无漏记）。
+    const sampledInPlan = planRefs.filter((r) => r === v1 || r === v2).sort();
+    expect([...result.sampledInclusion.keys()].sort()).toEqual(sampledInPlan);
+  });
+
+  it('FINDING 5（config.targetCount 被尊重）：传入 targetCount 下采样非到期，受 nonDueBudget 上界约束', async () => {
+    // 4 个 samplable + 充足容量（nonDueBudget=4）。config.targetCount=1 → effectiveTarget=
+    //   min(1,4)=1 ⇒ Σπ_i=1 ⇒ 每个候选 π_i≈0.25（<1）。若 targetCount 被忽略（旧 bug），
+    //   sampler 会用 nonDueBudget=4 ≥ N=4 ⇒ 全部 π_i=1。故 π_i<1 直接证明 targetCount 被采纳。
+    const vs: string[] = [];
+    for (let i = 0; i < 4; i++) vs.push(await seedVariantCandidate({ kind: 'choice' }));
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    inputs.capacity = { max: inputs.dueItems.length + 4 }; // nonDueBudget = 4 = N（若忽略 → π=1）
+
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: JSON.stringify({
+        candidates: vs.map((id, i) => ({
+          refId: id,
+          weight: 1,
+          role: 'diagnostic',
+          arrangement: i + 1,
+          reason: 'x',
+        })),
+      }),
+    }));
+
+    const result = await composeSoftmaxStream(
+      testDb(),
+      inputs,
+      { policy: 'softmax_mfi', temperature: 0.25, targetCount: 1 }, // 下采样到 1
+      { runTaskFn, rng: RNG_ALWAYS_SELECT },
+    );
+
+    // targetCount=1 被采纳 ⇒ Σπ_i=1 ⇒ 每个 π_i<1（均权 ⇒ ≈0.25）。
+    for (const id of vs) {
+      const pi = result.sampledInclusion.get(id);
+      expect(pi).toBeDefined();
+      expect(pi as number).toBeLessThan(1);
+      expect(pi as number).toBeGreaterThan(0);
+    }
+    const sumPi = vs.reduce((acc, id) => acc + (result.sampledInclusion.get(id) ?? 0), 0);
+    expect(sumPi).toBeCloseTo(1, 6); // Σπ_i = effectiveTarget = min(1, nonDueBudget=4) = 1
   });
 
   it('L1 fallback：runTask 抛错 → 统计 sampler 触发，流仍合法，π_i 仍记', async () => {
@@ -331,6 +463,39 @@ describe('softmax_mfi 选题接线（YUK-361 Phase 3 Step C2）', () => {
       .from(selection_observation)
       .where(eq(selection_observation.ref_id, v1));
     expect(obs.length).toBeGreaterThan(0);
+  });
+
+  it('FINDING 4（in-enum-cast-lies）：DB kind 不在 QuestionKind 枚举内 → fail-closed 视为 recall-locked，不被抽样', async () => {
+    // question.kind 是 text 列——行里可能存枚举外脏值（历史脏数据 / 手填 / enum 收缩遗留）。
+    //   旧 bug：裸 `as QuestionKindT` 把脏值原样传下游 → rotationClassForKind 返 undefined →
+    //   recallLocked=false → 题被 sampler 抽样（违反铁律③：身份不明的题不得被抽样/MFI 评分）。
+    //   修复：enrichCandidates 用 QuestionKind.safeParse 校验，枚举外 → undefined → 落
+    //   collectQuestionSignal 的 fail-closed recall-lock 分支。
+    await seedDueQuestion();
+    // 'mystery_kind' 不在 QuestionKind 枚举（choice/true_false/fill_blank/...）内。
+    const badKindId = await seedVariantCandidate({ kind: 'mystery_kind' });
+
+    // 即便 LLM 给它权重，编排层也不该把它喂 sampler（它该被当 recall-locked 切出 samplable）。
+    const runTaskFn = async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: JSON.stringify({
+        candidates: [{ refId: badKindId, weight: 5, role: 'diagnostic', reason: 'x' }],
+      }),
+    });
+
+    const view = await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { runTaskFn, rng: RNG_ALWAYS_SELECT },
+    });
+
+    // 枚举外 kind 被当 recall-locked → 确定性透传纳入流（same-question），但**不被抽样**。
+    expect(view.items.map((i) => i.ref_id)).toContain(badKindId);
+    // 不记 π_i（它不经 sampler）——铁律③守住（fail-closed，非 fail-open 被抽样）。
+    const obs = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(eq(selection_observation.ref_id, badKindId));
+    expect(obs).toHaveLength(0);
   });
 
   it('recall-locked 不变量：fill_blank 变体作为同题透传，不被抽样（不进 selection_observation）', async () => {

@@ -25,16 +25,18 @@ export type SelectionOrchestratorRoleT = z.infer<typeof SelectionOrchestratorRol
 /**
  * 单候选编排决策。
  *   - refId：必须是输入候选之一（parse barrier 用 inputRefIds 做 ⊆ 校验，丢未知 id）。
- *   - weight：≥0 的教学价值权重（越高 = 越值得现在练）。sampler 据此 softmax 抽样。
- *     负权会反转排序（抽到最差候选），故 schema 硬拒 `min(0)`——越界由 parse barrier
- *     当本轮失败（走 fallback），符合现有失败语义。
+ *   - weight：≥0 **且有限**的教学价值权重（越高 = 越值得现在练）。sampler 据此 softmax
+ *     抽样。负权会反转排序（抽到最差候选），故 schema 硬拒 `min(0)`；非有限（Infinity/NaN，
+ *     如 LLM 吐 `1e309` → JSON.parse → Infinity）会让 softmaxProbabilities 的非有限守卫抛错
+ *     → 整批塌到 fallback，故 schema 用 `.finite()` 在 parse 期就拒掉。两类越界都由 parse
+ *     barrier 当本轮失败（走 fallback），符合现有失败语义。
  *   - arrangement：非到期候选间的建议排序（整数，越小越靠前）。可选——LLM 不给则
  *     sampler 用纯权重序。
  *   - reason：简短教学理由（为什么这个权重/排序）。
  */
 export const SelectionOrchestratorCandidate = z.object({
   refId: z.string().min(1),
-  weight: z.number().min(0),
+  weight: z.number().finite().min(0),
   role: SelectionOrchestratorRole,
   arrangement: z.number().int().optional(),
   reason: z.string().min(1),
