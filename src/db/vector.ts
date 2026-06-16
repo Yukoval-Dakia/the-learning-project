@@ -5,6 +5,14 @@ import { customType } from 'drizzle-orm/pg-core';
 // to / decode from pgvector's text literal `[a,b,c]` at the driver boundary.
 
 export function toSqlVector(v: number[]): string {
+  // pgvector rejects NaN/Infinity inside a vector literal. Guard here so a future
+  // misbehaving embedder surfaces a clear error instead of an opaque driver-side
+  // pgvector parse failure (and keeps the backfill's idempotent retry meaningful).
+  for (let i = 0; i < v.length; i++) {
+    if (!Number.isFinite(v[i])) {
+      throw new Error(`toSqlVector: non-finite element at index ${i} (${v[i]})`);
+    }
+  }
   return `[${v.join(',')}]`;
 }
 
