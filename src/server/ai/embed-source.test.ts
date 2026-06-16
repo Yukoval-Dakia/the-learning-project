@@ -19,4 +19,13 @@ describe('embed source text', () => {
     expect(questionEmbedText({ prompt_md: 'p', reference_md: null, choices_md: null })).toBe('p');
     expect(knowledgeEmbedText({ name: 'n', domain: null })).toBe('n');
   });
+  it('clamps overlong question text to 6000 chars', () => {
+    const long = 'x'.repeat(7000);
+    const t = questionEmbedText({ prompt_md: long, reference_md: null, choices_md: null });
+    expect(t).toHaveLength(6000);
+  });
+  it('clamps overlong knowledge text to 6000 chars', () => {
+    const t = knowledgeEmbedText({ name: 'y'.repeat(7000), domain: null });
+    expect(t).toHaveLength(6000);
+  });
 });

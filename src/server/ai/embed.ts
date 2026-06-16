@@ -28,11 +28,21 @@ interface EmbedItem {
 
 /** POST one ≤EMBED_MAX_BATCH chunk and return its vectors in input order. */
 async function embedChunk(chunk: string[], apiKey: string): Promise<number[][]> {
-  const res = await fetch(`${BASE_URL}/embeddings`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: EMBED_MODEL, input: chunk, dimensions: EMBED_DIMS }),
-  });
+  // Timeout so a hung upstream can't pin a pg-boss worker thread indefinitely;
+  // the abort surfaces as a throw → job fails, rows stay NULL, retried next run.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/embeddings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: EMBED_MODEL, input: chunk, dimensions: EMBED_DIMS }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     throw new Error(`embedMany: DashScope ${res.status} ${await res.text()}`);
   }
@@ -49,6 +59,15 @@ async function embedChunk(chunk: string[], apiKey: string): Promise<number[][]> 
     const pos = typeof item.index === 'number' ? item.index : i;
     if (pos < 0 || pos >= chunk.length || out[pos] !== undefined) {
       throw new Error(`embedMany: DashScope returned invalid/duplicate index ${pos}`);
+    }
+    // Validate the vector itself (dims + finite numbers) so a malformed response
+    // fails fast here instead of surfacing as a DB write/dimension error later.
+    if (
+      !Array.isArray(item.embedding) ||
+      item.embedding.length !== EMBED_DIMS ||
+      item.embedding.some((n) => typeof n !== 'number' || !Number.isFinite(n))
+    ) {
+      throw new Error(`embedMany: DashScope returned invalid embedding at index ${pos}`);
     }
     out[pos] = item.embedding;
   }
