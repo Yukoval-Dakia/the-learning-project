@@ -9,19 +9,13 @@
 // node-only test stack (no jsdom / @testing-library), per the lane plan §1
 // "Test-stack reality". Components only render markup; logic lives here.
 
-// Form-value types mirror VisionTab's local unions (VisionTab.tsx:36-46) so the
-// seeded subset stays structurally compatible with `BlockFormState` (slice 3
-// spreads `SeededBlockForm` over it). Kept local — these are UI form types, not
-// canonical core/schema exports.
-type QuestionKindId =
-  | 'choice'
-  | 'true_false'
-  | 'fill_blank'
-  | 'short_answer'
-  | 'essay'
-  | 'computation'
-  | 'reading'
-  | 'translation';
+// Form-value types mirror VisionTab's form unions so the seeded subset stays
+// structurally compatible with `BlockFormState` (slice 3 spreads
+// `SeededBlockForm` over it). The kind union is consolidated to
+// @/core/schema/business (YUK-387 Step 0) — same 8-value UI-selectable subset.
+import type { QuestionKindOptionId } from '@/core/schema/business';
+
+type QuestionKindId = QuestionKindOptionId;
 type CauseCategoryId = string;
 
 // ---------------------------------------------------------------------------

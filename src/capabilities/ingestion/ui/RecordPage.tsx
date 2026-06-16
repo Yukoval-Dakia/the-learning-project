@@ -4,6 +4,7 @@
 // manual / 拍单题 / 拍试卷 / AI 录入四 tab 保持旧行为。路由耦合走 props 注入
 //（壳层规则，见 web/src/router.tsx）。
 
+import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
 import { VisionTab, type VisionTabRouting } from '@/ui/components/VisionTab';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
@@ -25,18 +26,12 @@ interface KnowledgeNode {
   effective_domain: string | null;
 }
 
-const QUESTION_KINDS = [
-  { id: 'choice', label: '选择' },
-  { id: 'true_false', label: '判断' },
-  { id: 'fill_blank', label: '填空' },
-  { id: 'short_answer', label: '简答' },
-  { id: 'essay', label: '论述' },
-  { id: 'computation', label: '计算' },
-  { id: 'reading', label: '阅读' },
-  { id: 'translation', label: '翻译' },
-] as const;
+// QUESTION_KIND_OPTIONS / QuestionKindOptionId consolidated to
+// @/core/schema/business (YUK-387 Step 0). Local alias keeps the rest of this
+// file's call sites unchanged.
+const QUESTION_KINDS = QUESTION_KIND_OPTIONS;
 
-type QuestionKindId = (typeof QUESTION_KINDS)[number]['id'];
+type QuestionKindId = QuestionKindOptionId;
 type CauseCategoryId = string;
 
 const MODE_TABS = [
