@@ -45,4 +45,21 @@ describe('composition root', () => {
     const expected = aiProposalKinds.filter((k) => !LEGACY_TOMBSTONE_KINDS.includes(k));
     expect([...declared].sort()).toEqual([...expected].sort());
   });
+
+  // YUK-383 — cross-capability cron stagger guard. The embed_backfill comment
+  // (practice/manifest.ts) claims its 04:40 slot is staggered against the whole
+  // nightly chain, INCLUDING agency goal_scope and other capabilities. The
+  // practice-only manifest test can't see those, so the cross-capability part of
+  // that claim is enforced here: no two scheduled jobs across ALL manifests may
+  // share an identical cron slot. (Runtime is keyed by job name so a collision
+  // wouldn't crash, but staggering the nightly chain is a documented invariant.)
+  it('no two scheduled jobs across all capabilities share a cron slot', () => {
+    const crons = capabilities.flatMap(
+      (c) => c.jobs?.handlers.flatMap((h) => (h.schedule ? [h.schedule.cron] : [])) ?? [],
+    );
+    const seen = new Map<string, number>();
+    for (const cron of crons) seen.set(cron, (seen.get(cron) ?? 0) + 1);
+    const collisions = [...seen.entries()].filter(([, n]) => n > 1).map(([cron]) => cron);
+    expect(collisions).toEqual([]);
+  });
 });
