@@ -29,12 +29,11 @@
 // 把家族 delta 接进 live b-resolution 是一个 thin follow-up（见本模块 effectiveFamilyB
 // 文档 + roadmap Task 10 step 5）。本 Phase 只 build + store + expose + test 机器。
 
-import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
 import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
-import { resolveKnownSubjectId } from '@/subjects/profile';
+import { resolveFamilyKeyForQuestion } from '@/server/mastery/family-key';
 import { and, eq, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -512,17 +511,15 @@ export async function recordFamilyObservationForAttempt(
   // 也不动——它不是「干净客观观测」）。散题/review 路径无 partial（attemptOutcome 不传）。
   if (input.attemptOutcome === 'partial') return;
 
-  // subject 派生（DERIVED 轴）。getEffectiveDomain 可能因 orphan id 抛错——容错为
-  // 'unknown' 段（不塌进 default profile，防过匹配）。
-  let subject = 'unknown';
-  try {
-    const domain = await getEffectiveDomain(tx, primaryKnowledgeId);
-    subject = resolveKnownSubjectId(domain) ?? 'unknown';
-  } catch {
-    subject = 'unknown';
-  }
-
-  const key = familyKey(subject, primaryKnowledgeId, input.kind, input.source);
+  // subject 派生 + family_key 组装（DERIVED 轴）。YUK-372 L3：经 resolveFamilyKeyForQuestion
+  // 单一真相源（读写两侧共用同一 subject 派生 + orphan→'unknown' 容错，不再各自内联）。kind/
+  // source 在此恒非空（attempt 必带），故只有 primaryKnowledgeId 缺失才会返 null——上面已早返。
+  const key = await resolveFamilyKeyForQuestion(tx, {
+    primaryKnowledgeId,
+    kind: input.kind,
+    source: input.source,
+  });
+  if (key === null) return; // 防御：理论上不达（primaryKnowledgeId 已校验非空）。
 
   // b 锚：与 state.ts θ̂ 更新同一来源链（item_calibration.b track='hard' → 弱锚兜底）。
   const calRows = await tx

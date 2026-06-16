@@ -16,8 +16,9 @@ import {
   collectCandidateSignals,
 } from '@/capabilities/practice/server/candidate-signals';
 import { newId } from '@/core/ids';
+import { mfiScore } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
-import { item_calibration, mastery_state } from '@/db/schema';
+import { item_calibration, item_family_calibration, knowledge, mastery_state } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -56,6 +57,32 @@ async function seedCalibration(questionId: string, b: number): Promise<void> {
     confidence: 0.5,
     track: 'hard',
     source: 'llm_prior',
+  });
+}
+
+// Seed a knowledge node with an explicit domain (for family_key subject derivation).
+async function seedKnowledge(id: string, domain = 'wenyan'): Promise<void> {
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id,
+    name: `K-${id}`,
+    domain,
+    parent_id: null,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+}
+
+// Seed an item_family_calibration row with a (gate-passed) non-zero b_delta.
+async function seedFamilyCalibration(familyKey: string, bDelta: number): Promise<void> {
+  await db.insert(item_family_calibration).values({
+    id: newId(),
+    family_key: familyKey,
+    b_delta: bDelta,
+    evidence_count: 30,
+    calibrated_n: 30,
+    confidence: 0.6,
   });
 }
 
@@ -335,5 +362,134 @@ describe('collectCandidateSignals — batch', () => {
     ]);
     expect(sigs.map((s) => s.refId)).toEqual(['q1', 'p1', 'q2']);
     expect(sigs.map((s) => s.refKind)).toEqual(['question', 'paper', 'question']);
+  });
+});
+
+// YUK-372 L3 — family b_delta composition (effectiveFamilyB) in the selection signal layer.
+describe('collectCandidateSignals — family b_delta composition (YUK-372 L3)', () => {
+  it('gate-passed family (b_delta≠0) shifts b by the delta and moves mfiScore', async () => {
+    const kid = 'kc-fam';
+    await seedKnowledge(kid, 'wenyan');
+    await seedMastery(kid, 0.0, 4);
+    await seedCalibration('q-fam', 0.85); // columnar b = 0.85
+    // family_key = `${subject=wenyan}:${kid}:${kind=short_answer}:${source=manual}`.
+    const familyKey = `wenyan:${kid}:short_answer:manual`;
+    const bDelta = 0.5;
+    await seedFamilyCalibration(familyKey, bDelta);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-fam',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: [kid],
+        difficulty: 3,
+        source: 'manual',
+      },
+    ]);
+
+    // effectiveFamilyB(0.85, {b_delta:0.5}) = 1.35.
+    expect(sig.b).toBeCloseTo(0.85 + bDelta, 10);
+    expect(sig.bSource).toBe('item_calibration');
+    // mfiScore reflects the shifted b (θ̂=0, b=1.35), NOT the un-shifted 0.85.
+    expect(sig.mfiScore).toBeCloseTo(mfiScore(0.0, 0.85 + bDelta), 10);
+    expect(sig.mfiScore).not.toBeCloseTo(mfiScore(0.0, 0.85), 6);
+  });
+
+  it('NO-OP regression: no family row → b + mfiScore bit-identical to no-source baseline', async () => {
+    const kid = 'kc-noop';
+    await seedKnowledge(kid, 'wenyan');
+    await seedMastery(kid, 0.0, 4);
+    await seedCalibration('q-noop', 0.85);
+    // NO item_family_calibration row for this family.
+
+    const withSource = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-noop',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: [kid],
+        difficulty: 3,
+        source: 'manual', // family lookup runs but finds no row → b_delta absent → NO-OP.
+      },
+    ]);
+    const noSource = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-noop',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: [kid],
+        difficulty: 3,
+        // no source → family lookup skipped entirely.
+      },
+    ]);
+
+    // Bit-identical: missing family row composes to the columnar b unchanged.
+    expect(withSource[0].b).toBe(noSource[0].b);
+    expect(withSource[0].mfiScore).toBe(noSource[0].mfiScore);
+    expect(withSource[0].b).toBeCloseTo(0.85, 10);
+  });
+
+  it('subject derivation: orphan/unknown-domain KC → "unknown" segment (not the default profile)', async () => {
+    // KC has NO knowledge row at all (orphan) → getEffectiveDomain throws → 'unknown' segment.
+    const kid = 'kc-orphan';
+    await seedMastery(kid, 0.0, 4);
+    await seedCalibration('q-orphan', 0.85);
+    // family_key uses 'unknown' subject → seed the family row under that key.
+    const familyKey = `unknown:${kid}:short_answer:manual`;
+    await seedFamilyCalibration(familyKey, 0.4);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-orphan',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: [kid],
+        difficulty: 3,
+        source: 'manual',
+      },
+    ]);
+
+    // The 'unknown'-keyed family delta applied → proves orphan resolves to 'unknown', not 'wenyan'.
+    expect(sig.b).toBeCloseTo(0.85 + 0.4, 10);
+  });
+
+  it('batch preserves input order with family-keyed candidates + source-missing falls back to pure effectiveB', async () => {
+    const kid = 'kc-mix';
+    await seedKnowledge(kid, 'wenyan');
+    await seedMastery(kid, 0.0, 4);
+    await seedCalibration('q-fam2', 0.85);
+    await seedCalibration('q-plain', 0.85);
+    await seedFamilyCalibration(`wenyan:${kid}:short_answer:manual`, 0.5);
+
+    const sigs = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-fam2',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: [kid],
+        difficulty: 3,
+        source: 'manual', // family-keyed → delta applies.
+      },
+      { refKind: 'paper', refId: 'p-mix', role: 'paper' },
+      {
+        refKind: 'question',
+        refId: 'q-plain',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: [kid],
+        difficulty: 3,
+        // no source → pure effectiveB, no delta.
+      },
+    ]);
+
+    expect(sigs.map((s) => s.refId)).toEqual(['q-fam2', 'p-mix', 'q-plain']);
+    expect(sigs[0].b).toBeCloseTo(0.85 + 0.5, 10); // family delta applied.
+    expect(sigs[2].b).toBeCloseTo(0.85, 10); // no delta (source missing).
   });
 });

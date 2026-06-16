@@ -937,6 +937,9 @@ export async function reRankAfterAnswer(
         kind: question.kind,
         knowledge_ids: question.knowledge_ids,
         difficulty: question.difficulty,
+        // YUK-372 L3 — question.source for family_key resolution (distinct from the slot
+        // `source` in eligibleRaws, which is the stream-slot origin 'decay'/'new_check').
+        source: question.source,
       })
       .from(question)
       .where(inArray(question.id, poolQids));
@@ -962,6 +965,8 @@ export async function reRankAfterAnswer(
         kind: resolveEnumKind(q?.kind),
         knowledgeIds: q?.knowledge_ids,
         difficulty: q?.difficulty,
+        // YUK-372 L3 — question.source (not the slot source) for family_key resolution.
+        source: q?.source,
       };
     });
     const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
