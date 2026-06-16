@@ -524,9 +524,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           // YUK-350 (L3, RL5) — additive: a verdict that did NOT promote is a real
           // model-side validation failure (distinct from the catch-bottom
           // 'system_error'). Key absent on promote=true.
-          ...(promote
-            ? {}
-            : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
+          ...(promote ? {} : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
           summary_md: parsed.summary_md,
           confidence: parsed.confidence,
           verified_by: verifiedBy,
