@@ -155,9 +155,14 @@ owner 已在 claude-context（代码检索，~13k chunks）用 **Zilliz Milvus**
 owner：per-subject 先行 + 讨论跨科意义与路径。
 
 - **意义**：per-subject cause_category（古文「虚词误解」/ 数学「符号错误」）诊断「这个领域你哪错」。**跨科价值是 learner 级元认知信号**——有一类错因跨学科同构：审题不清 / 计算粗心 / 概念过度泛化 / 迁移失败 / 记号混淆。它们不是学科知识弱点，是**你的系统性习惯**。「你在所有科目都审题不清」是 per-subject 永远看不到的高阶洞见，喂个性化（mem0 关于「你」的长期事实）。
-- **路径（两层，增量、不破 per-subject）**：① 保留 per-subject cause_category 作**叶子**；② 加一个**小而固定的跨科 meta-错因类型集**，每个 per-subject cause **映射到**一个 meta 类型（`meta_cause` 字段或映射表）；③ misconceptionRecurrence **两层聚合**：层内（cause × KC，per-subject，先做）+ 跨科（meta_cause across subjects，后做，落 learner 元认知画像**数据层**）。
 - **不需要统一各科 taxonomy**，只需各科 cause 各标一个 meta tag。
-- **meta 类型集（owner「再考究一点」）**：不取拍脑袋清单，**经学习科学/错误分类文献研究定**（Reason 人因错误 slips/lapses/mistakes + Rasmussen SRK / Newman 程序性错误分析 / Chi 概念误解 + 概念变化 / 元认知校准 等），含来源权威性核验——见配套 research workflow 产出（2026-06-16）。
+- **最终 taxonomy（owner 2026-06-16 拍板，文献 grounded；详见 `docs/design/2026-06-16-meta-cause-taxonomy-research.md` 含来源权威性表）**：4 学派（Reason/Rasmussen 人因 · Newman/Radatz 程序错误 · Chi/diSessa 概念变化 · Corbett BKT 心理测量）收敛到「错误出在哪个认知机制」。
+  - **6 类机制主轴 `meta_cause`（互斥单选）**：`execution_slip`（执行失误，提示即自纠不复现 → 只提示不加难度）/ `knowledge_gap`（知识缺乏，首次即错跨情境一致不会 → 初教/FSRS 重排）/ `retrieval_failure`（已编码取不出，给提示就想起 → 无提示检索练习）/ `rule_misapplication`（规则对但用错情境/越界泛化/负迁移 → 条件辨识/反例）/ `flawed_model`（稳定可复现的错心智模型或 bug 规则，抗简单纠正 → **认知冲突题，最高出题价值**）/ `representation_failure`（调用领域知识前读题/转译就失败 → 练「据语境/题意转译」）。
+  - **2 条正交标注轴（多标，不参与主分类）**：Axis A `metacog_flag`（元认知校准：blind_spot / false_fluency / regulation_gap / overconfident / poor_resolution / calibrated）；Axis B `bloom_level`（remember…create）。
+  - **双层映射（关键）**：per-subject `cause_category` **不硬编死 meta**——一词多机制（古文「虚词误解」可落 representation / rule_misapp / flawed_model / knowledge_gap）。= 静态默认映射表（冷启先验）+ **实例级 `meta_cause` 字段**（AI judge 按「提示是否自纠 / 是否跨情境复现 / 信心是否脱节」判定，evidence-first 落 `src/server/ai/log.ts` 可回滚）。
+  - **violation 不进主类**：「故意跳步/不验算」是动机非能力 → 归 Axis A `regulation_gap`（Reason 2000 把 violation 与 error 正交），不误判成「不会」。
+  - **落库字段**：`meta_cause`(主) / `meta_cause_secondary`(可空) / `metacog_flag` / `bloom_level`(可空) / `self_corrected_on_hint` / `recurred_cross_item`。
+- **两层聚合**：层内 `cause_category × KC`（per-subject，先做，喂 FSRS）+ 跨科 `meta_cause × effective_domain 派生轴`（后做；按「科目是视角不是结构」meta_cause **不挂 subject 列**）。
 - **跨科洞见呈现 = 独立未来 feature（owner 拍板）**：本 spec 只建 `meta_cause` **数据层**让数据尽早累积；「跨科系统性弱点」的**数据可视化**是 owner 计划中的独立 feature，scope 待定（owner「现在没想好」），不进本 spec。
 
 ---
@@ -173,7 +178,7 @@ owner：per-subject 先行 + 讨论跨科意义与路径。
 | 5 | forage 节奏/护栏 | **事件驱动（frontier 变化）+ nightly 双触发**；**暂不设成本限**（warning 水位观测可留）|
 | 6 | 引擎点火 | nightly cron + 事件驱动，**把 dormant 的 question-supply 重定义为 forager-steerer**（收尾 YUK-361 Phase 8 点火环）|
 | 7 | 三 dormant 信号解锁序 | **misconception → transfer → exam** ✅ |
-| 8 | 错因 taxonomy 跨科 | **per-subject 复发先行** + **跨科加一层 meta-错因映射**（两层，§4.6），不统一 per-subject 定义 |
+| 8 | 错因 taxonomy 跨科 | **per-subject 复发先行** + 跨科 **6 类机制 `meta_cause` 主轴 + Axis A 元认知 / Axis B Bloom 正交轴**（两层，§4.6，文献 grounded，2026-06-16 拍板）|
 
 ---
 
@@ -236,7 +241,7 @@ owner：per-subject 先行 + 讨论跨科意义与路径。
 
 ## 11. Open questions / owner gates（实施前要拍的）
 
-> **已于 2026-06-16 拍板**（见 §5 + §4.6），保留原问以备回溯：1=不设白名单给 guide、无版权 gate；2=事件驱动+nightly、暂不设限；3=认同 misconception→transfer→exam；4=per-subject 先行 + 跨科 meta 两层（§4.6，meta 类型集 + 是否 surface 待细化）；5=无历史数据 → 不建批量重标 job。**唯一仍 open 的是 §4.6 跨科 meta-taxonomy 的具体形态**（meta 类型集怎么设、跨科洞见要不要 surface 给学习者）。
+> **全部已于 2026-06-16 拍板**（见 §5 + §4.6），保留原问以备回溯：1=不设白名单给 guide、无版权 gate；2=事件驱动+nightly、暂不设限；3=misconception→transfer→exam；4=per-subject 先行 + **6 类 `meta_cause` 主轴 + Axis A 元认知 / Axis B Bloom 正交轴**（§4.6，文献 grounded）；5=无历史数据 → 不建批量重标 job。跨科洞见**呈现 = 独立未来 feature**（数据层本 spec 建，可视化 owner 另开，scope 待定）。**本 spec 决策面已全闭合 → 可转 writing-plans。**
 
 1. **源注册表 + 版权红线**：源清单 owner 手工白名单 vs 按 subject profile 派生？哪些源只允许「引用片段」不允许「整题入库」？forage 的 authentic 料是 raw 阶段免审 / promote 时审，还是 ADR-0002 类 owner-accept 闸？
 2. **forage 触发节奏/成本护栏**：nightly batch vs on-frontier-change 事件驱动？warning 水位 + 硬顶各设在哪？
