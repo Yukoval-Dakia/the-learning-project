@@ -50,7 +50,7 @@ import {
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
-import { updateThetaForAttempt } from '@/server/mastery/state';
+import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
@@ -583,6 +583,17 @@ async function persistSubmit(
         last_review_event_id: eventId,
       });
     }
+    // YUK-361 finding #3 修复 — 在 updateThetaForAttempt **之前**捕获 primary knowledge
+    // 的 PRE-attempt θ̂（作答当下的能力估计）。家族残差必须对着作答前的 θ̂ 算（mirror
+    // state.ts precision 更新里 thetaBefore=s.theta 的纪律）；下面的 updateThetaForAttempt
+    // 会把 mastery_state.theta_hat 移到 POSTERIOR，故必须先读。冷启（无 row）→ 0，与
+    // updateThetaForAttempt 内部的冷启基（θ=0）一致。primary = q.knowledge_ids[0]（与
+    // 家族键 + distinct 计数同源）。
+    const primaryKnowledgeId = q.knowledge_ids[0];
+    const thetaBefore = primaryKnowledgeId
+      ? ((await getMasteryState(tx, primaryKnowledgeId))?.theta_hat ?? 0)
+      : 0;
+
     // B1-W1 (ADR-0035) — θ̂ 在线更新（p(L) 诊断维，与上面 FSRS R 轴正交，三轴正交
     // 红线）。同 tx。并发串行化由 updateThetaForAttempt 内部对每个 KC 自取
     // `fsrs:knowledge:<id>` advisory lock 保证（review SF-2）——不依赖此处 FSRS 锁
@@ -602,9 +613,18 @@ async function persistSubmit(
     // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
     // 同 tx（计数与作答一致），但 best-effort：绝不让它 fail 上面的 θ̂/FSRS/event 主路径。
     // 门 (a) 在内部判：judgeRoute 非客观路由（exact/keyword 之外，含 null=纯手评）→
-    // 内部早返不触 DB，故这里无脑调即可。primary knowledge = q.knowledge_ids[0]
-    // （canonical 家族基，与 distinct 计数同源——见 personalized-difficulty.ts finding #3b
-    // 文档）；outcome 复用上面的二分（review 路径无 partial）。
+    // 内部早返不触 DB。primary knowledge = q.knowledge_ids[0]（canonical 家族基，与
+    // distinct 计数同源——见 personalized-difficulty.ts finding #3b 文档）。
+    //
+    // finding #2 修复 — **只在 outcome 真正来自客观 auto-judge 时**才折进家族校准，即
+    // body.auto_rate=true（judge 的 suggested rating 实际驱动了 finalRating，见上方
+    // judgeSubmit）。若 auto_rate=false：即便 client 传了客观 judge_route 的预览
+    // judge_result_v2，finalRating 仍来自**用户手动 body.rating**（advisor 信息性、永不
+    // 自动 commit，见 YUK-98 driver §1.1），把手动评分当客观 b 真值校准是错的（手评带
+    // 用户主观，污染 b 通道）。故 gate 在 body.auto_rate，而非「存在客观 judge_route 串」。
+    //
+    // finding #3 修复 — 传 thetaBefore（上面捕获的 PRE-attempt θ̂），不让 hook 读已被本次
+    // 作答移动过的 POSTERIOR mastery_state.theta_hat。
     //
     // finding #4a 修复 — 用 SAVEPOINT（嵌套 tx）隔离家族写：family 语句直接跑在外层 tx
     // 上时，任何 DB 级错误（advisory lock 序列化/死锁、statement timeout、并发首插的
@@ -613,21 +633,24 @@ async function persistSubmit(
     // 捕到了也救不回（捕 JS 错 ≠ 解毒 PG tx）。tx.transaction(...) 经 drizzle 转成
     // SAVEPOINT，family 写失败只回滚 savepoint，主 attempt 写完整保留可 COMMIT。
     // 同 Phase 3 telemetry-in-tx bug 同类修复。
-    try {
-      await tx.transaction(async (sp) => {
-        await recordFamilyObservationForAttempt(sp, {
-          primaryKnowledgeId: q.knowledge_ids[0],
-          questionId,
-          kind: q.kind,
-          source: q.source,
-          difficulty: q.difficulty,
-          outcome: outcome === 'success' ? 1 : 0,
-          judgeRoute,
-          now,
+    if (body.auto_rate) {
+      try {
+        await tx.transaction(async (sp) => {
+          await recordFamilyObservationForAttempt(sp, {
+            primaryKnowledgeId,
+            questionId,
+            kind: q.kind,
+            source: q.source,
+            difficulty: q.difficulty,
+            outcome: outcome === 'success' ? 1 : 0,
+            judgeRoute,
+            thetaBefore,
+            now,
+          });
         });
-      });
-    } catch (err) {
-      console.warn('recordFamilyObservationForAttempt (submit) failed (non-fatal):', err);
+      } catch (err) {
+        console.warn('recordFamilyObservationForAttempt (submit) failed (non-fatal):', err);
+      }
     }
   });
   // After the txn: primaryResult + primaryFsrsStateAfter were assigned inside; assert

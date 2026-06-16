@@ -11,7 +11,13 @@
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
-import { event, mastery_state, material_fsrs_state, question } from '@/db/schema';
+import {
+  event,
+  item_family_calibration,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 // YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
 // threaded through (student_image_refs).
@@ -1020,6 +1026,71 @@ describe('POST /api/review/submit', () => {
         }),
       );
       expect(res.status).toBe(400);
+    });
+  });
+
+  // ── YUK-361 finding #2 — 手动覆盖的评分不当客观 b 校准折进 ──────────────────────
+  // /api/review/submit 里 finalRating 仅在 body.auto_rate=true 时来自 judge 的 suggested
+  // rating；否则 finalRating = 用户手动 body.rating（advisor 信息性，永不自动 commit）。
+  // 旧 hook 只要 judgeRoute 是客观串（client 传了 keyword/exact 的预览 judge_result_v2）
+  // 就把 outcome 折进家族校准——但 auto_rate=false 时 outcome 实际来自**手评**，把手评当
+  // 客观 b 真值是错的（污染 b 通道）。修复：family 折进 gate 在 body.auto_rate=true。
+  describe('YUK-361 finding #2 — 家族校准只折客观 auto-judge，不折手动覆盖', () => {
+    it('客观 judge_route + auto_rate=false（手动覆盖）→ 不折进家族校准', async () => {
+      // fill_blank + reference → 客观 exact 路由；带 knowledge_id 让家族可成键。
+      await seedQuestion('q_f2_manual', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: ['k_f2'],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_f2_manual' },
+          rating: 'good', // 手动评分（auto_rate=false → 它是 finalRating）
+          response_md: '答案',
+          auto_rate: false,
+          // client 传了客观 keyword 路由的预览 judge_result_v2——旧 bug 会因这个客观
+          // route 串就把 outcome 折进家族校准，即便评分实际是手动的。
+          judge_result_v2: {
+            coarse_outcome: 'correct',
+            score: 1,
+            score_meaning: 'correctness',
+            confidence: 0.9,
+            capability_ref: { id: 'keyword', version: '1' },
+            feedback_md: 'preview keyword match',
+            evidence_json: {},
+          },
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      // finding #2：auto_rate=false → family 折进被 gate 掉 → 一条家族行都没写。
+      expect(await testDb().select().from(item_family_calibration)).toHaveLength(0);
+    });
+
+    it('（对照）客观 auto-judge + auto_rate=true → 折进家族校准（evidence_count=1）', async () => {
+      await seedQuestion('q_f2_auto', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: ['k_f2_auto'],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q_f2_auto' },
+          rating: 'again', // 被 auto_rate 覆盖
+          response_md: '答案',
+          auto_rate: true, // outcome 真正来自客观 exact auto-judge
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      // auto_rate=true 且 route 客观（exact）→ 折进 → 写家族行（单条门控未过 → b_delta 0）。
+      const fam = await testDb().select().from(item_family_calibration);
+      expect(fam).toHaveLength(1);
+      expect(fam[0].evidence_count).toBe(1);
+      expect(fam[0].b_delta).toBe(0); // 单条 → 门控未过
     });
   });
 

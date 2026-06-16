@@ -33,9 +33,9 @@ import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
 import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
-import { item_calibration, item_family_calibration, mastery_state, question } from '@/db/schema';
+import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import { resolveKnownSubjectId } from '@/subjects/profile';
-import { and, count, eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 
@@ -383,7 +383,11 @@ export async function updateFamilyCalibration(
 //     'wenyan'，防 YUK-288 式过匹配把不同科目刷成同家族）。
 //   - bAnchor：item_calibration.b（track='hard'）有则用，否则弱锚 difficultyToLogitB
 //     （与 state.ts θ̂ 更新读的同一锚链，两条慢线对齐同一 b 来源）。
-//   - theta：primary knowledge 的 mastery_state.theta_hat（快尺度，冷启 0）。
+//   - theta：作答时（PRE-attempt）的 θ̂（快尺度锚）。**必须**用 thetaBefore（finding #3
+//     修复，见下）：本 hook 在 updateThetaForAttempt 之后调用，此时 mastery_state.theta_hat
+//     已被本次作答移动（POSTERIOR），直接读会系统性偏置残差。caller 在调 updateThetaForAttempt
+//     **之前**捕获 primary knowledge 的 θ̂ 传入 `thetaBefore`，镜像 state.ts precision 更新
+//     里 thetaBefore=s.theta 的纪律。未传时回落读 mastery_state（向后兼容，但热路径必传）。
 //   - distinctQuestionCount：该家族的题面广度——见 countDistinctQuestionsInFamily。
 //
 // 同 tx vs best-effort 裁决（DOCUMENTED）：在 attempt tx 内调用以保证计数与作答一致
@@ -403,18 +407,58 @@ export interface RecordFamilyObservationInput {
   source: string;
   /** question.difficulty（弱锚兜底用）。 */
   difficulty: number;
-  /** 客观判分结果：success=1 / failure=0。 */
+  /**
+   * 客观判分结果（干净二分）：success=1 / failure=0。**绝不**把 partial coerce 成 1
+   * 传进来——partial 由 attemptOutcome 标识并在本 hook 早返排除（finding #4 修复，见下）。
+   */
   outcome: 0 | 1;
+  /**
+   * 原始 attempt outcome（finding #4 修复）。'partial' → 本 hook 早返**不折进**家族校准
+   * （部分对对难度估计语义歧义：把半对当全对 outcome=1 会制造 spurious「家族更易」负残差
+   * 偏置）。只折干净二分 success(→1)/failure(→0)。未传（散题/review 路径无 partial）→
+   * 视为非 partial，按 outcome 折。
+   */
+  attemptOutcome?: 'success' | 'failure' | 'partial';
   /** 判分路由（isObjectiveJudgeRoute 判客观性）。null → 视为非客观，跳过。 */
   judgeRoute: string | null | undefined;
+  /**
+   * 作答时（PRE-attempt）的 primary knowledge θ̂（finding #3 修复）。本 hook 在
+   * updateThetaForAttempt **之后**调用——彼时 mastery_state.theta_hat 已被本次作答移动
+   * （POSTERIOR），读它会让残差系统性偏置。caller 在调 updateThetaForAttempt **之前**捕获
+   * 该 KC 的 θ̂ 传入此处，镜像 state.ts precision 更新里 thetaBefore=s.theta 的纪律。
+   * 留 undefined → 回落读 mastery_state（向后兼容旧 caller / 直测，但热路径必传）。
+   */
+  thetaBefore?: number;
   now: Date;
 }
 
 /**
- * 计该家族的 distinct question 数（门 c 的输入）。家族 = 同 primary knowledge + kind
- * + source 的题集（subject 由 primary knowledge 派生，已被 primaryKnowledge 蕴含）。
- * 用 `knowledge_ids->>0` 取 jsonb 首元素当 primary。这是题面广度 proxy——家族绕道的
- * 合法性依赖跨题系统性（≥5 道不同题），不是单题重复。
+ * 计该家族**已实际产出客观观测**的 distinct question 数（门 c 的输入，finding #1 修复）。
+ *
+ * ─── 为什么不是 POOL 计数（finding #1）────────────────────────────────────────
+ * 旧实现 `count()` 该家族在 `question` 表里的**题池大小**——这是 POOL 计数，不是
+ * OBSERVED 计数：学习者反复刷**同一道**客观题，只要家族池里凑得齐 ≥5 道题，distinct
+ * 门就过，单题残差被反复折进家族 b_delta，正好打破「跨题系统性」的立家依据（家族绕道
+ * 的合法性在于多道**不同**题共享系统偏移，不是单题重复刷）。
+ *
+ * ─── OBSERVED-distinct 的来源（query-based，无新列）────────────────────────────
+ * 数「这个家族里**实际产生过客观观测**的不同题」。客观观测的权威落点是 `judge` 事件
+ * （`action='judge', subject_kind='event'`）的 `payload.judge_route`——散题（submit.ts）
+ * 与卷面（paper-submit.ts）两条路径**都**写这样一个独立 judge 事件，`caused_by_event_id`
+ * 指向 attempt/review 事件，而后者 `subject_kind='question', subject_id=questionId`。
+ * 故统一查法（两路径同形）：
+ *   - 内层：family 的题集 = `question` 中 `knowledge_ids->>0 = pk AND kind AND source`。
+ *   - 中层：attempt/review 事件 `subject_kind='question' AND subject_id ∈ 题集`。
+ *   - 外层：存在 objective judge 事件 `caused_by_event_id = attempt.id`
+ *     `AND payload->>'judge_route' ∈ OBJECTIVE_JUDGE_ROUTES`。
+ *   - 计 distinct `attempt.subject_id`（= distinct 客观-被观测题数）。
+ *
+ * 计数在 attempt tx 内调用——本次 attempt 的 attempt/review 事件 + judge 事件均已在
+ * tx 内写完（见 hook 调用顺序：writeEvent → judge writeEvent → … → 本计数），故本题
+ * 若是该家族首道被客观观测的题，这里能数到它（含本次）。20 次重复同一题 → distinct=1
+ * → 门不过（finding #1 验收）。
+ *
+ * 仍是题面/观测广度 proxy，但口径从「池里有几道题」收紧到「实际客观答过几道不同题」。
  */
 export async function countDistinctQuestionsInFamily(
   db: DbLike,
@@ -422,17 +466,34 @@ export async function countDistinctQuestionsInFamily(
   kind: string,
   source: string,
 ): Promise<number> {
-  const rows = await db
-    .select({ n: count() })
-    .from(question)
-    .where(
-      and(
-        sql`${question.knowledge_ids}->>0 = ${primaryKnowledgeId}`,
-        eq(question.kind, kind),
-        eq(question.source, source),
-      ),
-    );
-  return Number(rows[0]?.n ?? 0);
+  // OBJECTIVE_JUDGE_ROUTES 注入 SQL 的 IN 列表（白名单常量，非用户输入）。
+  const objectiveRoutes = [...OBJECTIVE_JUDGE_ROUTES];
+  const routeList = sql.join(
+    objectiveRoutes.map((r) => sql`${r}`),
+    sql`, `,
+  );
+  const rows = await db.execute<{ n: number }>(sql`
+    SELECT COUNT(DISTINCT attempt.subject_id)::int AS n
+    FROM event AS attempt
+    WHERE attempt.subject_kind = 'question'
+      AND attempt.action IN ('review', 'attempt')
+      AND attempt.subject_id IN (
+        SELECT q.id
+        FROM question AS q
+        WHERE q.knowledge_ids->>0 = ${primaryKnowledgeId}
+          AND q.kind = ${kind}
+          AND q.source = ${source}
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM event AS judge
+        WHERE judge.action = 'judge'
+          AND judge.subject_kind = 'event'
+          AND judge.caused_by_event_id = attempt.id
+          AND judge.payload->>'judge_route' IN (${routeList})
+      )
+  `);
+  return Number([...rows][0]?.n ?? 0);
 }
 
 export async function recordFamilyObservationForAttempt(
@@ -444,6 +505,12 @@ export async function recordFamilyObservationForAttempt(
 
   // 门 (a) 早返：非客观判分不触任何 DB。
   if (!isObjectiveJudgeRoute(input.judgeRoute)) return;
+
+  // finding #4 早返：partial outcome **不折进**家族校准。部分对对难度估计语义歧义——
+  // 把半对当全对（outcome=1）会让 residual 偏负，重复 partial 制造 spurious「家族更易」
+  // 偏置。难度估计只用干净二分 correct(1)/wrong(0)；partial 一条都不累（连 evidence_count
+  // 也不动——它不是「干净客观观测」）。散题/review 路径无 partial（attemptOutcome 不传）。
+  if (input.attemptOutcome === 'partial') return;
 
   // subject 派生（DERIVED 轴）。getEffectiveDomain 可能因 orphan id 抛错——容错为
   // 'unknown' 段（不塌进 default profile，防过匹配）。
@@ -471,18 +538,28 @@ export async function recordFamilyObservationForAttempt(
   // 更新的 bWeight 语义一致（弱锚提供的信息打折，不让占位锚主导家族 b 偏移）。
   const anchorWeight = calB !== null ? 1 : DIFFICULTY_PROXY_WEIGHT;
 
-  // θ̂：primary knowledge 当前能力估计（快尺度），冷启 0。
-  const stateRows = await tx
-    .select({ theta_hat: mastery_state.theta_hat })
-    .from(mastery_state)
-    .where(
-      and(
-        eq(mastery_state.subject_kind, 'knowledge'),
-        eq(mastery_state.subject_id, primaryKnowledgeId),
-      ),
-    )
-    .limit(1);
-  const theta = stateRows[0]?.theta_hat ?? 0;
+  // θ̂：作答时（PRE-attempt）的 primary knowledge 能力估计（快尺度），冷启 0。
+  // finding #3 修复 — 优先用 caller 在 updateThetaForAttempt **之前**捕获并传入的
+  // thetaBefore（作答当下的 θ̂）。本 hook 在 updateThetaForAttempt 之后调用，mastery_state
+  // 已是 POSTERIOR（被本次作答移动过），直接读会让残差系统性偏置（答错本应对着 Elo 下移
+  // **前**的 θ̂ 算残差，读后值会低估 surprise / 偏置 b_delta）。未传 thetaBefore → 回落读
+  // mastery_state（向后兼容；热路径 submit.ts / paper-submit.ts 必传 thetaBefore）。
+  let theta: number;
+  if (input.thetaBefore !== undefined) {
+    theta = input.thetaBefore;
+  } else {
+    const stateRows = await tx
+      .select({ theta_hat: mastery_state.theta_hat })
+      .from(mastery_state)
+      .where(
+        and(
+          eq(mastery_state.subject_kind, 'knowledge'),
+          eq(mastery_state.subject_id, primaryKnowledgeId),
+        ),
+      )
+      .limit(1);
+    theta = stateRows[0]?.theta_hat ?? 0;
+  }
 
   const distinctQuestionCount = await countDistinctQuestionsInFamily(
     tx,
