@@ -700,6 +700,35 @@ export const tasks = {
     // type-required fallback only (the builder lives in task-prompts.ts).
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  // YUK-361 Phase 3 Step B (Task 8 L2, ADR-0042 编排档2 amendment) — 选题编排器
+  // （档2 的 LLM 主脑）。给每个**非到期**候选输出 { weight≥0, role, arrangement?,
+  // reason }——选哪些、怎么排、为什么。一个薄 tempered-softmax sampler（Step C）把
+  // weight → π_i。LLM **不碰到期项**（due 相对序 + presence 是 L1 确定性契约）。
+  // 单次结构化输出（GoalScopeTask / QuestionAuthorTask / ItemPriorTask 范式：
+  // maxIterations 1, needsToolCall false, allowedTools []）——非 tool loop、非 Tavily、
+  // 非 copilotTool（headless composer-called task，由 Step C 的 shell 经 runTask 调）。
+  // 输入信号**分桶**喂 LLM（high/mid/low，ADR-0042:68 signal-fidelity mitigation），
+  // sampler 用真实数值兜 π_i。runtime model = mimo-v2.5（registry default）。
+  SelectionOrchestratorTask: {
+    kind: 'SelectionOrchestratorTask',
+    description:
+      'YUK-361 Phase 3 (Task 8 L2, ADR-0042 编排档2) — 选题编排器（档2 LLM 主脑）。输入=非到期候选的分桶信号投影（mfi/diagnostic/difficulty_anchor/exam_relevance/misconception_recurrence/transfer_gap 全 high/mid/low，buildSelectionOrchestratorInput）+ learner 上下文。输出=每候选 { refId, weight≥0, role, arrangement?, reason }——按教学价值（近-θ̂ 诊断 informativeness、考纲相关、错因复发、迁移缺口、变化度、fatigue、learner 叙事连贯——纯 MFI 算不出的）给非到期候选加权 + 排序 + 理由。薄 tempered-softmax sampler（Step C）把 weight → π_i（T>0 保 positivity）。LLM 不碰到期项（due 相对序 + presence 是 L1 确定性契约）。单次结构化输出（无 tool loop，无 Tavily），mimo-v2.5。',
+    defaultProvider: 'xiaomi',
+    // 纯文本编排推理（读分桶信号 + learner 上下文，写权重/排序/理由），无 vision →
+    // mimo-v2.5（registry runtime default）。⚠️ 不路由 sonnet/GLM——结构化输出不兼容
+    // （StructuredOutput 当 deferred 工具去 ToolSearch → 罢工，见 memory）。
+    defaultModel: 'mimo-v2.5',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
+    // 单次结构化输出（GoalScopeTask / QuestionAuthorTask / ItemPriorTask 范式）：一批
+    // 候选一次文本运行。60s（编排批候选，比单题作者轻）。
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile); this string is the
+    // type-required fallback only (the builder lives in task-prompts.ts).
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   SourcingTask: {
     kind: 'SourcingTask',
     description:

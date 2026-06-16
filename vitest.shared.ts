@@ -111,6 +111,13 @@ export const fastTestInclude = [
   // be listed explicitly or the db config's src/**/*.test.ts glob sweeps it into
   // the testcontainer partition (pricing.test.ts lesson).
   'src/server/ai/item-prior.test.ts',
+  // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
+  // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
+  // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`
+  // which is type-only / erased — no @/db/client / postgres / drizzle / PgBoss).
+  // src/server/ai/** has no unit glob, so this MUST be listed explicitly or the db
+  // config's src/**/*.test.ts glob sweeps it into the testcontainer partition.
+  'src/server/ai/selection-orchestrator.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',

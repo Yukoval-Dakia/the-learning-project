@@ -211,6 +211,33 @@ describe('QuestionAuthorTask registry entry', () => {
   });
 });
 
+// YUK-361 Phase 3 Step B (Task 8 L2, ADR-0042 编排档2) — the selection orchestrator
+// is a single-shot structured-output composer task (NOT a tool-calling agent, NOT a
+// copilotTool). Pin the contract: maxIterations 1, needsToolCall false, allowedTools
+// [], runtime model = mimo-v2.5 (the registry default — must NOT route to
+// sonnet/GLM, see memory: StructuredOutput incompatible).
+describe('SelectionOrchestratorTask registry entry', () => {
+  it('is registered as a single-shot structured composer usable by runTask', () => {
+    expect(tasks.SelectionOrchestratorTask.kind).toBe('SelectionOrchestratorTask');
+    expect(tasks.SelectionOrchestratorTask.needsToolCall).toBe(false);
+    expect(tasks.SelectionOrchestratorTask.isMultimodal).toBe(false);
+    expect(tasks.SelectionOrchestratorTask.allowedTools).toEqual([]);
+    expect(tasks.SelectionOrchestratorTask.budget.maxIterations).toBe(1);
+    expect(tasks.SelectionOrchestratorTask.budget.timeout).toBe(60_000);
+    // invocation defaults to 'auto' (headless composer-called via the Step C shell);
+    // the entry omits the optional field.
+    expect((tasks.SelectionOrchestratorTask as TaskDef).invocation).toBeUndefined();
+  });
+
+  it('uses the mimo-v2.5 runtime default (NOT mimo-v2.5-pro/sonnet/GLM)', () => {
+    expect(tasks.SelectionOrchestratorTask.defaultProvider).toBe('xiaomi');
+    expect(tasks.SelectionOrchestratorTask.defaultModel).toBe('mimo-v2.5');
+    expect(tasks.SelectionOrchestratorTask.fallbackChain).toEqual([
+      { provider: 'xiaomi', model: 'mimo-v2.5-pro' },
+    ]);
+  });
+});
+
 // YUK-267 (C2) — pin the CopilotTask conversation-memory + ambient clauses so the
 // history-preference prompt edit cannot silently regress.
 describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
