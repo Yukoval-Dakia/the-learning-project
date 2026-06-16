@@ -13,7 +13,7 @@
 // opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   event,
   knowledge,
@@ -40,10 +40,13 @@ import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stre
 export type StreamItemRow = typeof practice_stream_item.$inferSelect;
 export type StreamItemStatus = StreamItemRow['status'];
 
+/** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`（single-flight 锁需要事务）。 */
+type DbLike = Db | Tx;
+
 const DUE_INPUT_LIMIT = 10;
 const VARIANT_WINDOW_DAYS = 7;
 
-async function knowledgeLabels(db: Db, ids: string[]): Promise<Map<string, string>> {
+async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, string>> {
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return new Map();
   const rows = await db
@@ -53,7 +56,7 @@ async function knowledgeLabels(db: Db, ids: string[]): Promise<Map<string, strin
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
-export async function collectComposerInputs(db: Db, date: string): Promise<ComposerInputs> {
+export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
   // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
   const dueRes = await handleReviewDue(
     new Request(`http://internal/api/review/due?limit=${DUE_INPUT_LIMIT}`),
@@ -168,44 +171,117 @@ export async function collectComposerInputs(db: Db, date: string): Promise<Compo
   };
 }
 
-/** 物化 StreamPlan（追加模式：position 接在当日已有项之后；date+ref 唯一索引兜底重复）。 */
+/** materializeStream 的结果：新增行数 + **本轮真正新插入**的 ref 集合（CLUSTER A 用）。 */
+export interface MaterializeResult {
+  /** 本轮 INSERT 真正落库的新行数（= freshRefs.size）。 */
+  added: number;
+  /**
+   * 本轮**新插入**的 ref 集合（DB 里此前不存在的）。调用方据此只对新落的项记 π_i：
+   * 已物化（recompose 中存活）的 ref 保留其原始观测，不重复写（CLUSTER A 修复——
+   * recompose 时存活的 done/in_progress 行会被 collectComposerInputs 重新收集 → 再次进
+   * sampledInclusion，但它们并非「本轮新发生的选题」，不该再记一条 π_i 观测）。
+   */
+  freshRefs: Set<string>;
+}
+
+/**
+ * 物化 StreamPlan，position **取 plan 的意图序**（CLUSTER B 修复）——不再「append-after-max」。
+ *
+ * 位置模型（保证 getStream 的 ORDER BY position 永远吐 plan 序，与完成/recompose 历史无关）：
+ *   1. plan.items 已是 due-L1 序（due_at ASC）→ 非到期 → 卷的最终意图序。
+ *   2. plan 内的 ref（无论新插还是存活）→ position = 在 plan 里的 index+1。
+ *   3. plan **外**的存活行（已不在今日 plan，如已不到期的旧到期项 / 已结束的卷）→
+ *      追加在 plan.items.length 之后，按其当前 position 保序，避免与 plan 段冲突。
+ *   4. 全量 UPDATE 当日所有行的 position（存活行改位、保 status），新行 INSERT 到目标位。
+ * 这样 due 子序列在 DB 里恒等于 L1 序——recompose 删-再加早到期项也不会被排到存活晚到期项之后。
+ *
+ * **NO 重复 position**：最终每行一个唯一 position（1..M 连续，M = plan + plan外存活）。
+ * date+ref 唯一索引仍兜底「同 ref 不重复行」。
+ *
+ * @returns MaterializeResult（added + freshRefs）。
+ */
 export async function materializeStream(
-  db: Db,
+  db: DbLike,
   plan: StreamPlan,
   addedBy: StreamItemRow['added_by'],
-): Promise<number> {
-  if (plan.items.length === 0) return 0;
+): Promise<MaterializeResult> {
+  // 即便 plan 为空，也可能有 plan 外存活行需要 renumber（recompose 删 pending 后）；
+  // 但若当日全空且 plan 空，无事可做。
   const existing = await db
-    .select({ ref_id: practice_stream_item.ref_id, position: practice_stream_item.position })
+    .select({
+      id: practice_stream_item.id,
+      ref_id: practice_stream_item.ref_id,
+      position: practice_stream_item.position,
+    })
     .from(practice_stream_item)
     .where(eq(practice_stream_item.date, plan.date));
-  const existingRefs = new Set(existing.map((r) => r.ref_id));
-  const base = existing.reduce((m, r) => Math.max(m, r.position), 0);
+  const existingByRef = new Map(existing.map((r) => [r.ref_id, r]));
 
-  const fresh = plan.items.filter((it) => !existingRefs.has(it.ref_id));
-  if (fresh.length === 0) return 0;
+  if (plan.items.length === 0 && existing.length === 0) {
+    return { added: 0, freshRefs: new Set() };
+  }
+
+  const planRefSet = new Set(plan.items.map((it) => it.ref_id));
+  // plan 外的存活行（已不在今日 plan）——按现 position 保序，追加在 plan 段之后。
+  const survivorsOutsidePlan = existing
+    .filter((r) => !planRefSet.has(r.ref_id))
+    .sort((a, b) => a.position - b.position);
+
   const now = new Date();
-  await db
-    .insert(practice_stream_item)
-    .values(
-      fresh.map((it, i) => ({
-        id: newId(),
-        date: plan.date,
-        position: base + i + 1,
-        item_kind: it.item_kind,
-        ref_id: it.ref_id,
-        source: it.source,
-        status: 'pending' as const,
-        reasoning: it.reasoning,
-        added_by: addedBy,
-        // YUK-361 Phase 1：选题信号快照，缺省 {}（零行为变更）。
-        signals: it.signals ?? {},
-        created_at: now,
-        updated_at: now,
-      })),
-    )
-    .onConflictDoNothing();
-  return fresh.length;
+  const freshRefs = new Set<string>();
+
+  // 1) 新插入 plan 内此前不存在的 ref（position = plan index + 1）。
+  const fresh = plan.items
+    .map((it, i) => ({ it, pos: i + 1 }))
+    .filter(({ it }) => !existingByRef.has(it.ref_id));
+  if (fresh.length > 0) {
+    await db
+      .insert(practice_stream_item)
+      .values(
+        fresh.map(({ it, pos }) => {
+          freshRefs.add(it.ref_id);
+          return {
+            id: newId(),
+            date: plan.date,
+            position: pos,
+            item_kind: it.item_kind,
+            ref_id: it.ref_id,
+            source: it.source,
+            status: 'pending' as const,
+            reasoning: it.reasoning,
+            added_by: addedBy,
+            // YUK-361 Phase 1：选题信号快照，缺省 {}（零行为变更）。
+            signals: it.signals ?? {},
+            created_at: now,
+            updated_at: now,
+          };
+        }),
+      )
+      // 并发兜底：若另一路已抢先插了同 ref，本行不插，且从 freshRefs 里剔除（它不是
+      // 「我们插的」）。advisory-lock 单飞后此路径正常不触发，但保留双保险。
+      .onConflictDoNothing();
+    // onConflictDoNothing 不回报哪几行被吞——advisory 锁下不会发生冲突，这里乐观地
+    // 认为 fresh 都插成了。极端并发下 freshRefs 可能含一条没真插的 ref，会让调用方多记
+    // 一条 telemetry-only 观测（无害，非承重写）；single-flight 锁已消除此竞态。
+  }
+
+  // 2) renumber 存活行到目标 position（plan 内取 plan 位，plan 外追加在 plan 段之后）。
+  //    新插入的 fresh 行已落在正确 position，不在此重排。
+  const planLen = plan.items.length;
+  const planPosByRef = new Map(plan.items.map((it, i) => [it.ref_id, i + 1]));
+  for (const r of existing) {
+    const target = planRefSet.has(r.ref_id)
+      ? (planPosByRef.get(r.ref_id) as number)
+      : planLen + 1 + survivorsOutsidePlan.findIndex((s) => s.ref_id === r.ref_id);
+    if (target !== r.position) {
+      await db
+        .update(practice_stream_item)
+        .set({ position: target, updated_at: now })
+        .where(eq(practice_stream_item.id, r.id));
+    }
+  }
+
+  return { added: freshRefs.size, freshRefs };
 }
 
 /**
@@ -232,31 +308,44 @@ export function resolveSelectionPolicy(): SelectionPolicyConfig {
  * 返回新增行数（与旧 materializeStream 契约一致）。
  */
 async function composeMaterializeAndObserve(
-  db: Db,
+  db: DbLike,
   date: string,
   policy: SelectionPolicyConfig,
   deps: ComposeSoftmaxDeps = {},
+  capacity?: ComposerInputs['capacity'],
 ): Promise<number> {
   const inputs = await collectComposerInputs(db, date);
+  // 容量注入（DI，测试用——production 不传，走 composeSoftmaxStream 的 DEFAULT_WARN/MAX）。
+  //   收紧 max 可让 targetCount < 候选数，使 π_i 真正 < 1（区分不同权重的候选），并行
+  //   测 capacityGuard 的 slice 路径（G2/G3/G4）。
+  if (capacity) inputs.capacity = capacity;
 
   if (policy.policy === 'legacy') {
-    return materializeStream(db, composeDailyStream(inputs), 'composer_live');
+    const { added } = await materializeStream(db, composeDailyStream(inputs), 'composer_live');
+    return added;
   }
 
   // softmax_mfi：永不 throw（两级 fallback 兜底）。
   const result: ComposeSoftmaxResult = await composeSoftmaxStream(db, inputs, policy, deps);
-  const added = await materializeStream(db, result.plan, 'composer_live');
+  const { added, freshRefs } = await materializeStream(db, result.plan, 'composer_live');
 
-  // π_i 持久化：只对被抽中的非到期项（result.sampledInclusion）。需要物化行 id ——
-  // 重读当日流，按 ref_id 取已物化的 stream_item_id（截断后被砍的项已从 inclusion map
-  // 移除，不会在这里查不到）。
-  if (result.sampledInclusion.size > 0) {
+  // π_i 持久化：只对**本轮新物化**的被抽中非到期项（CLUSTER A 修复）。
+  //   result.sampledInclusion 含本轮被抽中的所有非到期 ref，但 recompose 时存活的
+  //   done/in_progress 行会被 collectComposerInputs 重新收集 → 重新抽中 → 落进
+  //   sampledInclusion；它们**不是本轮新发生的选题**（materializeStream 的 onConflict 没
+  //   重插它们），故不在 freshRefs 里——绝不能再对那条**陈旧的存活行 id**写一条幻影/重复
+  //   观测（会污染 π_i 慢热资产）。只观测 freshRefs ∩ sampledInclusion。
+  //
+  //   需要物化行 id：重读当日流按 ref_id 取（截断后被砍的项已从 inclusion map 移除）。
+  if (result.sampledInclusion.size > 0 && freshRefs.size > 0) {
     const rows = await db
       .select({ id: practice_stream_item.id, ref_id: practice_stream_item.ref_id })
       .from(practice_stream_item)
       .where(eq(practice_stream_item.date, date));
     const idByRef = new Map(rows.map((r) => [r.ref_id, r.id]));
     for (const [refId, pi] of result.sampledInclusion) {
+      // 只记本轮新插入的项——存活行的观测在它首次物化那轮已写过。
+      if (!freshRefs.has(refId)) continue;
       const streamItemId = idByRef.get(refId);
       const signal = result.signalByRef.get(refId);
       try {
@@ -278,6 +367,42 @@ async function composeMaterializeAndObserve(
   }
 
   return added;
+}
+
+/**
+ * Single-flight compose（CLUSTER C 修复）——把 compose+materialize+observe 包进一个事务，
+ * 事务内先抢一把 `pg_advisory_xact_lock(hashtext('stream:compose:<date>'))`（同 submit.ts/
+ * paper-submit.ts 的 FSRS 锁同款），再做**双重检查**：拿到锁后重读当日行，若已非空说明
+ * 竞态的赢家已 compose 过，本调用 no-op 返回（不再二次调 LLM / 不再插重复 position /
+ * 不再写重复 π_i 观测）。锁随事务释放（xact 锁，commit/rollback 自动解）。
+ *
+ * 为什么需要：getStream 的 lazy-compose 与 recompose 都「读行→（空则）compose→materialize」，
+ * 之前无锁——两个并发请求都看到空、都调 LLM、都 materialize，导致双倍 LLM 调用 + 重复
+ * position + 重复观测。advisory 锁把这段串行化成单飞。
+ *
+ * @returns 新增行数（compose 真正发生时 = composeMaterializeAndObserve 的 added；竞态输家
+ *          no-op 时 = 0）。
+ */
+async function singleFlightCompose(
+  db: Db,
+  date: string,
+  policy: SelectionPolicyConfig,
+  deps: ComposeSoftmaxDeps,
+  capacity?: ComposerInputs['capacity'],
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    // 事务级 advisory 锁，键 = 'stream:compose:<date>'。同日的并发 compose 串行化。
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+
+    // 双重检查：拿到锁后重读。赢家已 compose ⇒ 行非空 ⇒ 输家 no-op（不重 compose）。
+    const [{ count }] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.date, date));
+    if (count > 0) return 0;
+
+    return composeMaterializeAndObserve(tx, date, policy, deps, capacity);
+  });
 }
 
 export interface StreamView {
@@ -309,6 +434,8 @@ export async function getStream(
     composeIfEmpty?: boolean;
     policy?: SelectionPolicyConfig;
     composeDeps?: ComposeSoftmaxDeps;
+    /** 容量注入（DI，仅测试用——收紧 max 测 π_i<1 / capacityGuard slice）。production 省略。 */
+    capacity?: ComposerInputs['capacity'];
   } = {},
 ): Promise<StreamView> {
   let rows = await db
@@ -318,11 +445,13 @@ export async function getStream(
     .orderBy(asc(practice_stream_item.position));
 
   if (rows.length === 0 && opts.composeIfEmpty) {
-    await composeMaterializeAndObserve(
+    // CLUSTER C：single-flight（advisory 锁 + 双重检查）——并发 lazy-compose 不双发 LLM。
+    await singleFlightCompose(
       db,
       date,
       opts.policy ?? resolveSelectionPolicy(),
       opts.composeDeps ?? {},
+      opts.capacity,
     );
     rows = await db
       .select()
@@ -386,19 +515,34 @@ export async function advanceStreamItem(
 /**
  * 手动重排：保留 done/in_progress/skipped，删 pending 后按当前信号重新编排追加。
  * 选题路径同 getStream（policy 缺省 resolveSelectionPolicy）；softmax_mfi 路径记 π_i。
+ *
+ * CLUSTER C：delete + compose + materialize 全包进一个事务，事务内先抢
+ * `pg_advisory_xact_lock('stream:compose:<date>')`——与 getStream 的 lazy-compose 共用**同一
+ * 把锁键**，故 lazy-compose 与 recompose 互斥、并发 recompose 也串行化（不双发 LLM、不插重复
+ * position、不写重复 π_i 观测）。recompose 是显式用户动作，拿锁后不做「空则 no-op」双重检查
+ * （它本就要在存活行之上重排）——锁只负责串行化。CLUSTER A/B 修复保证串行重排幂等。
  */
 export async function recomposeStream(
   db: Db,
   date: string,
-  opts: { policy?: SelectionPolicyConfig; composeDeps?: ComposeSoftmaxDeps } = {},
+  opts: {
+    policy?: SelectionPolicyConfig;
+    composeDeps?: ComposeSoftmaxDeps;
+    /** 容量注入（DI，仅测试用）。production 省略。 */
+    capacity?: ComposerInputs['capacity'];
+  } = {},
 ): Promise<number> {
-  await db
-    .delete(practice_stream_item)
-    .where(and(eq(practice_stream_item.date, date), eq(practice_stream_item.status, 'pending')));
-  return composeMaterializeAndObserve(
-    db,
-    date,
-    opts.policy ?? resolveSelectionPolicy(),
-    opts.composeDeps ?? {},
-  );
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+    await tx
+      .delete(practice_stream_item)
+      .where(and(eq(practice_stream_item.date, date), eq(practice_stream_item.status, 'pending')));
+    return composeMaterializeAndObserve(
+      tx,
+      date,
+      opts.policy ?? resolveSelectionPolicy(),
+      opts.composeDeps ?? {},
+      opts.capacity,
+    );
+  });
 }

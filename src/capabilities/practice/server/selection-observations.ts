@@ -7,7 +7,7 @@
 // 随机化选题落地后才在真实选题路径调用本 helper（roadmap Task 8）。
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { selection_observation } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
 import { and, asc, eq } from 'drizzle-orm';
@@ -19,7 +19,7 @@ export interface SelectionObservationInput {
   streamItemId?: string;
   refKind: 'question' | 'paper';
   refId: string;
-  /** 策略标识（本 lane 'legacy'；Phase 3 起 'mfi_softmax' 等）。 */
+  /** 策略标识（'legacy'；Phase 3 起 'softmax_mfi'，见 selection-constants.ts）。 */
   policy: string;
   selected: boolean;
   /** 纳入概率 π_i ∈ (0, 1]。≤0 抛错（合法概率护栏）。 */
@@ -33,7 +33,7 @@ export interface SelectionObservationInput {
  * 都是上游 bug，fail-fast 而非静默落脏数据（慢热资产不可被污染）。
  */
 export async function recordSelectionObservation(
-  db: Db,
+  db: Db | Tx,
   input: SelectionObservationInput,
 ): Promise<string> {
   const pi = input.inclusionProbability;

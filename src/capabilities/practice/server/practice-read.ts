@@ -9,7 +9,7 @@
 
 import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_session } from '@/db/schema';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
@@ -24,7 +24,10 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
  * Returns a Map<id, name>; ids not found in the table map to themselves (id as
  * fallback) so callers never surface raw unknown ids to the UI.
  */
-export async function resolveKnowledgeNames(db: Db, ids: string[]): Promise<Map<string, string>> {
+export async function resolveKnowledgeNames(
+  db: Db | Tx,
+  ids: string[],
+): Promise<Map<string, string>> {
   const nameMap = new Map<string, string>();
   if (ids.length === 0) return nameMap;
   const rows = await db
@@ -143,7 +146,7 @@ export interface PracticeListResult {
  * The UI splits 今日 / 往日 and applies the source-tab filter client-side over
  * the returned `source` field (Map §C2 / critic #4).
  */
-export async function getPracticeList(db: Db): Promise<PracticeListResult> {
+export async function getPracticeList(db: Db | Tx): Promise<PracticeListResult> {
   // 1) Paper artifacts (the widened intent_source provenances).
   //    YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth source
   //    (ingest→practice bridge); must stay in lock-step with the start-session
