@@ -29,7 +29,10 @@ import { and, asc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import { handleReviewDue } from './due-list';
 import { getPracticeList } from './practice-read';
 import { DEFAULT_SELECTION_POLICY, type SelectionPolicyConfig } from './selection-constants';
-import { recordSelectionObservation } from './selection-observations';
+import {
+  type SelectionObservationInput,
+  recordSelectionObservation,
+} from './selection-observations';
 import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
@@ -303,22 +306,40 @@ export function resolveSelectionPolicy(): SelectionPolicyConfig {
 }
 
 /**
- * 按 policy 编排 + 物化 + 记 π_i。两条路径：
- *   - legacy：确定性 composeDailyStream → materialize。π_i 不记。
- *   - softmax_mfi：composeSoftmaxStream（含两级 fallback，永不 throw）→ materialize →
- *     对每个被 sampler 抽中的非到期项 recordSelectionObservation（π_i + policy +
- *     signals snapshot + streamItemId=物化行 id）。到期项 π_i=1 确定性、非随机抽样
- *     ——**不记**（IPW 只关心被抽样的非到期项；记 π_i=1 会污染 active-PPI 的方差估计）。
+ * compose+materialize 在事务内的结果：新增行数 + **待写的选题观测元组**（FINDING B）。
  *
- * 返回新增行数（与旧 materializeStream 契约一致）。
+ * 观测**不**在事务内写——见 composeMaterializeCollect / singleFlightCompose 的 FINDING B
+ * 解耦说明。事务内只把 (streamItemId, refId, π_i, signals) 元组**收集**起来，由调用方在
+ * **事务提交后**（锁外，best-effort）落库，使遥测写失败永不回滚已物化的流。
  */
-async function composeMaterializeAndObserve(
+interface ComposeOutcome {
+  /** 新增行数（与旧 materializeStream 契约一致）。 */
+  added: number;
+  /** 待写选题观测（事务提交后落库；softmax_mfi 路径才非空，legacy 恒空）。 */
+  observations: SelectionObservationInput[];
+}
+
+/**
+ * 按 policy 编排 + 物化 + **收集**（不写）π_i 观测。两条路径：
+ *   - legacy：确定性 composeDailyStream → materialize。π_i 不记（observations 空）。
+ *   - softmax_mfi：composeSoftmaxStream（含两级 fallback，永不 throw）→ materialize →
+ *     **收集**每个被 sampler 抽中的非到期项的观测元组（π_i + policy + signals snapshot +
+ *     streamItemId=物化行 id）。到期项 π_i=1 确定性、非随机抽样——**不收集**（IPW 只关心
+ *     被抽样的非到期项；记 π_i=1 会污染 active-PPI 的方差估计）。
+ *
+ * ⚠️ FINDING B：本函数**只收集不写**观测。它跑在 single-flight 锁事务内（singleFlightCompose
+ *   / recomposeStream 的 `db.transaction`）——若在事务内 INSERT selection_observation 且 INSERT
+ *   抛错，Postgres 会把**整个事务**标记为 aborted，try/catch 记日志也救不回，提交时整笔回滚
+ *   → 刚物化的 practice_stream 一起没了（违反「遥测失败不得破坏选题」）。故把观测元组**带出
+ *   事务**，由调用方在提交后锁外 best-effort 落库（见 writeObservationsBestEffort）。
+ */
+async function composeMaterializeCollect(
   db: DbLike,
   date: string,
   policy: SelectionPolicyConfig,
   deps: ComposeSoftmaxDeps = {},
   capacity?: ComposerInputs['capacity'],
-): Promise<number> {
+): Promise<ComposeOutcome> {
   const inputs = await collectComposerInputs(db, date);
   // 容量注入（DI，测试用——production 不传，走 composeSoftmaxStream 的 DEFAULT_WARN/MAX）。
   //   收紧 max 可让 targetCount < 候选数，使 π_i 真正 < 1（区分不同权重的候选），并行
@@ -327,21 +348,22 @@ async function composeMaterializeAndObserve(
 
   if (policy.policy === 'legacy') {
     const { added } = await materializeStream(db, composeDailyStream(inputs), 'composer_live');
-    return added;
+    return { added, observations: [] };
   }
 
   // softmax_mfi：永不 throw（两级 fallback 兜底）。
   const result: ComposeSoftmaxResult = await composeSoftmaxStream(db, inputs, policy, deps);
   const { added, freshRefs } = await materializeStream(db, result.plan, 'composer_live');
 
-  // π_i 持久化：只对**本轮新物化**的被抽中非到期项（CLUSTER A 修复）。
+  // π_i 收集：只对**本轮新物化**的被抽中非到期项（CLUSTER A 修复）。
   //   result.sampledInclusion 含本轮被抽中的所有非到期 ref，但 recompose 时存活的
   //   done/in_progress 行会被 collectComposerInputs 重新收集 → 重新抽中 → 落进
   //   sampledInclusion；它们**不是本轮新发生的选题**（materializeStream 的 onConflict 没
   //   重插它们），故不在 freshRefs 里——绝不能再对那条**陈旧的存活行 id**写一条幻影/重复
-  //   观测（会污染 π_i 慢热资产）。只观测 freshRefs ∩ sampledInclusion。
+  //   观测（会污染 π_i 慢热资产）。只收集 freshRefs ∩ sampledInclusion。
   //
   //   需要物化行 id：重读当日流按 ref_id 取（截断后被砍的项已从 inclusion map 移除）。
+  const observations: SelectionObservationInput[] = [];
   if (result.sampledInclusion.size > 0 && freshRefs.size > 0) {
     const rows = await db
       .select({ id: practice_stream_item.id, ref_id: practice_stream_item.ref_id })
@@ -349,33 +371,52 @@ async function composeMaterializeAndObserve(
       .where(eq(practice_stream_item.date, date));
     const idByRef = new Map(rows.map((r) => [r.ref_id, r.id]));
     for (const [refId, pi] of result.sampledInclusion) {
-      // 只记本轮新插入的项——存活行的观测在它首次物化那轮已写过。
+      // 只收集本轮新插入的项——存活行的观测在它首次物化那轮已写过。
       if (!freshRefs.has(refId)) continue;
-      const streamItemId = idByRef.get(refId);
       const signal = result.signalByRef.get(refId);
-      try {
-        await recordSelectionObservation(db, {
-          date,
-          streamItemId,
-          refKind: 'question',
-          refId,
-          policy: 'softmax_mfi',
-          selected: true,
-          inclusionProbability: pi,
-          signals: (signal as unknown as Record<string, unknown>) ?? {},
-        });
-      } catch (err) {
-        // 遥测写失败不该挂选题（telemetry-only）——记日志继续。
-        console.error('[stream-store] recordSelectionObservation failed', { refId, pi, err });
-      }
+      observations.push({
+        date,
+        streamItemId: idByRef.get(refId),
+        refKind: 'question',
+        refId,
+        policy: 'softmax_mfi',
+        selected: true,
+        inclusionProbability: pi,
+        signals: (signal as unknown as Record<string, unknown>) ?? {},
+      });
     }
   }
 
-  return added;
+  return { added, observations };
 }
 
 /**
- * Single-flight compose（CLUSTER C 修复）——把 compose+materialize+observe 包进一个事务，
+ * FINDING B：在 single-flight 锁事务**提交后**（锁外）best-effort 落选题观测。
+ *
+ * 用顶层 `db`（**非** tx）逐条写——这样一条观测写失败只丢那一条遥测，既不影响已提交的
+ * 物化流，也不影响其余观测（每条独立 try/catch）。遥测是 telemetry-only：失败记日志继续，
+ * 永不 throw 出去、永不回滚选题。π_i 慢热资产因此可能漏极少数条（已记日志可补），但选题
+ * 路径的可用性绝不被遥测拖垮——这正是「遥测失败不得破坏选题」契约的落地。
+ */
+async function writeObservationsBestEffort(
+  db: Db,
+  observations: SelectionObservationInput[],
+): Promise<void> {
+  for (const obs of observations) {
+    try {
+      await recordSelectionObservation(db, obs);
+    } catch (err) {
+      console.error('[stream-store] recordSelectionObservation failed (post-commit, best-effort)', {
+        refId: obs.refId,
+        pi: obs.inclusionProbability,
+        err,
+      });
+    }
+  }
+}
+
+/**
+ * Single-flight compose（CLUSTER C 修复）——把 compose+materialize 包进一个事务，
  * 事务内先抢一把 `pg_advisory_xact_lock(hashtext('stream:compose:<date>'))`（同 submit.ts/
  * paper-submit.ts 的 FSRS 锁同款），再做**双重检查**：拿到锁后重读当日行，若已非空说明
  * 竞态的赢家已 compose 过，本调用 no-op 返回（不再二次调 LLM / 不再插重复 position /
@@ -385,7 +426,11 @@ async function composeMaterializeAndObserve(
  * 之前无锁——两个并发请求都看到空、都调 LLM、都 materialize，导致双倍 LLM 调用 + 重复
  * position + 重复观测。advisory 锁把这段串行化成单飞。
  *
- * @returns 新增行数（compose 真正发生时 = composeMaterializeAndObserve 的 added；竞态输家
+ * FINDING B：选题观测（π_i）**不在事务内写**——事务只 compose+materialize 并**带出**待写
+ * 观测元组，提交后由 writeObservationsBestEffort 在**锁外** best-effort 落库。遥测写失败因此
+ * 永不回滚已物化的流（事务内 INSERT 抛错会 abort 整笔事务，try/catch 也救不回）。
+ *
+ * @returns 新增行数（compose 真正发生时 = composeMaterializeCollect 的 added；竞态输家
  *          no-op 时 = 0）。
  */
 async function singleFlightCompose(
@@ -395,7 +440,7 @@ async function singleFlightCompose(
   deps: ComposeSoftmaxDeps,
   capacity?: ComposerInputs['capacity'],
 ): Promise<number> {
-  return db.transaction(async (tx) => {
+  const { added, observations } = await db.transaction(async (tx) => {
     // 事务级 advisory 锁，键 = 'stream:compose:<date>'。同日的并发 compose 串行化。
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
 
@@ -404,10 +449,14 @@ async function singleFlightCompose(
       .select({ count: sql<number>`count(*)::int` })
       .from(practice_stream_item)
       .where(eq(practice_stream_item.date, date));
-    if (count > 0) return 0;
+    if (count > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    return composeMaterializeAndObserve(tx, date, policy, deps, capacity);
+    return composeMaterializeCollect(tx, date, policy, deps, capacity);
   });
+
+  // 事务已提交（流已稳）——锁外 best-effort 写观测；失败只丢遥测，绝不回滚流（FINDING B）。
+  await writeObservationsBestEffort(db, observations);
+  return added;
 }
 
 export interface StreamView {
@@ -526,6 +575,9 @@ export async function advanceStreamItem(
  * 把锁键**，故 lazy-compose 与 recompose 互斥、并发 recompose 也串行化（不双发 LLM、不插重复
  * position、不写重复 π_i 观测）。recompose 是显式用户动作，拿锁后不做「空则 no-op」双重检查
  * （它本就要在存活行之上重排）——锁只负责串行化。CLUSTER A/B 修复保证串行重排幂等。
+ *
+ * FINDING B：与 singleFlightCompose 同款——选题观测在事务**提交后**锁外 best-effort 写，
+ * 遥测失败永不回滚已重排物化的流。
  */
 export async function recomposeStream(
   db: Db,
@@ -537,12 +589,12 @@ export async function recomposeStream(
     capacity?: ComposerInputs['capacity'];
   } = {},
 ): Promise<number> {
-  return db.transaction(async (tx) => {
+  const { added, observations } = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
     await tx
       .delete(practice_stream_item)
       .where(and(eq(practice_stream_item.date, date), eq(practice_stream_item.status, 'pending')));
-    return composeMaterializeAndObserve(
+    return composeMaterializeCollect(
       tx,
       date,
       opts.policy ?? resolveSelectionPolicy(),
@@ -550,4 +602,8 @@ export async function recomposeStream(
       opts.capacity,
     );
   });
+
+  // 事务已提交（流已稳）——锁外 best-effort 写观测（FINDING B）。
+  await writeObservationsBestEffort(db, observations);
+  return added;
 }

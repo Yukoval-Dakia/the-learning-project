@@ -90,7 +90,23 @@ export function diagnosticScore(thetaHat: number, b: number, thetaPrecision: num
  *   - score 必须有限：非有限 score 是上游 bug（θ̂/b 没兜底），fail-fast 而非
  *     产出全 NaN 的 π_i（单个 NaN 经 max/exp 会污染整批分布）。
  *   - 用 reduce 求 max，**不用 `Math.max(...scores)`**——超大候选集 spread 会爆栈。
+ *
+ * positivity 护栏（FINDING A，ADR-0043 §7）——**指数下溢清零是最深的 positivity 漏洞**：
+ *   centered exponent `(s - max)/T` 恒 ≤ 0；当 score 跨度大时它会变成大负数，
+ *   `Math.exp` 在指数 < log(Number.MIN_VALUE) ≈ -744.44 时**硬清零**（返回精确 0，
+ *   非 denormal）。例：weights=[1000, 0]、T=0.25 ⇒ 低分项 exponent=(0-1000)/0.25=-4000
+ *   ⇒ exp(-4000)=0 ⇒ q=0 ⇒ π_i=0 ⇒ 该候选永不被抽样、也永不进 IPW 资产（§7 positivity
+ *   违例，active-PPI 估计偏置）。floor-fill 让每个权重 ≥ε 也救不了——下溢发生在 exp 之后。
+ *
+ *   修复：把 centered exponent **clamp 到 ≥ -CLAMP_K**（CLAMP_K=700）。exp(-700) ≈ 9.9e-305
+ *   是**正规** double（远高于 MIN_NORMAL ≈ 2.2e-308），保证每个有限 score 的 q_i > 0。
+ *   clamp 是单调非降映射 ⇒ 高 score → 高（或相等）q_i（单调性保全）；只在 score 跨度
+ *   超过 CLAMP_K·T（=175 @T=0.25）的极端尾部把多个低分压平到同一极小正值（可接受：
+ *   它们本就该是「近零」概率，clamp 只把「精确零」抬成「极小正」以保 positivity）。
+ *   正常跨度（如 [1000,999]，跨度 1 ≪ 175）完全不触发 clamp，分布数值不变。
  */
+const CLAMP_K = 700;
+
 export function softmaxProbabilities(scores: number[], temperature = 0.25): number[] {
   if (scores.length === 0) return [];
   if (!(temperature > 0)) {
@@ -103,7 +119,8 @@ export function softmaxProbabilities(scores: number[], temperature = 0.25): numb
     }
     if (s > max) max = s;
   }
-  const exps = scores.map((s) => Math.exp((s - max) / temperature));
+  // clamp 下溢防线（FINDING A）：centered exponent 不低于 -CLAMP_K ⇒ exp 永不清零 ⇒ q_i>0。
+  const exps = scores.map((s) => Math.exp(Math.max(-CLAMP_K, (s - max) / temperature)));
   const total = exps.reduce((a, b) => a + b, 0);
   return exps.map((e) => e / total);
 }

@@ -61,14 +61,18 @@ describe('inclusionProbabilities (Poisson IPPS clip, pure)', () => {
     for (const p of pi) expect(p).toBeCloseTo(0.5, 10);
   });
 
-  it('Σ π_i = targetCount even when clipping locks dominant items', () => {
-    // One huge q forces a clip to 1; the remainder redistributes.
+  it('Σ π_i = targetCount even when clipping locks dominant items (ε-mix preserves sum exactly)', () => {
+    // One huge q forces a clip to ~1; the remainder redistributes.
     const q = [0.9, 0.05, 0.03, 0.02];
     const pi = inclusionProbabilities(q, 2);
     const sum = pi.reduce((a, b) => a + b, 0);
+    // ε-greedy mix (FINDING A) preserves Σπ_i = targetCount EXACTLY (affine mix to uniform).
     expect(sum).toBeCloseTo(2, 10);
-    expect(pi[0]).toBe(1); // dominant item clipped to certainty
-    // remaining 1.0 of expected count spread over the other three by their q
+    // Dominant item is clipped to certainty then ε-mixed to just below 1 (exploration floor):
+    //   π'_0 = (1−ε)·1 + ε·(2/4) ≈ 0.9995 — near-certain, strictly < 1 (airtight ∈ (0,1)).
+    expect(pi[0]).toBeGreaterThan(0.99);
+    expect(pi[0]).toBeLessThan(1);
+    // remaining ~1.0 of expected count spread over the other three by their q
     expect(pi[1]).toBeGreaterThan(pi[2]);
     expect(pi[2]).toBeGreaterThan(pi[3]);
     for (const p of pi.slice(1)) {
@@ -84,6 +88,59 @@ describe('inclusionProbabilities (Poisson IPPS clip, pure)', () => {
       expect(p).toBeGreaterThanOrEqual(0);
       expect(p).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('FINDING A (IPPS saturation): tiny-q candidate keeps π_i>0 even when dominant saturates', () => {
+    // q ≈ [1, ~0]: WITHOUT the ε-greedy mix the dominant locks to π=1, consumes the whole
+    // budget (rem→0), and the tiny candidate gets λ·q = 0·q = 0 → positivity violation.
+    // WITH the mix every entry stays strictly > 0 while Σπ stays exactly = targetCount.
+    const q = [1 - 1e-300, 1e-300];
+    const pi = inclusionProbabilities(q, 1); // 0 < n < N, the saturating regime
+    expect(pi[0]).toBeGreaterThan(0);
+    expect(pi[1]).toBeGreaterThan(0); // <-- the airtight guarantee (was 0 before the fix)
+    expect(pi[0]).toBeLessThanOrEqual(1);
+    expect(pi[1]).toBeLessThanOrEqual(1);
+    const sum = pi.reduce((a, b) => a + b, 0);
+    expect(sum).toBeCloseTo(1, 10); // IPPS Σπ = targetCount preserved exactly
+  });
+});
+
+describe('FINDING A (positivity airtight): softmax underflow + IPPS saturation', () => {
+  it('softmaxProbabilities clamps the underflow: large weight gap [1000,0] → both q_i>0', () => {
+    // exp((0-1000)/0.25) = exp(-4000) underflows to EXACTLY 0 without the clamp → q=0 → π=0.
+    // The CLAMP_K floor keeps the centered exponent ≥ -700 so exp stays a normal double > 0.
+    const q = softmaxProbabilities([1000, 0], T);
+    expect(q[0]).toBeGreaterThan(0);
+    expect(q[1]).toBeGreaterThan(0); // <-- would be EXACTLY 0 (underflow) before the clamp
+    expect(q[0]).toBeGreaterThan(q[1]); // monotonic: higher weight → higher q
+    expect(q.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+  });
+
+  it('clamp does NOT perturb normal-range gaps: [1000,999] distribution unchanged', () => {
+    // gap 1 ≪ CLAMP_K·T (=175) → clamp never engages → identical to un-clamped softmax.
+    const q = softmaxProbabilities([1000, 999], T);
+    expect(q.every((x) => Number.isFinite(x) && x > 0)).toBe(true);
+    expect(q[0]).toBeGreaterThan(q[1]);
+    expect(q.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+  });
+
+  it('END-TO-END: large weight gap [1000,0] → BOTH candidates get π_i>0 (sampleByWeight)', () => {
+    // THE airtight proof: a candidate with weight 0 against a weight-1000 candidate must
+    // STILL have π_i > 0 (samplable ⇒ coverable by IPW, ADR-0043 §7). targetCount=1 forces
+    // the saturating regime (0<n<N) where both the softmax underflow AND the IPPS lock would
+    // independently zero the low candidate — the fix closes both.
+    const cands: WeightedCandidate[] = [
+      { refId: 'huge', weight: 1000 },
+      { refId: 'zero', weight: 0 },
+    ];
+    // rng()===0 < π_i selects every candidate whose π_i > 0, exposing each reported π_i.
+    const out = sampleByWeight(cands, { temperature: T, targetCount: 1, rng: () => 0 });
+    const byId = new Map(out.map((s) => [s.refId, s.inclusionProbability]));
+    expect(out.map((s) => s.refId).sort()).toEqual(['huge', 'zero']);
+    expect(getOr(byId, 'huge')).toBeGreaterThan(0);
+    expect(getOr(byId, 'zero')).toBeGreaterThan(0); // <-- airtight: was π=0 before the fix
+    // monotonic preserved: dominant weight still gets the higher inclusion probability.
+    expect(getOr(byId, 'huge')).toBeGreaterThan(getOr(byId, 'zero'));
   });
 });
 
