@@ -185,6 +185,20 @@ export const practiceCapability = defineCapability({
             (m) => m.buildStreamComposeNightlyHandler,
           ),
       },
+      // YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发夜扫。确定性缺口扫描
+      // （discoverSupplyTargets，零写零 LLM）→ dispatchSupplyTargets 派到既有 sourcing /
+      // quiz_gen 队列或标 manual。cron 06:00 Asia/Shanghai：错开并排在所有数据预产 job 之后
+      // （item_prior 04:20 / mastery 夜链 / compose 05:30），让前沿/题池信号已新鲜、缺口判定准。
+      // queue=llm：派出的 sourcing / quiz_gen 本身是 LLM 重型 job，本 job 与其同档 DLQ 重试。
+      // **成本护栏**：dispatcher 的 7d fingerprint cooldown 是唯一防 job-spam 闸（同未满足缺口
+      // 7 天内只真派一次）；本 job 依赖它，绝不绕过 dispatcher 直发付费队列。
+      {
+        name: 'question_supply_nightly',
+        schedule: { cron: '0 6 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
