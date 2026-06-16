@@ -214,7 +214,13 @@ export const question = pgTable(
     embed_model: text('embed_model'),
     embed_version: integer('embed_version'),
   },
-  (t) => [check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`)],
+  (t) => [
+    check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`),
+    // YUK-383 Phase 0 — GIN index on the knowledge_ids jsonb array to accelerate
+    // KC-containment lookups (which questions carry a given KC), consumed by the
+    // Phase 1 matcher. Mirrors event_affected_scopes_idx's gin pattern.
+    index('question_knowledge_ids_gin').using('gin', t.knowledge_ids),
+  ],
 );
 
 // Phase 1c.1 Step 9.J — `mistake` and `review_event` tables DROPped per
