@@ -270,3 +270,24 @@ owner：per-subject 先行 + 讨论跨科意义与路径。
 3. **三信号解锁优先级**：按推荐 misconception→transfer→exam，还是 owner 产品优先级不同？
 4. **错因 taxonomy 统一时机**：per-subject 复发先行（单科可用、跨科留白）vs 先攻跨科统一（解锁跨科但前置重）？关系 misconception 晋升环何时落地。
 5. **KC-tag 升级范围**：只补「embedding 候选 + confidence」，还是同时建 match 时语义重标 job（KC 树大改后批量重标历史题，涉历史回填成本）？
+
+---
+
+## 12. 生成(B leg) 形态决策（2026-06-17 owner 拍板）
+
+补 §3 残余-fill 生成器(B leg) 三条形态决策（quiz_gen 能力测绘 + `kind` 爆炸半径 workflow grounded）：
+
+### 12.1 生成直出 structured（不走 ingestion 恢复管道）
+
+quiz_gen 主链现只产**扁平纯文本题**，不产 structured 树 / 组合题 / 图。**决策：生成端直接 emit `StructuredQuestion` 树**（复用 author_question 已有的结构直出 + `StructureTask` 的 `StructureNode` shape）。**不**把生成文本喂进 ingestion 的 `block-assembly`/`StructureTask`——那是「从扫描页**图片恢复**结构」的 vision 管道（输入页图 + OCR 块 + bbox），与生成需求反向：会丢掉「生成器本就知道的结构意图」+ 多一道「所见≠入库」漂移面。共享层 = **StructuredQuestion schema + verify 契约**，不是抽取管道。verify 从「重抽结构」变「**校验结构树自洽**」。
+
+### 12.2 题型 = 两轴正交（kind → answer-class 轻标签）
+
+**决策详见 YUK-386**（kind 8 值闭集 → 结构轴通用树 + ~4 值 answer-class 验证标签 `exact/keyword/semantic/steps`；6 步砍法 YUK-387~392）。对生成的影响：Step 5 删生成端 `kindsMatch` pin + 闭集 prompt，生成按「结构 guide + answer-class」产出。**合流 A1**（客观 answer-class → typed attempt-payload）/ **A5**（verify rollout = answer-class 开闸序）。
+
+### 12.3 图片三分（算 / 画 / 采）
+
+- **数学/公式/几何/电路/坐标 → 确定性渲染**（from spec：matplotlib / TikZ / mathjs——生成器吐图 spec，渲染器出图）。正确性可证、可复现、便宜；与已有 mathjs 数值 verifier 同源。
+- **插画/场景/无事实负担装饰 → gpt-image 类生成**，配 ADR-0002 user-accept 闸，默认装饰用。
+- **事实性图示（地图 / 标注生物 / 数据图表 / 作为考点的电路）→ 两条生成路都危险，优先采集真图**（接 YUK-227 + harvest A leg）。生成图把「所见≠入库」升到视觉层，难自动 verify。
+- 口诀：**能算就别画、能画(确定)就别生成、能采(真图)就别赌生成。**
