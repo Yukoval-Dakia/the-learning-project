@@ -117,6 +117,14 @@ export const fastTestInclude = [
   // be listed explicitly or the db config's src/**/*.test.ts glob sweeps it into
   // the testcontainer partition (pricing.test.ts lesson).
   'src/server/ai/item-prior.test.ts',
+  // YUK-361 Phase 5 (Task 10) — 家族级 b_personalized 纯函数单测（shrinkage /
+  // family_key / 客观路由分类 / 隐含难度残差 / effectiveFamilyB）。Pure no-DB: imports
+  // 仅 ./personalized-difficulty（其 @/db/client import 是 type-only/erased，@/db/schema
+  // 是 table objects 不连库，@/capabilities/knowledge/server/domain 也 type-only Db），
+  // 不触 @/db/client 的 eager pool。门控 update 路径的 db 测在 personalized-difficulty.db.test.ts。
+  // src/server/mastery/** 无 unit glob，故必须显式列出，否则 db config 的 src/**/*.test.ts
+  // glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
+  'src/server/mastery/personalized-difficulty.test.ts',
   // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
   // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
   // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`

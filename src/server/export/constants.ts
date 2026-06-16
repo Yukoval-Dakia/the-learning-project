@@ -16,7 +16,11 @@
 // (π_i 是 D17 推翻后 active-PPI 重标定必需的慢热资产，不可丢)，故进 FK_ORDER 备份
 // (非 BACKUP_EXCLUDED)。+ `practice_stream_item.signals` additive jsonb 列 (ride 整行
 // dump/restore)。26 → 27 tables；bump 4.2 → 4.3 标注 telemetry 慢热资产入备份的契约变更。
-export const SCHEMA_VERSION = '4.3';
+// YUK-361 Phase 5 (家族级 b_personalized): additive `item_family_calibration` table —
+// 慢热校准资产 (家族级 b_delta 在足够重复客观观测后才 firm-up，攒不回来丢了即灭失)，
+// 同 item_calibration 进 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。27 → 28 tables；bump
+// 4.3 → 4.4 标注慢热校准资产入备份的契约变更 (per archive.ts assertEveryTableIsBackedUpOrExcluded)。
+export const SCHEMA_VERSION = '4.4';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -71,6 +75,10 @@ export const FK_ORDER = [
   'question_block',
   'question',
   'item_calibration',
+  // YUK-361 Phase 5 (家族级 b_personalized): item_family_calibration — 家族级 b_delta
+  // 慢热校准资产。软引用语义键 (subject:knowledge:kind:source，no enforced FK)，位置
+  // 不受 PG FK 约束；置于 item_calibration 后保持「难度校准簇」相邻可读。
+  'item_family_calibration',
   'material_fsrs_state',
   'memory_brief_note',
   'learning_record',

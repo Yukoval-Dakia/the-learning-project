@@ -190,6 +190,22 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     ).toEqual([]);
   });
 
+  // YUK-361 Phase 5 (ADR-0043 §家族级 b_personalized) — item_family_calibration is the
+  // family-level b_delta adjustment layer (独立调整层，永不回写 item_calibration.b——
+  // 不变量①). Its only writer is updateFamilyCalibration in src/server/mastery/
+  // (personalized-difficulty.ts). The hot paths (submit.ts / paper-submit.ts) only
+  // CALL recordFamilyObservationForAttempt best-effort — they never db.insert/update
+  // (item_family_calibration) directly, so this assertion stays clean.
+  it('db.{insert,update}(item_family_calibration) appears only in src/server/mastery/', async () => {
+    const ALLOWED_FAMILY_CALIBRATION_WRITERS = ['src/server/mastery/'] as const;
+    const hits = await findWriteHits('item_family_calibration');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_FAMILY_CALIBRATION_WRITERS));
+    expect(
+      violations,
+      `Disallowed writers of \`item_family_calibration\` found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
   for (const dropped of ['mistake', 'review_event', 'dreaming_proposal', 'ingestion_session']) {
     it(`legacy \`${dropped}\` table has ZERO write-callers in src/ + app/ (DROPped in 9.J)`, async () => {
       const hits = await findWriteHits(dropped, { roots: SCAN_RUNTIME_ROOTS });

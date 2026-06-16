@@ -35,6 +35,7 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
+import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import { updateThetaForAttempt } from '@/server/mastery/state';
 import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
@@ -595,6 +596,27 @@ export async function submitPaperSlot(
         attemptEventId,
         now,
       });
+
+      // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
+      // 同 tx，best-effort（try/catch 吞错，绝不 fail 主路径）。门 (a) 在内部判 judge
+      // route 客观性：paper judge route = invoked.route，非客观路由（exact/keyword 之外，
+      // 含 photo-only 的 null）内部早返不触 DB。primary knowledge = slot 的 primaryKnowledgeId
+      // （回落 q.knowledge_ids[0]，与 θ̂ / FSRS 同源 referencedKnowledgeIds 的首元素一致）。
+      // outcome：partial→1（与上面 θ̂ 一致的保守占位语义，部分对≈成功证据）。
+      try {
+        await recordFamilyObservationForAttempt(tx, {
+          primaryKnowledgeId: input.primaryKnowledgeId ?? referencedKnowledgeIds[0],
+          questionId: input.questionId,
+          kind: q.kind,
+          source: q.source,
+          difficulty: q.difficulty,
+          outcome: attemptOutcome === 'failure' ? 0 : 1,
+          judgeRoute: invoked?.route ?? null,
+          now,
+        });
+      } catch (err) {
+        console.warn('recordFamilyObservationForAttempt (paper) failed (non-fatal):', err);
+      }
     }
 
     // Freeze the answer draft (set submitted_at + event_id). Re-submission after

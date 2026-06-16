@@ -253,6 +253,13 @@
       "when": 1781539580896,
       "tag": "0035_selection_observation",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1781588944195,
+      "tag": "0036_item_family_calibration",
+      "breakpoints": true
     }
   ]
 }

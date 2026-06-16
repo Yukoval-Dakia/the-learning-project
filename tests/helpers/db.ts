@@ -28,6 +28,8 @@ const ALL_TABLES = [
   // B1-W1 (ADR-0035) — diagnostic projection (θ̂/p(L)) + item difficulty anchor.
   'mastery_state',
   'item_calibration',
+  // YUK-361 Phase 5 — 家族级 b_delta 慢热校准资产。
+  'item_family_calibration',
   'knowledge_edge',
   'learning_session',
   'answer',
