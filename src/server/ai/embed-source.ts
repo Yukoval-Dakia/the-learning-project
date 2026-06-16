@@ -9,10 +9,10 @@ export function questionEmbedText(q: {
   choices_md: string[] | null;
 }): string {
   return [q.prompt_md, q.reference_md ?? '', ...(q.choices_md ?? [])]
-    .filter((s) => s && s.trim())
+    .filter((s) => s?.trim())
     .join('\n');
 }
 
 export function knowledgeEmbedText(k: { name: string; domain: string | null }): string {
-  return [k.name, k.domain ?? ''].filter((s) => s && s.trim()).join('\n');
+  return [k.name, k.domain ?? ''].filter((s) => s?.trim()).join('\n');
 }

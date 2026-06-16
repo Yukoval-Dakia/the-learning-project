@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/ai/embed', () => ({
