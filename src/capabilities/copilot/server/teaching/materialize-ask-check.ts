@@ -50,8 +50,17 @@ export interface MaterializedAskCheckQuestion {
 
 /**
  * Insert the `teaching_check` question carried by an ask_check turn. Behavior is
- * byte-for-byte identical to the legacy inline INSERT (turn/route.ts) — a
- * regression test asserts the legacy route still produces an equivalent row.
+ * byte-for-byte identical to the legacy inline INSERT (turn/route.ts) EXCEPT for the
+ * intentional YUK-350 divergence below: this row now lands draft_status='draft'.
+ *
+ * YUK-350 (L2, RL2) — a teaching_check is CONTAINER-ONLY: it is read solely within its
+ * teaching session via getActiveQuestionState (active-question.ts, keyed on
+ * source + session_id, no draft filter), never selected by the general review pool
+ * (every pool path excludes draft). Landing it 'draft' makes the container-only
+ * contract explicit and pool-safe (NULL≡active would have made it ambiguously poolable).
+ * No promote path is required by design. NOTE: if the legacy inline turn route
+ * (turn/route.ts) still self-inserts a teaching_check, mirror this draft_status there
+ * too — tracked as a follow-up.
  */
 export async function materializeAskCheckQuestion(
   tx: Tx,
@@ -79,6 +88,8 @@ export async function materializeAskCheckQuestion(
     difficulty: 2,
     source: 'teaching_check',
     source_ref: sourceRef,
+    // YUK-350 (L2, RL2) — container-only: draft so it never enters the general pool.
+    draft_status: 'draft',
     metadata: {
       learning_item_id: learningItemId,
       session_id: sessionId,

@@ -225,10 +225,14 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // neither an fsrs_state row nor an attempt — both slices already miss it
     // implicitly. This predicate makes that an EXPLICIT, query-level invariant so
     // a stray draft (e.g. a future write path that mis-attaches an attempt event)
-    // can still never surface. Only 'draft' is excluded: NULL (embedded /
-    // auto-enroll / legacy) and 'active' (variant / dreaming / promoted quiz) both
-    // stay in the pool. NULL handling is explicit (`draft_status != 'draft'` alone
-    // would drop NULL rows under SQL three-valued logic).
+    // can still never surface. Only 'draft' is excluded: NULL (auto-enroll / legacy)
+    // and 'active' (variant / dreaming / promoted quiz) both stay in the pool. NULL
+    // handling is explicit (`draft_status != 'draft'` alone would drop NULL rows under
+    // SQL three-valued logic).
+    // YUK-350 (L2, RL2) — embedded/teaching checks are NO LONGER NULL-stays-in-pool:
+    // they now land draft_status='draft' (container-only by design), so this predicate
+    // already excludes them. NULL-stays-in-pool remains the truth ONLY for auto-enroll
+    // / legacy rows.
     const notDraftQuiz = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
 
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
