@@ -11,9 +11,7 @@ describe('practice manifest jobs', () => {
     expect(typeof job?.load).toBe('function');
 
     // staggered: no other scheduled job shares embed_backfill's cron slot
-    const crons = handlers
-      .filter((j) => j.schedule)
-      .map((j) => j.schedule?.cron);
+    const crons = handlers.filter((j) => j.schedule).map((j) => j.schedule?.cron);
     const dupes = crons.filter((c) => c === job?.schedule?.cron);
     expect(dupes).toHaveLength(1);
   });
