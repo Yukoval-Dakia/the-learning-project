@@ -14,7 +14,8 @@
 //   (1) family 行按 kQ（题的 knowledge_ids[0]）成键，**不**按 kSlot；
 //   (2) distinct 计数基 = knowledge_ids[0]=kQ 的题集，与 family_key 同源（数得到）。
 
-import { artifact, item_family_calibration, knowledge, question } from '@/db/schema';
+import { newId } from '@/core/ids';
+import { artifact, event, item_family_calibration, knowledge, question } from '@/db/schema';
 import { Review } from '@/server/session';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -23,6 +24,39 @@ import {
   familyKey,
 } from '../../../server/mastery/personalized-difficulty';
 import { submitPaperSlot } from './paper-submit';
+
+/**
+ * finding #1：observed-distinct 计数从 judged 事件流派生。为 `questionId` 写一个
+ * attempt 事件 + 客观 judge 兄弟事件，使其被 countDistinctQuestionsInFamily 计入。
+ */
+async function seedJudgedAttemptEvent(questionId: string, judgeRoute = 'exact') {
+  const db = testDb();
+  const createdAt = new Date();
+  const attemptId = newId();
+  await db.insert(event).values({
+    id: attemptId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: 'failure',
+    payload: {},
+    created_at: createdAt,
+  });
+  await db.insert(event).values({
+    id: newId(),
+    actor_kind: 'agent',
+    actor_ref: 'test_judge',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptId,
+    outcome: 'success',
+    payload: { judge_route: judgeRoute },
+    caused_by_event_id: attemptId,
+    created_at: createdAt,
+  });
+}
 
 async function seedKnowledge(id: string, domain = 'wenyan') {
   const db = testDb();
@@ -139,13 +173,15 @@ describe('finding #3b — paper family_key / distinct 计数基一致 (slot.prim
   it('distinct 计数基 = knowledge_ids[0]，与 family_key 同源 (数得到正确题集)', async () => {
     const db = testDb();
     await seedKnowledge('kQ', 'wenyan');
-    // 5 道同 (kQ, true_false, manual) 家族的题（按 knowledge_ids[0]=kQ）。
+    // 5 道同 (kQ, true_false, manual) 家族的题（按 knowledge_ids[0]=kQ），各产出客观观测。
     for (let i = 0; i < 5; i++) {
       await seedTrueFalseQuestion(`fq${i}`, ['kQ'], 'true');
+      await seedJudgedAttemptEvent(`fq${i}`); // finding #1：observed-distinct 需 judged 事件
     }
-    // 一道 knowledge_ids[0]=kOther 的干扰题——不属 kQ 家族，不该被计入。
+    // 一道 knowledge_ids[0]=kOther 的干扰题——不属 kQ 家族，不该被计入（也产出观测）。
     await seedKnowledge('kOther', 'wenyan');
     await seedTrueFalseQuestion('noise', ['kOther'], 'true');
+    await seedJudgedAttemptEvent('noise');
 
     // 按 kQ（canonical 基）计数 → 正确数到 5 道（不含 kOther 干扰题）。
     const countByKQ = await countDistinctQuestionsInFamily(db, 'kQ', 'true_false', 'manual');
