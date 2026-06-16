@@ -10,7 +10,7 @@
 
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
-import { embedMany, EMBED_MODEL } from '@/server/ai/embed';
+import { EMBED_MODEL, embedMany } from '@/server/ai/embed';
 import { knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
 import { eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';

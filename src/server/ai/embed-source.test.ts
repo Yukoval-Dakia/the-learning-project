@@ -3,7 +3,11 @@ import { knowledgeEmbedText, questionEmbedText } from './embed-source';
 
 describe('embed source text', () => {
   it('question = prompt + reference + choices joined', () => {
-    const t = questionEmbedText({ prompt_md: '题面', reference_md: '答案', choices_md: ['A', 'B'] });
+    const t = questionEmbedText({
+      prompt_md: '题面',
+      reference_md: '答案',
+      choices_md: ['A', 'B'],
+    });
     expect(t).toContain('题面');
     expect(t).toContain('答案');
     expect(t).toContain('A');
