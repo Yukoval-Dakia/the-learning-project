@@ -21,6 +21,8 @@ import {
 } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, mastery_state } from '@/db/schema';
+import { resolveFamilyKeyForQuestion } from './family-key';
+import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
 import { effectiveB } from './recalibration';
 
 type DbLike = Db | Tx;
@@ -144,6 +146,13 @@ export interface UpdateThetaForAttemptInput {
   /** provenance — the attempt event id that produced this update. */
   attemptEventId: string;
   now: Date;
+  /**
+   * YUK-372 L3 — question.kind / question.source（family_key 解析所需）。可选：caller-less /
+   * 直测不传 → 跳过家族查询 → 纯 effectiveB（NO-OP，向后兼容）。submit.ts / paper-submit.ts
+   * 热路径传 q.kind / q.source 启用家族 delta 组合。
+   */
+  kind?: string;
+  source?: string;
 }
 
 /**
@@ -203,9 +212,34 @@ export async function updateThetaForAttempt(
     )
     .limit(1);
   const calB = effectiveB(calRows[0]);
-  const b = calB ?? difficultyToLogitB(input.difficulty);
-  // Weak difficulty-proxy anchor → down-weight the update (D2 / VERIFY).
+  // Resolve the columnar b first (incl. the weak difficulty-proxy fallback), matching
+  // recalibration.ts:77-81's order.
+  const columnarB = calB ?? difficultyToLogitB(input.difficulty);
+  // Weak difficulty-proxy anchor → down-weight the update (D2 / VERIFY). bWeight stays keyed on
+  // the COLUMNAR anchor source — the family delta does NOT change the weak-anchor down-weight
+  // (G4: no double down-weight; family delta is an additive shift on b, not an anchor-quality
+  // change).
   const bWeight = calB !== null ? 1 : DIFFICULTY_PROXY_WEIGHT;
+
+  // YUK-361 Phase 5 (effectiveFamilyB) — YUK-372 L3: 把家族 b_delta 叠在去偏/弱锚 b 之上
+  //   b = effectiveFamilyB(columnarB, familyRow) = columnarB + shrunk_family_delta
+  // G4 NO-OP-safe：家族门未过 → b_delta=0 → effectiveFamilyB 原样返回 columnarB → θ̂ bit-identical。
+  // 缺 kind/source（caller-less / 直测）→ 跳过家族查询 → b = columnarB（纯 effectiveB，NO-OP）。
+  // G1：家族查询是主 tx 内的纯 SELECT（无写）；subject 派生的 orphan-domain throw 已被
+  // resolveFamilyKeyForQuestion 内 try/catch 兜成 'unknown'，绝不冒泡 abort θ̂。
+  // G3：只读，绝不写任何 b。
+  let b = columnarB;
+  if (input.kind && input.source) {
+    const familyKey = await resolveFamilyKeyForQuestion(tx, {
+      primaryKnowledgeId: knowledgeIds[0],
+      kind: input.kind,
+      source: input.source,
+    });
+    if (familyKey !== null) {
+      const familyRow = await getFamilyCalibration(tx, familyKey);
+      b = effectiveFamilyB(columnarB, familyRow);
+    }
+  }
 
   // 2. Read every KC's current state (null → cold start: θ=0, counts=0).
   const existing = await tx

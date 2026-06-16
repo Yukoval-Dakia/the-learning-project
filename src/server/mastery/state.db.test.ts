@@ -6,7 +6,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
-import { item_calibration, knowledge, mastery_state, question } from '@/db/schema';
+import {
+  item_calibration,
+  item_family_calibration,
+  knowledge,
+  mastery_state,
+  question,
+} from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
 import { getMasteryState, updateThetaForAttempt, upsertMasteryState } from './state';
 
@@ -422,5 +428,140 @@ describe('updateThetaForAttempt', () => {
     // Exact Fisher math: anchored 1²·0.25 = 0.25, proxy 0.3²·0.25 = 0.0225.
     expect(anchoredIncrement).toBeCloseTo(0.25, 5);
     expect(proxyIncrement).toBeCloseTo(0.09 * 0.25, 5);
+  });
+});
+
+// YUK-372 L3 — family b_delta composition (effectiveFamilyB) in the θ̂ anchor.
+describe('updateThetaForAttempt — family b_delta composition (YUK-372 L3)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function seedItemCalibration(questionId: string, b: number) {
+    await db.insert(item_calibration).values({
+      id: newId(),
+      question_id: questionId,
+      b,
+      b_anchor: b,
+      confidence: 0.5,
+      track: 'hard',
+      source: 'llm_prior',
+    });
+  }
+
+  async function seedFamily(familyKey: string, bDelta: number) {
+    await db.insert(item_family_calibration).values({
+      id: newId(),
+      family_key: familyKey,
+      b_delta: bDelta,
+      evidence_count: 30,
+      calibrated_n: 30,
+      confidence: 0.6,
+    });
+  }
+
+  // Run a single correct attempt and return the resulting θ̂ for the KC.
+  async function runAttemptTheta(opts: {
+    kid: string;
+    qid: string;
+    kind?: string;
+    source?: string;
+  }): Promise<number> {
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [opts.kid],
+        questionId: opts.qid,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        kind: opts.kind,
+        source: opts.source,
+      });
+    });
+    return (await readState(opts.kid))?.theta_hat ?? 0;
+  }
+
+  it('gate-passed family delta shifts the b anchor → θ̂ differs from the un-shifted anchor', async () => {
+    // Baseline: same columnar b, NO family delta (no kind/source → family lookup skipped).
+    const kBase = createId();
+    const qBase = createId();
+    await seedKnowledge(kBase);
+    await seedQuestion(qBase, [kBase]);
+    await seedItemCalibration(qBase, 0.0);
+    const baseTheta = await runAttemptTheta({ kid: kBase, qid: qBase });
+
+    // Family-shifted: same columnar b=0.0, but a gate-passed family delta of +1.0 → b=1.0.
+    const kFam = createId();
+    const qFam = createId();
+    await seedKnowledge(kFam);
+    await seedQuestion(qFam, [kFam]);
+    await seedItemCalibration(qFam, 0.0);
+    await seedFamily(`wenyan:${kFam}:short_answer:manual`, 1.0);
+    const famTheta = await runAttemptTheta({
+      kid: kFam,
+      qid: qFam,
+      kind: 'short_answer',
+      source: 'manual',
+    });
+
+    // A harder effective b (b=1.0 vs 0.0) on a correct answer yields a larger θ̂ gain (more
+    // surprise). The two θ̂ MUST differ — proving the family delta entered the anchor.
+    expect(famTheta).not.toBeCloseTo(baseTheta, 6);
+    expect(famTheta).toBeGreaterThan(baseTheta);
+  });
+
+  it('NO-OP bit-identical: kind/source present but NO family row → θ̂ identical to no-kind/source', async () => {
+    // With family row absent, passing kind/source must produce the exact same θ̂ as omitting them.
+    const kA = createId();
+    const qA = createId();
+    await seedKnowledge(kA);
+    await seedQuestion(qA, [kA]);
+    await seedItemCalibration(qA, 0.4);
+    const withKindSource = await runAttemptTheta({
+      kid: kA,
+      qid: qA,
+      kind: 'short_answer',
+      source: 'manual', // family lookup runs but finds no row → b_delta absent → NO-OP.
+    });
+
+    const kB = createId();
+    const qB = createId();
+    await seedKnowledge(kB);
+    await seedQuestion(qB, [kB]);
+    await seedItemCalibration(qB, 0.4);
+    const withoutKindSource = await runAttemptTheta({ kid: kB, qid: qB });
+
+    // Bit-identical θ̂ (same b=0.4, same cold-start state, same outcome).
+    expect(withKindSource).toBe(withoutKindSource);
+  });
+
+  it('weak difficulty-proxy anchor + family delta coexist; bWeight stays keyed on the columnar (none) source', async () => {
+    // No item_calibration row → columnar b = difficultyToLogitB(3) = 0 (weak proxy, bWeight=0.3).
+    // A family delta is added ON TOP of the weak b; bWeight stays 0.3 (keyed on the columnar
+    // anchor source = proxy), NOT double-down-weighted by the family delta.
+    const kProxy = createId();
+    const qProxy = createId();
+    await seedKnowledge(kProxy);
+    await seedQuestion(qProxy, [kProxy]);
+    // NO item_calibration → proxy anchor.
+    await seedFamily(`wenyan:${kProxy}:short_answer:manual`, 0.8);
+    const proxyTheta = await runAttemptTheta({
+      kid: kProxy,
+      qid: qProxy,
+      kind: 'short_answer',
+      source: 'manual',
+    });
+
+    // Baseline proxy WITHOUT family delta (no kind/source).
+    const kPlain = createId();
+    const qPlain = createId();
+    await seedKnowledge(kPlain);
+    await seedQuestion(qPlain, [kPlain]);
+    const plainProxyTheta = await runAttemptTheta({ kid: kPlain, qid: qPlain });
+
+    // The family delta shifted the weak b → different θ̂; both still go through bWeight=0.3
+    // (proxy), so the gain is modest but the delta clearly moved the anchor.
+    expect(proxyTheta).not.toBeCloseTo(plainProxyTheta, 6);
   });
 });

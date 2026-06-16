@@ -18,10 +18,15 @@ import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { type SelectionCandidateSignal, diagnosticScore, mfiScore } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
-import { item_calibration } from '@/db/schema';
+import { item_calibration, item_family_calibration } from '@/db/schema';
+import { batchResolveFamilyKeys } from '@/server/mastery/family-key';
+import {
+  type FamilyCalibrationRow,
+  effectiveFamilyB,
+} from '@/server/mastery/personalized-difficulty';
 import { effectiveB } from '@/server/mastery/recalibration';
 import { getMasteryState } from '@/server/mastery/state';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
@@ -41,6 +46,11 @@ export interface CandidateInput {
   knowledgeIds?: string[];
   /** 题候选的 1-5 难度档（兜底 b 弱锚来源）。缺 → 无 b。 */
   difficulty?: number;
+  /**
+   * YUK-372 L3 — question.source（family_key 解析所需，与 kind + knowledgeIds[0] 共同成键）。
+   * 缺 → 跳过家族查询 → 纯 effectiveB（NO-OP，向后兼容）。
+   */
+  source?: string;
 }
 
 /**
@@ -143,11 +153,22 @@ async function resolveBAnchor(
 
 /**
  * 收集一条题候选的信号。
+ *
+ * YUK-372 L3：`familyRow` 是 collectCandidateSignals 批量解析好的家族校准行（或 null）。在
+ * resolveBAnchor 后、mfiScore/diagnosticScore 前叠加 effectiveFamilyB(b, familyRow)。
+ * G4 NO-OP-safe：familyRow=null 或 b_delta=0 → effectiveFamilyB 原样返回 b → mfiScore bit-identical。
+ * recall-locked / b-absent（bSource='none'）候选：b===undefined 时不叠家族 delta（无 b 可叠）。
  */
-async function collectQuestionSignal(db: DbLike, cand: CandidateInput): Promise<CollectedSignal> {
+async function collectQuestionSignal(
+  db: DbLike,
+  cand: CandidateInput,
+  familyRow: FamilyCalibrationRow | null = null,
+): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
   const { thetaHat, thetaPrecision } = await aggregateWeakestKc(db, knowledgeIds);
-  const { b, bSource } = await resolveBAnchor(db, cand.refId, cand.difficulty);
+  const { b: columnarB, bSource } = await resolveBAnchor(db, cand.refId, cand.difficulty);
+  // 家族 delta 叠加（G4 NO-OP-safe）。b===undefined（bSource='none'）→ 无 b 可叠，保持 undefined。
+  const b = columnarB !== undefined ? effectiveFamilyB(columnarB, familyRow) : undefined;
 
   // recall-eligibility（ADR-0030 by-kind 路由 → recall/application）。
   //   recall（fill_blank/translation）：原题重背，FSRS 测的就是这道 recall item。recall
@@ -231,12 +252,49 @@ export async function collectCandidateSignals(
   db: DbLike,
   candidates: CandidateInput[],
 ): Promise<CollectedSignal[]> {
+  // YUK-372 L3 — 批量解析所有题候选的 family_key（kind + knowledgeIds[0] + source），subject
+  // 派生单遍内存 walk（NOT per-candidate 32-climb），再一次 IN 查 item_family_calibration →
+  // family_key → row Map。G3：这是 **Map sidecar**——绝不 reorder candidates（输出顺序严格
+  // 对齐输入），绝不写 item b。
+  const questionCands = candidates.filter(
+    (c): c is CandidateInput & { kind: QuestionKindT } => c.refKind === 'question',
+  );
+  const familyKeyByRefId = await batchResolveFamilyKeys(
+    db,
+    questionCands.map((c) => ({
+      questionId: c.refId,
+      primaryKnowledgeId: (c.knowledgeIds ?? [])[0],
+      kind: c.kind,
+      source: c.source,
+    })),
+  );
+  // 去重 family_key（多题共享一个 family）→ 一次 IN 查所有家族行。
+  const distinctKeys = Array.from(
+    new Set(Array.from(familyKeyByRefId.values()).filter((k): k is string => k !== null)),
+  );
+  const familyRowByKey = new Map<string, FamilyCalibrationRow>();
+  if (distinctKeys.length > 0) {
+    const rows = await db
+      .select({
+        family_key: item_family_calibration.family_key,
+        b_delta: item_family_calibration.b_delta,
+        evidence_count: item_family_calibration.evidence_count,
+        confidence: item_family_calibration.confidence,
+        calibrated_n: item_family_calibration.calibrated_n,
+      })
+      .from(item_family_calibration)
+      .where(inArray(item_family_calibration.family_key, distinctKeys));
+    for (const r of rows) familyRowByKey.set(r.family_key, r);
+  }
+
   const out: CollectedSignal[] = [];
   for (const cand of candidates) {
     if (cand.refKind === 'paper') {
       out.push(collectPaperSignal(cand));
     } else {
-      out.push(await collectQuestionSignal(db, cand));
+      const fk = familyKeyByRefId.get(cand.refId) ?? null;
+      const familyRow = fk !== null ? (familyRowByKey.get(fk) ?? null) : null;
+      out.push(await collectQuestionSignal(db, cand, familyRow));
     }
   }
   return out;
