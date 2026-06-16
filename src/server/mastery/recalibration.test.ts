@@ -16,47 +16,71 @@ import {
 } from './recalibration';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// aipwMean — ADR-0043 §7 正确归一化（核心：两段都 ÷N，不是 ÷n_labeled 再 ÷π）。
+// aipwMean — ADR-0043 §7 + Hájek 自归一化（FINDING #1：校正项 ÷ 精确 Σ(1/π)，不是 ÷N、
+// 不是 ÷round(Σ1/π)、不是 ÷n_labeled 再 ÷π）。
 // ─────────────────────────────────────────────────────────────────────────────
-describe('aipwMean (ADR-0043 §7 corrected normalization)', () => {
-  it('no labels → pure pool prediction mean (residualCorrection=0)', () => {
+describe('aipwMean (ADR-0043 §7 + Hájek self-normalization, FINDING #1)', () => {
+  it('no labels → pure pool prediction mean (correction term = 0)', () => {
     expect(aipwMean([1, 2, 3], [])).toBeCloseTo(2, 12);
     expect(aipwMean([0.5], [])).toBeCloseTo(0.5, 12);
   });
 
   it('uniform sampling does NOT multiply by N/n twice (the §7 bug)', () => {
-    // 候选池 N=10，锚预测全 0.6（predictionMean=0.6）。均匀抽样 π=0.2（即 N/n_labeled=10/2=5
-    // ⇒ π≈n/N=0.2 一致）。已标注 2 条，残差 ξ = +0.4 各一条（label=1.0, m̂=0.6）。
-    const N = 10;
-    const pool = Array(N).fill(0.6);
+    // 候选池锚预测全 0.6（predictionMean=0.6）。均匀抽样 π=0.2。已标注 2 条，残差 ξ=+0.4 各一条
+    // （label=1.0, m̂=0.6）。Hájek：predictionMean + Σ(ξ/π)/Σ(1/π)
+    //   = 0.6 + (0.4/0.2 + 0.4/0.2)/(1/0.2 + 1/0.2) = 0.6 + (2+2)/(5+5) = 0.6 + 0.4 = 1.0
+    // （均匀 π 下 Σ1/π = N=10，故 Hájek 与旧 ÷N 形数值巧合一致——这正是旧测遮住 FINDING #1 的原因）。
+    const pool = Array(10).fill(0.6);
     const labeled: LabeledResidual[] = [
       { residual: 0.4, pi: 0.2 },
       { residual: 0.4, pi: 0.2 },
     ];
-    // 正确：predictionMean + (1/N)·Σ(ξ/π) = 0.6 + (1/10)·(0.4/0.2 + 0.4/0.2)
-    //     = 0.6 + (1/10)·(2 + 2) = 0.6 + 0.4 = 1.0
     const correct = aipwMean(pool, labeled);
     expect(correct).toBeCloseTo(1.0, 12);
 
-    // 朴素错误形（÷n_labeled 再保留 ÷π 隐含的 N/n 因子）：predictionMean +
-    //   (1/n_labeled)·Σ(ξ/π) = 0.6 + (1/2)·(2+2) = 0.6 + 2.0 = 2.6 —— 多乘了 N/n=5 过度校正。
+    // 朴素错误形（÷n_labeled 再保留 ÷π 隐含的 N/n 因子）：0.6 + (1/2)·(2+2) = 2.6 —— 过度校正。
     const naiveWrong = 0.6 + labeled.reduce((s, r) => s + r.residual / r.pi, 0) / labeled.length;
     expect(naiveWrong).toBeCloseTo(2.6, 12);
-    // 断言：correct 与朴素错误形显著不同（捕住 §7 的 double-multiply bug）。
     expect(correct).not.toBeCloseTo(naiveWrong, 1);
   });
 
-  it('known-residuals case: hand-computed expected value', () => {
-    // N=4, pool=[1,1,2,2] → predictionMean=1.5。labeled 3 条：
-    //   ξ/π = -0.5/0.5=-1.0, 0.3/0.6=0.5, 1.2/0.4=3.0 → Σ=2.5
-    // aipw = 1.5 + 2.5/4 = 1.5 + 0.625 = 2.125
+  it('Hájek self-normalization: pool SIZE is irrelevant (only predictionMean matters)', () => {
+    // FINDING #1 core: the IPW correction divides by Σ(1/π) (the exact weight sum), NOT the
+    // pool size. So two pools with the SAME predictionMean but DIFFERENT lengths give the
+    // SAME result — proving no round(Σ1/π) / Array(N).fill dependence remains.
+    const labeled: LabeledResidual[] = [
+      { residual: 0.3, pi: 0.13 },
+      { residual: 0.3, pi: 0.47 },
+      { residual: 0.3, pi: 0.9 },
+    ];
+    const small = aipwMean([0.6], labeled);
+    const large = aipwMean(Array(100).fill(0.6), labeled);
+    expect(small).toBeCloseTo(large, 12);
+  });
+
+  it('all-equal residuals + non-uniform π → exact recovery (the bias the old ÷round(Σ1/π) hid)', () => {
+    // Every label says ξ = +1.0 (e.g. label 1.5, anchor 0.5). Hájek: 0.5 + (Σ 1/π)/(Σ 1/π) = 1.5
+    // EXACTLY, independent of the π distribution. The old round(Σ1/π) denominator gave ≈1.513.
+    const pis = [0.12, 0.34, 0.55, 0.2, 0.8, 0.45, 0.6];
+    const labeled: LabeledResidual[] = pis.map((pi) => ({ residual: 1.0, pi }));
+    expect(aipwMean([0.5], labeled)).toBeCloseTo(1.5, 12);
+    // Demonstrate the old buggy form would NOT have recovered 1.5:
+    const sumInv = pis.reduce((a, p) => a + 1 / p, 0);
+    const oldBuggy = 0.5 + labeled.reduce((s, r) => s + r.residual / r.pi, 0) / Math.round(sumInv);
+    expect(oldBuggy).not.toBeCloseTo(1.5, 3);
+  });
+
+  it('known case: hand-computed Hájek expected value', () => {
+    // pool predictionMean=1.5。labeled 3 条：ξ/π = -0.5/0.5=-1.0, 0.3/0.6=0.5, 1.2/0.4=3.0 → Σ=2.5。
+    // Σ1/π = 2 + 1.6667 + 2.5 = 6.16667。Hájek = 1.5 + 2.5/6.16667 = 1.905405…
     const pool = [1, 1, 2, 2];
     const labeled: LabeledResidual[] = [
       { residual: -0.5, pi: 0.5 },
       { residual: 0.3, pi: 0.6 },
       { residual: 1.2, pi: 0.4 },
     ];
-    expect(aipwMean(pool, labeled)).toBeCloseTo(2.125, 12);
+    const sumInv = 1 / 0.5 + 1 / 0.6 + 1 / 0.4;
+    expect(aipwMean(pool, labeled)).toBeCloseTo(1.5 + 2.5 / sumInv, 12);
   });
 
   it('throws on π <= 0 (positivity, §7)', () => {
@@ -88,14 +112,14 @@ describe('ppiPlusMean (PPI++ power-tuning)', () => {
     expect(ppiPlusMean(pool, samples, 1)).toBeCloseTo(aipwMean(pool, residuals), 12);
   });
 
-  it('λ=0 degrades to classical pure-IPW label mean (anchor fully ignored)', () => {
-    // λ=0 → 0·predictionMean + (1/N)·Σ(label/π)。锚 m̂ 被完全忽略。
+  it('λ=0 degrades to classical Hájek IPW label mean (anchor fully ignored)', () => {
+    // λ=0 → 0·predictionMean + Σ(label/π)/Σ(1/π)。锚 m̂ 被完全忽略（Hájek 自归一化）。
     const pool = Array(10).fill(99); // 锚预测极端值，λ=0 时应不影响结果。
     const samples: LabeledSample[] = [
       { label: 0.5, prediction: 99, pi: 0.2 },
       { label: 0.5, prediction: 99, pi: 0.2 },
     ];
-    // (1/10)·(0.5/0.2 + 0.5/0.2) = (1/10)·5 = 0.5
+    // Σ(0.5/0.2)/Σ(1/0.2) = (2.5+2.5)/(5+5) = 5/10 = 0.5（与 π 分布无关，全 label 相等 → 精确 0.5）。
     expect(ppiPlusMean(pool, samples, 0)).toBeCloseTo(0.5, 12);
   });
 
@@ -138,6 +162,10 @@ describe('estimateLambdaStar (PPI++ anchor-quality auto-degrade)', () => {
   });
 
   it('anchor has no variance (homogeneous pool) → 1 (trust anchor)', () => {
+    // FINDING low-1: this is EXACTLY the single-question constant-anchor mode recalibrateQuestion
+    // runs in — every sample's m̂ = b_anchor (constant) → Var(m̂)=0 → λ*=1. The bad-anchor
+    // auto-degrade valve is therefore inert in single-question mode regardless of how the
+    // labels spread; it only engages once Phase 7+ supplies a NON-constant m̂.
     const samples: LabeledSample[] = [
       { label: 0.2, prediction: 0.5, pi: 0.5 },
       { label: 0.9, prediction: 0.5, pi: 0.5 },
