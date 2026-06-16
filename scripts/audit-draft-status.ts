@@ -23,9 +23,11 @@
  *
  * 已知盲点（与 sibling audit-schema 同属正则-shape 限制，当前数据下均不可触发——
  * 已 grep 确认无任何站点命中以下形态——但未来贡献者须知）：
- *   1. 只匹配 INLINE 对象字面量形式 `.insert(question).values({ ... })`。变量/数组
- *      形式 `.values(rows)` / `.values([...])` 不会被扫到，会静默逃过 gate。新增
- *      bulk/computed-row insert 时必须改写成 inline 字面量，否则 gate 不覆盖。
+ *   1. 只匹配 INLINE 对象字面量形式 `.values({ ... })`。变量/数组形式 `.values(rows)` /
+ *      `.values([...])` 不会被扫到，会静默逃过 gate。新增 bulk/computed-row insert 时必须
+ *      改写成 inline 字面量，否则 gate 不覆盖。
+ *      （F3，YUK-350：跨行 / 链式断行形态——`.insert(question)` 与 `.values({` 之间夹换行或
+ *      `.onConflictDoNothing()` 等链式调用——以前被漏扫，现在 INSERT_HEAD_RE 已容忍，见其注释。）
  *   2. DRAFT_STATUS_KEY_RE 在整块对象（含嵌套）里找 key，不限 top-level。若把
  *      draft_status 作为嵌套对象（如 metadata: { draft_status: ... }）的 key，会被
  *      误判为「已设」。draft_status 必须是 top-level 列 key。
@@ -278,10 +280,26 @@ export type InsertSite = {
   hasDraftStatus: boolean;
 };
 
-// `.insert( question ).values( {` with optional whitespace. Word-boundary on `question`
-// excludes question_block / question_part (the `(` after the table name guarantees the
-// boundary; `question_block` would not be followed by `)`).
-const INSERT_HEAD_RE = /\.insert\(\s*question\s*\)\.values\(\s*\{/g;
+// `.insert( question )[ .chain(...) ]* .values( {` — tolerant of chained-call line breaks
+// (F3, YUK-350). The OLD matcher `\.insert\(\s*question\s*\)\.values\(\s*\{` required `.values(`
+// to immediately follow `)` with NOTHING between them, so the idiomatic Drizzle cross-line form
+//   tx
+//     .insert(question)
+//     .values({ ... })
+//     .onConflictDoNothing()
+// (and any `.insert(question).<method>(...).values({` shape) silently escaped the scan → the
+// gate could go falsely green on a new cross-line insert that forgot draft_status. This head
+// now allows whitespace/newlines AND zero-or-more intermediate chained method calls between
+// `.insert(question)` and `.values({`:
+//   `\s*` after `)` swallows the line break;
+//   `(?:\.<ident>\(<no-paren args>\)\s*)*` swallows any intermediate `.foo()` chain links.
+// Word-boundary on `question` still excludes question_block / question_part (the `(` after the
+// table name guarantees the boundary). The intermediate-link arg matcher is `[^)]*` (no nested
+// parens) — adequate for the empty-arg Drizzle chain links (`.onConflictDoNothing()`,
+// `.returning()`); a chain link carrying a nested-paren call before `.values` would not be
+// swallowed (acceptable — `.values` normally comes first in Drizzle insert chains).
+const INSERT_HEAD_RE =
+  /\.insert\(\s*question\s*\)\s*(?:\.[A-Za-z_$][\w$]*\([^)]*\)\s*)*\.values\(\s*\{/g;
 // draft_status as an object KEY (word-boundary, allow quotes), not a substring of
 // another identifier.
 const DRAFT_STATUS_KEY_RE = /(^|[^A-Za-z0-9_])(['"]?)draft_status\2\s*:/;

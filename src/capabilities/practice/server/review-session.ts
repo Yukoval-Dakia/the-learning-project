@@ -440,7 +440,18 @@ export async function planReviewSession(params: PlanReviewSessionParams): Promis
           knowledge_ids: question.knowledge_ids,
         })
         .from(question)
-        .where(inArray(question.id, trulyNew));
+        // 红线 4（draft 排除契约，YUK-350）：never-reviewed failure slice 也**必须排除**
+        // draft 题。用户对一道 embedded/teaching draft（draft_status='draft'，container-only）
+        // 答错一次 → 写 failure attempt → 该 draft 进 candidateNewQids → 若不过滤会作为
+        // 普通 PlanQueueItem 进 review session，泄漏 container-only 题给通用复习池。
+        // 谓词与本文件 due-slice 同形（NULL≡active / 'active' 留池，仅排 'draft'；NULL 显式
+        // 保留——`<> 'draft'` 在三值逻辑下会误丢 NULL 行）。
+        .where(
+          and(
+            inArray(question.id, trulyNew),
+            sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+          ),
+        );
       const qById = new Map(qRows.map((q) => [q.id, q]));
       newRows = trulyNew
         .map((qid) => qById.get(qid))
