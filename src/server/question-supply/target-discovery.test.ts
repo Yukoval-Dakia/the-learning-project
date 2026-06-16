@@ -5,12 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { planSupplyRoutes } from './route-planner';
 import {
   type FrontierKnowledgeInput,
+  OBJECTIVE_KINDS,
   type PoolQuestion,
   type QuestionSupplyTarget,
   type ScanInput,
   acquisitionTierForQuestion,
   difficultyBandFor,
   scanCoverageGaps,
+  seedGenerationMethod,
   seedRoutePreference,
 } from './target-discovery';
 
@@ -168,6 +170,10 @@ describe('scanCoverageGaps — R3 repeated diagnostic gap (calibrationCandidate)
     expect(diag?.constraints.calibrationCandidate).toBe(true);
     expect(diag?.difficultyBand).toBe('near');
     expect(diag?.reason).toContain('near-theta_hat');
+    // review FINDING #2 — R3 calibration target requests an OBJECTIVE kind (exact/keyword judged).
+    expect(diag?.kind).toBe('choice');
+    expect(OBJECTIVE_KINDS.has(diag?.kind as never)).toBe(true);
+    expect(diag?.constraints.objectiveOnly).toBe(true);
   });
 
   it('does NOT emit diagnostic when a near-theta_hat item already exists', () => {
@@ -363,6 +369,123 @@ describe('seedRoutePreference — profile sourcingRoutePreference → SupplyRout
 
   it('returns empty array when profile has no sourcingRoutePreference', () => {
     expect(seedRoutePreference({} as never)).toEqual([]);
+  });
+});
+
+// review FINDING #3 — material vs closed_book must NOT collapse: both map to the quiz_gen
+// queue but carry different generation_method (material→material_grounded, closed_book→closed_book).
+describe('seedGenerationMethod — preserve material vs closed_book distinction', () => {
+  it('material token → material_grounded', () => {
+    const profile = {
+      sourcingRoutePreference: { reading: ['material', 'sourced'] },
+    } as never;
+    expect(seedGenerationMethod(profile)).toBe('material_grounded');
+  });
+
+  it('closed_book token → closed_book', () => {
+    const profile = {
+      sourcingRoutePreference: { short_answer: ['closed_book'] },
+    } as never;
+    expect(seedGenerationMethod(profile)).toBe('closed_book');
+  });
+
+  it('first-appearing quiz_gen-class token wins (material before closed_book)', () => {
+    const profile = {
+      sourcingRoutePreference: { reading: ['material'], translation: ['closed_book'] },
+    } as never;
+    expect(seedGenerationMethod(profile)).toBe('material_grounded');
+  });
+
+  it('no quiz_gen-class token → undefined', () => {
+    const profile = {
+      sourcingRoutePreference: { short_answer: ['sourced', 'variant'] },
+    } as never;
+    expect(seedGenerationMethod(profile)).toBeUndefined();
+  });
+
+  it('no sourcingRoutePreference → undefined', () => {
+    expect(seedGenerationMethod({} as never)).toBeUndefined();
+  });
+
+  // The threaded distinction lands on the emitted target's preferredGenerationMethod when
+  // quiz_gen is in routePreference (so the dispatcher sends the right generation_method).
+  it('scanCoverageGaps threads preferredGenerationMethod onto targets when quiz_gen is preferred', () => {
+    const targets = scanCoverageGaps(
+      emptyScan({
+        frontier: [frontier('k-new')],
+        questions: [],
+        routePreferenceBySubject: { wenyan: ['quiz_gen', 'sourcing_web'] },
+        generationMethodBySubject: { wenyan: 'closed_book' },
+      }),
+      seqIds(),
+    );
+    expect(targets[0].preferredGenerationMethod).toBe('closed_book');
+  });
+
+  it('does NOT set preferredGenerationMethod when quiz_gen is not in routePreference', () => {
+    const targets = scanCoverageGaps(
+      emptyScan({
+        frontier: [frontier('k-new')],
+        questions: [],
+        routePreferenceBySubject: { wenyan: ['sourcing_web'] },
+        generationMethodBySubject: { wenyan: 'material_grounded' },
+      }),
+      seqIds(),
+    );
+    expect(targets[0].preferredGenerationMethod).toBeUndefined();
+  });
+});
+
+// review FINDING #6 — coverage-depth threshold. A KC below the threshold (< 2 usable questions)
+// still emits a coverage target even when it already has SOME questions; at/above threshold it does not.
+describe('scanCoverageGaps — FINDING #6: coverage-depth threshold (thin KC)', () => {
+  it('a KC with 1 usable question is below threshold → emits a coverage target (desiredCount=1)', () => {
+    // A tier-1 manual near-theta_hat question (suppresses R2/R3) — pool size 1 < 2.
+    const oneQ = poolQuestion({
+      source: 'manual',
+      kind: 'short_answer',
+      calibrationB: 0, // near → no R3; tier-1 → no R2.
+      knowledgeIds: ['k1'],
+    });
+    const targets = scanCoverageGaps(
+      emptyScan({ frontier: [frontier('k1', { thetaHat: 0 })], questions: [oneQ] }),
+      seqIds(),
+    );
+    const coverage = targets.find((t) => t.gapKind === 'frontier_zero');
+    expect(coverage).toBeDefined();
+    expect(coverage?.desiredCount).toBe(1); // deficit to threshold (2 - 1).
+    expect(coverage?.reason).toContain('coverage depth');
+  });
+
+  it('a KC with 2 usable questions is at threshold → NO coverage target', () => {
+    const q1 = poolQuestion({ source: 'manual', calibrationB: 0, knowledgeIds: ['k1'] });
+    const q2 = poolQuestion({ source: 'manual', calibrationB: 0, knowledgeIds: ['k1'] });
+    const targets = scanCoverageGaps(
+      emptyScan({ frontier: [frontier('k1', { thetaHat: 0 })], questions: [q1, q2] }),
+      seqIds(),
+    );
+    expect(targets.find((t) => t.gapKind === 'frontier_zero')).toBeUndefined();
+  });
+
+  it('a thin KC (1 question) STILL reaches R2/R3/R4 (not gated out)', () => {
+    // 1 low-tier question, no calibration → below threshold AND triggers R2 (low-tier-only)
+    // AND R3 (no reliable near anchor). All three gaps should be present.
+    const lowTierUncal = poolQuestion({
+      source: 'quiz_gen',
+      metadata: { quiz_gen: { generation_method: 'closed_book' } },
+      kind: 'fill_blank', // recall → also triggers R4.
+      calibrationB: null,
+      knowledgeIds: ['k1'],
+    });
+    const targets = scanCoverageGaps(
+      emptyScan({ frontier: [frontier('k1', { thetaHat: 0 })], questions: [lowTierUncal] }),
+      seqIds(),
+    );
+    const kinds = targets.map((t) => t.gapKind);
+    expect(kinds).toContain('frontier_zero'); // thin coverage.
+    expect(kinds).toContain('source_quality'); // R2 reachable.
+    expect(kinds).toContain('diagnostic'); // R3 reachable.
+    expect(kinds).toContain('format_diversity'); // R4 reachable.
   });
 });
 

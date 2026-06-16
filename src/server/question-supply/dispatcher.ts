@@ -24,6 +24,7 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { planSupplyRoutes } from './route-planner';
@@ -31,6 +32,18 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
 /** 能自动派到后台队列的路由（pg-boss）。其余路由 emit + manual。 */
 const AUTO_DISPATCHABLE = new Set<SupplyRoute>(['sourcing_web', 'quiz_gen']);
+
+// ── review FINDING #5：sourcing_web 派发前的 Tavily 可用性闸 ─────────────────────
+//
+// 问题：无 TAVILY_API_KEY 的安装里，SourcingTask 的 web 找题线退化（sourcing.ts 的
+// buildTavilyMcpServer() 返 null → 不挂 Tavily MCP → 找题 agent 无 web 搜索/抽取工具）。
+// 把 sourcing_web 直接派出去 = 一个注定退化/失败的付费 job。
+//
+// 修复：auto-派 sourcing_web 前查 TAVILY_API_KEY 可用性（复用 worker 同一判据
+// buildTavilyMcpServer() !== null——单一真相，不复制 env 读取）。不可用 → 跳过 sourcing_web，
+// 落到 route plan 的下一条可派路由（quiz_gen 仍可，不依赖 Tavily 的闭卷生成）；plan 里再无可派
+// 路由 → manual（emit + 留给 UI/copilot），不入队注定失败的 job。
+const defaultTavilyAvailable = (): boolean => buildTavilyMcpServer() !== null;
 
 // ── review FINDING #1 + #2：跨扫描指纹 cooldown（防 job-spam / 无界 re-dispatch）─────
 //
@@ -128,31 +141,63 @@ export interface DispatchDeps {
    * 测试可注入 0 关闭 cooldown 或调小窗口验证行为。
    */
   cooldownDays?: number;
+  /**
+   * Tavily 可用性判据注入（review FINDING #5）。默认 buildTavilyMcpServer() !== null（= TAVILY_API_KEY
+   * 已配，worker 同一判据，单一真相）。测试注入 false 验证 sourcing_web 不被 auto-派、落下一条路由。
+   */
+  tavilyAvailable?: () => boolean;
 }
 
 /**
- * 把一个 quiz_gen 路由的 generation_method 从目标约束推导：
- *   objectiveOnly / 一般 → closed_book（无 grounding 要求时闭卷生成）。
- *   minSourceTier ≤ 2（要中可信）→ material_grounded（拉真原文 grounding）。
+ * 把一个 quiz_gen 路由的 generation_method 推导：
+ *   1. review FINDING #3：target.preferredGenerationMethod（subject profile 的 material vs
+ *      closed_book token 区分，target-discovery seedGenerationMethod 播种）——若有，**优先尊重**它。
+ *      `material` 与 `closed_book` 都映射成 quiz_gen 队列，但生成方法不同（quiz_gen handler honor
+ *      material_grounded 拉真原文 grounding vs closed_book 闭卷生成）；丢这层区分 = 总以 minSourceTier
+ *      推导，会把 profile 显式声明的 closed_book 偏好覆盖成 material_grounded。
+ *   2. 无显式偏好 → 退回 minSourceTier 推导：minSourceTier ≤ 2（要中可信）→ material_grounded
+ *      （拉真原文 grounding）；否则 closed_book（无 grounding 要求时闭卷生成）。
  * （quiz_gen 队列只在 route plan 把它排到首位且 sourcing 不可用时才命中——见 chooseAutoRoute。）
  */
 function generationMethodFor(target: QuestionSupplyTarget): 'material_grounded' | 'closed_book' {
+  if (target.preferredGenerationMethod) return target.preferredGenerationMethod;
   return target.minSourceTier <= 2 ? 'material_grounded' : 'closed_book';
 }
 
 /**
- * 选自动派路由：**只看路由计划的 head（最优先路由）**——尊重 route-planner 的优先级排序。
- * head 可自动派（sourcing_web / quiz_gen）→ 自动派；head 不可自动派（image_candidate /
- * ingest_existing / author_question）→ 返回 null → manual（emit + 留给 UI/copilot）。
- *
- * 为什么不扫整个 plan 找首个可派的：image-first 的目标其 plan 是 ['image_candidate', ...,
- * 'sourcing_web']——若往后扫到 sourcing_web 就自动派，等于无视「这题需要图、web 是劣替代」
- * 的硬偏好（Task 13 Step 4：image_candidate 需 UI accept → 不自动派）。head-only 保证
- * 「最优先路由不可派 ⇒ 整个目标走 manual」，与 route-planner 的判据优先链一致。
+ * 一条已选定的 quiz_gen 路由是否依赖 Tavily：material_grounded 必须 tavily_extract 拉真原文
+ * （sourcing-sequence.ts 验证轮 C），closed_book 闭卷生成不依赖。sourcing_web 恒依赖 Tavily
+ * （web 找题线无 Tavily MCP 即退化，sourcing.ts）。
  */
-function chooseAutoRoute(routePlan: SupplyRoute[]): SupplyRoute | null {
-  const head = routePlan[0];
-  return head && AUTO_DISPATCHABLE.has(head) ? head : null;
+function routeNeedsTavily(route: SupplyRoute, target: QuestionSupplyTarget): boolean {
+  if (route === 'sourcing_web') return true;
+  if (route === 'quiz_gen') return generationMethodFor(target) === 'material_grounded';
+  return false;
+}
+
+/**
+ * 选自动派路由：沿 route plan 从 head 起逐条判定，尊重 route-planner 的优先级排序。
+ *
+ * - 遇到**不可自动派**的路由（image_candidate / ingest_existing / author_question）→ 立刻返回 null
+ *   → manual。这守住 image-first 等硬偏好：plan=['image_candidate', ..., 'sourcing_web'] 的目标
+ *   head 不可派即走 manual，不会越过「这题要图、web 是劣替代」的硬偏好往后自动派（Task 13 Step 4）。
+ * - 遇到**可自动派但 Tavily 不可用**的 Tavily-依赖路由（sourcing_web，或 material_grounded 的
+ *   quiz_gen）→ **跳过**它，继续看 plan 下一条（review FINDING #5：不入队注定退化/失败的 job）。
+ *   注意：跳过只发生在「该路由本可自动派、只是当前 Tavily 缺失」时——这是可行性降级，不是越过硬偏好。
+ * - 遇到可自动派且可行的路由 → 返回它。
+ * - 走完 plan 仍无可派路由 → null → manual。
+ */
+function chooseAutoRoute(
+  routePlan: SupplyRoute[],
+  target: QuestionSupplyTarget,
+  tavilyAvailable: boolean,
+): SupplyRoute | null {
+  for (const route of routePlan) {
+    if (!AUTO_DISPATCHABLE.has(route)) return null; // 硬偏好边界：不可派路由 → manual。
+    if (!tavilyAvailable && routeNeedsTavily(route, target)) continue; // FINDING #5：跳过注定失败的 Tavily 依赖路由。
+    return route;
+  }
+  return null;
 }
 
 /**
@@ -168,6 +213,7 @@ export async function dispatchSupplyTarget(
   const enqueue = deps.enqueue ?? defaultEnqueue;
   const actorRef = deps.actorRef ?? 'question_supply';
   const cooldownDays = deps.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
+  const tavilyAvailable = (deps.tavilyAvailable ?? defaultTavilyAvailable)();
   const routePlan = planSupplyRoutes(target);
   const anchorKid = target.knowledgeIds[0] ?? null;
 
@@ -186,9 +232,12 @@ export async function dispatchSupplyTarget(
       reason: target.reason,
     };
   } else {
-    const autoRoute = chooseAutoRoute(routePlan);
+    const autoRoute = chooseAutoRoute(routePlan, target, tavilyAvailable);
     if (autoRoute === null) {
-      // 选定路由（image/ingest/author）当前无法自动派 → manual（emit + 留给 UI/copilot）。
+      // 选定路由（image/ingest/author）无法自动派，**或** 所有可派路由都依赖 Tavily 而 Tavily 缺失
+      // （review FINDING #5）→ manual（emit + 留给 UI/copilot），不入队注定退化/失败的 job。
+      const headNeedsTavily =
+        !tavilyAvailable && routePlan[0] != null && routeNeedsTavily(routePlan[0], target);
       result = {
         targetId: target.id,
         fingerprint: target.fingerprint,
@@ -196,7 +245,9 @@ export async function dispatchSupplyTarget(
         chosenRoute: routePlan[0] ?? null,
         status: 'manual',
         jobId: null,
-        stopCondition: `route '${routePlan[0] ?? 'none'}' has no background queue; awaits user/UI (Open Decision #1/#4)`,
+        stopCondition: headNeedsTavily
+          ? `route '${routePlan[0]}' needs Tavily but TAVILY_API_KEY is unset; no Tavily-free auto route in plan → manual (review FINDING #5)`
+          : `route '${routePlan[0] ?? 'none'}' has no background queue; awaits user/UI (Open Decision #1/#4)`,
         reason: target.reason,
       };
     } else if (
