@@ -70,6 +70,24 @@
 
 **选题侧零改动**：选题引擎 + 调度引擎站在 active 池下游，继续 `collectComposerInputs` 从 active 行 MFI 打分抽样。A 只往池里更连续、更对准缺口地补料，**选题 API 不变**——需求侧重写不波及消费侧契约。
 
+### 3.1 引擎仲裁：harvest 默认 / request-then-fulfill 生成回退
+
+harvest-then-match **不取代** request-then-fulfill——引擎对每个 gap **逐个仲裁两种模式**，同一张 gap map 既转向 harvest、又对填不上的缺口下生成订单。两模式配两条通道：
+
+- **采集（authentic 真题）= harvest-then-match**（真题是低精度通道，没法按需「调」出一道 b≈0.3）。引擎对它是**方向盘不是下单**——即 §3 的三 seam：① 优先级转向（gap priority → forager 抓取优先队列）② 约束注入（minSourceTier / near-θ̂ band / kind → forager 的 query/filter 参数）③ 反馈闭环（填了的 gap 掉出地图、没填的升级重扫）。forager **偏置**往缺口爬但不保证拿到精确项；精确选择由 matcher 从落进来的料里做。
+- **生成（quiz_gen / item-model 变式）= request-then-fulfill**（precise channel，「要什么给什么」）。这正是 Seam ③「残余 gap → 路由生成」的本质——**request-then-fulfill 没死，是兜底 / 即时通道**。
+
+**仲裁逻辑**：每个 gap 先问「池里有料能 match 吗」→ 有 = harvest 模式 promote；没有 = 回 request-then-fulfill 生成。**回退触发条件**：
+
+| 触发 | 为什么回 request-then-fulfill |
+|---|---|
+| 空池 + 精确 diagnostic gap | 需精确难度的近-θ̂ 题来校准，harvest 拿不到精确项 → 立即生成 |
+| 即时/同步需求 | 用户正练、等不了夜 harvest → on-demand 生成（copilot D14 用户面本就是 live request-then-fulfill）|
+| 网上无此料 | 小众/个人化 KC，authentic 源不存在 → 生成是唯一源 |
+| 持久缺口 | harvest 连续 N 轮填不上同一 gap → 升级到生成 |
+
+**策略一句话**：**默认偏好 authentic（gap 不急就等 harvest），急 / 持续填不上才回 request-then-fulfill 生成**。两条通道最后都汇 **verify 闸（B5）**才进 active 池——生成的合成料尤其要 verify-then-promote，authentic 走轻量去重/质量。
+
 ---
 
 ## 4. 检索底座（统一层）
