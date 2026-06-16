@@ -28,6 +28,13 @@ import { and, asc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 
 import { handleReviewDue } from './due-list';
 import { getPracticeList } from './practice-read';
+import { DEFAULT_SELECTION_POLICY, type SelectionPolicyConfig } from './selection-constants';
+import { recordSelectionObservation } from './selection-observations';
+import {
+  type ComposeSoftmaxDeps,
+  type ComposeSoftmaxResult,
+  composeSoftmaxStream,
+} from './softmax-selection';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 
 export type StreamItemRow = typeof practice_stream_item.$inferSelect;
@@ -201,6 +208,78 @@ export async function materializeStream(
   return fresh.length;
 }
 
+/**
+ * 解析当次选题策略。默认 `DEFAULT_SELECTION_POLICY`（'softmax_mfi'，owner default-ON）；
+ * 环境变量 `SELECTION_POLICY=legacy` 强制走确定性 composeDailyStream——测试 + 紧急关闭
+ * 开关（impl plan Step C「env override 强制 legacy」）。未识别值落默认（不 fail-fast，
+ * 选题不能因配置 typo 挂）。
+ */
+export function resolveSelectionPolicy(): SelectionPolicyConfig {
+  const raw = process.env.SELECTION_POLICY;
+  if (raw === 'legacy') return { policy: 'legacy' };
+  if (raw === 'softmax_mfi') return { policy: 'softmax_mfi' };
+  return { policy: DEFAULT_SELECTION_POLICY };
+}
+
+/**
+ * 按 policy 编排 + 物化 + 记 π_i。两条路径：
+ *   - legacy：确定性 composeDailyStream → materialize。π_i 不记。
+ *   - softmax_mfi：composeSoftmaxStream（含两级 fallback，永不 throw）→ materialize →
+ *     对每个被 sampler 抽中的非到期项 recordSelectionObservation（π_i + policy +
+ *     signals snapshot + streamItemId=物化行 id）。到期项 π_i=1 确定性、非随机抽样
+ *     ——**不记**（IPW 只关心被抽样的非到期项；记 π_i=1 会污染 active-PPI 的方差估计）。
+ *
+ * 返回新增行数（与旧 materializeStream 契约一致）。
+ */
+async function composeMaterializeAndObserve(
+  db: Db,
+  date: string,
+  policy: SelectionPolicyConfig,
+  deps: ComposeSoftmaxDeps = {},
+): Promise<number> {
+  const inputs = await collectComposerInputs(db, date);
+
+  if (policy.policy === 'legacy') {
+    return materializeStream(db, composeDailyStream(inputs), 'composer_live');
+  }
+
+  // softmax_mfi：永不 throw（两级 fallback 兜底）。
+  const result: ComposeSoftmaxResult = await composeSoftmaxStream(db, inputs, policy, deps);
+  const added = await materializeStream(db, result.plan, 'composer_live');
+
+  // π_i 持久化：只对被抽中的非到期项（result.sampledInclusion）。需要物化行 id ——
+  // 重读当日流，按 ref_id 取已物化的 stream_item_id（截断后被砍的项已从 inclusion map
+  // 移除，不会在这里查不到）。
+  if (result.sampledInclusion.size > 0) {
+    const rows = await db
+      .select({ id: practice_stream_item.id, ref_id: practice_stream_item.ref_id })
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.date, date));
+    const idByRef = new Map(rows.map((r) => [r.ref_id, r.id]));
+    for (const [refId, pi] of result.sampledInclusion) {
+      const streamItemId = idByRef.get(refId);
+      const signal = result.signalByRef.get(refId);
+      try {
+        await recordSelectionObservation(db, {
+          date,
+          streamItemId,
+          refKind: 'question',
+          refId,
+          policy: 'softmax_mfi',
+          selected: true,
+          inclusionProbability: pi,
+          signals: (signal as unknown as Record<string, unknown>) ?? {},
+        });
+      } catch (err) {
+        // 遥测写失败不该挂选题（telemetry-only）——记日志继续。
+        console.error('[stream-store] recordSelectionObservation failed', { refId, pi, err });
+      }
+    }
+  }
+
+  return added;
+}
+
 export interface StreamView {
   date: string;
   opening_line: string;
@@ -216,11 +295,21 @@ export interface StreamView {
   progress: { done: number; total: number };
 }
 
-/** 读当日流；为空且 composeIfEmpty 时 lazy compose（首次打开练习面的默认路径）。 */
+/**
+ * 读当日流；为空且 composeIfEmpty 时 lazy compose（首次打开练习面的默认路径）。
+ *
+ * 选题路径由 `opts.policy`（缺省 `resolveSelectionPolicy()`，读 env / 默认 softmax_mfi）
+ * 裁定：legacy 走确定性 composeDailyStream；softmax_mfi 走档2 LLM-strong 路径（含两级
+ * fallback + π_i 持久化）。`opts.composeDeps` 仅 DI（测试 mock runTask/rng），production 省略。
+ */
 export async function getStream(
   db: Db,
   date: string,
-  opts: { composeIfEmpty?: boolean } = {},
+  opts: {
+    composeIfEmpty?: boolean;
+    policy?: SelectionPolicyConfig;
+    composeDeps?: ComposeSoftmaxDeps;
+  } = {},
 ): Promise<StreamView> {
   let rows = await db
     .select()
@@ -229,8 +318,12 @@ export async function getStream(
     .orderBy(asc(practice_stream_item.position));
 
   if (rows.length === 0 && opts.composeIfEmpty) {
-    const plan = composeDailyStream(await collectComposerInputs(db, date));
-    await materializeStream(db, plan, 'composer_live');
+    await composeMaterializeAndObserve(
+      db,
+      date,
+      opts.policy ?? resolveSelectionPolicy(),
+      opts.composeDeps ?? {},
+    );
     rows = await db
       .select()
       .from(practice_stream_item)
@@ -290,11 +383,22 @@ export async function advanceStreamItem(
   return updated ?? null;
 }
 
-/** 手动重排：保留 done/in_progress/skipped，删 pending 后按当前信号重新编排追加。 */
-export async function recomposeStream(db: Db, date: string): Promise<number> {
+/**
+ * 手动重排：保留 done/in_progress/skipped，删 pending 后按当前信号重新编排追加。
+ * 选题路径同 getStream（policy 缺省 resolveSelectionPolicy）；softmax_mfi 路径记 π_i。
+ */
+export async function recomposeStream(
+  db: Db,
+  date: string,
+  opts: { policy?: SelectionPolicyConfig; composeDeps?: ComposeSoftmaxDeps } = {},
+): Promise<number> {
   await db
     .delete(practice_stream_item)
     .where(and(eq(practice_stream_item.date, date), eq(practice_stream_item.status, 'pending')));
-  const plan = composeDailyStream(await collectComposerInputs(db, date));
-  return materializeStream(db, plan, 'composer_live');
+  return composeMaterializeAndObserve(
+    db,
+    date,
+    opts.policy ?? resolveSelectionPolicy(),
+    opts.composeDeps ?? {},
+  );
 }
