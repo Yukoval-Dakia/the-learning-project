@@ -246,10 +246,15 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
     expect(opts.model).toBe('claude-opus-4-8');
   });
 
-  it('default (no AI_PROVIDER_OVERRIDE) keeps the mimo key-auth env block', async () => {
+  it('default (no AI_PROVIDER_OVERRIDE) keeps the mimo key-auth env block + UNSETs a parent OAuth token', async () => {
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     // Ensure the override is absent for this case.
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    // Codex review P2 regression: owner placed CLAUDE_CODE_OAUTH_TOKEN in .env.local,
+    // so the parent process env HAS it even on the default mimo lane. The key-auth
+    // branch must explicitly UNSET it (lane mutual-exclusion + no token bleed into the
+    // mimo subprocess env). Without the parent stub this assertion passed trivially.
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
 
     mockSdk.messages = [successResult()];
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
