@@ -58,9 +58,10 @@ export interface MaterializedAskCheckQuestion {
  * source + session_id, no draft filter), never selected by the general review pool
  * (every pool path excludes draft). Landing it 'draft' makes the container-only
  * contract explicit and pool-safe (NULL≡active would have made it ambiguously poolable).
- * No promote path is required by design. NOTE: if the legacy inline turn route
- * (turn/route.ts) still self-inserts a teaching_check, mirror this draft_status there
- * too — tracked as a follow-up.
+ * No promote path is required by design. This is the SINGLE teaching_check INSERT site
+ * (verified: no turn/route.ts and no other `source: 'teaching_check'` insert exists in
+ * src/). Any future teaching_check writer MUST set draft_status='draft' — enforced by
+ * `pnpm audit:draft-status` (it flags any question insert missing draft_status).
  */
 export async function materializeAskCheckQuestion(
   tx: Tx,
