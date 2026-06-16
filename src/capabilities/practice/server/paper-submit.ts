@@ -36,7 +36,7 @@ import {
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
-import { updateThetaForAttempt } from '@/server/mastery/state';
+import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 
@@ -588,6 +588,18 @@ export async function submitPaperSlot(
     // 的 referencedKnowledgeIds（primary+secondary，无 primary 回落 q.knowledge_ids，
     // 与 FSRS / judge event 同源）。写独立 mastery_state 表——hermetic 不破。
     if (!photoOnlyUnsupported && scheduled !== null && coarseOutcome !== 'unsupported') {
+      // YUK-361 finding #3 修复 — 在 updateThetaForAttempt **之前**捕获 family primary
+      // knowledge（q.knowledge_ids[0]）的 PRE-attempt θ̂。家族残差必须对着作答前的 θ̂
+      // 算（mirror state.ts thetaBefore=s.theta 纪律）；下面 updateThetaForAttempt 会把
+      // mastery_state.theta_hat 移到 POSTERIOR，故必须先读。注意：family primary 用
+      // q.knowledge_ids[0]（family 计数同源），而 updateThetaForAttempt 用 slot 的
+      // referencedKnowledgeIds——两者可能不同 KC，family 的 θ̂ 锚取 q.knowledge_ids[0]
+      // 这一个（与 recordFamilyObservationForAttempt 内部回落读的 KC 一致）。冷启 → 0。
+      const familyPrimaryKnowledgeId = q.knowledge_ids[0];
+      const familyThetaBefore = familyPrimaryKnowledgeId
+        ? ((await getMasteryState(tx, familyPrimaryKnowledgeId))?.theta_hat ?? 0)
+        : 0;
+
       await updateThetaForAttempt(tx, {
         knowledgeIds: referencedKnowledgeIds,
         questionId: input.questionId,
@@ -609,7 +621,13 @@ export async function submitPaperSlot(
       // 若改用 slot.primaryKnowledgeId（plan 的 slot 指派，可能 ≠ 题的 knowledge_ids[0]），
       // family_key 与 distinct 计数基会指向**不同**的题集 → distinct 门永远数错 / 数不到，
       // 门控失效。review 路径本就传 q.knowledge_ids[0]，此处对齐到同一真相。
-      // outcome：partial→1（与上面 θ̂ 一致的保守占位语义，部分对≈成功证据）。
+      //
+      // finding #3 修复 — 传 familyThetaBefore（上面捕获的 PRE-attempt θ̂），不让 hook 读
+      // 已被本次作答移动过的 POSTERIOR mastery_state.theta_hat。
+      //
+      // finding #4 修复 — partial outcome **不折进**家族校准：传 attemptOutcome，hook 内
+      // 对 'partial' 早返（部分对对难度估计语义歧义；旧 `partial→1` coerce 会把半对当全对
+      // 制造 spurious「家族更易」负残差偏置）。只折干净二分 success(→1)/failure(→0)。
       //
       // finding #4a 修复 — 用 SAVEPOINT（嵌套 tx）隔离家族写：family 语句直接跑在外层
       // tx 上时，任何 DB 级错误（advisory lock 序列化/死锁、statement timeout、并发首插
@@ -621,13 +639,15 @@ export async function submitPaperSlot(
       try {
         await tx.transaction(async (sp) => {
           await recordFamilyObservationForAttempt(sp, {
-            primaryKnowledgeId: q.knowledge_ids[0],
+            primaryKnowledgeId: familyPrimaryKnowledgeId,
             questionId: input.questionId,
             kind: q.kind,
             source: q.source,
             difficulty: q.difficulty,
             outcome: attemptOutcome === 'failure' ? 0 : 1,
+            attemptOutcome,
             judgeRoute: invoked?.route ?? null,
+            thetaBefore: familyThetaBefore,
             now,
           });
         });
