@@ -672,6 +672,10 @@ export async function submitPaperSlot(
             judgeRoute: invoked?.route ?? null,
             thetaBefore: familyThetaBefore,
             now,
+            // YUK-372 L2 — paper sub-slot 不是 practice_stream_item（paper 走 paper-slot 流程，
+            // 题级无 stream_item_id）→ 传 null → hook skip（红线 #2：paper 路径永不挂流 slot 的
+            // π_i，正确）。不给 PaperSubmitSlotInput / route Zod body 加 stream_item_id 死字段。
+            streamItemId: null,
           });
         });
       } catch (err) {

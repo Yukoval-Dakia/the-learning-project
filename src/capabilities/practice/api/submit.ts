@@ -95,6 +95,11 @@ const SubmitBody = z.object({
   // the source-of-truth (advisor is informational; user override wins per
   // YUK-98 driver §1.1).
   judge_result_v2: JudgeResultV2.optional(),
+  // YUK-372 L2 — 被答 practice_stream_item.id（π_i 直 join 判别子）。流作答（PfSolo）传被答
+  // slot id；散题/复习等非流作答省略 → undefined → recordDifficultyCalibrationLabel 内 skip
+  // （红线 #2：无 slot id 不退回 (date, ref) 近似）。optional+nullable → 旧 client 不传 → 无 π_i
+  // 标签，向后兼容。
+  stream_item_id: z.string().min(1).nullable().optional(),
 });
 
 type Rating = z.infer<typeof FsrsRating>;
@@ -668,6 +673,8 @@ async function persistSubmit(
             judgeRoute,
             thetaBefore,
             now,
+            // YUK-372 L2 — 被答 slot id（无 → hook skip，红线 #2 不退回近似）。
+            streamItemId: body.stream_item_id ?? null,
           });
         });
       } catch (err) {
