@@ -195,13 +195,18 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
     const qRows = await db.select().from(question).where(eq(question.id, mat.id));
     expect(qRows).toHaveLength(1);
     expect(qRows[0].source_ref).toBe(fakeReplyEventId);
+    // YUK-350 (L2, RL2) — teaching_check lands draft_status='draft' (container-only;
+    // never enters the general review pool).
+    expect(qRows[0].draft_status).toBe('draft');
     expect(qRows[0].metadata).toMatchObject({
       learning_item_id: 'li_skill_ask_mat',
       session_id: sessionId,
     });
 
     // getActiveQuestionState resolves it against the COPILOT session id (the reader
-    // keys purely on metadata.session_id — no learning_session.type filter).
+    // keys purely on metadata.session_id — no learning_session.type filter). This is
+    // the container-read face: a draft teaching_check is still resolved here (no draft
+    // filter on the container path).
     const active = await getActiveQuestionState(db, sessionId);
     expect(active.active_question_id).toBe(mat.id);
   });

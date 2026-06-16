@@ -2,6 +2,8 @@ import {
   bodyBlocksToNoteSections,
   noteSectionsToBodyBlocks,
 } from '@/capabilities/notes/server/body-blocks';
+import { loadNotePage } from '@/capabilities/notes/server/note-page';
+import { pickProbeForKnowledge } from '@/capabilities/practice/server/variant-rotation';
 import { artifact, event, knowledge, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -211,6 +213,9 @@ describe('runEmbeddedCheckGenerate', () => {
     expect(questions[0].source_ref).toBe('a1');
     expect(questions[0].knowledge_ids).toEqual(['k1']);
     expect(questions[0].difficulty).toBe(2);
+    // YUK-350 (L2, RL2) — embedded checks land draft_status='draft' (container-only).
+    expect(questions[0].draft_status).toBe('draft');
+    expect(questions[1].draft_status).toBe('draft');
     expect(questions[0].judge_kind_override).toBe('semantic');
     expect(questions[0].rubric_json).toMatchObject({
       required_points: ['说明「之」作代词', '说明它指代前文提及的人、事、物'],
@@ -705,5 +710,47 @@ describe('buildEmbeddedCheckGenerateHandler', () => {
 
     // runTaskFn called twice
     expect(runTaskFn).toHaveBeenCalledTimes(2);
+  });
+});
+
+// YUK-350 (L2, RL2) — the two-face contract for draft embedded checks:
+//   (a) the OWNING CONTAINER still resolves them (note-page inArray, no draft filter)
+//   (b) the GENERAL POOL never selects them (pickProbeForKnowledge → firstForKnowledge
+//       uses the real `notDraft` predicate). Asserted through the genuine read/pool
+//       paths, not a raw draft_status column select.
+describe('embedded checks: draft pool-exclusion + container-read (RL2)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('a draft embedded check is resolved by its container but NOT by the review pool', async () => {
+    await seedAtomic({ artifactId: 'a_pool', knowledgeId: 'k_pool' });
+    const runTaskFn = vi.fn(async () => ({ text: VALID_OUTPUT }));
+
+    const result = await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a_pool',
+      runTaskFn,
+    });
+    expect(result.status).toBe('ready');
+    const embeddedIds = result.question_ids ?? [];
+    expect(embeddedIds.length).toBeGreaterThan(0);
+
+    // FACE (a) — container read: loadNotePage resolves the draft embedded questions
+    // via question_ids (no draft filter on the container path).
+    const page = await loadNotePage(testDb(), 'a_pool');
+    expect(page).not.toBeNull();
+    const pageQids = (page?.embedded_questions ?? []).map((q) => q.id).sort();
+    expect(pageQids).toEqual([...embeddedIds].sort());
+
+    // FACE (b) — general pool: pickProbeForKnowledge runs the REAL notDraft pool
+    // query. With only draft embedded questions tagged k_pool and no prior review,
+    // it must select NOTHING (the draft is excluded; not surfaced as a probe).
+    const probe = await pickProbeForKnowledge(testDb(), {
+      knowledgeId: 'k_pool',
+      lastReviewEventId: null,
+      usedQuestionIds: new Set<string>(),
+    });
+    expect(probe).toBeNull();
   });
 });
