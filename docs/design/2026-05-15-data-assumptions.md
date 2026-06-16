@@ -365,3 +365,33 @@ audit 揭露的 stub 模式不止 mastery 一处——是**系统性**的："sch
 
 > 落点依据：本文档已是项目数据假设的单一出处（§格式 / §目的），故合成-vs-真实 的分层
 > 定位写在此处而非散落 plan。详见 `docs/superpowers/plans/2026-06-05-strategy-d-s1-ingest-practice-bridge.md` §7 Step 7。
+
+## 附录 · `question.draft_status` 的 NULL≡active 三态契约（2026-06-16 · YUK-350）
+
+`question.draft_status` 是三态字段，且 **NULL 被语义化为 active**：
+
+| 值        | 语义                              | 进通用练习池？ |
+| --------- | --------------------------------- | -------------- |
+| `'draft'` | 未验证 / 容器内专用，不可进池     | **否**         |
+| `'active'`| 已验证 / 已晋升的池题             | 是             |
+| `NULL`    | **隐式 active**（合法 active 题） | 是             |
+
+**风险（红线 4）**：一条新插入的 question 若**不显式** set `draft_status`，它就是 `NULL`，被
+整个 review 池当 active 收。容器内专用题（embedded check / teaching check——只该被它的
+artifact 容器 / teaching session 读，不该当独立池题）若漏 set `draft_status`，会**静默漏进
+通用练习池**。所有池选择路径用 `draft_status IS NULL OR <> 'draft'` 排除 draft（`due-list`、
+`variant-rotation`、`review-session`、`sourcing-sequence`、`fewshot-retrieve`）；容器读路径
+（`note-page` 的 `inArray(question.id, ids)`、`getActiveQuestionState` 的 source+session_id）
+**不**带 draft filter，所以 draft 容器题仍能被它的容器解析——这是「双面契约」：容器可读、池不选。
+
+**审计契约**：`pnpm audit:draft-status`（`scripts/audit-draft-status.ts`）扫所有
+`.insert(question).values({ ... })` 站点，要求每个要么显式携带 `draft_status` key，要么在
+`scripts/audit-draft-status-allowlist.json` 声明 `reason` + `resolves_when{kind,ref,expected_by}`。
+NULL≡active 是合法语义的 writer（`auto-enroll` / `import` / 错题 `mistakes` / 卷题 `parts`——
+它们本就是 active 池题）进 allowlist；容器题（`embedded_check_generate` / `materialize-ask-check`）
+YUK-350 起显式 set `draft_status:'draft'`，同时保留在 allowlist 作 harmless-redundant 的
+chain-merge guard——审计对 **allowlisted-AND-explicit** 文件静默通过（不 hard-fail）。新增 question
+INSERT 时：要么显式 set `draft_status`，要么加 allowlist 并标注可检查的解除条件。
+
+> 这是 schema 层 `pnpm audit:schema`（字段是否有 write path）之外的**值层**漂移 lint：
+> 字段有 write path ≠ 每个 INSERT 都填了正确的值。
