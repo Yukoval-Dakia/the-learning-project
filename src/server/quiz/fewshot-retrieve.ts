@@ -186,7 +186,7 @@ export async function retrieveFewShotExamples(
 export function renderFewShotBlock(examples: FewShotExample[]): string {
   if (examples.length === 0) return '';
   const lines: string[] = [
-    '已入库的同题型优质范例（按可信度排序，供参考其结构与设问风格，**不要照抄题面**）：',
+    '已入库的同结构形态优质范例（同嵌套/排版/答案语义的题，按可信度排序，供参考其题面结构与设问风格，**不要照抄题面**）：',
   ];
   examples.forEach((ex, i) => {
     lines.push(`\n范例 ${i + 1}（tier ${ex.tier}，难度 ${ex.difficulty}）：`);
