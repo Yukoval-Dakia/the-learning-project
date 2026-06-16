@@ -49,10 +49,15 @@ function makeStream(outcomes: Array<0 | 1>, b = 0): ReplayAttempt[] {
 const STREAM: Array<0 | 1> = [0, 0, 1, 1, 1, 1];
 
 describe('outcome mapping', () => {
-  it('maps success→1, failure→0, partial→0 (conservative spike policy)', () => {
+  it('maps success→1, failure→0, partial→1 (mirrors production θ̂ update; Codex #5)', () => {
+    // Production updateThetaForAttempt is fed `attemptOutcome === 'failure' ? 0 : 1`
+    // (paper-submit.ts), so partial counts as SUCCESS evidence. The replay's whole
+    // value is mirroring that θ UPDATE, so it must fold partial→1 (NOT →0). This is
+    // distinct from Phase 5/6 family-calibration, which EXCLUDES partial — a different
+    // (calibration-label) channel, not the θ update.
     expect(toBinaryOutcome('success')).toBe(1);
     expect(toBinaryOutcome('failure')).toBe(0);
-    expect(toBinaryOutcome('partial')).toBe(0);
+    expect(toBinaryOutcome('partial')).toBe(1);
   });
 });
 
@@ -99,6 +104,24 @@ describe('variant 1 — Elo/MLE point estimate REUSES production theta.ts', () =
     expect(result.predictions[0].pHat).toBeCloseTo(0.5, 12);
     expect(result.predictions).toHaveLength(STREAM.length);
   });
+
+  it('weak difficulty_proxy anchor down-weights the θ̂ move by DIFFICULTY_PROXY_WEIGHT (Codex #1)', () => {
+    // Production updateThetaForAttempt scales the move by bWeight=0.3 when b is the
+    // difficulty proxy (no calibrated item_calibration.b). The replay must match: a
+    // proxy-anchored stream must move θ̂ exactly DIFFICULTY_PROXY_WEIGHT× per step vs
+    // the same stream on a calibrated anchor (everything else identical).
+    const proxy = makeStream(STREAM).map((a) => ({ ...a, bSource: 'difficulty_proxy' as const }));
+    const calib = makeStream(STREAM); // bSource: 'item_calibration'
+    const proxyRes = replayEloPoint(proxy);
+    const calibRes = replayEloPoint(calib);
+    // first step from θ=0,b=0: calib Δ = k·(outcome−0.5); proxy Δ = 0.3·that (exact).
+    expect(proxyRes.thetaTrajectory[0]).toBeCloseTo(calibRes.thetaTrajectory[0] * 0.3, 12);
+    expect(proxyRes.thetaTrajectory[0]).not.toBeCloseTo(calibRes.thetaTrajectory[0], 6);
+    // a single-step proxy stream is EXACTLY the production updateTheta with weight=0.3.
+    const oneStep = [{ ...proxy[2] }]; // a 'correct' attempt at b=0
+    const expected = updateTheta(0, 0, 1, eloK(0), 0.3);
+    expect(replayEloPoint(oneStep).thetaTrajectory[0]).toBeCloseTo(expected, 12);
+  });
 });
 
 describe('variant 2 — Elo + theta_precision REUSES production Phase 2 math', () => {
@@ -121,6 +144,40 @@ describe('variant 2 — Elo + theta_precision REUSES production Phase 2 math', (
     const v2 = replayEloPrecision(makeStream(STREAM));
     // θ=prior=0 so shrink is irrelevant at b=0; pHat = σ(0) = 0.5
     expect(v2.predictions[0].pHat).toBeCloseTo(0.5, 12);
+  });
+
+  it('SE-shrunk prediction shrinks the (θ−b) LOGIT, not θ alone — cold/far-b pulls toward 0.5 (Codex #6)', () => {
+    // Codex #6: at cold-start (precision=prior=1, θ̂=0) against a FAR anchor b=2, the
+    // old `θ*shrink` formula left b un-shrunk → still predicted σ(0·shrink − 2)=σ(−2)
+    // ≈ 0.12. The fixed logit-shrink predicts σ(shrink·(θ−b)) = σ(0.5·(0−2)) = σ(−1)
+    // ≈ 0.27 — pulled toward 0.5 because the estimate is uncertain. The point estimate
+    // (variant 1) is unchanged and still predicts the raw σ(0−2)=σ(−2).
+    const farB = makeStream(STREAM, 2); // b = 2 (far above the cold θ̂=0)
+    const v2 = replayEloPrecision(farB);
+    const v1 = replayEloPoint(farB);
+    const shrink =
+      DEFAULT_REPLAY_CONFIG.thetaPrecisionPrior / (DEFAULT_REPLAY_CONFIG.thetaPrecisionPrior + 1); // = 0.5 at prior precision 1
+    expect(v2.predictions[0].pHat).toBeCloseTo(expectedScore(shrink * (0 - 2), 0), 12);
+    // shrunk prediction is STRICTLY closer to 0.5 than the raw point prediction.
+    expect(Math.abs(v2.predictions[0].pHat - 0.5)).toBeLessThan(
+      Math.abs(v1.predictions[0].pHat - 0.5),
+    );
+    // variant 1 (point) is unchanged: raw σ(θ−b) = σ(−2).
+    expect(v1.predictions[0].pHat).toBeCloseTo(expectedScore(0, 2), 12);
+  });
+
+  it('weak difficulty_proxy anchor down-weights BOTH the θ̂ move and the Fisher info (Codex #1)', () => {
+    // Production accumulates precision with weight²·Fisher (same bWeight as the move).
+    // A proxy-anchored stream must grow precision more slowly (weaker info) AND move θ̂
+    // less than the same stream on a calibrated anchor.
+    const proxy = makeStream(STREAM).map((a) => ({ ...a, bSource: 'difficulty_proxy' as const }));
+    const calib = makeStream(STREAM);
+    const proxyRes = replayEloPrecision(proxy);
+    const calibRes = replayEloPrecision(calib);
+    // proxy move is 0.3× the calibrated move on the first step (θ̂ down-weight).
+    expect(proxyRes.thetaTrajectory[0]).toBeCloseTo(calibRes.thetaTrajectory[0] * 0.3, 12);
+    // proxy SE stays HIGHER (less information accumulated → weight²=0.09× per step).
+    expect(proxyRes.thetaSeFinal).toBeGreaterThan(calibRes.thetaSeFinal);
   });
 });
 
@@ -292,7 +349,16 @@ describe('variant metadata — production-reuse vs spike honesty', () => {
     // spikes MUST document their simplification
     expect(VARIANT_META.glicko_rd.simplification.length).toBeGreaterThan(0);
     expect(VARIANT_META.urnings.simplification.length).toBeGreaterThan(0);
-    // production reuse has no simplification caveat
-    expect(VARIANT_META.elo_point.simplification).toBe('');
+  });
+
+  it('production-reuse variants HONESTLY document the per-node multi-KC simplification (Codex #2)', () => {
+    // Codex #2 decision = DOCUMENT (joint multi-KC replay needs a per-event
+    // architecture rewrite, disproportionate to a data-gated spike). The reuse claim
+    // stays `true` (production-EXACT for single-KC questions, which production also
+    // degenerates to standard Elo on), but the per-node single-KC stream IS a
+    // documented simplification of the joint multi-KC credit — the simplification
+    // field must say so, so the "production reuse" claim is qualified, not false.
+    expect(VARIANT_META.elo_point.simplification).toMatch(/single-KC|multi-KC|joint/);
+    expect(VARIANT_META.elo_precision.simplification).toMatch(/single-KC|multi-KC|joint/);
   });
 });

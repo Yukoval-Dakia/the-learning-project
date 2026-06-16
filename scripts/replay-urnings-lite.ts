@@ -7,9 +7,15 @@
  * in-memory). NO schema, NO migration, NO pg-boss job, NO route.
  *
  * What it does:
- *   1. Reads historical attempts from the `event` table (action='attempt',
- *      subject_kind='question'), resolving each to its knowledge node(s) +
- *      the difficulty anchor b in effect at the time.
+ *   1. Reads historical θ-moving events from the `event` table — the EXACT set
+ *      production's online θ̂ update fires on: `action IN ('attempt','review')` &
+ *      subject_kind='question' (Codex #3: submit.ts writes action='review' but
+ *      STILL calls updateThetaForAttempt — θ moves; paper-submit.ts writes
+ *      action='attempt'). Reading only 'attempt' would miss every standalone-answer
+ *      review's θ move. Synthetic demo events (payload.__synthetic = true, written
+ *      by scripts/seed-synthetic.ts) are EXCLUDED (Codex #4) so the verdict corpus
+ *      is real attempt data, not seeded demo rows. Each scorable event resolves to
+ *      its knowledge node(s) + the difficulty anchor b in effect at the time.
  *   2. Replays FOUR θ-estimation variants over the time-ordered stream per node:
  *        - elo_point     — REUSES production src/core/theta.ts (Elo/MLE point)
  *        - elo_precision — REUSES production Phase 2 (Elo + theta_precision)
@@ -91,11 +97,33 @@ async function tableExists(name: string): Promise<boolean> {
 }
 
 /**
- * Read all attempt events, time-ordered ascending. Returns the scorable rows plus
+ * Read all θ-moving events, time-ordered ascending. Returns the scorable rows plus
  * the count of UN-JUDGED captures dropped (F1: structurally has an outcome enum but
- * is semantically "未判分" — must not be scored as right/wrong).
+ * is semantically "未判分" — must not be scored as right/wrong) and the count of
+ * SYNTHETIC seed rows excluded (Codex #4).
+ *
+ * Event set MIRRORS production's θ̂ update exactly (Codex #3): the two callers of
+ * updateThetaForAttempt are submit.ts (writes action='review', subject='question')
+ * and paper-submit.ts (writes action='attempt', subject='question'). So θ̂ moves on
+ * `action IN ('attempt','review')` — reading only 'attempt' misses every
+ * standalone-answer review's θ move. Synthetic seed events (payload.__synthetic =
+ * true) are filtered out in SQL (Codex #4) so the verdict rests on real data only.
  */
-async function readAttempts(): Promise<{ rows: RawAttemptRow[]; unjudgedSkipped: number }> {
+async function readAttempts(): Promise<{
+  rows: RawAttemptRow[];
+  unjudgedSkipped: number;
+  syntheticSkipped: number;
+}> {
+  // syntheticSkipped: count the seed rows we exclude (real attempt corpus only).
+  const synthRows = await db.execute<{ n: number }>(
+    sql`SELECT count(*)::int AS n
+        FROM event
+        WHERE action IN ('attempt', 'review')
+          AND subject_kind = 'question'
+          AND (payload->>'__synthetic') = 'true'`,
+  );
+  const syntheticSkipped = (synthRows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+
   const rows = await db.execute<{
     id: string;
     subject_id: string;
@@ -103,9 +131,12 @@ async function readAttempts(): Promise<{ rows: RawAttemptRow[]; unjudgedSkipped:
     payload: { referenced_knowledge_ids?: string[]; unsupported_judge?: boolean };
     created_at: Date;
   }>(
+    // Codex #3 — both θ-moving actions; Codex #4 — exclude synthetic seed rows.
     sql`SELECT id, subject_id, outcome, payload, created_at
         FROM event
-        WHERE action = 'attempt' AND subject_kind = 'question'
+        WHERE action IN ('attempt', 'review')
+          AND subject_kind = 'question'
+          AND (payload->>'__synthetic') IS DISTINCT FROM 'true'
         ORDER BY created_at ASC`,
   );
   const arr = rows as unknown as Array<{
@@ -130,7 +161,7 @@ async function readAttempts(): Promise<{ rows: RawAttemptRow[]; unjudgedSkipped:
       created_at: new Date(r.created_at),
     });
   }
-  return { rows: scorable, unjudgedSkipped };
+  return { rows: scorable, unjudgedSkipped, syntheticSkipped };
 }
 
 interface AnchorResolver {
@@ -168,12 +199,18 @@ async function buildAnchorResolver(
       b_anchor: number | null;
       b_calib: number | null;
     }>(
+      // Codex #7 — track='hard' ONLY. Production's online θ̂ update + candidate-signals
+      // read exclusively item_calibration.track='hard' (state.ts:202); the soft-track b
+      // never enters p(L)/scheduling (ADR-0035). Reading ALL tracks here would let a
+      // soft-track row become the replay anchor, diverging from production. A question
+      // has at most one 'hard' calibration row, so this also de-dups the per-question b.
       sql`SELECT question_id, b, b_anchor, b_calib
           FROM item_calibration
-          WHERE question_id IN ${sql`(${sql.join(
-            ids.map((i) => sql`${i}`),
-            sql`, `,
-          )})`}`,
+          WHERE track = 'hard'
+            AND question_id IN ${sql`(${sql.join(
+              ids.map((i) => sql`${i}`),
+              sql`, `,
+            )})`}`,
     );
     for (const c of cal as unknown as Array<{
       question_id: string;
@@ -217,7 +254,10 @@ interface ReplayReport {
   totalAttemptEvents: number;
   scorableAttempts: number;
   unjudgedSkipped: number;
-  partialFoldedToFailure: number;
+  /** Codex #4 — synthetic seed events (payload.__synthetic=true) excluded from the corpus. */
+  syntheticSkipped: number;
+  /** Codex #5 — partials folded to SUCCESS evidence (1), mirroring production θ̂ update. */
+  partialFoldedToSuccess: number;
   calibrationTableAvailable: boolean;
   anchorSources: { item_calibration: number; difficulty_proxy: number; unresolved: number };
   densityThreshold: number;
@@ -237,7 +277,8 @@ function buildReport(
     totalAttemptEvents: number;
     scorableAttempts: number;
     unjudgedSkipped: number;
-    partialFoldedToFailure: number;
+    syntheticSkipped: number;
+    partialFoldedToSuccess: number;
     calibrationAvailable: boolean;
     anchorSources: ReplayReport['anchorSources'];
     densityThreshold: number;
@@ -360,7 +401,8 @@ function buildReport(
     totalAttemptEvents: meta.totalAttemptEvents,
     scorableAttempts: meta.scorableAttempts,
     unjudgedSkipped: meta.unjudgedSkipped,
-    partialFoldedToFailure: meta.partialFoldedToFailure,
+    syntheticSkipped: meta.syntheticSkipped,
+    partialFoldedToSuccess: meta.partialFoldedToSuccess,
     calibrationTableAvailable: meta.calibrationAvailable,
     anchorSources: meta.anchorSources,
     densityThreshold: meta.densityThreshold,
@@ -375,10 +417,15 @@ function printHuman(report: ReplayReport): void {
   const fmt = (x: number): string => (Number.isNaN(x) ? 'n/a' : x.toFixed(4));
   console.log('\n═══ Offline Urnings replay spike (YUK-361 Phase 7, Task 12) ═══\n');
   console.log(`generated:                 ${report.generatedAt}`);
-  console.log(`total attempt events:      ${report.totalAttemptEvents}`);
+  console.log(
+    `total θ-moving events:     ${report.totalAttemptEvents}  (action IN attempt,review)`,
+  );
   console.log(`scorable attempts:         ${report.scorableAttempts}`);
   console.log(`  un-judged skipped:       ${report.unjudgedSkipped}`);
-  console.log(`  partial→failure folded:  ${report.partialFoldedToFailure}`);
+  console.log(`  synthetic excluded:      ${report.syntheticSkipped}  (payload.__synthetic=true)`);
+  console.log(
+    `  partial→success folded:  ${report.partialFoldedToSuccess}  (per production θ̂ update)`,
+  );
   console.log(
     `item_calibration table:    ${report.calibrationTableAvailable ? 'present' : 'ABSENT → difficulty_proxy fallback'}`,
   );
@@ -437,7 +484,8 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const { rows: raw, unjudgedSkipped } = await readAttempts();
+  const { rows: raw, unjudgedSkipped, syntheticSkipped } = await readAttempts();
+  // total = the real (non-synthetic) θ-moving events the corpus saw, scorable + unjudged.
   const totalAttemptEvents = raw.length + unjudgedSkipped;
 
   // Resolve anchors + expand each attempt to its knowledge node(s).
@@ -446,7 +494,8 @@ async function main(): Promise<void> {
 
   const attemptsByNode = new Map<string, ReplayAttempt[]>();
   const anchorSources = { item_calibration: 0, difficulty_proxy: 0, unresolved: 0 };
-  let partialFoldedToFailure = 0;
+  // Codex #5 — partials fold to SUCCESS evidence (1), mirroring production's θ̂ update.
+  let partialFoldedToSuccess = 0;
   let scorableAttempts = 0;
 
   for (const r of raw) {
@@ -455,7 +504,7 @@ async function main(): Promise<void> {
       anchorSources.unresolved += 1;
       continue;
     }
-    if (r.outcome === 'partial') partialFoldedToFailure += 1;
+    if (r.outcome === 'partial') partialFoldedToSuccess += 1;
     const outcome = toBinaryOutcome(r.outcome);
     const nodes = r.referenced_knowledge_ids.length
       ? r.referenced_knowledge_ids
@@ -491,7 +540,8 @@ async function main(): Promise<void> {
       totalAttemptEvents,
       scorableAttempts,
       unjudgedSkipped,
-      partialFoldedToFailure,
+      syntheticSkipped,
+      partialFoldedToSuccess,
       calibrationAvailable,
       anchorSources,
       densityThreshold,
