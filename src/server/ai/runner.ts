@@ -374,6 +374,11 @@ function buildAgentEnv(resolved: ResolvedProvider): Record<string, string | unde
     } else {
       base.ANTHROPIC_BASE_URL = '';
     }
+    // 互斥对称（Codex review P2）：若父进程 env 里有订阅 token（owner 把
+    // CLAUDE_CODE_OAUTH_TOKEN 放进 .env.local 后就有），key-auth lane 必须显式
+    // UNSET 它——否则 mimo 子进程 env 同时带 API key + OAuth token（违反 lane 互斥，
+    // 且会把 token 泄进 mimo lane env / 让 default-lane 测试断言到 token）。
+    base.CLAUDE_CODE_OAUTH_TOKEN = undefined;
   }
 
   base.CLAUDE_CONFIG_DIR = getIsolatedClaudeConfigDir();
