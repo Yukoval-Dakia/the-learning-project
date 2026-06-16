@@ -25,6 +25,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import * as observationsModule from '../server/selection-observations';
 import { composeSoftmaxStream } from '../server/softmax-selection';
 import type { ComposerInputs } from '../server/stream-composer';
 import {
@@ -792,5 +793,111 @@ describe('softmax_mfi 选题接线（YUK-361 Phase 3 Step C2）', () => {
     const hiObs = obs.find((o) => o.ref_id === hi);
     expect(hiObs?.inclusion_probability).toBeLessThan(1);
     expect(hiObs?.inclusion_probability).toBeGreaterThan(0);
+  });
+
+  it('FINDING B（遥测 tx 解耦）：recordSelectionObservation 写失败 → 流仍物化 + 可读（不回滚）', async () => {
+    // 旧 bug：观测写在 single-flight 锁事务**内**。INSERT selection_observation 抛错会让
+    //   Postgres 把整笔事务标记 aborted → try/catch 记日志也救不回 → 提交时整笔回滚 →
+    //   刚物化的 practice_stream 一起没了（违反「遥测失败不得破坏选题」）。
+    //   修复（FINDING B）：观测在事务**提交后**锁外 best-effort 写。这里强制
+    //   recordSelectionObservation 抛错——流必须仍物化且可读，只是少了那条遥测。
+    await seedDueQuestion();
+    const v1 = await seedVariantCandidate({ kind: 'choice' });
+
+    const runTaskFn = async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: JSON.stringify({
+        candidates: [{ refId: v1, weight: 3, role: 'diagnostic', reason: 'x' }],
+      }),
+    });
+
+    // 强制遥测写失败（模拟 INSERT selection_observation 抛错）。
+    const spy = vi
+      .spyOn(observationsModule, 'recordSelectionObservation')
+      .mockRejectedValue(new Error('simulated selection_observation INSERT failure'));
+
+    try {
+      // getStream 不得 throw（best-effort 吞掉遥测失败），且返回已物化的流。
+      const view = await getStream(testDb(), TODAY, {
+        composeIfEmpty: true,
+        policy: { policy: 'softmax_mfi' },
+        composeDeps: { runTaskFn, rng: RNG_ALWAYS_SELECT },
+      });
+
+      // 流仍物化（含被抽中的 v1）——遥测失败没把它回滚掉。
+      expect(view.items.map((i) => i.ref_id)).toContain(v1);
+      expect(view.items.length).toBeGreaterThan(0);
+
+      // 观测写**确实被尝试过**（证明走了 post-commit 路径，不是没记）。
+      expect(spy).toHaveBeenCalled();
+
+      // 重新读 DB 确认流真的提交了（不是只在内存）——practice_stream_item 行真实存在。
+      const rows = await testDb()
+        .select()
+        .from(practice_stream_item)
+        .where(eq(practice_stream_item.date, TODAY));
+      expect(rows.map((r) => r.ref_id)).toContain(v1);
+
+      // selection_observation 那条因写失败没落库（best-effort，可接受的遥测丢失）。
+      const obs = await testDb()
+        .select()
+        .from(selection_observation)
+        .where(eq(selection_observation.ref_id, v1));
+      expect(obs).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('FINDING C（卷不预扣 sampler 预算）：多卷 + 少量候选 → 候选仍被抽样（不被卷饿死）', async () => {
+    // 旧 bug：nonDueBudget = max − dues − **卷** − recall。卷一多（max=卷数）→ nonDueBudget=0
+    //   → 一道非到期都不抽 → 练习题被卷饿死。但 assemble 把非到期放在卷**前**、capacityGuard
+    //   截断卷尾（卷可截断）——预扣全部卷预算方向反了。
+    //   修复：不扣卷。散题先拿满预算，capacityGuard 用剩余容量截断卷尾（total 仍 ≤ max）。
+    //   直接调 composeSoftmaxStream（拿 sampledInclusion + plan 双证据）。
+    const v1 = await seedVariantCandidate({ kind: 'choice' });
+    const v2 = await seedVariantCandidate({ kind: 'choice' });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    // 用 max == 卷数模拟「卷塞满容量」的旧饿死场景：很多 ready 卷 + 紧容量。
+    const paperCount = 8;
+    inputs.pendingPapers = Array.from({ length: paperCount }, (_, i) => ({
+      paperId: `paper_${i}`,
+      title: `卷 ${i}`,
+      source: 'paper' as const,
+    }));
+    inputs.capacity = { max: paperCount }; // 旧码：nonDueBudget = max − 卷 = 0 → 饿死
+
+    const runTaskFn = async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: JSON.stringify({
+        candidates: [
+          { refId: v1, weight: 3, role: 'diagnostic', arrangement: 1, reason: 'hi' },
+          { refId: v2, weight: 1, role: 'diagnostic', arrangement: 2, reason: 'lo' },
+        ],
+      }),
+    });
+
+    const result = await composeSoftmaxStream(
+      testDb(),
+      inputs,
+      { policy: 'softmax_mfi', temperature: 0.25 },
+      { runTaskFn, rng: RNG_ALWAYS_SELECT },
+    );
+
+    // 候选**没被饿死**：两道非到期候选都拿到 π_i>0 且被抽中（旧 bug 下 sampledInclusion 为空）。
+    expect(result.sampledInclusion.size).toBe(2);
+    expect(result.sampledInclusion.get(v1)).toBeGreaterThan(0);
+    expect(result.sampledInclusion.get(v2)).toBeGreaterThan(0);
+
+    // 被抽中的候选受 capacityGuard 保护、留在最终流。
+    const planRefs = result.plan.items.map((i) => i.ref_id);
+    expect(planRefs).toContain(v1);
+    expect(planRefs).toContain(v2);
+
+    // total 仍受 max 约束：被抽中候选(2，受保护) + 截断后的卷尾 ≤ max。卷尾被砍以让位散题。
+    expect(result.plan.items.length).toBeLessThanOrEqual(paperCount);
+    const paperRefs = planRefs.filter((r) => r.startsWith('paper_'));
+    // 卷被截断（不是全部 8 张都进，因为候选占了受保护名额）。
+    expect(paperRefs.length).toBeLessThan(paperCount);
+    expect(result.plan.truncated).toBe(true);
   });
 });
