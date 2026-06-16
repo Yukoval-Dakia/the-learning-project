@@ -7,12 +7,24 @@
 // (clear embedding for stale versions in a future migration). embedMany throwing
 // (API down) fails the job and leaves rows NULL → pg-boss retries next run; the
 // question-insert path never calls this job, so ingestion is unaffected.
+//
+// SCOPE — NULL-backfill only; re-embed-on-edit is DEFERRED (PR #439 review).
+// This job intentionally selects ONLY `embedding IS NULL` rows. It does NOT
+// re-embed when source text/context changes after the fact — e.g. editQuestion
+// (src/server/questions/write.ts) rewriting prompt_md/reference_md/choices_md, or
+// applyReparent (src/capabilities/knowledge/server/proposals.ts) nulling a moved
+// root's domain (which shifts knowledgeEmbedText / effective-domain context).
+// After such edits the stored vector is STALE until a manual re-embed.
+// Refreshing on content edit is the deferred "embed-on-write" capability: it
+// needs a content-hash/version column + a migration (and the embed-source join
+// would gain effective-domain context for child KCs), which collides with this
+// PR's migration numbering. Tracked as a follow-up — do not bolt it on here.
 
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { EMBED_MODEL, embedMany } from '@/server/ai/embed';
 import { knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
-import { eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 // Bump when the embedder model or the embed-source join rule changes, to trigger
@@ -31,7 +43,10 @@ export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
       await db
         .update(question)
         .set({ embedding: vecs[i], embed_model: EMBED_MODEL, embed_version: EMBED_VERSION })
-        .where(eq(question.id, qs[i].id));
+        // isNull write guard: only fill rows still NULL, so a concurrent worker /
+        // pg-boss retry that already embedded this row between our SELECT and
+        // UPDATE can't be clobbered by a stale vector.
+        .where(and(eq(question.id, qs[i].id), isNull(question.embedding)));
     }
     total += qs.length;
   }
@@ -43,7 +58,8 @@ export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
       await db
         .update(knowledge)
         .set({ embedding: vecs[i], embed_model: EMBED_MODEL, embed_version: EMBED_VERSION })
-        .where(eq(knowledge.id, ks[i].id));
+        // isNull write guard (see question update above): concurrency-safe fill.
+        .where(and(eq(knowledge.id, ks[i].id), isNull(knowledge.embedding)));
     }
     total += ks.length;
   }
