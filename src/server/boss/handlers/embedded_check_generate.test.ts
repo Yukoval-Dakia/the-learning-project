@@ -496,6 +496,62 @@ describe('runEmbeddedCheckGenerate', () => {
     });
   });
 
+  // YUK-372 L4: AI output with bare control characters (newline/tab) inside a
+  // JSON string literal — JSON.parse rejects it on the first pass, the handler
+  // retries with the shared control-char sanitizer, and the question round-trips
+  // with the real \n / \t preserved. This is the load-bearing recovery path: the
+  // most common real LLM failure (multi-line reference_md emitted without \\n
+  // escaping) now produces a ready check instead of a failed artifact.
+  it('recovers via control-char sanitizer when reference_md contains a bare newline/tab', async () => {
+    await seedAtomic({ artifactId: 'a-ctrl', knowledgeId: 'k-ctrl' });
+    // Construct raw JSON text with literal control characters inside string
+    // literals (NOT \\n escapes) — this is exactly what a sloppy LLM emits.
+    const referenceWithControl = '第一步：识别用法。\n第二步：\t对照前文。';
+    const rawWithBareControl = `{
+  "questions": [
+    {
+      "kind": "short_answer",
+      "prompt_md": "请解释「之」作代词时的用法。",
+      "reference_md": "${referenceWithControl}",
+      "choices_md": null,
+      "judge_kind_override": "semantic",
+      "rubric_json": {
+        "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "覆盖核心要点" }],
+        "required_points": ["说明「之」作代词"]
+      }
+    }
+  ]
+}`;
+    // Sanity: the raw text must actually be invalid JSON before sanitizing.
+    expect(() => JSON.parse(rawWithBareControl)).toThrow();
+
+    const runTaskFn = vi.fn(async () => ({ text: rawWithBareControl }));
+
+    const result = await runEmbeddedCheckGenerate({
+      db: testDb(),
+      artifactId: 'a-ctrl',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.question_ids).toHaveLength(1);
+
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a-ctrl'));
+    expect(art.embedded_check_status).toBe('ready');
+
+    const qs = await testDb().select().from(question).where(eq(question.source_ref, 'a-ctrl'));
+    expect(qs).toHaveLength(1);
+    // The real control characters round-trip into the stored row.
+    expect(qs[0].reference_md).toContain('\n');
+    expect(qs[0].reference_md).toContain('\t');
+    expect(qs[0].reference_md).toBe(referenceWithControl);
+
+    // Success event, not failure.
+    const events = await testDb().select().from(event).where(eq(event.subject_id, 'a-ctrl'));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('success');
+  });
+
   // Regression for PR #76 review P1: if any future prompt drift makes the AI
   // emit subject-level kinds (single_choice / reading_comprehension /
   // calculation / proof / word_problem), the handler must mark the artifact
