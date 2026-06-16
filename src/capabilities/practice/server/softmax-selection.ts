@@ -465,7 +465,12 @@ function statisticalFloorWeight(s: CollectedSignal): number {
   return s.mfiScore ?? s.diagnosticScore ?? STAT_FLOOR_EPSILON;
 }
 
-function statisticalWeights(samplable: CollectedSignal[]): WeightedCandidate[] {
+/**
+ * 把 samplable 信号映射成 WeightedCandidate[]（统计权重）。L1 fallback 用，且 Task 9
+ * 的作答后增量重排**复用**它（hybrid 运行时：增量重排走纯统计 sampler——用更新后 θ̂ 重算
+ * mfiScore 权重，不重跑 LLM，ADR-0042 §4 amendment）。导出以单一真相共享权重语义。
+ */
+export function statisticalWeights(samplable: CollectedSignal[]): WeightedCandidate[] {
   return samplable.map((s) => ({ refId: s.refId, weight: statisticalFloorWeight(s) }));
 }
 

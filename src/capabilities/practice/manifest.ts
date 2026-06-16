@@ -170,6 +170,21 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/item_prior_backfill').then((m) => m.buildItemPriorBackfillHandler),
       },
+      // YUK-361 Phase 4 (Task 9) — hybrid 运行时夜间预产 job。每夜（用户晨起前）为「今天」
+      // 预产练习流，省去首读 lazy compose 的 LLM 网络往返。cron 5:30 Asia/Shanghai：错开
+      // 既有夜链 job（最晚 item_prior_backfill 4:20 / agency goal_scope 4:30），且在数据
+      // 预产链（item_prior / mastery 夜链）之后跑，让选题信号（θ̂ / b 锚）已新鲜。queue=llm：
+      // softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM 编排），与 item_prior 同档。
+      // 幂等由 composeNightly 的单飞锁 + 双重检查保证（夜产后用户首读 lazy 命中 no-op）。
+      {
+        name: 'practice_stream_compose_nightly',
+        schedule: { cron: '30 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/practice_stream_compose_nightly').then(
+            (m) => m.buildStreamComposeNightlyHandler,
+          ),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
