@@ -101,6 +101,9 @@ export function PfSolo({
         rating,
         response_md: answerMd,
         referenced_knowledge_ids: q.labels.map((l) => l.id),
+        // YUK-372 L2 — 被答 practice_stream_item.id（流作答的 π_i 直 join 判别子，server hook
+        // 用它精确取放置该 slot 的随机抽样事件的 π_i）。
+        stream_item_id: item.id,
         judge_result_v2: {
           score: preview.score,
           score_meaning: 'correctness',

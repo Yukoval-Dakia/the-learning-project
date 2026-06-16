@@ -82,6 +82,9 @@ export const submitReview = (input: {
   response_md: string;
   referenced_knowledge_ids: string[];
   judge_result_v2?: Omit<JudgePreview, 'route' | 'suggested_rating'> & { score_meaning?: string };
+  // YUK-372 L2 — 被答 practice_stream_item.id（流作答传被答 slot id，π_i 直 join 判别子）。
+  // 散题/非流作答省略 → server hook skip。
+  stream_item_id?: string;
 }) => apiJson<SubmitResult>('/api/review/submit', { method: 'POST', body: JSON.stringify(input) });
 
 export const fileAppeal = (judgeEventId: string, reasonMd: string) =>

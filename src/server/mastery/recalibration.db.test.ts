@@ -106,7 +106,7 @@ async function seedSoftmaxObservation(
   pi: number,
   date = ATTEMPT_LOCAL_DATE,
   opts: { streamItemId?: string | null } = {},
-) {
+): Promise<string | null> {
   let streamItemId: string | undefined;
   if (opts.streamItemId === null) {
     streamItemId = undefined; // candidate-layer observation, no materialized slot.
@@ -125,6 +125,9 @@ async function seedSoftmaxObservation(
     inclusionProbability: pi,
     signals: {},
   });
+  // Return the slot id (or null for candidate-layer) so callers can thread it into the hook's
+  // streamItemId param (YUK-372 L2 — π_i direct-join discriminant).
+  return streamItemId ?? null;
 }
 
 async function readLabels(questionId: string) {
@@ -151,11 +154,11 @@ describe('recordDifficultyCalibrationLabel', () => {
     await resetDb();
   });
 
-  it('softmax-selected objective attempt → writes a label with the joined π_i + θ-before', async () => {
+  it('softmax-selected objective attempt with the answered slot id → writes a label with the direct-join π_i + θ-before', async () => {
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
-    await seedSoftmaxObservation(q, 0.3);
+    const slotId = await seedSoftmaxObservation(q, 0.3);
 
     await db.transaction(async (tx) => {
       await recordDifficultyCalibrationLabel(tx, {
@@ -166,6 +169,7 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'exact',
         thetaBefore: 0.5,
         now: now(),
+        streamItemId: slotId, // YUK-372 L2 — answered slot id → direct π_i join.
       });
     });
 
@@ -178,6 +182,91 @@ describe('recordDifficultyCalibrationLabel', () => {
     expect(labels[0].b_label).toBeCloseTo(impliedBLabel(0.5, 0.5, 0), 6);
     // wrong answer → b_label > b_anchor (题更难).
     expect(labels[0].b_label).toBeGreaterThan(0.5);
+  });
+
+  // YUK-372 L2 red-line #2 — the LOAD-BEARING regression sentinel. The question WAS softmax-
+  // selected into today's stream (real slot, real π_i), but this attempt arrives with NO
+  // streamItemId (e.g. a SAME-DAY standalone/scatter re-answer of the same question via a
+  // non-stream path). The hook MUST skip — it must NEVER fall back to the (date, ref)
+  // approximation and mis-attach the stream slot's π_i to a non-stream answer. Poisoning the
+  // first batch of b_calib with a mis-attributed π_i is unrecoverable (slow asset).
+  it('red-line #2: no streamItemId → SKIP even when a same-day softmax slot exists (no (date,ref) fallback)', async () => {
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    // A real softmax slot + observation exists for the question TODAY (π=0.3).
+    await seedSoftmaxObservation(q, 0.3);
+
+    await db.transaction(async (tx) => {
+      await recordDifficultyCalibrationLabel(tx, {
+        questionId: q,
+        attemptEventId: createId(),
+        difficulty: 3,
+        outcome: 0,
+        judgeRoute: 'exact',
+        thetaBefore: 0.5,
+        now: now(),
+        // streamItemId omitted → scatter/non-stream re-answer → MUST skip (no approximation).
+      });
+    });
+
+    // ZERO labels — the stream slot's π_i was NOT mis-attached.
+    expect(await readLabels(q)).toHaveLength(0);
+  });
+
+  // YUK-372 L2 — streamItemId points to a slot that is NOT the one the observation references
+  // (a different materialized slot of the same question) → no matching observation → skip.
+  it('streamItemId mismatched to the observation slot → SKIP', async () => {
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    // The observation references slot-A (π=0.3).
+    await seedSoftmaxObservation(q, 0.3);
+    // But the attempt claims a DIFFERENT (unrelated, non-existent) slot id.
+    const otherSlot = createId();
+
+    await db.transaction(async (tx) => {
+      await recordDifficultyCalibrationLabel(tx, {
+        questionId: q,
+        attemptEventId: createId(),
+        difficulty: 3,
+        outcome: 0,
+        judgeRoute: 'exact',
+        thetaBefore: 0.5,
+        now: now(),
+        streamItemId: otherSlot, // not slot-A → direct join finds no observation.
+      });
+    });
+
+    expect(await readLabels(q)).toHaveLength(0);
+  });
+
+  // YUK-372 L2 — the answered slot-A exists and the attempt passes slot-A's id, but the only
+  // softmax observation references a DIFFERENT slot-B. The direct join on stream_item_id=slot-A
+  // finds no observation → skip (do not borrow slot-B's π_i).
+  it('observation references a different slot than the answered one → SKIP', async () => {
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    // Materialize slot-A (the answered slot) but DO NOT write an observation for it.
+    const slotA = await seedStreamSlot(q, '2026-06-15'); // a real slot, different date to dodge unique
+    // The observation references slot-B (today), π=0.7.
+    await seedSoftmaxObservation(q, 0.7);
+
+    await db.transaction(async (tx) => {
+      await recordDifficultyCalibrationLabel(tx, {
+        questionId: q,
+        attemptEventId: createId(),
+        difficulty: 3,
+        outcome: 0,
+        judgeRoute: 'exact',
+        thetaBefore: 0.5,
+        now: now(),
+        streamItemId: slotA, // join on slot-A → no observation references slot-A → skip.
+      });
+    });
+
+    expect(await readLabels(q)).toHaveLength(0);
   });
 
   it('non-objective judge route (semantic) → skip (no label, §6)', async () => {
@@ -227,7 +316,9 @@ describe('recordDifficultyCalibrationLabel', () => {
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
-    // NO seedSoftmaxObservation — legacy/due item has no real π_i.
+    // Materialize a slot so the attempt reaches the π_i join, but write NO observation for it —
+    // legacy/due item has no real π_i.
+    const slotId = await seedStreamSlot(q);
 
     await db.transaction(async (tx) => {
       await recordDifficultyCalibrationLabel(tx, {
@@ -238,6 +329,7 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'exact',
         thetaBefore: 0,
         now: now(),
+        streamItemId: slotId, // slot exists but no softmax_mfi observation → skip.
       });
     });
 
@@ -248,9 +340,11 @@ describe('recordDifficultyCalibrationLabel', () => {
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
-    // A legacy observation (deterministic selection, not random sampling).
+    // Materialize the answered slot, but its observation is LEGACY (deterministic, not random).
+    const slotId = await seedStreamSlot(q);
     await recordSelectionObservation(db, {
       date: ATTEMPT_LOCAL_DATE,
+      streamItemId: slotId,
       refKind: 'question',
       refId: q,
       policy: 'legacy',
@@ -268,23 +362,24 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'exact',
         thetaBefore: 0,
         now: now(),
+        streamItemId: slotId, // join on slot finds only a legacy (non-softmax_mfi) obs → skip.
       });
     });
 
     expect(await readLabels(q)).toHaveLength(0);
   });
 
-  it('FINDING #3 — π_i is joined from the selection event on the ATTEMPT date, not most-recent-across-days', async () => {
-    // Two softmax observations for the SAME question on different dates:
-    //   - day-1 (attempt date): π=0.3 — the event that PLACED the answered slot.
-    //   - day-5 (later):        π=0.7 — a later re-selection (slot answered as the day-1 instance).
-    // The attempt happens ON day-1 (ATTEMPT_NOW). The label MUST use π=0.3 (the placing
-    // event's weight), NOT 0.7 (the most-recent-across-days weight the old ORDER BY took).
+  it('FINDING #3 — π_i is joined from the answered slot, not a later re-selection of the same question', async () => {
+    // Two softmax observations for the SAME question on different slots/dates:
+    //   - day-1 (attempt date): π=0.3 on slot-A — the event that PLACED the answered slot.
+    //   - day-5 (later):        π=0.7 on slot-B — a later re-selection.
+    // The attempt answers slot-A. The direct join on stream_item_id=slot-A MUST use π=0.3
+    // (the answered slot's weight), NOT 0.7 (the later re-selection the old ORDER BY DESC took).
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
-    await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE); // placing event (attempt date)
-    await seedSoftmaxObservation(q, 0.7, '2026-06-20'); // later re-selection, different date
+    const slotA = await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE); // answered slot
+    await seedSoftmaxObservation(q, 0.7, '2026-06-20'); // later re-selection, different slot
 
     await db.transaction(async (tx) => {
       await recordDifficultyCalibrationLabel(tx, {
@@ -295,23 +390,25 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'exact',
         thetaBefore: 0,
         now: now(), // = ATTEMPT_NOW → attempt local date = ATTEMPT_LOCAL_DATE
+        streamItemId: slotA,
       });
     });
 
     const labels = await readLabels(q);
     expect(labels).toHaveLength(1);
-    // Joined the placing-event π (0.3), NOT the later re-selection's 0.7.
+    // Joined the answered slot's π (0.3), NOT the later re-selection's 0.7.
     expect(labels[0].inclusion_probability).toBeCloseTo(0.3, 6);
     expect(labels[0].inclusion_probability).not.toBeCloseTo(0.7, 2);
   });
 
-  it('FINDING #3 — no softmax observation on the attempt date (only on other days) → skip', async () => {
-    // The only softmax observation is on a DIFFERENT date than the attempt. There is no
-    // placing event on the attempt date → no real π_i for THIS attempt → skip (no label).
+  it('FINDING #3 — answered slot has no observation on the attempt date (race-guard date mismatch) → skip', async () => {
+    // The attempt's slot id refers to a slot materialized on a DIFFERENT date than the attempt.
+    // The redundant date race-guard (slot.date = attempt local date) fails → skip.
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
-    await seedSoftmaxObservation(q, 0.7, '2026-06-20'); // not the attempt date
+    // Slot + observation are on a date OTHER than the attempt date.
+    const otherDaySlot = await seedSoftmaxObservation(q, 0.7, '2026-06-20');
 
     await db.transaction(async (tx) => {
       await recordDifficultyCalibrationLabel(tx, {
@@ -321,7 +418,8 @@ describe('recordDifficultyCalibrationLabel', () => {
         outcome: 0,
         judgeRoute: 'exact',
         thetaBefore: 0,
-        now: now(), // attempt date = ATTEMPT_LOCAL_DATE, which has no softmax observation
+        now: now(), // attempt date = ATTEMPT_LOCAL_DATE ≠ slot's 2026-06-20
+        streamItemId: otherDaySlot,
       });
     });
 
@@ -331,11 +429,14 @@ describe('recordDifficultyCalibrationLabel', () => {
   it('Codex P2 — softmax observation with NULL stream_item_id (candidate-layer, no real slot) → skip', async () => {
     // The question WAS softmax-evaluated today, but the observation has no materialized
     // stream slot (stream_item_id NULL — candidate-layer / pre-materialization observation).
-    // The matched-stream-slot gate requires a real slot → no label (not a true slot selection).
+    // Even if the attempt passes a (real, separate) slot id, the direct join finds no observation
+    // referencing it (the only observation has stream_item_id NULL) → skip.
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
     await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE, { streamItemId: null });
+    // A real materialized slot the attempt claims (different date to dodge the (date,ref) unique).
+    const slotId = await seedStreamSlot(q);
 
     await db.transaction(async (tx) => {
       await recordDifficultyCalibrationLabel(tx, {
@@ -346,6 +447,7 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'exact',
         thetaBefore: 0,
         now: now(),
+        streamItemId: slotId, // join finds no observation referencing this slot → skip.
       });
     });
 
@@ -354,12 +456,14 @@ describe('recordDifficultyCalibrationLabel', () => {
 
   it('Codex P2 — observation references a stream slot that no longer exists (deleted/recomposed) → skip', async () => {
     // The observation carries a stream_item_id, but that practice_stream_item row was deleted
-    // (e.g. a later recompose re-filled the slot). The matched-stream-slot gate joins the slot
-    // and finds none → skip (do not attach a stale slot's π_i to this attempt).
+    // (e.g. a later recompose re-filled the slot). The attempt passes that same (now-dangling) id;
+    // the matched-stream-slot race-guard joins the slot and finds none → skip.
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
-    await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE, { streamItemId: createId() }); // dangling id
+    const danglingId = createId();
+    // observation references danglingId, but NO practice_stream_item row exists for it.
+    await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE, { streamItemId: danglingId });
 
     await db.transaction(async (tx) => {
       await recordDifficultyCalibrationLabel(tx, {
@@ -370,29 +474,24 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'exact',
         thetaBefore: 0,
         now: now(),
+        streamItemId: danglingId, // obs exists for this id, but no live slot → race-guard skip.
       });
     });
 
     expect(await readLabels(q)).toHaveLength(0);
   });
 
-  // Codex P2 — RESIDUAL (documented, deferred): a question that was softmax-selected INTO
-  // today's MATERIALIZED stream, then answered via a NON-stream path (e.g. a standalone review
-  // of the same question on the same day), STILL gets the stream slot's π_i. With only
-  // (date, ref) + a real slot existing, this attempt is INDISTINGUISHABLE from the genuine
-  // stream-slot answer — both share the same (date, ref) and the same materialized slot. The
-  // fully-correct discriminator is selection_observation.stream_item_id = the ANSWERED slot's
-  // id, which requires the attempt path (SubmitBody / PaperSubmitSlotInput) to thread the
-  // stream_item_id. It does NOT (confirmed: SubmitBody has only activity_ref/question_id/
-  // mistake_id/session_id; paper answers aren't stream items). This is the SAME stream_item_id
-  // seam as FINDING #3, tracked for a future phase. No test asserts the residual is FIXED
-  // (it is not) — this comment is the explicit record of the deferred seam.
+  // YUK-372 L2 — the Codex P2 RESIDUAL seam is now CLOSED. The same-day non-stream re-answer
+  // case (question softmax-selected into the materialized stream, then answered via a non-stream
+  // path) no longer mis-attaches the slot's π_i: the attempt path now threads the answered slot's
+  // stream_item_id (or null for non-stream answers), and the hook direct-joins on it / skips when
+  // absent (see the red-line #2 sentinel above). No deferred residual remains here.
 
   it('falls back to weak difficulty anchor when no item_calibration row', async () => {
     const q = createId();
     await seedQuestion(q, 4);
     // NO item_calibration row — anchor falls to difficultyToLogitB(4).
-    await seedSoftmaxObservation(q, 0.5);
+    const slotId = await seedSoftmaxObservation(q, 0.5);
 
     await db.transaction(async (tx) => {
       await recordDifficultyCalibrationLabel(tx, {
@@ -403,6 +502,7 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'keyword',
         thetaBefore: 0,
         now: now(),
+        streamItemId: slotId,
       });
     });
 
@@ -416,7 +516,7 @@ describe('recordDifficultyCalibrationLabel', () => {
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
-    await seedSoftmaxObservation(q, 0.3);
+    const slotId = await seedSoftmaxObservation(q, 0.3);
     const eid = createId();
 
     for (const out of [0, 1] as const) {
@@ -429,6 +529,7 @@ describe('recordDifficultyCalibrationLabel', () => {
           judgeRoute: 'exact',
           thetaBefore: 0,
           now: now(),
+          streamItemId: slotId,
         });
       });
     }
