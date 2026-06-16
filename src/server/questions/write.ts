@@ -312,6 +312,14 @@ export async function archiveQuestion(
 
     // Cascade: re-draft live composite parts so they don't outlive the parent in
     // the pool. Only parts NOT already drafted are touched (idempotent-ish).
+    // YUK-388 Step 1: part-ness is derived from the `parent_question_id` FK, not
+    // the `kind='question_part'` sentinel. `parent_question_id = questionId`
+    // already selects exactly the parts of THIS parent (strictly implies the FK
+    // IS NOT NULL), so the redundant kind predicate is dropped. See
+    // sourcing-sequence.ts:130-139 / detail.ts loadParts — both already detect
+    // parts via the FK alone. Legacy rows still carrying kind='question_part'
+    // are harmless dead data (no read consults `kind` for part-ness anymore);
+    // the vocabulary cleanup lands in Step 3.
     const cascaded = await tx
       .update(question)
       .set({
@@ -326,7 +334,6 @@ export async function archiveQuestion(
       })
       .where(
         and(
-          eq(question.kind, QUESTION_PART_KIND),
           eq(question.parent_question_id, questionId),
           or(isNull(question.draft_status), ne(question.draft_status, 'draft')),
         ),
