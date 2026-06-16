@@ -32,6 +32,7 @@ README is the project entrance for current stack + local/NAS setup. Keep it alig
 - **Postgres + Drizzle ORM**（`postgresql` dialect, `postgres` driver）— connection from `DATABASE_URL`；editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b），**无 Redis**
 - **R2 / S3-compatible blob** via `@aws-sdk/client-s3`（`src/server/r2.ts`）
 - **Claude Agent SDK**（`@anthropic-ai/claude-agent-sdk`）via xiaomi/mimo Anthropic-compatible endpoint；runtime is self-hosted Node（CMD `node dist/server.cjs`），not Vercel Functions
+- **Switchable AI provider lane (YUK-365)**：默认走 mimo-v2.5（xiaomi key-auth）。设 `AI_PROVIDER_OVERRIDE=anthropic-sub` 全局切到 **Opus 4.8 via owner's Claude Max 订阅（OAuth）** —— token 是 `claude setup-token` 生成的长效 `CLAUDE_CODE_OAUTH_TOKEN`（放 `.env.local` / 容器 env，**绝不入库不打印**）。订阅 token 与 mimo 互斥：oauth lane 在 SDK 子进程 env 里 SET `CLAUDE_CODE_OAUTH_TOKEN`、UNSET `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`（first-party endpoint only）。可选 `AI_PROVIDER_MODEL` 覆盖模型 id（lane 默认 `claude-opus-4-8`）。Wiring 在 `src/server/ai/providers.ts`（`authMode: 'key' | 'oauth'` 判别式 + `AI_PROVIDER_OVERRIDE` 开关）+ `runner.ts`（`buildAgentEnv` 按 authMode 分支）。
 - **React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query + Router, Zod, ts-fsrs**
 - **pg-boss** worker (`scripts/worker.ts`) for durable background jobs
 - **Biome** for lint + format, **Vitest** for tests, **pnpm** package manager
