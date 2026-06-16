@@ -29,11 +29,20 @@ RUN npm install --omit=dev --no-audit --no-fund sharp@^0.34.5
 # Same reasoning as sharp — the platform-specific `claude` binary that ships
 # via optionalDependencies is loaded lazily by the runner via dynamic spawn.
 # Use npm here for the same flat-layout reason sharpdeps does.
+#
+# YUK-365 (Codex review P2, Finding 3): these pins MUST stay in lockstep with the
+# versions pnpm-lock.yaml resolves (package.json pins claude-agent-sdk ^0.3.168 +
+# @anthropic-ai/sdk ^0.102.0; the lockfile resolves 0.3.168 / 0.102.0 / 1.29.0).
+# The old 0.3.143 / 0.96.0 pins predated Opus 4.8 (claude-opus-4-8) — that CLI may
+# reject the model id the subscription-OAuth lane (AI_PROVIDER_OVERRIDE=anthropic-sub)
+# requests, so prod would 4xx while dev (0.3.168) works. Bumped to match the
+# lockfile so the runner image runs the exact SDK this lane validated. When you bump
+# the package.json/lockfile SDK versions, bump these three pins to match.
 FROM node:24-bookworm-slim AS sdkdeps
 WORKDIR /sdk
 RUN npm install --omit=dev --no-audit --no-fund \
-    @anthropic-ai/claude-agent-sdk@0.3.143 \
-    @anthropic-ai/sdk@0.96.0 \
+    @anthropic-ai/claude-agent-sdk@0.3.168 \
+    @anthropic-ai/sdk@0.102.0 \
     @modelcontextprotocol/sdk@1.29.0
 
 # Stage 2.7: install better-sqlite3 into its own clean flat node_modules.
