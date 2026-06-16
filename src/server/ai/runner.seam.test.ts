@@ -199,3 +199,68 @@ describe('runTask — YUK-299 outputFormat seam', () => {
     expect('structured_output' in costArgs).toBe(false);
   });
 });
+
+// YUK-365 — subscription-OAuth lane env block. Asserts that when AI_PROVIDER_OVERRIDE
+// routes a task to the 'anthropic-sub' provider, buildAgentEnv (exercised via the
+// captured SDK Options.env) SETS CLAUDE_CODE_OAUTH_TOKEN and explicitly UNSETS the
+// three conflicting Anthropic vars, so a parent-process key can't win precedence.
+// Uses a DUMMY token value set in-test (never the real one).
+describe('runTask — YUK-365 subscription-OAuth env block', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [];
+    logMock.started.mockClear();
+    logMock.finished.mockClear();
+    logMock.cost.mockClear();
+    logMock.tool.mockClear();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('SETs CLAUDE_CODE_OAUTH_TOKEN and UNSETs ANTHROPIC_BASE_URL/API_KEY/AUTH_TOKEN', async () => {
+    // Simulate a parent process that ALSO has the conflicting vars set — the oauth
+    // lane must override them to undefined so they don't win precedence.
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-parent-key-should-be-unset');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://parent.example/should-be-unset');
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'parent-auth-should-be-unset');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
+
+    mockSdk.messages = [successResult()];
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as {
+      env: Record<string, string | undefined>;
+      model: string;
+    };
+    // Token set from its env var by NAME (dummy value, asserted by NAME only).
+    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('dummy-oauth-token-not-real');
+    // The three conflicting vars are explicitly UNSET (undefined) in the subprocess
+    // env block, even though they were present in the parent process.
+    expect(opts.env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(opts.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(opts.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    // The lane defaults to Opus 4.8.
+    expect(opts.model).toBe('claude-opus-4-8');
+  });
+
+  it('default (no AI_PROVIDER_OVERRIDE) keeps the mimo key-auth env block', async () => {
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
+    // Ensure the override is absent for this case.
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+
+    mockSdk.messages = [successResult()];
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as {
+      env: Record<string, string | undefined>;
+      model: string;
+    };
+    expect(opts.env.ANTHROPIC_API_KEY).toBe('sk-test-key');
+    expect(opts.env.ANTHROPIC_BASE_URL).toBe('https://api.xiaomimimo.com/anthropic');
+    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(opts.model).toBe('mimo-v2.5-pro');
+  });
+});

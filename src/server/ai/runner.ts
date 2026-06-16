@@ -343,17 +343,39 @@ function getIsolatedClaudeConfigDir(): string {
   return isolatedConfigDir;
 }
 
-function buildAgentEnv(resolved: ResolvedProvider): Record<string, string> {
-  const base: Record<string, string> = {};
+// The SDK's `Options.env` REPLACES the subprocess env (it is NOT merged with
+// process.env — see sdk.d.ts:1390-1408), so we spread process.env first and then
+// layer the auth overrides. The value type is `string | undefined`: setting a key
+// to `undefined` is the explicit, self-documenting way to UNSET that var in the
+// subprocess (used by the YUK-365 oauth lane to guarantee no parent-process
+// ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN wins precedence
+// over the subscription token).
+function buildAgentEnv(resolved: ResolvedProvider): Record<string, string | undefined> {
+  const base: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === 'string') base[k] = v;
   }
-  base.ANTHROPIC_API_KEY = resolved.apiKey;
-  if (resolved.baseUrl) {
-    base.ANTHROPIC_BASE_URL = resolved.baseUrl;
+
+  if (resolved.authMode === 'oauth') {
+    // YUK-365 subscription lane. The token only works against Anthropic's
+    // first-party endpoint and CANNOT coexist with a base URL or an API key
+    // (precedence: ANTHROPIC_API_KEY > CLAUDE_CODE_OAUTH_TOKEN). Explicitly
+    // UNSET the three conflicting vars so a parent-process value can't win, and
+    // SET the OAuth token from its env var by NAME (never logged / never copied
+    // anywhere else).
+    base.CLAUDE_CODE_OAUTH_TOKEN = process.env[resolved.oauthTokenEnv];
+    base.ANTHROPIC_BASE_URL = undefined;
+    base.ANTHROPIC_API_KEY = undefined;
+    base.ANTHROPIC_AUTH_TOKEN = undefined;
   } else {
-    base.ANTHROPIC_BASE_URL = '';
+    base.ANTHROPIC_API_KEY = resolved.apiKey;
+    if (resolved.baseUrl) {
+      base.ANTHROPIC_BASE_URL = resolved.baseUrl;
+    } else {
+      base.ANTHROPIC_BASE_URL = '';
+    }
   }
+
   base.CLAUDE_CONFIG_DIR = getIsolatedClaudeConfigDir();
   base.CLAUDE_AGENT_SDK_CLIENT_APP = base.CLAUDE_AGENT_SDK_CLIENT_APP ?? 'loom/0.1';
   return base;

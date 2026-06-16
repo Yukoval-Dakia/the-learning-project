@@ -8,7 +8,19 @@
 // landed Provider Manager (src/server/ai/providers.ts); 'anthropic' + 'xiaomi'
 // are wired, others throw 'not implemented' until a real trigger from ADR-0003
 // fires (see ADR-0003 2026-05-11 update + ADR-0004).
-export type Provider = 'anthropic' | 'xiaomi' | 'openrouter' | 'gateway' | 'openai';
+//
+// YUK-365: 'anthropic-sub' is the subscription-OAuth lane — Opus 4.8 via the
+// owner's Claude Max subscription (a long-lived CLAUDE_CODE_OAUTH_TOKEN against
+// Anthropic's first-party endpoint, NO baseUrl). It is never a task's
+// `defaultProvider`; it is opt-in ONLY via the `AI_PROVIDER_OVERRIDE` env switch
+// (see providers.ts). Default routing stays mimo (xiaomi).
+export type Provider =
+  | 'anthropic'
+  | 'xiaomi'
+  | 'openrouter'
+  | 'gateway'
+  | 'openai'
+  | 'anthropic-sub';
 export type ModelId = string;
 
 export interface TaskBudget {
