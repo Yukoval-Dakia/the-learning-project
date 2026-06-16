@@ -250,6 +250,11 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
 
     return { status, artifact_type: row.type, issues_count: parsed.issues.length };
   } catch (err) {
+    // YUK-350 (RL1) — error-safe: note_verify has no promote path (a note artifact
+    // is never enrolled into the question pool) and no `overall` field. This catch
+    // only marks the artifact verification_status='failed' (best-effort) and
+    // re-throws so pg-boss retries; a system error can never promote anything here.
+    // No result-layer 'error' value applies.
     await db
       .update(artifact)
       .set({ verification_status: 'failed', updated_at: new Date() })

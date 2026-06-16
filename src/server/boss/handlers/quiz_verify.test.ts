@@ -178,6 +178,30 @@ async function poolGapNotesForKnowledge(knowledgeId: string): Promise<number> {
   ).length;
 }
 
+// YUK-350 (RL1) — read the verify event rows (payload) for a question so a test can
+// assert the system-error class on the catch-bottom event.
+async function verifyEventsFor(questionId: string): Promise<
+  {
+    outcome: string | null;
+    payload: Record<string, unknown> | null;
+  }[]
+> {
+  const rows = await testDb()
+    .select({ outcome: event.outcome, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:quiz_verify'),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, questionId),
+      ),
+    );
+  return rows.map((r) => ({
+    outcome: r.outcome,
+    payload: (r.payload ?? null) as Record<string, unknown> | null,
+  }));
+}
+
 async function fsrsRowCount(subjectKind: string, subjectId: string): Promise<number> {
   const rows = await testDb()
     .select({ id: material_fsrs_state.id })
@@ -410,6 +434,43 @@ describe('runQuizVerify', () => {
     expect(await countVerifyEvents('q5b')).toBe(2);
     expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
     expect(await fsrsRowCount('question', 'q5b')).toBe(0);
+
+    // YUK-350 (RL1) — the transient-error event carries the machine-readable
+    // system-error marker payload.overall='error' (model can never emit it).
+    const evs = await verifyEventsFor('q5b');
+    const errorEv = evs.find((e) => e.outcome === 'error');
+    expect(errorEv).toBeDefined();
+    expect(errorEv?.payload?.overall).toBe('error');
+    // the terminal success event carries the model verdict, NOT 'error'.
+    const successEv = evs.find((e) => e.outcome === 'success');
+    expect(successEv?.payload?.overall).toBe('pass');
+  });
+
+  // YUK-350 (RL1) — system-error class: a task/parse blowup BEFORE a verdict must
+  // re-throw (pg-boss retries), leave the draft un-promoted with zero FSRS rows, and
+  // record outcome='error' + payload.overall='error'. The model can never inject
+  // 'error' through the LLM-parse path (asserted in the unit test).
+  it("system error: re-throws, stays draft, 0 FSRS, event outcome='error' + payload.overall='error'", async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_syserr', knowledgeId: 'k1' });
+    // Bad JSON → parseQuizVerifyOutput throws inside the try → catch-bottom.
+    const runTaskFn = runTaskMock('not a json verdict at all', 'tr_syserr');
+
+    await expect(
+      runQuizVerify({ db: testDb(), questionId: 'q_syserr', runTaskFn }),
+    ).rejects.toThrow();
+
+    // NEVER promoted.
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_syserr'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    expect(await fsrsRowCount('question', 'q_syserr')).toBe(0);
+
+    // Exactly one event, outcome='error', payload.overall='error'.
+    const evs = await verifyEventsFor('q_syserr');
+    expect(evs).toHaveLength(1);
+    expect(evs[0].outcome).toBe('error');
+    expect(evs[0].payload?.overall).toBe('error');
   });
 
   it('does NOT promote when overall=pass but a structured check verdict is fail', async () => {

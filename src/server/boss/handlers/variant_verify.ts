@@ -349,6 +349,12 @@ export function buildVariantVerifyHandler(
         });
         console.log(`[variant_verify] ${mistakeVariantId} → ${result.status}`);
       } catch (err) {
+        // YUK-350 (RL1) — error-safe: this catch only logs + re-throws (pg-boss
+        // retries). variant_verify writes NO verify event on a thrown failure and
+        // writes no `overall`, so a system error cannot promote a variant (promotion
+        // = mistake_variant status change happens only inside the committed txn in
+        // runVariantVerify, which is past the throw). No result-layer 'error' value is
+        // assigned here (no `overall` field exists for variants).
         console.error(`[variant_verify] ${mistakeVariantId} failed`, err);
         throw err;
       }

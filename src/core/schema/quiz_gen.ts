@@ -268,8 +268,27 @@ export const QuizVerificationResult = z.object({
   // 'unclear' / absent falls through (don't harden a missing optional into a fail).
   kind_conformance: QuizVerifyCheck.optional(),
   // Roll-up verdict driving the Option-B gate.
+  // YUK-350 (RL1, Plan B) — phase-deferred / red-line invariant: the LLM-parse
+  // enum stays EXACTLY 3-value (pass|needs_review|fail). 'error' is a SYSTEM-error
+  // class assigned ONLY by the handler's catch-bottom (a task/parse/DB blowup before
+  // a verdict); the model can NEVER emit it through this parse path, which is the
+  // strongest boundary for red line 1 (a model self-reporting "system error" must be
+  // impossible). The 4-value result-layer projection lives in `QuizVerifyOverall`
+  // below; do NOT widen this enum to carry 'error'.
   overall: z.enum(['pass', 'needs_review', 'fail']),
   summary_md: z.string().min(1).max(1000),
   confidence: z.number().min(0).max(1),
 });
 export type QuizVerificationResultT = z.infer<typeof QuizVerificationResult>;
+
+// YUK-350 (RL1, Plan B) — result-layer overall union. This is the value space the
+// quiz_verify HANDLER return type + verify-event payload carry, NOT the LLM-parse
+// schema. It is the 3-value model verdict (pass|needs_review|fail) PLUS the
+// system-error class 'error', which is assigned EXCLUSIVELY by the catch-bottom
+// when the task threw before producing a verdict. Splitting it from
+// QuizVerificationResult.overall keeps the model parse path physically unable to
+// emit 'error' (a model can never self-report a system failure). 'error' is a
+// distinct value — it is NOT aliased to pass and must NEVER promote (the catch path
+// throws before any promote). Exhaustiveness: the legal result-layer values are
+// exactly pass | needs_review | fail | error.
+export type QuizVerifyOverall = QuizVerificationResultT['overall'] | 'error';
