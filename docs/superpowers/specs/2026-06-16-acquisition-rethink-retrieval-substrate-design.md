@@ -77,16 +77,18 @@ harvest-then-match **不取代** request-then-fulfill——引擎对每个 gap *
 - **采集（authentic 真题）= harvest-then-match**（真题是低精度通道，没法按需「调」出一道 b≈0.3）。引擎对它是**方向盘不是下单**——即 §3 的三 seam：① 优先级转向（gap priority → forager 抓取优先队列）② 约束注入（minSourceTier / near-θ̂ band / kind → forager 的 query/filter 参数）③ 反馈闭环（填了的 gap 掉出地图、没填的升级重扫）。forager **偏置**往缺口爬但不保证拿到精确项；精确选择由 matcher 从落进来的料里做。
 - **生成（quiz_gen / item-model 变式）= request-then-fulfill**（precise channel，「要什么给什么」）。这正是 Seam ③「残余 gap → 路由生成」的本质——**request-then-fulfill 没死，是兜底 / 即时通道**。
 
-**仲裁逻辑**：每个 gap 先问「池里有料能 match 吗」→ 有 = harvest 模式 promote；没有 = 回 request-then-fulfill 生成。**回退触发条件**：
+**仲裁逻辑**：每个 gap 先问「池里有料能 match 吗」→ 有 = harvest 模式 promote；**no-match ≠ 立即生成**——默认仍**等 harvest 补**（harvest-default）。**只有 `no-match ∧ 命中下列回退条件之一` 才回 request-then-fulfill 生成**（合取，否则缺口留在地图上等下轮 harvest——避免空池/nightly scan 把所有未命中 gap 立刻下发 quiz_gen、让生成兜底变成默认通道）：
 
-| 触发 | 为什么回 request-then-fulfill |
+| 回退触发（须 `no-match ∧ 此条`）| 为什么回 request-then-fulfill |
 |---|---|
-| 空池 + 精确 diagnostic gap | 需精确难度的近-θ̂ 题来校准，harvest 拿不到精确项 → 立即生成 |
+| 空池 + 精确 diagnostic gap（R3）| 需精确难度近-θ̂ 题校准，harvest 拿不到精确项 → 生成。**前提**：dispatch 须把 `difficultyBand`/θ̂ 透传给 quiz_gen（现仅传 knowledge_id/count/kind/generation_method，**不带难度** → 生成题难度随机、命不中 θ̂）。此透传是 quiz_gen 缺口 #1 / kind 重塑（A1）的前置——**未补前 diagnostic 回退不可靠** |
 | 即时/同步需求 | 用户正练、等不了夜 harvest → on-demand 生成（copilot D14 用户面本就是 live request-then-fulfill）|
 | 网上无此料 | 小众/个人化 KC，authentic 源不存在 → 生成是唯一源 |
 | 持久缺口 | harvest 连续 N 轮填不上同一 gap → 升级到生成 |
 
-**策略一句话**：**默认偏好 authentic（gap 不急就等 harvest），急 / 持续填不上才回 request-then-fulfill 生成**。两条通道最后都汇 **verify 闸（B5）**才进 active 池——生成的合成料尤其要 verify-then-promote，authentic 走轻量去重/质量。
+**例外：R2 `source_quality` 不回生成**。该缺口要补**更高获取档**（`minSourceTier=2`），而 quiz_gen / material-grounded 落的是 generation/material 档、满足不了 R2 → 回生成只会新增仍不达档的低档题、缺口反复触发。**R2 只走 harvest / sourcing / manual**，不回生成兜底。
+
+**策略一句话**：**默认偏好 authentic（gap 不急就等 harvest），`no-match ∧（急/持久/无源）` 才回 request-then-fulfill 生成**（R2 除外）。两条通道**都过 verify 闸（B5）才进 active 池**——生成合成料 verify-then-promote；**harvested authentic 同样过 verify（`source_verify`：抽取非空 / answer 一致 / KC-tag 校验）**，「轻量」指档位降权 + 去重，**不是跳过 verify**（无人值守 forage 的爬取/OCR 料仍可能有抽取、答案、KC-tag 错）。
 
 ---
 
