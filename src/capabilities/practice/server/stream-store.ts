@@ -26,17 +26,30 @@ import {
 import { ApiError } from '@/server/http/errors';
 import { and, asc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 
+import { QuestionKind } from '@/core/schema/business';
+import type { QuestionKindT } from '@/core/schema/judge-routing';
+import {
+  type CandidateInput,
+  type CollectedSignal,
+  collectCandidateSignals,
+} from './candidate-signals';
 import { handleReviewDue } from './due-list';
 import { getPracticeList } from './practice-read';
-import { DEFAULT_SELECTION_POLICY, type SelectionPolicyConfig } from './selection-constants';
+import {
+  DEFAULT_SELECTION_POLICY,
+  DEFAULT_TEMPERATURE,
+  type SelectionPolicyConfig,
+} from './selection-constants';
 import {
   type SelectionObservationInput,
   recordSelectionObservation,
 } from './selection-observations';
+import { sampleByWeight } from './selection-sampler';
 import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
+  statisticalWeights,
 } from './softmax-selection';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 
@@ -339,6 +352,10 @@ async function composeMaterializeCollect(
   policy: SelectionPolicyConfig,
   deps: ComposeSoftmaxDeps = {},
   capacity?: ComposerInputs['capacity'],
+  // Task 9：物化行的 `added_by` 来源标注（lazy-compose / recompose = 'composer_live'；
+  //   夜间预产 job = 'composer_nightly'）。两条路径共用本函数（DRY，不分叉 compose 逻辑），
+  //   只此参数不同——区分流是用户首读懒产的还是夜链 AI 预产的（D14 夜链开场白归属）。
+  addedBy: StreamItemRow['added_by'] = 'composer_live',
 ): Promise<ComposeOutcome> {
   const inputs = await collectComposerInputs(db, date);
   // 容量注入（DI，测试用——production 不传，走 composeSoftmaxStream 的 DEFAULT_WARN/MAX）。
@@ -347,13 +364,13 @@ async function composeMaterializeCollect(
   if (capacity) inputs.capacity = capacity;
 
   if (policy.policy === 'legacy') {
-    const { added } = await materializeStream(db, composeDailyStream(inputs), 'composer_live');
+    const { added } = await materializeStream(db, composeDailyStream(inputs), addedBy);
     return { added, observations: [] };
   }
 
   // softmax_mfi：永不 throw（两级 fallback 兜底）。
   const result: ComposeSoftmaxResult = await composeSoftmaxStream(db, inputs, policy, deps);
-  const { added, freshRefs } = await materializeStream(db, result.plan, 'composer_live');
+  const { added, freshRefs } = await materializeStream(db, result.plan, addedBy);
 
   // π_i 收集：只对**本轮新物化**的被抽中非到期项（CLUSTER A 修复）。
   //   result.sampledInclusion 含本轮被抽中的所有非到期 ref，但 recompose 时存活的
@@ -439,24 +456,65 @@ async function singleFlightCompose(
   policy: SelectionPolicyConfig,
   deps: ComposeSoftmaxDeps,
   capacity?: ComposerInputs['capacity'],
+  // Task 9：物化来源标注。lazy-compose / recompose 传 'composer_live'（缺省）；
+  //   夜间预产 job 经 composeNightly 传 'composer_nightly'。双重检查 + 单飞锁不变，
+  //   只 addedBy 透传到 composeMaterializeCollect。
+  addedBy: StreamItemRow['added_by'] = 'composer_live',
 ): Promise<number> {
   const { added, observations } = await db.transaction(async (tx) => {
     // 事务级 advisory 锁，键 = 'stream:compose:<date>'。同日的并发 compose 串行化。
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
 
     // 双重检查：拿到锁后重读。赢家已 compose ⇒ 行非空 ⇒ 输家 no-op（不重 compose）。
+    // Task 9 幂等核心：夜间 job 与用户首读 lazy-compose 共用此锁 + 双重检查——夜间先产
+    //   ⇒ 当日行非空 ⇒ 用户首读 lazy 命中双重检查 no-op（不二次 compose、不双发 LLM、
+    //   不插重复 position / 重复 π_i）。反向（用户先读再夜间 job）亦同：夜间 job 经
+    //   composeNightly 自己也做「已物化则 no-op」双重检查（见 composeNightly）。
     const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(practice_stream_item)
       .where(eq(practice_stream_item.date, date));
     if (count > 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    return composeMaterializeCollect(tx, date, policy, deps, capacity);
+    return composeMaterializeCollect(tx, date, policy, deps, capacity, addedBy);
   });
 
   // 事务已提交（流已稳）——锁外 best-effort 写观测；失败只丢遥测，绝不回滚流（FINDING B）。
   await writeObservationsBestEffort(db, observations);
   return added;
+}
+
+/**
+ * Task 9 夜间预产入口——夜链 job（practice_stream_compose_nightly）调用本函数为「今天」
+ * 预产流。与用户首读的 lazy-compose **共用 singleFlightCompose 的同一把单飞锁 + 双重检查**
+ * （DRY：不分叉 compose 逻辑），唯一区别是物化行 `added_by='composer_nightly'`。
+ *
+ * 幂等（双重检查 under lock）：若今天的流已物化（夜间已跑过、或用户已首读懒产），
+ * singleFlightCompose 的双重检查命中 count>0 → no-op 返回 0，不二次 compose。故
+ *   - 夜间 job 跑两次：第二次 no-op。
+ *   - 夜间 job 跑完用户首读：lazy-compose 命中双重检查 no-op（不 double-compose）。
+ *   - 用户先首读再夜间 job：夜间 job 命中双重检查 no-op（不覆盖已产流）。
+ *
+ * @returns 新增行数（真正预产时 = composeMaterializeCollect 的 added；已物化时 = 0）。
+ */
+export async function composeNightly(
+  db: Db,
+  date: string,
+  opts: {
+    policy?: SelectionPolicyConfig;
+    composeDeps?: ComposeSoftmaxDeps;
+    /** 容量注入（DI，仅测试用）。production 省略。 */
+    capacity?: ComposerInputs['capacity'];
+  } = {},
+): Promise<number> {
+  return singleFlightCompose(
+    db,
+    date,
+    opts.policy ?? resolveSelectionPolicy(),
+    opts.composeDeps ?? {},
+    opts.capacity,
+    'composer_nightly',
+  );
 }
 
 export interface StreamView {
@@ -543,11 +601,29 @@ const LEGAL_TRANSITIONS: Record<StreamItemStatus, StreamItemStatus[]> = {
   done: [],
 };
 
-/** 推进 item 状态（作答事实由 submit 路由写 event；这里只动日程行）。 */
+/**
+ * 推进 item 状态（作答事实由 submit 路由写 event；这里只动日程行）。
+ *
+ * Task 9（hybrid 运行时）：题项推进到 `done` 后触发**有界增量重排**（reRankAfterAnswer）
+ * ——作答更新了该题 knowledge_ids 的 θ̂（submit 路由的 updateThetaForAttempt），触及这些 KC
+ * 的**待做非到期诊断项**的 MFI 权重随之变化，需据更新后 θ̂ 重排它们（only 它们）。
+ *
+ * 同步 vs 异步 / 重排触发的设计抉择（task 9 deliverable 2）：
+ *   - 选 **best-effort 同步**（状态 UPDATE 提交后、本函数返回前 inline 调），**包在 try/catch
+ *     里永不 throw**——与 writeObservationsBestEffort 的 post-commit 遥测同纪律。理由：
+ *     ① 重排走**纯统计 sampler**（不重跑 LLM，见 reRankAfterAnswer），廉价；② 它在自己的
+ *     单飞锁事务里跑（与作答 UPDATE 解耦），重排失败/抛错绝不回滚已落库的状态推进、也不让
+ *     PATCH 路由 500；③ 不引新 pg-boss 队列（scope discipline）。代价：PATCH 响应多等一个
+ *     轻量统计重排（无 LLM 网络往返）——可接受。
+ *   - 未选异步 fire-and-forget（boss.send 新队列）：增量重排无 LLM、毫秒级，独立队列的运维
+ *     成本 + 新 schema 面不划算；best-effort 同步已满足「不破坏/不显著拖慢作答写」。
+ */
 export async function advanceStreamItem(
   db: Db,
   id: string,
   next: StreamItemStatus,
+  // 重排 DI（测试注入 rng 确定化 Poisson 抽样）。production 省略 → 默认 Math.random。
+  rerankDeps: { rng?: () => number } = {},
 ): Promise<StreamItemRow | null> {
   const [row] = await db
     .select()
@@ -563,7 +639,27 @@ export async function advanceStreamItem(
     .set({ status: next, updated_at: new Date() })
     .where(eq(practice_stream_item.id, id))
     .returning();
-  return updated ?? null;
+  if (!updated) return null;
+
+  // Task 9：作答推进到 done 的**题项**触发有界增量重排（best-effort，post-commit）。
+  //   只 question 项（paper 内部题不在流层重排）；只 done（in_progress/skipped/pending 不触发）。
+  if (updated.status === 'done' && updated.item_kind === 'question') {
+    try {
+      await reRankAfterAnswer(db, {
+        date: updated.date,
+        answeredQuestionId: updated.ref_id,
+        rng: rerankDeps.rng,
+      });
+    } catch (err) {
+      // 重排是 hybrid 运行时的便利层，失败绝不破坏已提交的状态推进（best-effort 契约）。
+      console.error('[stream-store] reRankAfterAnswer failed (post-commit, best-effort)', {
+        streamItemId: updated.id,
+        refId: updated.ref_id,
+        err,
+      });
+    }
+  }
+  return updated;
 }
 
 /**
@@ -604,6 +700,222 @@ export async function recomposeStream(
   });
 
   // 事务已提交（流已稳）——锁外 best-effort 写观测（FINDING B）。
+  await writeObservationsBestEffort(db, observations);
+  return added;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Task 9（hybrid 运行时核心）：作答后有界增量重排。
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 作答把答对题的 knowledge_ids 的 θ̂ 推动了（submit 路由 updateThetaForAttempt）。触及这些
+// KC 的**待做非到期诊断项**（frontier/diagnostic/new_check）的 MFI 权重 = p(1−p)、p=σ(θ̂−b)
+// 随之改变——需据**更新后** θ̂ 重排它们。这就是 ADR-0042 §4 hybrid（夜间预产骨架 + 作答后
+// 增量重排）的「增量重排」半边：只重跑**受影响 KC** 的 L1 信号（重读 mastery_state → 新 θ̂）
+// + 薄统计 sampler，**不整流、不重跑 LLM**（ADR-0042 §4 amendment「增量重排走纯统计 sampler，
+// 若不重跑 LLM 则用上次 LLM 权重 + 新信号，便宜」——本实现取「新信号纯统计 sampler」档：
+// LLM 权重未逐项持久化，最便宜且正确的是用更新后 θ̂ 重算 mfiScore 当统计权重重抽样）。
+//
+// ─── 不变量保全（与 Phase 3 选题路径 review 同款铁律②③④ + positivity）────────────
+//   ② 到期 presence + intra-day 序：到期行（source='decay'）**冻结**——既不删也不动 position，
+//      故其 presence + L1 相对序原样保全（本函数从不碰到期行）。
+//   ③ recall 同题重背：recall-locked 待做行（signals.recallLocked===true）**冻结**——不进
+//      候选池、不被抽样、position 不动。
+//   ④ 容量 + draft 排除 + dedup：重排后的非到期项数 ≤ 被移除的受影响待做项数（重抽样从同一/
+//      更新候选池抽，targetCount=被移除数 → 不胀容量）；in-memory dedup（seen）+ date+ref
+//      唯一索引兜重复。
+//   positivity（ADR-0043 §7）：复用 sampleByWeight（含 ε-greedy 下限）——每个进池候选 π_i>0；
+//      被抽中项记真 π_i（post-commit best-effort，policy='softmax_mfi'）。
+//   done/in_progress/skipped 行（任意 source）**冻结**——既不删也不动 position+status。
+//
+// ─── 单飞锁 + 串行化 ───────────────────────────────────────────────────────────
+//   复用**同一把** `pg_advisory_xact_lock('stream:compose:<date>')`——与 lazy-compose /
+//   recompose / 夜间预产互斥，故重排与任何 compose 路径不会并发改同一天的流（不双写
+//   position、不写重复观测）。
+//
+// ─── position 模型（done/skipped 行绝不移位的硬约束 ⇒ 不能整流 renumber）──────────
+//   被移除的受影响待做行腾出 position「空位」；重抽样的新项**优先填这些空位**，多出的追加在
+//   `max(position)+1…`。冻结行 position 全部**逐字不动**——满足「done 保 position」+「无重复
+//   position」（空位本就空闲，tail 位超 max 不撞冻结位）。这与 materializeStream 的整流
+//   renumber **有意不同**：那条路径会移到期/done 行的 position（recompose 语义下可接受，因
+//   recompose 显式删全部 pending 重排）；增量重排的契约更严（done 必须钉死），故走专用定位。
+
+/** 从 practice_stream_item.signals 快照读 recallLocked（Phase 3 物化的 CollectedSignal）。 */
+function rowIsRecallLocked(signals: unknown): boolean {
+  return (signals as { recallLocked?: unknown } | null)?.recallLocked === true;
+}
+
+/** 把 DB question.kind（text，可能脏）收敛成枚举内 QuestionKindT 或 undefined（同 softmax 侧 FINDING 4）。 */
+function resolveEnumKind(kind: string | null | undefined): QuestionKindT | undefined {
+  const parsed = QuestionKind.safeParse(kind);
+  return parsed.success ? (parsed.data as QuestionKindT) : undefined;
+}
+
+/**
+ * 作答后有界增量重排（hybrid 运行时）。**永不 throw 出 compose 逻辑级别**——纯统计 sampler，
+ * 无 LLM。若无受影响待做项（θ̂ 移动不触及任何待做非到期诊断项）→ no-op（不动流、不写观测）。
+ *
+ * @param opts.answeredQuestionId 刚推进到 done 的题——其 knowledge_ids = affectedKnowledgeIds。
+ * @param opts.rng 注入 rng（测试确定化）；省略 → sampleByWeight 默认 Math.random。
+ * @returns 本轮新物化（重抽样落库）的非到期项数；no-op 时 0。
+ */
+export async function reRankAfterAnswer(
+  db: Db,
+  opts: { date: string; answeredQuestionId: string; rng?: () => number },
+): Promise<number> {
+  const { date, answeredQuestionId } = opts;
+
+  // 受影响 KC = 刚答完那题的 knowledge_ids。空 → 无 θ̂ 移动锚点 → no-op（不触发重排）。
+  const [answered] = await db
+    .select({ knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(eq(question.id, answeredQuestionId))
+    .limit(1);
+  const affectedKnowledgeIds = new Set((answered?.knowledge_ids ?? []).filter(Boolean));
+  if (affectedKnowledgeIds.size === 0) return 0;
+
+  const { added, observations } = await db.transaction(async (tx) => {
+    // 单飞锁（与所有 compose 路径共用键）——重排与 lazy/recompose/nightly 互斥。
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+
+    const rows = await tx
+      .select()
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.date, date))
+      .orderBy(asc(practice_stream_item.position));
+    if (rows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+
+    // 候选 = 待做(pending) + 非到期诊断(source variant/new_check) + 非 recall-locked 的**题**行。
+    //   到期行(decay)/卷/recall-locked/任何 done|in_progress|skipped 行 = 冻结，不进候选。
+    const reRankable = rows.filter(
+      (r) =>
+        r.status === 'pending' &&
+        r.item_kind === 'question' &&
+        (r.source === 'variant' || r.source === 'new_check') &&
+        !rowIsRecallLocked(r.signals),
+    );
+    if (reRankable.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+
+    // 受影响子集 = 候选里**触及受影响 KC** 的那些（θ̂ 真移动了它们的 MFI）。一次性点查
+    //   候选 ref 的 knowledge_ids；不触及任何受影响 KC 的候选**不重排**（bounded——只动 θ̂ 真
+    //   变了的项）。
+    const candRefIds = reRankable.map((r) => r.ref_id);
+    const candQRows = await tx
+      .select({
+        id: question.id,
+        kind: question.kind,
+        knowledge_ids: question.knowledge_ids,
+        difficulty: question.difficulty,
+      })
+      .from(question)
+      .where(inArray(question.id, candRefIds));
+    const candQById = new Map(candQRows.map((q) => [q.id, q]));
+    const affectedRows = reRankable.filter((r) => {
+      const kids = candQById.get(r.ref_id)?.knowledge_ids ?? [];
+      return kids.some((k) => affectedKnowledgeIds.has(k));
+    });
+    if (affectedRows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+
+    // 受影响行腾出的 position 空位（升序）——重抽样新项优先填这些位，冻结行 position 不动。
+    const vacatedPositions = affectedRows.map((r) => r.position).sort((a, b) => a - b);
+    const affectedRefs = new Set(affectedRows.map((r) => r.ref_id));
+
+    // 当前流里**所有非受影响 ref**（冻结行 + 其余待做候选）——dedup 真相源（铁律④）：重抽样
+    //   不得选中已在流里的其它 ref（避免同 ref 两行/撞 date+ref 唯一索引）。受影响 ref 本身
+    //   会被删后重排，可重新入选。
+    const survivingRefs = new Set(
+      rows.filter((r) => !affectedRefs.has(r.ref_id)).map((r) => r.ref_id),
+    );
+
+    // 候选信号：对受影响行重读 mastery_state（**更新后 θ̂**）+ b 锚 → CollectedSignal。
+    //   recall-locked（理论上已被上面 source/recallLocked 过滤掉，这里 enrich 后双保险切出）。
+    const candidateInputs: CandidateInput[] = affectedRows.map((r) => {
+      const q = candQById.get(r.ref_id);
+      return {
+        refKind: 'question' as const,
+        refId: r.ref_id,
+        role: r.source === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
+        kind: resolveEnumKind(q?.kind),
+        knowledgeIds: q?.knowledge_ids,
+        difficulty: q?.difficulty,
+      };
+    });
+    const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
+    const samplable = signals.filter((s) => s.recallLocked !== true);
+    const signalByRef = new Map(signals.map((s) => [s.refId, s]));
+
+    // 纯统计 sampler：用更新后 θ̂ 重算 mfiScore 当权重（不重跑 LLM）。targetCount=受影响数
+    //   （不胀容量，铁律④）。sampleByWeight 含 ε-greedy 下限 → positivity。
+    const weighted = statisticalWeights(samplable);
+    const sampled =
+      weighted.length === 0
+        ? []
+        : sampleByWeight(weighted, {
+            temperature: DEFAULT_TEMPERATURE,
+            targetCount: affectedRows.length,
+            rng: opts.rng,
+          });
+
+    // 删受影响待做行（腾位）。冻结行原封不动。
+    await tx.delete(practice_stream_item).where(
+      and(
+        eq(practice_stream_item.date, date),
+        inArray(
+          practice_stream_item.id,
+          affectedRows.map((r) => r.id),
+        ),
+      ),
+    );
+
+    // 落新抽中项：优先填腾出的空位，多出的追加在 max(position)+1…（冻结行 position 不动）。
+    //   dedup：跳过已在 survivingRefs 的 ref（理论不会——受影响 ref 已从 surviving 排除，
+    //   但 sampler 只会抽受影响候选；双保险）。
+    const maxPosition = rows.reduce((m, r) => Math.max(m, r.position), 0);
+    let tailPos = maxPosition + 1;
+    const now = new Date();
+    const observations: SelectionObservationInput[] = [];
+    let added = 0;
+    for (const [i, s] of sampled.entries()) {
+      if (survivingRefs.has(s.refId)) continue;
+      const pos = i < vacatedPositions.length ? vacatedPositions[i] : tailPos++;
+      const signal = signalByRef.get(s.refId);
+      const sourceRow = affectedRows.find((r) => r.ref_id === s.refId);
+      const newRowId = newId();
+      await tx
+        .insert(practice_stream_item)
+        .values({
+          id: newRowId,
+          date,
+          position: pos,
+          item_kind: 'question' as const,
+          ref_id: s.refId,
+          source: sourceRow?.source ?? 'variant',
+          status: 'pending' as const,
+          // 重排不改文案（保留原 reasoning 模板——增量重排是排序调整，非新叙事）。
+          reasoning: sourceRow?.reasoning ?? '',
+          added_by: 'composer_live' as const,
+          signals: (signal as unknown as Record<string, unknown>) ?? {},
+          created_at: now,
+          updated_at: now,
+        })
+        .onConflictDoNothing();
+      added++;
+      observations.push({
+        date,
+        streamItemId: newRowId,
+        refKind: 'question',
+        refId: s.refId,
+        policy: 'softmax_mfi',
+        selected: true,
+        inclusionProbability: s.inclusionProbability,
+        signals: (signal as unknown as Record<string, unknown>) ?? {},
+      });
+    }
+
+    return { added, observations };
+  });
+
+  // 事务已提交——锁外 best-effort 写 π_i 观测（FINDING B：遥测失败不回滚重排）。
   await writeObservationsBestEffort(db, observations);
   return added;
 }
