@@ -246,6 +246,17 @@ export async function runEmbeddedCheckGenerate(
           knowledge_ids: row.knowledge_ids,
           difficulty: 2,
           source_ref: row.id,
+          // YUK-350 (L2, RL2) — land embedded checks as draft_status='draft'. An
+          // embedded check is CONTAINER-ONLY by design: it is read solely by its
+          // owning artifact via question_ids (note-page.ts inArray, no draft filter),
+          // and must NEVER leak into the general review pool (every pool selection path
+          // excludes draft: variant-rotation, due-list, review-session, etc.). There is
+          // NO promote path and that is intentional — an embedded check is not a pool
+          // candidate, so it stays draft for its whole life. Previously these rows had
+          // a NULL draft_status, which the pool treats as active (NULL≡active), so they
+          // were ambiguously poolable; 'draft' makes the container-only contract
+          // explicit and pool-safe.
+          draft_status: 'draft',
           created_by: aiAgentRef('EmbeddedCheckGenerateTask', result) as never,
           // FSRS isn't initialised here — embedded check questions don't
           // enter the spaced-rep surface unless the user later actively
