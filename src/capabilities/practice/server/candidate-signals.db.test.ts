@@ -229,6 +229,27 @@ describe('collectCandidateSignals — question candidates', () => {
     expect(sig.mfiScore).toBeGreaterThan(0);
   });
 
+  it('(4d) undefined kind → recallLocked:true (fail CLOSED, review CLUSTER D)', async () => {
+    // 一道身份不明的候选（kind 缺失，如目标题被硬删 / kind 列丢失）。fail-open（旧行为）
+    // 会把它当 application 喂 sampler/MFI，违反铁律③（recall-locked = 同题永不被抽样）。
+    // 现保守锁 recall：宁可确定性透传也不让不明候选进随机抽样。
+    await seedMastery('kc-unknown-kind', 0.2, 4);
+    await seedCalibration('q-unknown-kind', 0.3); // 即便有全锚，未知 kind 也不算 MFI
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-unknown-kind',
+        role: 'diagnostic',
+        // kind 故意省略 → fail-closed 锁 recall。
+        knowledgeIds: ['kc-unknown-kind'],
+        difficulty: 3,
+      },
+    ]);
+    expect(sig.recallLocked).toBe(true);
+    expect(sig.mfiScore).toBeUndefined(); // 锁 recall ⇒ 不算 MFI（不进 sampler 评分）
+    expect(sig.diagnosticScore).toBeUndefined();
+  });
+
   it('(5) §9.2 fields are undefined when no data source exists (NOT zero)', async () => {
     await seedMastery('kc-92', 0.0, 4);
     const [sig] = await collectCandidateSignals(db, [

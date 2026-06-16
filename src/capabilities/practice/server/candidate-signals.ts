@@ -142,8 +142,12 @@ async function collectQuestionSignal(db: DbLike, cand: CandidateInput): Promise<
   //   题**绝不进 MFI/sampler 评分**（换题会污染 FSRS 信号；ADR-0042:36/ADR-0030）——
   //   recallLocked:true 且不算 mfiScore/diagnosticScore。
   //   application：可换变体，进 MFI 评分。
-  // kind 缺省（卷候选不会走这里；题候选理应带 kind）时保守按 application（不锁 recall）。
-  const recallLocked = cand.kind ? rotationClassForKind(cand.kind) === 'recall' : false;
+  // kind 缺省（卷候选不会走这里；题候选理应带 kind）时**保守锁 recall（fail CLOSED）**：
+  //   undefined kind 意味着我们无法证明这题可换变体（如目标题被硬删、kind 丢失）——
+  //   宁可把它当原题重背确定性透传，也不能让一道身份不明的题进 sampler/MFI 而违反铁律③
+  //   （recall-locked = 同题永不被抽样/MFI 评分）。这是 review CLUSTER D 的 fail-open→
+  //   fail-closed 纠正。
+  const recallLocked = cand.kind ? rotationClassForKind(cand.kind) === 'recall' : true;
 
   // MFI 评分快照：复用 core 数学（mfiScore/diagnosticScore，selection-signals.ts），不在此
   // 重算。recall-locked 或缺 θ̂/b 时不算（留 undefined）。
