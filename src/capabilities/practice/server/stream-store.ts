@@ -198,6 +198,11 @@ export interface MaterializeResult {
  * **NO 重复 position**：最终每行一个唯一 position（1..M 连续，M = plan + plan外存活）。
  * date+ref 唯一索引仍兜底「同 ref 不重复行」。
  *
+ * ⚠️ **隐含依赖：`(date, position)` 必须保持 NON-UNIQUE**（schema.ts 只有 `(date, ref_id)`
+ * 唯一）。本函数顺序 renumber 存活行时会有**瞬态**同 position（两行换位的中间态），最终态
+ * 才唯一。若将来给 `(date, position)` 加 uniqueIndex，reorder-survivor 会在 compose tx 里
+ * mid-loop 抛 23505——加唯一索引前必须先改成「先腾位再落位」或临时偏移。
+ *
  * @returns MaterializeResult（added + freshRefs）。
  */
 export async function materializeStream(
