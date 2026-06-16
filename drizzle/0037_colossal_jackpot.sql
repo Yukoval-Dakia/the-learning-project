@@ -1,0 +1,1 @@
+ALTER TABLE "item_family_calibration" ADD COLUMN "calibrated_n" integer DEFAULT 0 NOT NULL;

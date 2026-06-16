@@ -7,7 +7,7 @@
 //   (d) soft/subjective outcome 一条都不累 (isObjective=false 早返)。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
@@ -218,6 +218,67 @@ describe('updateFamilyCalibration — gates', () => {
     expect(row?.evidence_count).toBe(40);
     expect(Number.isFinite(row?.b_delta ?? Number.NaN)).toBe(true);
   });
+
+  // ── finding #2 修复回归 — distinct 门「晚跨」(n 在 distinct≥5 之前就 ≥20) ──────
+  // 旧 bug：用 effectiveN = n − FAMILY_MIN_EVIDENCE + 1 当 running-mean 基，把 n 门
+  // 跨阈值后、distinct 门未过期间**从未折进** mean 的观测当成已折进样本反推 → 注入
+  // phantom mean-0 样本，永久把 b_delta 向 0 稀释（all-+2 residual、distinct 在 n=26
+  // 才翻 ok → 错得 0.32 vs 正确 0.71）。修复后用 calibrated_n（只数实际折进的残差），
+  // 两门**首次**都过才从 1 起算，无 phantom 样本，b_delta 取正确值——**与门跨越顺序无关**。
+  it('(finding #2) distinct 门晚跨 → b_delta 取正确值 (无 phantom mean-0 稀释)', async () => {
+    const key = familyKey('wenyan', 'k1', 'short_answer', 'manual');
+    // 全答错 (outcome=0, θ=0, b=0) → 每次 residual = −(0−0.5)/0.25 = +2 (clamp +2)。
+    // distinct 门「晚跨」：前 25 条 distinct=3 (<5 → distinct 门未过)，第 26 条起 distinct=8
+    // (≥5 → 两门首次都过)。共跑到 n=36 → 折进 11 条 (n=26..36)。
+    // 修复后正确值：calibrated_n=11，全 +2 → newRawMean=+2，b_delta = shrink(2, 11)
+    //   = (11/(11+20))·2 = 22/31 ≈ 0.70967。
+    // 旧 bug 会因 phantom 样本稀释成 ~0.32（远低于正确值）。
+    let n = 0;
+    for (; n < 36; n++) {
+      const distinct = n < 25 ? 3 : 8; // 第 26 次 (n 索引 25) 起 distinct 门也过
+      await db.transaction(async (tx) => {
+        await updateFamilyCalibration(tx, {
+          familyKey: key,
+          theta: 0,
+          bAnchor: 0,
+          outcome: 0,
+          isObjective: true,
+          distinctQuestionCount: distinct,
+          now: now(),
+        });
+      });
+    }
+    const row = await readFamily(key);
+    expect(row?.evidence_count).toBe(36);
+    // calibrated_n = 11 折进条 (n=26..36)，全 +2 → 精确 b_delta = (11/31)·2。
+    expect(row?.calibrated_n).toBe(11);
+    expect(row?.b_delta).toBeCloseTo((11 / 31) * 2, 6); // ≈ 0.70967，不是 bug 的 ~0.32
+    expect(row?.confidence).toBeCloseTo(11 / 31, 6);
+  });
+
+  // calibrated_n 与 evidence_count 在 distinct 门晚跨时**发散**——这是修复的本质：
+  // evidence_count 数全部客观观测 (含两门未过的预热条)，calibrated_n 只数折进 mean 的条。
+  it('(finding #2) distinct 门晚跨期间 calibrated_n 保持 0、evidence_count 照累', async () => {
+    const key = familyKey('wenyan', 'k1', 'short_answer', 'manual');
+    // 25 条 distinct=3 (<5)：n 早早 ≥20 但 distinct 门未过 → 一条都没折进。
+    for (let i = 0; i < 25; i++) {
+      await db.transaction(async (tx) => {
+        await updateFamilyCalibration(tx, {
+          familyKey: key,
+          theta: 0,
+          bAnchor: 0,
+          outcome: 0,
+          isObjective: true,
+          distinctQuestionCount: 3,
+          now: now(),
+        });
+      });
+    }
+    const row = await readFamily(key);
+    expect(row?.evidence_count).toBe(25); // 全部客观观测照累
+    expect(row?.calibrated_n).toBe(0); // distinct 门未过 → 一条都没折进
+    expect(row?.b_delta).toBe(0); // 门控未过 → b_delta 恒 0
+  });
 });
 
 describe('recordFamilyObservationForAttempt — 端到端 (subject 派生 + 锚解析)', () => {
@@ -414,6 +475,142 @@ describe('mastery_state θ̂ 锚组合 (effectiveFamilyB 消费接缝 sanity)', 
 
     // 单条门控未过 b_delta=0，但 evidence_count=1 证明读到了 θ̂ 路径 (无异常)。
     const fam = await db.select().from(item_family_calibration);
+    expect(fam[0].evidence_count).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// finding #4a 回归 — family 写用 SAVEPOINT 隔离，DB 级错误不毒化主 attempt tx。
+//
+// 复现 submit.ts / paper-submit.ts hook 的结构：外层 attempt tx 先写主路径
+// （θ̂/FSRS/event，这里用 knowledge 行当代理），再在 SAVEPOINT（嵌套 tx）里跑 family
+// 写。family 写若直接跑在外层 tx 上、触发任何 DB 级错误（25P02 毒化 tx），外层
+// db.transaction 会整体 rollback——主路径全丢，JS try/catch 捕到了也救不回（捕 JS 错
+// ≠ 解毒 PG tx）。SAVEPOINT 让 family 写失败只回滚 savepoint，主写完整保留可 COMMIT。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('finding #4a — family 写 SAVEPOINT 隔离 (DB 错误不毒化主 attempt tx)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('SAVEPOINT 包裹下 family 写 DB 错误 → 主路径写 STILL COMMIT', async () => {
+    const mainK = createId();
+    // 模拟 hook：外层 attempt tx 内先写主路径（θ̂/FSRS/event 的代理 = knowledge 行），
+    // 再在 SAVEPOINT 里跑会触发 DB 级错误的 family 写，错误被 hook 的 try/catch 吞。
+    await db.transaction(async (tx) => {
+      // (1) 主路径写（代表 θ̂/FSRS/event 的成功写入）。
+      await tx.insert(knowledge).values({
+        id: mainK,
+        name: `K-${mainK}`,
+        domain: 'wenyan',
+        parent_id: null,
+        created_at: now(),
+        updated_at: now(),
+        version: 0,
+      });
+
+      // (2) SAVEPOINT 包裹的 family 写——内部强制一个 DB 级错误（malformed cast，
+      // 与「malformed-jsonb cast / 23505 / serialization」同类的 25P02 触发器）。
+      // 修复后：SAVEPOINT 回滚只丢这一步，外层 tx 不被毒化。
+      try {
+        await tx.transaction(async (sp) => {
+          // 故意失败的 DB 语句（无效 cast → PG 报错，毒化 savepoint 而非外层 tx）。
+          await sp.execute(sql`SELECT CAST('not-a-number' AS integer)`);
+        });
+      } catch {
+        // hook 的 best-effort 吞错（family 校准是慢热增益层，不 fail 主路径）。
+      }
+
+      // (3) family 写失败后，外层 tx 仍可继续写（证明未被毒化）——若被毒化这里会抛
+      // 25P02。这一步成功 = SAVEPOINT 隔离生效。
+      await tx
+        .update(knowledge)
+        .set({ name: `K-${mainK}-after` })
+        .where(eq(knowledge.id, mainK));
+    });
+
+    // 主路径写 COMMIT 成功（θ̂/FSRS/event 不丢）——这是修复的核心断言。
+    const rows = await db.select().from(knowledge).where(eq(knowledge.id, mainK));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe(`K-${mainK}-after`); // 步骤 (3) 也成功 → tx 未被毒化
+  });
+
+  it('(对照) 不用 SAVEPOINT → 同一 DB 错误毒化外层 tx，主路径写全丢', async () => {
+    const mainK = createId();
+    // 对照组：family 写**直接**跑在外层 tx 上（无 SAVEPOINT），错误毒化整个 tx。
+    // JS try/catch 捕到了错，但 PG tx 已 25P02——外层 db.transaction 整体 rollback。
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.insert(knowledge).values({
+          id: mainK,
+          name: `K-${mainK}`,
+          domain: 'wenyan',
+          parent_id: null,
+          created_at: now(),
+          updated_at: now(),
+          version: 0,
+        });
+        try {
+          // 直接在外层 tx 上跑失败语句 → 毒化 tx（25P02）。
+          await tx.execute(sql`SELECT CAST('not-a-number' AS integer)`);
+        } catch {
+          // 捕到 JS 错，但 PG tx 已毒化——后续写会抛，且整 tx 终将 rollback。
+        }
+        // tx 已毒化：这步会抛 25P02（current transaction is aborted）。
+        await tx
+          .update(knowledge)
+          .set({ name: `K-${mainK}-after` })
+          .where(eq(knowledge.id, mainK));
+      }),
+    ).rejects.toThrow();
+
+    // 整个 tx rollback → 主路径写也丢了（这正是 #4a 要避免的数据丢失）。
+    const rows = await db.select().from(knowledge).where(eq(knowledge.id, mainK));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('SAVEPOINT 包裹真实 recordFamilyObservationForAttempt（happy path）→ 主写 + family 写都 COMMIT', async () => {
+    const mainK = createId();
+    const k = createId();
+    await seedKnowledge(k, 'wenyan');
+    const q = createId();
+    await seedQuestion(q, [k], 'short_answer', 'manual');
+    await seedItemCalibration(q, 0.5);
+
+    // hook 的真实结构：主写 + SAVEPOINT 包裹的真实 family 写（无强制错误 → 都成功）。
+    await db.transaction(async (tx) => {
+      await tx.insert(knowledge).values({
+        id: mainK,
+        name: `K-${mainK}`,
+        domain: 'wenyan',
+        parent_id: null,
+        created_at: now(),
+        updated_at: now(),
+        version: 0,
+      });
+      try {
+        await tx.transaction(async (sp) => {
+          await recordFamilyObservationForAttempt(sp, {
+            primaryKnowledgeId: k,
+            questionId: q,
+            kind: 'short_answer',
+            source: 'manual',
+            difficulty: 3,
+            outcome: 0,
+            judgeRoute: 'exact',
+            now: now(),
+          });
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
+    // 主写 COMMIT。
+    expect(await db.select().from(knowledge).where(eq(knowledge.id, mainK))).toHaveLength(1);
+    // family 写也 COMMIT（SAVEPOINT happy path 不回滚）。
+    const fam = await db.select().from(item_family_calibration);
+    expect(fam).toHaveLength(1);
     expect(fam[0].evidence_count).toBe(1);
   });
 });

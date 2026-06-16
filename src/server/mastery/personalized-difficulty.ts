@@ -153,15 +153,20 @@ export function shrinkageFactor(n: number, priorStrength = SHRINKAGE_PRIOR_STREN
 // 无信息），裸除会爆——故 (a) 分母 floor MIN_FISHER，(b) 每次 residual_logit 量级
 // clamp 到 MAX_RESIDUAL_LOGIT（一次极端 surprise 不该独占家族均值）。保守 clamp。
 //
-// 实现为「运行均值」增量更新：newMean = oldMean + (residual − oldMean)/newN，
-// 数值稳定且 O(1) 状态（只存 b_delta 当 raw mean 的载体？——不，b_delta 存的是
-// **收缩后**的值，故 update 路径用 oldRawMean = b_delta / 旧 shrinkageFactor 反推
-// 旧 raw mean 不稳。改为：从 evidence_count 反推、用「增量到新 raw mean」的闭式：
-//   newRawMean = oldRawMean + (residual − oldRawMean)/newN
+// 实现为「运行均值」增量更新：newMean = oldMean + (residual − oldMean)/foldedN，
+// 数值稳定且 O(1) 状态。b_delta 存的是**收缩后**的值，故 update 路径需反推旧 raw mean：
+//   newRawMean = oldRawMean + (residual − oldRawMean)/calibrated_n
 // 我们不单独持久化 rawMean，而是每次 update 时**重算**需要 oldRawMean——为此
 // updateFamilyCalibration 持久化的 b_delta 是**收缩值**，oldRawMean 由调用方在 tx 内
-// 从「当前 row 的收缩值 ÷ 当前收缩因子」反推（收缩因子在 n>0 时非零，安全）。见
-// updateFamilyCalibration 实现注释。
+// 从「当前 row 的收缩值 ÷ shrinkageFactor(calibrated_n)」反推（因子在 n>0 时非零，安全）。
+//
+// ⚠️ 反推用的有效样本量基是 **calibrated_n**（持久化列，只数实际折进 running mean 的残差
+// 条数），**不是** evidence_count 也不是 n − FAMILY_MIN_EVIDENCE + 1（finding #2 修复）。
+// 后两者在 distinct 门「晚跨」（n 在 distinct≥5 之前就 ≥20）时会把「门未全过期间从未折进
+// mean 的观测」错当成已折进样本，注入 phantom mean-0 把 b_delta 永久稀释。calibrated_n 只
+// 在两门**都**过时才 +1、门未全过期间恒 0，故不变量
+//   storedDelta = shrinkFamilyDelta(runningMeanOf(实际折进的 residuals), calibrated_n)
+// **与门跨越顺序无关**地精确成立。见 updateFamilyCalibration 实现注释。
 // ─────────────────────────────────────────────────────────────────────────────
 const MIN_FISHER = 0.05; // p·(1−p) 下限（p≈0.05 或 0.95 处），防 logit 步长爆。
 const MAX_RESIDUAL_LOGIT = 2.0; // 单次隐含难度偏移量级 clamp（logit），保守。
@@ -195,6 +200,13 @@ export interface FamilyCalibrationRow {
   b_delta: number;
   evidence_count: number;
   confidence: number;
+  /**
+   * 真正折进 b_delta running mean 的残差条数（两门都过起算）。门控未过期间为 0。
+   * 与 evidence_count 区分：见 schema.ts item_family_calibration.calibrated_n 注释。
+   * finding #2 修复——running-mean 反推/前进的有效样本量基（避免 distinct 门晚跨时
+   * 用 evidence_count 当基注入 phantom mean-0 样本稀释 b_delta）。
+   */
+  calibrated_n: number;
 }
 
 /**
@@ -217,6 +229,7 @@ export async function getFamilyCalibration(
       b_delta: item_family_calibration.b_delta,
       evidence_count: item_family_calibration.evidence_count,
       confidence: item_family_calibration.confidence,
+      calibrated_n: item_family_calibration.calibrated_n,
     })
     .from(item_family_calibration)
     .where(eq(item_family_calibration.family_key, key))
@@ -287,28 +300,34 @@ export async function updateFamilyCalibration(
   const existing = await getFamilyCalibration(tx, input.familyKey);
   const oldN = existing?.evidence_count ?? 0;
   const newN = oldN + 1;
+  // 真正折进 running mean 的旧 fold 计数（两门都过起算）。门控未过期间存的是 0。
+  const oldCalibratedN = existing?.calibrated_n ?? 0;
 
-  // ── 运行均值的「有效样本量」与门控起点 ──────────────────────────────────
-  // 裁决（保守 + honest，避免「无第二列存 raw mean」的反推失真）：把**跨过 n 门的
-  // 那一刻**视为家族校准的起点——阈值前 (n<FAMILY_MIN_EVIDENCE) 的观测只用于满足
-  // n/distinct 门，不参与 rawMean。门控通过后，rawMean 是「跨阈值以来观测」的运行均值，
-  // 其有效样本量 effectiveN = n − FAMILY_MIN_EVIDENCE + 1（跨阈值那次 = 1，逐次 +1）。
+  // ── 运行均值的「有效样本量」与门控起点（finding #2 修复）──────────────────
+  // 裁决（保守 + honest）：把**两门 FIRST 都满足**的那一刻视为家族校准的起点，而非
+  // 仅 n 门跨阈值的那一刻。旧实现用 effectiveN = n − FAMILY_MIN_EVIDENCE + 1（即把 n
+  // 门跨阈值当起点）——但当 distinct 门**晚于** n 门满足时（n 在 distinct≥5 之前就 ≥20），
+  // n 门跨阈值后、distinct 门未过的那些观测**从未折进** b_delta（b_delta 恒 0），却被
+  // effectiveN 当成已折进的样本计入，反推 oldRawMean = 0/shrinkage(>1) = 0 注入 phantom
+  // mean-0 样本，永久把 b_delta 向 0 稀释（all-+2 residual、distinct 在 n=26 才翻 ok →
+  // 错得 0.32 vs 正确 0.71）。
   //
-  // 由此可从存储的收缩值**自洽反推**旧 raw mean（无需第二列）：
-  //   storedDelta(上一次) = oldRawMean · shrinkageFactor(oldEffectiveN)
-  //   ⟹ oldRawMean = storedDelta / shrinkageFactor(oldEffectiveN)   （因子在 n>0 非零）
-  // 反推用与写入**同一个 effectiveN 基**，故 round-trip 精确（无 effectiveN≠n 的错配）。
-  // 门控未过（gatesPassedBefore=false）时上一次存的就是 0，oldRawMean 从 0 起算正确
-  // ——因为我们本就把跨阈值视为起点，门控前的 rawMean 按设计丢弃（不是 bug，是裁决）。
+  // 修复：用持久化的 calibrated_n（只数实际折进 mean 的残差条数）当运行均值的有效样本量
+  // 基，**与门跨越顺序无关**。不变量：
+  //   storedDelta(上一次) = oldRawMean · shrinkageFactor(oldCalibratedN)
+  //   ⟹ oldRawMean = storedDelta / shrinkageFactor(oldCalibratedN)   （因子在 n>0 非零）
+  // 反推用与写入**同一个 calibrated_n 基**，round-trip 精确。门控未过期间 calibrated_n=0、
+  // b_delta=0，故两门**首次**都过时 newCalibratedN = 1、newRawMean = residual（不掺任何
+  // 预热期的 phantom 样本，无论 distinct 门何时跨）。
   const distinctOk = input.distinctQuestionCount >= FAMILY_MIN_DISTINCT_QUESTIONS;
-  const gatesPassedBefore = oldN >= FAMILY_MIN_EVIDENCE && distinctOk;
   const gatesPassedNow = newN >= FAMILY_MIN_EVIDENCE && distinctOk;
+  // 上次是否已折进过（两门都过过 → calibrated_n>0）。注意：不用 oldN≥阈值 && distinctOk
+  // 判断，因为 distinctQuestionCount 是当前传入值，可能这次才首次过 distinct 门——折进
+  // 与否的真相是「上次有没有真折进」，即 oldCalibratedN>0。
+  const foldedBefore = oldCalibratedN > 0;
 
-  const oldEffectiveN = oldN - FAMILY_MIN_EVIDENCE + 1; // 跨阈值以来的旧有效计数
   const oldRawMean =
-    gatesPassedBefore && existing != null && oldEffectiveN > 0
-      ? existing.b_delta / shrinkageFactor(oldEffectiveN)
-      : 0;
+    foldedBefore && existing != null ? existing.b_delta / shrinkageFactor(oldCalibratedN) : 0;
 
   // 本次客观观测的隐含难度偏移（logit），按锚权重缩放（弱锚降权）。
   const anchorWeight = input.anchorWeight ?? 1;
@@ -317,19 +336,20 @@ export async function updateFamilyCalibration(
 
   let storedDelta = 0;
   let storedConfidence = 0;
+  let newCalibratedN = oldCalibratedN; // 门控未过时保持原 fold 计数（恒 0）。
   if (gatesPassedNow) {
-    // 跨阈值以来的有效计数。刚跨阈值这次 = 1；之后 = oldEffectiveN + 1。
-    const effectiveN = gatesPassedBefore ? oldEffectiveN + 1 : 1;
-    // 运行均值增量更新。刚跨阈值（gatesPassedBefore=false）→ newRawMean = residual。
-    const newRawMean = gatesPassedBefore
-      ? oldRawMean + (residual - oldRawMean) / effectiveN
+    // 折进计数 +1。两门首次都过（foldedBefore=false）→ 从 1 起算。
+    newCalibratedN = foldedBefore ? oldCalibratedN + 1 : 1;
+    // 运行均值增量更新。两门首次都过（foldedBefore=false）→ newRawMean = residual。
+    const newRawMean = foldedBefore
+      ? oldRawMean + (residual - oldRawMean) / newCalibratedN
       : residual;
-    // confidence = 收缩因子；b_delta = 收缩后的家族偏移。用同一 effectiveN 基，
+    // confidence = 收缩因子；b_delta = 收缩后的家族偏移。用同一 calibrated_n 基，
     // 保证下一次 update 的反推 round-trip 精确。
-    storedConfidence = shrinkageFactor(effectiveN);
-    storedDelta = shrinkFamilyDelta(newRawMean, effectiveN);
+    storedConfidence = shrinkageFactor(newCalibratedN);
+    storedDelta = shrinkFamilyDelta(newRawMean, newCalibratedN);
   }
-  // 门控未过：storedDelta/storedConfidence 保持 0（只累 evidence_count）。
+  // 门控未过：storedDelta/storedConfidence 保持 0、calibrated_n 不动（只累 evidence_count）。
 
   await tx
     .insert(item_family_calibration)
@@ -339,6 +359,7 @@ export async function updateFamilyCalibration(
       b_delta: storedDelta,
       evidence_count: newN,
       confidence: storedConfidence,
+      calibrated_n: newCalibratedN,
       updated_at: input.now,
     })
     .onConflictDoUpdate({
@@ -347,6 +368,7 @@ export async function updateFamilyCalibration(
         b_delta: storedDelta,
         evidence_count: newN,
         confidence: storedConfidence,
+        calibrated_n: newCalibratedN,
         updated_at: input.now,
       },
     });

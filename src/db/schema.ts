@@ -826,6 +826,17 @@ export const item_family_calibration = pgTable(
     b_delta: real('b_delta').notNull().default(0),
     // 累积的客观观测条数（family 的有效样本量）。n 门控（≥20）读它。
     evidence_count: integer('evidence_count').notNull().default(0),
+    // YUK-361 Phase 5 finding #2 修复 — 真正被折进 running mean 的残差条数（=「两门
+    // 都过」起算的 fold 计数）。与 evidence_count 区分：evidence_count 数**全部**客观
+    // 观测（含两门未过的预热条），calibrated_n 只数**实际折进 b_delta running mean**
+    // 的条数。两者在 distinct 门「晚跨」时会发散：若 n 在 distinct≥5 之前就 ≥20，那些
+    // 早期观测累进 evidence_count 但 b_delta 仍 0（distinct 门没过 → 没折进 mean），
+    // calibrated_n 保持 0；待 distinct 门也过时从 1 起算。不变量：
+    //   storedDelta = shrinkFamilyDelta(runningMeanOf(folded residuals), calibrated_n)
+    // 精确成立，**与门跨越顺序无关**——反推 oldRawMean = b_delta / shrinkageFactor(
+    // calibrated_n) 用同一基，round-trip 精确。两门一旦都过即恒过（n 只增、distinct 只
+    // 增），故 calibrated_n 此后每条客观观测 +1。门控未过期间恒 0。
+    calibrated_n: integer('calibrated_n').notNull().default(0),
     // 置信度 0-1，= shrinkage 因子 n/(n+priorStrength)。门控未过也可计算（只是不应用 delta）。
     confidence: real('confidence').notNull().default(0),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

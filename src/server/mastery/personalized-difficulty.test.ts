@@ -144,17 +144,29 @@ describe('effectiveFamilyB', () => {
   });
 
   it('b_anchor + b_delta (家族调整后的有效 b)', () => {
-    const row = { family_key: 'k', b_delta: 0.3, evidence_count: 40, confidence: 0.67 };
+    const row = {
+      family_key: 'k',
+      b_delta: 0.3,
+      evidence_count: 40,
+      confidence: 0.67,
+      calibrated_n: 21,
+    };
     expect(effectiveFamilyB(0.7, row)).toBeCloseTo(1.0, 10);
   });
 
   it('b_delta=0 (门控未过) → 不改 b (与原锚相等)', () => {
-    const row = { family_key: 'k', b_delta: 0, evidence_count: 5, confidence: 0 };
+    const row = { family_key: 'k', b_delta: 0, evidence_count: 5, confidence: 0, calibrated_n: 0 };
     expect(effectiveFamilyB(0.7, row)).toBe(0.7);
   });
 
   it('负 b_delta 下调有效 b', () => {
-    const row = { family_key: 'k', b_delta: -0.4, evidence_count: 50, confidence: 0.71 };
+    const row = {
+      family_key: 'k',
+      b_delta: -0.4,
+      evidence_count: 50,
+      confidence: 0.71,
+      calibrated_n: 31,
+    };
     expect(effectiveFamilyB(1.0, row)).toBeCloseTo(0.6, 10);
   });
 });

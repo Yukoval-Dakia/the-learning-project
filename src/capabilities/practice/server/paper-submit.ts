@@ -598,21 +598,38 @@ export async function submitPaperSlot(
       });
 
       // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
-      // 同 tx，best-effort（try/catch 吞错，绝不 fail 主路径）。门 (a) 在内部判 judge
-      // route 客观性：paper judge route = invoked.route，非客观路由（exact/keyword 之外，
-      // 含 photo-only 的 null）内部早返不触 DB。primary knowledge = slot 的 primaryKnowledgeId
-      // （回落 q.knowledge_ids[0]，与 θ̂ / FSRS 同源 referencedKnowledgeIds 的首元素一致）。
+      // 同 tx（计数与作答一致），best-effort：绝不 fail 上面的 θ̂/FSRS/event 主路径。
+      // 门 (a) 在内部判 judge route 客观性：paper judge route = invoked.route，非客观
+      // 路由（exact/keyword 之外，含 photo-only 的 null）内部早返不触 DB。
+      //
+      // finding #3b 修复 — primary knowledge **必须**用 q.knowledge_ids[0]（题目自身的
+      // 主 knowledge），而非 slot 的 input.primaryKnowledgeId。因为 family_key 与
+      // countDistinctQuestionsInFamily 的 distinct 计数基都按 `knowledge_ids->>0`
+      // 取真相（见 personalized-difficulty.ts 文档：canonical = question.knowledge_ids[0]）。
+      // 若改用 slot.primaryKnowledgeId（plan 的 slot 指派，可能 ≠ 题的 knowledge_ids[0]），
+      // family_key 与 distinct 计数基会指向**不同**的题集 → distinct 门永远数错 / 数不到，
+      // 门控失效。review 路径本就传 q.knowledge_ids[0]，此处对齐到同一真相。
       // outcome：partial→1（与上面 θ̂ 一致的保守占位语义，部分对≈成功证据）。
+      //
+      // finding #4a 修复 — 用 SAVEPOINT（嵌套 tx）隔离家族写：family 语句直接跑在外层
+      // tx 上时，任何 DB 级错误（advisory lock 序列化/死锁、statement timeout、并发首插
+      // 的 23505 unique-violation、malformed-jsonb cast）会**毒化** PG tx（25P02），
+      // 外层 sql.begin 随后整体 rollback + re-throw——θ̂/FSRS/event 全丢，JS 的
+      // try/catch 捕到了也救不回（捕 JS 错 ≠ 解毒 PG tx）。tx.transaction(...) 经
+      // drizzle 转成 SAVEPOINT，family 写失败只回滚 savepoint，主 attempt 写完整保留可
+      // COMMIT。同 Phase 3 telemetry-in-tx bug 同类修复。
       try {
-        await recordFamilyObservationForAttempt(tx, {
-          primaryKnowledgeId: input.primaryKnowledgeId ?? referencedKnowledgeIds[0],
-          questionId: input.questionId,
-          kind: q.kind,
-          source: q.source,
-          difficulty: q.difficulty,
-          outcome: attemptOutcome === 'failure' ? 0 : 1,
-          judgeRoute: invoked?.route ?? null,
-          now,
+        await tx.transaction(async (sp) => {
+          await recordFamilyObservationForAttempt(sp, {
+            primaryKnowledgeId: q.knowledge_ids[0],
+            questionId: input.questionId,
+            kind: q.kind,
+            source: q.source,
+            difficulty: q.difficulty,
+            outcome: attemptOutcome === 'failure' ? 0 : 1,
+            judgeRoute: invoked?.route ?? null,
+            now,
+          });
         });
       } catch (err) {
         console.warn('recordFamilyObservationForAttempt (paper) failed (non-fatal):', err);
