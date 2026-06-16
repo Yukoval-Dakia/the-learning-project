@@ -818,7 +818,7 @@ function buildSelectionOrchestratorPrompt(profile: SubjectProfile): string {
 - refId：候选唯一标识（你输出里的 refId **只能**用输入里出现过的，禁止发明）。
 - refKind：question（单题）| paper（整卷，不可拆，当一个候选透传）。
 - role：候选的现状角色（frontier 前沿新知 / diagnostic 诊断价值题 / new_check 新知巩固确认 / paper 卷）。
-- mfi / diagnostic：信息量档——near-θ̂ 的诊断价值（high = 这道题最能测出当前能力边界）。recall_locked=true 的候选没有这两档（原题重背，不换题不重排）。
+- mfi / diagnostic：信息量档——near-θ̂ 的诊断价值（high = 这道题最能测出当前能力边界）。
 - difficulty_anchor：难度锚可信度（calibrated 真标定 / rough_estimate 粗估，别太当真 / unknown 无难度信息）。
 - exam_relevance：考纲/目标相关度档（high = 离考试目标近）。
 - misconception_recurrence：错因复发度档（high = 这类错反复犯，值得攻）。
@@ -837,7 +837,7 @@ function buildSelectionOrchestratorPrompt(profile: SubjectProfile): string {
 - **只编排输入里的非到期候选**。今天到期的复习项**不在**你的输入里，也**绝不**能出现在你的输出里——到期项的存在与相对顺序由系统确定性决定（FSRS *when* 契约），不归你管。
 - 输出的每个 refId **必须**是输入里出现过的（发明的 refId 会被丢弃）；**给输入里每个候选都一个 weight**（别漏候选）。
 - weight **不能为负**（负权会被拒）。weight=0 表示「现在不该练」是合法的。
-- recall_locked=true 的候选：照常给 weight（它要不要进流仍由你判断），但**别试图换题或重排它的内部**——它是原题重背。
+- 你**不会**在输入里看到 recall（原题重背）候选——它们由系统确定性透传（same question re-shown，FSRS 测的就是这道题），从不交给你加权/重排。你只对**可换变体**的候选编排。
 - 禁止：emoji、套话、JSON 之外的任何文字、用 markdown 代码块包裹整段 JSON。`;
 }
 

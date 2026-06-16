@@ -194,7 +194,10 @@ export async function composeSoftmaxStream(
     reasoning: dueReasoning(d.knowledgeLabel),
     // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
   }));
-  const dueRefSet = new Set(dueDrafts.map((d) => d.ref_id));
+  // 到期项的 L1 真相序（dedup 后，due_at ASC）——assertL3Invariants 据此校验 plan 里
+  //   due 子序列**顺序**与 L1 一致（铁律②不止 presence，还含 intra-day 序）。
+  const dueRefOrder = dueDrafts.map((d) => d.ref_id);
+  const dueRefSet = new Set(dueRefOrder);
 
   // ② 非到期候选（variant + new_check）——去重后是 sampler 的池子。
   const variantRaws: NonDueRaw[] = inputs.variantItems
@@ -340,9 +343,11 @@ export async function composeSoftmaxStream(
     warned: assembled.length > warn,
   };
 
-  // ── L3 守门断言（presence / recall）——assemble 后校验，违例即 bug，throw 留痕
-  //    （这是确定性逻辑 bug，不是 LLM/IO 失败——不该被 fallback 吞，要在测试/CI 暴露）。
-  assertL3Invariants(plan, dueRefSet, recallLockedRefs, sampledInclusion);
+  // ── L3 守门断言（presence + due-ORDER / recall）——assemble 后校验，违例即 bug，
+  //    throw 留痕（这是确定性逻辑 bug，不是 LLM/IO 失败——不该被 fallback 吞，要在
+  //    测试/CI 暴露）。due-ORDER 是 review CLUSTER B 加的深防御：plan 里 due 子序列必须
+  //    与 inputs 的 L1 序逐一相等（不止 presence）。
+  assertL3Invariants(plan, dueRefOrder, dueRefSet, recallLockedRefs, sampledInclusion);
 
   // 截断后被砍掉的 sampled 项要从 inclusion map 移除（没物化就不该记 π_i）。
   const keptRefs = new Set(plan.items.map((it) => it.ref_id));
@@ -416,13 +421,20 @@ function legacyFallback(inputs: ComposerInputs): ComposeSoftmaxResult {
 // ───────────────────────────────────────────────────────────────────────────
 // L3：容量守门——超 max 截断，但**到期项受保护**（presence 铁律②优先）。
 // ───────────────────────────────────────────────────────────────────────────
+// 行为契约（review CLUSTER F）：**到期 presence（铁律②）优先于容量硬顶**。当到期项
+// 自身就超过 `max` 时，本守门**有意 over-emit**——返回的 `kept` 长度可 > max（全部到期项
+// 都在，非到期/卷被砍到 0）。这与 legacy composeDailyStream 的「无条件 slice(0, max)」**有意
+// 不同**：legacy 会连到期项一起砍（presence 让位于硬顶），档2 反过来让 presence 赢。
+// 调用方/下游不得假设 `truncated === true ⇒ length ≤ max`——dues>max 时两者同真。
+// 这是设计选择不是 bug：复习到期是 FSRS *when* 契约，宁可今天题多也不能漏复习。
 function capacityGuard(
   assembled: Omit<StreamPlanItem, 'position'>[],
   dueRefSet: Set<string>,
   max: number,
 ): { kept: Omit<StreamPlanItem, 'position'>[]; truncated: boolean } {
   if (assembled.length <= max) return { kept: assembled, truncated: false };
-  // 必须保留全部到期项；非到期/卷按当前顺序填满剩余容量。
+  // 必须保留全部到期项；非到期/卷按当前顺序填满剩余容量。dues.length 可 > max
+  // ⇒ remaining=0 ⇒ keptRest=[] ⇒ kept 仅到期项（长度 = dues.length > max，over-cap，有意）。
   const dues = assembled.filter((d) => dueRefSet.has(d.ref_id));
   const rest = assembled.filter((d) => !dueRefSet.has(d.ref_id));
   const remaining = Math.max(0, max - dues.length);
@@ -439,18 +451,32 @@ function capacityGuard(
 // ───────────────────────────────────────────────────────────────────────────
 function assertL3Invariants(
   plan: StreamPlan,
+  dueRefOrder: readonly string[],
   dueRefSet: Set<string>,
   recallLockedRefs: Set<string>,
   sampledInclusion: Map<string, number>,
 ): void {
   const planRefs = new Set(plan.items.map((it) => it.ref_id));
-  // 铁律②：每个到期项必须在最终流（presence）。容量守门已保护到期项——若仍缺，是 bug。
+  // 铁律②（presence）：每个到期项必须在最终流。容量守门已保护到期项——若仍缺，是 bug。
   for (const dueRef of dueRefSet) {
     if (!planRefs.has(dueRef)) {
       throw new Error(
         `[softmax-selection] L3 due-presence violated: due item ${dueRef} missing from final plan`,
       );
     }
+  }
+  // 铁律②（intra-day 序，review CLUSTER B 深防御）：plan.items 里到期项的子序列必须与
+  // inputs 的 L1 序（due_at ASC，dedup 后）逐一相等——LLM/装配绝不能重排到期项。
+  const planDueSubsequence = plan.items.map((it) => it.ref_id).filter((r) => dueRefSet.has(r));
+  if (
+    planDueSubsequence.length !== dueRefOrder.length ||
+    planDueSubsequence.some((r, i) => r !== dueRefOrder[i])
+  ) {
+    throw new Error(
+      `[softmax-selection] L3 due-order violated: plan due subsequence [${planDueSubsequence.join(
+        ', ',
+      )}] != L1 order [${dueRefOrder.join(', ')}]`,
+    );
   }
   // 铁律③：recall-locked 项**不得**出现在 sampledInclusion（它们走确定性透传，从不抽样）。
   for (const ref of recallLockedRefs) {

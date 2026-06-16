@@ -398,8 +398,13 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('到期');
       // Bucketed signals, not raw floats (signal-fidelity mitigation).
       expect(prompt).toMatch(/high|mid|low/);
-      // recall-locked candidates must not be re-ordered internally.
-      expect(prompt).toContain('recall_locked');
+      // CLUSTER E (review)：prompt must NOT claim recall candidates are in the LLM
+      // input — they are stripped before buildSelectionOrchestratorInput. The
+      // misleading `recall_locked=true 的候选：照常给 weight` line was removed.
+      expect(prompt).not.toContain('recall_locked');
+      // Instead the prompt tells the LLM it won't see recall candidates (deterministic
+      // same-question passthrough — never weighted/sampled).
+      expect(prompt).toContain('原题重背');
     }
   });
 });

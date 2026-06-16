@@ -1,11 +1,33 @@
 // M2 (YUK-316) — 流 API 行为：lazy compose（仅今日）、状态机推进、双日隔离、
 // recompose 保留非 pending 项。composer 混排规则本体在 stream-composer.unit.test.ts。
 
-import { material_fsrs_state, practice_stream_item, question } from '@/db/schema';
+import {
+  event,
+  item_calibration,
+  mastery_state,
+  material_fsrs_state,
+  mistake_variant,
+  practice_stream_item,
+  question,
+  selection_observation,
+} from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+
+// G1 (review)：route 永不传 composeDeps，production lazy-compose 走 defaultRunTaskFn →
+//   动态 import('@/server/ai/runner') runTask。mock 该模块证明**真实路由**能命中 LLM 软
+//   选题路径（且绝不命中 live endpoint）。只有 samplable 非到期候选在场时才会触发——
+//   其余 due-only 测试 samplable=0，runTask 不被调，mock 无副作用。
+const runTaskMock = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+  text: '',
+}));
+vi.mock('@/server/ai/runner', () => ({
+  runTask: (...args: unknown[]) =>
+    (runTaskMock as unknown as (...a: unknown[]) => unknown)(...args),
+}));
+
 import { GET, PATCH, POST } from './stream';
 
 const TODAY = new Date().toLocaleDateString('sv-SE');
@@ -54,6 +76,81 @@ async function seedDueQuestion(): Promise<string> {
   return qid;
 }
 
+/**
+ * 非到期变体候选（samplable）：parent 近期 failure + active mistake_variant 指向变体题，
+ * 变体题挂 KC + mastery_state + item_calibration.b → candidate-signals 算得出 MFI。
+ * @returns 变体题 id。
+ */
+async function seedVariantCandidate(): Promise<string> {
+  const kc = createId();
+  const now = new Date();
+  const parentId = createId();
+  const variantId = createId();
+  for (const [id, kids] of [
+    [parentId, []],
+    [variantId, [kc]],
+  ] as Array<[string, string[]]>) {
+    await testDb().insert(question).values({
+      id,
+      kind: 'choice',
+      prompt_md: '题干',
+      reference_md: 'B',
+      knowledge_ids: kids,
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      figures: [],
+      image_refs: [],
+      structured: null,
+      metadata: {},
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
+  await testDb().insert(mistake_variant).values({
+    id: createId(),
+    parent_question_id: parentId,
+    variant_question_id: variantId,
+    status: 'active',
+    failure_reasons: [],
+    created_at: now,
+    updated_at: now,
+  });
+  await testDb().insert(event).values({
+    id: createId(),
+    actor_kind: 'user',
+    actor_ref: 'me',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: parentId,
+    outcome: 'failure',
+    payload: {},
+    created_at: now,
+  });
+  await testDb().insert(mastery_state).values({
+    id: createId(),
+    subject_kind: 'knowledge',
+    subject_id: kc,
+    theta_hat: 0,
+    evidence_count: 5,
+    success_count: 3,
+    fail_count: 2,
+    theta_precision: 4,
+    updated_at: now,
+  });
+  await testDb().insert(item_calibration).values({
+    id: createId(),
+    question_id: variantId,
+    b: 0,
+    track: 'hard',
+    source: 'llm_prior',
+    created_at: now,
+    updated_at: now,
+  });
+  return variantId;
+}
+
 function getReq(date?: string): Request {
   const qs = date ? `?date=${date}` : '';
   return new Request(`http://t/api/practice/stream${qs}`);
@@ -62,6 +159,7 @@ function getReq(date?: string): Request {
 describe('practice stream API', () => {
   beforeEach(async () => {
     await resetDb();
+    runTaskMock.mockClear();
   });
 
   it('GET today lazy-composes from due signal and persists the stream', async () => {
@@ -176,5 +274,45 @@ describe('practice stream API', () => {
     const sameRef = body.items.filter((i) => i.ref_id === qid);
     expect(sameRef).toHaveLength(1);
     expect(sameRef[0].status).toBe('done');
+  });
+
+  it('G1 (review)：真实路由 GET /api/practice/stream 在有非到期候选时命中 LLM 软选题路径（runTask mocked）', async () => {
+    // 种一个 samplable 非到期变体候选 → 真实路由 lazy-compose 走 softmax_mfi（默认 policy）
+    //   → tryLlmOrchestration → defaultRunTaskFn → import('@/server/ai/runner') runTask（mocked）。
+    await seedDueQuestion();
+    const variantId = await seedVariantCandidate();
+
+    // mock runTask 出该候选的合法权重（绝不命中 live endpoint）。
+    runTaskMock.mockImplementation(async (kind: string) => {
+      expect(kind).toBe('SelectionOrchestratorTask');
+      return {
+        text: JSON.stringify({
+          candidates: [{ refId: variantId, weight: 2, role: 'diagnostic', reason: 'x' }],
+        }),
+      };
+    });
+
+    const res = await GET(getReq('today'));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: Array<{ ref_id: string }> };
+
+    // 证明生产路由真到达了 LLM 编排器（这是旧 route 测试的盲点：只 seed due → samplable=0）。
+    expect(runTaskMock).toHaveBeenCalledTimes(1);
+    expect(runTaskMock.mock.calls[0][0]).toBe('SelectionOrchestratorTask');
+
+    // 候选被软选题路径抽进流（rng 默认 Math.random，π_i 由 weights 决定；这里只断言路径
+    //   被命中——候选可能被抽中也可能不被抽中，断言聚焦「LLM 路径已执行」+「π_i 被记」）。
+    const obs = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(eq(selection_observation.date, TODAY));
+    // 软选题路径执行 ⇒ policy=softmax_mfi 的观测（若候选被抽中）。至少证明路径未走 legacy。
+    for (const o of obs) {
+      expect(o.policy).toBe('softmax_mfi');
+      expect(o.inclusion_probability).toBeGreaterThan(0);
+      expect(o.inclusion_probability).toBeLessThanOrEqual(1);
+    }
+    // 到期项始终 present（无论候选抽中与否）。
+    expect(body.items.length).toBeGreaterThan(0);
   });
 });

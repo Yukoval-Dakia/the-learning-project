@@ -80,7 +80,11 @@ function bSourceLabel(bSource: CollectedSignal['bSource']): string {
 function projectCandidate(sig: CollectedSignal): string {
   const parts: string[] = [`refId=${sig.refId}`, `refKind=${sig.refKind}`, `role=${sig.role}`];
   if (sig.recallLocked) {
-    // recall-locked：原题重背，不进 MFI 评分（ADR-0030/ADR-0042:36）——明确告诉 LLM。
+    // DEAD UNDER CURRENT WIRING（review CLUSTER E）：recall-locked 候选在
+    // softmax-selection.ts 里被切出 `samplable` 池**之前** buildSelectionOrchestratorInput
+    // 被调用——LLM 永远看不到 recall 项（它们走确定性 same-question 透传，从不加权/重排）。
+    // 此分支因此不可达。保留它当深防御（若未来有人改 wiring 把 recall 喂进来，至少
+    // 投影出一个明确「不重排不换题」的标记而非裸 MFI），但**不应**在生产路径触发。
     parts.push('recall_locked=true (原题重背，不重排不换题)');
   } else {
     parts.push(`mfi=${bucketMfi(sig.mfiScore)}`);
