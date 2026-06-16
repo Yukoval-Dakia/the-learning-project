@@ -30,8 +30,6 @@ import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
-import { mfiScore } from '@/core/selection-signals';
-import { difficultyToLogitB } from '@/core/theta';
 import type { Db } from '@/db/client';
 import { item_calibration, learning_item, material_fsrs_state, question } from '@/db/schema';
 import { getMasteryState } from '@/server/mastery/state';
@@ -134,14 +132,20 @@ export interface ScanInput {
  * Task 13 字面要求：「manual/accepted = high tier 1, web_sourced = tier 2, llm-only/draft =
  * tier 3」。manual/accepted 真题在 provenance 里走 tier 1（authentic 经 ingestion marker）；
  * 纯 manual 无 ingestion marker 的题在 provenance 里会落 tier 4（generated）——但 Task 13 要求
- * 把「人工/已接受」当**最高获取档**。本映射用 source 列做这层修正：source='manual' / 'embedded'
- * （人工录入/已接受）当获取档 1；其余按 provenance tier 降档。这样：
+ * 把「人工/已接受」当**最高获取档**。本映射用 source 列做这层修正：source='manual' / 'imported'
+ * （人工录入 / 人工导入既存题）当获取档 1；其余按 provenance tier 降档。这样：
  *   - 真正的真题（带 ingestion_session_id）→ provenance 1 → 获取 1 ✓
  *   - 人工题（source='manual'，无 ingestion marker）→ source 修正 → 获取 1 ✓
  *   - web_sourced 已通过 source_verify 的 active 题 → provenance 2 → 获取 2 ✓
  *   - llm-only / 草稿（quiz_gen / variant / 未 verify）→ provenance 3|4 → 获取 3 ✓
+ *
+ * **`'embedded'` 刻意不在此集合**（review FINDING #3 修正）：source='embedded' 行是
+ * embedded_check_generate.ts 写的 **AI 生成练习检测题**（provenance.ts §MIX-LAYER DEFENCE：
+ * 无 ingestion_session_id → deriveSourceTier 正确落 tier 4 'generated'）。若把 embedded 当
+ * 获取档 1，「只被 embedded AI 检测题覆盖」的 KC 会误判 hasHighTier=true → R2 永不请求真正
+ * 的高可信题。embedded 是低可信生成档（→ 获取档 3），故按 provenance tier 降档，不进白名单。
  */
-const HIGH_TIER_MANUAL_SOURCES = new Set(['manual', 'embedded', 'imported']);
+const HIGH_TIER_MANUAL_SOURCES = new Set(['manual', 'imported']);
 
 export function acquisitionTierForQuestion(q: PoolQuestion): 1 | 2 | 3 {
   if (HIGH_TIER_MANUAL_SOURCES.has(q.source)) return 1;
@@ -172,9 +176,9 @@ export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
   return 'stretch';
 }
 
-function bAnchorFor(q: PoolQuestion): number {
-  return q.calibrationB ?? difficultyToLogitB(q.difficulty);
-}
+// review FINDING #4：`bAnchorFor`（calibrationB ?? difficultyToLogitB 弱锚兜底）已删除。
+// 唯一 caller 是 R3，但 R3 现在只信真实 item_calibration.b（不拿 difficulty_proxy 当 band
+// 真值），故弱锚兜底无处可用。`difficulty` 字段仍保留在 PoolQuestion 上（其它规则/未来用途）。
 
 // ── 优先级 + 指纹 ─────────────────────────────────────────────────────────────
 
@@ -331,11 +335,25 @@ export function scanCoverageGaps(
     }
 
     // ── R3: 没有近-θ̂ 题 → calibrationCandidate（诊断/MFI 缺口）──────────────
-    // 「MFI/诊断选题反复缺近-θ̂ 题」的结构性根因 = 池里根本没有 b 落 'near' band 的题。
-    // 用 MFI 评分（p(1−p) 在 |b−θ̂| 小处最大）确认：没有任何题信息量过阈值 → 诊断缺口。
+    // 「MFI/诊断选题反复缺近-θ̂ 题」的结构性根因 = 池里根本没有 b 落 'near' band 的**可靠锚**题。
+    //
+    // review FINDING #4 修正——**只在有真实 item_calibration.b 的题上判 band**：
+    //   旧实现用 bAnchorFor(q)（calibrationB ?? difficultyToLogitB(difficulty)）在 R3 里把
+    //   difficulty_proxy 弱锚当**满权**真值用。但 theta.ts:difficultyToLogitB 自身注释钉死它是
+    //   「占位/非真值，斜率无标定来源，caller 必须降权 ~0.3 + 优先 item_calibration.b」。拿一个
+    //   冷启 proxy 当 band 真值会两头错：(a) proxy 恰好落 'near' → 误判已有近-θ̂ 题 → 漏诊断缺口；
+    //   (b) proxy 落 'near' 外 → 据不可靠 proxy 误发 calibrationCandidate → 洪泛校准目标。
+    //   故 R3 的诊断决策**只信真实标定 b**：池里没有任何 **calibrated** 题落 'near' band，就是
+    //   「缺可靠近-θ̂ 锚」的结构性根因——proxy-only 的题不算可靠近-θ̂ 锚（它们的 b 不可信），
+    //   正好该去补一道带真标定的近-θ̂ 题。无标定题被跳过，不参与 R3 判定。
+    //
+    // review FINDING #5 修正——**删除恒真的 `&& mfiScore > 0` 死子句**：Rasch Fisher info
+    //   p(1−p) 对任何有限 θ̂/b 恒 > 0（p∈(0,1)），该子句永不为假，从不构成信息量门槛；保留它
+    //   只会让人误以为这里有个 MFI 阈值闸（其实没有）。诊断缺口由「band='near' 的可靠锚是否存在」
+    //   单独判定即可。
     const hasNearTheta = pool.some((q) => {
-      const b = bAnchorFor(q);
-      return difficultyBandFor(b, f.thetaHat) === 'near' && mfiScore(f.thetaHat, b) > 0;
+      if (q.calibrationB === null) return false; // proxy-only 题不算可靠近-θ̂ 锚。
+      return difficultyBandFor(q.calibrationB, f.thetaHat) === 'near';
     });
     if (!hasNearTheta) {
       push(f, 'diagnostic', {

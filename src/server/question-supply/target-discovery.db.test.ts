@@ -211,6 +211,75 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
     expect(typeof payload.stop_condition).toBe('string');
   });
 
+  // review FINDING #1 + #2 — query-based fingerprint cooldown breaks the unbounded
+  // re-dispatch loop. Dispatching the SAME target (same fingerprint, gap still
+  // unsatisfied — no fresh active question) twice must NOT enqueue a second job:
+  // the second call finds the first dispatch's persisted experimental:question_supply
+  // event (status='dispatched') within the cooldown window and SKIPS.
+  it('SKIPS a second dispatch of the same unsatisfied fingerprint within the cooldown window (no second enqueue)', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    await seedActiveLearningItem([kid]);
+
+    const targets = await discoverSupplyTargets(db);
+    const frontierTarget = targets.find((t) => t.gapKind === 'frontier_zero');
+    if (!frontierTarget) throw new Error('expected a frontier_zero target');
+
+    // Injectable enqueue captures every boss.send (assert via call count).
+    const enqueued: Array<{ queue: string; data: Record<string, unknown> }> = [];
+    const enqueue: EnqueueFn = async (queue, data) => {
+      enqueued.push({ queue, data });
+      return `job-${enqueued.length}`;
+    };
+
+    // First dispatch → real boss.send (enqueued once), writes a dispatched event.
+    const [first] = await dispatchSupplyTargets(db, [frontierTarget], { enqueue });
+    expect(first.status).toBe('dispatched');
+    expect(enqueued).toHaveLength(1);
+
+    // Second dispatch of the SAME fingerprint (gap still unsatisfied) → cooldown SKIP.
+    // Re-run the scanner: the KC still has zero questions → same fingerprint reappears.
+    const targets2 = await discoverSupplyTargets(db);
+    const frontierTarget2 = targets2.find((t) => t.gapKind === 'frontier_zero');
+    if (!frontierTarget2) throw new Error('expected a frontier_zero target on re-scan');
+    expect(frontierTarget2.fingerprint).toBe(frontierTarget.fingerprint);
+
+    const [second] = await dispatchSupplyTargets(db, [frontierTarget2], { enqueue });
+    expect(second.status).toBe('skipped');
+    expect(second.stopCondition).toContain('cooldown');
+    // The crux: NO second boss.send.
+    expect(enqueued).toHaveLength(1);
+
+    // The skip still emits an observability event (status='skipped') for the second target.
+    const skipEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.subject_id, frontierTarget2.id));
+    expect(skipEvents).toHaveLength(1);
+    expect((skipEvents[0].payload as Record<string, unknown>).status).toBe('skipped');
+  });
+
+  // cooldownDays:0 disables the cooldown (escape hatch) — same fingerprint re-dispatches.
+  it('cooldownDays=0 disables cooldown → same fingerprint re-dispatches', async () => {
+    const kid = createId();
+    await seedKnowledge(kid);
+    await seedActiveLearningItem([kid]);
+
+    const targets = await discoverSupplyTargets(db);
+    const frontierTarget = targets.find((t) => t.gapKind === 'frontier_zero');
+    if (!frontierTarget) throw new Error('expected a frontier_zero target');
+
+    const enqueued: Array<{ queue: string }> = [];
+    const enqueue: EnqueueFn = async (queue) => {
+      enqueued.push({ queue });
+      return `job-${enqueued.length}`;
+    };
+
+    await dispatchSupplyTargets(db, [frontierTarget], { enqueue, cooldownDays: 0 });
+    await dispatchSupplyTargets(db, [frontierTarget], { enqueue, cooldownDays: 0 });
+    expect(enqueued).toHaveLength(2);
+  });
+
   it('logs a manual (non-auto-dispatch) event for an image-needed target without enqueueing', async () => {
     const kid = createId();
     await seedKnowledge(kid);
