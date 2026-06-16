@@ -1,0 +1,51 @@
+{
+  "_comment": "question-insert sites that do NOT set draft_status. Each entry MUST have reason + resolves_when {kind,ref,expected_by}. NULL≡active is the legal semantics for these writers (the question IS an active pool item). embedded/teaching also set draft_status explicitly post-YUK-350-L2 — kept here as harmless-redundant (chain-merge guard); the audit silently passes an allowlisted-AND-explicit file. See docs/design/2026-05-15-data-assumptions.md.",
+  "src/capabilities/ingestion/server/auto-enroll.ts": {
+    "reason": "Auto-enrolled questions are active pool items by design — NULL≡active is correct; they enter the review pool immediately.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "permanent: auto-enroll questions are intentionally active (NULL≡active); revisit only if a draft-then-promote flow is introduced for auto-enroll",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "src/capabilities/ingestion/api/import.ts": {
+    "reason": "Imported questions are user-provided active pool items — NULL≡active is correct.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "permanent: imported questions are intentionally active (NULL≡active)",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "src/capabilities/ingestion/api/mistakes.ts": {
+    "reason": "Mistake-recorded questions are active pool items (the user got them wrong; they belong in review) — NULL≡active is correct.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "permanent: mistake questions are intentionally active (NULL≡active)",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "src/server/questions/parts.ts": {
+    "reason": "Paper/quiz part questions are active pool items written as part of an assembled paper — NULL≡active is correct.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "permanent: paper part questions are intentionally active (NULL≡active)",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "src/server/boss/handlers/embedded_check_generate.ts": {
+    "reason": "Container-only embedded checks now set draft_status='draft' explicitly (YUK-350 L2). Kept here as a harmless-redundant chain-merge guard so the L2->L4 chain never fails on either order; the audit silently passes an allowlisted-AND-explicit file.",
+    "resolves_when": {
+      "kind": "pr",
+      "ref": "YUK-350 L2 (embedded_check_generate draft_status='draft' merged)",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "src/capabilities/copilot/server/teaching/materialize-ask-check.ts": {
+    "reason": "Container-only teaching checks now set draft_status='draft' explicitly (YUK-350 L2). Kept here as a harmless-redundant chain-merge guard; the audit silently passes an allowlisted-AND-explicit file.",
+    "resolves_when": {
+      "kind": "pr",
+      "ref": "YUK-350 L2 (materialize-ask-check draft_status='draft' merged)",
+      "expected_by": "2026-12-31"
+    }
+  }
+}

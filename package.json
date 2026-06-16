@@ -33,6 +33,7 @@
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "audit:partition": "tsx scripts/audit-test-partition.ts",
     "audit:profile": "tsx scripts/audit-profile.ts",
+    "audit:draft-status": "tsx scripts/audit-draft-status.ts",
     "compile:profile": "tsx scripts/compile-profile.ts",
     "docs:linear-manifest": "tsx scripts/linear-doc-manifest.ts",
     "preflight:vision": "tsx scripts/preflight-vision.ts",
