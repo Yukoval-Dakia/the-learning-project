@@ -63,7 +63,7 @@ type DbLike = Db | Tx;
 // submit.ts/paper-submit.ts import——import 它会把整张图拽进 mastery 层并制造 import cycle 风险。
 // 公式是单行且单用户时区固定，内联 + 注释指向唯一真相源（stream-store.ts streamLocalDate）即可。
 // ─────────────────────────────────────────────────────────────────────────────
-function attemptLocalDate(now: Date): string {
+export function attemptLocalDate(now: Date): string {
   return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
 }
 
