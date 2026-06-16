@@ -162,6 +162,16 @@ export type QuizVerifyPerQuestionStatus =
   | 'skipped:not_quiz_gen'
   | 'skipped:already_verified';
 
+// YUK-350 (L3, RL5) — event-layer projection of WHY a verify did not promote.
+// Type alias only (NOT a Zod enum): the verify event payload is a loose, experimental
+// record with zero downstream readers, so this is a pure-additive, key-when-relevant
+// marker — absent ⇒ no failure. 'system_error' = the task/parse/DB blew up before a
+// verdict (catch-bottom; the event-layer twin of L1's result-layer overall='error').
+// 'validation_failure' = the model produced a verdict but the gate rejected promotion
+// (a REAL fail / needs_review). They are written ONLY on failure/error paths; promote
+// success carries no failure_class.
+export type VerifyFailureClass = 'system_error' | 'validation_failure';
+
 export interface RunQuizVerifyParams {
   db: Db;
   questionId: string;
@@ -511,6 +521,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             : {}),
           promoted: promote,
           verification_status: verificationStatus,
+          // YUK-350 (L3, RL5) — additive: a verdict that did NOT promote is a real
+          // model-side validation failure (distinct from the catch-bottom
+          // 'system_error'). Key absent on promote=true.
+          ...(promote
+            ? {}
+            : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
           summary_md: parsed.summary_md,
           confidence: parsed.confidence,
           verified_by: verifiedBy,
@@ -603,6 +619,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           // unambiguous "system blew up before a verdict" signal. The catch path NEVER
           // promotes (it re-throws), so this can never coincide with a promotion.
           overall: 'error' satisfies QuizVerifyOverall,
+          // YUK-350 (L3, RL5) — event-layer system-error class, the twin of L1's
+          // payload.overall='error'. Additive key on the error path only.
+          failure_class: 'system_error' satisfies VerifyFailureClass,
           error: String((err as Error).message ?? err),
         },
         caused_by_event_id: null,

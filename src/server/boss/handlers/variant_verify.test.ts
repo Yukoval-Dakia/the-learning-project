@@ -263,6 +263,8 @@ describe('runVariantVerify', () => {
       cause_targeting: 'on_target',
       mistake_variant_id: mvId,
     });
+    // YUK-350 (L3, RL5) — a 'pass' verify carries NO failure_class.
+    expect((verifyEvents[0].payload as Record<string, unknown>).failure_class).toBeUndefined();
   });
 
   it('drift path: verdict=fail flips status to broken with failure_reasons', async () => {
@@ -292,6 +294,18 @@ describe('runVariantVerify', () => {
       '变式的提问指向"之-定语后置标志"，已偏离原 cause 的主谓间用法',
       '难度跳跃过大',
     ]);
+
+    // YUK-350 (L3, RL5) — a 'fail' verdict (outcome 'partial') carries
+    // failure_class='validation_failure'.
+    const verifyEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:variant_verify'));
+    expect(verifyEvents).toHaveLength(1);
+    expect(verifyEvents[0].outcome).toBe('partial');
+    expect((verifyEvents[0].payload as Record<string, unknown>).failure_class).toBe(
+      'validation_failure',
+    );
   });
 
   it('idempotency: re-running after pass short-circuits without calling LLM', async () => {
