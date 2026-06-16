@@ -7,7 +7,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { planReviewSession } from './review-session';
 
-async function seedQuestion(id: string, prompt = `q ${id}`, knowledgeIds: string[] = []) {
+async function seedQuestion(
+  id: string,
+  prompt = `q ${id}`,
+  knowledgeIds: string[] = [],
+  // YUK-350 draft 排除回归：传 'draft' 模拟 container-only（embedded/teaching）题。
+  draftStatus: string | null = null,
+) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
@@ -17,6 +23,7 @@ async function seedQuestion(id: string, prompt = `q ${id}`, knowledgeIds: string
     reference_md: 'ref',
     source: 'manual',
     knowledge_ids: knowledgeIds,
+    draft_status: draftStatus,
     created_at: now,
     updated_at: now,
   });
@@ -346,5 +353,45 @@ describe('planReviewSession', () => {
     expect(plan.window.limit).toBe(3);
     // suppress unused-import lint
     void event;
+  });
+
+  // F2（YUK-350，P1 draft 泄漏）— never-reviewed failure slice 必须排除 draft 题。
+  // 场景：用户对一道 draft 题（embedded/teaching container-only）答错一次 → 写 failure
+  //   attempt → 该题进 candidateNewQids（never-reviewed slice）。旧实现的 trulyNew 取题查询
+  //   无 draft 过滤 → 该 draft 作为普通 PlanQueueItem 进 review session，泄漏给通用复习池。
+  //   修复后 draft 被排除，queue 为空。镜像「surfaces never-reviewed question」用例，只把
+  //   draft_status 改成 'draft'。
+  it('does NOT queue a never-reviewed question when it is a draft (F2 draft 排除)', async () => {
+    await seedQuestion('qd', 'container-only check', [], 'draft');
+    await seedFailureAttempt('ad', 'qd', null);
+
+    const plan = await planReviewSession({ db: testDb() });
+    expect(plan.queue.map((q) => q.question_id)).not.toContain('qd');
+    expect(plan.queue).toEqual([]);
+  });
+
+  it('NULL≡active / active never-reviewed questions still queue (仅 draft 排除)', async () => {
+    // qNull = draft_status NULL（auto-enroll / legacy 合法 active）；qActive = 'active'。
+    await seedQuestion('qNull', 'legacy active', [], null);
+    await seedQuestion('qActive', 'promoted active', [], 'active');
+    await seedFailureAttempt('aNull', 'qNull', null);
+    await seedFailureAttempt('aActive', 'qActive', null);
+
+    const plan = await planReviewSession({ db: testDb() });
+    const qids = new Set(plan.queue.map((q) => q.question_id));
+    expect(qids.has('qNull')).toBe(true); // NULL 留池。
+    expect(qids.has('qActive')).toBe(true); // 'active' 留池。
+  });
+
+  it('mixed pool: draft never-reviewed dropped, active never-reviewed kept', async () => {
+    await seedQuestion('qDraft', 'draft check', [], 'draft');
+    await seedQuestion('qKeep', 'real failure', [], null);
+    await seedFailureAttempt('aDraft', 'qDraft', null);
+    await seedFailureAttempt('aKeep', 'qKeep', null);
+
+    const plan = await planReviewSession({ db: testDb() });
+    const qids = plan.queue.map((q) => q.question_id);
+    expect(qids).toContain('qKeep');
+    expect(qids).not.toContain('qDraft');
   });
 });

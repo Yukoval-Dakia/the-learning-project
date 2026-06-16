@@ -7,6 +7,7 @@
 import {
   event,
   item_calibration,
+  learning_item,
   mastery_state,
   material_fsrs_state,
   mistake_variant,
@@ -39,6 +40,8 @@ async function insertQuestion(opts: {
   kind?: string;
   knowledgeIds?: string[];
   difficulty?: number;
+  /** YUK-350 draft 排除回归：传 'draft' 模拟 container-only（embedded/teaching）题。 */
+  draftStatus?: string | null;
 }): Promise<string> {
   const qid = opts.id ?? createId();
   const now = new Date();
@@ -52,6 +55,7 @@ async function insertQuestion(opts: {
       knowledge_ids: opts.knowledgeIds ?? [],
       difficulty: opts.difficulty ?? 3,
       source: 'manual',
+      draft_status: opts.draftStatus ?? null,
       variant_depth: 0,
       figures: [],
       image_refs: [],
@@ -938,5 +942,79 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
       expect(r.position).toBe(snapByRef.get(r.ref_id)?.position);
       expect(r.id).toBe(snapByRef.get(r.ref_id)?.id); // 无 delete+reinsert churn。
     }
+  });
+});
+
+// F1（YUK-350，P1 draft 泄漏）— collectComposerInputs 的 new_check 分支必须排除 draft 题。
+// 场景：active learning_item 的 KC 尚无 material_fsrs_state（= 学了还没检验），new_check
+//   会为该 KC 取一道题。若该 KC 下唯一的题是 draft（embedded/teaching container-only），
+//   旧实现（无 draft 过滤）会把它选成 new_check 候选 → 经 materializeStream 暴露成
+//   practice_stream_item(source='new_check')。修复后 draft 不入候选，new_check 为空。
+describe('F1（YUK-350）— new_check 候选排除 draft 题', () => {
+  /** active learning_item，挂一个尚无 material_fsrs_state 的 KC（触发 new_check）。 */
+  async function seedUntrackedKcLearningItem(kc: string): Promise<void> {
+    const now = new Date();
+    await testDb()
+      .insert(learning_item)
+      .values({
+        id: createId(),
+        source: 'manual',
+        title: '学习项',
+        content: '',
+        knowledge_ids: [kc],
+        status: 'active',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+  }
+
+  it('KC 下唯一题是 draft → new_check 候选为空（draft 不泄漏进流）', async () => {
+    const kc = createId();
+    await seedUntrackedKcLearningItem(kc);
+    // 该 KC 下唯一的题是 draft（container-only）。
+    await insertQuestion({ kind: 'choice', knowledgeIds: [kc], draftStatus: 'draft' });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    const newCheckKcs = inputs.newCheckItems.map((n) => n.knowledgeId);
+    expect(newCheckKcs).not.toContain(kc); // draft 不被选为 new_check。
+    expect(inputs.newCheckItems).toHaveLength(0);
+  });
+
+  it('NULL≡active 与 active 题仍被 new_check 选中（仅 draft 排除）', async () => {
+    const kcNull = createId();
+    const kcActive = createId();
+    await seedUntrackedKcLearningItem(kcNull);
+    await seedUntrackedKcLearningItem(kcActive);
+    // kcNull 唯一题 draft_status=NULL（auto-enroll / legacy 合法 active）。
+    await insertQuestion({ kind: 'choice', knowledgeIds: [kcNull], draftStatus: null });
+    // kcActive 唯一题 draft_status='active'（promoted quiz / variant）。
+    await insertQuestion({ kind: 'choice', knowledgeIds: [kcActive], draftStatus: 'active' });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    const newCheckKcs = new Set(inputs.newCheckItems.map((n) => n.knowledgeId));
+    expect(newCheckKcs.has(kcNull)).toBe(true); // NULL 留池。
+    expect(newCheckKcs.has(kcActive)).toBe(true); // 'active' 留池。
+  });
+
+  it('同 KC 既有 draft 又有 active 题 → new_check 永不取 draft 那条', async () => {
+    const kc = createId();
+    await seedUntrackedKcLearningItem(kc);
+    const draftQ = await insertQuestion({
+      kind: 'choice',
+      knowledgeIds: [kc],
+      draftStatus: 'draft',
+    });
+    const activeQ = await insertQuestion({
+      kind: 'choice',
+      knowledgeIds: [kc],
+      draftStatus: 'active',
+    });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    const pick = inputs.newCheckItems.find((n) => n.knowledgeId === kc);
+    expect(pick).toBeDefined();
+    expect(pick?.questionId).not.toBe(draftQ); // 绝不取 draft。
+    expect(pick?.questionId).toBe(activeQ); // 取 active 那条。
   });
 });
