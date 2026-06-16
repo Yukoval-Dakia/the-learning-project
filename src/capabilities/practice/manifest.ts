@@ -213,6 +213,18 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/recalibration_nightly').then((m) => m.buildRecalibrationNightlyHandler),
       },
+      // YUK-383 Phase 0 — 语义 embedding 地基 backfill。每夜嵌入 embedding IS NULL
+      // 的 question + knowledge 行（存量 backfill + 次日新行 + embed-API 故障重试，
+      // §9 fallback）。cron 04:40 Asia/Shanghai：错开既有夜链——item_prior 04:20、
+      // recalibration 04:50、compose 05:30、supply 06:00（agency goal_scope 04:30）。
+      // queue=llm：与其它慢热 backfill job 同档 DLQ 重试。幂等由 embedding IS NULL
+      // 过滤保证（无 NULL 行 = no-op）；embedMany throw 留 NULL 下轮重试，不阻塞入库。
+      {
+        name: 'embed_backfill',
+        schedule: { cron: '40 4 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () => import('./jobs/embed_backfill').then((m) => m.buildEmbedBackfillHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft

@@ -13,6 +13,7 @@ import { knowledge, question } from '@/db/schema';
 import { embedMany, EMBED_MODEL } from '@/server/ai/embed';
 import { knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
 import { eq, isNull } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 
 // Bump when the embedder model or the embed-source join rule changes, to trigger
 // a background re-embed of rows stamped with an older version.
@@ -48,4 +49,21 @@ export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
   }
 
   return total;
+}
+
+// pg-boss handler builder (mirrors buildItemPriorBackfillHandler): takes the db
+// injected by register-capability-jobs and returns the batch handler. A throw
+// propagates to pg-boss for retry (rows stay NULL → next nightly run retries).
+export function buildEmbedBackfillHandler(
+  db: Db,
+): (jobs: Job<Record<string, never>>[]) => Promise<void> {
+  return async () => {
+    try {
+      const embedded = await runEmbedBackfill(db);
+      console.log('[embed_backfill] embedded', embedded);
+    } catch (err) {
+      console.error('[embed_backfill] failed', err);
+      throw err;
+    }
+  };
 }
