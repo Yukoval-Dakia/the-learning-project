@@ -10,14 +10,22 @@
 // try/catch 即足够隔离——**不**给 recalibrateQuestion 加 SAVEPOINT（G1：它不在 attempt tx 里）。
 //
 // ── 候选窗（open-Q 裁决）─────────────────────────────────────────────────────
-// 候选 = 「有 difficulty_calibration_label 在【昨日本地日起】窗内新建」AND「该题历史标签
-// **总数** ≥ RECALIBRATION_MIN_LABELS」AND「question 非 draft」。
-//   - 用**昨日本地日起**的滚动窗（不是「今天」）：cron 跑在 04:50 Asia/Shanghai，「今天」本
+// 候选 = 「该题历史标签 **总数** ≥ RECALIBRATION_MIN_LABELS」AND「question 非 draft」AND
+//   「(A) 有标签在【昨日本地日起】窗内新建 OR (B) **stale 未校准**（calibration_n 落后于当前
+//   标签总数，含从未校准 b_calib IS NULL / calibration_n=0）」。
+//   - (A) 滚动窗用**昨日本地日起**（不是「今天」）：cron 跑在 04:50 Asia/Shanghai，「今天」本
 //     地日才刚开始几乎无标签 → 用「今天」窗会几乎永远空（04:50-empty-today bug）。取昨日起
 //     = 「自上次夜跑以来新攒的标签」，让昨天攒满的题今晨被重标定。
+//   - (B) **stale 未校准并入扫描集**（Codex review F1 修复）：只看窗 (A) 会漏两类已够标签的题——
+//     ① 首部署存量标签（攒够标签但 max(created_at) 早于昨天，b_calib 仍 NULL）；② cron 停机
+//     >1 天后那些昨天前攒满、窗已滑过的题。两类都「永不进窗 → 永不校准」。stale 准入用
+//     **calibration_n < 当前标签总数**（含从未校准的 calibration_n=0 / b_calib NULL）兜住它们：
+//     标签数已 ≥ 阈值但折进 b_calib 的标签数落后 ⇒ 有未消费的标签 ⇒ 该重标定。
+//   - **幂等**：已校准且 calibration_n == 当前标签总数 且无窗内新标签的题，(A)(B) 双 FALSE →
+//     不入选，不重复跑（recalibrateQuestion 即便跑也是同输入同输出，但预筛省掉这次开销）。
 //   - **历史总数**门（≥ threshold）只是预筛：真正的 firm-up 数据闸在 recalibrateQuestion 内
 //     （labelCount < RECALIBRATION_MIN_LABELS → no-op）。预筛省掉对刚起步、永远不够阈值的题
-//     反复跑 recalibrateQuestion 的开销，同时「新标签」窗保证只处理今晨真有进展的题。
+//     反复跑 recalibrateQuestion 的开销。
 //
 // ── 红线 ────────────────────────────────────────────────────────────────────
 // G1：recalibrateQuestion 在 job 顶层调，不在 attempt tx 内 → per-question try/catch 足够，
@@ -28,7 +36,7 @@
 //     last_calibrated_at——never item b / stream / due。本 job 不新增任何写。
 
 import type { Db } from '@/db/client';
-import { difficulty_calibration_label, question } from '@/db/schema';
+import { difficulty_calibration_label, item_calibration, question } from '@/db/schema';
 import {
   RECALIBRATION_MIN_LABELS,
   attemptLocalDate,
@@ -94,23 +102,45 @@ export async function runRecalibrationNightly(
   const windowStart = candidateWindowStart(now);
 
   // PRE-write read OUTSIDE any per-task swallow: a throw here is a legit retryable DB fault
-  // (pg-boss retries). 候选 = 有【窗内新标签】+ 历史标签总数 ≥ threshold + question 非 draft。
-  // GROUP BY question_id，HAVING：(a) 总标签数 ≥ threshold，(b) 至少一条标签 created_at ≥ 窗起点。
-  // JOIN question 排除 draft（G5）。
+  // (pg-boss retries). 候选 = 历史标签总数 ≥ threshold + question 非 draft + (窗内新标签 OR stale
+  // 未校准)。GROUP BY question_id，HAVING：
+  //   (a) 总标签数 ≥ threshold（预筛），
+  //   (b) 至少一条标签 created_at ≥ 窗起点（今晨有新进展），**OR**
+  //   (c) stale 未校准：coalesce(max(calibration_n), 0) < 当前标签总数（折进 b_calib 的标签数落后
+  //       于实际标签数 ⇒ 含从未校准 calibration_n=0 / 无 item_calibration row）OR b_calib 仍 NULL。
+  // LEFT JOIN item_calibration (track='hard')：1:1（每题至多一条 hard 轨行），故 max()/bool_or()
+  // 聚合是 GROUP-BY-safe 的恒等取值。JOIN question 排除 draft（G5）。
+  // (c) 是 F1 修复：只看 (b) 窗会漏「攒够标签但 max(created_at) 早于昨天且未校准」的题（首部署
+  // 存量标签 / cron 停机 >1 天），它们永不进窗 → 永不校准。stale 准入兜住它们；幂等由「已校准
+  // 且 calibration_n == 标签总数」时 (b)(c) 双 FALSE 保证（不重复跑）。
   const candidates = await db
     .select({ questionId: difficulty_calibration_label.question_id })
     .from(difficulty_calibration_label)
     .innerJoin(question, eq(question.id, difficulty_calibration_label.question_id))
+    .leftJoin(
+      item_calibration,
+      and(
+        eq(item_calibration.question_id, difficulty_calibration_label.question_id),
+        eq(item_calibration.track, 'hard'),
+      ),
+    )
     // G5：draft_status IS DISTINCT FROM 'draft'（NULL 也算非 draft）。
     .where(sql`${question.draft_status} IS DISTINCT FROM 'draft'`)
     .groupBy(difficulty_calibration_label.question_id)
     .having(
       and(
         gte(count(difficulty_calibration_label.id), RECALIBRATION_MIN_LABELS),
-        // 至少一条标签在窗内新建（MAX(created_at) ≥ 窗起点 ⇔ 该题今晨有新进展）。窗起点显式
-        // cast 成 timestamptz（postgres-js 在 HAVING 的 raw-sql 比较里推不出 Date 参数类型，
-        // 故传 ISO 字符串 + ::timestamptz）。
-        sql`max(${difficulty_calibration_label.created_at}) >= ${windowStart.toISOString()}::timestamptz`,
+        // (b) 窗内新标签 OR (c) stale 未校准。窗起点显式 cast 成 timestamptz（postgres-js 在
+        // HAVING 的 raw-sql 比较里推不出 Date 参数类型，故传 ISO 字符串 + ::timestamptz）。
+        // calibration_n NOT NULL（DEFAULT 0），但 LEFT JOIN miss（无 hard 轨行）时 max() 为
+        // NULL → coalesce 0 → < count ⇒ stale，正确把无锚但够标签的题纳入（recalibrateQuestion
+        // 内会判 no_anchor 计 skipped_no_anchor，与窗内无锚题同语义）。bool_or(b_calib IS NULL)
+        // 兜「外部写了 b_calib 却没同步 calibration_n」的防御性 stale。
+        sql`(
+          max(${difficulty_calibration_label.created_at}) >= ${windowStart.toISOString()}::timestamptz
+          OR coalesce(max(${item_calibration.calibration_n}), 0) < count(${difficulty_calibration_label.id})
+          OR bool_or(${item_calibration.b_calib} IS NULL)
+        )`,
       ),
     )
     .limit(maxPerRun);
