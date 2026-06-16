@@ -126,6 +126,28 @@ describe('scanCoverageGaps — R2 low-tier-only pool', () => {
     );
     expect(targets.find((t) => t.gapKind === 'source_quality')).toBeUndefined();
   });
+
+  // review FINDING #3 — source='embedded' rows are AI-generated practice checks
+  // (provenance tier 4 'generated'), NOT high-trust. A KC covered ONLY by embedded
+  // checks must still get a source_quality (R2) gap for a real high-tier item.
+  it('treats source=embedded as LOW tier → R2 source_quality fires when only embedded questions exist', () => {
+    const embeddedNearQ = poolQuestion({
+      id: 'q-embedded',
+      source: 'embedded', // AI-generated check, no ingestion marker → tier 4 → acquisition tier 3.
+      metadata: null,
+      kind: 'short_answer',
+      calibrationB: 0, // near band → suppresses R3 so we isolate R2.
+      knowledgeIds: ['k1'],
+    });
+    const targets = scanCoverageGaps(
+      emptyScan({ frontier: [frontier('k1')], questions: [embeddedNearQ] }),
+      seqIds(),
+    );
+    const sq = targets.find((t) => t.gapKind === 'source_quality');
+    expect(sq).toBeDefined();
+    expect(sq?.minSourceTier).toBe(2);
+    expect(sq?.constraints.avoidDuplicateOfQuestionIds).toEqual(['q-embedded']);
+  });
 });
 
 describe('scanCoverageGaps — R3 repeated diagnostic gap (calibrationCandidate)', () => {
@@ -160,6 +182,48 @@ describe('scanCoverageGaps — R3 repeated diagnostic gap (calibrationCandidate)
       seqIds(),
     );
     expect(targets.find((t) => t.gapKind === 'diagnostic')).toBeUndefined();
+  });
+
+  // review FINDING #4 — R3 must NOT trust difficulty_proxy as a band anchor.
+  // A proxy-only item whose proxy b happens to land 'near' must NOT suppress the
+  // diagnostic gap (we still lack a RELIABLE near-theta_hat anchor → R3 fires).
+  it('emits diagnostic when the only near-band item is proxy-only (no real item_calibration.b)', () => {
+    // difficulty=3 → difficultyToLogitB(3)=0 → proxy b=0=θ̂ would land 'near' under the
+    // OLD proxy-trusting logic and falsely suppress R3. With calibrationB=null it does NOT.
+    const proxyOnlyQ = poolQuestion({
+      source: 'manual', // tier-1 manual suppresses R2 so we isolate R3.
+      kind: 'short_answer',
+      difficulty: 3,
+      calibrationB: null, // proxy-only — not a reliable anchor.
+      knowledgeIds: ['k1'],
+    });
+    const targets = scanCoverageGaps(
+      emptyScan({ frontier: [frontier('k1', { thetaHat: 0 })], questions: [proxyOnlyQ] }),
+      seqIds(),
+    );
+    const diag = targets.find((t) => t.gapKind === 'diagnostic');
+    expect(diag).toBeDefined();
+    expect(diag?.constraints.calibrationCandidate).toBe(true);
+  });
+
+  // review FINDING #4 (other direction) — a proxy b that lands OUTSIDE near must NOT
+  // fire a calibrationCandidate off the unreliable proxy. With ONLY a proxy-only item,
+  // R3 fires because there is no reliable anchor at all — that is correct (we want a
+  // real near anchor); the point is the proxy's classification never DRIVES the decision.
+  it('R3 decision ignores proxy band classification entirely (proxy far-band still yields diagnostic)', () => {
+    const proxyFarQ = poolQuestion({
+      source: 'manual',
+      kind: 'short_answer',
+      difficulty: 5, // proxy b = 1.7 → 'above'/'stretch'; irrelevant — proxy is ignored.
+      calibrationB: null,
+      knowledgeIds: ['k1'],
+    });
+    const targets = scanCoverageGaps(
+      emptyScan({ frontier: [frontier('k1', { thetaHat: 0 })], questions: [proxyFarQ] }),
+      seqIds(),
+    );
+    // Still a diagnostic gap (no reliable near anchor); proxy band did not drive anything.
+    expect(targets.find((t) => t.gapKind === 'diagnostic')).toBeDefined();
   });
 });
 
@@ -256,6 +320,21 @@ describe('acquisitionTierForQuestion — 4-tier provenance → 3-tier acquisitio
         }),
       ),
     ).toBe(3);
+  });
+
+  // review FINDING #3 — source='embedded' (AI-generated practice check, no ingestion
+  // marker → provenance tier 4 'generated') is LOW acquisition tier 3, NOT high tier 1.
+  it('embedded AI-check question → acquisition tier 3 (NOT high tier 1)', () => {
+    expect(acquisitionTierForQuestion(poolQuestion({ source: 'embedded', metadata: null }))).toBe(
+      3,
+    );
+  });
+
+  // 'imported' stays high tier 1 (legitimately human-curated existing questions).
+  it('imported question → acquisition tier 1', () => {
+    expect(acquisitionTierForQuestion(poolQuestion({ source: 'imported', metadata: null }))).toBe(
+      1,
+    );
   });
 });
 
