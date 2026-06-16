@@ -48,6 +48,31 @@ describe('SelectionOrchestratorCandidate', () => {
     expect(r.success).toBe(false);
   });
 
+  it('rejects a non-finite weight (FINDING 3: Infinity from LLM 1e309 → JSON.parse)', () => {
+    // `1e309` parses to Infinity (passes min(0)); .finite() must reject it so a
+    // non-finite weight never reaches softmaxProbabilities (which would throw and
+    // tip the whole batch into fallback).
+    const inf = SelectionOrchestratorCandidate.safeParse({
+      refId: 'q-1',
+      weight: Number.POSITIVE_INFINITY,
+      role: 'diagnostic',
+      reason: 'overflow',
+    });
+    expect(inf.success).toBe(false);
+    // The exact value JSON.parse('1e309') yields → Infinity.
+    expect(JSON.parse('1e309')).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('rejects a NaN weight (FINDING 3)', () => {
+    const nan = SelectionOrchestratorCandidate.safeParse({
+      refId: 'q-1',
+      weight: Number.NaN,
+      role: 'diagnostic',
+      reason: 'nan',
+    });
+    expect(nan.success).toBe(false);
+  });
+
   it('rejects missing refId', () => {
     const r = SelectionOrchestratorCandidate.safeParse({
       weight: 1,

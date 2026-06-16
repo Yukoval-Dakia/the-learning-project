@@ -27,6 +27,7 @@
 // composeDailyStream（stream-composer.ts）保持 PURE 不动——它是 L2 fallback + legacy
 // policy 的承重确定性核心（7 单测钉死）。本模块是它之外的**独立新 async 路径**。
 
+import { QuestionKind } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
@@ -130,11 +131,28 @@ async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<Candidat
       // CandidateInput.role 用 core role 集（'diagnostic'/'new_check'/...）。变体候选
       // 走诊断角色（可换变体 → 进 MFI 评分）；new_check 候选保 new_check 角色。
       role: raw.role === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
-      kind: q?.kind as QuestionKindT | undefined,
+      // FINDING 4（fail-open→fail-closed）：DB question.kind 是 text 列，行里可能存
+      //   **不在 QuestionKind 枚举内**的脏值（历史脏数据 / enum 收缩后的遗留 / 手填）。
+      //   裸 `as QuestionKindT` 会把脏值原样传给 collectQuestionSignal → rotationClassForKind
+      //   读 `ROTATION_CLASS_BY_KIND[脏值]` 返 undefined → `=== 'recall'` 为假 → recallLocked
+      //   =false → 题被 sampler 抽样，违反铁律③（身份不明的题不得被抽样/MFI 评分）。
+      //   故在此用 enum 校验：枚举内 → 传真 kind；枚举外/缺失 → 传 undefined，落到
+      //   collectQuestionSignal 的 `cand.kind ? … : true` 保守分支 → recallLocked（不抽样）。
+      kind: resolveEnumKind(q?.kind),
       knowledgeIds: q?.knowledge_ids,
       difficulty: q?.difficulty,
     };
   });
+}
+
+/**
+ * 把 DB 读到的 question.kind（text，可能脏）收敛成**枚举内**的 QuestionKindT 或 undefined。
+ * 枚举外的值（含 null/缺失）→ undefined，使 collectQuestionSignal 走 fail-closed recall-lock
+ * 分支（FINDING 4，铁律③深防御）。
+ */
+function resolveEnumKind(kind: string | null | undefined): QuestionKindT | undefined {
+  const parsed = QuestionKind.safeParse(kind);
+  return parsed.success ? (parsed.data as QuestionKindT) : undefined;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -260,6 +278,13 @@ export async function composeSoftmaxStream(
   const fixedCount = dueDrafts.length + paperDrafts.length + recallLocked.length;
   const nonDueBudget = Math.max(0, max - fixedCount);
 
+  // FINDING 5：caller-supplied config.targetCount（实验/下采样旋钮）此前被忽略——sampler
+  //   恒用 nonDueBudget。修复：config.targetCount 在场时取 min(config.targetCount, nonDueBudget)
+  //   ——既尊重 caller 的下采样意图，又让容量（nonDueBudget）仍作上界（不会因 caller 传大值
+  //   而突破容量）。缺省（undefined）→ 仍用 nonDueBudget（原行为）。
+  const effectiveTarget =
+    config.targetCount !== undefined ? Math.min(config.targetCount, nonDueBudget) : nonDueBudget;
+
   // ── softmax 主路 + L1 fallback：拿到 WeightedCandidate[]（LLM 权重 OR 统计权重）。
   let fallback: FallbackLevel = 'none';
   let weighted: WeightedCandidate[];
@@ -280,11 +305,11 @@ export async function composeSoftmaxStream(
     }
   }
 
-  // ── 抽样：sampleByWeight 出真 π_i（Poisson IPPS）。
+  // ── 抽样：sampleByWeight 出真 π_i（Poisson IPPS）。targetCount=effectiveTarget（FINDING 5）。
   const sampled =
     weighted.length === 0
       ? []
-      : sampleByWeight(weighted, { temperature, targetCount: nonDueBudget, rng: deps.rng });
+      : sampleByWeight(weighted, { temperature, targetCount: effectiveTarget, rng: deps.rng });
   const sampledInclusion = new Map<string, number>(
     sampled.map((s) => [s.refId, s.inclusionProbability]),
   );
@@ -332,9 +357,11 @@ export async function composeSoftmaxStream(
   // 顺序：到期（L1 序，热身/优先） → 非到期散题（recall 透传 + 抽中） → 卷收口。
   const assembled = [...dueDrafts, ...nonDueDrafts, ...paperDrafts];
 
-  // ── L3 容量守门（铁律④）：超 max 截断。**到期项受保护**——截断只砍非到期/卷尾部，
-  //    到期项永不被容量截掉（presence 铁律②优先于容量）。
-  const { kept, truncated } = capacityGuard(assembled, dueRefSet, max);
+  // ── L3 容量守门（铁律④）：超 max 截断。**到期项 + 被抽中非到期项受保护**——截断只砍卷
+  //    （paper，确定性、不记 π_i）尾部。到期项 presence（铁律②）优先于容量；被抽中非到期项
+  //    的 π_i 受 IPW 资产保护（FINDING 2，见 capacityGuard 注释）。
+  const sampledRefs = new Set(sampled.map((s) => s.refId));
+  const { kept, truncated } = capacityGuard(assembled, dueRefSet, sampledRefs, max);
 
   const plan: StreamPlan = {
     date: inputs.date,
@@ -349,7 +376,10 @@ export async function composeSoftmaxStream(
   //    与 inputs 的 L1 序逐一相等（不止 presence）。
   assertL3Invariants(plan, dueRefOrder, dueRefSet, recallLockedRefs, sampledInclusion);
 
-  // 截断后被砍掉的 sampled 项要从 inclusion map 移除（没物化就不该记 π_i）。
+  // 守恒不变量（depth defense，FINDING 2 后）：sampledInclusion 只能含**真出现在最终
+  //   plan 里**的 ref——记录的 π_i 必须 ⇔ 该项在流里。capacityGuard 现已保护被抽中项不被
+  //   截断（见 FINDING 2 注释），故正常路径下此循环 no-op；保留它兜底任何「sampled 项最终
+  //   不在 plan」的将来路径，绝不让一条不在流里的 π_i 漏进 IPW 资产。
   const keptRefs = new Set(plan.items.map((it) => it.ref_id));
   for (const ref of [...sampledInclusion.keys()]) {
     if (!keptRefs.has(ref)) sampledInclusion.delete(ref);
@@ -374,7 +404,20 @@ async function tryLlmOrchestration(
     const refIds = samplable.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
     if (parsed.length === 0) return null;
-    const weighted: WeightedCandidate[] = parsed.map((c) => ({ refId: c.refId, weight: c.weight }));
+
+    // FINDING 1（positivity / silent candidate loss）：LLM 可能只编排 samplable 的**子集**
+    //   （漏排 / 重复被 dedup / 幻觉 id 被 ⊆filter 丢）。parse barrier 只在结果**全空**时才
+    //   throw；部分子集会让被漏掉的 samplable 候选拿不到权重 → 不进 sampleByWeight → π_i=0
+    //   → 违反 ADR-0043 §7 positivity（每个 samplable 候选都需 π_i>0，否则它永不被选中、也
+    //   永不被记进 IPW 资产 → active-PPI 估计偏置）。
+    //   修复：FLOOR-FILL——保留 LLM 给出的权重（它的编排信号），对 LLM 漏掉的每个 samplable
+    //   候选补一个**统计**权重（mfiScore → 退 diagnosticScore → 退 STAT_FLOOR_EPSILON），
+    //   使其留在加权池里、π_i>0。这样既不丢候选，又不抹掉 LLM 对它排过的那些的偏好。
+    const llmWeightByRef = new Map<string, number>(parsed.map((c) => [c.refId, c.weight]));
+    const weighted: WeightedCandidate[] = samplable.map((s) => ({
+      refId: s.refId,
+      weight: llmWeightByRef.get(s.refId) ?? statisticalFloorWeight(s),
+    }));
     const arrangementByRef = new Map<string, number>();
     for (const c of parsed) {
       if (c.arrangement !== undefined) arrangementByRef.set(c.refId, c.arrangement);
@@ -397,13 +440,21 @@ async function defaultRunTaskFn(): Promise<RunTaskFn> {
 // ───────────────────────────────────────────────────────────────────────────
 // L1 fallback：纯统计 sampler。用 mfiScore（退 diagnosticScore，再退小正权）当权重。
 // ───────────────────────────────────────────────────────────────────────────
+
+/** 无任何 MFI/诊断信号时的小正权——保 π_i>0（positivity）、softmax 退化为近均匀。 */
+const STAT_FLOOR_EPSILON = 0.01;
+
+/**
+ * 一条 samplable 候选的统计权重：mfiScore 优先；缺则 diagnosticScore；都缺（无 θ̂/b）
+ * 给 STAT_FLOOR_EPSILON 小正权（仍可被抽中，π_i>0 保 positivity——符合「无信号 → 不偏好」
+ * 语义）。L1 统计 fallback 与 FINDING 1 的 floor-fill 共用此函数（单一真相，权重语义一致）。
+ */
+function statisticalFloorWeight(s: CollectedSignal): number {
+  return s.mfiScore ?? s.diagnosticScore ?? STAT_FLOOR_EPSILON;
+}
+
 function statisticalWeights(samplable: CollectedSignal[]): WeightedCandidate[] {
-  return samplable.map((s) => {
-    // mfiScore 优先；缺则 diagnosticScore；都缺（无 θ̂/b）给一个小正权（仍可被抽中，
-    // π_i>0 保 positivity——softmax 退化为近均匀，符合「无信号 → 不偏好」语义）。
-    const weight = s.mfiScore ?? s.diagnosticScore ?? 0.01;
-    return { refId: s.refId, weight };
-  });
+  return samplable.map((s) => ({ refId: s.refId, weight: statisticalFloorWeight(s) }));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -419,30 +470,44 @@ function legacyFallback(inputs: ComposerInputs): ComposeSoftmaxResult {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// L3：容量守门——超 max 截断，但**到期项受保护**（presence 铁律②优先）。
+// L3：容量守门——超 max 截断，但**到期项 + 被抽中非到期项受保护**。
 // ───────────────────────────────────────────────────────────────────────────
-// 行为契约（review CLUSTER F）：**到期 presence（铁律②）优先于容量硬顶**。当到期项
-// 自身就超过 `max` 时，本守门**有意 over-emit**——返回的 `kept` 长度可 > max（全部到期项
-// 都在，非到期/卷被砍到 0）。这与 legacy composeDailyStream 的「无条件 slice(0, max)」**有意
-// 不同**：legacy 会连到期项一起砍（presence 让位于硬顶），档2 反过来让 presence 赢。
-// 调用方/下游不得假设 `truncated === true ⇒ length ≤ max`——dues>max 时两者同真。
-// 这是设计选择不是 bug：复习到期是 FSRS *when* 契约，宁可今天题多也不能漏复习。
+// 行为契约（review CLUSTER F + FINDING 2）：两类受保护项**永不被容量截断**——
+//   ① 到期项（presence 铁律②优先于容量硬顶）；
+//   ② 被 sampler 抽中的非到期项（其 π_i 是 Phase-6 active-PPI IPW 的慢热资产）。
+// 可截断的只剩**确定性非到期尾部**（recall 透传 + 卷 paper，都不记 π_i）。
+//
+// 为什么不截断被抽中项（FINDING 2 / ADR-0043 §7）：sampler 记录的 π_i **必须**等于
+// 该项出现在最终流里的真实概率 P(item ∈ final stream)。Poisson IPPS 抽样的 realized
+// 子集大小是随机的（均值 = effectiveTarget = nonDueBudget）；若在抽样后再按容量截断
+// 被抽中项的尾部，这是一道**第二重条件过滤**——幸存项的真实入选概率被压低，但代码记的
+// 仍是**截断前**的 π_i → π_i **高估**真实入选概率 → IPW/Horvitz-Thompson 估计偏置。
+// 修复采纳 option (b)：**非到期容量经 sampler 的 targetCount 在期望意义上兜底，不做抽样后
+// 硬截断**。代价：Poisson 上溢时最终流长度可略超 max（与到期 over-emit 同款 soft-capacity
+// 取舍——presence/π_i 正确性 > 硬顶）。这样记录的 π_i 恒 = 真实最终入选概率，IPW 资产干净。
+//
+// 调用方/下游不得假设 `truncated === true ⇒ length ≤ max`——到期 over-emit 或抽样上溢时
+// 两者可同真（与 legacy composeDailyStream 的「无条件 slice(0, max)」**有意不同**）。
 function capacityGuard(
   assembled: Omit<StreamPlanItem, 'position'>[],
   dueRefSet: Set<string>,
+  sampledRefs: Set<string>,
   max: number,
 ): { kept: Omit<StreamPlanItem, 'position'>[]; truncated: boolean } {
   if (assembled.length <= max) return { kept: assembled, truncated: false };
-  // 必须保留全部到期项；非到期/卷按当前顺序填满剩余容量。dues.length 可 > max
-  // ⇒ remaining=0 ⇒ keptRest=[] ⇒ kept 仅到期项（长度 = dues.length > max，over-cap，有意）。
-  const dues = assembled.filter((d) => dueRefSet.has(d.ref_id));
-  const rest = assembled.filter((d) => !dueRefSet.has(d.ref_id));
-  const remaining = Math.max(0, max - dues.length);
-  const keptRest = rest.slice(0, remaining);
-  // 维持原相对顺序：到期项在前（L1 序），非到期保留段紧随——assembled 已是该序，
-  // 重组时按「先到期、后保留的非到期」拼回（到期项本就在前）。
-  const keptRestSet = new Set(keptRest.map((d) => d.ref_id));
-  const kept = assembled.filter((d) => dueRefSet.has(d.ref_id) || keptRestSet.has(d.ref_id));
+  // 受保护 = 到期项 ∪ 被抽中非到期项（π_i 资产）。两者永不截断。
+  const isProtected = (d: Omit<StreamPlanItem, 'position'>) =>
+    dueRefSet.has(d.ref_id) || sampledRefs.has(d.ref_id);
+  // 可截断 = 确定性非到期尾部（recall 透传 + 卷）。按剩余容量从头保留。
+  const protectedItems = assembled.filter(isProtected);
+  const truncatable = assembled.filter((d) => !isProtected(d));
+  const remaining = Math.max(0, max - protectedItems.length);
+  const keptTruncatable = truncatable.slice(0, remaining);
+  // 维持原相对顺序（assembled 已是 [到期, recall, 抽中, 卷] 序）：受保护项 + 保留的可截断项
+  // 按原序拼回。protectedItems.length 可 > max（到期 over-emit 或抽样上溢）⇒ remaining=0
+  // ⇒ keptTruncatable=[] ⇒ kept 仅受保护项（length 可 > max，over-cap，有意）。
+  const keptTruncatableSet = new Set(keptTruncatable.map((d) => d.ref_id));
+  const kept = assembled.filter((d) => isProtected(d) || keptTruncatableSet.has(d.ref_id));
   return { kept, truncated: true };
 }
 
