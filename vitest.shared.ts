@@ -138,6 +138,14 @@ export const fastTestInclude = [
   // src/server/ai/** has no unit glob, so this MUST be listed explicitly or the db
   // config's src/**/*.test.ts glob sweeps it into the testcontainer partition.
   'src/server/ai/selection-orchestrator.test.ts',
+  // YUK-361 Phase 8 (Task 13) — 供给目标发现纯扫描器 + 路由规划单测. Pure no-DB:
+  // imports 仅 ./target-discovery + ./route-planner——其 @/db/client 是 type-only/erased，
+  // @/db/schema 是 table objects 不连库，@/server/mastery/state / domain / provenance /
+  // selection-signals / theta / subjects/profile 全是纯函数或 type-only db。端到端的
+  // discoverSupplyTargets + dispatcher 派发 db 测在 target-discovery.db.test.ts。
+  // src/server/question-supply/** 无 unit glob，故必须显式列出，否则 db config 的
+  // src/**/*.test.ts glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
+  'src/server/question-supply/target-discovery.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
