@@ -170,6 +170,30 @@ export function resolveTaskProvider(
   // Explicit arg > env switch > registry default. The arg may set only `model`,
   // so fall back through each layer per-field.
   const providerName: Provider = override?.provider ?? envOverride?.provider ?? def.defaultProvider;
+
+  // Codex review P2 (Finding 4): when AI_PROVIDER_OVERRIDE switches the GLOBAL
+  // provider to one whose endpoint won't accept the registry's mimo default model
+  // (e.g. `anthropic` direct, or any future wired non-mimo provider) and no
+  // AI_PROVIDER_MODEL is named, the layered model fallback below would carry the
+  // task's registry `mimo-v2.5*` id onto a non-mimo endpoint → a first-party
+  // request that 404s on an unknown model. The env switch is global, so this would
+  // silently break EVERY task. Fail fast with a clear config error instead.
+  //   - `anthropic-sub` is exempt: it has a built-in Opus 4.8 default (below).
+  //   - `xiaomi` is exempt: it IS the mimo endpoint, so the registry default fits.
+  //   - A per-call `override.model` (or AI_PROVIDER_MODEL) satisfies the guard.
+  const PROVIDERS_USING_MIMO_DEFAULT = new Set<Provider>(['xiaomi', 'anthropic-sub']);
+  const cameFromEnvSwitch = !override?.provider && envOverride?.provider !== undefined;
+  if (
+    cameFromEnvSwitch &&
+    !PROVIDERS_USING_MIMO_DEFAULT.has(providerName) &&
+    !override?.model &&
+    !envOverride?.model
+  ) {
+    throw new Error(
+      `AI_PROVIDER_OVERRIDE='${providerName}' selects a non-mimo provider, but no AI_PROVIDER_MODEL is set; the task registry default model ('${def.defaultModel}') is a mimo id that '${providerName}' won't accept. Set AI_PROVIDER_MODEL to a model the '${providerName}' endpoint serves, or use 'anthropic-sub' (defaults to ${ANTHROPIC_SUB_DEFAULT_MODEL}).`,
+    );
+  }
+
   // When the subscription lane is selected and no model is named anywhere, use
   // its Opus 4.8 default. Otherwise the layered model wins (arg > env > registry).
   const subDefaultModel =

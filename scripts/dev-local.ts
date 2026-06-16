@@ -2,6 +2,15 @@ import { spawn } from 'node:child_process';
 import { config } from 'dotenv';
 import { buildLocalDevEnv } from './local-db-env';
 
+// YUK-365 (Codex review P2, Finding 2): load .env.local BEFORE .env, both
+// non-overriding, so the AI provider toggle (AI_PROVIDER_OVERRIDE /
+// CLAUDE_CODE_OAUTH_TOKEN, owner places these in .env.local) is in the parent env
+// passed to all three spawned children. The children (rw:api → server/env loadEnv,
+// worker:dev → scripts/worker.ts loadEnv) also load .env.local themselves, so this
+// is belt-and-braces — but it keeps dev-local's view consistent with the API's.
+// `override: false` keeps real shell env winning, matching loadEnv's "only fill
+// unset keys" contract.
+config({ path: '.env.local', override: false });
 config({ path: '.env', override: false });
 
 const localEnv = buildLocalDevEnv(process.env);

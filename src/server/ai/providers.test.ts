@@ -110,3 +110,62 @@ describe('resolveTaskProvider — AI_PROVIDER_OVERRIDE validation', () => {
     expect(() => resolveTaskProvider(KIND)).toThrow(/is not a known provider/);
   });
 });
+
+// Finding 4 (Codex review P2): an env override to a non-mimo provider without
+// AI_PROVIDER_MODEL must NOT silently carry the task's registry mimo default onto
+// a non-mimo endpoint. It must throw a clear config error so the misconfig surfaces.
+describe('resolveTaskProvider — non-sub override model guard (Finding 4)', () => {
+  beforeEach(() => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-key');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('throws when AI_PROVIDER_OVERRIDE=anthropic has no AI_PROVIDER_MODEL (would keep the mimo default)', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic');
+    // The guard fires BEFORE the "reserved but not implemented" branch, so the
+    // error is the model-config one, not the not-implemented one.
+    expect(() => resolveTaskProvider(KIND)).toThrow(
+      /selects a non-mimo provider, but no AI_PROVIDER_MODEL is set/,
+    );
+  });
+
+  it('passes the model guard once AI_PROVIDER_MODEL is set (then the provider-specific path runs)', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'claude-opus-4-8');
+    // anthropic-direct is wired only as a key provider that currently reaches the
+    // resolved record (it IS in the implemented set), so this resolves cleanly with
+    // the named model rather than the mimo default.
+    const resolved = resolveTaskProvider(KIND);
+    expect(resolved.provider).toBe('anthropic');
+    expect(resolved.authMode).toBe('key');
+    expect(resolved.model).toBe('claude-opus-4-8');
+  });
+
+  it('does NOT trip the guard for AI_PROVIDER_OVERRIDE=xiaomi (mimo endpoint accepts the mimo default)', () => {
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'xiaomi');
+    const resolved = resolveTaskProvider(KIND);
+    expect(resolved.provider).toBe('xiaomi');
+    expect(resolved.model).toBe('mimo-v2.5-pro');
+  });
+
+  it('does NOT trip the guard for AI_PROVIDER_OVERRIDE=anthropic-sub (has its own Opus 4.8 default)', () => {
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
+    const resolved = resolveTaskProvider(KIND);
+    expect(resolved.provider).toBe('anthropic-sub');
+    expect(resolved.model).toBe('claude-opus-4-8');
+  });
+
+  it('a per-call override.provider to a non-mimo provider is NOT subject to the env-switch guard (dev escape hatch)', () => {
+    // The guard only applies when the provider came from the env switch, not from an
+    // explicit per-call override arg — that path is the test/dev escape hatch and is
+    // expected to pass its own model. Here we pass the model too, so it resolves.
+    const resolved = resolveTaskProvider(KIND, { provider: 'anthropic', model: 'claude-opus-4-8' });
+    expect(resolved.provider).toBe('anthropic');
+    expect(resolved.model).toBe('claude-opus-4-8');
+  });
+});

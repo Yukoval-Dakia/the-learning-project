@@ -367,6 +367,17 @@ function buildAgentEnv(resolved: ResolvedProvider): Record<string, string | unde
     base.ANTHROPIC_BASE_URL = undefined;
     base.ANTHROPIC_API_KEY = undefined;
     base.ANTHROPIC_AUTH_TOKEN = undefined;
+    // Codex review P2 (Finding 1): the cloud-provider selectors outrank the
+    // OAuth token in Claude Code's auth precedence — if ANY of them is truthy
+    // in the parent env, the SDK routes to Bedrock / Vertex / AWS / Foundry and
+    // the subscription token is silently ignored. A NAS/docker deployment that
+    // sets one of these (or a future dev who exports it) would break the A/B
+    // toggle invisibly. Explicitly UNSET all four so the first-party
+    // subscription endpoint is the only reachable target on the oauth lane.
+    base.CLAUDE_CODE_USE_BEDROCK = undefined;
+    base.CLAUDE_CODE_USE_VERTEX = undefined;
+    base.CLAUDE_CODE_USE_ANTHROPIC_AWS = undefined;
+    base.CLAUDE_CODE_USE_FOUNDRY = undefined;
   } else {
     base.ANTHROPIC_API_KEY = resolved.apiKey;
     if (resolved.baseUrl) {

@@ -246,6 +246,32 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
     expect(opts.model).toBe('claude-opus-4-8');
   });
 
+  it('UNSETs the cloud-provider selectors (Bedrock/Vertex/AWS/Foundry) so they cannot outrank the OAuth token (Finding 1)', async () => {
+    // Per Claude Code auth precedence, these four selectors outrank
+    // CLAUDE_CODE_OAUTH_TOKEN. A deployment (NAS/docker) that sets ANY of them in
+    // the parent env would route the SDK to that cloud provider and silently ignore
+    // the subscription token. The oauth lane must explicitly clear all four.
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
+    vi.stubEnv('CLAUDE_CODE_USE_BEDROCK', '1');
+    vi.stubEnv('CLAUDE_CODE_USE_VERTEX', '1');
+    vi.stubEnv('CLAUDE_CODE_USE_ANTHROPIC_AWS', '1');
+    vi.stubEnv('CLAUDE_CODE_USE_FOUNDRY', '1');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
+
+    mockSdk.messages = [successResult()];
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as { env: Record<string, string | undefined> };
+    // The subscription token still reaches the subprocess...
+    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('dummy-oauth-token-not-real');
+    // ...and every cloud-provider selector is explicitly cleared, even though all
+    // four were truthy in the parent process.
+    expect(opts.env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    expect(opts.env.CLAUDE_CODE_USE_VERTEX).toBeUndefined();
+    expect(opts.env.CLAUDE_CODE_USE_ANTHROPIC_AWS).toBeUndefined();
+    expect(opts.env.CLAUDE_CODE_USE_FOUNDRY).toBeUndefined();
+  });
+
   it('default (no AI_PROVIDER_OVERRIDE) keeps the mimo key-auth env block + UNSETs a parent OAuth token', async () => {
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     // Ensure the override is absent for this case.
