@@ -39,7 +39,7 @@ import {
   runSolveCheck,
 } from '@/server/quiz/verify-framework';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { maxNgramOverlap } from './quiz_verify';
+import { type VerifyFailureClass, maxNgramOverlap } from './quiz_verify';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -451,6 +451,12 @@ export async function runSourceVerify(
                   archived_knowledge_ids: archivedKnowledgeIds,
                 },
               }),
+          // YUK-350 (L3, RL5) — additive: a tier-2 verify that did NOT promote is a
+          // validation failure (a hard check failed or a knowledge point was archived),
+          // distinct from the catch-bottom 'system_error'. Key absent on promote=true.
+          ...(promote
+            ? {}
+            : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
           verified_by: verifiedBy,
         },
         caused_by_event_id: null,
@@ -482,6 +488,9 @@ export async function runSourceVerify(
         outcome: 'error',
         payload: {
           question_id: questionId,
+          // YUK-350 (L3, RL5) — event-layer system-error class. Additive key on the
+          // error path only; outcome + idempotency guard unchanged.
+          failure_class: 'system_error' satisfies VerifyFailureClass,
           error: String((err as Error).message ?? err),
         },
         caused_by_event_id: null,

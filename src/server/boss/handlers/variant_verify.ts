@@ -32,6 +32,7 @@ import {
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById, writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import type { VerifyFailureClass } from './quiz_verify';
 
 export interface VariantVerifyJobData {
   mistake_variant_id: string;
@@ -307,6 +308,11 @@ export async function runVariantVerify(
         proposal_event_id: proposalEventId,
         attempt_event_id: attemptEventId,
         verdict: parsed.verdict,
+        // YUK-350 (L3, RL5) — additive: a 'fail' verdict (variant broke; outcome
+        // 'partial') is a validation failure. 'pass' carries no failure_class.
+        ...(parsed.verdict === 'fail'
+          ? { failure_class: 'validation_failure' satisfies VerifyFailureClass }
+          : {}),
         cause_targeting: parsed.cause_targeting,
         failure_reasons: parsed.failure_reasons,
         summary_md: parsed.summary_md,
@@ -355,6 +361,14 @@ export function buildVariantVerifyHandler(
         // = mistake_variant status change happens only inside the committed txn in
         // runVariantVerify, which is past the throw). No result-layer 'error' value is
         // assigned here (no `overall` field exists for variants).
+        //
+        // YUK-350 (L3, RL5) — PHASE-DEFERRED observability gap: unlike quiz_verify /
+        // source_verify, variant_verify has NO catch-bottom verify event, so a system
+        // error here is NOT recorded as a failure_class='system_error' verify event —
+        // only this console.error + the pg-boss retry trail. Intentionally NOT adding a
+        // catch event (L3-Q2 decided): it would touch the retry/idempotency semantics
+        // (this handler has no transient-error event guard). Revisit if variant-verify
+        // observability needs event-level system-error coverage.
         console.error(`[variant_verify] ${mistakeVariantId} failed`, err);
         throw err;
       }

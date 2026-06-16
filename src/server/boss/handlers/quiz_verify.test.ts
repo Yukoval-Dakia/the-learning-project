@@ -441,9 +441,14 @@ describe('runQuizVerify', () => {
     const errorEv = evs.find((e) => e.outcome === 'error');
     expect(errorEv).toBeDefined();
     expect(errorEv?.payload?.overall).toBe('error');
-    // the terminal success event carries the model verdict, NOT 'error'.
+    // YUK-350 (L3, RL5) — the SAME transient-error event also carries the event-layer
+    // failure_class='system_error' (merged with L1's overall='error' assertion above).
+    expect(errorEv?.payload?.failure_class).toBe('system_error');
+    // the terminal success event carries the model verdict, NOT 'error', and (promote)
+    // carries NO failure_class.
     const successEv = evs.find((e) => e.outcome === 'success');
     expect(successEv?.payload?.overall).toBe('pass');
+    expect(successEv?.payload?.failure_class).toBeUndefined();
   });
 
   // YUK-350 (RL1) — system-error class: a task/parse blowup BEFORE a verdict must
@@ -471,6 +476,30 @@ describe('runQuizVerify', () => {
     expect(evs).toHaveLength(1);
     expect(evs[0].outcome).toBe('error');
     expect(evs[0].payload?.overall).toBe('error');
+    // YUK-350 (L3, RL5) — event-layer system-error class.
+    expect(evs[0].payload?.failure_class).toBe('system_error');
+  });
+
+  // YUK-350 (L3, RL5) — a model verdict that does NOT promote (real validation
+  // failure) carries payload.failure_class='validation_failure', distinct from the
+  // system_error class. Stays draft, no FSRS.
+  it("non-promote success: payload.failure_class='validation_failure'", async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_valfail', knowledgeId: 'k1' });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'fail' }), 'tr_valfail');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_valfail', runTaskFn });
+    expect(result.status).toBe('failed');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_valfail'));
+    expect(rows[0].draft_status).toBe('draft');
+
+    const evs = await verifyEventsFor('q_valfail');
+    expect(evs).toHaveLength(1);
+    expect(evs[0].outcome).toBe('failure');
+    expect(evs[0].payload?.failure_class).toBe('validation_failure');
+    // not a system error.
+    expect(evs[0].payload?.overall).toBe('fail');
   });
 
   it('does NOT promote when overall=pass but a structured check verdict is fail', async () => {
