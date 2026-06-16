@@ -24,7 +24,7 @@ import {
   question,
 } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
-import { and, asc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { QuestionKind } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
@@ -155,11 +155,19 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     const untracked = candidateKids.filter((k) => !trackedSet.has(k));
     if (untracked.length > 0) {
       // 每个未检验知识点取一道题（JSONB 包含查询，active 题）。
+      //
+      // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除**
+      // `draft_status='draft'`。new_check 在「KC 还没 material_fsrs_state 行」时触发——
+      // 此时刚生成的 embedded/teaching draft 题（L2 起落 draft_status='draft'，container-only）
+      // 还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露给用户成普通练习项。
+      // 谓词与 due-list.ts 的 notDraftQuiz 同形（NULL≡active / 'active' 留池，仅排 'draft'；
+      // NULL 需显式 isNull，否则 `<> 'draft'` 在三值逻辑下会误丢 NULL 行）。
+      const notDraft = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
       for (const kid of untracked) {
         const [q] = await db
           .select({ id: question.id })
           .from(question)
-          .where(sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`)
+          .where(and(sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`, notDraft))
           .limit(1);
         if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: kid });
       }

@@ -122,6 +122,69 @@ describe('scanQuestionInserts (classification)', () => {
     expect(sites).toHaveLength(1);
     expect(sites[0].hasDraftStatus).toBe(true);
   });
+
+  // F3 (YUK-350) — cross-line / chained insert forms must be scanned, not silently skipped.
+  // The OLD matcher required `.values(` to immediately follow `.insert(question))` with nothing
+  // between, so the idiomatic Drizzle multi-line builder chain escaped the gate entirely → a new
+  // cross-line insert that forgot draft_status would pass falsely green. These pin the fix.
+  it('scans a pure cross-line insert (newline between insert and values)', () => {
+    const src = ['tx', '  .insert(question)', '  .values({', '    id,', '    kind,', '  });'].join(
+      '\n',
+    );
+    const sites = scanQuestionInserts('f.ts', src);
+    expect(sites).toHaveLength(1);
+    // missing draft_status — and critically, it is no longer SKIPPED.
+    expect(sites[0].hasDraftStatus).toBe(false);
+  });
+
+  it('scans the idiomatic Drizzle insert().values().onConflict() multiline chain', () => {
+    const src = [
+      'await tx',
+      '  .insert(question)',
+      '  .values({',
+      '    id,',
+      '    draft_status: "draft",',
+      '  })',
+      '  .onConflictDoNothing();',
+    ].join('\n');
+    const sites = scanQuestionInserts('f.ts', src);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].hasDraftStatus).toBe(true);
+  });
+
+  it('scans an insert with an intermediate chained call before values', () => {
+    const src = ['tx.insert(question)', '  .onConflictDoNothing()', '  .values({ id });'].join(
+      '\n',
+    );
+    const sites = scanQuestionInserts('f.ts', src);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].hasDraftStatus).toBe(false);
+  });
+
+  it('still EXCLUDES cross-line question_block / question_part (word-boundary holds)', () => {
+    const src = [
+      'tx',
+      '  .insert(question_block)',
+      '  .values({ id });',
+      'tx',
+      '  .insert(question_part)',
+      '  .values({ id });',
+    ].join('\n');
+    expect(scanQuestionInserts('f.ts', src)).toHaveLength(0);
+  });
+
+  it('counts two distinct cross-line question inserts separately', () => {
+    const src = [
+      'await tx',
+      '  .insert(question)',
+      '  .values({ a: 1 });',
+      'await db',
+      '  .insert(question)',
+      '  .values({ b: 2 });',
+    ].join('\n');
+    const sites = scanQuestionInserts('f.ts', src);
+    expect(sites).toHaveLength(2);
+  });
 });
 
 // No-false-positive regression — run the REAL scanner over the 12 real source sites.
