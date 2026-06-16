@@ -50,6 +50,7 @@ import {
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
+import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
@@ -650,6 +651,27 @@ async function persistSubmit(
         });
       } catch (err) {
         console.warn('recordFamilyObservationForAttempt (submit) failed (non-fatal):', err);
+      }
+
+      // YUK-361 Phase 6 (Task 11) — active-PPI 难度标签记录（与上面家族观测同纪律）。
+      // 在**独立的** SAVEPOINT 内 best-effort：标签写失败只回滚本 savepoint，不连累上面
+      // 的家族写、更不毒化主 attempt tx（θ̂/FSRS/event）。同 auto_rate 门（手评不当客观 b
+      // 真值，§6）。hook 内部：非客观判分 / partial / 无真 π_i（softmax_mfi selected 观测）
+      // → skip 不写。thetaBefore = PRE-attempt θ̂（同家族 hook，b_label 反推锚定它）。
+      try {
+        await tx.transaction(async (sp) => {
+          await recordDifficultyCalibrationLabel(sp, {
+            questionId,
+            attemptEventId: eventId,
+            difficulty: q.difficulty,
+            outcome: outcome === 'success' ? 1 : 0,
+            judgeRoute,
+            thetaBefore,
+            now,
+          });
+        });
+      } catch (err) {
+        console.warn('recordDifficultyCalibrationLabel (submit) failed (non-fatal):', err);
       }
     }
   });

@@ -2,15 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { BACKUP_EXCLUDED_TABLES, FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.4" (YUK-361 Phase 5 item_family_calibration 慢热校准资产入备份, additive)', () => {
-    expect(SCHEMA_VERSION).toBe('4.4');
+  it('SCHEMA_VERSION is "4.5" (YUK-361 Phase 6 difficulty_calibration_label NEW table 入备份)', () => {
+    // 4.4 → 4.5 (YUK-361 Phase 6): NEW FK_ORDER table difficulty_calibration_label
+    // (active-PPI 难度标签账本，慢热校准资产)。新表入 FK_ORDER 必 bump (per archive.ts:92)。
+    // 对比：同 Phase 6 给 item_calibration 加的 b_anchor/b_calib/calibration_n/
+    // calibration_weight/last_calibrated_at 是既有 FK_ORDER 表的 additive **列**，随整行
+    // dump/restore，**不 bump** (同 Phase 2 theta_precision 加列不 bump 4.2 的先例)。
+    expect(SCHEMA_VERSION).toBe('4.5');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 28 tables in topological order', () => {
+  it('FK_ORDER lists all 29 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -22,8 +27,10 @@ describe('export constants', () => {
     // 是 active-PPI 重标定必需的慢热资产 (D17 推翻后)，进备份 (非 BACKUP_EXCLUDED)。
     // 27 → 28 (YUK-361 Phase 5): added item_family_calibration — 家族级 b_delta 慢热
     // 校准资产 (攒不回来，丢了即灭失)，同 item_calibration 进备份 (非 BACKUP_EXCLUDED)。
+    // 28 → 29 (YUK-361 Phase 6): added difficulty_calibration_label — active-PPI 难度
+    // 标签账本 (锚定 θ̂ 反推 b_label + π_i)，慢热校准资产，进备份 (非 BACKUP_EXCLUDED)。
     // knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(28);
+    expect(FK_ORDER.length).toBe(29);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('memory_reconciliation_log');
   });
@@ -56,6 +63,14 @@ describe('export constants', () => {
   it('FK_ORDER includes YUK-361 Phase 5 item_family_calibration (家族级 b 慢热资产，承重非排除)', () => {
     expect(FK_ORDER).toContain('item_family_calibration');
     expect(BACKUP_EXCLUDED_TABLES.has('item_family_calibration')).toBe(false);
+  });
+
+  it('FK_ORDER includes YUK-361 Phase 6 difficulty_calibration_label (active-PPI 难度标签账本，承重非排除)', () => {
+    expect(FK_ORDER).toContain('difficulty_calibration_label');
+    expect(BACKUP_EXCLUDED_TABLES.has('difficulty_calibration_label')).toBe(false);
+    // 置于 item_family_calibration 后 (难度校准簇相邻)。
+    const idx = (t: string) => FK_ORDER.indexOf(t as never);
+    expect(idx('item_family_calibration')).toBeLessThan(idx('difficulty_calibration_label'));
   });
 
   it('FK_ORDER includes all Phase 1c.1 Lane A new tables', () => {
