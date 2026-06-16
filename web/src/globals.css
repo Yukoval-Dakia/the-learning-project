@@ -2375,7 +2375,7 @@ ol {
 /* ─── YUK-52 — note-prose: scoped rules for NoteRenderer ───────────────────
    Targets <NoteRenderer kind="note">. Sits beside .artifact-section-body
    so atomic note bodies get list / code / image / blockquote rhythm without
-   leaking into TeachingDrawer / JudgeResultPanel / EmbeddedCheckSection
+   leaking into TeachingDrawer / JudgeResultPanel
    prompts (those still consume <MathMarkdown> directly).
 */
 .note-prose p {
@@ -2639,65 +2639,6 @@ ol {
   color: var(--again-ink);
   background: var(--again-soft);
   border-color: var(--again-line);
-}
-
-.embedded-check-section {
-  margin-top: var(--s-4);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
-}
-.embedded-check-question {
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  padding: var(--s-3);
-  margin-top: var(--s-2);
-  background: var(--paper-sunk);
-}
-.embedded-check-question__prompt {
-  margin: 0 0 var(--s-2);
-}
-.embedded-check-question__choices {
-  display: grid;
-  gap: var(--s-2);
-  margin: var(--s-2) 0;
-}
-.embedded-check-question__answer {
-  width: 100%;
-  padding: var(--s-2);
-  color: var(--ink);
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-}
-.embedded-check-question__submit {
-  margin-top: var(--s-2);
-}
-.embedded-check-feedback {
-  margin-top: var(--s-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-}
-.embedded-check-feedback.outcome-success {
-  color: var(--good-ink);
-}
-.embedded-check-feedback.outcome-failure {
-  color: var(--again-ink);
-}
-.embedded-check-status {
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  padding: var(--s-1) var(--s-2);
-  border-radius: var(--r-1);
-}
-.embedded-check-status.pending,
-.embedded-check-status.ready {
-  color: var(--info-ink);
-  background: var(--info-soft);
-}
-.embedded-check-status.failed,
-.embedded-check-error {
-  color: var(--again-ink);
-  background: var(--again-soft);
 }
 
 /* ------------------------------------------------------------ */
