@@ -6,8 +6,9 @@ describe('practice manifest jobs', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     const job = handlers.find((j) => j.name === 'embed_backfill');
     expect(job).toBeTruthy();
-    expect(job?.schedule?.cron).toBeTruthy();
+    expect(job?.schedule?.cron).toBe('40 4 * * *');
     expect(job?.schedule?.tz).toBe('Asia/Shanghai');
+    expect(job?.queue).toBe('llm');
     expect(typeof job?.load).toBe('function');
 
     // staggered: no other scheduled job shares embed_backfill's cron slot
