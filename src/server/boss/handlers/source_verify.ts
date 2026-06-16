@@ -454,9 +454,7 @@ export async function runSourceVerify(
           // YUK-350 (L3, RL5) — additive: a tier-2 verify that did NOT promote is a
           // validation failure (a hard check failed or a knowledge point was archived),
           // distinct from the catch-bottom 'system_error'. Key absent on promote=true.
-          ...(promote
-            ? {}
-            : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
+          ...(promote ? {} : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
           verified_by: verifiedBy,
         },
         caused_by_event_id: null,
