@@ -153,6 +153,20 @@ export interface UpdateThetaForAttemptInput {
    */
   kind?: string;
   source?: string;
+  /**
+   * Codex review F2 — family_key 解析必须用 **question 规范 primary KC**（q.knowledge_ids[0]），
+   * 而非 knowledgeIds[0]。paper submit 传 knowledgeIds=referencedKnowledgeIds（slot 的
+   * primary+secondary，无 primary 回落 q.knowledge_ids），其 [0] 是 **paper slot 指派的 primary
+   * KC**，可能 ≠ 题的 knowledge_ids[0]。但 family calibration 的写侧（recordFamilyObservation
+   * ForAttempt）与选题读侧（candidate-signals）都按 q.knowledge_ids[0] 成键（canonical 家族基，
+   * 见 personalized-difficulty.ts finding #3b 文档）。若此处用 knowledgeIds[0]，paper slot
+   * primary ≠ question primary 时，family delta 的 READ 会 miss 或读到**别的** family 行 → 错配。
+   * 故 caller 单独透传 question 规范 primary。
+   *
+   * 可选 + 回落 knowledgeIds[0]：未传（直测 / review 路径 knowledgeIds 本就是 q.knowledge_ids）
+   * → 退回 knowledgeIds[0]，行为与修复前等同（review 路径 [0] 本就等于 q.knowledge_ids[0]）。
+   */
+  familyPrimaryKnowledgeId?: string | null;
 }
 
 /**
@@ -236,8 +250,13 @@ export async function updateThetaForAttempt(
   // G3：只读，绝不写任何 b。
   let b = columnarB;
   if (input.kind && input.source) {
+    // Codex review F2 — family_key 用 **question 规范 primary KC**（caller 透传的
+    // familyPrimaryKnowledgeId = q.knowledge_ids[0]），回落 knowledgeIds[0]。paper submit 的
+    // knowledgeIds[0] 是 slot 指派的 primary，可能 ≠ 题 primary；family 写/读两侧都按
+    // q.knowledge_ids[0] 成键，用 slot primary 会让 family delta READ 错配别的 family（或 miss）。
+    const familyPrimaryKnowledgeId = input.familyPrimaryKnowledgeId ?? knowledgeIds[0];
     const familyKey = await resolveFamilyKeyForQuestion(tx, {
-      primaryKnowledgeId: knowledgeIds[0],
+      primaryKnowledgeId: familyPrimaryKnowledgeId,
       kind: input.kind,
       source: input.source,
     });

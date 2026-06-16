@@ -617,6 +617,9 @@ async function persistSubmit(
       // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
       kind: q.kind,
       source: q.source,
+      // Codex review F2 — 显式传 question 规范 primary（与 family 写/读两侧同键）。review 路径
+      // knowledgeIds 本就是 q.knowledge_ids，故 [0] 已等于 primaryKnowledgeId；显式传保契约一致。
+      familyPrimaryKnowledgeId: primaryKnowledgeId,
     });
 
     // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。

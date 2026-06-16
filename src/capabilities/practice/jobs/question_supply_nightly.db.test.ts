@@ -64,7 +64,9 @@ describe('runQuestionSupplyNightly', () => {
     });
 
     expect(result).toEqual({
+      discovered: 0,
       considered: 0,
+      deferred: 0,
       dispatched: 0,
       manual: 0,
       skipped: 0,
@@ -135,6 +137,38 @@ describe('runQuestionSupplyNightly', () => {
     expect(second.skipped).toBeGreaterThanOrEqual(1);
     // The crux: no additional enqueue on the second run.
     expect(enqueued).toHaveLength(firstEnqueueCount);
+  });
+
+  // ④b F3 per-run cap: many frontier_zero targets but maxPerRun=1 → only the single
+  // highest-priority target is dispatched; the rest are deferred to the next run. This is the
+  // accident hard-cap that prevents a first run (before the 7d cooldown takes effect) from
+  // flooding the paid Tavily/LLM queue with every discovered gap at once.
+  it('caps per-run dispatch to maxPerRun and defers the rest (F3)', async () => {
+    // Three distinct frontier KCs, each with zero active questions → three frontier_zero targets.
+    const kids = [createId(), createId(), createId()];
+    for (const kid of kids) {
+      await seedKnowledge(kid);
+      await seedActiveLearningItem([kid]);
+    }
+
+    const enqueued: Array<{ queue: string }> = [];
+    const enqueue: EnqueueFn = async (queue) => {
+      enqueued.push({ queue });
+      return `job-${enqueued.length}`;
+    };
+
+    const result = await runQuestionSupplyNightly(db, {
+      maxPerRun: 1,
+      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+    });
+
+    // Discovered all gaps, but only ONE was actually dispatched (the rest deferred to next run).
+    expect(result.discovered).toBeGreaterThanOrEqual(3);
+    expect(result.considered).toBe(1);
+    expect(result.deferred).toBe(result.discovered - 1);
+    expect(result.dispatched).toBe(1);
+    // The crux: exactly one enqueue despite three discovered targets — no flood.
+    expect(enqueued).toHaveLength(1);
   });
 
   // ④ single-target dispatch throws → swallowed by dispatchSupplyTargets' per-target try/catch →

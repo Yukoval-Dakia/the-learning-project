@@ -593,7 +593,7 @@ export async function submitPaperSlot(
       // knowledge（q.knowledge_ids[0]）的 PRE-attempt θ̂。家族残差必须对着作答前的 θ̂
       // 算（mirror state.ts thetaBefore=s.theta 纪律）；下面 updateThetaForAttempt 会把
       // mastery_state.theta_hat 移到 POSTERIOR，故必须先读。注意：family primary 用
-      // q.knowledge_ids[0]（family 计数同源），而 updateThetaForAttempt 用 slot 的
+      // q.knowledge_ids[0]（family 计数同源），而 updateThetaForAttempt 的 knowledgeIds 用 slot 的
       // referencedKnowledgeIds——两者可能不同 KC，family 的 θ̂ 锚取 q.knowledge_ids[0]
       // 这一个（与 recordFamilyObservationForAttempt 内部回落读的 KC 一致）。冷启 → 0。
       const familyPrimaryKnowledgeId = q.knowledge_ids[0];
@@ -611,6 +611,10 @@ export async function submitPaperSlot(
         // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
         kind: q.kind,
         source: q.source,
+        // Codex review F2 — family_key 必须用 question 规范 primary（q.knowledge_ids[0]），不是
+        // knowledgeIds[0]（= slot 指派 primary，paper 路径可能 ≠ 题 primary）。与 family 写侧
+        // （下面 recordFamilyObservationForAttempt 的 familyPrimaryKnowledgeId）+ 选题读侧同键。
+        familyPrimaryKnowledgeId,
       });
 
       // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。

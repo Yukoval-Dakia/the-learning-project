@@ -31,11 +31,30 @@ type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 type DepsOverride = {
   /** dispatcher 注入（DB 测试可注入 fake enqueue / cooldown / tavilyAvailable）。 */
   dispatchDeps?: DispatchDeps;
+  /**
+   * Codex review F3 — 本轮最多派发多少个供给目标（防一次 cron 打爆付费队列）。default 25。
+   */
+  maxPerRun?: number;
 };
 
+// ── 红线：per-run 派发硬顶（G-COST，Codex review F3）──────────────────────────
+// 这是**防事故硬顶**，不是紧限：cron 让付费获取（Tavily web 找题 + LLM 生成/验证）自动发生，
+// 而 dispatcher 的 7d fingerprint cooldown 在**首跑**（cooldown 尚未生效前）拦不住——首跑会把
+// discoverSupplyTargets 发现的**全部**缺口一次性 boss.send，首部署 / 大缺口积压时可一次性 flood
+// 付费队列。本顶把单轮派发数夹在合理上界：discoverSupplyTargets 返回的目标**已按 priority 降序**
+// 排好（见 target-discovery.ts），故 slice top-N 即「派最高优先级的 N 个，其余留下次夜跑」。
+// 取 25 对齐其它付费夜 job（item_prior_backfill DEFAULT_MAX_PER_RUN=25，同 LLM 付费惯例）——
+// 比 recalibration（200，纯本地计算无付费）保守。截掉的目标无 cooldown 副作用（未 dispatch →
+// 无 fingerprint 落库），下轮自然按新优先级重新发现 + 派发。
+const DEFAULT_MAX_PER_RUN = 25;
+
 export interface QuestionSupplyNightlyResult {
-  /** 本轮发现的供给目标数（缺口数）。 */
+  /** discoverSupplyTargets 发现的供给目标**总数**（缺口数，per-run cap 之前）。 */
+  discovered: number;
+  /** 本轮实际进入派发的目标数（= min(discovered, maxPerRun)，F3 硬顶后）。 */
   considered: number;
+  /** per-run cap 截掉、留待下轮的目标数（discovered − considered，F3 观测）。 */
+  deferred: number;
   /** 真派到后台队列的目标数（status='dispatched'）。 */
   dispatched: number;
   /** 无后台队列、留给人工/UI 的目标数（status='manual'）。 */
@@ -46,9 +65,11 @@ export interface QuestionSupplyNightlyResult {
   failed: number;
 }
 
-function tallyByStatus(results: DispatchResult[]): QuestionSupplyNightlyResult {
+function tallyByStatus(results: DispatchResult[], discovered: number): QuestionSupplyNightlyResult {
   const out: QuestionSupplyNightlyResult = {
+    discovered,
     considered: results.length,
+    deferred: Math.max(0, discovered - results.length),
     dispatched: 0,
     manual: 0,
     skipped: 0,
@@ -81,12 +102,24 @@ export async function runQuestionSupplyNightly(
   db: Db,
   deps: DepsOverride = {},
 ): Promise<QuestionSupplyNightlyResult> {
+  const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
   const targets = await discoverSupplyTargets(db);
   if (targets.length === 0) {
-    return { considered: 0, dispatched: 0, manual: 0, skipped: 0, failed: 0 };
+    return {
+      discovered: 0,
+      considered: 0,
+      deferred: 0,
+      dispatched: 0,
+      manual: 0,
+      skipped: 0,
+      failed: 0,
+    };
   }
-  const results = await dispatchSupplyTargets(db, targets, deps.dispatchDeps);
-  return tallyByStatus(results);
+  // F3 per-run 硬顶：targets 已按 priority 降序（target-discovery.ts），slice top-N 即派最高
+  // 优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
+  const dispatchTargets = targets.slice(0, maxPerRun);
+  const results = await dispatchSupplyTargets(db, dispatchTargets, deps.dispatchDeps);
+  return tallyByStatus(results, targets.length);
 }
 
 export function buildQuestionSupplyNightlyHandler(
