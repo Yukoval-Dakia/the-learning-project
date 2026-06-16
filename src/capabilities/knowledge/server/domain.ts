@@ -1,4 +1,4 @@
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { eq, isNull } from 'drizzle-orm';
@@ -12,8 +12,12 @@ const MAX_DEPTH = 32; // 防 cycle
  * GET /api/knowledge does its own in-memory walk over the full tree (batch-friendly),
  * so this single-node helper is reserved for Sub 2's KnowledgeProposeTask which will
  * need point lookups during tool calling (resolving a node's domain in tool results).
+ *
+ * Accepts `Db | Tx` (read-only SELECTs only) so callers inside an attempt tx
+ * (YUK-361 Phase 5 家族级校准的 subject 派生) can resolve a node's domain within
+ * the same transaction without a cast.
  */
-export async function getEffectiveDomain(db: Db, nodeId: string): Promise<string> {
+export async function getEffectiveDomain(db: Db | Tx, nodeId: string): Promise<string> {
   let curId: string = nodeId;
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
     const row = (
