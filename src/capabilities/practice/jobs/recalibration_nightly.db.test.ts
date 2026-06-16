@@ -132,20 +132,61 @@ describe('runRecalibrationNightly', () => {
     expect(cal?.b_calib).toBeNull();
   });
 
-  // (c) historically enough labels but NONE in the trigger window → not a candidate (no new
-  // progress this nightly).
-  it('does not pick a question whose labels are all outside the trigger window', async () => {
+  // (c) F1 修复：历史攒够标签、全部在窗外、但**从未校准**（b_calib NULL / calibration_n=0）
+  //     → stale 准入兜住它（首部署存量标签 / cron 停机 >1 天的题）。修复前只看窗会漏掉 → 永不
+  //     校准；修复后被纳入并 firm-up。
+  it('picks a stale never-calibrated question even when all its labels are outside the window (F1)', async () => {
     const q = createId();
     await seedQuestion(q);
     await seedItemCalibration(q, 0.5);
-    await seedLabels(q, RECALIBRATION_MIN_LABELS, { createdAt: OUT_OF_WINDOW });
+    await seedLabels(q, RECALIBRATION_MIN_LABELS, { bLabel: 1.5, createdAt: OUT_OF_WINDOW });
 
     const result = await runRecalibrationNightly(db, { now: JOB_NOW });
 
-    expect(result.considered).toBe(0);
-    expect(result.recalibrated).toBe(0);
+    expect(result.considered).toBe(1);
+    expect(result.recalibrated).toBe(1);
     const cal = await readCalibration(q);
-    expect(cal?.b_calib).toBeNull();
+    expect(cal?.b_calib).not.toBeNull();
+    expect(cal?.calibration_n).toBe(RECALIBRATION_MIN_LABELS);
+  });
+
+  // (c2) F1 幂等：已校准（calibration_n == 当前标签总数）且无窗内新标签 → 窗 (b) FALSE +
+  //      stale (c) FALSE → 不重复入选（避免每夜对静止已校准题重跑 recalibrateQuestion）。
+  it('does not re-pick an already-calibrated question with no new in-window labels (F1 idempotency)', async () => {
+    const q = createId();
+    await seedQuestion(q);
+    await seedItemCalibration(q, 0.5);
+    await seedLabels(q, RECALIBRATION_MIN_LABELS, { bLabel: 1.5, createdAt: OUT_OF_WINDOW });
+
+    // First run: firms up b_calib (stale-admission path) → calibration_n = label total.
+    const first = await runRecalibrationNightly(db, { now: JOB_NOW });
+    expect(first.recalibrated).toBe(1);
+
+    // Second run, no new labels, no in-window activity → now caught up → NOT a candidate.
+    const second = await runRecalibrationNightly(db, { now: JOB_NOW });
+    expect(second.considered).toBe(0);
+    expect(second.recalibrated).toBe(0);
+  });
+
+  // (c3) F1: a calibrated question whose label count has GROWN past calibration_n (new labels
+  //      accumulated, even if those new labels are out-of-window) → stale (calibration_n < total)
+  //      → re-picked and re-firmed with the larger label set.
+  it('re-picks a calibrated question whose label count grew past calibration_n (F1 stale)', async () => {
+    const q = createId();
+    await seedQuestion(q);
+    await seedItemCalibration(q, 0.5);
+    await seedLabels(q, RECALIBRATION_MIN_LABELS, { bLabel: 1.5, createdAt: OUT_OF_WINDOW });
+    const first = await runRecalibrationNightly(db, { now: JOB_NOW });
+    expect(first.recalibrated).toBe(1);
+    expect((await readCalibration(q))?.calibration_n).toBe(RECALIBRATION_MIN_LABELS);
+
+    // Add more (out-of-window) labels → label total now exceeds calibration_n.
+    await seedLabels(q, 3, { bLabel: 1.5, createdAt: OUT_OF_WINDOW });
+
+    const second = await runRecalibrationNightly(db, { now: JOB_NOW });
+    expect(second.considered).toBe(1);
+    expect(second.recalibrated).toBe(1);
+    expect((await readCalibration(q))?.calibration_n).toBe(RECALIBRATION_MIN_LABELS + 3);
   });
 
   // (d) candidate with enough in-window labels but NO anchor (no item_calibration row) →

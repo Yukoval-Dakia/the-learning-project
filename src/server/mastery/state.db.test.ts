@@ -536,6 +536,96 @@ describe('updateThetaForAttempt — family b_delta composition (YUK-372 L3)', ()
     expect(withKindSource).toBe(withoutKindSource);
   });
 
+  // Codex review F2 — paper submit passes knowledgeIds=referencedKnowledgeIds whose [0] is the
+  // SLOT primary, which can differ from the question primary (q.knowledge_ids[0]). The family_key
+  // must resolve off the QUESTION primary (familyPrimaryKnowledgeId), not knowledgeIds[0].
+  it('F2: family delta keys off familyPrimaryKnowledgeId (question primary), not knowledgeIds[0] (slot primary)', async () => {
+    const kQuestionPrimary = createId(); // q.knowledge_ids[0] — canonical family base.
+    const kSlotPrimary = createId(); // paper slot's assigned primary (≠ question primary).
+    const qid = createId();
+    await seedKnowledge(kQuestionPrimary);
+    await seedKnowledge(kSlotPrimary);
+    // Question's canonical primary is kQuestionPrimary (the family base).
+    await seedQuestion(qid, [kQuestionPrimary, kSlotPrimary]);
+    await seedItemCalibration(qid, 0.0);
+    // Family row is keyed on the QUESTION primary (where the family write side records it).
+    await seedFamily(`wenyan:${kQuestionPrimary}:short_answer:manual`, 1.0);
+
+    // Baseline: NO family delta reaches the anchor (no kind/source → family lookup skipped).
+    // Compute on the SLOT primary KC so we compare the same updated KC.
+    const kBaseSlot = createId();
+    const qBase = createId();
+    await seedKnowledge(kBaseSlot);
+    await seedQuestion(qBase, [kBaseSlot]);
+    await seedItemCalibration(qBase, 0.0);
+    const baseTheta = await runAttemptTheta({ kid: kBaseSlot, qid: qBase });
+
+    // Paper-shaped call: knowledgeIds starts with the SLOT primary, but familyPrimaryKnowledgeId
+    // is the QUESTION primary → family delta (+1.0) MUST enter the anchor.
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlotPrimary], // slot primary leads (≠ question primary).
+        questionId: qid,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        kind: 'short_answer',
+        source: 'manual',
+        familyPrimaryKnowledgeId: kQuestionPrimary, // F2 fix: question primary, not knowledgeIds[0].
+      });
+    });
+    const fixedTheta = (await readState(kSlotPrimary))?.theta_hat ?? 0;
+
+    // The family delta shifted the effective b (0.0 → 1.0) → larger θ̂ gain than the un-shifted
+    // baseline. If the lookup had keyed off knowledgeIds[0] (kSlotPrimary, which has NO family
+    // row), it would have been a NO-OP and fixedTheta would equal baseTheta.
+    expect(fixedTheta).not.toBeCloseTo(baseTheta, 6);
+    expect(fixedTheta).toBeGreaterThan(baseTheta);
+  });
+
+  // Codex review F2 — control: the OLD behavior (keying off knowledgeIds[0] = slot primary, which
+  // has no family row) is a NO-OP. This pins WHY the fix matters: same call but familyPrimary =
+  // slot primary → family lookup misses → θ̂ identical to the no-delta baseline.
+  it('F2 control: keying off the slot primary (no family row there) is a NO-OP', async () => {
+    const kQuestionPrimary = createId();
+    const kSlotPrimary = createId();
+    const qid = createId();
+    await seedKnowledge(kQuestionPrimary);
+    await seedKnowledge(kSlotPrimary);
+    await seedQuestion(qid, [kQuestionPrimary, kSlotPrimary]);
+    await seedItemCalibration(qid, 0.0);
+    // Family row exists ONLY on the question primary.
+    await seedFamily(`wenyan:${kQuestionPrimary}:short_answer:manual`, 1.0);
+
+    // Baseline θ̂ on a fresh slot KC with no family delta.
+    const kBaseSlot = createId();
+    const qBase = createId();
+    await seedKnowledge(kBaseSlot);
+    await seedQuestion(qBase, [kBaseSlot]);
+    await seedItemCalibration(qBase, 0.0);
+    const baseTheta = await runAttemptTheta({ kid: kBaseSlot, qid: qBase });
+
+    // Buggy-shaped call: familyPrimaryKnowledgeId = slot primary (no family row) → miss → NO-OP.
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlotPrimary],
+        questionId: qid,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        kind: 'short_answer',
+        source: 'manual',
+        familyPrimaryKnowledgeId: kSlotPrimary, // wrong key (slot primary) → no family row → NO-OP.
+      });
+    });
+    const buggyTheta = (await readState(kSlotPrimary))?.theta_hat ?? 0;
+
+    // No family delta reached the anchor → bit-identical to the no-delta baseline.
+    expect(buggyTheta).toBe(baseTheta);
+  });
+
   it('weak difficulty-proxy anchor + family delta coexist; bWeight stays keyed on the columnar (none) source', async () => {
     // No item_calibration row → columnar b = difficultyToLogitB(3) = 0 (weak proxy, bWeight=0.3).
     // A family delta is added ON TOP of the weak b; bWeight stays 0.3 (keyed on the columnar
