@@ -25,8 +25,14 @@ import {
   recordDifficultyCalibrationLabel,
 } from './recalibration';
 
+// FINDING #3：π_i join 按作答本地日（Asia/Shanghai）等值 join selection_observation.date。
+// 用一个**固定**的作答时刻让测试确定（不随真实日期漂移），并按同一时区公式派生它对应的
+// 本地日（与 recalibration.ts attemptLocalDate / stream-store.ts streamLocalDate 同度量）。
+const ATTEMPT_NOW = new Date('2026-06-16T08:00:00+08:00'); // = 2026-06-16 Asia/Shanghai
+const ATTEMPT_LOCAL_DATE = ATTEMPT_NOW.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+
 function now() {
-  return new Date();
+  return ATTEMPT_NOW;
 }
 
 async function seedQuestion(id: string, difficulty = 3) {
@@ -59,8 +65,8 @@ async function seedItemCalibration(questionId: string, b: number) {
   });
 }
 
-/** 写一条 softmax_mfi selected 观测（真 π_i），供 label hook join。 */
-async function seedSoftmaxObservation(questionId: string, pi: number, date = '2026-06-16') {
+/** 写一条 softmax_mfi selected 观测（真 π_i），供 label hook join。date 默认 = 作答本地日。 */
+async function seedSoftmaxObservation(questionId: string, pi: number, date = ATTEMPT_LOCAL_DATE) {
   await recordSelectionObservation(db, {
     date,
     refKind: 'question',
@@ -195,7 +201,7 @@ describe('recordDifficultyCalibrationLabel', () => {
     await seedItemCalibration(q, 0.5);
     // A legacy observation (deterministic selection, not random sampling).
     await recordSelectionObservation(db, {
-      date: '2026-06-16',
+      date: ATTEMPT_LOCAL_DATE,
       refKind: 'question',
       refId: q,
       policy: 'legacy',
@@ -213,6 +219,60 @@ describe('recordDifficultyCalibrationLabel', () => {
         judgeRoute: 'exact',
         thetaBefore: 0,
         now: now(),
+      });
+    });
+
+    expect(await readLabels(q)).toHaveLength(0);
+  });
+
+  it('FINDING #3 — π_i is joined from the selection event on the ATTEMPT date, not most-recent-across-days', async () => {
+    // Two softmax observations for the SAME question on different dates:
+    //   - day-1 (attempt date): π=0.3 — the event that PLACED the answered slot.
+    //   - day-5 (later):        π=0.7 — a later re-selection (slot answered as the day-1 instance).
+    // The attempt happens ON day-1 (ATTEMPT_NOW). The label MUST use π=0.3 (the placing
+    // event's weight), NOT 0.7 (the most-recent-across-days weight the old ORDER BY took).
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE); // placing event (attempt date)
+    await seedSoftmaxObservation(q, 0.7, '2026-06-20'); // later re-selection, different date
+
+    await db.transaction(async (tx) => {
+      await recordDifficultyCalibrationLabel(tx, {
+        questionId: q,
+        attemptEventId: createId(),
+        difficulty: 3,
+        outcome: 0,
+        judgeRoute: 'exact',
+        thetaBefore: 0,
+        now: now(), // = ATTEMPT_NOW → attempt local date = ATTEMPT_LOCAL_DATE
+      });
+    });
+
+    const labels = await readLabels(q);
+    expect(labels).toHaveLength(1);
+    // Joined the placing-event π (0.3), NOT the later re-selection's 0.7.
+    expect(labels[0].inclusion_probability).toBeCloseTo(0.3, 6);
+    expect(labels[0].inclusion_probability).not.toBeCloseTo(0.7, 2);
+  });
+
+  it('FINDING #3 — no softmax observation on the attempt date (only on other days) → skip', async () => {
+    // The only softmax observation is on a DIFFERENT date than the attempt. There is no
+    // placing event on the attempt date → no real π_i for THIS attempt → skip (no label).
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    await seedSoftmaxObservation(q, 0.7, '2026-06-20'); // not the attempt date
+
+    await db.transaction(async (tx) => {
+      await recordDifficultyCalibrationLabel(tx, {
+        questionId: q,
+        attemptEventId: createId(),
+        difficulty: 3,
+        outcome: 0,
+        judgeRoute: 'exact',
+        thetaBefore: 0,
+        now: now(), // attempt date = ATTEMPT_LOCAL_DATE, which has no softmax observation
       });
     });
 
@@ -359,6 +419,42 @@ describe('recalibrateQuestion (data-gated AIPW firm-up)', () => {
     expect(cal?.b_calib as number).toBeCloseTo(1.5, 4);
   });
 
+  it('FINDING #1 — NON-uniform π, all labels agree b=1.5 → b_calib == 1.5 EXACTLY (Hájek self-normalization)', async () => {
+    // The bias the old round(Σ1/π) denominator hid: with mixed π, Σ1/π is non-integer, so
+    // dividing the IPW correction by round(Σ1/π) (or a materialized Array(N).fill pool) makes
+    // the ratio ≠ 1 even when every label says the same true difficulty. The Hájek self-
+    // normalized estimator divides by the EXACT Σ(1/π) → the ratio is exactly 1 → b_calib
+    // recovers the labels' value EXACTLY, independent of the π distribution.
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5); // b_anchor = 0.5 (under-estimates true 1.5)
+    // 12 distinct NON-uniform π values (Σ1/π is non-integer → would trip the old bug).
+    const pis = [0.12, 0.34, 0.55, 0.2, 0.8, 0.45, 0.6, 0.15, 0.9, 0.33, 0.5, 0.7];
+    expect(pis).toHaveLength(RECALIBRATION_MIN_LABELS); // exactly the threshold
+    for (const pi of pis) {
+      await db.insert(difficulty_calibration_label).values({
+        id: newId(),
+        question_id: q,
+        attempt_event_id: createId(),
+        theta_snapshot: 0,
+        outcome: 0,
+        b_label: 1.5, // all labels agree the true difficulty is 1.5
+        inclusion_probability: pi,
+        created_at: now(),
+      });
+    }
+    // Sanity: Σ1/π is genuinely non-integer (so round() would have introduced bias).
+    const sumInv = pis.reduce((a, p) => a + 1 / p, 0);
+    expect(Math.abs(sumInv - Math.round(sumInv))).toBeGreaterThan(0.1);
+
+    const result = await recalibrateQuestion(db, q);
+    expect(result.updated).toBe(true);
+
+    const cal = await readCalibration(q);
+    // EXACT recovery (within float eps) — NOT 1.513… that the old round-denominator produced.
+    expect(cal?.b_calib as number).toBeCloseTo(1.5, 10);
+  });
+
   it('after firm-up, effectiveB(row) uses b_calib over b_anchor', async () => {
     const q = createId();
     await seedQuestion(q, 3);
@@ -369,6 +465,24 @@ describe('recalibrateQuestion (data-gated AIPW firm-up)', () => {
     const cal = await readCalibration(q);
     expect(effectiveB(cal)).toBeCloseTo(cal?.b_calib as number, 6);
     expect(effectiveB(cal)).not.toBeCloseTo(0.5, 2); // not the anchor anymore
+  });
+
+  it('FINDING low-1 — single-question constant-anchor mode → λ* == 1 (bad-anchor safety valve inert until Phase 7+)', async () => {
+    // In single-question mode the pool predictions are all b_anchor (constant) → Var(m̂)=0 →
+    // estimateLambdaStar returns 1. This is NOT a bug: the PPI++ closed form is correct; the
+    // auto-degrade valve simply cannot engage with a constant m̂. It activates only once
+    // Phase 7+ introduces a NON-constant pool prediction (family/library regression anchor).
+    // This assertion exists so a future reader does not assume the valve is live here.
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    // Labels deliberately VARY a lot (and π non-uniform) — a non-constant m̂ would push λ*<1
+    // if the valve were live, but a constant anchor m̂ keeps λ*==1 regardless of label spread.
+    await seedLabels(q, [0.2, 2.4, 0.5, 2.1, 0.1, 2.6, 0.3, 2.2, 0.4, 2.5, 0.6, 2.3], 0.5);
+
+    const result = await recalibrateQuestion(db, q);
+    expect(result.updated).toBe(true);
+    expect(result.lambdaStar).toBe(1); // constant-anchor → Var(m̂)=0 → λ*=1.
   });
 
   it('no anchor (no item_calibration row) → no_anchor no-op even with labels', async () => {

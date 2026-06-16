@@ -19,12 +19,24 @@
 // θ/学习漂移，当 b 真值会把 b 校成 response-rate 残差。单条 b_label 反推噪声大（n=1 CI 宽），
 // 这是预期的——AIPW 在候选池上聚合去噪（§7）。
 //
-// ─── AIPW 归一化（§7，Codex review 揪出的 bug 不能犯）──────────────────────────────
-// 正确形： aipwMean = (1/N)·Σ_pool m̂_i  +  (1/N)·Σ_labeled (ξ_j / π_j)
-//   N = 候选池大小（poolPredictions.length），m̂ = 池上锚预测（b_label 的锚预测），
-//   ξ_j = 第 j 条已标注的残差（label − 锚预测），π_j = 真随机抽样的 inclusion probability。
-// **不是**对已标注先 ÷n_labeled 再 ÷π（均匀抽样下会多乘 N/n_labeled 过度校正）——两段都
-// ÷N。positivity：任何 π ≤ 0 抛错（IPW 权重分母）。
+// ─── AIPW 归一化 + Hájek 自归一化（§7，Codex review 揪出的两个 bug 不能犯）──────────
+// 校正项是已标注子集的 IPW（Horvitz-Thompson）均值，**自归一化（Hájek）形**用样本权重
+// 的精确和 Σ(1/π) 作分母（不是池规模 N，更不是 round(N̂)）：
+//   ppiPlusMean = λ·predictionMean(pool)  +  [ Σ_labeled (ξ_j / π_j) ] / [ Σ_labeled (1/π_j) ]
+//   ξ_j = label_j − λ·m̂_j（残差），π_j = 真随机抽样的 inclusion probability，m̂ = 锚预测。
+// labeled 为空 → 校正项 0（退回 λ·predictionMean）。
+//
+// 为什么 ÷Σ(1/π) 而非 ÷N（FINDING #1，Codex review）：单题常数锚模式下 m̂≡b_anchor、
+// predictionMean=b_anchor，λ=1 时 b_calib = b_anchor + Σ((label−b_anchor)/π) / Σ(1/π) —— 这是
+// 标签的 **Hájek 自归一化 IPW 均值**：当所有 label 一致（如全 1.5）时，分子 = (1.5−anchor)·Σ(1/π)、
+// 分母 = Σ(1/π)，比值**恰好** = 1.5−anchor ⇒ b_calib=1.5 **精确**（与 π 分布无关）。旧实现用
+// round(Σ1/π) 当分母（materializing Array(N).fill 池）：Σ1/π 非整（真实混合 π 几乎总非整）→
+// 比值偏离 1 → 系统偏差（12 条全 b=1.5 + 非均匀 π → b_calib≈1.513 而非 1.5）。旧单/db 测全用
+// 均匀 π=0.5 ⇒ Σ1/π=2·n 为整 ⇒ round 无害，遮住了偏差。
+//
+// 朴素错误形对照（仍要防）：把校正项 ÷n_labeled 再保留 ÷π 隐含的 N/n 因子（均匀抽样下
+// π≈n/N）会多乘一个 N/n_labeled 过度校正——Hájek 的 ÷Σ(1/π) 同样自动消掉这个因子。
+// positivity（§7）：任何 π ≤ 0 抛错（IPW 权重分母，0 或负是上游 bug）。
 
 import { newId } from '@/core/ids';
 import { difficultyToLogitB } from '@/core/theta';
@@ -34,6 +46,21 @@ import { and, desc, eq } from 'drizzle-orm';
 import { impliedDifficultyResidual, isObjectiveJudgeRoute } from './personalized-difficulty';
 
 type DbLike = Db | Tx;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// attemptLocalDate — 作答时刻 → 用户本地日（YYYY-MM-DD），**显式锁定 Asia/Shanghai**。
+//
+// FINDING #3 π_i join 需要把作答钉在「作答当天放置该 slot 的选题事件」，故要作答的本地日。
+// 度量必须与 selection_observation.date / practice_stream_item.date 完全一致——那两者由
+// stream-store.ts 的 `streamLocalDate(now)`（同一 'sv-SE' + timeZone:'Asia/Shanghai' 公式）写入。
+// 此处**有意内联**而非 import `streamLocalDate`：那是 src/capabilities/practice/server 的重模块
+// （拉入 due-list / practice-read / composer 整张依赖图），而本模块在 src/server/mastery，被
+// submit.ts/paper-submit.ts import——import 它会把整张图拽进 mastery 层并制造 import cycle 风险。
+// 公式是单行且单用户时区固定，内联 + 注释指向唯一真相源（stream-store.ts streamLocalDate）即可。
+// ─────────────────────────────────────────────────────────────────────────────
+function attemptLocalDate(now: Date): string {
+  return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // effectiveB — b 读取终态优先链（read-compat helper，Task 11 step 1）。
@@ -78,19 +105,21 @@ export function impliedBLabel(theta: number, bAnchor: number, outcome: 0 | 1): n
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// aipwMean — AIPW / PPI rectifier 均值（Task 11 step 3，ADR-0043 §7 正确归一化）。
+// aipwMean — AIPW / PPI rectifier 均值，**Hájek 自归一化形**（Task 11 step 3，
+// ADR-0043 §7；FINDING #1 修复——精确 Σ(1/π) 分母，非 round(N̂) 池规模）。
 //
-//   aipwMean = predictionMean + (1/N)·Σ_j (residual_j / π_j)
-//            = (1/N)·Σ_pool m̂_i  +  (1/N)·Σ_labeled (ξ_j / π_j)
-//   N = poolPredictions.length（候选池大小，分母两段都用它）。
+//   aipwMean = predictionMean(pool)  +  [ Σ_labeled (ξ_j / π_j) ] / [ Σ_labeled (1/π_j) ]
+//   ξ_j = residual_j = label_j − 锚预测_j；分母 = 已标注样本权重的**精确和** Σ(1/π_j)。
+//   labeled 为空 → 校正项 0（退回纯 predictionMean）。
 //
-// 直觉（control-variate / Horvitz-Thompson 校正）：先用锚预测 m̂ 在**整个池**上取均值
-// （低方差但有偏——锚可能有系统尺度偏差）；再用**已标注子集**的残差 ξ/π 做 IPW 校正
-// （无偏但高方差），两者相加 = 半参数无偏估计。π 是真随机抽样的 inclusion probability。
+// 直觉（control-variate + Hájek 自归一化 Horvitz-Thompson 校正）：先用锚预测 m̂ 在**整个
+// 池**上取均值（低方差但有偏——锚可能有系统尺度偏差）；再用**已标注子集**的残差 ξ 做
+// Hájek IPW 校正（自归一化 ⇒ 标签一致时校正项精确收敛到真值偏移），两者相加 = 半参数估计。
 //
-// ⚠️ 正确归一化（§7，Codex review）：残差校正项是 (1/N)·Σ ξ/π，**不是** (1/n_labeled)·
-// Σ ξ/π 再 ÷π。均匀抽样下 π ≈ n_labeled/N，若误用 (1/n_labeled)·Σ ξ/π 会让校正项 ≈
-// (1/n_labeled)·Σ ξ·(N/n_labeled) —— 多乘了一个 N/n_labeled 因子，过度校正。两段都 ÷N。
+// ⚠️ FINDING #1（§7，Codex review）：校正项分母是 Σ(1/π)（精确权重和），**不是** round(Σ1/π)
+// 当池规模 N̂、也**不是** poolPredictions.length。旧实现 materializing Array(round(Σ1/π)).fill
+// + ÷N 在非均匀 π 下偏差（Σ1/π 非整 → 比值偏离 1）。均匀 π 下 Σ1/π=N 为整 → 偶然无害，
+// 遮住了偏差。自归一化的另一好处：自动消掉「÷n_labeled 再 ÷π」朴素错误形会多乘的 N/n 因子。
 //
 // positivity（§7）：任何 π ≤ 0 抛错——IPW 权重分母，0 或负是上游 bug（确定性 top-item
 // 选题事后归一化的伪 π 不满足 positivity，绝不该到这里）。
@@ -109,15 +138,18 @@ export function aipwMean(poolPredictions: number[], labeledResiduals: LabeledRes
   }
   const predictionMean = poolPredictions.reduce((a, b) => a + b, 0) / N;
   let residualCorrection = 0;
+  let weightSum = 0; // Σ(1/π) — Hájek 自归一化分母（精确权重和，FINDING #1）。
   for (const r of labeledResiduals) {
     if (!(r.pi > 0)) {
       // positivity 违反——IPW 权重分母 ≤0 是上游 bug（伪 π / 确定性选题），fail-fast。
       throw new Error(`aipwMean: inclusion probability must be > 0 (positivity), got ${r.pi}`);
     }
     residualCorrection += r.residual / r.pi;
+    weightSum += 1 / r.pi;
   }
-  // **两段都 ÷N**（§7 正确归一化）——不是 residualCorrection ÷ n_labeled。
-  return predictionMean + residualCorrection / N;
+  // Hájek 自归一化：校正项 ÷ Σ(1/π)（精确），不是 ÷round(Σ1/π) / ÷N（FINDING #1）。
+  // labeled 为空 → weightSum=0 → 校正项 0（退回 predictionMean）。
+  return predictionMean + (weightSum > 0 ? residualCorrection / weightSum : 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,8 +157,9 @@ export function aipwMean(poolPredictions: number[], labeledResiduals: LabeledRes
 //
 // 当锚 b_anchor 质量差（池预测 m̂ 与真标签相关性低）时，纯 AIPW 的方差被坏锚放大。
 // PPI++ 引入一个 power λ ∈ [0,1] 给锚预测项降权，**自动向 classical（纯标签）估计退化**：
-//   ppiPlusMean(λ) = λ·predictionMean + (1/N)·Σ (ξ_λ / π)，ξ_λ = label − λ·m̂
-//   λ=1 → 标准 AIPW（信任锚）；λ=0 → classical 纯 IPW 标签均值（完全不信锚）。
+//   ppiPlusMean(λ) = λ·predictionMean + [ Σ (ξ_λ / π) ] / [ Σ (1/π) ]，ξ_λ = label − λ·m̂
+//   （Hájek 自归一化分母 Σ(1/π)，FINDING #1）。
+//   λ=1 → 标准 AIPW（信任锚）；λ=0 → classical 纯 Hájek IPW 标签均值（完全不信锚）。
 //
 // λ* 闭式解（Angelopoulos et al. PPI++ 2023，最小化估计方差）：
 //   λ* = Cov(m̂, label_via_ipw) / Var(m̂_via_ipw)
@@ -181,8 +214,10 @@ export function estimateLambdaStar(labeled: LabeledSample[]): number {
 }
 
 /**
- * PPI++ power-tuned 均值（aipwMean 的 λ 泛化；λ=1 时数值等于 aipwMean）。
- *   ppiPlusMean(λ) = λ·predictionMean(pool) + (1/N)·Σ_labeled ((label − λ·m̂) / π)
+ * PPI++ power-tuned 均值（aipwMean 的 λ 泛化；λ=1 时数值等于 aipwMean）。**Hájek 自归一化**
+ * 校正分母 Σ(1/π)（FINDING #1——精确权重和，非池规模 N / round(N̂)）：
+ *   ppiPlusMean(λ) = λ·predictionMean(pool) + [ Σ_labeled ((label − λ·m̂) / π) ] / [ Σ_labeled (1/π) ]
+ * labeled 为空 → 校正项 0（退回 λ·predictionMean）。
  */
 export function ppiPlusMean(
   poolPredictions: number[],
@@ -195,13 +230,16 @@ export function ppiPlusMean(
   }
   const predictionMean = poolPredictions.reduce((a, b) => a + b, 0) / N;
   let correction = 0;
+  let weightSum = 0; // Σ(1/π) — Hájek 自归一化分母（FINDING #1）。
   for (const s of labeled) {
     if (!(s.pi > 0)) {
       throw new Error(`ppiPlusMean: inclusion probability must be > 0 (positivity), got ${s.pi}`);
     }
     correction += (s.label - lambda * s.prediction) / s.pi;
+    weightSum += 1 / s.pi;
   }
-  return lambda * predictionMean + correction / N;
+  // Hájek 自归一化：÷ Σ(1/π)（精确），不是 ÷N / ÷round(Σ1/π)（FINDING #1）。
+  return lambda * predictionMean + (weightSum > 0 ? correction / weightSum : 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -220,13 +258,28 @@ export const RECALIBRATION_MIN_LABELS = 12;
 // 由 submit.ts / paper-submit.ts 在 attempt tx 的 **SAVEPOINT** 内 best-effort 调用（同
 // Phase 5 family hook 的 tx-abort 隔离纪律——任何 DB 错只回滚 savepoint，不毒化主 attempt tx）。
 //
-// π_i join（设计接缝，见 Report「π_i join 的设计张力」）：从 selection_observation 取该题
-// （ref_id=questionId AND ref_kind='question'）**最近一条 policy='softmax_mfi' 且
-// selected=true** 的观测的 inclusion_probability（按 created_at desc）。**有意不按 date
-// 等值 join**——题可能在前一天被 softmax 选中、今天才作答，date 等值会漏掉真 π_i；取「该题
-// 最近一次 softmax 选中观测」是治理本次作答的那个抽样事件的最稳健代理。只对真随机抽样选中
-// 的锚题打标签（§7 positivity）；legacy/到期项无真 π_i（确定性选题，无 softmax_mfi 观测）
-// → join 不到 → **skip**（一条都不写，不落伪 π_i 污染慢热资产）。
+// π_i join（FINDING #3 修复——按 placing event join，不是 most-recent-across-days）：
+// selection_observation 每个 (date, ref_id) 选题事件一行（日级 materializeStream + 当日
+// reRankAfterAnswer 各写自己的 π_i）。**旧实现** `ORDER BY created_at DESC LIMIT 1`（不限
+// date）会把「该题跨所有日子最近一次 softmax 选中」的 π_i 贴上来：题 day-1 选中（π=0.30）、
+// 挂起未答、day-5 又被选中（π=0.70），却以 **day-1 那次** 作答 → 错贴 day-5 的 0.70。1/π 是
+// IPW 权重 ⇒ 错 π_i 直接偏置 rectifier（FINDING #3）。
+//
+// **正确 join**：取**放置被答 slot 的那次选题事件**的 π_i。理想做法是 thread 被答 slot 的
+// practice_stream_item.id（selection_observation.stream_item_id 直 join），但 attempt 路径
+// （submit.ts /api/review/submit 的 SubmitBody + paper-submit.ts 的 PaperSubmitSlotInput）
+// **不携带 stream_item_id**——SubmitBody 只有 activity_ref{kind,id}/question_id/mistake_id，
+// 无任何流上下文；paper 作答更是走 paper-slot 流程、根本不是 stream item（见 Report 接缝）。
+// 故用 attempt 路径**确实携带**的上下文做最准 join：作答时刻 `now` → 作答本地日
+// `streamLocalDate(now)`（显式 Asia/Shanghai，与 stream-store.ts streamLocalDate / 所有夜链
+// cron tz 同度量）。join `date = 作答本地日 AND ref_id = questionId AND ref_kind='question'
+// AND policy='softmax_mfi' AND selected=true`，按 created_at desc 取**那一天**的最新观测——
+// 当日内 reRankAfterAnswer 的最新观测正是治理当前物化 slot 的那次抽样事件（日级 materialize
+// 的更早观测被同日重排覆盖）。这把 π_i 钉在「作答当天放置该 slot 的事件」，而非跨日最近。
+//
+// 只对真随机抽样选中的锚题打标签（§7 positivity）；legacy/到期项无真 π_i（确定性选题，无
+// softmax_mfi 观测）/ 散题或非流作答（无当日 softmax 观测）→ join 不到 → **skip**（一条都
+// 不写，不落伪 π_i 污染慢热资产）。
 //
 // θ-before：caller 传 thetaBefore（在 updateThetaForAttempt 之前捕获的 PRE-attempt θ̂），
 // 同 Phase 5 family hook 的纪律——b_label 反推必须锚定作答前的 θ̂，不读已被本次作答移动的
@@ -276,12 +329,16 @@ export async function recordDifficultyCalibrationLabel(
   // partial 排除（同 Phase 5）：部分对对难度反推语义歧义，不折。
   if (input.attemptOutcome === 'partial') return;
 
-  // π_i join：取该题最近一条 softmax 选中观测的真 π_i。legacy/到期/无观测 → null → skip。
+  // π_i join（FINDING #3）：取**作答当天**放置该 slot 的 softmax 选中观测的真 π_i——按作答
+  // 本地日 `date` 等值 join（不是 most-recent-across-days），同日内取最新观测（reRankAfterAnswer
+  // 的最新观测治理当前物化 slot）。legacy/到期/散题/无当日观测 → null → skip。
+  const attemptDate = attemptLocalDate(input.now);
   const obsRows = await tx
     .select({ pi: selection_observation.inclusion_probability })
     .from(selection_observation)
     .where(
       and(
+        eq(selection_observation.date, attemptDate),
         eq(selection_observation.ref_id, input.questionId),
         eq(selection_observation.ref_kind, 'question'),
         eq(selection_observation.policy, 'softmax_mfi'),
@@ -334,17 +391,29 @@ export async function recordDifficultyCalibrationLabel(
 // 写 b_calib / calibration_n / calibration_weight / last_calibrated_at。**只此函数写
 // b_calib**（不变量①：在线 attempt 不写）。on-demand 函数（非 cron job，见 Report 决策）。
 //
-// 候选池 + HT 一致性（§7 positivity 的承重细节）：active-PPI/AIPW 的 `(1/N)` 里 N 必须是
-// **候选池规模**（不是已标注条数）——否则 §7 警告的「多乘 N/n」过度校正会反向发生（用
-// n_labeled 当 N 会**少**算池规模，让 IPW 校正项被放大）。单题维度下锚预测对全池是常数
-// b_anchor，故 predictionMean=b_anchor 与池如何枚举无关；关键是 N。π_i 是真随机抽样的
-// inclusion probability，Horvitz-Thompson 恒等式 E[Σ_labeled 1/π_i] = N_pool ⇒ 池规模的
-// 无偏估计 N̂_pool = round(Σ 1/π_i)。故 poolPredictions = b_anchor 复制 N̂_pool 次：
-//   - 均匀 π=0.5、N_labeled 条 → N̂_pool = 2·N_labeled，bCalib = anchor + mean(label−anchor)
-//     = mean(label)（退化为标签的 Hájek/自归一化均值，直觉正确）。
-//   - π→1（几乎确定性选中）→ N̂_pool→N_labeled，池≈已观测，校正项不被 IPW 放大。
+// **无生产 caller（数据闸/触发器延后，phase-deferred）**：本函数当前无调用方——触发器
+// （cron / 攒够阈值即时触发）刻意延后到 owner 用工具攒够标签后再接线。但 FINDING #1
+// （Hájek 精确分母）+ FINDING #3（π_i 按 placing event join）必须在**任何 caller 落地之前**
+// 就正确，否则首批 b_calib 写入即带偏差（慢热资产被污染后攒不回）——故本 phase 修对估计器
+// + join，caller 仍不接。接线时只需在攒够标签的触发点调本函数。
+//
+// Hájek 自归一化估计器（FINDING #1 修复）：单题维度下锚预测对全池是常数 b_anchor ⇒
+// predictionMean=b_anchor 与池如何枚举无关。故**不再** materializing round(Σ1/π) 大小的
+// Array(N).fill(b_anchor) 池——`[b_anchor]` 单元素池即给出 predictionMean=b_anchor。IPW 校正
+// 项用 ppiPlusMean 的 **Hájek 自归一化分母 Σ(1/π)**（精确权重和）：
+//   λ=1（单题常数锚恒定，见下 λ* 说明）⇒ b_calib = b_anchor + Σ((label−b_anchor)/π) / Σ(1/π)
+//   = 标签的 Hájek 自归一化 IPW 均值。所有 label 一致（如全 1.5）→ 分子=(1.5−anchor)·Σ(1/π)、
+//   分母=Σ(1/π) ⇒ 比值精确 = 1.5−anchor ⇒ b_calib=1.5 **与 π 分布无关**（FINDING #1 旧
+//   round(Σ1/π) 分母在非均匀 π 下偏离 1.5）。
+//
+// λ* 在单题常数锚模式恒 =1（FINDING low-1）：poolPredictions 全 = b_anchor（常数）⇒ 锚预测
+// 在样本间无方差 ⇒ estimateLambdaStar 的 Var(m̂)=0 分支返回 1。即「坏锚自降级」安全阀在本
+// 模式下**不可能触发**（这不是 bug——λ* 闭式正确，只是常数 m̂ 让方差比无定义，保守信任锚）。
+// 安全阀只在 Phase 7+ 引入**非常数** m̂（家族/全库回归锚预测）后才激活；届时 estimateLambdaStar
+// 会按真实 Cov(m̂,label)/Var(m̂) 给坏锚降权。本 phase 加 λ*==1 的断言测，防未来读者误以为阀已活。
+//
 // residual = label − b_anchor（锚预测）。门控：标签数 ≥ RECALIBRATION_MIN_LABELS 才 firm-up。
-// 这是单题粒度的轻量实例化（家族/全库粒度的更宽真池留 Phase 7+，届时 m̂ 不再是常数）。
+// 这是单题粒度的轻量实例化（家族/全库粒度的更宽真池 + 非常数 m̂ 留 Phase 7+）。
 //
 // **数据闸**：b_calib 只在标签攒够后非空（owner 用工具攒标签）。门控未过 → 返回
 // {updated:false}，b_calib 保持 NULL，effectiveB 退回 b_anchor ?? b（这是 roadmap 的本意：
@@ -396,19 +465,17 @@ export async function recalibrateQuestion(
     return { updated: false, labelCount, bCalib: null, reason: 'below_threshold' };
   }
 
-  // 4. PPI++ AIPW。样本 = (label, m̂=b_anchor, π)。
+  // 4. PPI++ AIPW（Hájek 自归一化，FINDING #1）。样本 = (label, m̂=b_anchor, π)。
   const samples: LabeledSample[] = labels.map((l) => ({
     label: l.b_label,
     prediction: bAnchor,
     pi: l.pi,
   }));
-  // 池规模 N̂_pool = round(Σ 1/π_i)（Horvitz-Thompson 无偏估计，见上 doc）。锚对全池常数 →
-  // poolPredictions = b_anchor 复制 N̂_pool 次。floor 到 labelCount（池至少有已观测这么多）。
-  const estimatedPoolSize = Math.max(
-    labelCount,
-    Math.round(samples.reduce((a, s) => a + 1 / s.pi, 0)),
-  );
-  const poolPredictions = Array(estimatedPoolSize).fill(bAnchor);
+  // 单题常数锚：predictionMean=b_anchor 与池规模无关 ⇒ 单元素池即可（**不再** materializing
+  // round(Σ1/π) 大小的 Array.fill 池——FINDING #1：那条路径把 IPW 校正项 ÷round(N̂)，非均匀 π
+  // 下产生偏差）。IPW 校正用 ppiPlusMean 的 Hájek 自归一化分母 Σ(1/π)（精确权重和）。
+  // λ* 在常数锚模式恒 =1（Var(m̂)=0；FINDING low-1，见上 doc），坏锚安全阀本模式不触发。
+  const poolPredictions = [bAnchor];
   const lambdaStar = estimateLambdaStar(samples);
   const bCalib = ppiPlusMean(poolPredictions, samples, lambdaStar);
 
