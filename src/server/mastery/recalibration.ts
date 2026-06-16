@@ -285,10 +285,12 @@ export const RECALIBRATION_MIN_LABELS = 12;
 // 只对真随机抽样（softmax_mfi selected）选中的锚题打标签（§7 positivity）：legacy/到期项确定性
 // 选题无 softmax_mfi 观测 → join 不到 → skip。
 //
-// matched-stream-slot gate（Codex P2，保留为冗余 race-guard）：再 join 被答 slot 的
-// practice_stream_item 确认它**当天确实物化存在**（slot 可能被后续重排删/回填）。attemptLocalDate
-// (now)=date 等值在此作冗余防御（主判别子已是 stream_item_id 直 join），多一道确认被答 slot 确属
-// 作答当天的物化流。
+// matched-stream-slot gate（Codex P2，保留为 race-guard）：再 join 被答 slot 的
+// practice_stream_item 确认它**仍活、仍属本题**（slot 可能被后续重排删/回填）。判别子是
+// (id=streamItemId AND ref_id=questionId)——被答 slot 的日期归属已由 stream_item_id 直 join 隐含
+// 确定，**不再叠 date=attemptLocalDate(now) 等值**：那会在跨本地午夜作答时（slot 物化于本地日 D、
+// now 滚到 D+1）令 date 等值变成实质约束而非纯冗余 → 误 skip 一条本可成立的午夜锚题标签
+// （慢热标签资产稀缺，YUK-372 修复）。
 //
 // θ-before：caller 传 thetaBefore（在 updateThetaForAttempt 之前捕获的 PRE-attempt θ̂），
 // 同 Phase 5 family hook 的纪律——b_label 反推必须锚定作答前的 θ̂，不读已被本次作答移动的
@@ -379,18 +381,17 @@ export async function recordDifficultyCalibrationLabel(
   // 只对真随机抽样选中的锚题打标签（§7 positivity）。无真 π_i → skip（不落伪 π_i）。
   if (pi === null || !(pi > 0 && pi <= 1)) return;
 
-  // matched-stream-slot gate（Codex P2）：要求被答 slot 的 practice_stream_item **当天确实物化
-  // 存在**。slot 可能因后续重排被删/回填——若已不在，则这条 π_i 不再对应一个活的当天流 slot →
-  // skip。attemptLocalDate(now)=date 等值在此作**冗余 race-guard**（不是主判别子——主判别子是上面
-  // 的 stream_item_id 直 join），多一道防御确认被答 slot 确属作答当天的物化流。
-  const attemptDate = attemptLocalDate(input.now);
+  // matched-stream-slot gate（Codex P2）：要求被答 slot 的 practice_stream_item **仍活、仍属本题**。
+  // slot 可能因后续重排被删/回填——若已不在，则这条 π_i 不再对应一个活的流 slot → skip。
+  // 判别子 = (id=streamItemId AND ref_id=questionId)：被答 slot 的日期归属已由 stream_item_id 直
+  // join 隐含确定，**不**再叠 date=attemptLocalDate(now) 等值——那会在跨本地午夜作答时误 skip 合法
+  // 锚题标签（slot 物化于本地日 D、now 滚到 D+1 → date 不等 → 丢标签；YUK-372 修复）。
   const slotRows = await tx
     .select({ id: practice_stream_item.id })
     .from(practice_stream_item)
     .where(
       and(
         eq(practice_stream_item.id, streamItemId),
-        eq(practice_stream_item.date, attemptDate),
         eq(practice_stream_item.ref_id, input.questionId),
       ),
     )
@@ -437,11 +438,11 @@ export async function recordDifficultyCalibrationLabel(
 // 写 b_calib / calibration_n / calibration_weight / last_calibrated_at。**只此函数写
 // b_calib**（不变量①：在线 attempt 不写）。on-demand 函数（非 cron job，见 Report 决策）。
 //
-// **无生产 caller（数据闸/触发器延后，phase-deferred）**：本函数当前无调用方——触发器
-// （cron / 攒够阈值即时触发）刻意延后到 owner 用工具攒够标签后再接线。但 FINDING #1
-// （Hájek 精确分母）+ FINDING #3（π_i 按 placing event join）必须在**任何 caller 落地之前**
-// 就正确，否则首批 b_calib 写入即带偏差（慢热资产被污染后攒不回）——故本 phase 修对估计器
-// + join，caller 仍不接。接线时只需在攒够标签的触发点调本函数。
+// **生产 caller（YUK-372 L1 已接线）**：recalibration_nightly cron（04:50 Asia/Shanghai，
+// practice manifest 注册）逐夜把「攒够标签 + 窗内有新标签」的题喂进本函数 firm-up b_calib——
+// active-PPI 重标定引擎自此在生产逐夜写首批 b_calib。FINDING #1（Hájek 精确分母）+ FINDING #3
+// （π_i 按 placing event join）的估计器正确性是 caller 落地的前置（首批 b_calib 写入即不带偏差，
+// 慢热资产不被污染）；本函数仍是纯 on-demand（job 顶层调，不在 attempt tx 内）。
 //
 // Hájek 自归一化估计器（FINDING #1 修复）：单题维度下锚预测对全池是常数 b_anchor ⇒
 // predictionMean=b_anchor 与池如何枚举无关。故**不再** materializing round(Σ1/π) 大小的

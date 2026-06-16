@@ -34,6 +34,7 @@ import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/co
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
 import { resolveFamilyKeyForQuestion } from '@/server/mastery/family-key';
+import { buildFamilyKey } from '@/server/mastery/family-key-format';
 import { and, eq, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -87,15 +88,11 @@ export function isObjectiveJudgeRoute(route: string | null | undefined): boolean
 //   - source：question.source（来源）。
 //
 // 绝不含 exact question id——家族绕道的核心是「多题共享一个 b_delta」。
+//
+// YUK-372：格式串提到无依赖的 family-key-format.ts 单一真相源，此处只是 re-export 别名（保持
+// 既有公开名 familyKey 与现有测试/调用方兼容），消除「改一处漏另一处」的读写键漂移窗口。
 // ─────────────────────────────────────────────────────────────────────────────
-export function familyKey(
-  subject: string,
-  primaryKnowledgeId: string,
-  kind: string,
-  source: string,
-): string {
-  return `${subject}:${primaryKnowledgeId}:${kind}:${source}`;
-}
+export const familyKey = buildFamilyKey;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shrinkage（经验贝叶斯收缩，Phase 5 step 3）。
