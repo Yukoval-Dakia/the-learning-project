@@ -100,7 +100,7 @@ A 让 **matcher 成承重墙，而 matcher = 检索**。这块检索底座是整
 **当前零域语义向量是底座的最大缺口。** 设计如下：
 
 **(a) 嵌入什么**
-- **第一批**：`question`（`prompt_md` + `reference_md` + `choices_md` 规范化拼接）、`knowledge`（KC 名 + 描述）、**raw 原料池 candidate**（题面候选）。
+- **第一批**：`question`（`prompt_md` + `reference_md` + `choices_md` 规范化拼接）、`knowledge`（KC 文本——**注**：`knowledge` 表当前只有 `name`/`domain`，**无 description 列**；KC 向量先用 `name` + `domain` + 关联 note 摘要的确定拼接，或新增 `description`/`summary` 列后用之，二选一见 §11）、**raw 原料池 candidate**（题面候选）。
 - **第二批（按需）**：`note` 块、错因描述（cause_category 的人话定义，用于「作答错→错因家族」语义匹配的补充层）。
 - **不嵌入**：mem0 facts（已有，是用户事实，不动）。
 
@@ -117,6 +117,7 @@ A 让 **matcher 成承重墙，而 matcher = 检索**。这块检索底座是整
 **(d) embed-on-write pipeline**
 - question / KC / raw-pool 行**写入或内容变更**时，enqueue 一个 embed job（pg-boss）计算 + 回填向量。域 ingestion 当前**无 embed step**——这是新增的横切环节。
 - 内容变更触发 re-embed（不是 MERGE 不 re-embed——见 mem0 反模式 §9）。
+- **一次性 backfill（关键）**：上线时对**存量** question/KC 跑一轮 embed——旧行不会再触发「写入/变更」，否则长期 NULL 向量、下游 KC-tag/变式/dedup 落空（Codex review）。n=1 量小（~分钟级）。**NULL embedding 降级路径**：matcher 退化为纯标量过滤（不崩，只是该行无语义召回）。
 
 **(e) 检索原语（matcher 核心，七消费者共享）**
 混合检索 = **语义 ANN top-K** ∩/+ **标量硬过滤** → **复合 rerank**：
@@ -159,7 +160,7 @@ owner：per-subject 先行 + 讨论跨科意义与路径。
 - **最终 taxonomy（owner 2026-06-16 拍板，文献 grounded；详见 `docs/design/2026-06-16-meta-cause-taxonomy-research.md` 含来源权威性表）**：4 学派（Reason/Rasmussen 人因 · Newman/Radatz 程序错误 · Chi/diSessa 概念变化 · Corbett BKT 心理测量）收敛到「错误出在哪个认知机制」。
   - **6 类机制主轴 `meta_cause`（互斥单选）**：`execution_slip`（执行失误，提示即自纠不复现 → 只提示不加难度）/ `knowledge_gap`（知识缺乏，首次即错跨情境一致不会 → 初教/FSRS 重排）/ `retrieval_failure`（已编码取不出，给提示就想起 → 无提示检索练习）/ `rule_misapplication`（规则对但用错情境/越界泛化/负迁移 → 条件辨识/反例）/ `flawed_model`（稳定可复现的错心智模型或 bug 规则，抗简单纠正 → **认知冲突题，最高出题价值**）/ `representation_failure`（调用领域知识前读题/转译就失败 → 练「据语境/题意转译」）。
   - **2 条正交标注轴（多标，不参与主分类）**：Axis A `metacog_flag`（元认知校准：blind_spot / false_fluency / regulation_gap / overconfident / poor_resolution / calibrated）；Axis B `bloom_level`（remember…create）。
-  - **双层映射（关键）**：per-subject `cause_category` **不硬编死 meta**——一词多机制（古文「虚词误解」可落 representation / rule_misapp / flawed_model / knowledge_gap）。= 静态默认映射表（冷启先验）+ **实例级 `meta_cause` 字段**（AI judge 按「提示是否自纠 / 是否跨情境复现 / 信心是否脱节」判定，evidence-first 落 `src/server/ai/log.ts` 可回滚）。
+  - **双层映射（关键）**：per-subject `cause_category` **不硬编死 meta**——一词多机制（古文「虚词误解」可落 representation / rule_misapp / flawed_model / knowledge_gap）。= 静态默认映射表（冷启先验）+ **实例级 `meta_cause` 字段**（AI judge 按「提示是否自纠 / 是否跨情境复现 / 信心是否脱节」判定，evidence-first 落 **event payload 的 `meta_cause` 字段 + correction 体系**可回滚——**不是** `ai/log.ts`，它只写 ai_task_runs/tool_call_log/cost_ledger，不持久化 judge 结构化判定，rejudge/纠错还原不了；Codex review）。
   - **violation 不进主类**：「故意跳步/不验算」是动机非能力 → 归 Axis A `regulation_gap`（Reason 2000 把 violation 与 error 正交），不误判成「不会」。
   - **落库字段**：`meta_cause`(主) / `meta_cause_secondary`(可空) / `metacog_flag` / `bloom_level`(可空) / `self_corrected_on_hint` / `recurred_cross_item`。
 - **两层聚合**：层内 `cause_category × KC`（per-subject，先做，喂 FSRS）+ 跨科 `meta_cause × effective_domain 派生轴`（后做；按「科目是视角不是结构」meta_cause **不挂 subject 列**）。
@@ -211,8 +212,8 @@ owner：per-subject 先行 + 讨论跨科意义与路径。
 
 ## 8. 分阶段 rollout（建议）
 
-- **Phase 0 — 检索底座地基**：pgvector 域 embedding 列（question/KC/raw-pool）+ embed-on-write job + 统一 pool-fetch 算子 + knowledge_ids GIN。（无行为变更，纯地基）
-- **Phase 1 — A 采集循环**：raw 池 schema + forager（点亮 question-supply 为 forager-steerer，nightly cron）+ matcher + 源注册表 + 版权 gate。（YUK-372 L5 在此被正式取代）
+- **Phase 0 — 检索底座地基**：pgvector 域 embedding 列（question/KC/raw-pool）+ embed-on-write job + **一次性 backfill 存量 question/KC embed**（旧行不再触发写入；n=1 量小）+ 统一 pool-fetch 算子 + knowledge_ids GIN。（无行为变更，纯地基）
+- **Phase 1 — A 采集循环**：raw 池 schema + forager（点亮 question-supply 为 forager-steerer，**nightly + 事件驱动**）+ matcher + 源注册表（forager **guide**，**无版权 gate**——决策 4）。（YUK-372 L5 在此被正式取代）
 - **Phase 2 — KC 自动标注升级**：embedding 候选 KC + confidence 落库（解 ≤200 grid 盲区）。
 - **Phase 3 — 选题侧解锁**：三 dormant 信号按序（misconception → transfer → exam）+ 变式家族相似度 + 语义 dedup。
 - **横切**：错因家族物化（Phase 1/3 之间，misconception 前置）；考纲数据源（exam 前置，最重）。
@@ -225,8 +226,9 @@ owner：per-subject 先行 + 讨论跨科意义与路径。
 - **KC-tag 准确率**：入池 AI tagger 错标污染所有下游 KC 检索，无 FK 约束清理悬挂 id；matcher 需对错/陈旧 KC 容错。
 - **错因家族稀疏 + n=1**：复发频次样本极少，misconception 晋升 ≥k 门槛可能长期不触发；守 **NEVER zero-fill**（undefined=无数据≠0）。
 - **错因 taxonomy 跨科不可比**：cause_category 是 per-subject 字符串 id，跨科聚合需先统一/可映射 taxonomy（故决策 8 = per-subject 先行）。
-- **版权 / web sourcing**：authentic/sourced 原始素材版权合规需在 source_tier 之上显式 gate；引入语义相似后近重判定边界变模糊。
+- **web sourcing 近重判定**：引入语义相似后近重判定边界变模糊（与 n-gram 阈值需协调）。（版权：决策 4 = 自用 n=1 无版权 gate，不作风险项）
 - **dormant 引擎接线**：question-supply 接 cron 时需验真实数据规模行为（无 GIN 的 jsonb 全表解析）+ cooldown 防 spam 正确性。
+- **Embedding API 可用性/延迟**：embed-on-write 在 ingestion 链路上——百炼 API 故障/延迟会堵题目入库。**fallback：API 不可用时题目照常入库、embedding 留 NULL 排队补**（不阻塞 ingestion）+ API SLA 监控（CodeRabbit review）。
 
 ---
 
