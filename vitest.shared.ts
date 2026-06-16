@@ -131,6 +131,11 @@ export const fastTestInclude = [
   // objects 不连库）+ ./personalized-difficulty（同款）。label hook + recalibrateQuestion
   // 的 db 测在 recalibration.db.test.ts。同 personalized-difficulty.test.ts 显式登记理由。
   'src/server/mastery/recalibration.test.ts',
+  // YUK-372 L3 — family_key 解析 null-guard 纯逻辑单测（缺 primaryKnowledgeId/kind/source → null
+  // 在任何 DB 调用前早返）。Pure no-DB: imports 仅 ./family-key（其 @/db/client / domain.ts 都是
+  // type-only/erased，@/db/schema 是 table objects 不连库）。subject 派生/内存 walk 的 DB 测在
+  // candidate-signals.db.test.ts / state.db.test.ts。同 personalized-difficulty.test.ts 显式登记理由。
+  'src/server/mastery/family-key.test.ts',
   // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
   // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
   // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`

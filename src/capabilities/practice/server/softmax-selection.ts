@@ -119,6 +119,8 @@ async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<Candidat
       kind: question.kind,
       knowledge_ids: question.knowledge_ids,
       difficulty: question.difficulty,
+      // YUK-372 L3 — source 透传到 CandidateInput（family_key 解析所需）。
+      source: question.source,
     })
     .from(question)
     .where(inArray(question.id, qids));
@@ -141,6 +143,8 @@ async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<Candidat
       kind: resolveEnumKind(q?.kind),
       knowledgeIds: q?.knowledge_ids,
       difficulty: q?.difficulty,
+      // YUK-372 L3 — source for family_key resolution (undefined → family lookup skipped).
+      source: q?.source,
     };
   });
 }

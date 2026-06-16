@@ -608,6 +608,9 @@ export async function submitPaperSlot(
         difficulty: q.difficulty,
         attemptEventId,
         now,
+        // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
+        kind: q.kind,
+        source: q.source,
       });
 
       // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
