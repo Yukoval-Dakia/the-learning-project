@@ -21,6 +21,16 @@
  * draft_status key。仅扫源码（非 test、非 scripts/seed-*），word-boundary 排除
  * question_block / question_part（同名前缀的其它表）。
  *
+ * 已知盲点（与 sibling audit-schema 同属正则-shape 限制，当前数据下均不可触发——
+ * 已 grep 确认无任何站点命中以下形态——但未来贡献者须知）：
+ *   1. 只匹配 INLINE 对象字面量形式 `.insert(question).values({ ... })`。变量/数组
+ *      形式 `.values(rows)` / `.values([...])` 不会被扫到，会静默逃过 gate。新增
+ *      bulk/computed-row insert 时必须改写成 inline 字面量，否则 gate 不覆盖。
+ *   2. DRAFT_STATUS_KEY_RE 在整块对象（含嵌套）里找 key，不限 top-level。若把
+ *      draft_status 作为嵌套对象（如 metadata: { draft_status: ... }）的 key，会被
+ *      误判为「已设」。draft_status 必须是 top-level 列 key。
+ *   3. 只 walk SRC_ROOT（src/），不扫 scripts/——seed-* 种子数据按设计排除。
+ *
  * 详见 docs/design/2026-05-15-data-assumptions.md（draft_status NULL≡active 契约）。
  */
 

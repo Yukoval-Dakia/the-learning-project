@@ -35,16 +35,16 @@
   "src/server/boss/handlers/embedded_check_generate.ts": {
     "reason": "Container-only embedded checks now set draft_status='draft' explicitly (YUK-350 L2). Kept here as a harmless-redundant chain-merge guard so the L2->L4 chain never fails on either order; the audit silently passes an allowlisted-AND-explicit file.",
     "resolves_when": {
-      "kind": "pr",
-      "ref": "YUK-350 L2 (embedded_check_generate draft_status='draft' merged)",
+      "kind": "manual",
+      "ref": "redundant post-L2 (file sets draft_status explicitly); remove this entry once W0 is merged — kept only so the L2->L4 chain never hard-fails on merge order",
       "expected_by": "2026-12-31"
     }
   },
   "src/capabilities/copilot/server/teaching/materialize-ask-check.ts": {
     "reason": "Container-only teaching checks now set draft_status='draft' explicitly (YUK-350 L2). Kept here as a harmless-redundant chain-merge guard; the audit silently passes an allowlisted-AND-explicit file.",
     "resolves_when": {
-      "kind": "pr",
-      "ref": "YUK-350 L2 (materialize-ask-check draft_status='draft' merged)",
+      "kind": "manual",
+      "ref": "redundant post-L2 (file sets draft_status explicitly); remove this entry once W0 is merged — kept only so the L2->L4 chain never hard-fails on merge order",
       "expected_by": "2026-12-31"
     }
   }
