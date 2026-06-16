@@ -38,6 +38,7 @@
     "preflight:vision": "tsx scripts/preflight-vision.ts",
     "preflight:ingestion": "tsx scripts/ingestion-preflight.ts",
     "sanity:vision-rejudge": "tsx scripts/sanity-vision-rejudge.ts",
+    "replay:urnings": "tsx scripts/replay-urnings-lite.ts",
     "compose:up": "docker compose up -d",
     "compose:down": "docker compose down",
     "compose:build": "docker compose build",
