@@ -16,6 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
+  DIFFICULTY_PROXY_WEIGHT,
   conjunctiveCredits,
   eloK,
   expectedScore,
@@ -85,13 +86,37 @@ export const VARIANT_META: Record<VariantId, VariantMeta> = {
     id: 'elo_point',
     label: 'Elo/MLE point estimate (production)',
     reusesProductionMath: true,
-    simplification: '',
+    // Codex #2 (documented simplification — NOT a false reuse claim): the
+    // production θ̂ update (updateThetaForAttempt) processes one EVENT and updates
+    // ALL of its question's knowledge_ids JOINTLY via conjunctiveCredits(thetas, b,
+    // outcome) (weakest-KC-aware credit assignment). This OFFLINE replay is per-node
+    // (one knowledge stream at a time), so a genuinely MULTI-KC event is replayed as
+    // independent single-KC streams using conjunctiveCredits([θ̂],…)[0] — which is
+    // PRODUCTION-EXACT for single-KC questions (production also degenerates to the
+    // standard Elo residual there) but a documented simplification of the joint
+    // multi-KC credit. Faithfully replaying joint multi-KC updates would require
+    // restructuring the whole per-node metric/aggregation architecture (an invasive
+    // rewrite disproportionate to a data-gated spike), so it is documented, not
+    // half-implemented. Everything else (K schedule, bWeight weak-anchor down-weight,
+    // the residual itself) is the real src/core/theta.ts math.
+    simplification:
+      "Per-node single-KC stream: production updates a question's multiple knowledge_ids " +
+      'JOINTLY via conjunctiveCredits(thetas, b, outcome); this offline replay processes ' +
+      'one node-stream at a time (single-KC degenerate = standard Elo residual), which is ' +
+      'production-EXACT for single-KC questions but a documented simplification of the ' +
+      'weakest-KC-aware joint credit for multi-KC ones (full joint replay needs a ' +
+      'per-event architecture rewrite, deferred for this spike).',
   },
   elo_precision: {
     id: 'elo_precision',
     label: 'Elo/MLE + theta_precision (production Phase 2)',
     reusesProductionMath: true,
-    simplification: '',
+    // Same documented per-node simplification as elo_point (Codex #2).
+    simplification:
+      'Per-node single-KC stream (same as elo_point): production joint multi-KC credit ' +
+      'is replayed as independent single-KC streams — production-EXACT for single-KC, a ' +
+      'documented simplification for multi-KC. The precision accumulation + bWeight ' +
+      'weak-anchor down-weight + SE-shrunk prediction are the real production math.',
   },
   glicko_rd: {
     id: 'glicko_rd',
@@ -155,19 +180,49 @@ export const DEFAULT_REPLAY_CONFIG: ReplayConfig = {
 
 const GLICKO_SCALE = 400 / Math.log(10); // glicko-400 ↔ natural-log (Glicko-2 q)
 
-/** Map the 3-way event outcome to a binary 0/1; partial → 0.5-rounded to the caller's policy. */
+/**
+ * Map the 3-way event outcome to a binary 0/1, MIRRORING the production θ update.
+ *
+ * Codex #5 fix — fidelity: production `updateThetaForAttempt` is fed
+ * `attemptOutcome === 'failure' ? 0 : 1` by paper-submit.ts (so `partial` → 1,
+ * "部分对≈成功证据，保守不扣"), and `submit.ts`'s review path only ever passes a
+ * binary success/failure (no partial). The replay's WHOLE VALUE is mirroring that
+ * online θ update, so it MUST fold `partial → 1` exactly as production does — NOT
+ * `partial → 0`. The script logs how many partials were folded this way.
+ *
+ * Distinction (do not conflate): Phase 5/6 FAMILY-calibration / difficulty-label
+ * recording EXCLUDES partial (it early-returns on `attemptOutcome === 'partial'`,
+ * because partial难度估计语义歧义). That is the CALIBRATION-label channel, a
+ * DIFFERENT concern from the θ UPDATE. This replay mirrors the θ UPDATE (state.ts /
+ * updateThetaForAttempt), where partial is success evidence → 1.
+ */
 export function toBinaryOutcome(outcome: 'success' | 'failure' | 'partial'): 0 | 1 {
-  // Spike policy: partial counts as failure (conservative; objective items rarely
-  // produce partial). The script logs how many partials were folded this way.
-  return outcome === 'success' ? 1 : 0;
+  // production parity: failure → 0, everything else (success OR partial) → 1.
+  return outcome === 'failure' ? 0 : 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Variant 1 — Elo/MLE point estimate (PRODUCTION reuse)
 //
-// Replays the EXACT production online update: per attempt, θ̂' = θ̂ + K·credit,
+// Replays the EXACT production online update: per attempt, θ̂' = θ̂ + K·bWeight·credit,
 // where credit = conjunctiveCredits([θ̂], b, outcome)[0] (single-KC → standard Elo
-// residual outcome−p) and K = eloK(evidenceCount). b is the read-only anchor.
+// residual outcome−p), K = eloK(evidenceCount), and bWeight is the weak-anchor
+// down-weight production applies (Codex #1).
+//
+// Codex #1 fix — weak-anchor down-weighting: production `updateThetaForAttempt`
+// multiplies the θ̂ update by `bWeight = (calB !== null ? 1 : DIFFICULTY_PROXY_WEIGHT)`
+// — i.e. when b is the ordinal-1-5 difficulty proxy (no calibrated item_calibration.b),
+// the move is scaled by 0.3 (the weak anchor is not trusted at full Elo step). The
+// replay now reads `a.bSource` and applies the SAME down-weight via updateTheta's
+// `weight` param, so the production-reuse claim holds on proxy-anchored attempts too.
+//
+// Codex #2 (documented simplification — see VARIANT_META.elo_point.simplification):
+// production updates ALL of a question's `knowledge_ids` JOINTLY via
+// conjunctiveCredits(thetas, b, outcome). This offline replay processes one
+// per-node stream at a time, so a genuinely multi-KC event uses the single-KC
+// degenerate conjunctiveCredits([θ̂],…)[0] (= standard Elo residual) per node — which
+// is production-EXACT for single-KC questions but a documented simplification of the
+// weakest-KC-aware joint credit for multi-KC ones. See replay-urnings-lite.ts loop.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function replayEloPoint(
@@ -180,9 +235,11 @@ export function replayEloPoint(
   attempts.forEach((a, i) => {
     const pHat = expectedScore(theta, a.b); // predict BEFORE update (prequential)
     predictions.push({ pHat, outcome: a.outcome });
+    // weak difficulty-proxy anchor → down-weight the move (production parity, #1).
+    const bWeight = a.bSource === 'difficulty_proxy' ? DIFFICULTY_PROXY_WEIGHT : 1;
     const credit = conjunctiveCredits([theta], a.b, a.outcome)[0]; // single-KC Elo residual
     const k = eloK(i); // evidenceCount = attempts seen so far for this node
-    theta = updateTheta(theta, a.b, a.outcome, k); // outcome−expected internally; credit asserted in tests
+    theta = updateTheta(theta, a.b, a.outcome, k, bWeight); // θ̂ += k·bWeight·(outcome−p)
     thetaTrajectory.push(theta);
     void credit; // credit kept for parity assertion in tests (== outcome−p at n=1)
   });
@@ -203,6 +260,20 @@ export function replayEloPoint(
 // surfaced two ways: (a) the SE trajectory (for the MFI-instability proxy), and
 // (b) an SE-shrunk prediction — when θ̂ is uncertain (high SE) the prediction is
 // pulled toward 0.5, the standard uncertainty-aware-down-weighting MFI uses.
+//
+// Codex #1 fix — weak-anchor down-weighting: production accumulates precision with
+// the SAME bWeight it uses for the θ̂ move (updateThetaPrecision(…, bWeight) →
+// weight²·Fisher), AND scales the θ̂ move by bWeight. The replay threads
+// `a.bSource` → bWeight into BOTH, matching production exactly on proxy anchors.
+//
+// Codex #6 fix — SE-shrunk PREDICTION shrinks the (θ−b) LOGIT toward 0, not θ alone.
+// Pre-fix it shrank θ toward the prior (`theta*shrink + prior*(1-shrink)`), so at a
+// cold/uncertain θ̂=0 with b=2 it still predicted σ(−2)≈0.12 no matter how uncertain
+// — the prediction never approached 0.5. The intended SE-shrunk semantics pull the
+// PREDICTION toward 0.5 as precision→0, which means shrinking the logit fed to σ:
+// pHat = σ(shrink·(θ−b)). shrink→0 → σ(0)=0.5 (max uncertainty); shrink→1 (precision
+// →∞) recovers the raw Elo prediction σ(θ−b) (variant 1). Variant 1 (point) is
+// unchanged — this only affects variant 2's predictive output.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PrecisionNodeResult extends VariantNodeResult {
@@ -222,18 +293,24 @@ export function replayEloPrecision(
   const predictions: Prediction[] = [];
   attempts.forEach((a, i) => {
     const se = thetaSe(precision);
-    // SE-shrunk prediction: scale the (θ−b) logit by precision/(precision+1) so
-    // a cold/uncertain θ̂ predicts closer to 0.5. precision→∞ recovers the raw
-    // Elo prediction (variant 1). This is the predictive expression of the same
-    // uncertainty MFI uses to down-weight uncertain θ̂.
+    // weak difficulty-proxy anchor → down-weight BOTH the move and the Fisher info (#1).
+    const bWeight = a.bSource === 'difficulty_proxy' ? DIFFICULTY_PROXY_WEIGHT : 1;
+    // SE-shrunk prediction (#6): shrink the (θ−b) LOGIT toward 0 by the factor
+    // precision/(precision+1) so a cold/uncertain θ̂ predicts closer to σ(0)=0.5
+    // REGARDLESS of how far b is from θ. shrink→0 (precision→0) → pHat→0.5 (max
+    // uncertainty); shrink→1 (precision→∞) recovers the raw Elo prediction σ(θ−b)
+    // (variant 1). This is the predictive expression of the same uncertainty MFI uses
+    // to down-weight uncertain θ̂. Shrinking the LOGIT (not θ alone) is the fix: the
+    // old `θ*shrink` left b un-shrunk, so cold θ̂=0,b=2 still predicted σ(−2), never 0.5.
     const shrink = precision / (precision + 1);
-    const pHat = expectedScore(theta * shrink + cfg.thetaPrior * (1 - shrink), a.b);
+    const pHat = expectedScore(shrink * (theta - a.b), 0); // σ(shrink·(θ−b))
     predictions.push({ pHat, outcome: a.outcome });
     // accumulate precision at θ̂ BEFORE the move (information evaluated where the
-    // gradient is taken — matches production updateThetaPrecision contract)
-    precision = updateThetaPrecision(precision, theta, a.b);
+    // gradient is taken — matches production updateThetaPrecision contract), with the
+    // same bWeight the θ̂ move uses (weight² into Fisher — production parity, #1).
+    precision = updateThetaPrecision(precision, theta, a.b, bWeight);
     const k = eloK(i);
-    theta = updateTheta(theta, a.b, a.outcome, k);
+    theta = updateTheta(theta, a.b, a.outcome, k, bWeight);
     thetaTrajectory.push(theta);
     seTrajectory.push(thetaSe(precision));
     void se;
