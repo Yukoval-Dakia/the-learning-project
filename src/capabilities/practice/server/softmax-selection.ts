@@ -161,10 +161,12 @@ function resolveEnumKind(kind: string | null | undefined): QuestionKindT | undef
 function dueReasoning(label?: string): string {
   return `我看了你的曲线：${kpSuffix(label)}到了复习边缘，先把它咬住。`;
 }
-function variantReasoning(label?: string): string {
+// Task 9 增量重排（stream-store.reRankAfterAnswer）复用这两个模板——重抽样换进的新候选
+// 需生成与首次 compose 一致的 reasoning 文案（单一真相，不重复 kpSuffix 模板）。
+export function variantReasoning(label?: string): string {
   return `之前${kpSuffix(label)}翻过车，这道换了说法再来一次。`;
 }
-function newCheckReasoning(label?: string): string {
+export function newCheckReasoning(label?: string): string {
   return `你刚学了${kpSuffix(label)}，自测一道确认真的进脑子了。`;
 }
 function paperReasoning(

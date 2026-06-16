@@ -49,7 +49,9 @@ import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
+  newCheckReasoning,
   statisticalWeights,
+  variantReasoning,
 } from './softmax-selection';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 
@@ -716,16 +718,36 @@ export async function recomposeStream(
 // 若不重跑 LLM 则用上次 LLM 权重 + 新信号，便宜」——本实现取「新信号纯统计 sampler」档：
 // LLM 权重未逐项持久化，最便宜且正确的是用更新后 θ̂ 重算 mfiScore 当统计权重重抽样）。
 //
+// ─── 候选池重设计（YUK-361 Phase 4 HIGH 缺陷修复）────────────────────────────────
+//   **以前的 bug**：候选池只取「受影响的既有流行」（candidateInputs = affectedRows.map），
+//   且 targetCount = affectedRows.length。pool 数 N === targetCount → inclusionProbabilities
+//   命中退化档（targetCount ≥ N → 全 π_i=1）→ sampler 原样重选同一集合 → delete+reinsert
+//   同 ref（churn + 新行 id），**一道都没真重排**，还往 IPW 资产灌 π=1 脏行。deliverable(2)
+//   「按更新后 θ̂ 重排待做非到期项」沦为 no-op。
+//
+//   **修复**：把候选池**拓宽**成「当日完整 eligible 非到期池」——复用 collectComposerInputs 的
+//   variant + new_check 源（与 Phase 3 选题同源），再**排除所有 FROZEN/ineligible ref**：
+//     - 到期行（source='decay'）、recall-locked 行、done/in_progress/skipped 行（任意 source）、
+//       今日已物化且已完成的 ref——都不进池（它们冻结，position/status 不动）。
+//   这个 broad pool 的大小 N **大于** targetCount（= 当前待做非到期空位数），故 sampleByWeight
+//   走**真** IPPS（π_i < 1，真重排：可换进一道现在更诊断的题、换掉一道现在更不诊断的）。新鲜
+//   θ̂（collectCandidateSignals 读当前 mastery_state）这下真的改变结果。
+//
+//   targetCount = **当前待做非到期空位数**（待回填的诊断尾长），**不是** pool 大小。
+//
 // ─── 不变量保全（与 Phase 3 选题路径 review 同款铁律②③④ + positivity）────────────
 //   ② 到期 presence + intra-day 序：到期行（source='decay'）**冻结**——既不删也不动 position，
-//      故其 presence + L1 相对序原样保全（本函数从不碰到期行）。
-//   ③ recall 同题重背：recall-locked 待做行（signals.recallLocked===true）**冻结**——不进
-//      候选池、不被抽样、position 不动。
-//   ④ 容量 + draft 排除 + dedup：重排后的非到期项数 ≤ 被移除的受影响待做项数（重抽样从同一/
-//      更新候选池抽，targetCount=被移除数 → 不胀容量）；in-memory dedup（seen）+ date+ref
-//      唯一索引兜重复。
+//      故其 presence + L1 相对序原样保全（本函数从不碰到期行；它们也被排出候选池）。
+//   ③ recall 同题重背：snapshot recall-locked 待做行（signals.recallLocked===true）**冻结**；
+//      且**EDGE 2**——某行 snapshot 不是 recall 但**新鲜 compute** 重判为 recall（question.kind
+//      变脏 → resolveEnumKind undefined → fail-closed recallLocked=true）时，该行**冻结保留**
+//      （不删进空位、不重抽样），presence 守住（never drop-into-a-gap）。
+//   ④ 容量 + draft 排除 + dedup：targetCount = 待做非到期空位数（不胀容量）；broad pool 抽样
+//      经 in-memory seen（排除冻结 ref）+ date+ref 唯一索引兜重复。
 //   positivity（ADR-0043 §7）：复用 sampleByWeight（含 ε-greedy 下限）——每个进池候选 π_i>0；
-//      被抽中项记真 π_i（post-commit best-effort，policy='softmax_mfi'）。
+//      **EDGE 3**——只对 INSERT **真落库**的行（onConflictDoNothing 没吞掉的）记真 π_i
+//      （post-commit best-effort，policy='softmax_mfi'），绝不记幻影 π_i（mirror materializeStream
+//      的 freshRefs 纪律）。
 //   done/in_progress/skipped 行（任意 source）**冻结**——既不删也不动 position+status。
 //
 // ─── 单飞锁 + 串行化 ───────────────────────────────────────────────────────────
@@ -734,11 +756,13 @@ export async function recomposeStream(
 //   position、不写重复观测）。
 //
 // ─── position 模型（done/skipped 行绝不移位的硬约束 ⇒ 不能整流 renumber）──────────
-//   被移除的受影响待做行腾出 position「空位」；重抽样的新项**优先填这些空位**，多出的追加在
-//   `max(position)+1…`。冻结行 position 全部**逐字不动**——满足「done 保 position」+「无重复
-//   position」（空位本就空闲，tail 位超 max 不撞冻结位）。这与 materializeStream 的整流
-//   renumber **有意不同**：那条路径会移到期/done 行的 position（recompose 语义下可接受，因
-//   recompose 显式删全部 pending 重排）；增量重排的契约更严（done 必须钉死），故走专用定位。
+//   只删**真正被新抽样替换**的待做非到期行（被 EDGE 2 冻结保留的不删），腾出 position「空位」；
+//   抽中的新项**优先填这些空位**（按抽样序），多出的追加在 `max(position)+1…`。冻结行 position
+//   全部**逐字不动**——满足「done/due/recall/in_progress/skipped 保 position」+「无重复 position」
+//   （空位本就空闲；tail 位超 max 不撞冻结位；空位本由删除行让出，不撞冻结位）。这与
+//   materializeStream 的整流 renumber **有意不同**：那条路径会移到期/done 行 position（recompose
+//   语义下可接受）；增量重排契约更严（done 必须钉死），故走专用定位。presence 硬约束：每行重排前
+//   存在的，要么 frozen-kept、要么被替换重落，**绝不掉进空位被丢**。
 
 /** 从 practice_stream_item.signals 快照读 recallLocked（Phase 3 物化的 CollectedSignal）。 */
 function rowIsRecallLocked(signals: unknown): boolean {
@@ -785,21 +809,56 @@ export async function reRankAfterAnswer(
       .orderBy(asc(practice_stream_item.position));
     if (rows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // 候选 = 待做(pending) + 非到期诊断(source variant/new_check) + 非 recall-locked 的**题**行。
-    //   到期行(decay)/卷/recall-locked/任何 done|in_progress|skipped 行 = 冻结，不进候选。
-    const reRankable = rows.filter(
+    // ── 待回填的诊断尾（targetCount 来源）= 当前**待做非到期诊断**行：
+    //    pending + question + source(variant/new_check) + snapshot 非 recall-locked。
+    //    到期行(decay)/卷/snapshot recall-locked/任何 done|in_progress|skipped 行 = 冻结，
+    //    它们既不进 targetCount、也不进候选池、position/status 逐字不动。
+    const pendingNonDue = rows.filter(
       (r) =>
         r.status === 'pending' &&
         r.item_kind === 'question' &&
         (r.source === 'variant' || r.source === 'new_check') &&
         !rowIsRecallLocked(r.signals),
     );
-    if (reRankable.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    // 无待回填空位 → no-op（不动流、不写观测）。
+    if (pendingNonDue.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // 受影响子集 = 候选里**触及受影响 KC** 的那些（θ̂ 真移动了它们的 MFI）。一次性点查
-    //   候选 ref 的 knowledge_ids；不触及任何受影响 KC 的候选**不重排**（bounded——只动 θ̂ 真
-    //   变了的项）。
-    const candRefIds = reRankable.map((r) => r.ref_id);
+    // ── HIGH 修复：候选池**拓宽**成「当日完整 eligible 非到期池」（不再只取受影响既有流行）。
+    //    复用 collectComposerInputs 的 variant + new_check 源（与 Phase 3 选题同源）；到期项
+    //    与卷不进重排候选池（它们冻结/旁路）。
+    const composerInputs = await collectComposerInputs(tx, date);
+    const poolRaws = [
+      ...composerInputs.variantItems.map((v) => ({
+        questionId: v.questionId,
+        source: 'variant' as const,
+        knowledgeLabel: v.knowledgeLabel,
+      })),
+      ...composerInputs.newCheckItems.map((n) => ({
+        questionId: n.questionId,
+        source: 'new_check' as const,
+        knowledgeLabel: n.knowledgeLabel,
+      })),
+    ];
+
+    // ── 冻结/ineligible ref 集合：必须从候选池**排除**（它们 position 不动，不得被重抽样
+    //    复制成新行 → 撞 date+ref 唯一索引 / 破坏冻结行的 presence）。
+    //    = 到期行(decay) + snapshot recall-locked 行 + done|in_progress|skipped 行（任意 source）
+    //      + 卷。pendingNonDue 的 ref **不在**冻结集（它们正是要被替换的尾，可重新入选）。
+    const pendingNonDueRefs = new Set(pendingNonDue.map((r) => r.ref_id));
+    const frozenRefs = new Set(
+      rows.filter((r) => !pendingNonDueRefs.has(r.ref_id)).map((r) => r.ref_id),
+    );
+
+    // 候选池 raws：排除冻结 ref + in-memory dedup（铁律④；唯一索引兜底）。
+    const seenPool = new Set<string>();
+    const eligibleRaws = poolRaws.filter(
+      (r) =>
+        !frozenRefs.has(r.questionId) && !seenPool.has(r.questionId) && seenPool.add(r.questionId),
+    );
+    if (eligibleRaws.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+
+    // ── 富化候选（kind/knowledge_ids/difficulty）——一次性批量点查 question 表。
+    const poolQids = eligibleRaws.map((r) => r.questionId);
     const candQRows = await tx
       .select({
         id: question.id,
@@ -808,32 +867,25 @@ export async function reRankAfterAnswer(
         difficulty: question.difficulty,
       })
       .from(question)
-      .where(inArray(question.id, candRefIds));
+      .where(inArray(question.id, poolQids));
     const candQById = new Map(candQRows.map((q) => [q.id, q]));
-    const affectedRows = reRankable.filter((r) => {
-      const kids = candQById.get(r.ref_id)?.knowledge_ids ?? [];
+
+    // ── bounded gate（铁律④ + deliverable 5）：只在答完题的 KC 与 eligible 池的 KC 相交时
+    //    才重排（θ̂ 真为相关候选移动了）。零相交 → no-op（不 churn、不写观测）。
+    const poolTouchesAffected = eligibleRaws.some((r) => {
+      const kids = candQById.get(r.questionId)?.knowledge_ids ?? [];
       return kids.some((k) => affectedKnowledgeIds.has(k));
     });
-    if (affectedRows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    if (!poolTouchesAffected) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // 受影响行腾出的 position 空位（升序）——重抽样新项优先填这些位，冻结行 position 不动。
-    const vacatedPositions = affectedRows.map((r) => r.position).sort((a, b) => a - b);
-    const affectedRefs = new Set(affectedRows.map((r) => r.ref_id));
-
-    // 当前流里**所有非受影响 ref**（冻结行 + 其余待做候选）——dedup 真相源（铁律④）：重抽样
-    //   不得选中已在流里的其它 ref（避免同 ref 两行/撞 date+ref 唯一索引）。受影响 ref 本身
-    //   会被删后重排，可重新入选。
-    const survivingRefs = new Set(
-      rows.filter((r) => !affectedRefs.has(r.ref_id)).map((r) => r.ref_id),
-    );
-
-    // 候选信号：对受影响行重读 mastery_state（**更新后 θ̂**）+ b 锚 → CollectedSignal。
-    //   recall-locked（理论上已被上面 source/recallLocked 过滤掉，这里 enrich 后双保险切出）。
-    const candidateInputs: CandidateInput[] = affectedRows.map((r) => {
-      const q = candQById.get(r.ref_id);
+    // ── 收集候选信号（**新鲜 θ̂**：collectCandidateSignals 读当前 mastery_state）。
+    const sourceByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.source]));
+    const labelByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.knowledgeLabel]));
+    const candidateInputs: CandidateInput[] = eligibleRaws.map((r) => {
+      const q = candQById.get(r.questionId);
       return {
         refKind: 'question' as const,
-        refId: r.ref_id,
+        refId: r.questionId,
         role: r.source === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
         kind: resolveEnumKind(q?.kind),
         knowledgeIds: q?.knowledge_ids,
@@ -841,47 +893,71 @@ export async function reRankAfterAnswer(
       };
     });
     const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
-    const samplable = signals.filter((s) => s.recallLocked !== true);
     const signalByRef = new Map(signals.map((s) => [s.refId, s]));
 
-    // 纯统计 sampler：用更新后 θ̂ 重算 mfiScore 当权重（不重跑 LLM）。targetCount=受影响数
-    //   （不胀容量，铁律④）。sampleByWeight 含 ε-greedy 下限 → positivity。
+    // ── EDGE 2（铁律③ + presence）：某 pendingNonDue 行 snapshot 不是 recall，但**新鲜 compute**
+    //    重判为 recall（question.kind 变脏 → resolveEnumKind undefined → fail-closed
+    //    recallLocked=true）。这种行**不删进空位、不重抽样**——freeze 保留（position/status 不动），
+    //    presence 守住（never drop-into-a-gap）。
+    const freshRecallRefs = new Set(
+      signals.filter((s) => s.recallLocked === true).map((s) => s.refId),
+    );
+    // samplable = 非 recall-locked 候选（snapshot 已过滤 + fresh recall 此处剔除）。
+    const samplable = signals.filter((s) => s.recallLocked !== true);
+
+    // ── 真正被替换的待做非到期行 = pendingNonDue 里**新鲜 compute 非 recall** 的（EDGE 2 冻结的
+    //    fresh-recall 行排除，保留不删）。它们腾出 position 空位。
+    const replacedRows = pendingNonDue.filter((r) => !freshRecallRefs.has(r.ref_id));
+    if (replacedRows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    const vacatedPositions = replacedRows.map((r) => r.position).sort((a, b) => a - b);
+    const replacedRefs = new Set(replacedRows.map((r) => r.ref_id));
+
+    // ── dedup 真相源（铁律④）：抽中项不得撞已在流里且**不被删**的 ref（frozen + fresh-recall-kept
+    //    pendingNonDue）。被替换的 ref 会被删后可重新入选。
+    const keptRefs = new Set(rows.filter((r) => !replacedRefs.has(r.ref_id)).map((r) => r.ref_id));
+
+    // ── 纯统计 sampler（不跑 LLM，ADR-0042 §4）：用新鲜 θ̂ 的 mfiScore 当权重。
+    //    targetCount = 被替换的待做非到期空位数（NOT pool 大小）——broad pool N > targetCount，
+    //    故 sampleByWeight 走**真** IPPS（π_i<1，真重排）。
     const weighted = statisticalWeights(samplable);
     const sampled =
       weighted.length === 0
         ? []
         : sampleByWeight(weighted, {
             temperature: DEFAULT_TEMPERATURE,
-            targetCount: affectedRows.length,
+            targetCount: replacedRows.length,
             rng: opts.rng,
           });
 
-    // 删受影响待做行（腾位）。冻结行原封不动。
+    // ── 删被替换的待做非到期行（腾位）。冻结行 + EDGE2 保留行原封不动。
     await tx.delete(practice_stream_item).where(
       and(
         eq(practice_stream_item.date, date),
         inArray(
           practice_stream_item.id,
-          affectedRows.map((r) => r.id),
+          replacedRows.map((r) => r.id),
         ),
       ),
     );
 
-    // 落新抽中项：优先填腾出的空位，多出的追加在 max(position)+1…（冻结行 position 不动）。
-    //   dedup：跳过已在 survivingRefs 的 ref（理论不会——受影响 ref 已从 surviving 排除，
-    //   但 sampler 只会抽受影响候选；双保险）。
+    // ── 落新抽中项：优先填腾出的空位，多出的追加在 max(position)+1…（冻结行 position 不动）。
+    //    dedup：跳过已在 keptRefs 的 ref（避免撞 date+ref 唯一索引）。
+    //    EDGE 3：observation + added **仅对 INSERT 真落库的行**（onConflictDoNothing 没吞掉的）
+    //    ——mirror materializeStream 的 freshRefs 纪律，绝不记幻影 π_i（streamItemId 必须有真行）。
     const maxPosition = rows.reduce((m, r) => Math.max(m, r.position), 0);
     let tailPos = maxPosition + 1;
+    let slot = 0;
     const now = new Date();
     const observations: SelectionObservationInput[] = [];
     let added = 0;
-    for (const [i, s] of sampled.entries()) {
-      if (survivingRefs.has(s.refId)) continue;
-      const pos = i < vacatedPositions.length ? vacatedPositions[i] : tailPos++;
+    for (const s of sampled) {
+      if (keptRefs.has(s.refId)) continue;
+      const pos = slot < vacatedPositions.length ? vacatedPositions[slot] : tailPos++;
+      slot++;
       const signal = signalByRef.get(s.refId);
-      const sourceRow = affectedRows.find((r) => r.ref_id === s.refId);
+      const source = sourceByRef.get(s.refId) ?? 'variant';
       const newRowId = newId();
-      await tx
+      const inserted = await tx
         .insert(practice_stream_item)
         .values({
           id: newRowId,
@@ -889,16 +965,26 @@ export async function reRankAfterAnswer(
           position: pos,
           item_kind: 'question' as const,
           ref_id: s.refId,
-          source: sourceRow?.source ?? 'variant',
+          source,
           status: 'pending' as const,
-          // 重排不改文案（保留原 reasoning 模板——增量重排是排序调整，非新叙事）。
-          reasoning: sourceRow?.reasoning ?? '',
+          // 重排不改文案（保留 reasoning 模板——增量重排是排序调整，非新叙事）。
+          reasoning:
+            source === 'new_check'
+              ? newCheckReasoning(labelByRef.get(s.refId))
+              : variantReasoning(labelByRef.get(s.refId)),
           added_by: 'composer_live' as const,
           signals: (signal as unknown as Record<string, unknown>) ?? {},
           created_at: now,
           updated_at: now,
         })
-        .onConflictDoNothing();
+        // EDGE 3：onConflictDoNothing 吞掉的行**不**回报 → returning() 空 → 不记 added/π_i。
+        .onConflictDoNothing()
+        .returning({ id: practice_stream_item.id });
+      // 行真被吞（并发/残留唯一索引冲突）→ inserted 为空 → 跳过 added + 观测（无幻影 π_i）。
+      if (inserted.length === 0) {
+        slot--; // 没真占用空位，让回 slot 游标（下一个抽中项可填这个 position）。
+        continue;
+      }
       added++;
       observations.push({
         date,

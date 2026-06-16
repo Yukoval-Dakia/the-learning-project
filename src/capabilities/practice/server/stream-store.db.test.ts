@@ -94,13 +94,16 @@ async function seedDueQuestion(opts: { dueOffsetMs?: number } = {}): Promise<str
  * 给变体题挂 KC + mastery_state + item_calibration.b → candidate-signals 算得出 MFI。
  * @returns { variantId, kc }（kc 用于测受影响 KC 触发）。
  */
-async function seedVariantCandidate(opts: { kind?: string; kc?: string } = {}): Promise<{
+async function seedVariantCandidate(
+  opts: { kind?: string; kc?: string; b?: number; variantId?: string } = {},
+): Promise<{
   variantId: string;
   kc: string;
 }> {
   const kc = opts.kc ?? createId();
   const parentId = await insertQuestion({ kind: 'choice' });
   const variantId = await insertQuestion({
+    id: opts.variantId,
     kind: opts.kind ?? 'choice',
     knowledgeIds: [kc],
     difficulty: 3,
@@ -126,27 +129,42 @@ async function seedVariantCandidate(opts: { kind?: string; kc?: string } = {}): 
     payload: {},
     created_at: now,
   });
-  await testDb().insert(mastery_state).values({
-    id: createId(),
-    subject_kind: 'knowledge',
-    subject_id: kc,
-    theta_hat: 0,
-    evidence_count: 5,
-    success_count: 3,
-    fail_count: 2,
-    theta_precision: 4,
-    updated_at: now,
-  });
-  await testDb().insert(item_calibration).values({
-    id: createId(),
-    question_id: variantId,
-    b: 0, // θ̂=b=0 → MFI 取最大 0.25（非零权重）。
-    track: 'hard',
-    source: 'llm_prior',
-    created_at: now,
-    updated_at: now,
-  });
+  // mastery_state 行（per-KC）幂等 upsert：多个候选共享 KC 时只一行。
+  await testDb()
+    .insert(mastery_state)
+    .values({
+      id: createId(),
+      subject_kind: 'knowledge',
+      subject_id: kc,
+      theta_hat: 0,
+      evidence_count: 5,
+      success_count: 3,
+      fail_count: 2,
+      theta_precision: 4,
+      updated_at: now,
+    })
+    .onConflictDoNothing();
+  await testDb()
+    .insert(item_calibration)
+    .values({
+      id: createId(),
+      question_id: variantId,
+      // 默认 b=0 → θ̂=b=0 → MFI 取最大 0.25。opts.b 可拉远 b 拉低 MFI（弱诊断候选）。
+      b: opts.b ?? 0,
+      track: 'hard',
+      source: 'llm_prior',
+      created_at: now,
+      updated_at: now,
+    });
   return { variantId, kc };
+}
+
+/** 把某 KC 的 mastery_state theta_hat 设成给定值（模拟作答后 θ̂ 移动）。 */
+async function setKcTheta(kc: string, theta: number): Promise<void> {
+  await testDb()
+    .update(mastery_state)
+    .set({ theta_hat: theta, updated_at: new Date() })
+    .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, kc)));
 }
 
 async function rowsForDate(date: string) {
@@ -427,5 +445,207 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
     expect(added).toBe(0);
     const after = await rowsForDate(TODAY);
     expect(after.length).toBe(before.length);
+  });
+
+  it('真重排（HIGH 缺陷回归）：broad pool > slots → 真 IPPS → 新 ref 换进非到期尾 + π_i 严格 <1；冻结行 position/status 不动；无重复 position', async () => {
+    // sharedKc：答完题与候选 A/B 同 KC（θ̂ 移动触发重排）。
+    const sharedKc = createId();
+    const dueId = await seedDueQuestion();
+    const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
+    // 候选 A：compose 时已 eligible → 进初始流，成为**唯一**待做非到期 slot（targetCount=1）。
+    const { variantId: candA } = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+    // recall 候选（fill_blank）——冻结，不进重排池。
+    const { variantId: recallId } = await seedVariantCandidate({ kind: 'fill_blank' });
+
+    // 首次 compose（候选 A + recall + due 入流；候选 B **尚未 seed** → 不在初始流）。
+    await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    // 关键：compose **之后**才 seed 候选 B（同 sharedKc，eligible）——它进重排的 fresh broad
+    //   pool，但**不在**初始流里。故 pool={A,B}=2 > slots={A}=1 → 真 IPPS（π_i<1），可换进 B。
+    const candB = createId();
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0, variantId: candB });
+
+    // 模拟作答把 sharedKc 的 θ̂ 推动（θ̂=0.5；候选据新鲜 θ̂ 重算 MFI 权重）。
+    await setKcTheta(sharedKc, 0.5);
+
+    const before = await rowsForDate(TODAY);
+    const beforeByRef = new Map(before.map((r) => [r.ref_id, r]));
+    // 断言初始流不含 B（它是 compose 后才 seed 的），含 A + recall + due。
+    expect(beforeByRef.has(candB)).toBe(false);
+    expect(beforeByRef.has(candA)).toBe(true);
+    expect(beforeByRef.has(recallId)).toBe(true);
+    const dueBefore = beforeByRef.get(dueId);
+    const recallBefore = beforeByRef.get(recallId);
+    expect(dueBefore).toBeDefined();
+    expect(recallBefore).toBeDefined();
+
+    // 触发重排（rng=0 → 每个 π>0 候选都入；pool=2 slots=1 ⇒ 非退化 ⇒ 全部 π_i<1）。
+    const added = await reRankAfterAnswer(testDb(), {
+      date: TODAY,
+      answeredQuestionId: answeredId,
+      rng: RNG_ALWAYS_SELECT,
+    });
+    expect(added).toBeGreaterThan(0);
+
+    const after = await rowsForDate(TODAY);
+    const afterByRef = new Map(after.map((r) => [r.ref_id, r]));
+
+    // ① 真重排：新 ref candB 被换进非到期尾（初始流没有它）——证明 broad pool 真生效（旧
+    //    degenerate 版**永远**只重选已在流的同一集合，candB 不可能出现）。
+    expect(afterByRef.has(candB)).toBe(true);
+    expect(afterByRef.get(candB)?.source).toBe('variant');
+    expect(afterByRef.get(candB)?.status).toBe('pending');
+
+    // ② π_i 严格 <1（真 IPPS，非退化）——旧 bug 的 π=1 在此被 catch。
+    const obs = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(eq(selection_observation.date, TODAY));
+    // candB 必有观测（本轮真新插），且 π_i ∈ (0,1) 严格。
+    const obsB = obs.filter((o) => o.ref_id === candB);
+    expect(obsB.length).toBeGreaterThan(0);
+    for (const o of obsB) {
+      expect(o.inclusion_probability).toBeGreaterThan(0);
+      expect(o.inclusion_probability).toBeLessThan(1); // 严格 <1 = 真 IPPS（非退化档）。
+      expect(o.policy).toBe('softmax_mfi');
+    }
+
+    // ③ 冻结行：due 行 + recall 行 position 不动、presence 守住。
+    expect(afterByRef.get(dueId)?.position).toBe(dueBefore?.position);
+    expect(afterByRef.get(recallId)?.position).toBe(recallBefore?.position);
+
+    // ④ 无重复 position。
+    const positions = after.map((r) => r.position);
+    expect(new Set(positions).size).toBe(positions.length);
+
+    // ⑤ candB（本轮真新插）的观测 streamItemId 指向真存在的行（无幻影 π_i，EDGE 3）。
+    //    NOTE：首次 compose 记的观测可能指向已被本轮替换删除的旧行 id（append-only 遥测的
+    //    正常陈旧，非 EDGE-3 违例）——故只校验**本轮**新插项的 streamItemId 有真行。
+    const afterIds = new Set(after.map((r) => r.id));
+    for (const o of obsB) {
+      if (o.stream_item_id) expect(afterIds.has(o.stream_item_id)).toBe(true);
+    }
+  });
+
+  it('EDGE 2：待做非到期行新鲜 kind 不可解析 → 重判 recall → 不丢进空位（presence 守住，frozen-kept）', async () => {
+    const sharedKc = createId();
+    const dueId = await seedDueQuestion();
+    const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
+    // 候选 A（choice，sharedKc）——初始 compose 进流，snapshot 非 recall（可重排）。
+    const { variantId: candA } = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+
+    await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    const before = await rowsForDate(TODAY);
+    const candARowBefore = before.find((r) => r.ref_id === candA);
+    expect(candARowBefore).toBeDefined();
+    // snapshot 非 recall（choice）。
+    expect((candARowBefore?.signals as { recallLocked?: boolean })?.recallLocked).not.toBe(true);
+
+    // 把 candA 的 question.kind 改脏（枚举外）——fresh compute 时 resolveEnumKind→undefined→
+    //   fail-closed recallLocked=true。该行**不得**被删进空位丢失（EDGE 2）。
+    await testDb()
+      .update(question)
+      .set({ kind: 'garbage_unparseable_kind' })
+      .where(eq(question.id, candA));
+
+    await setKcTheta(sharedKc, 0.5);
+
+    const added = await reRankAfterAnswer(testDb(), {
+      date: TODAY,
+      answeredQuestionId: answeredId,
+      rng: RNG_ALWAYS_SELECT,
+    });
+
+    const after = await rowsForDate(TODAY);
+    const afterByRef = new Map(after.map((r) => [r.ref_id, r]));
+
+    // candA 仍在流里（presence 守住）——它被 freeze 保留，不删进空位。
+    expect(afterByRef.has(candA)).toBe(true);
+    // position 不动（frozen-kept）。
+    expect(afterByRef.get(candA)?.position).toBe(candARowBefore?.position);
+    // due 行 presence 守住。
+    expect(afterByRef.has(dueId)).toBe(true);
+    // 无重复 position（无空位 gap 导致的撞位）。
+    const positions = after.map((r) => r.position);
+    expect(new Set(positions).size).toBe(positions.length);
+    // candA 被 freeze（不重抽样）→ 它不应被记一条幻影 IPPS 观测（recall 不进 sampler）。
+    const obsA = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(and(eq(selection_observation.date, TODAY), eq(selection_observation.ref_id, candA)));
+    // 首次 compose 时 candA 是 choice → 记过 1 条；本轮重排它被 freeze**不再**记新观测。
+    expect(obsA.length).toBeLessThanOrEqual(1);
+    // 即便 added>0（其它候选重排），candA 自身不在本轮新观测里。
+    expect(added).toBeGreaterThanOrEqual(0);
+  });
+
+  it('EDGE 3：observation 数 == 真插入行数（onConflictDoNothing 吞掉的不记幻影 π_i）', async () => {
+    const sharedKc = createId();
+    await seedDueQuestion();
+    const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+
+    await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    // compose 后 seed 候选 B（sharedKc，eligible，不在初始流）→ broad pool > slots。
+    const candB = createId();
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0, variantId: candB });
+    await setKcTheta(sharedKc, 0.5);
+
+    // 记重排前观测数（首次 compose 已记若干条）。
+    const obsBefore = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(eq(selection_observation.date, TODAY));
+
+    const rowsBefore = await rowsForDate(TODAY);
+    const refIdsBefore = new Set(rowsBefore.map((r) => r.ref_id));
+
+    const added = await reRankAfterAnswer(testDb(), {
+      date: TODAY,
+      answeredQuestionId: answeredId,
+      rng: RNG_ALWAYS_SELECT,
+    });
+
+    const obsAfter = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(eq(selection_observation.date, TODAY));
+    const newObs = obsAfter.length - obsBefore.length;
+
+    // 本轮新增观测数 == added（真插入行数）——无幻影 π_i（EDGE 3 核心断言）。
+    expect(newObs).toBe(added);
+
+    // 本轮真新插入的 ref（流里此前不存在的）含 candB（broad pool 换进）。
+    const rowsAfter = await rowsForDate(TODAY);
+    const freshlyInserted = rowsAfter.filter(
+      (r) => !refIdsBefore.has(r.ref_id) && r.status === 'pending',
+    );
+    expect(freshlyInserted.some((r) => r.ref_id === candB)).toBe(true);
+
+    // 本轮新增观测（diff 出的那 added 条）都指向真存在的行（streamItemId 必有行，无幻影）。
+    //   用 id 集合 diff 出本轮新观测——首次 compose 的旧观测可能指向已替换删除的行（陈旧，
+    //   非违例），故只校验本轮新增的那批。
+    const beforeObsIds = new Set(obsBefore.map((o) => o.id));
+    const freshObs = obsAfter.filter((o) => !beforeObsIds.has(o.id));
+    expect(freshObs.length).toBe(added);
+    const afterIds = new Set(rowsAfter.map((r) => r.id));
+    for (const o of freshObs) {
+      expect(o.stream_item_id).not.toBeNull();
+      if (o.stream_item_id) expect(afterIds.has(o.stream_item_id)).toBe(true);
+    }
   });
 });
