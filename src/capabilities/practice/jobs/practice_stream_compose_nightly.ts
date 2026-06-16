@@ -15,10 +15,13 @@
 //   - 夜间 job 跑完用户首读 → lazy-compose 命中同一双重检查 no-op（不 double-compose）。
 //   - 用户先首读再夜间 job → 夜间 job 命中双重检查 no-op（不覆盖已产流）。
 //
-// 本地日：用 `toLocaleDateString('sv-SE')`——与读路径（api/stream.ts:resolveDate）computeToday
-// **完全同款**，保证夜间预产的 date 键与用户首读 lazy-compose 的 date 键一致（幂等的前提：两条
-// 路径必须就「今天是哪天」达成一致，否则各产一份流）。cron 在 Asia/Shanghai tz 触发，但「今天」
-// 仍由进程本地时区裁定（单用户工具，进程本地时区即用户时区，与读路径一致）。
+// 本地日（FINDING 4，Codex）：用 `streamLocalDate()`（**显式 Asia/Shanghai 时区**）——与读路径
+// （api/stream.ts:resolveDate）**完全同款**（同一 helper），保证夜间预产的 date 键与用户首读
+// lazy-compose 的 date 键一致（幂等前提：两条路径必须就「今天是哪天」达成一致，否则各产一份流）。
+// cron 在 Asia/Shanghai tz 触发（manifest.ts: `'30 5 * * *', tz: 'Asia/Shanghai'`）；**修复前**
+// 这里用进程本地时区，在 UTC 容器里 05:30 上海 = 前一日 21:30 UTC → 进程本地日是**前一天** →
+// 给错误的日期预产流。现在显式锁定 Asia/Shanghai → cron tz 与「今天」对齐，读路径与夜间预产
+// 共用 streamLocalDate() → 恒一致。
 //
 // 失败语义：composeNightly 内部走两级 fallback（永不 throw 出选题逻辑）；handler 顶层 try/catch
 // 记日志后 rethrow → pg-boss 重试（DB 故障等可重试错误照常传播）。
@@ -26,12 +29,7 @@
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
-import { composeNightly } from '../server/stream-store';
-
-/** 读路径同款本地日（api/stream.ts:resolveDate 的 `new Date().toLocaleDateString('sv-SE')`）。 */
-function computeToday(): string {
-  return new Date().toLocaleDateString('sv-SE');
-}
+import { composeNightly, streamLocalDate } from '../server/stream-store';
 
 export interface StreamComposeNightlyResult {
   /** 预产的本地日（YYYY-MM-DD）。 */
@@ -44,7 +42,7 @@ export interface StreamComposeNightlyResult {
  * 为「今天」预产练习流（hybrid 夜间预产）。幂等：今天已物化 → no-op（added=0）。
  */
 export async function runStreamComposeNightly(db: Db): Promise<StreamComposeNightlyResult> {
-  const date = computeToday();
+  const date = streamLocalDate();
   const added = await composeNightly(db, date);
   return { date, added };
 }

@@ -6,9 +6,18 @@ import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { z } from 'zod';
 
-import { advanceStreamItem, getStream, recomposeStream } from '../server/stream-store';
+import {
+  advanceStreamItem,
+  getStream,
+  recomposeStream,
+  streamLocalDate,
+} from '../server/stream-store';
 
-/** 'today' / 缺省 → 服务器本地日（单用户工具，本地时区即用户时区）。 */
+/**
+ * 'today' / 缺省 → 用户本地日（Asia/Shanghai，FINDING 4）。读路径与夜间预产 job 共用
+ * `streamLocalDate()`，故两者对「今天是哪天」恒一致（夜间预产的 date 键 = 用户首读
+ * lazy-compose 的 date 键 → 幂等双重检查命中，不 double-compose）。
+ */
 function resolveDate(raw: string | null): string {
   if (raw && raw !== 'today') {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
@@ -16,7 +25,7 @@ function resolveDate(raw: string | null): string {
     }
     return raw;
   }
-  return new Date().toLocaleDateString('sv-SE');
+  return streamLocalDate();
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -24,7 +33,7 @@ export async function GET(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const date = resolveDate(url.searchParams.get('date'));
     // 只有「今天」才 lazy compose——翻看历史日期不应凭空生出新流。
-    const isToday = date === new Date().toLocaleDateString('sv-SE');
+    const isToday = date === streamLocalDate();
     const view = await getStream(db, date, { composeIfEmpty: isToday });
     return Response.json(view);
   } catch (err) {

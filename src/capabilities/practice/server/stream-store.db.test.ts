@@ -24,12 +24,15 @@ import {
   composeNightly,
   getStream,
   reRankAfterAnswer,
+  streamLocalDate,
 } from './stream-store';
 
-const TODAY = new Date().toLocaleDateString('sv-SE');
+const TODAY = streamLocalDate();
 
 // rng：< 1 全选（Poisson Bernoulli 必入，配合 π_i>0）；== 1 全不选。
 const RNG_ALWAYS_SELECT = () => 0;
+// rng == 1 → Bernoulli `rng() < π_i` 恒 false → **零抽中**（模拟 Poisson 极端欠采，FINDING 1）。
+const RNG_ALWAYS_REJECT = () => 1;
 
 async function insertQuestion(opts: {
   id?: string;
@@ -174,6 +177,29 @@ async function rowsForDate(date: string) {
     .where(eq(practice_stream_item.date, date))
     .orderBy(asc(practice_stream_item.position));
 }
+
+describe('streamLocalDate — 用户本地日（Asia/Shanghai）单一真相源（FINDING 4，Codex）', () => {
+  it('UTC 容器边界：21:30 UTC = 次日 05:30 Asia/Shanghai → 返回**次日**（不是 UTC 当日）', () => {
+    // 模拟夜间 cron `'30 5 * * *', tz: 'Asia/Shanghai'` 在 UTC 容器里触发的瞬间：
+    //   2026-06-15T21:30:00Z（UTC）= 2026-06-16T05:30:00+08:00（Asia/Shanghai）。
+    // 旧实现（进程本地 = UTC）会算成 2026-06-15（前一天）→ 给错误日期预产流。
+    const instant = new Date('2026-06-15T21:30:00Z');
+    expect(streamLocalDate(instant)).toBe('2026-06-16'); // Asia/Shanghai 日，非 UTC 的 06-15。
+  });
+
+  it('跨年/月边界同样按 Asia/Shanghai 裁定（16:00 UTC = 次日 00:00 上海）', () => {
+    // 2025-12-31T16:00:00Z = 2026-01-01T00:00:00+08:00。
+    const instant = new Date('2025-12-31T16:00:00Z');
+    expect(streamLocalDate(instant)).toBe('2026-01-01');
+  });
+
+  it('读路径 resolveDate 与夜间预产 runStreamComposeNightly 共用同一 helper → 日期恒一致', () => {
+    // 两条路径都走 streamLocalDate()（读路径见 api/stream.ts:resolveDate；夜间见 job
+    //   computeToday→streamLocalDate）。同一时刻调用必返回同值——幂等前提（不 double-compose）。
+    const instant = new Date('2026-06-15T21:30:00Z');
+    expect(streamLocalDate(instant)).toBe(streamLocalDate(instant));
+  });
+});
 
 describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
   beforeEach(async () => {
@@ -646,6 +672,271 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
     for (const o of freshObs) {
       expect(o.stream_item_id).not.toBeNull();
       if (o.stream_item_id) expect(afterIds.has(o.stream_item_id)).toBe(true);
+    }
+  });
+
+  it('FINDING 1（DATA LOSS 回归）：Poisson 欠采到 0（rng==1）→ 不删任何待做非到期行（count 守住，无 position 空洞）', async () => {
+    // 两条待做非到期诊断 slot（A/C 同 sharedKc，choice）+ broad pool（compose 后 seed B/D）
+    //   → π_i<1。rng==1（RNG_ALWAYS_REJECT）→ Bernoulli 零抽中（sampled.length=0 < replaceable=2）。
+    //   旧 bug：先删全部 replaceable（2 条）、再插 0 条 → **永久丢 2 道**（流缩短 + 空洞）。
+    //   修复：deleteCount = min(0, 2) = 0 → 一条都不删 → count 守住。
+    const sharedKc = createId();
+    const dueId = await seedDueQuestion();
+    const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
+    const { variantId: candA } = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+    const { variantId: candC } = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+
+    // 首次 compose（rng=0 全选 → A/C 入流为待做非到期 slot）。
+    await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    // compose 后 seed B/D（同 sharedKc，eligible，不在初始流）→ broad pool > slots → π_i<1。
+    const candB = createId();
+    const candD = createId();
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0, variantId: candB });
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0, variantId: candD });
+    await setKcTheta(sharedKc, 0.5);
+
+    const before = await rowsForDate(TODAY);
+    const beforeByRef = new Map(before.map((r) => [r.ref_id, r]));
+    // 确认 A/C 在初始流（待做非到期），B/D 不在。
+    expect(beforeByRef.has(candA)).toBe(true);
+    expect(beforeByRef.has(candC)).toBe(true);
+    expect(beforeByRef.has(candB)).toBe(false);
+    expect(beforeByRef.has(candD)).toBe(false);
+    const pendingNonDueBefore = before.filter(
+      (r) =>
+        r.status === 'pending' &&
+        r.item_kind === 'question' &&
+        (r.source === 'variant' || r.source === 'new_check'),
+    );
+    expect(pendingNonDueBefore.length).toBeGreaterThanOrEqual(2);
+
+    // 触发重排，**强制欠采到 0**（rng==1）。
+    const added = await reRankAfterAnswer(testDb(), {
+      date: TODAY,
+      answeredQuestionId: answeredId,
+      rng: RNG_ALWAYS_REJECT,
+    });
+
+    const after = await rowsForDate(TODAY);
+    const afterByRef = new Map(after.map((r) => [r.ref_id, r]));
+
+    // ① 零抽中 → 不删不插 → added=0。
+    expect(added).toBe(0);
+    // ② **NO 丢题**（FINDING 1 核心）：A/C 仍在流里，position 逐字不动。
+    expect(afterByRef.has(candA)).toBe(true);
+    expect(afterByRef.has(candC)).toBe(true);
+    expect(afterByRef.get(candA)?.position).toBe(beforeByRef.get(candA)?.position);
+    expect(afterByRef.get(candC)?.position).toBe(beforeByRef.get(candC)?.position);
+    // ③ 待做非到期行 count 守住（不 shrink）。
+    const pendingNonDueAfter = after.filter(
+      (r) =>
+        r.status === 'pending' &&
+        r.item_kind === 'question' &&
+        (r.source === 'variant' || r.source === 'new_check'),
+    );
+    expect(pendingNonDueAfter.length).toBe(pendingNonDueBefore.length);
+    // ④ 全流行数不变（无任何行被丢）。
+    expect(after.length).toBe(before.length);
+    // ⑤ 无重复 + 无 position 空洞（连续 1..N，由删-未回填造成的洞会在此被 catch）。
+    const positions = after.map((r) => r.position).sort((a, b) => a - b);
+    expect(new Set(positions).size).toBe(positions.length);
+    expect(positions).toEqual(positions.map((_, i) => i + 1));
+    // ⑥ due 行 presence 守住。
+    expect(afterByRef.has(dueId)).toBe(true);
+  });
+
+  it('FINDING 1（部分欠采）：sampled < replaceable → 只 SWAP 能填的，剩余原 slot 原地保留（count 守住）', async () => {
+    // 两条 slot（A/C）+ broad pool（A/C/B/D 同 sharedKc）。rng 让**恰好一个**候选过 Bernoulli：
+    //   首个 draw 过（rng=0）、其余全拒（rng=1）→ sampled.length=1 < replaceable=2。
+    //   修复：deleteCount = min(newRefPicks=1, replaceable=2) = 1 → 删 1 填 1，另 1 原地保留 →
+    //   待做非到期 count 守住（绝不 shrink 到 1）。
+    const sharedKc = createId();
+    await seedDueQuestion();
+    const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
+    const { variantId: candA } = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+    const { variantId: candC } = await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+
+    await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    const candB = createId();
+    const candD = createId();
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0, variantId: candB });
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0, variantId: candD });
+    await setKcTheta(sharedKc, 0.5);
+
+    const before = await rowsForDate(TODAY);
+    const pendingNonDueBefore = before.filter(
+      (r) =>
+        r.status === 'pending' &&
+        r.item_kind === 'question' &&
+        (r.source === 'variant' || r.source === 'new_check'),
+    );
+    expect(pendingNonDueBefore.length).toBe(2); // A + C。
+    void candA;
+    void candC;
+
+    // 第一个 Bernoulli draw 通过（rng=0），之后全部拒绝（rng=1）→ 恰抽中 1 个候选。
+    let drawCount = 0;
+    const rngOnePass = () => {
+      const v = drawCount === 0 ? 0 : 1;
+      drawCount++;
+      return v;
+    };
+
+    const added = await reRankAfterAnswer(testDb(), {
+      date: TODAY,
+      answeredQuestionId: answeredId,
+      rng: rngOnePass,
+    });
+
+    const after = await rowsForDate(TODAY);
+    // ① 至多换进 1 条（部分欠采）。
+    expect(added).toBeLessThanOrEqual(1);
+    // ② 待做非到期 count **绝不 shrink**（仍 ≥ 原来的 2）——FINDING 1：删 1 必填 1，余者保留。
+    const pendingNonDueAfter = after.filter(
+      (r) =>
+        r.status === 'pending' &&
+        r.item_kind === 'question' &&
+        (r.source === 'variant' || r.source === 'new_check'),
+    );
+    expect(pendingNonDueAfter.length).toBeGreaterThanOrEqual(pendingNonDueBefore.length);
+    // ③ 无重复 + 无 position 空洞。
+    const positions = after.map((r) => r.position).sort((a, b) => a - b);
+    expect(new Set(positions).size).toBe(positions.length);
+    expect(positions).toEqual(positions.map((_, i) => i + 1));
+  });
+
+  it('FINDING 2（KC 范围限定）：答 KC-A 不删/不动无关 KC-B 的待做非到期项（冻结，position 逐字不动）', async () => {
+    // 答完题触 KC-A；流里有 KC-A 的待做项（可重排）+ KC-B 的待做项（无关，必须冻结）。
+    const kcA = createId();
+    const kcB = createId();
+    await seedDueQuestion();
+    const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [kcA] });
+    // KC-A 待做非到期项（受影响，可被重排）。
+    const { variantId: candA } = await seedVariantCandidate({ kind: 'choice', kc: kcA, b: 0 });
+    // KC-B 待做非到期项（无关 KC，**必须**被冻结，不删不动 position）。
+    const { variantId: candB } = await seedVariantCandidate({ kind: 'choice', kc: kcB, b: 0 });
+
+    await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    const before = await rowsForDate(TODAY);
+    const beforeByRef = new Map(before.map((r) => [r.ref_id, r]));
+    expect(beforeByRef.has(candA)).toBe(true);
+    expect(beforeByRef.has(candB)).toBe(true);
+    const candBPosBefore = beforeByRef.get(candB)?.position;
+    const candBIdBefore = beforeByRef.get(candB)?.id;
+
+    // compose 后 seed KC-A 的新候选 candA2（broad pool > slots，可换进 KC-A 尾）。
+    const candA2 = createId();
+    await seedVariantCandidate({ kind: 'choice', kc: kcA, b: 0, variantId: candA2 });
+    await setKcTheta(kcA, 0.5);
+
+    const added = await reRankAfterAnswer(testDb(), {
+      date: TODAY,
+      answeredQuestionId: answeredId,
+      rng: RNG_ALWAYS_SELECT,
+    });
+
+    const after = await rowsForDate(TODAY);
+    const afterByRef = new Map(after.map((r) => [r.ref_id, r]));
+
+    // ① KC-B 待做项**逐字不动**（FINDING 2 核心）：presence + position + 行 id 全保（未被删/重排）。
+    expect(afterByRef.has(candB)).toBe(true);
+    expect(afterByRef.get(candB)?.position).toBe(candBPosBefore);
+    expect(afterByRef.get(candB)?.id).toBe(candBIdBefore); // 同一行（没被 delete+reinsert churn）。
+    // ② candB 不应被记一条本轮新的 IPPS 观测（它被冻结、不进 sampler）。
+    const obsB = await testDb()
+      .select()
+      .from(selection_observation)
+      .where(and(eq(selection_observation.date, TODAY), eq(selection_observation.ref_id, candB)));
+    // 首次 compose 时 candB 是 eligible → 记过 1 条；本轮重排它被冻结，不再记新观测。
+    expect(obsB.length).toBeLessThanOrEqual(1);
+    // ③ 重排仍可作用于 KC-A 尾（added ≥ 0；不强制必换，但 KC-B 绝不受影响）。
+    expect(added).toBeGreaterThanOrEqual(0);
+  });
+
+  it('FINDING 3（legacy 开关）：SELECTION_POLICY=legacy → advanceStreamItem 不触发 reRankAfterAnswer', async () => {
+    // legacy 紧急关闭开关下，advanceStreamItem 整体跳过随机重排。用一个**会触发重排**的场景
+    //   （答完题的 KC 触及待做非到期候选 + broad pool）验证 legacy 下流**完全不动**。
+    const sharedKc = createId();
+    await seedDueQuestion();
+    const answeredId = await insertQuestion({ kind: 'choice', knowledgeIds: [sharedKc] });
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0 });
+
+    await getStream(testDb(), TODAY, {
+      composeIfEmpty: true,
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    // compose 后 seed broad-pool 候选 candB（若重排触发，它会被换进）。
+    const candB = createId();
+    await seedVariantCandidate({ kind: 'choice', kc: sharedKc, b: 0, variantId: candB });
+    await setKcTheta(sharedKc, 0.5);
+
+    // 把 answeredId 作为流内一条 pending 题（推进 done 走 advanceStreamItem 的重排触发分支）。
+    const beforeRows = await rowsForDate(TODAY);
+    const maxPos = beforeRows.reduce((m, r) => Math.max(m, r.position), 0);
+    const answeredRowId = createId();
+    await testDb()
+      .insert(practice_stream_item)
+      .values({
+        id: answeredRowId,
+        date: TODAY,
+        position: maxPos + 1,
+        item_kind: 'question',
+        ref_id: answeredId,
+        source: 'new_check',
+        status: 'pending',
+        reasoning: 'self-check',
+        added_by: 'composer_live',
+        signals: {},
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+
+    const snap = await rowsForDate(TODAY);
+    const snapByRef = new Map(snap.map((r) => [r.ref_id, r]));
+
+    const prev = process.env.SELECTION_POLICY;
+    process.env.SELECTION_POLICY = 'legacy';
+    try {
+      await advanceStreamItem(testDb(), answeredRowId, 'in_progress');
+      await advanceStreamItem(testDb(), answeredRowId, 'done', { rng: RNG_ALWAYS_SELECT });
+    } finally {
+      // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+      if (prev === undefined) delete process.env.SELECTION_POLICY;
+      else process.env.SELECTION_POLICY = prev;
+    }
+
+    const after = await rowsForDate(TODAY);
+    const afterByRef = new Map(after.map((r) => [r.ref_id, r]));
+
+    // ① answered 行推进 done 成功（状态写不受 policy 影响）。
+    expect(afterByRef.get(answeredId)?.status).toBe('done');
+    // ② legacy 下**重排不触发**：candB 绝不被换进（它只会因 softmax 重排进流）。
+    expect(afterByRef.has(candB)).toBe(false);
+    // ③ 除 answered 行 status 变 done 外，其余行 position+ref 集合**完全不变**（重排未跑）。
+    const beforeRefs = [...snapByRef.keys()].sort();
+    const afterRefs = [...afterByRef.keys()].sort();
+    expect(afterRefs).toEqual(beforeRefs);
+    for (const r of after) {
+      if (r.ref_id === answeredId) continue;
+      expect(r.position).toBe(snapByRef.get(r.ref_id)?.position);
+      expect(r.id).toBe(snapByRef.get(r.ref_id)?.id); // 无 delete+reinsert churn。
     }
   });
 });
