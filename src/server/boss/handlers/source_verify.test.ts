@@ -142,6 +142,8 @@ describe('runSourceVerify', () => {
       .where(eq(event.action, 'experimental:source_verify'));
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe('success');
+    // YUK-350 (L3, RL5) — a promoted verify carries NO failure_class.
+    expect((events[0].payload as Record<string, unknown>).failure_class).toBeUndefined();
   });
 
   it('keeps the draft when solve_check fails (solver disagrees with reference)', async () => {
@@ -161,7 +163,28 @@ describe('runSourceVerify', () => {
     expect(rows[0].draft_status).toBe('draft');
     const fsrs = await getFsrsState(db, 'knowledge', 'k1');
     expect(fsrs).toBeNull();
+
+    // YUK-350 (L3, RL5) — a non-promote (check fail) verify carries
+    // failure_class='validation_failure' (outcome stays 'failure').
+    const events = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('failure');
+    expect((events[0].payload as Record<string, unknown>).failure_class).toBe('validation_failure');
   });
+
+  // YUK-350 (L3, RL5) — NOTE: source_verify's catch-bottom (outcome='error' +
+  // failure_class='system_error') cannot be exercised hermetically through the
+  // runTaskFn seam: runSolveCheck (verify-framework) intentionally SWALLOWS every
+  // solver error to verdict='unsupported' (conservative R2 — a solver blowup must not
+  // kill a question), so a thrown runTaskFn yields a non-promote SUCCESS, not a
+  // system error. The catch-bottom only fires on a deterministic-check or DB-level
+  // throw, which has no test seam here. The failure_class='system_error' key is the
+  // identical additive pattern verified end-to-end in quiz_verify.test.ts. The
+  // reachable source_verify failure mode (a hard check fail) IS asserted above
+  // (validation_failure).
 
   it('fails source_consistency for a web_sourced row missing its provenance block', async () => {
     const db = testDb();
