@@ -77,6 +77,13 @@ describe('parseSelectionOrchestratorOutput', () => {
     expect(() => parseSelectionOrchestratorOutput(text, INPUT_REF_IDS)).toThrow(/schema invalid/);
   });
 
+  it('rejects a non-finite weight (FINDING 3: 1e309 → Infinity → .finite() barrier → throw)', () => {
+    // Raw text with a literal 1e309 (NOT JSON.stringify'd — Infinity isn't valid JSON
+    // but `1e309` is a valid JSON number token that JSON.parse maps to Infinity).
+    const text = '{"candidates":[{"refId":"q-1","weight":1e309,"role":"diagnostic","reason":"x"}]}';
+    expect(() => parseSelectionOrchestratorOutput(text, INPUT_REF_IDS)).toThrow(/schema invalid/);
+  });
+
   it('throws when no JSON object is present', () => {
     expect(() => parseSelectionOrchestratorOutput('抱歉我无法完成', INPUT_REF_IDS)).toThrow(
       /no JSON object found/,
