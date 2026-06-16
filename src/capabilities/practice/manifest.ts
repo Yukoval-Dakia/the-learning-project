@@ -199,6 +199,20 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
       },
+      // YUK-372 L1 (YUK-361 Phase 6 wire-up, ADR-0043 §4) — active-PPI 难度重标定触发器。
+      // recalibrateQuestion（建好但 Phase 6 无生产 caller 的离线 b 去偏引擎）的夜间触发：每夜扫
+      // 「攒够标签 + 昨日起窗内有新标签」的非 draft 题，逐题 firm-up b_calib（track='hard'）。
+      // cron 04:50 Asia/Shanghai：错在 item_prior 04:20 之后、compose 05:30 之前——这样今晨 firm
+      // 的 b_calib 被当天 compose 的选题信号读到。queue=llm：与其它慢热 job 同档 DLQ 重试（慢资产
+      // 写慢，给重试余量）。recalibrateQuestion 在 job 顶层调（非 attempt tx 内），per-question
+      // try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
+      {
+        name: 'recalibration_nightly',
+        schedule: { cron: '50 4 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/recalibration_nightly').then((m) => m.buildRecalibrationNightlyHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
