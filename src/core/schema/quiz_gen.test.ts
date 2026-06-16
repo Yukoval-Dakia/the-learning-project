@@ -6,6 +6,7 @@ import {
   QuizGenMetadata,
   QuizGenOutput,
   QuizGenSourceRef,
+  QuizVerificationResult,
 } from './quiz_gen';
 
 describe('QuestionSource enum', () => {
@@ -358,5 +359,39 @@ describe('QuizGenOutput', () => {
         self_copy_safety: validCopySafety,
       }),
     ).toThrow();
+  });
+});
+
+// YUK-350 (RL1, Plan B) — the LLM-parse `overall` enum must stay 3-value so the model
+// can never self-report a system 'error'. The 4-value result-layer projection lives in
+// the QuizVerifyOverall type (handler/event), NOT in this parse schema.
+describe('QuizVerificationResult.overall (RL1 enum boundary)', () => {
+  const baseVerify = {
+    grounding: { verdict: 'pass' as const, note: 'grounded' },
+    copy_safety: { verdict: 'original' as const, max_overlap: 0.1 },
+    knowledge_hit: { verdict: 'pass' as const, note: 'on target' },
+    summary_md: '复核结论：pass',
+    confidence: 0.8,
+  };
+
+  it('exhaustiveness: accepts exactly the 3 legal model verdicts (pass|needs_review|fail)', () => {
+    for (const overall of ['pass', 'needs_review', 'fail'] as const) {
+      const parsed = QuizVerificationResult.safeParse({ ...baseVerify, overall });
+      expect(parsed.success).toBe(true);
+    }
+    // The enum lists exactly these three options — regression pin so widening it to
+    // carry 'error' (which would let the model self-report a system failure) fails.
+    expect(QuizVerificationResult.shape.overall.options).toEqual(['pass', 'needs_review', 'fail']);
+  });
+
+  it("REJECTS overall='error' (model cannot self-report a system-error class)", () => {
+    const parsed = QuizVerificationResult.safeParse({ ...baseVerify, overall: 'error' });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects an unknown overall value', () => {
+    expect(QuizVerificationResult.safeParse({ ...baseVerify, overall: 'maybe' }).success).toBe(
+      false,
+    );
   });
 });

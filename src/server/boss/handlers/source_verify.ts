@@ -465,6 +465,11 @@ export async function runSourceVerify(
     // failure-bottom: write a TRANSIENT-error event so pg-boss redelivery re-runs the
     // verify (idempotency guard treats outcome='error' as retriable). The draft stays
     // draft_status='draft' — the catch path NEVER promotes (mirrors quiz_verify).
+    // YUK-350 (RL1) — error-safe: promotion happens only inside the try (post-LLM
+    // gate), so reaching this catch guarantees the question was never promoted. This
+    // handler has no `overall` field (tier-2 verdict is the per-check array), so there
+    // is no symmetric result-layer 'error' value to assign — outcome='error' alone
+    // carries the system-error class on the event.
     try {
       await writeEvent(db, {
         id: createId(),

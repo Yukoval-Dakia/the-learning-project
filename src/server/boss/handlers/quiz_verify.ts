@@ -43,6 +43,7 @@ import {
   type QuizGenVerificationT,
   QuizVerificationResult,
   type QuizVerificationResultT,
+  type QuizVerifyOverall,
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
@@ -169,7 +170,11 @@ export interface RunQuizVerifyParams {
 
 export interface RunQuizVerifyResult {
   status: QuizVerifyPerQuestionStatus;
-  overall?: QuizVerificationResultT['overall'];
+  // YUK-350 (RL1) — result-layer 4-value overall (pass|needs_review|fail|error).
+  // The success path only ever sets the 3 model-verdict values; 'error' is reserved
+  // for the catch-bottom system-error class (assigned via the verify event payload,
+  // never returned on the success path because the catch re-throws).
+  overall?: QuizVerifyOverall;
   copy_safety_verdict?: QuizGenMetadataT['copy_safety']['verdict'];
 }
 
@@ -351,12 +356,24 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // omits kind_conformance (tier 1/2).
     const kindConformanceOk =
       !tierChecks.includes('kind_conformance') || parsed.kind_conformance?.verdict !== 'fail';
+    // YUK-350 (RL1 red-line invariant) — the promote gate MUST stay a POSITIVE
+    // whitelist anchored on `parsed.overall === 'pass'`. NEVER rewrite this as a
+    // negative test (e.g. `parsed.overall !== 'fail'`): a negative test would let
+    // any non-'fail' value (including a hypothetical leaked system 'error') promote.
+    // Because the model can only ever emit pass|needs_review|fail (LLM parse enum is
+    // 3-value) and the system 'error' class lives solely in the catch-bottom (which
+    // throws before reaching here), this success-path code never sees 'error' — the
+    // positive whitelist makes that structurally true rather than relying on it.
     const promote =
       parsed.overall === 'pass' &&
       checksPass &&
       !isTooClose &&
       materialGroundingOk &&
       kindConformanceOk;
+    // verificationStatus + the success-path writeEvent (below) + the metadata
+    // verification block only ever observe the 3 model-verdict values
+    // (pass|needs_review|fail); the system-error class 'error' NEVER reaches this
+    // path (it is assigned exclusively by the catch-bottom, which re-throws).
     const verificationStatus: QuizGenVerificationT['status'] = promote
       ? 'verified'
       : parsed.overall === 'fail'
@@ -579,6 +596,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         outcome: 'error',
         payload: {
           question_id: questionId,
+          // YUK-350 (RL1) — machine-readable system-error marker, symmetric with the
+          // success-path payload.overall (model verdict). This is the ONLY place the
+          // result-layer 'error' value is ever written: the model can never emit it
+          // (LLM parse enum is 3-value), so an `overall: 'error'` payload is an
+          // unambiguous "system blew up before a verdict" signal. The catch path NEVER
+          // promotes (it re-throws), so this can never coincide with a promotion.
+          overall: 'error' satisfies QuizVerifyOverall,
           error: String((err as Error).message ?? err),
         },
         caused_by_event_id: null,
