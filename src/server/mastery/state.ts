@@ -225,8 +225,14 @@ export async function updateThetaForAttempt(
   //   b = effectiveFamilyB(columnarB, familyRow) = columnarB + shrunk_family_delta
   // G4 NO-OP-safe：家族门未过 → b_delta=0 → effectiveFamilyB 原样返回 columnarB → θ̂ bit-identical。
   // 缺 kind/source（caller-less / 直测）→ 跳过家族查询 → b = columnarB（纯 effectiveB，NO-OP）。
-  // G1：家族查询是主 tx 内的纯 SELECT（无写）；subject 派生的 orphan-domain throw 已被
-  // resolveFamilyKeyForQuestion 内 try/catch 兜成 'unknown'，绝不冒泡 abort θ̂。
+  // G1：家族查询是主 tx 内的纯 SELECT（无写）。subject 派生的 **orphan-domain 应用级 throw**
+  //   （node-not-found / root-null-domain，SELECT 成功返回后由 new Error 抛出）被
+  //   resolveFamilyKeyForQuestion 内 try/catch 兜成 'unknown'，绝不冒泡 abort θ̂。
+  //   注意：若该 SELECT 本身发生**真 PG-error**（statement timeout / 序列化失败 / 连接断），tx
+  //   会进 25P02 aborted 态、后续 θ̂ 写连带失败——这是**正确行为**（与本 tx 内其它裸 SELECT 同
+  //   语义：连接已注定失败时整个 attempt 本就该 rollback，θ̂/FSRS/event 全 commit 或全 rollback，
+  //   不存在「读失败但主写应保留」的语义）。这不是新的 tx-abort 漏洞，红线 #1 只针对 best-effort
+  //   **写**毒化 tx，而非读。
   // G3：只读，绝不写任何 b。
   let b = columnarB;
   if (input.kind && input.source) {

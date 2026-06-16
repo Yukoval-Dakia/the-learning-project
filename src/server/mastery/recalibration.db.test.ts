@@ -401,9 +401,12 @@ describe('recordDifficultyCalibrationLabel', () => {
     expect(labels[0].inclusion_probability).not.toBeCloseTo(0.7, 2);
   });
 
-  it('FINDING #3 — answered slot has no observation on the attempt date (race-guard date mismatch) → skip', async () => {
-    // The attempt's slot id refers to a slot materialized on a DIFFERENT date than the attempt.
-    // The redundant date race-guard (slot.date = attempt local date) fails → skip.
+  it('YUK-372 — answered slot still live & belongs to the question, slot.date ≠ attempt local date (midnight-crossing) → label IS recorded (no date equality drop)', async () => {
+    // The attempt's slot id refers to a slot materialized on a DIFFERENT local date than the
+    // attempt (the cross-midnight case: slot物化于本地日 D, now 滚到 D+1). The matched-stream-slot
+    // race-guard no longer叠 a date=attemptLocalDate(now) equality — the stream_item_id direct join
+    // already precisely identifies the answered slot, so the slot's date归属 is implied. The label
+    // must still be recorded (previously this legitimate midnight anchor label was silently dropped).
     const q = createId();
     await seedQuestion(q, 3);
     await seedItemCalibration(q, 0.5);
@@ -418,12 +421,15 @@ describe('recordDifficultyCalibrationLabel', () => {
         outcome: 0,
         judgeRoute: 'exact',
         thetaBefore: 0,
-        now: now(), // attempt date = ATTEMPT_LOCAL_DATE ≠ slot's 2026-06-20
+        now: now(), // attempt date = ATTEMPT_LOCAL_DATE ≠ slot's 2026-06-20 (midnight crossing)
         streamItemId: otherDaySlot,
       });
     });
 
-    expect(await readLabels(q)).toHaveLength(0);
+    const labels = await readLabels(q);
+    expect(labels).toHaveLength(1);
+    // Joined the answered slot's π (0.7) via the stream_item_id direct join.
+    expect(labels[0].inclusion_probability).toBeCloseTo(0.7, 6);
   });
 
   it('Codex P2 — softmax observation with NULL stream_item_id (candidate-layer, no real slot) → skip', async () => {

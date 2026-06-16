@@ -317,6 +317,13 @@ export async function dispatchSupplyTarget(
   // caller 看到失败」的撕裂态（caller 可能重试 → 重复 job）。故把 writeEvent 包 try/catch：
   // 留痕失败只 log，**绝不 reject**，结果 result 已是真相（job 发没发由 result.status 定）。
   // observability 是辅助轴，不该反过来污染主派发结果。
+  //
+  // ⚠️ cooldown 凭证依赖此 writeEvent 成功（已知接受的权衡，YUK-372 review FINDING）：dispatched
+  // 路径的 cooldown 记录就是这条 payload.status='dispatched' 事件（recentDispatchExists 查它）。
+  // 若 boss.send 成功但此 writeEvent 因瞬时 DB 错失败 → 本次真派的 job **没留 cooldown 凭证** →
+  // 下轮夜扫对同 fingerprint 不命中 cooldown → 可能再 enqueue 一个付费 job。概率低、自限（下轮
+  // 派一次又写一次事件即恢复 cooldown），故保留此权衡；收紧需把 cooldown 凭证写进专用持久表
+  // （架构 doc 规划的后续 phase）或对 dispatched 路径的 writeEvent 做有限重试。
   try {
     await writeEvent(db, {
       id: newId(),
