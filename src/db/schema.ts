@@ -794,6 +794,45 @@ export const item_calibration = pgTable(
   ],
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-361 Phase 5 (ADR-0043 §family-级 b_personalized) — item_family_calibration：
+// 家族级 b 个性化增量（n=1 逐题 b 不可估的「家族绕道」）。
+//
+// 背景（ADR-0043 代价行 + Phase 5 amendment）：单题 b_j 在 n=1 下结构性不可精确定
+// （logit 平移不变 + N=1 校准样本），但 `(subject, primaryKnowledge, kind, source)`
+// 家族级的 b_delta 在足够重复客观观测后可估——同一家族的多道题共享一个系统性
+// 难度偏移信号，攒够样本后 shrinkage 守保守即可估。这是逐题 b 的家族级 fallback。
+//
+// 不变量①（红线）：本表 b_delta 是**独立的调整层**，永不回写 item_calibration.b
+//   （那是 item-半边锁死 G4 的外部锚）。effectiveFamilyB(b_anchor, familyRow) =
+//   b_anchor + shrunk_b_delta，组合在读侧发生，不污染锚本身。
+//
+// 两时间尺度（ADR-0043 §识别性）：θ̂ 是快尺度（每作答 Elo，state.ts），本表 b_delta
+//   是慢尺度家族层（攒够客观观测才动 b_delta，门控 n≥20 + ≥5 distinct questions）。
+//   慢 ≪ 快 是识别性的硬条件。
+//
+// 写者：src/server/mastery/personalized-difficulty.ts updateFamilyCalibration
+//   （仅在客观判分 attempt tx 内 best-effort 调用，见该模块文档）。
+// ─────────────────────────────────────────────────────────────────────────────
+export const item_family_calibration = pgTable(
+  'item_family_calibration',
+  {
+    id: text('id').primaryKey(),
+    // familyKey(subject, primaryKnowledgeId, kind, source) = `${subject}:${pk}:${kind}:${source}`。
+    // 绝不含 exact question id——家族绕道的核心（多题共享一个 b_delta）。
+    family_key: text('family_key').notNull(),
+    // 收缩后的家族级 b 增量（logit 尺度，与 b_anchor 同度量）。门控未过时恒 0
+    // （只累 evidence_count，不应用 delta）；门控全过后 = shrinkFamilyDelta(rawDelta, n)。
+    b_delta: real('b_delta').notNull().default(0),
+    // 累积的客观观测条数（family 的有效样本量）。n 门控（≥20）读它。
+    evidence_count: integer('evidence_count').notNull().default(0),
+    // 置信度 0-1，= shrinkage 因子 n/(n+priorStrength)。门控未过也可计算（只是不应用 delta）。
+    confidence: real('confidence').notNull().default(0),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('item_family_calibration_family_unique').on(t.family_key)],
+);
+
 // Typed mesh edges between knowledge nodes (ADR-0010).
 // Tree (knowledge.parent_id) is the backbone; this is the muscle.
 export const knowledge_edge = pgTable(

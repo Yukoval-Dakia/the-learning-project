@@ -49,6 +49,7 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
+import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import { updateThetaForAttempt } from '@/server/mastery/state';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
@@ -597,6 +598,26 @@ async function persistSubmit(
       attemptEventId: eventId,
       now,
     });
+
+    // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
+    // 同 tx（计数与作答一致），但 best-effort：try/catch 吞错——家族校准是慢热增益层，
+    // 绝不让它 fail 上面的 θ̂/FSRS/event 主路径。门 (a) 在内部判：judgeRoute 非客观
+    // 路由（exact/keyword 之外，含 null=纯手评）→ 内部早返不触 DB，故这里无脑调即可。
+    // primary knowledge = q.knowledge_ids[0]；outcome 复用上面的二分（review 路径无 partial）。
+    try {
+      await recordFamilyObservationForAttempt(tx, {
+        primaryKnowledgeId: q.knowledge_ids[0],
+        questionId,
+        kind: q.kind,
+        source: q.source,
+        difficulty: q.difficulty,
+        outcome: outcome === 'success' ? 1 : 0,
+        judgeRoute,
+        now,
+      });
+    } catch (err) {
+      console.warn('recordFamilyObservationForAttempt (submit) failed (non-fatal):', err);
+    }
   });
   // After the txn: primaryResult + primaryFsrsStateAfter were assigned inside; assert
   // non-null for TS narrowing (txn either commits and assigns, or throws).
