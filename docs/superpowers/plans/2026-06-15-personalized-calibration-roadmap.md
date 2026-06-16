@@ -353,8 +353,19 @@ export interface SelectionCandidateSignal {
   b?: number;
   dueRank?: number;
   recallLocked?: boolean;
+  // §9.2 / ADR-0042 编排档2 first-class 信号扩充（选题不止 MFI 中心）。
+  // **Phase 1 只定义 type + 进 signals 存储结构（type-only）；computation 全部留
+  // Phase 3 候选收集层（Task 7）**——examRelevance 据考纲映射、
+  // misconceptionRecurrence 据错题家族复发频次、transferGap 据迁移缺口诊断。
+  examRelevance?: number; // 0-1
+  misconceptionRecurrence?: number; // 0-1
+  transferGap?: number; // 0-1
 }
 ```
+
+> 落地状态（2026-06-15，PR #421）：这三个字段已随 Phase 1 selection-observability 在
+> `src/core/selection-signals.ts` 落 **type-only**（值 computation 在 Task 7 候选收集层）。
+> 本 lane 零选题行为变更——signals 列只存储不评分。
 
 - [ ] **Step 2: Add MFI score helper**
 
@@ -529,9 +540,18 @@ Store all KC snapshots in signals.
 
 Do not compute MFI for recall-locked variants. Mark `mfi_eligible: false`.
 
-- [ ] **Step 4: Add DB tests**
+- [ ] **Step 4: Compute §9.2 first-class signals（选题不止 MFI 中心）**
 
-Seed two knowledge states and one multi-KC question. Assert selected theta snapshot uses the lower `theta_hat`.
+填 `SelectionCandidateSignal` 在 Phase 1 留的 type-only 字段（ADR-0042 编排档2 L1 信号集扩充）：
+- `examRelevance` ∈ [0,1]：据考纲/考点权重映射（subject profile 的考纲数据）。
+- `misconceptionRecurrence` ∈ [0,1]：据该题关联错误观念家族的复发频次（mistake/cause 数据）。
+- `transferGap` ∈ [0,1]：据跨情境迁移缺口诊断（同 KC 不同题型/情境的掌握差）。
+
+缺数据时留 `undefined`（评分层按 MFI-only 退化，不强行兜 0）。这三个信号进 L2 LLM 编排器的候选画像 + 落 `signals` 快照，使选题脱离纯 MFI 中心。
+
+- [ ] **Step 5: Add DB tests**
+
+Seed two knowledge states and one multi-KC question. Assert selected theta snapshot uses the lower `theta_hat`. 另断言 §9.2 信号在有数据时被填、缺数据时留 `undefined`（不污染为 0）。
 
 ### Task 8: Randomized MFI Selection in Non-Due Slots
 
