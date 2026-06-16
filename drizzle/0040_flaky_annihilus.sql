@@ -1,0 +1,1 @@
+CREATE INDEX "question_knowledge_ids_gin" ON "question" USING gin ("knowledge_ids");
