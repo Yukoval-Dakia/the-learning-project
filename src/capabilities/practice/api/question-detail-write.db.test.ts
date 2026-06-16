@@ -375,6 +375,73 @@ describe('DELETE /api/questions/[id]', () => {
     expect((await loadRow(otherPart))?.draft_status).toBe('active');
   });
 
+  // YUK-388 Step 1 regression — part-ness is derived from the `parent_question_id`
+  // FK, NOT the `kind='question_part'` sentinel. A part linked via the FK but
+  // carrying a NON-sentinel kind (the post-Step-3 shape, or any future vocabulary)
+  // must still be cascade-archived. Conversely, a top-level question carrying a
+  // stale legacy `kind='question_part'` but NO parent FK must NOT be touched —
+  // proving the cascade no longer reads `kind` at all.
+  it('cascades by parent FK regardless of kind (sentinel migrated off kind)', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    // Part identified ONLY by the FK; kind is the canonical type, not the sentinel.
+    const fkPart = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+    // Legacy dead-data row: still tagged with the old sentinel kind but has NO
+    // parent FK, so it is a standalone question, not a part of `parentId`.
+    const orphanSentinel = await seedQuestion({
+      kind: 'question_part',
+      draft_status: 'active',
+      parent_question_id: null,
+    });
+
+    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { cascaded_part_ids: string[] };
+    // FK part is cascaded despite its non-sentinel kind.
+    expect(new Set(body.cascaded_part_ids)).toEqual(new Set([fkPart]));
+    expect((await loadRow(fkPart))?.draft_status).toBe('draft');
+    // The kind-sentinel orphan (no parent FK) is NOT touched.
+    expect((await loadRow(orphanSentinel))?.draft_status).toBe('active');
+  });
+
+  // YUK-388 Step 1 — zero behavior change for FSRS: a part is an independent
+  // `question` row with its own `material_fsrs_state`. Cascade-archiving the
+  // parent re-drafts the part row but MUST NOT delete or mutate the part's FSRS
+  // card (independent scheduling identity preserved — fsrs.ts supports_activity_kinds).
+  it('preserves the part FSRS card on cascade (independent scheduling identity)', async () => {
+    const parentId = await seedQuestion({ kind: 'reading', draft_status: 'active' });
+    const part = await seedQuestion({
+      kind: 'fill_blank',
+      draft_status: 'active',
+      parent_question_id: parentId,
+    });
+    await seedQuestionFsrs(part);
+
+    const before = await testDb()
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, part));
+    expect(before).toHaveLength(1);
+
+    const res = await DELETE(mkDeleteReq(parentId, '?version=0&confirm=true'), { id: parentId });
+    expect(res.status).toBe(200);
+
+    // Part row was re-drafted (out of the pool) ...
+    expect((await loadRow(part))?.draft_status).toBe('draft');
+    // ... but its FSRS card is intact and untouched.
+    const after = await testDb()
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, part));
+    expect(after).toHaveLength(1);
+    expect(after[0]?.id).toBe(before[0]?.id);
+    expect(after[0]?.subject_kind).toBe('question');
+    expect(after[0]?.due_at?.getTime()).toBe(before[0]?.due_at?.getTime());
+  });
+
   it('400s when version query param is missing on a CONFIRMED delete', async () => {
     const id = await seedQuestion({});
     const res = await DELETE(mkDeleteReq(id, '?confirm=true'), { id });
