@@ -73,6 +73,13 @@ export const fastTestInclude = [
   // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
   // a dynamic `await import()`, so no live Postgres is touched → unit partition.
   'src/db/client.test.ts',
+  // YUK-383 Phase 0 — pure (no-DB) unit for the pgvector customType codec in
+  // src/db/vector.ts (string <-> number[] only; no Postgres touched) → unit partition.
+  'src/db/vector.test.ts',
+  // YUK-383 Phase 0 — domain embedder + entity->embed-text are pure no-DB units
+  // (fetch is stubbed in embed.test.ts; embed-source.test.ts is string-join only).
+  'src/server/ai/embed.test.ts',
+  'src/server/ai/embed-source.test.ts',
   // YUK-274 — pure (no-DB) unit for the globalThis singleton-cache HMR guard in
   // src/server/boss/client.ts. `pg-boss` is vi.mock'd and the only ./client
   // import is a dynamic `await import()`, so no live Postgres is touched → unit

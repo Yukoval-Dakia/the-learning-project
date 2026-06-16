@@ -25,6 +25,7 @@ import type {
 } from '../core/schema/business';
 import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_question';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
+import { vector } from './vector';
 
 // Drizzle schema (Postgres) — single source of truth.
 // Per architecture-review.md § Stack Pivot: Postgres types throughout;
@@ -68,6 +69,15 @@ export const knowledge = pgTable('knowledge', {
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
+  // YUK-383 Phase 0 — semantic retrieval substrate. Nullable: NULL is the default
+  // for every existing/new row; the only write path is the idempotent nightly
+  // embed_backfill job (UPDATE ... SET embedding/embed_model/embed_version WHERE
+  // embedding IS NULL). dims=1024 MUST match EMBED_DIMS (src/server/ai/embed.ts).
+  // embed_version bump triggers a background re-embed. Transparent to all current
+  // reads (zero behaviour change). See plan 2026-06-16-phase0-retrieval-substrate.
+  embedding: vector(1024),
+  embed_model: text('embed_model'),
+  embed_version: integer('embed_version'),
 });
 
 export const source_asset = pgTable('source_asset', {
@@ -195,6 +205,14 @@ export const question = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
     version: integer('version').notNull().default(0),
+    // YUK-383 Phase 0 — semantic retrieval substrate. Nullable: NULL default for
+    // every existing/new row; only write path is the idempotent nightly
+    // embed_backfill job (UPDATE ... WHERE embedding IS NULL). dims=1024 MUST match
+    // EMBED_DIMS (src/server/ai/embed.ts). Transparent to all current reads (zero
+    // behaviour change). See plan 2026-06-16-phase0-retrieval-substrate.
+    embedding: vector(1024),
+    embed_model: text('embed_model'),
+    embed_version: integer('embed_version'),
   },
   (t) => [check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`)],
 );
