@@ -30,6 +30,9 @@ const ALL_TABLES = [
   'item_calibration',
   // YUK-361 Phase 5 — 家族级 b_delta 慢热校准资产。
   'item_family_calibration',
+  // YUK-361 Phase 6 — active-PPI 难度重标定标签账本（无 FK，须显式列入 TRUNCATE，
+  // 否则 resetDb 漏清 → 跨测 state 泄漏；当前仅靠 unique question id 遮掩，Codex P2）。
+  'difficulty_calibration_label',
   'knowledge_edge',
   'learning_session',
   'answer',

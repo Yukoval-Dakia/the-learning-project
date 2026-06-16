@@ -41,8 +41,13 @@
 import { newId } from '@/core/ids';
 import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
-import { difficulty_calibration_label, item_calibration, selection_observation } from '@/db/schema';
-import { and, desc, eq } from 'drizzle-orm';
+import {
+  difficulty_calibration_label,
+  item_calibration,
+  practice_stream_item,
+  selection_observation,
+} from '@/db/schema';
+import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { impliedDifficultyResidual, isObjectiveJudgeRoute } from './personalized-difficulty';
 
 type DbLike = Db | Tx;
@@ -281,6 +286,26 @@ export const RECALIBRATION_MIN_LABELS = 12;
 // softmax_mfi 观测）/ 散题或非流作答（无当日 softmax 观测）→ join 不到 → **skip**（一条都
 // 不写，不落伪 π_i 污染慢热资产）。
 //
+// matched-stream-slot gate（Codex P2 修复——π_i 过度归因到非流作答）：上面的 date+ref join
+// 只保证「该题当天被 softmax 选进了流」，**不**保证「这次作答就是那次随机抽样选中的流 slot」。
+// 反例：题被 softmax 选进今天的流（π=0.3），用户却经**非流路径**（/api/review/submit 散题
+// 复习同一题、非流 slot）作答它——hook 仍会把流 slot 的 π=0.3 贴上去，给一条**不是**随机抽样
+// 流选中的作答挂 IPW 权重 → 偏置 rectifier（Codex finding #1）。理想判别子是把被答 slot 的
+// practice_stream_item.id thread 进 attempt 路径，直 join selection_observation.stream_item_id
+// （= 被答 slot）；但 attempt 路径（SubmitBody / PaperSubmitSlotInput）**不携带 stream_item_id**
+// （SubmitBody 只有 activity_ref{kind,id}/question_id/mistake_id/session_id；paper 作答更根本不
+// 是 stream item）——wire 协议没穿这根线（与 FINDING #3 同一接缝）。
+//
+// 故用 available context 能支持的**最紧正确门**：除「当天有 softmax_mfi selected 观测」外，
+// **再要求**(a) 被 join 的观测自带非空 stream_item_id（排除候选层 / 物化前观测——schema 允许
+// 候选层观测 stream_item_id=NULL，那不对应真正物化的 slot），且 (b) 当天**确实物化了**该题的
+// practice_stream_item slot（join 该 slot 存在）。这把「该题在今天的流里」收紧成「该题在今天**
+// 物化的**流里、且 π_i 来自一个真 slot 的随机抽样事件」。**残留接缝**（deferred，需 stream_item_id
+// 穿线才能彻底修，out of scope）：同一题当天既被 softmax 选进流、又被非流路径重答时，仅凭
+// (date, ref) 仍**无法**区分这次作答走的是流 slot 还是散题复习——两者共享同一 (date, ref) 与同
+// 一物化 slot。彻底判别需 attempt 路径携带被答 slot 的 stream_item_id（直 join
+// selection_observation.stream_item_id），与 FINDING #3 是同一根 stream_item_id 接缝，一并延后。
+//
 // θ-before：caller 传 thetaBefore（在 updateThetaForAttempt 之前捕获的 PRE-attempt θ̂），
 // 同 Phase 5 family hook 的纪律——b_label 反推必须锚定作答前的 θ̂，不读已被本次作答移动的
 // POSTERIOR mastery_state.theta_hat。
@@ -332,9 +357,17 @@ export async function recordDifficultyCalibrationLabel(
   // π_i join（FINDING #3）：取**作答当天**放置该 slot 的 softmax 选中观测的真 π_i——按作答
   // 本地日 `date` 等值 join（不是 most-recent-across-days），同日内取最新观测（reRankAfterAnswer
   // 的最新观测治理当前物化 slot）。legacy/到期/散题/无当日观测 → null → skip。
+  //
+  // matched-stream-slot gate（Codex P2）：**再要求**观测自带非空 stream_item_id（`isNotNull`，
+  // 排除候选层 / 物化前观测——那不对应真正物化的 slot；生产 softmax_mfi selected 观测恒带物化
+  // slot id，见 stream-store writeObservationsBestEffort），把 π_i 钉在一个真 slot 的随机抽样
+  // 事件上。残留同日非流重答边仍需 stream_item_id 穿线才能彻底修（见 doc，与 FINDING #3 同接缝）。
   const attemptDate = attemptLocalDate(input.now);
   const obsRows = await tx
-    .select({ pi: selection_observation.inclusion_probability })
+    .select({
+      pi: selection_observation.inclusion_probability,
+      streamItemId: selection_observation.stream_item_id,
+    })
     .from(selection_observation)
     .where(
       and(
@@ -343,13 +376,32 @@ export async function recordDifficultyCalibrationLabel(
         eq(selection_observation.ref_kind, 'question'),
         eq(selection_observation.policy, 'softmax_mfi'),
         eq(selection_observation.selected, true),
+        // 只认带物化 slot id 的观测（候选层 stream_item_id=NULL 不算真 slot 选中事件）。
+        isNotNull(selection_observation.stream_item_id),
       ),
     )
     .orderBy(desc(selection_observation.created_at))
     .limit(1);
   const pi = obsRows[0]?.pi ?? null;
+  const streamItemId = obsRows[0]?.streamItemId ?? null;
   // 只对真随机抽样选中的锚题打标签（§7 positivity）。无真 π_i → skip（不落伪 π_i）。
-  if (pi === null || !(pi > 0 && pi <= 1)) return;
+  if (pi === null || streamItemId === null || !(pi > 0 && pi <= 1)) return;
+
+  // matched-stream-slot gate（Codex P2）：要求该观测引用的 practice_stream_item slot **当天确实
+  // 物化存在**。观测是 post-commit best-effort 写、slot 可能因后续重排被删/回填——若 slot 已不
+  // 在，则这条观测不再对应一个活的当天流 slot → skip（不把陈旧 slot 的 π_i 贴到本次作答）。
+  const slotRows = await tx
+    .select({ id: practice_stream_item.id })
+    .from(practice_stream_item)
+    .where(
+      and(
+        eq(practice_stream_item.id, streamItemId),
+        eq(practice_stream_item.date, attemptDate),
+        eq(practice_stream_item.ref_id, input.questionId),
+      ),
+    )
+    .limit(1);
+  if (slotRows.length === 0) return;
 
   // b 锚：item_calibration effectiveB（track='hard'）有则用，否则弱锚 difficultyToLogitB
   // （与 state.ts θ̂ 锚 + Phase 5 family hook 同来源链）。b_label 反推锚定它。

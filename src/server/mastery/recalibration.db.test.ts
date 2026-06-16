@@ -15,7 +15,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
-import { difficulty_calibration_label, item_calibration, question } from '@/db/schema';
+import {
+  difficulty_calibration_label,
+  item_calibration,
+  practice_stream_item,
+  question,
+} from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
 import {
   RECALIBRATION_MIN_LABELS,
@@ -65,10 +70,54 @@ async function seedItemCalibration(questionId: string, b: number) {
   });
 }
 
-/** 写一条 softmax_mfi selected 观测（真 π_i），供 label hook join。date 默认 = 作答本地日。 */
-async function seedSoftmaxObservation(questionId: string, pi: number, date = ATTEMPT_LOCAL_DATE) {
+/**
+ * 物化一个当天的 practice_stream_item slot（softmax 选题落地态），返回行 id。
+ * matched-stream-slot gate（Codex P2）要求观测引用一个真 slot，故 hook 的 happy path
+ * 需要一个真物化 slot 存在。
+ */
+let _streamPos = 0;
+async function seedStreamSlot(questionId: string, date = ATTEMPT_LOCAL_DATE) {
+  const id = newId();
+  await db.insert(practice_stream_item).values({
+    id,
+    date,
+    position: _streamPos++,
+    item_kind: 'question',
+    ref_id: questionId,
+    source: 'decay',
+    status: 'done',
+    reasoning: 'test slot',
+    added_by: 'composer_live',
+    signals: {},
+    created_at: now(),
+    updated_at: now(),
+  });
+  return id;
+}
+
+/**
+ * 写一条 softmax_mfi selected 观测（真 π_i），供 label hook join。date 默认 = 作答本地日。
+ * 默认**同时物化一个真 slot 并把观测 stream_item_id 钉到它**（matched-stream-slot gate，
+ * Codex P2 happy path）。传 `streamItemId: null` 可显式造「候选层观测（无真 slot）」用于
+ * 否定测；传一个不存在的 id 可造「slot 已被删/重排回填后陈旧」用于否定测。
+ */
+async function seedSoftmaxObservation(
+  questionId: string,
+  pi: number,
+  date = ATTEMPT_LOCAL_DATE,
+  opts: { streamItemId?: string | null } = {},
+) {
+  let streamItemId: string | undefined;
+  if (opts.streamItemId === null) {
+    streamItemId = undefined; // candidate-layer observation, no materialized slot.
+  } else if (opts.streamItemId !== undefined) {
+    streamItemId = opts.streamItemId; // explicit (e.g. a dangling/deleted slot id).
+  } else {
+    streamItemId = await seedStreamSlot(questionId, date); // default: materialize a real slot.
+  }
   await recordSelectionObservation(db, {
     date,
+    streamItemId,
     refKind: 'question',
     refId: questionId,
     policy: 'softmax_mfi',
@@ -278,6 +327,66 @@ describe('recordDifficultyCalibrationLabel', () => {
 
     expect(await readLabels(q)).toHaveLength(0);
   });
+
+  it('Codex P2 — softmax observation with NULL stream_item_id (candidate-layer, no real slot) → skip', async () => {
+    // The question WAS softmax-evaluated today, but the observation has no materialized
+    // stream slot (stream_item_id NULL — candidate-layer / pre-materialization observation).
+    // The matched-stream-slot gate requires a real slot → no label (not a true slot selection).
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE, { streamItemId: null });
+
+    await db.transaction(async (tx) => {
+      await recordDifficultyCalibrationLabel(tx, {
+        questionId: q,
+        attemptEventId: createId(),
+        difficulty: 3,
+        outcome: 0,
+        judgeRoute: 'exact',
+        thetaBefore: 0,
+        now: now(),
+      });
+    });
+
+    expect(await readLabels(q)).toHaveLength(0);
+  });
+
+  it('Codex P2 — observation references a stream slot that no longer exists (deleted/recomposed) → skip', async () => {
+    // The observation carries a stream_item_id, but that practice_stream_item row was deleted
+    // (e.g. a later recompose re-filled the slot). The matched-stream-slot gate joins the slot
+    // and finds none → skip (do not attach a stale slot's π_i to this attempt).
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    await seedSoftmaxObservation(q, 0.3, ATTEMPT_LOCAL_DATE, { streamItemId: createId() }); // dangling id
+
+    await db.transaction(async (tx) => {
+      await recordDifficultyCalibrationLabel(tx, {
+        questionId: q,
+        attemptEventId: createId(),
+        difficulty: 3,
+        outcome: 0,
+        judgeRoute: 'exact',
+        thetaBefore: 0,
+        now: now(),
+      });
+    });
+
+    expect(await readLabels(q)).toHaveLength(0);
+  });
+
+  // Codex P2 — RESIDUAL (documented, deferred): a question that was softmax-selected INTO
+  // today's MATERIALIZED stream, then answered via a NON-stream path (e.g. a standalone review
+  // of the same question on the same day), STILL gets the stream slot's π_i. With only
+  // (date, ref) + a real slot existing, this attempt is INDISTINGUISHABLE from the genuine
+  // stream-slot answer — both share the same (date, ref) and the same materialized slot. The
+  // fully-correct discriminator is selection_observation.stream_item_id = the ANSWERED slot's
+  // id, which requires the attempt path (SubmitBody / PaperSubmitSlotInput) to thread the
+  // stream_item_id. It does NOT (confirmed: SubmitBody has only activity_ref/question_id/
+  // mistake_id/session_id; paper answers aren't stream items). This is the SAME stream_item_id
+  // seam as FINDING #3, tracked for a future phase. No test asserts the residual is FIXED
+  // (it is not) — this comment is the explicit record of the deferred seam.
 
   it('falls back to weak difficulty anchor when no item_calibration row', async () => {
     const q = createId();
@@ -523,5 +632,35 @@ describe('effectiveB read-compat (column-level, end-to-end)', () => {
       .where(eq(item_calibration.question_id, q));
     const cal = await readCalibration(q);
     expect(effectiveB(cal)).toBeCloseTo(-0.4, 6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (D) resetDb truncates difficulty_calibration_label (Codex P2 — hermetic contract)
+//
+// The table has NO enforced FK, so CASCADE never reaches it from another table's
+// TRUNCATE — it must be in ALL_TABLES (tests/helpers/db.ts) explicitly, or rows leak
+// across tests (currently masked only because tests use unique question ids).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('resetDb truncates difficulty_calibration_label (ALL_TABLES, Codex P2)', () => {
+  it('a label written before resetDb is gone after resetDb', async () => {
+    const q = createId();
+    await db.insert(difficulty_calibration_label).values({
+      id: newId(),
+      question_id: q,
+      attempt_event_id: createId(),
+      theta_snapshot: 0,
+      outcome: 0,
+      b_label: 1.0,
+      inclusion_probability: 0.5,
+      created_at: now(),
+    });
+    const before = await db.select().from(difficulty_calibration_label);
+    expect(before.length).toBeGreaterThan(0);
+
+    await resetDb();
+
+    const after = await db.select().from(difficulty_calibration_label);
+    expect(after).toHaveLength(0);
   });
 });
