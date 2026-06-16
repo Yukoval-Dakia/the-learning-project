@@ -15,9 +15,18 @@
 // server/index.ts 的 RW_WORKER=1 进程内 worker 共用。本文件只剩独立进程
 // 专属纪律：process-level last-resort handlers + shutdown 安装。
 
-import { db } from '@/db/client';
-import { installShutdownHandler } from '@/server/boss/shutdown';
-import { startBossWorker } from '@/server/boss/start-worker';
+import { loadEnv } from '../server/env';
+
+// YUK-365 (Codex review P2, Finding 2): the standalone worker MUST load the same
+// env files the Hono API loads (server/index.ts → loadEnv()), and it must do so
+// BEFORE importing @/db/client (which reads DATABASE_URL at module top and throws
+// if it's unset). Most AI tasks run as BACKGROUND pg-boss jobs in THIS process, so
+// without this the AI provider toggle (AI_PROVIDER_OVERRIDE / CLAUDE_CODE_OAUTH_TOKEN
+// placed in .env.local) would reach the API but NOT the worker → background jobs
+// keep running mimo (or fail). loadEnv() only fills unset keys, so real
+// environment / docker-compose-injected values always win (prod container env is
+// unaffected). Dynamic-import the db client + boss modules below so this runs first.
+loadEnv();
 
 // YUK-235 [STB-1]: process-level last-resort handlers. Before this, the only
 // guard was `main().catch(...)` below, which catches a rejected boot promise but
@@ -40,6 +49,14 @@ process.on('uncaughtException', (err) => {
 });
 
 async function main() {
+  // Dynamic import AFTER loadEnv(): @/db/client reads DATABASE_URL at module top
+  // (throws if unset), and start-worker pulls the client in transitively. Mirrors
+  // server/index.ts's RW_WORKER=1 branch, which dynamic-imports for the same reason.
+  const [{ db }, { startBossWorker }, { installShutdownHandler }] = await Promise.all([
+    import('@/db/client'),
+    import('@/server/boss/start-worker'),
+    import('@/server/boss/shutdown'),
+  ]);
   const boss = await startBossWorker(db);
   installShutdownHandler(boss);
   console.log('[worker] running, handlers registered');
