@@ -3338,9 +3338,9 @@
           "name": "question_knowledge_ids_gin",
           "columns": [
             {
-              "expression": "knowledge_ids",
-              "isExpression": false,
+              "expression": "\"knowledge_ids\" jsonb_path_ops",
               "asc": true,
+              "isExpression": true,
               "nulls": "last"
             }
           ],

@@ -216,10 +216,18 @@ export const question = pgTable(
   },
   (t) => [
     check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`),
-    // YUK-383 Phase 0 — GIN index on the knowledge_ids jsonb array to accelerate
+    // YUK-383 Phase 0 — GIN index on the knowledge_ids JSONB array to accelerate
     // KC-containment lookups (which questions carry a given KC), consumed by the
-    // Phase 1 matcher. Mirrors event_affected_scopes_idx's gin pattern.
-    index('question_knowledge_ids_gin').using('gin', t.knowledge_ids),
+    // Phase 1 matcher. knowledge_ids is jsonb (NOT text[]), so this uses the
+    // jsonb_path_ops operator class — same precedent as event_payload_idx
+    // (drizzle/0005), NOT event_affected_scopes_idx (that index is on a native
+    // text[] column using array_ops, a different index family). jsonb_path_ops
+    // produces a smaller/faster index than the default jsonb_ops for pure
+    // element containment. The Phase-1 matcher MUST write the containment shape
+    // the planner can use against this opclass:
+    //   SELECT id FROM question WHERE knowledge_ids @> '["<kc>"]'::jsonb
+    // (jsonb_path_ops supports @> only — not key/path existence operators).
+    index('question_knowledge_ids_gin').using('gin', sql`${t.knowledge_ids} jsonb_path_ops`),
   ],
 );
 
