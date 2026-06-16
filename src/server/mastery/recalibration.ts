@@ -47,7 +47,7 @@ import {
   practice_stream_item,
   selection_observation,
 } from '@/db/schema';
-import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { impliedDifficultyResidual, isObjectiveJudgeRoute } from './personalized-difficulty';
 
 type DbLike = Db | Tx;
@@ -263,48 +263,32 @@ export const RECALIBRATION_MIN_LABELS = 12;
 // 由 submit.ts / paper-submit.ts 在 attempt tx 的 **SAVEPOINT** 内 best-effort 调用（同
 // Phase 5 family hook 的 tx-abort 隔离纪律——任何 DB 错只回滚 savepoint，不毒化主 attempt tx）。
 //
-// π_i join（FINDING #3 修复——按 placing event join，不是 most-recent-across-days）：
-// selection_observation 每个 (date, ref_id) 选题事件一行（日级 materializeStream + 当日
-// reRankAfterAnswer 各写自己的 π_i）。**旧实现** `ORDER BY created_at DESC LIMIT 1`（不限
-// date）会把「该题跨所有日子最近一次 softmax 选中」的 π_i 贴上来：题 day-1 选中（π=0.30）、
-// 挂起未答、day-5 又被选中（π=0.70），却以 **day-1 那次** 作答 → 错贴 day-5 的 0.70。1/π 是
-// IPW 权重 ⇒ 错 π_i 直接偏置 rectifier（FINDING #3）。
+// π_i join（YUK-372 L2——按被答 slot 的 stream_item_id **直 join**，彻底修 FINDING #3 +
+// Codex P2 残留接缝）：caller 现在把被答 slot 的 practice_stream_item.id 经 input.streamItemId
+// 透传进来（submit.ts 从 SubmitBody.stream_item_id；PfSolo 流作答传被答 slot id）。hook 直接
+// `eq(selection_observation.stream_item_id, input.streamItemId)` 取**放置那个被答 slot**的随机
+// 抽样事件的 π_i，不再用 (date, ref) DESC-LIMIT 近似。
 //
-// **正确 join**：取**放置被答 slot 的那次选题事件**的 π_i。理想做法是 thread 被答 slot 的
-// practice_stream_item.id（selection_observation.stream_item_id 直 join），但 attempt 路径
-// （submit.ts /api/review/submit 的 SubmitBody + paper-submit.ts 的 PaperSubmitSlotInput）
-// **不携带 stream_item_id**——SubmitBody 只有 activity_ref{kind,id}/question_id/mistake_id，
-// 无任何流上下文；paper 作答更是走 paper-slot 流程、根本不是 stream item（见 Report 接缝）。
-// 故用 attempt 路径**确实携带**的上下文做最准 join：作答时刻 `now` → 作答本地日
-// `streamLocalDate(now)`（显式 Asia/Shanghai，与 stream-store.ts streamLocalDate / 所有夜链
-// cron tz 同度量）。join `date = 作答本地日 AND ref_id = questionId AND ref_kind='question'
-// AND policy='softmax_mfi' AND selected=true`，按 created_at desc 取**那一天**的最新观测——
-// 当日内 reRankAfterAnswer 的最新观测正是治理当前物化 slot 的那次抽样事件（日级 materialize
-// 的更早观测被同日重排覆盖）。这把 π_i 钉在「作答当天放置该 slot 的事件」，而非跨日最近。
+// 为什么这是唯一正确判别子：selection_observation 每个 (date, ref_id) 一行（日级
+// materializeStream + 当日 reRankAfterAnswer 各写 π_i）。旧的 (date, ref) 近似有两个偏置：
+//   - 跨日最近（FINDING #3）：题 day-1 选中 π=0.3、day-5 又选中 π=0.7，以 day-1 作答却贴 0.7。
+//     →（date 等值后）已缓解，但仍——
+//   - 同日散题重答（Codex P2 残留）：题被 softmax 选进今天的流（π=0.3），用户却经非流路径
+//     （散题复习同一题）作答它——仅凭 (date, ref) 无法区分这次作答走没走流 slot，仍把 0.3 错贴
+//     给散题作答 → 1/π 是 IPW 权重 ⇒ 偏置 rectifier。
+// 按被答 slot 的 stream_item_id 直 join **同时**消掉这两个偏置：精确钉到被答 slot 的那次抽样。
 //
-// 只对真随机抽样选中的锚题打标签（§7 positivity）；legacy/到期项无真 π_i（确定性选题，无
-// softmax_mfi 观测）/ 散题或非流作答（无当日 softmax 观测）→ join 不到 → **skip**（一条都
-// 不写，不落伪 π_i 污染慢热资产）。
+// 红线 #2 — 无 streamItemId → **skip，绝不退回 (date, ref) 近似**：散题 / paper / 非流作答
+// caller 传 null/undefined（它们本就没走流 slot）→ 立即 skip。宁可少打一条标签，也不把流
+// slot 的 π_i 错贴到非流作答上——首批 b_calib 被污染后攒不回（慢资产不可逆）。
 //
-// matched-stream-slot gate（Codex P2 修复——π_i 过度归因到非流作答）：上面的 date+ref join
-// 只保证「该题当天被 softmax 选进了流」，**不**保证「这次作答就是那次随机抽样选中的流 slot」。
-// 反例：题被 softmax 选进今天的流（π=0.3），用户却经**非流路径**（/api/review/submit 散题
-// 复习同一题、非流 slot）作答它——hook 仍会把流 slot 的 π=0.3 贴上去，给一条**不是**随机抽样
-// 流选中的作答挂 IPW 权重 → 偏置 rectifier（Codex finding #1）。理想判别子是把被答 slot 的
-// practice_stream_item.id thread 进 attempt 路径，直 join selection_observation.stream_item_id
-// （= 被答 slot）；但 attempt 路径（SubmitBody / PaperSubmitSlotInput）**不携带 stream_item_id**
-// （SubmitBody 只有 activity_ref{kind,id}/question_id/mistake_id/session_id；paper 作答更根本不
-// 是 stream item）——wire 协议没穿这根线（与 FINDING #3 同一接缝）。
+// 只对真随机抽样（softmax_mfi selected）选中的锚题打标签（§7 positivity）：legacy/到期项确定性
+// 选题无 softmax_mfi 观测 → join 不到 → skip。
 //
-// 故用 available context 能支持的**最紧正确门**：除「当天有 softmax_mfi selected 观测」外，
-// **再要求**(a) 被 join 的观测自带非空 stream_item_id（排除候选层 / 物化前观测——schema 允许
-// 候选层观测 stream_item_id=NULL，那不对应真正物化的 slot），且 (b) 当天**确实物化了**该题的
-// practice_stream_item slot（join 该 slot 存在）。这把「该题在今天的流里」收紧成「该题在今天**
-// 物化的**流里、且 π_i 来自一个真 slot 的随机抽样事件」。**残留接缝**（deferred，需 stream_item_id
-// 穿线才能彻底修，out of scope）：同一题当天既被 softmax 选进流、又被非流路径重答时，仅凭
-// (date, ref) 仍**无法**区分这次作答走的是流 slot 还是散题复习——两者共享同一 (date, ref) 与同
-// 一物化 slot。彻底判别需 attempt 路径携带被答 slot 的 stream_item_id（直 join
-// selection_observation.stream_item_id），与 FINDING #3 是同一根 stream_item_id 接缝，一并延后。
+// matched-stream-slot gate（Codex P2，保留为冗余 race-guard）：再 join 被答 slot 的
+// practice_stream_item 确认它**当天确实物化存在**（slot 可能被后续重排删/回填）。attemptLocalDate
+// (now)=date 等值在此作冗余防御（主判别子已是 stream_item_id 直 join），多一道确认被答 slot 确属
+// 作答当天的物化流。
 //
 // θ-before：caller 传 thetaBefore（在 updateThetaForAttempt 之前捕获的 PRE-attempt θ̂），
 // 同 Phase 5 family hook 的纪律——b_label 反推必须锚定作答前的 θ̂，不读已被本次作答移动的
@@ -337,6 +321,18 @@ export interface RecordDifficultyCalibrationLabelInput {
    */
   thetaBefore: number;
   now: Date;
+  /**
+   * YUK-372 L2 — 被答 slot 的 practice_stream_item.id（π_i 直 join 判别子，Codex P2 残留接缝
+   * 的彻底修复）。caller（submit.ts /api/review/submit）从 SubmitBody.stream_item_id 透传；流
+   * 作答（PfSolo）传被答 slot id，散题/paper/非流作答传 **null/undefined**。
+   *
+   * - 非空 → **直 join** selection_observation.stream_item_id = 这个 id（精确取放置该 slot 的
+   *   随机抽样事件的 π_i），不再用 (date, ref) DESC-LIMIT 近似。
+   * - null/undefined → **立即 skip**（不打标签，不退回 (date, ref) 近似）——这是红线 #2：同日
+   *   散题重答同一题时，没有被答 slot id 就无法区分这次作答走没走流 slot，落 (date, ref) 近似会
+   *   把流 slot 的 π_i 错贴到散题作答上，毒化首批 b_calib（慢资产污染后攒不回）。宁可 skip。
+   */
+  streamItemId?: string | null;
 }
 
 /**
@@ -354,42 +350,40 @@ export async function recordDifficultyCalibrationLabel(
   // partial 排除（同 Phase 5）：部分对对难度反推语义歧义，不折。
   if (input.attemptOutcome === 'partial') return;
 
-  // π_i join（FINDING #3）：取**作答当天**放置该 slot 的 softmax 选中观测的真 π_i——按作答
-  // 本地日 `date` 等值 join（不是 most-recent-across-days），同日内取最新观测（reRankAfterAnswer
-  // 的最新观测治理当前物化 slot）。legacy/到期/散题/无当日观测 → null → skip。
-  //
-  // matched-stream-slot gate（Codex P2）：**再要求**观测自带非空 stream_item_id（`isNotNull`，
-  // 排除候选层 / 物化前观测——那不对应真正物化的 slot；生产 softmax_mfi selected 观测恒带物化
-  // slot id，见 stream-store writeObservationsBestEffort），把 π_i 钉在一个真 slot 的随机抽样
-  // 事件上。残留同日非流重答边仍需 stream_item_id 穿线才能彻底修（见 doc，与 FINDING #3 同接缝）。
-  const attemptDate = attemptLocalDate(input.now);
+  // 红线 #2（YUK-372 L2，Codex P2 残留接缝的彻底修复）：被答 slot 的 stream_item_id 是 π_i 的
+  // **唯一**正确判别子。无它 → **立即 skip**，绝不退回 (date, ref) 近似。
+  // 散题 / paper / 非流作答 caller 传 null/undefined → skip（它们本就没有流 slot 的 π_i）。
+  // 流作答（PfSolo）传被答 slot id → 直 join。这把「该题当天在流里被选中」收紧成「**这次作答
+  // 走的就是**那个被随机抽样选中的流 slot」——同日散题重答同一题不再误挂流 slot 的 π_i。
+  if (input.streamItemId == null) return;
+  const streamItemId = input.streamItemId;
+
+  // π_i 直 join（YUK-372 L2）：精确取放置**被答 slot** 的那次 softmax 随机抽样事件的 π_i——
+  // 按 stream_item_id 等值 join（不再 (date, ref) DESC-LIMIT 近似）。要求该观测是 softmax_mfi
+  // 真随机抽样、selected=true 的事件（§7 positivity；legacy/确定性选题无 softmax_mfi 观测）。
   const obsRows = await tx
-    .select({
-      pi: selection_observation.inclusion_probability,
-      streamItemId: selection_observation.stream_item_id,
-    })
+    .select({ pi: selection_observation.inclusion_probability })
     .from(selection_observation)
     .where(
       and(
-        eq(selection_observation.date, attemptDate),
+        eq(selection_observation.stream_item_id, streamItemId),
         eq(selection_observation.ref_id, input.questionId),
         eq(selection_observation.ref_kind, 'question'),
         eq(selection_observation.policy, 'softmax_mfi'),
         eq(selection_observation.selected, true),
-        // 只认带物化 slot id 的观测（候选层 stream_item_id=NULL 不算真 slot 选中事件）。
-        isNotNull(selection_observation.stream_item_id),
       ),
     )
     .orderBy(desc(selection_observation.created_at))
     .limit(1);
   const pi = obsRows[0]?.pi ?? null;
-  const streamItemId = obsRows[0]?.streamItemId ?? null;
   // 只对真随机抽样选中的锚题打标签（§7 positivity）。无真 π_i → skip（不落伪 π_i）。
-  if (pi === null || streamItemId === null || !(pi > 0 && pi <= 1)) return;
+  if (pi === null || !(pi > 0 && pi <= 1)) return;
 
-  // matched-stream-slot gate（Codex P2）：要求该观测引用的 practice_stream_item slot **当天确实
-  // 物化存在**。观测是 post-commit best-effort 写、slot 可能因后续重排被删/回填——若 slot 已不
-  // 在，则这条观测不再对应一个活的当天流 slot → skip（不把陈旧 slot 的 π_i 贴到本次作答）。
+  // matched-stream-slot gate（Codex P2）：要求被答 slot 的 practice_stream_item **当天确实物化
+  // 存在**。slot 可能因后续重排被删/回填——若已不在，则这条 π_i 不再对应一个活的当天流 slot →
+  // skip。attemptLocalDate(now)=date 等值在此作**冗余 race-guard**（不是主判别子——主判别子是上面
+  // 的 stream_item_id 直 join），多一道防御确认被答 slot 确属作答当天的物化流。
+  const attemptDate = attemptLocalDate(input.now);
   const slotRows = await tx
     .select({ id: practice_stream_item.id })
     .from(practice_stream_item)

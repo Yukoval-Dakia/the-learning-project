@@ -262,6 +262,8 @@ describe('runRecalibrationNightly', () => {
         judgeRoute: 'exact',
         thetaBefore: 0,
         now: attemptNow,
+        // YUK-372 L2 — thread the answered slot id (hook now requires it for the π_i direct join).
+        streamItemId: slotId,
       });
     });
 
