@@ -27,6 +27,29 @@ export const QuestionKind = z.enum([
   'derivation',
 ]);
 
+// UI-selectable question kinds (the manual / vision picker subset).
+//
+// YUK-387 Step 0 — consolidation only, zero behavior change. RecordPage,
+// VisionTab, and auto-enroll each maintained their own copy of this 8-value
+// labeled list / id union; this is the single source they now import.
+//
+// DELIBERATELY 8 values, NOT the full 9-value `QuestionKind` enum above:
+// 'derivation' is a vision/judge-only kind and was never offered in the manual
+// or vision form pickers. Keep it excluded here to preserve the existing UI
+// behavior — do not "fix" this by spreading `QuestionKind.options`.
+export const QUESTION_KIND_OPTIONS = [
+  { id: 'choice', label: '选择' },
+  { id: 'true_false', label: '判断' },
+  { id: 'fill_blank', label: '填空' },
+  { id: 'short_answer', label: '简答' },
+  { id: 'essay', label: '论述' },
+  { id: 'computation', label: '计算' },
+  { id: 'reading', label: '阅读' },
+  { id: 'translation', label: '翻译' },
+] as const satisfies readonly { id: z.infer<typeof QuestionKind>; label: string }[];
+
+export type QuestionKindOptionId = (typeof QUESTION_KIND_OPTIONS)[number]['id'];
+
 export const QuestionSource = z.enum([
   'embedded',
   'daily',

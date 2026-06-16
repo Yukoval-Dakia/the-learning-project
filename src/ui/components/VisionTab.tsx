@@ -16,6 +16,7 @@
 //     tree (block.structured) — sub_questions / options / answers /
 //     question_no — sits above the editable prompt textarea.
 
+import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
@@ -60,28 +61,14 @@ type Phase =
   | 'importing'
   | 'error';
 
-type QuestionKindId =
-  | 'choice'
-  | 'true_false'
-  | 'fill_blank'
-  | 'short_answer'
-  | 'essay'
-  | 'computation'
-  | 'reading'
-  | 'translation';
+// QUESTION_KIND_OPTIONS / QuestionKindOptionId consolidated to
+// @/core/schema/business (YUK-387 Step 0). Local aliases keep the rest of this
+// file's call sites unchanged.
+type QuestionKindId = QuestionKindOptionId;
 
 type CauseCategoryId = string;
 
-const QUESTION_KINDS: { id: QuestionKindId; label: string }[] = [
-  { id: 'choice', label: '选择' },
-  { id: 'true_false', label: '判断' },
-  { id: 'fill_blank', label: '填空' },
-  { id: 'short_answer', label: '简答' },
-  { id: 'essay', label: '论述' },
-  { id: 'computation', label: '计算' },
-  { id: 'reading', label: '阅读' },
-  { id: 'translation', label: '翻译' },
-];
+const QUESTION_KINDS: { id: QuestionKindId; label: string }[] = [...QUESTION_KIND_OPTIONS];
 
 interface KnowledgeNode {
   id: string;
