@@ -21,6 +21,7 @@ import {
 } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, mastery_state } from '@/db/schema';
+import { effectiveB } from './recalibration';
 
 type DbLike = Db | Tx;
 
@@ -184,16 +185,24 @@ export async function updateThetaForAttempt(
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
   }
 
-  // 1. Read the b anchor (item-half locked: read-only). track='hard' only —
-  //    soft track never reaches p(L)/scheduling (ADR-0035).
+  // 1. Read the b anchor (item-half locked: READ-ONLY — 不变量①, G4). track='hard'
+  //    only — soft track never reaches p(L)/scheduling (ADR-0035). YUK-361 Phase 6
+  //    (Task 11 step 5): 读 effectiveB = b_calib ?? b_anchor ?? b（去偏 b 优先）。
+  //    在线 θ̂ 路径**只 READS** effectiveB，**绝不 WRITES** b_calib（b_calib 只由批量
+  //    recalibrateQuestion 写）——不变量① intact。NO-OP today：b_calib 攒够标签前 NULL，
+  //    b_anchor 由 migration 0038 从既有 b 回填，故 effectiveB 当前等于原 b。
   const calRows = await tx
-    .select({ b: item_calibration.b })
+    .select({
+      b: item_calibration.b,
+      b_anchor: item_calibration.b_anchor,
+      b_calib: item_calibration.b_calib,
+    })
     .from(item_calibration)
     .where(
       and(eq(item_calibration.question_id, input.questionId), eq(item_calibration.track, 'hard')),
     )
     .limit(1);
-  const calB = calRows[0]?.b ?? null;
+  const calB = effectiveB(calRows[0]);
   const b = calB ?? difficultyToLogitB(input.difficulty);
   // Weak difficulty-proxy anchor → down-weight the update (D2 / VERIFY).
   const bWeight = calB !== null ? 1 : DIFFICULTY_PROXY_WEIGHT;

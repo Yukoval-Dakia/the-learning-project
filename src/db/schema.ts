@@ -779,6 +779,40 @@ export const item_calibration = pgTable(
     track: text('track').notNull().default('hard'),
     // 'llm_prior' | 'fixed_anchor' | ... ——provenance（evidence-first 红线）。
     source: text('source').notNull(),
+    // ── YUK-361 Phase 6 (Task 11, ADR-0043 §4 半数据驱动 b + §7 active-PPI)：
+    //    b_anchor / b_calib 分离 + 重标定元数据 ──────────────────────────────
+    //
+    // 读 b 的终态优先链（effectiveB helper，src/server/mastery/recalibration.ts）：
+    //   b_calib ?? b_anchor ?? b
+    // 即「去偏后的 b」优先于「冷启锚 b」优先于「历史 b 列」。三者皆 logit 尺度同度量。
+    //
+    // - b_anchor：**冷启锚**（先验 b）。由 ItemPriorTask applier 与既有 `b` 列**同源**
+    //   同步写入（applyItemPrior，feature→b 的 LLM-in-context 先验，低置信，
+    //   source='llm_prior'）。语义即「外部供给的锚定尺度原点+单位」——n=1 下不可 owner
+    //   自证，但绕开 θ-b 识别性墙的信息源（ADR-0043 §4 路线表「锚源」）。
+    //   **Backfill 契约（migration 0038）**：既有有 `b` 的行，把现存 `b` 当锚回填到
+    //   b_anchor（`UPDATE … SET b_anchor = b WHERE b IS NOT NULL`）。b_calib 保持 NULL
+    //   直到批量重标定首次 firm-up——故 effectiveB 在重标定攒够标签前恒退回 b_anchor ?? b，
+    //   零行为变更（read-compat NO-OP today，安全可接线）。
+    b_anchor: real('b_anchor'),
+    // - b_calib：**去偏后的 b**（active-PPI/AIPW 校锚标尺后的难度）。**只由批量重标定
+    //   写**（src/server/mastery/recalibration.ts recalibrateQuestion），**绝不**由在线
+    //   attempt 路径写——不变量①（item-半边锁死 G4）：在线 θ̂ 只 READS effectiveB，从不
+    //   WRITES b_calib。nullable：重标定攒够标签（calibration_n ≥ 阈值）前恒 NULL，
+    //   effectiveB 退回 b_anchor ?? b。这是 ADR-0043 §4「b 可在 PPI 框架内随真值去偏而动，
+    //   非数值永久冻结」的落点——但动 b 的是慢尺度批量去偏，非单次作答。
+    b_calib: real('b_calib'),
+    // - calibration_n：折进 b_calib 的 difficulty_calibration_label 条数（该题/家族）。
+    //   重标定门控读它（≥ RECALIBRATION_MIN_LABELS 才 firm-up b_calib，否则保持 NULL）。
+    //   DEFAULT 0 = 从未重标定，backfill-safe。
+    calibration_n: integer('calibration_n').notNull().default(0),
+    // - calibration_weight：b_calib 的可信权重（AIPW rectifier 的有效样本量 proxy /
+    //   PPI++ power-tuning λ* 的产物）。nullable：未重标定时 NULL。下游若把 b_anchor 与
+    //   b_calib 做凸组合可用它定权（本 wave 不组合——effectiveB 直接优先 b_calib，
+    //   留列给 Phase 7+ 的 shrinkage/凸组合细化）。
+    calibration_weight: real('calibration_weight'),
+    // - last_calibrated_at：上次批量重标定时刻（provenance/可观测）。nullable：未重标定 NULL。
+    last_calibrated_at: timestamp('last_calibrated_at', { withTimezone: true }),
     // ── 软轨占位列（本 wave NULL，audit allowlist kind:'manual'）──
     // n=1 无 cohort 结构性不可估，不是攒够时间问题（B1 foundation §6.3）。
     irt_a: real('irt_a'), // 区分度——Stocking 1990 不可估
@@ -842,6 +876,65 @@ export const item_family_calibration = pgTable(
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('item_family_calibration_family_unique').on(t.family_key)],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-361 Phase 6 (Task 11, ADR-0043 §6 + §7) — difficulty_calibration_label：
+// active-PPI 重标定的**标签账本**（慢热校准资产）。
+//
+// ─── 为什么是难度标签而非裸判分（ADR-0043 §6，承重红线）─────────────────────
+// PPI 的真值目标量 `Y` = **难度 b**，不是判分。客观题判分是二元对错 + 混 θ/学习漂移，
+// 裸当 b 真值会把 b 校成 response-rate/θ 混合残差（§6 明确警告）。故每条标签存的是
+// **由锚定 θ̂ 反推的难度标签** b_label（IRT 反推，见 recalibration.ts 的公式文档），
+// 不是 raw outcome——outcome 与 theta_snapshot 一并存档供审计/重算，但喂 AIPW 的 `Y`
+// 是 b_label。单条 n=1 反推噪声大（CI 宽）是预期的——AIPW 在池上聚合去噪（§7）。
+//
+// ─── π_i（inclusion_probability）从何来（ADR-0043 §7 positivity）──────────────
+// 只对**真随机抽样选中**的锚题打标签：π_i 来自 selection_observation（policy='softmax_mfi'
+// 的 tempered-softmax sampler 写入的真 inclusion probability，∈(0,1]，满足 positivity）。
+// legacy/到期项无真 π_i（确定性选题，事后归一化分数非合法 IPW 权重）→ **不打标签**
+// （label hook 在 join 不到真 π_i 时 skip，见 recordDifficultyCalibrationLabel）。
+//
+// ─── 慢热资产 → 进 FK_ORDER 备份（archive.ts 契约）────────────────────────────
+// 标签攒不回来（owner 用工具的历史，丢了即灭失），同 selection_observation /
+// item_family_calibration 是承重 telemetry，进 FK_ORDER（非 BACKUP_EXCLUDED）。**新表
+// 进 FK_ORDER → SCHEMA_VERSION bump 4.4→4.5**（per archive.ts:92；对比 item_calibration
+// 的**列**additive 不 bump）。
+//
+// ─── 写者（单写者契约，step9-invariant-audit.test.ts）──────────────────────────
+// 只由 src/server/mastery/recalibration.ts 的 recordDifficultyCalibrationLabel 写
+// （被 submit.ts / paper-submit.ts 的 attempt 路径在 SAVEPOINT 内 best-effort 调用，
+// 同家族 hook 的 tx-abort 隔离纪律——见 hook 文档）。
+// ─────────────────────────────────────────────────────────────────────────────
+export const difficulty_calibration_label = pgTable(
+  'difficulty_calibration_label',
+  {
+    id: text('id').primaryKey(),
+    // 被标定的题（软引用 question.id，no enforced FK）。重标定按 question_id 聚合标签。
+    question_id: text('question_id').notNull(),
+    // 产生本标签的 attempt/review 事件（软引用 event.id，no enforced FK）——provenance
+    // （evidence-first 红线）+ 去重锚（同一 attempt 不重复打标签）。
+    attempt_event_id: text('attempt_event_id').notNull(),
+    // 作答时（PRE-attempt）的 θ̂——**必须**是 θ-before（同 Phase 5 family hook 的
+    // thetaBefore 纪律：在 updateThetaForAttempt 之前捕获）。b_label 的反推锚定它。
+    theta_snapshot: real('theta_snapshot').notNull(),
+    // 客观判分二元结果：success=1 / failure=0。partial 被 hook 早返排除（同 Phase 5）。
+    // 存档供审计/重算；喂 AIPW 的 Y 是下面 b_label 而非它（§6 红线）。
+    outcome: integer('outcome').notNull(),
+    // **难度标签**（§6）：由 (outcome, theta_snapshot) 单次 fixed-anchor IRT 反推的隐含 b。
+    // 公式见 recalibration.ts impliedBLabel。单条噪声大（CI 宽），AIPW 池上聚合去噪。
+    b_label: real('b_label').notNull(),
+    // 纳入概率 π_i ∈ (0,1]（真随机抽样，positivity）。AIPW rectifier 的 IPW 权重分母。
+    // 来自 selection_observation（softmax_mfi sampler）；hook 拒 ≤0（合法概率护栏）。
+    inclusion_probability: real('inclusion_probability').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // 主查询路径：按 question 取该题全部标签（重标定回放）。
+    index('difficulty_calibration_label_question_idx').on(t.question_id),
+    // 去重：同一 attempt 事件最多一条标签（hook onConflictDoNothing 兜底重试/并发）。
+    uniqueIndex('difficulty_calibration_label_attempt_unique').on(t.attempt_event_id),
+  ],
 );
 
 // Typed mesh edges between knowledge nodes (ADR-0010).

@@ -125,6 +125,12 @@ export const fastTestInclude = [
   // src/server/mastery/** 无 unit glob，故必须显式列出，否则 db config 的 src/**/*.test.ts
   // glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
   'src/server/mastery/personalized-difficulty.test.ts',
+  // YUK-361 Phase 6 (Task 11) — active-PPI 重标定纯函数单测（aipwMean §7 正确归一化 /
+  // effectiveB read-compat / impliedBLabel IRT 反推 / PPI++ λ* power-tuning）。Pure no-DB:
+  // imports 仅 ./recalibration（其 @/db/client 是 type-only/erased，@/db/schema 是 table
+  // objects 不连库）+ ./personalized-difficulty（同款）。label hook + recalibrateQuestion
+  // 的 db 测在 recalibration.db.test.ts。同 personalized-difficulty.test.ts 显式登记理由。
+  'src/server/mastery/recalibration.test.ts',
   // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
   // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
   // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`

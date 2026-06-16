@@ -33,6 +33,11 @@ export async function applyItemPrior(db: DbLike, input: ApplyItemPriorInput): Pr
       id: newId(),
       question_id: input.questionId,
       b: input.draft.b_logit,
+      // YUK-361 Phase 6 (Task 11) — b_anchor 与 b 列**同源**写入（冷启锚 = ItemPriorTask
+      // 的 feature→b 先验）。effectiveB 读 b_calib ?? b_anchor ?? b：新行 b_calib 仍 NULL
+      // （重标定攒够标签才 firm-up），故 effectiveB 退回 b_anchor。给 b_anchor 一条 INSERT
+      // write path（audit:schema）+ 让 active-PPI 的 b_anchor 池预测有非空锚可读。
+      b_anchor: input.draft.b_logit,
       confidence: input.draft.confidence,
       track: 'hard',
       source: input.source ?? 'llm_prior',

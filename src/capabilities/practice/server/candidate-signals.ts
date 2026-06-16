@@ -19,6 +19,7 @@ import { type SelectionCandidateSignal, diagnosticScore, mfiScore } from '@/core
 import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration } from '@/db/schema';
+import { effectiveB } from '@/server/mastery/recalibration';
 import { getMasteryState } from '@/server/mastery/state';
 import { and, eq } from 'drizzle-orm';
 import { rotationClassForKind } from './variant-rotation';
@@ -103,11 +104,18 @@ async function aggregateWeakestKc(
 }
 
 /**
- * 读 b 锚：item_calibration.b（question_id=refId AND track='hard'），有非 NULL 值 → 真锚。
- * 否则 difficulty 在场 → difficultyToLogitB 弱锚（标 'difficulty_proxy'）。两者皆无 → 'none'。
+ * 读 b 锚：item_calibration（question_id=refId AND track='hard'）的 effectiveB =
+ * b_calib ?? b_anchor ?? b（YUK-361 Phase 6 read-compat，Task 11 step 5）。有非 NULL 值
+ * → 真锚（标 'item_calibration'）。否则 difficulty 在场 → difficultyToLogitB 弱锚
+ * （'difficulty_proxy'）。两者皆无 → 'none'。
  *
- * 注意 item_calibration.b 列本身 nullable（冷启行可能有 row 但 b=NULL）——故同时校验
- * row 存在 + b 非 NULL，否则照样落兜底链。读模式对齐 state.ts:189-196（track='hard' only）。
+ * **NO-OP today**：b_calib 攒够标签前 NULL，b_anchor 由 migration 0038 从既有 b 回填，故
+ * effectiveB 当前等于原 b（接线安全，零行为变更）。重标定首次 firm-up b_calib 后，选题层
+ * 自动用去偏 b——无需再改本处。家族 delta 组合（effectiveFamilyB）是 Phase 5 的独立接缝，
+ * 本处只解析列层 b（见 recalibration.ts effectiveB 文档的家族组合说明）。
+ *
+ * 三列皆 nullable（冷启行可能有 row 但全 NULL）——effectiveB 返回 null 时照样落兜底链。
+ * 读模式对齐 state.ts updateThetaForAttempt（track='hard' only）。
  */
 async function resolveBAnchor(
   db: DbLike,
@@ -115,11 +123,15 @@ async function resolveBAnchor(
   difficulty: number | undefined,
 ): Promise<{ b?: number; bSource: BSource }> {
   const calRows = await db
-    .select({ b: item_calibration.b })
+    .select({
+      b: item_calibration.b,
+      b_anchor: item_calibration.b_anchor,
+      b_calib: item_calibration.b_calib,
+    })
     .from(item_calibration)
     .where(and(eq(item_calibration.question_id, refId), eq(item_calibration.track, 'hard')))
     .limit(1);
-  const calB = calRows[0]?.b ?? null;
+  const calB = effectiveB(calRows[0]);
   if (calB !== null) {
     return { b: calB, bSource: 'item_calibration' };
   }

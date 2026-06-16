@@ -20,7 +20,15 @@
 // 慢热校准资产 (家族级 b_delta 在足够重复客观观测后才 firm-up，攒不回来丢了即灭失)，
 // 同 item_calibration 进 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。27 → 28 tables；bump
 // 4.3 → 4.4 标注慢热校准资产入备份的契约变更 (per archive.ts assertEveryTableIsBackedUpOrExcluded)。
-export const SCHEMA_VERSION = '4.4';
+// YUK-361 Phase 6 (active-PPI 重标定): additive `difficulty_calibration_label` table —
+// active-PPI 的难度标签账本 (锚定 θ̂ 反推的 b_label + π_i)，慢热校准资产 (owner 用工具
+// 的历史，攒不回来丢了即灭失)，同 item_family_calibration 进 FK_ORDER 备份 (非
+// BACKUP_EXCLUDED)。28 → 29 tables；bump 4.4 → 4.5 (NEW FK_ORDER table 必 bump，per
+// archive.ts:92)。**对比**：同 Phase 6 给 item_calibration 加的 b_anchor/b_calib/
+// calibration_n/calibration_weight/last_calibrated_at 是既有 FK_ORDER 表的 additive
+// **列**，随整行 dump/restore，**不 bump**（同 Phase 2 theta_precision 加列不 bump 4.2
+// 的先例）。表 = bump，列 = 不 bump。
+export const SCHEMA_VERSION = '4.5';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -79,6 +87,11 @@ export const FK_ORDER = [
   // 慢热校准资产。软引用语义键 (subject:knowledge:kind:source，no enforced FK)，位置
   // 不受 PG FK 约束；置于 item_calibration 后保持「难度校准簇」相邻可读。
   'item_family_calibration',
+  // YUK-361 Phase 6 (active-PPI 重标定): difficulty_calibration_label — 难度标签账本
+  // (锚定 θ̂ 反推 b_label + π_i)。慢热校准资产，不可丢，进备份 (非 BACKUP_EXCLUDED)。
+  // 软引用 question.id / event.id (text ref，no enforced FK)，位置不受 PG FK 约束；
+  // 置于 item_family_calibration 后保持「难度校准簇」相邻可读。
+  'difficulty_calibration_label',
   'material_fsrs_state',
   'memory_brief_note',
   'learning_record',
