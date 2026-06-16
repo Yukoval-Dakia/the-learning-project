@@ -368,6 +368,40 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).not.toMatch(/\bsingle_choice\b/);
     }
   });
+
+  // YUK-361 Phase 3 Step B (Task 8 L2, ADR-0042 编排档2) — pin the orchestrator
+  // contract: per-candidate weight output, the no-due-items 铁律, and the bucketed
+  // (NOT raw-float) signal framing (ADR-0042:68 signal-fidelity mitigation).
+  it('builds a SelectionOrchestratorTask prompt with per-candidate weight + bucketed-signal + no-due contract', () => {
+    const wenyan = getTaskSystemPrompt(
+      'SelectionOrchestratorTask',
+      resolveSubjectProfile('wenyan'),
+    );
+    const math = getTaskSystemPrompt('SelectionOrchestratorTask', resolveSubjectProfile('math'));
+
+    // Subject voice flows in via displayName.
+    expect(wenyan).toContain('文言文');
+    expect(math).toContain('数学');
+
+    for (const prompt of [wenyan, math]) {
+      // Per-candidate weight is the 档2 core output.
+      expect(prompt).toContain('weight');
+      expect(prompt).toContain('arrangement');
+      expect(prompt).toContain('reason');
+      // Output shape name (pins StructuredOutput / brace-slice both reading it).
+      expect(prompt).toContain('SelectionOrchestratorDraft');
+      // The four non-due roles (NO 'due' — LLM must not touch due items).
+      expect(prompt).toContain('frontier');
+      expect(prompt).toContain('diagnostic');
+      expect(prompt).toContain('new_check');
+      // The no-due-items 铁律 (FSRS when contract — due relative order is L1).
+      expect(prompt).toContain('到期');
+      // Bucketed signals, not raw floats (signal-fidelity mitigation).
+      expect(prompt).toMatch(/high|mid|low/);
+      // recall-locked candidates must not be re-ordered internally.
+      expect(prompt).toContain('recall_locked');
+    }
+  });
 });
 
 describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
