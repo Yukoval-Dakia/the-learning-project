@@ -273,9 +273,21 @@ export async function composeSoftmaxStream(
   // signalByRef：所有非到期题的信号快照（含 recall-locked），物化进 StreamPlanItem.signals。
   const signalByRef = new Map<string, CollectedSignal>(signals.map((s) => [s.refId, s]));
 
-  // ── 容量预算：非到期 sampler 的 targetCount = 容量 − 到期 − 卷 − recall透传 − new_check保底
-  //    （≥0）。到期项 hard-present 不占可调预算；卷 + recall 确定性纳入也先扣除。
-  const fixedCount = dueDrafts.length + paperDrafts.length + recallLocked.length;
+  // ── 容量预算：非到期 sampler 的 targetCount = 容量 − 到期 − recall透传（≥0）。
+  //
+  //    FINDING C（卷不得预扣 sampler 预算）：**不扣卷**（paperDrafts.length）。卷是
+  //    **可截断尾部**——assemble 把卷放在非到期散题**之后**，capacityGuard 把卷归入
+  //    truncatable（被抽中非到期项受保护、卷不受保护），超容量时**先砍卷尾**。若像旧码
+  //    那样把 paperDrafts.length 也从预算里扣掉，会出现：ready 卷一多（如 30 张卷、max=30）
+  //    → nonDueBudget=0 → sampler 一道非到期都不抽 → 练习题被卷**饿死**——但卷本就该让位给
+  //    散题（卷是尾部、可截断），方向恰好反了。正确做法：卷不占 sampler 预算，散题先拿满
+  //    预算，capacityGuard 再用剩余容量截断卷尾（见下方 capacityGuard 注释，total 仍受 max
+  //    约束：protected[dues∪sampled] + 截断后的 truncatable[recall+卷] ≤ max，除非 protected
+  //    自身 over-emit）。
+  //    recall 透传仍扣：它确定性纳入、assemble 在被抽中散题**之前**，先占掉的容量不该再被
+  //    sampler 重复瓜分（否则 sampled + recall 之和会无谓胀大、把卷尾全顶掉）。到期项
+  //    hard-present 同样先扣。
+  const fixedCount = dueDrafts.length + recallLocked.length;
   const nonDueBudget = Math.max(0, max - fixedCount);
 
   // FINDING 5：caller-supplied config.targetCount（实验/下采样旋钮）此前被忽略——sampler
