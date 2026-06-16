@@ -105,6 +105,12 @@ export const fastTestInclude = [
   'src/server/ai/output-format.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
   'src/server/ai/pricing.test.ts',
+  // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE
+  // switch). Pure no-DB: imports only ./providers (→ @/ai/registry) + stubs env;
+  // no @/db/client / postgres / SDK. src/server/ai/** has no unit glob, so this
+  // MUST be listed or the db config's src/**/*.test.ts glob sweeps it into the
+  // testcontainer partition (pricing.test.ts lesson).
+  'src/server/ai/providers.test.ts',
   // B1-W1 (ADR-0035) — ItemPriorTask output parse barrier. Pure no-DB: imports
   // only ./item-prior (→ @/core/schema/item_prior, Zod) — no @/db/client /
   // postgres / drizzle / PgBoss. src/server/ai/** has no unit glob, so this MUST
