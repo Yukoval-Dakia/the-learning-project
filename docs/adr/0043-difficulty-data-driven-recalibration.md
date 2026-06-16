@@ -99,7 +99,7 @@ spike 报告 `docs/design/2026-06-15-b-anchor-feasibility-spike.md`（5-agent，
 - **baseline 纠正**：当前难度**已是连续 logit b**（`item_calibration.b`），由 **ItemPriorTask 估，`source='llm_prior'`，低置信**；1-5 `question.difficulty` 只是无标定时的兜底 proxy。**且 ItemPriorTask 本身已是 feature-based 方法**（prompt 强制「抽教学特征：认知步骤/前置链/典型错误/题型 → 推 b」，已引「直接打分 r≈0」证据躲最坏失败模式）。故 b_anchor **不是 vs 1-5、不是新东西**——是 ItemPriorTask（LLM **in-context** feature→b）的**训练/校准升级版**（公开 cohort 难度训的 feature→b，带 CI）。新题覆盖论据 moot（ItemPriorTask 已覆盖全题）。
 - **裁决**：**仅 scale 锚可行 / 逐题 b 预测不可行（BEA 2024 RMSE 0.29≈dummy 0.31）/ 中文阅读×开放题 propose-only**。**真 blocker = 数据**（无中文全科 item 级 b 标签：ASSISTments 英文数学 b+文本双全但 NC、MOOCCubeX 唯一中文全科但 b 须自派生 + license/题面完整度待 PoC），**非经济性**（owner 拍「无所谓经济性」，故 roadmap Phase 6 不加经济闸，只留数据可行性 PoC）。
 - **更轻近路（不需公开数据）**：spike 建模 lane 证 **LLaSA「学生能力模拟」prompt > 直接估**——可把 ItemPriorTask 方法从「feature 分解→b」升级为「模拟不同能力学习者作答→反推 b」，纯 prompt 改、零数据零训练；若日用中 llm_prior b 太噪，先于训练 feature→b 试。
-- **承重澄清**：可靠性的承重机制是 **active-PPI（Phase 6 firm-up，用 owner 客观真值校 b）**，不是冷启先验本身。冷启 b（LLM-in-context vs 训练）只在「新题/未答过」时起作用；owner 一答 PPI 接管。优先级：**π_i + active-PPI（firm-up）> 更好的冷启先验**。
+- **承重澄清**：可靠性的承重机制是 **active-PPI（Phase 6 firm-up，用 owner 客观真值校 b）**，不是冷启先验本身。冷启 b（LLM-in-context vs 训练）只在「新题/未答过、该题家族客观标签尚不足」时起作用；**待家族积累足够客观标签 + θ 稳定 + π_i 前置满足后，由批量 active-PPI（Phase 6，用锚定 θ 反推的难度标签做 AIPW/PPI）接管——不是单次作答即 firm-up**（单答即把正确/错误写成校准信号会把 response-rate/θ 漂移混进 b，正是本 ADR §6 要避免的混淆）。优先级：**π_i + active-PPI（firm-up）> 更好的冷启先验**。
 - 公开数据按用途细分：拒**行为数据**（他人作答进 owner 回路，n=1 红线）；采**锚训练数据**（他人题面↔b 离线训映射器，产物只是回归权重不进 owner 回路）。
 
 ## 概念订正（载入实施）
