@@ -1,5 +1,11 @@
 import { db } from '@/db/client';
-import { question } from '@/db/schema';
+import { knowledge, question } from '@/db/schema';
+import type { DispatchResult } from '@/server/question-supply/dispatcher';
+import {
+  type QuestionSupplyTarget,
+  targetFingerprint,
+} from '@/server/question-supply/target-discovery';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
 import { matcher } from './matcher';
@@ -24,6 +30,35 @@ async function seed(f: QF) {
     draft_status: null,
     ...f,
   });
+}
+
+// Seed a knowledge node so demandToSupplyTarget's getEffectiveDomain →
+// resolveSubjectProfile resolution has a real domain to walk (Task 3 Step 3).
+async function seedKc(id: string, domain: string) {
+  await db.insert(knowledge).values({
+    id,
+    name: id,
+    domain,
+    parent_id: null,
+    created_at: new Date(),
+    updated_at: new Date(),
+  });
+}
+
+// Build a fake DispatchResult so the matcher residual branch can fold a dispatch
+// outcome into a SourcingNeed WITHOUT touching pg-boss / the real route planner.
+function fakeDispatchResult(over: Partial<DispatchResult> = {}): DispatchResult {
+  return {
+    targetId: 't-fake',
+    fingerprint: 'fp-fake',
+    routePlan: ['quiz_gen'],
+    chosenRoute: 'quiz_gen',
+    status: 'dispatched',
+    jobId: 'job-1',
+    stopCondition: 'fake',
+    reason: 'fake dispatch',
+    ...over,
+  };
 }
 
 describe('matcher — Task 1 (active hits, no draft, no residual)', () => {
@@ -191,5 +226,106 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
 
     // no query vector → pure scalar pool, NULL-embedding rows recalled too, created_at order.
     expect(result.used.map((u) => u.question_id).sort()).toEqual(['q-null', 'q-vec']);
+  });
+});
+
+describe('matcher — Task 3 (residual generation: demandToSupplyTarget + dispatchSupplyTarget)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('empty pool → residual + dispatch called once with a valid QuestionSupplyTarget (Step 1)', async () => {
+    // empty DB (no question rows on this KC) → matcher must dispatch a residual.
+    const kc = 'kc-empty';
+    const captured: QuestionSupplyTarget[] = [];
+    const fakeDispatchAsTarget = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> => {
+        captured.push(target);
+        return fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint });
+      },
+    );
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, limit: 2 },
+      { dispatch: fakeDispatchAsTarget },
+    );
+
+    expect(result.used).toEqual([]);
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(result.satisfiedFromPool).toBe(false);
+
+    // residual is a SourcingNeed shape with a legal SourcingSequenceStep source.
+    const need = result.residual[0];
+    expect(need.kind).toBe('question_generation');
+    expect(need.knowledge_id).toBe(kc);
+    expect(['external_sourcing', 'material_grounded', 'closed_book']).toContain(need.source);
+
+    // dispatch called exactly once with a well-formed QuestionSupplyTarget.
+    expect(fakeDispatchAsTarget).toHaveBeenCalledTimes(1);
+    const target = captured[0];
+    expect(target.knowledgeIds[0]).toBe(kc);
+    expect(target.desiredCount).toBe(2); // full gap (limit - 0 used)
+    expect(typeof target.fingerprint).toBe('string');
+    expect(target.fingerprint.length).toBeGreaterThan(0);
+    expect(typeof target.subjectId).toBe('string');
+    expect(target.subjectId.length).toBeGreaterThan(0);
+  });
+
+  it('partial pool → partial residual, dispatch gap reflects shortfall (Step 2)', async () => {
+    const kc = 'kc-partial';
+    await seed({ id: 'q-have', knowledge_ids: [kc] });
+
+    let capturedTarget: QuestionSupplyTarget | null = null;
+    const fakeDispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> => {
+        capturedTarget = target;
+        return fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint });
+      },
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 3 }, { dispatch: fakeDispatch });
+
+    // one active hit used, residual present, gap = 3 - 1 = 2.
+    expect(result.used).toHaveLength(1);
+    expect(result.used[0].question_id).toBe('q-have');
+    expect(result.satisfiedFromPool).toBe(false);
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(fakeDispatch).toHaveBeenCalledTimes(1);
+    expect((capturedTarget as QuestionSupplyTarget | null)?.desiredCount).toBe(2);
+  });
+
+  it('subjectId resolved from KC domain; fingerprint includes it (Step 3)', async () => {
+    const kc = 'kc-domain';
+    await seedKc(kc, 'math'); // KC node with a real domain, empty question pool.
+
+    let capturedTarget: QuestionSupplyTarget | null = null;
+    const fakeDispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> => {
+        capturedTarget = target;
+        return fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint });
+      },
+    );
+
+    await matcher(db, { knowledgeId: kc, limit: 2 }, { dispatch: fakeDispatch });
+
+    const expectedSubjectId = resolveSubjectProfile('math').id;
+    expect(capturedTarget).not.toBeNull();
+    // TS narrows the closure-assigned var to null at this scope; assert through unknown.
+    const t = capturedTarget as unknown as QuestionSupplyTarget;
+    expect(t.subjectId).toBe(expectedSubjectId);
+
+    // fingerprint is the imported targetFingerprint over the same parts (cooldown stability).
+    const expectedFingerprint = targetFingerprint({
+      subjectId: t.subjectId,
+      knowledgeIds: t.knowledgeIds,
+      kind: t.kind,
+      difficultyBand: t.difficultyBand,
+      gapKind: t.gapKind,
+      minSourceTier: t.minSourceTier,
+    });
+    expect(t.fingerprint).toBe(expectedFingerprint);
+    // and the fingerprint string literally carries the resolved subjectId (first segment).
+    expect(t.fingerprint.startsWith(`${expectedSubjectId}|`)).toBe(true);
   });
 });
