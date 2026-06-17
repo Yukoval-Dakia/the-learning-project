@@ -54,6 +54,12 @@ export interface PoolRow {
   source: string;
   kind: string;
   metadata: Record<string, unknown> | null;
+  // INCREMENT-3 — matcher reads draft_status to branch active/draft (§3.2). NULL≡active.
+  draft_status: string | null;
+  // INCREMENT-3 — matcher reads distance for the cosine threshold filter (§4); same source
+  // as the ORDER BY (single truth), analogous to inc-2 widening source/kind/metadata. NULL
+  // when no queryEmbedding (scalar mode has no distance to project).
+  cosine_distance: number | null;
 }
 
 /** Fetch a candidate question pool by composite scalar filters + KC containment,
@@ -77,8 +83,15 @@ export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]
   const useVector = c.queryEmbedding != null && c.queryEmbedding.length > 0;
   if (useVector) preds.push(sql`${question.embedding} IS NOT NULL`);
 
+  // INCREMENT-3 — distance expression reused for both the ORDER BY and the cosine_distance
+  // projection (single truth: the column the consumer thresholds on IS the column it sorts
+  // by). NULL projection in scalar mode (no query vector → no distance to compute).
+  const distanceExpr = useVector
+    ? sql<number>`${question.embedding} <=> ${toSqlVector(c.queryEmbedding as number[])}::vector`
+    : sql<number | null>`NULL`;
+
   const orderBy: SQL[] = useVector
-    ? [sql`${question.embedding} <=> ${toSqlVector(c.queryEmbedding as number[])}::vector`]
+    ? [distanceExpr as SQL]
     : [asc(question.created_at), asc(question.id)];
 
   const q = db
@@ -90,6 +103,11 @@ export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]
       source: question.source,
       kind: question.kind,
       metadata: question.metadata,
+      // INCREMENT-3 — draft_status (active/draft branch) + cosine_distance (threshold filter)
+      // for the matcher. Projection-only; does not touch WHERE/ORDER (distance reuses the
+      // ORDER BY expression). Additive: inc-1/2 callers that ignore these fields are unaffected.
+      draft_status: question.draft_status,
+      cosine_distance: distanceExpr,
     })
     .from(question)
     .where(and(...preds))

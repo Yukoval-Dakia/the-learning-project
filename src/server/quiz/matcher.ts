@@ -24,6 +24,7 @@ import { newId } from '@/core/ids';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { embedText } from '@/server/ai/embed';
+import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
 import {
   type DifficultyBand,
@@ -38,6 +39,14 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import { type PoolRow, poolFetch } from './pool-fetch';
 import type { SourcingNeed, SourcingSequenceStep } from './sourcing-sequence';
+import { verifyAndPromote } from './verify-and-promote';
+
+// ── §4 cosine 阈值 ────────────────────────────────────────────────────────────
+// pgvector `<=>` 是 cosine *距离* (0=同向、1=正交、2=反向)：越小越近。候选 cosine_distance
+// 超此值 → 丢弃 (不入保守集 → 落残余生成)。保守=偏严=阈值偏小 (§4 owner 决策 2「宁残余不塞次品」)。
+// 初值 0.35 ≈ cosine 相似度 ≥ 0.65 才收，无生产数据支撑，靠 db 测试 seed 向量经验标定。
+// TODO 实测调参 — YUK-396 关联 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
+const MATCHER_COSINE_MAX_DISTANCE = 0.35;
 
 // ── §3.1.5 三层 Demand (v1 子集) ──────────────────────────────────────────────
 export interface Demand {
@@ -91,8 +100,17 @@ export interface MatcherResult {
   satisfiedFromPool: boolean;
 }
 
-// Injectable seams (db 测试注 vi.fn() 不打真 DashScope/真派发). 后续 Task 在此扩
-// verify (Task 5)；Task 2 引入 embedFn，Task 3 引入 dispatch.
+// promote 决策 seam 返回值 (Task 5). verifyAndPromote 返 superset
+// ({promoted,status,verifyEventId,reason})，matcher 只读 promoted + verifyEventId 这两字段。
+export interface MatcherVerifyResult {
+  /** run 函数 status==='verified' (或 override 路径) → promote 成功. */
+  promoted: boolean;
+  /** promote 留痕引用 (evidence-first). promoted 时回查取，未 promote 时缺省. */
+  verifyEventId?: string;
+}
+
+// Injectable seams (db 测试注 vi.fn() 不打真 DashScope/真派发/真 verify).
+// Task 2 引入 embedFn，Task 3 引入 dispatch，Task 5 引入 verify + runTaskFn.
 export interface MatcherDeps {
   /** queryText 路 B 的 embedder seam. 默认 embedText (DashScope text-embedding-v4@1024).
    *  铁律: 与池中向量同一 seam，否则 cosine 跨空间无意义 (plan §190). */
@@ -101,6 +119,24 @@ export interface MatcherDeps {
    *  带 7 天 fingerprint cooldown 防无界 re-dispatch). db 测试注 vi.fn() 捕获 target、不打
    *  真 pg-boss / 真 Tavily. */
   dispatch?: (db: Db, target: QuestionSupplyTarget) => Promise<DispatchResult>;
+  /** draft 命中 lazy verify-promote seam (Task 5). 默认 verifyAndPromote (caller-agnostic
+   *  gate，按 source 转调现有 runSourceVerify/runQuizVerify). db 测试注 vi.fn() 验「派 + 透传」、
+   *  不打真 AI. 入参 {db, questionId, runTaskFn}，返 {promoted, verifyEventId?}. */
+  verify?: (p: {
+    db: Db;
+    questionId: string;
+    runTaskFn: RunTaskFn;
+  }) => Promise<MatcherVerifyResult>;
+  /** 透传给 verify → 被转调 run 函数的 task runner seam. 默认 lazy-import runTask (与
+   *  quiz_verify/source_verify 的 defaultRunTaskFn 同款). db 测试注 vi.fn() (不应被调，因 verify 也被 fake). */
+  runTaskFn?: RunTaskFn;
+}
+
+// 默认 runTaskFn — lazy-import runTask (mirror quiz_verify/source_verify defaultRunTaskFn).
+// 仅在 caller 不注入 runTaskFn 且走真实 verifyAndPromote 时执行；db 测试 fake 掉 verify 不触发.
+async function defaultRunTaskFn(kind: string, input: unknown, ctx: unknown) {
+  const { runTask } = await import('@/server/ai/runner');
+  return runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
 }
 
 /**
@@ -134,11 +170,16 @@ function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean |
 /**
  * Pure ranking of a fetched candidate pool: ① A2 kind filter (canonical space, no-op
  * when demand.kind is undefined) ② 合约五 tier/whitelist sort (authentic-first,
- * off-whitelist demoted) ③ slice to limit. Mirrors queryExistingPool's app-layer chain
- * (sourcing-sequence.ts:121-145) verbatim so selection stays single-truth. poolFetch must
- * NOT receive limit — slicing happens here, AFTER the in-memory tier sort (F2 防线).
+ * off-whitelist demoted) ③ slice to limit (optional). Mirrors queryExistingPool's app-layer
+ * chain (sourcing-sequence.ts:121-145) verbatim so selection stays single-truth. poolFetch
+ * must NOT receive limit — slicing happens here, AFTER the in-memory tier sort (F2 防线).
+ *
+ * `sliceToLimit` defaults true (queryExistingPool 同款 slice-after-sort). The matcher passes
+ * false so its §3.2 arbitration loop can fall past a verify-failed draft to the next ranked
+ * candidate — the loop itself enforces `limit` via its `used.length >= limit` break, which
+ * IS the app-layer slice-after-sort (just relocated to where draft-skip needs it).
  */
-export function rankPool(rows: PoolRow[], demand: Demand): PoolRow[] {
+export function rankPool(rows: PoolRow[], demand: Demand, sliceToLimit = true): PoolRow[] {
   const ranked = rows
     // A2 — kind filter in canonical space (no-op when demand.kind is undefined). A row
     // whose persisted kind doesn't normalize-match the requested kind is excluded.
@@ -151,7 +192,8 @@ export function rankPool(rows: PoolRow[], demand: Demand): PoolRow[] {
   // 合约五: high tier first (1 authentic → 4 generated), then OF-2 within-tier demotion.
   // The created_at/cosine base order from poolFetch stays stable within equal keys.
   ranked.sort(compareBySourceTierThenWhitelist);
-  return ranked.slice(0, demand.limit).map((x) => x.row);
+  const sorted = ranked.map((x) => x.row);
+  return sliceToLimit ? sorted.slice(0, demand.limit) : sorted;
 }
 
 // ── Task 3: 残余生成分支 (demandToSupplyTarget + dispatchSupplyTarget) ──────────
@@ -311,16 +353,20 @@ function residualReason(demand: Demand, gap: number): string {
 }
 
 /**
- * caller-agnostic matcher 仲裁器 (Task 1 骨架 + Task 2 cosine 软排序).
+ * caller-agnostic matcher 仲裁器 (Task 1 骨架 + Task 2 cosine 软排序 + Task 5 draft 仲裁).
  *
  * 召回单 KC 候选池 (hybrid: 标量硬过滤 + 可选 cosine 排序) → rankPool (kind 过滤 + tier 排序
- * + slice) → 三态输出. queryEmbedding/queryText 解析为查询向量透传 poolFetch (NULL embedding
- * 在 vector mode 由 poolFetch 排除，§7 降级)。
- * Task 1/2: poolFetch 不投影 draft_status，故全部候选当 active 填 used.
- * Task 3 (本提交): 池满足不了 limit → 残余生成分支. gap = limit - used.length → demandToSupplyTarget
- *   适配成 QuestionSupplyTarget → deps.dispatch (默认 dispatchSupplyTarget, 带 7 天 fingerprint
- *   cooldown 防无界 re-dispatch) → DispatchResult 经 supplyRouteToSourcingStep 折成一个
- *   SourcingNeed 填 residual. satisfiedFromPool = 无缺口 (gap <= 0).
+ * + slice) → §4 cosine 阈值过滤 → §3.2 逐候选仲裁 (active 直接用 / draft lazy verify-promote)
+ * → 三态输出. queryEmbedding/queryText 解析为查询向量透传 poolFetch (NULL embedding 在 vector
+ * mode 由 poolFetch 排除，§7 降级)。
+ * Task 5 (本提交):
+ *   ① cosine 阈值: 有 queryEmbedding 时丢弃 cosine_distance > MATCHER_COSINE_MAX_DISTANCE 的候选
+ *      (无 queryEmbedding → distance 全 null → 纯标量集不按阈值过滤). 宁残余不塞次品 (§4 决策 2).
+ *   ② 逐候选仲裁: draft_status NULL/'active' → 直接 used.push(promotedFromDraft:false)；'draft'
+ *      → await deps.verify (默认 verifyAndPromote)，promoted 则 push(promotedFromDraft:true,
+ *      verifyEventId)，否则跳下一候选 (耗尽仍不足 → 残余补差).
+ * gap = limit - used.length → demandToSupplyTarget → deps.dispatch → 折一 SourcingNeed 填 residual.
+ * satisfiedFromPool = 无缺口 (gap <= 0).
  */
 export async function matcher(
   db: Db,
@@ -330,7 +376,7 @@ export async function matcher(
   // 解析查询向量 (路 A queryEmbedding 优先于路 B queryText)；都无 → null → 标量序.
   const queryEmbedding = await resolveQueryEmbedding(demand, deps);
 
-  // 召回全量候选 (activeOnly:false 为接 draft 分支铺路；Task 1/2 暂当全 active).
+  // 召回全量候选 (activeOnly:false 召回 active+draft 当场仲裁).
   // 不传 limit — 截断在 app 层 rankPool 的 slice (F2 回归防线).
   // queryEmbedding 非空 → poolFetch ORDER BY embedding <=> qvec (cosine 软排序) 且
   // isNotNull(embedding) 排除 NULL 行；null → 退 created_at,id 标量序含 NULL 行 (§7 降级).
@@ -343,19 +389,47 @@ export async function matcher(
     queryEmbedding,
   });
 
-  const ranked = rankPool(rows, demand);
+  // §4 cosine 阈值过滤 — 仅在 vector mode (有 queryEmbedding) 生效. cosine_distance 与 ORDER BY
+  // 同源单一真相 (Task 5 扩的 projection). 超阈候选不入保守集 → 落残余 (宁残余不塞次品，§4 决策 2)。
+  // scalar mode 下 cosine_distance 全 null → 不过滤 (纯标量集). 偏严=保守=阈值偏小.
+  const thresholded = rows.filter(
+    (r) => r.cosine_distance == null || r.cosine_distance <= MATCHER_COSINE_MAX_DISTANCE,
+  );
 
-  // Task 1: 所有候选当 active 直接用 (poolFetch 不投影 draft_status — Task 5 接 draft 分支).
-  const used: MatchedQuestion[] = ranked.map((r) => ({
-    question_id: r.id,
-    source: r.source,
-    tier: deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier,
-    promotedFromDraft: false,
-  }));
+  // rankPool 不 slice (sliceToLimit:false) — 仲裁循环的 break 才是 app 层 slice-after-sort，
+  // 这样 verify 失败的 draft 可跳到下一 ranked 候选 (slice 到 limit 会提前砍掉后续 active).
+  const ranked = rankPool(thresholded, demand, false);
+
+  // §3.2 逐候选仲裁循环. rankPool 后 (kind 过滤 + tier 排序) 逐候选——active 直接用、draft lazy
+  // verify-promote. 凑够 limit 停 (loop break = slice-after-sort)；耗尽仍不足 → 下面残余补差.
+  const verify = deps.verify ?? verifyAndPromote;
+  const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
+  const used: MatchedQuestion[] = [];
+  for (const r of ranked) {
+    if (used.length >= demand.limit) break;
+    const tier = deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier;
+    // draft_status NULL/'active' → active 行直接用.
+    if (r.draft_status == null || r.draft_status === 'active') {
+      used.push({ question_id: r.id, source: r.source, tier, promotedFromDraft: false });
+      continue;
+    }
+    // draft 行 → lazy verify-promote (转调现有 gate). promoted 则升用，否则跳下一候选.
+    const result = await verify({ db, questionId: r.id, runTaskFn });
+    if (result.promoted) {
+      used.push({
+        question_id: r.id,
+        source: r.source,
+        tier,
+        promotedFromDraft: true,
+        verifyEventId: result.verifyEventId,
+      });
+    }
+    // promoted===false → 不入 used，看下一候选 (rankPool 的 tier 序内逐个找；耗尽则 gap > 0 落残余).
+  }
 
   // Task 3 — 残余生成分支. 池满足不了 limit (gap > 0) → 派一个供给目标补差.
-  // gap = limit - used.length (Task 1/2: used 全是 active 命中；Task 5 接 draft promote 后
-  // gap 仍是 limit - used.length，promote 的 draft 进 used 也算满足).
+  // gap = limit - used.length (active 命中 + promote 的 draft 都进 used 算满足；超阈丢弃 / verify
+  // 失败 / 池空 都体现为 used 不足 → gap > 0).
   const gap = demand.limit - used.length;
   const residual: SourcingNeed[] = [];
   if (gap > 0) {
