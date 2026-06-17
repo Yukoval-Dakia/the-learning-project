@@ -13,6 +13,9 @@ async function seed(f: QFields) {
     created_at: new Date(),
     updated_at: new Date(),
     ...f,
+    // explicit draft_status (NULL≡active) — keeps test inserts aligned with the
+    // audit:draft-status guideline even though test files escape the scan.
+    draft_status: f.draft_status ?? null,
   });
 }
 
