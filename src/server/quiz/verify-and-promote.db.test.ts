@@ -309,4 +309,126 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
     expect(spyA).not.toHaveBeenCalled();
     expect(spyB).not.toHaveBeenCalled();
   });
+
+  // ── codex P2 review findings (inc-3) ────────────────────────────────────────
+
+  // P2-5 — eager verify already promoted the row; the lazy call's run fn returns
+  // skipped:already_verified (terminal verify event exists) but the row is ALREADY active.
+  // verifyAndPromote must re-SELECT and, seeing draft_status non-draft, report it as
+  // promoted (with the looked-up verifyEventId) instead of mis-reporting promoted:false.
+  it('skipped:already_verified + row already active → reported as promoted (P2-5)', async () => {
+    const db = testDb();
+    const qid = await seedQuestion({ source: 'quiz_gen' });
+
+    // simulate the eager verify having already promoted the row + written a terminal
+    // verify event (exactly what the real handler does before the lazy call lands).
+    const eagerEventId = 'ev-eager-1';
+    const now = new Date();
+    await db
+      .update(question)
+      .set({ draft_status: 'active', updated_at: now })
+      .where(eq(question.id, qid));
+    await db.insert(event).values({
+      id: eagerEventId,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'quiz_verify',
+      action: 'experimental:quiz_verify',
+      subject_kind: 'question',
+      subject_id: qid,
+      outcome: 'success',
+      payload: { question_id: qid, promoted: true },
+      created_at: now,
+    });
+
+    // the run fn now short-circuits as already_verified (the terminal event exists).
+    const runSpy = vi.fn(async () => quizResult('skipped:already_verified'));
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      deps: { runQuizVerify: runSpy },
+    });
+
+    expect(runSpy).toHaveBeenCalledTimes(1);
+    // row was already active → treat as promoted + surface the existing verify event id.
+    expect(result.promoted).toBe(true);
+    expect(result.verifyEventId).toBe(eagerEventId);
+  });
+
+  // P2-5 (companion) — skipped:already_verified but the row is STILL a draft (terminal event
+  // came from a prior failed/needs_review verdict, not a promote) → NOT promoted.
+  it('skipped:already_verified but row still draft → not promoted (P2-5 companion)', async () => {
+    const db = testDb();
+    const qid = await seedQuestion({ source: 'quiz_gen' }); // stays draft
+
+    const runSpy = vi.fn(async () => quizResult('skipped:already_verified'));
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      deps: { runQuizVerify: runSpy },
+    });
+
+    expect(result.promoted).toBe(false);
+    expect(result.verifyEventId).toBeUndefined();
+    expect(result.status).toBe('skipped:already_verified');
+  });
+
+  // P2-6 — the override (skipVerify) branch ran BEFORE the source guard, so a container
+  // draft (teaching_check / copilot_authored / …) whose source is not a raw-pool-promotable
+  // source got force-promoted to active. Override must validate source first: only
+  // web_sourced / quiz_gen may be promoted; anything else → skipped:unsupported_source,
+  // no promote, no verify event written.
+  it('override on unsupported source (teaching_check) → rejected, no promote, no event (P2-6)', async () => {
+    const db = testDb();
+    const qid = await seedQuestion({ source: 'teaching_check' });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner forced' },
+    });
+
+    expect(result.promoted).toBe(false);
+    expect(result.status).toBe('skipped:unsupported_source');
+
+    // row stays draft (NOT force-promoted).
+    const row = (await db.select().from(question).where(eq(question.id, qid)).limit(1))[0];
+    expect(row.draft_status).toBe('draft');
+
+    // no verify event written for the rejected override.
+    const evs = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.subject_kind, 'question'), eq(event.subject_id, qid)));
+    expect(evs).toHaveLength(0);
+  });
+
+  // P2-6 (companion) — override on a non-draft row (already active) → skipped:not_draft,
+  // no promote, no event (mirrors YUK-400 条目 5: only true drafts are promotable).
+  it('override on a non-draft (already active) row → skipped:not_draft, no event (P2-6 companion)', async () => {
+    const db = testDb();
+    const qid = await seedQuestion({ source: 'quiz_gen', draftStatus: 'active' });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner forced' },
+    });
+
+    expect(result.promoted).toBe(false);
+    expect(result.status).toBe('skipped:not_draft');
+
+    // no verify event written.
+    const evs = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.subject_kind, 'question'), eq(event.subject_id, qid)));
+    expect(evs).toHaveLength(0);
+  });
 });
