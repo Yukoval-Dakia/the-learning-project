@@ -111,4 +111,32 @@ describe('poolFetch', () => {
     const rows = await poolFetch(db, { knowledgeId: 'kc-absent' });
     expect(rows).toEqual([]);
   });
+
+  // INCREMENT-3 — additive draft_status + cosine_distance projection (Task 5 Step 1).
+  it('projects draft_status (NULL active vs draft) when activeOnly:false', async () => {
+    const kc = 'kc-ds';
+    await seed({ id: 'q-active', knowledge_ids: [kc], draft_status: null });
+    await seed({ id: 'q-draft', knowledge_ids: [kc], draft_status: 'draft' });
+    const rows = await poolFetch(db, { knowledgeId: kc, activeOnly: false });
+    const byId = new Map(rows.map((r) => [r.id, r.draft_status]));
+    expect(byId.get('q-active')).toBeNull();
+    expect(byId.get('q-draft')).toBe('draft');
+  });
+
+  it('projects cosine_distance in vector mode; null when no queryEmbedding', async () => {
+    const kc = 'kc-dist';
+    await seed({ id: 'q-near', knowledge_ids: [kc], embedding: vec(1, 0) });
+    await seed({ id: 'q-far', knowledge_ids: [kc], embedding: vec(0, 1) });
+
+    // vector mode: distance projected, near row distance < far row distance.
+    const vrows = await poolFetch(db, { knowledgeId: kc, queryEmbedding: vec(1, 0) });
+    const vById = new Map(vrows.map((r) => [r.id, r.cosine_distance]));
+    expect(vById.get('q-near')).not.toBeNull();
+    expect(vById.get('q-far')).not.toBeNull();
+    expect(vById.get('q-near') as number).toBeLessThan(vById.get('q-far') as number);
+
+    // scalar mode: distance column is null for every row.
+    const srows = await poolFetch(db, { knowledgeId: kc });
+    expect(srows.every((r) => r.cosine_distance === null)).toBe(true);
+  });
 });
