@@ -169,6 +169,15 @@ export const question = pgTable(
     rubric_json: jsonb('rubric_json').$type<RubricT>(),
     choices_md: jsonb('choices_md').$type<string[]>(),
     judge_kind_override: text('judge_kind_override'),
+    // YUK-390 kind Step 3 — answer-class VERIFICATION axis (4 值 exact/keyword/
+    // semantic/steps), materialized by `deriveAnswerClass` (core/schema/answer-class.ts)
+    // for retrieval filtering + the kind two-axis reshape. DISTINCT from
+    // judge_kind_override (the 8-value dispatch ROUTE override) — this column never
+    // feeds route-resolve, so judge routing (+ profile-aware unit_dimension/
+    // multimodal_direct) is unchanged (A5-safe). Write path: answer_class_backfill
+    // job (NULL-only, idempotent). On-write@insert + re-derive@edit are a deferred
+    // follow-up (deriveAnswerClass is pure+cheap; see job SCOPE comment).
+    answer_class: text('answer_class'),
     visual_complexity: text('visual_complexity'),
     knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
     difficulty: integer('difficulty').notNull().default(3),
