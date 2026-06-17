@@ -7,13 +7,21 @@
 // forget；matcher activeOnly:false 召回 active+draft 当场仲裁)，故是新模块、不改造之 (plan §1).
 //
 // ── 增量切分 (plan §Tasks) ───────────────────────────────────────────────────
-// Task 1 (本提交): 纯 active 命中骨架 — poolFetch(activeOnly:false) 召回但暂当全 active
+// Task 1: 纯 active 命中骨架 — poolFetch(activeOnly:false) 召回但暂当全 active
 //   (poolFetch 当前不投影 draft_status — Task 5 才扩 projection 接 draft 分支)，全填 used；
-//   无 cosine 阈值过滤 (Task 2/5)、无残余生成 (Task 3)、无 draft lazy verify (Task 5).
+//   无 cosine 阈值过滤 (Task 5)、无残余生成 (Task 3)、无 draft lazy verify (Task 5).
+// Task 2 (本提交): cosine 软排序 (hybrid 检索) + NULL embedding 降级.
+//   入参解析 queryEmbedding (路 A) 优先于 queryText (路 B，经可注入 embedFn seam)；都无则
+//   不排序 (poolFetch 退 created_at,id)。得到的向量透传 poolFetch.queryEmbedding —— cosine
+//   排序由 poolFetch 的 `ORDER BY embedding <=> qvec` 给 (无需 distance projection；阈值过滤
+//   推迟到 Task 5 扩 projection 时一起做，plan §185)。NULL embedding 降级: 传 queryEmbedding
+//   时 poolFetch isNotNull(embedding) 排除 NULL 行 (不崩，用回来的有向量行)；不传则纯标量集
+//   含 NULL 行 (§7).
 // 镜像 queryExistingPool (sourcing-sequence.ts:121-145) 的 app 层 kind 过滤 + tier 排序 +
 //   slice 链 (同源单一真相)。CRITICAL: 不传 limit 给 poolFetch — 截断在 app 层 (F2 防线).
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
+import { embedText } from '@/server/ai/embed';
 import { kindsMatch } from '@/subjects/question-kind';
 import { type PoolRow, poolFetch } from './pool-fetch';
 import type { SourcingNeed } from './sourcing-sequence';
@@ -70,6 +78,31 @@ export interface MatcherResult {
   satisfiedFromPool: boolean;
 }
 
+// Injectable seams (db 测试注 vi.fn() 不打真 DashScope/真派发). 后续 Task 在此扩
+// dispatch (Task 3) / verify (Task 5)；Task 2 只引入 embedFn.
+export interface MatcherDeps {
+  /** queryText 路 B 的 embedder seam. 默认 embedText (DashScope text-embedding-v4@1024).
+   *  铁律: 与池中向量同一 seam，否则 cosine 跨空间无意义 (plan §190). */
+  embedFn?: (text: string) => Promise<number[]>;
+}
+
+/**
+ * Resolve the query vector for hybrid retrieval. queryEmbedding (路 A，caller 预算) 优先于
+ * queryText (路 B，matcher 内部 embed)；二者都给 Embedding 优先 (spec §9 开放问题 3)。都无 →
+ * null (poolFetch 退 created_at,id 标量序)。queryText 经可注入 embedFn (默认 embedText)，
+ * 保证与池向量同一 embedding seam (plan §190 铁律).
+ */
+async function resolveQueryEmbedding(demand: Demand, deps: MatcherDeps): Promise<number[] | null> {
+  if (demand.queryEmbedding != null && demand.queryEmbedding.length > 0) {
+    return demand.queryEmbedding;
+  }
+  if (demand.queryText != null && demand.queryText.length > 0) {
+    const embed = deps.embedFn ?? embedText;
+    return embed(demand.queryText);
+  }
+  return null;
+}
+
 // OF-2 — read metadata.web_sourced.whitelist_match for the within-tier-2 demotion
 // comparator. Mirrors queryExistingPool's readWhitelistMatch verbatim (single truth:
 // the sort semantics live in compareBySourceTierThenWhitelist, 合约五).
@@ -105,20 +138,32 @@ export function rankPool(rows: PoolRow[], demand: Demand): PoolRow[] {
 }
 
 /**
- * caller-agnostic matcher 仲裁器 (Task 1 骨架).
+ * caller-agnostic matcher 仲裁器 (Task 1 骨架 + Task 2 cosine 软排序).
  *
- * 召回单 KC 候选池 → rankPool (kind 过滤 + tier 排序 + slice) → 三态输出.
- * Task 1: poolFetch 不投影 draft_status，故全部候选当 active 填 used；无残余生成.
+ * 召回单 KC 候选池 (hybrid: 标量硬过滤 + 可选 cosine 排序) → rankPool (kind 过滤 + tier 排序
+ * + slice) → 三态输出. queryEmbedding/queryText 解析为查询向量透传 poolFetch (NULL embedding
+ * 在 vector mode 由 poolFetch 排除，§7 降级)。
+ * Task 1/2: poolFetch 不投影 draft_status，故全部候选当 active 填 used；无残余生成.
  */
-export async function matcher(db: Db, demand: Demand): Promise<MatcherResult> {
-  // 召回全量候选 (activeOnly:false 为接 draft 分支铺路；Task 1 暂当全 active).
+export async function matcher(
+  db: Db,
+  demand: Demand,
+  deps: MatcherDeps = {},
+): Promise<MatcherResult> {
+  // 解析查询向量 (路 A queryEmbedding 优先于路 B queryText)；都无 → null → 标量序.
+  const queryEmbedding = await resolveQueryEmbedding(demand, deps);
+
+  // 召回全量候选 (activeOnly:false 为接 draft 分支铺路；Task 1/2 暂当全 active).
   // 不传 limit — 截断在 app 层 rankPool 的 slice (F2 回归防线).
+  // queryEmbedding 非空 → poolFetch ORDER BY embedding <=> qvec (cosine 软排序) 且
+  // isNotNull(embedding) 排除 NULL 行；null → 退 created_at,id 标量序含 NULL 行 (§7 降级).
   const rows = await poolFetch(db, {
     knowledgeId: demand.knowledgeId,
     activeOnly: false,
     difficultyMin: demand.difficultyMin,
     difficultyMax: demand.difficultyMax,
     compositeParentOnly: demand.compositeParentOnly,
+    queryEmbedding,
   });
 
   const ranked = rankPool(rows, demand);
