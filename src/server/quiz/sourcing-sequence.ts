@@ -27,12 +27,13 @@
 // "要新题/扩充练习" scenario and does NOT绕过错题本 (the orchestrator only READS the
 // active pool and ENQUEUES production — it never touches mistakes / review state).
 
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { knowledge } from '@/db/schema';
 import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
+import { poolFetch } from '@/server/quiz/pool-fetch';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile, SubjectQuestionKind } from '@/subjects/profile-schema';
 import { kindsMatch, questionKindToSkillKind } from '@/subjects/question-kind';
@@ -108,38 +109,22 @@ async function queryExistingPool(
   // and exclude drafts — a node's active question pool is bounded (tens, not millions);
   // there is no unbounded-table scan here. created_at asc gives a stable base order so
   // the comparator below is a stable secondary sort within equal (tier, demotion).
-  const rows = await db
-    .select({
-      id: question.id,
-      source: question.source,
-      kind: question.kind,
-      // YUK-275 — projected so the difficulty WHERE predicate (and any future
-      // tool_state留痕) reads a real column rather than undefined.
-      difficulty: question.difficulty,
-      metadata: question.metadata,
-    })
-    .from(question)
-    .where(
-      and(
-        sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
-        // Drafts never enter the pool (mirror context-readers:797 / due-list Gate-B).
-        sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
-        // YUK-275 — difficulty floor (difficulty is integer NOT NULL default 3, CHECK
-        // 1-5 — schema.ts:163/198). null → omit the predicate (字节级不变).
-        ...(difficultyMin !== null ? [sql`${question.difficulty} >= ${difficultyMin}`] : []),
-        // YUK-275 — unit='篇' → composite parent: the row itself is not a part
-        // (parent_question_id IS NULL) AND it HAS ≥1 child part (a question_part row
-        // referencing it). 'question_part' is the part kind (parts.ts:32). '题'/null →
-        // omit (字节级不变).
-        ...(unit === '篇'
-          ? [
-              isNull(question.parent_question_id),
-              sql`EXISTS (SELECT 1 FROM ${question} AS c WHERE c.parent_question_id = ${question.id})`,
-            ]
-          : []),
-      ),
-    )
-    .orderBy(asc(question.created_at), asc(question.id));
+  //
+  // YUK-398 inc-2 — the raw scalar pool query is now the unified poolFetch operator
+  // (pool-fetch.ts). The WHERE clause is byte-identical (poolFetch covers all four
+  // predicates: KC containment / draft exclusion via activeOnly default true /
+  // difficultyMin floor / unit='篇' composite parent) and the non-vector ORDER is the
+  // same asc(created_at), asc(id). CRITICAL: limit is NOT passed to poolFetch — slicing
+  // in SQL would truncate by created_at BEFORE the in-memory tier sort below (the F2
+  // regression). poolFetch returns the FULL single-KC candidate set; the kind filter,
+  // 合约五 tier/whitelist sort, and limit slice all stay app-layer (unchanged).
+  const rows = await poolFetch(db, {
+    knowledgeId,
+    activeOnly: true,
+    difficultyMin,
+    compositeParentOnly: unit === '篇',
+    // no limit — slice AFTER the in-memory tier sort (F2).
+  });
 
   const hits = rows
     // A2 — kind filter in canonical space (no-op when kind is null). A row whose
