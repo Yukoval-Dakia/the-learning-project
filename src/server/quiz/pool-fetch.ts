@@ -47,6 +47,13 @@ export interface PoolFetchCriteria {
 export interface PoolRow {
   id: string;
   difficulty: number;
+  // INCREMENT-2 — projected unconditionally so the consumer (queryExistingPool) can run
+  // its in-memory 合约五 tier sort (deriveSourceTier reads source + metadata) and kind
+  // filter (kindsMatch reads kind) WITHOUT re-querying. Additive: existing callers that
+  // only read id/difficulty are unaffected. The matcher (inc-3) reuses these too.
+  source: string;
+  kind: string;
+  metadata: Record<string, unknown> | null;
 }
 
 /** Fetch a candidate question pool by composite scalar filters + KC containment,
@@ -75,7 +82,15 @@ export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]
     : [asc(question.created_at), asc(question.id)];
 
   const q = db
-    .select({ id: question.id, difficulty: question.difficulty })
+    .select({
+      id: question.id,
+      difficulty: question.difficulty,
+      // INCREMENT-2 — source/kind/metadata feed the consumer's in-memory tier sort +
+      // kind filter (queryExistingPool). Projection-only; does not touch WHERE/ORDER.
+      source: question.source,
+      kind: question.kind,
+      metadata: question.metadata,
+    })
     .from(question)
     .where(and(...preds))
     .orderBy(...orderBy);
