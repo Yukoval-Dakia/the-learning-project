@@ -225,6 +225,20 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/embed_backfill').then((m) => m.buildEmbedBackfillHandler),
       },
+      // YUK-390 kind Step 3 — answer_class materialization backfill. Classifies
+      // answer_class IS NULL question rows via deriveAnswerClass (pure, no API),
+      // for retrieval filtering + the kind reshape. cron 05:00 Asia/Shanghai: a
+      // clear slot after the nightly chain (embed 04:40 / recalibration 04:50,
+      // before compose 05:30). No dependency on other jobs (pure derivation).
+      // queue=llm: shares the established backfill DLQ/retry bucket. Idempotent via
+      // the answer_class IS NULL filter (no NULL rows = no-op).
+      {
+        name: 'answer_class_backfill',
+        schedule: { cron: '0 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
