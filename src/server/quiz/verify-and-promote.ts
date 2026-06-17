@@ -63,6 +63,15 @@ function verifyActionForSource(
   return source === 'web_sourced' ? 'experimental:source_verify' : 'experimental:quiz_verify';
 }
 
+// codex P2-6 — the only sources whose drafts may be promoted into the raw active pool:
+// web_sourced (→ source_verify) / quiz_gen (→ quiz_verify). Container-scoped drafts
+// (teaching_check / copilot_authored / embedded check / authentic / …) are NOT raw-pool
+// promotable — the override branch must reject them just like the normal branch's source
+// guard does (verifyActionForSource alone would mis-map them to experimental:quiz_verify).
+function isPromotableSource(source: string): boolean {
+  return source === 'web_sourced' || source === 'quiz_gen';
+}
+
 /**
  * Re-query the verify event id written by the转调 run fn on a successful promote. run 函数
  * 不返 verify event id (RunSourceVerifyResult/RunQuizVerifyResult 只返 status/checks/overall)，
@@ -123,6 +132,20 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   // 因为 owner override 跳过 verify，没有 run 函数可转调。复用 acceptQuestionDraftProposal 的
   // draft→active+FSRS 同形逻辑 (参照)。
   if (skipVerify) {
+    // codex P2-6 — the override branch ran BEFORE the source guard, so a container draft
+    // (teaching_check / copilot_authored / embedded check) whose source is not a raw-pool-
+    // promotable source got force-promoted to active. Validate source + draft_status FIRST:
+    //   ① only raw-pool-promotable sources (web_sourced / quiz_gen) may be promoted — anything
+    //      else → skipped:unsupported_source (mirror the normal branch's source guard).
+    //   ② only a true 'draft' is promotable (呼应 YUK-400 条目 5) — a non-draft row →
+    //      skipped:not_draft.
+    // Reject WITHOUT promoting or writing any verify event.
+    if (!isPromotableSource(row.source)) {
+      return { promoted: false, status: 'skipped:unsupported_source' };
+    }
+    if (row.draft_status !== 'draft') {
+      return { promoted: false, status: 'skipped:not_draft' };
+    }
     const action = verifyActionForSource(row.source);
     const actor = p.actor ?? { kind: 'agent' as const, ref: 'verify_and_promote' };
     const now = new Date();
@@ -209,6 +232,30 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   } else {
     // 防御：现实只有 web_sourced / quiz_gen 进 draft verify。其它 source 不派发。
     return { promoted: false, status: 'skipped:unsupported_source' };
+  }
+
+  // codex P2-5 — an eager verify can promote the row BEFORE this lazy call lands. Then the
+  // run fn short-circuits as skipped:already_verified (terminal verify event exists) but the
+  // row is ALREADY active. Treating that as promoted:false (status !== 'verified') would make
+  // the matcher skip a perfectly usable row. Re-SELECT on already_verified: if the row is no
+  // longer a draft (eager promote happened), report it as promoted + surface the existing
+  // verify event id. If it's still a draft (the terminal event was a failed/needs_review
+  // verdict, not a promote), keep the honest not-promoted result.
+  if (status === 'skipped:already_verified') {
+    const post = await db
+      .select({ draft_status: question.draft_status })
+      .from(question)
+      .where(eq(question.id, questionId))
+      .limit(1);
+    const alreadyActive = post[0] !== undefined && post[0].draft_status !== 'draft';
+    if (alreadyActive) {
+      const verifyEventId = await lookupVerifyEventId(
+        db,
+        questionId,
+        verifyActionForSource(row.source),
+      );
+      return { promoted: true, status, verifyEventId };
+    }
   }
 
   const promoted = status === 'verified';
