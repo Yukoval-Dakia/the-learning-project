@@ -238,8 +238,9 @@ describe('matcher — Task 3 (residual generation: demandToSupplyTarget + dispat
   });
 
   it('empty pool → residual + dispatch called once with a valid QuestionSupplyTarget (Step 1)', async () => {
-    // empty DB (no question rows on this KC) → matcher must dispatch a residual.
+    // empty pool but a LIVE KC node (codex P2-4: residual only dispatches for a live anchor).
     const kc = 'kc-empty';
+    await seedKc(kc, 'math');
     const captured: QuestionSupplyTarget[] = [];
     const fakeDispatchAsTarget = vi.fn(
       async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> => {
@@ -277,6 +278,7 @@ describe('matcher — Task 3 (residual generation: demandToSupplyTarget + dispat
 
   it('partial pool → partial residual, dispatch gap reflects shortfall (Step 2)', async () => {
     const kc = 'kc-partial';
+    await seedKc(kc, 'math'); // live KC anchor (codex P2-4) for the residual dispatch.
     await seed({ id: 'q-have', knowledge_ids: [kc] });
 
     let capturedTarget: QuestionSupplyTarget | null = null;
@@ -349,6 +351,7 @@ describe('matcher — Task 5 (draft 命中 lazy verify-promote + cosine 阈值�
   // must DISCARD it on threshold and fall to residual generation — never塞 a next-best.
   it('active hit whose cosine distance exceeds threshold is discarded → residual (§4)', async () => {
     const kc = 'kc-cos-thresh';
+    await seedKc(kc, 'math'); // live KC anchor (codex P2-4) for the residual dispatch.
     // embedding points at (1,0); query points at (0,1) → orthogonal → distance ~1.0.
     await seed({ id: 'q-far', knowledge_ids: [kc], embedding: vec(1, 0), draft_status: null });
 
@@ -456,6 +459,7 @@ describe('matcher — Task 5 (draft 命中 lazy verify-promote + cosine 阈值�
   // Step 5 — all candidates exhausted (lone draft fails verify, no active) → residual.
   it('lone draft fails verify, no active fallback → residual + dispatch', async () => {
     const kc = 'kc-exhaust';
+    await seedKc(kc, 'math'); // live KC anchor (codex P2-4) for the residual dispatch.
     await seed({
       id: 'q-draft-only',
       knowledge_ids: [kc],
@@ -484,5 +488,149 @@ describe('matcher — Task 5 (draft 命中 lazy verify-promote + cosine 阈值�
     expect(result.satisfiedFromPool).toBe(false);
     expect(verify).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── codex P2 review findings (inc-3) ──────────────────────────────────────────
+describe('matcher — codex P2 fixes', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // P2-1 — repo「可用」语义 = draft_status <> 'draft' (NULL / 'active' / legacy 'final'
+  // all usable). Only a true 'draft' goes to lazy verify; a non-draft row (e.g. 'final')
+  // must be used DIRECTLY, never sent to verify (sending it would mis-route a usable row).
+  it("non-draft 'final' row is used directly, verify NOT called (P2-1)", async () => {
+    const kc = 'kc-final';
+    await seed({ id: 'q-final', knowledge_ids: [kc], draft_status: 'final' });
+
+    const verify = vi.fn(
+      async (): Promise<{ promoted: boolean; verifyEventId?: string }> => ({ promoted: true }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 1 }, { verify });
+
+    expect(result.used).toHaveLength(1);
+    expect(result.used[0].question_id).toBe('q-final');
+    expect(result.used[0].promotedFromDraft).toBe(false);
+    expect(result.used[0].verifyEventId).toBeUndefined();
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(true);
+    // a non-draft row is NEVER routed through lazy verify.
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  // P2-2 — soft-archived draft = draft_status='draft' + metadata.archived_at. poolFetch
+  // (activeOnly:false) recalls it, but the matcher must treat it as UNUSABLE: skip it
+  // before verify (never promote an archived draft back to active) and fall to residual.
+  it('archived draft (metadata.archived_at) is skipped — not verified, not promoted → residual (P2-2)', async () => {
+    const kc = 'kc-archived-draft';
+    await seedKc(kc, 'math'); // live KC anchor (codex P2-4) so the residual still dispatches.
+    await seed({
+      id: 'q-arch',
+      knowledge_ids: [kc],
+      draft_status: 'draft',
+      metadata: { archived_at: '2024-01-01T00:00:00Z' } as never,
+    });
+
+    const verify = vi.fn(
+      async (): Promise<{ promoted: boolean; verifyEventId?: string }> => ({
+        promoted: true,
+        verifyEventId: 'should-not-happen',
+      }),
+    );
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 1 }, { verify, dispatch });
+
+    expect(result.used).toEqual([]);
+    expect(verify).not.toHaveBeenCalled();
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(result.satisfiedFromPool).toBe(false);
+  });
+
+  // P2-3 — a verify that REJECTS (system error: bad metadata / LLM / parse / transient DB)
+  // must not break the whole arbitration. The matcher catches the throw per-candidate,
+  // treats that candidate as unusable, and continues to the next ranked candidate.
+  it('verify that throws is caught per-candidate; matcher continues to next active candidate (P2-3)', async () => {
+    const kc = 'kc-verify-throw';
+    // draft ranks first by created_at and its verify throws; an active row follows and
+    // must still be used (the throw on the draft must not abort the loop).
+    await seed({
+      id: 'q-draft-throw',
+      knowledge_ids: [kc],
+      draft_status: 'draft',
+      created_at: new Date('2024-01-01T00:00:00Z'),
+    });
+    await seed({
+      id: 'q-active',
+      knowledge_ids: [kc],
+      draft_status: null,
+      created_at: new Date('2024-01-02T00:00:00Z'),
+    });
+
+    const verify = vi.fn(async (): Promise<{ promoted: boolean; verifyEventId?: string }> => {
+      throw new Error('verify blew up (bad metadata / transient)');
+    });
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 1 }, { verify });
+
+    // matcher did not reject; the bad draft was skipped, the active row used.
+    expect(result.used).toHaveLength(1);
+    expect(result.used[0].question_id).toBe('q-active');
+    expect(result.used[0].promotedFromDraft).toBe(false);
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(true);
+    expect(verify).toHaveBeenCalledTimes(1); // only the throwing draft was verified
+  });
+
+  // P2-4 — residual dispatch must verify the KC is LIVE first (mirror
+  // resolveLiveKnowledgeNode: exists AND archived_at IS NULL). getEffectiveDomain does NOT
+  // check archived_at, so a stale/archived KC would otherwise dispatch a residual that the
+  // worker-side anchor guard only rejects as ref_not_found. Archived KC → no dispatch.
+  it('archived KC → residual NOT dispatched (dispatch not called), residual empty (P2-4)', async () => {
+    const kc = 'kc-archived';
+    // KC node exists but is archived; empty question pool → would otherwise dispatch.
+    await db.insert(knowledge).values({
+      id: kc,
+      name: kc,
+      domain: 'math',
+      parent_id: null,
+      archived_at: new Date('2024-01-01T00:00:00Z'),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 2 }, { dispatch });
+
+    expect(result.used).toEqual([]);
+    // archived KC: the worker-side anchor guard would reject the job, so no dispatch.
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(false);
+  });
+
+  // P2-4 (companion) — a missing KC (no node at all) likewise must not dispatch a residual.
+  it('missing KC (no node) → residual NOT dispatched (P2-4 companion)', async () => {
+    const kc = 'kc-missing';
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 2 }, { dispatch });
+
+    expect(result.used).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(false);
   });
 });

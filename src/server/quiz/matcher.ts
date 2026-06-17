@@ -23,6 +23,7 @@ import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
+import { knowledge } from '@/db/schema';
 import { embedText } from '@/server/ai/embed';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { type DispatchResult, dispatchSupplyTarget } from '@/server/question-supply/dispatcher';
@@ -37,6 +38,7 @@ import {
 } from '@/server/question-supply/target-discovery';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
+import { and, eq, isNull } from 'drizzle-orm';
 import { type PoolRow, poolFetch } from './pool-fetch';
 import type { SourcingNeed, SourcingSequenceStep } from './sourcing-sequence';
 import { verifyAndPromote } from './verify-and-promote';
@@ -165,6 +167,29 @@ function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean |
   if (!webSourced || typeof webSourced !== 'object') return null;
   const match = (webSourced as Record<string, unknown>).whitelist_match;
   return typeof match === 'boolean' ? match : null;
+}
+
+// codex P2-2 — a soft-archived draft carries metadata.archived_at (any non-empty value).
+// poolFetch(activeOnly:false) recalls it, but the matcher must treat it as unusable and
+// never promote it back to active. Reads the metadata the consumer already projects
+// (PoolRow.metadata) — no extra query.
+function isArchivedDraft(metadata: Record<string, unknown> | null): boolean {
+  if (!metadata || typeof metadata !== 'object') return false;
+  return (metadata as Record<string, unknown>).archived_at != null;
+}
+
+// codex P2-4 — mirror sourcing-sequence.ts:resolveLiveKnowledgeNode (module-private there):
+// a KC is live iff a row exists AND archived_at IS NULL. The residual dispatch gates on this
+// so a stale/archived/missing anchor never enqueues a job the worker guard would just reject
+// (sourcing.ts / quiz_gen.ts filter isNull(archived_at)). getEffectiveDomain does NOT check
+// archived_at, so this is the matcher's own pre-dispatch guard.
+async function resolveKnowledgeNodeLive(db: Db, knowledgeId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: knowledge.id })
+    .from(knowledge)
+    .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
+    .limit(1);
+  return rows.length > 0;
 }
 
 /**
@@ -408,13 +433,30 @@ export async function matcher(
   for (const r of ranked) {
     if (used.length >= demand.limit) break;
     const tier = deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier;
-    // draft_status NULL/'active' → active 行直接用.
-    if (r.draft_status == null || r.draft_status === 'active') {
+    // 仓库「可用」语义 (codex P2-1) = draft_status <> 'draft'. NULL≡active、'active'、legacy
+    // 'final' 等任何非 'draft' 行都直接用——唯一送 lazy verify 的是 r.draft_status === 'draft'。
+    // (此前误把「非 NULL 非 active」整批送 verify，'final' 等可用行被错送验证门。)
+    if (r.draft_status !== 'draft') {
       used.push({ question_id: r.id, source: r.source, tier, promotedFromDraft: false });
       continue;
     }
+    // codex P2-2 — soft-archived draft (draft_status='draft' + metadata.archived_at) 不可用:
+    // poolFetch(activeOnly:false) 会召回它，但 lazy verify 绝不能把已归档 draft promote 回 active。
+    // 当作不可用跳过 (落下一候选 / 残余)，不 verify、不 promote。
+    if (isArchivedDraft(r.metadata)) continue;
     // draft 行 → lazy verify-promote (转调现有 gate). promoted 则升用，否则跳下一候选.
-    const result = await verify({ db, questionId: r.id, runTaskFn });
+    // codex P2-3 — 单候选 verify 抛错 (坏 metadata / LLM/parse/DB 瞬时失败) 不能打断整个仲裁:
+    // try/catch 包住，抛错按「该候选不可用」处理，继续下一 ranked 候选 (耗尽落残余)。留痕不静默。
+    let result: MatcherVerifyResult;
+    try {
+      result = await verify({ db, questionId: r.id, runTaskFn });
+    } catch (err) {
+      console.warn(
+        `[matcher] verify threw for draft candidate ${r.id}; treating as unusable, continuing:`,
+        err,
+      );
+      continue;
+    }
     if (result.promoted) {
       used.push({
         question_id: r.id,
@@ -432,7 +474,12 @@ export async function matcher(
   // 失败 / 池空 都体现为 used 不足 → gap > 0).
   const gap = demand.limit - used.length;
   const residual: SourcingNeed[] = [];
-  if (gap > 0) {
+  // codex P2-4 — 残余派发前 mirror resolveLiveKnowledgeNode (sourcing-sequence.ts): 确认 KC
+  // 存在且 archived_at IS NULL。getEffectiveDomain (demandToSupplyTarget 内) 不查 archived_at，
+  // stale/archived KC 仍会派一个供给目标，但 worker-side anchor guard 只会 skip:ref_not_found
+  // (sourcing.ts/quiz_gen.ts 的 isNull(archived_at))——白派一个注定失败的 job。KC 不 live →
+  // 不派 residual (返回空 residual；满足态由 satisfiedFromPool=false 如实体现「池空且无在途生产」)。
+  if (gap > 0 && (await resolveKnowledgeNodeLive(db, demand.knowledgeId))) {
     const target = await demandToSupplyTarget(db, demand, gap);
     const dispatch = deps.dispatch ?? dispatchSupplyTarget;
     // dispatchSupplyTarget: route-plan → enqueue 既有队列 (sourcing/quiz_gen)，带 7 天 fingerprint
@@ -448,8 +495,11 @@ export async function matcher(
     });
   }
 
-  // satisfiedFromPool = 池独立满足了整个 limit (无残余缺口).
-  const satisfiedFromPool = residual.length === 0;
+  // satisfiedFromPool = 池独立满足了整个 limit (gap <= 0)。基于 gap 而非 residual.length:
+  // codex P2-4 下，dead KC 时 gap > 0 但 residual 故意为空 (不派注定失败的 job)——这种「池没满足、
+  // 也没在途生产」必须返 false (别假装池满足了)。三态可区分: satisfiedFromPool=true ⇒ 池满足；
+  // false + residual 非空 ⇒ 已派在途生产；false + residual 空 ⇒ dead KC，缺口无法补 (可区分信号)。
+  const satisfiedFromPool = gap <= 0;
 
   return { used, residual, satisfiedFromPool };
 }
