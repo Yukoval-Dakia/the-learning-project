@@ -129,31 +129,34 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
 
   it('cosine-ranks pool hits nearest-first when queryEmbedding given (hybrid)', async () => {
     const kc = 'kc-vec';
-    // three active rows, distinct embeddings; created_at order is the inverse of the
-    // intended cosine order so a pass can only come from cosine ranking, not insertion.
+    // three active rows clustered near the query direction (1,0) at increasing angles —
+    // all WITHIN MATCHER_COSINE_MAX_DISTANCE (so the §4 threshold keeps all three; this
+    // test isolates ranking, the over-threshold drop is covered separately). created_at
+    // order (q1,q2,q3) differs from the intended cosine order (q2<q1<q3) so a pass can
+    // only come from cosine ranking, not insertion.
     await seed({
       id: 'q1',
       knowledge_ids: [kc],
-      embedding: vec(1, 0),
+      embedding: vec(1, 0.4), // dist ~0.07
       created_at: new Date('2024-01-01T00:00:00Z'),
     });
     await seed({
       id: 'q2',
       knowledge_ids: [kc],
-      embedding: vec(0, 1),
+      embedding: vec(1, 0.05), // dist ~0.001 (nearest)
       created_at: new Date('2024-01-02T00:00:00Z'),
     });
     await seed({
       id: 'q3',
       knowledge_ids: [kc],
-      embedding: vec(-1, 0),
+      embedding: vec(1, 0.7), // dist ~0.18
       created_at: new Date('2024-01-03T00:00:00Z'),
     });
 
-    // query vector pointing almost exactly at q2's direction (0,1).
+    // query vector pointing along (1,0); q2 is the closest of the three.
     const result = await matcher(db, {
       knowledgeId: kc,
-      queryEmbedding: vec(0.05, 0.95),
+      queryEmbedding: vec(1, 0),
       limit: 3,
     });
 
@@ -327,5 +330,159 @@ describe('matcher — Task 3 (residual generation: demandToSupplyTarget + dispat
     expect(t.fingerprint).toBe(expectedFingerprint);
     // and the fingerprint string literally carries the resolved subjectId (first segment).
     expect(t.fingerprint.startsWith(`${expectedSubjectId}|`)).toBe(true);
+  });
+});
+
+describe('matcher — Task 5 (draft 命中 lazy verify-promote + cosine 阈值过滤)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // A runTaskFn that must never be consulted (verify is faked at the matcher seam).
+  const noRunTask = vi.fn(async () => {
+    throw new Error('runTaskFn should not be called when verify is faked');
+  });
+
+  // Step 2 — cosine over-threshold → residual (§4 boundary, "宁残余不塞次品").
+  // An active row hits the KC and has an embedding, but its embedding is orthogonal to the
+  // query vector (cosine distance ≈ 1, well over MATCHER_COSINE_MAX_DISTANCE). The matcher
+  // must DISCARD it on threshold and fall to residual generation — never塞 a next-best.
+  it('active hit whose cosine distance exceeds threshold is discarded → residual (§4)', async () => {
+    const kc = 'kc-cos-thresh';
+    // embedding points at (1,0); query points at (0,1) → orthogonal → distance ~1.0.
+    await seed({ id: 'q-far', knowledge_ids: [kc], embedding: vec(1, 0), draft_status: null });
+
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, queryEmbedding: vec(0, 1), limit: 1 },
+      { dispatch },
+    );
+
+    // the over-threshold active row is dropped; pool yields nothing usable → residual.
+    expect(result.used).toEqual([]);
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(result.satisfiedFromPool).toBe(false);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  // Step 3 — draft hit (within threshold) → verify promotes → USE.
+  it('draft hit within threshold → verify promotes → used carries promotedFromDraft + verifyEventId', async () => {
+    const kc = 'kc-draft-ok';
+    await seed({
+      id: 'q-draft',
+      knowledge_ids: [kc],
+      embedding: vec(1, 0),
+      draft_status: 'draft',
+    });
+
+    const verify = vi.fn(
+      async (_p: {
+        db: typeof db;
+        questionId: string;
+        runTaskFn: unknown;
+      }): Promise<{ promoted: boolean; verifyEventId?: string }> => ({
+        promoted: true,
+        verifyEventId: 'ev1',
+      }),
+    );
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, queryEmbedding: vec(1, 0), limit: 1 },
+      { verify, runTaskFn: noRunTask },
+    );
+
+    expect(result.used).toHaveLength(1);
+    expect(result.used[0].question_id).toBe('q-draft');
+    expect(result.used[0].promotedFromDraft).toBe(true);
+    expect(result.used[0].verifyEventId).toBe('ev1');
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(true);
+
+    // verify called exactly once with {db, questionId, runTaskFn}.
+    expect(verify).toHaveBeenCalledTimes(1);
+    const callArg = verify.mock.calls[0][0];
+    expect(callArg.db).toBe(db);
+    expect(callArg.questionId).toBe('q-draft');
+    expect(callArg.runTaskFn).toBe(noRunTask);
+  });
+
+  // Step 4 — draft fails gate → skip it, use the next candidate (an active row).
+  it('draft that fails verify is skipped; next active candidate is used instead', async () => {
+    const kc = 'kc-draft-fail';
+    // both rows hit; same embedding (within threshold). draft ranks first by created_at but
+    // fails verify; active ranks second and must be the one used.
+    await seed({
+      id: 'q-draft',
+      knowledge_ids: [kc],
+      embedding: vec(1, 0),
+      draft_status: 'draft',
+      created_at: new Date('2024-01-01T00:00:00Z'),
+    });
+    await seed({
+      id: 'q-active',
+      knowledge_ids: [kc],
+      embedding: vec(1, 0),
+      draft_status: null,
+      created_at: new Date('2024-01-02T00:00:00Z'),
+    });
+
+    const verify = vi.fn(
+      async (): Promise<{ promoted: boolean; verifyEventId?: string }> => ({
+        promoted: false,
+      }),
+    );
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, queryEmbedding: vec(1, 0), limit: 1 },
+      { verify, runTaskFn: noRunTask },
+    );
+
+    expect(result.used).toHaveLength(1);
+    expect(result.used[0].question_id).toBe('q-active');
+    expect(result.used[0].promotedFromDraft).toBe(false);
+    expect(result.used[0].verifyEventId).toBeUndefined();
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(true);
+    expect(verify).toHaveBeenCalledTimes(1); // only the draft needed verification
+  });
+
+  // Step 5 — all candidates exhausted (lone draft fails verify, no active) → residual.
+  it('lone draft fails verify, no active fallback → residual + dispatch', async () => {
+    const kc = 'kc-exhaust';
+    await seed({
+      id: 'q-draft-only',
+      knowledge_ids: [kc],
+      embedding: vec(1, 0),
+      draft_status: 'draft',
+    });
+
+    const verify = vi.fn(
+      async (): Promise<{ promoted: boolean; verifyEventId?: string }> => ({
+        promoted: false,
+      }),
+    );
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, queryEmbedding: vec(1, 0), limit: 1 },
+      { verify, dispatch, runTaskFn: noRunTask },
+    );
+
+    expect(result.used).toEqual([]);
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(result.satisfiedFromPool).toBe(false);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 });
