@@ -7,14 +7,12 @@ name: PR-Agent (GLM-5.2)
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  issue_comment:
-    types: [created]          # lets you trigger tools manually with /review
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-agent-glm-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: pr-agent-glm-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -24,13 +22,9 @@ jobs:
     # (GitHub also withholds secrets from fork-PR `pull_request` runs, so the
     # same-repo guard keeps the GLM key out of contexts where it isn't passed.)
     if: >
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.draft == false &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       github.event.pull_request.user.login != 'dependabot[bot]') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request != null &&
-       github.event.sender.type != 'Bot')
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     # Public GLM endpoint (open.bigmodel.cn) → GitHub-hosted runner is enough;
     # no self-hosted Mac runner required for this one.
     runs-on: ubuntu-latest
