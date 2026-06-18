@@ -6,6 +6,7 @@ import {
   targetFingerprint,
 } from '@/server/question-supply/target-discovery';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
 import { matcher } from './matcher';
@@ -689,6 +690,95 @@ describe('matcher — YUK-401 operator hardening', () => {
     expect(result.used[0].question_id).toBe('q-low');
     expect(result.satisfiedFromPool).toBe(true);
     expect(result.residual).toEqual([]);
+  });
+
+  // codex #3 (round 2) — minSourceTier is an ACQUISITION-tier floor (1-3), but the floor
+  // judge must map the candidate's 4-level provenance tier onto that 3-level acquisition
+  // scale via acquisitionTierForQuestion (provenance 3 material + 4 generated → acquisition
+  // 3). The OLD Fix-1 compared the raw provenance tier (deriveSourceTier 1-4) against the
+  // acquisition floor, so a bare quiz_gen row (provenance tier 4 = acquisition tier 3) was
+  // wrongly skipped under minSourceTier:3 (4 > 3). It must be USED: acquisition 3 ≤ 3.
+  it('minSourceTier:3 — a generated (provenance tier 4 = acquisition tier 3) row IS used, not wrongly skipped (Fix A)', async () => {
+    const kc = 'kc-acqtier3';
+    await seedKc(kc, 'math'); // live KC anchor.
+    // source='quiz_gen' with NO material_grounded provenance → deriveSourceTier tier 4,
+    // but acquisitionTierForQuestion maps it to acquisition tier 3 (generated/草稿级).
+    await seed({ id: 'q-gen', knowledge_ids: [kc], source: 'quiz_gen', draft_status: null });
+
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, minSourceTier: 3, limit: 1 }, { dispatch });
+
+    // acquisition tier 3 satisfies floor 3 → the row is used; pool满足, no residual.
+    expect(result.used).toHaveLength(1);
+    expect(result.used[0].question_id).toBe('q-gen');
+    // the `used` entry still carries the PROVENANCE tier (4) for the A2 sort comparator —
+    // only the minSourceTier FLOOR judgement switched to acquisition tier, the sort tier
+    // stays provenance (deriveSourceTier). Invariant: A2 sort unchanged.
+    expect(result.used[0].tier).toBe(4);
+    expect(result.satisfiedFromPool).toBe(true);
+    expect(result.residual).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  // Fix A (contrast) — the SAME generated row (acquisition tier 3) under minSourceTier:2 is
+  // skipped (acquisition 3 > 2) → residual. Pins that the floor still excludes below-floor
+  // acquisition tiers; only the 3-vs-3 boundary was the bug.
+  it('minSourceTier:2 — the same generated row (acquisition tier 3 > 2) is skipped → residual (Fix A contrast)', async () => {
+    const kc = 'kc-acqtier2-skip';
+    await seedKc(kc, 'math'); // live KC anchor so the residual dispatches.
+    await seed({ id: 'q-gen', knowledge_ids: [kc], source: 'quiz_gen', draft_status: null });
+
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, minSourceTier: 2, limit: 1 }, { dispatch });
+
+    expect(result.used).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(false);
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  // codex #1 (round 2) — pre-dispatch live recheck restores the TOCTOU guard. The top-of-
+  // matcher() guard passes (KC live), but the KC is archived DURING the pool-fetch / lazy-
+  // verify window; the residual branch must re-check resolveKnowledgeNodeLive and NOT
+  // dispatch to a now-dead anchor. We exercise the race by archiving the KC inside the
+  // injected verify seam (which runs in the arbitration loop, after the top guard, before
+  // residual dispatch). The lone draft then fails verify → gap > 0 → residual recheck →
+  // KC now archived → no dispatch, empty residual.
+  it('KC live at top but archived before residual dispatch → recheck blocks dispatch (Fix B)', async () => {
+    const kc = 'kc-toctou';
+    await seedKc(kc, 'math'); // live at the top guard.
+    await seed({ id: 'q-draft-only', knowledge_ids: [kc], draft_status: 'draft' });
+
+    // verify archives the KC as a side effect (the TOCTOU window) then fails the draft.
+    const verify = vi.fn(async (): Promise<{ promoted: boolean; verifyEventId?: string }> => {
+      await db
+        .update(knowledge)
+        .set({ archived_at: new Date('2024-01-01T00:00:00Z') })
+        .where(eq(knowledge.id, kc));
+      return { promoted: false };
+    });
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 1 }, { verify, dispatch });
+
+    expect(result.used).toEqual([]);
+    // top guard passed (poolFetch ran, verify ran), but the pre-dispatch recheck caught the
+    // mid-flight archival → residual NOT dispatched, residual stays empty.
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(false);
   });
 
   // Fix 2 — compositeParentOnly propagation to the residual target.constraints. The
