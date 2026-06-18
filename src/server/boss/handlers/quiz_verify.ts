@@ -43,8 +43,12 @@ import {
   type QuizGenVerificationT,
   QuizVerificationResult,
   type QuizVerificationResultT,
-  type QuizVerifyOverall,
 } from '@/core/schema/quiz_gen';
+import {
+  type QuizVerifyOverall,
+  type VerifyFailureClass,
+  toUnifiedVerifyResult,
+} from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
@@ -162,15 +166,16 @@ export type QuizVerifyPerQuestionStatus =
   | 'skipped:not_quiz_gen'
   | 'skipped:already_verified';
 
-// YUK-350 (L3, RL5) — event-layer projection of WHY a verify did not promote.
-// Type alias only (NOT a Zod enum): the verify event payload is a loose, experimental
-// record with zero downstream readers, so this is a pure-additive, key-when-relevant
-// marker — absent ⇒ no failure. 'system_error' = the task/parse/DB blew up before a
-// verdict (catch-bottom; the event-layer twin of L1's result-layer overall='error').
-// 'validation_failure' = the model produced a verdict but the gate rejected promotion
-// (a REAL fail / needs_review). They are written ONLY on failure/error paths; promote
-// success carries no failure_class.
-export type VerifyFailureClass = 'system_error' | 'validation_failure';
+// YUK-350 (B5 increment C) — event-layer projection of WHY a verify did not promote,
+// LIFTED UP into the shared core verify contract (`@/core/schema/verify-contract`,
+// imported above) now that all three promote-gated handlers project onto one shape.
+// Re-exported here for back-compat with the sibling handlers (source_verify /
+// variant_verify import it from './quiz_verify'). 'system_error' = the task/parse/DB
+// blew up before a verdict (catch-bottom; the event-layer twin of the result-layer
+// overall='error'). 'validation_failure' = a verdict was produced but the gate rejected
+// promotion (a REAL fail / needs_review). Written ONLY on failure/error paths; promote
+// success carries none. Value space is byte-identical to the prior bare type alias.
+export type { VerifyFailureClass };
 
 export interface RunQuizVerifyParams {
   db: Db;
@@ -394,6 +399,38 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const verifyEventId = createId();
     const verifiedBy = aiAgentRef('QuizVerifyTask', result);
 
+    // YUK-350 (B5 increment C) — project this multi-axis verdict onto the unified
+    // verify contract shape. PROVABLY-EQUIVALENT: `promote` and `parsed.overall` are
+    // passed IN (already decided above); the helper only PROJECTS them — it re-derives
+    // no gate. The success-path verify event payload is then a SUPERSET: it spreads the
+    // unified { axes, overall, failure_class?, summary_md, confidence } and keeps every
+    // existing handler-specific key (grounding/knowledge_hit/copy_safety/source_tier/…)
+    // unchanged, so existing consumers (draft-review.ts reads overall/summary_md) keep
+    // working byte-identically and the only new field is the additive `axes` array.
+    const unified = toUnifiedVerifyResult({
+      source: 'quiz',
+      overall: parsed.overall,
+      promote,
+      summary_md: parsed.summary_md,
+      confidence: parsed.confidence,
+      checks: [
+        { axis_name: 'grounding', verdict: parsed.grounding.verdict },
+        { axis_name: 'knowledge_hit', verdict: parsed.knowledge_hit.verdict },
+        { axis_name: 'copy_safety', verdict: copySafetyVerdict },
+        ...(parsed.material_grounding
+          ? [
+              {
+                axis_name: 'material_grounding' as const,
+                verdict: parsed.material_grounding.verdict,
+              },
+            ]
+          : []),
+        ...(parsed.kind_conformance
+          ? [{ axis_name: 'kind_conformance' as const, verdict: parsed.kind_conformance.verdict }]
+          : []),
+      ],
+    });
+
     // Merge-preserving metadata: keep the agent's source_pack / source_refs /
     // generation_method; overwrite copy_safety with the quiz_verify-checked verdict
     // (checked_by='quiz_verify') and attach the two-axis verification block.
@@ -487,7 +524,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         outcome: promote ? 'success' : parsed.overall === 'fail' ? 'failure' : 'partial',
         payload: {
           question_id: questionId,
-          overall: parsed.overall,
+          // YUK-350 (B5 increment C) — unified verify contract shape (axes + overall +
+          // failure_class? + summary_md + confidence). SUPERSET: every handler-specific
+          // key below stays unchanged. `unified.overall` === `parsed.overall` and
+          // `unified.failure_class` (validation_failure when !promote) reproduce the
+          // prior inline values byte-identically; the only new key is `axes`.
+          ...unified,
           grounding: parsed.grounding,
           knowledge_hit: parsed.knowledge_hit,
           copy_safety: {
@@ -521,12 +563,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             : {}),
           promoted: promote,
           verification_status: verificationStatus,
-          // YUK-350 (L3, RL5) — additive: a verdict that did NOT promote is a real
-          // model-side validation failure (distinct from the catch-bottom
-          // 'system_error'). Key absent on promote=true.
-          ...(promote ? {} : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
-          summary_md: parsed.summary_md,
-          confidence: parsed.confidence,
+          // YUK-350 — overall / failure_class / summary_md / confidence now come from
+          // `...unified` above (the unified verify contract shape). failure_class is keyed
+          // there only when !promote (validation_failure), identical to the prior inline.
           verified_by: verifiedBy,
         },
         caused_by_event_id: null,
@@ -610,16 +649,20 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         outcome: 'error',
         payload: {
           question_id: questionId,
-          // YUK-350 (RL1) — machine-readable system-error marker, symmetric with the
-          // success-path payload.overall (model verdict). This is the ONLY place the
-          // result-layer 'error' value is ever written: the model can never emit it
-          // (LLM parse enum is 3-value), so an `overall: 'error'` payload is an
-          // unambiguous "system blew up before a verdict" signal. The catch path NEVER
-          // promotes (it re-throws), so this can never coincide with a promotion.
-          overall: 'error' satisfies QuizVerifyOverall,
-          // YUK-350 (L3, RL5) — event-layer system-error class, the twin of L1's
-          // payload.overall='error'. Additive key on the error path only.
-          failure_class: 'system_error' satisfies VerifyFailureClass,
+          // YUK-350 (B5 increment C) — unified verify contract shape via the system_error
+          // projection: { axes:[], overall:'error', failure_class:'system_error',
+          // summary_md, confidence:0 }. This is the ONLY place the result-layer 'error'
+          // value is ever written: the model can never emit it (LLM parse enum is 3-value),
+          // so an `overall:'error'` payload is an unambiguous "system blew up before a
+          // verdict" signal. The catch path NEVER promotes (it re-throws), so this can
+          // never coincide with a promotion. `overall`/`failure_class` are byte-identical
+          // to the prior inline values; axes/summary_md/confidence are additive (and this
+          // outcome='error' event is filtered out by every downstream consumer anyway).
+          ...toUnifiedVerifyResult({
+            source: 'system_error',
+            summary_md: `quiz_verify failed: ${String((err as Error).message ?? err)}`,
+            error: String((err as Error).message ?? err),
+          }),
           error: String((err as Error).message ?? err),
         },
         caused_by_event_id: null,

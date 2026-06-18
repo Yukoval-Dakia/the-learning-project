@@ -20,6 +20,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { VariantVerificationResult, type VariantVerificationResultT } from '@/core/schema/business';
+import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
@@ -32,7 +33,6 @@ import {
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById, writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { VerifyFailureClass } from './quiz_verify';
 
 export interface VariantVerifyJobData {
   mistake_variant_id: string;
@@ -274,6 +274,22 @@ export async function runVariantVerify(
   const now = new Date();
   const verifyEventId = createId();
 
+  // YUK-350 (B5 increment C) — project the variant pass|fail verdict onto the unified
+  // verify contract shape. PROVABLY-EQUIVALENT: `parsed.verdict` is passed IN (the
+  // model verdict); the helper only PROJECTS it (pass ⇒ overall pass, fail ⇒ overall
+  // fail + validation_failure) and turns cause_targeting into an axis. NOTE: this does
+  // NOT flip the accept-first write — the mistake_variant status update below is
+  // byte-identical (pass touches updated_at, fail flips to 'broken'); only the verify
+  // EVENT payload gains the unified shape (axes + overall) as a SUPERSET.
+  const unified = toUnifiedVerifyResult({
+    source: 'variant',
+    verdict: parsed.verdict,
+    cause_targeting: parsed.cause_targeting,
+    failure_reasons: parsed.failure_reasons,
+    summary_md: parsed.summary_md,
+    confidence: parsed.confidence,
+  });
+
   await db.transaction(async (tx) => {
     if (parsed.verdict === 'fail') {
       await tx
@@ -308,15 +324,16 @@ export async function runVariantVerify(
         proposal_event_id: proposalEventId,
         attempt_event_id: attemptEventId,
         verdict: parsed.verdict,
-        // YUK-350 (L3, RL5) — additive: a 'fail' verdict (variant broke; outcome
-        // 'partial') is a validation failure. 'pass' carries no failure_class.
-        ...(parsed.verdict === 'fail'
-          ? { failure_class: 'validation_failure' satisfies VerifyFailureClass }
-          : {}),
+        // YUK-350 (B5 increment C) — unified verify contract shape (axes + overall +
+        // failure_class? + summary_md + confidence). SUPERSET: the variant-specific keys
+        // (verdict / cause_targeting / failure_reasons / cause_source / …) stay
+        // unchanged. `unified.failure_class` (validation_failure on a 'fail' verdict)
+        // reproduces the prior inline value byte-identically; `unified.summary_md` /
+        // `unified.confidence` === parsed.summary_md / parsed.confidence (also already
+        // emitted below); axes/overall are the only new keys.
+        ...unified,
         cause_targeting: parsed.cause_targeting,
         failure_reasons: parsed.failure_reasons,
-        summary_md: parsed.summary_md,
-        confidence: parsed.confidence,
         cause_source: cause.source,
         original_cause_category: cause.primary_category,
         verified_by: aiAgentRef('VariantVerifyTask', result),
