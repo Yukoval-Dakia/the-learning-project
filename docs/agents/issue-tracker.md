@@ -153,13 +153,16 @@ These are observed working in the YUK-27..33 (P0 milestone) execution:
 - ✅ **commit message** containing `Closes YUK-XX` → integration auto-adds the commit as an attachment on the issue, and auto-sets the issue assignee to the commit author.
 - ✅ PR title / description containing `YUK-XX` → integration auto-adds the PR as an attachment on the issue (separate from commit attachments).
 
-### Unconfirmed (verify before relying on)
+### Confirmed (2026-06-18 — automation now ENABLED in Team Settings, verified live by YUK-415 / PR #457)
 
-The following are advertised behaviours of Linear's GitHub integration but were **not** observable in the YUK-27..33 run, because the issues were manually moved to Done before the PR merged. The Linear settings may or may not have the matching automation enabled — verify by leaving one issue in `In Progress`, merging its PR, and observing the state after ~1 minute.
+Owner enabled **Team Settings → Workflow → Pull request and commit automations**. YUK-415 的状态历史实证流转**全自动**触发（无任何手动改状态）：
 
-- ❓ PR moved to review state → issue auto-transitions to `In Review`
-- ❓ PR merged → issue auto-transitions to `Done`
-- ❓ Branch named `yuk-xx-<slug>` (Linear's `gitBranchName`) auto-links to the issue. Our branches used `<phase>/<slug>` form instead of `yuk-xx-`, so this was never exercised.
+- ✅ PR / commit opened → issue auto `In Progress`（"On PR or commit open"；YUK-415 Backlog→In Progress @ PR #457 开）。
+- ✅ PR merged → issue auto `Done`（"On PR or commit merge → Done"；YUK-415 In Progress→Done @ merge）。
+- ✅ Branch `yuk-415-…`（Linear `gitBranchName` 形态）+ commit `Closes YUK-415` 正确 link 并驱动自动流转 → **branch 用 Linear 的 `gitBranchName` 形态命名**（不要 `<phase>/<slug>`）。
+- ⚠️ 仍未观测到 firing：PR review activity → `In Review`。配置已设，但 #457 直接 merge、无 review 事件，故没触发（configured-but-unexercised，不是坏了）。
+
+**自动化已 LIVE 的副作用**：任意 commit/PR 文字出现 `YUK-NN`（哪怕 `Refs` / 哪怕无关）→ open 时自动 `In Progress`、merge 时自动 `Done`。所以 commit/PR **只引用真正要推进/关闭的 issue**（见下方 Keyword convention）。
 
 ### Important nuance: commit > PR body
 
