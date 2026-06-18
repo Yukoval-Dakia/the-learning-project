@@ -111,11 +111,22 @@ function truncatePrompt(prompt: string): string {
 // A draft sitting in the pool was, by definition, NOT promoted, so the terminal
 // verdict is only ever needs_review | failed (a 'pass'/promote would have moved the
 // row to active and out of this list).
+//
+// YUK-350 (B5 increment C) — all three promote-gated handlers (quiz/source/variant)
+// now emit the unified verify contract shape ({ axes, overall, failure_class?,
+// summary_md, confidence }) as a SUPERSET of their prior payloads. This reader prefers
+// the unified `overall` (now present on source_verify too — it previously had none,
+// which is why the legacy `outcome`-fallback branch below existed) and falls back to
+// the still-emitted `verification_status` (quiz) and the `outcome` heuristic for any
+// older / pre-contract event already in the table.
 function deriveVerifyVerdict(
   payload: Record<string, unknown> | null,
   outcome: string | null,
 ): { status: 'needs_review' | 'failed'; reason: string | null } {
   const verificationStatus = payload?.verification_status;
+  // unified contract overall (4-value pass|needs_review|fail|error). A draft in the pool
+  // was never promoted, so 'pass'/'error' never reach here (pass would have left the
+  // pool; outcome='error' events are excluded by the query's ne(outcome,'error')).
   const overall = payload?.overall;
   let status: 'needs_review' | 'failed';
   if (verificationStatus === 'needs_review' || overall === 'needs_review') {
@@ -123,8 +134,9 @@ function deriveVerifyVerdict(
   } else if (verificationStatus === 'failed' || overall === 'fail') {
     status = 'failed';
   } else {
-    // source_verify (tier-2) carries no verification_status/overall; a terminal
-    // non-promoted event ⇒ failed. outcome='partial' (no verdict field) ⇒ needs_review.
+    // Pre-contract source_verify (tier-2) carried no verification_status/overall; a
+    // terminal non-promoted event ⇒ failed. outcome='partial' (no verdict field) ⇒
+    // needs_review. (Post-contract source_verify now carries `overall`, handled above.)
     status = outcome === 'partial' ? 'needs_review' : 'failed';
   }
   const summary = payload?.summary_md;

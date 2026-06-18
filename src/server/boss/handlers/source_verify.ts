@@ -26,6 +26,7 @@ import type { Job } from 'pg-boss';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import { WebSourcedProvenance } from '@/core/schema/provenance';
+import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef } from '@/server/ai/provenance';
@@ -39,7 +40,7 @@ import {
   runSolveCheck,
 } from '@/server/quiz/verify-framework';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { type VerifyFailureClass, maxNgramOverlap } from './quiz_verify';
+import { maxNgramOverlap } from './quiz_verify';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -387,6 +388,33 @@ export async function runSourceVerify(
     const verifyEventId = createId();
     const verifiedBy = aiAgentRef('SourceVerify', { text: '' });
 
+    // YUK-350 (B5 increment C) — project the tier-2 per-check array onto the unified
+    // verify contract shape. PROVABLY-EQUIVALENT: `promote` is passed IN (already decided
+    // above as `knowledgeAlive && no failing check`); the helper only PROJECTS it and
+    // ROLLS the per-check array up into an `overall` source-verify previously LACKED
+    // (any failing check ⇒ fail, else promote ⇒ pass / not-promoted-without-fail ⇒
+    // needs_review). The promote predicate is unchanged. The summary names the failing
+    // check (or the knowledge-archived gate), giving draft-review.ts a驳回理由 it never
+    // had for tier-2 drafts before. SUPERSET: the existing payload keys below are kept.
+    const failingCheck = checks.find((c) => c.verdict === 'fail');
+    const sourceSummaryMd = promote
+      ? 'tier-2 source verify passed'
+      : failingCheck
+        ? `tier-2 source verify failed: ${failingCheck.check} — ${failingCheck.reason}`
+        : !knowledgeAlive
+          ? 'referenced knowledge point archived after sourcing; not promoted'
+          : 'tier-2 source verify did not promote';
+    const unified = toUnifiedVerifyResult({
+      source: 'source',
+      promote,
+      summary_md: sourceSummaryMd,
+      // tier-2 checks are deterministic (or conservative solve-check); the handler has no
+      // calibrated scalar confidence, so report a flat 1 on a verdict and let the axes /
+      // overall carry the signal (mirrors the pre-existing absence of a confidence field).
+      confidence: 1,
+      checks: checks.map((c) => ({ check: c.check, verdict: c.verdict, reason: c.reason })),
+    });
+
     await db.transaction(async (tx) => {
       if (promote) {
         await tx
@@ -438,6 +466,14 @@ export async function runSourceVerify(
           question_id: questionId,
           tier: 2,
           promoted: promote,
+          // YUK-350 (B5 increment C) — unified verify contract shape (axes + overall +
+          // failure_class? + summary_md + confidence). SUPERSET: the tier-2-specific keys
+          // below (checks / knowledge_archived) stay unchanged. `unified.failure_class`
+          // (validation_failure when !promote) reproduces the prior inline value
+          // byte-identically; axes/overall/summary_md/confidence are additive — overall
+          // fills the field source-verify previously lacked, giving draft-review.ts a
+          // first-class verdict instead of inferring from outcome.
+          ...unified,
           checks: checks.map((c) => ({ check: c.check, verdict: c.verdict, reason: c.reason })),
           // F3: record the knowledge-survival gate alongside the tier-2 checks. When a
           // referenced knowledge point was archived after sourcing, the draft is not
@@ -451,10 +487,6 @@ export async function runSourceVerify(
                   archived_knowledge_ids: archivedKnowledgeIds,
                 },
               }),
-          // YUK-350 (L3, RL5) — additive: a tier-2 verify that did NOT promote is a
-          // validation failure (a hard check failed or a knowledge point was archived),
-          // distinct from the catch-bottom 'system_error'. Key absent on promote=true.
-          ...(promote ? {} : { failure_class: 'validation_failure' satisfies VerifyFailureClass }),
           verified_by: verifiedBy,
         },
         caused_by_event_id: null,
@@ -470,10 +502,11 @@ export async function runSourceVerify(
     // verify (idempotency guard treats outcome='error' as retriable). The draft stays
     // draft_status='draft' — the catch path NEVER promotes (mirrors quiz_verify).
     // YUK-350 (RL1) — error-safe: promotion happens only inside the try (post-LLM
-    // gate), so reaching this catch guarantees the question was never promoted. This
-    // handler has no `overall` field (tier-2 verdict is the per-check array), so there
-    // is no symmetric result-layer 'error' value to assign — outcome='error' alone
-    // carries the system-error class on the event.
+    // gate), so reaching this catch guarantees the question was never promoted. The
+    // unified system_error projection now ALSO gives tier-2 a symmetric result-layer
+    // overall='error' (previously the handler emitted only failure_class); the
+    // outcome='error' event is filtered out by every downstream consumer, so this is
+    // purely additive. outcome + idempotency guard unchanged.
     try {
       await writeEvent(db, {
         id: createId(),
@@ -486,9 +519,15 @@ export async function runSourceVerify(
         outcome: 'error',
         payload: {
           question_id: questionId,
-          // YUK-350 (L3, RL5) — event-layer system-error class. Additive key on the
-          // error path only; outcome + idempotency guard unchanged.
-          failure_class: 'system_error' satisfies VerifyFailureClass,
+          // YUK-350 (B5 increment C) — unified verify contract shape via the system_error
+          // projection: { axes:[], overall:'error', failure_class:'system_error',
+          // summary_md, confidence:0 }. failure_class is byte-identical to the prior
+          // inline; overall/axes/summary_md/confidence are additive.
+          ...toUnifiedVerifyResult({
+            source: 'system_error',
+            summary_md: `source_verify failed: ${String((err as Error).message ?? err)}`,
+            error: String((err as Error).message ?? err),
+          }),
           error: String((err as Error).message ?? err),
         },
         caused_by_event_id: null,

@@ -281,14 +281,12 @@ export const QuizVerificationResult = z.object({
 });
 export type QuizVerificationResultT = z.infer<typeof QuizVerificationResult>;
 
-// YUK-350 (RL1, Plan B) — result-layer overall union. This is the value space the
-// quiz_verify HANDLER return type + verify-event payload carry, NOT the LLM-parse
-// schema. It is the 3-value model verdict (pass|needs_review|fail) PLUS the
-// system-error class 'error', which is assigned EXCLUSIVELY by the catch-bottom
-// when the task threw before producing a verdict. Splitting it from
-// QuizVerificationResult.overall keeps the model parse path physically unable to
-// emit 'error' (a model can never self-report a system failure). 'error' is a
-// distinct value — it is NOT aliased to pass and must NEVER promote (the catch path
-// throws before any promote). Exhaustiveness: the legal result-layer values are
-// exactly pass | needs_review | fail | error.
-export type QuizVerifyOverall = QuizVerificationResultT['overall'] | 'error';
+// YUK-350 (B5 increment C) — result-layer overall union LIFTED UP into the shared
+// core verify contract (`./verify-contract`), the correct home now that all three
+// promote-gated handlers (quiz/source/variant) project onto one shape. Re-exported
+// here type-only for back-compat with existing importers (no runtime cycle: a
+// type-only re-export is erased at compile time, so quiz_gen.ts still owns the FROZEN
+// 3-value LLM-parse `QuizVerificationResult.overall`, while the 4-value result-layer
+// projection — the 3 model verdicts PLUS the catch-bottom-only 'error' — lives in the
+// contract module). See verify-contract.ts for the full red-line-1 rationale.
+export type { QuizVerifyOverall } from './verify-contract';
