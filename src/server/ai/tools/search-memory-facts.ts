@@ -11,8 +11,15 @@
 // internal retrieval out of the user-visible event stream.
 
 import { type MemoryClient, createMemoryClient } from '@/server/memory/client';
+import { searchMemories } from '@/server/memory/search-memories';
 import { z } from 'zod';
 import type { DomainTool, ToolContext } from './types';
+
+// P3 (YUK-351): default topK for the wrapper when the caller omits it. The
+// pre-wrapper code passed `topK: undefined` straight to mem0 (its own default was
+// 10/20). The recency-rerank wrapper needs a concrete topK to overfetch + truncate
+// against, so name the fallback here instead of leaking `undefined` into the math.
+const DEFAULT_FACTS_TOP_K = 10;
 
 export const SearchMemoryFactsInputSchema = z.object({
   query: z.string().min(1).describe('Natural-language retrieval query for the Mem0 fact store.'),
@@ -78,11 +85,13 @@ export function buildSearchMemoryFactsTool(
     input: SearchMemoryFactsInput,
   ): Promise<SearchMemoryFactsOutput> {
     const client = memoryFactory();
-    // `user_id` is forced to 'self' inside the client wrapper (client.ts:184) —
-    // single-user invariant. `scopeKey` is threaded through the documented
-    // `{ contains }` filter shape (client.ts:181-183).
-    const result = await client.search(input.query, {
-      topK: input.topK,
+    // P3 (YUK-351): read through the searchMemories wrapper so soft-superseded
+    // facts (P2 reconcile markers) are filtered out and survivors are recency-
+    // reranked. `user_id` is still forced to 'self' inside the client wrapper
+    // (client.ts:195) — single-user invariant. `scopeKey` is threaded through the
+    // documented `{ contains }` filter shape (client.ts:191-194).
+    const result = await searchMemories(client, input.query, {
+      topK: input.topK ?? DEFAULT_FACTS_TOP_K,
       filters: input.scopeKey ? { scope_key: input.scopeKey } : undefined,
     });
     const facts = result.results ?? [];
