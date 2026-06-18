@@ -12,13 +12,13 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
+import { PFA_GAMMA, PFA_RHO, pLearnedBand, pfaLogit } from '@/core/pfa';
 import {
   DIFFICULTY_PROXY_WEIGHT,
   conjunctiveCredits,
   difficultyToLogitB,
   eloK,
   thetaSe,
-  thetaToMastery,
   updateThetaPrecision,
 } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
@@ -142,26 +142,43 @@ export async function getMasteryState(
  * `knowledge_mastery` view's faked recency-weighted-success-rate +
  * `evidence_count < 3 → 0.5` placeholder).
  *
- * Batch read of the p(L) state for many knowledge nodes, projecting each row's
- * θ̂ → a 0..1 `mastery` via {@link thetaToMastery} (σ(θ̂); cold-start θ̂=0 → 0.5)
- * and exposing `theta_se` (from `theta_precision`, default precision=1 → SE=1)
- * for uncertainty. Returns a Map keyed by knowledge id. Nodes with no
- * `mastery_state` row (never attempted) are simply ABSENT from the map — callers
- * treat absence as cold start / `mastery=null`, matching the old view's NULL
- * (no-evidence) semantics. `last_outcome_at` is the real last-attempt time
- * (replaces the view's `last_evidence_at`).
+ * Batch read of the p(L) state for many knowledge nodes, projecting each row to
+ * a 0..1 `mastery` via the **difficulty-aware PFA p(L)** ({@link pLearnedBand} /
+ * {@link pfaLogit}: logit = γ·success + ρ·fail − β, where β is the KC's
+ * representative HARD-track item difficulty), and exposing `theta_se` (from
+ * `theta_precision`, default precision=1 → SE=1) for uncertainty. Returns a Map
+ * keyed by knowledge id. Nodes with no `mastery_state` row (never attempted) are
+ * simply ABSENT from the map — callers treat absence as cold start /
+ * `mastery=null`, matching the old view's NULL (no-evidence) semantics.
+ * `last_outcome_at` is the real last-attempt time (replaces the view's
+ * `last_evidence_at`).
  *
- * ⚠️ INTERIM PROJECTION — the `mastery` field here is σ(θ̂) at b=0 (see
- *   {@link thetaToMastery}), i.e. the Elo ability θ̂ (individual ability on the
- *   b/logit scale) squashed to (0,1), NOT the difficulty-aware PFA p(L) and NOT a
- *   confidence-interval-aware number. The full difficulty-aware p(L) (conditioned
- *   on item difficulty b + PFA counts) and the ADR-0035 low-confidence /
- *   confidence-interval presentation are owned by B1 (YUK-348) and will REPLACE
- *   this interim projection. `theta_hat` / `theta_precision` / `theta_se` are
- *   surfaced raw so callers (and the future B1 read) keep the underlying state.
+ * B1 FULL path (YUK-420) — this is the LIVE difficulty-aware p(L) projection,
+ *   completing the path that previously shipped only the interim σ(θ̂)@b=0
+ *   point estimate:
+ *     - `mastery` = p(L) point estimate = σ(γ·success + ρ·fail − β). Cold start
+ *       (success=0, fail=0, β=0) → 0.5. Harder KC (larger β) lowers p(L) at fixed
+ *       counts; more successes raise it; more failures lower it.
+ *     - `mastery_lo` / `mastery_hi` = the ADR-0035 confidence-interval band
+ *       (point logit ± theta_se, each through σ). Widens as θ̂ uncertainty grows.
+ *     - `low_confidence` = true when θ̂ is still too uncertain to trust the point
+ *       (theta_se ≥ the precision threshold) — presentation should show the band.
+ *   `theta_hat` / `theta_precision` / `theta_se` are surfaced raw so callers keep
+ *   the underlying ability state. The PFA γ/ρ coefficients are PHASE-DEFERRED
+ *   hardcoded defaults pending nightly-refit statistical verification (YUK-361,
+ *   see src/core/pfa.ts).
+ *
+ *   The CI fields are ADDITIVE — the 5 point-estimate consumers (tree / node-page
+ *   / review-plan-tools / knowledge-readers / detail) read only `mastery` and are
+ *   transparent to the swap; the new fields are opt-in for CI-aware surfaces.
  */
 export interface MasteryProjection {
   mastery: number;
+  // B1 FULL (YUK-420) — ADR-0035 confidence-interval band around the p(L) point.
+  // Additive: existing consumers ignore these; CI-aware surfaces show the band.
+  mastery_lo: number;
+  mastery_hi: number;
+  low_confidence: boolean;
   theta_hat: number;
   theta_precision: number;
   theta_se: number;
@@ -191,21 +208,101 @@ export async function getMasteryProjection(
     .where(
       and(eq(mastery_state.subject_kind, subjectKind), inArray(mastery_state.subject_id, ids)),
     );
-  return new Map(
-    rows.map((row) => [
-      row.subject_id,
-      {
-        mastery: thetaToMastery(row.theta_hat),
-        theta_hat: row.theta_hat,
-        theta_precision: row.theta_precision,
-        theta_se: thetaSe(row.theta_precision),
-        evidence_count: row.evidence_count,
-        success_count: row.success_count,
-        fail_count: row.fail_count,
-        last_outcome_at: row.last_outcome_at ?? null,
-      },
-    ]),
+  // B1 FULL (YUK-420) — per-KC representative β = the KC's HARD-track item
+  // difficulty (logit). β feeds the difficulty-aware p(L) (harder KC ⇒ lower p(L)
+  // at fixed counts). KCs with no anchored hard-track item → β=0 (neutral
+  // difficulty origin), so cold-start / unanchored KCs project exactly as before
+  // (σ at b=0). Only KCs that HAVE a mastery_state row need a β (others are absent
+  // from the map), so we resolve β only for the rows we actually project.
+  const betaByKc = await getRepresentativeKcBeta(
+    db,
+    rows.map((r) => r.subject_id),
   );
+  return new Map(
+    rows.map((row) => {
+      const beta = betaByKc.get(row.subject_id) ?? 0;
+      const se = thetaSe(row.theta_precision);
+      // logit(p(L)) = γ·success + ρ·fail − β (ADR-0035 sign convention; β enters
+      // negatively so harder items lower p(L) — see src/core/pfa.ts).
+      const pointLogit = pfaLogit(beta, PFA_GAMMA, PFA_RHO, row.success_count, row.fail_count);
+      // CI band on the logit scale ± theta_se, each through σ (ADR-0035
+      // confidence-interval / low-confidence presentation).
+      const band = pLearnedBand(pointLogit, se);
+      return [
+        row.subject_id,
+        {
+          mastery: band.point,
+          mastery_lo: band.lo,
+          mastery_hi: band.hi,
+          low_confidence: band.lowConfidence,
+          theta_hat: row.theta_hat,
+          theta_precision: row.theta_precision,
+          theta_se: se,
+          evidence_count: row.evidence_count,
+          success_count: row.success_count,
+          fail_count: row.fail_count,
+          last_outcome_at: row.last_outcome_at ?? null,
+        },
+      ];
+    }),
+  );
+}
+
+/**
+ * B1 FULL (YUK-420) — resolve a representative HARD-track item difficulty (β, on
+ * the logit b-scale) per knowledge node, for the difficulty-aware p(L).
+ *
+ * Representative-b choice (documented): a KC is carried by MANY questions, each
+ * possibly anchored by a HARD-track `item_calibration` row. There is no single
+ * "the KC's b"; we summarise across the KC's hard-track items using the **MEDIAN**
+ * of each item's effective b = COALESCE(b_calib, b_anchor, b) — the same read
+ * order as {@link effectiveB} (de-biased b_calib first, then cold-start anchor
+ * b_anchor, then the legacy b column). Median (not mean) is robust to a single
+ * mis-anchored outlier item skewing the KC difficulty. SOFT-track rows are
+ * EXCLUDED (ADR-0035: soft track never reaches p(L)/scheduling). Items with no
+ * effective b at all are skipped; a KC with no anchored hard-track item gets NO
+ * entry → caller defaults β=0 (neutral difficulty origin, identical to the old
+ * σ(θ̂)@b=0 projection for unanchored KCs).
+ *
+ * READ-ONLY — pure SELECT against question.knowledge_ids (GIN @>) ⋈ item_calibration;
+ * never writes any b column (item-half locked, G4).
+ */
+async function getRepresentativeKcBeta(
+  db: Db,
+  knowledgeIds: string[],
+): Promise<Map<string, number>> {
+  const ids = Array.from(new Set(knowledgeIds.filter((id) => id.length > 0)));
+  if (ids.length === 0) return new Map();
+  // For each requested KC, find questions carrying it (knowledge_ids @> '["<kc>"]',
+  // hitting the question_knowledge_ids_gin index), join their HARD-track
+  // item_calibration, and take the median effective b. unnest(<ids>) drives the
+  // per-KC grouping; jsonb_build_array(kc) keeps the GIN containment predicate
+  // index-friendly per KC. The id list is parameter-bound (sql.join), not string-
+  // interpolated — no injection surface.
+  const idParams = sql.join(
+    ids.map((id) => sql`${id}`),
+    sql`, `,
+  );
+  const rows = (await db.execute(sql`
+    SELECT
+      kc,
+      percentile_cont(0.5) WITHIN GROUP (
+        ORDER BY COALESCE(ic.b_calib, ic.b_anchor, ic.b)
+      ) AS beta
+    FROM unnest(ARRAY[${idParams}]::text[]) AS kc
+    JOIN question q ON q.knowledge_ids @> jsonb_build_array(kc)
+    JOIN item_calibration ic ON ic.question_id = q.id
+      AND ic.track = 'hard'
+      AND COALESCE(ic.b_calib, ic.b_anchor, ic.b) IS NOT NULL
+    GROUP BY kc
+  `)) as unknown as Array<{ kc: string; beta: number | null }>;
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (r.beta !== null && r.beta !== undefined) {
+      map.set(r.kc, Number(r.beta));
+    }
+  }
+  return map;
 }
 
 export interface UpdateThetaForAttemptInput {
