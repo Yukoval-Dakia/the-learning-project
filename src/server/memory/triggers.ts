@@ -1,7 +1,7 @@
 import { eq, inArray, isNull, sql } from 'drizzle-orm';
 import { type DrizzleTransactionLike, type Job, fromDrizzle } from 'pg-boss';
 
-import { RetryableError } from '@/core/schema/structured_question';
+import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
@@ -613,7 +613,17 @@ export function buildMemoryReconcileHandler(
         // rows from this attempt). Swallowing here (the prior behavior) made the
         // job report success → no retry → this batch silently never reconciled.
         if (err instanceof RetryableError) throw err;
-        // Non-retryable: leave planned rows intact for idempotent resume on next job.
+        // YUK-353 (item 2): PermanentError (judge auth 401/403, 4xx, non-JSON 2xx)
+        // must ALSO propagate. Previously it fell into the swallow branch below →
+        // the job reported success → pg-boss never archived it and no failed
+        // outcome was recorded, so an auth/config breakage looked like a healthy
+        // no-op reconcile. Rethrowing lets pg-boss exhaust retries and archive the
+        // job (terminal failure surfaces in the boss archive / admin jobs面).
+        // Resume safety is unchanged: any planned rows from a PRIOR run still
+        // replay idempotently via applyPlannedRows at job start.
+        if (err instanceof PermanentError) throw err;
+        // Other non-retryable failures (unexpected errors, not in our error
+        // taxonomy): leave planned rows intact for idempotent resume on next job.
         console.error(
           '[memory_reconcile] job failed (non-retryable); planned rows left for resume',
           err,

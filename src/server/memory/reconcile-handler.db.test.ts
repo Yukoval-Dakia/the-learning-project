@@ -5,7 +5,7 @@
 //   3. Concurrency → singletonKey serializes per user
 // Also verifies the two-read-consumer passthrough after supersede injection.
 
-import { RetryableError } from '@/core/schema/structured_question';
+import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -449,6 +449,37 @@ describe('reconcile handler — retryable failure rethrows (pg-boss retries)', (
         }) as never,
       ),
     ).rejects.toBeInstanceOf(RetryableError);
+  });
+
+  // YUK-353 (item 2): a PermanentError (judge auth 401/403, 4xx, non-JSON 2xx)
+  // must propagate too — previously it was swallowed, so the job reported success
+  // and pg-boss never archived it (auth/config breakage looked like a healthy
+  // no-op reconcile).
+  it('rethrows PermanentError from judge instead of swallowing it', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'User prefers light mode', metadata: { created_ms: 1000 } },
+    ]);
+    // judge throws a non-retryable (permanent) error — e.g. GLM auth 401.
+    const judge = vi.fn(async () => {
+      throw new PermanentError('GLM reconcile requires ZHIPU_API_KEY (via mem0 config)');
+    });
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+
+    await expect(
+      handler(
+        makeJob({
+          memories: [mem(newMemId, 'User prefers dark mode', 'preference', 2000)],
+          user_id: 'self',
+        }) as never,
+      ),
+    ).rejects.toBeInstanceOf(PermanentError);
   });
 });
 
