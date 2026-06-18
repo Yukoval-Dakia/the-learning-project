@@ -17,6 +17,8 @@ import {
   conjunctiveCredits,
   difficultyToLogitB,
   eloK,
+  thetaSe,
+  thetaToMastery,
   updateThetaPrecision,
 } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
@@ -132,6 +134,62 @@ export async function getMasteryState(
     theta_precision: row.theta_precision,
     last_theta_delta: row.last_theta_delta ?? null,
   };
+}
+
+/**
+ * B1 double-truth fix — the SINGLE display/AI-facing read of mastery, derived
+ * from the real `mastery_state` source of truth (NOT the deprecated
+ * `knowledge_mastery` view's faked recency-weighted-success-rate +
+ * `evidence_count < 3 → 0.5` placeholder).
+ *
+ * Batch read of the p(L) state for many knowledge nodes, projecting each row's
+ * θ̂ → a 0..1 `mastery` via {@link thetaToMastery} (σ(θ̂); cold-start θ̂=0 → 0.5)
+ * and exposing `theta_se` (from `theta_precision`, default precision=1 → SE=1)
+ * for uncertainty. Returns a Map keyed by knowledge id. Nodes with no
+ * `mastery_state` row (never attempted) are simply ABSENT from the map — callers
+ * treat absence as cold start / `mastery=null`, matching the old view's NULL
+ * (no-evidence) semantics. `last_outcome_at` is the real last-attempt time
+ * (replaces the view's `last_evidence_at`).
+ */
+export interface MasteryProjection {
+  mastery: number;
+  theta_hat: number;
+  theta_precision: number;
+  theta_se: number;
+  evidence_count: number;
+  success_count: number;
+  fail_count: number;
+  last_outcome_at: Date | null;
+}
+
+export async function getMasteryProjection(
+  db: DbLike,
+  knowledgeIds: string[],
+  subjectKind = 'knowledge',
+): Promise<Map<string, MasteryProjection>> {
+  const ids = Array.from(new Set(knowledgeIds.filter((id) => id.length > 0)));
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select()
+    .from(mastery_state)
+    .where(
+      and(eq(mastery_state.subject_kind, subjectKind), inArray(mastery_state.subject_id, ids)),
+    );
+  return new Map(
+    rows.map((row) => [
+      row.subject_id,
+      {
+        mastery: thetaToMastery(row.theta_hat),
+        theta_hat: row.theta_hat,
+        theta_precision: row.theta_precision,
+        theta_se: thetaSe(row.theta_precision),
+        evidence_count: row.evidence_count,
+        success_count: row.success_count,
+        fail_count: row.fail_count,
+        last_outcome_at: row.last_outcome_at ?? null,
+      },
+    ]),
+  );
 }
 
 export interface UpdateThetaForAttemptInput {

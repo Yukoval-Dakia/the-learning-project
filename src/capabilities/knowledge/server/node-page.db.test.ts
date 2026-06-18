@@ -6,6 +6,7 @@
 
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { artifact, artifact_block_ref, event, knowledge, learning_item } from '@/db/schema';
+import { upsertMasteryState } from '@/server/mastery/state';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -420,10 +421,18 @@ describe('loadKnowledgeNodePage', () => {
   it('derives a mastery_decay_bucket from last evidence recency', async () => {
     const db = testDb();
     await seedKnowledge('k1', { name: '虚词' });
+    // B1 double-truth fix — evidence_count / last_evidence_at now come from the
+    // SoT mastery_state (last_outcome_at), NOT raw event rows. Seed the state the
+    // way the attempt path writes it: 3 stale observations.
     const old = new Date(Date.now() - 35 * 86_400_000);
-    await seedEvent('ev-old-1', 'k1', old);
-    await seedEvent('ev-old-2', 'k1', old);
-    await seedEvent('ev-old-3', 'k1', old);
+    await upsertMasteryState(db, {
+      subject_id: 'k1',
+      theta_hat: -0.5,
+      evidence_count: 3,
+      success_count: 1,
+      fail_count: 2,
+      last_outcome_at: old,
+    });
 
     const page = await loadKnowledgeNodePage(db, 'k1');
     expect(page?.evidence_count).toBe(3);

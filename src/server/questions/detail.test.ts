@@ -5,6 +5,7 @@
 
 import { newId } from '@/core/ids';
 import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { upsertMasteryState } from '@/server/mastery/state';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -203,12 +204,25 @@ describe('loadQuestionDetail', () => {
     await seedKnowledge(kStale);
     const qid = await seedQuestion({ knowledge_ids: [kFresh, kStale] });
 
-    // fresh evidence (today) for kFresh; stale evidence (>30d ago) for kStale.
-    await seedAttempt({ question_id: qid, knowledge_id: kFresh, created_at: new Date() });
-    await seedAttempt({
-      question_id: qid,
-      knowledge_id: kStale,
-      created_at: new Date(Date.now() - 40 * 86_400_000),
+    // B1 double-truth fix — decay_bucket now derives from the SoT mastery_state
+    // (evidence_count + last_outcome_at), NOT raw event rows. Seed the state the
+    // attempt path writes: fresh observation (today) for kFresh, stale (>30d) for
+    // kStale.
+    await upsertMasteryState(testDb(), {
+      subject_id: kFresh,
+      theta_hat: 0.2,
+      evidence_count: 1,
+      success_count: 1,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+    await upsertMasteryState(testDb(), {
+      subject_id: kStale,
+      theta_hat: -0.2,
+      evidence_count: 1,
+      success_count: 0,
+      fail_count: 1,
+      last_outcome_at: new Date(Date.now() - 40 * 86_400_000),
     });
     await seedFsrs('knowledge', kFresh, new Date('2026-07-01T00:00:00Z'));
 

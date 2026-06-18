@@ -28,6 +28,28 @@ export function expectedScore(theta: number, b: number): number {
   return logistic(theta - b);
 }
 
+/**
+ * B1 double-truth fix — project θ̂ (logit) → a 0..1 p(L) mastery for DISPLAY /
+ * AI-facing surfaces.
+ *
+ * This is the single source of truth for "the 0..1 mastery number" every read
+ * surface (node page, tree, knowledge readers, review snapshot, question detail)
+ * shows. It REPLACES the deprecated `knowledge_mastery` view's `mastery` column,
+ * which faked the number as a recency-weighted success rate with an
+ * `evidence_count < 3 → 0.5` placeholder rule — two diverging "truths" for the
+ * same node.
+ *
+ * Projection = σ(θ̂) = expectedScore(θ̂, 0): the 1PL p(correct) at the neutral
+ * logit origin b=0 (the same anchor cold-start θ̂ starts from). So:
+ *   - cold start θ̂=0 → 0.5 (neutral midpoint — derived now, not a placeholder),
+ *   - θ̂ > 0 → > 0.5, θ̂ < 0 → < 0.5, monotone, always strictly in (0, 1).
+ * Callers carry `theta_precision` (→ thetaSe) separately for uncertainty; this
+ * function is the point estimate only.
+ */
+export function thetaToMastery(thetaHat: number): number {
+  return expectedScore(thetaHat, 0);
+}
+
 export interface EloKConfig {
   /** 冷启段步长（前 coldStartN 次）。logit 尺度，占位待标定。 */
   kCold?: number; // default 0.4
