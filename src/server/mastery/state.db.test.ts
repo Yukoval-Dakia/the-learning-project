@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
+import { PFA_GAMMA, PFA_RHO, pLearned } from '@/core/pfa';
 import { thetaToMastery } from '@/core/theta';
 import { db } from '@/db/client';
 import {
@@ -132,16 +133,34 @@ describe('getMasteryState', () => {
   });
 });
 
-describe('getMasteryProjection (B1 double-truth fix — read from theta_hat, not the view)', () => {
+describe('getMasteryProjection (B1 FULL — difficulty-aware PFA p(L), YUK-420)', () => {
   beforeEach(async () => {
     await resetDb();
   });
+
+  // Anchor a KC with one hard-track item at difficulty b → representative β = b.
+  async function seedAnchoredKc(kc: string, b: number) {
+    const q = createId();
+    await seedKnowledge(kc);
+    await seedQuestion(q, [kc], 3);
+    await db.insert(item_calibration).values({
+      id: newId(),
+      question_id: q,
+      b,
+      b_anchor: b,
+      confidence: 0.9,
+      track: 'hard',
+      source: 'llm_prior',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+  }
 
   it('returns an empty map for empty input (no query)', async () => {
     expect((await getMasteryProjection(db, [])).size).toBe(0);
   });
 
-  it('projects theta_hat → mastery = σ(θ̂) and derives theta_se from precision', async () => {
+  it('projects PFA p(L) = σ(γ·success + ρ·fail − β); β=0 when KC has no anchored item', async () => {
     const k = createId();
     await seedKnowledge(k);
     await upsertMasteryState(db, {
@@ -156,17 +175,20 @@ describe('getMasteryProjection (B1 double-truth fix — read from theta_hat, not
     const proj = await getMasteryProjection(db, [k]);
     const row = proj.get(k);
     expect(row).toBeDefined();
-    // mastery is the θ̂ projection — NOT the deprecated view's weighted success
-    // rate (which here would be ~0.8) nor the <3-evidence 0.5 placeholder.
-    expect(row?.mastery).toBeCloseTo(thetaToMastery(1.2), 10);
+    // mastery is the difficulty-aware PFA p(L) — NOT σ(θ̂) and NOT the view rate.
+    // No anchored hard-track item for this KC → β=0.
+    expect(row?.mastery).toBeCloseTo(pLearned(0, PFA_GAMMA, PFA_RHO, 4, 1), 10);
     expect(row?.theta_hat).toBeCloseTo(1.2, 5);
-    // SE = 1/√precision = 1/√4 = 0.5.
+    // SE = 1/√precision = 1/√4 = 0.5 → CI band straddles the point, confident.
     expect(row?.theta_se).toBeCloseTo(0.5, 10);
+    expect(row?.mastery_lo).toBeLessThan(row?.mastery ?? 0);
+    expect(row?.mastery_hi).toBeGreaterThan(row?.mastery ?? 0);
+    expect(row?.low_confidence).toBe(false);
     expect(row?.success_count).toBe(4);
     expect(row?.fail_count).toBe(1);
   });
 
-  it('cold start: θ̂=0 / precision=1 (DB defaults) → mastery 0.5, theta_se 1', async () => {
+  it('cold start: θ̂=0 / precision=1, success=fail=0, β=0 → p(L) 0.5, theta_se 1, low_confidence', async () => {
     const k = createId();
     await seedKnowledge(k);
     // A row at the DB defaults (e.g. seeded with no movement) — θ̂=0, precision=1.
@@ -182,6 +204,8 @@ describe('getMasteryProjection (B1 double-truth fix — read from theta_hat, not
     const row = (await getMasteryProjection(db, [k])).get(k);
     expect(row?.mastery).toBeCloseTo(0.5, 10);
     expect(row?.theta_se).toBeCloseTo(1, 10);
+    // SE=1 ≥ the low-confidence threshold → band-first presentation.
+    expect(row?.low_confidence).toBe(true);
   });
 
   it('omits never-attempted nodes (no row) — absence = cold start, matches the old view NULL', async () => {
@@ -200,35 +224,175 @@ describe('getMasteryProjection (B1 double-truth fix — read from theta_hat, not
     const proj = await getMasteryProjection(db, [seeded, unseeded]);
     expect(proj.has(seeded)).toBe(true);
     expect(proj.has(unseeded)).toBe(false);
-    // A weak node (θ̂ < 0) projects below 0.5 — the deprecated view would have
-    // FAKED this as 0.5 because evidence_count < 3.
+    // A node with only failures (success=0, fail=2, β=0) → p(L)=σ(2ρ) < 0.5 —
+    // the deprecated view would have FAKED this as 0.5 (evidence_count < 3).
     expect(proj.get(seeded)?.mastery).toBeLessThan(0.5);
   });
 
-  it('after a real attempt, mastery tracks the moved θ̂ (end-to-end, not the view placeholder)', async () => {
+  it('harder KC (larger representative β) → lower p(L) at IDENTICAL success/fail counts (difficulty-aware)', async () => {
+    // Two KCs with identical PFA counts but different item difficulty β.
+    const kEasy = createId();
+    const kHard = createId();
+    await seedAnchoredKc(kEasy, -0.5); // easy item
+    await seedAnchoredKc(kHard, 1.5); // hard item
+    const counts = {
+      theta_hat: 0,
+      evidence_count: 4,
+      success_count: 3,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+      theta_precision: 4,
+    };
+    await upsertMasteryState(db, { subject_id: kEasy, ...counts });
+    await upsertMasteryState(db, { subject_id: kHard, ...counts });
+    const proj = await getMasteryProjection(db, [kEasy, kHard]);
+    const easy = proj.get(kEasy);
+    const hard = proj.get(kHard);
+    expect(easy).toBeDefined();
+    expect(hard).toBeDefined();
+    // Same counts, harder β → strictly lower p(L). This is the difficulty-aware
+    // behaviour the interim σ(θ̂)@b=0 form could NOT express (it ignored β).
+    expect(hard?.mastery).toBeLessThan(easy?.mastery ?? 1);
+    // And both match the exact PFA p(L) at their representative β.
+    expect(easy?.mastery).toBeCloseTo(pLearned(-0.5, PFA_GAMMA, PFA_RHO, 3, 1), 10);
+    expect(hard?.mastery).toBeCloseTo(pLearned(1.5, PFA_GAMMA, PFA_RHO, 3, 1), 10);
+  });
+
+  it('representative β is the MEDIAN of the KC hard-track items (robust to one outlier)', async () => {
+    const kc = createId();
+    await seedKnowledge(kc);
+    // Three items: b = 0.0, 0.5, 5.0 → median 0.5 (the outlier 5.0 is ignored).
+    for (const b of [0.0, 0.5, 5.0]) {
+      const q = createId();
+      await seedQuestion(q, [kc], 3);
+      await db.insert(item_calibration).values({
+        id: newId(),
+        question_id: q,
+        b,
+        b_anchor: b,
+        confidence: 0.9,
+        track: 'hard',
+        source: 'llm_prior',
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+    }
+    await upsertMasteryState(db, {
+      subject_id: kc,
+      theta_hat: 0,
+      evidence_count: 4,
+      success_count: 3,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+      theta_precision: 4,
+    });
+    const row = (await getMasteryProjection(db, [kc])).get(kc);
+    // p(L) computed at the MEDIAN β=0.5 (not the mean ≈ 1.83 the outlier would skew to).
+    expect(row?.mastery).toBeCloseTo(pLearned(0.5, PFA_GAMMA, PFA_RHO, 3, 1), 10);
+  });
+
+  it('SOFT-track items are EXCLUDED from β (ADR-0035: soft never reaches p(L))', async () => {
+    const kc = createId();
+    await seedKnowledge(kc);
+    // Only a SOFT-track calibration exists → it must NOT contribute β → β falls
+    // back to 0 (neutral), identical to having no anchor at all.
+    const q = createId();
+    await seedQuestion(q, [kc], 3);
+    await db.insert(item_calibration).values({
+      id: newId(),
+      question_id: q,
+      b: 2.0,
+      b_anchor: 2.0,
+      confidence: 0.9,
+      track: 'soft',
+      source: 'llm_prior',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    await upsertMasteryState(db, {
+      subject_id: kc,
+      theta_hat: 0,
+      evidence_count: 4,
+      success_count: 3,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+      theta_precision: 4,
+    });
+    const row = (await getMasteryProjection(db, [kc])).get(kc);
+    // β=0 (soft excluded), NOT β=2.0.
+    expect(row?.mastery).toBeCloseTo(pLearned(0, PFA_GAMMA, PFA_RHO, 3, 1), 10);
+  });
+
+  it('CI band widens as θ̂ uncertainty (theta_se) grows', async () => {
+    const kConfident = createId();
+    const kUncertain = createId();
+    await seedKnowledge(kConfident);
+    await seedKnowledge(kUncertain);
+    const base = {
+      theta_hat: 0,
+      evidence_count: 4,
+      success_count: 3,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+    };
+    // High precision → small SE → narrow band.
+    await upsertMasteryState(db, { subject_id: kConfident, ...base, theta_precision: 16 });
+    // Low precision → large SE → wide band.
+    await upsertMasteryState(db, { subject_id: kUncertain, ...base, theta_precision: 0.25 });
+    const proj = await getMasteryProjection(db, [kConfident, kUncertain]);
+    const confident = proj.get(kConfident);
+    const uncertain = proj.get(kUncertain);
+    const confidentWidth = (confident?.mastery_hi ?? 0) - (confident?.mastery_lo ?? 0);
+    const uncertainWidth = (uncertain?.mastery_hi ?? 0) - (uncertain?.mastery_lo ?? 0);
+    expect(uncertainWidth).toBeGreaterThan(confidentWidth);
+    // SE = 1/√0.25 = 2 ≥ threshold → low confidence; SE = 1/√16 = 0.25 < threshold.
+    expect(uncertain?.low_confidence).toBe(true);
+    expect(confident?.low_confidence).toBe(false);
+  });
+
+  it('after a real attempt, p(L) reflects the PFA counts and is difficulty-aware, NOT σ(θ̂)@b=0', async () => {
     const k = createId();
     const q = createId();
     await seedKnowledge(k);
     await seedQuestion(q, [k], 3);
-    // One correct attempt — θ̂ moves up from 0; evidence_count becomes 1 (< 3),
-    // exactly the regime the deprecated view clamped to 0.5.
+    // Anchor the question/KC at a non-zero hard-track b so the projection is
+    // demonstrably difficulty-aware (β ≠ 0).
+    await db.insert(item_calibration).values({
+      id: newId(),
+      question_id: q,
+      b: 0.8,
+      b_anchor: 0.8,
+      confidence: 0.9,
+      track: 'hard',
+      source: 'llm_prior',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    // Two successes + one fail on the known-b item.
     await db.transaction(async (tx) => {
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: [k],
-        questionId: q,
-        outcome: 1,
-        difficulty: 3,
-        attemptEventId: newId(),
-        now: new Date(),
-      });
+      for (const outcome of [1, 1, 0] as const) {
+        await updateThetaForAttempt(tx, {
+          knowledgeIds: [k],
+          questionId: q,
+          outcome,
+          difficulty: 3,
+          attemptEventId: newId(),
+          now: new Date(),
+        });
+      }
     });
     const state = await getMasteryState(db, k);
     const row = (await getMasteryProjection(db, [k])).get(k);
-    expect(state?.evidence_count).toBe(1);
-    expect(row?.theta_hat).toBeCloseTo(state?.theta_hat ?? Number.NaN, 10);
-    expect(row?.mastery).toBeCloseTo(thetaToMastery(state?.theta_hat ?? 0), 10);
-    // The correct answer pushed θ̂ > 0 → mastery > 0.5, NOT clamped to 0.5.
-    expect(row?.mastery).toBeGreaterThan(0.5);
+    expect(state?.success_count).toBe(2);
+    expect(state?.fail_count).toBe(1);
+    // mastery = the difficulty-aware p(L) at the KC's representative β (0.8) and
+    // the persisted PFA counts — NOT 0.5 and NOT σ(θ̂)@b=0.
+    // b is stored as float4 (real) so the round-tripped β ≈ 0.8 within float4
+    // precision — assert to 6 decimals (well inside the real-column tolerance).
+    const expectedPL = pLearned(0.8, PFA_GAMMA, PFA_RHO, 2, 1);
+    expect(row?.mastery).toBeCloseTo(expectedPL, 6);
+    expect(row?.mastery).not.toBeCloseTo(0.5, 4);
+    expect(row?.mastery).not.toBeCloseTo(thetaToMastery(state?.theta_hat ?? 0), 4);
   });
 });
 

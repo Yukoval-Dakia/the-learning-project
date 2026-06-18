@@ -29,31 +29,21 @@ export function expectedScore(theta: number, b: number): number {
 }
 
 /**
- * B1 double-truth fix — project θ̂ (logit) → a 0..1 mastery number for DISPLAY /
- * AI-facing surfaces. It is the SINGLE read of "the 0..1 mastery number" every
- * read surface (node page, tree, knowledge readers, review snapshot, question
- * detail) shows, REPLACING the deprecated `knowledge_mastery` view's `mastery`
- * column, which faked the number as a recency-weighted success rate with an
- * `evidence_count < 3 → 0.5` placeholder rule — two diverging "truths" for the
- * same node.
+ * Project θ̂ (logit) → a 0..1 number = σ(θ̂) = expectedScore(θ̂, 0): the 1PL
+ * p(correct) at the neutral logit origin b=0. Cold start θ̂=0 → 0.5; θ̂>0 → >0.5;
+ * monotone; strictly in (0,1). Point estimate only — no confidence interval.
  *
- * ⚠️ INTERIM PROJECTION — NOT the final p(L) (read before relying on this number).
- *   Projection = σ(θ̂) = expectedScore(θ̂, 0): the 1PL p(correct) evaluated at the
- *   neutral logit origin b=0. So what this returns is **σ of the θ̂ point estimate
- *   at b=0** — i.e. the Elo ability θ̂ (individual ability on the b/logit scale)
- *   squashed to (0,1), NOT the difficulty-aware PFA p(L) (probability of having
- *   LEARNED a KC, which must condition on item difficulty b and on the PFA
- *   success/fail history, not just θ̂ at the b=0 anchor). Properties of THIS interim
- *   form:
- *     - cold start θ̂=0 → 0.5 (neutral midpoint — derived now, not a placeholder),
- *     - θ̂ > 0 → > 0.5, θ̂ < 0 → < 0.5, monotone, always strictly in (0, 1).
- *   Callers carry `theta_precision` (→ thetaSe) separately for uncertainty; this
- *   function is the point estimate only and exposes NO confidence interval.
- *
- *   The full B1 — the difficulty-aware p(L) (conditioned on b + PFA counts, not
- *   σ(θ̂) at b=0) AND the ADR-0035 confidence-interval / low-confidence
- *   presentation (showing the CI band instead of a bare point when θ̂ is still
- *   uncertain) — is owned by B1 (YUK-348) and will REPLACE this interim projection.
+ * ⚠️ SUPERSEDED AS THE DISPLAY MASTERY NUMBER (YUK-420). This σ(θ̂)@b=0 form was
+ *   the INTERIM mastery projection (it ignored item difficulty b and the PFA
+ *   success/fail history). The B1 FULL path replaced it: the live display / AI-
+ *   facing mastery number is now the **difficulty-aware PFA p(L)** computed in
+ *   `getMasteryProjection` (src/server/mastery/state.ts) via `pfaLogit` /
+ *   `pLearnedBand` (src/core/pfa.ts) — conditioned on the KC's representative
+ *   item difficulty β AND the PFA success/fail counts, plus an ADR-0035
+ *   confidence-interval band. `thetaToMastery` is retained as the bare σ(θ̂)
+ *   helper (callers that want the b=0 ability projection, or tests that pin the
+ *   old interim form, may still use it), but it is NO LONGER what any read
+ *   surface shows as "mastery".
  */
 export function thetaToMastery(thetaHat: number): number {
   return expectedScore(thetaHat, 0);
