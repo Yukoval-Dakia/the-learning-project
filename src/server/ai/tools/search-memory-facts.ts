@@ -29,7 +29,7 @@ export const SearchMemoryFactsInputSchema = z.object({
     .positive()
     .max(20)
     .optional()
-    .describe('Max facts to return (1-20). Defaults to the Mem0 client default when omitted.'),
+    .describe('Max facts to return (1-20). Defaults to 10 when omitted.'),
   // ADR-0017 fixes 5 scope prefixes: `global` / `subject:*` / `topic:*` /
   // `mistake_cluster:*` / `meta:orchestrator_self`. The value is matched against
   // a fact's `affected_scopes` via `{ contains: scopeKey }` (client.ts:181-183).
