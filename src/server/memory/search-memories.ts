@@ -134,16 +134,22 @@ export async function searchMemories(
   const candidates = raw.results ?? [];
 
   const reranked = candidates
-    .map((item) => {
+    .map((item, origIndex) => {
       const meta = getMetadata(item);
       const baseScore = typeof item.score === 'number' ? item.score : 0;
       const ageDays = Math.max(0, (nowMs - createdMsForItem(item, meta, nowMs)) / MS_PER_DAY);
       const halfLife = halfLifeForKind(meta.kind);
       const decay = Math.exp((-LN2 * ageDays) / halfLife);
-      return { item, meta, rerankScore: baseScore * decay };
+      // Capture the original store index so equal rerankScores break ties on it
+      // (below). Without this, a set of all-zero-score items (no numeric score)
+      // would collapse to rerankScore 0 and an engine-dependent sort could
+      // reorder — and drop the most relevant zero-score item on truncation.
+      return { item, meta, rerankScore: baseScore * decay, origIndex };
     })
     .filter(({ meta }) => !isSuperseded(meta))
-    .sort((a, b) => b.rerankScore - a.rerankScore)
+    // Descending by rerankScore; ties (including all-zero) keep original store
+    // order via the origIndex tiebreaker so truncation is deterministic.
+    .sort((a, b) => b.rerankScore - a.rerankScore || a.origIndex - b.origIndex)
     .slice(0, topK)
     .map(({ item }) => item);
 
