@@ -9,6 +9,13 @@ import { artifact } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 
+// ADR-0033 D1 (YUK-309) — body_blocks block-tree editing is a NOTE-ONLY write path.
+// Opaque artifact types (tool_quiz, interactive) MUST keep body_blocks null and never
+// participate in the cross_link mesh; editing them here would (1) break the D1 opaque
+// invariant and (2) make the row a mesh source via syncBlockRefsForArtifact. Guarding the
+// edited artifact's type to NOTE_TYPES closes both at the source side.
+const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
+
 export interface EditArtifactBodyBlocksParams {
   db: Db;
   artifactId: string;
@@ -38,6 +45,7 @@ export async function editArtifactBodyBlocks(
     const rows = await tx
       .select({
         id: artifact.id,
+        type: artifact.type,
         history: artifact.history,
         archived_at: artifact.archived_at,
         version: artifact.version,
@@ -47,6 +55,16 @@ export async function editArtifactBodyBlocks(
       .limit(1);
     const row = rows[0];
     if (!row) throw new ApiError('not_found', `artifact ${params.artifactId} not found`, 404);
+    // YUK-309: refuse to write a block-tree onto an opaque artifact type. Without this
+    // a hand-crafted PATCH against an interactive / tool_quiz id would write body_blocks
+    // (breaking the ADR-0033 D1 opaque invariant) and turn the row into a mesh source.
+    if (!(NOTE_TYPES as readonly string[]).includes(row.type)) {
+      throw new ApiError(
+        'conflict',
+        `artifact ${params.artifactId} has type ${row.type}; body_blocks editing is only allowed for note artifacts`,
+        409,
+      );
+    }
     if (row.archived_at) {
       throw new ApiError('conflict', `artifact ${params.artifactId} is archived`, 409);
     }
