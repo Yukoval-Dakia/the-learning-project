@@ -1225,4 +1225,104 @@ describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', ()
     expect(stats.folded_topology_rejected).toBe(0);
     expect(stats.proposed).toBe(1);
   });
+
+  // ADR-0034 §2 / YUK-344 (RB-7 twin for the TOPOLOGY marker) — a previously
+  // topology-rejected (folded) propose event must NOT block a later batch from
+  // re-proposing the same edge. The fold carries a `topology_verdict.status =
+  // 'reject'` marker and NO rubric_verdict key, so the cross-batch dedup
+  // (loadPendingEdgeProposalKeys) MUST filter it out — otherwise it would be
+  // counted live-pending and the next batch hits `skipped_duplicate_pending`,
+  // permanently refusing to re-propose the very edge topology rejected. The
+  // edge still closes a cycle on the live graph, so the re-propose RE-FOLDS
+  // (proving it was re-evaluated, not deduped away).
+  it('RB-7 (topology): a topology-rejected fold on K does NOT block a later batch re-propose of K', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    // Live prerequisite chain kA→kB→kC: proposing kC→kA closes a cycle.
+    await insertLiveEdge('e_ab', 'kA', 'kB');
+    await insertLiveEdge('e_bc', 'kB', 'kC');
+    // Strong endpoint-touching failures so the rubric floor would PASS — isolating
+    // the topology fold (and matching the rest of this describe block).
+    await seedJudgeFailure('att_1', ['kC', 'kA']);
+    await seedJudgeFailure('att_2', ['kC', 'kA']);
+
+    // Pre-existing TOPOLOGY-folded event for K = (kC→kA, prerequisite): a
+    // `topology_verdict.status = 'reject'` marker, NO rubric_verdict key, NO
+    // chained rate (so without the dedup filter it would look live-pending).
+    await db.insert(event).values({
+      id: 'e_topo_folded_prior',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'propose',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'syn_prior_topo_fold',
+      outcome: 'success',
+      payload: {
+        from_knowledge_id: 'kC',
+        to_knowledge_id: 'kA',
+        relation_type: 'prerequisite',
+        weight: 0.5,
+        reasoning: 'prior cycle-closing edge → topology rejected',
+        topology_verdict: { status: 'reject', gate: 'cycle', reason: 'closes a cycle' },
+        ai_proposal: {
+          kind: 'knowledge_edge',
+          target: { subject_kind: 'knowledge_edge', subject_id: null },
+          reason_md: 'prior cycle-closing edge → topology rejected',
+          evidence_refs: [],
+          proposed_change: {
+            from_knowledge_id: 'kC',
+            to_knowledge_id: 'kA',
+            relation_type: 'prerequisite',
+            weight: 0.5,
+          },
+          cooldown_key: 'knowledge_edge:kC|kA|prerequisite',
+        },
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: new Date(Date.now() - DAY_MS),
+    });
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kC',
+            to_knowledge_id: 'kA',
+            relation_type: 'prerequisite',
+            weight: 0.6,
+            reasoning: 'attempt att_1 显示 kC 与 kA 的 prerequisite 顺序。',
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    // NOT deduped against the prior topology fold (the RB-7 twin fix) AND the
+    // edge is re-evaluated → re-folded (still closes a cycle on the live graph).
+    expect(stats.skipped_duplicate_pending).toBe(0);
+    expect(stats.proposed).toBe(0);
+    expect(stats.folded_topology_rejected).toBe(1);
+
+    // Now TWO topology-folded propose events for K; ZERO live ones (no folded
+    // event leaks into the live pool).
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(2);
+    const liveEvents = proposeEvents.filter((row) => {
+      const p = row.payload as { topology_verdict?: { status?: string } };
+      return p.topology_verdict?.status !== 'reject';
+    });
+    expect(liveEvents).toHaveLength(0);
+  });
 });

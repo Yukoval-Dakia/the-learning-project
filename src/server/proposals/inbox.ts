@@ -99,6 +99,26 @@ function isRubricRejected(row: EventRow): boolean {
   );
 }
 
+// ADR-0034 §2 / YUK-344 — a propose event the write-time TOPOLOGY gate hard-
+// rejected (cycle / direction contradiction) carries a `topology_verdict` marker
+// with status 'reject' (sibling of ai_proposal) and NO rubric_verdict key. It is
+// folded EXACTLY like a rubric reject: a marked propose event for audit, no live
+// pending proposal, no chained rate. Without a terminal branch here it would
+// derive 'pending' and re-occupy the (kind, cooldown_key) for live-pending dedup
+// — the same lockout RB-7 forbids, now via the topology marker. We fold it into
+// the same terminal `rubric_rejected` (folded / low-visibility) bucket so the
+// derived status is non-pending and non-acceptable, mirroring the rubric handling
+// without widening the public ProposalStatus enum surface.
+function isTopologyRejected(row: EventRow): boolean {
+  const payload = toRecord(row.payload);
+  const verdict = payload.topology_verdict;
+  return (
+    verdict !== null &&
+    typeof verdict === 'object' &&
+    (verdict as Record<string, unknown>).status === 'reject'
+  );
+}
+
 // Resolve the terminal status for a propose event. A non-active correction
 // (stale) takes PRIORITY over the rubric_rejected marker: a folded edge that is
 // later retracted/corrected (a `correct` event chained off it via
@@ -118,6 +138,12 @@ function deriveProposalStatus(
 ): ProposalStatus {
   if (correction) return correction.status;
   if (isRubricRejected(row)) return 'rubric_rejected';
+  // ADR-0034 §2 / YUK-344 — a topology-rejected fold is terminal just like a
+  // rubric reject: fold it into the same non-pending / non-acceptable bucket so
+  // it never derives 'pending' and re-occupies the (kind, cooldown_key) the
+  // dup-pending callers key on. Correction (above) still wins, identical to the
+  // rubric_rejected ordering.
+  if (isTopologyRejected(row)) return 'rubric_rejected';
   return rateStatus(rate);
 }
 
