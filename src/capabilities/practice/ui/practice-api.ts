@@ -3,7 +3,13 @@
 // /api/questions/*（题面读 + solve 链）整体留旧栈 proxy——solve 链的旧壳是
 // shim、handler 同为包内代码（quiz 域 D16 出 M2 范围，M5 收口）。
 
-import { ApiAuthError, ApiError, apiJson, getInternalToken } from '@/ui/lib/api';
+import {
+  ApiAuthError,
+  ApiError,
+  apiJson,
+  clearInternalToken,
+  getInternalToken,
+} from '@/ui/lib/api';
 
 // ── 流 ──────────────────────────────────────────────────────────
 export type StreamSource = 'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import';
@@ -216,6 +222,8 @@ export async function deleteQuestion(
   const res = await fetch(url, { method: 'DELETE', headers: { 'x-internal-token': token } });
 
   if (res.status === 401) {
+    // 与 apiFetch 401 分支一致：清掉失效 token，避免后续请求继续带坏 token。
+    clearInternalToken();
     throw new ApiAuthError('token 无效或已过期');
   }
 
