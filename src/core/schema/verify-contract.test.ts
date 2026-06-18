@@ -12,6 +12,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { NoteVerificationResult } from './business';
 import { QuizVerificationResult } from './quiz_gen';
 import {
   UnifiedVerifyResult,
@@ -193,6 +194,65 @@ describe('toUnifiedVerifyResult — variant', () => {
   });
 });
 
+describe('toUnifiedVerifyResult — note (YUK-350 increment 2)', () => {
+  it('note verdict=pass maps to overall pass, no failure_class, no axes for a clean pass', () => {
+    const unified = toUnifiedVerifyResult({
+      source: 'note',
+      verdict: 'pass',
+      summary_md: '结构完整，未发现明显问题。',
+      confidence: 0.82,
+      issues: [],
+    });
+    expect(unified.overall).toBe('pass');
+    expect(unified.failure_class).toBeUndefined();
+    expect(unified.summary_md).toBe('结构完整，未发现明显问题。');
+    expect(unified.confidence).toBe(0.82);
+    expect(unified.axes).toHaveLength(0);
+    expect(UnifiedVerifyResult.safeParse(unified).success).toBe(true);
+  });
+
+  it('note verdict=needs_review maps to overall needs_review + validation_failure, issues → axes', () => {
+    const unified = toUnifiedVerifyResult({
+      source: 'note',
+      verdict: 'needs_review',
+      summary_md: '例子部分需要人工复核。',
+      confidence: 0.58,
+      issues: [
+        {
+          block_id: 'b2',
+          severity: 'warn',
+          category: 'factuality',
+          message: '例句解释缺少文本证据。',
+          suggested_fix_md: '补充原句出处或改成不确定表述。',
+        },
+      ],
+    });
+    expect(unified.overall).toBe('needs_review');
+    expect(unified.failure_class).toBe('validation_failure');
+    // a note can NEVER project overall='fail' (the note verdict has no 'fail').
+    expect(unified.overall).not.toBe('fail');
+    expect(unified.axes).toHaveLength(1);
+    const axis = unified.axes[0];
+    expect(axis.axis_name).toBe('factuality');
+    expect(axis.verdict).toBe('fail');
+    expect(axis.note).toBe('例句解释缺少文本证据。');
+    expect(UnifiedVerifyResult.safeParse(unified).success).toBe(true);
+  });
+
+  it('note never projects overall=error from the verdict path (only the catch-bottom can)', () => {
+    for (const verdict of ['pass', 'needs_review'] as const) {
+      const unified = toUnifiedVerifyResult({
+        source: 'note',
+        verdict,
+        summary_md: 'x',
+        confidence: 0.5,
+        issues: [],
+      });
+      expect(unified.overall).not.toBe('error');
+    }
+  });
+});
+
 describe('toUnifiedVerifyResult — system-error (catch path)', () => {
   it('a catch-path error input maps to overall error + failure_class system_error', () => {
     const unified = toUnifiedVerifyResult({
@@ -231,6 +291,44 @@ describe('QuizVerificationResult red line 1 (model cannot self-report error)', (
       knowledge_hit: { verdict: 'pass' },
       overall: 'error',
       summary_md: 'x',
+      confidence: 0.5,
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
+
+// ---- RL1 red line 1 regression for the NOTE LLM-parse schema (YUK-350 increment 2) ----
+// The note verdict is FROZEN at the 2-value pass|needs_review (NO fail). The result-layer
+// 'error' value lives ONLY on the catch-bottom system_error projection — the model can
+// never self-report a system error through the note parse path.
+describe('NoteVerificationResult red line 1 (model cannot self-report error)', () => {
+  it('parses the 2 model verdicts pass|needs_review', () => {
+    for (const verdict of ['pass', 'needs_review'] as const) {
+      const parsed = NoteVerificationResult.safeParse({
+        verdict,
+        summary_md: 'x',
+        issues: [],
+        confidence: 0.5,
+      });
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it("CANNOT produce verdict='fail' (the note verdict has no fail)", () => {
+    const parsed = NoteVerificationResult.safeParse({
+      verdict: 'fail',
+      summary_md: 'x',
+      issues: [],
+      confidence: 0.5,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("CANNOT produce verdict='error' through the LLM parse path (red line 1)", () => {
+    const parsed = NoteVerificationResult.safeParse({
+      verdict: 'error',
+      summary_md: 'x',
+      issues: [],
       confidence: 0.5,
     });
     expect(parsed.success).toBe(false);

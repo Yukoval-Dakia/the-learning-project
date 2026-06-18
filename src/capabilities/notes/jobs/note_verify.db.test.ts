@@ -1,5 +1,5 @@
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
-import { artifact, event, knowledge } from '@/db/schema';
+import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -205,7 +205,25 @@ describe('runNoteVerify', () => {
       outcome: 'success',
       actor_ref: 'note_verify',
     });
+    // SUPERSET payload: existing `verdict` kept byte-identical + unified contract keys.
     expect(rows[0].payload).toMatchObject({ verdict: 'pass' });
+    // YUK-350 increment 2 — unified verify contract shape: note pass → overall 'pass',
+    // NO failure_class.
+    const payload = rows[0].payload as { overall?: string; failure_class?: string; axes?: unknown };
+    expect(payload.overall).toBe('pass');
+    expect(payload.failure_class).toBeUndefined();
+    expect(Array.isArray(payload.axes)).toBe(true);
+
+    // PROMOTE semantics byte-identical: a note promote = an owner-readable ACTIVE
+    // artifact (verification_status='verified'). NO FSRS enroll and NO practice-pool
+    // entry — notes are not practice items. Assert nothing leaked into the pool/FSRS.
+    const fsrsRows = await testDb()
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'k1'));
+    expect(fsrsRows).toHaveLength(0);
+    const questionRows = await testDb().select().from(question);
+    expect(questionRows).toHaveLength(0);
   });
 
   it('marks verification_status=needs_review and persists issues when verifier flags problems', async () => {
@@ -235,6 +253,20 @@ describe('runNoteVerify', () => {
     expect(rows).toHaveLength(2);
     const verifyEvent = rows.find((row) => row.action === 'experimental:note_verify');
     expect(verifyEvent?.outcome).toBe('partial');
+    // YUK-350 increment 2 — unified verify contract shape: note needs_review →
+    // overall 'needs_review' + failure_class 'validation_failure'; NEVER 'fail' (the
+    // note verdict has no fail). Existing `verdict` key kept byte-identical.
+    const vp = verifyEvent?.payload as {
+      verdict?: string;
+      overall?: string;
+      failure_class?: string;
+      axes?: Array<{ axis_name?: string; verdict?: string }>;
+    };
+    expect(vp.verdict).toBe('needs_review');
+    expect(vp.overall).toBe('needs_review');
+    expect(vp.overall).not.toBe('fail');
+    expect(vp.failure_class).toBe('validation_failure');
+    expect(vp.axes?.[0]?.axis_name).toBe('factuality');
     const proposalEvent = rows.find((row) => row.action === 'experimental:proposal');
     expect((proposalEvent?.payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
       'note_update',
@@ -279,6 +311,46 @@ describe('runNoteVerify', () => {
 
     const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
     expect(updated.verification_status).toBe('failed');
+  });
+
+  it('catch-bottom projects overall=error + failure_class=system_error (transient, outcome=error)', async () => {
+    await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: 'not json' }));
+
+    await expect(runNoteVerify({ db: testDb(), artifactId: 'a1', runTaskFn })).rejects.toThrow(
+      /parseVerificationOutput/,
+    );
+
+    // The catch-bottom writes a TRANSIENT system-error verify event. overall='error'
+    // (the result-layer 'error' value can ONLY come from here — the note LLM-parse
+    // schema can never self-report it, red line 1) + failure_class='system_error'.
+    const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
+    expect(rows).toHaveLength(1);
+    const errEvent = rows[0];
+    expect(errEvent.action).toBe('experimental:note_verify');
+    expect(errEvent.subject_kind).toBe('artifact');
+    // outcome='error' (NOT 'failure') marks it transient/retriable, distinct from a
+    // terminal model verdict.
+    expect(errEvent.outcome).toBe('error');
+    const ep = errEvent.payload as {
+      overall?: string;
+      failure_class?: string;
+      confidence?: number;
+      axes?: unknown[];
+    };
+    expect(ep.overall).toBe('error');
+    expect(ep.failure_class).toBe('system_error');
+    expect(ep.confidence).toBe(0);
+    expect(ep.axes).toHaveLength(0);
+
+    // A system error NEVER promotes: still no FSRS / no practice-pool entry.
+    const fsrsRows = await testDb()
+      .select()
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_id, 'k1'));
+    expect(fsrsRows).toHaveLength(0);
+    const questionRows = await testDb().select().from(question);
+    expect(questionRows).toHaveLength(0);
   });
 });
 
