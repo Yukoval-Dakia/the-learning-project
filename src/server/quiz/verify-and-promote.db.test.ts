@@ -24,7 +24,7 @@ import type {
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { verifyAndPromote } from './verify-and-promote';
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'wenyan', archivedAt: Date | null = null) {
   const db = testDb();
   const now = new Date();
   await db.insert(knowledge).values({
@@ -35,6 +35,7 @@ async function seedKnowledge(id: string, domain = 'wenyan') {
     merged_from: [],
     proposed_by_ai: false,
     approval_status: 'approved',
+    archived_at: archivedAt,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -46,6 +47,7 @@ interface SeedQuestionOpts {
   source?: string;
   draftStatus?: string | null;
   knowledgeIds?: string[];
+  metadata?: Record<string, unknown>;
 }
 
 async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
@@ -65,7 +67,7 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
     source_ref: null,
     draft_status: opts.draftStatus === undefined ? 'draft' : opts.draftStatus,
     created_by: { by: 'ai', task_kind: 'QuizGenTask' },
-    metadata: {} as never,
+    metadata: (opts.metadata ?? {}) as never,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -312,11 +314,15 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
 
   // ── codex P2 review findings (inc-3) ────────────────────────────────────────
 
-  // P2-5 — eager verify already promoted the row; the lazy call's run fn returns
-  // skipped:already_verified (terminal verify event exists) but the row is ALREADY active.
-  // verifyAndPromote must re-SELECT and, seeing draft_status non-draft, report it as
-  // promoted (with the looked-up verifyEventId) instead of mis-reporting promoted:false.
-  it('skipped:already_verified + row already active → reported as promoted (P2-5)', async () => {
+  // P2-5 — eager verify already promoted the row; a terminal verify event exists and
+  // the row is ALREADY active. verifyAndPromote must report it as promoted (with the
+  // looked-up verifyEventId) instead of mis-reporting promoted:false.
+  //
+  // inc-4a (B-normal-draft) refinement: the pre-dispatch draft guard now detects the
+  // already-active+verified row BEFORE dispatching the (paid) run fn — so the run fn is
+  // NOT called at all. The core invariant is unchanged (promoted:true + eager event id);
+  // we just avoid an unnecessary run-fn round trip on a non-draft.
+  it('skipped:already_verified + row already active → reported as promoted, no run fn (P2-5)', async () => {
     const db = testDb();
     const qid = await seedQuestion({ source: 'quiz_gen' });
 
@@ -341,7 +347,6 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
       created_at: now,
     });
 
-    // the run fn now short-circuits as already_verified (the terminal event exists).
     const runSpy = vi.fn(async () => quizResult('skipped:already_verified'));
     const result = await verifyAndPromote({
       db,
@@ -350,7 +355,8 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
       deps: { runQuizVerify: runSpy },
     });
 
-    expect(runSpy).toHaveBeenCalledTimes(1);
+    // pre-dispatch guard caught the already-active+verified row → no run fn dispatched.
+    expect(runSpy).not.toHaveBeenCalled();
     // row was already active → treat as promoted + surface the existing verify event id.
     expect(result.promoted).toBe(true);
     expect(result.verifyEventId).toBe(eagerEventId);
@@ -423,6 +429,153 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
 
     expect(result.promoted).toBe(false);
     expect(result.status).toBe('skipped:not_draft');
+
+    // no verify event written.
+    const evs = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.subject_kind, 'question'), eq(event.subject_id, qid)));
+    expect(evs).toHaveLength(0);
+  });
+
+  // ── YUK-400 B-section guards (inc-4a) ───────────────────────────────────────
+
+  // B-normal-draft (YUK-400 条目 1) — the NORMAL (non-override) branch must also
+  // verify the row is a true 'draft' BEFORE dispatching to a run fn. The override
+  // branch already guards this (P2-6 companion); the normal branch did not, so an
+  // owner-UI retry that lands on an already-active row would re-run a paid verify
+  // against a non-draft. Non-draft → skipped:not_draft, NO run fn called.
+  it('normal branch on a non-draft (already active) row → skipped:not_draft, no run fn (B-normal-draft)', async () => {
+    const db = testDb();
+    const qid = await seedQuestion({ source: 'quiz_gen', draftStatus: 'active' });
+    const spyA = vi.fn(async () => sourceResult('verified'));
+    const spyB = vi.fn(async () => quizResult('verified'));
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      deps: { runSourceVerify: spyA, runQuizVerify: spyB },
+    });
+
+    expect(result.promoted).toBe(false);
+    expect(result.status).toBe('skipped:not_draft');
+    expect(spyA).not.toHaveBeenCalled();
+    expect(spyB).not.toHaveBeenCalled();
+  });
+
+  // B-normal-draft sanity — a true draft still dispatches (the guard must not
+  // block the happy path).
+  it('normal branch on a true draft still dispatches (B-normal-draft happy path)', async () => {
+    const db = testDb();
+    const qid = await seedQuestion({ source: 'quiz_gen', draftStatus: 'draft' });
+    const spyB = vi.fn(async () => quizResult('verified'));
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      deps: { runQuizVerify: spyB },
+    });
+
+    expect(spyB).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('verified');
+  });
+
+  // B-archived-KC (YUK-400 条目 2) — the override branch must verify every
+  // knowledge_ids node is non-archived (archived_at IS NULL) BEFORE promoting. A
+  // force-enable against a draft bound to an archived KC must be rejected: no FSRS
+  // card built, no promote, no verify event — a distinguishable status.
+  it('override with an archived knowledge node → rejected, no promote, no FSRS card, no event (B-archived-KC)', async () => {
+    const db = testDb();
+    await seedKnowledge('k-live');
+    await seedKnowledge('k-dead', 'wenyan', new Date());
+    const qid = await seedQuestion({
+      source: 'quiz_gen',
+      knowledgeIds: ['k-live', 'k-dead'],
+    });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner forced' },
+    });
+
+    expect(result.promoted).toBe(false);
+    expect(result.status).toBe('skipped:archived_knowledge');
+
+    // row stays draft (NOT force-promoted).
+    const row = (await db.select().from(question).where(eq(question.id, qid)).limit(1))[0];
+    expect(row.draft_status).toBe('draft');
+
+    // no FSRS card materialized for either node.
+    const fsrs = await db
+      .select({ id: material_fsrs_state.subject_id })
+      .from(material_fsrs_state)
+      .where(eq(material_fsrs_state.subject_kind, 'knowledge'));
+    expect(fsrs).toHaveLength(0);
+
+    // no verify event written for the rejected override.
+    const evs = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(and(eq(event.subject_kind, 'question'), eq(event.subject_id, qid)));
+    expect(evs).toHaveLength(0);
+  });
+
+  // B-archived-KC sanity — all KC live → override promotes as before.
+  it('override with all knowledge nodes live → promotes (B-archived-KC happy path)', async () => {
+    const db = testDb();
+    await seedKnowledge('k-live-1');
+    await seedKnowledge('k-live-2');
+    const qid = await seedQuestion({
+      source: 'quiz_gen',
+      knowledgeIds: ['k-live-1', 'k-live-2'],
+    });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner forced' },
+    });
+
+    expect(result.promoted).toBe(true);
+    const row = (await db.select().from(question).where(eq(question.id, qid)).limit(1))[0];
+    expect(row.draft_status).toBe('active');
+  });
+
+  // B-archived-draft (YUK-400 条目 3) — the override branch must verify the row is
+  // not a soft-archived draft (metadata.archived_at IS NULL) BEFORE promoting. An
+  // archived question is re-drafted with metadata.archived_at set (see
+  // src/server/questions/write.ts archiveQuestion). Force-enable must NOT resurrect
+  // it back to active.
+  it('override on a soft-archived draft (metadata.archived_at set) → rejected, not revived, no event (B-archived-draft)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      source: 'quiz_gen',
+      knowledgeIds: ['k1'],
+      metadata: { archived_at: Math.floor(Date.now() / 1000), archived_reason: 'owner deleted' },
+    });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner forced' },
+    });
+
+    expect(result.promoted).toBe(false);
+    expect(result.status).toBe('skipped:archived_draft');
+
+    // row stays draft (NOT revived to active).
+    const row = (await db.select().from(question).where(eq(question.id, qid)).limit(1))[0];
+    expect(row.draft_status).toBe('draft');
 
     // no verify event written.
     const evs = await db

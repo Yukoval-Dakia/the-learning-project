@@ -64,6 +64,25 @@ export const practiceCapability = defineCapability({
         path: '/api/review/sessions/[id]/reopen',
         load: () => import('./api/session-reopen').then((m) => m.POST),
       },
+      // YUK-402 inc-4a — owner manual gate (draft 池审核面)后端。list draft pool +
+      // enable (normal B5 verify→promote) + force-enable (override + reason 留痕)。
+      // gate op = verifyAndPromote (src/server/quiz/verify-and-promote.ts)；/api/*
+      // 自动套 internal-token。审核面属练习消费侧（draft 是 practice-pool 题）。
+      {
+        method: 'GET',
+        path: '/api/review/drafts',
+        load: () => import('./api/review-drafts-list').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/drafts/[id]/enable',
+        load: () => import('./api/review-draft-enable').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/review/drafts/[id]/force-enable',
+        load: () => import('./api/review-draft-force-enable').then((m) => m.POST),
+      },
       {
         method: 'GET',
         path: '/api/practice',

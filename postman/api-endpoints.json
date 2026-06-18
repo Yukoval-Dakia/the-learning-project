@@ -478,6 +478,68 @@
     ]
   },
   {
+    "path": "/api/review/drafts",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "owner 手动 gate 草稿池：列 draft_status='draft' 题（排除软归档草稿），含 verify 状态投影",
+        "query": [
+          {
+            "name": "source",
+            "required": false,
+            "example": "quiz_gen"
+          },
+          {
+            "name": "kind",
+            "required": false,
+            "example": "short_answer"
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "example": "50"
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "example": "0"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "limit 默认 50 上限 200；每条投影 id/prompt_preview(截断)/kind/source/created_at/verify_status(unverified|needs_review|failed)/verify_reason；verify_status 从最新终态 verify event 派生；返回 { rows, limit, offset, total, truncated }"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/drafts/:id/enable",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "owner 启用草稿：跑 B5 verify（quiz_verify/source_verify）过则 promote，三态返回",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无 body；调 verifyAndPromote(actor=user, 正常分支)；返回 { promoted, status(verified|needs_review|failed|skipped:*), verify_event_id, reason }；题不存在 404；非 draft → skipped:not_draft"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/drafts/:id/force-enable",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "owner 强制启用草稿：跳 verify 直接 promote（override），reason 必填留痕",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "reason": "owner 判断这题质量足够，跳过 AI 验证"
+        },
+        "notes": "reason 必填非空（空则 400）；调 verifyAndPromote(actor=user, skipVerify)；写 actor_kind=user + skipped_verify=true + reason verify event；YUK-400 B 段守门：仅 web_sourced/quiz_gen 可 promote、仅 true draft、归档 KC 拒(skipped:archived_knowledge)、软归档 draft 拒(skipped:archived_draft)；题不存在 404"
+      }
+    ]
+  },
+  {
     "path": "/api/teaching-sessions/:id/accept-chip",
     "methods": [
       {

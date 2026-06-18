@@ -20,13 +20,13 @@
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
 import { runQuizVerify } from '@/server/boss/handlers/quiz_verify';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { runSourceVerify } from '@/server/boss/handlers/source_verify';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { and, desc, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 
 export interface VerifyAndPromoteParams {
   db: Db;
@@ -110,13 +110,14 @@ async function lookupVerifyEventId(
 export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<VerifyAndPromoteResult> {
   const { db, questionId, runTaskFn, skipVerify } = p;
 
-  // 一次轻量 SELECT 取 source + draft_status (派发判别 + override promote 前置).
+  // 一次轻量 SELECT 取 source + draft_status + metadata (派发判别 + override promote 前置守门).
   const rows = await db
     .select({
       id: question.id,
       source: question.source,
       draft_status: question.draft_status,
       knowledge_ids: question.knowledge_ids,
+      metadata: question.metadata,
     })
     .from(question)
     .where(eq(question.id, questionId))
@@ -145,6 +146,31 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
     }
     if (row.draft_status !== 'draft') {
       return { promoted: false, status: 'skipped:not_draft' };
+    }
+    // YUK-400 B-archived-draft (inc-4a) — a soft-archived (re-drafted) question
+    // carries metadata.archived_at (set by archiveQuestion, src/server/questions/
+    // write.ts). owner force-enable must NEVER resurrect such a draft back to active;
+    // reject WITHOUT promoting or writing any verify event (don't update回 active).
+    const metaArchivedAt = (row.metadata as Record<string, unknown> | null)?.archived_at;
+    if (metaArchivedAt !== undefined && metaArchivedAt !== null) {
+      return { promoted: false, status: 'skipped:archived_draft' };
+    }
+    // YUK-400 B-archived-KC (inc-4a) — owner override builds FSRS cards per
+    // knowledge_ids node. If ANY referenced KC is archived (knowledge.archived_at IS
+    // NOT NULL) we must NOT promote / enroll — an archived node would get a fresh
+    // card it shouldn't have (mirrors source_verify's knowledge-survival gate).
+    // Reject WITHOUT promoting or writing any verify event.
+    const overrideKnowledgeIds = Array.from(new Set(row.knowledge_ids ?? []));
+    if (overrideKnowledgeIds.length > 0) {
+      const liveKnowledge = await db
+        .select({ id: knowledge.id })
+        .from(knowledge)
+        .where(and(inArray(knowledge.id, overrideKnowledgeIds), isNull(knowledge.archived_at)));
+      const liveIds = new Set(liveKnowledge.map((k) => k.id));
+      const hasArchivedKc = overrideKnowledgeIds.some((id) => !liveIds.has(id));
+      if (hasArchivedKc) {
+        return { promoted: false, status: 'skipped:archived_knowledge' };
+      }
     }
     const action = verifyActionForSource(row.source);
     const actor = p.actor ?? { kind: 'agent' as const, ref: 'verify_and_promote' };
@@ -215,8 +241,31 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   }
 
   // ── 正常分支 = 薄派发 ───────────────────────────────────────────────────────
+  // YUK-400 B-normal-draft (inc-4a) — the override branch already guards draft_status;
+  // the normal branch did NOT, so an owner-UI retry (or matcher race) landing on an
+  // already-active row would re-run a PAID verify against a non-draft. The转调 run 函数
+  // only short-circuit on source mismatch / terminal-event idempotency, NOT on
+  // draft_status, so gate it here BEFORE dispatch.
+  //   - A non-draft row that already carries a TERMINAL verify event was legitimately
+  //     promoted (e.g. an eager verify landed first, codex P2-5): report it as
+  //     promoted + surface the existing verify event id, so a matcher caller doesn't
+  //     skip a perfectly usable row.
+  //   - A non-draft row WITHOUT a terminal verify event (owner-UI retry on an already-
+  //     active row, never legitimately promoted via this path) → skipped:not_draft.
+  // Either way the PAID run fn is NOT dispatched against a non-draft.
+  if (row.draft_status !== 'draft') {
+    const verifyEventId = await lookupVerifyEventId(
+      db,
+      questionId,
+      verifyActionForSource(row.source),
+    );
+    if (verifyEventId) {
+      return { promoted: true, status: 'skipped:already_verified', verifyEventId };
+    }
+    return { promoted: false, status: 'skipped:not_draft' };
+  }
   // 按 source 字面转调现有 per-question run 函数 (整体调用)。三态 / writeAgentNote note /
-  // metadata 写回 / catch / 幂等 / 非-draft 守门全部由被转调的 run 函数天然产生.
+  // metadata 写回 / catch / 幂等 全部由被转调的 run 函数天然产生.
   const runSourceVerifyFn = p.deps?.runSourceVerify ?? runSourceVerify;
   const runQuizVerifyFn = p.deps?.runQuizVerify ?? runQuizVerify;
 
@@ -241,6 +290,10 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   // longer a draft (eager promote happened), report it as promoted + surface the existing
   // verify event id. If it's still a draft (the terminal event was a failed/needs_review
   // verdict, not a promote), keep the honest not-promoted result.
+  // NOTE (inc-4a) — the B-normal-draft pre-dispatch guard above already catches a row that
+  // was non-draft at SELECT time. This post-dispatch block still covers the TOCTOU race: a
+  // row that WAS a draft at SELECT but got eager-promoted concurrently between SELECT and
+  // dispatch (the run fn then returns already_verified against a now-active row).
   if (status === 'skipped:already_verified') {
     const post = await db
       .select({ draft_status: question.draft_status })
