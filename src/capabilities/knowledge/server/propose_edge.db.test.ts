@@ -2,12 +2,23 @@
 
 import { tasks } from '@/ai/registry';
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
-import { cost_ledger, event, knowledge, knowledge_edge, question } from '@/db/schema';
+import {
+  cost_ledger,
+  edge_reconciliation_log,
+  event,
+  knowledge,
+  knowledge_edge,
+  question,
+} from '@/db/schema';
 import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
+import { getCorrectionStatus } from '@/server/events/corrections';
 import { type FailureAttempt, getFailureAttempts, writeEvent } from '@/server/events/queries';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import type { EdgeReconcileDecision } from './edge-reconcile';
+import { ReconcileParseError } from './edge-reconcile';
+import { loadUnappliedEdgeReconcileLog } from './edge-reconcile-store';
 import { parseEdgeProposeOutput, runEdgeProposeAndWrite } from './propose_edge';
 
 describe('KnowledgeEdgeProposeTask system prompt', () => {
@@ -1396,5 +1407,524 @@ describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', ()
     });
     const edge2Payload = edge2?.payload as { topology_verdict?: unknown };
     expect(edge2Payload?.topology_verdict).toBeUndefined();
+  });
+});
+
+// ADR-0034 §3 / YUK-344 增量 2 — write-time RECONCILIATION RING wired into
+// runEdgeProposeAndWrite. The pure decision layer (judgeEdgeReconcile / parse /
+// confidence threshold) is unit-tested in edge-reconcile.unit.test.ts; here we
+// confirm the WIRING: topology runs first and short-circuits (reconcile never
+// sees a topology-rejected edge), a SUPERSEDE archives the old edge + writes the
+// log row + emits a CorrectionKind correction event + writes the new live edge, a
+// KEEP_BOTH proceeds as a pending proposal unchanged, and parse-error /
+// low-confidence safe-degrade to KEEP_BOTH. The judge is INJECTED (judgeReconcileFn)
+// so no live GLM call is made.
+describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function insertKnowledge(id: string) {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id,
+      name: id,
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
+
+  async function insertLiveEdge(
+    id: string,
+    from: string,
+    to: string,
+    relation = 'contrasts_with',
+    archivedAt: Date | null = null,
+  ) {
+    const db = testDb();
+    await db.insert(knowledge_edge).values({
+      id,
+      from_knowledge_id: from,
+      to_knowledge_id: to,
+      relation_type: relation,
+      weight: 1,
+      created_by: 'user' as never,
+      reasoning: null,
+      created_at: new Date(),
+      archived_at: archivedAt,
+    });
+  }
+
+  // Strong endpoint-touching evidence so the candidate passes the rubric floor —
+  // isolating the reconcile branch as the only thing diverging from the baseline.
+  async function seedJudgeFailure(attemptId: string, knowledgeIds: string[]): Promise<void> {
+    const db = testDb();
+    const questionId = `q_${attemptId}`;
+    const createdAt = new Date(Date.now() - DAY_MS);
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: 'p',
+      reference_md: 'r',
+      knowledge_ids: knowledgeIds,
+      source: 'manual',
+      difficulty: 3,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: attemptId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      created_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: `judge_${attemptId}`,
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: [],
+          analysis_md: '用户混淆两个用法。',
+          confidence: 0.9,
+        },
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      caused_by_event_id: attemptId,
+      created_at: new Date(createdAt.getTime() + 500),
+    });
+  }
+
+  function reasoningFor(attemptId: string): string {
+    return `attempt ${attemptId} 显示用户反复失败，judge cause 为 concept。`;
+  }
+
+  // Inject a judge that SUPERSEDES the first neighbor it is handed.
+  const supersedeFirstNeighbor = async (
+    _cand: unknown,
+    neighbors: Array<{ index: number; edge_id: string }>,
+  ): Promise<EdgeReconcileDecision> => ({
+    action: 'SUPERSEDE',
+    neighbor_index: neighbors[0].index,
+    superseded_edge_id: neighbors[0].edge_id,
+    confidence: 0.9,
+    reason: 'candidate semantically corrects the live neighbor',
+  });
+
+  it('SUPERSEDE: archives the old edge + writes the log row + emits the correction event + writes the new edge', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    // Live neighbor edge kA --contrasts_with--> kB (shares endpoint kA with the
+    // candidate). It will be superseded by the candidate kA --contrasts_with--> kC.
+    await insertLiveEdge('e_old', 'kA', 'kB', 'contrasts_with');
+    await seedJudgeFailure('att_sup_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_sup_2', ['kA', 'kC']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'contrasts_with',
+            weight: 0.7,
+            reasoning: reasoningFor('att_sup_1'),
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({
+      db,
+      recentFailures,
+      runTaskFn: fakeRunTask,
+      judgeReconcileFn: supersedeFirstNeighbor,
+    });
+    expect(stats.reconcile_superseded).toBe(1);
+    // No live PENDING proposal was written for a superseded candidate.
+    expect(stats.proposed).toBe(0);
+
+    // Old edge soft-archived (the load-bearing removal).
+    const oldEdge = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_old'))
+      .limit(1);
+    expect(oldEdge[0].archived_at).not.toBeNull();
+
+    // A new LIVE edge kA --contrasts_with--> kC exists (not archived).
+    const liveEdges = await db
+      .select()
+      .from(knowledge_edge)
+      .where(and(eq(knowledge_edge.from_knowledge_id, 'kA'), isNull(knowledge_edge.archived_at)));
+    expect(liveEdges).toHaveLength(1);
+    expect(liveEdges[0].to_knowledge_id).toBe('kC');
+    expect(liveEdges[0].relation_type).toBe('contrasts_with');
+
+    // Write-ahead log row written AND applied (applied_at set; nothing unapplied).
+    const logRows = await db.select().from(edge_reconciliation_log);
+    expect(logRows).toHaveLength(1);
+    expect(logRows[0].action).toBe('SUPERSEDE');
+    expect(logRows[0].superseded_edge_id).toBe('e_old');
+    expect(logRows[0].applied_at).not.toBeNull();
+    const unapplied = await loadUnappliedEdgeReconcileLog(db);
+    expect(unapplied).toHaveLength(0);
+
+    // A CorrectionKind supersede correction event was emitted (provenance). It
+    // targets the OLD edge's archive-provenance generate event; that event is
+    // therefore SUPERSEDED with a replacement pointing at the new edge's
+    // generate event.
+    const correctRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_kind, 'event')));
+    expect(correctRows).toHaveLength(1);
+    const correctPayload = correctRows[0].payload as { correction_kind?: string };
+    expect(correctPayload.correction_kind).toBe('supersede');
+
+    const status = await getCorrectionStatus(db, correctRows[0].subject_id);
+    expect(status.state).toBe('superseded');
+    if (status.state === 'superseded') {
+      // The replacement is the NEW edge's generate event (a real event row).
+      const replacement = await db
+        .select()
+        .from(event)
+        .where(eq(event.id, status.replacement_event_id))
+        .limit(1);
+      expect(replacement[0].action).toBe('generate');
+      expect(replacement[0].subject_kind).toBe('knowledge_edge');
+    }
+  });
+
+  it('KEEP_BOTH: a no-contradiction candidate proceeds as a pending proposal unchanged (no archive, no new edge, no correction)', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    // Live neighbor kA --contrasts_with--> kB; the judge says KEEP_BOTH.
+    await insertLiveEdge('e_keep', 'kA', 'kB', 'contrasts_with');
+    await seedJudgeFailure('att_keep_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_keep_2', ['kA', 'kC']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'contrasts_with',
+            weight: 0.7,
+            reasoning: reasoningFor('att_keep_1'),
+          },
+        ],
+      }),
+    });
+
+    const keepBoth = async (): Promise<EdgeReconcileDecision> => ({
+      action: 'KEEP_BOTH',
+      neighbor_index: null,
+      superseded_edge_id: null,
+      confidence: 0.95,
+      reason: 'distinct coexisting contrasts',
+    });
+
+    const stats = await runEdgeProposeAndWrite({
+      db,
+      recentFailures,
+      runTaskFn: fakeRunTask,
+      judgeReconcileFn: keepBoth,
+    });
+    // Behavior-equivalent to today: a live pending PROPOSE event, nothing else.
+    expect(stats.proposed).toBe(1);
+    expect(stats.reconcile_superseded).toBe(0);
+
+    // Old neighbor edge untouched (still live).
+    const oldEdge = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_keep'))
+      .limit(1);
+    expect(oldEdge[0].archived_at).toBeNull();
+
+    // No NEW live edge row was written (KEEP_BOTH only writes a propose event).
+    const liveEdges = await db
+      .select()
+      .from(knowledge_edge)
+      .where(isNull(knowledge_edge.archived_at));
+    expect(liveEdges).toHaveLength(1); // only e_keep
+    // No correction event, no reconcile log row.
+    const correctRows = await db.select().from(event).where(eq(event.action, 'correct'));
+    expect(correctRows).toHaveLength(0);
+    const logRows = await db.select().from(edge_reconciliation_log);
+    expect(logRows).toHaveLength(0);
+    // A normal pending propose event exists.
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(1);
+    const proposePayload = proposeEvents[0].payload as { topology_verdict?: unknown };
+    expect(proposePayload.topology_verdict).toBeUndefined();
+  });
+
+  it('topology short-circuits BEFORE reconcile: a topology-rejected candidate NEVER reaches the reconcile judge', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    // Live prerequisite kA→kB; candidate kB→kA is a direction contradiction →
+    // topology HARD-rejects BEFORE reconcile. The judge must never be called.
+    await insertLiveEdge('e_ab', 'kA', 'kB', 'prerequisite');
+    await seedJudgeFailure('att_topo_1', ['kA', 'kB']);
+    await seedJudgeFailure('att_topo_2', ['kA', 'kB']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kB',
+            to_knowledge_id: 'kA',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: reasoningFor('att_topo_1'),
+          },
+        ],
+      }),
+    });
+
+    let judgeCalled = false;
+    const judgeThatMustNotRun = async (): Promise<EdgeReconcileDecision> => {
+      judgeCalled = true;
+      throw new Error('reconcile judge must NOT be called for a topology-rejected edge');
+    };
+
+    const stats = await runEdgeProposeAndWrite({
+      db,
+      recentFailures,
+      runTaskFn: fakeRunTask,
+      judgeReconcileFn: judgeThatMustNotRun,
+    });
+    expect(judgeCalled).toBe(false);
+    expect(stats.folded_topology_rejected).toBe(1);
+    expect(stats.reconcile_superseded).toBe(0);
+    // No new edge, no archive, no log row.
+    const logRows = await db.select().from(edge_reconciliation_log);
+    expect(logRows).toHaveLength(0);
+  });
+
+  it('parse-error degrades to KEEP_BOTH (no destructive supersede on an unparseable judge)', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    await insertLiveEdge('e_old', 'kA', 'kB', 'contrasts_with');
+    await seedJudgeFailure('att_pe_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_pe_2', ['kA', 'kC']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'contrasts_with',
+            weight: 0.7,
+            reasoning: reasoningFor('att_pe_1'),
+          },
+        ],
+      }),
+    });
+
+    const throwingJudge = async (): Promise<EdgeReconcileDecision> => {
+      throw new ReconcileParseError('bad json', '{');
+    };
+
+    const stats = await runEdgeProposeAndWrite({
+      db,
+      recentFailures,
+      runTaskFn: fakeRunTask,
+      judgeReconcileFn: throwingJudge,
+    });
+    // Degrades to KEEP_BOTH → a live pending propose, no supersede.
+    expect(stats.reconcile_superseded).toBe(0);
+    expect(stats.proposed).toBe(1);
+    const oldEdge = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_old'))
+      .limit(1);
+    expect(oldEdge[0].archived_at).toBeNull();
+    const logRows = await db.select().from(edge_reconciliation_log);
+    expect(logRows).toHaveLength(0);
+  });
+
+  it('low-confidence SUPERSEDE degrades to KEEP_BOTH (confidence threshold re-applied in the wiring)', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    await insertLiveEdge('e_old', 'kA', 'kB', 'contrasts_with');
+    await seedJudgeFailure('att_lc_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_lc_2', ['kA', 'kC']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'contrasts_with',
+            weight: 0.7,
+            reasoning: reasoningFor('att_lc_1'),
+          },
+        ],
+      }),
+    });
+
+    // A SUPERSEDE below the 0.6 threshold — the wiring's defensive
+    // applyConfidenceThreshold must downgrade it to KEEP_BOTH.
+    const lowConfidenceSupersede = async (
+      _cand: unknown,
+      neighbors: Array<{ index: number; edge_id: string }>,
+    ): Promise<EdgeReconcileDecision> => ({
+      action: 'SUPERSEDE',
+      neighbor_index: neighbors[0].index,
+      superseded_edge_id: neighbors[0].edge_id,
+      confidence: 0.3,
+      reason: 'unsure',
+    });
+
+    const stats = await runEdgeProposeAndWrite({
+      db,
+      recentFailures,
+      runTaskFn: fakeRunTask,
+      judgeReconcileFn: lowConfidenceSupersede,
+    });
+    expect(stats.reconcile_superseded).toBe(0);
+    expect(stats.proposed).toBe(1);
+    const oldEdge = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_old'))
+      .limit(1);
+    expect(oldEdge[0].archived_at).toBeNull();
+  });
+
+  it('write-ahead idempotent replay does not double-apply (a pre-existing applied log row is not re-applied)', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    await insertLiveEdge('e_old', 'kA', 'kB', 'contrasts_with');
+    await seedJudgeFailure('att_idem_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_idem_2', ['kA', 'kC']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'contrasts_with',
+            weight: 0.7,
+            reasoning: reasoningFor('att_idem_1'),
+          },
+        ],
+      }),
+    });
+
+    // First run: SUPERSEDE applied (archive old, write new, log applied).
+    const first = await runEdgeProposeAndWrite({
+      db,
+      recentFailures,
+      runTaskFn: fakeRunTask,
+      judgeReconcileFn: supersedeFirstNeighbor,
+    });
+    expect(first.reconcile_superseded).toBe(1);
+
+    const logAfterFirst = await db.select().from(edge_reconciliation_log);
+    expect(logAfterFirst).toHaveLength(1);
+    expect(logAfterFirst[0].applied_at).not.toBeNull();
+    const liveAfterFirst = await db
+      .select()
+      .from(knowledge_edge)
+      .where(isNull(knowledge_edge.archived_at));
+    // Exactly one live edge: the new kA→kC (old kA→kB archived).
+    expect(liveAfterFirst).toHaveLength(1);
+    expect(liveAfterFirst[0].to_knowledge_id).toBe('kC');
+
+    // The applied row is the replay cursor's terminal state — loadUnappliedLog
+    // returns nothing, so a resumed reconcile job would NOT re-apply it (no
+    // second archive, no duplicate new edge).
+    const unapplied = await loadUnappliedEdgeReconcileLog(db);
+    expect(unapplied).toHaveLength(0);
+
+    // Sanity: the new candidate edge is now a real live row, so a SUBSEQUENT
+    // batch proposing the SAME edge would be `skipped_duplicate_edge` (it does
+    // not double-write). This confirms the apply is terminal, not repeatable.
+    const second = await runEdgeProposeAndWrite({
+      db,
+      recentFailures,
+      runTaskFn: fakeRunTask,
+      judgeReconcileFn: supersedeFirstNeighbor,
+    });
+    expect(second.skipped_duplicate_edge).toBe(1);
+    expect(second.reconcile_superseded).toBe(0);
+    // Still exactly one reconcile log row + one live new edge (no double-apply).
+    const logAfterSecond = await db.select().from(edge_reconciliation_log);
+    expect(logAfterSecond).toHaveLength(1);
+    const liveAfterSecond = await db
+      .select()
+      .from(knowledge_edge)
+      .where(isNull(knowledge_edge.archived_at));
+    expect(liveAfterSecond).toHaveLength(1);
   });
 });
