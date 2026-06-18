@@ -36,6 +36,10 @@ const ListQuerySchema = z
     group_by_family: z.boolean().default(false),
     expand_root: z.string().min(1).optional(),
     include_drafts: z.boolean().default(false),
+    // YUK-409 题库面 enrichment opt-in（subject / knowledge_labels / 大题小题展开）。
+    // 只对默认 flat list 路径生效——与 expand_root / group_by_family / source_tier /
+    // sort_by 互斥（那些是 in-memory derive 路径，不补 enrichment）。
+    enrich: z.boolean().default(false),
     limit: z.coerce.number().int().default(DEFAULT_LIMIT),
     offset: z.coerce.number().int().min(0).default(0),
   })
@@ -72,6 +76,7 @@ export async function GET(req: Request): Promise<Response> {
       group_by_family: parseBool(sp.get('group_by_family')),
       expand_root: sp.get('expand_root') ?? undefined,
       include_drafts: parseBool(sp.get('include_drafts')),
+      enrich: parseBool(sp.get('enrich')),
       limit: sp.get('limit') ?? undefined,
       offset: sp.get('offset') ?? undefined,
     });
@@ -105,6 +110,7 @@ export async function GET(req: Request): Promise<Response> {
       groupByFamily: q.group_by_family,
       expandRoot: q.expand_root,
       includeDrafts: q.include_drafts,
+      enrich: q.enrich,
       limit,
       offset,
     });

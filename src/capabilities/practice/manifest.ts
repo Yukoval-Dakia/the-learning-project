@@ -284,7 +284,15 @@ export const practiceCapability = defineCapability({
   },
   // M2-T6 将把旧 /review、/practice 页重生为单一练习面 /practice（流+卷架）。
   // inc-4b (YUK-403) — owner manual gate 草稿审核面 /drafts（draft 是 practice-pool 题）。
-  ui: { pages: [{ route: '/practice' }, { route: '/drafts' }] },
+  // YUK-409 — 题库面 /questions（loom screen-questions）+ 题详情 stub /questions/:id。
+  ui: {
+    pages: [
+      { route: '/practice' },
+      { route: '/drafts' },
+      { route: '/questions' },
+      { route: '/questions/:id' },
+    ],
+  },
   // M5-T3 (YUK-321) — copilot 工具归属声明（题/错题/复习读 4 + 出题组卷写 3）。
   // ADR-0032 D6-B (YUK-203 lane L6) 追加 propose_question_edit（active 题结构编辑写）。
   copilotTools: {
