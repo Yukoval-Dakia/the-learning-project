@@ -651,6 +651,59 @@ describe('proposal inbox reader', () => {
     expect(folded.map((r) => r.id)).toContain('edge_folded');
   });
 
+  // ADR-0034 §2 / YUK-344 (RB-7 twin for the TOPOLOGY marker) — a propose event
+  // the write-time topology gate hard-rejected carries a `topology_verdict.status
+  // = 'reject'` marker (sibling of ai_proposal) and NO rubric_verdict key. It must
+  // derive the TERMINAL 'rubric_rejected' (folded / non-pending / non-acceptable)
+  // status via deriveProposalStatus/isTopologyRejected, NOT 'pending'. Without
+  // this the topology fold (which has no chained rate) would derive 'pending' and
+  // re-occupy the (kind, cooldown_key) for the dup-pending callers — the same
+  // lockout RB-7 forbids, now via the topology marker.
+  it('derives terminal status for a topology-rejected (topology_verdict) propose event, not pending', async () => {
+    const db = testDb();
+    await writeAiProposal(db, {
+      id: 'edge_topo_folded',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'cycle-closing agent edge → topology rejected',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'prerequisite',
+          weight: 1,
+        },
+      },
+      event_override: {
+        action: 'propose',
+        subject_kind: 'knowledge_edge',
+        payload: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'prerequisite',
+          weight: 1,
+          reasoning: 'cycle-closing agent edge → topology rejected',
+          topology_verdict: { status: 'reject', gate: 'cycle', reason: 'closes a cycle' },
+        },
+      },
+    });
+
+    // Single-row projection → terminal (non-pending, non-acceptable), folded into
+    // the rubric_rejected bucket. NOT pending.
+    const row = await getProposalInboxRow(db, 'edge_topo_folded');
+    expect(row?.status).toBe('rubric_rejected');
+    expect(row?.status).not.toBe('pending');
+    expect(row?.status).not.toBe('accepted');
+
+    // Excluded from the live-pending bucket (the RB-7 twin invariant) and surfaces
+    // in the folded bucket instead.
+    const pending = await listProposalInboxRows(db, { status: 'pending' });
+    expect(pending.find((r) => r.id === 'edge_topo_folded')).toBeUndefined();
+    const folded = await listProposalInboxRows(db, { status: 'rubric_rejected' });
+    expect(folded.map((r) => r.id)).toContain('edge_topo_folded');
+  });
+
   // P5.4 / YUK-143 (codex r4 P2 #2) — correction status takes PRIORITY over the
   // rubric_rejected marker. A folded edge that is later retracted/corrected must
   // clear the folded bucket and derive 'stale', otherwise it stays pinned as

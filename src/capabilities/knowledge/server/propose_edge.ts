@@ -429,6 +429,16 @@ async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> {
         // findProposalRowsForGate (review.ts) does. The marker is a
         // `rubric_verdict: { ok:false }` sibling of ai_proposal on the payload.
         sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
+        // ADR-0034 §2 / YUK-344 — exclude TOPOLOGY-rejected (folded) propose
+        // events too. A topology reject fold writes a `topology_verdict` marker
+        // with status 'reject' (and NO rubric_verdict key), so the rubric filter
+        // above does NOT catch it. Without this twin filter a topology-rejected
+        // edge would be counted as live-pending here → the next batch hits
+        // `skipped_duplicate_pending` and permanently refuses to re-propose the
+        // very edge topology rejected (the cross-batch lockout RB-7 forbids).
+        // Mirrors the rubric_verdict predicate exactly; the marker is a
+        // `topology_verdict: { status:'reject' }` sibling of ai_proposal.
+        sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
       ),
     )
     .orderBy(desc(event.created_at));
