@@ -144,6 +144,12 @@ export interface QuestionDetail {
   part_index: number | null;
   parts: QuestionDetailPart[];
   draft_status: string | null;
+  // YUK-413 — row version for optimistic-lock on the editor's PATCH/DELETE. The
+  // edit surface (src/capabilities/practice/api/question-detail.ts) requires the
+  // current version; without exposing it here the detail-page editor has no way to
+  // supply a non-stale `version` and every save would 409. Pure projection of
+  // question.version (no schema change, additive read field).
+  version: number;
   knowledge_ids: string[];
   labels: QuestionDetailLabel[];
   family: QuestionDetailFamily;
@@ -248,6 +254,7 @@ export async function loadQuestionDetail(
     part_index: q.part_index ?? null,
     parts,
     draft_status: q.draft_status ?? null,
+    version: q.version, // YUK-413 — editor optimistic-lock token (see interface).
     knowledge_ids: knowledgeIds,
     labels,
     family,
