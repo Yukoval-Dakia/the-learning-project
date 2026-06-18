@@ -12,7 +12,17 @@ import { loadEnv } from './env';
 
 loadEnv();
 
-const port = Number(process.env.API_PORT ?? 8787);
+// YUK-345: `??` only guards null/undefined, so a bare `API_PORT=` (dotenv loads
+// it as '') would make Number('') === 0 → listen(0) binds a RANDOM port instead
+// of 8787. Trim-then-empty-check + positive-integer guard mirrors the
+// `optionalEnv` (trim → empty=default) fix applied to the mem0 config side in
+// YUK-341. This is the only remaining `Number(process.env.X ?? ...)` site.
+const rawApiPort = process.env.API_PORT?.trim();
+const parsedApiPort = rawApiPort ? Number(rawApiPort) : 8787;
+if (!Number.isInteger(parsedApiPort) || parsedApiPort <= 0) {
+  throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
+}
+const port = parsedApiPort;
 const app = buildHonoApp(capabilities);
 
 // M5-T5b (YUK-321) — prod 静态面：RW_STATIC_DIR 指向 vite build 产物（web/dist）。
