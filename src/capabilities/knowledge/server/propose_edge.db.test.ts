@@ -1325,4 +1325,76 @@ describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', ()
     });
     expect(liveEvents).toHaveLength(0);
   });
+
+  // FINDING A (YUK-344) — intra-batch accumulator correctness. A proposal folded
+  // earlier in the SAME batch (here by the RUBRIC gate) is intentionally NOT
+  // pushed into `liveTopologyEdges`, because a folded edge is never persisted
+  // live. So a LATER same-batch edge that would ONLY close a cycle THROUGH that
+  // folded edge must be ALLOWED (the cycle does not exist in the live graph).
+  // This documents the intentional exclusion: adding folded edges to the
+  // accumulator would cause false topology rejections.
+  it('does NOT topology-reject a later batch edge whose only cycle path runs through an EARLIER rubric-folded edge', async () => {
+    const db = testDb();
+    await insertKnowledge('kX');
+    await insertKnowledge('kY');
+    await insertKnowledge('kZ');
+    // Live prerequisite edge kY→kZ. If a live kZ→kX existed too, then kY would
+    // reach kX (kY→kZ→kX) and a later kX→kY would close the cycle kX→kY→kZ→kX.
+    await insertLiveEdge('e_yz', 'kY', 'kZ');
+    // Evidence touches ONLY kY (proposal 2's endpoint), with two same-cause
+    // in-window judge-backed failures → proposal 2 (kX→kY) passes the rubric
+    // floor. It does NOT touch kZ or kX, so proposal 1 (kZ→kX) has no
+    // endpoint-touching evidence and the rubric gate FOLDS it.
+    await seedJudgeFailure('att_finding_a_1', ['kY']);
+    await seedJudgeFailure('att_finding_a_2', ['kY']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          // Proposal 1 — kZ→kX. No endpoint-touching evidence → RUBRIC-folded.
+          // If (wrongly) added to the live accumulator, it would let proposal 2
+          // close a cycle.
+          {
+            from_knowledge_id: 'kZ',
+            to_knowledge_id: 'kX',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: 'kZ→kX 顺序（无端点证据，应被 rubric 折叠）。',
+          },
+          // Proposal 2 — kX→kY. Only closes a cycle THROUGH the folded kZ→kX, so
+          // on the LIVE graph (kY→kZ only) it forms no cycle → must be allowed.
+          {
+            from_knowledge_id: 'kX',
+            to_knowledge_id: 'kY',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: 'attempt att_finding_a_1 显示 kX→kY 的 prerequisite 顺序。',
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    // Proposal 1 rubric-folded; proposal 2 written live and NOT topology-rejected.
+    expect(stats.folded_rubric_rejected).toBe(1);
+    expect(stats.folded_topology_rejected).toBe(0);
+    expect(stats.proposed).toBe(1);
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(2);
+    // The kX→kY proposal is LIVE: no topology_verdict marker at all.
+    const edge2 = proposeEvents.find((row) => {
+      const p = row.payload as { from_knowledge_id?: string };
+      return p.from_knowledge_id === 'kX';
+    });
+    const edge2Payload = edge2?.payload as { topology_verdict?: unknown };
+    expect(edge2Payload?.topology_verdict).toBeUndefined();
+  });
 });
