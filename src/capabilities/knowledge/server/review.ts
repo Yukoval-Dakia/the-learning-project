@@ -339,6 +339,15 @@ async function findProposalRowsForGate(
         // proposal on the same (kind, cooldown_key). The marker is a
         // `rubric_verdict: { ok:false }` sibling of ai_proposal on the payload.
         sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
+        // ADR-0034 §2 / YUK-344 — exclude TOPOLOGY-rejected (folded) propose
+        // events too. A topology reject fold carries a `topology_verdict` marker
+        // with status 'reject' and NO rubric_verdict key, so the rubric filter
+        // above misses it. Counting one here would lock out the same
+        // (kind, cooldown_key) and block a later valid proposal — the same
+        // terminal-but-treated-as-pending bug RB-7 forbids. Mirrors the
+        // rubric_verdict predicate; the marker is a
+        // `topology_verdict: { status:'reject' }` sibling of ai_proposal.
+        sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))
