@@ -1,5 +1,6 @@
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_mastery } from '@/db/schema';
+import { getMasteryProjection } from '@/server/mastery/state';
 import { eq, isNull, sql } from 'drizzle-orm';
 
 interface KnowledgeRow {
@@ -55,16 +56,19 @@ export function warnIfTreeSnapshotTruncated(
 }
 
 export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
-  const rows = await db
+  // B1 double-truth fix — `mastery` / `evidence_count` / `last_evidence_at` are
+  // overlaid below from the SoT mastery_state.theta_hat projection
+  // (getMasteryProjection → σ(θ̂)), NOT the deprecated knowledge_mastery view's
+  // weighted-success-rate + `<3 → 0.5` placeholder. `last_active_at` is an
+  // orthogonal "last touched by ANY event" timeline value (COALESCE with
+  // knowledge.created_at) — NOT the double-truth bug — so it still reads the view.
+  const baseRows = await db
     .select({
       id: knowledge.id,
       name: knowledge.name,
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
       archived_at: knowledge.archived_at,
-      mastery: knowledge_mastery.mastery,
-      evidence_count: sql<number>`COALESCE(${knowledge_mastery.evidence_count}, 0)`,
-      last_evidence_at: knowledge_mastery.last_evidence_at,
       last_active_at: sql<Date>`COALESCE(${knowledge_mastery.last_active_at}, ${knowledge.created_at})`,
     })
     .from(knowledge)
@@ -81,7 +85,30 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
     // Bound the load-all snapshot so a runaway graph can't OOM the heap. See the
     // LOAD_TREE_SNAPSHOT_LIMIT docblock for the phase-deferred CTE follow-up.
     .limit(LOAD_TREE_SNAPSHOT_LIMIT);
-  warnIfTreeSnapshotTruncated(rows.length);
+  warnIfTreeSnapshotTruncated(baseRows.length);
+
+  // Overlay the SoT mastery projection (single batch read on mastery_state).
+  // Absent (never-attempted) nodes → mastery null / evidence 0 / no
+  // last_evidence_at, matching the deprecated view's NULL/0 (no-evidence) output.
+  const projection = await getMasteryProjection(
+    db,
+    baseRows.map((r) => r.id),
+  );
+  const rows: KnowledgeRow[] = baseRows.map((r) => {
+    const proj = projection.get(r.id);
+    return {
+      id: r.id,
+      name: r.name,
+      domain: r.domain,
+      parent_id: r.parent_id,
+      archived_at: r.archived_at,
+      mastery: proj ? proj.mastery : null,
+      evidence_count: proj?.evidence_count ?? 0,
+      last_evidence_at: proj?.last_outcome_at ?? null,
+      last_active_at: r.last_active_at,
+    };
+  });
+
   const byId = new Map<string, KnowledgeRow>();
   for (const r of rows) byId.set(r.id, r);
   return rows.map((r) => {

@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
+import { thetaToMastery } from '@/core/theta';
 import { db } from '@/db/client';
 import {
   item_calibration,
@@ -14,7 +15,12 @@ import {
   question,
 } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
-import { getMasteryState, updateThetaForAttempt, upsertMasteryState } from './state';
+import {
+  getMasteryProjection,
+  getMasteryState,
+  updateThetaForAttempt,
+  upsertMasteryState,
+} from './state';
 
 async function seedKnowledge(id: string) {
   const now = new Date();
@@ -123,6 +129,106 @@ describe('getMasteryState', () => {
     const state = await getMasteryState(db, k);
     expect(state?.theta_hat).toBeCloseTo(1.1, 5);
     expect(state?.success_count).toBe(2);
+  });
+});
+
+describe('getMasteryProjection (B1 double-truth fix — read from theta_hat, not the view)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns an empty map for empty input (no query)', async () => {
+    expect((await getMasteryProjection(db, [])).size).toBe(0);
+  });
+
+  it('projects theta_hat → mastery = σ(θ̂) and derives theta_se from precision', async () => {
+    const k = createId();
+    await seedKnowledge(k);
+    await upsertMasteryState(db, {
+      subject_id: k,
+      theta_hat: 1.2,
+      evidence_count: 5,
+      success_count: 4,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+      theta_precision: 4,
+    });
+    const proj = await getMasteryProjection(db, [k]);
+    const row = proj.get(k);
+    expect(row).toBeDefined();
+    // mastery is the θ̂ projection — NOT the deprecated view's weighted success
+    // rate (which here would be ~0.8) nor the <3-evidence 0.5 placeholder.
+    expect(row?.mastery).toBeCloseTo(thetaToMastery(1.2), 10);
+    expect(row?.theta_hat).toBeCloseTo(1.2, 5);
+    // SE = 1/√precision = 1/√4 = 0.5.
+    expect(row?.theta_se).toBeCloseTo(0.5, 10);
+    expect(row?.success_count).toBe(4);
+    expect(row?.fail_count).toBe(1);
+  });
+
+  it('cold start: θ̂=0 / precision=1 (DB defaults) → mastery 0.5, theta_se 1', async () => {
+    const k = createId();
+    await seedKnowledge(k);
+    // A row at the DB defaults (e.g. seeded with no movement) — θ̂=0, precision=1.
+    await upsertMasteryState(db, {
+      subject_id: k,
+      theta_hat: 0,
+      evidence_count: 0,
+      success_count: 0,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+      theta_precision: 1,
+    });
+    const row = (await getMasteryProjection(db, [k])).get(k);
+    expect(row?.mastery).toBeCloseTo(0.5, 10);
+    expect(row?.theta_se).toBeCloseTo(1, 10);
+  });
+
+  it('omits never-attempted nodes (no row) — absence = cold start, matches the old view NULL', async () => {
+    const seeded = createId();
+    const unseeded = createId();
+    await seedKnowledge(seeded);
+    await seedKnowledge(unseeded);
+    await upsertMasteryState(db, {
+      subject_id: seeded,
+      theta_hat: -0.8,
+      evidence_count: 2,
+      success_count: 0,
+      fail_count: 2,
+      last_outcome_at: new Date(),
+    });
+    const proj = await getMasteryProjection(db, [seeded, unseeded]);
+    expect(proj.has(seeded)).toBe(true);
+    expect(proj.has(unseeded)).toBe(false);
+    // A weak node (θ̂ < 0) projects below 0.5 — the deprecated view would have
+    // FAKED this as 0.5 because evidence_count < 3.
+    expect(proj.get(seeded)?.mastery).toBeLessThan(0.5);
+  });
+
+  it('after a real attempt, mastery tracks the moved θ̂ (end-to-end, not the view placeholder)', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k], 3);
+    // One correct attempt — θ̂ moves up from 0; evidence_count becomes 1 (< 3),
+    // exactly the regime the deprecated view clamped to 0.5.
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    const state = await getMasteryState(db, k);
+    const row = (await getMasteryProjection(db, [k])).get(k);
+    expect(state?.evidence_count).toBe(1);
+    expect(row?.theta_hat).toBeCloseTo(state?.theta_hat ?? Number.NaN, 10);
+    expect(row?.mastery).toBeCloseTo(thetaToMastery(state?.theta_hat ?? 0), 10);
+    // The correct answer pushed θ̂ > 0 → mastery > 0.5, NOT clamped to 0.5.
+    expect(row?.mastery).toBeGreaterThan(0.5);
   });
 });
 
