@@ -176,70 +176,6 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
 
-      // ADR-0034 §2 / YUK-344 — write-time STRUCTURAL CONSISTENCY gate (topology
-      // layer). Pure graph checks (cycle / direction contradiction / transitive
-      // redundancy) on the prerequisite graph, orthogonal to the semantic rubric
-      // gate below. `liveTopologyEdges` accumulates edges accepted EARLIER in this
-      // same batch so two proposals that TOGETHER form a cycle are caught (the
-      // batch is not yet persisted, so a fresh DB read would miss them).
-      const topology = checkEdgeTopology(
-        {
-          from_knowledge_id: p.from_knowledge_id,
-          to_knowledge_id: p.to_knowledge_id,
-          relation_type: p.relation_type,
-        },
-        liveTopologyEdges,
-      );
-
-      if (topology.status === 'reject') {
-        // Cycle / direction contradiction = HARD reject. Fold like a rubric
-        // reject (RB-6 / §3.4): write a MARKED propose event for audit, no live
-        // pending proposal, and exclude it from cross-batch dedup so a later
-        // batch can re-evaluate against an evolved graph. The marker is a
-        // `topology_verdict` sibling of ai_proposal on the event payload.
-        await writeAiProposal(params.db, {
-          actor_ref: 'dreaming',
-          outcome: 'success',
-          payload: {
-            kind: 'knowledge_edge' as const,
-            target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
-            reason_md: p.reasoning,
-            evidence_refs: [],
-            proposed_change: {
-              from_knowledge_id: p.from_knowledge_id,
-              to_knowledge_id: p.to_knowledge_id,
-              relation_type: p.relation_type,
-              weight: p.weight,
-            },
-            cooldown_key: `knowledge_edge:${key}`,
-          },
-          event_override: {
-            action: 'propose',
-            subject_kind: 'knowledge_edge',
-            payload: {
-              from_knowledge_id: p.from_knowledge_id,
-              to_knowledge_id: p.to_knowledge_id,
-              relation_type: p.relation_type,
-              weight: p.weight,
-              reasoning: p.reasoning,
-              topology_verdict: {
-                status: 'reject',
-                gate: topology.gate,
-                reason: topology.reason,
-              },
-            },
-          },
-          task_run_id: result.task_run_id ?? null,
-          cost_usd: result.cost_usd,
-          created_at: new Date(),
-        });
-        pendingEdgeKey.add(key);
-        stats.folded_topology_rejected += 1;
-        continue;
-      }
-
-      // Write ProposeKnowledgeEdge event (Lane B).
-      //
       // P5.4-L2 / YUK-174 NOTE: this batch path's L1 rubric floor is now wired in
       // (YUK-175): every proposal runs `validateProposalQuality` BELOW before the
       // live write, mirroring the DomainTool / legacy-MCP call sites. Facet A
@@ -260,6 +196,10 @@ export async function runEdgeProposeAndWrite(
       // when its effective id set contains p.from_knowledge_id or p.to_knowledge_id.
       // When the scoped set is empty the validator takes the evidence_missing path
       // → fold (correct, matches the existing no-endpoint-evidence behaviour).
+      //
+      // Built BEFORE the topology check so the topology-reject branch can reuse it
+      // (overriding only evidence_refs → []) instead of hand-rebuilding the same
+      // proposal payload object.
       const endpointTouchingFailures = params.recentFailures.filter((failure) => {
         const effectiveRefs = new Set([
           ...failure.referenced_knowledge_ids,
@@ -284,6 +224,65 @@ export async function runEdgeProposeAndWrite(
         cooldown_key: `knowledge_edge:${key}`,
       };
 
+      // Base fields shared by every writeAiProposal call below (reject / warn /
+      // normal). Each branch spreads this and adds its own payload + event_override.
+      const proposalWriteBase = {
+        actor_ref: 'dreaming' as const,
+        outcome: 'success' as const,
+        task_run_id: result.task_run_id ?? null,
+        cost_usd: result.cost_usd,
+        created_at: new Date(),
+      };
+
+      // ADR-0034 §2 / YUK-344 — write-time STRUCTURAL CONSISTENCY gate (topology
+      // layer). Pure graph checks (cycle / direction contradiction / transitive
+      // redundancy) on the prerequisite graph, orthogonal to the semantic rubric
+      // gate below. `liveTopologyEdges` accumulates edges accepted EARLIER in this
+      // same batch so two proposals that TOGETHER form a cycle are caught (the
+      // batch is not yet persisted, so a fresh DB read would miss them).
+      const topology = checkEdgeTopology(
+        {
+          from_knowledge_id: p.from_knowledge_id,
+          to_knowledge_id: p.to_knowledge_id,
+          relation_type: p.relation_type,
+        },
+        liveTopologyEdges,
+      );
+
+      if (topology.status === 'reject') {
+        // Cycle / direction contradiction = HARD reject. Fold like a rubric
+        // reject (RB-6 / §3.4): write a MARKED propose event for audit, no live
+        // pending proposal, and exclude it from cross-batch dedup so a later
+        // batch can re-evaluate against an evolved graph. The marker is a
+        // `topology_verdict` sibling of ai_proposal on the event payload. Reuse
+        // `proposalPayload` but drop evidence_refs — a folded reject carries no
+        // evidence (its endpoints' failures are not "supporting" a live edge).
+        await writeAiProposal(params.db, {
+          ...proposalWriteBase,
+          payload: { ...proposalPayload, evidence_refs: [] },
+          event_override: {
+            action: 'propose',
+            subject_kind: 'knowledge_edge',
+            payload: {
+              from_knowledge_id: p.from_knowledge_id,
+              to_knowledge_id: p.to_knowledge_id,
+              relation_type: p.relation_type,
+              weight: p.weight,
+              reasoning: p.reasoning,
+              topology_verdict: {
+                status: 'reject',
+                gate: topology.gate,
+                reason: topology.reason,
+              },
+            },
+          },
+        });
+        pendingEdgeKey.add(key);
+        stats.folded_topology_rejected += 1;
+        continue;
+      }
+
+      // Write ProposeKnowledgeEdge event (Lane B).
       const verdict = await validateProposalQuality(
         parseAiProposalPayload(proposalPayload),
         params.db,
@@ -298,8 +297,7 @@ export async function runEdgeProposeAndWrite(
         // and re-fold rather than permanently lock the edge out. Mirrors
         // foldRubricRejectedEdge in proposal-tools.ts.
         await writeAiProposal(params.db, {
-          actor_ref: 'dreaming',
-          outcome: 'success',
+          ...proposalWriteBase,
           payload: proposalPayload,
           event_override: {
             action: 'propose',
@@ -313,9 +311,6 @@ export async function runEdgeProposeAndWrite(
               rubric_verdict: { ok: false, gate: verdict.gate, reason: verdict.reason },
             },
           },
-          task_run_id: result.task_run_id ?? null,
-          cost_usd: result.cost_usd,
-          created_at: new Date(),
         });
         // Mark this key so the SAME batch does not re-emit it (the folded row is
         // excluded from the CROSS-batch pending set in loadPendingEdgeProposalKeys,
@@ -333,8 +328,7 @@ export async function runEdgeProposeAndWrite(
       // byte-identical to before this gate.
       if (topology.status === 'warn') {
         await writeAiProposal(params.db, {
-          actor_ref: 'dreaming',
-          outcome: 'success',
+          ...proposalWriteBase,
           payload: proposalPayload,
           event_override: {
             action: 'propose',
@@ -352,25 +346,29 @@ export async function runEdgeProposeAndWrite(
               },
             },
           },
-          task_run_id: result.task_run_id ?? null,
-          cost_usd: result.cost_usd,
-          created_at: new Date(),
         });
         stats.warned_transitive_redundancy += 1;
       } else {
         await writeAiProposal(params.db, {
-          actor_ref: 'dreaming',
-          outcome: 'success',
+          ...proposalWriteBase,
           payload: proposalPayload,
-          task_run_id: result.task_run_id ?? null,
-          cost_usd: result.cost_usd,
-          created_at: new Date(),
         });
       }
       // 同一 batch 内防同向同型重复
       pendingEdgeKey.add(key);
       // ADR-0034 §2 — record the now-live edge so a LATER proposal in this same
       // batch is checked against it (intra-batch cycle / contradiction).
+      //
+      // FINDING A (YUK-344) — this push is reached ONLY on the live (non-folded)
+      // path: every fold branch above (topology reject, rubric reject) `continue`s
+      // BEFORE here, so a folded edge is intentionally NEVER added to
+      // `liveTopologyEdges`. This is correct, not a bug: a folded edge (rubric OR
+      // topology) is never persisted as a live edge, so it is not part of the live
+      // prerequisite graph. The accumulator must mirror the live graph — if a
+      // folded edge were added, a LATER same-batch edge that would only close a
+      // cycle THROUGH the folded edge would be falsely topology-rejected, even
+      // though that cycle does not exist in the live mesh. Excluding folded edges
+      // keeps the intra-batch check consistent with the eventual DB state.
       liveTopologyEdges.push({
         from_knowledge_id: p.from_knowledge_id,
         to_knowledge_id: p.to_knowledge_id,
