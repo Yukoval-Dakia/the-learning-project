@@ -68,6 +68,7 @@ describe('matcher — Task 1 (active hits, no draft, no residual)', () => {
 
   it('returns active pool hits sliced to limit, difficulty floor applied, by created_at order', async () => {
     const kc = 'kc-m1';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     // three active rows on the same KC, all difficulty >= 3, distinct created_at.
     await seed({
       id: 'q-a',
@@ -129,6 +130,7 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
 
   it('cosine-ranks pool hits nearest-first when queryEmbedding given (hybrid)', async () => {
     const kc = 'kc-vec';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     // three active rows clustered near the query direction (1,0) at increasing angles —
     // all WITHIN MATCHER_COSINE_MAX_DISTANCE (so the §4 threshold keeps all three; this
     // test isolates ranking, the over-threshold drop is covered separately). created_at
@@ -166,6 +168,7 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
 
   it('queryText 路 B — embeds via injected embedFn exactly once', async () => {
     const kc = 'kc-text';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     await seed({ id: 'q-near', knowledge_ids: [kc], embedding: vec(0, 1) });
     await seed({ id: 'q-far', knowledge_ids: [kc], embedding: vec(1, 0) });
 
@@ -184,6 +187,7 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
 
   it('queryEmbedding takes priority over queryText — embedFn not called', async () => {
     const kc = 'kc-prio';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     await seed({ id: 'q-near', knowledge_ids: [kc], embedding: vec(0, 1) });
     await seed({ id: 'q-far', knowledge_ids: [kc], embedding: vec(1, 0) });
 
@@ -201,6 +205,7 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
 
   it('vector mode excludes NULL-embedding rows but does not crash (§7 降级)', async () => {
     const kc = 'kc-null-vec';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     await seed({ id: 'q-vec', knowledge_ids: [kc], embedding: vec(1, 0) });
     await seed({ id: 'q-null', knowledge_ids: [kc] }); // NULL embedding
 
@@ -213,6 +218,7 @@ describe('matcher — Task 2 (cosine soft ranking + NULL embedding 降级)', () 
 
   it('scalar mode (no queryEmbedding) recalls NULL-embedding rows (§7 降级)', async () => {
     const kc = 'kc-null-scalar';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     await seed({
       id: 'q-vec',
       knowledge_ids: [kc],
@@ -376,6 +382,7 @@ describe('matcher — Task 5 (draft 命中 lazy verify-promote + cosine 阈值�
   // Step 3 — draft hit (within threshold) → verify promotes → USE.
   it('draft hit within threshold → verify promotes → used carries promotedFromDraft + verifyEventId', async () => {
     const kc = 'kc-draft-ok';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     await seed({
       id: 'q-draft',
       knowledge_ids: [kc],
@@ -418,6 +425,7 @@ describe('matcher — Task 5 (draft 命中 lazy verify-promote + cosine 阈值�
   // Step 4 — draft fails gate → skip it, use the next candidate (an active row).
   it('draft that fails verify is skipped; next active candidate is used instead', async () => {
     const kc = 'kc-draft-fail';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     // both rows hit; same embedding (within threshold). draft ranks first by created_at but
     // fails verify; active ranks second and must be the one used.
     await seed({
@@ -502,6 +510,7 @@ describe('matcher — codex P2 fixes', () => {
   // must be used DIRECTLY, never sent to verify (sending it would mis-route a usable row).
   it("non-draft 'final' row is used directly, verify NOT called (P2-1)", async () => {
     const kc = 'kc-final';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     await seed({ id: 'q-final', knowledge_ids: [kc], draft_status: 'final' });
 
     const verify = vi.fn(
@@ -557,6 +566,7 @@ describe('matcher — codex P2 fixes', () => {
   // treats that candidate as unusable, and continues to the next ranked candidate.
   it('verify that throws is caught per-candidate; matcher continues to next active candidate (P2-3)', async () => {
     const kc = 'kc-verify-throw';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
     // draft ranks first by created_at and its verify throws; an active row follows and
     // must still be used (the throw on the draft must not abort the loop).
     await seed({
@@ -628,6 +638,134 @@ describe('matcher — codex P2 fixes', () => {
 
     const result = await matcher(db, { knowledgeId: kc, limit: 2 }, { dispatch });
 
+    expect(result.used).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(result.residual).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(false);
+  });
+});
+
+// ── YUK-401 — matcher 算子 3 个硬化修 (codex round-2 A 段) ──────────────────────
+describe('matcher — YUK-401 operator hardening', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // Fix 1 — Demand.minSourceTier enforcement. A candidate counts toward `used` ONLY if
+  // its derived source tier SATISFIES minSourceTier (deriveSourceTier: tier 1 authentic
+  // best → 4 generated; minSourceTier=2 ⇒ require tier ≤ 2). A bare source row with no
+  // provenance markers derives tier 4 (low); under minSourceTier:2 it must be skipped
+  // (not counted toward used) → gap → residual dispatched (target carries minSourceTier).
+  it('minSourceTier:2 — a low-tier (tier 4) active candidate does NOT satisfy the demand → residual (Fix 1)', async () => {
+    const kc = 'kc-mintier';
+    await seedKc(kc, 'math'); // live KC anchor so the residual dispatches.
+    // source='quiz_gen' with NO provenance metadata → deriveSourceTier falls through to tier 4.
+    await seed({ id: 'q-low', knowledge_ids: [kc], source: 'quiz_gen', draft_status: null });
+
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, minSourceTier: 2, limit: 1 }, { dispatch });
+
+    // tier-4 row does not meet minSourceTier:2 → not used; pool yields nothing usable → residual.
+    expect(result.used).toEqual([]);
+    expect(result.satisfiedFromPool).toBe(false);
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  // Fix 1 (control) — WITHOUT minSourceTier, the same tier-4 row is used normally
+  // (the floor only applies when the demand declares it). Guards against over-filtering.
+  it('no minSourceTier — the same tier-4 active row is used normally (Fix 1 control)', async () => {
+    const kc = 'kc-mintier-control';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
+    await seed({ id: 'q-low', knowledge_ids: [kc], source: 'quiz_gen', draft_status: null });
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 1 });
+
+    expect(result.used).toHaveLength(1);
+    expect(result.used[0].question_id).toBe('q-low');
+    expect(result.satisfiedFromPool).toBe(true);
+    expect(result.residual).toEqual([]);
+  });
+
+  // Fix 2 — compositeParentOnly propagation to the residual target.constraints. The
+  // demand's 篇-only structural axis must reach the generation end: demandToSupplyTarget
+  // writes demand.compositeParentOnly into target.constraints so the dispatched target
+  // carries the 「篇」constraint (otherwise the generation side drops it).
+  it('compositeParentOnly:true → dispatched target.constraints carries compositeParentOnly (Fix 2)', async () => {
+    const kc = 'kc-composite';
+    await seedKc(kc, 'math'); // live KC, empty pool → residual dispatch fires.
+    let captured: QuestionSupplyTarget | null = null;
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> => {
+        captured = target;
+        return fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint });
+      },
+    );
+
+    const result = await matcher(
+      db,
+      { knowledgeId: kc, compositeParentOnly: true, limit: 1 },
+      { dispatch },
+    );
+
+    expect(result.residual.length).toBeGreaterThanOrEqual(1);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const t = captured as unknown as QuestionSupplyTarget;
+    expect(t.constraints.compositeParentOnly).toBe(true);
+  });
+
+  // Fix 2 (control) — a demand WITHOUT compositeParentOnly must NOT set the flag on the
+  // target (it stays absent/falsy), so the generation side is unconstrained by default.
+  it('no compositeParentOnly → dispatched target.constraints does not set it (Fix 2 control)', async () => {
+    const kc = 'kc-composite-control';
+    await seedKc(kc, 'math');
+    let captured: QuestionSupplyTarget | null = null;
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> => {
+        captured = target;
+        return fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint });
+      },
+    );
+
+    await matcher(db, { knowledgeId: kc, limit: 1 }, { dispatch });
+
+    const t = captured as unknown as QuestionSupplyTarget;
+    expect(t.constraints.compositeParentOnly).toBeFalsy();
+  });
+
+  // Fix 3 — archived-KC live check moved to the TOP of matcher(), before poolFetch. An
+  // archived KC that still carries a stale active question must NOT be served from the
+  // pool (an archived KC serves no stale items) and must NOT dispatch a residual (the
+  // worker anchor guard would reject it anyway). matcher returns the empty triple
+  // immediately: used [], residual [], satisfiedFromPool false — a distinguishable signal.
+  it('archived KC with a stale active question → pool NOT served, dispatch NOT called, empty triple (Fix 3)', async () => {
+    const kc = 'kc-archived-stale';
+    // archived KC node…
+    await db.insert(knowledge).values({
+      id: kc,
+      name: kc,
+      domain: 'math',
+      parent_id: null,
+      archived_at: new Date('2024-01-01T00:00:00Z'),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    // …that STILL carries a live (non-draft) question on its knowledge_ids.
+    await seed({ id: 'q-stale-active', knowledge_ids: [kc], draft_status: null });
+
+    const dispatch = vi.fn(
+      async (_db: typeof db, target: QuestionSupplyTarget): Promise<DispatchResult> =>
+        fakeDispatchResult({ targetId: target.id, fingerprint: target.fingerprint }),
+    );
+
+    const result = await matcher(db, { knowledgeId: kc, limit: 2 }, { dispatch });
+
+    // archived KC: the stale active row is NOT used (poolFetch never reached);
+    // no residual dispatched; the empty triple is the distinguishable dead-KC signal.
     expect(result.used).toEqual([]);
     expect(dispatch).not.toHaveBeenCalled();
     expect(result.residual).toEqual([]);

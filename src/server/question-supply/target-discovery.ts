@@ -83,6 +83,13 @@ export interface QuestionSupplyTarget {
     objectiveOnly?: boolean;
     calibrationCandidate?: boolean;
     avoidDuplicateOfQuestionIds?: string[];
+    /**
+     * YUK-401 Fix 2 — structural axis unit==='篇' (composite-parent-only). The matcher's
+     * Demand.compositeParentOnly threads through demandToSupplyTarget into this constraint
+     * so a residual 「篇」 request reaches the generation end (mirrors poolFetch's
+     * compositeParentOnly hard filter on the retrieval side). Absent → unconstrained.
+     */
+    compositeParentOnly?: boolean;
   };
 }
 
