@@ -3,7 +3,7 @@
 // /api/questions/*（题面读 + solve 链）整体留旧栈 proxy——solve 链的旧壳是
 // shim、handler 同为包内代码（quiz 域 D16 出 M2 范围，M5 收口）。
 
-import { apiJson } from '@/ui/lib/api';
+import { ApiAuthError, ApiError, apiJson, getInternalToken } from '@/ui/lib/api';
 
 // ── 流 ──────────────────────────────────────────────────────────
 export type StreamSource = 'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import';
@@ -53,6 +53,203 @@ export interface QuestionDetail {
 
 export const getQuestion = (id: string) =>
   apiJson<QuestionDetail>(`/api/questions/${encodeURIComponent(id)}`);
+
+// ── 题详情面 /questions/:id（YUK-413, loom screen-question-detail）─────────────
+// GET /api/questions/:id 的完整聚合（src/server/questions/detail.ts QuestionDetail）。
+// 上面那个薄 QuestionDetail 是 solve 链用的兼容子集；详情编辑面要全投影：
+// family（变体家族）/ parts（composite 小题）/ scheduling（FSRS）/ backlinks（卷引用）
+// / timeline（attempt·review）/ version（PATCH/DELETE 乐观锁 token）。
+export interface QFullDetailLabel {
+  id: string;
+  name: string;
+}
+
+export interface QFullFamilyMember {
+  id: string;
+  variant_depth: number;
+  kind: string;
+  is_self: boolean;
+}
+
+export interface QFullPart {
+  id: string;
+  kind: string;
+  part_index: number;
+  prompt_md: string;
+  difficulty: number;
+  draft_status: string | null;
+}
+
+export interface QFullPerKnowledge {
+  knowledge_id: string;
+  name: string | null;
+  mastery: number | null;
+  evidence_count: number;
+  last_evidence_at_sec: number | null;
+  decay_bucket: string;
+  due_at_sec: number | null;
+}
+
+export interface QFullBacklink {
+  artifact_id: string;
+  type: string;
+  title: string;
+  tool_kind: string | null;
+  intent_source: string;
+  generation_status: string;
+  created_at_sec: number;
+}
+
+export interface QFullTimelineEntry {
+  kind: 'attempt' | 'review';
+  event_id: string;
+  created_at_sec: number;
+  outcome: string;
+  duration_ms: number | null;
+  cause?: { primary: string; confidence: number | null } | null;
+  fsrs_rating?: 'again' | 'hard' | 'good';
+}
+
+export interface QuestionFullDetail {
+  id: string;
+  kind: string;
+  prompt_md: string;
+  reference_md: string | null;
+  choices_md: string[] | null;
+  rubric_json: unknown;
+  difficulty: number;
+  source: string;
+  source_ref: string | null;
+  source_tier: { tier: number; name: string };
+  visual_complexity: string | null;
+  figures: unknown;
+  image_refs: string[];
+  variant_depth: number;
+  root_question_id: string | null;
+  parent_variant_id: string | null;
+  parent_question_id: string | null;
+  part_index: number | null;
+  parts: QFullPart[];
+  draft_status: string | null;
+  version: number; // PATCH/DELETE 乐观锁 token（YUK-413 加在后端聚合上）。
+  knowledge_ids: string[];
+  labels: QFullDetailLabel[];
+  family: { root_question_id: string; members: QFullFamilyMember[]; variant_count: number };
+  scheduling: {
+    per_knowledge: QFullPerKnowledge[];
+    aggregate_decay_bucket: string;
+    legacy_question_fsrs: { due_at_sec: number } | null;
+  };
+  backlinks: QFullBacklink[];
+  backlinks_by_intent_source: Record<string, QFullBacklink[]>;
+  timeline: QFullTimelineEntry[];
+  metadata: Record<string, unknown> | null;
+  created_at_sec: number;
+  updated_at_sec: number;
+  computed_at_sec: number;
+}
+
+export const getQuestionFull = (id: string) =>
+  apiJson<QuestionFullDetail>(`/api/questions/${encodeURIComponent(id)}`);
+
+// PATCH 编辑面（editable surface 子集 + version 乐观锁；血缘字段后端 .strict() 拒）。
+// 返回 { ok, noop, version, event_id }——noop≡补丁与现行 row 无差异（version 不动）。
+export interface QuestionPatchBody {
+  version: number;
+  prompt_md?: string;
+  reference_md?: string | null;
+  choices_md?: string[] | null;
+  difficulty?: number;
+  knowledge_ids?: string[];
+  kind?: string;
+  draft_status?: 'draft' | 'active' | null;
+}
+
+export interface QuestionPatchResult {
+  ok: boolean;
+  noop: boolean;
+  version: number;
+  event_id?: string | null;
+}
+
+export const patchQuestion = (id: string, body: QuestionPatchBody) =>
+  apiJson<QuestionPatchResult>(`/api/questions/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+
+// DELETE 关联约束门 + 软删。两步：
+//   1. 无 confirm → 后端回 409 'confirm_required' + associations 计数（attempts/
+//      mistakes/fsrs_cards/paper_refs）。apiJson 会把 409 抛成 ApiError 丢掉 body，
+//      故这里直接走 apiFetch 读 409 体（kind:'confirm_required' 返计数）。
+//   2. confirm=true&version=N → 软删（re-draft）+ 级联小题 + event。
+export interface QuestionAssociationCounts {
+  attempts: number;
+  mistakes: number;
+  fsrs_cards: number;
+  paper_refs: number;
+}
+
+export type DeleteQuestionResult =
+  | { kind: 'confirm_required'; associations: QuestionAssociationCounts; has_associations: boolean }
+  | {
+      kind: 'archived';
+      event_id?: string | null;
+      cascaded_part_ids: string[];
+      associations: QuestionAssociationCounts;
+    };
+
+export async function deleteQuestion(
+  id: string,
+  opts: { confirm?: boolean; version?: number } = {},
+): Promise<DeleteQuestionResult> {
+  const sp = new URLSearchParams();
+  if (opts.confirm) sp.set('confirm', 'true');
+  if (opts.version != null) sp.set('version', String(opts.version));
+  const url = `/api/questions/${encodeURIComponent(id)}${sp.toString() ? `?${sp.toString()}` : ''}`;
+
+  // 手摇 fetch（不走 apiJson/apiFetch）：未确认删的第一拍要读 409 'confirm_required'
+  // body 的 associations 计数，而 apiJson/apiFetch 在 !res.ok 时直接 throw 丢 body。
+  // token 注入沿用 apiFetch 同款（x-internal-token from localStorage）；401 同样清 token。
+  const token = getInternalToken();
+  if (!token) throw new ApiAuthError('未设置 internal token');
+  const res = await fetch(url, { method: 'DELETE', headers: { 'x-internal-token': token } });
+
+  if (res.status === 401) {
+    throw new ApiAuthError('token 无效或已过期');
+  }
+
+  const body = (await res.json().catch(() => null)) as {
+    error?: string;
+    message?: string;
+    archived?: boolean;
+    event_id?: string | null;
+    cascaded_part_ids?: string[];
+    associations?: QuestionAssociationCounts;
+    has_associations?: boolean;
+  } | null;
+
+  // 409 confirm_required：约束门（version 校验之前，无写库副作用）→ 回计数给 UI 展示。
+  if (res.status === 409 && body?.error === 'confirm_required' && body.associations) {
+    return {
+      kind: 'confirm_required',
+      associations: body.associations,
+      has_associations: body.has_associations ?? false,
+    };
+  }
+
+  if (!res.ok) {
+    throw new ApiError(body?.message ?? `${res.status} ${res.statusText}`, res.status, body?.error);
+  }
+
+  // 2xx：confirm=true 已软删。
+  return {
+    kind: 'archived',
+    event_id: body?.event_id ?? null,
+    cascaded_part_ids: body?.cascaded_part_ids ?? [],
+    associations: body?.associations ?? { attempts: 0, mistakes: 0, fsrs_cards: 0, paper_refs: 0 },
+  };
+}
 
 export interface JudgePreview {
   route: string;
