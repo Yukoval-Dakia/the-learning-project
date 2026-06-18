@@ -180,9 +180,25 @@ jobs:
             const body = lines.join('\n').trim();
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number,
-              body,
-            });
+
+            // The review itself already succeeded and the JSON artifact is the
+            // durable record; only the comment POST remains. GitHub's API
+            // returns transient 5xx / "fetch failed" often enough that a single
+            // attempt flakes the whole job (observed: a 500 on POST .../comments
+            // after a clean review). Retry transient failures with backoff; a
+            // 4xx (real client error) fails fast.
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const maxAttempts = 4;
+            for (let attempt = 1; ; attempt++) {
+              try {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+                break;
+              } catch (err) {
+                const status = err && err.status;
+                const transient = !status || status >= 500 || status === 429;
+                if (!transient || attempt >= maxAttempts) throw err;
+                const delay = 2000 * attempt;
+                core.warning(`createComment attempt ${attempt} failed (status ${status ?? 'network'}): ${err.message}; retrying in ${delay}ms`);
+                await sleep(delay);
+              }
+            }
