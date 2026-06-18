@@ -47,6 +47,8 @@ export const NAV: NavEntry[] = [
   { id: 'record', label: '录入', icon: 'record', path: '/record' },
   { section: '整理' },
   { id: 'inbox', label: '收件箱', icon: 'inbox', path: '/inbox' },
+  // inc-4b (YUK-403) — owner manual gate 草稿审核面（真 SPA 路由 /drafts）。
+  { id: 'drafts', label: '草稿审核', icon: 'review', path: '/drafts' },
   { id: 'knowledge', label: '知识', icon: 'knowledge', path: '/knowledge' },
   // agent-notes / coach 是真实 SPA 面，补足设计「整理」段的观察 / 周报入口。
   { id: 'agent-notes', label: 'AI 观察', icon: 'eye', path: '/agent-notes' },
@@ -68,6 +70,7 @@ export const TITLES: Record<string, string> = {
   practice: '练习',
   record: '录入',
   inbox: '收件箱',
+  drafts: '草稿审核',
   knowledge: '知识',
   notes: '笔记',
   'agent-notes': 'AI 观察',
@@ -83,6 +86,7 @@ const PATH_ACTIVE: Array<[string, string]> = [
   ['/practice', 'practice'],
   ['/record', 'record'],
   ['/inbox', 'inbox'],
+  ['/drafts', 'drafts'],
   ['/knowledge', 'knowledge'],
   ['/notes', 'notes'],
   ['/agent-notes', 'agent-notes'],

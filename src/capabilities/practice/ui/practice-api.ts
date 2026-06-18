@@ -189,3 +189,92 @@ export const endPaperSession = (sessionId: string) =>
     method: 'POST',
     body: JSON.stringify({}),
   });
+
+// ── 草稿审核池（owner manual gate, YUK-402/403 inc-4） ─────────────
+// 后端 server/draft-review.ts 的投影：list 是截断预览 + verify 状态；detail 是
+// 全文 prompt + passage/options/answer。verify_status 三态 unverified|needs_review|
+// failed（draft 在池=未 promote，故不会是 pass）。
+
+export type DraftVerifyStatus = 'unverified' | 'needs_review' | 'failed';
+
+export interface DraftKnowledgeRef {
+  id: string;
+  label: string;
+}
+
+export interface DraftReviewRow {
+  id: string;
+  prompt_preview: string;
+  kind: string;
+  source: string;
+  created_at: string;
+  difficulty: number;
+  knowledge: DraftKnowledgeRef[];
+  verify_status: DraftVerifyStatus;
+  verify_reason: string | null;
+}
+
+export interface DraftReviewListPage {
+  rows: DraftReviewRow[];
+  limit: number;
+  offset: number;
+  total: number;
+  truncated: boolean;
+}
+
+export interface DraftReviewDetail {
+  id: string;
+  kind: string;
+  source: string;
+  created_at: string;
+  difficulty: number;
+  knowledge: DraftKnowledgeRef[];
+  prompt_md: string;
+  passage: string | null;
+  options: string[] | null;
+  answer: string | null;
+  verify_status: DraftVerifyStatus;
+  verify_reason: string | null;
+}
+
+/** verify→promote / force-enable 的共享返回（promoted=true 转 active；false 留池+reason）。 */
+export interface DraftPromoteResult {
+  promoted: boolean;
+  status: string;
+  verify_event_id: string | null;
+  reason: string | null;
+}
+
+export interface DraftListFilters {
+  source?: string;
+  kind?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export const getDrafts = (filters: DraftListFilters = {}) => {
+  const sp = new URLSearchParams();
+  if (filters.source) sp.set('source', filters.source);
+  if (filters.kind) sp.set('kind', filters.kind);
+  if (filters.limit != null) sp.set('limit', String(filters.limit));
+  if (filters.offset != null) sp.set('offset', String(filters.offset));
+  const qs = sp.toString();
+  return apiJson<DraftReviewListPage>(`/api/review/drafts${qs ? `?${qs}` : ''}`);
+};
+
+export const getDraftDetail = (id: string) =>
+  apiJson<DraftReviewDetail>(`/api/review/drafts/${encodeURIComponent(id)}`);
+
+/** 启用：跑一遍 B5 verify，通过转 active；不过留池并回 needs_review/failed + reason。 */
+export const enableDraft = (id: string) =>
+  apiJson<DraftPromoteResult>(`/api/review/drafts/${encodeURIComponent(id)}/enable`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+
+/** 强制启用：跳过 verify 直接转 active，必填 reason 留痕（actor=user · force_enable）。 */
+export const forceEnableDraft = (id: string, reason: string) =>
+  apiJson<DraftPromoteResult>(`/api/review/drafts/${encodeURIComponent(id)}/force-enable`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
