@@ -19,8 +19,9 @@
 // OOM guard, NOT a business limit — it only bites when the tier/family in-memory
 // path must fetch the full WHERE-hit set (it cannot SQL-paginate, see A1b).
 
-import { type SQL, and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
+import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import {
   type SourceTier,
   type SourceTierName,
@@ -28,7 +29,7 @@ import {
   deriveSourceTier,
 } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { question } from '@/db/schema';
+import { knowledge, question } from '@/db/schema';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
 // Truncation threshold for list-item `prompt_md` (detail page serves the full
@@ -95,6 +96,11 @@ export interface ListQuestionsParams {
   expandRoot?: string;
   // draft exclusion (default false → draft 排除惯例).
   includeDrafts?: boolean;
+  // YUK-409 题库面 enrichment opt-in. true → 回填 subject / knowledge_labels /
+  // is_composite / children（loom screen-questions 所需的派生量）。只在默认 SQL-
+  // 分页 flat 路径生效（题库 UI 唯一走的路径）；tier/family/OOM 路径与 copilot
+  // query_questions 工具不传它 → 零额外查询、零行为变更。
+  enrich?: boolean;
   limit: number; // clamp 1..200
   offset: number; // >= 0
 }
@@ -117,6 +123,23 @@ export interface QuestionListItem {
   part_index: number | null;
   draft_status: string | null;
   created_at_sec: number; // unix seconds — matches全仓 API 时间形 (learning-items/timeline).
+  // ── YUK-409 题库面 enrichment (opt-in via `enrich`; null when not requested) ──
+  // 这四项是 loom screen-questions 的真面所需、基础投影没有的派生量。**全部 additive**
+  // （existing list/route 契约与测试只断言 .id / 子属性，从不整对象 toEqual），且仅在
+  // `enrich:true`（题库 UI 路径）时计算——tier/family/OOM 路径与 copilot query_questions
+  // 工具走 enrich:false，零额外查询、零行为变更。null≡未请求 enrichment。
+  //
+  // subject: 派生学科 profile id（batchResolveSubjectIds，knowledge_ids[0] →
+  //   effectiveDomain → resolveSubjectProfile.id；绝非 question 列——subject 模型终版）。
+  subject: string | null;
+  // knowledge_labels: knowledge_ids → {id,name}（kchips 显示中文名而非裸 id；
+  //   archived/missing 节点从 labels 落选，仅在原 knowledge_ids 保留可追溯）。
+  knowledge_labels: { id: string; name: string }[] | null;
+  // is_composite: 此行是否为大题（有 question_part 子题）——驱动展开折叠 glyph。
+  is_composite: boolean;
+  // children: 大题的有序小题（part_index 序）。非大题为 []。小题本身也 enrich（subject/
+  //   labels/glyph 所需），但小题不再递归取 children（小题无小题）。
+  children: QuestionListItem[];
 }
 
 export interface QuestionFamily {
@@ -256,6 +279,12 @@ function toListItem(c: DerivedCandidate): QuestionListItem {
     part_index: row.part_index,
     draft_status: row.draft_status,
     created_at_sec: Math.floor(row.created_at.getTime() / 1000),
+    // YUK-409 — enrichment 默认未填（null / 非大题）。仅 enrichItems 在 enrich:true
+    // 路径回填 subject / knowledge_labels / is_composite / children。
+    subject: null,
+    knowledge_labels: null,
+    is_composite: false,
+    children: [],
   };
 }
 
@@ -371,13 +400,97 @@ async function flatListSqlPaginated(
     .from(question)
     .where(where);
 
+  let items = rows.map((row) => toListItem(deriveCandidate(row)));
+  // YUK-409 — 题库面 enrichment：subject / knowledge_labels / 大题小题展开。仅本
+  // SQL-分页路径（题库 UI 唯一路径）按 page 量（≤200 行）补，绝不入 tier/family 路径。
+  if (params.enrich) items = await enrichItems(db, items, params.includeDrafts ?? false);
+
   return {
-    items: rows.map((row) => toListItem(deriveCandidate(row))),
+    items,
     families: null,
     total: count,
     truncated: false,
     computed_at_sec: computedAtSec,
   };
+}
+
+// ── YUK-409: 题库面 enrichment（subject / knowledge_labels / 大题小题展开）─────────
+// 输入是 page 量（≤200）顶层行。三步批量补全，避免 N+1：
+//   1. children — 一次 IN 查 page 内所有 parent 的 question_part 子行（part_index 序）。
+//   2. subject — batchResolveSubjectIds 对 page+children 全体一次解析（去重 walk）。
+//   3. knowledge_labels — 一次 IN 查 page+children 全体 knowledge_ids 的非归档 name。
+// children 自身也被 enrich（subject/labels），但不再递归取它们的 children（小题无小题）。
+async function enrichItems(
+  db: Db,
+  items: QuestionListItem[],
+  includeDrafts: boolean,
+): Promise<QuestionListItem[]> {
+  if (items.length === 0) return items;
+
+  // 1. 取所有 parent 的 question_part 子行（loom 大题展开所需）。一次 IN 查全 page。
+  const parentIds = items.map((it) => it.id);
+  const draftFilter = includeDrafts
+    ? undefined
+    : sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`;
+  const childRows = (await db
+    .select(CANDIDATE_COLUMNS)
+    .from(question)
+    .where(
+      draftFilter
+        ? and(inArray(question.parent_question_id, parentIds), draftFilter)
+        : inArray(question.parent_question_id, parentIds),
+    )
+    .orderBy(
+      asc(question.parent_question_id),
+      asc(question.part_index),
+      asc(question.id),
+    )) as CandidateRow[];
+
+  const childrenByParent = new Map<string, QuestionListItem[]>();
+  for (const row of childRows) {
+    const child = toListItem(deriveCandidate(row));
+    const bucket = childrenByParent.get(row.parent_question_id as string);
+    if (bucket) bucket.push(child);
+    else childrenByParent.set(row.parent_question_id as string, [child]);
+  }
+
+  // enrichment 解析对象：page 顶层 items + 全部 children 实例（小题也要 subject/labels）。
+  // 用 childrenByParent 内的实例（就地写回，最终随顶层 it.children 返回）。
+  const enrichTargets: QuestionListItem[] = [...items, ...[...childrenByParent.values()].flat()];
+
+  // 2. subject 派生（batchResolveSubjectIds：knowledge_ids[0] → effectiveDomain →
+  //    subject profile id；去重 parent-chain walk，page 量级一次解析）。
+  const subjectById = await batchResolveSubjectIds(
+    db,
+    enrichTargets.map((it) => ({ id: it.id, knowledge_ids: it.knowledge_ids })),
+  );
+
+  // 3. knowledge label 解析（非归档 name；archived/missing 落选——同 detail:191-200）。
+  const allKnowledgeIds = [...new Set(enrichTargets.flatMap((it) => it.knowledge_ids))];
+  const labelRows =
+    allKnowledgeIds.length === 0
+      ? []
+      : await db
+          .select({ id: knowledge.id, name: knowledge.name })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, allKnowledgeIds), isNull(knowledge.archived_at)));
+  const nameById = new Map(labelRows.map((r) => [r.id, r.name]));
+  const labelsFor = (ids: string[]) =>
+    ids.filter((id) => nameById.has(id)).map((id) => ({ id, name: nameById.get(id) as string }));
+
+  // 就地写回 subject / knowledge_labels（顶层 + children 实例）。
+  for (const it of enrichTargets) {
+    it.subject = subjectById.get(it.id) ?? null;
+    it.knowledge_labels = labelsFor(it.knowledge_ids);
+  }
+
+  // 顶层挂 children + is_composite（child 实例已在 enrichTargets 内就地补好）。
+  for (const it of items) {
+    const kids = childrenByParent.get(it.id) ?? [];
+    it.children = kids;
+    it.is_composite = kids.length > 0;
+  }
+  return items;
 }
 
 // ── A1a/A1b: flat list (with optional tier filter + tier/created_at sort) ──────

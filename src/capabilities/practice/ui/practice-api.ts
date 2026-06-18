@@ -105,6 +105,77 @@ export const solveHint = (questionId: string, sessionId: string, hintIndex: numb
     { method: 'POST', body: JSON.stringify({ hint_index: hintIndex }) },
   );
 
+// ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────
+// GET /api/questions?enrich=true 的投影（src/server/questions/list.ts QuestionListItem）。
+// enrich 路径补了 subject（派生学科 profile id）/ knowledge_labels（kchip 中文名）/
+// is_composite + children（大题展开小题）——基础投影没有的派生量，YUK-409 additive 补。
+export interface QBankSourceTier {
+  tier: number;
+  name: string;
+}
+
+export interface QBankKnowledgeLabel {
+  id: string;
+  name: string;
+}
+
+export interface QBankQuestion {
+  id: string;
+  kind: string;
+  prompt_md: string; // ≤200 字预览（detail 才给全文）。
+  source: string;
+  source_tier: QBankSourceTier;
+  difficulty: number; // 1-5
+  visual_complexity: string | null;
+  knowledge_ids: string[];
+  root_question_id: string | null;
+  variant_depth: number;
+  parent_question_id: string | null;
+  part_index: number | null;
+  draft_status: string | null; // NULL≡active；'draft'≡草稿。
+  created_at_sec: number; // unix 秒。
+  // enrich 路径填（enrich:false 时后端给 null / 非大题默认）。
+  subject: string | null; // 派生学科 profile id（'wenyan'|'math'|'eng'|'general'...）。
+  knowledge_labels: QBankKnowledgeLabel[] | null;
+  is_composite: boolean; // 有 question_part 子题（大题）。
+  children: QBankQuestion[]; // 大题的有序小题（part_index 序）；非大题为 []。
+}
+
+export interface QBankListResult {
+  items: QBankQuestion[];
+  families: unknown | null; // 题库面不走 group_by_family，恒 null。
+  total: number;
+  truncated: boolean;
+  computed_at_sec: number;
+}
+
+export interface QBankListFilters {
+  // API 支持的 server-side 轴（择优 server-side 传参；search 走 client-side，同 DraftReviewPage）。
+  subject?: string;
+  source?: string;
+  kind?: string; // canonical QuestionKind（choice/reading/computation...）。
+  difficulty?: number; // 1-5
+  knowledgeIds?: string[];
+  includeDrafts?: boolean; // 题库面默认 true（状态 tab 需草稿全集 → client 按 draft_status 分）。
+  limit?: number;
+  offset?: number;
+}
+
+export const getQuestionsList = (filters: QBankListFilters = {}) => {
+  const sp = new URLSearchParams();
+  // 题库 UI 唯一走默认 flat list 路径 → 总带 enrich=true 拉 subject/labels/children。
+  sp.set('enrich', 'true');
+  if (filters.subject) sp.set('subject', filters.subject);
+  if (filters.source) sp.set('source', filters.source);
+  if (filters.kind) sp.set('kind', filters.kind);
+  if (filters.difficulty != null) sp.set('difficulty', String(filters.difficulty));
+  for (const k of filters.knowledgeIds ?? []) sp.append('knowledge_id', k);
+  if (filters.includeDrafts) sp.set('include_drafts', 'true');
+  if (filters.limit != null) sp.set('limit', String(filters.limit));
+  if (filters.offset != null) sp.set('offset', String(filters.offset));
+  return apiJson<QBankListResult>(`/api/questions?${sp.toString()}`);
+};
+
 // ── 卷（papers list / detail / 草稿 / 逐题提交 / 会话） ─────────
 export interface PaperListItem {
   artifact_id: string;
