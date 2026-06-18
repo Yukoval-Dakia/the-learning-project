@@ -234,6 +234,19 @@ export async function runEdgeProposeAndWrite(
         created_at: new Date(),
       };
 
+      // Base event_override.payload fields shared by the topology reject AND warn
+      // branches below. Both branches emit the identical edge fields and differ
+      // ONLY in the `topology_verdict` marker they append, so we build the common
+      // base once here (before the topology check) and spread it with the
+      // per-branch verdict. Behaviour is byte-identical to inlining the fields.
+      const eventPayloadBase = {
+        from_knowledge_id: p.from_knowledge_id,
+        to_knowledge_id: p.to_knowledge_id,
+        relation_type: p.relation_type,
+        weight: p.weight,
+        reasoning: p.reasoning,
+      };
+
       // ADR-0034 §2 / YUK-344 — write-time STRUCTURAL CONSISTENCY gate (topology
       // layer). Pure graph checks (cycle / direction contradiction / transitive
       // redundancy) on the prerequisite graph, orthogonal to the semantic rubric
@@ -264,11 +277,7 @@ export async function runEdgeProposeAndWrite(
             action: 'propose',
             subject_kind: 'knowledge_edge',
             payload: {
-              from_knowledge_id: p.from_knowledge_id,
-              to_knowledge_id: p.to_knowledge_id,
-              relation_type: p.relation_type,
-              weight: p.weight,
-              reasoning: p.reasoning,
+              ...eventPayloadBase,
               topology_verdict: {
                 status: 'reject',
                 gate: topology.gate,
@@ -334,11 +343,7 @@ export async function runEdgeProposeAndWrite(
             action: 'propose',
             subject_kind: 'knowledge_edge',
             payload: {
-              from_knowledge_id: p.from_knowledge_id,
-              to_knowledge_id: p.to_knowledge_id,
-              relation_type: p.relation_type,
-              weight: p.weight,
-              reasoning: p.reasoning,
+              ...eventPayloadBase,
               topology_verdict: {
                 status: 'warn',
                 gate: topology.gate,
