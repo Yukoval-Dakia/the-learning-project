@@ -34,7 +34,10 @@ describe('searchMemoryFactsTool', () => {
     expect(searchMemoryFactsTool.costClass).toBe('cheap_llm');
   });
 
-  it('passes the query through and forwards topK; no scope filter when scopeKey omitted', async () => {
+  // P3 (YUK-351): reads now flow through the searchMemories wrapper, so the
+  // underlying client.search is called with an OVERFETCHED topK (topK × 3) and the
+  // NOT-superseded filter merged in (then the wrapper reranks + truncates to topK).
+  it('reads through searchMemories: overfetches topK × 3 with the NOT-superseded filter; no scope filter when scopeKey omitted', async () => {
     const search = vi.fn(async () => ({
       results: [{ id: 'm1', memory: 'prefers terse feedback' }],
     }));
@@ -44,22 +47,49 @@ describe('searchMemoryFactsTool', () => {
     await tool.execute(ctx, { query: 'what should I remember?', topK: 5 });
 
     expect(search).toHaveBeenCalledWith('what should I remember?', {
-      topK: 5,
-      filters: undefined,
+      topK: 15, // 5 × OVERFETCH_FACTOR(3)
+      filters: { NOT: [{ superseded_by: '*' }] },
     });
   });
 
-  it('threads scopeKey into the documented { scope_key } filter shape', async () => {
+  it('threads scopeKey into the documented { scope_key } filter shape (merged with NOT-superseded)', async () => {
     const search = vi.fn(async () => ({ results: [] }));
     const { client } = stubClient(search);
     const tool = buildSearchMemoryFactsTool({ memoryFactory: () => client });
 
     await tool.execute(ctx, { query: 'subject prefs', scopeKey: 'topic:k1' });
 
+    // topK omitted → DEFAULT_FACTS_TOP_K(10) × OVERFETCH_FACTOR(3) = 30
     expect(search).toHaveBeenCalledWith('subject prefs', {
-      topK: undefined,
-      filters: { scope_key: 'topic:k1' },
+      topK: 30,
+      filters: { scope_key: 'topic:k1', NOT: [{ superseded_by: '*' }] },
     });
+  });
+
+  it('filters soft-superseded facts out of the tool result (P2 reconcile marker)', async () => {
+    const search = vi.fn(async () => ({
+      results: [
+        {
+          id: 'live',
+          memory: 'prefers terse feedback',
+          score: 0.8,
+          metadata: { kind: 'preference' },
+        },
+        {
+          id: 'dead',
+          memory: 'prefers verbose feedback',
+          score: 0.9,
+          metadata: { kind: 'preference', superseded_by: 'live' },
+        },
+      ],
+    }));
+    const { client } = stubClient(search);
+    const tool = buildSearchMemoryFactsTool({ memoryFactory: () => client });
+
+    const out = await tool.execute(ctx, { query: 'feedback' });
+
+    expect(out.count).toBe(1);
+    expect(out.facts.map((f) => f.id)).toEqual(['live']);
   });
 
   it('maps Mem0 results into { facts, count } and preserves extra fields via passthrough', async () => {
