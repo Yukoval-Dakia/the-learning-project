@@ -50,6 +50,8 @@ const ALL_TABLES = [
   'editing_presence',
   // YUK-342 P2 — memory reconcile write-ahead log.
   'memory_reconciliation_log',
+  // YUK-344 增量 2 / ADR-0034 §3 — knowledge-edge reconcile write-ahead log.
+  'edge_reconciliation_log',
   // YUK-143 / ADR-0024 — North-Star goal entity.
   'goal',
   'question_block',
