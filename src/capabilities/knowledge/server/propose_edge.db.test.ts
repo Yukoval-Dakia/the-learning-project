@@ -956,3 +956,273 @@ describe('runEdgeProposeAndWrite — L1 rubric floor (YUK-175)', () => {
     expect(RECENT_FAILURE_WINDOW_MS).toBe(RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   });
 });
+
+// ADR-0034 §2 / YUK-344 — write-time structural consistency gate (topology layer)
+// WIRED into runEdgeProposeAndWrite. These exercise the gate's integration with
+// the propose path (the pure logic itself is unit-tested in
+// topology-gate.unit.test.ts); here we confirm a cycle/direction reject FOLDS
+// (marked topology_verdict, no live pending) and a transitive-redundancy WARN
+// still writes live with a marker.
+describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  async function insertKnowledge(id: string) {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id,
+      name: id,
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
+
+  async function insertLiveEdge(
+    id: string,
+    from: string,
+    to: string,
+    relation = 'prerequisite',
+    archivedAt: Date | null = null,
+  ) {
+    const db = testDb();
+    await db.insert(knowledge_edge).values({
+      id,
+      from_knowledge_id: from,
+      to_knowledge_id: to,
+      relation_type: relation,
+      weight: 1,
+      created_by: 'user' as never,
+      reasoning: null,
+      created_at: new Date(),
+      archived_at: archivedAt,
+    });
+  }
+
+  // Seed a recent in-window judge-backed failure referencing both endpoints so
+  // the rubric floor would otherwise PASS — proving the FOLD is the topology
+  // gate's doing, not the rubric gate's.
+  async function seedJudgeFailure(attemptId: string, knowledgeIds: string[]): Promise<void> {
+    const db = testDb();
+    const questionId = `q_${attemptId}`;
+    const createdAt = new Date(Date.now() - DAY_MS);
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: 'p',
+      reference_md: 'r',
+      knowledge_ids: knowledgeIds,
+      source: 'manual',
+      difficulty: 3,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: attemptId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      created_at: createdAt,
+    });
+    await writeEvent(db, {
+      id: `judge_${attemptId}`,
+      actor_kind: 'agent',
+      actor_ref: 'attribution',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: attemptId,
+      outcome: 'success',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: [],
+          analysis_md: '用户混淆两个用法。',
+          confidence: 0.9,
+        },
+        referenced_knowledge_ids: knowledgeIds,
+      },
+      caused_by_event_id: attemptId,
+      created_at: new Date(createdAt.getTime() + 500),
+    });
+  }
+
+  it('folds a prerequisite edge that closes a cycle (A→B→C live, propose C→A)', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    await insertLiveEdge('e_ab', 'kA', 'kB');
+    await insertLiveEdge('e_bc', 'kB', 'kC');
+    // Two strong same-pattern failures touching the endpoints so the rubric gate
+    // would pass on its own — isolating the topology fold.
+    await seedJudgeFailure('att_1', ['kC', 'kA']);
+    await seedJudgeFailure('att_2', ['kC', 'kA']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kC',
+            to_knowledge_id: 'kA',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: 'attempt att_1 显示 kC 与 kA 的 prerequisite 顺序。',
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    expect(stats.folded_topology_rejected).toBe(1);
+    expect(stats.proposed).toBe(0);
+    expect(stats.folded_rubric_rejected).toBe(0);
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(1);
+    const payload = proposeEvents[0].payload as {
+      topology_verdict?: { status?: string; gate?: string };
+    };
+    expect(payload.topology_verdict?.status).toBe('reject');
+    expect(payload.topology_verdict?.gate).toBe('cycle');
+  });
+
+  it('folds a direction-contradiction prerequisite (A→B live, propose B→A)', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertLiveEdge('e_ab', 'kA', 'kB');
+    await seedJudgeFailure('att_1', ['kA', 'kB']);
+    await seedJudgeFailure('att_2', ['kA', 'kB']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kB',
+            to_knowledge_id: 'kA',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: 'attempt att_1 显示顺序。',
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    expect(stats.folded_topology_rejected).toBe(1);
+    expect(stats.proposed).toBe(0);
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    const payload = proposeEvents[0].payload as { topology_verdict?: { gate?: string } };
+    expect(payload.topology_verdict?.gate).toBe('direction_contradiction');
+  });
+
+  it('warns (not rejects) a transitively-redundant direct edge — written live with marker', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    await insertLiveEdge('e_ab', 'kA', 'kB');
+    await insertLiveEdge('e_bc', 'kB', 'kC');
+    await seedJudgeFailure('att_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_2', ['kA', 'kC']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: 'attempt att_1 显示 kA→kC 的 prerequisite 顺序。',
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    expect(stats.warned_transitive_redundancy).toBe(1);
+    expect(stats.proposed).toBe(1);
+    expect(stats.folded_topology_rejected).toBe(0);
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(proposeEvents).toHaveLength(1);
+    const payload = proposeEvents[0].payload as {
+      topology_verdict?: { status?: string; gate?: string };
+    };
+    expect(payload.topology_verdict?.status).toBe('warn');
+    expect(payload.topology_verdict?.gate).toBe('transitive_redundancy');
+  });
+
+  it('ignores ARCHIVED edges — an archived A→B does not contradict a live B→A', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    // A→B exists but is ARCHIVED, so it is not part of the live graph; B→A must
+    // NOT be folded as a direction contradiction.
+    await insertLiveEdge('e_ab', 'kA', 'kB', 'prerequisite', new Date());
+    await seedJudgeFailure('att_1', ['kA', 'kB']);
+    await seedJudgeFailure('att_2', ['kA', 'kB']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kB',
+            to_knowledge_id: 'kA',
+            relation_type: 'prerequisite',
+            weight: 0.7,
+            reasoning: 'attempt att_1 显示 kB→kA 顺序。',
+          },
+        ],
+      }),
+    });
+
+    const stats = await runEdgeProposeAndWrite({ db, recentFailures, runTaskFn: fakeRunTask });
+    expect(stats.folded_topology_rejected).toBe(0);
+    expect(stats.proposed).toBe(1);
+  });
+});
