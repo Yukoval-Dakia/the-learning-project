@@ -15,7 +15,7 @@ import {
 import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
 import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
-import QuestionDetailStubPage from '@/capabilities/practice/ui/QuestionDetailStubPage';
+import QuestionDetailPage from '@/capabilities/practice/ui/QuestionDetailPage';
 import QuestionsPage from '@/capabilities/practice/ui/QuestionsPage';
 import CoachPage from '@/capabilities/shell/ui/CoachPage';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
@@ -301,9 +301,11 @@ const draftsRoute = createRoute({
   component: DraftReviewRoute,
 });
 
-// YUK-409 — 题库面（loom screen-questions）+ 题详情 stub。导航走壳层 prop 注入
-// （同 PracticeRoute/DraftReviewRoute），page 自持 list query（多轴筛选 + composite
-// 展开 + variant lineage）。row-click → /questions/$id（minimal stub detail）。
+// YUK-409 / YUK-413 — 题库面（loom screen-questions）+ 题详情面（loom
+// screen-question-detail）。导航走壳层 prop 注入（同 PracticeRoute/DraftReviewRoute），
+// page 自持 list query（多轴筛选 + composite 展开 + variant lineage）。row-click →
+// /questions/$id（QuestionDetailPage：inline 编辑 + 变体家族 + 约束删除，YUK-413 替
+// YUK-409 的 stub）。
 function QuestionsRoute() {
   const router = useRouter();
   return <QuestionsPage navigate={(to) => router.history.push(to)} />;
@@ -318,7 +320,7 @@ const questionsRoute = createRoute({
 function QuestionDetailRouteC() {
   const router = useRouter();
   const { id } = questionDetailRoute.useParams();
-  return <QuestionDetailStubPage id={id} navigate={(to) => router.history.push(to)} />;
+  return <QuestionDetailPage id={id} navigate={(to) => router.history.push(to)} />;
 }
 
 const questionDetailRoute = createRoute({
