@@ -19,6 +19,7 @@ import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -262,12 +263,22 @@ interface PreviewProps {
   activeId: string | null;
   detailQ: ReturnType<typeof useQuery<DraftReviewDetail>>;
   verifyingId: string | null;
+  // batch 队列正在跑（任意一条 verify 中）——禁单条动作钮，避免批量处理 X 时切到 Y 触发并发 enable。
+  batchRunning: boolean;
   onEnable: (id: string) => void;
   onForce: (d: DraftReviewDetail) => void;
   onSkip: (id: string) => void;
 }
 
-function DrPreview({ activeId, detailQ, verifyingId, onEnable, onForce, onSkip }: PreviewProps) {
+function DrPreview({
+  activeId,
+  detailQ,
+  verifyingId,
+  batchRunning,
+  onEnable,
+  onForce,
+  onSkip,
+}: PreviewProps) {
   if (!activeId) {
     return (
       <div className="dr-preview">
@@ -349,10 +360,21 @@ function DrPreview({ activeId, detailQ, verifyingId, onEnable, onForce, onSkip }
           </span>
         ) : (
           <>
-            <Btn variant="primary" icon="check" onClick={() => onEnable(d.id)}>
+            {/* 批量队列运行中禁单条 enable/force-enable——避免批量处理 X 时切到 Y 触发并发 enable。*/}
+            <Btn
+              variant="primary"
+              icon="check"
+              disabled={batchRunning}
+              onClick={() => onEnable(d.id)}
+            >
               启用
             </Btn>
-            <button type="button" className="btn btn-secondary btn-warn" onClick={() => onForce(d)}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-warn"
+              disabled={batchRunning}
+              onClick={() => onForce(d)}
+            >
               <LoomIcon name="bolt" size={17} />
               强制启用
             </button>
@@ -389,16 +411,11 @@ function DrForceModal({
   const [reason, setReason] = useState('');
   const ok = reason.trim().length >= 4;
 
-  // Esc 关闭 + mount 时聚焦输入框（轻量 focus 管理，无第三方 trap）。
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  useEffect(() => {
-    inputRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
+  // 同 CommandPalette）。trap 自带初始聚焦（panel 首个 focusable）、Tab 循环、
+  // Esc + stopPropagation 与 restore-on-close，故不再手搓 keydown / mount-focus。
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(true, onClose, panelRef);
 
   return createPortal(
     <div className="dr-modal-wrap">
@@ -410,10 +427,12 @@ function DrForceModal({
         onClick={onClose}
       />
       <div
+        ref={panelRef}
         className="dr-modal"
         // biome-ignore lint/a11y/useSemanticElements: native <dialog> 需 imperative
         // showModal()/close() API，与 CSS-class 驱动的 portal + scrim 模式不兼容（同
-        // CopilotDrawer / CommandPalette / PfSolo）。
+        // CopilotDrawer / CommandPalette / PfSolo）。focus-trap 经 useFocusTrap(panelRef)
+        // 落地（Tab 循环 + Esc + restore-on-close），与 CommandPalette 同。
         role="dialog"
         aria-modal="true"
         aria-label="强制启用确认"
@@ -446,7 +465,6 @@ function DrForceModal({
           </label>
           <textarea
             id="dr-reason"
-            ref={inputRef}
             className="dr-reason-input"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -559,6 +577,9 @@ export default function DraftReviewPage({ navigate }: DraftReviewPageProps) {
     (r: DraftReviewRow) => {
       const q = query.trim().toLowerCase();
       if (!q) return true;
+      // 搜索面只覆盖 list 投影的字段：prompt_preview + id + knowledge label。passage
+      // 只在 detail 投影里（list row 不带 passage），故 list 搜不到 passage 文本——
+      // 这是与设计稿 matchQuery 一致的有意分歧，不是 bug（搜不到材料正文是预期）。
       const hay = `${plainText(r.prompt_preview)} ${r.id} ${r.knowledge
         .map((k) => k.label)
         .join(' ')}`;
@@ -1055,6 +1076,7 @@ export default function DraftReviewPage({ navigate }: DraftReviewPageProps) {
               activeId={activeId}
               detailQ={detailQ}
               verifyingId={verifyingId}
+              batchRunning={batchRunning}
               onEnable={enableOne}
               onForce={(d) => setForceDraft(d)}
               onSkip={skipOne}
