@@ -5,13 +5,19 @@
 // rollup `overall`）+ 决定 #5（'error' 通道：transport/parse/DB 在产出 verdict 前炸了
 // 与「验了判失败」在 result 层分开）.
 //
-// SCOPE (this increment): the THREE promote-gated handlers only —
+// SCOPE (increment C): the THREE promote-gated handlers —
 //   - quiz_verify   (multi-axis QuizVerificationResult.overall)
 //   - source_verify (tier-2 per-check array + promote bool, previously had NO overall)
 //   - variant_verify(single pass|fail verdict + cause_targeting)
-// note_verify is DEFERRED (ADR-0038 Amendment 2026-06-15; different promote
-// semantics —笔记不 enroll 进练习池). It is intentionally NOT a `toUnifiedVerifyResult`
-// branch here.
+//
+// SCOPE (increment 2, YUK-350): note_verify joins as the 4th handler, completing
+// ADR-0038 决定 #1 coverage. Note has DIFFERENT promote semantics — a note never
+// enrolls into the practice pool / FSRS; a note "promote" = upgrading to an
+// owner-readable ACTIVE artifact (verification_status='verified'). This module only
+// PROJECTS the note verdict onto the unified payload shape; it does NOT touch the
+// note active-artifact write path. The note verdict is 2-value (pass|needs_review,
+// NO fail), so a note can never project overall='fail' — only pass / needs_review
+// (and 'error' from the catch-bottom, never from the LLM parse — red line 1).
 //
 // This module is the SHARED HOME (core/ — cross-subject, no IO) for:
 //   - UnifiedVerifyResult  : the one verify-event payload SHAPE (a SUPERSET — handlers
@@ -133,6 +139,32 @@ export interface VariantVerifyProjectionInput {
   confidence: number;
 }
 
+/**
+ * note_verify input (YUK-350 increment 2): the 2-value note verdict
+ * (pass|needs_review, NO fail) + the note's issue list. Different promote semantics
+ * from the other three — a note never enrolls into the practice pool / FSRS; its
+ * "promote" is the active-artifact write (verification_status='verified'). The
+ * promote decision is NOT recomputed here: `verdict` IS the handler's decision
+ * (pass ⇒ verified/promote, needs_review ⇒ stays needs_review). The note has NO
+ * fail verdict, so this branch can only project overall pass | needs_review —
+ * never fail.
+ */
+export interface NoteVerifyProjectionInput {
+  source: 'note';
+  /** the note LLM-parse 2-value verdict, AS COMPUTED by the handler. */
+  verdict: 'pass' | 'needs_review';
+  summary_md: string;
+  confidence: number;
+  /** each note issue → an axis (severity:category as the axis name + verdict + message note). */
+  issues: Array<{
+    block_id: string | null;
+    severity: 'info' | 'warn' | 'error';
+    category: 'factuality' | 'coverage' | 'clarity' | 'subject_fit' | 'format' | 'safety';
+    message: string;
+    suggested_fix_md?: string;
+  }>;
+}
+
 /** catch-bottom input: a system error before any verdict. */
 export interface SystemErrorProjectionInput {
   source: 'system_error';
@@ -144,6 +176,7 @@ export type VerifyProjectionInput =
   | QuizVerifyProjectionInput
   | SourceVerifyProjectionInput
   | VariantVerifyProjectionInput
+  | NoteVerifyProjectionInput
   | SystemErrorProjectionInput;
 
 // ---------- the pure projection helper ----------
@@ -214,6 +247,31 @@ export function toUnifiedVerifyResult(input: VerifyProjectionInput): UnifiedVeri
         axes,
         overall,
         ...(input.verdict === 'fail' ? { failure_class: 'validation_failure' as const } : {}),
+        summary_md: input.summary_md,
+        confidence: input.confidence,
+      };
+    }
+    case 'note': {
+      // YUK-350 increment 2 — the note 2-value verdict (pass|needs_review, NO fail).
+      // pass ⇒ overall pass + no failure_class; needs_review ⇒ overall needs_review +
+      // validation_failure (symmetry with the other handlers: a verdict that did not
+      // promote carries failure_class='validation_failure'). A note can NEVER project
+      // overall='fail' (the note verdict has no 'fail') and NEVER overall='error' (that
+      // is the catch-bottom's exclusive job — red line 1: the LLM-parse note schema
+      // cannot self-report a system error). Each note issue becomes an axis: the axis
+      // name is the issue category, the verdict is 'fail' (a flagged problem is a failing
+      // signal), and the message rides along in the optional note. A clean pass has no
+      // issues ⇒ no axes (a valid empty axes array).
+      const overall: QuizVerifyOverall = input.verdict === 'pass' ? 'pass' : 'needs_review';
+      const axes: VerifyAxisT[] = input.issues.map((issue) => ({
+        axis_name: issue.category,
+        verdict: 'fail' as const,
+        note: issue.message,
+      }));
+      return {
+        axes,
+        overall,
+        ...(input.verdict === 'pass' ? {} : { failure_class: 'validation_failure' as const }),
         summary_md: input.summary_md,
         confidence: input.confidence,
       };
