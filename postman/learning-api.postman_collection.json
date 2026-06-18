@@ -754,6 +754,105 @@
       ]
     },
     {
+      "name": "review",
+      "item": [
+        {
+          "name": "GET /api/review/drafts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/drafts",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "drafts"],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "quiz_gen",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "kind",
+                  "value": "short_answer",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "owner 手动 gate 草稿池：列 draft_status='draft' 题（排除软归档草稿），含 verify 状态投影\n\n**Query:**\n- `source` (optional) e.g. `quiz_gen`\n- `kind` (optional) e.g. `short_answer`\n- `limit` (optional) e.g. `50`\n- `offset` (optional) e.g. `0`\n\n**Notes:** limit 默认 50 上限 200；每条投影 id/prompt_preview(截断)/kind/source/created_at/verify_status(unverified|needs_review|failed)/verify_reason；verify_status 从最新终态 verify event 派生；返回 { rows, limit, offset, total, truncated }"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/drafts/:id/enable",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/drafts/:id/enable",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "drafts", ":id", "enable"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "owner 启用草稿：跑 B5 verify（quiz_verify/source_verify）过则 promote，三态返回\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body；调 verifyAndPromote(actor=user, 正常分支)；返回 { promoted, status(verified|needs_review|failed|skipped:*), verify_event_id, reason }；题不存在 404；非 draft → skipped:not_draft"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/drafts/:id/force-enable",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/drafts/:id/force-enable",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "drafts", ":id", "force-enable"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "owner 强制启用草稿：跳 verify 直接 promote（override），reason 必填留痕\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** reason 必填非空（空则 400）；调 verifyAndPromote(actor=user, skipVerify)；写 actor_kind=user + skipped_verify=true + reason verify event；YUK-400 B 段守门：仅 web_sourced/quiz_gen 可 promote、仅 true draft、归档 KC 拒(skipped:archived_knowledge)、软归档 draft 拒(skipped:archived_draft)；题不存在 404",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"owner 判断这题质量足够，跳过 AI 验证\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "teaching-sessions",
       "item": [
         {
