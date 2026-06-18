@@ -42,7 +42,7 @@ export async function GET(req: Request): Promise<Response> {
       );
     }
     const q = parsed.data;
-    const limit = Math.min(Math.max(Number.isNaN(q.limit) ? DEFAULT_LIMIT : q.limit, 1), MAX_LIMIT);
+    const limit = Math.min(Math.max(q.limit, 1), MAX_LIMIT);
     const offset = Math.max(q.offset, 0);
 
     const page = await listDraftReview(db, {
