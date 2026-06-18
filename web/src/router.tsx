@@ -13,6 +13,7 @@ import {
   AdminRunsSurface,
 } from '@/capabilities/observability/ui/observability';
 import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
+import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
 import CoachPage from '@/capabilities/shell/ui/CoachPage';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
@@ -284,6 +285,20 @@ const practiceRoute = createRoute({
   component: PracticeRoute,
 });
 
+// inc-4b (YUK-403) — 草稿审核面（owner manual gate /drafts）。loom
+// screen-draft-review。导航走壳层 prop 注入（同 PracticeRoute），page 自持
+// list/detail query + verify/force-enable mutation。
+function DraftReviewRoute() {
+  const router = useRouter();
+  return <DraftReviewPage navigate={(to) => router.history.push(to)} />;
+}
+
+const draftsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/drafts',
+  component: DraftReviewRoute,
+});
+
 // M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
 function KnowledgeIndexRoute() {
   const router = useRouter();
@@ -387,6 +402,7 @@ const routeTree = rootRoute.addChildren([
   agentNotesRoute,
   recordRoute,
   practiceRoute,
+  draftsRoute,
   knowledgeRoute,
   knowledgeDetailRoute,
   noteReaderRoute,
