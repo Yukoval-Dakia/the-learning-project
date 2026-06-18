@@ -172,7 +172,12 @@ export interface MasteryProjection {
 }
 
 export async function getMasteryProjection(
-  db: DbLike,
+  // PR #468 finding E — display/AI read-side projection: every caller passes a
+  // full Db (node-page / tree / detail / knowledge-readers / review-plan-tools all
+  // hold a Db, never a Tx). Unlike getMasteryState / upsertMasteryState (which run
+  // inside updateThetaForAttempt's attempt Tx and so keep DbLike), this never runs
+  // in a transaction, so the param is the concrete Db — no Db|Tx ambiguity.
+  db: Db,
   knowledgeIds: string[],
   subjectKind = 'knowledge',
 ): Promise<Map<string, MasteryProjection>> {
