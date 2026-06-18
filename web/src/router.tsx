@@ -15,6 +15,8 @@ import {
 import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
 import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
+import QuestionDetailStubPage from '@/capabilities/practice/ui/QuestionDetailStubPage';
+import QuestionsPage from '@/capabilities/practice/ui/QuestionsPage';
 import CoachPage from '@/capabilities/shell/ui/CoachPage';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
 import TodayPage from '@/capabilities/shell/ui/TodayPage';
@@ -299,6 +301,32 @@ const draftsRoute = createRoute({
   component: DraftReviewRoute,
 });
 
+// YUK-409 — 题库面（loom screen-questions）+ 题详情 stub。导航走壳层 prop 注入
+// （同 PracticeRoute/DraftReviewRoute），page 自持 list query（多轴筛选 + composite
+// 展开 + variant lineage）。row-click → /questions/$id（minimal stub detail）。
+function QuestionsRoute() {
+  const router = useRouter();
+  return <QuestionsPage navigate={(to) => router.history.push(to)} />;
+}
+
+const questionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/questions',
+  component: QuestionsRoute,
+});
+
+function QuestionDetailRouteC() {
+  const router = useRouter();
+  const { id } = questionDetailRoute.useParams();
+  return <QuestionDetailStubPage id={id} navigate={(to) => router.history.push(to)} />;
+}
+
+const questionDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/questions/$id',
+  component: QuestionDetailRouteC,
+});
+
 // M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
 function KnowledgeIndexRoute() {
   const router = useRouter();
@@ -403,6 +431,8 @@ const routeTree = rootRoute.addChildren([
   recordRoute,
   practiceRoute,
   draftsRoute,
+  questionsRoute,
+  questionDetailRoute,
   knowledgeRoute,
   knowledgeDetailRoute,
   noteReaderRoute,

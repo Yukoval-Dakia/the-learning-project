@@ -508,4 +508,80 @@ describe('listQuestions', () => {
       expect(res.items.map((i) => i.id)).toEqual([qA]);
     });
   });
+
+  describe('YUK-409 题库面 enrichment (subject / knowledge_labels / composite children)', () => {
+    it('leaves enrichment fields null/empty when enrich is not requested', async () => {
+      const k = await seedKnowledge(newId(), { domain: 'wenyan' });
+      await seedQuestion({ knowledge_ids: [k] });
+
+      const res = await listQuestions(testDb(), { limit: 50, offset: 0 });
+      expect(res.items).toHaveLength(1);
+      // additive 默认：未 enrich 时四项是 null / 非大题，不触发任何额外查询。
+      expect(res.items[0].subject).toBeNull();
+      expect(res.items[0].knowledge_labels).toBeNull();
+      expect(res.items[0].is_composite).toBe(false);
+      expect(res.items[0].children).toEqual([]);
+    });
+
+    it('enriches subject + knowledge_labels on the default flat path', async () => {
+      const k = await seedKnowledge(newId(), { domain: 'wenyan' });
+      await seedQuestion({ knowledge_ids: [k] });
+
+      const res = await listQuestions(testDb(), { enrich: true, limit: 50, offset: 0 });
+      expect(res.items).toHaveLength(1);
+      // subject 是派生 profile id（wenyan domain → wenyan profile）。
+      expect(res.items[0].subject).toBe('wenyan');
+      // knowledge_labels 解析非归档 name（seedKnowledge 写 name = `node <id>`）。
+      expect(res.items[0].knowledge_labels).toEqual([{ id: k, name: `node ${k}` }]);
+    });
+
+    it('attaches ordered composite children (question_part rows) when enriched', async () => {
+      const parent = await seedQuestion({ kind: 'reading', prompt_md: '大题材料' });
+      // 乱序插入，断言 enrich 按 part_index 升序还原。
+      const p1 = await seedQuestion({
+        kind: 'question_part',
+        parent_question_id: parent,
+        part_index: 1,
+        prompt_md: '小题二',
+      });
+      const p0 = await seedQuestion({
+        kind: 'question_part',
+        parent_question_id: parent,
+        part_index: 0,
+        prompt_md: '小题一',
+      });
+
+      const res = await listQuestions(testDb(), { enrich: true, limit: 50, offset: 0 });
+      // 顶层仍只一行（part 行不进顶层 list），但带上 children + is_composite。
+      expect(res.items.map((i) => i.id)).toEqual([parent]);
+      expect(res.items[0].is_composite).toBe(true);
+      expect(res.items[0].children.map((c) => c.id)).toEqual([p0, p1]);
+    });
+
+    it('excludes draft parts from children unless includeDrafts', async () => {
+      const parent = await seedQuestion({ kind: 'reading' });
+      const active = await seedQuestion({
+        kind: 'question_part',
+        parent_question_id: parent,
+        part_index: 0,
+      });
+      await seedQuestion({
+        kind: 'question_part',
+        parent_question_id: parent,
+        part_index: 1,
+        draft_status: 'draft',
+      });
+
+      const excl = await listQuestions(testDb(), { enrich: true, limit: 50, offset: 0 });
+      expect(excl.items[0].children.map((c) => c.id)).toEqual([active]);
+
+      const incl = await listQuestions(testDb(), {
+        enrich: true,
+        includeDrafts: true,
+        limit: 50,
+        offset: 0,
+      });
+      expect(incl.items[0].children).toHaveLength(2);
+    });
+  });
 });

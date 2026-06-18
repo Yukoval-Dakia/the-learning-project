@@ -47,6 +47,9 @@ export const NAV: NavEntry[] = [
   { id: 'record', label: '录入', icon: 'record', path: '/record' },
   { section: '整理' },
   { id: 'inbox', label: '收件箱', icon: 'inbox', path: '/inbox' },
+  // YUK-409 — 题库面（loom screen-questions，真 SPA 路由 /questions）。设计 NAV 原
+  // 列「questions」一项，S13 时因 SPA 无该路由而省略；此刻接通后回填。
+  { id: 'questions', label: '题库', icon: 'quiz', path: '/questions' },
   // inc-4b (YUK-403) — owner manual gate 草稿审核面（真 SPA 路由 /drafts）。
   { id: 'drafts', label: '草稿审核', icon: 'review', path: '/drafts' },
   { id: 'knowledge', label: '知识', icon: 'knowledge', path: '/knowledge' },
@@ -70,6 +73,7 @@ export const TITLES: Record<string, string> = {
   practice: '练习',
   record: '录入',
   inbox: '收件箱',
+  questions: '题库',
   drafts: '草稿审核',
   knowledge: '知识',
   notes: '笔记',
@@ -86,6 +90,7 @@ const PATH_ACTIVE: Array<[string, string]> = [
   ['/practice', 'practice'],
   ['/record', 'record'],
   ['/inbox', 'inbox'],
+  ['/questions', 'questions'],
   ['/drafts', 'drafts'],
   ['/knowledge', 'knowledge'],
   ['/notes', 'notes'],
