@@ -1208,6 +1208,57 @@ export const memory_reconciliation_log = pgTable(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Edge reconciliation log（YUK-344 调和环增量 2，ADR-0034 §3）：知识边写入期
+// 调和层 write-ahead 日志。
+//
+// 与 memory_reconciliation_log（mem0 个性化轴）**结构正交**——OWNER RULING：另立
+// 新表，**不复用** memory 表（结构轴 ≠ 记忆轴，无 user_id 哨兵）。每条知识边提议
+// 通过拓扑闸后，reconcile handler 用 GLM 判定该候选边与既有相邻 live 边的关系
+// （KEEP_BOTH / SUPERSEDE，结构边二动作空间，edge-reconcile.ts）。判定意图先写到
+// 本表（planned 行，applied_at NULL = write-ahead），apply 完成后 UPDATE
+// applied_at=now()；半途崩溃时按 candidate key 重放（applied_at IS NULL 行，
+// 幂等续跑）。
+//
+// SUPERSEDE 的实际移除走 knowledge_edge.archived_at 软归档（ADR-0034 §4 load-bearing
+// 移除）；本表 + 一条 CorrectionKind correction event 只记 epistemic 来由 provenance。
+//
+// action 二值枚举（KEEP_BOTH/SUPERSEDE），不套 memory 侧四值——结构边无文本可
+// MERGE、RETRACT_NEW 由上游拓扑/语义闸承接（edge-reconcile.ts 模块头）。
+// 行堆积：单用户量级可忽略，不做清理 job（YAGNI），与 memory 表同纪律。
+// ─────────────────────────────────────────────────────────────────────────────
+export const edge_reconciliation_log = pgTable(
+  'edge_reconciliation_log',
+  {
+    id: text('id').primaryKey(),
+    // 候选边键三元组（from|to|relation_type）——重放幂等的去重锚（候选边尚未持久化、
+    // 无自身 UUID，故用三元组而非 edge id）。
+    candidate_from_knowledge_id: text('candidate_from_knowledge_id').notNull(),
+    candidate_to_knowledge_id: text('candidate_to_knowledge_id').notNull(),
+    candidate_relation_type: text('candidate_relation_type').notNull(),
+    // 调和判定结果。SUPERSEDE 时 superseded_edge_id 指向被归档的旧 live 边。
+    action: text('action').$type<'KEEP_BOTH' | 'SUPERSEDE'>().notNull(),
+    // 被取代的旧 knowledge_edge.id（仅 SUPERSEDE 非空）。
+    superseded_edge_id: text('superseded_edge_id'),
+    // 判定置信度（applyConfidenceThreshold 后；低置信已降级为 KEEP_BOTH）。
+    confidence: real('confidence').notNull(),
+    reason: text('reason').notNull(),
+    // GLM 原始决策（审计；KEEP_BOTH 短路无 GLM 调用 / 降级时可为 null）。
+    llm_raw: jsonb('llm_raw'),
+    // write-ahead 游标：planned_at = 意图写入时；applied_at NULL = 待重放。
+    planned_at: timestamp('planned_at', { withTimezone: true }).notNull(),
+    applied_at: timestamp('applied_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('edge_recon_candidate_idx').on(
+      t.candidate_from_knowledge_id,
+      t.candidate_to_knowledge_id,
+      t.candidate_relation_type,
+    ),
+    index('edge_recon_unapplied_idx').on(t.applied_at),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Selection observation（YUK-361 Phase 1，观测先行）：选题的逐项遥测。
 //
 // 每个被选中的候选（题或卷）落一行，记录当时的策略（policy）、是否选中

@@ -8,6 +8,7 @@
 // 交互式 12 iter 设计，nightly cron 用单次结构化输出更便宜可控。
 
 import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
+import type { ActivityRefT } from '@/core/schema/activity';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -15,11 +16,26 @@ import { event, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
+import { writeEvent } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
+import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
+import {
+  type EdgeCandidate,
+  type EdgeNeighbor,
+  type EdgeReconcileDecision,
+  applyConfidenceThreshold,
+  judgeEdgeReconcile,
+} from './edge-reconcile';
+import {
+  insertEdgePlannedRows,
+  makeEdgePlannedRow,
+  markEdgeReconcileApplied,
+} from './edge-reconcile-store';
+import { archiveKnowledgeEdge, createKnowledgeEdge } from './edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 
@@ -31,6 +47,8 @@ const EdgeProposalSchema = z.object({
   reasoning: z.string().min(1).max(500),
 });
 
+type EdgeProposalSchemaT = z.infer<typeof EdgeProposalSchema>;
+
 const EdgeOutputSchema = z.object({
   proposals: z.array(EdgeProposalSchema).max(5),
 });
@@ -39,12 +57,24 @@ export type EdgeProposeOutput = z.infer<typeof EdgeOutputSchema>;
 
 export type RunTaskFn = TaskTextRunFn;
 
+// ADR-0034 §3 / YUK-344 增量 2 — the reconcile decision function. Defaults to the
+// live GLM `judgeEdgeReconcile`; tests inject a deterministic stub so the wiring
+// (archive + log + correction + new edge) can be exercised without a GLM call.
+// Signature mirrors judgeEdgeReconcile's (candidate, neighbors) → decision.
+export type JudgeEdgeReconcileFn = (
+  candidate: EdgeCandidate,
+  neighbors: EdgeNeighbor[],
+) => Promise<EdgeReconcileDecision>;
+
 export interface RunEdgeProposeAndWriteParams {
   db: Db;
   recentFailures: FailureAttempt[];
   runTaskFn: RunTaskFn;
   env?: unknown;
   subjectProfile?: SubjectProfile;
+  // Override for tests. Production omits it → the live GLM judge is used with
+  // `env` threaded through (so the ZHIPU key resolves via mem0 config).
+  judgeReconcileFn?: JudgeEdgeReconcileFn;
 }
 
 export interface RunEdgeProposeAndWriteResult {
@@ -65,6 +95,13 @@ export interface RunEdgeProposeAndWriteResult {
   // still proposed live (warning, not hard-reject per §2), but the propose event
   // carries a topology_verdict marker so the inbox / downstream can downweight.
   warned_transitive_redundancy: number;
+  // ADR-0034 §3 / YUK-344 增量 2 — RECONCILE SUPERSEDE applied: a candidate that
+  // passed topology + rubric semantically CORRECTED a live neighbor edge. The old
+  // edge is soft-archived (archived_at, load-bearing removal), a CorrectionKind
+  // supersede event records the epistemic provenance, the new edge is written
+  // live, and a write-ahead log row is marked applied. Distinct from `proposed`
+  // (which counts KEEP_BOTH propose events).
+  reconcile_superseded: number;
 }
 
 const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
@@ -76,6 +113,7 @@ const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
   folded_rubric_rejected: 0,
   folded_topology_rejected: 0,
   warned_transitive_redundancy: 0,
+  reconcile_superseded: 0,
 };
 
 /**
@@ -93,6 +131,7 @@ export async function runEdgeProposeAndWrite(
 
     const existingEdges = await params.db
       .select({
+        id: knowledge_edge.id,
         from_knowledge_id: knowledge_edge.from_knowledge_id,
         to_knowledge_id: knowledge_edge.to_knowledge_id,
         relation_type: knowledge_edge.relation_type,
@@ -103,6 +142,11 @@ export async function runEdgeProposeAndWrite(
     const existingEdgeKey = new Set(
       existingEdges.map((e) => edgeKey(e.from_knowledge_id, e.to_knowledge_id, e.relation_type)),
     );
+
+    // ADR-0034 §3 / YUK-344 增量 2 — node-name map for the reconcile prompt's
+    // human-readable neighbor descriptions (ids are NEVER exposed to the LLM, but
+    // names are; see edge-reconcile.ts describeEdge).
+    const nodeNameById = new Map(tree.map((n) => [n.id, n.name]));
 
     // ADR-0034 §2 / YUK-344 — the topology gate operates on the LIVE mesh only
     // (archived_at IS NULL is the live-mesh reader's sole filter, ADR-0034 §4).
@@ -118,6 +162,29 @@ export async function runEdgeProposeAndWrite(
         to_knowledge_id: e.to_knowledge_id,
         relation_type: e.relation_type,
       }));
+
+    // ADR-0034 §3 / YUK-344 增量 2 — live edges carrying their REAL edge id, for
+    // the reconcile ring's neighbor lookup. Like `liveTopologyEdges`, this starts
+    // from the live (archived_at IS NULL) mesh and is mutated as the batch
+    // proceeds: a SUPERSEDE removes the archived old edge and adds the new one, a
+    // KEEP_BOTH adds the new edge — so a LATER candidate in the same batch
+    // reconciles against the batch-evolved live mesh (the DB is not yet
+    // persisted for the in-flight rows).
+    type LiveEdge = {
+      edge_id: string;
+      from_knowledge_id: string;
+      to_knowledge_id: string;
+      relation_type: string;
+    };
+    const liveNeighborEdges: LiveEdge[] = existingEdges
+      .filter((e) => e.archived_at === null)
+      .map((e) => ({
+        edge_id: e.id,
+        from_knowledge_id: e.from_knowledge_id,
+        to_knowledge_id: e.to_knowledge_id,
+        relation_type: e.relation_type,
+      }));
+
     const pendingEdgeKey = await loadPendingEdgeProposalKeys(params.db);
 
     const input = {
@@ -329,6 +396,125 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
 
+      // ADR-0034 §3 / YUK-344 增量 2 — WRITE-TIME RECONCILIATION RING. Runs ONLY
+      // for a candidate that has already passed BOTH the topology gate (above —
+      // a topology-rejected edge `continue`d before ever reaching here, so the
+      // ring NEVER sees a topology-rejected edge) AND the semantic rubric floor
+      // (just above). Retrieve the live neighbor edges touching either endpoint
+      // and ask the ring whether the candidate semantically CORRECTS a live
+      // neighbor (SUPERSEDE) or coexists with all of them (KEEP_BOTH, the
+      // default-in-doubt). On ReconcileParseError / network / low confidence the
+      // ring (or this wiring) degrades to KEEP_BOTH — never a destructive
+      // supersede on an uncertain judgment.
+      const neighbors: EdgeNeighbor[] = liveNeighborEdges
+        .filter(
+          (e) =>
+            e.from_knowledge_id === p.from_knowledge_id ||
+            e.to_knowledge_id === p.from_knowledge_id ||
+            e.from_knowledge_id === p.to_knowledge_id ||
+            e.to_knowledge_id === p.to_knowledge_id,
+        )
+        .map((e, index) => ({
+          index,
+          edge_id: e.edge_id,
+          from_knowledge_id: e.from_knowledge_id,
+          to_knowledge_id: e.to_knowledge_id,
+          relation_type: e.relation_type as EdgeNeighbor['relation_type'],
+          from_name: nodeNameById.get(e.from_knowledge_id),
+          to_name: nodeNameById.get(e.to_knowledge_id),
+        }));
+
+      const candidateForReconcile: EdgeCandidate = {
+        from_knowledge_id: p.from_knowledge_id,
+        to_knowledge_id: p.to_knowledge_id,
+        relation_type: p.relation_type as EdgeCandidate['relation_type'],
+        from_name: nodeNameById.get(p.from_knowledge_id),
+        to_name: nodeNameById.get(p.to_knowledge_id),
+        reasoning: p.reasoning,
+      };
+
+      // The ring only covers the 5 CORE homogeneous relation types (ADR-0010 /
+      // edge-reconcile.ts). An `experimental:*` candidate has no ring framing —
+      // treat it as KEEP_BOTH (skip the ring entirely), preserving today's behavior.
+      const isCoreRelation = CORE_RELATION_TYPES.has(p.relation_type);
+
+      let decision: EdgeReconcileDecision | null = null;
+      if (isCoreRelation && neighbors.length > 0) {
+        try {
+          const judge =
+            params.judgeReconcileFn ??
+            ((cand: EdgeCandidate, nbrs: EdgeNeighbor[]) =>
+              judgeEdgeReconcile(cand, nbrs, { env: params.env as never }));
+          // Defensive re-apply of the confidence threshold: the live
+          // judgeEdgeReconcile already applies it, so this is an idempotent no-op
+          // there; for an INJECTED fn it guarantees a low-confidence SUPERSEDE is
+          // still degraded to KEEP_BOTH (the "no destructive supersede on low
+          // confidence" invariant holds regardless of the decision source).
+          decision = applyConfidenceThreshold(await judge(candidateForReconcile, neighbors));
+        } catch (err) {
+          // ReconcileParseError / Retryable / Permanent — safe-degrade to
+          // KEEP_BOTH (no destructive supersede on an unparseable / failed judge).
+          console.warn('runEdgeProposeAndWrite: reconcile judge failed, KEEP_BOTH degrade', err);
+          decision = null;
+        }
+      }
+
+      if (decision?.action === 'SUPERSEDE' && decision.superseded_edge_id) {
+        // Resolve the superseded neighbor (its endpoints/type for the new-edge
+        // provenance + intra-batch live-mesh bookkeeping). Guard against a stale
+        // id that no longer matches a tracked live edge → degrade to KEEP_BOTH.
+        const supersededId = decision.superseded_edge_id;
+        const supersededEdge = liveNeighborEdges.find((e) => e.edge_id === supersededId);
+        // affected_refs must be ≥1 ActivityRef (CorrectEvent schema). The candidate
+        // reached the LIVE path, so the rubric floor passed via endpoint-touching
+        // judge-backed failures → endpointTouchingFailures is non-empty in practice.
+        // If it is somehow empty we cannot form a valid correction event → degrade.
+        const affectedRefs: ActivityRefT[] = endpointTouchingFailures.map((failure) => ({
+          kind: 'question',
+          id: failure.question_id,
+        }));
+
+        if (supersededEdge && affectedRefs.length > 0) {
+          const newEdgeId = await applyEdgeSupersede(params.db, {
+            candidate: p,
+            supersededEdgeId: supersededId,
+            decision,
+            affectedRefs,
+          });
+
+          // Intra-batch live-mesh bookkeeping: the old edge is now archived (drop
+          // it from BOTH accumulators), the new edge is now live (add it). This
+          // keeps a LATER same-batch candidate's topology + reconcile checks
+          // consistent with the eventual DB state (mirrors FINDING A).
+          for (let i = liveNeighborEdges.length - 1; i >= 0; i -= 1) {
+            if (liveNeighborEdges[i].edge_id === supersededId) liveNeighborEdges.splice(i, 1);
+          }
+          const removeIdx = liveTopologyEdges.findIndex(
+            (e) =>
+              e.from_knowledge_id === supersededEdge.from_knowledge_id &&
+              e.to_knowledge_id === supersededEdge.to_knowledge_id &&
+              e.relation_type === supersededEdge.relation_type,
+          );
+          if (removeIdx >= 0) liveTopologyEdges.splice(removeIdx, 1);
+
+          pendingEdgeKey.add(key);
+          liveTopologyEdges.push({
+            from_knowledge_id: p.from_knowledge_id,
+            to_knowledge_id: p.to_knowledge_id,
+            relation_type: p.relation_type,
+          });
+          liveNeighborEdges.push({
+            edge_id: newEdgeId,
+            from_knowledge_id: p.from_knowledge_id,
+            to_knowledge_id: p.to_knowledge_id,
+            relation_type: p.relation_type,
+          });
+          stats.reconcile_superseded += 1;
+          continue;
+        }
+        // supersededEdge missing / no affected_refs → fall through to KEEP_BOTH.
+      }
+
       // ADR-0034 §2 — transitive-redundancy WARNING (topology.status === 'warn').
       // Not a hard reject: the edge is still proposed live, but the propose event
       // carries a `topology_verdict` marker so the inbox / downstream can
@@ -374,6 +560,13 @@ export async function runEdgeProposeAndWrite(
       // cycle THROUGH the folded edge would be falsely topology-rejected, even
       // though that cycle does not exist in the live mesh. Excluding folded edges
       // keeps the intra-batch check consistent with the eventual DB state.
+      //
+      // ADR-0034 §3 / YUK-344 增量 2 — a KEEP_BOTH edge is written as a PENDING
+      // PROPOSAL (writeAiProposal → a propose event), NOT a live knowledge_edge
+      // row, so it is intentionally NOT added to `liveNeighborEdges`: the
+      // reconcile ring's neighbors are LIVE edges (archivable rows with real
+      // ids), and a pending proposal has neither. Only a SUPERSEDE (which writes
+      // a real live edge) feeds `liveNeighborEdges` above.
       liveTopologyEdges.push({
         from_knowledge_id: p.from_knowledge_id,
         to_knowledge_id: p.to_knowledge_id,
@@ -408,6 +601,155 @@ export function parseEdgeProposeOutput(text: string): EdgeProposeOutput {
 
 function edgeKey(fromId: string, toId: string, relationType: string): string {
   return `${fromId}|${toId}|${relationType}`;
+}
+
+// ADR-0034 §3 / YUK-344 增量 2 — the 5 CORE homogeneous relation types the
+// reconcile ring covers (ADR-0010 / edge-reconcile.ts EdgeRelationType). An
+// `experimental:*` candidate has no ring framing → KEEP_BOTH (skip the ring),
+// preserving today's behavior for experimental edges.
+const CORE_RELATION_TYPES = new Set<string>([
+  'prerequisite',
+  'related_to',
+  'contrasts_with',
+  'applied_in',
+  'derived_from',
+]);
+
+/**
+ * ADR-0034 §3 / YUK-344 增量 2 — apply a reconcile SUPERSEDE decision.
+ *
+ * Write-ahead idempotent sequence (all inside ONE transaction so a crash either
+ * applies everything or nothing; the write-ahead log row is committed-then-marked
+ * within the same tx, and every step is independently idempotent on replay):
+ *   1. write-ahead-log the SUPERSEDE plan (planned_at set, applied_at NULL);
+ *   2. write the NEW edge: a `generate` knowledge_edge event (its id is the
+ *      correction's `replacement_event_id`) + the real live `knowledge_edge` row
+ *      (createKnowledgeEdge — single-owner INSERT);
+ *   3. archive the OLD edge: `archiveKnowledgeEdge` (NULL→now soft-delete — the
+ *      ADR-0034 §4 LOAD-BEARING removal from the live mesh);
+ *   4. write the OLD edge's archive-provenance `generate` event (mirrors the
+ *      proposals/actions.ts archive path) so the correction has a stable event to
+ *      target — a CorrectEvent can only target subject_kind='event', NOT an edge
+ *      row (ADR-0034 §4);
+ *   5. write the `correct` event: correction_kind='supersede', subject targeting
+ *      the OLD edge's archive-provenance event, replacement_event_id = the NEW
+ *      edge's generate event (epistemic PROVENANCE only — the archive in step 3 is
+ *      what actually removes the edge);
+ *   6. mark the write-ahead log row applied.
+ *
+ * Returns the new edge's id (for intra-batch live-mesh bookkeeping).
+ */
+async function applyEdgeSupersede(
+  db: Db,
+  opts: {
+    candidate: EdgeProposalSchemaT;
+    supersededEdgeId: string;
+    decision: EdgeReconcileDecision;
+    affectedRefs: ActivityRefT[];
+  },
+): Promise<string> {
+  const { candidate: p, supersededEdgeId, decision, affectedRefs } = opts;
+  const now = new Date();
+
+  const logRow = makeEdgePlannedRow({
+    candidate_from_knowledge_id: p.from_knowledge_id,
+    candidate_to_knowledge_id: p.to_knowledge_id,
+    candidate_relation_type: p.relation_type,
+    action: 'SUPERSEDE',
+    superseded_edge_id: supersededEdgeId,
+    confidence: decision.confidence,
+    reason: decision.reason,
+    llm_raw: { action: decision.action, neighbor_index: decision.neighbor_index },
+  });
+
+  const newGenerateEventId = createId();
+  const oldArchiveGenerateEventId = createId();
+  const correctionEventId = createId();
+  let newEdgeId = '';
+
+  await db.transaction(async (tx) => {
+    // 1) write-ahead the plan (applied_at NULL).
+    await insertEdgePlannedRows(tx, [logRow]);
+
+    // 2) NEW live edge row first (assigns its id), then its `generate` provenance
+    //    event subject-anchored to that id. The candidate's key is guaranteed
+    //    unique here (a key matching ANY existing edge — including the archived
+    //    superseded one, which keeps its UNIQUE(from,to,type) slot — was already
+    //    `skipped_duplicate_edge` upstream), so this INSERT cannot 23505-conflict.
+    newEdgeId = await createKnowledgeEdge(tx, {
+      from_knowledge_id: p.from_knowledge_id,
+      to_knowledge_id: p.to_knowledge_id,
+      relation_type: p.relation_type,
+      weight: p.weight,
+      created_by: 'dreaming',
+      reasoning: p.reasoning,
+    });
+    await writeEvent(tx, {
+      id: newGenerateEventId,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'generate',
+      subject_kind: 'knowledge_edge',
+      subject_id: newEdgeId,
+      outcome: 'success',
+      payload: {
+        from_knowledge_id: p.from_knowledge_id,
+        to_knowledge_id: p.to_knowledge_id,
+        relation_type: p.relation_type,
+        weight: p.weight,
+        reasoning: p.reasoning,
+      },
+      created_at: now,
+    });
+
+    // 3) Archive the OLD edge (the load-bearing removal; idempotent NULL→now).
+    await archiveKnowledgeEdge(tx, supersededEdgeId);
+
+    // 4) OLD edge archive-provenance event — a stable subject the correction can
+    //    target (a CorrectEvent cannot target an edge row, only an event).
+    await writeEvent(tx, {
+      id: oldArchiveGenerateEventId,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'generate',
+      subject_kind: 'knowledge_edge',
+      subject_id: supersededEdgeId,
+      outcome: 'success',
+      payload: {
+        edge_op: 'archive',
+        archive_edge_id: supersededEdgeId,
+        from_knowledge_id: p.from_knowledge_id,
+        to_knowledge_id: p.to_knowledge_id,
+        relation_type: p.relation_type,
+        reasoning: `reconcile SUPERSEDE: ${decision.reason}`,
+      },
+      created_at: now,
+    });
+
+    // 5) CorrectionKind supersede event — epistemic PROVENANCE only (ADR-0034 §4).
+    await writeEvent(tx, {
+      id: correctionEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: oldArchiveGenerateEventId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'supersede',
+        replacement_event_id: newGenerateEventId,
+        reason_md: `reconcile ring superseded a contradicting live edge: ${decision.reason}`,
+        affected_refs: affectedRefs,
+      },
+      caused_by_event_id: oldArchiveGenerateEventId,
+      created_at: now,
+    });
+
+    // 6) Mark the write-ahead log row applied (same tx — atomic with the apply).
+    await markEdgeReconcileApplied(tx, logRow.id);
+  });
+
+  return newEdgeId;
 }
 
 /**
