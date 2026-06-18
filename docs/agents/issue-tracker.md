@@ -17,12 +17,22 @@ Linear 原生层级 → 项目语义：
 | Linear           | 用途                                                                 |
 | ---------------- | -------------------------------------------------------------------- |
 | **Initiative**   | 跨多 phase 的大版本（v0.3、v0.4...）。可选，phase 不大时不必建。     |
-| **Project**      | 一条 lane / phase（如 "Foundation B — SubjectProfile"）。            |
+| **Project**      | 一条主线 / lane / phase。当前活的 4 条：**领域模型重构 (YUK-203)** / **私人教研团 rethink (YUK-405)** / **记忆层 (YUK-322)** / **UI 重绘 (YUK-169)**。新 issue 优先挂对应 Project。 |
 | **Milestone**    | Project 内的执行节点（M1 / M2...）。带 target date。                  |
-| **Issue**        | 单个可独立 grab 的工作单元。带 estimate（Fibonacci 1/2/3/5/8）+ priority。 |
-| **Cycle**        | 1–2 周冲刺。Issue 可挂 cycle 做短期排程。                            |
+| **Issue**        | 单个可独立 grab 的工作单元。带 priority；estimate 可选（做 cycle 排程时再设 Fibonacci）。 |
+| **Cycle**        | 1–2 周冲刺。只把当前焦点 issue 挂 cycle，别灌整个 backlog。           |
+
+> 配套：`docs/agents/linear-agent-guidance.md`（Agent guidance 源，粘贴进 Settings→AI）+ `docs/agents/linear-maximization.md`（最大化方案 + PR→状态自动流转开关说明）。
 
 ## Workflow
+
+### 纪律（standing rules，每次都遵守）
+
+- **Linear = 驾驶舱，不是 compute**：绝不用 Linear 原生 coding session（委派 issue→Linear 跑 agent 出 PR）——它按 AI credits 真金白银扣（$0.5–5+/次，opt-in，不充钱没有此功能）。委派一律走 `W`→`O`（Open in coding tool）把 issue 丢进**本地 Claude Code**（owner 的 Max 订阅/机器，0 Linear 充值）。其它面（Projects / Cycles / Labels / Agent chat / project update / PR 状态自动流转）全不碰 credits，放心用。
+- **活的工作进 Project**：为当前主线建/更新 issue 时挂到对应 live Project——**领域模型重构 (YUK-203)** / **私人教研团 rethink (YUK-405)** / **记忆层 (YUK-322)** / **UI 重绘 (YUK-169)**；新主线就建新 Project。别让活跃工作裸飘成 parent-issue 树（2026-06-18 重组前的旧病）。
+- **带 area 标签**：每个 issue 挂一个 `area:matcher|kg|practice|copilot|memory|ui`（子系统轴，与 triage 标签正交）。
+- **Cycle 只装焦点**：只把当前在跑的 issue 挂 cycle，别灌整个 backlog。
+- 完整说明见 `docs/agents/linear-maximization.md` + `docs/agents/linear-agent-guidance.md`。
 
 ### Closeout issue capture gate
 
@@ -36,7 +46,7 @@ Every implementation, audit, planning, or migration task must reconcile Linear b
    - failed validation or environment blockers that need a concrete follow-up;
    - TODO/FIXME/comment evidence only when it is still valid and not already covered.
 2. Search existing Linear issues first by `YUK-*`, title keywords, file path, symbol name, and project/milestone. Update the existing issue when it covers the same work.
-3. Create a new Linear issue when the follow-up is executable, repo-evidenced, and not already covered.
+3. Create a new Linear issue when the follow-up is executable, repo-evidenced, and not already covered. 新建时按上面的纪律挂对应 live Project（YUK-203/405/322/169 之一，或新建 Project）+ 一个 `area:*` 标签 + 合适的 triage 标签。
 4. Do not create an issue for speculative ideas, answered questions, already-fixed work in the current diff, historical archive notes, or vague "improve X" work without a concrete next action.
 5. If the Linear connector is unavailable, include an exact issue draft in the final response and say the connector was unavailable.
 
@@ -48,7 +58,7 @@ New issues should be small enough for one agent pass. Required content:
 
 - title with the concrete action, not the symptom alone;
 - project and milestone when known;
-- estimate 1/2/3/5/8, with >8 split before creation;
+- estimate 可选（默认不设；做 cycle velocity 排程时再补 Fibonacci 1/2/3/5/8，>8 拆分）；
 - priority 2/3/4 unless urgency is explicitly known;
 - labels from `docs/agents/triage-labels.md`;
 - description with source paths, observed evidence, acceptance criteria, and validation command when applicable.
@@ -130,7 +140,7 @@ Backlog → Todo → In Progress → In Review → Done
 
 ### Estimate
 
-Fibonacci 1 / 2 / 3 / 5 / 8 points。> 8 的 issue 应拆分。
+**可选字段**（默认不设——本工作区实践里多数 issue 无 estimate）。需要 cycle velocity / project 按点进度时再补 Fibonacci 1 / 2 / 3 / 5 / 8 points，> 8 的 issue 应拆分。不要为凑字段编估值。
 
 ## PR ↔ Issue link
 
