@@ -138,7 +138,7 @@ export async function listDraftReview(
     .select({ count: sql<number>`count(*)::int` })
     .from(question)
     .where(where);
-  const total = totalRows[0]?.count ?? rows.length;
+  const total = totalRows[0]?.count ?? 0;
 
   // Fetch the latest TERMINAL (outcome != 'error') verify event per draft in one
   // round-trip; pick the newest by created_at in memory.
@@ -158,7 +158,7 @@ export async function listDraftReview(
       .from(event)
       .where(
         and(
-          inArray(event.action, VERIFY_ACTIONS as unknown as string[]),
+          inArray(event.action, [...VERIFY_ACTIONS]),
           eq(event.subject_kind, 'question'),
           inArray(event.subject_id, ids),
           ne(event.outcome, 'error'),

@@ -150,7 +150,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
     // YUK-400 B-archived-draft (inc-4a) — a soft-archived (re-drafted) question
     // carries metadata.archived_at (set by archiveQuestion, src/server/questions/
     // write.ts). owner force-enable must NEVER resurrect such a draft back to active;
-    // reject WITHOUT promoting or writing any verify event (don't update回 active).
+    // reject WITHOUT promoting or writing any verify event (don't update it back to active).
     const metaArchivedAt = (row.metadata as Record<string, unknown> | null)?.archived_at;
     if (metaArchivedAt !== undefined && metaArchivedAt !== null) {
       return { promoted: false, status: 'skipped:archived_draft' };
@@ -243,8 +243,8 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   // ── 正常分支 = 薄派发 ───────────────────────────────────────────────────────
   // YUK-400 B-normal-draft (inc-4a) — the override branch already guards draft_status;
   // the normal branch did NOT, so an owner-UI retry (or matcher race) landing on an
-  // already-active row would re-run a PAID verify against a non-draft. The转调 run 函数
-  // only short-circuit on source mismatch / terminal-event idempotency, NOT on
+  // already-active row would re-run a PAID verify against a non-draft. The delegated run fn
+  // only short-circuits on source mismatch / terminal-event idempotency, NOT on
   // draft_status, so gate it here BEFORE dispatch.
   //   - A non-draft row that already carries a TERMINAL verify event was legitimately
   //     promoted (e.g. an eager verify landed first, codex P2-5): report it as

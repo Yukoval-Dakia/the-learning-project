@@ -21,6 +21,7 @@
 //   slice 链 (同源单一真相)。CRITICAL: 不传 limit 给 poolFetch — 截断在 app 层 (F2 防线).
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
+import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
@@ -473,7 +474,7 @@ export async function matcher(
       // acquisitionTierForQuestion only reads source + metadata; the remaining PoolQuestion
       // fields are not consulted by it, so stub-fill the typed shape minimally.
       id: r.id,
-      kind: r.kind as never,
+      kind: r.kind as QuestionKindT,
       difficulty: r.difficulty,
       calibrationB: null,
       knowledgeIds: [],
