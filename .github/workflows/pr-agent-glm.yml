@@ -1,0 +1,65 @@
+name: PR-Agent (GLM-5.2)
+
+# Runs alongside the existing OCR review so the two can be compared on the same
+# PRs (precision / recall / signal-to-noise). Uses your GLM Coding Plan via
+# BigModel's Anthropic-compatible endpoint.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]          # lets you trigger tools manually with /review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-agent-glm-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr_agent:
+    name: PR-Agent review (GLM-5.2)
+    # Same guards as ocr-codex-review.yml: skip drafts, fork PRs, and bots.
+    # (GitHub also withholds secrets from fork-PR `pull_request` runs, so the
+    # same-repo guard keeps the GLM key out of contexts where it isn't passed.)
+    if: >
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.user.login != 'dependabot[bot]') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.sender.type != 'Bot')
+    # Public GLM endpoint (open.bigmodel.cn) → GitHub-hosted runner is enough;
+    # no self-hosted Mac runner required for this one.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: PR-Agent
+        # Canonical repo (Codium-ai → qodo-ai → The-PR-Agent; old slugs redirect).
+        # Pinned to the latest release as of 2026-06-16 for reproducibility.
+        uses: The-PR-Agent/pr-agent@v0.36.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # --- GLM Coding Plan via BigModel Anthropic-compatible endpoint ---
+          config.model: "anthropic/glm-5.2"
+          config.fallback_models: '["anthropic/glm-5.2"]'
+          # glm-5.2 is not in litellm's token map; this is REQUIRED or it errors.
+          config.custom_model_max_tokens: "200000"
+          ANTHROPIC.KEY: ${{ secrets.GLM_ANTHROPIC_KEY }}
+          # ⚠️ The one line to verify on first run: routes litellm's anthropic
+          #    provider at BigModel instead of api.anthropic.com. If the run
+          #    errors (hits api.anthropic.com / "model not found"), see the
+          #    OpenAI-compatible fallback noted in chat.
+          ANTHROPIC_API_BASE: "https://open.bigmodel.cn/api/anthropic"
+
+          # --- review only: mirrors OCR's behaviour and conserves your weekly
+          #     Coding-Plan prompt quota (describe/improve would burn more) ---
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
