@@ -422,7 +422,7 @@ export async function loadKnowledgeNodePage(
     parent_id: node.parent_id,
     parent_name: parentName,
     effective_domain: effectiveDomain,
-    mastery: nodeMastery ? nodeMastery.mastery : null,
+    mastery: nodeMastery?.mastery ?? null,
     evidence_count: nodeEvidenceCount,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
     mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),

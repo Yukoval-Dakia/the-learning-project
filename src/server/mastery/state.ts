@@ -181,7 +181,9 @@ export async function getMasteryProjection(
   knowledgeIds: string[],
   subjectKind = 'knowledge',
 ): Promise<Map<string, MasteryProjection>> {
-  const ids = Array.from(new Set(knowledgeIds.filter((id) => id.length > 0)));
+  const ids = Array.from(
+    new Set(knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
+  );
   if (ids.length === 0) return new Map();
   const rows = await db
     .select()
