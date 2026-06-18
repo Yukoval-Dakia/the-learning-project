@@ -82,6 +82,22 @@ function rateStatus(rate: EventRow | undefined): ProposalStatus {
   }
 }
 
+// Read a verdict marker (sibling of ai_proposal on the propose event payload)
+// under `key`, null/object-guard it, and apply `predicate` to the marker object.
+// Shared by isRubricRejected (rubric_verdict) and isTopologyRejected
+// (topology_verdict) — both are "does this event carry a terminal fold marker?"
+// checks with the same null/object guard and only the key + predicate differ.
+function hasVerdictMarker(
+  row: EventRow,
+  key: string,
+  predicate: (verdict: Record<string, unknown>) => boolean,
+): boolean {
+  const verdict = toRecord(row.payload)[key];
+  return (
+    verdict !== null && typeof verdict === 'object' && predicate(verdict as Record<string, unknown>)
+  );
+}
+
 // P5.4 / YUK-143 (RB-6 / RB-7) — a propose event the Layer-1 rubric folded
 // carries a `rubric_verdict` marker (sibling of ai_proposal in the event
 // payload). Read it from the propose event row so the derived status becomes
@@ -90,13 +106,7 @@ function rateStatus(rate: EventRow | undefined): ProposalStatus {
 // 'pending' and re-occupy the (kind, cooldown_key) for live-pending dedup —
 // the exact lockout RB-7 forbids.
 function isRubricRejected(row: EventRow): boolean {
-  const payload = toRecord(row.payload);
-  const verdict = payload.rubric_verdict;
-  return (
-    verdict !== null &&
-    typeof verdict === 'object' &&
-    (verdict as Record<string, unknown>).ok === false
-  );
+  return hasVerdictMarker(row, 'rubric_verdict', (v) => v.ok === false);
 }
 
 // ADR-0034 §2 / YUK-344 — a propose event the write-time TOPOLOGY gate hard-
@@ -110,13 +120,7 @@ function isRubricRejected(row: EventRow): boolean {
 // derived status is non-pending and non-acceptable, mirroring the rubric handling
 // without widening the public ProposalStatus enum surface.
 function isTopologyRejected(row: EventRow): boolean {
-  const payload = toRecord(row.payload);
-  const verdict = payload.topology_verdict;
-  return (
-    verdict !== null &&
-    typeof verdict === 'object' &&
-    (verdict as Record<string, unknown>).status === 'reject'
-  );
+  return hasVerdictMarker(row, 'topology_verdict', (v) => v.status === 'reject');
 }
 
 // Resolve the terminal status for a propose event. A non-active correction

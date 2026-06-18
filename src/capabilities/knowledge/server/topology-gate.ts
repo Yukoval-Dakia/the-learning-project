@@ -2,14 +2,17 @@
 //
 // Spec: docs/adr/0034-knowledge-structure-consistency-gate-supersedes-bitemporal.md §2
 //
-// Three PURE graph checks on a candidate knowledge_edge write (no DB, no LLM):
-//   ① cycle detection         — a `prerequisite` edge must not close a cycle in
-//                               the learning-order graph → hard-reject.
+// Four PURE graph checks on a candidate knowledge_edge write (no DB, no LLM),
+// numbered here in the order they run in checkEdgeTopology below:
+//   ① self-loop               — a `prerequisite` edge whose from == to is the
+//                               degenerate 1-node cycle → hard-reject.
 //   ② direction contradiction — A prereq B already exists AND the candidate is
 //                               B prereq A → hard-reject (the 2-node back-edge
 //                               case, called out separately from the generic
 //                               cycle per the ADR).
-//   ③ transitive redundancy   — A→…→C is already reachable along prerequisite
+//   ③ cycle detection (general) — a `prerequisite` edge must not close a cycle in
+//                               the learning-order graph → hard-reject.
+//   ④ transitive redundancy   — A→…→C is already reachable along prerequisite
 //                               edges and a DIRECT A→C is proposed → warn
 //                               (rejected-or-downweighted; this layer warns and
 //                               lets the caller decide to fold/downweight).
@@ -94,12 +97,13 @@ function isReachable(adj: Map<string, Set<string>>, start: string, target: strin
  * Run the three pure topological checks for one candidate edge against the live
  * (already filtered to `archived_at IS NULL` by the caller) edge set.
  *
- * Returns a single verdict with reject taking priority over warn:
- *   - self-loop                       → reject (degenerate cycle)
- *   - direction contradiction (B→A)   → reject (more specific than the generic
+ * Returns a single verdict with reject taking priority over warn (numbered in
+ * the order the checks run below):
+ *   ① self-loop                       → reject (degenerate cycle)
+ *   ② direction contradiction (B→A)   → reject (more specific than the generic
  *                                       cycle for the 2-node case)
- *   - new edge closes a cycle         → reject
- *   - direct edge duplicates a path   → warn
+ *   ③ new edge closes a cycle         → reject
+ *   ④ direct edge duplicates a path   → warn
  *   - otherwise                       → ok
  *
  * Non-prerequisite candidates are out of this gate's scope → { status: 'ok' }.
@@ -116,7 +120,7 @@ export function checkEdgeTopology(
   const from = candidate.from_knowledge_id;
   const to = candidate.to_knowledge_id;
 
-  // ① cycle — self-loop is the degenerate 1-node cycle.
+  // ① self-loop — the degenerate 1-node cycle (from == to).
   if (from === to) {
     return {
       status: 'reject',
@@ -129,7 +133,8 @@ export function checkEdgeTopology(
 
   // ② direction contradiction — the exact inverse edge already exists. This is
   // the 2-node back-edge special case; surface the more specific gate before the
-  // generic cycle check (a 2-node cycle would also be caught by ① below).
+  // generic cycle check (a 2-node cycle would also be caught by the general cycle
+  // check ③ below).
   const inverseSuccessors = adj.get(to);
   if (inverseSuccessors?.has(from)) {
     return {
@@ -139,7 +144,7 @@ export function checkEdgeTopology(
     };
   }
 
-  // ① cycle (general) — adding from → to creates a cycle iff `from` is already
+  // ③ cycle (general) — adding from → to creates a cycle iff `from` is already
   // reachable FROM `to` along existing prerequisite edges (i.e. a path to → … →
   // from already exists, and the new edge would close it).
   if (isReachable(adj, to, from)) {
@@ -150,7 +155,7 @@ export function checkEdgeTopology(
     };
   }
 
-  // ③ transitive redundancy — a DIRECT from → to edge whose target is ALREADY
+  // ④ transitive redundancy — a DIRECT from → to edge whose target is ALREADY
   // reachable from the source via an intermediate node (length ≥ 2 path). Warn,
   // do not reject (ADR §2: "rejected-or-downweighted (warning)").
   const directSuccessors = adj.get(from);
