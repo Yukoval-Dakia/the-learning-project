@@ -5,8 +5,8 @@
 //
 // Runs the B5 verify (reuses the per-source quiz_verify/source_verify handler via
 // the caller-agnostic verifyAndPromote gate) and promotes on pass; on not-pass
-// returns the三态 verdict (needs_review / failed + reason). actor='user' tags the
-// gate's verify event as owner-driven. Auth is enforced upstream by the /api/*
+// returns the tri-state verdict (needs_review / failed + reason). actor='user' tags
+// the gate's verify event as owner-driven. Auth is enforced upstream by the /api/*
 // internal-token middleware.
 
 import { db } from '@/db/client';
