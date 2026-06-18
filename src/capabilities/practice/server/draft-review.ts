@@ -23,10 +23,17 @@
 
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
 
 type DbLike = Db | Tx;
+
+/** A knowledge concept tag on a draft: id + display label (knowledge.name). */
+export interface DraftKnowledgeRef {
+  id: string;
+  label: string;
+}
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -42,8 +49,36 @@ export interface DraftReviewRow {
   kind: string;
   source: string;
   created_at: Date;
+  /** question.difficulty (1–5) — renders the难度 pips in the preview meta. */
+  difficulty: number;
+  /** resolved knowledge tags (id → knowledge.name label). */
+  knowledge: DraftKnowledgeRef[];
   verify_status: DraftVerifyStatus;
   /** model's驳回理由 (summary_md) when the latest terminal verify did not promote. */
+  verify_reason: string | null;
+}
+
+/**
+ * Full-text draft projection for the single-draft preview pane (inc-4b). Unlike
+ * the list row this carries the UNtruncated prompt + the option/answer/passage
+ * blocks the loom DrPreviewBody needs.
+ */
+export interface DraftReviewDetail {
+  id: string;
+  kind: string;
+  source: string;
+  created_at: Date;
+  difficulty: number;
+  knowledge: DraftKnowledgeRef[];
+  /** full prompt_md (NOT the 160-char list preview). */
+  prompt_md: string;
+  /** reading material / passage — derived from a stem structured tree, else null. */
+  passage: string | null;
+  /** mcq choices (choices_md) when present, else null. */
+  options: string[] | null;
+  /** reference answer (reference_md) when present, else null. */
+  answer: string | null;
+  verify_status: DraftVerifyStatus;
   verify_reason: string | null;
 }
 
@@ -99,6 +134,43 @@ function deriveVerifyVerdict(
   };
 }
 
+// Resolve a set of knowledge ids → {id,label} in one round-trip (avoid N+1).
+// Preserves the per-question ORDER of knowledge_ids; an id with no row (or an
+// archived node) falls back to the id itself as the label so the preview never
+// shows a blank tag.
+async function resolveKnowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, string>> {
+  const labelById = new Map<string, string>();
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return labelById;
+  const rows = await db
+    .select({ id: knowledge.id, name: knowledge.name })
+    .from(knowledge)
+    .where(inArray(knowledge.id, unique));
+  for (const r of rows) labelById.set(r.id, r.name);
+  return labelById;
+}
+
+function toKnowledgeRefs(ids: string[], labelById: Map<string, string>): DraftKnowledgeRef[] {
+  return ids.map((id) => ({ id, label: labelById.get(id) ?? id }));
+}
+
+// Derive the reading material / passage for the preview. A passage lives in the
+// `structured` tree as the stem node's prompt_text (role='stem' with sub_questions);
+// plain/standalone questions have no separate passage block → null.
+function derivePassage(structured: StructuredQuestionT | null | undefined): string | null {
+  if (!structured) return null;
+  if (
+    structured.role === 'stem' &&
+    structured.sub_questions &&
+    structured.sub_questions.length > 0 &&
+    typeof structured.prompt_text === 'string' &&
+    structured.prompt_text.length > 0
+  ) {
+    return structured.prompt_text;
+  }
+  return null;
+}
+
 /**
  * List the draft-review pool (draft_status='draft', excluding soft-archived
  * drafts), with per-draft verify status derived from the latest terminal verify
@@ -126,6 +198,8 @@ export async function listDraftReview(
       prompt_md: question.prompt_md,
       kind: question.kind,
       source: question.source,
+      difficulty: question.difficulty,
+      knowledge_ids: question.knowledge_ids,
       created_at: question.created_at,
     })
     .from(question)
@@ -175,6 +249,12 @@ export async function listDraftReview(
     }
   }
 
+  // Resolve every KC referenced on this page → label, in one round-trip.
+  const labelById = await resolveKnowledgeLabels(
+    db,
+    rows.flatMap((r) => r.knowledge_ids),
+  );
+
   return {
     rows: rows.map((r): DraftReviewRow => {
       const verdict = verdictById.get(r.id);
@@ -184,6 +264,8 @@ export async function listDraftReview(
         kind: r.kind,
         source: r.source,
         created_at: r.created_at,
+        difficulty: r.difficulty,
+        knowledge: toKnowledgeRefs(r.knowledge_ids, labelById),
         verify_status: verdict?.status ?? 'unverified',
         verify_reason: verdict?.reason ?? null,
       };
@@ -192,5 +274,86 @@ export async function listDraftReview(
     offset,
     total,
     truncated: total > offset + rows.length,
+  };
+}
+
+/**
+ * Full-text projection for a single draft (the preview pane, inc-4b). Serves only
+ * draft_status='draft' AND non-soft-archived questions (same filter as the list);
+ * a non-draft / soft-archived / missing question returns null (the route maps that
+ * to 404). Reuses the list's verify-status derivation (latest terminal event).
+ */
+export async function getDraftReviewDetail(
+  db: DbLike,
+  id: string,
+): Promise<DraftReviewDetail | null> {
+  const rows = await db
+    .select({
+      id: question.id,
+      kind: question.kind,
+      source: question.source,
+      difficulty: question.difficulty,
+      knowledge_ids: question.knowledge_ids,
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      choices_md: question.choices_md,
+      structured: question.structured,
+      created_at: question.created_at,
+    })
+    .from(question)
+    .where(
+      and(
+        eq(question.id, id),
+        eq(question.draft_status, 'draft'),
+        // exclude soft-archived (deleted) drafts (mirror the list filter).
+        sql`(${question.metadata} -> 'archived_at') IS NULL`,
+      ),
+    )
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return null;
+
+  // Latest terminal verify verdict (same derivation as the list).
+  const verifyEvents = await db
+    .select({
+      outcome: event.outcome,
+      payload: event.payload,
+    })
+    .from(event)
+    .where(
+      and(
+        inArray(event.action, [...VERIFY_ACTIONS]),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, id),
+        ne(event.outcome, 'error'),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  const verdict = verifyEvents[0]
+    ? deriveVerifyVerdict(
+        verifyEvents[0].payload as Record<string, unknown> | null,
+        verifyEvents[0].outcome,
+      )
+    : null;
+
+  const labelById = await resolveKnowledgeLabels(db, row.knowledge_ids);
+  const choices = row.choices_md as string[] | null;
+
+  return {
+    id: row.id,
+    kind: row.kind,
+    source: row.source,
+    created_at: row.created_at,
+    difficulty: row.difficulty,
+    knowledge: toKnowledgeRefs(row.knowledge_ids, labelById),
+    prompt_md: row.prompt_md,
+    passage: derivePassage(row.structured as StructuredQuestionT | null),
+    options: choices && choices.length > 0 ? choices : null,
+    answer:
+      typeof row.reference_md === 'string' && row.reference_md.length > 0 ? row.reference_md : null,
+    verify_status: verdict?.status ?? 'unverified',
+    verify_reason: verdict?.reason ?? null,
   };
 }

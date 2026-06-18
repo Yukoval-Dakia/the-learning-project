@@ -25,19 +25,25 @@ vi.mock('@/server/quiz/verify-and-promote', () => ({
   verifyAndPromote: (...args: unknown[]) => verifyAndPromoteMock(...args),
 }));
 
+import { GET as draftDetail } from './review-draft-detail';
 import { POST as enableDraft } from './review-draft-enable';
 import { POST as forceEnableDraft } from './review-draft-force-enable';
 import { GET as listDrafts } from './review-drafts-list';
 
-async function seedKnowledge(id: string, archivedAt: Date | null = null): Promise<string> {
-  await testDb().insert(knowledge).values({
-    id,
-    name: id,
-    domain: 'wenyan',
-    archived_at: archivedAt,
-    created_at: new Date(),
-    updated_at: new Date(),
-  });
+async function seedKnowledge(
+  id: string,
+  opts: { name?: string; archivedAt?: Date | null } = {},
+): Promise<string> {
+  await testDb()
+    .insert(knowledge)
+    .values({
+      id,
+      name: opts.name ?? id,
+      domain: 'wenyan',
+      archived_at: opts.archivedAt ?? null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
   return id;
 }
 
@@ -45,6 +51,9 @@ async function seedQuestion(opts: {
   id?: string;
   source?: string;
   kind?: string;
+  reference_md?: string | null;
+  choices_md?: string[] | null;
+  difficulty?: number;
   draft_status?: string | null;
   knowledge_ids?: string[];
   metadata?: Record<string, unknown> | null;
@@ -58,8 +67,10 @@ async function seedQuestion(opts: {
       id,
       kind: opts.kind ?? 'short_answer',
       prompt_md: 'prompt',
+      reference_md: opts.reference_md ?? null,
+      choices_md: (opts.choices_md ?? null) as never,
       knowledge_ids: opts.knowledge_ids ?? [],
-      difficulty: 3,
+      difficulty: opts.difficulty ?? 3,
       source: opts.source ?? 'quiz_gen',
       draft_status: opts.draft_status === undefined ? 'draft' : opts.draft_status,
       metadata: (opts.metadata ?? null) as never,
@@ -71,6 +82,9 @@ async function seedQuestion(opts: {
 
 function listReq(query = ''): Request {
   return new Request(`http://localhost/api/review/drafts${query}`);
+}
+function detailReq(id: string): Request {
+  return new Request(`http://localhost/api/review/drafts/${id}`);
 }
 function actionReq(id: string, sub: 'enable' | 'force-enable', body?: unknown): Request {
   return new Request(`http://localhost/api/review/drafts/${id}/${sub}`, {
@@ -260,7 +274,7 @@ describe('POST /api/review/drafts/[id]/force-enable (override, real path)', () =
 
   it('B-archived-KC: override with an archived knowledge node → not promoted', async () => {
     await seedKnowledge('k-live');
-    await seedKnowledge('k-dead', new Date());
+    await seedKnowledge('k-dead', { archivedAt: new Date() });
     const qid = await seedQuestion({ source: 'quiz_gen', knowledge_ids: ['k-live', 'k-dead'] });
 
     const res = await forceEnableDraft(actionReq(qid, 'force-enable', { reason: 'forced' }), {
@@ -304,5 +318,60 @@ describe('POST /api/review/drafts/[id]/force-enable (override, real path)', () =
       id: 'missing',
     });
     expect(res.status).toBe(404);
+  });
+});
+
+// inc-4b — GET /api/review/drafts/[id]: full-text draft preview for the loom pane.
+describe('GET /api/review/drafts/[id]', () => {
+  beforeEach(async () => {
+    await resetDb();
+    verifyAndPromoteMock.mockReset();
+  });
+
+  it('returns the full draft projection for a draft question', async () => {
+    await seedKnowledge('k1', { name: '宾语前置' });
+    const qid = await seedQuestion({
+      draft_status: 'draft',
+      kind: 'mcq',
+      reference_md: '答案 B',
+      choices_md: ['甲', '乙'],
+      difficulty: 4,
+      knowledge_ids: ['k1'],
+    });
+    const res = await draftDetail(detailReq(qid), { id: qid });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.id).toBe(qid);
+    expect(body.kind).toBe('mcq');
+    expect(body.difficulty).toBe(4);
+    expect(body.answer).toBe('答案 B');
+    expect(body.options).toEqual(['甲', '乙']);
+    expect(body.knowledge).toEqual([{ id: 'k1', label: '宾语前置' }]);
+    expect(body.verify_status).toBe('unverified');
+  });
+
+  it('404 for a non-draft question (active)', async () => {
+    const qid = await seedQuestion({ draft_status: 'active' });
+    const res = await draftDetail(detailReq(qid), { id: qid });
+    expect(res.status).toBe(404);
+  });
+
+  it('404 for a soft-archived draft', async () => {
+    const qid = await seedQuestion({
+      draft_status: 'draft',
+      metadata: { archived_at: Math.floor(Date.now() / 1000) },
+    });
+    const res = await draftDetail(detailReq(qid), { id: qid });
+    expect(res.status).toBe(404);
+  });
+
+  it('404 for a non-existent id', async () => {
+    const res = await draftDetail(detailReq('missing'), { id: 'missing' });
+    expect(res.status).toBe(404);
+  });
+
+  it('400 for a blank id', async () => {
+    const res = await draftDetail(detailReq(''), { id: '   ' });
+    expect(res.status).toBe(400);
   });
 });
