@@ -14,6 +14,7 @@ import {
   bodyBlocksToNoteSections,
 } from '@/capabilities/notes/server/body-blocks';
 import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
+import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
@@ -128,6 +129,25 @@ async function persistNoteVerificationResult(params: {
   const { db, artifactId, parsed, taskResult } = params;
   const status = parsed.verdict === 'pass' ? 'verified' : 'needs_review';
 
+  // YUK-350 (B5 increment 2) — project the note verdict onto the unified verify
+  // contract shape, exactly like increment C did for quiz/source/variant. The note
+  // PROMOTE decision is NOT recomputed here — `parsed.verdict` IS the handler's
+  // decision (pass ⇒ verified active artifact, needs_review ⇒ stays needs_review).
+  // The helper only PROJECTS: pass ⇒ overall='pass' (no failure_class), needs_review
+  // ⇒ overall='needs_review' + failure_class='validation_failure'. A note has NO
+  // 'fail' verdict, so it can never project overall='fail'; the result-layer 'error'
+  // lives solely on the catch-bottom (red line 1). The verify-event payload below
+  // is an ADDITIVE SUPERSET: it spreads the unified { axes, overall, failure_class?,
+  // summary_md, confidence } and keeps the full `...parsed` NoteVerificationResult
+  // (verdict / issues / summary_md / confidence) byte-identical for existing readers.
+  const unified = toUnifiedVerifyResult({
+    source: 'note',
+    verdict: parsed.verdict,
+    summary_md: parsed.summary_md,
+    confidence: parsed.confidence,
+    issues: parsed.issues,
+  });
+
   await db.transaction(async (tx) => {
     await tx
       .update(artifact)
@@ -151,7 +171,11 @@ async function persistNoteVerificationResult(params: {
       subject_kind: 'artifact',
       subject_id: artifactId,
       outcome: parsed.verdict === 'pass' ? 'success' : 'partial',
-      payload: parsed,
+      // SUPERSET: the unified contract shape spread first, then the full parsed note
+      // result kept on top (verdict / issues stay byte-identical; summary_md /
+      // confidence are shared between the two; axes / overall / failure_class? are
+      // the additive new keys).
+      payload: { ...unified, ...parsed },
       caused_by_event_id: null,
       task_run_id: taskResult?.task_run_id ?? null,
       cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
@@ -233,6 +257,7 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     sections,
   };
 
+  let taskResult: TaskTextResult | null = null;
   try {
     const subjectProfile = resolveSubjectProfile(kNode?.domain);
     const result = await runTaskFn('NoteVerifyTask', input, {
@@ -240,6 +265,7 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
       subjectProfile,
       skills: await resolveNoteSkill(subjectProfile.id),
     });
+    taskResult = result;
     const parsed = parseVerificationOutput(result.text);
     const status = await persistNoteVerificationResult({
       db,
@@ -250,15 +276,51 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
 
     return { status, artifact_type: row.type, issues_count: parsed.issues.length };
   } catch (err) {
-    // YUK-350 (RL1) — error-safe: note_verify has no promote path (a note artifact
-    // is never enrolled into the question pool) and no `overall` field. This catch
-    // only marks the artifact verification_status='failed' (best-effort) and
-    // re-throws so pg-boss retries; a system error can never promote anything here.
-    // No result-layer 'error' value applies.
-    await db
-      .update(artifact)
-      .set({ verification_status: 'failed', updated_at: new Date() })
-      .where(eq(artifact.id, artifactId));
+    // YUK-350 (B5 increment 2, RL1) — error-safe catch-bottom. note_verify has NO
+    // promote-into-the-pool path (a note never enrolls into the question pool / FSRS),
+    // so a system error here can never promote anything. This catch:
+    //   (a) marks the artifact verification_status='failed' (best-effort), and
+    //   (b) writes a TRANSIENT-error verify event projecting the unified contract's
+    //       system_error shape ({ axes:[], overall:'error', failure_class:'system_error',
+    //       summary_md, confidence:0 }) — the ONLY producer of the result-layer 'error'
+    //       value. The note LLM-parse schema can never emit 'error' (its verdict is the
+    //       2-value pass|needs_review), so an `overall:'error'` payload is an unambiguous
+    //       "system blew up before a verdict" signal. The catch re-throws so pg-boss
+    //       retries; it NEVER promotes (red line 1: the model cannot self-report error).
+    // The error event uses outcome='error' (NOT 'failure'): like quiz_verify, a transient
+    // system failure is non-terminal and must remain retriable, distinct from a terminal
+    // model verdict (note has none — its non-promote verdict is needs_review/'partial').
+    try {
+      await db
+        .update(artifact)
+        .set({ verification_status: 'failed', updated_at: new Date() })
+        .where(eq(artifact.id, artifactId));
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'note_verify',
+        action: 'experimental:note_verify',
+        subject_kind: 'artifact',
+        subject_id: artifactId,
+        outcome: 'error',
+        payload: {
+          artifact_id: artifactId,
+          ...toUnifiedVerifyResult({
+            source: 'system_error',
+            summary_md: `note_verify failed: ${String((err as Error).message ?? err)}`,
+            error: String((err as Error).message ?? err),
+          }),
+          error: String((err as Error).message ?? err),
+        },
+        caused_by_event_id: null,
+        task_run_id: taskResult?.task_run_id ?? null,
+        cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
+        created_at: new Date(),
+      });
+    } catch (cleanupErr) {
+      console.error('[note_verify] catch-block cleanup failed for', artifactId, cleanupErr);
+    }
     throw err;
   }
 }
