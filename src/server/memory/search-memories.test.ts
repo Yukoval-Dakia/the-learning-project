@@ -119,6 +119,46 @@ describe('searchMemories', () => {
     expect(KIND_HALF_LIFE_DAYS.habit).toBeGreaterThan(KIND_HALF_LIFE_DAYS.event);
   });
 
+  it('keeps original store order for items with no numeric score (all rerankScore 0) and drops none before truncation', async () => {
+    const now = new Date('2026-06-18T00:00:00Z');
+    // All items lack a numeric score → baseScore defaults to 0 → rerankScore 0
+    // for every item. The origIndex tiebreaker must preserve the input order so
+    // the most relevant (store-ordered) zero-score item is not dropped on
+    // truncation. topK ≥ item count so nothing is truncated here — assert the
+    // full set survives in original order.
+    const items: Item[] = ['z0', 'z1', 'z2', 'z3', 'z4'].map((id) => ({
+      id,
+      memory: `fact ${id}`,
+      // no `score` field at all → typeof item.score !== 'number' → baseScore 0
+      metadata: { kind: 'event', created_ms: now.getTime() },
+    }));
+    const client = stubClient(items);
+
+    const out = await searchMemories(client, 'q', { topK: 5, now });
+
+    // none dropped
+    expect(out.results).toHaveLength(5);
+    // original store order preserved (not reordered)
+    expect(out.results.map((r) => r.id)).toEqual(['z0', 'z1', 'z2', 'z3', 'z4']);
+  });
+
+  it('truncates all-zero-score items keeping the original-order prefix (no relevant item dropped out of order)', async () => {
+    const now = new Date('2026-06-18T00:00:00Z');
+    // Same all-zero-score situation, but topK < item count: the surviving items
+    // must be the original-order prefix, proving truncation respects store order
+    // rather than collapsing the relative order of equal rerankScores.
+    const items: Item[] = ['a', 'b', 'c', 'd'].map((id) => ({
+      id,
+      memory: `fact ${id}`,
+      metadata: { kind: 'event', created_ms: now.getTime() },
+    }));
+    const client = stubClient(items);
+
+    const out = await searchMemories(client, 'q', { topK: 2, now });
+
+    expect(out.results.map((r) => r.id)).toEqual(['a', 'b']);
+  });
+
   it('merges caller filters with the NOT-superseded filter (scope_key passes through)', async () => {
     const now = new Date('2026-06-18T00:00:00Z');
     const capture: { lastSearch?: Parameters<MemoryClient['search']>[1] } = {};
