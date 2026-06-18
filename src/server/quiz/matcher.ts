@@ -32,6 +32,7 @@ import {
   type QuestionSupplyTarget,
   type SupplyGapKind,
   type SupplyRoute,
+  acquisitionTierForQuestion,
   seedGenerationMethod,
   seedRoutePreference,
   targetFingerprint,
@@ -363,6 +364,9 @@ export async function demandToSupplyTarget(
     // the 「篇」 constraint reaches the generation end (dispatcher persists target.constraints
     // into the question_supply observability payload; route-planner reads sibling flags).
     // Only set when the demand declares it (additive; absent → unconstrained, matching pre-fix).
+    // NOTE (codex #2): constraints 暂只到 target（route-planner/observability 读）；穿到生成
+    // JobData（QuizGenJobData/SourcingJobData payload）见 YUK-400（同 cause→JobData 同类，本 PR
+    // 不扩 dispatcher/JobData 契约）。
     constraints: demand.compositeParentOnly ? { compositeParentOnly: true } : {},
   };
 }
@@ -448,16 +452,33 @@ export async function matcher(
   const used: MatchedQuestion[] = [];
   for (const r of ranked) {
     if (used.length >= demand.limit) break;
+    // PROVENANCE tier (4-level: 1 authentic → 4 generated) — kept for the A2 sort tier that
+    // travels on the `used` entry (compareBySourceTierThenWhitelist reads provenance, 不动).
     const tier = deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier;
-    // YUK-401 Fix 1 — Demand.minSourceTier enforcement. deriveSourceTier ranks trust as
-    // tier 1 authentic (best) → 4 generated (worst); minSourceTier=2 ⇒ require tier ≤ 2.
-    // A candidate counts toward `used` ONLY if its DERIVED tier satisfies the floor —
-    // a below-floor candidate (e.g. a bare quiz_gen row deriving tier 4 under
-    // minSourceTier:2) is skipped (not counted), so the shortfall falls through to gap →
-    // residual (whose target already carries minSourceTier, demandToSupplyTarget). Without
-    // this the loop counted any active/promoted row regardless of its source档, defeating
-    // R2「源档底线」. Guard is no-op when demand.minSourceTier is undefined.
-    if (demand.minSourceTier != null && tier > demand.minSourceTier) continue;
+    // YUK-401 Fix 1 (+ codex #3 round-2) — Demand.minSourceTier is an ACQUISITION-tier floor
+    // (1-3), NOT a provenance tier. The supply-side contract maps the 4-level provenance tier
+    // onto the 3-level acquisition scale via acquisitionTierForQuestion (provenance 1→1, 2→2,
+    // 3 material + 4 generated → 3). So the floor judgement MUST compare acquisition tier, not
+    // provenance tier: a bare quiz_gen row is provenance tier 4 but acquisition tier 3, which
+    // SATISFIES minSourceTier:3 (3 ≤ 3) — comparing provenance (4 > 3) would wrongly skip a
+    // generated row the demand explicitly accepts. A candidate counts toward `used` ONLY if
+    // its acquisition tier satisfies the floor; a below-floor row (acquisition 3 under
+    // minSourceTier:2) is skipped, so the shortfall falls through to gap → residual (whose
+    // target already carries minSourceTier). Guard is no-op when demand.minSourceTier is
+    // undefined. NB: only the FLOOR judgement uses acquisition tier; the A2 sort tier above
+    // stays provenance (deriveSourceTier) — invariant unchanged.
+    const acqTier = acquisitionTierForQuestion({
+      source: r.source,
+      metadata: r.metadata ?? null,
+      // acquisitionTierForQuestion only reads source + metadata; the remaining PoolQuestion
+      // fields are not consulted by it, so stub-fill the typed shape minimally.
+      id: r.id,
+      kind: r.kind as never,
+      difficulty: r.difficulty,
+      calibrationB: null,
+      knowledgeIds: [],
+    });
+    if (demand.minSourceTier != null && acqTier > demand.minSourceTier) continue;
     // 仓库「可用」语义 (codex P2-1) = draft_status <> 'draft'. NULL≡active、'active'、legacy
     // 'final' 等任何非 'draft' 行都直接用——唯一送 lazy verify 的是 r.draft_status === 'draft'。
     // (此前误把「非 NULL 非 active」整批送 verify，'final' 等可用行被错送验证门。)
@@ -499,13 +520,16 @@ export async function matcher(
   // 失败 / 池空 都体现为 used 不足 → gap > 0).
   const gap = demand.limit - used.length;
   const residual: SourcingNeed[] = [];
-  // codex P2-4 — KC liveness is now guaranteed by the YUK-401 Fix 3 front-loaded guard at the
-  // top of matcher() (an archived/missing KC short-circuits to the empty triple before poolFetch
-  // is ever reached), so this branch no longer re-checks resolveKnowledgeNodeLive — a dead KC
-  // never gets here. Mirror resolveLiveKnowledgeNode's intent stays the top guard: a stale/
-  // archived KC must not dispatch a residual the worker anchor guard (sourcing.ts/quiz_gen.ts
-  // isNull(archived_at)) would just reject as a doomed job.
-  if (gap > 0) {
+  // codex P2-4 + codex #1 (round-2) — the YUK-401 Fix 3 front-loaded guard at the top of
+  // matcher() proves the KC was live BEFORE poolFetch, but pool fetch + per-candidate lazy
+  // verify run AFTER it, and a KC can be archived during that window (TOCTOU). The worker-side
+  // anchor guard (sourcing.ts/quiz_gen.ts isNull(archived_at)) would reject a residual
+  // dispatched to a now-dead anchor, so re-check liveness immediately before dispatch — the
+  // last-mile race guard the round-1 refactor dropped. A KC archived mid-flight → no residual
+  // dispatched (residual stays empty), same shape as the top dead-KC short-circuit. The top
+  // guard stays (it still short-circuits poolFetch for an already-dead KC); this is the
+  // companion last-mile check, not a replacement.
+  if (gap > 0 && (await resolveKnowledgeNodeLive(db, demand.knowledgeId))) {
     const target = await demandToSupplyTarget(db, demand, gap);
     const dispatch = deps.dispatch ?? dispatchSupplyTarget;
     // dispatchSupplyTarget: route-plan → enqueue 既有队列 (sourcing/quiz_gen)，带 7 天 fingerprint
@@ -522,10 +546,13 @@ export async function matcher(
   }
 
   // satisfiedFromPool = 池独立满足了整个 limit (gap <= 0)。基于 gap 而非 residual.length。
-  // 三态可区分: satisfiedFromPool=true ⇒ 池满足；false + residual 非空 ⇒ 已派在途生产；
-  // false + residual 空 ⇒ 池没满足、也没在途生产（live KC 但 dispatch 自身返 manual/skip/failed
-  // 不折出 step 的边角态——residual.push 恒发，故此路实际总非空）。注: dead/archived KC 不会走到这里
-  // ——YUK-401 Fix 3 已在顶部 short-circuit 成 {used:[], residual:[], satisfiedFromPool:false}。
+  // 三态读法:
+  //   ① satisfiedFromPool=true                  ⇒ 池满足 (gap<=0，含 limit=0 → gap=0)，无 residual。
+  //   ② satisfiedFromPool=false + residual 非空 ⇒ 池有缺口 (gap>0) 且 KC live → 已派在途生产。
+  //   ③ satisfiedFromPool=false + residual 空   ⇒ 有缺口 (gap>0) 但 KC 在 fetch/verify 窗口被归档
+  //      (Fix B 的 pre-dispatch recheck 拦下 dispatch；这是状态③的唯一成因)。
+  // dead/archived KC (顶部 guard) 直接 short-circuit 成 {used:[], residual:[], satisfiedFromPool:
+  // false}，根本走不到这里 (YUK-401 Fix 3)。
   const satisfiedFromPool = gap <= 0;
 
   return { used, residual, satisfiedFromPool };
