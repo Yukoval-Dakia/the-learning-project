@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MemoryClient } from './client';
-import { KIND_HALF_LIFE_DAYS, OVERFETCH_FACTOR, searchMemories } from './search-memories';
+import { KIND_HALF_LIFE_DAYS, MAX_TOPK, OVERFETCH_FACTOR, searchMemories } from './search-memories';
 
 // P3 (YUK-351): the mem0 READ path wrapper. Sits over MemoryClient.search and
 // (1) forwards the NOT-superseded filter, (2) drops any soft-superseded item the
@@ -180,5 +180,90 @@ describe('searchMemories', () => {
       scope_key: 'topic:k1',
       NOT: [{ superseded_by: '*' }],
     });
+  });
+
+  it('preserves a caller-supplied NOT clause (merged, not overwritten by the superseded filter)', async () => {
+    const now = new Date('2026-06-18T00:00:00Z');
+    const capture: { lastSearch?: Parameters<MemoryClient['search']>[1] } = {};
+    const client = stubClient(
+      [
+        {
+          id: 'a',
+          memory: 'x',
+          score: 0.5,
+          metadata: { kind: 'event', created_ms: now.getTime() },
+        },
+      ],
+      capture,
+    );
+
+    await searchMemories(client, 'q', {
+      topK: 3,
+      now,
+      // Caller already excludes a kind via NOT; the superseded filter must be
+      // appended, not clobber it.
+      filters: { NOT: [{ kind: 'event' }] },
+    });
+
+    const not = capture.lastSearch?.filters?.NOT as Array<Record<string, unknown>> | undefined;
+    expect(not).toEqual([{ kind: 'event' }, { superseded_by: '*' }]);
+  });
+
+  it('preserves a caller NOT supplied as a single object (normalized to an array and merged)', async () => {
+    const now = new Date('2026-06-18T00:00:00Z');
+    const capture: { lastSearch?: Parameters<MemoryClient['search']>[1] } = {};
+    const client = stubClient(
+      [
+        {
+          id: 'a',
+          memory: 'x',
+          score: 0.5,
+          metadata: { kind: 'event', created_ms: now.getTime() },
+        },
+      ],
+      capture,
+    );
+
+    await searchMemories(client, 'q', {
+      topK: 3,
+      now,
+      filters: { NOT: { kind: 'event' } },
+    });
+
+    const not = capture.lastSearch?.filters?.NOT as Array<Record<string, unknown>> | undefined;
+    expect(not).toEqual([{ kind: 'event' }, { superseded_by: '*' }]);
+  });
+
+  it('degrades to empty results when the underlying client.search rejects (ADR-0017 attention prior must not crash)', async () => {
+    const now = new Date('2026-06-18T00:00:00Z');
+    const search = vi.fn(async () => {
+      throw new Error('pgvector unavailable');
+    });
+    const client = { search } as unknown as MemoryClient;
+    // Silence the expected warn log so the suite output stays clean.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    let out: Awaited<ReturnType<typeof searchMemories>> | undefined;
+    await expect(
+      (async () => {
+        out = await searchMemories(client, 'q', { topK: 5, now });
+      })(),
+    ).resolves.toBeUndefined();
+
+    expect(out?.results).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+  });
+
+  it('clamps topK to MAX_TOPK so the store overfetch stays bounded', async () => {
+    const now = new Date('2026-06-18T00:00:00Z');
+    const capture: { lastSearch?: Parameters<MemoryClient['search']>[1] } = {};
+    const client = stubClient([], capture);
+
+    // Caller asks for far more than MAX_TOPK; the overfetch must be computed from
+    // the clamped topK, not the raw request.
+    await searchMemories(client, 'q', { topK: MAX_TOPK + 1000, now });
+
+    expect(capture.lastSearch?.topK).toBe(MAX_TOPK * OVERFETCH_FACTOR);
   });
 });
