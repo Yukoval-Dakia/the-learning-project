@@ -28,6 +28,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # drizzle-zod 0.8.x is deliberately pinned to ^0.7.1 — 0.8.3 breaks the
+      # generated types (owner-verified revert; see project dep-constraints).
+      # Without this, the un-mergeable drizzle-zod bump poisons the whole
+      # prod-minor-patch group PR (e.g. #423 blocked ~17 otherwise-safe bumps).
+      # Revisit when drizzle-zod's >=0.8 type regression is resolved upstream.
+      - dependency-name: "drizzle-zod"
+        versions: [">=0.8.0"]
     labels:
       - "dependencies"
     commit-message:
