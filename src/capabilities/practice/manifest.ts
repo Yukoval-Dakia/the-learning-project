@@ -73,6 +73,12 @@ export const practiceCapability = defineCapability({
         path: '/api/review/drafts',
         load: () => import('./api/review-drafts-list').then((m) => m.GET),
       },
+      // YUK-403 inc-4b — full-text draft preview (loom preview pane data source).
+      {
+        method: 'GET',
+        path: '/api/review/drafts/[id]',
+        load: () => import('./api/review-draft-detail').then((m) => m.GET),
+      },
       {
         method: 'POST',
         path: '/api/review/drafts/[id]/enable',

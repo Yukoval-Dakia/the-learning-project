@@ -792,7 +792,27 @@
                 }
               ]
             },
-            "description": "owner 手动 gate 草稿池：列 draft_status='draft' 题（排除软归档草稿），含 verify 状态投影\n\n**Query:**\n- `source` (optional) e.g. `quiz_gen`\n- `kind` (optional) e.g. `short_answer`\n- `limit` (optional) e.g. `50`\n- `offset` (optional) e.g. `0`\n\n**Notes:** limit 默认 50 上限 200；每条投影 id/prompt_preview(截断)/kind/source/created_at/verify_status(unverified|needs_review|failed)/verify_reason；verify_status 从最新终态 verify event 派生；返回 { rows, limit, offset, total, truncated }"
+            "description": "owner 手动 gate 草稿池：列 draft_status='draft' 题（排除软归档草稿），含 verify 状态投影\n\n**Query:**\n- `source` (optional) e.g. `quiz_gen`\n- `kind` (optional) e.g. `short_answer`\n- `limit` (optional) e.g. `50`\n- `offset` (optional) e.g. `0`\n\n**Notes:** limit 默认 50 上限 200；每条投影 id/prompt_preview(截断)/kind/source/created_at/difficulty/knowledge([{id,label}])/verify_status(unverified|needs_review|failed)/verify_reason；verify_status 从最新终态 verify event 派生；返回 { rows, limit, offset, total, truncated }"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/review/drafts/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/drafts/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "drafts", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "owner 手动 gate 草稿全文预览：单条 draft 的题面/材料/选项/答案/难度/知识点（loom preview pane 数据源）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 仅 draft_status='draft' 且非软归档；投影 id/kind/source/created_at/difficulty/knowledge([{id,label}])/prompt_md(全文非截断)/passage(stem 结构树材料,无则 null)/options(choices_md,无则 null)/answer(reference_md,无则 null)/verify_status/verify_reason；非 draft / 软归档 / 不存在 → 404；空 id → 400"
           },
           "response": []
         },
