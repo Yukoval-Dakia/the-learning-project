@@ -135,9 +135,10 @@ function deriveVerifyVerdict(
 }
 
 // Resolve a set of knowledge ids → {id,label} in one round-trip (avoid N+1).
-// Preserves the per-question ORDER of knowledge_ids; an id with no row (or an
-// archived node) falls back to the id itself as the label so the preview never
-// shows a blank tag.
+// Preserves the per-question ORDER of knowledge_ids; an id with no row falls
+// back to the id itself as the label so the preview never shows a blank tag.
+// (No archived_at filter — an archived KC still resolves to its name here, which
+// is acceptable for a draft preview tag.)
 async function resolveKnowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, string>> {
   const labelById = new Map<string, string>();
   const unique = [...new Set(ids)];
