@@ -11,7 +11,8 @@
 import type { ToolStateSectionT } from '@/core/schema/business';
 import { ReviewSessionProposal } from '@/core/schema/coach';
 import { compareBySourceTierThenWhitelist } from '@/core/schema/provenance';
-import { artifact, knowledge, knowledge_mastery, question } from '@/db/schema';
+import { artifact, knowledge, question } from '@/db/schema';
+import { getMasteryProjection } from '@/server/mastery/state';
 import { getLatestCoachPlan } from '@/server/today/coach-plan';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -170,18 +171,12 @@ async function executeGetReviewKnowledgeSnapshot(
   for (const kid of input.knowledgeIds ?? []) knowledgeIds.add(kid);
   const ids = [...knowledgeIds];
 
-  const masteryRows =
-    ids.length > 0
-      ? await ctx.db
-          .select({
-            knowledge_id: knowledge_mastery.knowledge_id,
-            mastery: knowledge_mastery.mastery,
-            evidence_count: knowledge_mastery.evidence_count,
-          })
-          .from(knowledge_mastery)
-          .where(inArray(knowledge_mastery.knowledge_id, ids))
-      : [];
-  const masteryById = new Map(masteryRows.map((r) => [r.knowledge_id, r]));
+  // B1 double-truth fix — mastery / evidence_count come from the SoT
+  // mastery_state.theta_hat projection (getMasteryProjection → σ(θ̂)), NOT the
+  // deprecated knowledge_mastery view's weighted-success-rate + `<3 → 0.5`
+  // placeholder. Absent (never-attempted) nodes → mastery null / evidence 0,
+  // matching the old view's NULL/0 semantics.
+  const masteryById = await getMasteryProjection(ctx.db, ids);
 
   const nameRows =
     ids.length > 0

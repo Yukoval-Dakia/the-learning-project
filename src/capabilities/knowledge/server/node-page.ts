@@ -33,8 +33,9 @@ import {
 } from '@/capabilities/notes/server/notes-read';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { artifact, event, knowledge, knowledge_mastery, question } from '@/db/schema';
+import { artifact, event, knowledge, question } from '@/db/schema';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
+import { getMasteryProjection } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
@@ -145,7 +146,12 @@ export async function loadKnowledgeNodePage(
   db: Db,
   knowledgeId: string,
 ): Promise<KnowledgeNodePage | null> {
-  // 1. node metadata + mastery (single-row join; no O(N) tree scan).
+  // 1. node metadata (single row; no O(N) tree scan). B1 double-truth fix —
+  // mastery / evidence_count / last_evidence_at are overlaid below from the SoT
+  // mastery_state.theta_hat projection (getMasteryProjection → σ(θ̂)), NOT the
+  // deprecated knowledge_mastery view's weighted-success-rate + `<3 → 0.5`
+  // placeholder. `last_evidence_at` maps to mastery_state.last_outcome_at (the
+  // real last-attempt time).
   const nodeRows = await db
     .select({
       id: knowledge.id,
@@ -153,12 +159,8 @@ export async function loadKnowledgeNodePage(
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
       archived_at: knowledge.archived_at,
-      mastery: knowledge_mastery.mastery,
-      evidence_count: sql<number>`COALESCE(${knowledge_mastery.evidence_count}, 0)`,
-      last_evidence_at: knowledge_mastery.last_evidence_at,
     })
     .from(knowledge)
-    .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
     .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
     .limit(1);
   const node = nodeRows[0];
@@ -183,24 +185,32 @@ export async function loadKnowledgeNodePage(
     effectiveDomain = await resolveEffectiveDomain(db, node.parent_id);
   }
 
-  // 1b. direct children — non-archived nodes whose parent_id is this node, with
-  // mastery from the knowledge_mastery view (same join as the node main query).
+  // 1b. direct children — non-archived nodes whose parent_id is this node.
   // Archived children are filtered out for the same dead-link reason as the parent
   // lookup (the endpoint 404s on archived nodes). Name-ordered for stable display.
+  // B1 double-truth fix — child mastery is overlaid from the SoT mastery_state
+  // projection below (same as the focal node), NOT the deprecated view.
   const childRows = await db
     .select({
       id: knowledge.id,
       name: knowledge.name,
-      mastery: knowledge_mastery.mastery,
     })
     .from(knowledge)
-    .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
     .where(and(eq(knowledge.parent_id, knowledgeId), isNull(knowledge.archived_at)))
     .orderBy(knowledge.name);
+
+  // Single batch read of the SoT mastery projection for the focal node + every
+  // child. Absent (never-attempted) nodes → mastery null, matching the
+  // deprecated view's NULL (no-evidence) output.
+  const masteryProjection = await getMasteryProjection(db, [
+    node.id,
+    ...childRows.map((c) => c.id),
+  ]);
+  const nodeMastery = masteryProjection.get(node.id);
   const children: NodePageChild[] = childRows.map((row) => ({
     id: row.id,
     name: row.name,
-    mastery: row.mastery,
+    mastery: masteryProjection.get(row.id)?.mastery ?? null,
   }));
 
   // 2. mesh neighbors — both directions (ADR-0010 edges). Resolve neighbor names.
@@ -398,6 +408,13 @@ export async function loadKnowledgeNodePage(
 
   const profile = await resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
 
+  // B1 double-truth fix — focal-node mastery / evidence_count / last_evidence_at
+  // from the SoT mastery_state projection (σ(θ̂)). Absent row → cold start:
+  // mastery null / evidence 0 / no last_evidence_at (matches the old view NULL/0).
+  // last_evidence_at is the real last-attempt time (mastery_state.last_outcome_at).
+  const nodeEvidenceCount = nodeMastery?.evidence_count ?? 0;
+  const nodeLastEvidenceAt = nodeMastery?.last_outcome_at ?? null;
+
   return {
     id: node.id,
     name: node.name,
@@ -405,10 +422,10 @@ export async function loadKnowledgeNodePage(
     parent_id: node.parent_id,
     parent_name: parentName,
     effective_domain: effectiveDomain,
-    mastery: node.mastery,
-    evidence_count: node.evidence_count,
-    last_evidence_at: node.last_evidence_at ? node.last_evidence_at.toISOString() : null,
-    mastery_decay_bucket: masteryDecayBucket(node.evidence_count, node.last_evidence_at),
+    mastery: nodeMastery ? nodeMastery.mastery : null,
+    evidence_count: nodeEvidenceCount,
+    last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
+    mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),
     subject_profile: toSlimSubjectProfile(profile),
     children,
     mesh_neighbors: meshNeighbors,

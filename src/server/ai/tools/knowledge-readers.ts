@@ -11,6 +11,7 @@
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
+import { getMasteryProjection } from '@/server/mastery/state';
 import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 // P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single
@@ -152,23 +153,32 @@ async function loadMasteryMap(
   ids: string[],
 ): Promise<Map<string, { mastery: number | null; last_active_at: string | null }>> {
   if (ids.length === 0) return new Map();
-  const rows = await db
-    .select({
-      knowledge_id: knowledge_mastery.knowledge_id,
-      mastery: knowledge_mastery.mastery,
-      last_active_at: knowledge_mastery.last_active_at,
-    })
-    .from(knowledge_mastery)
-    .where(inArray(knowledge_mastery.knowledge_id, ids));
-  return new Map(
-    rows.map((row) => [
-      row.knowledge_id,
-      {
-        mastery: row.mastery ?? null,
-        last_active_at: row.last_active_at?.toISOString() ?? null,
-      },
-    ]),
-  );
+  // B1 double-truth fix — `mastery` now comes from the SoT mastery_state.theta_hat
+  // projection (getMasteryProjection → σ(θ̂)), NOT the deprecated knowledge_mastery
+  // view's weighted-success-rate + `evidence_count < 3 → 0.5` placeholder.
+  // `last_active_at` is an orthogonal "last touched by ANY event" timeline value
+  // (not just attempts) — it is NOT the double-truth bug, so it still reads the
+  // view's last_active_at (COALESCE(any-event, knowledge.created_at)).
+  const [projection, activityRows] = await Promise.all([
+    getMasteryProjection(db, ids),
+    db
+      .select({
+        knowledge_id: knowledge_mastery.knowledge_id,
+        last_active_at: knowledge_mastery.last_active_at,
+      })
+      .from(knowledge_mastery)
+      .where(inArray(knowledge_mastery.knowledge_id, ids)),
+  ]);
+  const lastActiveById = new Map(activityRows.map((row) => [row.knowledge_id, row.last_active_at]));
+  const out = new Map<string, { mastery: number | null; last_active_at: string | null }>();
+  for (const id of ids) {
+    const proj = projection.get(id);
+    out.set(id, {
+      mastery: proj ? proj.mastery : null,
+      last_active_at: lastActiveById.get(id)?.toISOString() ?? null,
+    });
+  }
+  return out;
 }
 
 async function loadRecentFailures(

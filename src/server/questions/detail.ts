@@ -26,8 +26,9 @@ import {
 } from '@/capabilities/knowledge/server/node-page';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { artifact, knowledge, knowledge_mastery, material_fsrs_state, question } from '@/db/schema';
+import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { type QuestionTimelineEntry, getQuestionTimeline } from '@/server/events/queries';
+import { getMasteryProjection } from '@/server/mastery/state';
 import { loadFamilyMembers } from '@/server/questions/list';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
@@ -298,17 +299,13 @@ async function loadScheduling(
     };
   }
 
-  // mastery view (mastery / evidence_count / last_evidence_at) per knowledge node.
-  const masteryRows = await db
-    .select({
-      knowledge_id: knowledge_mastery.knowledge_id,
-      mastery: knowledge_mastery.mastery,
-      evidence_count: knowledge_mastery.evidence_count,
-      last_evidence_at: knowledge_mastery.last_evidence_at,
-    })
-    .from(knowledge_mastery)
-    .where(inArray(knowledge_mastery.knowledge_id, knowledgeIds));
-  const masteryByKnowledge = new Map(masteryRows.map((r) => [r.knowledge_id, r]));
+  // B1 double-truth fix — mastery / evidence_count / last_evidence_at come from
+  // the SoT mastery_state.theta_hat projection (getMasteryProjection → σ(θ̂)),
+  // NOT the deprecated knowledge_mastery view's weighted-success-rate + `<3 →
+  // 0.5` placeholder. `last_evidence_at` maps to mastery_state.last_outcome_at
+  // (the real last-attempt time). Absent (never-attempted) nodes → mastery null /
+  // evidence 0 / no last_evidence_at, matching the old view's NULL/0 semantics.
+  const masteryByKnowledge = await getMasteryProjection(db, knowledgeIds);
 
   // FSRS due_at per knowledge node (subject_kind='knowledge').
   const fsrsRows = await db
@@ -325,7 +322,9 @@ async function loadScheduling(
   const perKnowledge: QuestionDetailPerKnowledge[] = knowledgeIds.map((kid) => {
     const m = masteryByKnowledge.get(kid);
     const evidenceCount = m?.evidence_count ?? 0;
-    const lastEvidenceAt = m?.last_evidence_at ?? null;
+    // B1 double-truth fix — `last_evidence_at` is now the real last-attempt time
+    // (mastery_state.last_outcome_at), replacing the view's last_evidence_at.
+    const lastEvidenceAt = m?.last_outcome_at ?? null;
     return {
       knowledge_id: kid,
       name: nameById.get(kid) ?? null,
