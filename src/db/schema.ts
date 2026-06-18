@@ -739,10 +739,12 @@ export const material_fsrs_state = pgTable(
 // ─────────────────────────────────────────────────────────────────────────────
 // B1-W1 (ADR-0035 决定#2) — mastery_state：诊断维 p(L) 的物化载体。
 //
-// 取代 knowledge_mastery VIEW 作为 SoT 的占位（本 wave 并存，view 消费端不切，
-// 切换在 Wave 2 派生层接通）。per-knowledge 一行，subject_kind 固定 'knowledge'
-// （与 material_fsrs_state 的 subject_kind 平行，但语义正交：FSRS=R 调度轴，
-// 这里=p(L) 诊断轴，三轴正交红线 ADR-0035）。
+// 取代 knowledge_mastery VIEW 作为 p(L) 诊断维的 SoT。YUK-420 起 view 消费端已切：
+// getMasteryProjection（src/server/mastery/state.ts）是唯一展示/AI 读，投影 = 难度感知
+// PFA p(L)（σ(γ·success + ρ·fail − β)，β=KC 代表性 hard-track item 难度 + ADR-0035
+// 置信带），不再是 view 的占位也不再是 interim σ(θ̂)@b=0。per-knowledge 一行，
+// subject_kind 固定 'knowledge'（与 material_fsrs_state 的 subject_kind 平行，但语义
+// 正交：FSRS=R 调度轴，这里=p(L) 诊断轴，三轴正交红线 ADR-0035）。
 //
 // 单写者：src/server/mastery/state.ts（step9-invariant-audit.test.ts 新增平行断言）。
 // 写路径：submit.ts / paper-submit.ts 的 attempt tx 内调 updateThetaForAttempt。
