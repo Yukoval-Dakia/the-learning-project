@@ -195,6 +195,19 @@
     ]
   },
   {
+    "path": "/api/observability/calibration-maturity",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "per-KC mastery-calibration firm-up 只读观测面（YUK-348）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 { rows: per-KC[{knowledge_id,name,evidence_count,theta_se,confidence,track,cold_start}], aggregate:{total_kcs,cold_start_count,firm_count,pct_firm,median_theta_se} }。cold_start = 无 mastery_state 行 OR evidence_count<4 OR theta_precision<=1.0。需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/editing-session/blur",
     "methods": [
       {
