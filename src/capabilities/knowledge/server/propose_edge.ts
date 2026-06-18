@@ -20,6 +20,7 @@ import type { SubjectProfile } from '@/subjects/profile';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
+import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 
 const EdgeProposalSchema = z.object({
@@ -56,6 +57,14 @@ export interface RunEdgeProposeAndWriteResult {
   // (validateProposalQuality) and were FOLDED (a rubric-rejected propose event is
   // still written, marked, but no live pending proposal is created).
   folded_rubric_rejected: number;
+  // ADR-0034 §2 / YUK-344 — TOPOLOGY gate hard-rejects (cycle / direction
+  // contradiction on the prerequisite graph). Folded like rubric rejects: a
+  // marked propose event is written for audit, no live pending proposal.
+  folded_topology_rejected: number;
+  // ADR-0034 §2 / YUK-344 — TOPOLOGY transitive-redundancy WARNINGS. The edge is
+  // still proposed live (warning, not hard-reject per §2), but the propose event
+  // carries a topology_verdict marker so the inbox / downstream can downweight.
+  warned_transitive_redundancy: number;
 }
 
 const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
@@ -65,6 +74,8 @@ const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
   skipped_duplicate_edge: 0,
   skipped_duplicate_pending: 0,
   folded_rubric_rejected: 0,
+  folded_topology_rejected: 0,
+  warned_transitive_redundancy: 0,
 };
 
 /**
@@ -85,12 +96,28 @@ export async function runEdgeProposeAndWrite(
         from_knowledge_id: knowledge_edge.from_knowledge_id,
         to_knowledge_id: knowledge_edge.to_knowledge_id,
         relation_type: knowledge_edge.relation_type,
+        archived_at: knowledge_edge.archived_at,
       })
       .from(knowledge_edge);
 
     const existingEdgeKey = new Set(
       existingEdges.map((e) => edgeKey(e.from_knowledge_id, e.to_knowledge_id, e.relation_type)),
     );
+
+    // ADR-0034 §2 / YUK-344 — the topology gate operates on the LIVE mesh only
+    // (archived_at IS NULL is the live-mesh reader's sole filter, ADR-0034 §4).
+    // An archived edge is not part of the learning-order graph, so it cannot
+    // form a cycle / contradiction / transitive path with a new live proposal.
+    // The dedup `existingEdgeKey` above intentionally still uses the FULL set
+    // (an archived row keeps its UNIQUE(from,to,type) slot), so these are kept
+    // separate.
+    const liveTopologyEdges: TopologyEdge[] = existingEdges
+      .filter((e) => e.archived_at === null)
+      .map((e) => ({
+        from_knowledge_id: e.from_knowledge_id,
+        to_knowledge_id: e.to_knowledge_id,
+        relation_type: e.relation_type,
+      }));
     const pendingEdgeKey = await loadPendingEdgeProposalKeys(params.db);
 
     const input = {
@@ -100,7 +127,14 @@ export async function runEdgeProposeAndWrite(
         parent_id: n.parent_id,
         effective_domain: n.effective_domain,
       })),
-      existing_edges: existingEdges,
+      // Keep the LLM input shape stable (from/to/relation_type only) — the
+      // archived_at column added for the topology gate must not leak into the
+      // prompt input.
+      existing_edges: existingEdges.map((e) => ({
+        from_knowledge_id: e.from_knowledge_id,
+        to_knowledge_id: e.to_knowledge_id,
+        relation_type: e.relation_type,
+      })),
       recent_failures: params.recentFailures.map((fa) => {
         const cause = effectiveCauseForFailureAttempt(fa);
         return {
@@ -139,6 +173,68 @@ export async function runEdgeProposeAndWrite(
       }
       if (pendingEdgeKey.has(key)) {
         stats.skipped_duplicate_pending += 1;
+        continue;
+      }
+
+      // ADR-0034 §2 / YUK-344 — write-time STRUCTURAL CONSISTENCY gate (topology
+      // layer). Pure graph checks (cycle / direction contradiction / transitive
+      // redundancy) on the prerequisite graph, orthogonal to the semantic rubric
+      // gate below. `liveTopologyEdges` accumulates edges accepted EARLIER in this
+      // same batch so two proposals that TOGETHER form a cycle are caught (the
+      // batch is not yet persisted, so a fresh DB read would miss them).
+      const topology = checkEdgeTopology(
+        {
+          from_knowledge_id: p.from_knowledge_id,
+          to_knowledge_id: p.to_knowledge_id,
+          relation_type: p.relation_type,
+        },
+        liveTopologyEdges,
+      );
+
+      if (topology.status === 'reject') {
+        // Cycle / direction contradiction = HARD reject. Fold like a rubric
+        // reject (RB-6 / §3.4): write a MARKED propose event for audit, no live
+        // pending proposal, and exclude it from cross-batch dedup so a later
+        // batch can re-evaluate against an evolved graph. The marker is a
+        // `topology_verdict` sibling of ai_proposal on the event payload.
+        await writeAiProposal(params.db, {
+          actor_ref: 'dreaming',
+          outcome: 'success',
+          payload: {
+            kind: 'knowledge_edge' as const,
+            target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
+            reason_md: p.reasoning,
+            evidence_refs: [],
+            proposed_change: {
+              from_knowledge_id: p.from_knowledge_id,
+              to_knowledge_id: p.to_knowledge_id,
+              relation_type: p.relation_type,
+              weight: p.weight,
+            },
+            cooldown_key: `knowledge_edge:${key}`,
+          },
+          event_override: {
+            action: 'propose',
+            subject_kind: 'knowledge_edge',
+            payload: {
+              from_knowledge_id: p.from_knowledge_id,
+              to_knowledge_id: p.to_knowledge_id,
+              relation_type: p.relation_type,
+              weight: p.weight,
+              reasoning: p.reasoning,
+              topology_verdict: {
+                status: 'reject',
+                gate: topology.gate,
+                reason: topology.reason,
+              },
+            },
+          },
+          task_run_id: result.task_run_id ?? null,
+          cost_usd: result.cost_usd,
+          created_at: new Date(),
+        });
+        pendingEdgeKey.add(key);
+        stats.folded_topology_rejected += 1;
         continue;
       }
 
@@ -229,16 +325,57 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
 
-      await writeAiProposal(params.db, {
-        actor_ref: 'dreaming',
-        outcome: 'success',
-        payload: proposalPayload,
-        task_run_id: result.task_run_id ?? null,
-        cost_usd: result.cost_usd,
-        created_at: new Date(),
-      });
+      // ADR-0034 §2 — transitive-redundancy WARNING (topology.status === 'warn').
+      // Not a hard reject: the edge is still proposed live, but the propose event
+      // carries a `topology_verdict` marker so the inbox / downstream can
+      // downweight the redundant direct edge. When there is no warning we keep
+      // the original write shape (no marker), so the non-warning path is
+      // byte-identical to before this gate.
+      if (topology.status === 'warn') {
+        await writeAiProposal(params.db, {
+          actor_ref: 'dreaming',
+          outcome: 'success',
+          payload: proposalPayload,
+          event_override: {
+            action: 'propose',
+            subject_kind: 'knowledge_edge',
+            payload: {
+              from_knowledge_id: p.from_knowledge_id,
+              to_knowledge_id: p.to_knowledge_id,
+              relation_type: p.relation_type,
+              weight: p.weight,
+              reasoning: p.reasoning,
+              topology_verdict: {
+                status: 'warn',
+                gate: topology.gate,
+                reason: topology.reason,
+              },
+            },
+          },
+          task_run_id: result.task_run_id ?? null,
+          cost_usd: result.cost_usd,
+          created_at: new Date(),
+        });
+        stats.warned_transitive_redundancy += 1;
+      } else {
+        await writeAiProposal(params.db, {
+          actor_ref: 'dreaming',
+          outcome: 'success',
+          payload: proposalPayload,
+          task_run_id: result.task_run_id ?? null,
+          cost_usd: result.cost_usd,
+          created_at: new Date(),
+        });
+      }
       // 同一 batch 内防同向同型重复
       pendingEdgeKey.add(key);
+      // ADR-0034 §2 — record the now-live edge so a LATER proposal in this same
+      // batch is checked against it (intra-batch cycle / contradiction).
+      liveTopologyEdges.push({
+        from_knowledge_id: p.from_knowledge_id,
+        to_knowledge_id: p.to_knowledge_id,
+        relation_type: p.relation_type,
+      });
       stats.proposed += 1;
     }
 
