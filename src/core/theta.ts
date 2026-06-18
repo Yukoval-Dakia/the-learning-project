@@ -29,22 +29,31 @@ export function expectedScore(theta: number, b: number): number {
 }
 
 /**
- * B1 double-truth fix — project θ̂ (logit) → a 0..1 p(L) mastery for DISPLAY /
- * AI-facing surfaces.
- *
- * This is the single source of truth for "the 0..1 mastery number" every read
- * surface (node page, tree, knowledge readers, review snapshot, question detail)
- * shows. It REPLACES the deprecated `knowledge_mastery` view's `mastery` column,
- * which faked the number as a recency-weighted success rate with an
+ * B1 double-truth fix — project θ̂ (logit) → a 0..1 mastery number for DISPLAY /
+ * AI-facing surfaces. It is the SINGLE read of "the 0..1 mastery number" every
+ * read surface (node page, tree, knowledge readers, review snapshot, question
+ * detail) shows, REPLACING the deprecated `knowledge_mastery` view's `mastery`
+ * column, which faked the number as a recency-weighted success rate with an
  * `evidence_count < 3 → 0.5` placeholder rule — two diverging "truths" for the
  * same node.
  *
- * Projection = σ(θ̂) = expectedScore(θ̂, 0): the 1PL p(correct) at the neutral
- * logit origin b=0 (the same anchor cold-start θ̂ starts from). So:
- *   - cold start θ̂=0 → 0.5 (neutral midpoint — derived now, not a placeholder),
- *   - θ̂ > 0 → > 0.5, θ̂ < 0 → < 0.5, monotone, always strictly in (0, 1).
- * Callers carry `theta_precision` (→ thetaSe) separately for uncertainty; this
- * function is the point estimate only.
+ * ⚠️ INTERIM PROJECTION — NOT the final p(L) (read before relying on this number).
+ *   Projection = σ(θ̂) = expectedScore(θ̂, 0): the 1PL p(correct) evaluated at the
+ *   neutral logit origin b=0. So what this returns is **σ of the θ̂ point estimate
+ *   at b=0** — i.e. the Elo ability θ̂ (individual ability on the b/logit scale)
+ *   squashed to (0,1), NOT the difficulty-aware PFA p(L) (probability of having
+ *   LEARNED a KC, which must condition on item difficulty b and on the PFA
+ *   success/fail history, not just θ̂ at the b=0 anchor). Properties of THIS interim
+ *   form:
+ *     - cold start θ̂=0 → 0.5 (neutral midpoint — derived now, not a placeholder),
+ *     - θ̂ > 0 → > 0.5, θ̂ < 0 → < 0.5, monotone, always strictly in (0, 1).
+ *   Callers carry `theta_precision` (→ thetaSe) separately for uncertainty; this
+ *   function is the point estimate only and exposes NO confidence interval.
+ *
+ *   The full B1 — the difficulty-aware p(L) (conditioned on b + PFA counts, not
+ *   σ(θ̂) at b=0) AND the ADR-0035 confidence-interval / low-confidence
+ *   presentation (showing the CI band instead of a bare point when θ̂ is still
+ *   uncertain) — is owned by B1 (YUK-348) and will REPLACE this interim projection.
  */
 export function thetaToMastery(thetaHat: number): number {
   return expectedScore(thetaHat, 0);
