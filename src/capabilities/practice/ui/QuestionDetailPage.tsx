@@ -26,6 +26,7 @@
 //   • mcq 正确答案高亮 → 从 reference_md 首字母解析（best-effort），编辑落 reference_md。
 //   • answerNote / origin（变体生成理由置信度）→ 后端无对应列，不渲。
 
+import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
@@ -35,7 +36,7 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './questions.css';
 
@@ -180,6 +181,14 @@ function letterFor(i: number): string {
   return String.fromCharCode(65 + i);
 }
 
+// 设正确答案 key 时只替换前导答案键 token（如「A. 」「B、」），保留其余参考正文。
+// 旧实现把整个 reference_md 覆盖成单字母 → 有解析全文（「A. 因为…」）时点字母丢全文。
+// reference_md 为空/纯单字母 → 单字母；含正文 → 换键保正文。
+function withAnswerKey(referenceMd: string, key: string): string {
+  const rest = referenceMd.replace(/^\s*[A-Za-z][.．、:：)\s]*/, '').trim();
+  return rest ? `${key}. ${rest}` : key;
+}
+
 // figure 卡（DEFER：仅显示，无拖拽上传接线）。
 function QFigure({ caption }: { caption: string }) {
   return (
@@ -194,6 +203,37 @@ function QFigure({ caption }: { caption: string }) {
       </div>
     </div>
   );
+}
+
+// ── toast（写面失败/成功提示；参照 DraftReviewPage 的 portal toast 模式）──────
+interface QdToast {
+  id: string;
+  kind: 'good' | 'warn';
+  text: string;
+}
+function QdToasts({ items }: { items: QdToast[] }) {
+  if (items.length === 0) return null;
+  return createPortal(
+    <div className="qd-toast-wrap">
+      {items.map((t) => (
+        <div key={t.id} className={`qd-toast ${t.kind}`}>
+          <LoomIcon name={t.kind === 'good' ? 'checkCircle' : 'alert'} size={15} />
+          {t.text}
+        </div>
+      ))}
+    </div>,
+    document.body,
+  );
+}
+
+// PATCH/DELETE 失败 → 人类可读提示（按 ApiError.status/code/message 分门别类）。
+function errMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 409) return '题目已被改动，已刷新，请重试。';
+    if (err.status === 400) return `保存被拒：${err.message}`;
+    return err.message || `请求失败（${err.status}）`;
+  }
+  return err instanceof Error ? err.message : '操作失败，请重试。';
 }
 
 // ── 约束感知删除 modal ───────────────────────────────────────────────────────
@@ -408,10 +448,20 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const [chipDraft, setChipDraft] = useState('');
   const [del, setDel] = useState(false);
   const [delCounts, setDelCounts] = useState<QuestionAssociationCounts | null>(null);
+  const [toasts, setToasts] = useState<QdToast[]>([]);
 
+  const pushToast = useCallback((kind: 'good' | 'warn', text: string) => {
+    const tid = `t${Date.now()}${Math.random()}`;
+    setToasts((ts) => [...ts, { id: tid, kind, text }]);
+    setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== tid)), 2600);
+  }, []);
+
+  // data 到达 / 切换 id 时重置编辑草稿与瞬态 UI。
+  // minor1 修：不在此 effect 里碰 saved——「已保存」提示由保存成功的独立计时器
+  // 管控（见 patchMut.onSuccess），否则 invalidate→refetch→本 effect 会把刚亮起的
+  // badge 一闪即逝地抹掉。
   useEffect(() => {
     if (data) setDraft(draftFrom(data));
-    setSaved(false);
     setEditOptIdx(-1);
     setShowAddChip(false);
     setChipDraft('');
@@ -443,14 +493,31 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const patchMut = useMutation({
     mutationFn: (body: Parameters<typeof patchQuestion>[1]) => patchQuestion(id, body),
     onSuccess: () => {
+      // minor1：用独立计时器管「已保存」提示，不依赖 data-effect（refetch 会抹它）。
       setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
       void qc.invalidateQueries({ queryKey: ['question-detail', id] });
       void qc.invalidateQueries({ queryKey: ['questions-bank'] });
+    },
+    // M1：静默失败 → 显式提示。409（version 冲突）强制 refetch 最新 version 免反复 409；
+    // 400（空选项 / 校验错）回后端 message；其它 status 回原因。
+    onError: (err: unknown) => {
+      if (err instanceof ApiError && err.status === 409) {
+        void qc.invalidateQueries({ queryKey: ['question-detail', id] });
+      }
+      pushToast('warn', errMessage(err));
     },
   });
 
   const deleteMut = useMutation({
     mutationFn: (opts: { confirm?: boolean; version?: number }) => deleteQuestion(id, opts),
+    // M1：DELETE 失败（含 confirm 后又 409 冲突）→ 提示，不静默。409 刷新最新 version。
+    onError: (err: unknown) => {
+      if (err instanceof ApiError && err.status === 409) {
+        void qc.invalidateQueries({ queryKey: ['question-detail', id] });
+      }
+      pushToast('warn', errMessage(err));
+    },
   });
 
   if (detailQ.isError) {
@@ -497,6 +564,12 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
 
   const save = () => {
     if (!dirty || patchMut.isPending) return;
+    // M1：「添加选项」会插入空串占位 → 前端拦下空/纯空白选项，提示填写，免后端 400 静默吞。
+    // （择前端拦：比让后端 400 反弹更直接，且空选项是用户尚未填的明确占位态。）
+    if (draft.choices_md.some((c) => c.trim() === '')) {
+      pushToast('warn', '存在空选项，请填写后再保存。');
+      return;
+    }
     const base = draftFrom(data);
     // 只发改了的字段（version 必带）。
     const body: Parameters<typeof patchQuestion>[1] = { version: data.version };
@@ -722,8 +795,11 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                       <button
                         type="button"
                         className="qd-opt-key"
-                        // 点字母设正确答案：写入 reference_md（后端 choices_md 无正确标记，DEFER 注释）。
-                        onClick={() => edit({ reference_md: key })}
+                        // 点字母设正确答案：只替换 reference_md 前导答案键 token，保留参考正文
+                        // （后端 choices_md 无正确标记，DEFER 注释；M2 修：旧实现覆盖全文丢正文）。
+                        onClick={() =>
+                          edit({ reference_md: withAnswerKey(draft.reference_md, key) })
+                        }
                         title="设为正确答案"
                       >
                         {key}
@@ -1080,6 +1156,8 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
           onConfirm={confirmDelete}
         />
       )}
+
+      <QdToasts items={toasts} />
     </div>
   );
 }
