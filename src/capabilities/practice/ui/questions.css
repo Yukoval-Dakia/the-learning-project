@@ -1315,3 +1315,50 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ── 写面 toast（PATCH/DELETE 失败/成功提示；同 DraftReviewPage 视觉）──────── */
+.qd-toast-wrap {
+  position: fixed;
+  left: 50%;
+  bottom: var(--s-6);
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  align-items: center;
+  pointer-events: none;
+}
+.qd-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--fs-caption);
+  padding: 9px var(--s-4);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-3);
+  animation: qd-toast-in var(--dur-base) var(--ease-out);
+}
+.qd-toast.good {
+  background: var(--good-ink);
+}
+.qd-toast.warn {
+  background: var(--again-ink);
+}
+@keyframes qd-toast-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qd-toast {
+    animation: none;
+  }
+}
