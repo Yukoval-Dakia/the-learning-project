@@ -27,6 +27,14 @@ const LN2 = Math.LN2;
 export const OVERFETCH_FACTOR = 3;
 
 /**
+ * Upper bound on the post-floor topK. The store request fans out to
+ * `topK × OVERFETCH_FACTOR` candidates; without a cap a runaway caller topK
+ * would balloon the overfetch (and the embedding/pgvector cost) unbounded. 50 is
+ * far above any realistic attention-prior window (callers default to 10).
+ */
+export const MAX_TOPK = 50;
+
+/**
  * Per-kind half-life (days) for the recency decay. preference/habit are durable
  * (slow decay → long half-life); weakness is medium; event/episodic is short
  * (recent attempts matter most). An unknown / unset kind falls back to
@@ -117,19 +125,40 @@ export async function searchMemories(
 ): Promise<SearchResult> {
   const now = opts.now ?? new Date();
   const nowMs = now.getTime();
-  const topK = Math.max(1, Math.floor(opts.topK));
+  const topK = Math.min(MAX_TOPK, Math.max(1, Math.floor(opts.topK)));
+
+  // Uppercase NOT: the `search()` path translation (§3.3). $not is the getAll
+  // form and would be mis-parsed here.
+  const supersededFilter = { superseded_by: '*' };
+  // Merge — do NOT overwrite — any caller-supplied NOT. Spreading opts.filters
+  // and then assigning NOT would silently drop a caller NOT clause; instead
+  // concat the caller's NOT (array or single object) with the superseded filter.
+  const callerNot = opts.filters?.NOT;
+  const mergedNot = callerNot
+    ? [...(Array.isArray(callerNot) ? callerNot : [callerNot]), supersededFilter]
+    : [supersededFilter];
 
   const filters: SearchFilters = {
     ...(opts.filters ?? {}),
-    // Uppercase NOT: the `search()` path translation (§3.3). $not is the getAll
-    // form and would be mis-parsed here.
-    NOT: [{ superseded_by: '*' }],
+    NOT: mergedNot,
   };
 
-  const raw = await client.search(query, {
-    topK: topK * OVERFETCH_FACTOR,
-    filters,
-  });
+  // Fix 2 (OCR): mem0 retrieval is a read-only attention prior (ADR-0017) and
+  // must never crash the tool chain. A store/embedding failure degrades to an
+  // empty result set rather than propagating — the caller treats "no memories"
+  // and "memories unavailable" identically (a softer prior either way).
+  let raw: SearchResult;
+  try {
+    raw = await client.search(query, {
+      topK: topK * OVERFETCH_FACTOR,
+      filters,
+    });
+  } catch (err) {
+    // ADR-0017: memory is an attention prior, not a source of truth — surface
+    // the failure to logs but do not throw. Do not swallow silently.
+    console.warn('[searchMemories] mem0 search failed; degrading to empty results (ADR-0017)', err);
+    return { results: [] };
+  }
 
   const candidates = raw.results ?? [];
 
