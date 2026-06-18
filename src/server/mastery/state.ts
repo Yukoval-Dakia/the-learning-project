@@ -150,6 +150,15 @@ export async function getMasteryState(
  * treat absence as cold start / `mastery=null`, matching the old view's NULL
  * (no-evidence) semantics. `last_outcome_at` is the real last-attempt time
  * (replaces the view's `last_evidence_at`).
+ *
+ * ⚠️ INTERIM PROJECTION — the `mastery` field here is σ(θ̂) at b=0 (see
+ *   {@link thetaToMastery}), i.e. the Elo ability θ̂ (individual ability on the
+ *   b/logit scale) squashed to (0,1), NOT the difficulty-aware PFA p(L) and NOT a
+ *   confidence-interval-aware number. The full difficulty-aware p(L) (conditioned
+ *   on item difficulty b + PFA counts) and the ADR-0035 low-confidence /
+ *   confidence-interval presentation are owned by B1 (YUK-348) and will REPLACE
+ *   this interim projection. `theta_hat` / `theta_precision` / `theta_se` are
+ *   surfaced raw so callers (and the future B1 read) keep the underlying state.
  */
 export interface MasteryProjection {
   mastery: number;

@@ -229,7 +229,7 @@ export const getReviewKnowledgeSnapshotTool: DomainTool<
 > = {
   name: 'get_review_knowledge_snapshot',
   description:
-    'Read the review-relevant knowledge state: due / weak / uncertain / recent-failure signals per knowledge node, with mastery from the knowledge_mastery view (derived, never stored). Optionally focus on knowledge_ids. Read-only; never mutates FSRS / mastery.',
+    'Read the review-relevant knowledge state: due / weak / uncertain / recent-failure signals per knowledge node, with mastery now derived from the mastery_state theta_hat source of truth (B1 double-truth fix; the old knowledge_mastery view is deprecated). Optionally focus on knowledge_ids. Read-only; never mutates FSRS / mastery.',
   effect: 'read',
   inputSchema: GetReviewKnowledgeSnapshotInputSchema,
   outputSchema: GetReviewKnowledgeSnapshotOutputSchema,
