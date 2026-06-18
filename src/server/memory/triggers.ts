@@ -41,6 +41,7 @@ import {
   rewriteMemoryText,
   softSupersede,
 } from './reconcile-store';
+import { searchMemories } from './search-memories';
 
 // P5.2 (YUK-143) — per-subject brief refresh lookback for the nightly sweep +
 // regen handler. Bounded initial-build window for never-built subjects (BR-5).
@@ -336,7 +337,10 @@ export function buildMemoryBriefRegenHandler(
           // per-scope catch → logged skip. Neither path storms the job.
           try {
             memoryClient ??= createMemoryClient();
-            const result = await memoryClient.search(`memory brief ${scopeKey}`, {
+            // P3 (YUK-351): read through the searchMemories wrapper so the brief
+            // never fixes already-superseded facts into its long-term summary
+            // (brief.ts:195 design note). Filters soft-superseded + recency-reranks.
+            const result = await searchMemories(memoryClient, `memory brief ${scopeKey}`, {
               topK: 10,
               filters: { scope_key: scopeKey },
             });

@@ -277,6 +277,9 @@ export const fastTestInclude = [
   'src/server/memory/triggers.test.ts',
   // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
   'src/server/memory/reconcile-llm.test.ts',
+  // P3 (YUK-351) — pure (no-DB) mem0 READ wrapper: stubbed MemoryClient.search,
+  // asserts soft-superseded filtering + per-kind recency rerank. No live DB.
+  'src/server/memory/search-memories.test.ts',
   'src/server/r2.test.ts',
   // P2a (YUK-312) — review 域 5 条 unit 条目已随模块迁入 src/capabilities/practice/，
   // 由约定 glob（src/capabilities/**/*.unit.test.ts）自动接管，无需再登记。
