@@ -110,7 +110,7 @@ function subjMeta(subject: string | null): { label: string; tone: Tone } {
   return QSUBJECT[subject] ?? { label: subject, tone: 'neutral' };
 }
 
-// 去 markdown/latex 标记符——行 stem 与搜索匹配都用纯文本（避免 *`$ 干扰）。
+// 去 markdown/latex 标记符——仅用于搜索匹配（行 stem 渲染走 QInline 保留 latex）。
 function plainText(s: string): string {
   return (s || '').replace(/[*`$＿_]/g, '');
 }
@@ -260,7 +260,7 @@ function QRow({ q, go, expanded, onToggle, isChild, subIndex }: QRowProps) {
               大题 · {q.children.length} 小题
             </span>
           )}
-          <QInline text={plainText(q.prompt_md)} />
+          <QInline text={q.prompt_md} />
         </div>
         <QIndicators q={q} />
       </div>
@@ -349,6 +349,8 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     setDiffs([]);
     setLabels([]);
     setQuery('');
+    setSort('time');
+    setDir('desc');
   };
 
   // search（client，同 DraftReviewPage 约定）：题面预览 + 题号 + 知识点名；composite
