@@ -359,7 +359,11 @@ export async function demandToSupplyTarget(
     // cause→prompt 透传缺口: 把 demand.cause 塞进 reason (人读字符串，dispatcher 留痕)。
     // 扩 JobData 是后续增量，见 spec §3.1.5.
     reason: residualReason(demand, gap),
-    constraints: {},
+    // YUK-401 Fix 2 — thread the demand's 篇-only structural axis into target.constraints so
+    // the 「篇」 constraint reaches the generation end (dispatcher persists target.constraints
+    // into the question_supply observability payload; route-planner reads sibling flags).
+    // Only set when the demand declares it (additive; absent → unconstrained, matching pre-fix).
+    constraints: demand.compositeParentOnly ? { compositeParentOnly: true } : {},
   };
 }
 
@@ -398,6 +402,18 @@ export async function matcher(
   demand: Demand,
   deps: MatcherDeps = {},
 ): Promise<MatcherResult> {
+  // YUK-401 Fix 3 — live-KC guard FRONT-LOADED to the top, BEFORE poolFetch (was previously
+  // only a pre-residual check). An archived/missing KC may still carry stale active questions
+  // on its knowledge_ids; if we poolFetch first, those stale rows would be served as `used`.
+  // An archived KC serves no stale items AND dispatches no residual (the worker anchor guard
+  // — sourcing.ts/quiz_gen.ts isNull(archived_at) — would just reject the job). So a dead KC
+  // returns the empty triple immediately: used [], residual [], satisfiedFromPool false —
+  // a distinguishable「dead KC, gap unfillable」signal (cf. satisfiedFromPool semantics below).
+  // This is the matcher's own pre-fetch guard (getEffectiveDomain does NOT check archived_at).
+  if (!(await resolveKnowledgeNodeLive(db, demand.knowledgeId))) {
+    return { used: [], residual: [], satisfiedFromPool: false };
+  }
+
   // 解析查询向量 (路 A queryEmbedding 优先于路 B queryText)；都无 → null → 标量序.
   const queryEmbedding = await resolveQueryEmbedding(demand, deps);
 
@@ -433,6 +449,15 @@ export async function matcher(
   for (const r of ranked) {
     if (used.length >= demand.limit) break;
     const tier = deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier;
+    // YUK-401 Fix 1 — Demand.minSourceTier enforcement. deriveSourceTier ranks trust as
+    // tier 1 authentic (best) → 4 generated (worst); minSourceTier=2 ⇒ require tier ≤ 2.
+    // A candidate counts toward `used` ONLY if its DERIVED tier satisfies the floor —
+    // a below-floor candidate (e.g. a bare quiz_gen row deriving tier 4 under
+    // minSourceTier:2) is skipped (not counted), so the shortfall falls through to gap →
+    // residual (whose target already carries minSourceTier, demandToSupplyTarget). Without
+    // this the loop counted any active/promoted row regardless of its source档, defeating
+    // R2「源档底线」. Guard is no-op when demand.minSourceTier is undefined.
+    if (demand.minSourceTier != null && tier > demand.minSourceTier) continue;
     // 仓库「可用」语义 (codex P2-1) = draft_status <> 'draft'. NULL≡active、'active'、legacy
     // 'final' 等任何非 'draft' 行都直接用——唯一送 lazy verify 的是 r.draft_status === 'draft'。
     // (此前误把「非 NULL 非 active」整批送 verify，'final' 等可用行被错送验证门。)
@@ -474,12 +499,13 @@ export async function matcher(
   // 失败 / 池空 都体现为 used 不足 → gap > 0).
   const gap = demand.limit - used.length;
   const residual: SourcingNeed[] = [];
-  // codex P2-4 — 残余派发前 mirror resolveLiveKnowledgeNode (sourcing-sequence.ts): 确认 KC
-  // 存在且 archived_at IS NULL。getEffectiveDomain (demandToSupplyTarget 内) 不查 archived_at，
-  // stale/archived KC 仍会派一个供给目标，但 worker-side anchor guard 只会 skip:ref_not_found
-  // (sourcing.ts/quiz_gen.ts 的 isNull(archived_at))——白派一个注定失败的 job。KC 不 live →
-  // 不派 residual (返回空 residual；满足态由 satisfiedFromPool=false 如实体现「池空且无在途生产」)。
-  if (gap > 0 && (await resolveKnowledgeNodeLive(db, demand.knowledgeId))) {
+  // codex P2-4 — KC liveness is now guaranteed by the YUK-401 Fix 3 front-loaded guard at the
+  // top of matcher() (an archived/missing KC short-circuits to the empty triple before poolFetch
+  // is ever reached), so this branch no longer re-checks resolveKnowledgeNodeLive — a dead KC
+  // never gets here. Mirror resolveLiveKnowledgeNode's intent stays the top guard: a stale/
+  // archived KC must not dispatch a residual the worker anchor guard (sourcing.ts/quiz_gen.ts
+  // isNull(archived_at)) would just reject as a doomed job.
+  if (gap > 0) {
     const target = await demandToSupplyTarget(db, demand, gap);
     const dispatch = deps.dispatch ?? dispatchSupplyTarget;
     // dispatchSupplyTarget: route-plan → enqueue 既有队列 (sourcing/quiz_gen)，带 7 天 fingerprint
@@ -495,10 +521,11 @@ export async function matcher(
     });
   }
 
-  // satisfiedFromPool = 池独立满足了整个 limit (gap <= 0)。基于 gap 而非 residual.length:
-  // codex P2-4 下，dead KC 时 gap > 0 但 residual 故意为空 (不派注定失败的 job)——这种「池没满足、
-  // 也没在途生产」必须返 false (别假装池满足了)。三态可区分: satisfiedFromPool=true ⇒ 池满足；
-  // false + residual 非空 ⇒ 已派在途生产；false + residual 空 ⇒ dead KC，缺口无法补 (可区分信号)。
+  // satisfiedFromPool = 池独立满足了整个 limit (gap <= 0)。基于 gap 而非 residual.length。
+  // 三态可区分: satisfiedFromPool=true ⇒ 池满足；false + residual 非空 ⇒ 已派在途生产；
+  // false + residual 空 ⇒ 池没满足、也没在途生产（live KC 但 dispatch 自身返 manual/skip/failed
+  // 不折出 step 的边角态——residual.push 恒发，故此路实际总非空）。注: dead/archived KC 不会走到这里
+  // ——YUK-401 Fix 3 已在顶部 short-circuit 成 {used:[], residual:[], satisfiedFromPool:false}。
   const satisfiedFromPool = gap <= 0;
 
   return { used, residual, satisfiedFromPool };
