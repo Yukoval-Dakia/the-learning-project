@@ -68,12 +68,41 @@ export function isObjectiveQuestion(route: string): boolean {
   return OBJECTIVE_JUDGE_ROUTES.has(route);
 }
 
+// YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后退出回流（「返回流」）时是否必须把 slot 标 done。
+// auto-commit 后 review 已落库（slot 实质 done）；此时点「返回流」若只 onBack（host 仅回列表、不 PATCH
+// slot 状态）会留下「已判分但 slot 卡 in_progress」的不一致态。autoCommitted===true → 走
+// onCommittedBack（标 done + 回列表）；未自动 commit（作答中 / 开放题手动流）→ false → 走原 onBack
+// （review 未提交，slot 应留 in_progress 供 resume）。纯谓词，供单测固定不变式。
+export function shouldMarkSlotDoneOnBack(autoCommitted: boolean): boolean {
+  return autoCommitted;
+}
+
+// YUK-432 (Bugbot FINDING 2) — 反馈卡上「不服判」入口是否可用。客观题自动 commit 同样落了独立 judge
+// 锚点 event（后端 submit.ts:550 在 judge_route ∈ JudgeKind {exact,keyword,…} 时写，并经响应
+// judge.judge_event_id 回传），故 deterministic 判定**可申诉**（如 exact-match 误拒了等价答案）。
+// 入口在反馈相位、当前未展开申诉框、且拿得到锚点 id 时可用——与 autoCommitted 无关（旧实现错误地用
+// autoCommitted 隐藏了它）。手动流锚点在用户提交申诉那刻随 commit 落（res.judge.judge_event_id），客观
+// 流锚点在 auto-commit 时已落（同一响应字段），暂存后供此谓词判定。
+export function appealEntryAvailable(opts: {
+  phase: 'answering' | 'feedback';
+  appealOpen: boolean;
+  autoCommitted: boolean;
+  autoCommitJudgeEventId: string | null;
+}): boolean {
+  if (opts.phase !== 'feedback' || opts.appealOpen) return false;
+  // 自动 commit 流：仅当拿到了可申诉锚点才显示入口（无锚点的判定无可申诉对象）。
+  if (opts.autoCommitted) return opts.autoCommitJudgeEventId !== null;
+  // 手动流：入口恒可见，锚点在用户提交申诉那一刻随 commit 落库（既有行为，不变）。
+  return true;
+}
+
 export function PfSolo({
   item,
   pos,
   total,
   onDone,
   onBack,
+  onCommittedBack,
   addToast,
 }: {
   item: StreamItem;
@@ -81,6 +110,9 @@ export function PfSolo({
   total: number;
   onDone: () => void;
   onBack: () => void;
+  // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后的「返回流」出口：host 标 slot done + 回列表
+  // （不自动推进到下一题）。仅 autoCommitted 时走它；未提供时回落 onBack（向后兼容旧调用方）。
+  onCommittedBack?: () => void;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
   const qQ = useQuery({
@@ -96,15 +128,24 @@ export function PfSolo({
   const [appealText, setAppealText] = useState('');
   const [committing, setCommitting] = useState(false);
   const [coach, setCoach] = useState(false);
-  // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡隐藏手动评级
-  // 按钮，「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
+  // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡保留判定，
+  // 「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
   const [autoCommitted, setAutoCommitted] = useState(false);
+  // YUK-432 (Bugbot FINDING 2) — 客观题自动 commit 那次 submitReview 回执的 judge 锚点 id。后端为
+  // 客观判分（route ∈ JudgeKind）写了独立 judge event 并回传 judge.judge_event_id；存下来，让反馈卡上
+  // 的「不服判」入口在自动 commit 后仍能对这个锚点直接发 appeal（不再二次 submit——review 已落库）。
+  // null = 这次自动判定没有可申诉锚点（理论上 exact/keyword 恒有，留 null 兜底 → 入口自动隐藏）。
+  const [autoCommitJudgeEventId, setAutoCommitJudgeEventId] = useState<string | null>(null);
 
   const q = qQ.data ?? null;
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
   const answerMd = isChoice && sel !== null ? (q?.choices_md?.[sel] ?? '') : text;
   const canSubmit = !judging && (isChoice ? sel !== null : text.trim().length > 0);
   const phase: 'answering' | 'feedback' = preview === null ? 'answering' : 'feedback';
+  // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
+  // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
+  const handleBack = () =>
+    shouldMarkSlotDoneOnBack(autoCommitted) && onCommittedBack ? onCommittedBack() : onBack();
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
@@ -152,13 +193,34 @@ export function PfSolo({
           addToast('这次判定没有可申诉的锚点（无服务端判分）。', 'info', 'alert');
         }
       }
-      // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）。
+      // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）+ 暂存
+      // 这次判定的 judge 锚点 id（FINDING 2：让「不服判」入口在自动 commit 后仍能对它发 appeal）。
       // 只在写入成功后置位：失败时保持手动评级行可见，用户可重试/手动评级（不丢答）。
-      if (opts.autoRate && opts.advance === false) setAutoCommitted(true);
+      if (opts.autoRate && opts.advance === false) {
+        setAutoCommitted(true);
+        setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
+      }
       // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
       if (opts.advance !== false) onDone();
     } catch (e) {
       addToast(`提交失败：${(e as Error).message}`, 'info', 'alert');
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  // YUK-432 (Bugbot FINDING 2) — 客观题自动 commit 后的「不服判」。review 已落库，不能再走 commit（会
+  // 重复 submit 一条 review event）；直接对自动 commit 时暂存的 judge 锚点发 appeal。无锚点 → 入口本
+  // 就被 appealEntryAvailable 隐藏，这里再兜底一次。
+  const submitAutoCommitAppeal = async () => {
+    if (!autoCommitJudgeEventId || committing) return;
+    setCommitting(true);
+    try {
+      await fileAppeal(autoCommitJudgeEventId, appealText.trim());
+      addToast('已提交重判——异步跑，结果回来我会提醒你。', 'info', 'clock');
+      setAppealOpen(false);
+    } catch (e) {
+      addToast(`提交重判失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
       setCommitting(false);
     }
@@ -224,7 +286,8 @@ export function PfSolo({
   return (
     <div className="pfs" data-screen-label={`散题作答 · ${q.id}`}>
       <div className="pfs-top">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={onBack}>
+        {/* YUK-432 (FINDING 1) — 自动 commit 后「返回流」走 handleBack（标 slot done），否则 onBack。 */}
+        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => handleBack()}>
           返回流
         </Btn>
         <span className="pfs-pos">
@@ -341,6 +404,7 @@ export function PfSolo({
 
             {/* YUK-432 — 客观题自动判分+自动评级：preview 回来已自动 commit（auto_rate:true），故
                 隐藏手动 again/hard/good 评级行；用户仍看到上面的判定反馈卡，按「下一项」推进。
+                注意：仅隐藏**手动评级行**——「不服判」入口仍保留（FINDING 2，见下方 footer）。
                 开放题：保留现有手动评级行（默认=建议，可改）。 */}
             {!autoCommitted && (
               <div className="pfs-rate">
@@ -378,7 +442,16 @@ export function PfSolo({
                   {committing ? '提交中…' : '确认评级 · 下一项'}
                 </Btn>
               )}
-              {!autoCommitted && !appealOpen && (
+              {/* YUK-432 (FINDING 2) — 「不服判」入口在客观题自动 commit 后**仍可用**（旧实现错误地
+                  用 autoCommitted 隐藏它）：deterministic 判定（exact/keyword）也落了 judge 锚点，可
+                  对它发 appeal（如 exact-match 误拒等价答案）。可用性由 appealEntryAvailable 统一判：
+                  自动流要求拿到锚点 id，手动流恒可见。 */}
+              {appealEntryAvailable({
+                phase,
+                appealOpen,
+                autoCommitted,
+                autoCommitJudgeEventId,
+              }) && (
                 <button
                   type="button"
                   className="pfs-appeal-link"
@@ -401,15 +474,29 @@ export function PfSolo({
                   />
                 </div>
                 <div className="pfs-actions" style={{ marginTop: 'var(--s-3)' }}>
-                  <Btn
-                    size="sm"
-                    variant="secondary"
-                    icon="send"
-                    disabled={!appealText.trim() || committing || !rating}
-                    onClick={() => rating && void commit({ withAppeal: true, rating })}
-                  >
-                    提交重判 · 先继续
-                  </Btn>
+                  {/* 自动 commit 流：review 已落库 → 直接对暂存锚点发 appeal（不再二次 submit）。
+                      手动流：commit({ withAppeal:true }) 一次性 submit + appeal（既有行为不变）。 */}
+                  {autoCommitted ? (
+                    <Btn
+                      size="sm"
+                      variant="secondary"
+                      icon="send"
+                      disabled={!appealText.trim() || committing || !autoCommitJudgeEventId}
+                      onClick={() => void submitAutoCommitAppeal()}
+                    >
+                      提交重判 · 先继续
+                    </Btn>
+                  ) : (
+                    <Btn
+                      size="sm"
+                      variant="secondary"
+                      icon="send"
+                      disabled={!appealText.trim() || committing || !rating}
+                      onClick={() => rating && void commit({ withAppeal: true, rating })}
+                    >
+                      提交重判 · 先继续
+                    </Btn>
+                  )}
                   <Btn size="sm" variant="ghost" onClick={() => setAppealOpen(false)}>
                     算了
                   </Btn>
