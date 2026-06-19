@@ -65,6 +65,7 @@ pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 
 pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-level lint）
 pnpm audit:profile    # 检查所有 SubjectProfile 是否通过 schema + capability registry 验证
 pnpm audit:draft-status # 检查每个 question INSERT 都显式 set draft_status 或在 allowlist（防容器题漏进练习池）
+pnpm audit:relations  # KG 死边反向审计：每个 relation_type 是否有特化下游消费（诊断/推荐/复习），report-only
 ```
 
 `pnpm audit:schema` 扫描 `src/db/schema.ts` 所有业务字段，验证每个都有 INSERT 或 UPDATE write path。例外字段须在 `scripts/audit-schema-allowlist.json` 显式声明 `reason` + `resolves_when`，其中 `resolves_when` 必须是 `{ "kind": "pr" | "phase" | "manual", "ref": string, "expected_by": "YYYY-MM-DD" }`。`kind: "pr"` 的 `ref` 写 GitHub PR 号或 `#N`，若本地 git history 已包含该 PR 会 fail；`kind: "phase"` 的 `ref` 要能匹配 `docs/superpowers/status.md` 的已 ship 行；`kind: "manual"` 只用于无法机器判定的历史解除条件，仍受 `expected_by` 到期约束。引入新表 / 字段时，要么实现 write path，要么加入 allowlist 并标注可检查的解除条件。详见 `docs/design/2026-05-15-data-assumptions.md`。
@@ -72,6 +73,8 @@ pnpm audit:draft-status # 检查每个 question INSERT 都显式 set draft_statu
 `pnpm audit:profile` 调用 `scripts/audit-profile.ts`，遍历 `subjectProfiles` 并复用 `validateProfile()` 检查 `SubjectProfileSchema`、`causeCategories` 唯一性、`judgeCapabilities` 是否已在默认 capability registry 注册，以及 registry-backed preferred route 是否已声明。新增或修改 subject profile 后必须先跑 `pnpm audit:profile`；坏 profile 也会在 `SubjectRegistry.register()` 启动期直接抛错。
 
 `pnpm audit:draft-status`（YUK-350）调用 `scripts/audit-draft-status.ts`，扫所有 `.insert(question).values({ ... })` 站点（brace-balanced 抽对象块，跳字符串/模板/注释，word-boundary 排除 `question_block`/`question_part`），要求每个站点要么显式携带 `draft_status` key，要么在 `scripts/audit-draft-status-allowlist.json` 声明 `reason` + `resolves_when{kind,ref,expected_by}`。`question.draft_status` 是 NULL≡active 的三态字段——漏 set 的新 question 会被 review 池当 active 收，容器内专用题（embedded check / teaching check）会静默漏进通用练习池。NULL≡active 是合法语义的 writer（auto-enroll / import / 错题 / 卷题）放 allowlist；allowlisted-AND-explicit 文件静默通过（不 hard-fail）。新增 question INSERT 时要么显式 set draft_status，要么加 allowlist 并标注解除条件。**它已接入 `pnpm test` 链（在 `audit:profile` 之后），所以容器题漏进池的失效模式由自动 gate 强制——不像 `audit:schema`/`audit:partition` 只在 pre-PR 散文清单里靠人工记得跑。**详见 `docs/design/2026-05-15-data-assumptions.md`。
+
+`pnpm audit:relations`（YUK-357 / RT4）调用 `scripts/audit-relations.ts`，做 **KG 死边反向审计**（gap-analysis 决策 7 / gate doc §1.7 7c，源自 GPT §10.1「只保留能影响诊断/推荐/复习的关系」）。对每个核心 `knowledge_edge.relation_type`（prerequisite / related_to / contrasts_with / applied_in / derived_from）反查下游消费路径，按三层分级——`creation-validation`（提议时校验，不算下游学习消费）/ `generic-read`（copilot 一把灌所有 type，最弱信号）/ `specialized`（诊断/推荐/复习按具体 type 驱动行为）。**「死边」= 某 type 零 specialized 消费**（图在转但不影响学习）。消费矩阵是手维护的声明式 `CONSUMER_REGISTRY`，每条带 `file:marker` 证据；脚本对每条做**源码反查**，marker 不再命中即报 STALE（registry↔代码漂移）。**默认 report-only（exit 0），`--strict` 才非零 exit**（gate doc §1.7 标「→ Linear follow-up」非硬 gate；升级为 CI gate 是 owner 决策）。当前实测唯一死边 = `applied_in`（hub-mesh 显式排除、topology-gate 仅 prerequisite、paths 反向邻接仅 related_to/contrasts_with）。新增「按 relation_type 分支」的消费路径时须在 registry 补一条。
 
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema），输出到 `docs/audit/YYYY-MM-DD-drift.md`，命令式手动触发；不自动开 issue / PR / cron。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。
 
