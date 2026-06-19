@@ -33,7 +33,15 @@
 // 同 memory_reconciliation_log 进 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。29 → 30 tables；bump
 // 4.5 → 4.6 (NEW FK_ORDER table 必 bump，per archive.ts:92)。这是纯备份登记 + 版本号 bump，
 // 不动任何 reconcile runtime。
-export const SCHEMA_VERSION = '4.6';
+// YUK-355 (D17「数据可丢」推翻续): mem0 个性化半边的 pgvector collection 表 (默认
+// `learning_project_memories`) 纳入备份/恢复。它是 mem0 PGVector provider 运行时自建的表
+// (NOT drizzle-managed，无 pgTable 导出)，故**不**进 FK_ORDER (会让 buildColumnAllowlist 因
+// 找不到 pgTable 而 throw)，而是走 archive.ts 里独立的 mem0-collection 备份/恢复分支
+// (id/vector/payload 固定列 + vector::text 序列化 / ::vector 回插)。这闭合 §1② 端到端验收
+// 接缝 e (「备 WAL 不备 collection 是半截」)——之前只备 memory_reconciliation_log
+// (WAL/provenance)，慢热软画像本体 (collection 行) 仍在 restore 后灭失。新增数据载荷形态
+// (data.json 多一个 mem0-collection key) 必 bump：4.6 → 4.7。
+export const SCHEMA_VERSION = '4.7';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -145,4 +153,40 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // 存储非业务实体". A restore starts from an empty presence backend — heartbeats are
   // re-established live, so persisting them would resurrect stale lock state.
   'editing_presence',
+]);
+
+// ─── mem0 collection table (YUK-355) ─────────────────────────────────────────
+//
+// The mem0 personalization half stores memories in a pgvector "collection" table
+// created at runtime by mem0's PGVector provider (mem0ai/oss). Its schema is
+// fixed by mem0: `id UUID PRIMARY KEY, vector vector(<dims>), payload JSONB`
+// (node_modules/mem0ai/dist/oss/index.js createCol()). The table name IS the
+// collectionName verbatim. This is NOT a drizzle-managed table — it has no
+// pgTable export and never appears in a migration — so it is intentionally absent
+// from FK_ORDER (adding it there would make buildColumnAllowlist() throw, since
+// that derives columns from getTableColumns() on schema pgTables). Instead it gets
+// a dedicated mem0-collection backup/restore branch in archive.ts.
+//
+// The default collection name MUST stay in sync with DEFAULT_COLLECTION in
+// src/server/memory/client.ts. Both resolve the same MEM0_PGVECTOR_COLLECTION env
+// override so a backup taken with a custom collection name restores to the same
+// table the live client reads from.
+export const MEM0_COLLECTION_DEFAULT = 'learning_project_memories';
+
+/** Resolve the mem0 pgvector collection (= table) name from env, mirroring
+ * createMem0Config()'s `optionalEnv(env, 'MEM0_PGVECTOR_COLLECTION', DEFAULT)`. A
+ * bare `MEM0_PGVECTOR_COLLECTION=` (empty after trim) falls back to the default. */
+export function mem0CollectionTable(env: Record<string, string | undefined> = process.env): string {
+  const v = env.MEM0_PGVECTOR_COLLECTION?.trim();
+  return v ? v : MEM0_COLLECTION_DEFAULT;
+}
+
+// Fixed column set of the mem0 collection table (mem0 createCol()). Used as the
+// restore allowlist (the drizzle-derived COLUMN_ALLOWLIST cannot cover it — it is
+// not a pgTable). `vector` is the pgvector column: dumped as text (vector::text)
+// and re-inserted with an explicit ::vector cast (see archive.ts).
+export const MEM0_COLLECTION_COLUMNS: ReadonlySet<string> = new Set<string>([
+  'id',
+  'vector',
+  'payload',
 ]);
