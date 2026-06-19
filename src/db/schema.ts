@@ -59,11 +59,21 @@ export const knowledge = pgTable('knowledge', {
   merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
   archived_at: timestamp('archived_at', { withTimezone: true }),
   proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
-  // Phase-deferred (placeholder values). Only 'approved' has a write path today
-  // (seed.ts, knowledge/proposals.ts, orchestrator/learning_intent.ts — all set
-  // 'approved'); 'pending' / 'rejected' have NO code that sets them and exist as
-  // a reserved enum for a future AI-review flow. Default stays 'approved' (see
-  // src/core/schema/index.ts KnowledgeInsert). Revisit when that review flow lands.
+  // RESERVED-FOR-FUTURE (YUK-422 — owner decided to document, not drop). This enum
+  // is INERT today: every row is auto-approved and NOTHING reads it.
+  //   (a) Only 'approved' has a write path — all 6 writers hardcode it (seed.ts,
+  //       knowledge/proposals.ts ×2, orchestrator/learning_intent.ts ×2,
+  //       scripts/seed-synthetic.ts) and the column + KnowledgeInsert both default
+  //       to 'approved'. 'pending' / 'rejected' have NO writer and are unreachable
+  //       by design — they are reserved for an unbuilt AI-review/approval flow where
+  //       AI-proposed knowledge would land as 'pending' → be reviewed → become
+  //       'approved' or 'rejected', and reads would then filter to approved-only.
+  //   (b) There are ZERO readers today: no query filters on this column and nothing
+  //       gates behaviour on it, so the per-enum-value reachability gap is intentional
+  //       (column-level audit:schema passes via the 'approved' write; there is no
+  //       per-enum-value audit). Revisit when the AI-review flow lands.
+  //   (c) Tracked in docs/design/2026-05-15-data-assumptions.md (appendix
+  //       'knowledge.approval_status' + §6.5 R2).
   approval_status: text('approval_status', {
     enum: ['pending', 'approved', 'rejected'],
   })
