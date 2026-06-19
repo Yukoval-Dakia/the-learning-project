@@ -35,6 +35,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 
 import { initialFsrsState } from './fsrs';
 
@@ -199,26 +200,28 @@ export async function acceptVariantQuestionProposal(
   const rateEventId = newId();
 
   await db.transaction(async (tx) => {
-    await tx.insert(question).values({
-      id: newQuestionId,
-      kind: 'short_answer',
-      prompt_md: proposedChange.prompt_md as string,
-      reference_md: proposedChange.reference_md ?? null,
-      knowledge_ids: proposedChange.knowledge_ids ?? [],
-      difficulty: proposedChange.difficulty as number,
-      source: 'mistake_variant',
-      draft_status: 'active',
-      variant_depth: proposedChange.variant_depth ?? 1,
-      root_question_id: proposedChange.root_question_id ?? null,
-      parent_variant_id: proposedChange.parent_variant_id ?? null,
-      created_by: {
-        by: 'ai',
-        task_kind: 'VariantGenTask',
-        propose_event_id: proposalId,
-      } as never,
-      created_at: now,
-      updated_at: now,
-    });
+    await tx.insert(question).values(
+      withAnswerClass({
+        id: newQuestionId,
+        kind: 'short_answer',
+        prompt_md: proposedChange.prompt_md as string,
+        reference_md: proposedChange.reference_md ?? null,
+        knowledge_ids: proposedChange.knowledge_ids ?? [],
+        difficulty: proposedChange.difficulty as number,
+        source: 'mistake_variant',
+        draft_status: 'active',
+        variant_depth: proposedChange.variant_depth ?? 1,
+        root_question_id: proposedChange.root_question_id ?? null,
+        parent_variant_id: proposedChange.parent_variant_id ?? null,
+        created_by: {
+          by: 'ai',
+          task_kind: 'VariantGenTask',
+          propose_event_id: proposalId,
+        } as never,
+        created_at: now,
+        updated_at: now,
+      }),
+    );
 
     await tx
       .update(mistake_variant)

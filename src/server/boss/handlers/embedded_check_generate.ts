@@ -33,6 +33,7 @@ import {
 } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface EmbeddedCheckGenerateJobData {
@@ -250,37 +251,39 @@ export async function runEmbeddedCheckGenerate(
       for (const q of parsed.questions) {
         const id = createId();
         const judgeKind = defaultJudgeKindForQuestion(q);
-        await tx.insert(question).values({
-          id,
-          kind: q.kind,
-          source: 'embedded',
-          prompt_md: q.prompt_md,
-          reference_md: q.reference_md,
-          rubric_json: q.rubric_json ?? null,
-          choices_md: q.choices_md ?? null,
-          judge_kind_override: judgeKind,
-          knowledge_ids: row.knowledge_ids,
-          difficulty: 2,
-          source_ref: row.id,
-          // YUK-350 (L2, RL2) — land embedded checks as draft_status='draft'. An
-          // embedded check is CONTAINER-ONLY by design: it is read solely by its
-          // owning artifact via question_ids (note-page.ts inArray, no draft filter),
-          // and must NEVER leak into the general review pool (every pool selection path
-          // excludes draft: variant-rotation, due-list, review-session, etc.). There is
-          // NO promote path and that is intentional — an embedded check is not a pool
-          // candidate, so it stays draft for its whole life. Previously these rows had
-          // a NULL draft_status, which the pool treats as active (NULL≡active), so they
-          // were ambiguously poolable; 'draft' makes the container-only contract
-          // explicit and pool-safe.
-          draft_status: 'draft',
-          created_by: aiAgentRef('EmbeddedCheckGenerateTask', result) as never,
-          // FSRS isn't initialised here — embedded check questions don't
-          // enter the spaced-rep surface unless the user later actively
-          // promotes them. The first FSRS write happens lazily if/when
-          // /api/review/submit ever sees this question_id.
-          created_at: new Date(),
-          updated_at: new Date(),
-        });
+        await tx.insert(question).values(
+          withAnswerClass({
+            id,
+            kind: q.kind,
+            source: 'embedded',
+            prompt_md: q.prompt_md,
+            reference_md: q.reference_md,
+            rubric_json: q.rubric_json ?? null,
+            choices_md: q.choices_md ?? null,
+            judge_kind_override: judgeKind,
+            knowledge_ids: row.knowledge_ids,
+            difficulty: 2,
+            source_ref: row.id,
+            // YUK-350 (L2, RL2) — land embedded checks as draft_status='draft'. An
+            // embedded check is CONTAINER-ONLY by design: it is read solely by its
+            // owning artifact via question_ids (note-page.ts inArray, no draft filter),
+            // and must NEVER leak into the general review pool (every pool selection path
+            // excludes draft: variant-rotation, due-list, review-session, etc.). There is
+            // NO promote path and that is intentional — an embedded check is not a pool
+            // candidate, so it stays draft for its whole life. Previously these rows had
+            // a NULL draft_status, which the pool treats as active (NULL≡active), so they
+            // were ambiguously poolable; 'draft' makes the container-only contract
+            // explicit and pool-safe.
+            draft_status: 'draft',
+            created_by: aiAgentRef('EmbeddedCheckGenerateTask', result) as never,
+            // FSRS isn't initialised here — embedded check questions don't
+            // enter the spaced-rep surface unless the user later actively
+            // promotes them. The first FSRS write happens lazily if/when
+            // /api/review/submit ever sees this question_id.
+            created_at: new Date(),
+            updated_at: new Date(),
+          }),
+        );
         questionIds.push(id);
       }
 

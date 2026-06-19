@@ -60,6 +60,7 @@ import { writeEvent } from '@/server/events/queries';
 // rather than re-deriving "live" from raw rows.
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -458,28 +459,30 @@ export async function runSourcing(params: RunSourcingParams): Promise<RunSourcin
           extract: q.extract,
         };
 
-        await tx.insert(question).values({
-          id,
-          kind: q.kind,
-          source: 'web_sourced',
-          prompt_md: q.prompt_md,
-          reference_md: q.reference_md,
-          rubric_json: q.rubric_json ?? null,
-          choices_md: q.choices_md ?? null,
-          judge_kind_override: judgeKind,
-          knowledge_ids: questionKnowledgeIds,
-          difficulty: q.difficulty,
-          // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
-          // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
-          source_ref: q.source_url,
-          // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
-          // source_verify passes.
-          draft_status: 'draft',
-          created_by: aiAgentRef('SourcingTask', result),
-          metadata: { web_sourced: webSourced, source_ref_kind: 'url' },
-          created_at: now,
-          updated_at: now,
-        });
+        await tx.insert(question).values(
+          withAnswerClass({
+            id,
+            kind: q.kind,
+            source: 'web_sourced',
+            prompt_md: q.prompt_md,
+            reference_md: q.reference_md,
+            rubric_json: q.rubric_json ?? null,
+            choices_md: q.choices_md ?? null,
+            judge_kind_override: judgeKind,
+            knowledge_ids: questionKnowledgeIds,
+            difficulty: q.difficulty,
+            // source_ref = the fetched URL; source_ref_kind='url' disambiguates the
+            // overloaded source_ref column (合约三). Both land tier 2 via deriveSourceTier.
+            source_ref: q.source_url,
+            // Option B (R6) — sourced drafts do NOT enter the pool / FSRS until
+            // source_verify passes.
+            draft_status: 'draft',
+            created_by: aiAgentRef('SourcingTask', result),
+            metadata: { web_sourced: webSourced, source_ref_kind: 'url' },
+            created_at: now,
+            updated_at: now,
+          }),
+        );
         questionIds.push(id);
       }
     });
