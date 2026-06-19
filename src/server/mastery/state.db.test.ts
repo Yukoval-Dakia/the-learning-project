@@ -1033,6 +1033,88 @@ describe('updateThetaForAttempt — SRT scoring (A1 / YUK-433)', () => {
     expect(flagOnNoRt).toBe(flagOff); // byte-identical binary result
     expect(flagOnNoRt).toBeCloseTo(0.06, 10);
   });
+
+  it('BUGBOT REGRESSION: slow (t≥d) WRONG yields STRICTLY SMALLER θ̂ than slow CORRECT from same start (sign never erased)', async () => {
+    // The exact scenario Cursor Bugbot described: at t≥d the raw residual r=0 collapsed
+    // BOTH correct and wrong to outcome 0.5, so a timed-out WRONG answer moved θ̂ the
+    // SAME (0.5−p) amount as a slow CORRECT one. With the SRT_MIN_SIGNAL floor the
+    // correctness sign survives: slow-correct (0.575) lifts θ̂, slow-wrong (0.425)
+    // lowers it. Same cold-start θ̂=0, same d (difficulty 3 → 30s), same slow RT.
+    srtFlag.value = true;
+    const kSlowCorrect = createId();
+    const kSlowWrong = createId();
+    const qSlowCorrect = createId();
+    const qSlowWrong = createId();
+    await seedKnowledge(kSlowCorrect);
+    await seedKnowledge(kSlowWrong);
+    await seedQuestion(qSlowCorrect, [kSlowCorrect], 3);
+    await seedQuestion(qSlowWrong, [kSlowWrong], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlowCorrect],
+        questionId: qSlowCorrect,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 45_000, // 45s > 30s limit (t > d) → raw r=0 → floored slow-correct
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlowWrong],
+        questionId: qSlowWrong,
+        outcome: 0,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 45_000, // identical slow RT, but WRONG → floored slow-wrong
+      });
+    });
+
+    const slowCorrect = (await readState(kSlowCorrect))?.theta_hat ?? Number.NaN;
+    const slowWrong = (await readState(kSlowWrong))?.theta_hat ?? Number.NaN;
+    // The fix: slow-wrong is STRICTLY below slow-correct (pre-fix they were EQUAL).
+    expect(slowWrong).toBeLessThan(slowCorrect);
+    // And the sign is correct: slow-correct lifts θ̂ (>0), slow-wrong lowers it (<0).
+    expect(slowCorrect).toBeGreaterThan(0);
+    expect(slowWrong).toBeLessThan(0);
+    // fail_count still incremented for the wrong answer (the tally was always binary).
+    expect((await readState(kSlowWrong))?.fail_count).toBe(1);
+  });
+
+  it('BUGBOT REGRESSION: multi-KC slow (t≥d) WRONG applies a NON-ZERO penalty to every KC (was ZERO at the boundary)', async () => {
+    // Pre-fix at t≥d the multi-KC continuous outcome was exactly 0.5 → magnitude m=0 →
+    // EVERY KC credit was 0 → a timed-out wrong answer on a multi-KC item moved nothing.
+    // With the floor the wrong outcome is 0.425 → m>0 → each KC takes a real (small)
+    // negative step. Two KCs on one question, slow wrong answer.
+    srtFlag.value = true;
+    const kA = createId();
+    const kB = createId();
+    const qMulti = createId();
+    await seedKnowledge(kA);
+    await seedKnowledge(kB);
+    await seedQuestion(qMulti, [kA, kB], 3); // multi-KC item, difficulty 3 → d=30s
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kA, kB],
+        questionId: qMulti,
+        outcome: 0,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 60_000, // 60s ≫ 30s (t = 2d) → raw r=0 → floored slow-wrong
+      });
+    });
+
+    const thetaA = (await readState(kA))?.theta_hat ?? Number.NaN;
+    const thetaB = (await readState(kB))?.theta_hat ?? Number.NaN;
+    // The fix: BOTH KCs take a strictly-negative (non-zero) penalty — not the pre-fix 0.
+    expect(thetaA).toBeLessThan(0);
+    expect(thetaB).toBeLessThan(0);
+    expect(thetaA).not.toBe(0);
+    expect(thetaB).not.toBe(0);
+  });
 });
 
 // YUK-372 L3 — family b_delta composition (effectiveFamilyB) in the θ̂ anchor.
