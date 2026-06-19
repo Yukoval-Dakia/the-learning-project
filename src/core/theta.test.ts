@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DIFFICULTY_PROXY_WEIGHT,
   SRT_ENABLED,
+  SRT_MIN_SIGNAL,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
   difficultyToLogitB,
@@ -284,9 +285,15 @@ describe('srtOutcome (continuous time-aware outcome-analog in [0,1])', () => {
     expect(srtOutcome(true, 30, 0.0001)).toBeGreaterThan(0.999);
   });
 
-  it('slow-correct (t≥d, r=0) = 0.5 — SMALLER credit than binary correct', () => {
-    expect(srtOutcome(true, 30, 30)).toBeCloseTo(0.5, 12); // t == d boundary
-    expect(srtOutcome(true, 30, 45)).toBeCloseTo(0.5, 12); // t > d clamps to r=0
+  it('slow-correct (t≥d, r_eff=SRT_MIN_SIGNAL floor) stays STRICTLY above 0.5 — signal not erased', () => {
+    const floorCredit = 0.5 + 0.5 * SRT_MIN_SIGNAL; // 0.575 at SRT_MIN_SIGNAL=0.15
+    expect(srtOutcome(true, 30, 30)).toBeCloseTo(floorCredit, 12); // t == d boundary
+    expect(srtOutcome(true, 30, 45)).toBeCloseTo(floorCredit, 12); // t > d clamps to r=0
+    expect(srtOutcome(true, 30, 300)).toBeCloseTo(floorCredit, 12); // t = 10d
+    // floored slow-correct is a SMALL reward but strictly above the midpoint.
+    expect(srtOutcome(true, 30, 30)).toBeGreaterThan(0.5);
+    // and still smaller than fast-correct (= binary 1.0) — bounded.
+    expect(srtOutcome(true, 30, 30)).toBeLessThan(1.0);
   });
 
   it('fast-wrong (t→0, r=1) reproduces binary wrong = 0.0', () => {
@@ -294,9 +301,41 @@ describe('srtOutcome (continuous time-aware outcome-analog in [0,1])', () => {
     expect(srtOutcome(false, 30, 0.0001)).toBeLessThan(0.001);
   });
 
-  it('slow-wrong (t≥d, r=0) = 0.5 — LESS penalty than binary wrong', () => {
-    expect(srtOutcome(false, 30, 30)).toBeCloseTo(0.5, 12); // t == d boundary
-    expect(srtOutcome(false, 30, 45)).toBeCloseTo(0.5, 12); // t > d clamps to r=0
+  it('slow-wrong (t≥d, r_eff=SRT_MIN_SIGNAL floor) stays STRICTLY below 0.5 — real (small) penalty', () => {
+    const floorPenalty = 0.5 - 0.5 * SRT_MIN_SIGNAL; // 0.425 at SRT_MIN_SIGNAL=0.15
+    expect(srtOutcome(false, 30, 30)).toBeCloseTo(floorPenalty, 12); // t == d boundary
+    expect(srtOutcome(false, 30, 45)).toBeCloseTo(floorPenalty, 12); // t > d clamps to r=0
+    expect(srtOutcome(false, 30, 300)).toBeCloseTo(floorPenalty, 12); // t = 10d
+    // floored slow-wrong is a SMALL penalty but strictly below the midpoint (NOT erased).
+    expect(srtOutcome(false, 30, 30)).toBeLessThan(0.5);
+    // and still less severe than fast-wrong (= binary 0.0) — bounded.
+    expect(srtOutcome(false, 30, 30)).toBeGreaterThan(0.0);
+  });
+
+  it('NEW INVARIANT: correct > wrong by ≥ SRT_MIN_SIGNAL for ALL t — correctness sign never erased', () => {
+    const d = 30;
+    for (const t of [0, d / 2, d, 2 * d, 10 * d, 1000]) {
+      const c = srtOutcome(true, d, t);
+      const w = srtOutcome(false, d, t);
+      expect(c).toBeGreaterThan(w); // correct ALWAYS strictly above wrong
+      expect(c - w).toBeGreaterThanOrEqual(SRT_MIN_SIGNAL - 1e-12); // gap ≥ floor
+      expect(c).toBeGreaterThan(0.5); // correct strictly in (0.5, 1]
+      expect(c).toBeLessThanOrEqual(1.0);
+      expect(w).toBeGreaterThanOrEqual(0.0); // wrong strictly in [0, 0.5)
+      expect(w).toBeLessThan(0.5);
+    }
+  });
+
+  it('NEW INVARIANT (slow boundary t≥d): correct ≠ wrong, correct > 0.5 > wrong', () => {
+    const d = 30;
+    for (const t of [d, 2 * d, 10 * d]) {
+      const c = srtOutcome(true, d, t);
+      const w = srtOutcome(false, d, t);
+      expect(c).not.toBe(w); // the bug: both collapsed to exactly 0.5
+      expect(c).toBeGreaterThan(0.5);
+      expect(w).toBeLessThan(0.5);
+      expect(c - w).toBeGreaterThanOrEqual(SRT_MIN_SIGNAL - 1e-12);
+    }
   });
 
   it('output stays bounded in [0,1] across the t range (never exceeds binary)', () => {
@@ -321,10 +360,12 @@ describe('srtOutcome (continuous time-aware outcome-analog in [0,1])', () => {
     expect(srtOutcome(false, 30, 5)).toBeLessThan(srtOutcome(false, 30, 20));
   });
 
-  it('mid-time correct sits strictly between binary-correct and the 0.5 slow floor', () => {
-    const mid = srtOutcome(true, 30, 15); // r = 0.5 → 0.75
-    expect(mid).toBeCloseTo(0.75, 12);
-    expect(mid).toBeGreaterThan(0.5);
+  it('mid-time correct sits strictly between binary-correct and the floored slow value', () => {
+    const rEff = SRT_MIN_SIGNAL + (1 - SRT_MIN_SIGNAL) * 0.5; // raw r = 0.5
+    const mid = srtOutcome(true, 30, 15);
+    expect(mid).toBeCloseTo(0.5 + 0.5 * rEff, 12);
+    const slow = srtOutcome(true, 30, 30); // floored slow value
+    expect(mid).toBeGreaterThan(slow); // faster correct moves θ more than slow correct
     expect(mid).toBeLessThan(1.0);
   });
 });

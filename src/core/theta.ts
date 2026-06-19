@@ -171,6 +171,26 @@ export const DIFFICULTY_PROXY_WEIGHT = 0.3;
  */
 export const SRT_ENABLED = false;
 
+/**
+ * Minimum-signal floor for the residual-time fraction (Cursor Bugbot HIGH fix).
+ *
+ * WHY: the raw residual r = clamp((d−t)/d, 0, 1) hits 0 at t ≥ d (any slow answer),
+ *   which collapsed BOTH srtOutcome(correct) and srtOutcome(wrong) to exactly 0.5 —
+ *   ERASING the correctness sign. A timed-out WRONG answer then moved θ̂ like a slow
+ *   CORRECT one (same 0.5−p credit) while fail_count still incremented, and multi-KC
+ *   slow-wrong got ZERO penalty at that boundary. A wrong answer must ALWAYS pull θ
+ *   below what a correct answer would at the same response time.
+ *
+ * FIX: floor the EFFECTIVE residual at SRT_MIN_SIGNAL so r_eff ∈ [SRT_MIN_SIGNAL, 1].
+ *   The correctness sign survives at every t: correct stays strictly in (0.5, 1],
+ *   wrong strictly in [0, 0.5), with a guaranteed gap ≥ SRT_MIN_SIGNAL between them.
+ *   Fast (r=1) is unchanged → r_eff=1 → binary anchors 1.0 / 0.0 PRESERVED.
+ *
+ * In (0,1); 0.15 = a small-but-non-zero floored reward/penalty for slow answers
+ * (floored slow-correct = 0.575, floored slow-wrong = 0.425). Owner-tunable.
+ */
+export const SRT_MIN_SIGNAL = 0.15;
+
 function clamp01(x: number): number {
   if (x < 0) return 0;
   if (x > 1) return 1;
@@ -184,25 +204,36 @@ function clamp01(x: number): number {
  * examinee's response time. BOTH IN THE SAME UNIT (seconds — see resolveSrtTimeLimit
  * + the ms→s conversion at the state.ts wiring seam). Residual-time fraction:
  *
- *   r = clamp((d − t) / d, 0, 1)   // fast t→0 ⇒ r→1; slow t≥d ⇒ r=0; t<0 ⇒ r=1
+ *   r     = clamp((d − t) / d, 0, 1)            // fast t→0 ⇒ r→1; slow t≥d ⇒ r=0
+ *   r_eff = SRT_MIN_SIGNAL + (1 − SRT_MIN_SIGNAL)·r   // floored ⇒ r_eff ∈ [floor, 1]
  *
- *   correct: 0.5 + 0.5·r   wrong: 0.5 − 0.5·r
+ *   correct: 0.5 + 0.5·r_eff   wrong: 0.5 − 0.5·r_eff
  *
- * CONSERVATIVE / BOUNDED — the flag-on outcome NEVER exceeds the binary magnitude:
- *   - fast-correct (r=1) → 1.0  == binary correct (regression anchor)
- *   - slow-correct (r=0) → 0.5  <  1.0 (less credit than binary; θ moves less)
- *   - fast-wrong   (r=1) → 0.0  == binary wrong (regression anchor)
- *   - slow-wrong   (r=0) → 0.5  >  0.0 (less penalty than binary; real struggle)
- * So fast-correct moves θ MORE than slow-correct, and fast-wrong is penalised
- * HARDER than slow-wrong, while staying inside the binary [0,1] envelope.
+ * CONSERVATIVE / BOUNDED — the flag-on outcome NEVER exceeds the binary magnitude,
+ * and the floor guarantees the correctness sign is NEVER erased (Bugbot HIGH fix):
+ *   - fast-correct (r=1, r_eff=1) → 1.0  == binary correct (regression anchor)
+ *   - slow-correct (r=0, r_eff=floor) → 0.5 + 0.5·floor  >  0.5 (small reward, NOT 0.5)
+ *   - fast-wrong   (r=1, r_eff=1) → 0.0  == binary wrong (regression anchor)
+ *   - slow-wrong   (r=0, r_eff=floor) → 0.5 − 0.5·floor  <  0.5 (small penalty, NOT 0.5)
+ * INVARIANT (all t≥0): srtOutcome(true) − srtOutcome(false) ≥ SRT_MIN_SIGNAL, so a wrong
+ * answer ALWAYS pulls θ below what a correct answer would at the same response time.
+ * fast-correct moves θ MORE than slow-correct, fast-wrong is penalised HARDER than
+ * slow-wrong, all inside the binary [0,1] envelope.
  */
 export function srtOutcome(correct: boolean, d: number, t: number): number {
   // d ≤ 0 is a config bug (resolveSrtTimeLimit always returns > 0); guard so a bad
-  // d degrades to the binary endpoints (r=0 → 0.5 is the most conservative fallback;
-  // here we treat a non-positive limit as "no time signal" → midpoint contribution).
-  if (!(d > 0)) return correct ? 0.5 : 0.5;
-  const r = clamp01((d - t) / d);
-  return correct ? 0.5 + 0.5 * r : 0.5 - 0.5 * r;
+  // d degrades to the floored minimum-signal endpoints (NOT a bare 0.5 — that would
+  // re-erase the correctness sign the SRT_MIN_SIGNAL floor exists to protect). A
+  // non-positive limit is treated as "no time signal" → the floored slow value.
+  if (!(d > 0)) {
+    return correct ? 0.5 + 0.5 * SRT_MIN_SIGNAL : 0.5 - 0.5 * SRT_MIN_SIGNAL;
+  }
+  // Effective residual floored at SRT_MIN_SIGNAL so r_eff ∈ [SRT_MIN_SIGNAL, 1]:
+  // even a fully timed-out answer (raw r=0) keeps a minimum correctness signal, so
+  // correct and wrong NEVER collapse to the same value (Bugbot HIGH fix). Fast (raw
+  // r=1) ⇒ r_eff=1 ⇒ binary anchors 1.0 / 0.0 preserved exactly.
+  const rEff = SRT_MIN_SIGNAL + (1 - SRT_MIN_SIGNAL) * clamp01((d - t) / d);
+  return correct ? 0.5 + 0.5 * rEff : 0.5 - 0.5 * rEff;
 }
 
 /**
