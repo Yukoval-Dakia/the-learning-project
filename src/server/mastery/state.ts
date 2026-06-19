@@ -15,9 +15,13 @@ import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearnedBand, pfaLogit } from '@/core/pfa';
 import {
   DIFFICULTY_PROXY_WEIGHT,
+  SRT_ENABLED,
   conjunctiveCredits,
+  conjunctiveCreditsContinuous,
   difficultyToLogitB,
   eloK,
+  resolveSrtTimeLimit,
+  srtOutcome,
   thetaSe,
   updateThetaPrecision,
 } from '@/core/theta';
@@ -314,6 +318,16 @@ export interface UpdateThetaForAttemptInput {
   outcome: 0 | 1;
   /** fallback anchor source (1-5) when no item_calibration.b. */
   difficulty: number;
+  /**
+   * A1 (YUK-433) — optional response time IN MILLISECONDS (latency_ms from the
+   * solo review submit). When present AND SRT_ENABLED AND d resolves, the BINARY
+   * `outcome` is replaced on the credit path by a CONTINUOUS time-aware srtOutcome
+   * (fast-correct moves θ̂ more than slow-correct; fast-wrong penalised harder than
+   * slow-wrong). When undefined/null (paper path, or any missing-RT solo attempt)
+   * the SRT path is SKIPPED → binary credit, bit-identical to today. Converted to
+   * seconds at the seam to match resolveSrtTimeLimit's units.
+   */
+  responseTimeMs?: number | null;
   /** provenance — the attempt event id that produced this update. */
   attemptEventId: string;
   now: Date;
@@ -464,11 +478,37 @@ export async function updateThetaForAttempt(
   // 3. 多 KC 合取 credit（owner 拍板 MLE，review SF-1）。conjunctiveCredits 直接
   //    返回每 KC 的 log 似然梯度项（题目级 surprise × (1−p_k) 灵敏度），取代旧的
   //    per-KC 残差权重（两端抵消、弱 KC 答错不降的反向 bug）。单 KC 退化为标准 Elo。
-  const credits = conjunctiveCredits(
-    states.map((s) => s.theta),
-    b,
-    input.outcome,
-  );
+  //
+  // A1 (YUK-433) — SRT gate. ALL THREE must hold to take the continuous path,
+  // else we use the BINARY outcome bit-identically (NO-OP regression):
+  //   (a) SRT_ENABLED (module const, default false this PR → dark-ship);
+  //   (b) responseTimeMs is a finite number (paper path passes nothing → binary;
+  //       any missing/NaN/negative-or-not RT → binary);
+  //   (c) d resolves > 0 (resolveSrtTimeLimit always does for the difficulty map).
+  // The continuous srtOutcome ∈ [0,1] then drives conjunctiveCreditsContinuous,
+  // which is BIT-IDENTICAL to conjunctiveCredits at the binary endpoints. The eloK
+  // step, bWeight, the b anchor, and the precision/Fisher math below are ALL
+  // untouched — SRT modulates ONLY the per-KC credit value.
+  // Units: latency arrives in MILLISECONDS; convert to SECONDS to match d.
+  const rtMs = input.responseTimeMs;
+  const useSrt = SRT_ENABLED && typeof rtMs === 'number' && Number.isFinite(rtMs);
+  let credits: number[];
+  if (useSrt) {
+    const d = resolveSrtTimeLimit(input.difficulty); // seconds (module const)
+    const tSeconds = (rtMs as number) / 1000; // ms → s
+    const srt = srtOutcome(input.outcome === 1, d, tSeconds); // ∈ [0,1]
+    credits = conjunctiveCreditsContinuous(
+      states.map((s) => s.theta),
+      b,
+      srt,
+    );
+  } else {
+    credits = conjunctiveCredits(
+      states.map((s) => s.theta),
+      b,
+      input.outcome,
+    );
+  }
 
   // 4 + 5. Per-KC update + upsert. θ̂ += k · bWeight · credit_k（弱锚 bWeight 降权）。
   for (let i = 0; i < states.length; i++) {
