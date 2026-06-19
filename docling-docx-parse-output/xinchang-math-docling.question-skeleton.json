@@ -1,0 +1,310 @@
+[
+  {
+    "title": "一、选择题（本大题共5小题，每小题4分，共20分．在每小题给出的四个选项中，只有一项是符合题目要求的）",
+    "questions": [
+      {
+        "number": 1,
+        "text_fragments": [
+          "1. 设，则（ ）",
+          "A. 2B. C. 1D."
+        ],
+        "object_counts": {
+          "ole_objects": 4,
+          "vml_images": 4,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 2,
+        "text_fragments": [
+          "2. 已知直线不平行于平面，且，则下列结论成立的是（ ）",
+          "A. 平面内的所有直线与是异面直线B. 平面内不存在与平行的直线",
+          "C. 平面内存在唯一一条直线与平行D. 平面内的所有直线与都相交"
+        ],
+        "object_counts": {
+          "ole_objects": 11,
+          "vml_images": 11,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 3,
+        "text_fragments": [
+          "3. 在下列各组向量中，不可以作为基底的是（ ）",
+          "A. ，B. ，",
+          "C. ，D. ，"
+        ],
+        "object_counts": {
+          "ole_objects": 8,
+          "vml_images": 8,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 4,
+        "text_fragments": [
+          "4. 如图，在梯形中，，，分别为，的中点，为线段的四等分点（靠近点），记，，则（ ）",
+          "[image-or-formula-object]",
+          "A. B.",
+          "C. D."
+        ],
+        "object_counts": {
+          "ole_objects": 15,
+          "vml_images": 15,
+          "drawing_blips": 1,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 5,
+        "text_fragments": [
+          "5. 已知空间内三点A、B、C，满足，在空间内取不同两点（不计顺序）使得这两点与A、B、C可以组成正四棱锥，则方案数为（ ）",
+          "A. 7B. 8C. 9D. 10"
+        ],
+        "object_counts": {
+          "ole_objects": 1,
+          "vml_images": 1,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      }
+    ]
+  },
+  {
+    "title": "二、多选题（本大题共4小题，每小题6分，共24分．在每小题给出的选项中，有多项符合题目要求．全部选对的得6分，部分选对的得部分分，有选错的得0分）",
+    "questions": [
+      {
+        "number": 6,
+        "text_fragments": [
+          "6. 已知点，，，若点G与点A，B，C四点构成平行四边形，则点G的坐标可能是（ ）",
+          "A. B. C. D."
+        ],
+        "object_counts": {
+          "ole_objects": 7,
+          "vml_images": 7,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 7,
+        "text_fragments": [
+          "7. 下列命题正确的是（ ）",
+          "A. 过平面外一点，有且只有一条直线与这个平面垂直",
+          "B. 过平面外一点，有且只有一条直线与这个平面平行",
+          "C. 过直线外一点，有且只有一个平面与这个直线垂直",
+          "D. 过直线外一点，有且只有一个平面与这个直线平行"
+        ],
+        "object_counts": {
+          "ole_objects": 0,
+          "vml_images": 0,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "text-only"
+      },
+      {
+        "number": 8,
+        "text_fragments": [
+          "8. 已知对任意平面向量，把绕其起点沿逆时针方向旋转角得到向量，叫做把点B绕点A沿逆时针方向旋转角得到点P．已知平面内点，点，将点B绕点A沿顺时针方向旋转得到点P，将点B绕点A沿逆时针方向旋转得到点Q，则下列说法正确的是（ ）",
+          "A. 向量",
+          "B. 向量在上的投影向量为",
+          "C. 若动点M满足且，则的最小值为",
+          "D. 若S是外接圆上的动点，则"
+        ],
+        "object_counts": {
+          "ole_objects": 19,
+          "vml_images": 19,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 9,
+        "text_fragments": [
+          "9. 在棱长为2的正方体中，P是棱的中点，点Q在线段，满足，点F为侧面内的一动点，则下列说法正确的为（ ）",
+          "A. 直线与直线所成角为",
+          "B. 若，则F点的轨迹是线段",
+          "C. 若平面，则点F的轨迹长度为",
+          "D. 若点F在线段上，则的最小值是"
+        ],
+        "object_counts": {
+          "ole_objects": 16,
+          "vml_images": 16,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      }
+    ]
+  },
+  {
+    "title": "三、填空题（本大题共4小题，每小题4分，共16分）",
+    "questions": [
+      {
+        "number": 10,
+        "text_fragments": [
+          "10. 在中，已知，，，则____．"
+        ],
+        "object_counts": {
+          "ole_objects": 5,
+          "vml_images": 5,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 11,
+        "text_fragments": [
+          "11. 若满足，则的最大值是_______."
+        ],
+        "object_counts": {
+          "ole_objects": 3,
+          "vml_images": 3,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 12,
+        "text_fragments": [
+          "12. 如图，在中，已知，，，AC边上的中线BN与的角平分线AM相交于点P，则______．",
+          "[image-or-formula-object]"
+        ],
+        "object_counts": {
+          "ole_objects": 6,
+          "vml_images": 6,
+          "drawing_blips": 1,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 13,
+        "text_fragments": [
+          "13. 在三棱锥中，，，棱上分别存在点（包含端点），直线与平面，平面所成角分别为和，则的最大值是______．"
+        ],
+        "object_counts": {
+          "ole_objects": 11,
+          "vml_images": 11,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      }
+    ]
+  },
+  {
+    "title": "四、解答题（本大题共5小题，共60分．解答应写出文字说明、证明过程或演算步骤）",
+    "questions": [
+      {
+        "number": 14,
+        "text_fragments": [
+          "14. 已知．",
+          "（1）求与垂直的单位向量的坐标；",
+          "（2）设，若向量，共线，求k的值．"
+        ],
+        "object_counts": {
+          "ole_objects": 6,
+          "vml_images": 6,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 15,
+        "text_fragments": [
+          "15. 如图，是的中线，，用向量方法证明是直角三角形．",
+          "[image-or-formula-object]"
+        ],
+        "object_counts": {
+          "ole_objects": 4,
+          "vml_images": 4,
+          "drawing_blips": 1,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 16,
+        "text_fragments": [
+          "16.",
+          "如图，测量河对岸的塔高AB时，可以选与塔底B在同一水平面内的两个测点C与D. 现测得，，，并在点C测得塔顶A的仰角为，求塔高.",
+          "[image-or-formula-object]"
+        ],
+        "object_counts": {
+          "ole_objects": 5,
+          "vml_images": 5,
+          "drawing_blips": 1,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 17,
+        "text_fragments": [
+          "17. 如图，是正三角形，和都垂直于平面，且，是的中点．",
+          "[image-or-formula-object]",
+          "（1）求证：平面；",
+          "（2）求异面直线与所成的角的大小；",
+          "（3）求三棱锥的体积．"
+        ],
+        "object_counts": {
+          "ole_objects": 12,
+          "vml_images": 12,
+          "drawing_blips": 1,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 18,
+        "text_fragments": [
+          "18. 已知a，b，c分别为三个内角A，B，C的对边，且．",
+          "（1）求A；",
+          "（2）已知，",
+          "（ⅰ）若的面积为，求b，c；",
+          "（ⅱ）求的面积的最大值．"
+        ],
+        "object_counts": {
+          "ole_objects": 6,
+          "vml_images": 6,
+          "drawing_blips": 0,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      },
+      {
+        "number": 19,
+        "text_fragments": [
+          "19. 如图，直四棱柱的所有棱长均为2，，M，N分别为AD，的中点．",
+          "[image-or-formula-object]",
+          "（1）求证：平面平面；",
+          "（2）若动点P满足，且．",
+          "（ⅰ）若，E为上一动点，且平面ABCD，求EP的最小值；",
+          "（ⅱ）若，点O为三棱锥外接球的球心，求OP的取值范围．"
+        ],
+        "object_counts": {
+          "ole_objects": 12,
+          "vml_images": 12,
+          "drawing_blips": 1,
+          "math_omml": 0
+        },
+        "formula_quality": "incomplete"
+      }
+    ]
+  }
+]

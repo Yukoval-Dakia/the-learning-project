@@ -1,0 +1,1204 @@
+{
+  "docling_version": "2.97.0",
+  "docling_config": {
+    "allowed_formats": [
+      "InputFormat.DOCX"
+    ],
+    "format_options": {
+      "InputFormat.DOCX": {
+        "class": "WordFormatOption",
+        "pipeline_cls": "SimplePipeline"
+      }
+    },
+    "exports": [
+      "markdown",
+      "strict_text",
+      "json",
+      "markdown_with_referenced_images"
+    ]
+  },
+  "docling_result": {
+    "status": "ConversionStatus.SUCCESS",
+    "elapsed_seconds": 60.915,
+    "markdown_path": "/Users/yukoval/yukoval-projects/the-learning-project/docling-docx-parse-output/xinchang-math-docling.md",
+    "strict_text_path": "/Users/yukoval/yukoval-projects/the-learning-project/docling-docx-parse-output/xinchang-math-docling.strict.txt",
+    "json_path": "/Users/yukoval/yukoval-projects/the-learning-project/docling-docx-parse-output/xinchang-math-docling.json",
+    "referenced_markdown_path": "/Users/yukoval/yukoval-projects/the-learning-project/docling-docx-parse-output/xinchang-math-docling.with-image-refs.md",
+    "markdown_chars": 4447,
+    "markdown_non_empty_lines": 220,
+    "question_like_lines": 19,
+    "first_120_markdown_lines": [
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "**2025学年第二学期高一基础知识调测试卷**",
+      "",
+      "**数学试题**",
+      "",
+      "**2026.5**",
+      "",
+      "**一、选择题（本大题共5小题，每小题4分，共20分．在每小题给出的四个选项中，只有一项是符合题目要求的）**",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "1. 设，则（    ）",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "A. 2\tB. \tC. 1\tD.",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "2. 已知直线不平行于平面，且，则下列结论成立的是（    ）",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "A. 平面内的所有直线与是异面直线\tB. 平面内不存在与平行的直线",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "C. 平面内存在唯一一条直线与平行\tD. 平面内的所有直线与都相交",
+      "",
+      "3. 在下列各组向量中，不可以作为基底的是（    ）",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "A. ，\tB. ，",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "C. ，\tD. ，",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "4. 如图，在梯形中，，，分别为，的中点，为线段的四等分点（靠近点），记，，则（    ）",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "A. \tB.",
+      "",
+      "<!-- image -->",
+      "",
+      "<!-- image -->",
+      "",
+      "C. \tD.",
+      "",
+      "<!-- image -->",
+      "",
+      "5. 已知空间内三点 *A* 、 *B* 、 *C* ，满足，在空间内取不同两点（不计顺序）使得这两点与 *A* 、 *B* 、 *C* 可以组成正四棱锥，则方案数为（    ）",
+      "",
+      "A. 7\tB. 8\tC. 9\tD. 10",
+      "",
+      "**二、多选题（本大题共4小题，每小题6分，共24分．在每小题给出的选项中，有多项符合题目要求．全部选对的得6分，部分选对的得部分分，有选错的得0分）**",
+      ""
+    ]
+  },
+  "question_skeleton_path": "/Users/yukoval/yukoval-projects/the-learning-project/docling-docx-parse-output/xinchang-math-docling.question-skeleton.json",
+  "question_skeleton_stats": {
+    "sections": 4,
+    "questions": 19,
+    "questions_with_ole_formula_objects": 18
+  },
+  "docx_package_inspection": {
+    "source": "/Users/yukoval/Downloads/精品解析：浙江省新昌中学、新昌澄潭中学2025-2026学年高一下学期5月知识技能竞赛数学试卷/精品解析：浙江省新昌中学、新昌澄潭中学2025-2026学年高一下学期5月知识技能竞赛数学试卷（原卷版）.docx",
+    "zip_entry_count": 307,
+    "document_xml_bytes": 168707,
+    "paragraph_count_with_text": 61,
+    "question_like_paragraph_count": 24,
+    "option_like_paragraph_count": 21,
+    "media_count": 136,
+    "media_extensions": {
+      ".png": 11,
+      ".wmf": 125
+    },
+    "embedding_count": 151,
+    "ole_object_count": 151,
+    "ole_progids": {
+      "Equation.DSMT4": 151
+    },
+    "referenced_image_count": 159,
+    "referenced_image_samples": [
+      {
+        "rid": "rId5",
+        "target": "media/image1.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId6",
+        "target": "media/image2.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId66",
+        "target": "media/image28.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId183",
+        "target": "media/image84.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId224",
+        "target": "media/image104.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId234",
+        "target": "media/image109.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId246",
+        "target": "media/image114.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId270",
+        "target": "media/image124.png",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId7",
+        "target": "media/image3.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId9",
+        "target": "media/image4.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId11",
+        "target": "media/image5.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId13",
+        "target": "media/image6.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId15",
+        "target": "media/image7.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId17",
+        "target": "media/image8.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId19",
+        "target": "media/image9.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId17",
+        "target": "media/image8.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId15",
+        "target": "media/image7.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId17",
+        "target": "media/image8.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId15",
+        "target": "media/image7.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      },
+      {
+        "rid": "rId17",
+        "target": "media/image8.wmf",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+      }
+    ],
+    "ole_samples": [
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId8",
+        "target": "embeddings/oleObject1.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId10",
+        "target": "embeddings/oleObject2.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId12",
+        "target": "embeddings/oleObject3.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId14",
+        "target": "embeddings/oleObject4.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId16",
+        "target": "embeddings/oleObject5.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId18",
+        "target": "embeddings/oleObject6.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId20",
+        "target": "embeddings/oleObject7.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId21",
+        "target": "embeddings/oleObject8.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId22",
+        "target": "embeddings/oleObject9.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId23",
+        "target": "embeddings/oleObject10.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId24",
+        "target": "embeddings/oleObject11.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId25",
+        "target": "embeddings/oleObject12.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId26",
+        "target": "embeddings/oleObject13.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId27",
+        "target": "embeddings/oleObject14.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId28",
+        "target": "embeddings/oleObject15.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId30",
+        "target": "embeddings/oleObject16.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId32",
+        "target": "embeddings/oleObject17.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId34",
+        "target": "embeddings/oleObject18.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId36",
+        "target": "embeddings/oleObject19.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      },
+      {
+        "ProgID": "Equation.DSMT4",
+        "rid": "rId38",
+        "target": "embeddings/oleObject20.bin",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+      }
+    ],
+    "first_text_paragraphs": [
+      "2025学年第二学期高一基础知识调测试卷",
+      "数学试题",
+      "2026.5",
+      "一、选择题（本大题共5小题，每小题4分，共20分．在每小题给出的四个选项中，只有一项是符合题目要求的）",
+      "1. 设，则（ ）",
+      "A. 2B. C. 1D.",
+      "2. 已知直线不平行于平面，且，则下列结论成立的是（ ）",
+      "A. 平面内的所有直线与是异面直线B. 平面内不存在与平行的直线",
+      "C. 平面内存在唯一一条直线与平行D. 平面内的所有直线与都相交",
+      "3. 在下列各组向量中，不可以作为基底的是（ ）",
+      "A. ，B. ，",
+      "C. ，D. ，",
+      "4. 如图，在梯形中，，，分别为，的中点，为线段的四等分点（靠近点），记，，则（ ）",
+      "A. B.",
+      "C. D.",
+      "5. 已知空间内三点A、B、C，满足，在空间内取不同两点（不计顺序）使得这两点与A、B、C可以组成正四棱锥，则方案数为（ ）",
+      "A. 7B. 8C. 9D. 10",
+      "二、多选题（本大题共4小题，每小题6分，共24分．在每小题给出的选项中，有多项符合题目要求．全部选对的得6分，部分选对的得部分分，有选错的得0分）",
+      "6. 已知点，，，若点G与点A，B，C四点构成平行四边形，则点G的坐标可能是（ ）",
+      "A. B. C. D.",
+      "7. 下列命题正确的是（ ）",
+      "A. 过平面外一点，有且只有一条直线与这个平面垂直",
+      "B. 过平面外一点，有且只有一条直线与这个平面平行",
+      "C. 过直线外一点，有且只有一个平面与这个直线垂直",
+      "D. 过直线外一点，有且只有一个平面与这个直线平行",
+      "8. 已知对任意平面向量，把绕其起点沿逆时针方向旋转角得到向量，叫做把点B绕点A沿逆时针方向旋转角得到点P．已知平面内点，点，将点B绕点A沿顺时针方向旋转得到点P，将点B绕点A沿逆时针方向旋转得到点Q，则下列说法正确的是（ ）",
+      "A. 向量",
+      "B. 向量在上的投影向量为",
+      "C. 若动点M满足且，则的最小值为",
+      "D. 若S是外接圆上的动点，则",
+      "9. 在棱长为2的正方体中，P是棱的中点，点Q在线段，满足，点F为侧面内的一动点，则下列说法正确的为（ ）",
+      "A. 直线与直线所成角为",
+      "B. 若，则F点的轨迹是线段",
+      "C. 若平面，则点F的轨迹长度为",
+      "D. 若点F在线段上，则的最小值是",
+      "三、填空题（本大题共4小题，每小题4分，共16分）",
+      "10. 在中，已知，，，则____．",
+      "11. 若满足，则的最大值是_______.",
+      "12. 如图，在中，已知，，，AC边上的中线BN与的角平分线AM相交于点P，则______．",
+      "13. 在三棱锥中，，，棱上分别存在点（包含端点），直线与平面，平面所成角分别为和，则的最大值是______．"
+    ],
+    "paragraph_objects": [
+      {
+        "text": "2025学年第二学期高一基础知识调测试卷",
+        "ole_objects": 0,
+        "drawing_blips": 2,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "数学试题",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "2026.5",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "一、选择题（本大题共5小题，每小题4分，共20分．在每小题给出的四个选项中，只有一项是符合题目要求的）",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "1. 设，则（ ）",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "A. 2B. C. 1D.",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "2. 已知直线不平行于平面，且，则下列结论成立的是（ ）",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "A. 平面内的所有直线与是异面直线B. 平面内不存在与平行的直线",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "C. 平面内存在唯一一条直线与平行D. 平面内的所有直线与都相交",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "3. 在下列各组向量中，不可以作为基底的是（ ）",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "A. ，B. ，",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "C. ，D. ，",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "4. 如图，在梯形中，，，分别为，的中点，为线段的四等分点（靠近点），记，，则（ ）",
+        "ole_objects": 11,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 11
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "A. B.",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "C. D.",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "5. 已知空间内三点A、B、C，满足，在空间内取不同两点（不计顺序）使得这两点与A、B、C可以组成正四棱锥，则方案数为（ ）",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "A. 7B. 8C. 9D. 10",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "二、多选题（本大题共4小题，每小题6分，共24分．在每小题给出的选项中，有多项符合题目要求．全部选对的得6分，部分选对的得部分分，有选错的得0分）",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "6. 已知点，，，若点G与点A，B，C四点构成平行四边形，则点G的坐标可能是（ ）",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "A. B. C. D.",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "7. 下列命题正确的是（ ）",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "A. 过平面外一点，有且只有一条直线与这个平面垂直",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "B. 过平面外一点，有且只有一条直线与这个平面平行",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "C. 过直线外一点，有且只有一个平面与这个直线垂直",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "D. 过直线外一点，有且只有一个平面与这个直线平行",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "8. 已知对任意平面向量，把绕其起点沿逆时针方向旋转角得到向量，叫做把点B绕点A沿逆时针方向旋转角得到点P．已知平面内点，点，将点B绕点A沿顺时针方向旋转得到点P，将点B绕点A沿逆时针方向旋转得到点Q，则下列说法正确的是（ ）",
+        "ole_objects": 9,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 9
+      },
+      {
+        "text": "A. 向量",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "B. 向量在上的投影向量为",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "C. 若动点M满足且，则的最小值为",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "D. 若S是外接圆上的动点，则",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "9. 在棱长为2的正方体中，P是棱的中点，点Q在线段，满足，点F为侧面内的一动点，则下列说法正确的为（ ）",
+        "ole_objects": 5,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 5
+      },
+      {
+        "text": "A. 直线与直线所成角为",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "B. 若，则F点的轨迹是线段",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "C. 若平面，则点F的轨迹长度为",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "D. 若点F在线段上，则的最小值是",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "三、填空题（本大题共4小题，每小题4分，共16分）",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "10. 在中，已知，，，则____．",
+        "ole_objects": 5,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 5
+      },
+      {
+        "text": "11. 若满足，则的最大值是_______.",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "12. 如图，在中，已知，，，AC边上的中线BN与的角平分线AM相交于点P，则______．",
+        "ole_objects": 6,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 6
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "13. 在三棱锥中，，，棱上分别存在点（包含端点），直线与平面，平面所成角分别为和，则的最大值是______．",
+        "ole_objects": 11,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 11
+      },
+      {
+        "text": "四、解答题（本大题共5小题，共60分．解答应写出文字说明、证明过程或演算步骤）",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "14. 已知．",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "（1）求与垂直的单位向量的坐标；",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（2）设，若向量，共线，求k的值．",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "15. 如图，是的中线，，用向量方法证明是直角三角形．",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "16.",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "如图，测量河对岸的塔高AB时，可以选与塔底B在同一水平面内的两个测点C与D. 现测得，，，并在点C测得塔顶A的仰角为，求塔高.",
+        "ole_objects": 5,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 5
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "17. 如图，是正三角形，和都垂直于平面，且，是的中点．",
+        "ole_objects": 7,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 7
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "（1）求证：平面；",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（2）求异面直线与所成的角的大小；",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（3）求三棱锥的体积．",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "18. 已知a，b，c分别为三个内角A，B，C的对边，且．",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（1）求A；",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "（2）已知，",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "（ⅰ）若的面积为，求b，c；",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（ⅱ）求的面积的最大值．",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "19. 如图，直四棱柱的所有棱长均为2，，M，N分别为AD，的中点．",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "（1）求证：平面平面；",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（2）若动点P满足，且．",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（ⅰ）若，E为上一动点，且平面ABCD，求EP的最小值；",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "（ⅱ）若，点O为三棱锥外接球的球心，求OP的取值范围．",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 0
+      }
+    ],
+    "paragraph_object_samples": [
+      {
+        "text": "2025学年第二学期高一基础知识调测试卷",
+        "ole_objects": 0,
+        "drawing_blips": 2,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "1. 设，则（ ）",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "A. 2B. C. 1D.",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "2. 已知直线不平行于平面，且，则下列结论成立的是（ ）",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "A. 平面内的所有直线与是异面直线B. 平面内不存在与平行的直线",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "C. 平面内存在唯一一条直线与平行D. 平面内的所有直线与都相交",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "A. ，B. ，",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "C. ，D. ，",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "4. 如图，在梯形中，，，分别为，的中点，为线段的四等分点（靠近点），记，，则（ ）",
+        "ole_objects": 11,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 11
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "A. B.",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "C. D.",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "5. 已知空间内三点A、B、C，满足，在空间内取不同两点（不计顺序）使得这两点与A、B、C可以组成正四棱锥，则方案数为（ ）",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "6. 已知点，，，若点G与点A，B，C四点构成平行四边形，则点G的坐标可能是（ ）",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "A. B. C. D.",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "8. 已知对任意平面向量，把绕其起点沿逆时针方向旋转角得到向量，叫做把点B绕点A沿逆时针方向旋转角得到点P．已知平面内点，点，将点B绕点A沿顺时针方向旋转得到点P，将点B绕点A沿逆时针方向旋转得到点Q，则下列说法正确的是（ ）",
+        "ole_objects": 9,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 9
+      },
+      {
+        "text": "A. 向量",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "B. 向量在上的投影向量为",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "C. 若动点M满足且，则的最小值为",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "D. 若S是外接圆上的动点，则",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "9. 在棱长为2的正方体中，P是棱的中点，点Q在线段，满足，点F为侧面内的一动点，则下列说法正确的为（ ）",
+        "ole_objects": 5,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 5
+      },
+      {
+        "text": "A. 直线与直线所成角为",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "B. 若，则F点的轨迹是线段",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "C. 若平面，则点F的轨迹长度为",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "D. 若点F在线段上，则的最小值是",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "10. 在中，已知，，，则____．",
+        "ole_objects": 5,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 5
+      },
+      {
+        "text": "11. 若满足，则的最大值是_______.",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "12. 如图，在中，已知，，，AC边上的中线BN与的角平分线AM相交于点P，则______．",
+        "ole_objects": 6,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 6
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "13. 在三棱锥中，，，棱上分别存在点（包含端点），直线与平面，平面所成角分别为和，则的最大值是______．",
+        "ole_objects": 11,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 11
+      },
+      {
+        "text": "14. 已知．",
+        "ole_objects": 1,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 1
+      },
+      {
+        "text": "（1）求与垂直的单位向量的坐标；",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      },
+      {
+        "text": "（2）设，若向量，共线，求k的值．",
+        "ole_objects": 3,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 3
+      },
+      {
+        "text": "15. 如图，是的中线，，用向量方法证明是直角三角形．",
+        "ole_objects": 4,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 4
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "如图，测量河对岸的塔高AB时，可以选与塔底B在同一水平面内的两个测点C与D. 现测得，，，并在点C测得塔顶A的仰角为，求塔高.",
+        "ole_objects": 5,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 5
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "17. 如图，是正三角形，和都垂直于平面，且，是的中点．",
+        "ole_objects": 7,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 7
+      },
+      {
+        "text": "",
+        "ole_objects": 0,
+        "drawing_blips": 1,
+        "math_omml": 0,
+        "vml_images": 0
+      },
+      {
+        "text": "（1）求证：平面；",
+        "ole_objects": 2,
+        "drawing_blips": 0,
+        "math_omml": 0,
+        "vml_images": 2
+      }
+    ]
+  }
+}
