@@ -220,19 +220,34 @@ export const RateEvent = z.object({
 });
 export type RateEventT = z.infer<typeof RateEvent>;
 
-// 6b. CorrectEvent — actor=user / action='correct' / subject='event'
+// 6b. CorrectEvent — actor=user|agent / action='correct' / subject='event'
 //
 // First-class semantic correction for append-only event history. Unlike
 // RateEvent.rating='rollback', this says how projections should treat a prior
 // event: superseded, retracted, marked wrong, or restored.
+//
+// ATTRIBUTION (YUK-344): a correction can be authored by the user OR by an
+// autonomous agent. The two authoring lanes are:
+//   - user lane:  actor_kind='user',  actor_ref='self'  (UI rejudge / correct /
+//                 revert — a human-initiated semantic correction);
+//   - agent lane: actor_kind='agent', actor_ref=<agent ref> (e.g. 'dreaming' —
+//                 the nightly edge reconcile SUPERSEDE auto-archives a contradicted
+//                 live edge with no human in the loop; mirrors the actor fields the
+//                 `generate` events on the same axis use, actor_kind='agent').
+// The pairing is enforced below: 'user' MUST be 'self' (no agent masquerading as
+// a user correction), 'agent' MUST NOT be 'self' (so an autonomous supersede is
+// never mis-recorded as a user correction). Correction consumers
+// (corrections.ts getCorrectionStatuses, inbox / proposal-status projections) read
+// only correction_kind + replacement_event_id, so they are attribution-agnostic
+// and unaffected by which lane authored the row.
 
 export const CorrectionKind = z.enum(['supersede', 'retract', 'mark_wrong', 'restore']);
 export type CorrectionKindT = z.infer<typeof CorrectionKind>;
 
 export const CorrectEvent = z
   .object({
-    actor_kind: z.literal('user'),
-    actor_ref: z.literal('self'),
+    actor_kind: z.enum(['user', 'agent']),
+    actor_ref: z.string().min(1),
     action: z.literal('correct'),
     subject_kind: z.literal('event'),
     subject_id: z.string(),
@@ -246,6 +261,23 @@ export const CorrectEvent = z
     ...baseOptionalFields,
   })
   .superRefine((data, ctx) => {
+    // Attribution pairing — keep the user-correction lane (user/self) intact and
+    // reserve the agent lane for a non-self ref. A 'user' correction that is not
+    // 'self', or an 'agent' correction tagged 'self', is a mis-attribution.
+    if (data.actor_kind === 'user' && data.actor_ref !== 'self') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "actor_ref must be 'self' when actor_kind='user'",
+        path: ['actor_ref'],
+      });
+    }
+    if (data.actor_kind === 'agent' && data.actor_ref === 'self') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "actor_ref must be a non-'self' agent ref when actor_kind='agent'",
+        path: ['actor_ref'],
+      });
+    }
     if (data.payload.correction_kind === 'supersede' && !data.payload.replacement_event_id) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

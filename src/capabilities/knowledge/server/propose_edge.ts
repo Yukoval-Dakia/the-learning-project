@@ -13,6 +13,8 @@ import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
+import { writeCostLedger } from '@/server/ai/log';
+import { glmChatCostCny } from '@/server/ai/pricing';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
@@ -444,7 +446,25 @@ export async function runEdgeProposeAndWrite(
           const judge =
             params.judgeReconcileFn ??
             ((cand: EdgeCandidate, nbrs: EdgeNeighbor[]) =>
-              judgeEdgeReconcile(cand, nbrs, { env: params.env as never }));
+              judgeEdgeReconcile(cand, nbrs, {
+                env: params.env as never,
+                // YUK-344: ledger live reconcile GLM tokens to cost_ledger, mirroring
+                // the memory reconcile path (triggers.ts onUsage / YUK-359). Best-effort
+                // — a ledger write failure must never fail reconcile, so swallow + log.
+                // Only the LIVE judge bills; the injected test fn (judgeReconcileFn) has
+                // no GLM call, so it correctly never reaches this onUsage.
+                onUsage: (usage) => {
+                  void writeCostLedger(params.db, {
+                    task_kind: 'edge_reconcile',
+                    provider: 'glm',
+                    model: 'glm-5.2',
+                    cost: glmChatCostCny(usage.promptTokens, usage.completionTokens),
+                    currency: 'CNY',
+                    tokens_in: usage.promptTokens,
+                    tokens_out: usage.completionTokens,
+                  }).catch((err) => console.error('[edge_reconcile] writeCostLedger failed', err));
+                },
+              }));
           // Defensive re-apply of the confidence threshold: the live
           // judgeEdgeReconcile already applies it, so this is an idempotent no-op
           // there; for an INJECTED fn it guarantees a low-confidence SUPERSEDE is
@@ -618,10 +638,15 @@ const CORE_RELATION_TYPES = new Set<string>([
 /**
  * ADR-0034 §3 / YUK-344 增量 2 — apply a reconcile SUPERSEDE decision.
  *
- * Write-ahead idempotent sequence (all inside ONE transaction so a crash either
- * applies everything or nothing; the write-ahead log row is committed-then-marked
- * within the same tx, and every step is independently idempotent on replay):
- *   1. write-ahead-log the SUPERSEDE plan (planned_at set, applied_at NULL);
+ * Atomic single-transaction sequence (all inside ONE `db.transaction`, so a crash
+ * rolls back EVERYTHING — including the `edge_reconciliation_log` row — and there is
+ * nothing to replay). The log row is an AUDIT / PROVENANCE record of the supersede,
+ * not a write-ahead replay cursor: it captures the decision (action, confidence,
+ * superseded_edge_id, llm_raw) for observability. The no-double-apply guard is the
+ * `knowledge_edge` UNIQUE(from,to,relation_type) constraint (a re-proposed duplicate
+ * candidate is `skipped_duplicate_edge` upstream before ever reaching this apply),
+ * NOT deterministic ids — every id below is a fresh `createId()`.
+ *   1. audit-log the SUPERSEDE plan (planned_at set; applied_at stamped in step 6);
  *   2. write the NEW edge: a `generate` knowledge_edge event (its id is the
  *      correction's `replacement_event_id`) + the real live `knowledge_edge` row
  *      (createKnowledgeEdge — single-owner INSERT);
@@ -634,7 +659,9 @@ const CORE_RELATION_TYPES = new Set<string>([
  *   5. write the `correct` event: correction_kind='supersede', subject targeting
  *      the OLD edge's archive-provenance event, replacement_event_id = the NEW
  *      edge's generate event (epistemic PROVENANCE only — the archive in step 3 is
- *      what actually removes the edge);
+ *      what actually removes the edge). Attributed to the dreaming AGENT
+ *      (actor_kind='agent', actor_ref='dreaming') — this is an autonomous supersede,
+ *      NOT a user correction (YUK-344);
  *   6. mark the write-ahead log row applied.
  *
  * Returns the new edge's id (for intra-batch live-mesh bookkeeping).
@@ -668,7 +695,7 @@ async function applyEdgeSupersede(
   let newEdgeId = '';
 
   await db.transaction(async (tx) => {
-    // 1) write-ahead the plan (applied_at NULL).
+    // 1) audit-log the SUPERSEDE plan (applied_at stamped in step 6, same tx).
     await insertEdgePlannedRows(tx, [logRow]);
 
     // 2) NEW live edge row first (assigns its id), then its `generate` provenance
@@ -727,10 +754,17 @@ async function applyEdgeSupersede(
     });
 
     // 5) CorrectionKind supersede event — epistemic PROVENANCE only (ADR-0034 §4).
+    // YUK-344 attribution fix: this is an AUTONOMOUS nightly supersede (no human in
+    // the loop), so it is attributed to the dreaming AGENT, NOT user/self. The
+    // CorrectEvent schema now accepts the agent lane (actor_kind='agent', a non-'self'
+    // ref); the user-correction lane (UI rejudge/correct/revert) still writes
+    // user/self. Consumers (getCorrectionStatuses, deriveProposalStatus, inbox /
+    // proposal-status projections) read only correction_kind + replacement_event_id,
+    // so this attribution change does not alter the projected correction state.
     await writeEvent(tx, {
       id: correctionEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
       action: 'correct',
       subject_kind: 'event',
       subject_id: oldArchiveGenerateEventId,
@@ -745,7 +779,8 @@ async function applyEdgeSupersede(
       created_at: now,
     });
 
-    // 6) Mark the write-ahead log row applied (same tx — atomic with the apply).
+    // 6) Stamp the audit-log row applied_at (same tx — atomic with the apply, so
+    //    a committed log row always reflects a fully-applied supersede).
     await markEdgeReconcileApplied(tx, logRow.id);
   });
 

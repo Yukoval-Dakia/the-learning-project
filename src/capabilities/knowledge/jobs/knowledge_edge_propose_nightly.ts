@@ -50,6 +50,16 @@ export interface NightlyResult {
   skipped_duplicate_pending: number;
   // P5.4 §5-Q5 / YUK-175 — batch edge proposals folded by the L1 rubric floor.
   folded_rubric_rejected: number;
+  // ADR-0034 §2 / YUK-344 — TOPOLOGY gate hard-rejects (cycle / direction
+  // contradiction). Previously spread through {...stats} but untyped here.
+  folded_topology_rejected: number;
+  // ADR-0034 §2 / YUK-344 — TOPOLOGY transitive-redundancy WARNINGS (proposed live
+  // but marked). Previously spread through {...stats} but untyped here.
+  warned_transitive_redundancy: number;
+  // ADR-0034 §3 / YUK-344 增量 2 — RECONCILE SUPERSEDE applied (old live edge
+  // archived + new live edge written). Previously spread through {...stats} but
+  // untyped here.
+  reconcile_superseded: number;
 }
 
 /**
@@ -71,6 +81,9 @@ export async function runKnowledgeEdgeProposeNightly(
       skipped_duplicate_edge: 0,
       skipped_duplicate_pending: 0,
       folded_rubric_rejected: 0,
+      folded_topology_rejected: 0,
+      warned_transitive_redundancy: 0,
+      reconcile_superseded: 0,
     };
   }
 
@@ -79,6 +92,12 @@ export async function runKnowledgeEdgeProposeNightly(
     db,
     recentFailures: attempts,
     runTaskFn,
+    // YUK-344: pass env explicitly so the live edge-reconcile judge resolves its
+    // GLM (ZHIPU) config from the same env the rest of the pipeline uses. The live
+    // judge falls back to process.env when env is undefined, but threading it here
+    // keeps the nightly handler aligned with judgeEdgeReconcile({ env }) and the
+    // runTask provenance ctx (both env-scoped).
+    env: process.env,
     subjectProfile: await resolveDominantSubjectProfile(db, attempts),
   });
 
