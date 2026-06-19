@@ -12,10 +12,11 @@
 
 ## NOW（在推的一条线）
 
-- ✅ 两个输入都回来了：代码体检（loop wiring 真相）+ 冷启外部研究（`wl8czd2vc`，source-vetted）。
-- **冷启 n=1-safe 栈（研究结论）**：KG prereq 结构剪空间 → LLM **模拟/比较式** elicit 难度 b（**绝不 1-10 直评=噪声**，信相对排序+宽方差）→ EAP/AutoElicit 给带方差的 θ/p(L) 先验（1 题也稳）→ 1PL 半分/最大信息 placement 探针逐题收敛 → FSRS 默认参数调度，judge 锚正确答案+约束 cause taxonomy 归因 misconception。**从不估** a/c/slip/guess。诚实警告：LLM 难度只是 moderate（best ρ~0.43-0.50、系统低估、prompt 敏感）；misconception conjecture 是最弱环（命中具体干扰项仅 31-47%）→ 目录靠 subject 声明、归因靠 live judge、保留 unknown 逃生口；**强模型反而模拟学生更差**（可能高估成功率）。
-- **待 owner 拍 fork**：每天打开的钩子 = 机械闭环 vs 诊断 payoff？→ 决定 profile 冷启前置程度。
-- 然后：合成统一计划（loop-wiring Step1-3 + 冷启 priors + day-one placement 旅程）。
+- ✅ 三个输入齐了，全汇合到同一结论 **「缺的是 day-one 入口」**：代码体检（loop wiring 真相）+ 冷启外部研究（`wl8czd2vc`）+ 冷启设计 doc（`docs/design/2026-06-20-cold-start-day-one-design.md`）+ UI 完全体 gap 分析（claude design fa5b0bb6）。
+- **UI 完全体覆盖稳态 app + A1-A8 + 空/错态几乎无懈**；唯一承重缺口 = **新用户冷启首会流（onboarding→goal→placement→起始档案）完全 ABSENT**——冷 DB 落空 /today。UI gap 与代码 gap 完全对齐。
+- **冷启 n=1-safe 栈**：KG 结构剪空间 → LLM **模拟/比较式** elicit b（绝不 1-10 直评）→ EAP/AutoElicit 带方差 θ/p(L) 先验 → 1PL placement 探针收敛 → FSRS 默认参数 + judge 锚答案+约束 taxonomy 归因。**从不估** a/c/slip/guess。诚实警告：LLM 难度只 moderate（best ρ~0.43-0.50、系统低估）→ 靠 owner anchor 题校 offset + 宽方差 + 可见不确定性；misconception conjecture 最弱（目录靠 subject 声明、归因靠 live judge）；强模型反而模拟学生更差。
+- **inc 序（设计 doc §5）**：inc-A owner fixed-anchor 写路径（**最高杠杆**，`source='fixed_anchor'` 槽已存无 writer，纯 add）→ inc-C onboarding/goal 入口（UI，需 pre-flight）→ inc-B placement 探针（flag，cold-DB only）→ inc-E prereq mastery 传播（重，flag+审计）→ inc-D AutoElicit / inc-F 模拟 elicit。
+- **待 owner**：设计 doc §6 的 7 个问题（见下）+ 钩子 fork（机械闭环 vs 诊断 payoff）。
 
 ## NEXT（就绪，排队）
 
