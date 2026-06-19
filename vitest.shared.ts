@@ -143,6 +143,13 @@ export const fastTestInclude = [
   // type-only/erased，@/db/schema 是 table objects 不连库）。subject 派生/内存 walk 的 DB 测在
   // candidate-signals.db.test.ts / state.db.test.ts。同 personalized-difficulty.test.ts 显式登记理由。
   'src/server/mastery/family-key.test.ts',
+  // YUK-348 (B1 four-engine soft-track inc-1) — BKT forward estimator 纯函数单测（result shape /
+  // pLFinal 升降方向 / 空·极短序列 prior-echo 红线）。Pure no-DB: imports 仅 ./kt-estimator
+  // （纯算术 + 命名常量，零 IO，无 @/db/client / postgres / drizzle / PgBoss）。soft-track 写者
+  // 的 db 测在 kt-calibration.db.test.ts / kt_estimate_nightly.db.test.ts。src/server/mastery/**
+  // 无 unit glob，故必须显式列出，否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer
+  // 分区（personalized-difficulty.test.ts 同款）。
+  'src/server/mastery/kt-estimator.test.ts',
   // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
   // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
   // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`

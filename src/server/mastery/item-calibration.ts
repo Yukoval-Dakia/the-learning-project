@@ -4,7 +4,9 @@
 // 只允许出现在 src/server/mastery/。本模块是 ItemPriorTask backfill 的 applier；
 // θ̂ 更新路径（mastery/state.ts）只**读** item_calibration.b（item-半边锁死 G4）。
 //
-// 软轨列（irt_a/irt_c/cdm_json/kt_json）本 wave 不产出 → NULL（audit allowlist）。
+// 软轨列：本 applier 不产出，留 NULL。irt_a/irt_c/cdm_json 仍 NULL（audit allowlist）；
+// kt_json 由独立软轨写者 kt-calibration.ts applyKtEstimate 经夜扫 UPDATE 落库（YUK-348，
+// BKT forward sink，纯持久化零下游消费者，ADR-0035 决定 #4）——硬轨 applier 不碰它。
 
 import { newId } from '@/core/ids';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
