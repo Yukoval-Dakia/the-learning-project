@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DIFFICULTY_PROXY_WEIGHT,
+  SRT_ENABLED,
   conjunctiveCredits,
+  conjunctiveCreditsContinuous,
   difficultyToLogitB,
   eloK,
   expectedScore,
   fisherInformation,
+  resolveSrtTimeLimit,
+  srtOutcome,
   thetaSe,
   thetaToMastery,
   updateTheta,
@@ -257,5 +261,176 @@ describe('thetaToMastery (B1 double-truth fix — θ̂ → p(L) display projecti
     // evidence_count < 3.
     expect(thetaToMastery(0.3)).toBeGreaterThan(0.5);
     expect(thetaToMastery(-0.3)).toBeLessThan(0.5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A1 (YUK-433) — SRT (Signed Residual Time) scoring. Continuous, time-aware
+// outcome-analog that slots into the existing `outcome − p` credit form. Maris &
+// van der Maas 2012: per-item time-limit d is the discrimination DESIGN CONSTANT
+// (implicit 2PL, zero cross-examinee variance). CONSERVATIVE bounded modulation —
+// flag-on SRT NEVER exceeds the binary magnitude.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SRT_ENABLED flag', () => {
+  it('defaults to false (dark-ship this PR — flip after RT accumulates)', () => {
+    expect(SRT_ENABLED).toBe(false);
+  });
+});
+
+describe('srtOutcome (continuous time-aware outcome-analog in [0,1])', () => {
+  it('fast-correct (t→0, r=1) reproduces binary correct = 1.0', () => {
+    expect(srtOutcome(true, 30, 0)).toBeCloseTo(1.0, 12);
+    expect(srtOutcome(true, 30, 0.0001)).toBeGreaterThan(0.999);
+  });
+
+  it('slow-correct (t≥d, r=0) = 0.5 — SMALLER credit than binary correct', () => {
+    expect(srtOutcome(true, 30, 30)).toBeCloseTo(0.5, 12); // t == d boundary
+    expect(srtOutcome(true, 30, 45)).toBeCloseTo(0.5, 12); // t > d clamps to r=0
+  });
+
+  it('fast-wrong (t→0, r=1) reproduces binary wrong = 0.0', () => {
+    expect(srtOutcome(false, 30, 0)).toBeCloseTo(0.0, 12);
+    expect(srtOutcome(false, 30, 0.0001)).toBeLessThan(0.001);
+  });
+
+  it('slow-wrong (t≥d, r=0) = 0.5 — LESS penalty than binary wrong', () => {
+    expect(srtOutcome(false, 30, 30)).toBeCloseTo(0.5, 12); // t == d boundary
+    expect(srtOutcome(false, 30, 45)).toBeCloseTo(0.5, 12); // t > d clamps to r=0
+  });
+
+  it('output stays bounded in [0,1] across the t range (never exceeds binary)', () => {
+    for (const t of [-5, 0, 5, 15, 30, 60, 1000]) {
+      const c = srtOutcome(true, 30, t);
+      const w = srtOutcome(false, 30, t);
+      expect(c).toBeGreaterThanOrEqual(0.5); // correct never below midpoint
+      expect(c).toBeLessThanOrEqual(1.0);
+      expect(w).toBeGreaterThanOrEqual(0.0);
+      expect(w).toBeLessThanOrEqual(0.5); // wrong never above midpoint
+    }
+  });
+
+  it('clamps t < 0 to r=1 (defensive — negative latency treated as instant)', () => {
+    expect(srtOutcome(true, 30, -10)).toBeCloseTo(1.0, 12);
+    expect(srtOutcome(false, 30, -10)).toBeCloseTo(0.0, 12);
+  });
+
+  it('monotone: faster-correct ≥ slower-correct; faster-wrong penalty ≥ slower-wrong', () => {
+    expect(srtOutcome(true, 30, 5)).toBeGreaterThan(srtOutcome(true, 30, 20));
+    // faster wrong → smaller srtOutcome → harder penalty (further below 0.5).
+    expect(srtOutcome(false, 30, 5)).toBeLessThan(srtOutcome(false, 30, 20));
+  });
+
+  it('mid-time correct sits strictly between binary-correct and the 0.5 slow floor', () => {
+    const mid = srtOutcome(true, 30, 15); // r = 0.5 → 0.75
+    expect(mid).toBeCloseTo(0.75, 12);
+    expect(mid).toBeGreaterThan(0.5);
+    expect(mid).toBeLessThan(1.0);
+  });
+});
+
+describe('resolveSrtTimeLimit (population-seeded module-const d, in SECONDS)', () => {
+  it('returns a positive d in seconds for every difficulty 1..5', () => {
+    for (const diff of [1, 2, 3, 4, 5]) {
+      const d = resolveSrtTimeLimit(diff);
+      expect(d).toBeGreaterThan(0);
+      expect(Number.isFinite(d)).toBe(true);
+    }
+  });
+
+  it('is monotone non-decreasing in difficulty (harder item → more time allowed)', () => {
+    expect(resolveSrtTimeLimit(1)).toBeLessThanOrEqual(resolveSrtTimeLimit(3));
+    expect(resolveSrtTimeLimit(3)).toBeLessThanOrEqual(resolveSrtTimeLimit(5));
+  });
+
+  it('falls back to a sane positive default for out-of-range difficulty', () => {
+    expect(resolveSrtTimeLimit(0)).toBeGreaterThan(0);
+    expect(resolveSrtTimeLimit(99)).toBeGreaterThan(0);
+    expect(resolveSrtTimeLimit(Number.NaN)).toBeGreaterThan(0);
+  });
+});
+
+describe('conjunctiveCreditsContinuous (SRT-driven, binary-bit-identical at {0,1})', () => {
+  it('REGRESSION: continuous outcome=1 is BIT-IDENTICAL to binary conjunctiveCredits(…,1)', () => {
+    for (const thetas of [[0.5], [2, -1], [0, -3], [4, 4], [1, 0.2, -2]]) {
+      const binary = conjunctiveCredits(thetas, 0, 1);
+      const cont = conjunctiveCreditsContinuous(thetas, 0, 1);
+      expect(cont.length).toBe(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        expect(cont[i]).toBe(binary[i]); // exact float equality — same code path
+      }
+    }
+  });
+
+  it('REGRESSION: continuous outcome=0 is BIT-IDENTICAL to binary conjunctiveCredits(…,0)', () => {
+    for (const thetas of [[0.5], [2, -1], [0, -3], [4, 4], [1, 0.2, -2]]) {
+      const binary = conjunctiveCredits(thetas, 0, 0);
+      const cont = conjunctiveCreditsContinuous(thetas, 0, 0);
+      expect(cont.length).toBe(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        expect(cont[i]).toBe(binary[i]);
+      }
+    }
+  });
+
+  it('empty input returns empty (no KCs → no-op)', () => {
+    expect(conjunctiveCreditsContinuous([], 0, 1)).toEqual([]);
+    expect(conjunctiveCreditsContinuous([], 0, 0.7)).toEqual([]);
+  });
+
+  it('single KC: credit = (srtOutcome − p), continuous residual form preserved', () => {
+    const p = expectedScore(0.5, 0);
+    expect(conjunctiveCreditsContinuous([0.5], 0, 0.75)[0]).toBeCloseTo(0.75 - p, 12);
+    expect(conjunctiveCreditsContinuous([0.5], 0, 0.25)[0]).toBeCloseTo(0.25 - p, 12);
+    // outcome = p → zero residual.
+    expect(conjunctiveCreditsContinuous([0.5], 0, p)[0]).toBeCloseTo(0, 12);
+  });
+
+  it('slow correct (outcome=0.75 vs binary 1.0): smaller positive credit than binary', () => {
+    const binary = conjunctiveCreditsContinuous([0.5], 0, 1); // = (1 − p)
+    const slow = conjunctiveCreditsContinuous([0.5], 0, 0.75);
+    expect(slow[0]).toBeGreaterThan(0);
+    expect(slow[0]).toBeLessThan(binary[0]); // fast-correct moves θ MORE than slow-correct
+  });
+
+  it('slow wrong (outcome=0.25 vs binary 0.0): smaller penalty than binary', () => {
+    const binary = conjunctiveCreditsContinuous([0.5], 0, 0); // = −p
+    const slow = conjunctiveCreditsContinuous([0.5], 0, 0.25);
+    expect(slow[0]).toBeLessThan(0);
+    expect(slow[0]).toBeGreaterThan(binary[0]); // slow-wrong penalised LESS than fast-wrong
+  });
+
+  it('outcome = 0.5 (slow answer, no time signal): zero credit direction (no movement scale)', () => {
+    // Multi-KC: srtOutcome=0.5 → magnitude m=0 → every KC credit is 0.
+    const credits = conjunctiveCreditsContinuous([2, -1], 0, 0.5);
+    for (const c of credits) expect(c).toBeCloseTo(0, 12);
+  });
+
+  it('multi-KC continuous PRESERVES the (1−p_k) sensitivity assignment (weaker KC moves more)', () => {
+    // Correct-direction continuous outcome (0.8). The (1−p_k) sensitivity must
+    // still order the bumps: weaker KC (lower p) gets the larger credit.
+    const [cA, cB] = conjunctiveCreditsContinuous([2, -1], 0, 0.8);
+    expect(cA).toBeGreaterThan(0);
+    expect(cB).toBeGreaterThan(0);
+    expect(cB).toBeGreaterThan(cA); // weaker KC (−1) has larger (1−p) sensitivity
+  });
+
+  it('multi-KC wrong-direction continuous PRESERVES sparing the mastered KC', () => {
+    // Wrong-direction continuous outcome (0.2). The mastered KC (A) must still be
+    // spared relative to the neutral KC (B).
+    const [cA, cB] = conjunctiveCreditsContinuous([2, 0], 0, 0.2);
+    expect(cA).toBeLessThan(0);
+    expect(cB).toBeLessThan(0);
+    expect(Math.abs(cB)).toBeGreaterThan(Math.abs(cA));
+  });
+
+  it('multi-KC continuous magnitude is bounded by the binary magnitude (conservative)', () => {
+    // A correct-direction continuous outcome (0.7) must move each KC no MORE than
+    // the binary correct credit for the same KC — the bounded property.
+    const binary = conjunctiveCreditsContinuous([2, -1], 0, 1);
+    const cont = conjunctiveCreditsContinuous([2, -1], 0, 0.7);
+    for (let i = 0; i < binary.length; i++) {
+      expect(Math.abs(cont[i])).toBeLessThanOrEqual(Math.abs(binary[i]) + 1e-12);
+    }
   });
 });

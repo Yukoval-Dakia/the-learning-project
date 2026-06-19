@@ -137,6 +137,144 @@ export function difficultyToLogitB(difficulty: number, scale = 0.85): number {
 export const DIFFICULTY_PROXY_WEIGHT = 0.3;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// A1 (YUK-433) — SRT (Signed Residual Time) scoring on the θ̂ credit hot path.
+//
+// Maris & van der Maas (2012): the *signed residual time* is a sufficient
+// statistic for θ in a speed-accuracy IRT model. Under their construction the
+// per-item time-limit d plays the role of the 2PL discrimination a — but a is
+// un-estimable per-examinee, so we collapse it into an owner-controlled DESIGN
+// CONSTANT d (same 2PL family as the current locked-b Elo: zero cross-examinee
+// variance, d is a fixed feature of the item, not a fitted parameter).
+//
+// CONSERVATIVE route (this PR): we do NOT rewrite the SRT likelihood. We replace
+// the BINARY {0,1} `outcome` that feeds the existing `outcome − p` Elo credit
+// with a CONTINUOUS time-aware analog `srtOutcome ∈ [0,1]`. Everything downstream
+// (eloK, bWeight, conjunctive credit-assignment, precision/Fisher) is untouched.
+//
+// FLAG: SRT_ENABLED gates the whole thing as a module-level constant (mirrors the
+//   DIFFICULTY_PROXY_WEIGHT module-const pattern above — NO config table, NO env).
+//   Default false this PR = ship dark; flip in a follow-up once response-time data
+//   has accumulated. When false the θ̂ math is BYTE-IDENTICAL to today.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Master flag for SRT scoring on the θ̂ credit path. **Default false (dark-ship).**
+ *
+ * false → the hot path uses the pure binary outcome exactly as before (the
+ *   srtOutcome / conjunctiveCreditsContinuous code is never reached → bit-identical).
+ * true  → AND a response time is available AND d resolves → the continuous srtOutcome
+ *   drives the credit. Missing-RT still falls back to binary even when true.
+ *
+ * Flipped in a follow-up (not this PR) after RT accumulates. Phase-deferred: the
+ * follow-up that flips this also replaces resolveSrtTimeLimit's population-seeded d
+ * with a per-KC rolling RT quantile (see YUK-433 follow-up).
+ */
+export const SRT_ENABLED = false;
+
+function clamp01(x: number): number {
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
+}
+
+/**
+ * SRT outcome-analog ∈ [0,1] that slots into the existing `outcome − p` credit form.
+ *
+ * `d` = per-item time-limit (the 2PL discrimination design constant), `t` = the
+ * examinee's response time. BOTH IN THE SAME UNIT (seconds — see resolveSrtTimeLimit
+ * + the ms→s conversion at the state.ts wiring seam). Residual-time fraction:
+ *
+ *   r = clamp((d − t) / d, 0, 1)   // fast t→0 ⇒ r→1; slow t≥d ⇒ r=0; t<0 ⇒ r=1
+ *
+ *   correct: 0.5 + 0.5·r   wrong: 0.5 − 0.5·r
+ *
+ * CONSERVATIVE / BOUNDED — the flag-on outcome NEVER exceeds the binary magnitude:
+ *   - fast-correct (r=1) → 1.0  == binary correct (regression anchor)
+ *   - slow-correct (r=0) → 0.5  <  1.0 (less credit than binary; θ moves less)
+ *   - fast-wrong   (r=1) → 0.0  == binary wrong (regression anchor)
+ *   - slow-wrong   (r=0) → 0.5  >  0.0 (less penalty than binary; real struggle)
+ * So fast-correct moves θ MORE than slow-correct, and fast-wrong is penalised
+ * HARDER than slow-wrong, while staying inside the binary [0,1] envelope.
+ */
+export function srtOutcome(correct: boolean, d: number, t: number): number {
+  // d ≤ 0 is a config bug (resolveSrtTimeLimit always returns > 0); guard so a bad
+  // d degrades to the binary endpoints (r=0 → 0.5 is the most conservative fallback;
+  // here we treat a non-positive limit as "no time signal" → midpoint contribution).
+  if (!(d > 0)) return correct ? 0.5 : 0.5;
+  const r = clamp01((d - t) / d);
+  return correct ? 0.5 + 0.5 * r : 0.5 - 0.5 * r;
+}
+
+/**
+ * Population-seeded per-item time-limit d (the SRT design constant), IN SECONDS.
+ *
+ * COLD-START source: a difficulty(1-5)→seconds map. This is a population seed, NOT a
+ * fitted parameter — it is owner-controlled and identical across examinees (zero
+ * cross-examinee variance, the whole point of collapsing the un-estimable 2PL a into d).
+ *
+ * Phase-deferred (do NOT build now): a follow-up replaces this with a per-KC rolling
+ * RT quantile (e.g. the KC's median/p60 response time) once RT data accumulates — see
+ * the YUK-433 follow-up that also flips SRT_ENABLED. Until then every item of a given
+ * difficulty shares the seed.
+ *
+ * NOT stored in / read from kt_json (ADR-0035 red-line: kt_json is a pure persistence
+ * sink with zero downstream consumer — d is a pure module constant).
+ */
+export function resolveSrtTimeLimit(difficulty: number): number {
+  // difficulty → allotted seconds. Harder items get more time (monotone). Out-of-range
+  // / NaN → the difficulty-3 default. Placeholder magnitudes, owner-tunable.
+  const map: Record<number, number> = { 1: 20, 2: 25, 3: 30, 4: 40, 5: 50 };
+  const d = map[Math.round(difficulty)];
+  return d ?? 30;
+}
+
+/**
+ * Continuous variant of conjunctiveCredits: accepts a continuous `outcome ∈ [0,1]`
+ * (the srtOutcome) instead of only {0,1}, and reduces BIT-IDENTICALLY to the binary
+ * conjunctiveCredits when `outcome` is exactly 0 or 1 (regression anchor).
+ *
+ * Decomposition (mirrors conjunctiveCredits' two branches, scaled by direction magnitude):
+ *   - single KC (or empty): standard residual `outcome − p` (continuous Elo residual).
+ *   - multi-KC, outcome ≥ 0.5 (correct-direction): credit_k = (1 − p_k) · m,
+ *       m = 2·(outcome − 0.5) ∈ [0,1]  ⇒ m=1 at outcome=1 reproduces the binary (1−p_k).
+ *   - multi-KC, outcome < 0.5 (wrong-direction): credit_k = max(−(1−p_k)·odds, −1) · m,
+ *       m = 2·(0.5 − outcome) ∈ [0,1]  ⇒ m=1 at outcome=0 reproduces the binary
+ *       clamped −(1−p_k)·odds. The (1−p_k) SENSITIVITY (weaker KC moves most) and the
+ *       per-KC magnitude clamp are preserved; m only scales the whole vector toward 0
+ *       as the answer slows (outcome→0.5 ⇒ m→0 ⇒ no movement).
+ *
+ * EXACT binary equivalence: for outcome ∈ {0,1} this delegates to conjunctiveCredits so
+ * the bytes are identical, not merely close (the regression test asserts `toBe`).
+ */
+export function conjunctiveCreditsContinuous(
+  thetas: number[],
+  b: number,
+  outcome: number,
+): number[] {
+  // Bit-identical regression anchor: at the binary endpoints, delegate to the exact
+  // same code path the binary hot path uses today.
+  if (outcome === 1) return conjunctiveCredits(thetas, b, 1);
+  if (outcome === 0) return conjunctiveCredits(thetas, b, 0);
+
+  const ps = thetas.map((t) => expectedScore(t, b));
+  if (ps.length <= 1) {
+    // 单 KC（或空）→ continuous Elo residual (outcome − p)，与二元 (x − p) 同形。
+    return ps.map((p) => outcome - p);
+  }
+  if (outcome >= 0.5) {
+    // correct-direction，magnitude m = 2·(outcome − 0.5) ∈ [0,1]。
+    const m = 2 * (outcome - 0.5);
+    return ps.map((p) => (1 - p) * m);
+  }
+  // wrong-direction，magnitude m = 2·(0.5 − outcome) ∈ [0,1]。先按二元算 clamp 后的
+  // per-KC blame，再整体乘 m（m=1 时与二元 wrong 分支逐位相同）。
+  const m = 2 * (0.5 - outcome);
+  const pItem = ps.reduce((acc, p) => acc * p, 1);
+  const odds = pItem / Math.max(1 - pItem, 1e-9);
+  return ps.map((p) => Math.max(-(1 - p) * odds, -1) * m);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // YUK-361 Phase 2 (Urnings-Lite θ 不确定性) — 给点估计 θ̂ 配一个不确定性度量。
 //
 // Urnings 作不确定性「灵感」、非在线 item-half 更新（ADR-0042 amendment +

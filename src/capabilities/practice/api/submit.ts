@@ -614,6 +614,12 @@ async function persistSubmit(
       difficulty: q.difficulty,
       attemptEventId: eventId,
       now,
+      // A1 (YUK-433) — thread the solo review latency (ms) into the SRT credit path.
+      // SRT is dark-shipped (SRT_ENABLED=false), so until the flag flips this is
+      // carried but unused (binary credit). When present + flag on, fast-correct
+      // moves θ̂ more than slow-correct. body.latency_ms is number|null|undefined;
+      // undefined coerces to undefined (binary fallback). Paper path passes nothing.
+      responseTimeMs: body.latency_ms ?? undefined,
       // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
       kind: q.kind,
       source: q.source,
