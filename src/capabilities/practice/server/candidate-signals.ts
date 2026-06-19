@@ -107,11 +107,13 @@ const COLD_START_EVIDENCE = 0;
  * 评分层退化为无 θ̂ 状态）。
  *
  * A2 (YUK-434) — the per-KC θ_hat is the OFFSET θ_KC; the value compared/returned is
- *   the EFFECTIVE theta = θ_global(domain-of-KC) + θ_KC (effectiveThetaForKc). With
- *   HIERARCHICAL_ELO_ENABLED=false (DEFAULT) effectiveThetaForKc returns θ_KC
- *   UNCHANGED and resolves no domain/global row, so this read path is BYTE-IDENTICAL
- *   to today (weakest-by-θ_hat, same precision). With it on, a new KC of a strong
- *   domain compares at its inherited effective ability rather than cold 0.
+ *   the EFFECTIVE theta = θ_global(domain-of-KC) + θ_KC (effectiveThetaForKc). Now
+ *   LIVE (HIERARCHICAL_ELO_ENABLED=true, P1 go-live YUK-361): a new KC of a strong
+ *   domain compares at its inherited effective ability rather than cold 0; an orphan /
+ *   domain-unresolvable KC degrades to θ_KC (effectiveThetaForKc catches + returns θ_KC).
+ *   With the flag OFF (still a valid mocked-false regression) effectiveThetaForKc
+ *   returns θ_KC UNCHANGED and resolves no domain/global row → read path BYTE-IDENTICAL
+ *   to single-layer (weakest-by-θ_hat, same precision).
  *
  * A3 (YUK-435) — also surface the WEAKEST KC's `evidence_count` (the per-KC cold-start
  *   regime gate for KLP scoring) from the row ALREADY READ here (zero new query). The
