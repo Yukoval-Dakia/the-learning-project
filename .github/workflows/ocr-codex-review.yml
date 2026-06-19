@@ -90,7 +90,7 @@ jobs:
           set -euo pipefail
 
           OCR_CONCURRENCY="${OCR_CONCURRENCY:-1}"
-          OCR_MAX_TOOLS="${OCR_MAX_TOOLS:-6}"
+          OCR_MAX_TOOLS="${OCR_MAX_TOOLS:-30}"
           OCR_TIMEOUT_MINUTES="${OCR_TIMEOUT_MINUTES:-20}"
 
           "${{ steps.ocr_bin.outputs.path }}" review \
