@@ -1,6 +1,6 @@
 # 知识图谱（Knowledge Graph）
 
-> Last reviewed: 2026-05-28 (T-PD8)
+> Last reviewed: 2026-06-19 (YUK-426：修 §0 graph reader tools 误标「尚未实现」)
 >
 > 见 [架构基础](../architecture.md) 的 `knowledge_mesh`、[ADR-0010](../adr/0010-knowledge-mesh.md)、[ADR-0011](../adr/0011-tool-use-and-edge-event-paths.md)。
 > Mastery 见 [ADR-0012](../adr/0012-mastery-as-derived-view.md)（derived view）。
@@ -22,8 +22,8 @@
 | edge accept / rate path | ✅ | `RateKnowledgeEdge` → `GenerateKnowledgeEdge` → insert edge |
 | `KnowledgeEdgeProposeTask` | ✅ registered | 单轮结构化输出，nightly / maintenance 用 |
 | `KnowledgeReviewTask` | ✅ registered, tool-call | in-process MCP `write_proposal`；可写 tree / mesh proposal |
-| Subject Graph Guide runtime | ❌ | 本文先定义 contract；实现放 agent-tools 后续 |
-| Graph reader tools | ❌ | `get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths` 尚未实现 |
+| Subject Graph Guide runtime | ⚠️ 部分 | guide 实体（可 seed / versioned / enrich 的 `SubjectGraphGuide` §2）仍未落地——无 `subject_graph_guide` 表、无 `seedSubjectGraphGuide()`。graph reader tools 当前用 DB 派生的确定性 fallback（`DEFAULT_RELATIONS` + 固定 reading hint，§62「没有 guide 时」路径），不读 guide 实体 |
+| Graph reader tools | ✅ | 4 个语义化 graph reader 全部上线：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths`，定义在 `src/server/ai/tools/knowledge-readers.ts`（`DomainTool` + `execute`），经 `src/capabilities/knowledge/manifest.ts` 的 `copilotTools` 贡献制登记进组合根，进 allowlist/budget，被 copilot / quiz_gen / sourcing 消费。见 [架构基础](../architecture.md) 的「agent 读图路径」 |
 
 ---
 
