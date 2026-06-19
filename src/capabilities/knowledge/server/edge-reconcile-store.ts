@@ -66,12 +66,26 @@ export async function insertEdgePlannedRows(db: DbLike, rows: EdgePlannedRow[]):
   );
 }
 
-/** UPDATE applied_at = now() — stamps the audit row as fully applied (same tx). */
+/**
+ * UPDATE applied_at = now() — stamps the audit row as fully applied (same tx).
+ *
+ * CodeRabbit Finding 2 — verify the UPDATE actually hit a row. A bad/missing logId
+ * would otherwise silently no-op while the enclosing single transaction still
+ * commits, leaving the planned log row unapplied with NO failure signal. We capture
+ * the affected ids via `.returning({ id })` and throw if it is not exactly one row,
+ * so the whole applyEdgeSupersede transaction rolls back (fail loud, not silent).
+ */
 export async function markEdgeReconcileApplied(db: DbLike, logId: string): Promise<void> {
-  await db
+  const updated = await db
     .update(edge_reconciliation_log)
     .set({ applied_at: new Date() })
-    .where(eq(edge_reconciliation_log.id, logId));
+    .where(eq(edge_reconciliation_log.id, logId))
+    .returning({ id: edge_reconciliation_log.id });
+  if (updated.length !== 1) {
+    throw new Error(
+      `markEdgeReconcileApplied: expected to stamp exactly 1 edge_reconciliation_log row for id=${logId}, updated ${updated.length}`,
+    );
+  }
 }
 
 /** Build a planned row with a fresh cuid2 id (convenience for the handler). */
