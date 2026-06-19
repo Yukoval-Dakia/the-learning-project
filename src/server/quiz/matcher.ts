@@ -41,6 +41,7 @@ import {
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import { and, eq, isNull } from 'drizzle-orm';
+import { MATCHER_ANSWER_CLASS_FILTER } from './matcher-flags';
 import { type PoolRow, poolFetch } from './pool-fetch';
 import type { SourcingNeed, SourcingSequenceStep } from './sourcing-sequence';
 import { verifyAndPromote } from './verify-and-promote';
@@ -63,7 +64,12 @@ export interface Demand {
   difficultyMax?: number | null;
   /** 结构轴 unit==='篇' (poolFetch compositeParentOnly). */
   compositeParentOnly?: boolean;
-  /** gated YUK-395 — v1 收下不进 WHERE (留接口；answer_class 新鲜度未解前不硬过滤). */
+  /** answer_class VERIFICATION axis (exact/keyword/semantic/steps). gated YUK-395 / B4 YUK-386:
+   *  RECEIVED here, but only enters the pool-fetch WHERE when MATCHER_ANSWER_CLASS_FILTER is on
+   *  (dark-ship, default false). When the flag is off the field is收下不进 WHERE (unchanged). When
+   *  on AND present, it adds a NULL-lenient hard filter (a `steps` demand can't be filled by an
+   *  `exact` candidate; NULL answer_class is NOT excluded). NULL/absent → no answer_class
+   *  constraint either way. */
   answerClass?: string;
   // ② 软排序
   /** matcher 内部 embed (路 B)；Task 2 接入. */
@@ -426,6 +432,14 @@ export async function matcher(
   // 不传 limit — 截断在 app 层 rankPool 的 slice (F2 回归防线).
   // queryEmbedding 非空 → poolFetch ORDER BY embedding <=> qvec (cosine 软排序) 且
   // isNotNull(embedding) 排除 NULL 行；null → 退 created_at,id 标量序含 NULL 行 (§7 降级).
+  // B4 (YUK-386) — answer_class hard filter is forwarded ONLY when MATCHER_ANSWER_CLASS_FILTER
+  // is on (dark-ship, default false) AND the demand declares answerClass. Flag off OR no
+  // answerClass → undefined → poolFetch adds no answer_class predicate → WHERE byte-identical
+  // to pre-B4 (the legacy kindsMatch shim in rankPool is untouched in both directions). The
+  // NULL-lenient `(= $X OR IS NULL)` lives in pool-fetch so the un-backfilled tail is never
+  // hard-excluded. The flag is read through the imported binding (./matcher-flags) so db tests
+  // can mock it via getter (mirror candidate-signals.db.test.ts's EARLY_KLP_ENABLED getter mock).
+  const answerClass = MATCHER_ANSWER_CLASS_FILTER ? demand.answerClass : undefined;
   const rows = await poolFetch(db, {
     knowledgeId: demand.knowledgeId,
     activeOnly: false,
@@ -433,6 +447,7 @@ export async function matcher(
     difficultyMax: demand.difficultyMax,
     compositeParentOnly: demand.compositeParentOnly,
     queryEmbedding,
+    answerClass,
   });
 
   // §4 cosine 阈值过滤 — 仅在 vector mode (有 queryEmbedding) 生效. cosine_distance 与 ORDER BY

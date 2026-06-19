@@ -123,6 +123,36 @@ describe('poolFetch', () => {
     expect(byId.get('q-draft')).toBe('draft');
   });
 
+  // B4 (YUK-386) — answer_class hard filter, NULL-lenient.
+  it('answerClass hard-filters by matching class; a mismatched class is excluded', async () => {
+    const kc = 'kc-ac-match';
+    await seed({ id: 'q-steps', knowledge_ids: [kc], answer_class: 'steps' });
+    await seed({ id: 'q-exact', knowledge_ids: [kc], answer_class: 'exact' });
+    const rows = await poolFetch(db, { knowledgeId: kc, answerClass: 'steps' });
+    // only the steps row; the exact row is hard-excluded (steps demand ≠ exact candidate).
+    expect(rows.map((r) => r.id)).toEqual(['q-steps']);
+  });
+
+  it('answerClass is NULL-lenient — a NULL-answer_class row is NOT excluded', async () => {
+    const kc = 'kc-ac-null';
+    await seed({ id: 'q-steps', knowledge_ids: [kc], answer_class: 'steps' });
+    await seed({ id: 'q-null', knowledge_ids: [kc], answer_class: null }); // un-backfilled tail
+    await seed({ id: 'q-exact', knowledge_ids: [kc], answer_class: 'exact' });
+    const rows = await poolFetch(db, { knowledgeId: kc, answerClass: 'steps' });
+    // matching class AND the NULL tail survive; only the genuine mismatch (exact) is dropped.
+    expect(rows.map((r) => r.id).sort()).toEqual(['q-null', 'q-steps']);
+  });
+
+  it('answerClass undefined → no answer_class constraint (current behaviour)', async () => {
+    const kc = 'kc-ac-absent';
+    await seed({ id: 'q-steps', knowledge_ids: [kc], answer_class: 'steps' });
+    await seed({ id: 'q-exact', knowledge_ids: [kc], answer_class: 'exact' });
+    await seed({ id: 'q-null', knowledge_ids: [kc], answer_class: null });
+    const rows = await poolFetch(db, { knowledgeId: kc });
+    // no answerClass criterion → all three classes recalled (column untouched).
+    expect(rows.map((r) => r.id).sort()).toEqual(['q-exact', 'q-null', 'q-steps']);
+  });
+
   it('projects cosine_distance in vector mode; null when no queryEmbedding', async () => {
     const kc = 'kc-dist';
     await seed({ id: 'q-near', knowledge_ids: [kc], embedding: vec(1, 0) });
