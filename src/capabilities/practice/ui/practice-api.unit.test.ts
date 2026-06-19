@@ -9,7 +9,7 @@
 // No-DB unit partition（不 import db/postgres/drizzle）；纯函数，无 DOM 依赖。
 
 import { describe, expect, it } from 'vitest';
-import { computeLatencyMs } from './practice-api';
+import { buildDraftListQuery, computeLatencyMs } from './practice-api';
 
 describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
   it('shownAt 为 null → 返回 null（计时器未起 / 题面未就绪，不发噪声）', () => {
@@ -41,5 +41,41 @@ describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
 
   it('恰好 0 下界 → 不被 clamp（now === shownAt，瞬时提交）', () => {
     expect(computeLatencyMs(5_000, 5_000)).toBe(0);
+  });
+});
+
+describe('buildDraftListQuery — getDrafts 负值防御 (YUK-408)', () => {
+  it('正常正值 → 原样透传（current caller limit: 200 不受影响）', () => {
+    expect(buildDraftListQuery({ limit: 200, offset: 0 })).toBe('limit=200&offset=0');
+  });
+
+  it('负 limit → 丢弃（不发 ?limit=-5；服务端落自身 default）', () => {
+    expect(buildDraftListQuery({ limit: -5 })).toBe('');
+  });
+
+  it('零 limit → 丢弃（≤0 无意义）', () => {
+    expect(buildDraftListQuery({ limit: 0 })).toBe('');
+  });
+
+  it('负 offset → 丢弃（offset 是非负索引）', () => {
+    expect(buildDraftListQuery({ offset: -10 })).toBe('');
+  });
+
+  it('offset=0 → 保留（0 是合法下界）', () => {
+    expect(buildDraftListQuery({ offset: 0 })).toBe('offset=0');
+  });
+
+  it('非整数 limit/offset → 截断为整（不发小数）', () => {
+    expect(buildDraftListQuery({ limit: 50.9, offset: 3.2 })).toBe('limit=50&offset=3');
+  });
+
+  it('非有限值（NaN / Infinity）→ 丢弃', () => {
+    expect(buildDraftListQuery({ limit: Number.NaN, offset: Number.POSITIVE_INFINITY })).toBe('');
+  });
+
+  it('source / kind 过滤保留，负 limit 仍被丢', () => {
+    expect(buildDraftListQuery({ source: 'import', kind: 'mcq', limit: -1 })).toBe(
+      'source=import&kind=mcq',
+    );
   });
 });

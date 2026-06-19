@@ -555,13 +555,32 @@ export interface DraftListFilters {
   offset?: number;
 }
 
-export const getDrafts = (filters: DraftListFilters = {}) => {
+/**
+ * Build the /api/review/drafts query string from filters, with a client-side
+ * negative-value guard. The server already clamps limit/offset (review-drafts-list.ts
+ * + listDraftReview), so this is defense-in-depth: it stops malformed negatives from
+ * ever leaving the browser as `?limit=-5`. Negative/zero limit and negative offset are
+ * dropped (omitted → server applies its own default/clamp); valid positive values pass
+ * through untouched, so current callers (limit: 200) are unaffected. Pure + exported
+ * for unit testing.
+ */
+export function buildDraftListQuery(filters: DraftListFilters): string {
   const sp = new URLSearchParams();
   if (filters.source) sp.set('source', filters.source);
   if (filters.kind) sp.set('kind', filters.kind);
-  if (filters.limit != null) sp.set('limit', String(filters.limit));
-  if (filters.offset != null) sp.set('offset', String(filters.offset));
-  const qs = sp.toString();
+  // limit must be a positive integer to be meaningful; drop ≤0 / non-finite.
+  if (filters.limit != null && Number.isFinite(filters.limit) && filters.limit > 0) {
+    sp.set('limit', String(Math.trunc(filters.limit)));
+  }
+  // offset is a non-negative index; drop negatives / non-finite (0 is valid).
+  if (filters.offset != null && Number.isFinite(filters.offset) && filters.offset >= 0) {
+    sp.set('offset', String(Math.trunc(filters.offset)));
+  }
+  return sp.toString();
+}
+
+export const getDrafts = (filters: DraftListFilters = {}) => {
+  const qs = buildDraftListQuery(filters);
   return apiJson<DraftReviewListPage>(`/api/review/drafts${qs ? `?${qs}` : ''}`);
 };
 
