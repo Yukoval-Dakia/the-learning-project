@@ -11,10 +11,13 @@
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearnedBand, pfaLogit } from '@/core/pfa';
 import {
   DIFFICULTY_PROXY_WEIGHT,
+  ELO_K_GLOBAL,
+  HIERARCHICAL_ELO_ENABLED,
   SRT_ENABLED,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
@@ -32,6 +35,16 @@ import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficult
 import { effectiveB } from './recalibration';
 
 type DbLike = Db | Tx;
+
+// A2 (YUK-434) — per-domain global ability θ_global storage. We REUSE mastery_state
+// (zero new tables/columns): a θ_global row has subject_kind = ABILITY_GLOBAL_KIND
+// and subject_id = the KC's effective_domain id. One row per domain the learner has
+// touched. subject_id is a DOMAIN id here (not a KC id) — the (subject_kind,
+// subject_id) unique index keeps the per-(kind,id) keying clean and orthogonal to
+// the 'knowledge' per-KC rows (no collision: a KC id and a domain id live in
+// different subject_kind partitions). When HIERARCHICAL_ELO_ENABLED=false NO global
+// row is ever read or written, so this kind never appears in the table (dark-ship).
+const ABILITY_GLOBAL_KIND = 'ability_global';
 
 export interface MasteryStateRow {
   subject_kind: string;
@@ -138,6 +151,56 @@ export async function getMasteryState(
     theta_precision: row.theta_precision,
     last_theta_delta: row.last_theta_delta ?? null,
   };
+}
+
+/**
+ * A2 (YUK-434) — read the per-domain θ_global for an ALREADY-RESOLVED domain id.
+ *
+ * FLAG OFF (DEFAULT): returns 0 WITHOUT touching the DB (dark-ship — no global row
+ *   exists, callers add 0 → effective == θ_KC, bit-identical to today).
+ * FLAG ON: reads the domain's 'ability_global' mastery_state row (null → 0).
+ *
+ * Use this when the caller has ALREADY resolved the raw domain string (e.g.
+ * target-discovery resolves getEffectiveDomain for subjectId anyway) — it avoids a
+ * second domain walk. KC-keyed callers that have NOT resolved a domain should use
+ * {@link effectiveThetaForKc}, which resolves the domain for them.
+ */
+export async function globalThetaForDomain(db: DbLike, domain: string | null): Promise<number> {
+  if (!HIERARCHICAL_ELO_ENABLED || domain === null) return 0;
+  const row = await getMasteryState(db, domain, ABILITY_GLOBAL_KIND);
+  return row?.theta_hat ?? 0;
+}
+
+/**
+ * A2 (YUK-434) — read-side effective ability for a KC = θ_global(domain-of-KC) +
+ * θ_KC, mirroring the write-path's effective-theta input.
+ *
+ * FLAG OFF (DEFAULT): θ_global ≡ 0 → returns `thetaKc` UNCHANGED. No domain is
+ *   resolved, no global row is read — so the selection read paths are
+ *   BYTE-IDENTICAL to single-layer Elo (they pass today's theta_hat straight
+ *   through). This is the guarantee the regression tests pin.
+ * FLAG ON: resolve the KC's effective_domain (getEffectiveDomain — the same
+ *   resolver the write path uses; orphan/null-root → degrade to θ_global=0), read
+ *   that domain's θ_global row (null → 0), return θ_global + thetaKc.
+ *
+ * `thetaKc` is the per-KC `theta_hat` (the offset) the caller already read from a
+ * 'knowledge' mastery_state row (or the cold-start default). Keeping the caller's
+ * already-fetched value avoids a redundant per-KC SELECT — this helper only adds the
+ * (memoizable-by-caller) domain + global-row reads, and ONLY when the flag is on.
+ */
+export async function effectiveThetaForKc(
+  db: DbLike,
+  knowledgeId: string,
+  thetaKc: number,
+): Promise<number> {
+  if (!HIERARCHICAL_ELO_ENABLED) return thetaKc; // dark-ship: bit-identical to today.
+  let domain: string | null;
+  try {
+    domain = await getEffectiveDomain(db, knowledgeId);
+  } catch {
+    return thetaKc; // orphan / null-root-domain → no domain anchor → θ_global=0.
+  }
+  return (await globalThetaForDomain(db, domain)) + thetaKc;
 }
 
 /**
@@ -475,6 +538,49 @@ export async function updateThetaForAttempt(
     };
   });
 
+  // ── A2 (YUK-434) — hierarchical Elo: resolve each KC's per-domain θ_global ───
+  //
+  // FLAG OFF (DEFAULT, dark-ship): θ_global ≡ 0 for every KC. No domain is resolved,
+  //   no global row is read or written. domainOfKc / globalThetaOfDomain stay empty.
+  //   The per-KC `theta` below IS the effective theta (offset == ability), so credits
+  //   + the per-KC update path are BYTE-IDENTICAL to single-layer Elo.
+  // FLAG ON: resolve each touched KC's effective_domain (memoized — each unique KC
+  //   domain resolved at most once via getEffectiveDomain, the SAME domain resolver
+  //   the family-key write path above already uses inside this attempt tx, ≤32-hop
+  //   parent-chain point lookups). Read that domain's θ_global row (null → cold-start
+  //   θ_global = 0). effectiveTheta_k = θ_global(domain_k) + θ_KC_k.
+  //
+  // domainResolveFailed (orphan / null-root-domain id — getEffectiveDomain throws):
+  //   we degrade that KC to θ_global = 0 (treat the KC as its own anchor, identical
+  //   to the single-layer path) rather than aborting the whole attempt — matches the
+  //   family-key path's orphan→'unknown' graceful-degrade philosophy. The KC still
+  //   updates its θ_KC; it simply does not inherit/contribute to any domain anchor.
+  const domainOfKc = new Map<string, string | null>(); // KC id → resolved domain id (null = unresolved)
+  const globalThetaOfDomain = new Map<string, number>(); // domain id → current θ_global (0 if no row)
+  if (HIERARCHICAL_ELO_ENABLED) {
+    // Memoized per-KC domain resolution (unique domains read their global row once).
+    for (const id of knowledgeIds) {
+      let domain: string | null = null;
+      try {
+        domain = await getEffectiveDomain(tx, id);
+      } catch {
+        domain = null; // orphan / null-root-domain → no domain anchor for this KC.
+      }
+      domainOfKc.set(id, domain);
+      if (domain !== null && !globalThetaOfDomain.has(domain)) {
+        const grow = await getMasteryState(tx, domain, ABILITY_GLOBAL_KIND);
+        globalThetaOfDomain.set(domain, grow?.theta_hat ?? 0); // null → cold-start θ_global=0
+      }
+    }
+  }
+  // effectiveTheta_k = θ_global(domain_k) + θ_KC_k. Flag off (or unresolved domain)
+  // → θ_global = 0 → effectiveTheta == θ_KC == today's theta (bit-identical input).
+  const globalOf = (kcId: string): number => {
+    const domain = domainOfKc.get(kcId) ?? null;
+    return domain !== null ? (globalThetaOfDomain.get(domain) ?? 0) : 0;
+  };
+  const effectiveThetas = states.map((s) => s.theta + globalOf(s.id));
+
   // 3. 多 KC 合取 credit（owner 拍板 MLE，review SF-1）。conjunctiveCredits 直接
   //    返回每 KC 的 log 似然梯度项（题目级 surprise × (1−p_k) 灵敏度），取代旧的
   //    per-KC 残差权重（两端抵消、弱 KC 答错不降的反向 bug）。单 KC 退化为标准 Elo。
@@ -490,6 +596,12 @@ export async function updateThetaForAttempt(
   // step, bWeight, the b anchor, and the precision/Fisher math below are ALL
   // untouched — SRT modulates ONLY the per-KC credit value.
   // Units: latency arrives in MILLISECONDS; convert to SECONDS to match d.
+  //
+  // A2 (YUK-434) — the credit formula is UNCHANGED; only the θ INPUT becomes the
+  //   EFFECTIVE theta (θ_global(domain) + θ_KC). Flag off → effectiveThetas ===
+  //   states.map(s=>s.theta) elementwise (θ_global≡0), so this is bit-identical to
+  //   single-layer Elo. conjunctiveCredits / conjunctiveCreditsContinuous, eloK,
+  //   bWeight, srtOutcome, and the precision/Fisher math are all untouched.
   const rtMs = input.responseTimeMs;
   const useSrt = SRT_ENABLED && typeof rtMs === 'number' && Number.isFinite(rtMs);
   let credits: number[];
@@ -497,27 +609,28 @@ export async function updateThetaForAttempt(
     const d = resolveSrtTimeLimit(input.difficulty); // seconds (module const)
     const tSeconds = (rtMs as number) / 1000; // ms → s
     const srt = srtOutcome(input.outcome === 1, d, tSeconds); // ∈ [0,1]
-    credits = conjunctiveCreditsContinuous(
-      states.map((s) => s.theta),
-      b,
-      srt,
-    );
+    credits = conjunctiveCreditsContinuous(effectiveThetas, b, srt);
   } else {
-    credits = conjunctiveCredits(
-      states.map((s) => s.theta),
-      b,
-      input.outcome,
-    );
+    credits = conjunctiveCredits(effectiveThetas, b, input.outcome);
   }
 
-  // 4 + 5. Per-KC update + upsert. θ̂ += k · bWeight · credit_k（弱锚 bWeight 降权）。
+  // 4 + 5. Per-KC update + upsert. θ_KC += k · bWeight · credit_k（弱锚 bWeight 降权）。
+  //
+  // A2 (YUK-434) — this is now the per-KC OFFSET update (θ_KC), not the whole ability:
+  //   the global-layer drift is applied SEPARATELY below (once per domain). The step
+  //   itself is UNCHANGED — same eloK(s.evidence), same bWeight, same credits[i]. Flag
+  //   off → θ_global≡0 → θ_KC IS the ability → byte-identical to single-layer Elo.
+  //   Precision/Fisher stays on the KC layer at thetaBefore = s.theta (the KC offset,
+  //   layer-independent — constraint iii: precision UNCHANGED, RT/layer-independent).
   for (let i = 0; i < states.length; i++) {
     const s = states[i];
     const k = eloK(s.evidence);
     const newTheta = s.theta + k * bWeight * credits[i];
     // YUK-361 Phase 2 — 累积 θ precision，用与 θ̂ 更新**同一个 b 锚 + 同一 bWeight**
     //   喂 Fisher information（弱锚 bWeight=0.3 → weight² 降权，信息增量小）。
-    //   thetaBefore=s.theta（信息在 θ̂ 移动前的位置评估，与梯度同步）。
+    //   thetaBefore=s.theta（信息在 θ̂ 移动前的位置评估，与梯度同步）。A2: stays on the
+    //   KC layer at s.theta (the offset) — NOT the effective theta — so it is
+    //   bit-identical with the flag off and layer-independent with it on.
     const newPrecision = updateThetaPrecision(s.precision, s.theta, b, bWeight);
     const delta = newTheta - s.theta;
     await upsertMasteryState(tx, {
@@ -530,5 +643,73 @@ export async function updateThetaForAttempt(
       theta_precision: newPrecision,
       last_theta_delta: delta,
     });
+  }
+
+  // ── A2 (YUK-434) — per-domain θ_global drift (ONCE per touched domain) ──────────
+  //
+  // FLAG OFF: nothing here runs (HIERARCHICAL_ELO_ENABLED gate) → no global row is
+  //   ever written → table never gains an 'ability_global' row (dark-ship, the read
+  //   paths see no rows → effective == θ_KC everywhere). BYTE-IDENTICAL to today.
+  // FLAG ON: each touched domain's θ_global drifts SLOWLY (ELO_K_GLOBAL ≪ eloK floor)
+  //   by the AGGREGATED credit of THAT domain's KCs (mean of the per-KC credits in the
+  //   domain — a multi-KC item in one domain still moves that domain's global ONCE,
+  //   not N times; a multi-DOMAIN item moves EACH touched domain's global ONCE). The
+  //   credit signal is the SAME credits[] vector used for the per-KC update (binary or
+  //   SRT-continuous, composing with A1). bWeight is applied identically to the per-KC
+  //   step so a weak-anchor attempt drifts the global slower too.
+  if (HIERARCHICAL_ELO_ENABLED) {
+    // Group the per-KC credits by resolved domain (unresolved-domain KCs contribute to
+    // no global row — see domainResolveFailed degrade above).
+    const creditsByDomain = new Map<string, number[]>();
+    for (let i = 0; i < states.length; i++) {
+      const domain = domainOfKc.get(states[i].id) ?? null;
+      if (domain === null) continue;
+      const list = creditsByDomain.get(domain) ?? [];
+      list.push(credits[i]);
+      creditsByDomain.set(domain, list);
+    }
+    // Sorted domain order → stable advisory-lock acquire order across concurrent
+    // multi-domain attempts (no deadlock cycle), mirroring the per-KC sorted-lock above.
+    for (const domain of [...creditsByDomain.keys()].sort()) {
+      const domainCredits = creditsByDomain.get(domain) as number[];
+      // Aggregate = MEAN of that domain's KC credits → the domain global is updated
+      // exactly ONCE per attempt regardless of how many of its KCs the item touched.
+      const aggregateCredit = domainCredits.reduce((acc, c) => acc + c, 0) / domainCredits.length;
+      // Serialize the θ_global row under the SAME advisory-lock scheme as the per-KC
+      // rows, in a stable per-domain-global namespace, so concurrent attempts on
+      // different KCs of the same domain do not lose a global increment (n=1 single-
+      // user contention is ~nil, but the lock keeps the invariant honest). Released at
+      // tx commit (we are inside the attempt tx). Acquired here (after the per-KC locks
+      // above, which are sorted) — domain-global keys are a DISJOINT namespace from
+      // the per-KC `fsrs:knowledge:<id>` keys, so no new deadlock cycle is introduced.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`mastery:ability_global:${domain}`}))`,
+      );
+      // Re-read under the lock so a concurrent same-domain attempt's increment is not
+      // lost (the pre-lock read used for effective theta may be stale). NULL → 0.
+      const lockedRow = await getMasteryState(tx, domain, ABILITY_GLOBAL_KIND);
+      const lockedGlobal = lockedRow?.theta_hat ?? 0;
+      const lockedNewGlobal = lockedGlobal + ELO_K_GLOBAL * bWeight * aggregateCredit;
+      // θ_global rows REUSE mastery_state with subject_kind=ABILITY_GLOBAL_KIND and
+      // subject_id=domain. evidence/success/fail counts are NOT meaningful at the
+      // global layer (the p(L)/PFA projection only reads 'knowledge' rows), so we keep
+      // them as a plain attempt tally (evidence_count) and leave success/fail at the
+      // binary integers they would carry — NOT used by any reader, but kept binary per
+      // constraint (v). precision is left at default (global layer has no Fisher
+      // consumer today). last_theta_delta records the global drift for observability.
+      const globalEvidence = (lockedRow?.evidence_count ?? 0) + 1;
+      await upsertMasteryState(tx, {
+        subject_kind: ABILITY_GLOBAL_KIND,
+        subject_id: domain,
+        theta_hat: lockedNewGlobal,
+        evidence_count: globalEvidence,
+        // Binary integer tallies (constraint v): success on a correct attempt, fail on
+        // a wrong one — one increment per attempt per domain, never fractional.
+        success_count: (lockedRow?.success_count ?? 0) + (input.outcome === 1 ? 1 : 0),
+        fail_count: (lockedRow?.fail_count ?? 0) + (input.outcome === 0 ? 1 : 0),
+        last_outcome_at: input.now,
+        last_theta_delta: lockedNewGlobal - lockedGlobal,
+      });
+    }
   }
 }

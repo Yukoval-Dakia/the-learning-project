@@ -9,7 +9,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // of @/core/theta and keep every other export (conjunctiveCredits, eloK, Fisher math,
 // …) as the REAL implementation via importOriginal. The default-flag (false) tests
 // below run against the real const through the same mock factory returning false.
+//
+// A2 (YUK-434) — HIERARCHICAL_ELO_ENABLED is mocked the same way (dark-ship default
+// false). The flag-OFF tests run against the real const (false) through this factory;
+// the flag-ON tests opt in via hierFlag.value = true. ELO_K_GLOBAL stays the REAL
+// const (we assert the slow-drift split with its real value).
 const srtFlag = { value: false };
+const hierFlag = { value: false };
 vi.mock('@/core/theta', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/theta')>();
   return {
@@ -17,12 +23,15 @@ vi.mock('@/core/theta', async (importOriginal) => {
     get SRT_ENABLED() {
       return srtFlag.value;
     },
+    get HIERARCHICAL_ELO_ENABLED() {
+      return hierFlag.value;
+    },
   };
 });
 
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearned } from '@/core/pfa';
-import { thetaToMastery } from '@/core/theta';
+import { ELO_K_GLOBAL, thetaToMastery } from '@/core/theta';
 import { db } from '@/db/client';
 import {
   item_calibration,
@@ -33,8 +42,10 @@ import {
 } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
 import {
+  effectiveThetaForKc,
   getMasteryProjection,
   getMasteryState,
+  globalThetaForDomain,
   updateThetaForAttempt,
   upsertMasteryState,
 } from './state';
@@ -78,6 +89,36 @@ async function readState(knowledgeId: string) {
     .from(mastery_state)
     .where(
       and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, knowledgeId)),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+// A2 (YUK-434) — seed a root knowledge node with an explicit domain (the canonical
+// effective_domain, since parent_id=null root carries the domain directly).
+async function seedKnowledgeWithDomain(id: string, domain: string) {
+  const now = new Date();
+  await db
+    .insert(knowledge)
+    .values({
+      id,
+      name: `K-${id}`,
+      domain,
+      parent_id: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })
+    .onConflictDoNothing();
+}
+
+// A2 — read the per-domain θ_global row (subject_kind='ability_global', subject_id=domain).
+async function readGlobal(domain: string) {
+  const rows = await db
+    .select()
+    .from(mastery_state)
+    .where(
+      and(eq(mastery_state.subject_kind, 'ability_global'), eq(mastery_state.subject_id, domain)),
     )
     .limit(1);
   return rows[0] ?? null;
@@ -1339,5 +1380,427 @@ describe('updateThetaForAttempt — family b_delta composition (YUK-372 L3)', ()
     // The family delta shifted the weak b → different θ̂; both still go through bWeight=0.3
     // (proxy), so the gain is modest but the delta clearly moved the anchor.
     expect(proxyTheta).not.toBeCloseTo(plainProxyTheta, 6);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A2 (YUK-434) — Hierarchical Elo: θ_global(per-domain) + θ_KC, cold-start inheritance.
+// ═════════════════════════════════════════════════════════════════════════════
+describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    srtFlag.value = false;
+    hierFlag.value = false; // dark-ship default; individual tests opt in.
+  });
+  afterEach(() => {
+    srtFlag.value = false;
+    hierFlag.value = false;
+  });
+
+  // ── REGRESSION ANCHOR (write FIRST): flag OFF → θ̂ path BYTE-IDENTICAL to today ──
+  it('flag OFF → theta_hat/precision/counts BIT-IDENTICAL to single-layer Elo (toBe) + NO global row written', async () => {
+    hierFlag.value = false;
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k); // domain 'wenyan'
+    await seedQuestion(q, [k], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const s = await readState(k);
+    // Canonical cold-start correct step: kCold 0.4 · bWeight 0.3 · (1 − 0.5) = 0.06.
+    // toBe (not toBeCloseTo): the flag-off two-layer code must be byte-identical.
+    expect(s?.theta_hat).toBe(0.06);
+    expect(s?.theta_precision).toBe(1 + 0.3 * 0.3 * 0.25); // unchanged Fisher: weight²·p(1−p)
+    expect(s?.success_count).toBe(1);
+    expect(s?.fail_count).toBe(0);
+    expect(s?.evidence_count).toBe(1);
+    // NO 'ability_global' row exists with the flag off (dark-ship).
+    expect(await readGlobal('wenyan')).toBeNull();
+  });
+
+  it('flag OFF → multi-KC theta_hat BIT-IDENTICAL to single-layer (toBe) + no global rows', async () => {
+    hierFlag.value = false;
+    const kA = createId();
+    const kB = createId();
+    const q = createId();
+    await seedKnowledge(kA);
+    await seedKnowledge(kB);
+    await seedQuestion(q, [kA, kB], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kA, kB],
+        questionId: q,
+        outcome: 0, // wrong → (1−p_k) normalized blame
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const a = await readState(kA);
+    const b = await readState(kB);
+    // Both KCs cold at θ=0, p=0.5, P_item=0.25, odds=0.25/0.75=1/3, credit=−(1−0.5)·(1/3)=−1/6.
+    // newTheta = 0 + 0.4·0.3·(−1/6) = −0.02 each. toBe: byte-identical to single-layer.
+    expect(a?.theta_hat).toBe(b?.theta_hat);
+    expect(a?.theta_hat).toBeCloseTo(-0.02, 12);
+    expect(a?.fail_count).toBe(1);
+    expect(await readGlobal('wenyan')).toBeNull();
+  });
+
+  // ── FLAG ON: per-domain cold-start inheritance (the main payoff) ───────────────
+  it('flag ON → a NEW KC in a domain with θ_global≠0 starts at effective theta ≠ 0 (inherits)', async () => {
+    hierFlag.value = true;
+    const domain = 'wenyan';
+    // Seed a strong domain anchor θ_global = 0.9 (subject_kind='ability_global').
+    await upsertMasteryState(db, {
+      subject_kind: 'ability_global',
+      subject_id: domain,
+      theta_hat: 0.9,
+      evidence_count: 10,
+      success_count: 8,
+      fail_count: 2,
+      last_outcome_at: new Date(),
+    });
+    // A brand-new KC of that domain — never attempted, θ_KC defaults to 0.
+    const kNew = createId();
+    await seedKnowledgeWithDomain(kNew, domain);
+
+    // Read-side: effective theta for the fresh KC inherits the domain anchor.
+    const effBefore = await effectiveThetaForKc(db, kNew, 0);
+    expect(effBefore).toBeCloseTo(0.9, 12); // θ_global(0.9) + θ_KC(0)
+
+    // Write-side: an attempt computes credit at effective ability 0.9 (NOT cold 0).
+    const q = createId();
+    await seedQuestion(q, [kNew], 3); // proxy b=0, bWeight=0.3
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kNew],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    const s = await readState(kNew);
+    // credit = (1 − p), p = σ(effective 0.9 − b 0) = σ(0.9) ≈ 0.7109 → credit ≈ 0.2891.
+    // θ_KC step = kCold 0.4 · 0.3 · 0.2891 ≈ 0.0347 (SMALLER than the cold p=0.5 → 0.06
+    // a single-layer new KC would get, because the inherited prior already expects success).
+    const pInherit = 1 / (1 + Math.exp(-0.9));
+    // theta_hat is stored as float32 (real), so use a float32-appropriate tolerance.
+    expect(s?.theta_hat).toBeCloseTo(0.4 * 0.3 * (1 - pInherit), 7);
+    expect(s?.theta_hat).toBeLessThan(0.06); // less surprise than a cold new KC
+  });
+
+  it('flag ON → θ_global drifts SLOWER than θ_KC for the same attempt', async () => {
+    hierFlag.value = true;
+    const domain = 'wenyan';
+    const k = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(k, domain);
+    await seedQuestion(q, [k], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const kcRow = await readState(k);
+    const globalRow = await readGlobal(domain);
+    expect(globalRow).not.toBeNull(); // global row WAS written (flag on)
+    const kcDelta = Math.abs(kcRow?.theta_hat ?? 0); // from θ_KC=0
+    const globalDelta = Math.abs(globalRow?.theta_hat ?? 0); // from θ_global=0
+    expect(kcDelta).toBeGreaterThan(0);
+    expect(globalDelta).toBeGreaterThan(0);
+    // Same credit, same bWeight: θ_KC uses eloK(0)=kCold 0.4, θ_global uses ELO_K_GLOBAL ≈ 0.048.
+    expect(globalDelta).toBeLessThan(kcDelta);
+    // Ratio is exactly ELO_K_GLOBAL / kCold(0.4) (credit cancels).
+    expect(globalDelta / kcDelta).toBeCloseTo(ELO_K_GLOBAL / 0.4, 10);
+  });
+
+  it('flag ON → a multi-KC SINGLE-DOMAIN item updates that domain global EXACTLY ONCE', async () => {
+    hierFlag.value = true;
+    const domain = 'wenyan';
+    const kA = createId();
+    const kB = createId();
+    const kC = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(kA, domain);
+    await seedKnowledgeWithDomain(kB, domain);
+    await seedKnowledgeWithDomain(kC, domain);
+    await seedQuestion(q, [kA, kB, kC], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kA, kB, kC],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const globalRow = await readGlobal(domain);
+    expect(globalRow).not.toBeNull();
+    // evidence_count == 1: the domain global was upserted ONCE (not 3× for 3 KCs).
+    expect(globalRow?.evidence_count).toBe(1);
+    expect(globalRow?.success_count).toBe(1); // binary integer, one increment
+    expect(globalRow?.fail_count).toBe(0);
+  });
+
+  it('flag ON → a MULTI-DOMAIN item updates EACH touched domain global exactly once', async () => {
+    hierFlag.value = true;
+    const kWen = createId();
+    const kMath = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(kWen, 'wenyan');
+    await seedKnowledgeWithDomain(kMath, 'math');
+    await seedQuestion(q, [kWen, kMath], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kWen, kMath],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const gWen = await readGlobal('wenyan');
+    const gMath = await readGlobal('math');
+    expect(gWen).not.toBeNull();
+    expect(gMath).not.toBeNull();
+    expect(gWen?.evidence_count).toBe(1); // each domain updated exactly once
+    expect(gMath?.evidence_count).toBe(1);
+  });
+
+  it('flag ON → precision (Fisher) is UNCHANGED vs flag OFF — layer-independent (constraint iii)', async () => {
+    // Flag OFF baseline precision.
+    hierFlag.value = false;
+    const kOff = createId();
+    const qOff = createId();
+    await seedKnowledge(kOff);
+    await seedQuestion(qOff, [kOff], 3);
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kOff],
+        questionId: qOff,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    const off = await readState(kOff);
+
+    // Flag ON, SAME cold-start KC (θ_global also 0 since no anchor seeded) — precision
+    // is evaluated at the KC offset s.theta with the same b/bWeight, so it must MATCH.
+    hierFlag.value = true;
+    const kOn = createId();
+    const qOn = createId();
+    await seedKnowledge(kOn);
+    await seedQuestion(qOn, [kOn], 3);
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kOn],
+        questionId: qOn,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    const on = await readState(kOn);
+
+    expect(on?.theta_precision).toBe(off?.theta_precision); // Fisher unchanged by A2
+  });
+
+  it('flag ON → success/fail counts stay binary integers on both layers', async () => {
+    hierFlag.value = true;
+    const domain = 'wenyan';
+    const k = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(k, domain);
+    await seedQuestion(q, [k], 3);
+
+    // Two attempts: one correct, one wrong.
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 0,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const kc = await readState(k);
+    const g = await readGlobal(domain);
+    expect(kc?.success_count).toBe(1);
+    expect(kc?.fail_count).toBe(1);
+    expect(Number.isInteger(kc?.success_count)).toBe(true);
+    expect(Number.isInteger(kc?.fail_count)).toBe(true);
+    // Global counts also binary integers (one increment per attempt per domain).
+    expect(g?.success_count).toBe(1);
+    expect(g?.fail_count).toBe(1);
+    expect(g?.evidence_count).toBe(2);
+    expect(Number.isInteger(g?.success_count)).toBe(true);
+    expect(Number.isInteger(g?.fail_count)).toBe(true);
+  });
+
+  // ── READ-SIDE bit-identical proof (flag off) ──────────────────────────────────
+  it('flag OFF → globalThetaForDomain returns 0 without any DB row; effectiveThetaForKc === θ_KC', async () => {
+    hierFlag.value = false;
+    const k = createId();
+    await seedKnowledge(k); // domain 'wenyan'
+    // Even if an 'ability_global' row somehow existed, the flag-off read must ignore it.
+    await upsertMasteryState(db, {
+      subject_kind: 'ability_global',
+      subject_id: 'wenyan',
+      theta_hat: 5.0, // would be huge if read
+      evidence_count: 1,
+      success_count: 1,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+    expect(await globalThetaForDomain(db, 'wenyan')).toBe(0); // flag off → 0, no read
+    expect(await effectiveThetaForKc(db, k, 0.42)).toBe(0.42); // === θ_KC exactly
+  });
+
+  it('flag ON → effectiveThetaForKc resolves the KC domain and adds θ_global', async () => {
+    hierFlag.value = true;
+    const domain = 'wenyan';
+    const k = createId();
+    await seedKnowledgeWithDomain(k, domain);
+    await upsertMasteryState(db, {
+      subject_kind: 'ability_global',
+      subject_id: domain,
+      theta_hat: 0.7,
+      evidence_count: 3,
+      success_count: 2,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+    });
+    expect(await globalThetaForDomain(db, domain)).toBeCloseTo(0.7, 12);
+    expect(await effectiveThetaForKc(db, k, 0.25)).toBeCloseTo(0.95, 12); // 0.7 + 0.25
+  });
+
+  // ── COMPOSE WITH A1 (SRT × HIERARCHICAL — all four combos well-defined) ─────────
+  it('SRT ON × HIERARCHICAL ON → both apply: SRT modulates credit, hierarchical the θ input', async () => {
+    srtFlag.value = true;
+    hierFlag.value = true;
+    const domain = 'wenyan';
+    // Strong domain anchor so the hierarchical layer measurably shifts the θ input.
+    await upsertMasteryState(db, {
+      subject_kind: 'ability_global',
+      subject_id: domain,
+      theta_hat: 0.9,
+      evidence_count: 5,
+      success_count: 4,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+    });
+    const kFast = createId();
+    const kSlow = createId();
+    const qFast = createId();
+    const qSlow = createId();
+    await seedKnowledgeWithDomain(kFast, domain);
+    await seedKnowledgeWithDomain(kSlow, domain);
+    await seedQuestion(qFast, [kFast], 3); // d = 30s
+    await seedQuestion(qSlow, [kSlow], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kFast],
+        questionId: qFast,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 1000, // fast-correct
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlow],
+        questionId: qSlow,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 29_000, // slow-correct
+      });
+    });
+
+    const fast = (await readState(kFast))?.theta_hat ?? 0;
+    const slow = (await readState(kSlow))?.theta_hat ?? 0;
+    // A1 still applies: fast-correct moves θ_KC MORE than slow-correct (the credit is
+    // computed against the SRT-continuous outcome, so the A1 ordering survives).
+    expect(fast).toBeGreaterThan(slow);
+    // BOTH layers compose: the credit uses srtOutcome (A1) evaluated at the EFFECTIVE
+    // ability θ_global(0.9)+θ_KC (A2). With a high inherited prior (p=σ(0.9)≈0.71), a
+    // SLOW-correct answer's continuous outcome (≈0.517) is BELOW the expected p, so the
+    // θ_KC offset drifts slightly DOWN — correct behaviour (a learner expected to ace it
+    // who is slow gives weak positive evidence). Fast-correct (outcome≈0.983 > p) rises.
+    // We therefore assert only the A1 ordering + that A2 ran, NOT that both rise.
+    expect(fast).toBeGreaterThan(0); // fast-correct outcome exceeds the inherited prior
+    expect(slow).toBeLessThan(0); // slow-correct outcome below the high inherited prior
+    // A2 still applies: the global row was written (hierarchical path ran).
+    const g = await readGlobal(domain);
+    expect(g).not.toBeNull();
+  });
+
+  it('SRT OFF × HIERARCHICAL ON → binary credit at effective θ; global row written', async () => {
+    srtFlag.value = false;
+    hierFlag.value = true;
+    const domain = 'wenyan';
+    const k = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(k, domain);
+    await seedQuestion(q, [k], 3);
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 1000, // present but SRT off → ignored (binary credit)
+      });
+    });
+    // Cold θ_global=0 + θ_KC=0 → effective 0 → binary credit (1−0.5)=0.5 → θ_KC=0.06.
+    const s = await readState(k);
+    expect(s?.theta_hat).toBe(0.06); // binary path (SRT ignored)
+    expect(await readGlobal(domain)).not.toBeNull(); // hierarchical path still ran
   });
 });

@@ -137,6 +137,64 @@ export function difficultyToLogitB(difficulty: number, scale = 0.85): number {
 export const DIFFICULTY_PROXY_WEIGHT = 0.3;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// A2 (YUK-434) — Hierarchical Elo on the θ̂ credit hot path.
+//
+// Split the single per-KC online θ̂ into TWO layers:
+//   θ_global(domain)  — a PER-DOMAIN learner-ability anchor (one row per domain
+//                       the learner has touched), drifts SLOWLY.
+//   θ_KC (= theta_hat) — a per-KC OFFSET on top of the domain anchor.
+// Effective ability for a KC = θ_global(domain-of-KC) + θ_KC.
+//   P(correct) = σ(effective − b).
+//
+// MAIN PAYOFF — per-domain cold-start inheritance: a never-seen KC has θ_KC = 0
+//   (the DB default for a fresh mastery_state row), so its effective ability is
+//   exactly θ_global of ITS domain. A learner who is strong in a domain starts a
+//   new KC of that domain ABOVE the logit origin instead of cold at 0.
+//
+// HONEST framing: the predictive gain over single Elo is SMALL (per-concept and
+//   global ability correlate ~0.6). This is built for (a) per-domain new-KC
+//   cold-start inheritance, and (b) the structural scaffold for interpretable
+//   per-KC mastery (the θ_KC offset) that later KG-borrowing approaches (A5/A6)
+//   lean on — NOT a predictive jump.
+//
+// FLAG: HIERARCHICAL_ELO_ENABLED gates the whole thing as a module-level const
+//   (mirrors SRT_ENABLED / DIFFICULTY_PROXY_WEIGHT — NO config table, NO env).
+//   Default FALSE this PR = ship dark. When false, θ_global is treated as
+//   identically 0: the per-KC path is BYTE-IDENTICAL to today (theta_hat IS the
+//   ability, no global row is read or written). When true, the two-layer path runs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Master flag for hierarchical (two-layer θ_global + θ_KC) Elo on the credit
+ * path. **Default false (dark-ship).**
+ *
+ * false → θ_global ≡ 0; effective ability == θ_KC == today's theta_hat. No
+ *   per-domain global row is read or written. The θ̂ update + the selection read
+ *   paths are BYTE-IDENTICAL to single-layer Elo (regression anchor with toBe).
+ * true  → effective ability = θ_global(domain-of-KC) + θ_KC feeds expectedScore /
+ *   conjunctiveCredits; θ_KC updates as today (now an offset), and θ_global drifts
+ *   slowly (ELO_K_GLOBAL) once per touched domain per attempt.
+ *
+ * Composes orthogonally with SRT_ENABLED: SRT modulates the per-KC credit VALUE;
+ * this flag modulates the θ INPUT that feeds the credit. All four combinations
+ * are well-defined (srtOutcome / eloK / precision math are untouched by A2).
+ *
+ * Flipped in a follow-up (not this PR) after the two-layer math is validated on
+ * live data.
+ */
+export const HIERARCHICAL_ELO_ENABLED = false;
+
+/**
+ * Global-layer Elo step (≈ 0.4 × the eloK floor 0.12). θ_global is a SLOW-moving
+ * per-domain anchor — it should integrate ability across many KCs/attempts, not
+ * chase a single item the way the per-KC offset does. A small fixed step keeps the
+ * domain anchor stable while the per-KC θ_KC offset absorbs item-level surprise.
+ * Owner-tunable; deliberately well below eloK's kFloor (0.12) so the global layer
+ * drifts SLOWER than the per-KC layer (asserted in state.db.test.ts).
+ */
+export const ELO_K_GLOBAL = 0.048;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // A1 (YUK-433) — SRT (Signed Residual Time) scoring on the θ̂ credit hot path.
 //
 // Maris & van der Maas (2012): the *signed residual time* is a sufficient

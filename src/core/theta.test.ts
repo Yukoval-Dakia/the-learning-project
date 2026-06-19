@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DIFFICULTY_PROXY_WEIGHT,
+  ELO_K_GLOBAL,
+  HIERARCHICAL_ELO_ENABLED,
   SRT_ENABLED,
   SRT_MIN_SIGNAL,
   conjunctiveCredits,
@@ -473,5 +475,77 @@ describe('conjunctiveCreditsContinuous (SRT-driven, binary-bit-identical at {0,1
     for (let i = 0; i < binary.length; i++) {
       expect(Math.abs(cont[i])).toBeLessThanOrEqual(Math.abs(binary[i]) + 1e-12);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A2 (YUK-434) — hierarchical Elo: θ_global + θ_KC, per-domain cold-start inheritance.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('HIERARCHICAL_ELO_ENABLED flag', () => {
+  it('defaults to false (dark-ship; per-KC path byte-identical to single-layer Elo)', () => {
+    expect(HIERARCHICAL_ELO_ENABLED).toBe(false);
+  });
+});
+
+describe('ELO_K_GLOBAL (slow per-domain drift)', () => {
+  it('is a small positive step', () => {
+    expect(ELO_K_GLOBAL).toBeGreaterThan(0);
+  });
+
+  it('is well below the eloK floor (global drifts slower than per-KC)', () => {
+    // eloK floor (kFloor) = 0.12 for evidence ≥ coldStartN. The global step must be
+    // strictly smaller so the domain anchor moves slower than the per-KC offset.
+    const kFloor = eloK(100); // 0.12
+    expect(ELO_K_GLOBAL).toBeLessThan(kFloor);
+    // And approximately 0.4× the floor (the design target), within a tight band.
+    expect(ELO_K_GLOBAL / kFloor).toBeCloseTo(0.4, 1);
+  });
+});
+
+describe('effective theta = θ_global + θ_KC fed into expectedScore (A2 two-layer)', () => {
+  it('expectedScore reads the SUM of the two layers (effective ability)', () => {
+    const thetaGlobal = 0.8;
+    const thetaKc = 0.3;
+    const b = 0.5;
+    // The credit/selection layers feed (θ_global + θ_KC) into expectedScore; verify
+    // the 1PL ICC reads the sum, not either layer alone.
+    expect(expectedScore(thetaGlobal + thetaKc, b)).toBeCloseTo(expectedScore(1.1, 0.5), 12);
+    // Sanity: the sum prediction differs from using θ_KC alone (the single-layer form).
+    expect(expectedScore(thetaGlobal + thetaKc, b)).not.toBeCloseTo(expectedScore(thetaKc, b), 6);
+  });
+
+  it('a NEVER-SEEN KC (θ_KC=0) predicts σ(θ_global − b) — per-domain cold-start inheritance', () => {
+    const thetaGlobal = 0.9; // learner strong in this domain
+    const thetaKc = 0; // fresh mastery_state row default → inherits the domain anchor
+    const b = 0.2;
+    // The MAIN PAYOFF: effective ability of a brand-new KC == θ_global of its domain,
+    // so P(correct) = σ(θ_global − b), NOT the cold σ(−b) the single layer would give.
+    expect(expectedScore(thetaGlobal + thetaKc, b)).toBeCloseTo(expectedScore(thetaGlobal, b), 12);
+    // It is ABOVE the cold-start σ(0 − b) a single-layer new KC would predict.
+    expect(expectedScore(thetaGlobal + thetaKc, b)).toBeGreaterThan(expectedScore(0, b));
+  });
+
+  it('flag-off semantics: θ_global=0 → effective == θ_KC (single-layer reduction)', () => {
+    // When the flag is off the write/read paths treat θ_global as identically 0, so
+    // the effective theta collapses to θ_KC and the prediction is the single-layer one.
+    const thetaKc = 0.45;
+    const b = -0.1;
+    expect(expectedScore(0 + thetaKc, b)).toBe(expectedScore(thetaKc, b));
+  });
+});
+
+describe('two-layer K split ratio (per-KC offset moves faster than domain global)', () => {
+  it('per-KC step (eloK floor) > global step (ELO_K_GLOBAL) for the same credit', () => {
+    // Same per-attempt credit magnitude, same bWeight: the per-KC offset update uses
+    // eloK (≥ kFloor 0.12) while the domain global uses ELO_K_GLOBAL (~0.048), so the
+    // KC offset always absorbs more of a single attempt's surprise than the domain
+    // anchor — the structural reason θ_global is the slow, stable layer.
+    const credit = 0.5;
+    const bWeight = 1;
+    const perKcStep = eloK(100) * bWeight * credit; // 0.12 · 1 · 0.5
+    const globalStep = ELO_K_GLOBAL * bWeight * credit; // 0.048 · 1 · 0.5
+    expect(perKcStep).toBeGreaterThan(globalStep);
+    expect(globalStep / perKcStep).toBeCloseTo(ELO_K_GLOBAL / eloK(100), 12);
   });
 });
