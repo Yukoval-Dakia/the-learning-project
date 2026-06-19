@@ -1,6 +1,7 @@
 // M2 (YUK-316) — 流 API 行为：lazy compose（仅今日）、状态机推进、双日隔离、
 // recompose 保留非 pending 项。composer 混排规则本体在 stream-composer.unit.test.ts。
 
+import { streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import {
   event,
   item_calibration,
@@ -30,7 +31,7 @@ vi.mock('@/server/ai/runner', () => ({
 
 import { GET, PATCH, POST } from './stream';
 
-const TODAY = new Date().toLocaleDateString('sv-SE');
+const TODAY = streamLocalDate();
 
 async function seedDueQuestion(): Promise<string> {
   const qid = createId();
