@@ -40,6 +40,14 @@ export interface PoolFetchCriteria {
   /** When non-empty, order by cosine distance to this query vector (hybrid retrieval);
    *  rows with NULL embedding are excluded. Otherwise order by created_at, id. */
   queryEmbedding?: number[] | null;
+  /** B4 (YUK-386) — answer_class hard filter (NULL-lenient). When set, restrict the pool to
+   *  rows whose persisted answer_class equals this value OR is NULL. NULL≡un-backfilled tail
+   *  (A3 only fills NEW writes + the backfill job; legacy rows are NULL) — those MUST NOT be
+   *  hard-excluded, so the predicate is `(answer_class = $X OR answer_class IS NULL)`, never a
+   *  bare equality. null/undefined → NO answer_class constraint (current behaviour; the column
+   *  is not touched). The matcher only passes this when MATCHER_ANSWER_CLASS_FILTER is on AND
+   *  the Demand declares answerClass — off → this stays undefined → WHERE byte-identical. */
+  answerClass?: string | null;
   /** Max rows. undefined → no limit. */
   limit?: number;
 }
@@ -73,6 +81,20 @@ export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]
   }
   if (c.difficultyMin != null) preds.push(sql`${question.difficulty} >= ${c.difficultyMin}`);
   if (c.difficultyMax != null) preds.push(sql`${question.difficulty} <= ${c.difficultyMax}`);
+  // B4 (YUK-386) — answer_class hard filter, NULL-lenient. Additive predicate, pushed ONLY
+  // when the caller passes a concrete answerClass (matcher: flag-gated). A row is eligible iff
+  // its answer_class matches OR is NULL (the un-backfilled legacy tail — A3 fills new writes
+  // only — must stay eligible, never silently dropped). Absent → no predicate → WHERE
+  // byte-identical to pre-B4. A faithful read-time derive (deriveAnswerClass) would need to
+  // replicate the TS classifier's choices-first + keyword-sensitivity logic in SQL CASE, which
+  // risks drift from the single canonical classifier; the NULL-lenient equality keeps the
+  // single source of truth (deriveAnswerClass on write / backfill) and corrects the NULL tail
+  // over time as coverage approaches 100%.
+  if (c.answerClass != null) {
+    preds.push(
+      sql`(${question.answer_class} = ${c.answerClass} OR ${question.answer_class} IS NULL)`,
+    );
+  }
   if (c.compositeParentOnly) {
     preds.push(isNull(question.parent_question_id));
     preds.push(

@@ -9,6 +9,25 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
+
+// B4 (YUK-386) — MATCHER_ANSWER_CLASS_FILTER is a module-level const in ./matcher-flags. Its
+// REAL default is false (dark-ship). We mock just that one export via a getter (EARLY_KLP
+// pattern) so both flag directions stay covered regardless of the default:
+//   - flag OFF (default; restored to false in beforeEach) → demand.answerClass is NOT pushed
+//     into the pool WHERE → byte-identical to the legacy kindsMatch pool query.
+//   - flag ON (set per-test) → demand.answerClass is forwarded to poolFetch.answerClass (the
+//     NULL-lenient hard filter). Validates the dark-ship gate without flipping the real const.
+const answerClassFilterFlag = { value: false };
+vi.mock('./matcher-flags', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./matcher-flags')>();
+  return {
+    ...actual,
+    get MATCHER_ANSWER_CLASS_FILTER() {
+      return answerClassFilterFlag.value;
+    },
+  };
+});
+
 import { matcher } from './matcher';
 
 // 1024-dim vector (matches EMBED_DIMS) with the first two components set — mirrors
@@ -860,5 +879,102 @@ describe('matcher — YUK-401 operator hardening', () => {
     expect(dispatch).not.toHaveBeenCalled();
     expect(result.residual).toEqual([]);
     expect(result.satisfiedFromPool).toBe(false);
+  });
+});
+
+// ── B4 (YUK-386) — answer_class hard filter (flag-gated, NULL-lenient, dark-ship) ─────────────
+describe('matcher — B4 answer_class hard filter (MATCHER_ANSWER_CLASS_FILTER)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    answerClassFilterFlag.value = false; // restore dark-ship default for the next test
+  });
+
+  // (1) flag ON + Demand.answerClass='steps' → an exact-class candidate is NOT returned, a
+  // steps candidate IS (a steps demand must not be filled by an exact candidate).
+  it('flag ON + answerClass=steps → exact candidate excluded, steps candidate used', async () => {
+    answerClassFilterFlag.value = true;
+    const kc = 'kc-ac-on';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
+    await seed({ id: 'q-steps', knowledge_ids: [kc], answer_class: 'steps', draft_status: null });
+    await seed({ id: 'q-exact', knowledge_ids: [kc], answer_class: 'exact', draft_status: null });
+
+    const result = await matcher(db, { knowledgeId: kc, answerClass: 'steps', limit: 5 });
+
+    // only the steps candidate is eligible; the exact one is hard-filtered out of the pool.
+    expect(result.used.map((u) => u.question_id)).toEqual(['q-steps']);
+  });
+
+  // (2) flag OFF → result set is identical to the legacy pool query — demand.answerClass is
+  // RECEIVED but ignored (收下不进 WHERE). Regression anchor: both classes are returned, proving
+  // the off-path pool query is byte-identical to pre-B4 (the exact row is NOT filtered).
+  it('flag OFF → answerClass ignored, pool identical to legacy (both classes returned)', async () => {
+    answerClassFilterFlag.value = false; // explicit (dark-ship default)
+    const kc = 'kc-ac-off';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
+    await seed({
+      id: 'q-steps',
+      knowledge_ids: [kc],
+      answer_class: 'steps',
+      draft_status: null,
+      created_at: new Date('2024-01-01T00:00:00Z'),
+    });
+    await seed({
+      id: 'q-exact',
+      knowledge_ids: [kc],
+      answer_class: 'exact',
+      draft_status: null,
+      created_at: new Date('2024-01-02T00:00:00Z'),
+    });
+
+    // SAME demand as test (1) — answerClass='steps' — but flag OFF: the exact row must STILL be
+    // returned (no answer_class predicate in the WHERE), byte-identical to the pre-B4 pool.
+    const result = await matcher(db, { knowledgeId: kc, answerClass: 'steps', limit: 5 });
+
+    // both classes recalled in created_at order — the off-path ignored answerClass entirely.
+    expect(result.used.map((u) => u.question_id)).toEqual(['q-steps', 'q-exact']);
+  });
+
+  // (3) NULL-answer_class candidate under flag ON → handled via the lenient OR, NOT silently
+  // dropped. The un-backfilled legacy tail (A3 fills NEW writes only) stays eligible.
+  it('flag ON + NULL-answer_class candidate is NULL-lenient (still considered, not dropped)', async () => {
+    answerClassFilterFlag.value = true;
+    const kc = 'kc-ac-null';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
+    await seed({
+      id: 'q-steps',
+      knowledge_ids: [kc],
+      answer_class: 'steps',
+      draft_status: null,
+      created_at: new Date('2024-01-01T00:00:00Z'),
+    });
+    await seed({
+      id: 'q-null',
+      knowledge_ids: [kc],
+      answer_class: null, // legacy / un-backfilled
+      draft_status: null,
+      created_at: new Date('2024-01-02T00:00:00Z'),
+    });
+    await seed({ id: 'q-exact', knowledge_ids: [kc], answer_class: 'exact', draft_status: null });
+
+    const result = await matcher(db, { knowledgeId: kc, answerClass: 'steps', limit: 5 });
+
+    // the matching class AND the NULL tail survive; only the genuine mismatch (exact) is dropped.
+    expect(result.used.map((u) => u.question_id).sort()).toEqual(['q-null', 'q-steps']);
+  });
+
+  // (4) Demand WITHOUT answerClass under flag ON → unconstrained (no answer_class predicate, no
+  // regression). The flag only matters when the demand actually declares answerClass.
+  it('flag ON + Demand without answerClass → unconstrained (all classes recalled)', async () => {
+    answerClassFilterFlag.value = true;
+    const kc = 'kc-ac-no-demand';
+    await seedKc(kc, 'math'); // live KC anchor (YUK-401 Fix 3 front-loaded guard).
+    await seed({ id: 'q-steps', knowledge_ids: [kc], answer_class: 'steps', draft_status: null });
+    await seed({ id: 'q-exact', knowledge_ids: [kc], answer_class: 'exact', draft_status: null });
+    await seed({ id: 'q-null', knowledge_ids: [kc], answer_class: null, draft_status: null });
+
+    // no answerClass on the demand → forwarded value is undefined → no answer_class constraint.
+    const result = await matcher(db, { knowledgeId: kc, limit: 5 });
+
+    expect(result.used.map((u) => u.question_id).sort()).toEqual(['q-exact', 'q-null', 'q-steps']);
   });
 });
