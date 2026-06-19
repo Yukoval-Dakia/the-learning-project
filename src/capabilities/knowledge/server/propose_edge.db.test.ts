@@ -1538,9 +1538,14 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     await insertKnowledge('kA');
     await insertKnowledge('kB');
     await insertKnowledge('kC');
-    // Live neighbor edge kA --contrasts_with--> kB (shares endpoint kA with the
-    // candidate). It will be superseded by the candidate kA --contrasts_with--> kC.
-    await insertLiveEdge('e_old', 'kA', 'kB', 'contrasts_with');
+    // CodeRabbit/Bugbot Finding 1 regression lock: the OLD/neighbor edge endpoints
+    // must DIFFER from the candidate on every axis the archive payload records
+    // (from, to, AND relation_type) so a step-4 archive event that wrongly used the
+    // CANDIDATE endpoints would be DETECTABLY wrong. Old edge = kB --related_to--> kA
+    // (shares endpoint kA, but from/to are reversed AND a different relation_type vs
+    // the candidate kA --contrasts_with--> kC). The reconcile neighbor filter only
+    // requires sharing ONE endpoint, so this is a valid neighbor.
+    await insertLiveEdge('e_old', 'kB', 'kA', 'related_to');
     await seedJudgeFailure('att_sup_1', ['kA', 'kC']);
     await seedJudgeFailure('att_sup_2', ['kA', 'kC']);
 
@@ -1588,6 +1593,39 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     expect(liveEdges).toHaveLength(1);
     expect(liveEdges[0].to_knowledge_id).toBe('kC');
     expect(liveEdges[0].relation_type).toBe('contrasts_with');
+
+    // Finding 1 regression lock: the step-4 OLD-edge archive-provenance event must
+    // describe the SUPERSEDED OLD edge endpoints (kB --related_to--> kA), NOT the
+    // candidate's (kA --contrasts_with--> kC). It is the `generate` event anchored
+    // to the superseded edge id (e_old) carrying an `edge_op: 'archive'` marker.
+    const archiveEvents = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'generate'),
+          eq(event.subject_kind, 'knowledge_edge'),
+          eq(event.subject_id, 'e_old'),
+        ),
+      );
+    expect(archiveEvents).toHaveLength(1);
+    const archivePayload = archiveEvents[0].payload as {
+      edge_op?: string;
+      archive_edge_id?: string;
+      from_knowledge_id?: string;
+      to_knowledge_id?: string;
+      relation_type?: string;
+    };
+    expect(archivePayload.edge_op).toBe('archive');
+    expect(archivePayload.archive_edge_id).toBe('e_old');
+    // EQUAL the OLD edge endpoints…
+    expect(archivePayload.from_knowledge_id).toBe('kB');
+    expect(archivePayload.to_knowledge_id).toBe('kA');
+    expect(archivePayload.relation_type).toBe('related_to');
+    // …and NOT the candidate's endpoints (the exact misdescription Finding 1 fixes).
+    expect(archivePayload.from_knowledge_id).not.toBe('kA');
+    expect(archivePayload.to_knowledge_id).not.toBe('kC');
+    expect(archivePayload.relation_type).not.toBe('contrasts_with');
 
     // Audit-log row written AND applied within the single tx (applied_at set;
     // no row left unapplied).
@@ -2012,10 +2050,15 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
         runTaskFn: fakeRunTask,
         // Env carries the ZHIPU/DASHSCOPE keys createMem0Config requires; NO
         // judgeReconcileFn → the LIVE judgeEdgeReconcile runs (against fetchMock).
+        // CodeRabbit/PR-Agent Finding 3 regression lock: MEM0_LLM_MODEL overrides
+        // the GLM model to a NON-default value, so a cost_ledger row that hardcoded
+        // 'glm-5.2' would be DETECTABLY wrong. The model must come from the same
+        // resolveGlmConfig(env) the judge uses.
         env: {
           DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
           ZHIPU_API_KEY: 'test-key',
           DASHSCOPE_API_KEY: 'test-dashscope',
+          MEM0_LLM_MODEL: 'glm-4.6-test-override',
         },
       });
 
@@ -2034,6 +2077,10 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
       expect(ledgerRows[0].tokens_in).toBe(321);
       expect(ledgerRows[0].tokens_out).toBe(42);
       expect(Number(ledgerRows[0].cost)).toBeGreaterThan(0);
+      // Finding 3: the ledger model is the RESOLVED model (MEM0_LLM_MODEL override),
+      // NOT the previously-hardcoded 'glm-5.2'.
+      expect(ledgerRows[0].model).toBe('glm-4.6-test-override');
+      expect(ledgerRows[0].model).not.toBe('glm-5.2');
     } finally {
       global.fetch = originalFetch;
     }

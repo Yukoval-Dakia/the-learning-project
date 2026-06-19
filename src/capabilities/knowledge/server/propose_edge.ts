@@ -19,6 +19,7 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import type { FailureAttempt } from '@/server/events/queries';
 import { writeEvent } from '@/server/events/queries';
+import type { Env } from '@/server/memory/client';
 import { writeAiProposal } from '@/server/proposals/writer';
 import type { SubjectProfile } from '@/subjects/profile';
 import { createId } from '@paralleldrive/cuid2';
@@ -31,6 +32,7 @@ import {
   type EdgeReconcileDecision,
   applyConfidenceThreshold,
   judgeEdgeReconcile,
+  resolveGlmConfig,
 } from './edge-reconcile';
 import {
   insertEdgePlannedRows,
@@ -454,10 +456,15 @@ export async function runEdgeProposeAndWrite(
                 // Only the LIVE judge bills; the injected test fn (judgeReconcileFn) has
                 // no GLM call, so it correctly never reaches this onUsage.
                 onUsage: (usage) => {
+                  // CodeRabbit/PR-Agent Finding 3 — thread the ACTUAL resolved GLM
+                  // model (the same resolveGlmConfig the judge uses) instead of
+                  // hardcoding 'glm-5.2', which drifts when MEM0_LLM_MODEL overrides
+                  // the model. Single source of truth: resolveGlmConfig(env).
+                  const model = resolveGlmConfig(params.env as Env).model;
                   void writeCostLedger(params.db, {
                     task_kind: 'edge_reconcile',
                     provider: 'glm',
-                    model: 'glm-5.2',
+                    model,
                     cost: glmChatCostCny(usage.promptTokens, usage.completionTokens),
                     currency: 'CNY',
                     tokens_in: usage.promptTokens,
@@ -498,6 +505,16 @@ export async function runEdgeProposeAndWrite(
           const newEdgeId = await applyEdgeSupersede(params.db, {
             candidate: p,
             supersededEdgeId: supersededId,
+            // CodeRabbit/Bugbot Finding 1 — pass the SUPERSEDED OLD edge endpoints so
+            // the step-4 archive-provenance event describes the edge actually being
+            // archived. The reconcile neighbor filter only requires sharing ONE
+            // endpoint, so the old edge endpoints can differ from the candidate's;
+            // using p.* there would misdescribe which edge was archived.
+            supersededEdge: {
+              from_knowledge_id: supersededEdge.from_knowledge_id,
+              to_knowledge_id: supersededEdge.to_knowledge_id,
+              relation_type: supersededEdge.relation_type,
+            },
             decision,
             affectedRefs,
           });
@@ -671,11 +688,20 @@ async function applyEdgeSupersede(
   opts: {
     candidate: EdgeProposalSchemaT;
     supersededEdgeId: string;
+    // CodeRabbit/Bugbot Finding 1 — the SUPERSEDED OLD edge endpoints (resolved at
+    // the call site from the chosen neighbor). The step-4 archive-provenance event
+    // MUST describe THESE, not the candidate's (the neighbor filter only requires a
+    // single shared endpoint, so they can legitimately differ).
+    supersededEdge: {
+      from_knowledge_id: string;
+      to_knowledge_id: string;
+      relation_type: string;
+    };
     decision: EdgeReconcileDecision;
     affectedRefs: ActivityRefT[];
   },
 ): Promise<string> {
-  const { candidate: p, supersededEdgeId, decision, affectedRefs } = opts;
+  const { candidate: p, supersededEdgeId, supersededEdge, decision, affectedRefs } = opts;
   const now = new Date();
 
   const logRow = makeEdgePlannedRow({
@@ -745,9 +771,12 @@ async function applyEdgeSupersede(
       payload: {
         edge_op: 'archive',
         archive_edge_id: supersededEdgeId,
-        from_knowledge_id: p.from_knowledge_id,
-        to_knowledge_id: p.to_knowledge_id,
-        relation_type: p.relation_type,
+        // CodeRabbit/Bugbot Finding 1 — the OLD (superseded) edge endpoints, NOT the
+        // candidate's. Step-2's NEW-edge generate event correctly keeps p.* (the new
+        // edge); this archive-provenance event describes the edge being ARCHIVED.
+        from_knowledge_id: supersededEdge.from_knowledge_id,
+        to_knowledge_id: supersededEdge.to_knowledge_id,
+        relation_type: supersededEdge.relation_type,
         reasoning: `reconcile SUPERSEDE: ${decision.reason}`,
       },
       created_at: now,

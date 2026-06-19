@@ -142,13 +142,17 @@ type GlmChatResponse = {
 /** Token usage surfaced to the caller so it can write cost_ledger (mirrors reconcile-llm.ts). */
 export type ReconcileUsage = { promptTokens: number; completionTokens: number };
 
-type GlmConfig = {
+export type GlmConfig = {
   baseURL: string;
   apiKey: string;
   model: string;
 };
 
-function resolveGlmConfig(env: Env): GlmConfig {
+// Exported so the cost_ledger call site (propose_edge.ts) can read the SAME
+// resolved GLM model the judge uses — single source of truth (CodeRabbit/PR-Agent
+// Finding 3), instead of hardcoding 'glm-5.2' which drifts when MEM0_LLM_MODEL is
+// set. Cheap + idempotent (createMem0Config just reads env into a config object).
+export function resolveGlmConfig(env: Env): GlmConfig {
   const mem0Config = createMem0Config(env);
   const llmConfig = mem0Config.llm.config;
   return {
