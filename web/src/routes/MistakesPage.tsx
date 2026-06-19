@@ -14,9 +14,10 @@
 // 偏差（owner-ratified preflight §4 + 本任务 present-if-available 规则；no-mock）：
 // ① 正解对照行（loom .cmp-right）：投影无 reference_md → DROP，`.mistake-cmp` 退化为单
 //    「误」行（CSS 本就无 .cmp-right）。要补需扩 listMistakeProjectionRows 返 reference_md。
-// ② inline 事件链展开（loom .event-chain / expander）：本页无事件 list query → DROP 展开，
-//    保留 `→ 事件链` 链接指向 /events/{id}（该 route 尚未登记 SPA，点击 404 属预期，同
-//    InboxPage evidence-link 既有行为）。
+// ② inline 事件链展开（loom .event-chain / expander）：本页无事件 list query → DROP 展开。
+//    事件链 footer 保留可读文案但 render 为 disabled——/events route 尚未登记 SPA，不 ship
+//    已知 404 导航（graceful defer，同 ProposalCard EvidenceChip：无 route 即 disabled +
+//    去 affordance）。/events 登记后撤 disabled + 补 onClick(`/events/{id}`)。
 // ③ 归因 badge：复用 CauseBadge primitive（user/agent/pending/conf 全覆盖，语义等价 loom
 //    AttributionBadge），不照搬 loom 简化版——避免双套归因展示漂移。
 // ④ 知识点 chip：knowledge_ids → 经 getTree fan-out 白话化为节点名（present-if-available；
@@ -33,7 +34,7 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 // ── wire 类型（GET /api/mistakes 投影行；listMistakeProjectionRows） ──
 interface MistakeCause {
@@ -81,6 +82,28 @@ function subjMeta(subject: string | null): { label: string; tone: Tone } {
   return QSUBJECT[subject] ?? { label: subject, tone: 'neutral' };
 }
 
+// 科目筛选规范化：把「filter chip key」与「effective_domain」折叠到同一规范桶后比 KEY，
+// 不比 label。旧码比 subjMeta(...).label——靠 wenyan/yuwen 共享「语文」标签碰巧对上，但
+// physics(物理)/suanxue 等无对应 chip 的科目会被静默错筛（label 永不等任一 chip label，
+// 等价于「永远不显示」而非「正确地不匹配」）。SUBJECT_OPTS chip key 是展示用别名
+// （yuwen/eng），effective_domain 是 profile id（wenyan/math/physics/general/...），二者
+// 词表不同——必须先各自归一到规范桶。规范桶取 profile id 优先（wenyan/math/physics/
+// general），英语无 profile 故用 eng 桶。
+const SUBJECT_KEY_ALIASES: Record<string, string> = {
+  wenyan: 'wenyan',
+  yuwen: 'wenyan',
+  math: 'math',
+  suanxue: 'math',
+  physics: 'physics',
+  eng: 'eng',
+  english: 'eng',
+  general: 'general',
+};
+function subjectKey(subject: string | null): string | null {
+  if (!subject) return null;
+  return SUBJECT_KEY_ALIASES[subject] ?? subject;
+}
+
 // loom 状态轴。投影无显式「已纠正/待重学」枚举——按 correction_state.terminal_state 派生：
 // retracted/marked_wrong（原 attempt 已被纠正事件推翻）→ 已纠正；cause 仍 null（归因未落）
 // → 归因中…；其余（active 等）→ 待重学。
@@ -117,7 +140,11 @@ function toCauseBadgeInput(cause: MistakeCause | null): {
   };
 }
 
-// 归因开始至今秒数（CauseBadge 的 pending<30s「归因中...」vs ≥30s「待归因」分界）。
+// 归因开始至今秒数。唯一消费者是 CauseBadge：仅用于在 <30s「归因中...」与 ≥30s
+// 「待归因」间二选一（不渲染活动秒数计数器）。Date.now() 在 render 期取——单凭它，
+// 一条 <30s 的 pending 行会卡在「归因中...」永不翻到「待归因」（页面挂着不重渲）。
+// 修法：页面级 30s 阈值附近补一个 tick（见 MistakesPage useEffect，仅 pending>0 时跑）
+// 触发重渲，让阈值跨越被如实反映。因为没有「看起来在走的冻结数字」，所以不误导。
 function pendingSinceSec(m: MistakeRow): number {
   return Math.max(0, Math.floor(Date.now() / 1000) - m.created_at);
 }
@@ -209,8 +236,10 @@ function MistakeCard({
               type="button"
               key={id}
               className="chip chip-k mono kp-chip"
-              title="跳到知识图"
-              onClick={() => navigate('/knowledge')}
+              title="跳到该知识点"
+              // loom kp-chip onClick={() => go("knowledge")} 是泛跳；SPA 深链到该 KC 自身
+              // 详情页（router.tsx /knowledge/$id → KnowledgeDetailPage useParams().id）。
+              onClick={() => navigate(`/knowledge/${id}`)}
             >
               {kpName(id)}
             </button>
@@ -223,17 +252,14 @@ function MistakeCard({
         />
       </div>
 
-      {/* footer：→ 事件链（inline 展开按 §4 DROP；/events/{id} route 尚未登记 SPA，
-          点击 404 属预期，同 InboxPage evidence-link 既有行为）。 */}
+      {/* footer：事件链（inline 展开按 §4 DROP；/events/{id} route 尚未登记 SPA）。
+          GRACEFUL DEFER：不 ship 已知 404 导航——同 ProposalCard EvidenceChip 先例
+          （src/.../ProposalCard.tsx：route 缺失时 disabled + 去掉「查看 →」affordance），
+          保留可读文案，撤掉点击穿透与 `→` 触发暗示。/events 登记后再补 onClick。 */}
       <div className="mistake-foot">
-        <button
-          type="button"
-          className="mistake-evlink"
-          title={`事件 events:${m.id}`}
-          onClick={() => navigate(`/events/${m.id}`)}
-        >
+        <button type="button" className="mistake-evlink" title={`事件 events:${m.id}`} disabled>
           <LoomIcon name="clock" size={13} />
-          查看事件链 →
+          事件链
         </button>
       </div>
     </LoomCard>
@@ -266,17 +292,53 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
 
   const kpName = (id: string) => treeById.get(id)?.name ?? id.slice(0, 8);
   // 科目派生：取首个 knowledge_id 的 effective_domain（无则 null → 未分科）。
-  const subjectOf = (m: MistakeRow): string | null =>
-    m.knowledge_ids.length > 0
-      ? (treeById.get(m.knowledge_ids[0])?.effective_domain ?? null)
-      : null;
+  const subjectOf = useCallback(
+    (m: MistakeRow): string | null =>
+      m.knowledge_ids.length > 0
+        ? (treeById.get(m.knowledge_ids[0])?.effective_domain ?? null)
+        : null,
+    [treeById],
+  );
 
-  const pending = rows.filter((m) => m.cause === null).length;
+  // 每行只算一次派生轴（subject / uiState / attr / 科目规范键），counts + shown + 卡片
+  // 都从这里取——旧码对 uiState(m) 跑了 4 趟独立 .filter()（3 个 count + shown），现在单趟。
+  const derived = useMemo(
+    () =>
+      rows.map((m) => {
+        const subject = subjectOf(m);
+        return {
+          m,
+          subject,
+          ui: uiState(m),
+          attr: attrOf(m),
+          skey: subjectKey(subject),
+        };
+      }),
+    [rows, subjectOf],
+  );
 
-  const shown = rows.filter((m) => {
-    if (subject !== 'all' && subjMeta(subjectOf(m)).label !== subjMeta(subject).label) return false;
-    if (state !== 'all' && uiState(m) !== state) return false;
-    if (attr !== 'all' && attrOf(m) !== attr) return false;
+  const pending = derived.filter((d) => d.m.cause === null).length;
+  const toRelearn = derived.filter((d) => d.ui === '待重学').length;
+  const corrected = derived.filter((d) => d.ui === '已纠正').length;
+
+  // pending 行的 CauseBadge 文案随 Date.now() 派生（<30s「归因中...」/ ≥30s「待归因」）。
+  // render 期一次性取的 Date.now() 不会自己走——补一个低频 tick 触发重渲，让阈值跨越如实
+  // 反映；只在 pending>0 时跑（无 pending 行时零开销，不挂常驻 interval）。15s 间距保证 30s
+  // 阈值在 ~一个周期内被跨过。tick 值本身不渲染（只为 invalidate render），不是冻结的活动计数。
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (pending === 0) return;
+    const h = setInterval(() => setTick((t) => t + 1), 15_000);
+    return () => clearInterval(h);
+  }, [pending]);
+
+  // 科目筛选比规范键（subjectKey），不比 label——见 SUBJECT_KEY_ALIASES 注释。
+  // shown 保留 derived 条目（含预算 subject），卡片渲染直接复用，不再重算 subjectOf。
+  const subjectFilterKey = subject === 'all' ? null : subjectKey(subject);
+  const shown = derived.filter((d) => {
+    if (subjectFilterKey !== null && d.skey !== subjectFilterKey) return false;
+    if (state !== 'all' && d.ui !== state) return false;
+    if (attr !== 'all' && d.attr !== attr) return false;
     return true;
   });
 
@@ -329,8 +391,7 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
               {shown.length} 条错题{activeFilters ? ' · 已筛选' : ''}
             </div>
             <div className="meta">
-              待重学 {rows.filter((m) => uiState(m) === '待重学').length} · 已纠正{' '}
-              {rows.filter((m) => uiState(m) === '已纠正').length} · 归因中 {pending}
+              待重学 {toRelearn} · 已纠正 {corrected} · 归因中 {pending}
             </div>
           </div>
           {activeFilters > 0 && (
@@ -389,11 +450,11 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
           />
         ) : (
           <div className="grid stagger" style={{ gap: 'var(--s-3)' }}>
-            {shown.map((m) => (
+            {shown.map((d) => (
               <MistakeCard
-                key={m.id}
-                m={m}
-                subject={subjectOf(m)}
+                key={d.m.id}
+                m={d.m}
+                subject={d.subject}
                 kpName={kpName}
                 navigate={navigate}
               />
