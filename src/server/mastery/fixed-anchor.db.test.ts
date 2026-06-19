@@ -165,4 +165,31 @@ describe('setFixedAnchors (batch)', () => {
       expect(row?.source).toBe('fixed_anchor');
     }
   });
+
+  // OCR major finding (PR #512): a sequential `await setFixedAnchor` loop with NO
+  // wrapping transaction lets a mid-batch failure leave EARLIER anchors committed +
+  // LATER ones not (partial write). The batch must be ATOMIC: any failure rolls back
+  // ALL anchors. The forced error here is an invalid bucket on the 2nd entry —
+  // `bucketToLogit` throws *after* the 1st entry's INSERT, so without the tx wrap the
+  // 1st row would already be committed; with the wrap the throw rolls the whole batch.
+  it('is atomic — a mid-batch failure rolls back ALL anchors (zero partial write)', async () => {
+    const good1 = createId();
+    const bad = createId();
+    const good2 = createId();
+    const inputs = [
+      { questionId: good1, bucket: 'easy' as AnchorBucket },
+      // Invalid bucket — bucketToLogit throws mid-batch (after good1 already INSERTed
+      // inside the loop). Cast past the type so the runtime guard fires.
+      { questionId: bad, bucket: 'nonexistent' as AnchorBucket },
+      { questionId: good2, bucket: 'hard' as AnchorBucket },
+    ];
+
+    await expect(setFixedAnchors(db, inputs)).rejects.toThrow();
+
+    // Full rollback: NONE of the three questions has a row — not even the first,
+    // which succeeded before the throw. A partial write (good1 present) is the bug.
+    expect(await readCalRow(good1)).toBeNull();
+    expect(await readCalRow(bad)).toBeNull();
+    expect(await readCalRow(good2)).toBeNull();
+  });
 });
