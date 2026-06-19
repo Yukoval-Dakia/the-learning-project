@@ -1,7 +1,9 @@
 /* ============================================================
    Loom · 草稿审核 (draft-pool review) — /drafts
    Master-detail: left draft list + right preview pane.
-   Two layouts (split · compact) toggled by [data-dr-layout].
+   Page renders the `split` layout ([data-dr-layout="split"], fixed in
+   DraftReviewPage.tsx); the `compact` [data-dr-layout] variant CSS below is
+   defined but not yet wired to a toggle (phase-deferred).
    Batch-select → verify queue · force-enable confirm modal.
    Warm-paper / coral / tone tokens only.
    ============================================================ */
@@ -1130,6 +1132,13 @@
 /* ── responsive ───────────────────────────────────────────── */
 @media (max-width: 1080px) {
   .dr-body {
+    /* !important is load-bearing, NOT redundant: the two-column grid is set by
+       `[data-dr-layout="split"|"compact"] .dr-body` (specificity 0,2,0), which
+       outranks this bare-class rule (0,1,0). A media query adds no specificity,
+       so without !important the desktop grid would survive below 1080px and the
+       single-column collapse would never apply. The page always renders under a
+       [data-dr-layout] ancestor (DraftReviewPage.tsx), so the higher-specificity
+       rule is always live. Keep until the grid columns move into a custom prop. */
     grid-template-columns: 1fr !important;
   }
   .dr-preview {
