@@ -24,6 +24,7 @@ import { createId } from '@paralleldrive/cuid2';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 
 /** Matches the `question.metadata` jsonb column shape (Record<string, unknown>). */
 type JsonObject = Record<string, unknown>;
@@ -82,32 +83,34 @@ export async function createQuestionPart(
   input: CreateQuestionPartInput,
 ): Promise<CreatedQuestionPart> {
   const questionId = input.id ?? createId();
-  await tx.insert(question).values({
-    id: questionId,
-    kind: QUESTION_PART_KIND,
-    prompt_md: input.promptMd,
-    reference_md: input.referenceMd ?? null,
-    knowledge_ids: input.knowledgeIds ?? [],
-    difficulty: input.difficulty ?? 3,
-    source: input.source,
-    variant_depth: 0,
-    // T-QP: the composition link + ordering — the columns this owner exists to write.
-    parent_question_id: input.parentQuestionId,
-    part_index: input.partIndex,
-    figures: input.figures ?? [],
-    image_refs: input.imageRefs ?? [],
-    structured: input.structured ?? null,
-    metadata: {
-      ...(input.metadata ?? {}),
-      // Always traceable to the parent in metadata (mirrors the ingestion
-      // metadata-provenance convention). `created_by` stays NULL by design.
-      part_of_question_id: input.parentQuestionId,
+  await tx.insert(question).values(
+    withAnswerClass({
+      id: questionId,
+      kind: QUESTION_PART_KIND,
+      prompt_md: input.promptMd,
+      reference_md: input.referenceMd ?? null,
+      knowledge_ids: input.knowledgeIds ?? [],
+      difficulty: input.difficulty ?? 3,
+      source: input.source,
+      variant_depth: 0,
+      // T-QP: the composition link + ordering — the columns this owner exists to write.
+      parent_question_id: input.parentQuestionId,
       part_index: input.partIndex,
-    },
-    created_at: input.now,
-    updated_at: input.now,
-    version: 0,
-  });
+      figures: input.figures ?? [],
+      image_refs: input.imageRefs ?? [],
+      structured: input.structured ?? null,
+      metadata: {
+        ...(input.metadata ?? {}),
+        // Always traceable to the parent in metadata (mirrors the ingestion
+        // metadata-provenance convention). `created_by` stays NULL by design.
+        part_of_question_id: input.parentQuestionId,
+        part_index: input.partIndex,
+      },
+      created_at: input.now,
+      updated_at: input.now,
+      version: 0,
+    }),
+  );
   return { questionId, partIndex: input.partIndex };
 }
 

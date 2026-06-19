@@ -49,6 +49,7 @@ import {
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { writeEvent } from '@/server/events/queries';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
@@ -653,27 +654,29 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             ? { material_source_document_id: materialSourceDocumentId }
             : {}),
         };
-        await tx.insert(question).values({
-          id,
-          kind: q.kind,
-          source: 'quiz_gen',
-          prompt_md: effectivePromptMd,
-          reference_md: q.reference_md,
-          rubric_json: q.rubric_json ?? null,
-          choices_md: q.choices_md ?? null,
-          judge_kind_override: judgeKind,
-          knowledge_ids: questionKnowledgeIds,
-          difficulty: q.difficulty,
-          // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
-          source_ref: resolved.refId,
-          // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
-          // quiz_verify passes (Q5 promotes draft→active + enrolls).
-          draft_status: 'draft',
-          created_by: aiAgentRef('QuizGenTask', result),
-          metadata: { quiz_gen: metaQuizGen },
-          created_at: now,
-          updated_at: now,
-        });
+        await tx.insert(question).values(
+          withAnswerClass({
+            id,
+            kind: q.kind,
+            source: 'quiz_gen',
+            prompt_md: effectivePromptMd,
+            reference_md: q.reference_md,
+            rubric_json: q.rubric_json ?? null,
+            choices_md: q.choices_md ?? null,
+            judge_kind_override: judgeKind,
+            knowledge_ids: questionKnowledgeIds,
+            difficulty: q.difficulty,
+            // §2 — trigger pointer (knowledge_id / learning_item_id), NOT a web URL.
+            source_ref: resolved.refId,
+            // Option B (§3) — generated drafts do NOT enter the pool / FSRS until
+            // quiz_verify passes (Q5 promotes draft→active + enrolls).
+            draft_status: 'draft',
+            created_by: aiAgentRef('QuizGenTask', result),
+            metadata: { quiz_gen: metaQuizGen },
+            created_at: now,
+            updated_at: now,
+          }),
+        );
         questionIds.push(id);
       }
 

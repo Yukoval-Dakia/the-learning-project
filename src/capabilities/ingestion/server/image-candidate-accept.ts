@@ -51,6 +51,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type R2Client, getR2 } from '@/server/r2';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
@@ -675,38 +676,40 @@ export async function acceptImageCandidateProposal(
         );
       }
 
-      await tx.insert(question).values({
-        id: questionId,
-        kind: draftQuestion.kind,
-        source: 'web_sourced',
-        prompt_md: promptMd,
-        reference_md: referenceMd || null,
-        judge_kind_override: judgeKind,
-        // FIX-3 — attribute to the originating 知识点 (text path parity).
-        knowledge_ids: knowledgeIds,
-        difficulty: draftQuestion.difficulty,
-        // source_ref = the page URL + source_ref_kind='url' so deriveSourceTier lands tier 2
-        // (合约三), identical to the SourcingTask text path.
-        source_ref: change.source_url,
-        // Option B (R6) — drafts do NOT enter the pool / FSRS until source_verify passes.
-        draft_status: 'draft',
-        created_by: aiAgentRef(IMAGE_EXTRACT_TASK_KIND, result),
-        metadata: {
-          web_sourced: webSourced,
-          source_ref_kind: 'url',
-          // Evidence trail: which asset + proposal this question came from.
-          image_candidate_source_asset_id: sourceAssetId,
-          image_candidate_proposal_id: proposalId,
-          // FIX-R2-6 — the prompt + the extract both originate from the SAME single VLM
-          // call (no independent re-read of the image), so source_verify's overlap is a
-          // weaker signal than for a web-text source (where extract is an independent page
-          // scrape). Marked explicitly; a future multimodal verify-against-image pass would
-          // clear this. Not done in this slice (see comment above).
-          single_source_grounding: true,
-        },
-        created_at: now,
-        updated_at: now,
-      });
+      await tx.insert(question).values(
+        withAnswerClass({
+          id: questionId,
+          kind: draftQuestion.kind,
+          source: 'web_sourced',
+          prompt_md: promptMd,
+          reference_md: referenceMd || null,
+          judge_kind_override: judgeKind,
+          // FIX-3 — attribute to the originating 知识点 (text path parity).
+          knowledge_ids: knowledgeIds,
+          difficulty: draftQuestion.difficulty,
+          // source_ref = the page URL + source_ref_kind='url' so deriveSourceTier lands tier 2
+          // (合约三), identical to the SourcingTask text path.
+          source_ref: change.source_url,
+          // Option B (R6) — drafts do NOT enter the pool / FSRS until source_verify passes.
+          draft_status: 'draft',
+          created_by: aiAgentRef(IMAGE_EXTRACT_TASK_KIND, result),
+          metadata: {
+            web_sourced: webSourced,
+            source_ref_kind: 'url',
+            // Evidence trail: which asset + proposal this question came from.
+            image_candidate_source_asset_id: sourceAssetId,
+            image_candidate_proposal_id: proposalId,
+            // FIX-R2-6 — the prompt + the extract both originate from the SAME single VLM
+            // call (no independent re-read of the image), so source_verify's overlap is a
+            // weaker signal than for a web-text source (where extract is an independent page
+            // scrape). Marked explicitly; a future multimodal verify-against-image pass would
+            // clear this. Not done in this slice (see comment above).
+            single_source_grounding: true,
+          },
+          created_at: now,
+          updated_at: now,
+        }),
+      );
 
       // ── 5. cost ledger — one CORRELATION row per accept. ───────────────────────
       // FIX-R2-2 — this row's cost/tokens are intentionally ZERO. The underlying

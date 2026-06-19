@@ -61,6 +61,7 @@ import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
 import { learning_session, question, question_block } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -333,36 +334,38 @@ export async function runAutoEnrollForSession(
     const answerMd = outcome === 'unanswered' ? '' : (block.wrong_answer_md ?? '');
     const result = await params.db.transaction(async (tx) => {
       const questionId = createId();
-      await tx.insert(question).values({
-        id: questionId,
-        kind: verdict.prefilled.question_kind,
-        prompt_md: questionMd,
-        reference_md: null,
-        knowledge_ids: verdict.prefilled.knowledge_ids,
-        difficulty: verdict.prefilled.difficulty,
-        source: sessionEntrypoint,
-        variant_depth: 0,
-        figures: block.figures,
-        image_refs: block.image_refs,
-        // Carry the structured tree only if prompt_md is regenerable from it
-        // (ADR-0002 revision invariant). questionMd is derived from structured,
-        // so when structured exists they always match.
-        structured: block.structured ?? null,
-        metadata: {
-          source_document_id: sourceDocumentId,
-          ingestion_session_id: params.sessionId,
-          question_block_id: block.id,
-          // OC-5: surface the judge decision on the question for traceability.
-          workflow_judge: {
-            route: verdict.route,
-            confidence: verdict.confidence,
-            reasoning: verdict.reasoning,
+      await tx.insert(question).values(
+        withAnswerClass({
+          id: questionId,
+          kind: verdict.prefilled.question_kind,
+          prompt_md: questionMd,
+          reference_md: null,
+          knowledge_ids: verdict.prefilled.knowledge_ids,
+          difficulty: verdict.prefilled.difficulty,
+          source: sessionEntrypoint,
+          variant_depth: 0,
+          figures: block.figures,
+          image_refs: block.image_refs,
+          // Carry the structured tree only if prompt_md is regenerable from it
+          // (ADR-0002 revision invariant). questionMd is derived from structured,
+          // so when structured exists they always match.
+          structured: block.structured ?? null,
+          metadata: {
+            source_document_id: sourceDocumentId,
+            ingestion_session_id: params.sessionId,
+            question_block_id: block.id,
+            // OC-5: surface the judge decision on the question for traceability.
+            workflow_judge: {
+              route: verdict.route,
+              confidence: verdict.confidence,
+              reasoning: verdict.reasoning,
+            },
           },
-        },
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        }),
+      );
 
       // SAME enrollment owner as the human path — only generatedBy + the (drafted)
       // outcome/answer differ. enrollCapturedBlock routes all 4 outcomes.
