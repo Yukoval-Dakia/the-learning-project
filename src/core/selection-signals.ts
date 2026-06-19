@@ -87,28 +87,34 @@ export function mfiScore(thetaHat: number, b: number): number {
 //   evidence_count < EARLY_KLP_N 用 KLP，之后回落点 MFI（candidate-signals.ts 门控）。
 //
 // FLAG：EARLY_KLP_ENABLED 是 module-level const（镜像 SRT_ENABLED /
-//   HIERARCHICAL_ELO_ENABLED 的 dark-ship 模式——无 config 表、无 env）。Default
-//   FALSE = 本 PR ship dark：候选信号评分逐位等同今天（点 MFI），仅 type/常量/纯
-//   函数落地，klpScore 永不在热路径被调用。在 RT/冷启数据验证后由 follow-up 翻开。
+//   HIERARCHICAL_ELO_ENABLED 的模式——无 config 表、无 env）。**现 default TRUE
+//   = LIVE**（P1 go-live step 2，YUK-361 / YUK-435 已闭环）：冷启 KC（per-KC
+//   evidence_count < EARLY_KLP_N）的候选评分走 klpScore（后验加权 Fisher 网格积分），
+//   warm KC 仍点 MFI。OFF（false）路径仍是合法的 baseline——只是不再是 default；
+//   bitwise baseline regression 经 candidate-signals.db.test.ts 的 explicit
+//   false-mock 继续守护。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Master flag for KLP cold-start selection scoring. **Default false (dark-ship).**
+ * Master flag for KLP cold-start selection scoring. **Default true (LIVE).**
  *
+ * true (default, live) → for cold-start KCs (per-KC evidence_count < EARLY_KLP_N)
+ *   the candidate score becomes klpScore(θ̂, b, precision) instead of mfiScore(θ̂, b);
+ *   warm KCs (evidence_count ≥ EARLY_KLP_N) still use point MFI (the gate is intact).
  * false → candidate scoring uses point MFI exactly as before for ALL candidates
- *   (klpScore is never reached on the hot path → selection bytes identical to today).
- * true  → for cold-start KCs (per-KC evidence_count < EARLY_KLP_N) the candidate
- *   score becomes klpScore(θ̂, b, precision) instead of mfiScore(θ̂, b); warm KCs
- *   (evidence_count ≥ EARLY_KLP_N) still use point MFI.
+ *   (klpScore is never reached on the hot path → selection bytes identical to the
+ *   pre-A3 baseline). Still a valid path, exercised explicitly via false-mock; just
+ *   no longer the default.
  *
  * Composes orthogonally with HIERARCHICAL_ELO_ENABLED (A2) and SRT_ENABLED (A1):
  * those modulate the θ̂ INPUT / credit value; this flag only changes which
  * information functional scores a candidate given (θ̂, b, precision).
  *
- * Flipped in a follow-up (not this PR) after the cold-start gain is observed on
- * live data.
+ * Flipped to live in YUK-361 P1 go-live step 2 (after SRT + hierarchical Elo went
+ * live in #499); the per-KC evidence_count gate keeps the change scoped to the
+ * cold-start regime where posterior-weighted information actually helps.
  */
-export const EARLY_KLP_ENABLED = false;
+export const EARLY_KLP_ENABLED = true;
 
 /**
  * Cold-start regime length for KLP scoring — KCs with per-KC evidence_count below

@@ -13,12 +13,16 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// A3 (YUK-435) — EARLY_KLP_ENABLED is a module-level const (dark-ship default false,
-// mirrors the SRT_ENABLED / HIERARCHICAL_ELO_ENABLED pattern). To exercise the flag-ON
-// cold-start branch in collectQuestionSignal we mock just that one export of
-// @/core/selection-signals and keep every other export (mfiScore, klpScore,
-// diagnosticScore, …) as the REAL implementation via importOriginal. The default-flag
-// (false) regression tests run against the real const (false) through this same factory.
+// A3 (YUK-435) — EARLY_KLP_ENABLED is a module-level const. As of YUK-361 P1 go-live
+// step 2 its REAL default is now TRUE (live). This suite controls the flag explicitly
+// via the getter mock below (it does NOT rely on the real const default), so both
+// directions stay tested regardless of the live default:
+//   - OFF-path / baseline regressions (the bit-identical point-MFI anchor) run with an
+//     EXPLICIT false (earlyKlpFlag.value=false, restored in beforeEach) → the pre-A3
+//     baseline survives the flip and is NOT vacuous.
+//   - ON-path tests set earlyKlpFlag.value=true (now also the live default).
+// We mock just this one export of @/core/selection-signals and keep every other export
+// (mfiScore, klpScore, diagnosticScore, …) as the REAL implementation via importOriginal.
 const earlyKlpFlag = { value: false };
 vi.mock('@/core/selection-signals', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/selection-signals')>();
