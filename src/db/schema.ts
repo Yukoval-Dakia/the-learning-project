@@ -24,6 +24,9 @@ import type {
   ToolState,
 } from '../core/schema/business';
 import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_question';
+// A4 (YUK-436) — persisted shadow shape for mastery_state.theta_grid_json (type-only,
+// erased at compile; the actual grid math lives in src/core/theta-grid.ts).
+import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 import { vector } from './vector';
 
@@ -780,6 +783,13 @@ export const mastery_state = pgTable(
     // 本次 attempt 的 θ̂ 变化量（newTheta − thetaBefore），可观测/调试用。nullable：
     // 冷启或从未 attempt 的行为 NULL。default 1 不适用（这是有符号增量非信息量）。
     last_theta_delta: real('last_theta_delta'),
+    // A4 (YUK-436) — 离散网格贝叶斯 θ_KC OFFSET 后验的 SHADOW 持久化（inc-1）。
+    // { probs: number[41], evidence: number }（支撑点是 GRID_THETA 模块常量，不持久化）。
+    // inc-1 是 PURE-ADDITIVE SHADOW：theta_hat 仍是 SoT，本列只在 THETA_GRID_ENABLED=true
+    // 且单 KC 题时写，**无任何 inc-1 下游读者**（不喂 p(L)/effectiveB/选题）。flag OFF（默认）
+    // 恒 NULL。校准验证后才在 inc-2（grid→SoT cut-over，必须排在 A3 之后）接读侧。
+    // 进 audit-schema allowlist（写路径存在但 inc-1 无 live reader）。
+    theta_grid_json: jsonb('theta_grid_json').$type<ThetaGridPosteriorJson>(),
     // 软轨占位（本 wave 不写，进 audit allowlist，kind:'manual' 解除）:
     // fixed-anchor 慢热校准残差——Wave2 复盘/锚校准路径才写。n=1 结构性受锚质量约束。
     calibration_residual: real('calibration_residual'),

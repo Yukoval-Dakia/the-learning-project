@@ -29,9 +29,25 @@ vi.mock('@/core/theta', async (importOriginal) => {
   };
 });
 
+// A4 (YUK-436) — THETA_GRID_ENABLED is a module-level const (dark-ship default false),
+// mocked the same way. The flag-OFF regression anchor runs against the real const
+// (false) through this factory; the flag-ON shadow test opts in via gridFlag.value=true.
+// Everything else in @/core/theta-grid (gridUpdate / posteriorMean / …) stays REAL.
+const gridFlag = { value: false };
+vi.mock('@/core/theta-grid', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/theta-grid')>();
+  return {
+    ...actual,
+    get THETA_GRID_ENABLED() {
+      return gridFlag.value;
+    },
+  };
+});
+
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearned } from '@/core/pfa';
 import { ELO_K_GLOBAL, thetaToMastery } from '@/core/theta';
+import { GRID_POINTS, type ThetaGridPosterior, posteriorMean } from '@/core/theta-grid';
 import { db } from '@/db/client';
 import {
   item_calibration,
@@ -1802,5 +1818,211 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
     const s = await readState(k);
     expect(s?.theta_hat).toBe(0.06); // binary path (SRT ignored)
     expect(await readGlobal(domain)).not.toBeNull(); // hierarchical path still ran
+  });
+});
+
+// A4 (YUK-436) — discrete grid-Bayes θ_KC offset posterior, SHADOW write (inc-1).
+//   Read the persisted shadow posterior off mastery_state.theta_grid_json (a 'knowledge'
+//   row, the same row the Elo theta_hat lives on).
+async function readGridJson(knowledgeId: string): Promise<ThetaGridPosterior | null> {
+  const rows = await db
+    .select({ grid: mastery_state.theta_grid_json })
+    .from(mastery_state)
+    .where(
+      and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, knowledgeId)),
+    )
+    .limit(1);
+  return (rows[0]?.grid as ThetaGridPosterior | null | undefined) ?? null;
+}
+
+describe('updateThetaForAttempt — grid-Bayes θ shadow posterior (A4 / YUK-436)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    srtFlag.value = false;
+    hierFlag.value = false;
+    gridFlag.value = false; // dark-ship default; individual tests opt in.
+  });
+  afterEach(() => {
+    srtFlag.value = false;
+    hierFlag.value = false;
+    gridFlag.value = false;
+  });
+
+  // ── REGRESSION ANCHOR (write FIRST): flag OFF → θ̂ path BYTE-IDENTICAL + grid NULL ──
+  it('flag OFF → theta_hat/precision/counts BIT-IDENTICAL to today (toBe) + theta_grid_json stays NULL', async () => {
+    gridFlag.value = false;
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const s = await readState(k);
+    // Canonical cold-start correct step: kCold 0.4 · bWeight 0.3 · (1 − 0.5) = 0.06.
+    // toBe (not toBeCloseTo): the flag-off grid code must be byte-identical to today.
+    expect(s?.theta_hat).toBe(0.06);
+    expect(s?.theta_precision).toBe(1 + 0.3 * 0.3 * 0.25); // unchanged Fisher: weight²·p(1−p)
+    expect(s?.success_count).toBe(1);
+    expect(s?.fail_count).toBe(0);
+    expect(s?.evidence_count).toBe(1);
+    // THE A4 RED-LINE: no shadow grid is computed/persisted with the flag off.
+    expect(await readGridJson(k)).toBeNull();
+  });
+
+  it('flag OFF → multi-KC theta_hat unchanged + theta_grid_json stays NULL on every KC', async () => {
+    gridFlag.value = false;
+    const kA = createId();
+    const kB = createId();
+    const q = createId();
+    await seedKnowledge(kA);
+    await seedKnowledge(kB);
+    await seedQuestion(q, [kA, kB], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kA, kB],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    expect(await readGridJson(kA)).toBeNull();
+    expect(await readGridJson(kB)).toBeNull();
+  });
+
+  // ── FLAG ON: single-KC shadow posterior is computed + persisted (no SoT change) ──
+  it('flag ON → single-KC correct attempt writes a shadow posterior; Elo theta_hat UNCHANGED (shadow-only)', async () => {
+    gridFlag.value = true;
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k], 3); // proxy b=0
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    // Elo theta_hat stays the SOURCE OF TRUTH — bit-identical to the flag-off step (0.06).
+    // The grid is PURE-ADDITIVE SHADOW: it does NOT feed/alter the Elo update.
+    const s = await readState(k);
+    expect(s?.theta_hat).toBe(0.06);
+
+    // The shadow posterior is persisted on the same 'knowledge' row.
+    const grid = await readGridJson(k);
+    expect(grid).not.toBeNull();
+    expect(grid?.probs).toHaveLength(GRID_POINTS);
+    expect(grid?.probs.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 8); // normalised
+    expect(grid?.evidence).toBe(1); // one sequential-Bayes fold
+    // A correct answer at b'=0 shifts the posterior mean UP from the uniform-prior 0.
+    expect(posteriorMean(grid as ThetaGridPosterior)).toBeGreaterThan(0);
+  });
+
+  it('flag ON → a WRONG single-KC attempt shifts the shadow posterior mean DOWN', async () => {
+    gridFlag.value = true;
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 0,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const grid = await readGridJson(k);
+    expect(grid).not.toBeNull();
+    expect(posteriorMean(grid as ThetaGridPosterior)).toBeLessThan(0);
+  });
+
+  it('flag ON → sequential folds accumulate: two correct attempts fold evidence 1 then 2', async () => {
+    gridFlag.value = true;
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    const after1 = await readGridJson(k);
+    expect(after1?.evidence).toBe(1);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [k],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    const after2 = await readGridJson(k);
+    expect(after2?.evidence).toBe(2); // running posterior, not re-started from prior
+    // Two consecutive correct answers move the mean further up than one.
+    expect(posteriorMean(after2 as ThetaGridPosterior)).toBeGreaterThan(
+      posteriorMean(after1 as ThetaGridPosterior),
+    );
+  });
+
+  it('flag ON → MULTI-KC item is SKIPPED (single-KC only inc-1): no shadow posterior on either KC', async () => {
+    gridFlag.value = true;
+    const kA = createId();
+    const kB = createId();
+    const q = createId();
+    await seedKnowledge(kA);
+    await seedKnowledge(kB);
+    await seedQuestion(q, [kA, kB], 3); // 2-KC item → multi-KC conjunctive deferred
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kA, kB],
+        questionId: q,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    // The Elo per-KC update still ran on both KCs (rows exist) — only the GRID is gated
+    // to single-KC items, so neither KC gets a shadow posterior.
+    expect(await readState(kA)).not.toBeNull();
+    expect(await readState(kB)).not.toBeNull();
+    expect(await readGridJson(kA)).toBeNull();
+    expect(await readGridJson(kB)).toBeNull();
   });
 });
