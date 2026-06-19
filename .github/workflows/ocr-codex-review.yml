@@ -233,12 +233,17 @@ jobs:
 
           test -s ocr-review.json
 
+      # Diagnostic artifact only — a transient ECONNRESET from the self-hosted
+      # runner to GitHub's artifact endpoint must NOT fail a review that already
+      # ran and posted comments. Best-effort with retries.
       - name: Upload OCR review JSON
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: ocr-codex-review-${{ github.event.pull_request.number }}
           path: ocr-review.json
           if-no-files-found: error
+          retention-days: 7
 
       - name: Upsert PR review comment
         uses: actions/github-script@v7
