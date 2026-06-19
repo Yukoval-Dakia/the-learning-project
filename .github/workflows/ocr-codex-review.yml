@@ -125,14 +125,7 @@ jobs:
               }`;
 
               // Follow-up query to fetch remaining comment pages for a single thread.
-              const commentsQuery = `query($owner:String!,$repo:String!,$pr:Int!,$threadId:ID!,$commentsCursor:String){
-                repository(owner:$owner,name:$repo){
-                  pullRequest(number:$pr){
-                    reviewThreads(first:1, after:null){
-                      nodes{ id }
-                    }
-                  }
-                }
+              const commentsQuery = `query($threadId:ID!,$commentsCursor:String){
                 node(id:$threadId){
                   ... on PullRequestReviewThread{
                     comments(first:100, after:$commentsCursor){
@@ -170,10 +163,10 @@ jobs:
                   let commentsCursor = firstPage.pageInfo.hasNextPage ? firstPage.pageInfo.endCursor : null;
                   while (commentsCursor) {
                     const moreData = await github.graphql(commentsQuery, {
-                      owner: context.repo.owner, repo: context.repo.repo, pr: prNumber,
                       threadId: th.id, commentsCursor,
                     });
-                    const morePage = moreData.node.comments;
+                    const morePage = moreData?.node?.comments;
+                    if (!morePage) break;
                     allComments = allComments.concat(morePage.nodes);
                     commentsCursor = morePage.pageInfo.hasNextPage ? morePage.pageInfo.endCursor : null;
                   }
