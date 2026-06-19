@@ -475,6 +475,20 @@ export async function restoreFromArchive({
       }
     }
   }
+  // Cursor Bugbot (PR #491): give the mem0 collection entry the SAME present-but-
+  // not-an-array shape guard the FK_ORDER tables get above. Without it, a data.json
+  // whose mem0 key is PRESENT but malformed (object/string/number rather than an
+  // array) collapsed `mem0Rows` to `undefined` at the top of this function —
+  // indistinguishable from the legitimate ABSENT case — so NO shape error was
+  // raised, the FK_ORDER tables were still wiped + reloaded, and the mem0 collection
+  // was SILENTLY skipped (a silent recoverability break: restore must NEVER drop a
+  // present-but-malformed table without failing). Mirror FK_ORDER's "not an array"
+  // branch: a PRESENT-but-non-array mem0 key is a hard shape error BEFORE any wipe.
+  // The ABSENT case (key missing -> fresh DB / mem0 never self-init) stays a graceful
+  // skip (mem0Rows === undefined, handled by the dedicated restore branch below).
+  if (Object.prototype.hasOwnProperty.call(data, mem0Table) && !Array.isArray(data[mem0Table])) {
+    validationErrors.push(`${mem0Table}: not an array`);
+  }
   if (validationErrors.length > 0) {
     return {
       status: 400,
