@@ -1,10 +1,21 @@
 // YUK-432 — PfSolo 客观题判别（auto-commit gate）的纯逻辑单测。
 //
 // PfSolo 没有 render 测试 harness（项目不带 jsdom/testing-library），且引入它属 scope creep。
-// 自动判分/自动评级的**判定**逻辑被抽成纯谓词 isObjectiveQuestion(route, kind)，它就是
-// runJudge 里「preview 回来后是否自动 commit(auto_rate:true)」的唯一开关：
-//   - 客观（exact/keyword 路由，或 choice/true_false/fill_blank 题型）→ 自动 commit，跳过手动评级。
-//   - 开放（语义/主观判分 + 开放题型）→ 落现有手动 again/hard/good 流。
+// 自动判分/自动评级的**判定**逻辑被抽成纯谓词 isObjectiveQuestion(route)，它就是
+// runJudge 里「preview 回来后是否自动 commit(auto_rate:true)」的唯一开关。
+//
+// 关键不变式（YUK-432 firm-up unblock，Bugbot Medium 修复）：UI auto-rate gate 必须**逐字**对齐
+// 后端 label gate。后端（src/server/mastery/personalized-difficulty.ts 的 isObjectiveJudgeRoute）
+// 仅在判分 ROUTE ∈ {exact, keyword} 时才写 difficulty_calibration_label，键于 judge route，
+// 与题型（kind）无关。因此 UI 也必须**只**看 route：
+//   - 客观判分路由（exact/keyword）→ 自动 commit(auto_rate:true)，跳过手动评级（后端会写 label）。
+//   - 其它路由（semantic/rubric/steps…）→ 落现有手动 again/hard/good 流（后端不写 label）。
+// 旧实现额外用 kind-OR 兜底（choice/true_false/fill_blank 也算客观），这会让一道**题型客观但
+// 判分路由非客观**（例如 judge_kind_override=semantic 路由到 semantic 的 choice 题）在 UI 侧过 gate
+// → auto_rate:true 自动 commit、跳过手动评级 —— 但后端 route gate 为 false → **不写 label**。
+// 用户走完自动流，B1 label 却从未落库，且一道被语义判分的题被错误地跳过了手动评级。修复=去掉
+// kind-OR，UI gate ≡ 后端 isObjectiveJudgeRoute（route only）。
+//
 // 端到端写库证据在 submit.db.test.ts「YUK-432 — 客观 auto_rate 产 difficulty_calibration_label」。
 //
 // No-DB unit partition（不 import db/postgres/drizzle）；node env 下 PfSolo.tsx 导入干净（无 DOM 调用）。
@@ -13,35 +24,41 @@ import { describe, expect, it } from 'vitest';
 import { isObjectiveQuestion } from './PfSolo';
 
 describe('isObjectiveQuestion — PfSolo 客观题 auto-commit gate (YUK-432)', () => {
-  it('客观判分路由（exact）→ 客观（即便题型是开放 short_answer）', () => {
-    // exact 路由是确定性字符串匹配（后端 OBJECTIVE_JUDGE_ROUTES 同源）→ 自动判分+自动评级。
-    expect(isObjectiveQuestion('exact', 'short_answer')).toBe(true);
+  it('(a) choice/true_false 题（route exact）→ 客观（auto-rate）', () => {
+    // 正常封闭客观题的判分路由本就是确定性的 exact → 自动判分+自动评级，后端也会写 label。
+    expect(isObjectiveQuestion('exact')).toBe(true);
   });
 
-  it('客观判分路由（keyword）→ 客观', () => {
-    expect(isObjectiveQuestion('keyword', 'short_answer')).toBe(true);
+  it('(b) fill_blank 题（route keyword）→ 客观（auto-rate）', () => {
+    // fill_blank（带 reference）路由到 exact/keyword → 客观，后端写 label。
+    expect(isObjectiveQuestion('keyword')).toBe(true);
   });
 
-  it('封闭客观题型（choice）→ 客观（即便路由是 semantic）', () => {
-    expect(isObjectiveQuestion('semantic', 'choice')).toBe(true);
+  it('(c) BUGBOT 回归：题型客观但 route=semantic（judge_kind_override）→ 非客观（保留手动评级）', () => {
+    // 一道 choice/true_false/fill_blank 携带 judge_kind_override=semantic、路由到 semantic：
+    // 旧的 kind-OR 兜底会判它为客观 → UI 发 auto_rate:true → 自动 commit、跳过手动评级，
+    // 但后端 isObjectiveJudgeRoute('semantic')=false → **不写 label** → mismatch（auto-rate
+    // 无 label）。修复后 UI gate 只看 route：semantic → 非客观 → 保留手动评级流，与后端一致。
+    expect(isObjectiveQuestion('semantic')).toBe(false);
   });
 
-  it('封闭客观题型（true_false / fill_blank）→ 客观', () => {
-    expect(isObjectiveQuestion('semantic', 'true_false')).toBe(true);
-    expect(isObjectiveQuestion('semantic', 'fill_blank')).toBe(true);
+  it('(d) 开放题（route semantic）→ 非客观 → 维持手动评级流', () => {
+    // LLM-backed 主观判分 → 不自动 commit，落手动 again/hard/good。
+    expect(isObjectiveQuestion('semantic')).toBe(false);
   });
 
-  it('开放题（semantic 路由 + short_answer 题型）→ 非客观 → 维持手动评级流', () => {
-    // LLM-backed 主观判分 + 开放题型 → 不自动 commit，落手动 again/hard/good。
-    expect(isObjectiveQuestion('semantic', 'short_answer')).toBe(false);
+  it('开放判分路由（rubric / steps）→ 非客观', () => {
+    expect(isObjectiveQuestion('rubric')).toBe(false);
+    expect(isObjectiveQuestion('steps')).toBe(false);
   });
 
-  it('开放题（rubric / steps 路由 + reading 题型）→ 非客观', () => {
-    expect(isObjectiveQuestion('rubric', 'reading')).toBe(false);
-    expect(isObjectiveQuestion('steps', 'essay')).toBe(false);
-  });
-
-  it('题型未知（undefined）+ 非客观路由 → 非客观（保守落手动流）', () => {
-    expect(isObjectiveQuestion('semantic', undefined)).toBe(false);
+  it('UI gate ≡ 后端 isObjectiveJudgeRoute：仅 route ∈ {exact, keyword} 为客观', () => {
+    // 与 src/server/mastery/personalized-difficulty.ts 的 OBJECTIVE_JUDGE_ROUTES 逐字同源。
+    for (const route of ['exact', 'keyword']) {
+      expect(isObjectiveQuestion(route)).toBe(true);
+    }
+    for (const route of ['semantic', 'rubric', 'steps', 'advice', 'unsupported', 'reading']) {
+      expect(isObjectiveQuestion(route)).toBe(false);
+    }
   });
 });

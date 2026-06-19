@@ -44,19 +44,28 @@ const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: 
 const RATING_LABEL: Record<Rating, string> = { again: '再练', hard: '模糊', good: '掌握' };
 
 // YUK-432 — 客观题判别（OWNER DECISION A：客观题自动判分 + 自动评级，跳过手动 again/hard/good）。
-// 任一命中即客观：
-//   1. judge 预览 route 是确定性客观路由（exact/keyword，与后端 server/mastery/personalized-difficulty.ts
-//      OBJECTIVE_JUDGE_ROUTES 同源——纯字符串/集合匹配、零 LLM）。
-//   2. 题型本身是封闭客观题（choice/true_false/fill_blank）。
+//
+// gate 的判据：judge 预览 route 是确定性客观路由（exact/keyword）。**只看 route，不看题型 kind。**
+// 必须逐字对齐后端 label gate：后端 src/server/mastery/personalized-difficulty.ts 的
+// isObjectiveJudgeRoute(judgeRoute) 仅在 route ∈ OBJECTIVE_JUDGE_ROUTES={exact,keyword} 时才写
+// difficulty_calibration_label（键于 judge route，与 kind 无关）。UI auto-rate gate 与之同源——
+// UI 发 auto_rate:true ⟺ 后端会写 label。
+//
+// 为何不能再用 kind-OR 兜底（Bugbot Medium 修复）：一道**题型客观但判分路由非客观**的题（例如
+// choice/true_false/fill_blank 携带 judge_kind_override=semantic、路由到 semantic）会在旧的 kind-OR
+// 下过 UI gate → auto_rate:true 自动 commit、跳过手动评级 —— 但后端 route gate=false → **不写 label**。
+// 结果：用户走完自动流，B1 label 从未落库（firm-up 链仍冻结），且一道被语义判分的题被错误跳过手动
+// 评级。route-only gate 消除这个 mismatch：semantic-override 的客观题型回到手动评级流（它确实在被
+// 语义判分，而非确定性判分），正常 choice/true_false/fill_blank（其 route 本就是 exact/keyword）继续
+// auto-rate。
+//
 // 客观题：preview 回来后直接以 suggested_rating + auto_rate:true 自动 commit（让客观判分流过后端
 // difficulty_calibration_label hook 产标签，解冻 B1 难度 firm-up 链）；用户仍看到判定反馈卡再前进。
-// 开放题维持现有手动评级流（字节不变）。
+// 开放题（含 semantic-override 的客观题型）维持现有手动评级流（字节不变）。
 const OBJECTIVE_JUDGE_ROUTES = new Set(['exact', 'keyword']);
-const OBJECTIVE_QUESTION_KINDS = new Set(['choice', 'true_false', 'fill_blank']);
 
-export function isObjectiveQuestion(route: string, questionKind: string | undefined): boolean {
-  if (OBJECTIVE_JUDGE_ROUTES.has(route)) return true;
-  return questionKind != null && OBJECTIVE_QUESTION_KINDS.has(questionKind);
+export function isObjectiveQuestion(route: string): boolean {
+  return OBJECTIVE_JUDGE_ROUTES.has(route);
 }
 
 export function PfSolo({
@@ -162,11 +171,11 @@ export function PfSolo({
       const r = await getAdvice(q.id, answerMd);
       setPreview(r.judge);
       setRating(r.judge.suggested_rating);
-      // YUK-432 — 客观题（route exact/keyword 或 kind choice/true_false/fill_blank）：preview 回来即
-      // 自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让用户
-      // 仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。开放题：不自动
-      // commit，落到现有手动评级流。
-      if (isObjectiveQuestion(r.judge.route, q.kind)) {
+      // YUK-432 — 客观题（route exact/keyword，与后端 isObjectiveJudgeRoute 同源；不看 kind）：preview
+      // 回来即自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让
+      // 用户仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。开放题（含
+      // semantic-override 的客观题型）：不自动 commit，落到现有手动评级流。
+      if (isObjectiveQuestion(r.judge.route)) {
         await commit({
           withAppeal: false,
           rating: r.judge.suggested_rating,
