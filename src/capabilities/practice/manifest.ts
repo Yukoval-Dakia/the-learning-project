@@ -264,6 +264,23 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
+      // YUK-348 (B1 four-engine soft-track inc-1, ADR-0035 决定 #3 + 决定 #4 红线) — 软轨 KT
+      // 估计夜扫。每夜扫「有硬轨 item_calibration 行 + 有非空二元作答序列」的非 draft 题，逐题
+      // estimateBkt (纯 BKT forward) → applyKtEstimate 落 item_calibration.kt_json。kt_json 是
+      // **纯持久化 sink，零下游消费者**——不喂 p(L)/调度/显示（PFA 是唯一可信决策信号，决定 #4）；
+      // n=1 下输出多为 prior-echo（预期且正确，价值在管线就位 + 扩多用户期权 + 诊断丰富度，决定 #3）。
+      // cron 10 5 * * * Asia/Shanghai：错在 recalibration 04:50 + answer_class 05:00 之后、compose
+      // 05:30 之前——晚于硬轨数据预产（item_prior 04:20 / recalibration 04:50），让 KT 读到的作答
+      // 序列已新鲜，且不与前两 job 同分钟竞争。queue=llm：与其它慢热 backfill job 同档 DLQ 重试
+      // （KT 估计本身纯 CPU，但与软/慢轨家族同档调度）。runKtEstimateNightly 在 job 顶层调（非
+      // attempt tx 内），per-question try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
+      {
+        name: 'kt_estimate_nightly',
+        schedule: { cron: '10 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/kt_estimate_nightly').then((m) => m.buildKtEstimateNightlyHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
