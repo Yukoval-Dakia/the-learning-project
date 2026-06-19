@@ -1,0 +1,1 @@
+ALTER TABLE "mastery_state" ADD COLUMN "theta_grid_json" jsonb;

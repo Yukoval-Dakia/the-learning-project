@@ -521,5 +521,13 @@
       "ref": "B1 Wave2 A2 复盘判定",
       "expected_by": "2026-09-30"
     }
+  },
+  "mastery_state.theta_grid_json": {
+    "reason": "A4 (YUK-436) 离散网格贝叶斯 θ_KC offset 后验 — inc-1 是 PURE-ADDITIVE SHADOW：写路径已存在（THETA_GRID_ENABLED=true 且单 KC 题时由 updateThetaForAttempt 尾部 shadow-write），但**无 inc-1 live reader**（不喂 p(L)/effectiveB/选题；theta_hat 仍是 SoT）。校准验证后才在 inc-2 grid→SoT cut-over 接读侧（必须排在 A3 之后）。allowlist 诚实记录「有写无读」状态——写侧验证由 state.db.test.ts 的 flag-OFF bit-identical + flag-ON shadow 断言守。",
+    "resolves_when": {
+      "kind": "phase",
+      "ref": "A4 inc-2 grid→SoT cut-over (YUK-436)",
+      "expected_by": "2026-12-15"
+    }
   }
 }

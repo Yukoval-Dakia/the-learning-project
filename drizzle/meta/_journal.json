@@ -309,6 +309,13 @@
       "when": 1781832656626,
       "tag": "0043_sparkling_fat_cobra",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1781852423935,
+      "tag": "0044_good_blazing_skull",
+      "breakpoints": true
     }
   ]
 }
