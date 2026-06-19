@@ -43,6 +43,22 @@ const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: 
 
 const RATING_LABEL: Record<Rating, string> = { again: '再练', hard: '模糊', good: '掌握' };
 
+// YUK-432 — 客观题判别（OWNER DECISION A：客观题自动判分 + 自动评级，跳过手动 again/hard/good）。
+// 任一命中即客观：
+//   1. judge 预览 route 是确定性客观路由（exact/keyword，与后端 server/mastery/personalized-difficulty.ts
+//      OBJECTIVE_JUDGE_ROUTES 同源——纯字符串/集合匹配、零 LLM）。
+//   2. 题型本身是封闭客观题（choice/true_false/fill_blank）。
+// 客观题：preview 回来后直接以 suggested_rating + auto_rate:true 自动 commit（让客观判分流过后端
+// difficulty_calibration_label hook 产标签，解冻 B1 难度 firm-up 链）；用户仍看到判定反馈卡再前进。
+// 开放题维持现有手动评级流（字节不变）。
+const OBJECTIVE_JUDGE_ROUTES = new Set(['exact', 'keyword']);
+const OBJECTIVE_QUESTION_KINDS = new Set(['choice', 'true_false', 'fill_blank']);
+
+export function isObjectiveQuestion(route: string, questionKind: string | undefined): boolean {
+  if (OBJECTIVE_JUDGE_ROUTES.has(route)) return true;
+  return questionKind != null && OBJECTIVE_QUESTION_KINDS.has(questionKind);
+}
+
 export function PfSolo({
   item,
   pos,
@@ -71,6 +87,9 @@ export function PfSolo({
   const [appealText, setAppealText] = useState('');
   const [committing, setCommitting] = useState(false);
   const [coach, setCoach] = useState(false);
+  // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡隐藏手动评级
+  // 按钮，「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
+  const [autoCommitted, setAutoCommitted] = useState(false);
 
   const q = qQ.data ?? null;
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
@@ -78,43 +97,44 @@ export function PfSolo({
   const canSubmit = !judging && (isChoice ? sel !== null : text.trim().length > 0);
   const phase: 'answering' | 'feedback' = preview === null ? 'answering' : 'feedback';
 
-  const runJudge = async () => {
-    if (!q || !canSubmit) return;
-    setJudging(true);
-    try {
-      const r = await getAdvice(q.id, answerMd);
-      setPreview(r.judge);
-      setRating(r.judge.suggested_rating);
-    } catch (e) {
-      addToast(`判分失败：${(e as Error).message}`, 'info', 'alert');
-    } finally {
-      setJudging(false);
-    }
-  };
-
-  const commit = async (withAppeal: boolean) => {
-    if (!q || !preview || !rating || committing) return;
+  // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
+  // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
+  // previewOverride：客观题自动 commit 在 setPreview 同一 tick 内触发，闭包里的 `preview` 仍是旧的
+  // null（state 尚未 re-render），故 runJudge 把 fresh judge preview 直接传进来（手动流省略 → 用
+  // 已落 state 的 `preview`）。
+  const commit = async (opts: {
+    withAppeal: boolean;
+    rating: Rating;
+    autoRate?: boolean;
+    advance?: boolean;
+    previewOverride?: JudgePreview;
+  }) => {
+    const pv = opts.previewOverride ?? preview;
+    if (!q || !pv || committing) return;
     setCommitting(true);
     try {
       const res = await submitReview({
         question_id: q.id,
-        rating,
+        rating: opts.rating,
         response_md: answerMd,
         referenced_knowledge_ids: q.labels.map((l) => l.id),
         // YUK-372 L2 — 被答 practice_stream_item.id（流作答的 π_i 直 join 判别子，server hook
         // 用它精确取放置该 slot 的随机抽样事件的 π_i）。
         stream_item_id: item.id,
+        // YUK-432 — 客观题自动判分+自动评级：server 用 judge 的 suggested rating 覆盖 body.rating，
+        // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
+        auto_rate: opts.autoRate,
         judge_result_v2: {
-          score: preview.score,
+          score: pv.score,
           score_meaning: 'correctness',
-          coarse_outcome: preview.coarse_outcome,
-          confidence: preview.confidence,
-          feedback_md: preview.feedback_md,
-          evidence_json: preview.evidence_json,
-          capability_ref: preview.capability_ref,
+          coarse_outcome: pv.coarse_outcome,
+          confidence: pv.confidence,
+          feedback_md: pv.feedback_md,
+          evidence_json: pv.evidence_json,
+          capability_ref: pv.capability_ref,
         } as never,
       });
-      if (withAppeal) {
+      if (opts.withAppeal) {
         const anchor = res.judge?.judge_event_id;
         if (anchor) {
           await fileAppeal(anchor, appealText.trim());
@@ -123,11 +143,42 @@ export function PfSolo({
           addToast('这次判定没有可申诉的锚点（无服务端判分）。', 'info', 'alert');
         }
       }
-      onDone();
+      // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）。
+      // 只在写入成功后置位：失败时保持手动评级行可见，用户可重试/手动评级（不丢答）。
+      if (opts.autoRate && opts.advance === false) setAutoCommitted(true);
+      // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
+      if (opts.advance !== false) onDone();
     } catch (e) {
       addToast(`提交失败：${(e as Error).message}`, 'info', 'alert');
     } finally {
       setCommitting(false);
+    }
+  };
+
+  const runJudge = async () => {
+    if (!q || !canSubmit) return;
+    setJudging(true);
+    try {
+      const r = await getAdvice(q.id, answerMd);
+      setPreview(r.judge);
+      setRating(r.judge.suggested_rating);
+      // YUK-432 — 客观题（route exact/keyword 或 kind choice/true_false/fill_blank）：preview 回来即
+      // 自动 commit（auto_rate:true + suggested_rating），跳过手动 again/hard/good。advance:false 让用户
+      // 仍看到判定反馈卡，再按「下一项」推进（commit 成功内部置 autoCommitted）。开放题：不自动
+      // commit，落到现有手动评级流。
+      if (isObjectiveQuestion(r.judge.route, q.kind)) {
+        await commit({
+          withAppeal: false,
+          rating: r.judge.suggested_rating,
+          autoRate: true,
+          advance: false,
+          previewOverride: r.judge, // 闭包里的 preview state 此刻仍 null，传 fresh judge。
+        });
+      }
+    } catch (e) {
+      addToast(`判分失败：${(e as Error).message}`, 'info', 'alert');
+    } finally {
+      setJudging(false);
     }
   };
 
@@ -279,33 +330,46 @@ export function PfSolo({
               </div>
             )}
 
-            <div className="pfs-rate">
-              <span className="pfs-rate-label">评级</span>
-              {(['again', 'hard', 'good'] as const).map((g) => (
-                <button
-                  type="button"
-                  key={g}
-                  className={`pfs-rate-btn t-${g}${rating === g ? ' on' : ''}`}
-                  onClick={() => setRating(g)}
-                >
-                  {RATING_LABEL[g]}
-                </button>
-              ))}
-              <span className="pfs-rate-advised">
-                建议：{RATING_LABEL[preview.suggested_rating]}
-              </span>
-            </div>
+            {/* YUK-432 — 客观题自动判分+自动评级：preview 回来已自动 commit（auto_rate:true），故
+                隐藏手动 again/hard/good 评级行；用户仍看到上面的判定反馈卡，按「下一项」推进。
+                开放题：保留现有手动评级行（默认=建议，可改）。 */}
+            {!autoCommitted && (
+              <div className="pfs-rate">
+                <span className="pfs-rate-label">评级</span>
+                {(['again', 'hard', 'good'] as const).map((g) => (
+                  <button
+                    type="button"
+                    key={g}
+                    className={`pfs-rate-btn t-${g}${rating === g ? ' on' : ''}`}
+                    onClick={() => setRating(g)}
+                  >
+                    {RATING_LABEL[g]}
+                  </button>
+                ))}
+                <span className="pfs-rate-advised">
+                  建议：{RATING_LABEL[preview.suggested_rating]}
+                </span>
+              </div>
+            )}
 
             <div className="pfs-fb-foot">
-              <Btn
-                variant="primary"
-                icon="arrow"
-                disabled={committing}
-                onClick={() => void commit(false)}
-              >
-                {committing ? '提交中…' : '确认评级 · 下一项'}
-              </Btn>
-              {!appealOpen && (
+              {autoCommitted ? (
+                // 客观题：已自动判分+评级，「下一项」只推进（不再二次 commit）。
+                <Btn variant="primary" icon="arrow" disabled={committing} onClick={() => onDone()}>
+                  {committing ? '判分中…' : '下一项'}
+                </Btn>
+              ) : (
+                // 开放题：手动确认评级后 commit（auto_rate 缺省 false → server 用 body.rating）。
+                <Btn
+                  variant="primary"
+                  icon="arrow"
+                  disabled={committing || !rating}
+                  onClick={() => rating && void commit({ withAppeal: false, rating })}
+                >
+                  {committing ? '提交中…' : '确认评级 · 下一项'}
+                </Btn>
+              )}
+              {!autoCommitted && !appealOpen && (
                 <button
                   type="button"
                   className="pfs-appeal-link"
@@ -332,8 +396,8 @@ export function PfSolo({
                     size="sm"
                     variant="secondary"
                     icon="send"
-                    disabled={!appealText.trim() || committing}
-                    onClick={() => void commit(true)}
+                    disabled={!appealText.trim() || committing || !rating}
+                    onClick={() => rating && void commit({ withAppeal: true, rating })}
                   >
                     提交重判 · 先继续
                   </Btn>

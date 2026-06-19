@@ -11,11 +11,18 @@
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+// YUK-432 — softmax 选题观测 seeder（label hook 的 π_i 直 join 需要一条 softmax_mfi selected 观测 +
+// 一个真物化 slot 才产标签）。
+import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
+import { newId } from '@/core/ids';
 import {
+  difficulty_calibration_label,
   event,
+  item_calibration,
   item_family_calibration,
   mastery_state,
   material_fsrs_state,
+  practice_stream_item,
   question,
 } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
@@ -1091,6 +1098,197 @@ describe('POST /api/review/submit', () => {
       expect(fam).toHaveLength(1);
       expect(fam[0].evidence_count).toBe(1);
       expect(fam[0].b_delta).toBe(0); // 单条 → 门控未过
+    });
+  });
+
+  // ── YUK-432 — 客观题 auto_rate 自动判分流过 difficulty_calibration_label hook ──────
+  // VERIFIED ROOT CAUSE：label hook 在 submit.ts ~line 648 被 `if (body.auto_rate)` 闸住，
+  // auto_rate 默认 false 且旧 UI 从不传 → label 恒空 → recalibrateQuestion labelCount<12 永不过
+  // → item_calibration.b_calib 恒 NULL → 难度冻在冷启锚。修复 = 让客观题送 auto_rate:true。
+  // 本块从 POST 整路证：客观 auto_rate:true + 一个带 π_i 的被答 slot → 恰好一条标签（非空 impliedB
+  // + inclusion_probability）；开放手动评级 → 零标签；主 attempt tx（θ̂/FSRS/event）不被标签写毒化。
+  describe('YUK-432 — 客观 auto_rate 产 difficulty_calibration_label，开放手动不产', () => {
+    // 物化一个被答 slot + 一条 softmax_mfi selected 观测（真 π_i），返回 slot id 供作为
+    // stream_item_id 透传。label hook 的 π_i 直 join 需要二者皆在。
+    async function seedAnsweredSlotWithPi(questionId: string, pi: number): Promise<string> {
+      const db = testDb();
+      const now = new Date();
+      const slotId = newId();
+      await db.insert(practice_stream_item).values({
+        id: slotId,
+        date: '2026-06-19',
+        position: 0,
+        item_kind: 'question',
+        ref_id: questionId,
+        source: 'decay',
+        status: 'in_progress',
+        reasoning: 'test slot',
+        added_by: 'composer_live',
+        signals: {},
+        created_at: now,
+        updated_at: now,
+      });
+      await recordSelectionObservation(db, {
+        date: '2026-06-19',
+        streamItemId: slotId,
+        refKind: 'question',
+        refId: questionId,
+        policy: 'softmax_mfi',
+        selected: true,
+        inclusionProbability: pi,
+        signals: {},
+      });
+      return slotId;
+    }
+
+    async function seedAnchor(questionId: string, bAnchor: number) {
+      const db = testDb();
+      const now = new Date();
+      await db.insert(item_calibration).values({
+        id: newId(),
+        question_id: questionId,
+        b: bAnchor,
+        b_anchor: bAnchor,
+        confidence: 0.5,
+        track: 'hard',
+        source: 'llm_prior',
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
+    function readLabels(questionId: string) {
+      return testDb()
+        .select()
+        .from(difficulty_calibration_label)
+        .where(eq(difficulty_calibration_label.question_id, questionId));
+    }
+
+    it('(a) 客观 auto_rate:true + 被答 slot（有 π_i）→ 恰好一条标签（非空 impliedB + inclusion_probability）', async () => {
+      // fill_blank + reference → 客观 exact 路由；带 knowledge_id 让 θ̂ 锚可成立。
+      await seedQuestion('q432_obj', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: ['k432'],
+      });
+      await seedAnchor('q432_obj', 0.5);
+      const slotId = await seedAnsweredSlotWithPi('q432_obj', 0.3);
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q432_obj' },
+          rating: 'again', // 被 auto_rate 覆盖（exact correct → good）
+          response_md: '答案', // 与 reference 完全匹配 → exact correct
+          auto_rate: true,
+          stream_item_id: slotId, // 被答 slot id → label hook π_i 直 join
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      const labels = await readLabels('q432_obj');
+      expect(labels).toHaveLength(1);
+      expect(labels[0].inclusion_probability).toBeCloseTo(0.3, 6); // 直 join 取到被答 slot 的 π_i
+      expect(labels[0].b_label).not.toBeNull(); // IRT-reverse 反推的非空 impliedB
+      expect(labels[0].outcome).toBe(1); // exact correct → success → outcome 1
+      expect(labels[0].attempt_event_id).not.toBeNull(); // provenance 锚
+    });
+
+    it('(b) 开放题手动评级（无 auto_rate）→ 零标签（流不变）', async () => {
+      // short_answer + 客观 slot 都在，但 auto_rate 缺省 false → label hook 整段被 gate 掉。
+      await seedQuestion('q432_open', {
+        kind: 'short_answer',
+        reference_md: '答案',
+        knowledge_ids: ['k432o'],
+      });
+      await seedAnchor('q432_open', 0.5);
+      const slotId = await seedAnsweredSlotWithPi('q432_open', 0.3);
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q432_open' },
+          rating: 'good', // 手动评级（auto_rate=false → 它是 finalRating）
+          response_md: '答案',
+          // auto_rate 缺省 false
+          stream_item_id: slotId,
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      // auto_rate=false → 整个 label 分支（含 family + 标签）被 `if (body.auto_rate)` gate 掉。
+      expect(await readLabels('q432_open')).toHaveLength(0);
+    });
+
+    it('(c) 主 attempt tx（θ̂/FSRS/event）不被标签写毒化——标签是独立 family 写（SAVEPOINT 隔离）', async () => {
+      await seedQuestion('q432_tx', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: ['k432tx'],
+      });
+      await seedAnchor('q432_tx', 0.5);
+      const slotId = await seedAnsweredSlotWithPi('q432_tx', 0.3);
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q432_tx' },
+          rating: 'again',
+          response_md: '答案',
+          auto_rate: true,
+          stream_item_id: slotId,
+        }),
+      );
+      expect(res.status).toBe(200);
+
+      const db = testDb();
+      // 标签写成功（一条）。
+      expect(await readLabels('q432_tx')).toHaveLength(1);
+      // 主 attempt tx 完整提交：review event 落库（exact correct → outcome success）。
+      const events = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q432_tx')));
+      expect(events).toHaveLength(1);
+      expect(events[0].outcome).toBe('success');
+      // FSRS R 轴落库（material_fsrs_state for the knowledge）。
+      const fsrs = await db
+        .select()
+        .from(material_fsrs_state)
+        .where(
+          and(
+            eq(material_fsrs_state.subject_id, 'k432tx'),
+            eq(material_fsrs_state.subject_kind, 'knowledge'),
+          ),
+        );
+      expect(fsrs).toHaveLength(1);
+      expect(fsrs[0].last_review_event_id).toBe(events[0].id);
+      // θ̂ 诊断轴落库（mastery_state，与 FSRS R 轴正交）。
+      const theta = await db
+        .select()
+        .from(mastery_state)
+        .where(
+          and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k432tx')),
+        );
+      expect(theta).toHaveLength(1);
+    });
+
+    it('(d) 422 guard：auto_rate + unsupported verdict 仍被拒（客观 correct/incorrect 不误拒）', async () => {
+      // 无 response_md、无 image → 没有答案 → judge 不跑 → suggestedRating null → auto_rate 422。
+      await seedQuestion('q432_422', {
+        kind: 'fill_blank',
+        reference_md: '答案',
+        knowledge_ids: ['k432_422'],
+      });
+
+      const res = await POST(
+        submitReq({
+          activity_ref: { kind: 'question', id: 'q432_422' },
+          rating: 'good',
+          auto_rate: true,
+          // response_md 省略 → 无答案 → unsupported
+        }),
+      );
+      expect(res.status).toBe(422);
+      // 无标签（422 在 persist 前抛）。
+      expect(await readLabels('q432_422')).toHaveLength(0);
     });
   });
 
