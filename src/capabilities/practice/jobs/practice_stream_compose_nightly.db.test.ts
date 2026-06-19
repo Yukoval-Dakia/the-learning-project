@@ -4,6 +4,7 @@
 // LLM 不命中 live endpoint：本测试不种非到期 samplable 候选（只种到期题），故 softmax 路径
 // samplable=0、不调 SelectionOrchestratorTask（与 stream.db.test 的 due-only 路径同理）。
 
+import { streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import { material_fsrs_state, practice_stream_item, question } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { asc, eq } from 'drizzle-orm';
@@ -11,7 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runStreamComposeNightly } from './practice_stream_compose_nightly';
 
-const TODAY = new Date().toLocaleDateString('sv-SE');
+const TODAY = streamLocalDate();
 
 async function seedDueQuestion(): Promise<string> {
   const qid = createId();

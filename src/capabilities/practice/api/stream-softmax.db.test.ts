@@ -11,6 +11,7 @@
 // LLM **永不命中 live endpoint**——全程注入 mock runTaskFn（composeDeps.runTaskFn）。
 // rng 注入 seeded（全选 / 全不选）以确定化 Poisson 抽样。
 
+import { streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import {
   event,
   item_calibration,
@@ -35,7 +36,7 @@ import {
   recomposeStream,
 } from '../server/stream-store';
 
-const TODAY = new Date().toLocaleDateString('sv-SE');
+const TODAY = streamLocalDate();
 
 // rng 注入：< 1 全选（Poisson Bernoulli 必入，配合 π_i），== 1 全不选（rng() < π 永假）。
 const RNG_ALWAYS_SELECT = () => 0;
