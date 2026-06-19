@@ -87,7 +87,7 @@ jobs:
       - name: Collect prior-comment feedback (learnings)
         if: ${{ vars.OCR_LEARNINGS != 'off' }}
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
@@ -246,7 +246,7 @@ jobs:
           retention-days: 7
 
       - name: Upsert PR review comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -456,7 +456,7 @@ jobs:
 
       - name: Collect final feedback (learnings)
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
