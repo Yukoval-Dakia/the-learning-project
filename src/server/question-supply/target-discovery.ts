@@ -554,9 +554,11 @@ async function loadFrontierKnowledge(db: Db): Promise<FrontierKnowledgeInput[]> 
       subjectId = resolveSubjectProfile(null).id;
     }
     // A2 — θ_hat fed to the supply scanner is the EFFECTIVE theta = θ_global(domain) +
-    //   θ_KC. globalThetaForDomain returns 0 with the flag OFF (DEFAULT) WITHOUT a DB
-    //   read, so thetaHat stays bit-identical to today (the bare θ_KC). With the flag
-    //   on, a frontier KC of a strong domain is scanned at its inherited ability.
+    //   θ_KC. Now LIVE (HIERARCHICAL_ELO_ENABLED=true, P1 go-live YUK-361): a frontier
+    //   KC of a strong domain is scanned at its inherited ability (θ_global read; null
+    //   row / unresolved domain → 0, so the bare θ_KC). With the flag OFF (still a valid
+    //   mocked-false regression) globalThetaForDomain returns 0 WITHOUT a DB read →
+    //   thetaHat stays bit-identical to single-layer (the bare θ_KC).
     const thetaKc = state?.theta_hat ?? COLD_START_THETA;
     const thetaHat = thetaKc + (await globalThetaForDomain(db, rawDomain));
     out.push({
