@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CORE_RELATION_TYPES,
   type ConsumerEntry,
@@ -6,6 +9,7 @@ import {
   computeDeadEdges,
   findExperimentalRelations,
   reverseCheckConsumers,
+  walkSource,
 } from './audit-relations';
 
 // YUK-357 / RT4 — KG 死边反向审计的死边检测逻辑回归。
@@ -150,6 +154,75 @@ describe('reverseCheckConsumers — registry ↔ code drift detection', () => {
       return 'A and B';
     });
     expect(reads).toBe(1);
+  });
+});
+
+describe('walkSource — excludes test files (mirrors audit-draft-status.ts sibling)', () => {
+  // Cursor Bugbot LOW (PR #492): the source walk that feeds findExperimentalRelations
+  // MUST skip *.test.ts / *.test.tsx, exactly like the sibling walkSource in
+  // scripts/audit-draft-status.ts:123-140. Otherwise an experimental:* relation_type
+  // that exists ONLY in a test fixture is reported as "wired in source", a false
+  // "wired" positive that skews the dead-edge audit's experimental observability.
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'audit-relations-walk-'));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does NOT report an experimental relation that exists ONLY in a *.test.ts fixture as source-wired', () => {
+    // Production file: a real (core) relation_type wiring, no experimental literal.
+    writeFileSync(join(root, 'prod.ts'), "const x = { relation_type: 'prerequisite' };\n");
+    // Test-only fixture: an experimental relation_type that lives ONLY in a test.
+    writeFileSync(
+      join(root, 'fixture.test.ts'),
+      "const f = { relation_type: 'experimental:cohort_resemblance' };\n",
+    );
+    // A .test.tsx variant too, to pin both exclusions.
+    writeFileSync(
+      join(root, 'widget.test.tsx'),
+      "const w = { relation_type: 'experimental:only_in_tsx_test' };\n",
+    );
+
+    const files = walkSource(root).sort();
+    // The walk must skip both test files entirely.
+    expect(files.some((f) => f.endsWith('fixture.test.ts'))).toBe(false);
+    expect(files.some((f) => f.endsWith('widget.test.tsx'))).toBe(false);
+    expect(files.some((f) => f.endsWith('prod.ts'))).toBe(true);
+
+    // ⇒ the experimental observability report (findExperimentalRelations over the
+    // walked files) must NOT surface the test-only experimental relation_type:
+    // the readFile shim returns each file's real content for the walked paths only,
+    // so the test-only experimental literal can never be reached.
+    const byBasename: Record<string, string> = {
+      'prod.ts': readFileSync(join(root, 'prod.ts'), 'utf-8'),
+      'fixture.test.ts': readFileSync(join(root, 'fixture.test.ts'), 'utf-8'),
+      'widget.test.tsx': readFileSync(join(root, 'widget.test.tsx'), 'utf-8'),
+    };
+    const experimental = findExperimentalRelations(
+      files,
+      (f) => byBasename[f.split('/').pop() ?? ''] ?? '',
+    );
+    expect(experimental).not.toContain('experimental:cohort_resemblance');
+    expect(experimental).not.toContain('experimental:only_in_tsx_test');
+    expect(experimental).toEqual([]);
+  });
+
+  it('still excludes .d.ts and still includes plain .ts/.tsx production files', () => {
+    writeFileSync(join(root, 'types.d.ts'), 'export type T = string;\n');
+    writeFileSync(join(root, 'real.ts'), 'export const a = 1;\n');
+    mkdirSync(join(root, 'nested'));
+    writeFileSync(join(root, 'nested', 'comp.tsx'), 'export const C = () => null;\n');
+    writeFileSync(join(root, 'nested', 'comp.test.ts'), 'it("x", () => {});\n');
+
+    const files = walkSource(root).sort();
+    expect(files.some((f) => f.endsWith('types.d.ts'))).toBe(false);
+    expect(files.some((f) => f.endsWith('comp.test.ts'))).toBe(false);
+    expect(files.some((f) => f.endsWith('real.ts'))).toBe(true);
+    expect(files.some((f) => f.endsWith('comp.tsx'))).toBe(true);
   });
 });
 
