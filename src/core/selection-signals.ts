@@ -43,10 +43,13 @@ export interface SelectionCandidateSignal {
 
   // ───────────────────────────────────────────────────────────────────────────
   // #52 / ADR-0042 编排档2 amendment（GPT 研究稿 §9.2）——选题不止 MFI 中心。
-  // 本 ADR 在本分支上还没有这三个字段，显式加入。**本 lane 只定义 type + 进
-  // signals 存储结构，computation 全部留 Phase 3**：值由 Phase 3 候选收集层计算
-  // （examRelevance 据考纲映射、misconceptionRecurrence 据错题家族复发频次、
-  // transferGap 据迁移缺口诊断），本 lane 仅定 schema，不算任何值。
+  // 三个 first-class 信号。computation 状态（不再全部 deferred）：
+  //   - examRelevance：仍 deferred（无 cheap reader——无考纲映射数据源）。
+  //   - misconceptionRecurrence：**已实现**（P2 D2 / A8）——由 candidate-signals.ts
+  //     aggregateMisconceptionRecurrence 按错题家族复发频次算，flag-gated
+  //     （MISCONCEPTION_RECURRENCE_ENABLED，默认 OFF → undefined）。见下方字段注。
+  //   - transferGap：仍 deferred（无 cheap reader——mastery_state 无 per-kind 粒度）。
+  // 值均由候选收集层计算（candidate-signals.ts）；本文件仅定义 type/schema。
   // ───────────────────────────────────────────────────────────────────────────
   /** 考纲相关度 0-1（考点权重）。computation-deferred：仍无 cheap reader（无考纲映射源）。 */
   examRelevance?: number;
