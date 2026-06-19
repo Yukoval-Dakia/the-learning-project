@@ -97,6 +97,12 @@ jobs:
 
             try {
               // Page through this PR's review threads via GraphQL (isResolved lives here).
+              // Each thread's first page of comments is fetched inline (first:100).
+              // Fix 1 — comment pagination: if a thread is an OCR thread AND its first
+              // comment page has hasNextPage, we fetch additional pages via a dedicated
+              // query keyed by the thread's databaseId. This avoids over-fetching on the
+              // common case (most threads have <100 comments) while ensuring we see every
+              // human reply before computing the verdict.
               const query = `query($owner:String!,$repo:String!,$pr:Int!,$cursor:String){
                 repository(owner:$owner,name:$repo){
                   pullRequest(number:$pr){
@@ -104,12 +110,36 @@ jobs:
                       pageInfo{ hasNextPage endCursor }
                       nodes{
                         isResolved
-                        comments(first:50){
+                        id
+                        comments(first:100){
+                          pageInfo{ hasNextPage endCursor }
                           nodes{
                             id body path createdAt
                             author{ login __typename }
                           }
                         }
+                      }
+                    }
+                  }
+                }
+              }`;
+
+              // Follow-up query to fetch remaining comment pages for a single thread.
+              const commentsQuery = `query($owner:String!,$repo:String!,$pr:Int!,$threadId:ID!,$commentsCursor:String){
+                repository(owner:$owner,name:$repo){
+                  pullRequest(number:$pr){
+                    reviewThreads(first:1, after:null){
+                      nodes{ id }
+                    }
+                  }
+                }
+                node(id:$threadId){
+                  ... on PullRequestReviewThread{
+                    comments(first:100, after:$commentsCursor){
+                      pageInfo{ hasNextPage endCursor }
+                      nodes{
+                        id body path createdAt
+                        author{ login __typename }
                       }
                     }
                   }
@@ -124,19 +154,36 @@ jobs:
                 });
                 const threads = data.repository.pullRequest.reviewThreads;
                 for (const th of threads.nodes) {
-                  const cs = th.comments.nodes;
+                  const firstPage = th.comments;
+                  const cs = firstPage.nodes;
                   if (cs.length === 0) continue;
                   // The first comment in a thread is the original review comment.
                   const head = cs[0];
-                  const isOCR = head.body && head.body.startsWith('**OCR**');
+                  // Fix 2 — verify the OCR comment's author is a Bot, not just body prefix.
+                  // A human comment starting with '**OCR**' would otherwise be misclassified.
+                  const isOCR = head.body && head.body.startsWith('**OCR**') &&
+                    head.author && head.author.__typename === 'Bot';
                   if (!isOCR) continue;
+
+                  // Collect all comment nodes; add more pages if needed (Fix 1).
+                  let allComments = cs.slice();
+                  let commentsCursor = firstPage.pageInfo.hasNextPage ? firstPage.pageInfo.endCursor : null;
+                  while (commentsCursor) {
+                    const moreData = await github.graphql(commentsQuery, {
+                      owner: context.repo.owner, repo: context.repo.repo, pr: prNumber,
+                      threadId: th.id, commentsCursor,
+                    });
+                    const morePage = moreData.node.comments;
+                    allComments = allComments.concat(morePage.nodes);
+                    commentsCursor = morePage.pageInfo.hasNextPage ? morePage.pageInfo.endCursor : null;
+                  }
 
                   let verdict = null;
                   if (th.isResolved) {
                     verdict = 'accepted';
                   } else {
                     // Any human reply expressing disagreement => rejected.
-                    const humanDisagree = cs.slice(1).some(c =>
+                    const humanDisagree = allComments.slice(1).some(c =>
                       c.author && c.author.__typename === 'User' && DISAGREE.test(c.body || ''));
                     if (humanDisagree) {
                       verdict = 'rejected';
@@ -150,7 +197,7 @@ jobs:
                   out.push({
                     comment_id: head.id,
                     body: head.body,
-                    path: head.path || '',
+                    path: head.path ?? null, // Fix 3 — null (not '') for missing path
                     verdict,
                   });
                 }
