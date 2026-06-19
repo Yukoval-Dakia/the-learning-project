@@ -9881,6 +9881,16 @@ button.seg-sm {
 .mistakes-loom .mistake-evlink:hover {
   text-decoration: underline;
 }
+/* GRACEFUL DEFER：/events route 尚未登记 SPA，事件链链接 render 为 disabled（同
+   .inbox-loom .evidence-readable:disabled 先例）——muted、default cursor、无 hover
+   下划线，读起来是「可读但暂不可跳」。/events 登记后撤 disabled + 补 onClick。 */
+.mistakes-loom .mistake-evlink:disabled {
+  color: var(--ink-4);
+  cursor: default;
+}
+.mistakes-loom .mistake-evlink:disabled:hover {
+  text-decoration: none;
+}
 
 @media (max-width: 640px) {
   .mistakes-loom .mistake-top {
