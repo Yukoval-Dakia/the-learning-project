@@ -11,20 +11,41 @@
 // 纯读、零行为变更。Follow selection-observations.db.test.ts / variant-rotation.db.test.ts
 // 约定：resetDb() in beforeEach，testDb() 取 handle。
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// A3 (YUK-435) — EARLY_KLP_ENABLED is a module-level const (dark-ship default false,
+// mirrors the SRT_ENABLED / HIERARCHICAL_ELO_ENABLED pattern). To exercise the flag-ON
+// cold-start branch in collectQuestionSignal we mock just that one export of
+// @/core/selection-signals and keep every other export (mfiScore, klpScore,
+// diagnosticScore, …) as the REAL implementation via importOriginal. The default-flag
+// (false) regression tests run against the real const (false) through this same factory.
+const earlyKlpFlag = { value: false };
+vi.mock('@/core/selection-signals', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/selection-signals')>();
+  return {
+    ...actual,
+    get EARLY_KLP_ENABLED() {
+      return earlyKlpFlag.value;
+    },
+  };
+});
+
 import {
   type CandidateInput,
   collectCandidateSignals,
 } from '@/capabilities/practice/server/candidate-signals';
 import { newId } from '@/core/ids';
-import { mfiScore } from '@/core/selection-signals';
+import { klpScore, mfiScore } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
 import { item_calibration, item_family_calibration, knowledge, mastery_state } from '@/db/schema';
-import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const db = testDb();
 
-beforeEach(() => resetDb());
+beforeEach(() => {
+  earlyKlpFlag.value = false; // restore dark-ship default before every test
+  return resetDb();
+});
 
 // Seed one mastery_state row for a knowledge node with explicit θ̂ / precision.
 async function seedMastery(
@@ -314,6 +335,190 @@ describe('collectCandidateSignals — question candidates', () => {
     expect(sig.thetaPrecision).toBeUndefined();
     expect(sig.b).toBeCloseTo(0.5, 10); // b still resolved from calibration
     expect(sig.mfiScore).toBeUndefined(); // no θ̂ → no MFI
+  });
+});
+
+// A3 (YUK-435) — KLP cold-start early selection + scoreKind provenance.
+describe('collectCandidateSignals — KLP early selection (A3, YUK-435)', () => {
+  // Seed a mastery_state row with an EXPLICIT evidence_count (the cold-start regime gate).
+  async function seedMasteryWithEvidence(
+    knowledgeId: string,
+    thetaHat: number,
+    thetaPrecision: number,
+    evidenceCount: number,
+  ): Promise<void> {
+    const now = new Date();
+    await db.insert(mastery_state).values({
+      id: newId(),
+      subject_kind: 'knowledge',
+      subject_id: knowledgeId,
+      theta_hat: thetaHat,
+      evidence_count: evidenceCount,
+      success_count: Math.max(evidenceCount - 1, 0),
+      fail_count: 0,
+      last_outcome_at: now,
+      theta_precision: thetaPrecision,
+      last_theta_delta: null,
+      updated_at: now,
+    });
+  }
+
+  it('flag OFF (default): cold-start KC scored by point MFI, scoreKind=mfi (BITWISE regression anchor)', async () => {
+    // evidence_count=1 < EARLY_KLP_N(4): would be KLP IF the flag were on. With the
+    // dark-ship default (false) it MUST be the exact point-MFI byte, scoreKind='mfi'.
+    await seedMasteryWithEvidence('kc-off-cold', 0.3, 0.5, 1);
+    await seedCalibration('q-off-cold', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-off-cold',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-off-cold'],
+        difficulty: 3,
+      },
+    ]);
+
+    // BITWISE-identical to point MFI (toBe, not toBeCloseTo): flag-off scoring is
+    // byte-for-byte today's behaviour, on a KC that WOULD trigger KLP if flag were on.
+    expect(sig.mfiScore).toBe(mfiScore(0.3, 0.85));
+    expect(sig.scoreKind).toBe('mfi');
+    // And it must NOT be the KLP value (proves the branch is actually gated off).
+    expect(sig.mfiScore).not.toBe(klpScore(0.3, 0.85, 0.5));
+  });
+
+  it('flag OFF (default): warm KC also scored by point MFI, scoreKind=mfi', async () => {
+    await seedMasteryWithEvidence('kc-off-warm', 0.2, 6, 10); // evidence_count=10 ≥ 4
+    await seedCalibration('q-off-warm', 0.5);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-off-warm',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-off-warm'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.mfiScore).toBe(mfiScore(0.2, 0.5));
+    expect(sig.scoreKind).toBe('mfi');
+  });
+
+  it('flag ON: cold-start KC (evidence_count < EARLY_KLP_N) scored by KLP, scoreKind=klp', async () => {
+    earlyKlpFlag.value = true;
+    // evidence_count=2 < 4 → cold-start regime → KLP. precision=0.5 (wide SE) so KLP
+    // is observably DIFFERENT from point MFI (not a degenerate SE→0 coincidence).
+    await seedMasteryWithEvidence('kc-on-cold', 0.3, 0.5, 2);
+    await seedCalibration('q-on-cold', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-on-cold',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-on-cold'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.scoreKind).toBe('klp');
+    // The collected score field carries the KLP value (posterior-weighted), not point MFI.
+    expect(sig.mfiScore).toBeCloseTo(klpScore(0.3, 0.85, 0.5), 12);
+    expect(sig.mfiScore).not.toBeCloseTo(mfiScore(0.3, 0.85), 6);
+  });
+
+  it('flag ON: warm KC (evidence_count ≥ EARLY_KLP_N) falls back to point MFI, scoreKind=mfi', async () => {
+    earlyKlpFlag.value = true;
+    await seedMasteryWithEvidence('kc-on-warm', 0.3, 0.5, 4); // evidence_count=4 == N → warm
+    await seedCalibration('q-on-warm', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-on-warm',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-on-warm'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.scoreKind).toBe('mfi');
+    expect(sig.mfiScore).toBe(mfiScore(0.3, 0.85)); // bitwise point MFI past the regime
+  });
+
+  it('flag ON: cold-start gate uses the WEAKEST KC evidence_count (the θ̂_min KC)', async () => {
+    earlyKlpFlag.value = true;
+    // weakest KC (θ̂=-0.5) is cold (evidence_count=1 < 4); the stronger KC is warm.
+    // The gate must follow the SAME KC whose θ̂/precision is used for scoring (weakest).
+    await seedMasteryWithEvidence('kc-weak-cold', -0.5, 0.5, 1);
+    await seedMasteryWithEvidence('kc-strong-warm', 1.2, 8, 20);
+    await seedCalibration('q-mixed-gate', 0.2);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-mixed-gate',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-weak-cold', 'kc-strong-warm'],
+        difficulty: 3,
+      },
+    ]);
+
+    // weakest θ̂=-0.5, its precision=0.5, its evidence_count=1 → cold → KLP on the weak KC.
+    expect(sig.thetaHat).toBeCloseTo(-0.5, 10);
+    expect(sig.scoreKind).toBe('klp');
+    expect(sig.mfiScore).toBeCloseTo(klpScore(-0.5, 0.2, 0.5), 12);
+  });
+
+  it('flag ON: cold-start KC with no mastery_state row (evidence_count=0) → KLP', async () => {
+    earlyKlpFlag.value = true;
+    // No seedMastery: cold-start defaults θ̂=0, precision=1, and evidence_count must
+    // default to 0 (< 4) → cold regime → KLP.
+    await seedCalibration('q-never-seen', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-never-seen',
+        role: 'new_check',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-never-seen-klp'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.thetaHat).toBe(0);
+    expect(sig.thetaPrecision).toBe(1);
+    expect(sig.scoreKind).toBe('klp');
+    expect(sig.mfiScore).toBeCloseTo(klpScore(0, 0.85, 1), 12);
+  });
+
+  it('flag ON: recall-locked KC still gets NO score and NO scoreKind (KLP never reached)', async () => {
+    earlyKlpFlag.value = true;
+    await seedMasteryWithEvidence('kc-recall-klp', -0.3, 0.5, 1); // cold
+    await seedCalibration('q-recall-klp', 0.4);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-recall-klp',
+        role: 'diagnostic',
+        kind: 'fill_blank', // recall-locked → no MFI/KLP scoring at all
+        knowledgeIds: ['kc-recall-klp'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.recallLocked).toBe(true);
+    expect(sig.mfiScore).toBeUndefined();
+    expect(sig.diagnosticScore).toBeUndefined();
+    expect(sig.scoreKind).toBeUndefined();
   });
 });
 
