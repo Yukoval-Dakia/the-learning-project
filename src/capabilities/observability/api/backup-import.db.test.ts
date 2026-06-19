@@ -37,17 +37,27 @@ function extractFullSql(query: unknown): string {
 }
 
 vi.mock('@/db/client', () => {
+  // Single execute implementation shared by the outer `db` AND the `tx` handed to
+  // db.transaction(cb). restoreFromArchive runs its entire wipe+insert sequence inside
+  // `await db.transaction(async (tx) => {...})` using `tx.execute`, so the mock must
+  // expose `transaction` (else `db.transaction is not a function` throws and restore
+  // returns 500). Routing tx.execute through the SAME spy keeps the DELETE/INSERT
+  // tracking arrays populated for the assertions below (YUK-355 atomicity follow-up).
+  const execute = vi.fn(async (query: unknown) => {
+    const sqlStr = extractFullSql(query);
+    if (/delete from/i.test(sqlStr)) {
+      deleteCalls.push(sqlStr.trim());
+    } else if (/insert into/i.test(sqlStr)) {
+      insertCalls.push({ table: sqlStr, rows: [] });
+    }
+    return [];
+  });
   return {
     db: {
-      execute: vi.fn(async (query: unknown) => {
-        const sqlStr = extractFullSql(query);
-        if (/delete from/i.test(sqlStr)) {
-          deleteCalls.push(sqlStr.trim());
-        } else if (/insert into/i.test(sqlStr)) {
-          insertCalls.push({ table: sqlStr, rows: [] });
-        }
-        return [];
-      }),
+      execute,
+      transaction: vi.fn(async (cb: (tx: { execute: typeof execute }) => unknown) =>
+        cb({ execute }),
+      ),
     },
   };
 });
