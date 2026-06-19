@@ -2,7 +2,23 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// A1 (YUK-433) — SRT_ENABLED is a module-level const (dark-ship default false). To
+// exercise the flag-ON branch in updateThetaForAttempt we mock just that one export
+// of @/core/theta and keep every other export (conjunctiveCredits, eloK, Fisher math,
+// …) as the REAL implementation via importOriginal. The default-flag (false) tests
+// below run against the real const through the same mock factory returning false.
+const srtFlag = { value: false };
+vi.mock('@/core/theta', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/theta')>();
+  return {
+    ...actual,
+    get SRT_ENABLED() {
+      return srtFlag.value;
+    },
+  };
+});
 
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearned } from '@/core/pfa';
@@ -698,6 +714,324 @@ describe('updateThetaForAttempt', () => {
     // Exact Fisher math: anchored 1²·0.25 = 0.25, proxy 0.3²·0.25 = 0.0225.
     expect(anchoredIncrement).toBeCloseTo(0.25, 5);
     expect(proxyIncrement).toBeCloseTo(0.09 * 0.25, 5);
+  });
+});
+
+// ── A1 (YUK-433) — SRT scoring on the θ̂ credit hot path ──────────────────────
+describe('updateThetaForAttempt — SRT scoring (A1 / YUK-433)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    srtFlag.value = false; // dark-ship default; individual tests opt in.
+  });
+  afterEach(() => {
+    srtFlag.value = false;
+  });
+
+  it('responseTimeMs ABSENT → θ̂/precision/counts BIT-IDENTICAL to the binary path (NO-OP regression)', async () => {
+    // Two identical KCs/questions. One attempt threads NO responseTimeMs, the other
+    // threads it but with the flag still OFF. Both must equal the pure binary update.
+    const kNone = createId();
+    const kRtFlagOff = createId();
+    const qNone = createId();
+    const qRtFlagOff = createId();
+    await seedKnowledge(kNone);
+    await seedKnowledge(kRtFlagOff);
+    await seedQuestion(qNone, [kNone], 3);
+    await seedQuestion(qRtFlagOff, [kRtFlagOff], 3);
+
+    srtFlag.value = false;
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kNone],
+        questionId: qNone,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        // no responseTimeMs
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kRtFlagOff],
+        questionId: qRtFlagOff,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 1000, // present, but flag OFF → must be ignored
+      });
+    });
+
+    const none = await readState(kNone);
+    const rtFlagOff = await readState(kRtFlagOff);
+    // Both equal the canonical binary cold-start correct step (kCold 0.4 · bWeight 0.3 · (1−0.5) = 0.06).
+    expect(none?.theta_hat).toBeCloseTo(0.06, 10);
+    expect(rtFlagOff?.theta_hat).toBeCloseTo(0.06, 10);
+    expect(rtFlagOff?.theta_hat).toBe(none?.theta_hat); // byte-identical
+    expect(rtFlagOff?.theta_precision).toBe(none?.theta_precision);
+    expect(rtFlagOff?.success_count).toBe(none?.success_count);
+    expect(rtFlagOff?.fail_count).toBe(none?.fail_count);
+  });
+
+  it('SRT ON + fast-correct moves θ̂ MORE than slow-correct (same outcome=1)', async () => {
+    srtFlag.value = true;
+    const kFast = createId();
+    const kSlow = createId();
+    const qFast = createId();
+    const qSlow = createId();
+    await seedKnowledge(kFast);
+    await seedKnowledge(kSlow);
+    await seedQuestion(qFast, [kFast], 3); // difficulty 3 → d = 30s
+    await seedQuestion(qSlow, [kSlow], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kFast],
+        questionId: qFast,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 1000, // 1s of a 30s limit → r≈0.967 → srt≈0.983
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlow],
+        questionId: qSlow,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 29_000, // 29s of 30s → r≈0.033 → srt≈0.517
+      });
+    });
+
+    const fast = (await readState(kFast))?.theta_hat ?? 0;
+    const slow = (await readState(kSlow))?.theta_hat ?? 0;
+    expect(fast).toBeGreaterThan(0);
+    expect(slow).toBeGreaterThan(0);
+    expect(fast).toBeGreaterThan(slow); // fast-correct rewarded more
+  });
+
+  it('SRT ON + fast-wrong is penalised HARDER than slow-wrong (same outcome=0)', async () => {
+    srtFlag.value = true;
+    const kFast = createId();
+    const kSlow = createId();
+    const qFast = createId();
+    const qSlow = createId();
+    await seedKnowledge(kFast);
+    await seedKnowledge(kSlow);
+    await seedQuestion(qFast, [kFast], 3);
+    await seedQuestion(qSlow, [kSlow], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kFast],
+        questionId: qFast,
+        outcome: 0,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 1000, // fast-wrong (guess/careless) → srt≈0.017 → near binary 0
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlow],
+        questionId: qSlow,
+        outcome: 0,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 29_000, // slow-wrong (real struggle) → srt≈0.483 → mild penalty
+      });
+    });
+
+    const fast = (await readState(kFast))?.theta_hat ?? 0;
+    const slow = (await readState(kSlow))?.theta_hat ?? 0;
+    expect(fast).toBeLessThan(0); // both fall
+    expect(slow).toBeLessThan(0);
+    // fast-wrong falls MORE (more negative) than slow-wrong.
+    expect(fast).toBeLessThan(slow);
+  });
+
+  it('SRT ON + slow-correct credit NEVER exceeds the binary correct magnitude (bounded)', async () => {
+    // Binary correct cold-start step = 0.06. Any SRT-on correct step must be ≤ that.
+    const kBinary = createId();
+    const qBinary = createId();
+    await seedKnowledge(kBinary);
+    await seedQuestion(qBinary, [kBinary], 3);
+    srtFlag.value = false;
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kBinary],
+        questionId: qBinary,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    const binaryTheta = (await readState(kBinary))?.theta_hat ?? 0;
+
+    const kSrt = createId();
+    const qSrt = createId();
+    await seedKnowledge(kSrt);
+    await seedQuestion(qSrt, [kSrt], 3);
+    srtFlag.value = true;
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSrt],
+        questionId: qSrt,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 15_000, // mid-time → srt 0.75 < 1.0 → smaller credit
+      });
+    });
+    const srtTheta = (await readState(kSrt))?.theta_hat ?? 0;
+    expect(srtTheta).toBeGreaterThan(0);
+    expect(srtTheta).toBeLessThanOrEqual(binaryTheta + 1e-12); // bounded by binary
+  });
+
+  it('precision (Fisher) is IDENTICAL regardless of RT — RT-independent (HARD CONSTRAINT iii)', async () => {
+    // Same θ_before, same b, same bWeight → updateThetaPrecision must be bit-identical
+    // whether SRT is off (no RT) or on (fast vs slow RT). precision must NOT see RT.
+    const kOff = createId();
+    const kFast = createId();
+    const kSlow = createId();
+    const qOff = createId();
+    const qFast = createId();
+    const qSlow = createId();
+    for (const [k, q] of [
+      [kOff, qOff],
+      [kFast, qFast],
+      [kSlow, qSlow],
+    ]) {
+      await seedKnowledge(k);
+      await seedQuestion(q, [k], 3);
+    }
+
+    srtFlag.value = false;
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kOff],
+        questionId: qOff,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+    srtFlag.value = true;
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kFast],
+        questionId: qFast,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 500,
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kSlow],
+        questionId: qSlow,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 28_000,
+      });
+    });
+
+    const offP = (await readState(kOff))?.theta_precision;
+    const fastP = (await readState(kFast))?.theta_precision;
+    const slowP = (await readState(kSlow))?.theta_precision;
+    // All three: cold-start precision 1 + bWeight²·I(θ_before=0,b=0)=0.09·0.25 = 1.0225.
+    expect(fastP).toBe(offP); // bit-identical — RT had no effect on precision
+    expect(slowP).toBe(offP);
+    expect(offP).toBeCloseTo(1 + 0.09 * 0.25, 10);
+  });
+
+  it('success/fail counts STAY BINARY under SRT (HARD CONSTRAINT vi — PFA tallies untouched)', async () => {
+    srtFlag.value = true;
+    const kCorrect = createId();
+    const kWrong = createId();
+    const qCorrect = createId();
+    const qWrong = createId();
+    await seedKnowledge(kCorrect);
+    await seedKnowledge(kWrong);
+    await seedQuestion(qCorrect, [kCorrect], 3);
+    await seedQuestion(qWrong, [kWrong], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kCorrect],
+        questionId: qCorrect,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 29_000, // slow-correct: continuous credit, but the COUNT is still integer 1
+      });
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kWrong],
+        questionId: qWrong,
+        outcome: 0,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        responseTimeMs: 500, // fast-wrong: continuous credit, but the COUNT is still integer 1
+      });
+    });
+
+    const correct = await readState(kCorrect);
+    const wrong = await readState(kWrong);
+    // Integer counts — the SRT continuous outcome modulates θ̂ credit ONLY, not the tallies.
+    expect(correct?.success_count).toBe(1);
+    expect(correct?.fail_count).toBe(0);
+    expect(wrong?.success_count).toBe(0);
+    expect(wrong?.fail_count).toBe(1);
+  });
+
+  it('SRT ON but responseTimeMs ABSENT → binary fallback (paper / missing-RT path unchanged)', async () => {
+    // Even with the flag ON, an attempt that passes NO responseTimeMs must use the
+    // binary credit — modelling the paper path and any solo attempt lacking RT.
+    srtFlag.value = true;
+    const kFlagOnNoRt = createId();
+    const kFlagOff = createId();
+    const qFlagOnNoRt = createId();
+    const qFlagOff = createId();
+    await seedKnowledge(kFlagOnNoRt);
+    await seedKnowledge(kFlagOff);
+    await seedQuestion(qFlagOnNoRt, [kFlagOnNoRt], 3);
+    await seedQuestion(qFlagOff, [kFlagOff], 3);
+
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kFlagOnNoRt],
+        questionId: qFlagOnNoRt,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+        // flag ON but NO responseTimeMs → binary
+      });
+    });
+    srtFlag.value = false;
+    await db.transaction(async (tx) => {
+      await updateThetaForAttempt(tx, {
+        knowledgeIds: [kFlagOff],
+        questionId: qFlagOff,
+        outcome: 1,
+        difficulty: 3,
+        attemptEventId: newId(),
+        now: new Date(),
+      });
+    });
+
+    const flagOnNoRt = (await readState(kFlagOnNoRt))?.theta_hat;
+    const flagOff = (await readState(kFlagOff))?.theta_hat;
+    expect(flagOnNoRt).toBe(flagOff); // byte-identical binary result
+    expect(flagOnNoRt).toBeCloseTo(0.06, 10);
   });
 });
 
