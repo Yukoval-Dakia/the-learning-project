@@ -33,6 +33,7 @@ import { knowledge, learning_session, question, question_block } from '@/db/sche
 import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { getR2 } from '@/server/r2';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';
@@ -361,23 +362,25 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           ingestion_session_id: sessionId,
           question_block_id: importedBlockId,
         };
-        await tx.insert(question).values({
-          id: questionId,
-          kind: block.question_kind,
-          prompt_md: block.final_prompt_md,
-          reference_md: block.final_reference_md,
-          knowledge_ids: block.knowledge_ids,
-          difficulty: block.difficulty,
-          source: sessionEntrypoint,
-          variant_depth: 0,
-          figures: importedFigures,
-          image_refs: block.image_refs,
-          structured: importedStructured,
-          metadata: questionMetadata,
-          created_at: now,
-          updated_at: now,
-          version: 0,
-        });
+        await tx.insert(question).values(
+          withAnswerClass({
+            id: questionId,
+            kind: block.question_kind,
+            prompt_md: block.final_prompt_md,
+            reference_md: block.final_reference_md,
+            knowledge_ids: block.knowledge_ids,
+            difficulty: block.difficulty,
+            source: sessionEntrypoint,
+            variant_depth: 0,
+            figures: importedFigures,
+            image_refs: block.image_refs,
+            structured: importedStructured,
+            metadata: questionMetadata,
+            created_at: now,
+            updated_at: now,
+            version: 0,
+          }),
+        );
 
         // T-OC slice 1 (YUK-145, OC-3): generalized capture. The capture's
         // `outcome` is a SIGNAL routed by enrollCapturedBlock — failure → attempt

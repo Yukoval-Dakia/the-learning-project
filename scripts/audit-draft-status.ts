@@ -298,8 +298,17 @@ export type InsertSite = {
 // parens) — adequate for the empty-arg Drizzle chain links (`.onConflictDoNothing()`,
 // `.returning()`); a chain link carrying a nested-paren call before `.values` would not be
 // swallowed (acceptable — `.values` normally comes first in Drizzle insert chains).
+//
+// YUK-395: the values object may be wrapped in a single derive helper call —
+// `.values(withAnswerClass({ ... }))` — so allow an OPTIONAL `<ident>(` (with
+// whitespace/newlines) between `.values(` and the `{`. The brace-balance extractor
+// keys off the `{` being the LAST char of the match, so swallowing the wrapper-open
+// paren keeps the `{` as the anchor; the extra close paren after the object `}` is
+// outside the extracted block and irrelevant to the draft_status key scan. Without
+// this, every wrapped site silently escapes the scan and the gate goes falsely green
+// (0 sites scanned).
 const INSERT_HEAD_RE =
-  /\.insert\(\s*question\s*\)\s*(?:\.[A-Za-z_$][\w$]*\([^)]*\)\s*)*\.values\(\s*\{/g;
+  /\.insert\(\s*question\s*\)\s*(?:\.[A-Za-z_$][\w$]*\([^)]*\)\s*)*\.values\(\s*(?:[A-Za-z_$][\w$]*\(\s*)?\{/g;
 // draft_status as an object KEY (word-boundary, allow quotes), not a substring of
 // another identifier.
 const DRAFT_STATUS_KEY_RE = /(^|[^A-Za-z0-9_])(['"]?)draft_status\2\s*:/;

@@ -16,6 +16,7 @@ import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -106,20 +107,22 @@ export async function POST(req: Request): Promise<Response> {
 
     const userCauseEventId = body.cause === null ? null : createId();
     await db.transaction(async (tx) => {
-      await tx.insert(question).values({
-        id: questionId,
-        kind: body.question_kind,
-        prompt_md: body.prompt_md,
-        reference_md: body.reference_md,
-        knowledge_ids: body.knowledge_ids,
-        difficulty: body.difficulty,
-        source: 'manual',
-        variant_depth: 0,
-        metadata: questionMetadata,
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
+      await tx.insert(question).values(
+        withAnswerClass({
+          id: questionId,
+          kind: body.question_kind,
+          prompt_md: body.prompt_md,
+          reference_md: body.reference_md,
+          knowledge_ids: body.knowledge_ids,
+          difficulty: body.difficulty,
+          source: 'manual',
+          variant_depth: 0,
+          metadata: questionMetadata,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        }),
+      );
       await writeEvent(tx, {
         id: attemptEventId,
         session_id: null,

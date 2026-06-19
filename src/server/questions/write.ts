@@ -40,6 +40,7 @@ import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validat
 import type { Db } from '@/db/client';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
 
 export const QUESTION_PART_KIND = 'question_part' as const;
 
@@ -226,6 +227,28 @@ export async function editQuestion(
     track('knowledge_ids', 'knowledge_ids', row.knowledge_ids);
     track('kind', 'kind', row.kind);
     track('draft_status', 'draft_status', row.draft_status);
+
+    // YUK-395 — answer_class freshness on EDIT. answer_class is structurally
+    // derived from kind/choices_md/rubric_json; if this edit changes either of the
+    // two editable structural inputs (kind / choices_md — rubric_json is not in the
+    // edit surface), RE-DERIVE so the column doesn't go stale (e.g. a derivation→
+    // choice edit must flip steps→exact, a short_answer that gains choices must flip
+    // semantic→exact). Derive from the MERGED row: patched kind/choices when present,
+    // existing values otherwise, plus the untouched persisted rubric_json. This is a
+    // DERIVED shadow of fields already audited, so it is NOT added to before/after.
+    // Behavior-neutral (no live reader branches on answer_class today). When the row
+    // somehow lacks the structural input (no kind), leave the existing value / NULL
+    // for the backfill net (never guess).
+    if (Object.hasOwn(after, 'kind') || Object.hasOwn(after, 'choices_md')) {
+      const nextKind = patch.kind !== undefined ? patch.kind : row.kind;
+      const nextChoices = patch.choices_md !== undefined ? patch.choices_md : row.choices_md;
+      const derivedAnswerClass = deriveAnswerClassForValues({
+        kind: nextKind,
+        choices_md: nextChoices,
+        rubric_json: row.rubric_json,
+      });
+      if (derivedAnswerClass != null) setValues.answer_class = derivedAnswerClass;
+    }
 
     // No real change: return the current version untouched, no event, no bump.
     // We still honour the optimistic-lock contract — a stale version on a no-op

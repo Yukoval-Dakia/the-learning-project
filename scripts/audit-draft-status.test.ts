@@ -173,6 +173,43 @@ describe('scanQuestionInserts (classification)', () => {
     expect(scanQuestionInserts('f.ts', src)).toHaveLength(0);
   });
 
+  // YUK-395 — the values object may be wrapped in a derive helper call
+  // (`.values(withAnswerClass({ ... }))`). The head matcher must look THROUGH the
+  // single wrapper so the wrapped site is still scanned (otherwise the gate goes
+  // falsely green with 0 sites). These pin the wrapper-aware matcher.
+  it('scans a withAnswerClass-wrapped insert and classifies draft_status present', () => {
+    const sites = scanQuestionInserts(
+      'f.ts',
+      'await tx.insert(question).values(withAnswerClass({ id, draft_status: "draft", kind }));',
+    );
+    expect(sites).toHaveLength(1);
+    expect(sites[0].hasDraftStatus).toBe(true);
+  });
+
+  it('scans a withAnswerClass-wrapped insert MISSING draft_status (still flagged, not skipped)', () => {
+    const sites = scanQuestionInserts(
+      'f.ts',
+      'await tx.insert(question).values(withAnswerClass({ id, kind }));',
+    );
+    expect(sites).toHaveLength(1);
+    expect(sites[0].hasDraftStatus).toBe(false);
+  });
+
+  it('scans a cross-line withAnswerClass-wrapped insert', () => {
+    const src = [
+      'await tx.insert(question).values(',
+      '  withAnswerClass({',
+      '    id,',
+      '    draft_status: "draft",',
+      '    kind,',
+      '  }),',
+      ');',
+    ].join('\n');
+    const sites = scanQuestionInserts('f.ts', src);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].hasDraftStatus).toBe(true);
+  });
+
   it('counts two distinct cross-line question inserts separately', () => {
     const src = [
       'await tx',

@@ -9,6 +9,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, eq, isNull } from 'drizzle-orm';
 import {
   asPlainRecord,
@@ -329,27 +330,29 @@ export async function acceptRecordPromotionProposal(
 
   await db.transaction(async (tx) => {
     if (target === 'question') {
-      await tx.insert(question).values({
-        id: materializedId,
-        kind: 'short_answer',
-        prompt_md: draftString(draft, 'prompt_md', content),
-        reference_md:
-          typeof draft.reference_md === 'string' && draft.reference_md.length > 0
-            ? draft.reference_md
-            : null,
-        knowledge_ids: knowledgeIds,
-        difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
-        source: 'dreaming',
-        source_ref: proposalId,
-        draft_status: 'active',
-        created_by: {
-          by: 'ai',
-          task_kind: 'record_promotion',
-          propose_event_id: proposalId,
-        } as never,
-        created_at: now,
-        updated_at: now,
-      });
+      await tx.insert(question).values(
+        withAnswerClass({
+          id: materializedId,
+          kind: 'short_answer',
+          prompt_md: draftString(draft, 'prompt_md', content),
+          reference_md:
+            typeof draft.reference_md === 'string' && draft.reference_md.length > 0
+              ? draft.reference_md
+              : null,
+          knowledge_ids: knowledgeIds,
+          difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
+          source: 'dreaming',
+          source_ref: proposalId,
+          draft_status: 'active',
+          created_by: {
+            by: 'ai',
+            task_kind: 'record_promotion',
+            propose_event_id: proposalId,
+          } as never,
+          created_at: now,
+          updated_at: now,
+        }),
+      );
     } else if (target === 'learning_item') {
       await tx.insert(learning_item).values({
         id: materializedId,

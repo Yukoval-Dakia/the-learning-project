@@ -34,6 +34,7 @@ import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { writeAiProposal } from '@/server/proposals/writer';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
@@ -191,34 +192,36 @@ export async function runQuestionAuthor(
 
   let proposalId = '';
   await db.transaction(async (tx) => {
-    await tx.insert(question).values({
-      id: questionId,
-      kind: draft.kind,
-      prompt_md: normalized.prompt_md,
-      reference_md: normalized.reference_md,
-      structured: normalized.structured,
-      choices_md: draft.choices_md ?? null,
-      rubric_json: draft.rubric_json ?? null,
-      judge_kind_override: draft.judge_kind_override ?? null,
-      knowledge_ids: questionKnowledgeIds,
-      difficulty: draft.difficulty,
-      // Zero-DDL QuestionSource enum value (business.ts) — question.source is text.
-      source: 'copilot_authored',
-      source_ref: null,
-      // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
-      // until the question_draft proposal is accepted.
-      draft_status: 'draft',
-      created_by: aiAgentRef('QuestionAuthorTask', result),
-      metadata: {
-        author_question: {
-          seed_mode: seed.seed_mode,
-          ...(seed.material_url ? { material_url: seed.material_url } : {}),
-          ...(seed.material_title ? { material_title: seed.material_title } : {}),
+    await tx.insert(question).values(
+      withAnswerClass({
+        id: questionId,
+        kind: draft.kind,
+        prompt_md: normalized.prompt_md,
+        reference_md: normalized.reference_md,
+        structured: normalized.structured,
+        choices_md: draft.choices_md ?? null,
+        rubric_json: draft.rubric_json ?? null,
+        judge_kind_override: draft.judge_kind_override ?? null,
+        knowledge_ids: questionKnowledgeIds,
+        difficulty: draft.difficulty,
+        // Zero-DDL QuestionSource enum value (business.ts) — question.source is text.
+        source: 'copilot_authored',
+        source_ref: null,
+        // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
+        // until the question_draft proposal is accepted.
+        draft_status: 'draft',
+        created_by: aiAgentRef('QuestionAuthorTask', result),
+        metadata: {
+          author_question: {
+            seed_mode: seed.seed_mode,
+            ...(seed.material_url ? { material_url: seed.material_url } : {}),
+            ...(seed.material_title ? { material_title: seed.material_title } : {}),
+          },
         },
-      },
-      created_at: now,
-      updated_at: now,
-    });
+        created_at: now,
+        updated_at: now,
+      }),
+    );
 
     proposalId = await writeAiProposal(tx, {
       actor_ref: deps.actorRef,

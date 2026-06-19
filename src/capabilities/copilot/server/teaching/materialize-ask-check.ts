@@ -22,6 +22,7 @@ import { eq } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
 import { learning_item, question } from '@/db/schema';
 import type { TeachingStructuredQuestionT } from '@/server/orchestrator/teaching';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 
 export interface MaterializeAskCheckParams {
   structured_question: TeachingStructuredQuestionT;
@@ -77,27 +78,29 @@ export async function materializeAskCheckQuestion(
   const knowledgeIds = liRows[0]?.knowledge_ids ?? [];
   const promptMd = structured.prompt_md ?? params.fallbackPromptMd;
   const choicesMd = structured.choices_md ?? null;
-  await tx.insert(question).values({
-    id: qId,
-    kind: structured.kind,
-    prompt_md: promptMd,
-    reference_md: structured.reference_md,
-    rubric_json: structured.rubric_json ?? null,
-    choices_md: choicesMd,
-    judge_kind_override: structured.judge_kind_override ?? null,
-    knowledge_ids: knowledgeIds,
-    difficulty: 2,
-    source: 'teaching_check',
-    source_ref: sourceRef,
-    // YUK-350 (L2, RL2) — container-only: draft so it never enters the general pool.
-    draft_status: 'draft',
-    metadata: {
-      learning_item_id: learningItemId,
-      session_id: sessionId,
-    },
-    created_at: new Date(),
-    updated_at: new Date(),
-  });
+  await tx.insert(question).values(
+    withAnswerClass({
+      id: qId,
+      kind: structured.kind,
+      prompt_md: promptMd,
+      reference_md: structured.reference_md,
+      rubric_json: structured.rubric_json ?? null,
+      choices_md: choicesMd,
+      judge_kind_override: structured.judge_kind_override ?? null,
+      knowledge_ids: knowledgeIds,
+      difficulty: 2,
+      source: 'teaching_check',
+      source_ref: sourceRef,
+      // YUK-350 (L2, RL2) — container-only: draft so it never enters the general pool.
+      draft_status: 'draft',
+      metadata: {
+        learning_item_id: learningItemId,
+        session_id: sessionId,
+      },
+      created_at: new Date(),
+      updated_at: new Date(),
+    }),
+  );
   return {
     id: qId,
     kind: structured.kind,
