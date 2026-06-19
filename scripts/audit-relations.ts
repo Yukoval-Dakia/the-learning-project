@@ -241,6 +241,12 @@ export function walkSource(root: string, out: string[] = []): string[] {
     } else if (
       entry.isFile() &&
       (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+      // Mirror scripts/audit-draft-status.ts:132-134 walkSource EXACTLY: skip test
+      // files so the experimental-relations "wired in source" report reflects only
+      // production wiring — a relation_type that exists only in a *.test.ts fixture
+      // must not show up as a false "wired" positive (Cursor Bugbot LOW, PR #492).
+      !entry.name.endsWith('.test.ts') &&
+      !entry.name.endsWith('.test.tsx') &&
       !entry.name.endsWith('.d.ts')
     ) {
       out.push(relative(REPO_ROOT, abs));
