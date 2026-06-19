@@ -9889,6 +9889,112 @@ button.seg-sm {
   }
 }
 
+/* ── Usability Step1 (YUK-354) — SPA /mistakes 上线补层 ──────────
+   原 wave-2 .mistakes-loom 层（上方）port 自旧 Next.js page，未含
+   filters / summary-row / 科目 tag（旧页是 filterless 纯展示）。本次
+   SPA MistakesPage 实现 loom ScreenMistakes 全形（filter card + 3 轴
+   chip + summary row + 科目 tag），故把这些 loom 类按既有「每 loom 页
+   把需要但跨 scope 的类摘进自己 scope」先例 port 进 .mistakes-loom：
+   - .filter-row / .filter-row-l / .filter-row .chip ← shell.css .inbox-loom（同形）
+   - .inbox-summary-row ← shell.css .inbox-loom（同形 flex 三件）
+   - .qb-subj(.tone-*) ← questions.css（未 scope，但仅 QuestionsPage import 不加载）
+   - .qf2-reset(:hover) ← globals .questions-loom（同形）
+   - .attr-badge / .state-badge：loom 归因/状态 badge 钩子（全仓 grep=0），
+     基样式由 .badge.tone-* 承载，这里只补「不换行 + 收口」微调。
+   tokens-only，无新 hue。 ============================================ */
+
+/* summary row（同 shell.css .inbox-loom .inbox-summary-row 偏差③ 补全 flex 三件） */
+.mistakes-loom .inbox-summary-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+
+/* readable filter chip rows（同 shell.css .inbox-loom .filter-row 三件） */
+.mistakes-loom .filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px dashed var(--line);
+}
+.mistakes-loom .filter-row .chip {
+  white-space: nowrap;
+}
+.mistakes-loom .filter-row-l {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  min-width: 32px;
+}
+
+/* 科目 tag（同 questions.css .qb-subj + tone 变体；补 neutral/hard 让派生科目
+   全 tone 覆盖，未知 effective_domain 降级 neutral 不裸） */
+.mistakes-loom .qb-subj {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid;
+}
+.mistakes-loom .qb-subj.tone-coral {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.mistakes-loom .qb-subj.tone-info {
+  color: var(--info-ink);
+  background: var(--info-soft);
+  border-color: var(--info-line, var(--info));
+}
+.mistakes-loom .qb-subj.tone-good {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border-color: var(--good-line);
+}
+.mistakes-loom .qb-subj.tone-hard {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+}
+.mistakes-loom .qb-subj.tone-neutral {
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border-color: var(--line);
+}
+
+/* 清除筛选按钮（同 globals .questions-loom .qf2-reset） */
+.mistakes-loom .qf2-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  border: 1px solid var(--coral-line);
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-radius: var(--r-2);
+  padding: 6px 12px;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.mistakes-loom .qf2-reset:hover {
+  background: var(--coral-line);
+}
+
+/* 归因 / 状态 badge 钩子（loom AttributionBadge .attr-badge + state .state-badge；
+   配色由 .badge.tone-* 承载，这里只保不换行 + 图标/文字间距收口） */
+.mistakes-loom .attr-badge,
+.mistakes-loom .state-badge {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* ============================================================
    LOOM COACH LAYER — Wave 2 (YUK-169)
    /coach read-only weekly report. Ported additively from
