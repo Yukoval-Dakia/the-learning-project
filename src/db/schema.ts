@@ -1260,6 +1260,15 @@ export const edge_reconciliation_log = pgTable(
       t.candidate_relation_type,
     ),
     index('edge_recon_unapplied_idx').on(t.applied_at),
+    // action ↔ superseded_edge_id consistency invariant, enforced at the DB layer
+    // (not just the application layer): a SUPERSEDE row MUST name the archived old
+    // edge (superseded_edge_id non-null), and a KEEP_BOTH row MUST NOT (null).
+    // Mirrors the decision builder in edge-reconcile.ts (SUPERSEDE → neighbor.edge_id,
+    // KEEP_BOTH → null) so the DB can never persist a contradictory audit row.
+    check(
+      'edge_recon_action_superseded_ck',
+      sql`(${t.action} = 'SUPERSEDE' AND ${t.superseded_edge_id} IS NOT NULL) OR (${t.action} = 'KEEP_BOTH' AND ${t.superseded_edge_id} IS NULL)`,
+    ),
   ],
 );
 

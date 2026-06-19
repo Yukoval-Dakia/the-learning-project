@@ -1,0 +1,1 @@
+ALTER TABLE "edge_reconciliation_log" ADD CONSTRAINT "edge_recon_action_superseded_ck" CHECK (("edge_reconciliation_log"."action" = 'SUPERSEDE' AND "edge_reconciliation_log"."superseded_edge_id" IS NOT NULL) OR ("edge_reconciliation_log"."action" = 'KEEP_BOTH' AND "edge_reconciliation_log"."superseded_edge_id" IS NULL));
