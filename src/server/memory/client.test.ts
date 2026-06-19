@@ -107,6 +107,7 @@ describe('createMemoryClient', () => {
 
     await client.addEventMemory({
       id: 'evt_1',
+      actor_kind: 'user',
       action: 'review',
       subject_kind: 'question',
       subject_id: 'q1',
@@ -125,6 +126,7 @@ describe('createMemoryClient', () => {
       metadata: {
         source: 'event',
         event_id: 'evt_1',
+        actor_kind: 'user',
         action: 'review',
         subject_kind: 'question',
         subject_id: 'q1',
