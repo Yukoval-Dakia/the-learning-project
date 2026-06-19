@@ -119,6 +119,49 @@ async function seedDraftQuestion(opts: {
   });
 }
 
+// YUK-350 (B5 ADR-0038 决定 #2, increment 1) — objective draft seeds.
+// A choice / true_false / fill_blank / translation draft carries a reference
+// answer (+ choices for choice) so the deterministic exact judge can self-check
+// objective kinds WITHOUT burning an LLM. judge_kind_override left null so the
+// route resolves naturally (choices_md present → 'exact'; kind choice/true_false
+// → 'exact'; translation → PROSE → semantic, NOT short-circuited).
+async function seedObjectiveDraftQuestion(opts: {
+  id: string;
+  knowledgeId: string;
+  kind: 'choice' | 'true_false' | 'fill_blank' | 'translation';
+  referenceMd?: string;
+  choicesMd?: string[] | null;
+  source?: string;
+}) {
+  const db = testDb();
+  const now = new Date();
+  const defaultChoices =
+    opts.kind === 'choice'
+      ? ['A. 取消句子独立性', 'B. 表示领属', 'C. 代词', 'D. 动词「到」']
+      : opts.kind === 'true_false'
+        ? ['对', '错']
+        : null;
+  await db.insert(question).values({
+    id: opts.id,
+    kind: opts.kind,
+    prompt_md: '下列关于「之」作主谓间助词的说法，正确的是？',
+    reference_md: opts.referenceMd ?? 'A',
+    rubric_json: null as never,
+    choices_md: opts.choicesMd === undefined ? defaultChoices : opts.choicesMd,
+    judge_kind_override: null,
+    knowledge_ids: [opts.knowledgeId],
+    difficulty: 3,
+    source: opts.source ?? 'quiz_gen',
+    source_ref: opts.knowledgeId,
+    // draft_status explicitly set (audit:draft-status compliant).
+    draft_status: 'draft',
+    created_by: { by: 'ai', task_kind: 'QuizGenTask', task_run_id: 'tr_gen' } as never,
+    metadata: { quiz_gen: BASE_META } as never,
+    created_at: now,
+    updated_at: now,
+  });
+}
+
 // YUK-224 (slice 3, tier 3) — material_grounded meta carrying the grounded doc id.
 function materialMeta(materialDocId: string): QuizGenMetadataT {
   return {
@@ -622,6 +665,160 @@ describe('runQuizVerify', () => {
       material_grounding: { material_present: true, verdict: 'fail' },
       promoted: false,
     });
+  });
+});
+
+// YUK-350 (B5 ADR-0038 决定 #2, increment 1) — DETERMINISTIC objective-question
+// verify short-circuit. choice / true_false drafts whose route resolves to the
+// `exact` judge are verified WITHOUT burning an LLM. A runTaskFn that THROWS if
+// called proves the LLM path is never taken. fill_blank is increment 2 (still
+// LLM this increment); prose/translation must NEVER short-circuit.
+describe('runQuizVerify — deterministic objective short-circuit (YUK-350 inc 1)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // A runTaskFn that explodes if invoked — its absence-of-call proves the
+  // deterministic path replaced the LLM verdict source.
+  function throwingRunTaskFn() {
+    return vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => {
+      throw new Error('LLM runTaskFn MUST NOT be called for a short-circuited objective question');
+    });
+  }
+
+  it('(a) choice with a correct reference: deterministic pass — LLM NOT called, draft promotes to active', async () => {
+    await seedKnowledge('k1');
+    // reference 'A' matches the leading-letter of choice option 'A. 取消句子独立性'.
+    await seedObjectiveDraftQuestion({
+      id: 'oc1',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      referenceMd: 'A',
+    });
+    const runTaskFn = throwingRunTaskFn();
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'oc1', runTaskFn });
+
+    // LLM short-circuited.
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(result.status).toBe('verified');
+    expect(result.overall).toBe('pass');
+
+    // Promote path unchanged: draft→active + per-knowledge FSRS enroll.
+    const rows = await testDb().select().from(question).where(eq(question.id, 'oc1'));
+    expect(rows[0].draft_status).toBe('active');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+    expect(await fsrsRowCount('question', 'oc1')).toBe(0);
+
+    // Exactly one verify event, outcome success.
+    expect(await countVerifyEvents('oc1')).toBe(1);
+
+    // The verify event payload carries the deterministic_check axis (verdict source
+    // = deterministic, not LLM).
+    const evs = await verifyEventsFor('oc1');
+    expect(evs).toHaveLength(1);
+    expect(evs[0].outcome).toBe('success');
+    expect(evs[0].payload?.overall).toBe('pass');
+    const axes = (evs[0].payload?.axes ?? []) as Array<{ axis_name: string; verdict: string }>;
+    expect(axes.some((a) => a.axis_name === 'deterministic_check')).toBe(true);
+  });
+
+  it('(b) true_false correct → pass/promote; incorrect (empty reference) → no-promote, stays draft', async () => {
+    await seedKnowledge('k1');
+    // correct: reference '对' matches option '对'.
+    await seedObjectiveDraftQuestion({
+      id: 'tf_ok',
+      knowledgeId: 'k1',
+      kind: 'true_false',
+      referenceMd: '对',
+    });
+    // incorrect: empty reference → exact judge cannot verify → no promote.
+    await seedObjectiveDraftQuestion({
+      id: 'tf_bad',
+      knowledgeId: 'k1',
+      kind: 'true_false',
+      referenceMd: '',
+    });
+    const runTaskFn = throwingRunTaskFn();
+
+    const ok = await runQuizVerify({ db: testDb(), questionId: 'tf_ok', runTaskFn });
+    expect(ok.status).toBe('verified');
+    expect(ok.overall).toBe('pass');
+    const okRows = await testDb().select().from(question).where(eq(question.id, 'tf_ok'));
+    expect(okRows[0].draft_status).toBe('active');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+
+    const bad = await runQuizVerify({ db: testDb(), questionId: 'tf_bad', runTaskFn });
+    expect(bad.status).not.toBe('verified');
+    const badRows = await testDb().select().from(question).where(eq(question.id, 'tf_bad'));
+    expect(badRows[0].draft_status).toBe('draft');
+
+    // The deterministic path never touched the LLM for either question.
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  // NEGATIVE — a translation (PROSE_KIND) draft must NOT be short-circuited; it
+  // still hits the LLM runTaskFn exactly once.
+  it('(c) translation (PROSE_KIND): LLM runTaskFn IS called once (not mis-short-circuited)', async () => {
+    await seedKnowledge('k1');
+    await seedObjectiveDraftQuestion({
+      id: 'tr1',
+      knowledgeId: 'k1',
+      kind: 'translation',
+      referenceMd: '把这句古文翻成白话。',
+      choicesMd: null,
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_prose');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'tr1', runTaskFn });
+
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTaskFn.mock.calls[0][0]).toBe('QuizVerifyTask');
+    expect(result.status).toBe('verified');
+  });
+
+  // fill_blank is increment 2 — STILL the LLM path this increment.
+  it('(d) fill_blank: STILL hits the LLM path this increment (increment 2 handles it)', async () => {
+    await seedKnowledge('k1');
+    await seedObjectiveDraftQuestion({
+      id: 'fb1',
+      knowledgeId: 'k1',
+      kind: 'fill_blank',
+      referenceMd: '取消句子独立性',
+      choicesMd: null,
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_fb');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'fb1', runTaskFn });
+
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTaskFn.mock.calls[0][0]).toBe('QuizVerifyTask');
+    expect(result.status).toBe('verified');
+  });
+
+  // (e) idempotency — a second run of a deterministically-verified choice skips
+  // (no duplicate event, no re-promote), proving the existing promote/idempotency
+  // guard is not regressed by the short-circuit.
+  it('(e) idempotency: second run of a deterministic choice skips, no duplicate event / FSRS row', async () => {
+    await seedKnowledge('k1');
+    await seedObjectiveDraftQuestion({
+      id: 'oc_idem',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      referenceMd: 'A',
+    });
+    const runTaskFn = throwingRunTaskFn();
+
+    const first = await runQuizVerify({ db: testDb(), questionId: 'oc_idem', runTaskFn });
+    expect(first.status).toBe('verified');
+
+    const second = await runQuizVerify({ db: testDb(), questionId: 'oc_idem', runTaskFn });
+    expect(second.status).toBe('skipped:already_verified');
+
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(await countVerifyEvents('oc_idem')).toBe(1);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+    expect(await fsrsRowCount('question', 'oc_idem')).toBe(0);
   });
 });
 

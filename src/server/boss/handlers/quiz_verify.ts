@@ -36,6 +36,7 @@ import type { Job } from 'pg-boss';
 
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { exactJudgeCapability } from '@/core/capability/judges/exact';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   QuizGenMetadata,
@@ -49,11 +50,20 @@ import {
   type VerifyFailureClass,
   toUnifiedVerifyResult,
 } from '@/core/schema/verify-contract';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
+// F0 — buildLocalJudgeQuestion shapes the exact judge's `{ reference, choices_md }`
+// input from a JudgeQuestionRow; resolveQuestionJudgeRoute (re-exported there) is the
+// dependency-light pure route resolver.
+import {
+  buildLocalJudgeQuestion,
+  resolveQuestionJudgeRoute,
+} from '@/server/ai/judges/question-contract';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import type { JudgeRoute } from '@/server/judge/route-resolve';
+import { isObjectiveJudgeRoute } from '@/server/mastery/personalized-difficulty';
 import { checksForTier } from '@/server/quiz/verify-framework';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
@@ -193,6 +203,50 @@ export interface RunQuizVerifyResult {
   copy_safety_verdict?: QuizGenMetadataT['copy_safety']['verdict'];
 }
 
+// YUK-203 P3 — per-knowledge FSRS enroll-if-absent (shared by the LLM-verdict
+// promote path AND the YUK-350 deterministic objective short-circuit). Extracted
+// verbatim so both verdict sources reach the SAME enroll semantics: materialize an
+// initial "new" card per knowledge id the verified question probes; never reset an
+// existing projection (Codex PR #295 enroll-if-absent); unlabeled legacy questions
+// fall back to question-level enroll. The verdict SOURCE differs between callers;
+// this enroll behaviour does not.
+async function enrollFsrsOnPromote(
+  tx: Tx,
+  opts: {
+    knowledgeIds: string[] | null | undefined;
+    questionId: string;
+    enrolledByEventId: string;
+    now: Date;
+  },
+): Promise<void> {
+  const initial = initialFsrsState(opts.now);
+  const fsrsSubjectIds = Array.from(new Set(opts.knowledgeIds ?? []));
+  if (fsrsSubjectIds.length > 0) {
+    for (const knowledgeId of fsrsSubjectIds) {
+      const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
+      if (existing) continue;
+      await upsertFsrsState(tx, {
+        subject_kind: 'knowledge',
+        subject_id: knowledgeId,
+        state: initial.state,
+        due_at: initial.dueAt,
+        last_review_event_id: opts.enrolledByEventId,
+      });
+    }
+  } else {
+    const existing = await getFsrsState(tx, 'question', opts.questionId);
+    if (!existing) {
+      await upsertFsrsState(tx, {
+        subject_kind: 'question',
+        subject_id: opts.questionId,
+        state: initial.state,
+        due_at: initial.dueAt,
+        last_review_event_id: opts.enrolledByEventId,
+      });
+    }
+  }
+}
+
 /**
  * Verify a single quiz_gen draft question. Idempotent per (question_id) via the
  * chained verify event guard. Promotes draft→active + FSRS-enrolls on pass.
@@ -311,6 +365,35 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   const verifySkills = kindConformanceChecked
     ? await resolveQuizGenSkills(subjectProfile.id, row.kind as SubjectQuestionKind)
     : undefined;
+
+  // ── YUK-350 (B5 ADR-0038 决定 #2, increment 1) — DETERMINISTIC objective verify ──
+  // 客观题（choice / true_false，答案能确定性比对语料的题型）的 verify verdict **不烧
+  // LLM**——答案能确定性比对即放行（ADR-0038 决定 #2 第二条，docs/adr/0038-…md:30）。这
+  // 直接接 B1 §5.1「客观题闭环可 n=1 自校验」：客观题的确定判分是 verify 闸的零成本通道。
+  //
+  // SCOPE (this increment): choice + true_false ONLY. fill_blank is increment 2 (needs
+  // an owner normalization policy, ADR-0038:30 lists it as objective but deferred here).
+  // prose/translation/short_answer/reading/essay are PROSE_KINDS — structurally NOT
+  // determinable by string compare (ADR-0038:56), so they fall through to the LLM path
+  // BELOW exactly as today (no behaviour change for them — invariant 1).
+  //
+  // The gate: route via the dependency-light resolveQuestionJudgeRoute; short-circuit
+  // ONLY when kind ∈ {choice, true_false} AND the route is an OBJECTIVE judge route
+  // (`exact` — isObjectiveJudgeRoute). A choice question whose subject profile somehow
+  // routed it to a non-exact judge (or a judge_kind_override pinning semantic) is NOT
+  // short-circuited (the route resolver is the source of truth, not the bare kind).
+  const objectiveRoute = resolveQuestionJudgeRoute(row, subjectProfile);
+  const isObjectiveShortCircuitKind = row.kind === 'choice' || row.kind === 'true_false';
+  if (isObjectiveShortCircuitKind && isObjectiveJudgeRoute(objectiveRoute)) {
+    return await runDeterministicObjectiveVerify({
+      db,
+      row,
+      meta,
+      metadataRaw,
+      objectiveRoute,
+    });
+  }
+  // ── end deterministic short-circuit; everything below is the UNCHANGED LLM path ──
 
   let taskResult: TaskTextResult | null = null;
   try {
@@ -464,44 +547,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
 
         // YUK-203 P3 — FSRS enroll is per knowledge point: materialize an
         // initial "new" card for each knowledge id this verified question
-        // probes. The question itself remains the concrete item selected when
-        // that knowledge becomes due. Unlabeled legacy questions fall back to
-        // question-level FSRS so they are not silently dropped.
-        const initial = initialFsrsState(now);
-        const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
-        if (fsrsSubjectIds.length > 0) {
-          for (const knowledgeId of fsrsSubjectIds) {
-            // Codex (PR #295) — enroll-if-absent. A verified quiz binding to a
-            // knowledge point that ALREADY has an FSRS projection (e.g. a
-            // supplementary question for an already-studied node) must NOT reset
-            // that node's state/due_at/last_review_event_id back to a fresh card —
-            // that would discard the user's review history and pull a not-yet-due
-            // card back into the pool. Only enroll knowledge points with no
-            // existing projection; leave existing schedules untouched.
-            const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-            if (existing) continue;
-            await upsertFsrsState(tx, {
-              subject_kind: 'knowledge',
-              subject_id: knowledgeId,
-              state: initial.state,
-              due_at: initial.dueAt,
-              last_review_event_id: verifyEventId,
-            });
-          }
-        } else {
-          // Unlabeled legacy questions enroll at question level. Same
-          // enroll-if-absent guard so a re-verify can't reset an existing card.
-          const existing = await getFsrsState(tx, 'question', questionId);
-          if (!existing) {
-            await upsertFsrsState(tx, {
-              subject_kind: 'question',
-              subject_id: questionId,
-              state: initial.state,
-              due_at: initial.dueAt,
-              last_review_event_id: verifyEventId,
-            });
-          }
-        }
+        // probes. Codex (PR #295) enroll-if-absent + unlabeled-legacy fallback
+        // semantics live in the shared `enrollFsrsOnPromote` helper (YUK-350:
+        // shared verbatim with the deterministic objective short-circuit so both
+        // verdict sources reach IDENTICAL enroll behaviour).
+        await enrollFsrsOnPromote(tx, {
+          knowledgeIds: row.knowledge_ids,
+          questionId,
+          enrolledByEventId: verifyEventId,
+          now,
+        });
       } else {
         // needs_review / fail / too_close — stay draft, never reaches the pool.
         await tx
@@ -675,6 +730,181 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     }
     throw err;
   }
+}
+
+type QuestionRow = typeof question.$inferSelect;
+
+/**
+ * YUK-350 (B5 ADR-0038 决定 #2, increment 1) — DETERMINISTIC objective verify.
+ *
+ * Verify a choice / true_false draft WITHOUT burning an LLM by self-checking its
+ * reference answer with the deterministic `exact` judge (NFKC+trim+lowercase +
+ * choice-index parse). The verdict SOURCE is deterministic, but the promote path
+ * downstream is the SAME as the LLM path: `coarse_outcome === 'correct'` ⇒
+ * overall='pass' ⇒ draft→active + per-knowledge FSRS enroll (shared
+ * `enrollFsrsOnPromote`); anything else ⇒ stays draft (needs_review), leave the
+ * coach pool-gap note. The unified verify-event payload gains a single
+ * `deterministic_check` axis so a consumer can see the verdict came from the
+ * deterministic judge rather than the LLM (verifier router projection unchanged).
+ *
+ * Self-check rationale: at verify time there is no student answer — we feed the
+ * draft's OWN reference back through the exact judge. A choice/true_false draft
+ * with a valid, parseable reference (a letter that resolves to a choice index, or
+ * an answer matching an option text) judges 'correct' against itself ⇒ it is
+ * deterministically gradable ⇒ safe to promote. A draft with an empty / unparseable
+ * reference judges unsupported|incorrect ⇒ NOT promoted (stays draft for owner
+ * review), exactly the conservative posture B1 §5.1 wants for the objective闭环.
+ */
+async function runDeterministicObjectiveVerify(args: {
+  db: Db;
+  row: QuestionRow;
+  meta: QuizGenMetadataT;
+  metadataRaw: Record<string, unknown>;
+  objectiveRoute: JudgeRoute;
+}): Promise<RunQuizVerifyResult> {
+  const { db, row, meta, metadataRaw, objectiveRoute } = args;
+  const questionId = row.id;
+
+  // Build the exact judge's `{ reference, choices_md }` input from the draft row,
+  // then self-check the reference against itself. No LLM, no Tavily, no cost.
+  const judgeInput = buildLocalJudgeQuestion(row, objectiveRoute);
+  // The exact judge runs synchronously, but the JudgeCapabilityRunner.run signature is
+  // widened to `JudgeResultV2T | Promise<...>`; await to narrow to the concrete result.
+  const judgeResult = await exactJudgeCapability.run({
+    question: judgeInput,
+    answer: { content: row.reference_md ?? '' },
+  });
+
+  // coarse_outcome === 'correct' ⇒ pass (the reference is a valid, deterministically
+  // gradable objective answer). 'incorrect' (reference present but self-mismatch — should
+  // not normally happen) and 'unsupported' (empty / unparseable reference) ⇒ NOT pass.
+  const promote = judgeResult.coarse_outcome === 'correct';
+  const overall: QuizVerifyOverall = promote ? 'pass' : 'needs_review';
+  const verificationStatus: QuizGenVerificationT['status'] = promote ? 'verified' : 'needs_review';
+  const summaryMd = promote
+    ? `客观题确定性校验通过（${row.kind} via exact judge，零 LLM）。`
+    : `客观题确定性校验未通过（${row.kind}）：参考答案无法被 exact judge 确定性判分（${judgeResult.coarse_outcome}）。`;
+
+  const now = new Date();
+  const verifyEventId = createId();
+  // verified_by marks the verdict source as a local deterministic capability (the exact
+  // judge), NOT an AI/LLM run. `by:'system'` (AgentRef has no 'ai' here — there was no
+  // model call); the capability_ref + verdict_source ride in AgentRef's catchall so the
+  // audit trail records it was the exact judge that produced the verdict.
+  const verifiedBy: QuizGenVerificationT['verified_by'] = {
+    by: 'system',
+    verdict_source: 'deterministic',
+    capability_ref: judgeResult.capability_ref,
+  };
+
+  // YUK-350 (B5 increment C) — project onto the unified verify contract shape. The
+  // single `deterministic_check` axis carries the exact judge's coarse_outcome verdict
+  // (mapped onto the axis vocabulary: correct→pass, else→fail). promote is passed IN
+  // (already decided above) — the projection re-derives no gate.
+  const unified = toUnifiedVerifyResult({
+    source: 'quiz',
+    overall: promote ? 'pass' : 'needs_review',
+    promote,
+    summary_md: summaryMd,
+    confidence: judgeResult.confidence,
+    checks: [
+      {
+        axis_name: 'deterministic_check',
+        verdict: promote ? 'pass' : 'fail',
+        note: `exact judge coarse_outcome=${judgeResult.coarse_outcome}`,
+      },
+    ],
+  });
+
+  // Merge-preserving metadata: keep the agent's source_pack / source_refs /
+  // generation_method; record the verification block. copy_safety is left as the
+  // agent's self-reported value (no source-snippet overlap is computed for a
+  // deterministically-verified objective question — there is no LLM copy check here;
+  // the deterministic verdict is purely answer-gradability, not plagiarism).
+  const verification: QuizGenVerificationT = {
+    status: verificationStatus,
+    summary: summaryMd,
+    verified_by: verifiedBy,
+  };
+  const updatedMeta: QuizGenMetadataT = { ...meta, verification };
+  const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
+
+  await db.transaction(async (tx) => {
+    if (promote) {
+      await tx
+        .update(question)
+        .set({ draft_status: 'active', metadata: newMetadata as never, updated_at: now })
+        .where(eq(question.id, questionId));
+      // SAME enroll semantics as the LLM promote path (shared helper).
+      await enrollFsrsOnPromote(tx, {
+        knowledgeIds: row.knowledge_ids,
+        questionId,
+        enrolledByEventId: verifyEventId,
+        now,
+      });
+    } else {
+      await tx
+        .update(question)
+        .set({ metadata: newMetadata as never, updated_at: now })
+        .where(eq(question.id, questionId));
+    }
+
+    await writeEvent(tx, {
+      id: verifyEventId,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'quiz_verify',
+      action: 'experimental:quiz_verify',
+      subject_kind: 'question',
+      subject_id: questionId,
+      // success on promote, partial on a non-promote (needs_review) — mirrors the LLM
+      // path's success/partial mapping (a non-promote here is needs_review, never a hard
+      // 'fail' verdict, so outcome='partial' not 'failure').
+      outcome: promote ? 'success' : 'partial',
+      payload: {
+        question_id: questionId,
+        // unified verify contract shape (axes + overall + failure_class? + summary_md +
+        // confidence). The deterministic_check axis records the verdict source.
+        ...unified,
+        // explicit marker so observers know this verdict skipped the LLM.
+        deterministic: true,
+        judge_route: objectiveRoute,
+        judge_coarse_outcome: judgeResult.coarse_outcome,
+        promoted: promote,
+        verification_status: verificationStatus,
+        verified_by: verifiedBy,
+      },
+      caused_by_event_id: null,
+      // No AI run → no task_run_id, zero cost (the whole point of the short-circuit).
+      task_run_id: null,
+      cost_micro_usd: 0,
+      created_at: now,
+    });
+  });
+
+  // U8 / AF §4 — on a non-promote, the knowledge points still lack a usable question;
+  // leave the coach pool-gap hint (best-effort, mirrors the LLM path).
+  if (!promote) {
+    const poolGapRefs = (
+      row.knowledge_ids && row.knowledge_ids.length > 0 ? row.knowledge_ids : [questionId]
+    ).map((id) => ({ kind: row.knowledge_ids?.length ? 'knowledge' : 'question', id }));
+    try {
+      await writeAgentNote(db, {
+        target_agents: ['coach'],
+        source_task_kind: 'quiz_verify',
+        refs: poolGapRefs,
+        signal_kind: 'question_pool_gap',
+        summary_md: `Generated question ${questionId} did not enter the review pool (deterministic verification ${verificationStatus}); its knowledge point(s) may still lack a usable question.`,
+        confidence: judgeResult.confidence,
+        expires_at: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        caused_by_event_id: verifyEventId,
+      });
+    } catch (noteErr) {
+      console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);
+    }
+  }
+
+  return { status: verificationStatus, overall };
 }
 
 export function buildQuizVerifyHandler(
