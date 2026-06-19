@@ -33,7 +33,7 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { item_calibration, learning_item, question } from '@/db/schema';
 import { effectiveB } from '@/server/mastery/recalibration';
-import { getMasteryState } from '@/server/mastery/state';
+import { getMasteryState, globalThetaForDomain } from '@/server/mastery/state';
 import { resolveSubjectProfile, subjectProfiles } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
@@ -544,15 +544,25 @@ async function loadFrontierKnowledge(db: Db): Promise<FrontierKnowledgeInput[]> 
   for (const kid of candidateKids) {
     const state = await getMasteryState(db, kid, 'knowledge');
     let subjectId: string;
+    // A2 (YUK-434) — capture the RAW resolved domain alongside subjectId so the
+    // effective theta reuses it (no second domain walk). Null = unresolved domain.
+    let rawDomain: string | null = null;
     try {
-      subjectId = resolveSubjectProfile(await getEffectiveDomain(db, kid)).id;
+      rawDomain = await getEffectiveDomain(db, kid);
+      subjectId = resolveSubjectProfile(rawDomain).id;
     } catch {
       subjectId = resolveSubjectProfile(null).id;
     }
+    // A2 — θ_hat fed to the supply scanner is the EFFECTIVE theta = θ_global(domain) +
+    //   θ_KC. globalThetaForDomain returns 0 with the flag OFF (DEFAULT) WITHOUT a DB
+    //   read, so thetaHat stays bit-identical to today (the bare θ_KC). With the flag
+    //   on, a frontier KC of a strong domain is scanned at its inherited ability.
+    const thetaKc = state?.theta_hat ?? COLD_START_THETA;
+    const thetaHat = thetaKc + (await globalThetaForDomain(db, rawDomain));
     out.push({
       knowledgeId: kid,
       subjectId,
-      thetaHat: state?.theta_hat ?? COLD_START_THETA,
+      thetaHat,
       thetaPrecision: state?.theta_precision ?? COLD_START_PRECISION,
       evidenceCount: state?.evidence_count ?? 0,
     });

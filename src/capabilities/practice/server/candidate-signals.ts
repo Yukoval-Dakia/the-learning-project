@@ -25,7 +25,7 @@ import {
   effectiveFamilyB,
 } from '@/server/mastery/personalized-difficulty';
 import { effectiveB } from '@/server/mastery/recalibration';
-import { getMasteryState } from '@/server/mastery/state';
+import { effectiveThetaForKc, getMasteryState } from '@/server/mastery/state';
 import { and, eq, inArray } from 'drizzle-orm';
 import { rotationClassForKind } from './variant-rotation';
 
@@ -91,6 +91,13 @@ const COLD_START_PRECISION = 1;
  * 读每个 KC 的 mastery_state（getMasteryState，'knowledge' 维），冷启行（null）兜底
  * θ̂=0 / precision=1。无 KC（空 knowledgeIds）→ 返回 undefined/undefined（无个体能力锚，
  * 评分层退化为无 θ̂ 状态）。
+ *
+ * A2 (YUK-434) — the per-KC θ_hat is the OFFSET θ_KC; the value compared/returned is
+ *   the EFFECTIVE theta = θ_global(domain-of-KC) + θ_KC (effectiveThetaForKc). With
+ *   HIERARCHICAL_ELO_ENABLED=false (DEFAULT) effectiveThetaForKc returns θ_KC
+ *   UNCHANGED and resolves no domain/global row, so this read path is BYTE-IDENTICAL
+ *   to today (weakest-by-θ_hat, same precision). With it on, a new KC of a strong
+ *   domain compares at its inherited effective ability rather than cold 0.
  */
 async function aggregateWeakestKc(
   db: DbLike,
@@ -103,7 +110,9 @@ async function aggregateWeakestKc(
   let weakestPrecision = COLD_START_PRECISION;
   for (const kid of knowledgeIds) {
     const row = await getMasteryState(db, kid, 'knowledge');
-    const theta = row?.theta_hat ?? COLD_START_THETA;
+    const thetaKc = row?.theta_hat ?? COLD_START_THETA;
+    // Effective theta (θ_global + θ_KC). Flag off → === thetaKc (bit-identical).
+    const theta = await effectiveThetaForKc(db, kid, thetaKc);
     const precision = row?.theta_precision ?? COLD_START_PRECISION;
     if (theta < weakestTheta) {
       weakestTheta = theta;
