@@ -15,7 +15,7 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { PfSrcBadge } from './PfStream';
@@ -158,7 +158,9 @@ export function PfSolo({
   // qQ.data 先短暂仍是上一题（缓存）→ 新题数据回来 q?.id 才变，正是「这道题的题面真正可见」的那一刻；re-answer
   // 同一题重取也会让 q?.id 重新落定 → 重新 stamp Date.now()，保证下一次 commit 算的是这次作答的墙钟用时。
   // 纯 ref 写入，无 state/DOM 变更 → 零视觉/渲染 delta（instrumentation only）。
-  useEffect(() => {
+  // 用 useLayoutEffect（非 useEffect）：layout 阶段在浏览器 paint **之前**同步跑，stamp 更贴近题面真正
+  // 变可见的时刻——useEffect 在 paint 之后异步跑会系统性低估 latency（PR review timing-accuracy note）。
+  useLayoutEffect(() => {
     if (q?.id) questionShownAtRef.current = Date.now();
   }, [q?.id]);
 

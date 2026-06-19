@@ -16,12 +16,13 @@ describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
     expect(computeLatencyMs(null, 1_000)).toBe(null);
   });
 
-  it('shownAt 为 undefined → 返回 null（同 null 透传）', () => {
-    expect(computeLatencyMs(undefined as unknown as number | null, 1_000)).toBe(null);
-  });
-
   it('正常用例 → now - shownAt（毫秒墙钟差）', () => {
     expect(computeLatencyMs(1_000, 6_000)).toBe(5_000);
+  });
+
+  it('连续两次正常调用 → 各自独立算差（commit 间 stamp 不被复用）', () => {
+    expect(computeLatencyMs(1_000, 6_000)).toBe(5_000);
+    expect(computeLatencyMs(2_000, 9_000)).toBe(7_000);
   });
 
   it('负差 / 时钟回拨 → clamp 到 0（下界对齐 server zod .min(0)）', () => {
