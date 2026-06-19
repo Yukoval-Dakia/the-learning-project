@@ -102,6 +102,20 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     [addToast, refreshStream],
   );
 
+  // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后「返回流」的退出。review 已落库 → 该 slot
+  // 实质 done，必须标 done（否则留下「已判分但 slot 卡 in_progress」的不一致态）。区别于
+  // completeSolo（「下一项」）：这里**只**标 done + 回列表，不自动推进到下一道 pending——用户按的是
+  // 「返回流」而非「下一项」，自动推进会越权。两条出口（completeSolo / 此处）都让 auto-commit 后的
+  // slot 落到一致的 done 态。
+  const markSoloDoneAndExit = useCallback(
+    async (item: StreamItem) => {
+      await advanceStreamItem(item.id, 'done').catch(() => {});
+      setMode({ kind: 'list' });
+      await refreshStream();
+    },
+    [refreshStream],
+  );
+
   const items = useMemo(() => streamQ.data?.items ?? [], [streamQ.data]);
 
   let body: React.ReactNode;
@@ -119,6 +133,8 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           setMode({ kind: 'list' });
           void refreshStream();
         }}
+        // YUK-432 — 客观题自动 commit 后退出回流：标 done（不自动推进），消除卡 in_progress 的 slot。
+        onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
         addToast={addToast}
       />
     );
