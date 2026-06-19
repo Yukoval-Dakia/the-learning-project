@@ -135,70 +135,143 @@ jobs:
               return `\n\`\`\`\n${text.replaceAll('```', '`\\`\\`')}\n\`\`\``;
             };
 
-            const lines = [
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const commit_id = context.payload.pull_request.head.sha;
+
+            // Retry transient GitHub API failures (5xx / 429 / network). A 4xx
+            // (e.g. 422 "line not in diff") is a real client error — fail fast so
+            // the caller can fall back. Returns the API response.
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const withRetry = async (label, fn) => {
+              for (let attempt = 1; ; attempt++) {
+                try {
+                  return await fn();
+                } catch (err) {
+                  const status = err && err.status;
+                  const transient = !status || status >= 500 || status === 429;
+                  if (!transient || attempt >= 4) throw err;
+                  const delay = 2000 * attempt;
+                  core.warning(`${label} attempt ${attempt} failed (status ${status ?? 'network'}): ${err.message}; retrying in ${delay}ms`);
+                  await sleep(delay);
+                }
+              }
+            };
+
+            // Body for a single finding (used both inline and in the fallback summary).
+            const commentBody = (comment) => {
+              const sev = comment.severity ? ` \`${comment.severity}\`` : '';
+              const conf = (typeof comment.confidence === 'number') ? ` (confidence ${comment.confidence.toFixed(2)})` : '';
+              const out = [`**OCR**${sev}${conf}`, '', String(comment.content || '').trim()];
+              if (comment.suggestion_code) {
+                out.push('', 'Suggested replacement:', fenced(comment.suggestion_code));
+              }
+              return out.join('\n');
+            };
+
+            // An inline review comment anchors on a line that must fall inside the
+            // PR diff. Use end_line as the anchor; for a multi-line span, set
+            // start_line too (GitHub requires start_line < line).
+            const inlineComment = (comment) => {
+              const line = comment.end_line || comment.start_line;
+              if (!comment.path || !line) return null; // not anchorable
+              const c = { path: comment.path, line, side: 'RIGHT', body: commentBody(comment) };
+              if (comment.start_line && comment.start_line < line) {
+                c.start_line = comment.start_line;
+                c.start_side = 'RIGHT';
+              }
+              return c;
+            };
+
+            const headerLines = [
               marker,
               '## OCR review',
               '',
-              `Reviewed commit: \`${(context.payload.pull_request.head.sha || '').slice(0, 8)}\``,
+              `Reviewed commit: \`${(commit_id || '').slice(0, 8)}\``,
               `Status: \`${result.status || 'unknown'}\``,
               `Files reviewed: \`${summary.files_reviewed ?? 0}\``,
               `Comments: \`${summary.comments ?? comments.length}\``,
               `Elapsed: \`${summary.elapsed || 'n/a'}\``,
-              '',
             ];
 
             if (comments.length === 0) {
-              lines.push('No actionable comments found.');
-            } else {
-              for (const [index, comment] of comments.entries()) {
-                const location = [
-                  comment.path || 'unknown',
-                  comment.start_line ? `:${comment.start_line}` : '',
-                  comment.end_line && comment.end_line !== comment.start_line ? `-${comment.end_line}` : '',
-                ].join('');
+              await withRetry('createReview(summary)', () => github.rest.pulls.createReview({
+                owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT',
+                body: [...headerLines, '', 'No actionable comments found.'].join('\n'),
+              }));
+              return;
+            }
 
-                lines.push(`### ${index + 1}. \`${location}\``);
-                lines.push('');
-                lines.push(String(comment.content || '').trim());
+            // Render a finding into the fallback summary (for comments whose line
+            // GitHub rejects as outside the diff).
+            const summaryEntry = (comment, idx) => {
+              const location = [
+                comment.path || 'unknown',
+                comment.start_line ? `:${comment.start_line}` : '',
+                comment.end_line && comment.end_line !== comment.start_line ? `-${comment.end_line}` : '',
+              ].join('');
+              const parts = [`### ${idx}. \`${location}\``, '', commentBody(comment)];
+              if (comment.existing_code) {
+                parts.push('', 'Existing code:', fenced(comment.existing_code));
+              }
+              return parts.join('\n');
+            };
 
-                if (comment.existing_code) {
-                  lines.push('');
-                  lines.push('Existing code:');
-                  lines.push(fenced(comment.existing_code));
-                }
+            const anchored = [];
+            const unanchored = [];
+            comments.forEach((c, i) => {
+              const ic = inlineComment(c);
+              if (ic) anchored.push(ic); else unanchored.push(summaryEntry(c, i + 1));
+            });
 
-                if (comment.suggestion_code) {
-                  lines.push('');
-                  lines.push('Suggested replacement:');
-                  lines.push(fenced(comment.suggestion_code));
-                }
-
-                lines.push('');
+            // Attempt one review with all inline comments. GitHub rejects the
+            // WHOLE review (422) if any one line is outside the diff, so on 422
+            // fall back to posting each inline comment individually and collect
+            // the ones that still fail into the summary body.
+            let posted = 0;
+            let inlineFailed = [];
+            if (anchored.length > 0) {
+              try {
+                await withRetry('createReview(inline)', () => github.rest.pulls.createReview({
+                  owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT',
+                  body: headerLines.join('\n'),
+                  comments: anchored,
+                }));
+                posted = anchored.length;
+              } catch (err) {
+                if (err && err.status === 422) {
+                  core.warning(`Batch inline review rejected (422); retrying comments individually: ${err.message}`);
+                  for (const ic of anchored) {
+                    try {
+                      await withRetry('createReviewComment', () => github.rest.pulls.createReviewComment({
+                        owner, repo, pull_number: issue_number, commit_id,
+                        path: ic.path, line: ic.line, side: ic.side,
+                        ...(ic.start_line ? { start_line: ic.start_line, start_side: ic.start_side } : {}),
+                        body: ic.body,
+                      }));
+                      posted++;
+                    } catch (e2) {
+                      if (e2 && e2.status === 422) {
+                        inlineFailed.push(`### \`${ic.path}:${ic.line}\` (could not anchor to diff)\n\n${ic.body}`);
+                      } else { throw e2; }
+                    }
+                  }
+                } else { throw err; }
               }
             }
 
-            const body = lines.join('\n').trim();
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-
-            // The review itself already succeeded and the JSON artifact is the
-            // durable record; only the comment POST remains. GitHub's API
-            // returns transient 5xx / "fetch failed" often enough that a single
-            // attempt flakes the whole job (observed: a 500 on POST .../comments
-            // after a clean review). Retry transient failures with backoff; a
-            // 4xx (real client error) fails fast.
-            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-            const maxAttempts = 4;
-            for (let attempt = 1; ; attempt++) {
-              try {
-                await github.rest.issues.createComment({ owner, repo, issue_number, body });
-                break;
-              } catch (err) {
-                const status = err && err.status;
-                const transient = !status || status >= 500 || status === 429;
-                if (!transient || attempt >= maxAttempts) throw err;
-                const delay = 2000 * attempt;
-                core.warning(`createComment attempt ${attempt} failed (status ${status ?? 'network'}): ${err.message}; retrying in ${delay}ms`);
-                await sleep(delay);
-              }
+            // Post a summary comment if there is anything that could not be inlined,
+            // or if there were zero anchorable comments to begin with.
+            const overflow = [...unanchored, ...inlineFailed];
+            if (overflow.length > 0 || anchored.length === 0) {
+              const summaryBody = [
+                ...headerLines,
+                '',
+                anchored.length > 0 ? `${posted} comment(s) posted inline. The following could not be anchored to the diff:` : 'Comments (could not be anchored to the diff):',
+                '',
+                ...overflow,
+              ].join('\n');
+              await withRetry('createComment(summary)', () => github.rest.issues.createComment({
+                owner, repo, issue_number, body: summaryBody,
+              }));
             }
