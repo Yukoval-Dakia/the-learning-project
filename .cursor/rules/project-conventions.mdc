@@ -1,0 +1,90 @@
+---
+description: loom project conventions and architecture invariants — scope discipline, stack, AI provider lanes, capability manifests, destructive-action policy
+globs:
+alwaysApply: true
+---
+
+# loom — project conventions
+
+> Authoritative details: `CLAUDE.md`, `AGENTS.md`, `docs/architecture.md`, `docs/adr/`.
+> This file is a Cursor-mirror digest; when they disagree, the source docs win.
+
+## Scope / session discipline
+
+- Implement EXACTLY what was asked; do not expand scope (MCP / Skills / Plugins / harnesses)
+  unless explicitly requested. When tempted to add infrastructure, first ask: "Did the user
+  ask for this?" If unclear, ask before building.
+- ≥3 independent steps or cross-many-calls work → maintain a task list, don't wing it.
+- External SaaS / local-permission / third-party CLI tasks → run a 30s pre-flight
+  (`which` / version / token-present / app-name-resolves), print pass/fail checklist.
+
+## UI design pre-flight
+
+Before writing any UI code (new component / modify existing / layout / interaction):
+1. Quote verbatim the relevant design-doc section (file path + section anchor / line range).
+   Don't infer. If you can't find it, stop and ask.
+2. Declare component type: drawer / route / modal / page / other.
+3. List files to be touched, marked create vs modify.
+Skip for: pure docs / pure backend / pure schema / pure test / work inside an already-approved plan step.
+
+## Stack (post YUK-321 M5)
+
+- Hono API (`server/index.ts` + composition root `server/app.ts`, :8787)
+- Vite SPA (`web/`, TanStack Router + React 19, :5173, dev `/api` proxy → :8787)
+- pg-boss worker as separate process (`scripts/worker.ts`)
+- Postgres + Drizzle (postgresql dialect, postgres driver); **no Redis**
+- R2/S3 blob via `@aws-sdk/client-s3` (`src/server/r2.ts`)
+- Claude Agent SDK via mimo Anthropic-compatible endpoint; self-hosted Node, NOT Vercel
+- Switchable AI provider lane (YUK-365): default mimo-v2.5; `AI_PROVIDER_OVERRIDE=anthropic-sub`
+  → Opus 4.8 via owner's Claude Max OAuth. **Token + override must be visible to ALL THREE
+  processes** (API / Vite / worker). OAuth lane: set `CLAUDE_CODE_OAUTH_TOKEN`, unset
+  `ANTHROPIC_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN` + 4 cloud-provider selectors.
+  Wiring: `src/server/ai/providers.ts` + `runner.ts`.
+- React 19, Tailwind v4 (CSS-first), Zustand, TanStack Query+Router, Zod, ts-fsrs
+- Biome (lint+format), Vitest, pnpm, esbuild (`dist/{server,worker,migrate}.cjs`)
+
+## Backend surface
+
+Every route/job/copilotTool registers through capability manifests
+(`src/capabilities/*/manifest.ts`) → composition root `server/app.ts`. There are NO
+`app/api/**` Next.js route-handler shells anymore. Token check is middleware in
+`server/app.ts` (`x-internal-token === INTERNAL_TOKEN`, exempt `/api/health`).
+Browser code never holds the provider key — all AI calls funnel through Hono route or worker.
+
+## Anti-patterns (this project)
+
+- Destructive AI actions (delete question / merge node / reparent / archive) only `propose`;
+  real mutation happens on user-accept route only.
+- Don't expose profile-driven / manual-rescue / tool tasks via generic `/api/ai/[task]` —
+  use domain routes or worker (only `ReviewIntentTask` uses the generic entry).
+- Don't write derived lifecycle fields back to the source table — build a reader/projection.
+- Don't refactor on a bug fix.
+- Adding a new table/field requires a write path, or an allowlist entry in
+  `scripts/audit-schema-allowlist.json` with a checkable `resolves_when`.
+
+## Commands (cheat sheet)
+
+```bash
+pnpm dev:local       # compose Postgres :5433 + api + web + worker (推荐入口)
+pnpm typecheck       # tsc --noEmit
+pnpm lint            # biome check .
+pnpm format          # biome format --write .
+pnpm test:unit:watch # 快速无-DB watch
+pnpm test:db:watch   # DB/API watch (Docker/OrbStack)
+pnpm test            # full pre-PR gate: audit:profile + unit + db + migration-smoke
+pnpm build           # rw:web:build + 三 esbuild 产物
+```
+
+Pre-PR: `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`,
+`pnpm audit:partition`, `pnpm audit:profile`, `pnpm audit:draft-status`,
+`pnpm test`, `pnpm build`.
+
+## Conventions
+
+- Toolchain: **Biome only** (no ESLint/Prettier) — 2-space / 100 col / single quotes /
+  auto-organize imports; `noExplicitAny` + `useImportType` are warnings.
+- TS strict + ESM + `@/*` → `src/*`.
+- Issue tracker: **Linear** (`Yukoval Studios` / `YUK`). `YUK-XX` in PR titles / commit
+  messages; branch `yuk-xx-...`. New work never uses bare `#N`.
+- File mode: never hardcode `0o644` — respect umask (`0o666 & ~umask`).
+- Respond in 中文 by default.

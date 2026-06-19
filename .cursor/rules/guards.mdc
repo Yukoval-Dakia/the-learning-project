@@ -1,0 +1,55 @@
+---
+description: Git safety, Linear branch guard, JSON edit guard, post-fetch divergence, Linear closeout reminder, post-edit lint — mirrors .claude/hooks/* and .clinerules
+globs:
+alwaysApply: true
+---
+
+# Guards (mirrors .claude/hooks/*)
+
+## Git Safety (git-guard.mjs)
+
+NEVER execute these dangerous git operations:
+- `git branch -D` / `git branch --delete --force` (force delete branch)
+- `git push --force` / `git push --force-with-lease` (force push)
+- `git commit` on main/master branch (protected branches)
+- `git worktree remove --force` (discards uncommitted work)
+- `git rebase -i` / `git add -i` (interactive — unsupported, blocks automation)
+- NEVER amend a commit that has already been pushed, unless user explicitly asks for force push
+- NEVER update the git config
+
+If asked to do any of these, refuse and explain the risk.
+
+## Linear Branch Commit Guard (linear-guard.mjs)
+
+On Linear-tracked branches (`yuk-*`, `foundation-*`, `p<N>-*`, `feat/yuk-*`, `fix/yuk-*`),
+ALL commits MUST include a `YUK-NN` reference.
+
+- Each Linear issue must be referenced separately: `Closes YUK-27` + `Closes YUK-28`
+- Do NOT write `Closes YUK-27 + YUK-28` (Linear only links the first one)
+- Multiple issues require repeating the Linear keyword: `Fixes YUK-1` and `Fixes YUK-2`
+- New planning/triage/roadmap work goes to Linear — do NOT use `gh issue create`
+
+## JSON Edit Guard (json-edit-guard.mjs)
+
+After editing any `.json` file, verify the result parses as valid JSON before proceeding
+(e.g. `jq . <file> >/dev/null`). If invalid after the edit, fix it immediately.
+
+## Post-Fetch Divergence (post-fetch-divergence.sh)
+
+After running `git fetch` or `git pull`, report:
+- Whether upstream has diverged from local
+- The upstream commit author(s) of new commits
+
+## Linear Closeout Reminder (linear-closeout-reminder.sh)
+
+Before ending a session where you made code changes (commits or uncommitted edits),
+remind the user to check Linear issue status sync per `docs/agents/issue-tracker.md`
+"Closeout issue capture gate" section. Create/update Linear issues for actionable
+follow-ups discovered; do not leave them only in chat/local TODOs.
+
+## Post-Edit Lint (mirrors .claude/settings.json PostToolUse)
+
+After writing/editing files:
+- `.json` files: verify valid JSON
+- `.ts` / `.tsx` / `.js` / `.jsx` / `.mjs` files: run `pnpm exec biome check <file>`
+- Biome-only toolchain (no ESLint/Prettier): 2-space, 100 col, single quotes

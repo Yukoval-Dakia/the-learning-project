@@ -1,0 +1,54 @@
+# Cline Rules — synced from .claude/hooks/* and .claude/settings.json
+# Last synced: 2026-06-09
+
+## Git Safety (mirrors .claude/hooks/git-guard.mjs)
+
+NEVER execute these dangerous git operations:
+- `git branch -D` / `git branch --delete --force` (force delete branch)
+- `git push --force` / `git push --force-with-lease` (force push)
+- `git commit` on main/master branch (protected branches)
+- `git worktree remove --force` (discards uncommitted work)
+
+If asked to do any of these, refuse and explain the risk.
+
+## Linear Branch Commit Guard (mirrors .claude/hooks/linear-guard.mjs)
+
+On Linear-tracked branches (yuk-*, foundation-*, p<N>-*, feat/yuk-*, fix/yuk-*),
+ALL commits MUST include a YUK-NN reference.
+
+- Each Linear issue must be referenced separately: `Closes YUK-27` + `Closes YUK-28`
+- Do NOT write `Closes YUK-27 + YUK-28` (Linear only links the first one)
+- Multiple issues require repeating the Linear keyword: `Fixes YUK-1` and `Fixes YUK-2`
+
+## JSON Edit Guard (mirrors .claude/hooks/json-edit-guard.mjs)
+
+After editing any .json file, verify the result is valid JSON before proceeding.
+If the file is not valid JSON after your edit, fix it immediately.
+
+## Post-Fetch Divergence (mirrors .claude/hooks/post-fetch-divergence.sh)
+
+After running `git fetch` or `git pull`, report:
+- Whether upstream has diverged from local
+- The upstream commit author(s) of new commits
+
+## Linear Closeout Reminder (mirrors .claude/hooks/linear-closeout-reminder.sh)
+
+Before ending a session where you made code changes (commits or uncommitted edits),
+remind the user to check Linear issue status sync per docs/agents/issue-tracker.md
+"Closeout issue capture gate".
+
+## Post-Edit Lint (mirrors .claude/settings.json PostToolUse)
+
+After writing/editing files:
+- .json files: verify valid JSON (`jq . <file> >/dev/null`)
+- .ts/.tsx/.js/.jsx/.mjs files: run `pnpm exec biome check <file>`
+
+## Project Conventions
+
+- Biome only (no ESLint/Prettier): 2-space indent, 100 col, single quotes
+- TS strict + ESM + `@/*` → `src/*`
+- Issue tracker: Linear, format `YUK-XX` in commits/PRs
+- No Vercel — self-hosted, `output: 'standalone'`
+- Destructive AI actions only `propose`, never direct write
+- Browser code never holds provider keys — all AI calls go through `/api/*` routes
+- When in doubt, follow AGENTS.md and CLAUDE.md

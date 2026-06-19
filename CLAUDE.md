@@ -197,3 +197,23 @@ Single-context layout with CONTEXT.md and docs/adr/ at repo root. See `docs/agen
 
 - The agent cannot edit `~/.claude/settings.json` (user-level, blocked by self-modification protection). For user-level changes, output the exact diff/JSON for the user to apply manually.
 - Project-level `.claude/settings.json` can be edited directly.
+
+## MCP / Tooling
+
+- MCP servers are snapshotted at session start; configuration changes (adding/swapping/renaming servers) require a session restart before they take effect. Do not attempt to test a newly-added or hot-swapped MCP server in the same session.
+
+## Product / Design Principles
+
+- Do NOT propose deleting or removing pre-AI features (question banks, quizzes, flows) when designing AI-native improvements; treat them as legacy-compatible and additive unless explicitly told otherwise. "Delete" usually means "demote from sole source," not remove.
+
+## Engineering Approach
+
+- Prefer the smallest sufficient solution: confirm the simplest approach (e.g., a single vision LLM) before proposing multi-step pipelines or broad refactors.
+
+## Code Review Workflow
+
+- When spawning review subagents, ensure each agent has Bash access (or dump the diff to disk and feed it) so it can fetch the PR diff.
+
+## Shell / Environment
+
+- For millisecond timestamps use python (not `date %3N`), since macOS `date` does not support that flag.
