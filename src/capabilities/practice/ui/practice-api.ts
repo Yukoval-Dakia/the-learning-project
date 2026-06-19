@@ -290,6 +290,10 @@ export const submitReview = (input: {
   // YUK-372 L2 — 被答 practice_stream_item.id（流作答传被答 slot id，π_i 直 join 判别子）。
   // 散题/非流作答省略 → server hook skip。
   stream_item_id?: string;
+  // YUK-432 — 客观题自动判分+自动评级：true 时 server 用 judge 的 suggested rating 覆盖
+  // body.rating（auto-grade），并让客观判分流过 difficulty_calibration_label hook 产标签
+  // （B1 难度 firm-up 链解冻）。开放题省略 → 默认 false → 维持现有手动评级流。
+  auto_rate?: boolean;
 }) => apiJson<SubmitResult>('/api/review/submit', { method: 'POST', body: JSON.stringify(input) });
 
 export const fileAppeal = (judgeEventId: string, reasonMd: string) =>
