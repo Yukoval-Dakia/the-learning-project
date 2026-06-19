@@ -362,7 +362,7 @@ describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HI
     const rows = (await testDb().execute(
       sql`select to_regclass(${`public.${COLLECTION}`}) as reg`,
     )) as Array<{ reg: string | null }>;
-    return rows[0]?.reg != null;
+    return rows[0]?.reg !== null && rows[0]?.reg !== undefined;
   }
 
   // Take a real archive, then rewrite data.json's mem0 collection rows (e.g. to inject
@@ -519,7 +519,7 @@ describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
     const rows = (await testDb().execute(
       sql`select to_regclass(${`public.${COLLECTION}`}) as reg`,
     )) as Array<{ reg: string | null }>;
-    return rows[0]?.reg != null;
+    return rows[0]?.reg !== null && rows[0]?.reg !== undefined;
   }
 
   function rewriteMem0Rows(bytes: Uint8Array, rows: Array<Record<string, unknown>>): Uint8Array {
