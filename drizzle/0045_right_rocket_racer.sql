@@ -1,0 +1,1 @@
+ALTER TABLE "completion_evidence" DROP COLUMN "user_overrode_low_evidence";
