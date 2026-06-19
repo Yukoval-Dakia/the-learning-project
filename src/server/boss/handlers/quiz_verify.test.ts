@@ -14,6 +14,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/server/notes';
+import { exactJudgeCapability } from '@/core/capability/judges/exact';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -819,6 +820,58 @@ describe('runQuizVerify — deterministic objective short-circuit (YUK-350 inc 1
     expect(await countVerifyEvents('oc_idem')).toBe(1);
     expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
     expect(await fsrsRowCount('question', 'oc_idem')).toBe(0);
+  });
+
+  // (f) FAILURE-BOTTOM (YUK-478) — the deterministic short-circuit early-returns BEFORE
+  // the LLM try/catch, so without its OWN catch a thrown exact-judge / buildLocalJudgeQuestion
+  // / DB error would crash the pg-boss job with NO verify-event trail and leave the draft in a
+  // non-deterministic state with no clean retry. Force the exact judge to throw and assert the
+  // SAME error-handling contract as the LLM path: a failure verify-event (outcome='error' /
+  // failure_class='system_error' / overall='error') is written, the error is re-thrown for
+  // pg-boss retry, and the draft is NOT promoted (stays draft_status='draft', no FSRS row).
+  it('(f) exact judge throws → writes system_error verify-event, re-throws, draft NOT promoted', async () => {
+    await seedKnowledge('k1');
+    await seedObjectiveDraftQuestion({
+      id: 'oc_throw',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      referenceMd: 'A',
+    });
+    // A runTaskFn that would explode if the deterministic path ever fell through to the LLM —
+    // proves the error came from the deterministic body, not the LLM path.
+    const runTaskFn = throwingRunTaskFn();
+
+    const judgeSpy = vi.spyOn(exactJudgeCapability, 'run').mockImplementation(() => {
+      throw new Error('boom: exact judge blew up mid-verify');
+    });
+    try {
+      // The error must propagate (re-thrown for pg-boss retry).
+      await expect(
+        runQuizVerify({ db: testDb(), questionId: 'oc_throw', runTaskFn }),
+      ).rejects.toThrow('boom: exact judge blew up mid-verify');
+    } finally {
+      judgeSpy.mockRestore();
+    }
+
+    // Draft NOT promoted — stays draft, no FSRS enroll.
+    const rows = await testDb().select().from(question).where(eq(question.id, 'oc_throw'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    expect(await fsrsRowCount('question', 'oc_throw')).toBe(0);
+
+    // verification.status best-effort marked failed on the row.
+    const meta = await readMeta('oc_throw');
+    expect((meta?.verification as Record<string, unknown>)?.status).toBe('failed');
+
+    // A failure verify-event was written: outcome='error', system_error class, overall='error'.
+    const evs = await verifyEventsFor('oc_throw');
+    expect(evs).toHaveLength(1);
+    expect(evs[0].outcome).toBe('error');
+    expect(evs[0].payload?.overall).toBe('error');
+    expect(evs[0].payload?.failure_class).toBe('system_error');
+
+    // The LLM path was never reached.
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 });
 

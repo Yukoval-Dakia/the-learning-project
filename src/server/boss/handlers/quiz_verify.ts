@@ -765,146 +765,211 @@ async function runDeterministicObjectiveVerify(args: {
   const { db, row, meta, metadataRaw, objectiveRoute } = args;
   const questionId = row.id;
 
-  // Build the exact judge's `{ reference, choices_md }` input from the draft row,
-  // then self-check the reference against itself. No LLM, no Tavily, no cost.
-  const judgeInput = buildLocalJudgeQuestion(row, objectiveRoute);
-  // The exact judge runs synchronously, but the JudgeCapabilityRunner.run signature is
-  // widened to `JudgeResultV2T | Promise<...>`; await to narrow to the concrete result.
-  const judgeResult = await exactJudgeCapability.run({
-    question: judgeInput,
-    answer: { content: row.reference_md ?? '' },
-  });
-
-  // coarse_outcome === 'correct' ⇒ pass (the reference is a valid, deterministically
-  // gradable objective answer). 'incorrect' (reference present but self-mismatch — should
-  // not normally happen) and 'unsupported' (empty / unparseable reference) ⇒ NOT pass.
-  const promote = judgeResult.coarse_outcome === 'correct';
-  const overall: QuizVerifyOverall = promote ? 'pass' : 'needs_review';
-  const verificationStatus: QuizGenVerificationT['status'] = promote ? 'verified' : 'needs_review';
-  const summaryMd = promote
-    ? `客观题确定性校验通过（${row.kind} via exact judge，零 LLM）。`
-    : `客观题确定性校验未通过（${row.kind}）：参考答案无法被 exact judge 确定性判分（${judgeResult.coarse_outcome}）。`;
-
-  const now = new Date();
-  const verifyEventId = createId();
-  // verified_by marks the verdict source as a local deterministic capability (the exact
-  // judge), NOT an AI/LLM run. `by:'system'` (AgentRef has no 'ai' here — there was no
-  // model call); the capability_ref + verdict_source ride in AgentRef's catchall so the
-  // audit trail records it was the exact judge that produced the verdict.
-  const verifiedBy: QuizGenVerificationT['verified_by'] = {
-    by: 'system',
-    verdict_source: 'deterministic',
-    capability_ref: judgeResult.capability_ref,
-  };
-
-  // YUK-350 (B5 increment C) — project onto the unified verify contract shape. The
-  // single `deterministic_check` axis carries the exact judge's coarse_outcome verdict
-  // (mapped onto the axis vocabulary: correct→pass, else→fail). promote is passed IN
-  // (already decided above) — the projection re-derives no gate.
-  const unified = toUnifiedVerifyResult({
-    source: 'quiz',
-    overall: promote ? 'pass' : 'needs_review',
-    promote,
-    summary_md: summaryMd,
-    confidence: judgeResult.confidence,
-    checks: [
-      {
-        axis_name: 'deterministic_check',
-        verdict: promote ? 'pass' : 'fail',
-        note: `exact judge coarse_outcome=${judgeResult.coarse_outcome}`,
-      },
-    ],
-  });
-
-  // Merge-preserving metadata: keep the agent's source_pack / source_refs /
-  // generation_method; record the verification block. copy_safety is left as the
-  // agent's self-reported value (no source-snippet overlap is computed for a
-  // deterministically-verified objective question — there is no LLM copy check here;
-  // the deterministic verdict is purely answer-gradability, not plagiarism).
-  const verification: QuizGenVerificationT = {
-    status: verificationStatus,
-    summary: summaryMd,
-    verified_by: verifiedBy,
-  };
-  const updatedMeta: QuizGenMetadataT = { ...meta, verification };
-  const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
-
-  await db.transaction(async (tx) => {
-    if (promote) {
-      await tx
-        .update(question)
-        .set({ draft_status: 'active', metadata: newMetadata as never, updated_at: now })
-        .where(eq(question.id, questionId));
-      // SAME enroll semantics as the LLM promote path (shared helper).
-      await enrollFsrsOnPromote(tx, {
-        knowledgeIds: row.knowledge_ids,
-        questionId,
-        enrolledByEventId: verifyEventId,
-        now,
-      });
-    } else {
-      await tx
-        .update(question)
-        .set({ metadata: newMetadata as never, updated_at: now })
-        .where(eq(question.id, questionId));
-    }
-
-    await writeEvent(tx, {
-      id: verifyEventId,
-      session_id: null,
-      actor_kind: 'agent',
-      actor_ref: 'quiz_verify',
-      action: 'experimental:quiz_verify',
-      subject_kind: 'question',
-      subject_id: questionId,
-      // success on promote, partial on a non-promote (needs_review) — mirrors the LLM
-      // path's success/partial mapping (a non-promote here is needs_review, never a hard
-      // 'fail' verdict, so outcome='partial' not 'failure').
-      outcome: promote ? 'success' : 'partial',
-      payload: {
-        question_id: questionId,
-        // unified verify contract shape (axes + overall + failure_class? + summary_md +
-        // confidence). The deterministic_check axis records the verdict source.
-        ...unified,
-        // explicit marker so observers know this verdict skipped the LLM.
-        deterministic: true,
-        judge_route: objectiveRoute,
-        judge_coarse_outcome: judgeResult.coarse_outcome,
-        promoted: promote,
-        verification_status: verificationStatus,
-        verified_by: verifiedBy,
-      },
-      caused_by_event_id: null,
-      // No AI run → no task_run_id, zero cost (the whole point of the short-circuit).
-      task_run_id: null,
-      cost_micro_usd: 0,
-      created_at: now,
+  try {
+    // Build the exact judge's `{ reference, choices_md }` input from the draft row,
+    // then self-check the reference against itself. No LLM, no Tavily, no cost.
+    const judgeInput = buildLocalJudgeQuestion(row, objectiveRoute);
+    // The exact judge runs synchronously, but the JudgeCapabilityRunner.run signature is
+    // widened to `JudgeResultV2T | Promise<...>`; await to narrow to the concrete result.
+    const judgeResult = await exactJudgeCapability.run({
+      question: judgeInput,
+      answer: { content: row.reference_md ?? '' },
     });
-  });
 
-  // U8 / AF §4 — on a non-promote, the knowledge points still lack a usable question;
-  // leave the coach pool-gap hint (best-effort, mirrors the LLM path).
-  if (!promote) {
-    const poolGapRefs = (
-      row.knowledge_ids && row.knowledge_ids.length > 0 ? row.knowledge_ids : [questionId]
-    ).map((id) => ({ kind: row.knowledge_ids?.length ? 'knowledge' : 'question', id }));
-    try {
-      await writeAgentNote(db, {
-        target_agents: ['coach'],
-        source_task_kind: 'quiz_verify',
-        refs: poolGapRefs,
-        signal_kind: 'question_pool_gap',
-        summary_md: `Generated question ${questionId} did not enter the review pool (deterministic verification ${verificationStatus}); its knowledge point(s) may still lack a usable question.`,
-        confidence: judgeResult.confidence,
-        expires_at: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        caused_by_event_id: verifyEventId,
+    // coarse_outcome === 'correct' ⇒ pass (the reference is a valid, deterministically
+    // gradable objective answer). 'incorrect' (reference present but self-mismatch — should
+    // not normally happen) and 'unsupported' (empty / unparseable reference) ⇒ NOT pass.
+    const promote = judgeResult.coarse_outcome === 'correct';
+    const overall: QuizVerifyOverall = promote ? 'pass' : 'needs_review';
+    const verificationStatus: QuizGenVerificationT['status'] = promote
+      ? 'verified'
+      : 'needs_review';
+    const summaryMd = promote
+      ? `客观题确定性校验通过（${row.kind} via exact judge，零 LLM）。`
+      : `客观题确定性校验未通过（${row.kind}）：参考答案无法被 exact judge 确定性判分（${judgeResult.coarse_outcome}）。`;
+
+    const now = new Date();
+    const verifyEventId = createId();
+    // verified_by marks the verdict source as a local deterministic capability (the exact
+    // judge), NOT an AI/LLM run. `by:'system'` (AgentRef has no 'ai' here — there was no
+    // model call); the capability_ref + verdict_source ride in AgentRef's catchall so the
+    // audit trail records it was the exact judge that produced the verdict.
+    const verifiedBy: QuizGenVerificationT['verified_by'] = {
+      by: 'system',
+      verdict_source: 'deterministic',
+      capability_ref: judgeResult.capability_ref,
+    };
+
+    // YUK-350 (B5 increment C) — project onto the unified verify contract shape. The
+    // single `deterministic_check` axis carries the exact judge's coarse_outcome verdict
+    // (mapped onto the axis vocabulary: correct→pass, else→fail). promote is passed IN
+    // (already decided above) — the projection re-derives no gate.
+    const unified = toUnifiedVerifyResult({
+      source: 'quiz',
+      overall: promote ? 'pass' : 'needs_review',
+      promote,
+      summary_md: summaryMd,
+      confidence: judgeResult.confidence,
+      checks: [
+        {
+          axis_name: 'deterministic_check',
+          verdict: promote ? 'pass' : 'fail',
+          note: `exact judge coarse_outcome=${judgeResult.coarse_outcome}`,
+        },
+      ],
+    });
+
+    // Merge-preserving metadata: keep the agent's source_pack / source_refs /
+    // generation_method; record the verification block. copy_safety is left as the
+    // agent's self-reported value (no source-snippet overlap is computed for a
+    // deterministically-verified objective question — there is no LLM copy check here;
+    // the deterministic verdict is purely answer-gradability, not plagiarism).
+    const verification: QuizGenVerificationT = {
+      status: verificationStatus,
+      summary: summaryMd,
+      verified_by: verifiedBy,
+    };
+    const updatedMeta: QuizGenMetadataT = { ...meta, verification };
+    const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
+
+    await db.transaction(async (tx) => {
+      if (promote) {
+        await tx
+          .update(question)
+          .set({ draft_status: 'active', metadata: newMetadata as never, updated_at: now })
+          .where(eq(question.id, questionId));
+        // SAME enroll semantics as the LLM promote path (shared helper).
+        await enrollFsrsOnPromote(tx, {
+          knowledgeIds: row.knowledge_ids,
+          questionId,
+          enrolledByEventId: verifyEventId,
+          now,
+        });
+      } else {
+        await tx
+          .update(question)
+          .set({ metadata: newMetadata as never, updated_at: now })
+          .where(eq(question.id, questionId));
+      }
+
+      await writeEvent(tx, {
+        id: verifyEventId,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'quiz_verify',
+        action: 'experimental:quiz_verify',
+        subject_kind: 'question',
+        subject_id: questionId,
+        // success on promote, partial on a non-promote (needs_review) — mirrors the LLM
+        // path's success/partial mapping (a non-promote here is needs_review, never a hard
+        // 'fail' verdict, so outcome='partial' not 'failure').
+        outcome: promote ? 'success' : 'partial',
+        payload: {
+          question_id: questionId,
+          // unified verify contract shape (axes + overall + failure_class? + summary_md +
+          // confidence). The deterministic_check axis records the verdict source.
+          ...unified,
+          // explicit marker so observers know this verdict skipped the LLM.
+          deterministic: true,
+          judge_route: objectiveRoute,
+          judge_coarse_outcome: judgeResult.coarse_outcome,
+          promoted: promote,
+          verification_status: verificationStatus,
+          verified_by: verifiedBy,
+        },
+        caused_by_event_id: null,
+        // No AI run → no task_run_id, zero cost (the whole point of the short-circuit).
+        task_run_id: null,
+        cost_micro_usd: 0,
+        created_at: now,
       });
-    } catch (noteErr) {
-      console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);
-    }
-  }
+    });
 
-  return { status: verificationStatus, overall };
+    // U8 / AF §4 — on a non-promote, the knowledge points still lack a usable question;
+    // leave the coach pool-gap hint (best-effort, mirrors the LLM path).
+    if (!promote) {
+      const poolGapRefs = (
+        row.knowledge_ids && row.knowledge_ids.length > 0 ? row.knowledge_ids : [questionId]
+      ).map((id) => ({ kind: row.knowledge_ids?.length ? 'knowledge' : 'question', id }));
+      try {
+        await writeAgentNote(db, {
+          target_agents: ['coach'],
+          source_task_kind: 'quiz_verify',
+          refs: poolGapRefs,
+          signal_kind: 'question_pool_gap',
+          summary_md: `Generated question ${questionId} did not enter the review pool (deterministic verification ${verificationStatus}); its knowledge point(s) may still lack a usable question.`,
+          confidence: judgeResult.confidence,
+          expires_at: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          caused_by_event_id: verifyEventId,
+        });
+      } catch (noteErr) {
+        console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);
+      }
+    }
+
+    return { status: verificationStatus, overall };
+  } catch (err) {
+    // failure-bottom (MIRRORS the LLM path's catch at the top of this handler): the
+    // deterministic short-circuit early-returns BEFORE the LLM try/catch, so without this
+    // its own throw (exact judge / buildLocalJudgeQuestion / any DB op) would crash the
+    // pg-boss job with NO verify-event trail and leave the draft non-deterministic with no
+    // clean retry. Best-effort mark verification.status='failed' on the row + write the
+    // system_error failure event (outcome='error', via the SAME toUnifiedVerifyResult
+    // system_error projection the LLM path uses), then re-throw so pg-boss retries. The
+    // draft stays draft_status='draft' (never promoted) — this catch NEVER promotes.
+    try {
+      const failedVerification: QuizGenVerificationT = {
+        status: 'failed',
+        summary: `quiz_verify failed: ${String((err as Error).message ?? err)}`,
+        verified_by: { by: 'ai', task_kind: 'QuizVerifyTask' },
+      };
+      const failedMeta: QuizGenMetadataT = { ...meta, verification: failedVerification };
+      await db
+        .update(question)
+        .set({
+          metadata: { ...metadataRaw, quiz_gen: failedMeta } as never,
+          updated_at: new Date(),
+        })
+        .where(eq(question.id, questionId));
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'quiz_verify',
+        action: 'experimental:quiz_verify',
+        subject_kind: 'question',
+        subject_id: questionId,
+        // 'error' (NOT 'failure') marks a TRANSIENT, non-terminal failure: the verify threw
+        // before producing a verdict. The idempotency guard treats this as retriable
+        // (outcome != 'error'), so pg-boss redelivery re-runs the verify instead of skipping
+        // it as already_verified — identical posture to the LLM catch-bottom.
+        outcome: 'error',
+        payload: {
+          question_id: questionId,
+          // system_error projection: { axes:[], overall:'error', failure_class:'system_error',
+          // summary_md, confidence:0 } — the catch-bottom system_error class (red-line-1: the
+          // system_error event is the catch-bottom, NOT self-reportable from the success path).
+          ...toUnifiedVerifyResult({
+            source: 'system_error',
+            summary_md: `quiz_verify failed: ${String((err as Error).message ?? err)}`,
+            error: String((err as Error).message ?? err),
+          }),
+          error: String((err as Error).message ?? err),
+          // marker so observers know this error came from the deterministic short-circuit
+          // (no AI run → no task_run_id, zero cost).
+          deterministic: true,
+        },
+        caused_by_event_id: null,
+        // No AI run in the deterministic path → no task_run_id, zero cost.
+        task_run_id: null,
+        cost_micro_usd: 0,
+        created_at: new Date(),
+      });
+    } catch (cleanupErr) {
+      console.error('[quiz_verify] catch-block cleanup failed for', questionId, cleanupErr);
+    }
+    throw err;
+  }
 }
 
 export function buildQuizVerifyHandler(
