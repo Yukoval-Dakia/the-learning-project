@@ -21,6 +21,7 @@ import {
   COPY_SAFETY_TOO_CLOSE_THRESHOLD,
   buildQuizVerifyHandler,
   maxNgramOverlap,
+  runObjectiveStructuralRejectFilter,
   runQuizVerify,
 } from './quiz_verify';
 
@@ -96,17 +97,24 @@ async function seedDraftQuestion(opts: {
   promptMd?: string;
   meta?: QuizGenMetadataT;
   source?: string;
+  // YUK-350 objective structural reject filter — let a test seed choice / true_false
+  // drafts (with explicit reference_md + choices_md) so the deterministic filter can be
+  // exercised. Defaults keep the existing short_answer fixture byte-identical.
+  kind?: string;
+  referenceMd?: string;
+  choicesMd?: string[] | null;
+  judgeKindOverride?: string | null;
 }) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
     id: opts.id,
-    kind: 'short_answer',
+    kind: opts.kind ?? 'short_answer',
     prompt_md: opts.promptMd ?? '用你自己的话解释「之」作主谓间助词的作用。',
-    reference_md: '「之」用在主谓之间，取消句子独立性。',
+    reference_md: opts.referenceMd ?? '「之」用在主谓之间，取消句子独立性。',
     rubric_json: { required_points: ['用在主谓之间', '取消句子独立性'] } as never,
-    choices_md: null,
-    judge_kind_override: 'semantic',
+    choices_md: opts.choicesMd ?? null,
+    judge_kind_override: opts.judgeKindOverride ?? 'semantic',
     knowledge_ids: [opts.knowledgeId],
     difficulty: 3,
     source: opts.source ?? 'quiz_gen',
@@ -622,6 +630,363 @@ describe('runQuizVerify', () => {
       material_grounding: { material_present: true, verdict: 'fail' },
       promoted: false,
     });
+  });
+});
+
+// YUK-350 — deterministic OBJECTIVE STRUCTURAL REJECT FILTER (pure, no LLM, no DB).
+// This is the pure-function half: assert the filter is a meaningful structural check
+// (reference-resolves-to-a-valid-unique-choice, NOT reference-vs-reference) and that it
+// can ONLY emit a reject signal — never a promote/pass.
+describe('runObjectiveStructuralRejectFilter (pure, deterministic)', () => {
+  it('choice: a reference that resolves to exactly one in-range choice is well-formed (fall through)', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'choice',
+      reference_md: 'B',
+      choices_md: ['甲', '乙', '丙'],
+    });
+    expect(r.malformed).toBe(false);
+    // The filter has NO "promote" verb in its result shape — it can ONLY reject or
+    // fall through. There is no field that grants promotion.
+    expect(Object.keys(r)).toEqual(['malformed']);
+  });
+
+  it('choice: a reference resolving to NO valid choice is malformed (reject)', () => {
+    // 'Z' is out of range for a 3-option question → resolves to nothing.
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'choice',
+      reference_md: 'Z',
+      choices_md: ['甲', '乙', '丙'],
+    });
+    expect(r.malformed).toBe(true);
+    if (r.malformed) expect(r.reason).toBeTruthy();
+  });
+
+  it('choice: a reference resolving to MORE THAN ONE choice is malformed (not unique)', () => {
+    // "AB" resolves to two indices — not a single-answer well-formed choice item.
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'choice',
+      reference_md: 'AB',
+      choices_md: ['甲', '乙', '丙'],
+    });
+    expect(r.malformed).toBe(true);
+  });
+
+  it('choice: fewer than 2 choices is malformed', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'choice',
+      reference_md: 'A',
+      choices_md: ['只有一个选项'],
+    });
+    expect(r.malformed).toBe(true);
+  });
+
+  it('choice: duplicate choices (after normalize-dedup) is malformed', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'choice',
+      reference_md: 'A',
+      choices_md: ['甲', '甲 ', '乙'],
+    });
+    expect(r.malformed).toBe(true);
+  });
+
+  it('choice: missing choices_md is malformed', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'choice',
+      reference_md: 'A',
+      choices_md: null,
+    });
+    expect(r.malformed).toBe(true);
+  });
+
+  it('MEANINGFUL not tautological: a reference equal to a choice TEXT (not its letter) resolves to a unique index', () => {
+    // The check resolves reference TEXT against the choices and asserts uniqueness —
+    // it is NOT comparing reference to itself. A reference carrying the option text
+    // resolves to exactly that option's index → well-formed.
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'choice',
+      reference_md: '乙',
+      choices_md: ['甲', '乙', '丙'],
+    });
+    expect(r.malformed).toBe(false);
+  });
+
+  it('true_false: a valid true/false token is well-formed', () => {
+    for (const tok of ['对', '错', '正确', '错误', 'true', 'False', 'T', 'F', '√', '×']) {
+      const r = runObjectiveStructuralRejectFilter({
+        kind: 'true_false',
+        reference_md: tok,
+        choices_md: null,
+      });
+      expect(r.malformed, `token ${tok} should be valid`).toBe(false);
+    }
+  });
+
+  it('true_false: a non-boolean reference is malformed', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'true_false',
+      reference_md: '这不是一个判断答案',
+      choices_md: null,
+    });
+    expect(r.malformed).toBe(true);
+  });
+
+  it('non-objective kinds never enter the filter (always falls through)', () => {
+    for (const kind of ['short_answer', 'essay', 'translation', 'reading', 'derivation']) {
+      const r = runObjectiveStructuralRejectFilter({
+        kind,
+        reference_md: 'anything',
+        choices_md: null,
+      });
+      expect(r.malformed, `kind ${kind} must not be rejected by the filter`).toBe(false);
+    }
+  });
+});
+
+// YUK-350 — the DB-level wiring of the objective structural reject filter into
+// runQuizVerify: a MALFORMED objective draft must reject (needs_review) WITHOUT burning
+// the LLM (short-circuit), while a STRUCTURALLY VALID objective draft must fall through
+// to the unchanged LLM verify path (the filter grants NOTHING).
+describe('runQuizVerify — objective structural reject filter (YUK-350)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // (a) malformed choice — reference resolves to no valid choice.
+  it('malformed choice (reference resolves to no choice): needs_review, structure_completeness fail, NOT promoted, LLM NOT called', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_choice_bad',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      promptMd: '下列哪一项正确？',
+      referenceMd: 'Z', // out of range for a 3-option question
+      choicesMd: ['甲', '乙', '丙'],
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_should_not_run');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_choice_bad', runTaskFn });
+
+    // Rejected, not promoted.
+    expect(result.status).toBe('needs_review');
+    expect(result.overall).toBe('needs_review');
+    // LLM-saving short-circuit: the runTaskFn (the expensive LLM verify) NEVER ran.
+    expect(runTaskFn).not.toHaveBeenCalled();
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_choice_bad'));
+    expect(rows[0].draft_status).toBe('draft'); // NOT active
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0); // NO FSRS enroll
+    expect(await fsrsRowCount('question', 'q_choice_bad')).toBe(0);
+
+    // A verify event was written with a structure_completeness=fail axis + overall
+    // needs_review (NOT pass) + validation_failure class.
+    const evs = await verifyEventsFor('q_choice_bad');
+    expect(evs).toHaveLength(1);
+    expect(evs[0].outcome).toBe('partial'); // needs_review → partial (never success)
+    expect(evs[0].payload?.overall).toBe('needs_review');
+    expect(evs[0].payload?.failure_class).toBe('validation_failure');
+    expect(evs[0].payload?.promoted).toBe(false);
+    const axes = (evs[0].payload?.axes ?? []) as { axis_name: string; verdict: string }[];
+    const structAxis = axes.find((a) => a.axis_name === 'structure_completeness');
+    expect(structAxis).toBeDefined();
+    expect(structAxis?.verdict).toBe('fail');
+  });
+
+  // (b) <2 choices / duplicate choices — same reject, LLM not called.
+  it('malformed choice (<2 choices): needs_review, LLM NOT called, not promoted', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_choice_one',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      referenceMd: 'A',
+      choicesMd: ['只有一个选项'],
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }));
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_choice_one', runTaskFn });
+    expect(result.status).toBe('needs_review');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_choice_one'));
+    expect(rows[0].draft_status).toBe('draft');
+  });
+
+  it('malformed choice (duplicate choices): needs_review, LLM NOT called, not promoted', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_choice_dup',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      referenceMd: 'A',
+      choicesMd: ['甲', '甲', '乙'],
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }));
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_choice_dup', runTaskFn });
+    expect(result.status).toBe('needs_review');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_choice_dup'));
+    expect(rows[0].draft_status).toBe('draft');
+  });
+
+  // (c) structurally VALID choice → falls through to the LLM (filter grants nothing).
+  it('structurally valid choice: falls through to the LLM (runTaskFn IS called); filter promotes nothing on its own', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_choice_ok',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      promptMd: '「之」在「臣之壮也」中的用法是？',
+      referenceMd: 'B',
+      choicesMd: ['代词', '主谓之间取消独立性', '动词'],
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_ok');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_choice_ok', runTaskFn });
+
+    // The LLM verify path ran unchanged — the structural filter granted NOTHING; the
+    // LLM's own verdict drove the promotion.
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(runTaskFn.mock.calls[0][0]).toBe('QuizVerifyTask');
+    expect(result.status).toBe('verified');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_choice_ok'));
+    expect(rows[0].draft_status).toBe('active');
+  });
+
+  it('structurally valid choice whose LLM verdict FAILS: stays draft (filter granted nothing, LLM gate decided)', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_choice_ok_llmfail',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      referenceMd: 'A',
+      choicesMd: ['代词', '助词'],
+      judgeKindOverride: 'exact',
+    });
+    // Structurally valid, but the LLM says fail → must NOT promote. Proves the filter
+    // did not auto-promote a structurally-valid draft.
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+      'tr_ok_fail',
+    );
+
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q_choice_ok_llmfail',
+      runTaskFn,
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('failed');
+    const rows = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'q_choice_ok_llmfail'));
+    expect(rows[0].draft_status).toBe('draft');
+  });
+
+  // (d) true_false malformed vs valid.
+  it('malformed true_false (non-boolean reference): needs_review, LLM NOT called, not promoted', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_tf_bad',
+      knowledgeId: 'k1',
+      kind: 'true_false',
+      promptMd: '「之」总是代词。',
+      referenceMd: '这不是一个判断题答案',
+      choicesMd: null,
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }));
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_tf_bad', runTaskFn });
+    expect(result.status).toBe('needs_review');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_tf_bad'));
+    expect(rows[0].draft_status).toBe('draft');
+    const evs = await verifyEventsFor('q_tf_bad');
+    const axes = (evs[0].payload?.axes ?? []) as { axis_name: string; verdict: string }[];
+    expect(axes.find((a) => a.axis_name === 'structure_completeness')?.verdict).toBe('fail');
+  });
+
+  it('valid true_false: falls through to the LLM (runTaskFn IS called) and promotes on the LLM pass', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_tf_ok',
+      knowledgeId: 'k1',
+      kind: 'true_false',
+      promptMd: '「之」可作主谓之间的结构助词。',
+      referenceMd: '正确',
+      choicesMd: null,
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_tf_ok');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_tf_ok', runTaskFn });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('verified');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_tf_ok'));
+    expect(rows[0].draft_status).toBe('active');
+  });
+
+  // (e) prose / translation never enters the filter — LLM called as today.
+  it('translation draft: never enters the filter, LLM called as today', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_translation',
+      knowledgeId: 'k1',
+      kind: 'translation',
+      promptMd: '翻译：臣之壮也，犹不如人。',
+      referenceMd: '我壮年的时候，尚且不如别人。',
+      choicesMd: null,
+      judgeKindOverride: 'semantic',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_trans');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_translation', runTaskFn });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('verified');
+  });
+
+  it('short_answer draft: never enters the filter, LLM called as today', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_prose', knowledgeId: 'k1' }); // default short_answer
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_prose');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_prose', runTaskFn });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('verified');
+  });
+
+  // (f) idempotency: a structural reject is terminal — a second run skips, no re-reject,
+  // no regression to the promote/FSRS path.
+  it('idempotency: a structural reject is terminal (second run skips, LLM never called, no FSRS)', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_choice_idem',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      referenceMd: 'Z',
+      choicesMd: ['甲', '乙', '丙'],
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }));
+
+    const first = await runQuizVerify({ db: testDb(), questionId: 'q_choice_idem', runTaskFn });
+    expect(first.status).toBe('needs_review');
+
+    const second = await runQuizVerify({ db: testDb(), questionId: 'q_choice_idem', runTaskFn });
+    expect(second.status).toBe('skipped:already_verified');
+
+    // LLM never ran (short-circuited both attempts; second skipped on idempotency).
+    expect(runTaskFn).not.toHaveBeenCalled();
+    // exactly one verify event, no FSRS rows, still draft.
+    expect(await countVerifyEvents('q_choice_idem')).toBe(1);
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_choice_idem'));
+    expect(rows[0].draft_status).toBe('draft');
   });
 });
 

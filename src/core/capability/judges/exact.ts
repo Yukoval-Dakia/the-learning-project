@@ -36,6 +36,50 @@ function normalize(value: string): string {
   return value.normalize('NFKC').trim().toLowerCase();
 }
 
+// YUK-260 / YUK-350 — resolve a free-form value ("A" / "BC" / option TEXT / "C。依据…")
+// to the set of choice indices it picks among `choices`. Extracted to a module-level
+// PURE function (was an inline closure inside `run`) so the VERIFY-time objective
+// structural reject filter (quiz_verify.ts runObjectiveStructuralRejectFilter) can reuse
+// the SAME resolution rules to check「does reference_md resolve to exactly one valid
+// in-range choice」. Pure: no IO, no LLM; logic is identical to the prior closure — the
+// only change is `choices` is now a parameter instead of a captured variable. Returns
+// null when the value resolves to no in-range choice.
+export function resolveChoiceIndices(value: string, choices: readonly string[]): number[] | null {
+  if (choices.length === 0) return null;
+  const t = value.normalize('NFKC').trim();
+  if (t.length === 0) return null;
+  // `t` is already NFKC + trim; normalize(t) would only re-add toLowerCase.
+  const tLower = t.toLowerCase();
+
+  // (1) Exact option-text equality first — so an option whose text happens to
+  // be pure Latin letters (e.g. ['True','False'], or a math option 'a + b')
+  // matches by text rather than being mis-parsed as a letter index.
+  const exact = choices.findIndex((c) => normalize(c) === tLower);
+  if (exact !== -1) return [exact];
+
+  // (2) Pure letter string(s): "A" / "BC" / "B、C". Only accept when every
+  // resolved index is in range; otherwise fall through to prefix parsing.
+  const lettersOnly = t.toUpperCase().replace(/[\s,，、和与]/g, '');
+  if (/^[A-Z]+$/.test(lettersOnly)) {
+    const idx = [...new Set(lettersOnly.split('').map((c) => c.charCodeAt(0) - 65))].sort(
+      (a, b) => a - b,
+    );
+    if (idx.length > 0 && idx.every((i) => i < choices.length)) return idx;
+  }
+
+  // (3) Leading-letter prefix: reference_md per the reading-comprehension skill
+  // is "正确项字母 + 依据" (e.g. "C。原文依据…"), and choices_md options may carry
+  // a label prefix ("A. 修八尺有余…"). Parse the leading letter when followed by
+  // a separator so 'C' answer ↔ "C。…" reference are judged equal.
+  const prefix = t.toUpperCase().match(/^([A-Z])[\s.．。、,，:：)）]/);
+  if (prefix) {
+    const i = prefix[1].charCodeAt(0) - 65;
+    if (i < choices.length) return [i];
+  }
+
+  return null;
+}
+
 function unsupportedResult(input: JudgeRunInput, issue: string): JudgeResultV2T {
   return {
     score: null,
@@ -69,43 +113,8 @@ function run(input: JudgeRunInput): JudgeResultV2T {
   // compare as sets; fall back to plain text equality so non-choice exact
   // judging is unchanged.
   const choices = question.choices_md;
-  const resolveChoiceIndices = (value: string): number[] | null => {
-    if (choices.length === 0) return null;
-    const t = value.normalize('NFKC').trim();
-    if (t.length === 0) return null;
-    // `t` is already NFKC + trim; normalize(t) would only re-add toLowerCase.
-    const tLower = t.toLowerCase();
-
-    // (1) Exact option-text equality first — so an option whose text happens to
-    // be pure Latin letters (e.g. ['True','False'], or a math option 'a + b')
-    // matches by text rather than being mis-parsed as a letter index.
-    const exact = choices.findIndex((c) => normalize(c) === tLower);
-    if (exact !== -1) return [exact];
-
-    // (2) Pure letter string(s): "A" / "BC" / "B、C". Only accept when every
-    // resolved index is in range; otherwise fall through to prefix parsing.
-    const lettersOnly = t.toUpperCase().replace(/[\s,，、和与]/g, '');
-    if (/^[A-Z]+$/.test(lettersOnly)) {
-      const idx = [...new Set(lettersOnly.split('').map((c) => c.charCodeAt(0) - 65))].sort(
-        (a, b) => a - b,
-      );
-      if (idx.length > 0 && idx.every((i) => i < choices.length)) return idx;
-    }
-
-    // (3) Leading-letter prefix: reference_md per the reading-comprehension skill
-    // is "正确项字母 + 依据" (e.g. "C。原文依据…"), and choices_md options may carry
-    // a label prefix ("A. 修八尺有余…"). Parse the leading letter when followed by
-    // a separator so 'C' answer ↔ "C。…" reference are judged equal.
-    const prefix = t.toUpperCase().match(/^([A-Z])[\s.．。、,，:：)）]/);
-    if (prefix) {
-      const i = prefix[1].charCodeAt(0) - 65;
-      if (i < choices.length) return [i];
-    }
-
-    return null;
-  };
-  const answerIdx = resolveChoiceIndices(input.answer.content);
-  const referenceIdx = resolveChoiceIndices(question.reference);
+  const answerIdx = resolveChoiceIndices(input.answer.content, choices);
+  const referenceIdx = resolveChoiceIndices(question.reference, choices);
   const choiceMatch =
     answerIdx !== null &&
     referenceIdx !== null &&
