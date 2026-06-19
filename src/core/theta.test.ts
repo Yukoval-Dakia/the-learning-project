@@ -276,8 +276,11 @@ describe('thetaToMastery (B1 double-truth fix — θ̂ → p(L) display projecti
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('SRT_ENABLED flag', () => {
-  it('defaults to false (dark-ship this PR — flip after RT accumulates)', () => {
-    expect(SRT_ENABLED).toBe(false);
+  it('is LIVE (true) — P1 go-live default (YUK-361 step 1); off path still mocked-false in state.db.test.ts', () => {
+    // Flipped from dark-ship false → live true. The OFF (binary) path is NOT deleted:
+    // it remains the explicit-false-mock regression in state.db.test.ts (srtFlag.value
+    // = false NO-OP byte-identical anchor) and the missing-RT binary fallback.
+    expect(SRT_ENABLED).toBe(true);
   });
 });
 
@@ -483,8 +486,11 @@ describe('conjunctiveCreditsContinuous (SRT-driven, binary-bit-identical at {0,1
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('HIERARCHICAL_ELO_ENABLED flag', () => {
-  it('defaults to false (dark-ship; per-KC path byte-identical to single-layer Elo)', () => {
-    expect(HIERARCHICAL_ELO_ENABLED).toBe(false);
+  it('is LIVE (true) — P1 go-live default (YUK-361 step 1); off path still mocked-false in state.db.test.ts', () => {
+    // Flipped from dark-ship false → live true. The OFF (single-layer) path is NOT
+    // deleted: it remains the explicit-false-mock regression in state.db.test.ts
+    // (hierFlag.value = false byte-identical anchor, NO global row written).
+    expect(HIERARCHICAL_ELO_ENABLED).toBe(true);
   });
 });
 

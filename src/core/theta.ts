@@ -166,23 +166,22 @@ export const DIFFICULTY_PROXY_WEIGHT = 0.3;
 
 /**
  * Master flag for hierarchical (two-layer θ_global + θ_KC) Elo on the credit
- * path. **Default false (dark-ship).**
+ * path. **LIVE default true (P1 go-live, YUK-361 step 1 — flipped from dark-ship).**
  *
- * false → θ_global ≡ 0; effective ability == θ_KC == today's theta_hat. No
+ * true (DEFAULT now) → effective ability = θ_global(domain-of-KC) + θ_KC feeds
+ *   expectedScore / conjunctiveCredits; θ_KC updates as today (now an offset), and
+ *   θ_global drifts slowly (ELO_K_GLOBAL) once per touched domain per attempt.
+ * false → θ_global ≡ 0; effective ability == θ_KC == single-layer theta_hat. No
  *   per-domain global row is read or written. The θ̂ update + the selection read
- *   paths are BYTE-IDENTICAL to single-layer Elo (regression anchor with toBe).
- * true  → effective ability = θ_global(domain-of-KC) + θ_KC feeds expectedScore /
- *   conjunctiveCredits; θ_KC updates as today (now an offset), and θ_global drifts
- *   slowly (ELO_K_GLOBAL) once per touched domain per attempt.
+ *   paths are BYTE-IDENTICAL to single-layer Elo. STILL A VALID BEHAVIOUR (the
+ *   off path) — exercised by the explicit-false regression anchors in
+ *   state.db.test.ts (hierFlag.value=false, toBe byte-identical), NOT deleted.
  *
  * Composes orthogonally with SRT_ENABLED: SRT modulates the per-KC credit VALUE;
  * this flag modulates the θ INPUT that feeds the credit. All four combinations
  * are well-defined (srtOutcome / eloK / precision math are untouched by A2).
- *
- * Flipped in a follow-up (not this PR) after the two-layer math is validated on
- * live data.
  */
-export const HIERARCHICAL_ELO_ENABLED = false;
+export const HIERARCHICAL_ELO_ENABLED = true;
 
 /**
  * Global-layer Elo step (≈ 0.4 × the eloK floor 0.12). θ_global is a SLOW-moving
@@ -216,18 +215,23 @@ export const ELO_K_GLOBAL = 0.048;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Master flag for SRT scoring on the θ̂ credit path. **Default false (dark-ship).**
+ * Master flag for SRT scoring on the θ̂ credit path. **LIVE default true (P1
+ * go-live, YUK-361 step 1 — flipped from dark-ship).**
  *
+ * true (DEFAULT now) → WHEN a response time is available AND d resolves → the
+ *   continuous srtOutcome drives the credit. Missing-RT still falls back to binary
+ *   even when true (paper path / solo attempts lacking RT → binary, unchanged).
  * false → the hot path uses the pure binary outcome exactly as before (the
  *   srtOutcome / conjunctiveCreditsContinuous code is never reached → bit-identical).
- * true  → AND a response time is available AND d resolves → the continuous srtOutcome
- *   drives the credit. Missing-RT still falls back to binary even when true.
+ *   STILL A VALID BEHAVIOUR (the off path) — exercised by the explicit-false
+ *   regression anchors in state.db.test.ts (srtFlag.value=false, NO-OP byte-identical
+ *   to binary), NOT deleted.
  *
- * Flipped in a follow-up (not this PR) after RT accumulates. Phase-deferred: the
- * follow-up that flips this also replaces resolveSrtTimeLimit's population-seeded d
- * with a per-KC rolling RT quantile (see YUK-433 follow-up).
+ * Phase-deferred (still open): a YUK-433 follow-up replaces resolveSrtTimeLimit's
+ * population-seeded d (a population constant, identical across examinees) with a
+ * per-KC rolling RT quantile once per-KC RT accumulates (see YUK-449).
  */
-export const SRT_ENABLED = false;
+export const SRT_ENABLED = true;
 
 /**
  * Minimum-signal floor for the residual-time fraction (Cursor Bugbot HIGH fix).
