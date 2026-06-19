@@ -317,3 +317,164 @@ describe('mem0 collection malformed-entry preflight (PR #491 Bugbot)', () => {
     expect(await countKnowledge()).toBe(1);
   });
 });
+
+// ─── Cursor Bugbot (PR #491) HIGH regression: table-ABSENT restore must RE-CREATE
+// the collection and RESTORE the rows — never silently skip backed-up mem0 data. ──
+//
+// THE BUG: the restore mem0 branch was gated
+//   if (mem0Rows && (await mem0CollectionExists(db, mem0Table))) { ... }
+// If the archive HAS mem0 rows (collection was backed up while the table existed)
+// but the TARGET DB lacks the collection table (fresh DB / mem0 never lazy-init —
+// the canonical disaster-recovery scenario), mem0CollectionExists() is false → the
+// rows are SILENTLY skipped → backed-up mem0 data is NOT restored. That is the exact
+// "不可丢必须可恢复" recoverability hole YUK-355 exists to close (D17 reversal).
+//
+// FIX (create-then-insert, NOT silent skip): when mem0Rows is a NON-EMPTY array but
+// the target lacks the collection table, CREATE the table first (replicate mem0
+// createCol: id uuid primary key, vector vector(<dims>), payload jsonb), inferring
+// <dims> from the element count of the first archived row vector. Then insert. If the
+// dims cannot be determined (malformed vector), FAIL LOUDLY (data_validation) rather
+// than silent-skip or create a wrong-dim table. The empty/absent case stays a no-op.
+describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HIGH)', () => {
+  let prevCollectionEnv: string | undefined;
+
+  beforeAll(() => {
+    prevCollectionEnv = process.env.MEM0_PGVECTOR_COLLECTION;
+    process.env.MEM0_PGVECTOR_COLLECTION = COLLECTION;
+  });
+
+  afterAll(() => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+    if (prevCollectionEnv === undefined) delete process.env.MEM0_PGVECTOR_COLLECTION;
+    else process.env.MEM0_PGVECTOR_COLLECTION = prevCollectionEnv;
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+    await createCollection();
+  });
+
+  afterEach(async () => {
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+  });
+
+  async function tableExists(): Promise<boolean> {
+    const rows = (await testDb().execute(
+      sql`select to_regclass(${`public.${COLLECTION}`}) as reg`,
+    )) as Array<{ reg: string | null }>;
+    return rows[0]?.reg != null;
+  }
+
+  // Take a real archive, then rewrite data.json's mem0 collection rows (e.g. to inject
+  // a malformed vector). Re-zip with the original manifest so restore reaches the
+  // dump branch rather than bailing on schema_version/zip errors.
+  function rewriteMem0Rows(bytes: Uint8Array, rows: Array<Record<string, unknown>>): Uint8Array {
+    const entries = unzipSync(bytes);
+    const data = JSON.parse(new TextDecoder().decode(entries['data.json'])) as Record<
+      string,
+      unknown
+    >;
+    data[COLLECTION] = rows;
+    const repacked: Record<string, Uint8Array> = {};
+    for (const [name, content] of Object.entries(entries)) {
+      repacked[name] =
+        name === 'data.json' ? new TextEncoder().encode(JSON.stringify(data)) : content;
+    }
+    return zipSync(repacked);
+  }
+
+  it('RE-CREATES the collection with the correct dims AND restores rows when the target table is absent', async () => {
+    const vec1 = Array.from({ length: DIMS }, (_, i) => Math.sin(i) * 0.001);
+    const vec2 = Array.from({ length: DIMS }, (_, i) => Math.cos(i) * 0.002);
+    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec1, {
+      data: 'prefers dark mode',
+      user_id: 'self',
+    });
+    await seedRow('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', vec2, {
+      data: 'weak on integration by parts',
+      user_id: 'self',
+      superseded_by: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+    });
+
+    // Archive captured WHILE the table existed (2 rows present in data.json).
+    const bytes = await buildZipBytes();
+
+    // Disaster-recovery target: the collection table does NOT exist at all (fresh DB,
+    // mem0 never lazy-initialised). This is the silent-skip hole.
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+    expect(await tableExists()).toBe(false);
+
+    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes });
+    expect(res.status).toBe(200);
+
+    // The table is RE-CREATED…
+    expect(await tableExists()).toBe(true);
+    // …with the correct dimensionality (inferred from the archived vector)…
+    const dimsRow = (await testDb().execute(
+      sql`select a.atttypmod as typmod
+          from pg_attribute a
+          join pg_class c on c.oid = a.attrelid
+          where c.relname = ${COLLECTION} and a.attname = 'vector'`,
+    )) as Array<{ typmod: number }>;
+    // pgvector stores the declared dim verbatim in atttypmod (no +4 VARLENA offset).
+    expect(dimsRow[0]?.typmod).toBe(DIMS);
+
+    // …and the backed-up rows are ACTUALLY restored (the round-trip survives a
+    // table-absent target — the recoverability contract).
+    const after = await readRows();
+    expect(after).toHaveLength(2);
+    const byId = new Map(after.map((r) => [r.id, r.payload as Record<string, unknown>]));
+    expect(byId.get('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')).toMatchObject({
+      data: 'prefers dark mode',
+    });
+    expect(byId.get('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')).toMatchObject({
+      superseded_by: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+    });
+    for (const r of after) {
+      expect(r.vector.startsWith('[')).toBe(true);
+      expect(r.vector.split(',').length).toBe(DIMS);
+    }
+    // stats report the actual insert count for the re-created collection.
+    const body = res.body as { stats: Record<string, { inserted: number }> };
+    expect(body.stats[COLLECTION]?.inserted).toBe(2);
+  });
+
+  it('FAILS LOUDLY when the target table is absent and the archived vector dims are undeterminable', async () => {
+    const vec = Array.from({ length: DIMS }, () => 0);
+    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
+    const good = await buildZipBytes();
+    // Malformed vector: NULL — dims cannot be inferred (no element count).
+    const bad = rewriteMem0Rows(good, [
+      { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vector: null, payload: { data: 'x' } },
+    ]);
+
+    // Table absent → the create-if-absent path must infer dims; it cannot.
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+    expect(await tableExists()).toBe(false);
+
+    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: bad });
+    // Hard failure rather than silent-skip or wrong-dim table creation.
+    expect(res.status).toBe(500);
+    const body = res.body as { error: string };
+    expect(body.error).toBe('restore_failed_mid_flight');
+    // Did NOT create a wrong-dim (or any) table.
+    expect(await tableExists()).toBe(false);
+  });
+
+  it('table-absent + EMPTY archived collection is a graceful no-op (no table created)', async () => {
+    // Build an archive whose mem0 key is present but an EMPTY array, with the table
+    // absent on the target. Nothing to restore → graceful skip, no table conjured.
+    const vec = Array.from({ length: DIMS }, () => 0);
+    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
+    const good = await buildZipBytes();
+    const bytes = rewriteMem0Rows(good, []); // present but empty
+
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+    expect(await tableExists()).toBe(false);
+
+    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes });
+    expect(res.status).toBe(200);
+    // Empty collection → no table created (mem0 self-init will make it lazily).
+    expect(await tableExists()).toBe(false);
+  });
+});
