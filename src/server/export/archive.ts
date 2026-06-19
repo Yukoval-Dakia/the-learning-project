@@ -41,12 +41,48 @@ import { type Manifest, buildReadme } from './readme';
 // never initialised), dump is skipped (graceful) and restore is a no-op for it.
 
 /** True when the mem0 collection table physically exists (mem0 self-init may not
- * have run yet on a fresh DB). to_regclass returns NULL for a missing relation. */
+ * have run yet on a fresh DB). to_regclass returns NULL for a missing relation.
+ * `table` is bound as a VALUE (not raw-interpolated), so it is injection-safe. */
 async function mem0CollectionExists(db: Db, table: string): Promise<boolean> {
   const rows = (await db.execute(sql`select to_regclass(${`public.${table}`}) as reg`)) as Array<{
     reg: string | null;
   }>;
   return rows[0]?.reg != null;
+}
+
+// A Postgres table/collection name is an IDENTIFIER, not a value — it cannot be a
+// parameter bind, so it must reach SQL via sql.raw(). To keep that interpolation
+// safe we validate it against the SAME identifier shape mem0's PGVector provider
+// enforces on the collectionName (node_modules/mem0ai/dist/oss/index.js
+// SAFE_IDENTIFIER_RE / validateIdentifier): letters/digits/underscores, starting
+// with a letter or underscore, at most 128 chars. mem0CollectionTable() resolves
+// the name from MEM0_PGVECTOR_COLLECTION, so a hostile env value cannot smuggle SQL
+// through the raw-interpolated dump query (Cursor OCR minor, PR #491). The validated
+// name is double-quote-wrapped at the call sites for the identifier form mem0 uses.
+const MEM0_COLLECTION_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/;
+
+function assertSafeMem0CollectionName(table: string): void {
+  if (!MEM0_COLLECTION_NAME_RE.test(table)) {
+    throw new Error(
+      `mem0 collection name "${table}" is not a safe SQL identifier (letters/digits/underscores, must start with a letter or underscore, ≤128 chars). Refusing to interpolate it into raw SQL.`,
+    );
+  }
+}
+
+/** Infer the pgvector dimensionality from an archived row's `vector` column. On
+ * dump we cast `vector::text`, so an archived vector is the pgvector text form
+ * `[a,b,c]` (a string) — its element count IS the declared dim. Returns undefined
+ * when the dim cannot be determined (NULL/empty/malformed vector). Used only when a
+ * table-absent restore must re-create the collection (mem0 createCol needs a dim);
+ * an undeterminable dim there is a hard failure, never a silent skip or wrong dim. */
+function inferMem0VectorDims(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return undefined;
+  const inner = trimmed.slice(1, -1).trim();
+  if (inner.length === 0) return undefined; // `[]` — no elements, no inferable dim
+  const dims = inner.split(',').length;
+  return dims > 0 ? dims : undefined;
 }
 
 // ─── Restore column allowlist (single source of truth: Drizzle schema) ───────
@@ -166,6 +202,10 @@ export async function buildBackupArchive({
   // column a stable string in JSON. Skipped (no key, count 0) if mem0 never created
   // the table on this DB — a backup of a fresh DB is still valid.
   const mem0Table = mem0CollectionTable();
+  // Identifier safety (Cursor OCR minor, PR #491): the table name is raw-interpolated
+  // into the dump SELECT, so validate it against the mem0 collection-name shape before
+  // building the query — consistent with the value-bound mem0CollectionExists().
+  assertSafeMem0CollectionName(mem0Table);
   if (await mem0CollectionExists(db, mem0Table)) {
     const mem0Rows = (await db.execute(
       sql.raw(`select id, vector::text as vector, payload from "${mem0Table}"`),
@@ -534,13 +574,46 @@ export async function restoreFromArchive({
       }
     }
 
-    // YUK-355: wipe + restore the mem0 collection (non-FK_ORDER). Only acted on
-    // when the archive carries the key AND the table physically exists (mem0
-    // self-init must have run on this DB — a restore into a DB whose mem0 client
-    // has never started would have no table to wipe/insert into; skip gracefully).
-    // The `vector` column is bound with an explicit ::vector cast; id/payload reuse
-    // the same JSON-serialise-objects discipline as restoreValue().
-    if (mem0Rows && (await mem0CollectionExists(db, mem0Table))) {
+    // YUK-355: wipe + restore the mem0 collection (non-FK_ORDER). The archive carries
+    // a NON-EMPTY mem0 collection array → those rows MUST land, even on a fresh
+    // disaster-recovery DB whose mem0 client never lazy-initialised the table.
+    //
+    // Cursor Bugbot HIGH (PR #491): the previous gate was
+    //   if (mem0Rows && (await mem0CollectionExists(db, mem0Table))) { ... }
+    // so a backup with mem0 rows restored into a TARGET that lacked the collection
+    // table SILENTLY skipped the rows — the backed-up slow-warming soft profile was
+    // NOT restored. That is the exact "不可丢必须可恢复" recoverability hole YUK-355
+    // exists to close. Fix: create-then-insert. When the table is absent we RE-CREATE
+    // it first, replicating mem0's createCol schema exactly
+    // (node_modules/mem0ai/dist/oss/index.js: id UUID PRIMARY KEY, vector vector(<dims>),
+    // payload JSONB), inferring <dims> from the element count of the first archived
+    // row vector (dumped as ::text). The identifier is validated + double-quote-wrapped
+    // for raw interpolation. If <dims> cannot be determined we FAIL LOUDLY rather than
+    // silent-skip or conjure a wrong-dim table.
+    //
+    // The EMPTY/absent case (mem0Rows undefined or []) stays a graceful no-op: there
+    // is nothing to restore, and mem0's own self-init will create the collection lazily
+    // with the live embedder's true dims on first use.
+    if (mem0Rows && mem0Rows.length > 0) {
+      assertSafeMem0CollectionName(mem0Table);
+      if (!(await mem0CollectionExists(db, mem0Table))) {
+        const dims = inferMem0VectorDims(mem0Rows[0]?.vector);
+        if (dims === undefined) {
+          // Loud failure — surfaced as restore_failed_mid_flight by the outer catch.
+          // We refuse to create a wrong-dim table or silently drop the rows.
+          throw new Error(
+            `mem0 collection "${mem0Table}" is absent on the target DB and the archived vector dimensionality could not be determined (first row vector is NULL/empty/malformed). Refusing to silently skip backed-up mem0 rows or create a wrong-dim table.`,
+          );
+        }
+        // Replicate mem0 createCol() exactly. CREATE EXTENSION is idempotent; mem0's
+        // own initialize() runs it too, but a fresh restore target may not have it yet.
+        await db.execute(sql.raw('create extension if not exists vector'));
+        await db.execute(
+          sql.raw(
+            `create table if not exists "${mem0Table}" (id uuid primary key, vector vector(${dims}), payload jsonb)`,
+          ),
+        );
+      }
       stats[mem0Table] = { deleted: 0, inserted: 0 };
       await db.execute(sql.raw(`delete from "${mem0Table}"`));
       for (let i = 0; i < mem0Rows.length; i += INSERT_BATCH_SIZE) {
@@ -557,12 +630,15 @@ export async function restoreFromArchive({
           // is jsonb. NULL vector/payload bind through cleanly (cast of NULL = NULL).
           return sql`(${id}, ${vector}::vector, ${payloadBound}::jsonb)`;
         });
+        // Count ACTUAL inserted rows via RETURNING (Cursor OCR minor, PR #491): with
+        // `on conflict do nothing` a duplicate id is skipped, so chunk.length would
+        // over-count. The returned row set is exactly the rows that landed.
         const query = sql`insert into ${sql.raw(`"${mem0Table}"`)} ("id","vector","payload") values ${sql.join(
           rowFragments,
           sql`,`,
-        )} on conflict do nothing`;
-        await db.execute(query);
-        stats[mem0Table].inserted += chunk.length;
+        )} on conflict do nothing returning "id"`;
+        const inserted = (await db.execute(query)) as Array<{ id: unknown }>;
+        stats[mem0Table].inserted += inserted.length;
       }
     }
   } catch (err) {
