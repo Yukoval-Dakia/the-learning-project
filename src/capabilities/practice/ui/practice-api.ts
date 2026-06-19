@@ -281,6 +281,25 @@ export interface SubmitResult {
   judge: { judge_event_id: string | null; suggested_rating: string } | null;
 }
 
+// YUK-433 — solo 路径 per-attempt response-time（RT）capture 的纯计算核。A1 SRT 评分（PR2）的硬前置：
+// 服务端 submit schema 早已接受 latency_ms（src/capabilities/practice/api/submit.ts:72）并把它映射成事件
+// payload 的 duration_ms（同文件 :531）—— 但 SPA 从未发送（旧 Next.js worktree 的 questionShownAt 计时器
+// 没被搬过来）。这里复活计算：题面变可见那刻记 shownAtMs，commit 时 now - shownAtMs 即这次作答的墙钟用时。
+//
+// clamp 边界**逐字对齐**服务端 zod 约束 [0, 3_600_000]（submit.ts:72 的 z.number().int().min(0).max(3_600_000)）：
+//   - 负差（系统时钟回拨，now < shownAt）→ Math.max(0, …) clamp 到 0，不发负值。
+//   - 超 1 小时（标签页长挂 / 隔夜回来）→ Math.min(3_600_000, …) clamp 到上界，避免服务端 422。
+// shownAtMs 为 null/undefined（计时器未起 / 题面未就绪）→ 返回 null，调用方据此略过 latency_ms（不发噪声）。
+//
+// HONEST caveat：latency_ms 是**墙钟用时，含 idle**（切标签页 / 思考停顿 / 隔夜都计入），没有 active-time
+// 追踪——一个已知噪声源。下游 A1 SRT 的 rapid-guess downweight + Ter personal baseline（P5 follow-ups）会
+// 专门处理它。此外 duration_ms 已被 get-attempt-context 的「为什么错」诊断消费（见上方 QFullTimelineEntry
+// .duration_ms + 后端 detail），所以复活 capture 也顺带丰富了那条诊断。
+export function computeLatencyMs(shownAtMs: number | null, nowMs: number): number | null {
+  if (shownAtMs === null || shownAtMs === undefined) return null;
+  return Math.max(0, Math.min(3_600_000, nowMs - shownAtMs));
+}
+
 export const submitReview = (input: {
   question_id: string;
   rating: 'again' | 'hard' | 'good';
@@ -294,6 +313,10 @@ export const submitReview = (input: {
   // body.rating（auto-grade），并让客观判分流过 difficulty_calibration_label hook 产标签
   // （B1 难度 firm-up 链解冻）。开放题省略 → 默认 false → 维持现有手动评级流。
   auto_rate?: boolean;
+  // YUK-433 — per-attempt 墙钟用时（ms），由 computeLatencyMs 算出并 clamp 到 [0, 3_600_000]。
+  // 服务端 submit schema 接受它并映射成事件 payload 的 duration_ms（submit.ts:72/531，**无需后端改动**）。
+  // null/省略 → server 略过 duration_ms（向后兼容旧 caller）。墙钟含 idle，是已知噪声源（见 computeLatencyMs）。
+  latency_ms?: number | null;
 }) => apiJson<SubmitResult>('/api/review/submit', { method: 'POST', body: JSON.stringify(input) });
 
 export const fileAppeal = (judgeEventId: string, reasonMd: string) =>
