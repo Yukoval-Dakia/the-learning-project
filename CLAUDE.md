@@ -13,6 +13,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Long-session task tracking**：当前请求涉及 ≥3 个独立步骤、或预期跨多次工具调用时，主动 `ToolSearch` 加载 `TaskCreate/TaskUpdate` 并维护任务列表；不要凭记忆推进多步工作。
 - **Environment-sensitive tasks**：涉及外部 SaaS / 本机权限 / 第三方 CLI（Cloudflare、computer-use、waifu2x 之类）时，先跑 30 秒 pre-flight—— `which` / 版本 / token 在不在 env / 本地化应用名是否解析 —— 打印 pass/fail checklist，全 pass 才进主任务。
+- **Cockpit & 全局视角（多线不乱）**：单 session 是线性引擎，全局态活在外部 ledger、不在上下文里——别试图用 session 的脑子当全局视角。**驾驶舱** = `PLAN.md`（repo 根，NOW / NEXT / PARKED / BLOCKED-ON 活看板，手边）+ Linear（权威 projects/issues）+ `.remember/`（跨 session handoff）。
+  - **Session start**：先读 `PLAN.md` + `.remember/remember.md` + `MEMORY.md` 重建全局视角，别从零推。
+  - **Capture-at-discovery**：任何中途冒出但出当前线的东西（bug / follow-up / 岔路 fork），当场进 `PLAN.md` PARKED 或 Linear，绝不靠记忆「我记着」。
+  - **拓扑**：1 个 driver session 持计划 + 只推一条 active 线；广度派 fan-out（workflow / subagent 当 scout，主线只收结论）；并行执行钉 git worktree（每 lane 独立 worktree + branch）；**别开对等多窗抢同一工作树**（冲突/乱的根源）。
+  - **保真**：Linear 会腐败（stale In Progress 是常态）；触及的 issue 状态当场对齐代码，周期性 re-excavation 拿 code ground 一遍。
+  - **收尾 checklist（结束前必跑）**：① `PLAN.md` 四栏对齐现实；② 所有发现的 follow-up 已落 Linear 或 `PLAN.md`（脑子不留）；③ 触及的 Linear issue 状态对齐代码（无假 In Progress）；④ `.remember` handoff 更新；⑤ 在飞 PR / workflow / worktree 列清状态。
 
 ## UI Design Compliance
 
