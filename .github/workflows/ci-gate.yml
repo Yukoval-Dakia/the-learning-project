@@ -3,6 +3,11 @@ name: CI Gate
 # 远端 pre-merge gate（替代本地手跑 full pnpm test）。
 # CI 绿 = mergeable。DB 测经 @testcontainers/postgresql 自起 Postgres（runner 自带 Docker）。
 # 无需 secret：DB 测用 testcontainer、build 用 DATABASE_URL 占位、AI 测全 mock。
+#
+# Path-aware：docs-only 改动（docs/** · *.md · .remember/**）跳过整条重 gate（install/
+# typecheck/lint/audit/test/build），秒过。同名 check 照常 success，不破坏 branch-protection
+# 的 required-check（job 永远 run + 永远绿，只是按需跳步）。判 docs-only 用 merge-base diff，
+# 无法判 base 时**保守跑全量**（false-negative 只是多跑，绝不漏测代码改动）。
 
 on:
   pull_request:
@@ -20,37 +25,77 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需历史做 merge-base diff 判 docs-only
+
+      - name: Detect docs-only change
+        id: filter
+        run: |
+          set -uo pipefail
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Base 未知 — 保守跑全量 gate。"
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          MB="$(git merge-base "$BASE" HEAD || echo "$BASE")"
+          CHANGED="$(git diff --name-only "$MB" HEAD)"
+          echo "Changed files vs $MB:"; echo "$CHANGED"
+          if [ -z "$CHANGED" ]; then
+            echo "无文件变更 — 跳过重 gate。"
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # 任一文件不匹配 doc pattern → 跑全量；全匹配 → docs-only 跳过。
+          if echo "$CHANGED" | grep -qvE '^(docs/|\.remember/|.*\.md$)'; then
+            echo "含代码/配置改动 — 跑全量 gate。"
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docs-only 改动 — 跳过重 gate。"
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Docs-only — heavy gate skipped
+        if: steps.filter.outputs.code_changed != 'true'
+        run: echo "✅ Docs-only PR — install/typecheck/lint/audit/test/build skipped. Gate green."
 
       - uses: pnpm/action-setup@v4
+        if: steps.filter.outputs.code_changed == 'true'
         with:
           version: 9.12.0
 
       - uses: actions/setup-node@v4
+        if: steps.filter.outputs.code_changed == 'true'
         with:
           node-version: '24'
           cache: 'pnpm'
 
       - name: Install deps
+        if: steps.filter.outputs.code_changed == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        if: steps.filter.outputs.code_changed == 'true'
         run: pnpm typecheck
 
       - name: Lint
+        if: steps.filter.outputs.code_changed == 'true'
         run: pnpm lint
 
       - name: Audit — schema write-path
+        if: steps.filter.outputs.code_changed == 'true'
         run: pnpm audit:schema
 
       - name: Audit — test partition
+        if: steps.filter.outputs.code_changed == 'true'
         run: pnpm audit:partition
 
       # `pnpm test` = audit:profile + audit:draft-status + test:unit + test:db + test:migration
       # test:db 经 testcontainers 起真 Postgres（runner Docker socket 自动探测）。
       - name: Test (profile + draft-status + unit + db + migration)
+        if: steps.filter.outputs.code_changed == 'true'
         run: pnpm test
 
       - name: Build (server/worker/migrate + web)
+        if: steps.filter.outputs.code_changed == 'true'
         run: pnpm build
         env:
           DATABASE_URL: postgres://placeholder
