@@ -1209,15 +1209,19 @@ export const memory_reconciliation_log = pgTable(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Edge reconciliation log（YUK-344 调和环增量 2，ADR-0034 §3）：知识边写入期
-// 调和层 write-ahead 日志。
+// 调和层 AUDIT / PROVENANCE 日志（**不是 write-ahead replay 游标**）。
 //
 // 与 memory_reconciliation_log（mem0 个性化轴）**结构正交**——OWNER RULING：另立
 // 新表，**不复用** memory 表（结构轴 ≠ 记忆轴，无 user_id 哨兵）。每条知识边提议
 // 通过拓扑闸后，reconcile handler 用 GLM 判定该候选边与既有相邻 live 边的关系
-// （KEEP_BOTH / SUPERSEDE，结构边二动作空间，edge-reconcile.ts）。判定意图先写到
-// 本表（planned 行，applied_at NULL = write-ahead），apply 完成后 UPDATE
-// applied_at=now()；半途崩溃时按 candidate key 重放（applied_at IS NULL 行，
-// 幂等续跑）。
+// （KEEP_BOTH / SUPERSEDE，结构边二动作空间，edge-reconcile.ts）。SUPERSEDE 的整段
+// apply（落本表 planned 行 → 写新 live 边 → 归档旧边 → correction event → 盖
+// applied_at）跑在**单个 db.transaction**（propose_edge.ts applyEdgeSupersede）里：
+// 崩溃整体回滚（连本表行一起），**没有半途状态可重放**。本表只是 SUPERSEDE 决策的
+// 审计记录（planned_at / applied_at 标注 apply 是否在该 tx 内走完）。防双写靠
+// knowledge_edge UNIQUE(from,to,relation_type) 约束 + skipped_duplicate_edge
+// （重复候选在 apply 前就跳过），**不靠确定性 id**——每个 event/edge id 都是 fresh
+// createId()。
 //
 // SUPERSEDE 的实际移除走 knowledge_edge.archived_at 软归档（ADR-0034 §4 load-bearing
 // 移除）；本表 + 一条 CorrectionKind correction event 只记 epistemic 来由 provenance。
@@ -1230,8 +1234,8 @@ export const edge_reconciliation_log = pgTable(
   'edge_reconciliation_log',
   {
     id: text('id').primaryKey(),
-    // 候选边键三元组（from|to|relation_type）——重放幂等的去重锚（候选边尚未持久化、
-    // 无自身 UUID，故用三元组而非 edge id）。
+    // 候选边键三元组（from|to|relation_type）——审计锚，记录这条 SUPERSEDE 针对的
+    // 候选边（候选边落库前无自身 UUID，故用三元组而非 edge id）。
     candidate_from_knowledge_id: text('candidate_from_knowledge_id').notNull(),
     candidate_to_knowledge_id: text('candidate_to_knowledge_id').notNull(),
     candidate_relation_type: text('candidate_relation_type').notNull(),
@@ -1244,7 +1248,8 @@ export const edge_reconciliation_log = pgTable(
     reason: text('reason').notNull(),
     // GLM 原始决策（审计；KEEP_BOTH 短路无 GLM 调用 / 降级时可为 null）。
     llm_raw: jsonb('llm_raw'),
-    // write-ahead 游标：planned_at = 意图写入时；applied_at NULL = 待重放。
+    // 审计时间戳：planned_at = 决策落本表时；applied_at = 同一 apply tx 末尾盖戳
+    //（NULL 只会出现在 apply tx 内部的瞬时，提交后总是非 NULL——崩溃则整行回滚）。
     planned_at: timestamp('planned_at', { withTimezone: true }).notNull(),
     applied_at: timestamp('applied_at', { withTimezone: true }),
   },

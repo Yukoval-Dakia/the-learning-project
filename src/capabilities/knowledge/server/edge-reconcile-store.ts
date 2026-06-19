@@ -1,15 +1,19 @@
-// ADR-0034 §3 / YUK-344 调和环增量 2 — 知识边写入期调和环的 write-ahead-log 数据层。
+// ADR-0034 §3 / YUK-344 调和环增量 2 — 知识边写入期调和环的 AUDIT / PROVENANCE 数据层。
 //
-// 镜像 src/server/memory/reconcile-store.ts 的 write-ahead 模式（insertPlannedRows /
-// markApplied / loadUnappliedLog 幂等重放），但作用对象是 edge_reconciliation_log
-// （结构轴）而非 memory_reconciliation_log（个性化轴）—— OWNER RULING：另立新表、
-// 不复用 memory 表、无 user_id 哨兵（结构轴 ⊥ 记忆轴）。
+// edge_reconciliation_log 是结构轴 SUPERSEDE 决策的审计 / 来由记录（不是 write-ahead
+// replay 游标）：insertEdgePlannedRows 落 planned 行、markEdgeReconcileApplied 在同一
+// apply 事务里盖 applied_at。整段 apply 跑在单个 db.transaction（propose_edge.ts
+// applyEdgeSupersede）里——崩溃整体回滚（连 log 行一起），没有半途状态可重放。
+// 防双写靠 knowledge_edge UNIQUE(from,to,relation_type) 约束（重复候选在 apply 前就
+// skipped_duplicate_edge），不靠确定性 id。作用对象是 edge_reconciliation_log（结构轴）
+// 而非 memory_reconciliation_log（个性化轴）—— OWNER RULING：另立新表、不复用 memory 表、
+// 无 user_id 哨兵（结构轴 ⊥ 记忆轴）。
 //
 // 调和层动作空间是 KEEP_BOTH | SUPERSEDE（结构边二动作，edge-reconcile.ts），
 // 不套 memory 侧四值。SUPERSEDE 的实际移除是 knowledge_edge.archived_at 软归档
-// （ADR-0034 §4 load-bearing 移除）；本表只是意图 write-ahead + 来由审计。
+// （ADR-0034 §4 load-bearing 移除）；本表只是决策审计 + 来由。
 
-import { eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
@@ -39,9 +43,10 @@ export function edgeReconcileKey(fromId: string, toId: string, relationType: str
 }
 
 /**
- * Batch INSERT planned rows into edge_reconciliation_log (write-ahead).
- * applied_at left NULL — set by markEdgeReconcileApplied after the apply step
- * (archive old + write new edge + correction event) succeeds.
+ * Batch INSERT planned rows into edge_reconciliation_log. applied_at left NULL —
+ * stamped by markEdgeReconcileApplied at the end of the SAME apply transaction
+ * (archive old + write new edge + correction event). Audit record, not a replay
+ * cursor: the whole apply is one tx, so a crash rolls these rows back too.
  */
 export async function insertEdgePlannedRows(db: DbLike, rows: EdgePlannedRow[]): Promise<void> {
   if (rows.length === 0) return;
@@ -61,44 +66,12 @@ export async function insertEdgePlannedRows(db: DbLike, rows: EdgePlannedRow[]):
   );
 }
 
-/** UPDATE applied_at = now() — marks a write-ahead row as fully applied. */
+/** UPDATE applied_at = now() — stamps the audit row as fully applied (same tx). */
 export async function markEdgeReconcileApplied(db: DbLike, logId: string): Promise<void> {
   await db
     .update(edge_reconciliation_log)
     .set({ applied_at: new Date() })
     .where(eq(edge_reconciliation_log.id, logId));
-}
-
-/**
- * Idempotent replay cursor: load all planned rows that have NOT been applied
- * yet (applied_at IS NULL). Mirrors reconcile-store.loadUnappliedLog — called
- * at the START of the reconcile path so a crash mid-apply is resumed, not lost.
- *
- * Concurrency: NOT row-locked. Serialization relies on the single nightly edge
- * propose-and-write entry (`runEdgeProposeAndWrite`) + the per-edge transaction.
- * The apply step is idempotent by design — archiveKnowledgeEdge is a NULL→now
- * guarded no-op, the new-edge insert + correction event use deterministic ids
- * (onConflictDoNothing / writeEvent first-write-wins), and markEdgeReconcileApplied
- * is a no-op once set — so a double-apply wastes work but never corrupts.
- */
-export async function loadUnappliedEdgeReconcileLog(db: DbLike): Promise<EdgePlannedRow[]> {
-  const rows = await db
-    .select()
-    .from(edge_reconciliation_log)
-    .where(isNull(edge_reconciliation_log.applied_at))
-    .orderBy(edge_reconciliation_log.planned_at);
-  return rows.map((r) => ({
-    id: r.id,
-    candidate_from_knowledge_id: r.candidate_from_knowledge_id,
-    candidate_to_knowledge_id: r.candidate_to_knowledge_id,
-    candidate_relation_type: r.candidate_relation_type,
-    action: r.action as EdgeReconcileLogAction,
-    superseded_edge_id: r.superseded_edge_id,
-    confidence: r.confidence,
-    reason: r.reason,
-    llm_raw: r.llm_raw,
-    planned_at: r.planned_at,
-  }));
 }
 
 /** Build a planned row with a fresh cuid2 id (convenience for the handler). */

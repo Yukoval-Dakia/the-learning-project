@@ -14,11 +14,10 @@ import { RECENT_FAILURE_WINDOW_MS } from '@/server/ai/tools/knowledge-readers';
 import { getCorrectionStatus } from '@/server/events/corrections';
 import { type FailureAttempt, getFailureAttempts, writeEvent } from '@/server/events/queries';
 import { and, eq, isNull } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { EdgeReconcileDecision } from './edge-reconcile';
 import { ReconcileParseError } from './edge-reconcile';
-import { loadUnappliedEdgeReconcileLog } from './edge-reconcile-store';
 import { parseEdgeProposeOutput, runEdgeProposeAndWrite } from './propose_edge';
 
 describe('KnowledgeEdgeProposeTask system prompt', () => {
@@ -1590,13 +1589,17 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     expect(liveEdges[0].to_knowledge_id).toBe('kC');
     expect(liveEdges[0].relation_type).toBe('contrasts_with');
 
-    // Write-ahead log row written AND applied (applied_at set; nothing unapplied).
+    // Audit-log row written AND applied within the single tx (applied_at set;
+    // no row left unapplied).
     const logRows = await db.select().from(edge_reconciliation_log);
     expect(logRows).toHaveLength(1);
     expect(logRows[0].action).toBe('SUPERSEDE');
     expect(logRows[0].superseded_edge_id).toBe('e_old');
     expect(logRows[0].applied_at).not.toBeNull();
-    const unapplied = await loadUnappliedEdgeReconcileLog(db);
+    const unapplied = await db
+      .select()
+      .from(edge_reconciliation_log)
+      .where(isNull(edge_reconciliation_log.applied_at));
     expect(unapplied).toHaveLength(0);
 
     // A CorrectionKind supersede correction event was emitted (provenance). It
@@ -1610,6 +1613,10 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     expect(correctRows).toHaveLength(1);
     const correctPayload = correctRows[0].payload as { correction_kind?: string };
     expect(correctPayload.correction_kind).toBe('supersede');
+    // YUK-344 attribution: an AUTONOMOUS nightly supersede is attributed to the
+    // dreaming AGENT, NOT user/self (it is not a human correction).
+    expect(correctRows[0].actor_kind).toBe('agent');
+    expect(correctRows[0].actor_ref).toBe('dreaming');
 
     const status = await getCorrectionStatus(db, correctRows[0].subject_id);
     expect(status.state).toBe('superseded');
@@ -1854,7 +1861,7 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     expect(oldEdge[0].archived_at).toBeNull();
   });
 
-  it('write-ahead idempotent replay does not double-apply (a pre-existing applied log row is not re-applied)', async () => {
+  it('no double-apply: the UNIQUE(from,to,relation_type) constraint makes a re-proposed superseded candidate skipped_duplicate_edge (not a second archive/new edge)', async () => {
     const db = testDb();
     await insertKnowledge('kA');
     await insertKnowledge('kB');
@@ -1901,15 +1908,19 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     expect(liveAfterFirst).toHaveLength(1);
     expect(liveAfterFirst[0].to_knowledge_id).toBe('kC');
 
-    // The applied row is the replay cursor's terminal state — loadUnappliedLog
-    // returns nothing, so a resumed reconcile job would NOT re-apply it (no
-    // second archive, no duplicate new edge).
-    const unapplied = await loadUnappliedEdgeReconcileLog(db);
+    // The apply ran in a single tx, so the audit-log row is stamped applied_at
+    // (no row left unapplied). There is no replay cursor — a crash would have
+    // rolled the row back entirely.
+    const unapplied = await db
+      .select()
+      .from(edge_reconciliation_log)
+      .where(isNull(edge_reconciliation_log.applied_at));
     expect(unapplied).toHaveLength(0);
 
-    // Sanity: the new candidate edge is now a real live row, so a SUBSEQUENT
-    // batch proposing the SAME edge would be `skipped_duplicate_edge` (it does
-    // not double-write). This confirms the apply is terminal, not repeatable.
+    // The real no-double-apply guard: the new candidate edge is now a real live
+    // row, so a SUBSEQUENT batch proposing the SAME (from,to,relation_type) edge
+    // is `skipped_duplicate_edge` via the UNIQUE constraint BEFORE the apply path
+    // (it does not double-archive / double-write).
     const second = await runEdgeProposeAndWrite({
       db,
       recentFailures,
@@ -1926,5 +1937,109 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
       .from(knowledge_edge)
       .where(isNull(knowledge_edge.archived_at));
     expect(liveAfterSecond).toHaveLength(1);
+  });
+
+  // YUK-344 (Issue 3) — the LIVE judge path (no injected judgeReconcileFn) must
+  // ledger its GLM tokens to cost_ledger via the onUsage hook, mirroring the
+  // memory reconcile path (triggers.ts / YUK-359). Exercises judgeEdgeReconcile
+  // through runEdgeProposeAndWrite with a MOCKED global fetch (the wiring does not
+  // thread fetchImpl, so the judge uses global fetch) returning a SUPERSEDE with
+  // usage tokens; asserts an `edge_reconcile` cost_ledger row is written AND the
+  // supersede actually applied (proving the bill is for a real live judgment).
+  it('live judge path writes a cost_ledger row for reconcile GLM usage (YUK-344 Issue 3)', async () => {
+    const db = testDb();
+    await insertKnowledge('kA');
+    await insertKnowledge('kB');
+    await insertKnowledge('kC');
+    // Live neighbor kA --contrasts_with--> kB; the live GLM judge will SUPERSEDE it
+    // in favor of the candidate kA --contrasts_with--> kC.
+    await insertLiveEdge('e_old', 'kA', 'kB', 'contrasts_with');
+    await seedJudgeFailure('att_cost_1', ['kA', 'kC']);
+    await seedJudgeFailure('att_cost_2', ['kA', 'kC']);
+
+    const recentFailures = await getFailureAttempts(db, {
+      since: new Date(Date.now() - 5 * DAY_MS),
+    });
+
+    const fakeRunTask = async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: 'kA',
+            to_knowledge_id: 'kC',
+            relation_type: 'contrasts_with',
+            weight: 0.7,
+            reasoning: reasoningFor('att_cost_1'),
+          },
+        ],
+      }),
+    });
+
+    // Mock global fetch: the live judge resolves GLM config from env then POSTs to
+    // {baseURL}/chat/completions. Return a SUPERSEDE of neighbor_index 0 (the only
+    // neighbor handed to the ring) WITH usage tokens so onUsage fires.
+    const glmResponse = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              decision: {
+                action: 'SUPERSEDE',
+                neighbor_index: 0,
+                confidence: 0.88,
+                reason: 'candidate corrects the live neighbor',
+              },
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 321, completion_tokens: 42, total_tokens: 363 },
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(glmResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const stats = await runEdgeProposeAndWrite({
+        db,
+        recentFailures,
+        runTaskFn: fakeRunTask,
+        // Env carries the ZHIPU/DASHSCOPE keys createMem0Config requires; NO
+        // judgeReconcileFn → the LIVE judgeEdgeReconcile runs (against fetchMock).
+        env: {
+          DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+          ZHIPU_API_KEY: 'test-key',
+          DASHSCOPE_API_KEY: 'test-dashscope',
+        },
+      });
+
+      // The live judge ran and superseded the neighbor.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(stats.reconcile_superseded).toBe(1);
+
+      // The GLM tokens were ledgered to cost_ledger under task_kind='edge_reconcile'.
+      const ledgerRows = await db
+        .select()
+        .from(cost_ledger)
+        .where(eq(cost_ledger.task_kind, 'edge_reconcile'));
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0].provider).toBe('glm');
+      expect(ledgerRows[0].currency).toBe('CNY');
+      expect(ledgerRows[0].tokens_in).toBe(321);
+      expect(ledgerRows[0].tokens_out).toBe(42);
+      expect(Number(ledgerRows[0].cost)).toBeGreaterThan(0);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 });
