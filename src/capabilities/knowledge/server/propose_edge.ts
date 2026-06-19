@@ -498,6 +498,11 @@ export async function runEdgeProposeAndWrite(
           const newEdgeId = await applyEdgeSupersede(params.db, {
             candidate: p,
             supersededEdgeId: supersededId,
+            supersededEdge: {
+              from_knowledge_id: supersededEdge.from_knowledge_id,
+              to_knowledge_id: supersededEdge.to_knowledge_id,
+              relation_type: supersededEdge.relation_type,
+            },
             decision,
             affectedRefs,
           });
@@ -671,11 +676,16 @@ async function applyEdgeSupersede(
   opts: {
     candidate: EdgeProposalSchemaT;
     supersededEdgeId: string;
+    supersededEdge: {
+      from_knowledge_id: string;
+      to_knowledge_id: string;
+      relation_type: string;
+    };
     decision: EdgeReconcileDecision;
     affectedRefs: ActivityRefT[];
   },
 ): Promise<string> {
-  const { candidate: p, supersededEdgeId, decision, affectedRefs } = opts;
+  const { candidate: p, supersededEdgeId, supersededEdge, decision, affectedRefs } = opts;
   const now = new Date();
 
   const logRow = makeEdgePlannedRow({
@@ -733,7 +743,10 @@ async function applyEdgeSupersede(
     await archiveKnowledgeEdge(tx, supersededEdgeId);
 
     // 4) OLD edge archive-provenance event — a stable subject the correction can
-    //    target (a CorrectEvent cannot target an edge row, only an event).
+    //    target (a CorrectEvent cannot target an edge row, only an event). The
+    //    payload describes the edge BEING ARCHIVED (the OLD edge), not the
+    //    candidate — using the old edge's endpoints/type keeps the audit trail
+    //    truthful about which row was actually archived.
     await writeEvent(tx, {
       id: oldArchiveGenerateEventId,
       actor_kind: 'agent',
@@ -745,9 +758,9 @@ async function applyEdgeSupersede(
       payload: {
         edge_op: 'archive',
         archive_edge_id: supersededEdgeId,
-        from_knowledge_id: p.from_knowledge_id,
-        to_knowledge_id: p.to_knowledge_id,
-        relation_type: p.relation_type,
+        from_knowledge_id: supersededEdge.from_knowledge_id,
+        to_knowledge_id: supersededEdge.to_knowledge_id,
+        relation_type: supersededEdge.relation_type,
         reasoning: `reconcile SUPERSEDE: ${decision.reason}`,
       },
       created_at: now,

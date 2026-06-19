@@ -1630,6 +1630,29 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
       expect(replacement[0].action).toBe('generate');
       expect(replacement[0].subject_kind).toBe('knowledge_edge');
     }
+
+    // The OLD edge's archive-provenance generate event (the correction target)
+    // describes the edge BEING ARCHIVED — endpoints/type of the superseded OLD
+    // edge (kA→kB), NOT the candidate (kA→kC). A misleading payload here would
+    // mis-record which row was archived in the audit trail.
+    const archiveEvent = await db
+      .select()
+      .from(event)
+      .where(eq(event.id, correctRows[0].subject_id))
+      .limit(1);
+    expect(archiveEvent[0].action).toBe('generate');
+    const archivePayload = archiveEvent[0].payload as {
+      edge_op?: string;
+      archive_edge_id?: string;
+      from_knowledge_id?: string;
+      to_knowledge_id?: string;
+      relation_type?: string;
+    };
+    expect(archivePayload.edge_op).toBe('archive');
+    expect(archivePayload.archive_edge_id).toBe('e_old');
+    expect(archivePayload.from_knowledge_id).toBe('kA');
+    expect(archivePayload.to_knowledge_id).toBe('kB');
+    expect(archivePayload.relation_type).toBe('contrasts_with');
   });
 
   it('KEEP_BOTH: a no-contradiction candidate proceeds as a pending proposal unchanged (no archive, no new edge, no correction)', async () => {

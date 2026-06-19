@@ -20,7 +20,7 @@
 调查结论（YUK-322，三档证据：源码/官方文档/issues）：
 
 - **mem0 v3 是 ADD-only**：TS OSS 3.0.7 的 add() 管道硬编码 `event:"ADD"`，经典调和环（per-fact 检索 + ADD/UPDATE/DELETE/NONE 决策）只存在于 2.4.6，3.0.0 起移除；官方 NOT_PLANNED（issues #4896/#4904 closed，#4956 无回复）；**托管平台 v3 同样 ADD-only**，换托管版躲不开。
-- 但 mem0 的**抽取质量实测好**（尤其配 glm-x-preview：时间锚保留、中文术语内联保真、《论语》引用无幻觉）——这是「挂 mem0 而非全自建」的核心理由。
+- 但 mem0 的**抽取质量实测好**（尤其配 glm-5.2：时间锚保留、中文术语内联保真、《论语》引用无幻觉）——这是「挂 mem0 而非全自建」的核心理由。
 - Graphiti 的核心增量是 **bi-temporal（valid_at/invalid_at）+ 写入期矛盾调和环（resolve_extracted_edge）**，与自家 KG（类型化边 + AI 提议 + 软归档 + 溯源）高度同构——只值得抄设计，不值得引运行时。
 - **FSRS/掌握度等 UPDATE 主旋律的学习者状态不进 mem0**，留自家 Postgres 结构化表。mem0 只承接个性化/episodic 层。
 
@@ -115,7 +115,7 @@ UPDATE <collection> SET payload = payload || jsonb_build_object(
 |---|---|
 | jsonb 软取代直写 | 原子、零 re-embed、textLemmatized 完好 |
 | NOT / $not 过滤 | 两路径语法各自生效，标记后即时排除 |
-| glm-x-preview 调和决策 | 3 组 9 条零误判，中文理由准确 |
+| glm-5.2 调和决策 | 3 组 9 条零误判，中文理由准确 |
 | 延迟分布 | search ~200ms；LLM 4-27s；apply 0-14ms——**LLM 占 95-99%** |
 | 全 NONE（无矛盾）批次 | LLM 判断快 5-7×（~4s vs 23-27s） |
 
