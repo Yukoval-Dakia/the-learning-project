@@ -481,7 +481,15 @@ export async function runEdgeProposeAndWrite(
         } catch (err) {
           // ReconcileParseError / Retryable / Permanent — safe-degrade to
           // KEEP_BOTH (no destructive supersede on an unparseable / failed judge).
-          console.warn('runEdgeProposeAndWrite: reconcile judge failed, KEEP_BOTH degrade', err);
+          // Log ONLY the safe message: a ReconcileParseError carries `raw` = the
+          // full raw LLM provider response, and serializing the whole error object
+          // would leak that sensitive AI payload into log output. Mirror the memory
+          // side's KEEP_BOTH degrade log (triggers.ts: `err.message` only); `raw`
+          // belongs in the audit-log row, never the console.
+          console.warn(
+            'runEdgeProposeAndWrite: reconcile judge failed, KEEP_BOTH degrade',
+            err instanceof Error ? err.message : String(err),
+          );
           decision = null;
         }
       }
@@ -614,7 +622,15 @@ export async function runEdgeProposeAndWrite(
 
     return stats;
   } catch (err) {
-    console.error('runEdgeProposeAndWrite: failed (no proposals written)', err);
+    // Log ONLY the safe message: this catch-all in the edge-reconcile write path
+    // could in principle receive an error carrying a raw LLM payload (e.g. a
+    // ReconcileParseError), and serializing the whole error object would leak that
+    // sensitive AI response into log output. Message-only, matching the judge
+    // degrade site above.
+    console.error(
+      'runEdgeProposeAndWrite: failed (no proposals written)',
+      err instanceof Error ? err.message : String(err),
+    );
     await writeRetryableAiFailureLedger(params.db, 'KnowledgeEdgeProposeTask');
     return { ...EMPTY_RESULT };
   }
