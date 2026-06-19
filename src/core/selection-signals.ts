@@ -10,7 +10,7 @@
 // 越高（precision 越低）的诊断价值越低，避免在噪声大的能力估计上浪费选题预算。
 // 权威 spec：docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md §Task4。
 
-import { fisherInformation } from '@/core/theta';
+import { fisherInformation, thetaSe } from '@/core/theta';
 
 /**
  * 选题候选信号。一条候选（题或卷）一行；选题策略据此打分 + 抽样。
@@ -33,6 +33,13 @@ export interface SelectionCandidateSignal {
   dueRank?: number;
   /** recall-locked 变体（原题重背，不进 MFI 评分；Phase 3 标 mfi_eligible:false）。 */
   recallLocked?: boolean;
+  /**
+   * A3 (YUK-435) — 哪种信息准则算出了 `mfiScore` 字段（provenance）。
+   *   'mfi' — 点 MFI（fisherInformation(θ̂, b)）。warm KC / flag off 的默认。
+   *   'klp' — KLP 后验加权 Fisher 网格积分（仅 EARLY_KLP_ENABLED && 冷启 KC）。
+   * 缺省（recall-locked / 缺 θ̂ 或 b / 卷候选 → 无评分）时为 undefined。
+   */
+  scoreKind?: 'mfi' | 'klp';
 
   // ───────────────────────────────────────────────────────────────────────────
   // #52 / ADR-0042 编排档2 amendment（GPT 研究稿 §9.2）——选题不止 MFI 中心。
@@ -59,6 +66,101 @@ export interface SelectionCandidateSignal {
  */
 export function mfiScore(thetaHat: number, b: number): number {
   return fisherInformation(thetaHat, b);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A3 (YUK-435) — KLP（KL-information-Proxy）冷启选题分 + 制度门控开关。
+//
+// 问题：点 MFI `fisherInformation(θ̂, b)` 把全部信息押在 ONE 个 θ̂ 点上。冷启段
+//   （per-KC evidence_count 极小）θ̂ 还很 volatile（eloK 用大 kCold 让它乱跳），
+//   点 MFI 会在一个噪声很大的能力估计上做选题决策——选出的题对真实（未知）能力
+//   不一定信息量最高。
+//
+// 解法：用 θ̂ 的后验不确定性（Gaussian，中心 θ̂、SD = thetaSe(precision)）给 Fisher
+//   information 做**后验加权积分**——不押单点，而是对「θ 在后验下可能落的整片区域」
+//   求期望 item information。等价于「在不确定 θ̂ 下，这道题预期能提供多少 KC 信息」。
+//   这是 KL/KLP（Kullback–Leibler / posterior-weighted information）选题准则的轻量
+//   Fisher-grid 近似（owner 锁定形态）。
+//
+// HONEST framing：增益 MODEST，且只在冷启段（precision 低、SE 宽）显著——precision
+//   攒高后 SE→0，网格塌回 θ̂ 一点，KLP → 点 MFI（连续退化，见单测）。故只在
+//   evidence_count < EARLY_KLP_N 用 KLP，之后回落点 MFI（candidate-signals.ts 门控）。
+//
+// FLAG：EARLY_KLP_ENABLED 是 module-level const（镜像 SRT_ENABLED /
+//   HIERARCHICAL_ELO_ENABLED 的 dark-ship 模式——无 config 表、无 env）。Default
+//   FALSE = 本 PR ship dark：候选信号评分逐位等同今天（点 MFI），仅 type/常量/纯
+//   函数落地，klpScore 永不在热路径被调用。在 RT/冷启数据验证后由 follow-up 翻开。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Master flag for KLP cold-start selection scoring. **Default false (dark-ship).**
+ *
+ * false → candidate scoring uses point MFI exactly as before for ALL candidates
+ *   (klpScore is never reached on the hot path → selection bytes identical to today).
+ * true  → for cold-start KCs (per-KC evidence_count < EARLY_KLP_N) the candidate
+ *   score becomes klpScore(θ̂, b, precision) instead of mfiScore(θ̂, b); warm KCs
+ *   (evidence_count ≥ EARLY_KLP_N) still use point MFI.
+ *
+ * Composes orthogonally with HIERARCHICAL_ELO_ENABLED (A2) and SRT_ENABLED (A1):
+ * those modulate the θ̂ INPUT / credit value; this flag only changes which
+ * information functional scores a candidate given (θ̂, b, precision).
+ *
+ * Flipped in a follow-up (not this PR) after the cold-start gain is observed on
+ * live data.
+ */
+export const EARLY_KLP_ENABLED = false;
+
+/**
+ * Cold-start regime length for KLP scoring — KCs with per-KC evidence_count below
+ * this use KLP; at/above it, point MFI. Aligned with eloK's coldStartN (=4): the
+ * SAME regime where θ̂ is driven by the high-K cold-start step (and is therefore
+ * most volatile) is the regime where posterior-weighted information helps most.
+ * Above EARLY_KLP_N the SE has shrunk enough that KLP ≈ MFI anyway (continuous
+ * degradation), so the regime gate is honest, not arbitrary.
+ */
+export const EARLY_KLP_N = 4;
+
+/** KLP 后验加权 Fisher 网格的采样点数（θ̂ ± 3·SE 上等距）。21 点 ≈ ±3σ 充分覆盖。 */
+const KLP_GRID_N = 21;
+/** 网格半宽（以 SE 为单位）。±3·SE 覆盖 ~99.7% 后验质量。 */
+const KLP_GRID_HALF_WIDTH_SE = 3;
+
+/**
+ * KLP 评分：θ̂ 后验下 item information 的**后验加权积分**（posterior-weighted Fisher
+ * grid integral）。
+ *
+ *   后验：θ ~ Normal(θ̂, SE²)，SE = thetaSe(precision)（与 θ_precision 累积同一真相）。
+ *   网格：KLP_GRID_N(=21) 个点等距覆盖 [θ̂ − 3·SE, θ̂ + 3·SE]。
+ *   权重：w_i = φ((θ_i − θ̂)/SE) = exp(−½ z²)（未归一化高斯密度；归一化常数在比值
+ *         中抵消，故省）。
+ *   返回：Σ w_i · fisherInformation(θ_i, b) / Σ w_i —— θ 后验下的期望 item information。
+ *
+ * 与点 MFI 的关系（连续退化，单测钉死）：
+ *   - precision → ∞ ⇒ SE → 0 ⇒ 网格塌到 θ̂ 一点 ⇒ KLP → fisherInformation(θ̂, b) = MFI。
+ *   - precision 低 ⇒ SE 宽 ⇒ 后验把质量摊到 θ̂ 两侧 ⇒ KLP 比点 MFI 更「保守」（在
+ *     I(θ̂) 处于峰值附近时 KLP < MFI，因两侧信息更低）。冷启段正是 precision 低、
+ *     θ̂ volatile 之处——此时 KLP 不押单点噪声估计。
+ *
+ * 取值域：fisherInformation ∈ (0, 0.25]，加权平均不出界 ⇒ KLP ∈ (0, 0.25]。
+ * precision 非正由 thetaSe 内部 floor（1e-9）兜底 ⇒ SE 有限 ⇒ 不抛错、不 NaN。
+ *
+ * 纯函数、零 IO；与 mfiScore 同享 fisherInformation 真相（无第二份 item information）。
+ */
+export function klpScore(thetaHat: number, b: number, thetaPrecision: number): number {
+  const se = thetaSe(thetaPrecision); // floors precision at 1e-9 → SE finite & > 0
+  const lo = thetaHat - KLP_GRID_HALF_WIDTH_SE * se;
+  const hi = thetaHat + KLP_GRID_HALF_WIDTH_SE * se;
+  const step = (hi - lo) / (KLP_GRID_N - 1);
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < KLP_GRID_N; i++) {
+    const theta = lo + i * step;
+    const z = (theta - thetaHat) / se;
+    const w = Math.exp(-0.5 * z * z); // unnormalised Gaussian posterior weight
+    num += w * fisherInformation(theta, b);
+    den += w;
+  }
+  return num / den;
 }
 
 /**

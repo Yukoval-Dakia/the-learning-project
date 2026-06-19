@@ -4,10 +4,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   diagnosticScore,
+  klpScore,
   mfiScore,
   softmaxProbabilities,
   uncertaintyPenalty,
 } from './selection-signals';
+import { fisherInformation, thetaSe } from './theta';
 
 describe('mfiScore', () => {
   it('θ̂ = b 时取最大值 0.25', () => {
@@ -119,5 +121,85 @@ describe('softmaxProbabilities', () => {
   it('超大候选集不爆栈（不用 Math.max(...spread)）', () => {
     const big = new Array(200_000).fill(0).map((_, i) => i % 7);
     expect(() => softmaxProbabilities(big)).not.toThrow();
+  });
+});
+
+// A3 (YUK-435) — KLP（posterior-weighted Fisher grid integral）冷启信息分。
+describe('klpScore', () => {
+  // Reference implementation mirrors the spec exactly: 21-point grid over
+  // θ̂ ± 3·SE, Gaussian posterior weights φ((θ−θ̂)/SE), weighted mean of
+  // fisherInformation(θ, b). Used as the ground-truth oracle for the unit.
+  function referenceKlp(thetaHat: number, b: number, thetaPrecision: number): number {
+    const se = thetaSe(thetaPrecision);
+    const lo = thetaHat - 3 * se;
+    const hi = thetaHat + 3 * se;
+    const N = 21;
+    const step = (hi - lo) / (N - 1);
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < N; i++) {
+      const theta = lo + i * step;
+      const z = (theta - thetaHat) / se;
+      const w = Math.exp(-0.5 * z * z);
+      num += w * fisherInformation(theta, b);
+      den += w;
+    }
+    return num / den;
+  }
+
+  it('与 21 点后验加权 Fisher 网格积分参考实现一致', () => {
+    for (const [t, b, prec] of [
+      [0, 0, 1],
+      [0.5, 0.85, 0.5],
+      [-1.2, 0.3, 2],
+      [2, -1, 0.25],
+    ]) {
+      expect(klpScore(t, b, prec)).toBeCloseTo(referenceKlp(t, b, prec), 12);
+    }
+  });
+
+  it('恒在 (0, 0.25]（item information 的取值域，加权平均不出界）', () => {
+    for (const [t, b, prec] of [
+      [0, 0, 1],
+      [3, 0, 0.5],
+      [-3, 0, 0.5],
+      [1, -2, 4],
+    ]) {
+      const v = klpScore(t, b, prec);
+      expect(v).toBeGreaterThan(0);
+      expect(v).toBeLessThanOrEqual(0.25);
+    }
+  });
+
+  it('低 precision（高不确定）时与点 MFI 偏离更大', () => {
+    // θ̂ = b：点 MFI 在峰值 0.25；后验把质量摊到两侧信息更低的 θ ⇒ KLP < MFI，
+    // 且 precision 越低（SE 越宽）摊得越开 ⇒ 偏离越大。
+    const b = 0;
+    const thetaHat = 0;
+    const pointMfi = mfiScore(thetaHat, b); // 0.25 峰值
+    const klpWide = klpScore(thetaHat, b, 0.25); // 宽后验（SE=2）
+    const klpNarrow = klpScore(thetaHat, b, 100); // 窄后验（SE=0.1）
+    expect(klpWide).toBeLessThan(pointMfi);
+    expect(klpNarrow).toBeLessThan(pointMfi);
+    // 偏离单调：宽后验偏离 > 窄后验偏离。
+    expect(pointMfi - klpWide).toBeGreaterThan(pointMfi - klpNarrow);
+  });
+
+  it('高 precision（SE→0）时收敛到点 MFI', () => {
+    // precision 极大 ⇒ SE 极小 ⇒ 网格塌到 θ̂ 一点 ⇒ KLP → fisherInformation(θ̂, b)。
+    const [t, b] = [0.4, 0.85];
+    expect(klpScore(t, b, 1e6)).toBeCloseTo(mfiScore(t, b), 6);
+  });
+
+  it('对称：θ̂−b 等距时 KLP 相等（后验关于 θ̂ 对称 + I(θ) 关于 b 对称）', () => {
+    // 同一 precision，θ̂ 在 b 两侧等距 ⇒ 网格 + 权重 + I 都镜像对称 ⇒ KLP 相等。
+    expect(klpScore(2, 0, 1)).toBeCloseTo(klpScore(-2, 0, 1), 12);
+  });
+
+  it('非正 precision 被 clamp（thetaSe floor）不抛错、不 NaN', () => {
+    expect(() => klpScore(0, 0, 0)).not.toThrow();
+    const v = klpScore(0, 0, 0);
+    expect(Number.isFinite(v)).toBe(true);
+    expect(v).toBeGreaterThan(0);
   });
 });

@@ -15,7 +15,14 @@
 // b 锚只读 track='hard'（软轨 b 永不进 p(L)/调度，ADR-0035）。
 
 import type { QuestionKindT } from '@/core/schema/judge-routing';
-import { type SelectionCandidateSignal, diagnosticScore, mfiScore } from '@/core/selection-signals';
+import {
+  EARLY_KLP_ENABLED,
+  EARLY_KLP_N,
+  type SelectionCandidateSignal,
+  diagnosticScore,
+  klpScore,
+  mfiScore,
+} from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration } from '@/db/schema';
@@ -65,15 +72,20 @@ export interface CandidateInput {
 export type BSource = 'item_calibration' | 'difficulty_proxy' | 'none';
 
 /**
- * 收集层返回类型：core 信号 + b 来源旁路标注 + MFI 评分快照。
+ * 收集层返回类型：core 信号 + b 来源旁路标注 + 选题评分快照。
  *
  * `mfiScore` / `diagnosticScore` 是收集时算好的快照（复用 core 数学，不在此重算）——
  * recall-locked 候选**不算**（recall 题重背，不进 MFI/sampler 评分，ADR-0042:36/ADR-0030），
  * 故这两个字段对 recall 候选恒为 undefined。无 thetaHat/b（缺 KC 或缺难度）时也为 undefined。
+ *
+ * A3 (YUK-435)：`mfiScore` 字段承载的是**当前生效准则**算出的信息分——点 MFI（默认 /
+ * warm KC）或 KLP（EARLY_KLP_ENABLED && 冷启 KC）。`scoreKind`（继承自 core 信号 type）
+ * 旁路标注用了哪种。flag OFF（默认）恒为点 MFI，逐位等同今天。字段名保留 `mfiScore`
+ * 是为不破坏 Step C sampler 既有读点（语义已泛化为「信息分」）。
  */
 export type CollectedSignal = SelectionCandidateSignal & {
   bSource: BSource;
-  /** MFI 评分快照 = p(1−p)，p=σ(θ̂−b)。recall-locked / 缺 θ̂或b → undefined。 */
+  /** 信息分快照（点 MFI = p(1−p)，p=σ(θ̂−b)；或 KLP 后验加权积分）。recall-locked / 缺 θ̂或b → undefined。 */
   mfiScore?: number;
   /** 诊断评分快照 = MFI × 不确定性降权。recall-locked / 缺 θ̂/b/precision → undefined。 */
   diagnosticScore?: number;
@@ -82,6 +94,8 @@ export type CollectedSignal = SelectionCandidateSignal & {
 /** 冷启兜底（mastery_state 无行）：θ̂=0（logit 原点先验中性），precision=1（弱先验 1 单位信息，SE=1）。 */
 const COLD_START_THETA = 0;
 const COLD_START_PRECISION = 1;
+/** A3 (YUK-435) 冷启兜底 evidence_count=0（< EARLY_KLP_N ⇒ 落 KLP 冷启段）。never-seen KC 无作答证据。 */
+const COLD_START_EVIDENCE = 0;
 
 /**
  * 多 KC θ̂ 聚合：取最弱 KC（min theta_hat）。ADR-0042:36「多 KC 用 θ̂_min」——选题
@@ -98,28 +112,43 @@ const COLD_START_PRECISION = 1;
  *   UNCHANGED and resolves no domain/global row, so this read path is BYTE-IDENTICAL
  *   to today (weakest-by-θ_hat, same precision). With it on, a new KC of a strong
  *   domain compares at its inherited effective ability rather than cold 0.
+ *
+ * A3 (YUK-435) — also surface the WEAKEST KC's `evidence_count` (the per-KC cold-start
+ *   regime gate for KLP scoring) from the row ALREADY READ here (zero new query). The
+ *   evidence_count tracks the SAME KC whose θ̂/precision is returned (the θ̂_min KC), so
+ *   the KLP-vs-MFI decision and the score it produces are anchored on one consistent KC.
+ *   Cold start (no row / empty KCs) → 0 (< EARLY_KLP_N → cold regime). n=1-legal:
+ *   evidence_count is a single-learner sufficient statistic, KLP is a selection
+ *   criterion (no estimation), so one learner's count is the whole signal.
  */
 async function aggregateWeakestKc(
   db: DbLike,
   knowledgeIds: string[],
-): Promise<{ thetaHat?: number; thetaPrecision?: number }> {
+): Promise<{ thetaHat?: number; thetaPrecision?: number; evidenceCount: number }> {
   if (knowledgeIds.length === 0) {
-    return { thetaHat: undefined, thetaPrecision: undefined };
+    return { thetaHat: undefined, thetaPrecision: undefined, evidenceCount: 0 };
   }
   let weakestTheta = Number.POSITIVE_INFINITY;
   let weakestPrecision = COLD_START_PRECISION;
+  let weakestEvidence = COLD_START_EVIDENCE;
   for (const kid of knowledgeIds) {
     const row = await getMasteryState(db, kid, 'knowledge');
     const thetaKc = row?.theta_hat ?? COLD_START_THETA;
     // Effective theta (θ_global + θ_KC). Flag off → === thetaKc (bit-identical).
     const theta = await effectiveThetaForKc(db, kid, thetaKc);
     const precision = row?.theta_precision ?? COLD_START_PRECISION;
+    const evidence = row?.evidence_count ?? COLD_START_EVIDENCE;
     if (theta < weakestTheta) {
       weakestTheta = theta;
       weakestPrecision = precision;
+      weakestEvidence = evidence;
     }
   }
-  return { thetaHat: weakestTheta, thetaPrecision: weakestPrecision };
+  return {
+    thetaHat: weakestTheta,
+    thetaPrecision: weakestPrecision,
+    evidenceCount: weakestEvidence,
+  };
 }
 
 /**
@@ -174,7 +203,7 @@ async function collectQuestionSignal(
   familyRow: FamilyCalibrationRow | null = null,
 ): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
-  const { thetaHat, thetaPrecision } = await aggregateWeakestKc(db, knowledgeIds);
+  const { thetaHat, thetaPrecision, evidenceCount } = await aggregateWeakestKc(db, knowledgeIds);
   const { b: columnarB, bSource } = await resolveBAnchor(db, cand.refId, cand.difficulty);
   // 家族 delta 叠加（G4 NO-OP-safe）。b===undefined（bSource='none'）→ 无 b 可叠，保持 undefined。
   const b = columnarB !== undefined ? effectiveFamilyB(columnarB, familyRow) : undefined;
@@ -191,12 +220,29 @@ async function collectQuestionSignal(
   //   fail-closed 纠正。
   const recallLocked = cand.kind ? rotationClassForKind(cand.kind) === 'recall' : true;
 
-  // MFI 评分快照：复用 core 数学（mfiScore/diagnosticScore，selection-signals.ts），不在此
-  // 重算。recall-locked 或缺 θ̂/b 时不算（留 undefined）。
+  // 评分快照：复用 core 数学（mfiScore/klpScore/diagnosticScore，selection-signals.ts），
+  // 不在此重算。recall-locked 或缺 θ̂/b 时不算（留 undefined，scoreKind 同样 undefined）。
+  //
+  // A3 (YUK-435) — cold-start KLP 门控：weakest-KC evidence_count < EARLY_KLP_N 且
+  //   EARLY_KLP_ENABLED ⇒ 用 KLP（后验加权 Fisher 网格积分，不押 volatile θ̂ 单点）；
+  //   否则点 MFI。`scoreKind` 旁路标注用了哪种准则（provenance）。
+  //   FLAG OFF (DEFAULT)：useEarlyKlp 恒 false ⇒ 永远点 MFI ⇒ 选题评分逐位等同今天
+  //   （bitwise regression anchor，candidate-signals.db.test.ts 用 toBe 钉死）；scoreKind
+  //   只是新增的旁路字段，不改任何既有 score 数值。precision 缺失（无 θ̂ 状态）时 KLP
+  //   无法算（需 precision）⇒ 退点 MFI（与今天一致）。
   let mfi: number | undefined;
   let diag: number | undefined;
+  let scoreKind: SelectionCandidateSignal['scoreKind'];
   if (!recallLocked && thetaHat !== undefined && b !== undefined) {
-    mfi = mfiScore(thetaHat, b);
+    const useEarlyKlp =
+      EARLY_KLP_ENABLED && evidenceCount < EARLY_KLP_N && thetaPrecision !== undefined;
+    if (useEarlyKlp && thetaPrecision !== undefined) {
+      mfi = klpScore(thetaHat, b, thetaPrecision);
+      scoreKind = 'klp';
+    } else {
+      mfi = mfiScore(thetaHat, b);
+      scoreKind = 'mfi';
+    }
     if (thetaPrecision !== undefined) {
       diag = diagnosticScore(thetaHat, b, thetaPrecision);
     }
@@ -213,6 +259,7 @@ async function collectQuestionSignal(
     bSource,
     mfiScore: mfi,
     diagnosticScore: diag,
+    scoreKind,
     // ─────────────────────────────────────────────────────────────────────────
     // §9.2 / ADR-0042 编排档2 first-class 信号扩充（选题不止 MFI 中心）。
     // 调查结论（2026-06-16，Step A）：三者**当前都无 cheap reader**，全留 undefined
