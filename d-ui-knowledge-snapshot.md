@@ -1,0 +1,151 @@
+- generic [ref=e2]:
+  - button "Open Next.js Dev Tools" [ref=e8] [cursor=pointer]:
+    - img [ref=e9]
+  - alert [ref=e1]
+  - generic [ref=e12]:
+    - complementary [ref=e13]:
+      - button "Loom Loom 织 · 学习编织台" [ref=e14] [cursor=pointer]:
+        - img "Loom" [ref=e16]
+        - generic [ref=e21]:
+          - generic [ref=e22]: Loom
+          - generic [ref=e23]: 织 · 学习编织台
+      - navigation [ref=e24]:
+        - generic [ref=e25]: 织造
+        - button "今日" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e30]: 今日
+        - button "复习" [ref=e31] [cursor=pointer]:
+          - img [ref=e32]
+          - generic [ref=e35]: 复习
+        - button "练习" [ref=e36] [cursor=pointer]:
+          - img [ref=e37]
+          - generic [ref=e40]: 练习
+        - button "录入" [ref=e41] [cursor=pointer]:
+          - img [ref=e42]
+          - generic [ref=e44]: 录入
+        - generic [ref=e45]: 整理
+        - button "收件箱" [ref=e46] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e50]: 收件箱
+        - button "错题" [ref=e51] [cursor=pointer]:
+          - img [ref=e52]
+          - generic [ref=e54]: 错题
+        - button "题库" [ref=e55] [cursor=pointer]:
+          - img [ref=e56]
+          - generic [ref=e59]: 题库
+        - button "学习项" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e62]: 学习项
+        - button "知识" [ref=e63] [cursor=pointer]:
+          - img [ref=e64]
+          - generic [ref=e69]: 知识
+      - generic [ref=e70]:
+        - button "Copilot" [ref=e71] [cursor=pointer]:
+          - img [ref=e72]
+          - generic [ref=e75]: Copilot
+        - button "Admin" [ref=e76] [cursor=pointer]:
+          - img [ref=e77]
+          - generic [ref=e80]: Admin
+        - generic [ref=e81]:
+          - button "知 知微 Studio" [ref=e82] [cursor=pointer]:
+            - generic [ref=e83]: 知
+            - generic [ref=e84]:
+              - generic [ref=e85]: 知微
+              - generic [ref=e86]: Studio
+          - button "切换主题" [ref=e87] [cursor=pointer]:
+            - img [ref=e88]
+    - generic [ref=e90]:
+      - banner [ref=e91]:
+        - button "折叠侧栏" [ref=e92] [cursor=pointer]:
+          - img [ref=e93]
+        - generic [ref=e96]:
+          - generic [ref=e97]: Loom
+          - generic [ref=e98]: /
+          - generic [ref=e99]: 知识
+          - generic [ref=e100]: /
+          - generic [ref=e101]: synthetic:wenyan:root
+        - generic [ref=e102]:
+          - img [ref=e103]
+          - generic [ref=e106]: 搜索卡片、节点、错题…
+          - generic [ref=e107]: ⌘K
+        - button "Copilot" [ref=e108] [cursor=pointer]:
+          - img [ref=e109]
+      - main [ref=e112]:
+        - generic [ref=e113]:
+          - link "知识网" [ref=e114] [cursor=pointer]:
+            - /url: /knowledge
+            - img [ref=e115]
+            - text: 知识网
+          - generic [ref=e117]:
+            - generic [ref=e118]: KNOWLEDGE · syntheti…
+            - generic [ref=e119]:
+              - generic "evidence_count=0" [ref=e120]:
+                - img [ref=e121]
+                - text: 未练习
+              - generic [ref=e125]:
+                - heading "文言文（合成根）" [level=1] [ref=e126]
+                - generic [ref=e127]:
+                  - generic [ref=e128]: 0 evidence
+                  - generic [ref=e129]: ·
+                  - generic [ref=e130]: wenyan
+              - link "复习此点" [ref=e132] [cursor=pointer]:
+                - /url: /review
+                - img [ref=e133]
+                - text: 复习此点
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - heading "笔记" [level=2] [ref=e139]
+              - generic [ref=e140]:
+                - img [ref=e141]
+                - text: knowledge_id 是笔记上的标签 · 笔记按 note_atomic / note_hub / note_long 区分，一条笔记可挂多个知识点
+              - generic [ref=e144]:
+                - generic [ref=e145]:
+                  - generic [ref=e146]: interactive
+                  - text: 互动内容 · 1
+                - link "迷你互动周期表(视觉环种子) 11 分钟前" [ref=e147] [cursor=pointer]:
+                  - /url: /notes/art_visual_seed_interactive_01?from=knowledge:synthetic:wenyan:root
+                  - img [ref=e148]
+                  - generic [ref=e150]: 迷你互动周期表(视觉环种子)
+                  - generic [ref=e151]: 11 分钟前
+                  - img [ref=e152]
+              - heading "邻居 · 按关系分组" [level=2] [ref=e155]
+              - generic [ref=e156]:
+                - generic [ref=e157]:
+                  - generic [ref=e158]:
+                    - img [ref=e159]
+                    - text: 层级
+                  - generic [ref=e165]: 根节点 · 无父级
+                - generic [ref=e167]: 暂无横向关系
+            - generic [ref=e168]:
+              - heading "反向链接 · 按来源类型" [level=2] [ref=e170]
+              - generic [ref=e172]: 无反向链接
+              - heading "活动" [level=2] [ref=e174]
+              - generic [ref=e176]: 无活动记录
+    - generic [ref=e177]:
+      - button "关闭 Copilot 抽屉" [ref=e178] [cursor=pointer]
+      - dialog "Copilot" [active] [ref=e179]:
+        - banner [ref=e180]:
+          - heading "Copilot" [level=2] [ref=e181]
+          - button "关闭" [ref=e182] [cursor=pointer]: 收起
+        - generic [ref=e184]:
+          - generic [ref=e186]: 在线
+          - paragraph [ref=e188]: 昨晚 Coach 还没出新计划，先按你昨天排的复习队列开始即可。
+          - paragraph [ref=e189]:
+            - text: 今日待复习
+            - strong [ref=e190]: "7"
+            - text: 题
+          - list [ref=e191]:
+            - listitem [ref=e192]: knowledge_edge 用户反复在虚词和句式两个概念间混淆。多个失败 attempt 摘要明确标注"混淆虚词与句式判断"（events synthetic_evt_cluster_att_0/1/2 等）。虚词关注词类功能（如「之」的助词/代词用法），句式关注句子结构类型（如宾语前置）——二者是同一句子的不同分析维度，容易混为一谈。当前知识图中 xuci 节点完全孤立（0 条边），jushi 也仅有到翻译的 1 条边，缺
+            - listitem [ref=e193]: knowledge_node 题目考查「水陆草木之花」中「之」作结构助词（相当于「的」）的用法。用户挂到「虚词」大类后仍答错，说明需要将「之」的结构助词用法与代词用法（如「学而时习之」）、动词用法（如「送孟浩然之广陵」）区分。「虚词」节点粒度过粗，缺少对「之」字多种语法功能的辨析层，建议新增此节点。
+          - paragraph [ref=e194]: 共 12 条 pending 提案 · Coach 2026/6/9 03:47:01
+        - paragraph [ref=e198]: 问 Loom 任何事 —— 它会读你的错题、知识图谱与今日计划来回答。
+        - contentinfo [ref=e199]:
+          - generic [ref=e200]:
+            - generic [ref=e201]:
+              - button "今天该复习哪些？" [ref=e202] [cursor=pointer]
+              - button "解释「之」的用法" [ref=e203] [cursor=pointer]
+              - button "出题" [disabled] [ref=e204] [cursor=pointer]
+            - generic [ref=e205]:
+              - textbox "问 Loom 任何事…" [ref=e206]
+              - button "发送" [disabled]:
+                - img

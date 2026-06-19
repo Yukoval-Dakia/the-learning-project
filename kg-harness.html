@@ -1,0 +1,1192 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KnowledgeGraph Test Harness</title>
+<style>
+  /* ── reset + base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #faf9f7;
+    --surface: #fff;
+    --ink: #1a1612;
+    --ink-4: #9b8f82;
+    --ink-5: #cdc4b8;
+    --coral: #e84d3d;
+    --info: #3b82f6;
+    --contrasts: #8b5cf6;
+    --good: #16a34a;
+    --hard: #d97706;
+    --again: #dc2626;
+    --border: #e5dfd7;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+
+  /* ── top toolbar ── */
+  .toolbar {
+    display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    flex-shrink: 0; flex-wrap: wrap;
+  }
+  .toolbar h1 { font-size: 13px; font-weight: 600; color: var(--ink-4); letter-spacing: .04em; }
+  .toolbar label { font-size: 12px; color: var(--ink-4); }
+  .toolbar select, .toolbar input[type=range] { font-size: 12px; }
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 99px;
+    font-size: 11px; font-weight: 600; background: var(--border); color: var(--ink-4);
+  }
+  .badge.ok { background: #dcfce7; color: #15803d; }
+  .badge.err { background: #fee2e2; color: #b91c1c; }
+
+  /* ── main layout ── */
+  .main { display: flex; flex: 1; min-height: 0; }
+
+  /* ── sidebar (JSON paste) ── */
+  .sidebar {
+    width: 320px; flex-shrink: 0; display: flex; flex-direction: column;
+    border-right: 1px solid var(--border); background: var(--surface);
+  }
+  .sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .stab {
+    flex: 1; padding: 7px 4px; font-size: 12px; font-weight: 500;
+    text-align: center; cursor: pointer; border: none; background: none;
+    color: var(--ink-4); border-bottom: 2px solid transparent;
+  }
+  .stab.active { color: var(--ink); border-bottom-color: var(--coral); }
+  .sidebar-panel { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  .sidebar-panel.active { display: flex; }
+  .sidebar-panel textarea {
+    flex: 1; resize: none; border: none; outline: none; padding: 10px;
+    font-size: 11px; font-family: 'Menlo','Consolas',monospace; color: var(--ink);
+    background: #fdfcfb; line-height: 1.55;
+  }
+  .panel-footer {
+    padding: 7px 10px; border-top: 1px solid var(--border);
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  }
+  .btn {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface); cursor: pointer; font-size: 12px;
+    color: var(--ink); font-weight: 500;
+  }
+  .btn:hover { background: #f5f0ea; }
+  .btn.primary { background: var(--coral); color: #fff; border-color: var(--coral); }
+  .btn.primary:hover { background: #c93c2e; }
+  .parse-status { font-size: 11px; }
+
+  /* ── graph area ── */
+  .graph-wrap {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  }
+  .graph-controls {
+    display: flex; gap: 8px; padding: 7px 12px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+  }
+  .chip {
+    padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border);
+    background: var(--surface); cursor: pointer; font-size: 12px; white-space: nowrap;
+  }
+  .chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .chip-weak.on { background: var(--again); border-color: var(--again); }
+  .chip-learning.on { background: var(--hard); border-color: var(--hard); }
+  .chip-mastered.on { background: var(--good); border-color: var(--good); }
+
+  .svg-stage {
+    flex: 1; min-height: 0; cursor: grab; position: relative; overflow: hidden;
+  }
+  .svg-stage:active { cursor: grabbing; }
+  .svg-stage svg { width: 100%; height: 100%; display: block; }
+
+  /* ── legend ── */
+  .legend {
+    display: flex; gap: 12px; padding: 6px 14px; flex-wrap: wrap; align-items: center;
+    border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+    font-size: 11px; color: var(--ink-4);
+  }
+  .legend .swatch {
+    display: inline-block; width: 22px; height: 3px; border-radius: 2px;
+    border-top: 3px solid currentColor; vertical-align: middle; margin-right: 3px;
+  }
+  .legend .dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    vertical-align: middle; margin-right: 3px;
+  }
+  .legend .halo {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--coral); vertical-align: middle; margin-right: 3px;
+  }
+  .legend-sec { font-weight: 600; color: var(--ink-4); }
+
+  /* ── info panel (click a node) ── */
+  .info-panel {
+    position: absolute; right: 12px; top: 12px; width: 220px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.08);
+    display: none; z-index: 10;
+  }
+  .info-panel.visible { display: block; }
+  .info-panel h3 { font-size: 13px; margin-bottom: 8px; }
+  .info-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .info-key { color: var(--ink-4); }
+  .close-btn {
+    float: right; border: none; background: none; cursor: pointer;
+    color: var(--ink-4); font-size: 16px; line-height: 1;
+  }
+
+  /* ── transform log ── */
+  .transform-log {
+    position: absolute; left: 8px; bottom: 8px;
+    background: rgba(255,255,255,.92); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; font-size: 10px;
+    font-family: 'Menlo','Consolas',monospace; color: var(--ink-4);
+    max-width: 280px; line-height: 1.6; pointer-events: none; z-index: 5;
+  }
+  .transform-log b { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<!-- ── toolbar ── -->
+<div class="toolbar">
+  <h1>KnowledgeGraph Harness</h1>
+  <span id="node-badge" class="badge">0 nodes</span>
+  <span id="edge-badge" class="badge">0 edges</span>
+  <label>域名筛选
+    <select id="domain-select"><option value="">全部</option></select>
+  </label>
+  <label>布局模式
+    <select id="layout-mode">
+      <option value="tidyTree">tidyTree（默认）</option>
+      <option value="radial">radial（按深度）</option>
+    </select>
+  </label>
+  <label>展开深度 <span id="depth-val">2</span>
+    <input type="range" id="depth-range" min="1" max="8" value="2" />
+  </label>
+  <button class="btn primary" id="reset-view-btn">复位视图</button>
+</div>
+
+<!-- ── main ── -->
+<div class="main">
+
+  <!-- sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="stab active" data-tab="nodes-tab">Nodes JSON</button>
+      <button class="stab" data-tab="edges-tab">Edges JSON</button>
+      <button class="stab" data-tab="due-tab">Due JSON</button>
+      <button class="stab" data-tab="help-tab">帮助</button>
+    </div>
+
+    <!-- nodes panel -->
+    <div class="sidebar-panel active" id="nodes-tab">
+      <textarea id="nodes-input" spellcheck="false" placeholder='粘贴 GET /api/knowledge 的响应，格式：
+{"rows":[{"id":"kn_1","name":"虚词","parent_id":null,"mastery":0.8,"evidence_count":5,"domain":"文言文","effective_domain":"文言文"},…]}
+
+或直接粘贴节点数组 [{"id":…},…]'></textarea>
+      <div class="panel-footer">
+        <button class="btn primary" id="load-nodes-btn">加载节点</button>
+        <button class="btn" id="sample-btn">示例数据</button>
+        <span class="parse-status" id="nodes-status"></span>
+      </div>
+    </div>
+
+    <!-- edges panel -->
+    <div class="sidebar-panel" id="edges-tab">
+      <textarea id="edges-input" spellcheck="false" placeholder='粘贴 GET /api/knowledge/edges 的响应，格式：
+{"rows":[{"id":"e_1","from_knowledge_id":"kn_1","to_knowledge_id":"kn_2","relation_type":"prerequisite","weight":0.8,"archived_at":null},…]}
+
+或直接粘贴边数组 […]'></textarea>
+      <div class="panel-footer">
+        <button class="btn primary" id="load-edges-btn">加载边</button>
+        <span class="parse-status" id="edges-status"></span>
+      </div>
+    </div>
+
+    <!-- due panel -->
+    <div class="sidebar-panel" id="due-tab">
+      <textarea id="due-input" spellcheck="false" placeholder='粘贴 GET /api/knowledge/review-due-summary 的响应，格式：
+{"now":"2026-06-09T…","due_soon_window_hours":24,"summary":{"kn_1":{"overdue":2,"due_soon":1},…}}'></textarea>
+      <div class="panel-footer">
+        <button class="btn primary" id="load-due-btn">加载复习摘要</button>
+        <span class="parse-status" id="due-status"></span>
+      </div>
+    </div>
+
+    <!-- help panel -->
+    <div class="sidebar-panel" id="help-tab" style="padding:12px;overflow:auto;font-size:12px;line-height:1.7;color:#555;">
+      <b>数据流（与生产代码完全一致）</b><br>
+      <ol style="padding-left:16px;margin:8px 0;">
+        <li><code>GET /api/knowledge</code> → nodes（含 mastery, evidence_count, domain, parent_id）</li>
+        <li><code>GET /api/knowledge/edges</code> → edges → 过滤 archived_at===null</li>
+        <li><code>GET /api/knowledge/review-due-summary</code> → dueCounts Map</li>
+        <li>passesFilter（domain + mastery band + dueOnly）→ universeNodes</li>
+        <li>progressive disclosure：roots 自动展开，点击节点 drill-down</li>
+        <li>computeLayout（nodes ≤ 60 → tidyTree；> 60 → fcose headless）<br>
+            <i>Harness 只实现 tidyTree；fcose 路径显示提示</i></li>
+        <li>SVG 渲染：nodes + tree edges + mesh edges</li>
+      </ol>
+      <b>快捷键</b><br>
+      <ul style="padding-left:16px;margin:4px 0;">
+        <li>拖拽 = 平移</li>
+        <li>Ctrl/Cmd + 滚轮 = 缩放</li>
+        <li>双指滚动 = 平移</li>
+        <li>点击节点 = 展开 / 收起 + 查看详情</li>
+        <li>点击空白 = 退出聚焦</li>
+      </ul>
+      <b>masteryBand 规则</b><br>
+      evidence_count=0 → untrained，&lt;3 → insufficient，mastery&lt;0.4 → weak，&lt;0.7 → learning，≥0.7 → mastered<br><br>
+      <b>masteryTone（碟片颜色）</b><br>
+      mastery≥0.7 → good（绿），≥0.4 → hard（琥珀），其余 → again（红）
+    </div>
+  </div>
+
+  <!-- graph area -->
+  <div class="graph-wrap">
+    <!-- mastery filter chips -->
+    <div class="graph-controls" id="mastery-controls">
+      <button class="chip on" data-mastery="all">全部</button>
+      <button class="chip chip-weak" data-mastery="weak">薄弱 / 未练习</button>
+      <button class="chip chip-learning" data-mastery="learning">学习中</button>
+      <button class="chip chip-mastered" data-mastery="mastered">已掌握</button>
+      <button class="chip" id="due-only-chip">今天该复习</button>
+      <button class="chip" id="expand-all-btn">全展开</button>
+      <button class="chip" id="collapse-all-btn">只看根节点</button>
+    </div>
+
+    <div class="svg-stage" id="svg-stage">
+      <svg id="kg-svg" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrow-prerequisite" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--coral)" />
+          </marker>
+          <marker id="arrow-applied_in" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--info)" />
+          </marker>
+          <marker id="arrow-derived_from" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-4)" />
+          </marker>
+          <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(60,50,30,0.18)" />
+          </filter>
+        </defs>
+        <g id="camera"></g>
+      </svg>
+
+      <!-- node info panel -->
+      <div class="info-panel" id="info-panel">
+        <button class="close-btn" id="info-close">×</button>
+        <h3 id="info-name">—</h3>
+        <div class="info-row"><span class="info-key">ID</span><span id="info-id">—</span></div>
+        <div class="info-row"><span class="info-key">掌握度</span><span id="info-mastery">—</span></div>
+        <div class="info-row"><span class="info-key">证据数</span><span id="info-evidence">—</span></div>
+        <div class="info-row"><span class="info-key">Band</span><span id="info-band">—</span></div>
+        <div class="info-row"><span class="info-key">Tone</span><span id="info-tone">—</span></div>
+        <div class="info-row"><span class="info-key">Domain</span><span id="info-domain">—</span></div>
+        <div class="info-row"><span class="info-key">逾期复习</span><span id="info-overdue">—</span></div>
+        <div class="info-row"><span class="info-key">子节点数</span><span id="info-children">—</span></div>
+      </div>
+
+      <!-- transform log -->
+      <div class="transform-log" id="transform-log">载入数据后查看 transform 摘要</div>
+    </div>
+
+    <!-- legend -->
+    <div class="legend">
+      <span class="legend-sec">掌握度</span>
+      <span><span class="dot" style="background:var(--good)"></span>已掌握</span>
+      <span><span class="dot" style="background:var(--hard)"></span>学习中</span>
+      <span><span class="dot" style="background:var(--again)"></span>薄弱</span>
+      <span class="legend-sec">复习</span>
+      <span><span class="halo"></span>逾期</span>
+      <span class="legend-sec">边</span>
+      <span><span class="swatch" style="border-top-color:var(--ink-5);border-top-style:dashed"></span>tree</span>
+      <span><span class="swatch" style="border-top-color:var(--coral)"></span>前置</span>
+      <span><span class="swatch" style="border-top-color:var(--info)"></span>应用于</span>
+      <span><span class="swatch" style="border-top-color:var(--ink-4)"></span>派生自</span>
+      <span><span class="swatch" style="border-top-color:var(--contrasts)"></span>对照</span>
+      <span><span class="swatch" style="border-top-color:var(--ink-4);border-top-style:dashed"></span>相关</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+//  KnowledgeGraph Test Harness
+//  Mirrors the EXACT data transforms in:
+//    src/ui/KnowledgeGraph.tsx
+//    src/ui/knowledge-graph/layout.ts
+//    src/ui/knowledge-graph/mastery-tone.ts
+//    app/(app)/knowledge/page.tsx
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Constants (from KnowledgeGraph.tsx) ─────────────────────────────────
+const VIEW_BOX_W = 1000;
+const VIEW_BOX_H = 560;
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2;
+const HUB_RADIUS = 24;    // node with children
+const LEAF_RADIUS = 18;   // leaf node
+const FORCE_THRESHOLD = 60;  // above → would use fcose headless (not impl here)
+const MAX_INLINE_EXPAND_CHILDREN = 40;
+
+// relation_type → visual config (mirrors RELATION_VISUAL)
+const RELATION_VISUAL = {
+  prerequisite:  { token: '--coral',      arrow: true,  dashed: false },
+  applied_in:    { token: '--info',       arrow: true,  dashed: false },
+  derived_from:  { token: '--ink-4',      arrow: true,  dashed: false },
+  contrasts_with:{ token: '--contrasts',  arrow: false, dashed: false },
+  related_to:    { token: '--ink-4',      arrow: false, dashed: true  },
+};
+const RELATION_GLYPH = {
+  prerequisite: '→', applied_in: '↦', derived_from: '↳',
+  contrasts_with: '⇆', related_to: '—',
+};
+const RELATION_LABEL = {
+  prerequisite: '前置', related_to: '相关', contrasts_with: '对照',
+  applied_in: '应用于', derived_from: '派生自',
+};
+const MASTERY_BAND_LABEL = {
+  weak: '薄弱', learning: '学习中', mastered: '已掌握',
+  untrained: '未练习', insufficient: '证据不足',
+};
+
+// ── masteryTone (mirrors mastery-tone.ts) ───────────────────────────────
+function masteryTone(mastery) {
+  const m = mastery ?? 0;
+  if (m >= 0.7) return 'good';
+  if (m >= 0.4) return 'hard';
+  return 'again';
+}
+
+// ── masteryBand (mirrors KnowledgeGraph.tsx masteryBand) ─────────────────
+function masteryBand(mastery, evidenceCount) {
+  const evidence = evidenceCount ?? Infinity;
+  if (evidence === 0) return 'untrained';
+  if (evidence < 3)  return 'insufficient';
+  if (mastery == null) return 'untrained';
+  if (mastery < 0.4)  return 'weak';
+  if (mastery < 0.7)  return 'learning';
+  return 'mastered';
+}
+
+function isWeakish(mastery, evidenceCount) {
+  const b = masteryBand(mastery, evidenceCount);
+  return b === 'weak' || b === 'untrained' || b === 'insufficient';
+}
+
+// ── relationVisualKey ────────────────────────────────────────────────────
+function relationVisualKey(relationType) {
+  return RELATION_VISUAL[relationType] ? relationType : 'related_to';
+}
+
+// ── passesFilter (mirrors KnowledgeGraph.tsx passesFilter) ────────────────
+function passesFilter(node, filter, dueCounts) {
+  if (filter.domain !== null) {
+    const d = node.effective_domain ?? node.domain ?? null;
+    if (d !== filter.domain) return false;
+  }
+  if (filter.dueOnly && ((dueCounts.get(node.id)?.overdue ?? 0) === 0)) return false;
+  if (filter.mastery === 'all') return true;
+  const band = masteryBand(node.mastery, node.evidence_count);
+  if (filter.mastery === 'weak')
+    return band === 'weak' || band === 'untrained' || band === 'insufficient';
+  if (filter.mastery === 'learning') return band === 'learning';
+  return band === 'mastered';
+}
+
+// ── isInlineExpandable ───────────────────────────────────────────────────
+function isInlineExpandable(depth, childCount) {
+  if (childCount <= 0) return false;
+  return depth < 1 || childCount <= MAX_INLINE_EXPAND_CHILDREN;
+}
+
+// ── computeDepths (mirrors layout.ts computeDepths) ──────────────────────
+function computeDepths(nodes) {
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const cache = new Map();
+  function depthOf(id, seen) {
+    if (cache.has(id)) return cache.get(id);
+    const node = byId.get(id);
+    if (!node || node.parent_id == null || !byId.has(node.parent_id) || seen.has(id)) return 0;
+    seen.add(id);
+    const d = depthOf(node.parent_id, seen) + 1;
+    cache.set(id, d);
+    return d;
+  }
+  const out = new Map();
+  for (const n of nodes) out.set(n.id, depthOf(n.id, new Set()));
+  return out;
+}
+
+// ── tidyTree (mirrors layout.ts tidyTree) ────────────────────────────────
+function tidyTree(nodes) {
+  if (nodes.length === 0) return new Map();
+  const ids = new Set(nodes.map(n => n.id));
+  const childrenOf = new Map();
+  for (const n of nodes) {
+    if (n.parent_id != null && ids.has(n.parent_id)) {
+      const arr = childrenOf.get(n.parent_id) ?? [];
+      arr.push(n.id);
+      childrenOf.set(n.parent_id, arr);
+    }
+  }
+  const depths = computeDepths(nodes);
+  const roots = nodes.filter(n => n.parent_id == null || !ids.has(n.parent_id)).map(n => n.id);
+  const slot = new Map();
+  let cursor = 0;
+  function assign(id, seen) {
+    if (seen.has(id)) return cursor;
+    seen.add(id);
+    const ch = childrenOf.get(id) ?? [];
+    if (ch.length === 0) { const x = cursor++; slot.set(id, x); return x; }
+    const xs = ch.map(c => assign(c, seen));
+    const x = (xs[0] + xs[xs.length - 1]) / 2;
+    slot.set(id, x);
+    return x;
+  }
+  for (const r of roots) assign(r, new Set());
+  for (const n of nodes) if (!slot.has(n.id)) slot.set(n.id, cursor++);
+  let maxDepth = 0;
+  for (const n of nodes) maxDepth = Math.max(maxDepth, depths.get(n.id) ?? 0);
+  const slots = [...slot.values()];
+  const minX = Math.min(...slots);
+  const maxX = Math.max(...slots);
+  const spanX = maxX - minX || 1;
+  const PAD_X = 120, PAD_Y = 90;
+  const rowGap = maxDepth > 0 ? (VIEW_BOX_H - 2 * PAD_Y) / maxDepth : 0;
+  const colScale = (VIEW_BOX_W - 2 * PAD_X) / spanX;
+  const pos = new Map();
+  for (const n of nodes) {
+    const sx = slot.get(n.id) ?? 0;
+    const d = depths.get(n.id) ?? 0;
+    const x = maxX === minX ? VIEW_BOX_W / 2 : PAD_X + (sx - minX) * colScale;
+    const y = maxDepth === 0 ? VIEW_BOX_H / 2 : PAD_Y + d * rowGap;
+    pos.set(n.id, { x, y });
+  }
+  return pos;
+}
+
+// ── radial layout (alternative, same interface) ──────────────────────────
+function radialByDepth(nodes) {
+  if (nodes.length === 0) return new Map();
+  const depths = computeDepths(nodes);
+  const byDepth = new Map();
+  for (const n of nodes) {
+    const d = depths.get(n.id) ?? 0;
+    const arr = byDepth.get(d) ?? []; arr.push(n.id); byDepth.set(d, arr);
+  }
+  const maxDepth = Math.max(...[...byDepth.keys()]);
+  const cx = VIEW_BOX_W / 2, cy = VIEW_BOX_H / 2;
+  const maxR = Math.min(cx, cy) - 60;
+  const pos = new Map();
+  for (const [depth, ids] of byDepth) {
+    const r = maxDepth === 0 ? 0 : (depth / maxDepth) * maxR;
+    ids.forEach((id, i) => {
+      const angle = (2 * Math.PI * i / ids.length) - Math.PI / 2;
+      pos.set(id, { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+    });
+  }
+  return pos;
+}
+
+// ── computeLayout (mirrors layout.ts computeLayout) ──────────────────────
+function computeLayout(nodes, edges, mode) {
+  if (nodes.length === 0) return new Map();
+  if (mode === 'radial') return radialByDepth(nodes);
+  // fcose path → harness degrades to tidyTree with a warning
+  return tidyTree(nodes);
+}
+
+// ── curvedEdge (mirrors KnowledgeGraph.tsx curvedEdge) ───────────────────
+function curvedEdge(from, to, kind) {
+  const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2;
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const bow = kind === 'tree' ? 16 : Math.min(72, len * 0.22);
+  const cx = mx + (-dy / len) * bow, cy = my + (dx / len) * bow;
+  return {
+    d: `M${from.x} ${from.y} Q${cx} ${cy} ${to.x} ${to.y}`,
+    apex: { x: (mx + cx) / 2, y: (my + cy) / 2 },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Application state
+// ══════════════════════════════════════════════════════════════════════════
+let state = {
+  // raw data (from API)
+  rawNodes: [],      // KnowledgeNode[]
+  rawEdges: [],      // KnowledgeEdgeRow[]  (all, incl. archived)
+  dueCounts: new Map(),  // Map<string, {overdue,due_soon}>
+
+  // filter state
+  filter: { domain: null, mastery: 'all', dueOnly: false },
+  layoutMode: 'tidyTree',
+  maxDepth: 2,       // for future: harness uses expandedIds instead
+
+  // UI
+  expandedIds: new Set(),   // ids the user has expanded
+  selectedNodeId: null,     // clicked node id
+
+  // camera (pan/zoom)
+  view: { x: 0, y: 0, k: 1 },
+  drag: null,
+
+  // computed (set by render)
+  layout: new Map(),
+  visibleNodes: [],
+  childrenByParent: new Map(),
+  depthByNode: new Map(),
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Data loading (page.tsx transforms)
+// ══════════════════════════════════════════════════════════════════════════
+
+function loadNodes(json) {
+  // Mirrors page.tsx: knowledgeQ.data?.rows ?? []
+  let rows;
+  try {
+    const parsed = JSON.parse(json);
+    rows = Array.isArray(parsed) ? parsed : (parsed.rows ?? []);
+  } catch(e) { return { ok: false, error: e.message }; }
+  if (!Array.isArray(rows)) return { ok: false, error: 'Expected array or {rows:[…]}' };
+
+  state.rawNodes = rows;
+  // Re-default domain filter (mirrors page.tsx useEffect on domains)
+  const domains = distinctDomains(rows);
+  if (state.filter.domain !== null && !domains.includes(state.filter.domain)) {
+    state.filter.domain = domains.length > 1 ? domains[0] : null;
+  }
+  // Default expand roots
+  rebuildRootsExpanded();
+  rebuildDomainSelect(domains);
+  render();
+  return { ok: true, count: rows.length };
+}
+
+function loadEdges(json) {
+  // Mirrors page.tsx: edgesQ.data?.rows ?? [], then activeEdges = filter(archived_at===null)
+  let rows;
+  try {
+    const parsed = JSON.parse(json);
+    rows = Array.isArray(parsed) ? parsed : (parsed.rows ?? []);
+  } catch(e) { return { ok: false, error: e.message }; }
+  if (!Array.isArray(rows)) return { ok: false, error: 'Expected array or {rows:[…]}' };
+  state.rawEdges = rows;
+  render();
+  return { ok: true, count: rows.length, active: rows.filter(e => e.archived_at === null).length };
+}
+
+function loadDue(json) {
+  // Mirrors page.tsx: dueCounts = Map from reviewDueQ.data?.summary
+  let parsed;
+  try { parsed = JSON.parse(json); } catch(e) { return { ok: false, error: e.message }; }
+  const summary = parsed.summary ?? parsed;
+  if (typeof summary !== 'object') return { ok: false, error: 'Expected {summary:{…}} or object' };
+  state.dueCounts = new Map(Object.entries(summary));
+  render();
+  return { ok: true, count: Object.keys(summary).length };
+}
+
+// ── distinctDomains (mirrors KnowledgeGraph.tsx distinctDomains) ──────────
+function distinctDomains(nodes) {
+  const seen = new Set();
+  for (const n of nodes) { const d = n.effective_domain ?? n.domain; if (d) seen.add(d); }
+  return [...seen].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+}
+
+function rebuildDomainSelect(domains) {
+  const sel = document.getElementById('domain-select');
+  sel.innerHTML = '<option value="">全部</option>';
+  for (const d of domains) {
+    const opt = document.createElement('option');
+    opt.value = d; opt.textContent = d;
+    if (d === state.filter.domain) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+function rebuildRootsExpanded() {
+  // Mirrors page.tsx default: expandedIds = new Set(rootIds)
+  const universeNodes = state.rawNodes.filter(n => passesFilter(n, state.filter, state.dueCounts));
+  const universeIds = new Set(universeNodes.map(n => n.id));
+  const rootIds = universeNodes
+    .filter(n => n.parent_id == null || !universeIds.has(n.parent_id))
+    .map(n => n.id);
+  state.expandedIds = new Set(rootIds);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Main render pipeline
+// ══════════════════════════════════════════════════════════════════════════
+function render() {
+  const log = [];
+
+  // 1. passesFilter → universeNodes
+  const universeNodes = state.rawNodes.filter(n =>
+    passesFilter(n, state.filter, state.dueCounts)
+  );
+  const universeIds = new Set(universeNodes.map(n => n.id));
+  log.push(`<b>1. passesFilter</b>: ${state.rawNodes.length} → <b>${universeNodes.length}</b> nodes`);
+
+  // 2. activeEdges (mirrors page.tsx: edges.filter(e => e.archived_at === null))
+  const activeEdges = state.rawEdges.filter(e => e.archived_at === null);
+  const visibleEdges = activeEdges.filter(e =>
+    universeIds.has(e.from_knowledge_id) && universeIds.has(e.to_knowledge_id)
+  );
+  log.push(`<b>2. activeEdges</b>: ${state.rawEdges.length} total → <b>${activeEdges.length}</b> active → ${visibleEdges.length} in-universe`);
+
+  // 3. childrenByParent
+  const childrenByParent = new Map();
+  for (const n of universeNodes) {
+    if (n.parent_id != null && universeIds.has(n.parent_id)) {
+      const arr = childrenByParent.get(n.parent_id) ?? [];
+      arr.push(n.id);
+      childrenByParent.set(n.parent_id, arr);
+    }
+  }
+  state.childrenByParent = childrenByParent;
+
+  // 4. depthByNode
+  const depthByNode = computeDepths(universeNodes);
+  state.depthByNode = depthByNode;
+
+  // 5. rootIds
+  const rootIds = universeNodes
+    .filter(n => n.parent_id == null || !universeIds.has(n.parent_id))
+    .map(n => n.id);
+
+  // 6. disclosedIds (progressive disclosure: roots + children of expandedIds)
+  const disclosedIds = new Set(rootIds);
+  const queue = [...rootIds];
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (!state.expandedIds.has(id)) continue;
+    for (const c of (childrenByParent.get(id) ?? [])) {
+      if (!disclosedIds.has(c)) { disclosedIds.add(c); queue.push(c); }
+    }
+  }
+  log.push(`<b>3. disclosure</b>: ${universeNodes.length} universe → <b>${disclosedIds.size}</b> disclosed (roots: ${rootIds.length}, expanded: ${state.expandedIds.size})`);
+
+  // 7. visibleNodes (disclosed ∩ universe)
+  const visibleNodes = universeNodes.filter(n => disclosedIds.has(n.id));
+  const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
+  const visibleMeshEdges = activeEdges.filter(e =>
+    visibleNodeIds.has(e.from_knowledge_id) && visibleNodeIds.has(e.to_knowledge_id)
+  );
+  state.visibleNodes = visibleNodes;
+  log.push(`<b>4. visible</b>: <b>${visibleNodes.length}</b> nodes, <b>${visibleMeshEdges.length}</b> mesh edges`);
+
+  // 8. computeLayout
+  const tooLarge = visibleNodes.length > FORCE_THRESHOLD;
+  const layout = computeLayout(visibleNodes, visibleMeshEdges, state.layoutMode);
+  state.layout = layout;
+  log.push(`<b>5. layout</b>: ${tooLarge ? '<span style="color:var(--again)">⚠ &gt;60 nodes, fcose path — harness degrades to tidyTree</span>' : state.layoutMode}`);
+
+  // 9. hubIds (nodes that parent others — drive hub radius)
+  const hubIds = new Set();
+  for (const n of state.rawNodes) if (n.parent_id) hubIds.add(n.parent_id);
+
+  // Update badges
+  document.getElementById('node-badge').textContent = `${state.rawNodes.length} nodes`;
+  document.getElementById('node-badge').className = `badge ${state.rawNodes.length ? 'ok' : ''}`;
+  document.getElementById('edge-badge').textContent = `${activeEdges.length} edges`;
+
+  // ── SVG render ─────────────────────────────────────────────────────────
+  const camera = document.getElementById('camera');
+  camera.innerHTML = '';
+
+  // ── Tree edges (parent_id skeleton) ────────────────────────────────────
+  for (const n of visibleNodes) {
+    if (!n.parent_id) continue;
+    const from = layout.get(n.parent_id);
+    const to = layout.get(n.id);
+    if (!from || !to) continue;
+    const curve = curvedEdge(from, to, 'tree');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', curve.d);
+    path.setAttribute('stroke', 'var(--ink-5)');
+    path.setAttribute('stroke-width', '1');
+    path.setAttribute('stroke-dasharray', '3 5');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('opacity', '0.7');
+    camera.appendChild(path);
+  }
+
+  // ── Mesh edges ─────────────────────────────────────────────────────────
+  for (const e of visibleMeshEdges) {
+    const from = layout.get(e.from_knowledge_id);
+    const to = layout.get(e.to_knowledge_id);
+    if (!from || !to) continue;
+    const vk = relationVisualKey(e.relation_type);
+    const vis = RELATION_VISUAL[vk];
+    const color = `var(${vis.token})`;
+    const width = 1 + (e.weight ?? 0.5) * 1.5;
+    const dash = vis.dashed ? '5 4' : undefined;
+    const curve = curvedEdge(from, to, 'mesh');
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', curve.d);
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', String(width));
+    path.setAttribute('fill', 'none');
+    if (dash) path.setAttribute('stroke-dasharray', dash);
+    if (vis.arrow) path.setAttribute('marker-end', `url(#arrow-${vk})`);
+    g.appendChild(path);
+
+    // Label at apex
+    const glyph = RELATION_GLYPH[vk] ?? '';
+    const label = RELATION_LABEL[vk] ?? vk;
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', String(curve.apex.x));
+    text.setAttribute('y', String(curve.apex.y - 4));
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('font-size', '9');
+    text.setAttribute('fill', color);
+    text.setAttribute('font-family', 'monospace');
+    text.textContent = `${glyph} ${label}`;
+    g.appendChild(text);
+    camera.appendChild(g);
+  }
+
+  // ── Nodes ───────────────────────────────────────────────────────────────
+  for (const n of visibleNodes) {
+    const p = layout.get(n.id);
+    if (!p) continue;
+    const r = hubIds.has(n.id) ? HUB_RADIUS : LEAF_RADIUS;
+    const tone = masteryTone(n.mastery);
+    const masteryPct = Math.max(0, Math.min(1, n.mastery ?? 0));
+    const circ = 2 * Math.PI * r;
+    const overdue = state.dueCounts.get(n.id)?.overdue ?? 0;
+    const childCount = childrenByParent.get(n.id)?.length ?? 0;
+    const depth = depthByNode.get(n.id) ?? 0;
+    const isExpanded = state.expandedIds.has(n.id);
+    const hiddenKids = childCount > 0 && !isExpanded ? childCount : 0;
+    const expandable = isInlineExpandable(depth, childCount);
+    const selected = n.id === state.selectedNodeId;
+
+    // Use CSS class for tone color — SVG fill/stroke attributes do NOT resolve
+    // CSS custom properties (var()); only inline style.fill does. We assign a
+    // tone-* class and let the stylesheet handle the resolved color.
+    const toneClass = `tone-${tone}`; // tone-good | tone-hard | tone-again
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', `translate(${p.x},${p.y})`);
+    g.setAttribute('cursor', 'pointer');
+    g.setAttribute('class', toneClass);
+    g.dataset.id = n.id;
+    g.dataset.name = n.name;
+
+    // Due halo
+    if (overdue > 0) {
+      const halo = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      halo.setAttribute('r', String(r + 6));
+      halo.setAttribute('fill', 'none');
+      halo.setAttribute('stroke', 'var(--coral)');
+      halo.setAttribute('stroke-width', '2.5');
+      halo.setAttribute('opacity', '0.7');
+      g.appendChild(halo);
+    }
+
+    // Selected ring
+    if (selected) {
+      const sel = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      sel.setAttribute('r', String(r + 4));
+      sel.setAttribute('fill', 'none');
+      sel.setAttribute('stroke', 'var(--ink)');
+      sel.setAttribute('stroke-width', '2');
+      g.appendChild(sel);
+    }
+
+    // Disc — use style.fill so CSS var() resolves (SVG fill attribute cannot
+    // resolve CSS custom properties; inline style can).
+    const disc = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    disc.setAttribute('r', String(r));
+    disc.style.fill = `var(--${tone})`;
+    disc.setAttribute('filter', 'url(#shadow)');
+    disc.setAttribute('opacity', '0.85');
+    g.appendChild(disc);
+
+    // Track ring
+    const track = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    track.setAttribute('r', String(r));
+    track.setAttribute('fill', 'none');
+    track.setAttribute('stroke', 'rgba(255,255,255,0.18)');
+    track.setAttribute('stroke-width', '3.5');
+    g.appendChild(track);
+
+    // Mastery arc — same CSS var trick for stroke
+    const arc = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    arc.setAttribute('r', String(r));
+    arc.setAttribute('fill', 'none');
+    arc.style.stroke = `var(--${tone})`;
+    arc.setAttribute('stroke-width', '3.5');
+    arc.setAttribute('stroke-linecap', 'round');
+    arc.setAttribute('stroke-dasharray', String(circ));
+    arc.setAttribute('stroke-dashoffset', String(circ * (1 - masteryPct)));
+    arc.setAttribute('transform', 'rotate(-90)');
+    arc.setAttribute('opacity', '0.5');
+    g.appendChild(arc);
+
+    // Mastery % label inside
+    const pctText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    pctText.setAttribute('y', '4');
+    pctText.setAttribute('text-anchor', 'middle');
+    pctText.setAttribute('font-size', r >= HUB_RADIUS ? '10' : '8');
+    pctText.setAttribute('font-family', 'monospace');
+    pctText.setAttribute('fill', '#fff');
+    pctText.setAttribute('font-weight', '600');
+    pctText.textContent = String(Math.round(masteryPct * 100));
+    g.appendChild(pctText);
+
+    // Node name label below
+    const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    labelText.setAttribute('y', String(r + 18));
+    labelText.setAttribute('text-anchor', 'middle');
+    labelText.setAttribute('font-size', '11');
+    labelText.setAttribute('fill', 'var(--ink)');
+    // truncate long names
+    const displayName = n.name.length > 10 ? n.name.slice(0, 9) + '…' : n.name;
+    labelText.textContent = displayName;
+    if (n.name.length > 10) {
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = n.name;
+      g.appendChild(title);
+    }
+    g.appendChild(labelText);
+
+    // Badge: hidden children count
+    if (hiddenKids > 0) {
+      const capped = !expandable;
+      const bx = r * 0.72, by = -r * 0.72;
+      const bgCirc = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      bgCirc.setAttribute('cx', String(bx));
+      bgCirc.setAttribute('cy', String(by));
+      bgCirc.setAttribute('r', '10');
+      bgCirc.setAttribute('fill', capped ? 'var(--ink-4)' : 'var(--coral)');
+      g.appendChild(bgCirc);
+      const bText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      bText.setAttribute('x', String(bx));
+      bText.setAttribute('y', String(by + 3.5));
+      bText.setAttribute('text-anchor', 'middle');
+      bText.setAttribute('font-size', '8');
+      bText.setAttribute('font-family', 'monospace');
+      bText.setAttribute('fill', '#fff');
+      bText.setAttribute('font-weight', '700');
+      bText.textContent = capped ? (hiddenKids > 99 ? '99+' : String(hiddenKids)) : `+${hiddenKids}`;
+      g.appendChild(bText);
+    }
+
+    // Click handler
+    g.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      handleNodeTap(n.id);
+    });
+
+    camera.appendChild(g);
+  }
+
+  // Auto-fit: after each layout change, update the SVG viewBox so it tightly
+  // wraps all visible node positions (with padding). This is simpler and more
+  // reliable than trying to compute a camera transform: the <svg> viewBox IS
+  // the "logical canvas", so expanding it to include all nodes + padding means
+  // preserveAspectRatio="xMidYMid meet" will always show everything without
+  // clipping, regardless of node count or stage size.
+  //
+  // We only auto-fit when the visible set changes (or on first render) so that
+  // manual pan/zoom from the camera <g> still works after the user drills in.
+  const prevCount = state._lastVisibleCount ?? -1;
+  const curCount = visibleNodes.length;
+  if (curCount !== prevCount) {
+    state._lastVisibleCount = curCount;
+    // Compute bbox over all positioned visible nodes.
+    if (layout.size > 0) {
+      const MAX_R = HUB_RADIUS + 6 + 20; // max radius + halo + label clearance
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const [, p] of layout) {
+        minX = Math.min(minX, p.x - MAX_R);
+        minY = Math.min(minY, p.y - MAX_R);
+        maxX = Math.max(maxX, p.x + MAX_R);
+        maxY = Math.max(maxY, p.y + MAX_R);
+      }
+      const PAD = 24;
+      const vbX = minX - PAD, vbY = minY - PAD;
+      const vbW = maxX - minX + PAD * 2, vbH = maxY - minY + PAD * 2;
+      document.getElementById('kg-svg').setAttribute('viewBox',
+        `${vbX} ${vbY} ${vbW} ${vbH}`
+      );
+    } else {
+      document.getElementById('kg-svg').setAttribute('viewBox', `0 0 ${VIEW_BOX_W} ${VIEW_BOX_H}`);
+    }
+    // Reset camera to identity — the viewBox does the fit.
+    state.view = { x: 0, y: 0, k: 1 };
+  }
+
+  // apply camera transform
+  applyCamera();
+
+  // update transform log
+  document.getElementById('transform-log').innerHTML = log.join('<br>');
+}
+
+function applyCamera() {
+  const camera = document.getElementById('camera');
+  camera.setAttribute('transform',
+    `translate(${state.view.x} ${state.view.y}) scale(${state.view.k})`
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Node tap → drill-down (mirrors KnowledgeGraph.tsx handleNodeTap)
+// ══════════════════════════════════════════════════════════════════════════
+function handleNodeTap(id) {
+  state.selectedNodeId = id;
+  const node = state.rawNodes.find(n => n.id === id);
+  if (!node) return;
+
+  // expand / collapse
+  const childCount = state.childrenByParent.get(id)?.length ?? 0;
+  if (childCount > 0) {
+    const depth = state.depthByNode.get(id) ?? 0;
+    const isExpanded = state.expandedIds.has(id);
+    if (isExpanded) {
+      state.expandedIds.delete(id);
+    } else if (isInlineExpandable(depth, childCount)) {
+      state.expandedIds.add(id);
+    }
+  }
+
+  // show info panel
+  showInfo(node);
+  render();
+}
+
+function showInfo(node) {
+  const band = masteryBand(node.mastery, node.evidence_count);
+  const tone = masteryTone(node.mastery);
+  const overdue = state.dueCounts.get(node.id)?.overdue ?? 0;
+  const childCount = state.childrenByParent.get(node.id)?.length ?? 0;
+  document.getElementById('info-name').textContent = node.name;
+  document.getElementById('info-id').textContent = node.id;
+  document.getElementById('info-mastery').textContent =
+    node.mastery != null ? (node.mastery * 100).toFixed(0) + '%' : 'null';
+  document.getElementById('info-evidence').textContent = String(node.evidence_count ?? '—');
+  document.getElementById('info-band').textContent = MASTERY_BAND_LABEL[band] ?? band;
+  document.getElementById('info-tone').textContent = tone;
+  document.getElementById('info-domain').textContent =
+    node.effective_domain ?? node.domain ?? '—';
+  document.getElementById('info-overdue').textContent = String(overdue);
+  document.getElementById('info-children').textContent = String(childCount);
+  document.getElementById('info-panel').classList.add('visible');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Pan / zoom (matches KnowledgeGraph.tsx wheel + drag logic)
+// ══════════════════════════════════════════════════════════════════════════
+const stage = document.getElementById('svg-stage');
+
+stage.addEventListener('mousedown', e => {
+  state.drag = { px: e.clientX, py: e.clientY, x: state.view.x, y: state.view.y };
+});
+window.addEventListener('mousemove', e => {
+  if (!state.drag) return;
+  state.view.x = state.drag.x + (e.clientX - state.drag.px);
+  state.view.y = state.drag.y + (e.clientY - state.drag.py);
+  applyCamera();
+});
+window.addEventListener('mouseup', () => { state.drag = null; });
+
+// Pinch = ctrlKey+wheel → zoom; plain wheel → pan (mirrors KnowledgeGraph.tsx)
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN,
+      parseFloat((state.view.k - e.deltaY * 0.01).toFixed(2))
+    ));
+    state.view.k = k;
+  } else {
+    state.view.x -= e.deltaX;
+    state.view.y -= e.deltaY;
+  }
+  applyCamera();
+}, { passive: false });
+
+stage.addEventListener('click', e => {
+  if (e.target === stage || e.target.tagName === 'svg') {
+    state.selectedNodeId = null;
+    document.getElementById('info-panel').classList.remove('visible');
+  }
+});
+
+document.getElementById('reset-view-btn').addEventListener('click', () => {
+  state.view = { x: 0, y: 0, k: 1 };
+  applyCamera();
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Sidebar tabs
+// ══════════════════════════════════════════════════════════════════════════
+document.querySelectorAll('.stab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Load buttons
+// ══════════════════════════════════════════════════════════════════════════
+function setStatus(elId, result) {
+  const el = document.getElementById(elId);
+  if (result.ok) {
+    el.style.color = 'var(--good)';
+    el.textContent = `✓ 已加载 ${result.count ?? ''} 条${result.active != null ? ` (active: ${result.active})` : ''}`;
+  } else {
+    el.style.color = 'var(--again)';
+    el.textContent = `✗ ${result.error}`;
+  }
+}
+
+document.getElementById('load-nodes-btn').addEventListener('click', () => {
+  setStatus('nodes-status', loadNodes(document.getElementById('nodes-input').value));
+});
+document.getElementById('load-edges-btn').addEventListener('click', () => {
+  setStatus('edges-status', loadEdges(document.getElementById('edges-input').value));
+});
+document.getElementById('load-due-btn').addEventListener('click', () => {
+  setStatus('due-status', loadDue(document.getElementById('due-input').value));
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Filter controls
+// ══════════════════════════════════════════════════════════════════════════
+document.querySelectorAll('[data-mastery]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-mastery]').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    state.filter.mastery = btn.dataset.mastery;
+    rebuildRootsExpanded();
+    render();
+  });
+});
+
+document.getElementById('due-only-chip').addEventListener('click', () => {
+  state.filter.dueOnly = !state.filter.dueOnly;
+  document.getElementById('due-only-chip').classList.toggle('on', state.filter.dueOnly);
+  rebuildRootsExpanded();
+  render();
+});
+
+document.getElementById('domain-select').addEventListener('change', e => {
+  state.filter.domain = e.target.value || null;
+  rebuildRootsExpanded();
+  render();
+});
+
+document.getElementById('layout-mode').addEventListener('change', e => {
+  state.layoutMode = e.target.value;
+  render();
+});
+
+document.getElementById('depth-range').addEventListener('input', e => {
+  state.maxDepth = parseInt(e.target.value, 10);
+  document.getElementById('depth-val').textContent = e.target.value;
+  // Expand to maxDepth from roots
+  expandToDepth(state.maxDepth);
+  render();
+});
+
+function expandToDepth(maxDepth) {
+  const universeNodes = state.rawNodes.filter(n => passesFilter(n, state.filter, state.dueCounts));
+  const universeIds = new Set(universeNodes.map(n => n.id));
+  const depths = computeDepths(universeNodes);
+  state.expandedIds = new Set(
+    universeNodes.filter(n => (depths.get(n.id) ?? 0) < maxDepth).map(n => n.id)
+  );
+}
+
+document.getElementById('expand-all-btn').addEventListener('click', () => {
+  const universeNodes = state.rawNodes.filter(n => passesFilter(n, state.filter, state.dueCounts));
+  state.expandedIds = new Set(universeNodes.map(n => n.id));
+  render();
+});
+
+document.getElementById('collapse-all-btn').addEventListener('click', () => {
+  rebuildRootsExpanded();
+  render();
+});
+
+document.getElementById('info-close').addEventListener('click', () => {
+  document.getElementById('info-panel').classList.remove('visible');
+  state.selectedNodeId = null;
+  render();
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Sample data (realistic minimal graph)
+// ══════════════════════════════════════════════════════════════════════════
+document.getElementById('sample-btn').addEventListener('click', () => {
+  const nodesJson = JSON.stringify({
+    rows: [
+      { id: 'kn_wen', name: '文言文', parent_id: null, mastery: 0.72, evidence_count: 8, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_xu', name: '虚词', parent_id: 'kn_wen', mastery: 0.55, evidence_count: 4, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_er', name: '而', parent_id: 'kn_xu', mastery: 0.35, evidence_count: 3, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_zhi', name: '之', parent_id: 'kn_xu', mastery: 0.8, evidence_count: 7, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_qi', name: '其', parent_id: 'kn_xu', mastery: null, evidence_count: 0, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_ju', name: '句式', parent_id: 'kn_wen', mastery: 0.61, evidence_count: 5, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_bj', name: '宾语前置', parent_id: 'kn_ju', mastery: 0.42, evidence_count: 2, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_pd', name: '判断句', parent_id: 'kn_ju', mastery: 0.78, evidence_count: 6, domain: '语文', effective_domain: '语文' },
+      { id: 'kn_math', name: '数学', parent_id: null, mastery: 0.65, evidence_count: 10, domain: '数学', effective_domain: '数学' },
+      { id: 'kn_func', name: '函数', parent_id: 'kn_math', mastery: 0.5, evidence_count: 4, domain: '数学', effective_domain: '数学' },
+      { id: 'kn_tri', name: '三角函数', parent_id: 'kn_func', mastery: 0.3, evidence_count: 3, domain: '数学', effective_domain: '数学' },
+      { id: 'kn_log', name: '对数函数', parent_id: 'kn_func', mastery: 0.68, evidence_count: 5, domain: '数学', effective_domain: '数学' },
+    ]
+  }, null, 2);
+  const edgesJson = JSON.stringify({
+    rows: [
+      { id: 'e_1', from_knowledge_id: 'kn_xu', to_knowledge_id: 'kn_bj', relation_type: 'prerequisite', weight: 0.9, archived_at: null },
+      { id: 'e_2', from_knowledge_id: 'kn_er', to_knowledge_id: 'kn_zhi', relation_type: 'related_to', weight: 0.5, archived_at: null },
+      { id: 'e_3', from_knowledge_id: 'kn_tri', to_knowledge_id: 'kn_log', relation_type: 'contrasts_with', weight: 0.6, archived_at: null },
+      { id: 'e_4', from_knowledge_id: 'kn_func', to_knowledge_id: 'kn_ju', relation_type: 'applied_in', weight: 0.4, archived_at: null },
+      { id: 'e_old', from_knowledge_id: 'kn_qi', to_knowledge_id: 'kn_er', relation_type: 'related_to', weight: 0.3, archived_at: '2026-01-01T00:00:00Z' },
+    ]
+  }, null, 2);
+  const dueJson = JSON.stringify({
+    now: new Date().toISOString(),
+    due_soon_window_hours: 24,
+    summary: { kn_er: { overdue: 2, due_soon: 0 }, kn_tri: { overdue: 1, due_soon: 1 }, kn_qi: { overdue: 0, due_soon: 3 } }
+  }, null, 2);
+
+  document.getElementById('nodes-input').value = nodesJson;
+  document.getElementById('edges-input').value = edgesJson;
+  document.getElementById('due-input').value = dueJson;
+
+  setStatus('nodes-status', loadNodes(nodesJson));
+  setStatus('edges-status', loadEdges(edgesJson));
+  setStatus('due-status', loadDue(dueJson));
+
+  // switch to nodes tab
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('[data-tab="nodes-tab"]').classList.add('active');
+  document.getElementById('nodes-tab').classList.add('active');
+});
+
+// ── initial render ────────────────────────────────────────────────────────
+render();
+</script>
+</body>
+</html>
