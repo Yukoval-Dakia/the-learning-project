@@ -36,6 +36,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import MistakesPage from './routes/MistakesPage';
 
 // S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
 // ThemeToggle primitive 同 key（'loom-theme'），互不打架。
@@ -219,6 +220,20 @@ const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/inbox',
   component: InboxRoute,
+});
+
+// Usability Step1 (YUK-354) — 错题本面（loom screen-mistakes ScreenMistakes）。闭合
+// record→see→practice 死链：RecordPage onSuccess navigate('/mistakes') 此前 404。导航走
+// 壳层 prop 注入（同 InboxRoute），page 自持 list query + 客户端 3 轴筛选（科目/状态/归因）。
+function MistakesRoute() {
+  const router = useRouter();
+  return <MistakesPage navigate={(to) => router.history.push(to)} />;
+}
+
+const mistakesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/mistakes',
+  component: MistakesRoute,
 });
 
 function AgentNotesRoute() {
@@ -429,6 +444,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   todayRoute,
   inboxRoute,
+  mistakesRoute,
   agentNotesRoute,
   recordRoute,
   practiceRoute,
