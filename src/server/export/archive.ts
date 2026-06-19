@@ -657,17 +657,22 @@ export async function restoreFromArchive({
           );
         }
 
+        // The mem0 key IS present in the archive (mem0Rows is defined), so the collection
+        // ALWAYS gets a stats entry — hoisted here so it is set on every path, including
+        // the empty + table-absent no-op path, where neither the wipe nor the
+        // create+insert branch runs (Cursor OCR minor, PR #495: stats[mem0Table] was left
+        // undefined there, an inconsistent report for a processed key). The hoist keeps
+        // the entry present without conjuring a table or inserting anything (no-op
+        // behavior preserved).
+        stats[mem0Table] = { deleted: 0, inserted: 0 };
+
         // WIPE whenever the collection table exists — including the empty-archive case,
         // where wiping is the entire job (target rows → 0 to match the archive). After a
-        // create above, `tableExists` was false, so re-check: a freshly-created table is
-        // already empty (no wipe needed); an existing one (rows OR empty archive) is
-        // wiped here.
+        // create above, `tableExists` was false, so a freshly-created table is already
+        // empty (no wipe needed); an existing one (rows OR empty archive) is wiped here.
+        // Table-absent + empty-archive is a pure no-op (nothing to wipe, deleted stays 0).
         if (tableExists) {
-          stats[mem0Table] = { deleted: 0, inserted: 0 };
           await tx.execute(sql.raw(`delete from "${mem0Table}"`));
-        } else if (hasRows) {
-          // Table was just created above (so empty); only initialise stats for insert.
-          stats[mem0Table] = { deleted: 0, inserted: 0 };
         }
 
         if (hasRows) {
@@ -702,11 +707,20 @@ export async function restoreFromArchive({
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // YUK-355 (atomic restore): the whole restore mutation runs inside ONE
+    // db.transaction (see above), so a failure here has ALREADY rolled the transaction
+    // back — the database is left UNCHANGED, never half-wiped/partially-restored. The
+    // message must say so plainly: the previous "DB may be in a half-wiped state" wording
+    // predated the transaction wrap and is now FALSE, misleading the operator into
+    // thinking their DB is corrupted (Bugbot MEDIUM, PR #495). The error CODE stays
+    // `restore_failed_mid_flight` — callers/tests key off it — only the human-facing
+    // detail is corrected. `partial_stats` is the stats accumulated before the throw;
+    // since the tx rolled back NONE of it was actually applied (left for diagnostics).
     return {
       status: 500,
       body: {
         error: 'restore_failed_mid_flight',
-        message: `DB may be in a half-wiped state. Re-run the same ZIP to retry — wipe is idempotent. ${msg}`,
+        message: `Restore failed and was rolled back atomically — the database is left UNCHANGED (no partial restore). Fix the cause and re-run the same ZIP. ${msg}`,
         partial_stats: stats,
       },
     };

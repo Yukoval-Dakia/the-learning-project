@@ -584,6 +584,30 @@ describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
     // No rows to insert + table absent → nothing created (wipe-if-PRESENT, not create).
     expect(await tableExists()).toBe(false);
   });
+
+  it('table-absent + EMPTY archive still reports stats[mem0] = {deleted:0, inserted:0}', async () => {
+    // OCR minor (PR #495): when the mem0 key is PRESENT-but-empty ([]) AND the target
+    // lacks the table, neither the wipe branch (tableExists) nor the create+insert
+    // branch (hasRows) runs, so stats[mem0Table] was left UNDEFINED — inconsistent
+    // stats reporting for an edge that legitimately processed the collection (its key
+    // is present in the archive). The fix sets {deleted:0, inserted:0} for that path
+    // WITHOUT conjuring a table or inserting anything (no-op behavior preserved).
+    const vec = Array.from({ length: DIMS }, () => 0);
+    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
+    const good = await buildZipBytes();
+    const emptyArchive = rewriteMem0Rows(good, []);
+
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+    expect(await tableExists()).toBe(false);
+
+    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: emptyArchive });
+    expect(res.status).toBe(200);
+    // Stats entry PRESENT (not undefined) and a zero no-op for the present-but-empty key.
+    const body = res.body as { stats: Record<string, { deleted: number; inserted: number }> };
+    expect(body.stats[COLLECTION]).toEqual({ deleted: 0, inserted: 0 });
+    // Still no table conjured (no-op behavior preserved).
+    expect(await tableExists()).toBe(false);
+  });
 });
 
 // ─── YUK-355 recoverability core: restore must be ATOMIC. A mid-restore failure must
@@ -681,7 +705,15 @@ describe('mem0/FK restore atomicity — mid-restore failure rolls back (YUK-355)
     const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: bad });
     // The corrupt ::vector cast fails the restore.
     expect(res.status).toBe(500);
-    expect((res.body as { error: string }).error).toBe('restore_failed_mid_flight');
+    const failBody = res.body as { error: string; message: string };
+    expect(failBody.error).toBe('restore_failed_mid_flight');
+
+    // The operator-facing MESSAGE must reflect ATOMIC rollback now that the whole
+    // restore runs inside a single transaction: on failure the DB is left UNCHANGED.
+    // It must NOT mislead with the stale "half-wiped state" wording (Bugbot MEDIUM,
+    // PR #495), which implies partial/corrupt restore that no longer happens.
+    expect(failBody.message).not.toMatch(/half-wiped/i);
+    expect(failBody.message).toMatch(/rolled back|unchanged|atomic/i);
 
     // CRITICAL: the whole mutation rolled back — the FK_ORDER wipe was undone, so the
     // canary (never in the archive) still exists. RED against the non-transactional
