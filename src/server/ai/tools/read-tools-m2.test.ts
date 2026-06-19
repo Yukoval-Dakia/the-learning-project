@@ -238,7 +238,6 @@ async function seedLearningObjects() {
     learning_item_id: 'li_zhi',
     path: 'primary_artifact.ready',
     evidence_json: { summary: 'note ready' },
-    user_overrode_low_evidence: false,
     decided_at: new Date(BASE.getTime() + 2_000),
   });
   await db.insert(learning_record).values({

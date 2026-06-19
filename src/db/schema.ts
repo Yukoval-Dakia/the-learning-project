@@ -471,7 +471,6 @@ export const completion_evidence = pgTable('completion_evidence', {
   learning_item_id: text('learning_item_id').notNull(),
   path: text('path').notNull(),
   evidence_json: jsonb('evidence_json').$type<JsonObject>().notNull().default({}),
-  user_overrode_low_evidence: boolean('user_overrode_low_evidence').notNull().default(false),
   decided_at: timestamp('decided_at', { withTimezone: true }).notNull(),
 });
 

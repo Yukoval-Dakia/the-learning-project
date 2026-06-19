@@ -316,6 +316,13 @@
       "when": 1781852423935,
       "tag": "0044_good_blazing_skull",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1781855171806,
+      "tag": "0045_right_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

@@ -510,7 +510,6 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
       learning_item_id: 'li_zhi',
       path: 'primary_artifact.ready',
       evidence_json: { summary: 'note ready' },
-      user_overrode_low_evidence: false,
       decided_at: new Date(BASE.getTime() + 2_000),
     });
     // F3 — propose_learning_item_completion writes its `evidence_event_ids` as

@@ -308,7 +308,6 @@ export async function acceptCompletionProposal(
       learning_item_id: learningItemId,
       path: 'ai_propose',
       evidence_json: evidenceJson,
-      user_overrode_low_evidence: false,
       decided_at: now,
     });
 
