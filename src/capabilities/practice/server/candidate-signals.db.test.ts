@@ -146,14 +146,25 @@ async function seedQuestion(id: string, knowledgeIds: string[]): Promise<void> {
 
 // P2 D2 / A8 — seed one mistake_variant row = one of THIS learner's recurrences of
 // `causeCategory` on a mistake whose parent question is `parentQuestionId`.
-async function seedMistake(parentQuestionId: string, causeCategory: string | null): Promise<void> {
+//
+// `status` defaults to 'active' (the confirmed-accepted mistake — the only status that
+// counts toward misconceptionRecurrence). Pass 'draft' (pending acceptance), 'broken'
+// (failed verify pass-2), or 'dismissed' (user-rejected false-positive cause) to seed a
+// row that carries a cause_category but must NOT count (these all keep their cause_category
+// after the status flip — see proposals/actions.ts dismiss + variant_verify.ts broken).
+type MistakeVariantStatus = 'draft' | 'active' | 'broken' | 'dismissed';
+async function seedMistake(
+  parentQuestionId: string,
+  causeCategory: string | null,
+  status: MistakeVariantStatus = 'active',
+): Promise<void> {
   const now = new Date();
   await db.insert(mistake_variant).values({
     id: newId(),
     parent_question_id: parentQuestionId,
     variant_question_id: null,
     proposal_event_id: null,
-    status: 'active',
+    status,
     failure_reasons: [],
     cause_category: causeCategory,
     created_at: now,
@@ -915,6 +926,61 @@ describe('collectCandidateSignals — misconceptionRecurrence (P2 D2 / A8)', () 
       },
     ]);
     expect(sig.misconceptionRecurrence).toBeUndefined();
+  });
+
+  it('(2d) flag ON: only confirmed (status=active) rows count — draft/dismissed/broken excluded', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-status', 0.0, 4);
+    await seedCalibration('q-status', 0.5);
+    await seedQuestion('q-status-sib', ['kc-status']);
+    // Same cause family across mixed statuses. Each non-active status carries a non-null
+    // cause_category (that is exactly how the rows look in prod: variant_gen seeds the
+    // cause at INSERT while status='draft'; dismiss/broken flip status without clearing
+    // cause_category). Only the 2 active rows are confirmed-accepted recurrences.
+    await seedMistake('q-status-sib', 'misread', 'active');
+    await seedMistake('q-status-sib', 'misread', 'active');
+    await seedMistake('q-status-sib', 'misread', 'draft'); // pending → must NOT count
+    await seedMistake('q-status-sib', 'misread', 'dismissed'); // rejected → must NOT count
+    await seedMistake('q-status-sib', 'misread', 'broken'); // failed verify → must NOT count
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-status',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-status'],
+        difficulty: 3,
+      },
+    ]);
+    // Only the 2 active rows count: 2/5, NOT 5/5 (which would double-count the
+    // pending/rejected/broken rows and inflate the misconception signal).
+    expect(sig.misconceptionRecurrence).toBeCloseTo(2 / 5, 10);
+  });
+
+  it('(2e) flag ON: ALL non-active rows (no active) → undefined (no confirmed recurrence)', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-allpending', 0.0, 4);
+    await seedCalibration('q-allpending', 0.5);
+    await seedQuestion('q-allpending-sib', ['kc-allpending']);
+    // Every row is draft/dismissed/broken — none is a confirmed-accepted mistake.
+    await seedMistake('q-allpending-sib', 'misread', 'draft');
+    await seedMistake('q-allpending-sib', 'misread', 'dismissed');
+    await seedMistake('q-allpending-sib', 'misread', 'broken');
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-allpending',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-allpending'],
+        difficulty: 3,
+      },
+    ]);
+    // No confirmed rows → undefined (NOT 0, the NEVER-zero-fill contract).
+    expect(sig.misconceptionRecurrence).toBeUndefined();
+    expect(sig.misconceptionRecurrence).not.toBe(0);
   });
 
   it('(2c) flag ON: candidate with NO KCs → undefined (no KC anchor → no linkage)', async () => {

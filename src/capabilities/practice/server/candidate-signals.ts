@@ -246,12 +246,15 @@ const RECURRENCE_NORM = 5;
  * learner's). One bounded aggregate read (NOT a new service): a single GROUP BY over
  * mistake_variant joined to question on parent_question_id, filtered to rows whose parent
  * question carries any kc∈K (jsonb `@>` containment, GIN-indexed), with a non-null
- * cause_category. Returns the MAX per-cause-family count normalized to [0,1] via the
- * owner-fixed RECURRENCE_NORM.
+ * cause_category AND status='active' (only CONFIRMED-ACCEPTED mistakes count — draft /
+ * dismissed / broken are excluded; see the inline WHERE-clause comment for the lifecycle
+ * rationale). Returns the MAX per-cause-family count normalized to [0,1] via the owner-fixed
+ * RECURRENCE_NORM.
  *
- * NEVER zero-fill — three undefined (no-data) returns, distinct from a measured 0:
+ * NEVER zero-fill — undefined (no-data) returns, distinct from a measured 0:
  *   - empty K (candidate has no KCs) → undefined (no KC anchor → no linkage).
- *   - no mistake_variant rows on those KCs with a cause_category → undefined (no cause data).
+ *   - no ACTIVE mistake_variant rows on those KCs with a cause_category → undefined (no
+ *     confirmed cause data — e.g. only draft/dismissed/broken rows, or none at all).
  * A measured count ≥1 maps to a finite (0,1] value that rises with the recurrence count.
  */
 async function aggregateMisconceptionRecurrence(
@@ -268,6 +271,22 @@ async function aggregateMisconceptionRecurrence(
   // count(*) is the per-cause-family recurrence tally (each mistake_variant row = one
   // recurrence of that cause family). The outer max() over the grouped counts is the single
   // "most-recurring misconception probed by this candidate" scalar.
+  //
+  // STATUS FILTER (correctness): only status='active' rows are CONFIRMED-ACCEPTED mistakes
+  // — the lifecycle (schema.ts mistake_variant / business.ts MistakeVariant enum) is:
+  //   draft     → AI-proposed, pending user acceptance (cause_category is set at INSERT
+  //               while still 'draft' — see variant_gen.ts — so a draft row carries a
+  //               non-null cause but is NOT yet a confirmed mistake);
+  //   active    → user accepted + variant materialized (THE confirmed recurrence);
+  //   broken    → the generated variant failed VariantVerify pass-2 (drifted / off-target)
+  //               — a quality-rejected generation, not a confirmed-accepted recurrence;
+  //   dismissed → user rejected the proposal (false-positive cause analysis).
+  // dismiss/broken transitions flip status WITHOUT clearing cause_category (proposals/
+  // actions.ts sets only status; variant_verify.ts sets only status+failure_reasons), so an
+  // un-filtered count inflates the signal with pending / rejected / failed rows. We count
+  // ONLY status='active' (mirrors stream-store.ts's variant read), excluding draft +
+  // dismissed + broken. (broken is excluded too: it represents a failed VARIANT generation,
+  // not a confirmed recurrence the learner accepted.)
   const rows = await db
     .select({
       maxCount: sql<number>`max(grouped.cnt)`,
@@ -278,6 +297,7 @@ async function aggregateMisconceptionRecurrence(
         FROM ${mistake_variant}
         JOIN ${question} ON ${question.id} = ${mistake_variant.parent_question_id}
         WHERE ${mistake_variant.cause_category} IS NOT NULL
+          AND ${mistake_variant.status} = 'active'
           AND (${kcContainment})
         GROUP BY ${mistake_variant.cause_category}
       ) AS grouped`,
@@ -355,6 +375,12 @@ async function collectQuestionSignal(
   //     undefined（NOT 0）。recall-locked 也照常算——它是候选画像的一部分（生产里
   //     recall-locked 在喂 orchestrator 前已被切出，故此值对它实际不被消费；但保持
   //     snapshot 完整、不引入 recall 特例分支）。
+  // TODO(flag-on): batch aggregateMisconceptionRecurrence across all candidates (like the
+  //   family-calibration read in collectCandidateSignals ~lines 442-453: dedupe the KC keys
+  //   then issue ONE IN/containment query) BEFORE flipping MISCONCEPTION_RECURRENCE_ENABLED
+  //   to true. Right now this runs per-candidate inside the serial loop (an N+1 aggregate
+  //   read). It is harmless while the flag is OFF (default) — the call is short-circuited
+  //   before any query — but go-live must not silently ship the N+1.
   const misconceptionRecurrence = MISCONCEPTION_RECURRENCE_ENABLED
     ? await aggregateMisconceptionRecurrence(db, knowledgeIds)
     : undefined;
