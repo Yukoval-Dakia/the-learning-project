@@ -566,6 +566,24 @@
     ]
   },
   {
+    "path": "/api/practice/calibration/anchors",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "owner FIXED-ANCHOR 写面：钦定 ~5-10 道锚题难度档（粗分桶）→ item_calibration source=fixed_anchor（YUK-453 cold-start inc-A）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": [
+          {
+            "question_id": "q_abc123",
+            "bucket": "hard"
+          }
+        ],
+        "notes": "body = [{question_id, bucket}]，bucket ∈ {very_easy,-2 | easy,-1 | medium,0 | hard,1 | very_hard,2}（owner-fixed module const，非估计）；写 item_calibration{b=bucketToLogit, b_anchor=同, track=hard, source=fixed_anchor}，按 question_id 幂等 upsert（同题重设覆盖，b_calib 不动）；返回 {anchors:[{question_id,bucket,b}]}；θ̂ 读路径不变（effectiveB 自动优先非 NULL 锚）；无 flag；需 x-internal-token；空数组/坏 bucket/缺 question_id/非 JSON → 400"
+      }
+    ]
+  },
+  {
     "path": "/api/teaching-sessions/:id/accept-chip",
     "methods": [
       {
