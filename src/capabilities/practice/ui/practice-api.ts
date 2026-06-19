@@ -289,14 +289,14 @@ export interface SubmitResult {
 // clamp 边界**逐字对齐**服务端 zod 约束 [0, 3_600_000]（submit.ts:72 的 z.number().int().min(0).max(3_600_000)）：
 //   - 负差（系统时钟回拨，now < shownAt）→ Math.max(0, …) clamp 到 0，不发负值。
 //   - 超 1 小时（标签页长挂 / 隔夜回来）→ Math.min(3_600_000, …) clamp 到上界，避免服务端 422。
-// shownAtMs 为 null/undefined（计时器未起 / 题面未就绪）→ 返回 null，调用方据此略过 latency_ms（不发噪声）。
+// shownAtMs 为 null（计时器未起 / 题面未就绪）→ 返回 null，调用方据此略过 latency_ms（不发噪声）。
 //
 // HONEST caveat：latency_ms 是**墙钟用时，含 idle**（切标签页 / 思考停顿 / 隔夜都计入），没有 active-time
 // 追踪——一个已知噪声源。下游 A1 SRT 的 rapid-guess downweight + Ter personal baseline（P5 follow-ups）会
 // 专门处理它。此外 duration_ms 已被 get-attempt-context 的「为什么错」诊断消费（见上方 QFullTimelineEntry
 // .duration_ms + 后端 detail），所以复活 capture 也顺带丰富了那条诊断。
 export function computeLatencyMs(shownAtMs: number | null, nowMs: number): number | null {
-  if (shownAtMs === null || shownAtMs === undefined) return null;
+  if (shownAtMs === null) return null;
   return Math.max(0, Math.min(3_600_000, nowMs - shownAtMs));
 }
 
