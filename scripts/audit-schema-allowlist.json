@@ -8,14 +8,6 @@
       "expected_by": "2026-07-31"
     }
   },
-  "completion_evidence.user_overrode_low_evidence": {
-    "reason": "Phase 1b user-override flow not implemented; decision pending",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1b override-completion UI path landed OR field dropped",
-      "expected_by": "2026-07-31"
-    }
-  },
   "question.rubric_json": {
     "reason": "Sub 1 JudgeTask grading config; not yet written by ingestion",
     "resolves_when": {
