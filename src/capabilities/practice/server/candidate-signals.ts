@@ -25,7 +25,7 @@ import {
 } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
-import { item_calibration, item_family_calibration } from '@/db/schema';
+import { item_calibration, item_family_calibration, mistake_variant, question } from '@/db/schema';
 import { batchResolveFamilyKeys } from '@/server/mastery/family-key';
 import {
   type FamilyCalibrationRow,
@@ -33,7 +33,8 @@ import {
 } from '@/server/mastery/personalized-difficulty';
 import { effectiveB } from '@/server/mastery/recalibration';
 import { effectiveThetaForKc, getMasteryState } from '@/server/mastery/state';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { MISCONCEPTION_RECURRENCE_ENABLED } from './selection-constants';
 import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
@@ -191,6 +192,103 @@ async function resolveBAnchor(
   return { b: undefined, bSource: 'none' };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// P2 D2 / A8 — misconceptionRecurrence（错误观念复发度）选题信号。
+//
+// 填补 candidate-signals.ts §9.2 三 first-class 信号里 `misconceptionRecurrence` 这一格
+// （examRelevance / transferGap 仍无 cheap reader，留 undefined）。
+//
+// 权威 spec：
+//   - ADR-0042 编排档2 amendment（GPT 研究稿 §9.2）——选题不止 MFI 中心。
+//   - core/selection-signals.ts:53「错题家族复发频次」computation-deferred 注。
+//
+// 消费方（live，本处只产值不碰）：selection-orchestrator.ts:97
+//   `bucketUnit(sig.misconceptionRecurrence)` → SelectionOrchestratorTask LLM prompt
+//   （softmax-selection.ts tryLlmOrchestration）。**选题专属**——此值绝不进
+//   updateThetaForAttempt / p(L) / FSRS（红线 #1；updateThetaForAttempt 的 input 形状
+//   UpdateThetaForAttemptInput 里根本没有承载它的字段，结构性切断）。
+//
+// 单用户工具（CLAUDE.md Auth：「single-user tool；no per-user auth」）——schema 里
+// mistake_variant / question / mastery_state 全无 user_id 列。故每条 mistake_variant 行
+// 就是 THIS learner 自己的错误记录。本信号是**纯 per-learner SELF-STATE tally**
+// （sufficient-statistic 式计数），归一化常数 owner-fixed（module const，同其它选题权重），
+// **绝不估计任何 cross-examinee 量**（admissibility HARD，n=1 admissible）。
+//
+// 链接（KC-based，prompt PREFER）：候选题触及 KC 集 K（cand.knowledgeIds）。
+//   1. 找触及任一 kc∈K 的题：question.knowledge_ids @> [kc]（已有 GIN 索引）。
+//   2. 这些题上的错误：mistake_variant.parent_question_id ∈ 那些题 id，按 cause_category
+//      group + count（每行 = 该错因家族的一次复发）。
+//   3. 复发分 = 跨 cause_category 的 MAX 计数（这道题最常复发的那个错误观念有多顽固）。
+//   4. 归一化：min(1, maxCount / NORMALIZATION_CONST)（owner-fixed const，非学习/估计量）。
+//   无任何错误数据（learner 在候选 KC 上无 cause 记录）→ undefined（NEVER zero-fill：
+//   undefined=「无数据」，0=「测得为零」——评分层据此 MFI-only 退化 vs 当硬零处理）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Dark-ship flag MISCONCEPTION_RECURRENCE_ENABLED lives in ./selection-constants (imported
+// above) — a pure IO-free module so tests can mock just that export (EARLY_KLP pattern).
+// Default false → misconceptionRecurrence undefined for all → orchestrator prompt +
+// mfiScore/diagnosticScore byte-identical to today (the aggregate read is never issued).
+
+/**
+ * Owner-fixed normalization constant for misconceptionRecurrence (NOT a learned / estimated
+ * quantity — a module const, same class as the other selection weights). The raw signal is
+ * this learner's MAX per-cause-family recurrence count over questions probing the candidate's
+ * KCs; we map it onto [0,1] by `min(1, count / RECURRENCE_NORM)`. RECURRENCE_NORM=5 means
+ * "5+ recurrences of the same misconception family on this candidate's KCs ⇒ saturated (1.0)".
+ * Owner-tunable like a weight; it is NOT inferred from any cross-examinee distribution.
+ */
+const RECURRENCE_NORM = 5;
+
+/**
+ * Per-learner cross-attempt cause-family recurrence for a candidate touching KC set K.
+ *
+ * SELF-STATE sufficient statistic (single-user tool → every mistake_variant row is THIS
+ * learner's). One bounded aggregate read (NOT a new service): a single GROUP BY over
+ * mistake_variant joined to question on parent_question_id, filtered to rows whose parent
+ * question carries any kc∈K (jsonb `@>` containment, GIN-indexed), with a non-null
+ * cause_category. Returns the MAX per-cause-family count normalized to [0,1] via the
+ * owner-fixed RECURRENCE_NORM.
+ *
+ * NEVER zero-fill — three undefined (no-data) returns, distinct from a measured 0:
+ *   - empty K (candidate has no KCs) → undefined (no KC anchor → no linkage).
+ *   - no mistake_variant rows on those KCs with a cause_category → undefined (no cause data).
+ * A measured count ≥1 maps to a finite (0,1] value that rises with the recurrence count.
+ */
+async function aggregateMisconceptionRecurrence(
+  db: DbLike,
+  knowledgeIds: string[],
+): Promise<number | undefined> {
+  if (knowledgeIds.length === 0) return undefined;
+  // OR of jsonb containments: question probes ANY of the candidate's KCs.
+  const kcContainment = sql.join(
+    knowledgeIds.map((kc) => sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`),
+    sql` OR `,
+  );
+  // GROUP BY cause_category over this learner's mistakes on those questions; take MAX count.
+  // count(*) is the per-cause-family recurrence tally (each mistake_variant row = one
+  // recurrence of that cause family). The outer max() over the grouped counts is the single
+  // "most-recurring misconception probed by this candidate" scalar.
+  const rows = await db
+    .select({
+      maxCount: sql<number>`max(grouped.cnt)`,
+    })
+    .from(
+      sql`(
+        SELECT count(*)::int AS cnt
+        FROM ${mistake_variant}
+        JOIN ${question} ON ${question.id} = ${mistake_variant.parent_question_id}
+        WHERE ${mistake_variant.cause_category} IS NOT NULL
+          AND (${kcContainment})
+        GROUP BY ${mistake_variant.cause_category}
+      ) AS grouped`,
+    );
+  const maxCount = rows[0]?.maxCount;
+  // No grouped rows → max() returns NULL → maxCount null/undefined → no cause data → undefined.
+  if (maxCount === null || maxCount === undefined || maxCount <= 0) return undefined;
+  // Owner-fixed normalization; rises with recurrence count, saturates at RECURRENCE_NORM.
+  return Math.min(1, maxCount / RECURRENCE_NORM);
+}
+
 /**
  * 收集一条题候选的信号。
  *
@@ -250,6 +348,17 @@ async function collectQuestionSignal(
     }
   }
 
+  // P2 D2 / A8 — misconceptionRecurrence（错误观念复发度，选题专属，flag-gated dark-ship）。
+  //   FLAG OFF (DEFAULT)：短路在读之前 → 恒 undefined → orchestrator prompt + mfiScore/
+  //     diagnosticScore 路径逐位等同今天（NEVER zero-fill）。
+  //   FLAG ON：per-learner SELF-STATE tally（aggregateMisconceptionRecurrence）。无数据 →
+  //     undefined（NOT 0）。recall-locked 也照常算——它是候选画像的一部分（生产里
+  //     recall-locked 在喂 orchestrator 前已被切出，故此值对它实际不被消费；但保持
+  //     snapshot 完整、不引入 recall 特例分支）。
+  const misconceptionRecurrence = MISCONCEPTION_RECURRENCE_ENABLED
+    ? await aggregateMisconceptionRecurrence(db, knowledgeIds)
+    : undefined;
+
   return {
     refKind: 'question',
     refId: cand.refId,
@@ -264,23 +373,22 @@ async function collectQuestionSignal(
     scoreKind,
     // ─────────────────────────────────────────────────────────────────────────
     // §9.2 / ADR-0042 编排档2 first-class 信号扩充（选题不止 MFI 中心）。
-    // 调查结论（2026-06-16，Step A）：三者**当前都无 cheap reader**，全留 undefined
-    // （NEVER zero-fill——undefined = 「无数据」，0 = 「测得为零」，评分层据此 MFI-only 退化）。
-    //   - examRelevance（考纲/考点权重）：SubjectProfileSchema（profile-schema.ts）无
-    //     examWeight/syllabus 字段；无考纲映射数据源。Phase 3+ 若引入 subject profile
-    //     考纲权重表，在此据 candidate 的 knowledgeIds → 考点权重映射计算。
-    //   - misconceptionRecurrence（错误观念复发度）：mistake_variant 表有 cause_category
-    //     + parent_question_id，但「候选题 → 错因家族跨 attempt 复发频次」需新建聚合查询
-    //     （非 trivial read，超出 Step A 的 scope discipline）。Phase 3+ 据错题家族
-    //     （cause_category 维）的复发频次计算。
-    //   - transferGap（迁移缺口）：mastery_state 按 (subject_kind, subject_id) 即 per-KC
-    //     建键，**无 kind 维度**——同 KC 跨题型掌握差无法从现表 cheap 读出。Phase 3+ 需
-    //     先有 per-(KC,kind) 粒度的掌握度（或 Task 10 family-level calibration）才能算。
-    // 不为这三个新信号自建子系统/查询（impl plan §「Map 阶段」+ roadmap Task 7 Step 4
-    // 「缺数据留 undefined」+ scope discipline）。
+    // NEVER zero-fill——undefined = 「无数据」，0 = 「测得为零」，评分层据此 MFI-only 退化。
+    //   - examRelevance（考纲/考点权重）：仍无 cheap reader——SubjectProfileSchema
+    //     （profile-schema.ts）无 examWeight/syllabus 字段；无考纲映射数据源。引入 subject
+    //     profile 考纲权重表后，在此据 candidate 的 knowledgeIds → 考点权重映射计算。
+    //   - misconceptionRecurrence（错误观念复发度）：**已填**（P2 D2 / A8）。flag-gated
+    //     dark-ship（MISCONCEPTION_RECURRENCE_ENABLED，默认 false → undefined → orchestrator
+    //     prompt byte-identical）。ON 时 aggregateMisconceptionRecurrence 算 per-learner
+    //     SELF-STATE 错因家族跨 attempt 复发频次（KC-based linkage），归一化到 0-1（owner-fixed
+    //     RECURRENCE_NORM）。无数据 → undefined（见该函数文档）。
+    //   - transferGap（迁移缺口）：仍无 cheap reader——mastery_state 按 (subject_kind,
+    //     subject_id) 即 per-KC 建键，**无 kind 维度**——同 KC 跨题型掌握差无法从现表 cheap
+    //     读出。需先有 per-(KC,kind) 粒度的掌握度（或 family-level calibration）才能算。
+    // 不为剩余两个信号自建子系统/查询（缺数据留 undefined + scope discipline）。
     // ─────────────────────────────────────────────────────────────────────────
     examRelevance: undefined,
-    misconceptionRecurrence: undefined,
+    misconceptionRecurrence,
     transferGap: undefined,
   };
 }
