@@ -15,11 +15,39 @@ import {
   BACKUP_EXCLUDED_TABLES,
   FK_ORDER,
   MAX_INLINE_ASSETS,
+  MEM0_COLLECTION_COLUMNS,
   SCHEMA_VERSION,
   type TableName,
+  mem0CollectionTable,
 } from './constants';
 import { buildMistakesCsv, buildReviewEventsCsv } from './csv';
 import { type Manifest, buildReadme } from './readme';
+
+// ─── mem0 collection backup (YUK-355, D17「数据可丢」推翻续) ────────────────────
+//
+// The mem0 personalization half stores slow-warming soft-profile memories in a
+// pgvector collection table (default `learning_project_memories`) that mem0's
+// PGVector provider creates at runtime — NOT a drizzle-managed table, so it is
+// absent from FK_ORDER and the schema-derived COLUMN_ALLOWLIST. Backing up only
+// memory_reconciliation_log (the WAL/provenance) while dropping the collection
+// itself is "备 WAL 不备 collection 是半截" (rethink gate §1.6 / acceptance seam e):
+// the memory bodies would vanish on restore. So we dump + restore the collection
+// through this dedicated branch, keyed in data.json by the RESOLVED collection
+// table name (so a custom MEM0_PGVECTOR_COLLECTION round-trips to the same table).
+//
+// The `vector` column is pgvector — postgres-js round-trips it as a `[..]` string
+// already, but we cast `vector::text` explicitly on dump for stability and bind it
+// back with `::vector` on insert. If the table does not exist yet (fresh DB, mem0
+// never initialised), dump is skipped (graceful) and restore is a no-op for it.
+
+/** True when the mem0 collection table physically exists (mem0 self-init may not
+ * have run yet on a fresh DB). to_regclass returns NULL for a missing relation. */
+async function mem0CollectionExists(db: Db, table: string): Promise<boolean> {
+  const rows = (await db.execute(sql`select to_regclass(${`public.${table}`}) as reg`)) as Array<{
+    reg: string | null;
+  }>;
+  return rows[0]?.reg != null;
+}
 
 // ─── Restore column allowlist (single source of truth: Drizzle schema) ───────
 //
@@ -131,6 +159,19 @@ export async function buildBackupArchive({
     >;
     tableRows[t] = rows;
     rowCounts[t] = rows.length;
+  }
+
+  // YUK-355: dump the mem0 collection table (non-drizzle, runtime-created by mem0).
+  // Keyed in data.json by its resolved table name. `vector::text` keeps the pgvector
+  // column a stable string in JSON. Skipped (no key, count 0) if mem0 never created
+  // the table on this DB — a backup of a fresh DB is still valid.
+  const mem0Table = mem0CollectionTable();
+  if (await mem0CollectionExists(db, mem0Table)) {
+    const mem0Rows = (await db.execute(
+      sql.raw(`select id, vector::text as vector, payload from "${mem0Table}"`),
+    )) as Array<Record<string, unknown>>;
+    tableRows[mem0Table] = mem0Rows;
+    rowCounts[mem0Table] = mem0Rows.length;
   }
 
   type Entry = { name: string; input: string | Uint8Array | ReadableStream; lastModified?: Date };
@@ -335,11 +376,16 @@ export async function restoreFromArchive({
     }
   }
 
+  // YUK-355: the mem0 collection key is restorable but NOT in FK_ORDER (it is the
+  // resolved collection table name, restored through the dedicated branch below).
+  const mem0Table = mem0CollectionTable();
+  const mem0Rows = Array.isArray(data[mem0Table]) ? data[mem0Table] : undefined;
+
   // Pre-flight (security, YUK-136): reject unknown top-level keys BEFORE we wipe
   // the DB. Previously any key in data.json that was not in FK_ORDER was silently
-  // ignored; that masks a malformed/hostile archive. Anything outside FK_ORDER is
-  // a hard 400 (FK_ORDER is the complete set of restorable tables).
-  const allowedTables = new Set<string>(FK_ORDER);
+  // ignored; that masks a malformed/hostile archive. Anything outside FK_ORDER
+  // (or the mem0 collection key) is a hard 400.
+  const allowedTables = new Set<string>([...FK_ORDER, mem0Table]);
   for (const key of Object.keys(data)) {
     if (!allowedTables.has(key)) {
       return {
@@ -350,6 +396,27 @@ export async function restoreFromArchive({
           table: key,
         },
       };
+    }
+  }
+
+  // Pre-flight (security): validate mem0 collection column names against the fixed
+  // mem0 createCol() allowlist (id/vector/payload) BEFORE we wipe — same raw-SQL
+  // column-interpolation surface as the FK_ORDER tables below.
+  if (mem0Rows) {
+    for (const row of mem0Rows) {
+      for (const col of Object.keys(row)) {
+        if (!MEM0_COLLECTION_COLUMNS.has(col)) {
+          return {
+            status: 400,
+            body: {
+              error: 'invalid_column',
+              message: `Unknown column "${col}" for mem0 collection "${mem0Table}"; DB was NOT wiped.`,
+              table: mem0Table,
+              column: col,
+            },
+          };
+        }
+      }
     }
   }
 
@@ -450,6 +517,38 @@ export async function restoreFromArchive({
         const query = sql`insert into ${sql.raw(`"${t}"`)} (${sql.raw(colList)}) values ${sql.join(rowFragments, sql`,`)} on conflict do nothing`;
         await db.execute(query);
         stats[t].inserted = (stats[t].inserted ?? 0) + chunk.length;
+      }
+    }
+
+    // YUK-355: wipe + restore the mem0 collection (non-FK_ORDER). Only acted on
+    // when the archive carries the key AND the table physically exists (mem0
+    // self-init must have run on this DB — a restore into a DB whose mem0 client
+    // has never started would have no table to wipe/insert into; skip gracefully).
+    // The `vector` column is bound with an explicit ::vector cast; id/payload reuse
+    // the same JSON-serialise-objects discipline as restoreValue().
+    if (mem0Rows && (await mem0CollectionExists(db, mem0Table))) {
+      stats[mem0Table] = { deleted: 0, inserted: 0 };
+      await db.execute(sql.raw(`delete from "${mem0Table}"`));
+      for (let i = 0; i < mem0Rows.length; i += INSERT_BATCH_SIZE) {
+        const chunk = mem0Rows.slice(i, i + INSERT_BATCH_SIZE);
+        const rowFragments = chunk.map((row) => {
+          const id = row.id ?? null;
+          const vector = row.vector ?? null;
+          const payload = row.payload;
+          const payloadBound =
+            payload !== null && typeof payload === 'object'
+              ? JSON.stringify(payload)
+              : (payload ?? null);
+          // vector::vector casts the dumped `[..]` text back to pgvector; payload
+          // is jsonb. NULL vector/payload bind through cleanly (cast of NULL = NULL).
+          return sql`(${id}, ${vector}::vector, ${payloadBound}::jsonb)`;
+        });
+        const query = sql`insert into ${sql.raw(`"${mem0Table}"`)} ("id","vector","payload") values ${sql.join(
+          rowFragments,
+          sql`,`,
+        )} on conflict do nothing`;
+        await db.execute(query);
+        stats[mem0Table].inserted += chunk.length;
       }
     }
   } catch (err) {
