@@ -24,6 +24,7 @@ import {
   type JudgePreview,
   type QuestionDetail,
   type StreamItem,
+  computeLatencyMs,
   fileAppeal,
   getAdvice,
   getQuestion,
@@ -136,6 +137,11 @@ export function PfSolo({
   // 的「不服判」入口在自动 commit 后仍能对这个锚点直接发 appeal（不再二次 submit——review 已落库）。
   // null = 这次自动判定没有可申诉锚点（理论上 exact/keyword 恒有，留 null 兜底 → 入口自动隐藏）。
   const [autoCommitJudgeEventId, setAutoCommitJudgeEventId] = useState<string | null>(null);
+  // YUK-433 — solo 路径 RT capture：题面变可见那刻的墙钟时间戳。commit 时 now - 它 = 这次作答用时
+  // （computeLatencyMs clamp 后作为 latency_ms 发出，server 映射成事件 payload 的 duration_ms）。下面
+  // 的 effect 在新题就绪时 RESET（keyed on q?.id），保证 re-answer / next-item 都从干净的零点起算。
+  // null = 题面尚未就绪（计时器未起）→ computeLatencyMs 返回 null → 略过 latency_ms（不发噪声）。
+  const questionShownAtRef = useRef<number | null>(null);
 
   const q = qQ.data ?? null;
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
@@ -146,6 +152,15 @@ export function PfSolo({
   // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
   const handleBack = () =>
     shouldMarkSlotDoneOnBack(autoCommitted) && onCommittedBack ? onCommittedBack() : onBack();
+
+  // YUK-433 — solo 路径 RT capture：题面就绪（q 拿到）那刻起算计时器，per 题 RESET。host 给每个 StreamItem
+  // 复用本组件实例（query 的 key 含 item.ref_id）。依赖列表只用 q?.id 即足够且更准：换题时 queryKey 变 →
+  // qQ.data 先短暂仍是上一题（缓存）→ 新题数据回来 q?.id 才变，正是「这道题的题面真正可见」的那一刻；re-answer
+  // 同一题重取也会让 q?.id 重新落定 → 重新 stamp Date.now()，保证下一次 commit 算的是这次作答的墙钟用时。
+  // 纯 ref 写入，无 state/DOM 变更 → 零视觉/渲染 delta（instrumentation only）。
+  useEffect(() => {
+    if (q?.id) questionShownAtRef.current = Date.now();
+  }, [q?.id]);
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
@@ -174,6 +189,11 @@ export function PfSolo({
         // YUK-432 — 客观题自动判分+自动评级：server 用 judge 的 suggested rating 覆盖 body.rating，
         // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
         auto_rate: opts.autoRate,
+        // YUK-433 — solo 路径 RT capture：这次作答的墙钟用时（题面就绪 → 此刻 commit）。在单一 commit()
+        // 路径里 stamp，故**两条提交分支都覆盖**：手动评级 commit（开放题）与客观题 auto_rate:true 自动
+        // commit 都经此。computeLatencyMs clamp 到 [0, 3_600_000]（对齐 server zod）；shownAt 为 null →
+        // 略过（不发噪声）。server 映射成事件 payload 的 duration_ms（无后端改动）。墙钟含 idle，已知噪声源。
+        latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
         judge_result_v2: {
           score: pv.score,
           score_meaning: 'correctness',
