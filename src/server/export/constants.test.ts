@@ -2,20 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { BACKUP_EXCLUDED_TABLES, FK_ORDER, MAX_INLINE_ASSETS, SCHEMA_VERSION } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.5" (YUK-361 Phase 6 difficulty_calibration_label NEW table 入备份)', () => {
-    // 4.4 → 4.5 (YUK-361 Phase 6): NEW FK_ORDER table difficulty_calibration_label
-    // (active-PPI 难度标签账本，慢热校准资产)。新表入 FK_ORDER 必 bump (per archive.ts:92)。
-    // 对比：同 Phase 6 给 item_calibration 加的 b_anchor/b_calib/calibration_n/
-    // calibration_weight/last_calibrated_at 是既有 FK_ORDER 表的 additive **列**，随整行
-    // dump/restore，**不 bump** (同 Phase 2 theta_precision 加列不 bump 4.2 的先例)。
-    expect(SCHEMA_VERSION).toBe('4.5');
+  it('SCHEMA_VERSION is "4.6" (YUK-344 edge_reconciliation_log NEW table 入备份)', () => {
+    // 4.5 → 4.6 (YUK-344 调和环增量 2): NEW FK_ORDER table edge_reconciliation_log
+    // (结构轴知识边调和的 AUDIT / PROVENANCE 日志，SUPERSEDE 决策来由)。新表入 FK_ORDER
+    // 必 bump (per archive.ts:92)，同 memory_reconciliation_log 的先例 (非 BACKUP_EXCLUDED)。
+    // 4.4 → 4.5 (YUK-361 Phase 6): difficulty_calibration_label 入 FK_ORDER (前一次 bump)。
+    expect(SCHEMA_VERSION).toBe('4.6');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 29 tables in topological order', () => {
+  it('FK_ORDER lists all 30 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -29,10 +28,13 @@ describe('export constants', () => {
     // 校准资产 (攒不回来，丢了即灭失)，同 item_calibration 进备份 (非 BACKUP_EXCLUDED)。
     // 28 → 29 (YUK-361 Phase 6): added difficulty_calibration_label — active-PPI 难度
     // 标签账本 (锚定 θ̂ 反推 b_label + π_i)，慢热校准资产，进备份 (非 BACKUP_EXCLUDED)。
+    // 29 → 30 (YUK-344 调和环增量 2): added edge_reconciliation_log — 结构轴知识边调和的
+    // AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)，同 memory_reconciliation_log 进备份
+    // (非 BACKUP_EXCLUDED)；置于 memory_reconciliation_log 后保持两条 reconciliation 日志相邻。
     // knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(29);
+    expect(FK_ORDER.length).toBe(30);
     expect(FK_ORDER[0]).toBe('knowledge');
-    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('memory_reconciliation_log');
+    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('edge_reconciliation_log');
   });
 
   it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {
@@ -71,6 +73,14 @@ describe('export constants', () => {
     // 置于 item_family_calibration 后 (难度校准簇相邻)。
     const idx = (t: string) => FK_ORDER.indexOf(t as never);
     expect(idx('item_family_calibration')).toBeLessThan(idx('difficulty_calibration_label'));
+  });
+
+  it('FK_ORDER includes YUK-344 edge_reconciliation_log (结构轴调和 provenance，承重非排除)', () => {
+    expect(FK_ORDER).toContain('edge_reconciliation_log');
+    expect(BACKUP_EXCLUDED_TABLES.has('edge_reconciliation_log')).toBe(false);
+    // 置于 memory_reconciliation_log 后 (两条 reconciliation 日志相邻可读)。
+    const idx = (t: string) => FK_ORDER.indexOf(t as never);
+    expect(idx('memory_reconciliation_log')).toBeLessThan(idx('edge_reconciliation_log'));
   });
 
   it('FK_ORDER includes all Phase 1c.1 Lane A new tables', () => {
