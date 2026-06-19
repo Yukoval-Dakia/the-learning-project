@@ -28,6 +28,12 @@ import {
   thetaSe,
   updateThetaPrecision,
 } from '@/core/theta';
+import {
+  THETA_GRID_ENABLED,
+  type ThetaGridPosterior,
+  gridUpdate,
+  uniformPrior,
+} from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, mastery_state } from '@/db/schema';
 import { resolveFamilyKeyForQuestion } from './family-key';
@@ -70,6 +76,10 @@ export interface UpsertMasteryStateInput {
   // YUK-361 Phase 2 — 默认让 upsert 维持既有 precision/delta 语义（不传则不更新）。
   theta_precision?: number;
   last_theta_delta?: number | null;
+  // A4 (YUK-436) — 离散网格贝叶斯 θ_KC offset 后验的 SHADOW 持久化。可选（同 precision/delta
+  // 语义）：只有 caller 显式传值时才写。INSERT 缺省 → DB default NULL；UPDATE 缺省 → 不动此列。
+  // inc-1 PURE-ADDITIVE SHADOW：写路径存在但**无 inc-1 下游读者**（不喂 p(L)/effectiveB/选题）。
+  theta_grid_json?: ThetaGridPosterior | null;
 }
 
 /**
@@ -102,6 +112,11 @@ export async function upsertMasteryState(
   if (input.last_theta_delta !== undefined) {
     updateSet.last_theta_delta = input.last_theta_delta;
   }
+  // A4 (YUK-436) — same optional-maintenance semantics: only write the shadow grid
+  // posterior when the caller explicitly passes it (THETA_GRID_ENABLED single-KC path).
+  if (input.theta_grid_json !== undefined) {
+    updateSet.theta_grid_json = input.theta_grid_json;
+  }
   await db
     .insert(mastery_state)
     .values({
@@ -115,6 +130,7 @@ export async function upsertMasteryState(
       last_outcome_at: input.last_outcome_at,
       ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
       ...(input.last_theta_delta !== undefined ? { last_theta_delta: input.last_theta_delta } : {}),
+      ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
       updated_at: now,
     })
     .onConflictDoUpdate({
@@ -535,6 +551,12 @@ export async function updateThetaForAttempt(
       fail: row?.fail_count ?? 0,
       // YUK-361 Phase 2 — 冷启 precision = 1（弱先验 1 单位信息，SE=1），同 DB default。
       precision: row?.theta_precision ?? 1,
+      // A4 (YUK-436) — PRE-attempt shadow grid posterior over the θ_KC offset (null →
+      // never folded → cold-start uniform prior). Captured here from the SAME pre-attempt
+      // read used for the Elo update, so the sequential-Bayes fold below continues the
+      // running posterior rather than re-starting it. Shadow-only — never read by any
+      // inc-1 decision/display path.
+      gridPrior: (row?.theta_grid_json as ThetaGridPosterior | null | undefined) ?? null,
     };
   });
 
@@ -711,5 +733,58 @@ export async function updateThetaForAttempt(
         last_theta_delta: lockedNewGlobal - lockedGlobal,
       });
     }
+  }
+
+  // ── A4 (YUK-436) — discrete grid-Bayes θ_KC offset posterior, SHADOW write ────────
+  //
+  // PURE-ADDITIVE SHADOW (inc-1): maintain a discrete posterior over the per-KC θ_KC
+  //   OFFSET and PERSIST it shadow-only. The Elo theta_hat written in the per-KC loop
+  //   above stays the SOURCE OF TRUTH — this block does NOT read back or alter it; it
+  //   only appends theta_grid_json. NOTHING downstream reads theta_grid_json in inc-1
+  //   (it does not feed p(L)/effectiveB/selection — the audit-schema allowlist entry
+  //   records the write-path-without-live-reader honestly). The calibrated posterior SE
+  //   is the eventual payoff; the invasive grid→SoT cut-over is inc-2 (deferred, must
+  //   serialize AFTER A3).
+  //
+  // GATES (ALL must hold, else this block is a complete NO-OP → theta_grid_json stays
+  //   NULL and the θ̂ path is BYTE-IDENTICAL to today — the regression anchor):
+  //   (a) THETA_GRID_ENABLED (module const, default false this PR → dark-ship);
+  //   (b) SINGLE-KC item only (states.length === 1). The multi-KC conjunctive posterior
+  //       factorisation is deferred — one Bernoulli outcome shared across KCs does not
+  //       factor into independent per-KC posteriors trivially, and single-KC suffices to
+  //       validate calibration. Multi-KC items skip the grid entirely (both KCs' Elo
+  //       still updates above; only the shadow grid is gated off).
+  //
+  // LIKELIHOOD: inc-1 is BINARY Bernoulli ONLY (gridUpdate uses binaryLikelihood). The
+  //   continuous-CB likelihood (continuousCbLikelihood) is written but GATED — it would
+  //   be wired only when SRT_ENABLED && THETA_GRID_ENABLED, which is NOT inc-1; we do not
+  //   wire it here so the binary shadow stays the single validated path.
+  //
+  // θ_global TRANSLATION ANCHOR (orthogonal to A2, builds ON it): the grid is over the
+  //   θ_KC OFFSET; the likelihood evaluates the 1PL ICC at the EFFECTIVE ability
+  //   (θ_global + offset) by shifting the difficulty anchor: b' = b − θ_global. θ_global
+  //   is `globalOf(s.id)` — 0 when A2 is off / domain unresolved (b' = b, grid over the
+  //   raw offset), the A2 per-domain global when A2 is on. The grid does NOT model/subsume
+  //   θ_global; it reads it as a fixed translation.
+  //
+  // n=1-LEGAL: single-learner sequential Bayes with the item difficulty b LOCKED (G4 —
+  //   we never fit b). The pre-attempt posterior (states[0].gridPrior) is folded with one
+  //   binary likelihood; cold start (null prior) → uniform prior. A targeted UPDATE patches
+  //   ONLY theta_grid_json on the row the per-KC loop already wrote (theta_hat/counts left
+  //   untouched), so the SoT path is structurally unreachable from the shadow write.
+  if (THETA_GRID_ENABLED && states.length === 1) {
+    const s = states[0];
+    const bPrime = b - globalOf(s.id); // b' = b − θ_global (A2 anchor; 0 if A2 off/unresolved)
+    const prior = s.gridPrior ?? uniformPrior(); // null → cold-start uniform over the offset grid
+    const posterior = gridUpdate(prior, bPrime, input.outcome); // one binary sequential-Bayes fold
+    // Targeted UPDATE of ONLY the shadow column on the row the per-KC loop already wrote
+    // (the KC's 'knowledge' mastery_state row exists by now). We deliberately do NOT touch
+    // theta_hat / precision / counts here — the per-KC loop is their single writer, so the
+    // SoT path cannot be perturbed by the shadow write (this is what keeps the flag-off and
+    // flag-on Elo theta_hat bit-identical). updated_at is refreshed to mark the shadow write.
+    await tx
+      .update(mastery_state)
+      .set({ theta_grid_json: posterior, updated_at: input.now })
+      .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, s.id)));
   }
 }
