@@ -1,10 +1,15 @@
+// Single source of truth for the mem0 pgvector collection (= table) name. The backup
+// path (src/server/export/constants.ts) and this live client MUST resolve the same
+// default so a backup restores to the exact table the client reads from (Cursor OCR
+// minor, PR #491: the literal was duplicated in both files).
+import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import { Memory, type MemoryConfig, type SearchResult } from 'mem0ai/oss';
 
 // P1 (YUK-341)：mem0 个性化半边换血到 GLM 5.2 + 百炼 v4，LLM/embedder 全走
 // openai-compat provider——mem0ai 3.0.6 的 openai provider 转发 config.baseURL
 // （anthropic 不转发，故弃 anthropic provider + 整套 withXiaomiBaseUrl env-dance）。
 // 详见 docs/design/2026-06-13-memory-architecture.md §8.3。
-const DEFAULT_COLLECTION = 'learning_project_memories';
+const DEFAULT_COLLECTION = MEM0_COLLECTION_DEFAULT;
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-v4'; // 阿里百炼 DashScope
 const DEFAULT_EMBEDDING_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'; // 含 /v1
 const DEFAULT_EMBEDDING_DIMS = 1024; // 百炼 v4 推荐性价比维度；embedder 与 vectorStore 必须同值
