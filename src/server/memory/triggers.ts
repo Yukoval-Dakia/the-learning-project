@@ -182,6 +182,8 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
   if (!row) return null;
   return {
     id: row.id,
+    // P3 (YUK-351): thread actor_kind for the extraction gate (below).
+    actor_kind: row.actor_kind,
     action: row.action,
     subject_kind: row.subject_kind,
     subject_id: row.subject_id,
@@ -190,6 +192,39 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
     created_at: row.created_at,
     kind: mapEventActionToKind(row.action),
   };
+}
+
+/**
+ * P3 (YUK-351) extraction gate — the write-side invariant for mem0.
+ *
+ * ADR-0039 §决定 7 invariant (i) + Phase 2 synthesis §6.3 C3 / §7 H6 (owner-locked
+ * 2026-06-15): **only user-originated events may feed mem0 extraction; the
+ * orchestrator's own output must NEVER enter the extraction source.** This closes
+ * the confirmation loop the design flags as a HIGH-severity break of the
+ * anti-injection 五防 (project memory `feedback_no_recursive_prompt_injection`):
+ *
+ *   agent output → event(actor_kind='agent') → mem0 infer:true extracts a
+ *   semantic-trait about "the user" → searchMemories feeds it back into the next
+ *   orchestration prompt → the model self-confirms its own prior output as a fact.
+ *
+ * The gate sits at the single write-side seam (buildMemoryEventIngestHandler),
+ * BEFORE addEventMemory's extraction LLM call. It is a pure deterministic function
+ * over event.actor_kind (NOT NULL, 'user' | 'agent' — src/db/schema.ts +
+ * core/schema/event/known.ts), kept exported + unit-tested per the ADR's "写成
+ * extraction gate invariant + 单测" directive.
+ *
+ * Fail-closed: anything that is not exactly 'user' is rejected (defensive against
+ * a future actor_kind value or a malformed row — never silently widen the feed).
+ *
+ * NOTE — narrowing scope (design §3.7 "喂信号收窄"): the deeper B4 semantic-trait
+ * accept gate (a PG pending table + reject/edit face, §7.2 owner pick "落 PG") and
+ * "数值留结构表" feed-narrowing are SEPARATE, larger increments (new schema + ADR +
+ * UI). This gate implements the load-bearing, owner-locked, code-side C3/H6
+ * invariant that the design names as the blocker; the accept-gate UI/table is
+ * tracked as a follow-up.
+ */
+export function shouldExtractToMemory(event: Pick<MemoryEventInput, 'actor_kind'>): boolean {
+  return event.actor_kind === 'user';
 }
 
 // ADR-0021 — outbox poll handler is the sole producer. Dedup is enforced by
@@ -274,13 +309,23 @@ export function buildMemoryEventIngestHandler(
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
       if (!row) continue;
+
+      // P3 (YUK-351) extraction gate (ADR-0039 §决定 7 (i) / Phase 2 §6.3 C3 / §7 H6):
+      // agent-originated events must NEVER feed mem0 extraction (closes the
+      // confirmation loop). The brief NOTE layer is orthogonal — it reads events
+      // straight from PG (brief.ts:loadEventsFromDb) and legitimately summarizes
+      // agent activity too — so the brief regen fan-out STILL runs for gated events;
+      // only addEventMemory + reconcile are skipped.
+      const admitToExtraction = shouldExtractToMemory(row);
+
       // P2 (YUK-342): capture add() return — results[].id + results[].memory are
       // the extracted memory rows (mem0 infer:true). Fan-out brief regen, then
       // enqueue reconcile for the new memory ids.
-      const memResult = await client.addEventMemory(row);
+      const memResult = admitToExtraction ? await client.addEventMemory(row) : null;
       for (const scopeKey of row.affected_scopes) {
         await enqueueBriefRegen(boss, scopeKey);
       }
+      if (!admitToExtraction) continue;
       // Thread the extracted memory text + created_ms (the event's time) so the
       // reconcile job searches by text, not by an opaque UUID (see ReconcileMemInput).
       const createdMs = row.created_at.getTime();

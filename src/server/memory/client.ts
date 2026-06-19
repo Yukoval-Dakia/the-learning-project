@@ -30,6 +30,16 @@ type Mem0Like = {
 
 export type MemoryEventInput = {
   id: string;
+  /**
+   * P3 (YUK-351) extraction gate: who originated the event — 'user' | 'agent'
+   * (event.actor_kind, NOT NULL). The extraction gate (triggers.ts:
+   * shouldExtractToMemory) admits ONLY user-originated events into mem0 extraction
+   * and rejects agent-originated ones, per ADR-0039 §决定 7 invariant (i) / Phase 2
+   * §6.3 C3 / §7 H6 — the orchestrator's own output must never enter the extraction
+   * source (closes the confirmation loop: agent output → event → mem0 semantic-trait
+   * → fed back). Threaded through from defaultLoadEvent.
+   */
+  actor_kind: string;
   action: string;
   subject_kind: string;
   subject_id: string;
@@ -173,6 +183,10 @@ export function createMemoryClient(
         metadata: {
           source: 'event',
           event_id: input.id,
+          // P3 (YUK-351): provenance of the originating event. Only 'user' reaches
+          // here (the extraction gate rejects 'agent' upstream in triggers.ts), but
+          // persist it so the source actor is auditable on the extracted fact.
+          actor_kind: input.actor_kind,
           action: input.action,
           subject_kind: input.subject_kind,
           subject_id: input.subject_id,

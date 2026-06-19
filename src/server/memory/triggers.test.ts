@@ -8,6 +8,7 @@ import {
   enqueueBriefRegen,
   enqueueMemoryReconcile,
   registerMemoryHandlers,
+  shouldExtractToMemory,
 } from './triggers';
 
 describe('enqueueBriefRegen', () => {
@@ -75,6 +76,7 @@ describe('buildMemoryEventIngestHandler', () => {
     const handler = buildMemoryEventIngestHandler({} as never, boss, {
       loadEvent: async () => ({
         id: 'evt_1',
+        actor_kind: 'user',
         action: 'attempt',
         subject_kind: 'question',
         subject_id: 'q1',
@@ -121,6 +123,7 @@ describe('buildMemoryEventIngestHandler', () => {
     const handler = buildMemoryEventIngestHandler({} as never, boss, {
       loadEvent: async () => ({
         id: 'evt_1',
+        actor_kind: 'user',
         action: 'attempt',
         subject_kind: 'question',
         subject_id: 'q1',
@@ -143,6 +146,104 @@ describe('buildMemoryEventIngestHandler', () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  // P3 (YUK-351) extraction gate — ADR-0039 §决定 7 invariant (i) / Phase 2 §6.3
+  // C3 / §7 H6: an agent-originated event must NEVER feed mem0 extraction (it
+  // would close the confirmation loop: orchestrator output → event → mem0 extracts
+  // a semantic-trait → fed back next turn). Agent events skip addEventMemory +
+  // reconcile entirely, but STILL fan out brief regen (the brief NOTE layer reads
+  // events directly from PG and legitimately summarizes agent activity too).
+  it('GATES agent-originated events out of extraction (no add, no reconcile), still fans out brief regen', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm', memory: 'x' }] }));
+    const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_agent',
+        actor_kind: 'agent',
+        action: 'generate',
+        subject_kind: 'artifact',
+        subject_id: 'a1',
+        payload: {},
+        affected_scopes: ['global', 'topic:k1'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: { addEventMemory, search: vi.fn() },
+    });
+
+    await handler([{ data: { event_id: 'evt_agent' } } as Job<{ event_id: string }>]);
+
+    // Extraction gated: addEventMemory NEVER called for an agent event.
+    expect(addEventMemory).not.toHaveBeenCalled();
+    // No reconcile enqueued (nothing was extracted).
+    expect(send).not.toHaveBeenCalledWith(
+      MEMORY_RECONCILE_QUEUE,
+      expect.anything(),
+      expect.anything(),
+    );
+    // Brief regen still fans out for both scopes (NOTE layer is orthogonal).
+    const regenCalls = send.mock.calls.filter((c) => c[0] === MEMORY_BRIEF_REGEN_QUEUE);
+    expect(regenCalls).toHaveLength(2);
+  });
+
+  it('ADMITS user-originated events into extraction (add + reconcile)', async () => {
+    const addEventMemory = vi.fn(async () => ({ results: [{ id: 'm1', memory: 'fact' }] }));
+    const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_user',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: {},
+        affected_scopes: ['global'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: { addEventMemory, search: vi.fn() },
+    });
+
+    await handler([{ data: { event_id: 'evt_user' } } as Job<{ event_id: string }>]);
+
+    expect(addEventMemory).toHaveBeenCalledWith(expect.objectContaining({ id: 'evt_user' }));
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_RECONCILE_QUEUE,
+      expect.objectContaining({ user_id: 'self' }),
+      expect.anything(),
+    );
+  });
+});
+
+describe('shouldExtractToMemory (extraction gate invariant)', () => {
+  // ADR-0039 §决定 7 (i) + Phase 2 §6.3 C3 / §7 H6: only user-answering /
+  // user-statement events may feed mem0 extraction; the orchestrator's own output
+  // (actor_kind='agent') must NEVER enter the extraction source.
+  const baseEvent = {
+    id: 'evt',
+    action: 'attempt',
+    subject_kind: 'question',
+    subject_id: 'q1',
+    payload: {},
+    affected_scopes: ['global'],
+    created_at: new Date('2026-05-27T00:00:00Z'),
+    kind: 'event',
+  };
+
+  it('admits user-originated events', () => {
+    expect(shouldExtractToMemory({ ...baseEvent, actor_kind: 'user' })).toBe(true);
+  });
+
+  it('rejects agent-originated events (confirmation-loop blocker)', () => {
+    expect(shouldExtractToMemory({ ...baseEvent, actor_kind: 'agent' })).toBe(false);
+  });
+
+  it('fails closed on an unknown / missing actor_kind (defensive — never feed)', () => {
+    expect(shouldExtractToMemory({ ...baseEvent, actor_kind: 'system' })).toBe(false);
+    expect(shouldExtractToMemory({ ...baseEvent, actor_kind: '' })).toBe(false);
   });
 });
 
