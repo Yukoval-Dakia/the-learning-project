@@ -1,4 +1,4 @@
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
 import type { R2Client } from '@/server/r2';
 /**
@@ -43,11 +43,11 @@ import { type Manifest, buildReadme } from './readme';
 /** True when the mem0 collection table physically exists (mem0 self-init may not
  * have run yet on a fresh DB). to_regclass returns NULL for a missing relation.
  * `table` is bound as a VALUE (not raw-interpolated), so it is injection-safe. */
-async function mem0CollectionExists(db: Db, table: string): Promise<boolean> {
+async function mem0CollectionExists(db: Db | Tx, table: string): Promise<boolean> {
   const rows = (await db.execute(sql`select to_regclass(${`public.${table}`}) as reg`)) as Array<{
     reg: string | null;
   }>;
-  return rows[0]?.reg != null;
+  return rows[0]?.reg !== null && rows[0]?.reg !== undefined;
 }
 
 // A Postgres table/collection name is an IDENTIFIER, not a value — it cannot be a
@@ -74,7 +74,15 @@ function assertSafeMem0CollectionName(table: string): void {
  * `[a,b,c]` (a string) — its element count IS the declared dim. Returns undefined
  * when the dim cannot be determined (NULL/empty/malformed vector). Used only when a
  * table-absent restore must re-create the collection (mem0 createCol needs a dim);
- * an undeterminable dim there is a hard failure, never a silent skip or wrong dim. */
+ * an undeterminable dim there is a hard failure, never a silent skip or wrong dim.
+ *
+ * WHY first-row inference is sound (Cursor OCR finding, PR #491 — documented-as-
+ * intended, NOT a bug): a mem0 pgvector collection is `vector vector(<dims>)` with a
+ * SINGLE fixed embedding dimension by construction (mem0 createCol() declares one dim
+ * for the whole table, set by the configured embedder). Every row therefore carries an
+ * identically-dimensioned vector — Postgres rejects an INSERT of a wrong-length vector
+ * into a `vector(<dims>)` column — so the first row's element count equals every row's.
+ * There is no per-row dim to scan for; reading row 0 is exact, not a sample/heuristic. */
 function inferMem0VectorDims(value: unknown): number | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -336,6 +344,25 @@ function restoreValue(table: TableName, column: string, value: unknown) {
   return sql`${bound}`;
 }
 
+/** Per-column value binder for the mem0 collection INSERT. Driven by column NAME (one
+ * of MEM0_COLLECTION_COLUMNS) so the column list and the value fragments stay in
+ * lockstep from a single source of truth (no hardcoded ("id","vector","payload")):
+ *   - `vector`  → re-parse the dumped `[..]` text back to pgvector via ::vector
+ *   - `payload` → bind JSON-stringified object as ::jsonb (NULL/primitive binds plain)
+ *   - `id`      → bind plainly (uuid text)
+ * A NULL value binds cleanly through any cast (cast of NULL = NULL). */
+function mem0RestoreValue(column: string, value: unknown) {
+  if (column === 'vector') {
+    return sql`${value ?? null}::vector`;
+  }
+  if (column === 'payload') {
+    const bound =
+      value !== null && typeof value === 'object' ? JSON.stringify(value) : (value ?? null);
+    return sql`${bound}::jsonb`;
+  }
+  return sql`${value ?? null}`;
+}
+
 export async function restoreFromArchive({
   db,
   r2,
@@ -543,104 +570,136 @@ export async function restoreFromArchive({
   const stats: Record<string, { deleted: number; inserted: number }> = {};
 
   try {
-    // Wipe in REVERSE FK order.
-    for (const t of [...FK_ORDER].reverse()) {
-      await db.execute(sql.raw(`delete from "${t}"`));
-      stats[t] = { deleted: 0, inserted: 0 };
-    }
-
-    // Insert in FORWARD FK order, chunked.
-    for (const t of FK_ORDER) {
-      const rows = data[t] ?? [];
-      if (rows.length === 0) continue;
-      const cols = Object.keys(rows[0]);
-
-      for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
-        const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
-
-        // Build INSERT using drizzle sql template to get proper parameterisation.
-        // Arrays and objects must be serialised to JSON strings before binding —
-        // drizzle's sql tag treats a bare JS array as a sql.join list which produces
-        // "()" for empty arrays, causing a Postgres syntax error. Known Postgres
-        // array columns are rebound explicitly in restoreValue().
-        const colList = cols.map((c) => `"${c}"`).join(',');
-        const rowFragments = chunk.map((row) => {
-          const valFragments = cols.map((col) => restoreValue(t, col, row[col] ?? null));
-          return sql`(${sql.join(valFragments, sql`,`)})`;
-        });
-        const query = sql`insert into ${sql.raw(`"${t}"`)} (${sql.raw(colList)}) values ${sql.join(rowFragments, sql`,`)} on conflict do nothing`;
-        await db.execute(query);
-        stats[t].inserted = (stats[t].inserted ?? 0) + chunk.length;
+    // YUK-355 (atomic restore): the ENTIRE restore mutation sequence — FK_ORDER
+    // wipe+insert AND the mem0 collection wipe/create/insert — runs inside a SINGLE
+    // drizzle transaction. Pre-flight validation (shape/column/unknown-table) already
+    // ran ABOVE, outside the tx (validate first, then atomic apply). A failure anywhere
+    // in the block throws, drizzle rolls the whole transaction back, and the DB is left
+    // exactly as it was — never half-wiped/half-restored. Postgres supports
+    // transactional DDL, so the create-extension/create-table for an absent mem0
+    // collection roll back cleanly too. All mutations use `tx`, never the outer `db`.
+    await db.transaction(async (tx) => {
+      // Wipe in REVERSE FK order.
+      for (const t of [...FK_ORDER].reverse()) {
+        await tx.execute(sql.raw(`delete from "${t}"`));
+        stats[t] = { deleted: 0, inserted: 0 };
       }
-    }
 
-    // YUK-355: wipe + restore the mem0 collection (non-FK_ORDER). The archive carries
-    // a NON-EMPTY mem0 collection array → those rows MUST land, even on a fresh
-    // disaster-recovery DB whose mem0 client never lazy-initialised the table.
-    //
-    // Cursor Bugbot HIGH (PR #491): the previous gate was
-    //   if (mem0Rows && (await mem0CollectionExists(db, mem0Table))) { ... }
-    // so a backup with mem0 rows restored into a TARGET that lacked the collection
-    // table SILENTLY skipped the rows — the backed-up slow-warming soft profile was
-    // NOT restored. That is the exact "不可丢必须可恢复" recoverability hole YUK-355
-    // exists to close. Fix: create-then-insert. When the table is absent we RE-CREATE
-    // it first, replicating mem0's createCol schema exactly
-    // (node_modules/mem0ai/dist/oss/index.js: id UUID PRIMARY KEY, vector vector(<dims>),
-    // payload JSONB), inferring <dims> from the element count of the first archived
-    // row vector (dumped as ::text). The identifier is validated + double-quote-wrapped
-    // for raw interpolation. If <dims> cannot be determined we FAIL LOUDLY rather than
-    // silent-skip or conjure a wrong-dim table.
-    //
-    // The EMPTY/absent case (mem0Rows undefined or []) stays a graceful no-op: there
-    // is nothing to restore, and mem0's own self-init will create the collection lazily
-    // with the live embedder's true dims on first use.
-    if (mem0Rows && mem0Rows.length > 0) {
-      assertSafeMem0CollectionName(mem0Table);
-      if (!(await mem0CollectionExists(db, mem0Table))) {
-        const dims = inferMem0VectorDims(mem0Rows[0]?.vector);
-        if (dims === undefined) {
-          // Loud failure — surfaced as restore_failed_mid_flight by the outer catch.
-          // We refuse to create a wrong-dim table or silently drop the rows.
-          throw new Error(
-            `mem0 collection "${mem0Table}" is absent on the target DB and the archived vector dimensionality could not be determined (first row vector is NULL/empty/malformed). Refusing to silently skip backed-up mem0 rows or create a wrong-dim table.`,
+      // Insert in FORWARD FK order, chunked.
+      for (const t of FK_ORDER) {
+        const rows = data[t] ?? [];
+        if (rows.length === 0) continue;
+        const cols = Object.keys(rows[0]);
+
+        for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
+          const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
+
+          // Build INSERT using drizzle sql template to get proper parameterisation.
+          // Arrays and objects must be serialised to JSON strings before binding —
+          // drizzle's sql tag treats a bare JS array as a sql.join list which produces
+          // "()" for empty arrays, causing a Postgres syntax error. Known Postgres
+          // array columns are rebound explicitly in restoreValue().
+          const colList = cols.map((c) => `"${c}"`).join(',');
+          const rowFragments = chunk.map((row) => {
+            const valFragments = cols.map((col) => restoreValue(t, col, row[col] ?? null));
+            return sql`(${sql.join(valFragments, sql`,`)})`;
+          });
+          const query = sql`insert into ${sql.raw(`"${t}"`)} (${sql.raw(colList)}) values ${sql.join(rowFragments, sql`,`)} on conflict do nothing`;
+          await tx.execute(query);
+          stats[t].inserted = (stats[t].inserted ?? 0) + chunk.length;
+        }
+      }
+
+      // YUK-355: wipe + restore the mem0 collection (non-FK_ORDER). Restore must make
+      // the target collection IDENTICAL to the archived one. We separate two questions:
+      //   (i)  Should we PROCESS this collection at all? — yes iff the archive HAS the
+      //        mem0 key (mem0Rows is a defined array, even []). An archived [] means
+      //        "this collection is empty", so a target that still HAS stale rows must be
+      //        WIPED to match. (#491 follow-up: the previous gate `mem0Rows.length > 0`
+      //        skipped the WHOLE branch on an empty archive, leaving stale target rows.)
+      //   (ii) Are there rows to INSERT / a table to CREATE-if-absent? — only when the
+      //        archived array is NON-EMPTY.
+      //
+      // Cursor Bugbot HIGH (PR #491): when the archive HAS rows but the TARGET lacks the
+      // collection table (fresh disaster-recovery DB / mem0 never lazy-init), we RE-CREATE
+      // it first, replicating mem0's createCol schema exactly
+      // (node_modules/mem0ai/dist/oss/index.js: id UUID PRIMARY KEY, vector vector(<dims>),
+      // payload JSONB), inferring <dims> from the first archived row vector (dumped as
+      // ::text). If <dims> cannot be determined we FAIL LOUDLY (rolls the tx back) rather
+      // than silent-skip or conjure a wrong-dim table.
+      //
+      // The table-ABSENT + EMPTY-archive case stays a graceful no-op: there is nothing
+      // to wipe (no table) and nothing to insert, and mem0's own self-init will create
+      // the collection lazily with the live embedder's true dims on first use.
+      if (mem0Rows) {
+        assertSafeMem0CollectionName(mem0Table);
+        const hasRows = mem0Rows.length > 0;
+        const tableExists = await mem0CollectionExists(tx, mem0Table);
+
+        // Re-create the collection only when there are rows to land but no table yet.
+        if (hasRows && !tableExists) {
+          const dims = inferMem0VectorDims(mem0Rows[0]?.vector);
+          if (dims === undefined) {
+            // Loud failure — surfaced as restore_failed_mid_flight by the outer catch
+            // (and rolls the transaction back). We refuse to create a wrong-dim table or
+            // silently drop the rows.
+            throw new Error(
+              `mem0 collection "${mem0Table}" is absent on the target DB and the archived vector dimensionality could not be determined (first row vector is NULL/empty/malformed). Refusing to silently skip backed-up mem0 rows or create a wrong-dim table.`,
+            );
+          }
+          // Replicate mem0 createCol() exactly. CREATE EXTENSION is idempotent; mem0's
+          // own initialize() runs it too, but a fresh restore target may not have it yet.
+          await tx.execute(sql.raw('create extension if not exists vector'));
+          await tx.execute(
+            sql.raw(
+              `create table if not exists "${mem0Table}" (id uuid primary key, vector vector(${dims}), payload jsonb)`,
+            ),
           );
         }
-        // Replicate mem0 createCol() exactly. CREATE EXTENSION is idempotent; mem0's
-        // own initialize() runs it too, but a fresh restore target may not have it yet.
-        await db.execute(sql.raw('create extension if not exists vector'));
-        await db.execute(
-          sql.raw(
-            `create table if not exists "${mem0Table}" (id uuid primary key, vector vector(${dims}), payload jsonb)`,
-          ),
-        );
+
+        // WIPE whenever the collection table exists — including the empty-archive case,
+        // where wiping is the entire job (target rows → 0 to match the archive). After a
+        // create above, `tableExists` was false, so re-check: a freshly-created table is
+        // already empty (no wipe needed); an existing one (rows OR empty archive) is
+        // wiped here.
+        if (tableExists) {
+          stats[mem0Table] = { deleted: 0, inserted: 0 };
+          await tx.execute(sql.raw(`delete from "${mem0Table}"`));
+        } else if (hasRows) {
+          // Table was just created above (so empty); only initialise stats for insert.
+          stats[mem0Table] = { deleted: 0, inserted: 0 };
+        }
+
+        if (hasRows) {
+          // INSERT column list derived from MEM0_COLLECTION_COLUMNS (single source of
+          // truth — same allowlist the pre-flight validates against). Per-column binders
+          // apply the right cast: vector::vector re-parses the dumped `[..]` text back to
+          // pgvector, payload::jsonb, id binds plainly. NULL binds cleanly (cast of NULL =
+          // NULL). Iterating MEM0_COLLECTION_COLUMNS keeps the column list and the value
+          // fragments in lockstep — no hardcoded ("id","vector","payload") to drift.
+          const orderedCols = [...MEM0_COLLECTION_COLUMNS];
+          const colList = orderedCols.map((c) => `"${c}"`).join(',');
+          for (let i = 0; i < mem0Rows.length; i += INSERT_BATCH_SIZE) {
+            const chunk = mem0Rows.slice(i, i + INSERT_BATCH_SIZE);
+            const rowFragments = chunk.map((row) => {
+              const valFragments = orderedCols.map((col) =>
+                mem0RestoreValue(col, row[col] ?? null),
+              );
+              return sql`(${sql.join(valFragments, sql`,`)})`;
+            });
+            // Count ACTUAL inserted rows via RETURNING (Cursor OCR minor, PR #491): with
+            // `on conflict do nothing` a duplicate id is skipped, so chunk.length would
+            // over-count. The returned row set is exactly the rows that landed.
+            const query = sql`insert into ${sql.raw(`"${mem0Table}"`)} (${sql.raw(colList)}) values ${sql.join(
+              rowFragments,
+              sql`,`,
+            )} on conflict do nothing returning "id"`;
+            const inserted = (await tx.execute(query)) as Array<{ id: unknown }>;
+            stats[mem0Table].inserted += inserted.length;
+          }
+        }
       }
-      stats[mem0Table] = { deleted: 0, inserted: 0 };
-      await db.execute(sql.raw(`delete from "${mem0Table}"`));
-      for (let i = 0; i < mem0Rows.length; i += INSERT_BATCH_SIZE) {
-        const chunk = mem0Rows.slice(i, i + INSERT_BATCH_SIZE);
-        const rowFragments = chunk.map((row) => {
-          const id = row.id ?? null;
-          const vector = row.vector ?? null;
-          const payload = row.payload;
-          const payloadBound =
-            payload !== null && typeof payload === 'object'
-              ? JSON.stringify(payload)
-              : (payload ?? null);
-          // vector::vector casts the dumped `[..]` text back to pgvector; payload
-          // is jsonb. NULL vector/payload bind through cleanly (cast of NULL = NULL).
-          return sql`(${id}, ${vector}::vector, ${payloadBound}::jsonb)`;
-        });
-        // Count ACTUAL inserted rows via RETURNING (Cursor OCR minor, PR #491): with
-        // `on conflict do nothing` a duplicate id is skipped, so chunk.length would
-        // over-count. The returned row set is exactly the rows that landed.
-        const query = sql`insert into ${sql.raw(`"${mem0Table}"`)} ("id","vector","payload") values ${sql.join(
-          rowFragments,
-          sql`,`,
-        )} on conflict do nothing returning "id"`;
-        const inserted = (await db.execute(query)) as Array<{ id: unknown }>;
-        stats[mem0Table].inserted += inserted.length;
-      }
-    }
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {

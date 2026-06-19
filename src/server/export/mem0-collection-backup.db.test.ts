@@ -478,3 +478,216 @@ describe('mem0 collection table-ABSENT restore re-creates + restores (PR #491 HI
     expect(await tableExists()).toBe(false);
   });
 });
+
+// ─── #491 follow-up regression: EMPTY archived mem0 collection ([]) must EMPTY a
+// target that HAS stale rows — present-but-empty archive ≠ "skip the collection". ──
+//
+// THE BUG (archive.ts:597, regression introduced by #491): the restore gate was
+//   if (mem0Rows && mem0Rows.length > 0) { ... }
+// so an archive carrying the mem0 key PRESENT but EMPTY ([]) — a legitimate backup of
+// a DB whose collection was emptied (all memories superseded/pruned) — skipped the
+// WHOLE mem0 branch (wipe + create + insert). The target kept its STALE pre-existing
+// rows instead of being emptied to MATCH the archive. Restore must make the target
+// collection identical to the archived one: an archived [] means "this collection is
+// empty", so a target that HAS rows must be WIPED. The fix separates "should we
+// process this collection at all" (archive HAS the key, even []) from "are there rows
+// to insert" (only non-empty arrays insert / create-if-absent).
+describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
+  let prevCollectionEnv: string | undefined;
+
+  beforeAll(() => {
+    prevCollectionEnv = process.env.MEM0_PGVECTOR_COLLECTION;
+    process.env.MEM0_PGVECTOR_COLLECTION = COLLECTION;
+  });
+
+  afterAll(() => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+    if (prevCollectionEnv === undefined) delete process.env.MEM0_PGVECTOR_COLLECTION;
+    else process.env.MEM0_PGVECTOR_COLLECTION = prevCollectionEnv;
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+    await createCollection();
+  });
+
+  afterEach(async () => {
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+  });
+
+  async function tableExists(): Promise<boolean> {
+    const rows = (await testDb().execute(
+      sql`select to_regclass(${`public.${COLLECTION}`}) as reg`,
+    )) as Array<{ reg: string | null }>;
+    return rows[0]?.reg != null;
+  }
+
+  function rewriteMem0Rows(bytes: Uint8Array, rows: Array<Record<string, unknown>>): Uint8Array {
+    const entries = unzipSync(bytes);
+    const data = JSON.parse(new TextDecoder().decode(entries['data.json'])) as Record<
+      string,
+      unknown
+    >;
+    data[COLLECTION] = rows;
+    const repacked: Record<string, Uint8Array> = {};
+    for (const [name, content] of Object.entries(entries)) {
+      repacked[name] =
+        name === 'data.json' ? new TextEncoder().encode(JSON.stringify(data)) : content;
+    }
+    return zipSync(repacked);
+  }
+
+  it('EMPTIES a target collection that has rows when the archived collection is empty ([])', async () => {
+    // Build an archive whose mem0 key is present but EMPTY ([]).
+    const vec = Array.from({ length: DIMS }, () => 0);
+    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
+    const good = await buildZipBytes();
+    const emptyArchive = rewriteMem0Rows(good, []); // archive says: collection is empty
+
+    // Target DB HAS stale rows the empty archive must overwrite to empty.
+    await testDb().execute(sql.raw(`DELETE FROM "${COLLECTION}"`));
+    await seedRow(
+      'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      Array.from({ length: DIMS }, () => 1),
+      { data: 'STALE memory that should be wiped', user_id: 'self' },
+    );
+    await seedRow(
+      'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      Array.from({ length: DIMS }, () => 2),
+      { data: 'another STALE memory', user_id: 'self' },
+    );
+    expect(await readRows()).toHaveLength(2);
+
+    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: emptyArchive });
+    expect(res.status).toBe(200);
+
+    // The target collection is now EMPTY — matches the archived (empty) collection.
+    // RED against the `mem0Rows.length > 0` gate, which skipped the wipe entirely.
+    expect(await readRows()).toHaveLength(0);
+  });
+
+  it('table-absent + EMPTY archive stays a graceful no-op (no table conjured)', async () => {
+    // Regression guard: the empty-wipe fix must NOT create a table when the target
+    // lacks the collection AND the archive is empty (nothing to restore; mem0 self-init
+    // makes it lazily with the live embedder's true dims). Mirrors the existing HIGH
+    // test, asserted again here so the empty-wipe branch keeps it.
+    const vec = Array.from({ length: DIMS }, () => 0);
+    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
+    const good = await buildZipBytes();
+    const emptyArchive = rewriteMem0Rows(good, []);
+
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+    expect(await tableExists()).toBe(false);
+
+    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: emptyArchive });
+    expect(res.status).toBe(200);
+    // No rows to insert + table absent → nothing created (wipe-if-PRESENT, not create).
+    expect(await tableExists()).toBe(false);
+  });
+});
+
+// ─── YUK-355 recoverability core: restore must be ATOMIC. A mid-restore failure must
+// ROLL BACK — the DB must never be left half-wiped/half-restored. ──────────────────
+//
+// THE BUG (pre-existing): restoreFromArchive ran the FK_ORDER deletes+inserts AND the
+// mem0 wipe/create/insert with NO transaction (grep: zero BEGIN/COMMIT). A failure
+// part-way through left the DB half-wiped with no rollback — a real disaster-recovery
+// hole for "必须可恢复" (D17 reversal). FIX: wrap the entire restore mutation sequence
+// in a single drizzle db.transaction(async (tx) => { ... }); any throw rolls the whole
+// thing back (Postgres supports transactional DDL, so create-extension/create-table
+// inside the tx roll back too). Pre-flight validation stays BEFORE the tx.
+describe('mem0/FK restore atomicity — mid-restore failure rolls back (YUK-355)', () => {
+  let prevCollectionEnv: string | undefined;
+
+  beforeAll(() => {
+    prevCollectionEnv = process.env.MEM0_PGVECTOR_COLLECTION;
+    process.env.MEM0_PGVECTOR_COLLECTION = COLLECTION;
+  });
+
+  afterAll(() => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+    if (prevCollectionEnv === undefined) delete process.env.MEM0_PGVECTOR_COLLECTION;
+    else process.env.MEM0_PGVECTOR_COLLECTION = prevCollectionEnv;
+  });
+
+  beforeEach(async () => {
+    await resetDb();
+    await createCollection();
+  });
+
+  afterEach(async () => {
+    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
+  });
+
+  async function seedKnowledgeRow(id: string, name: string) {
+    await testDb().execute(sql`
+      INSERT INTO knowledge (id, name, created_at, updated_at)
+      VALUES (${id}, ${name}, now(), now())
+    `);
+  }
+
+  async function knowledgeNames(): Promise<string[]> {
+    const rows = (await testDb().execute(
+      sql.raw('select name from knowledge order by name'),
+    )) as Array<{ name: string }>;
+    return rows.map((r) => r.name);
+  }
+
+  // Take a real archive, then corrupt the mem0 vector to a syntactically-broken
+  // pgvector text so the INSERT … ::vector cast throws DEEP inside the restore — AFTER
+  // the FK_ORDER wipe has already run. Without a transaction, that half-wipes the DB.
+  function corruptMem0Vector(bytes: Uint8Array): Uint8Array {
+    const entries = unzipSync(bytes);
+    const data = JSON.parse(new TextDecoder().decode(entries['data.json'])) as Record<
+      string,
+      Array<Record<string, unknown>>
+    >;
+    // 'not-a-vector' passes the id/vector/payload COLUMN allowlist (key names are fine)
+    // and the shape pre-flight (it IS an array of well-shaped rows), so the failure can
+    // only surface at the ::vector cast mid-transaction — exactly the half-wipe window.
+    data[COLLECTION] = [
+      {
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        vector: 'not-a-vector',
+        payload: { data: 'x' },
+      },
+    ];
+    const repacked: Record<string, Uint8Array> = {};
+    for (const [name, content] of Object.entries(entries)) {
+      repacked[name] =
+        name === 'data.json' ? new TextEncoder().encode(JSON.stringify(data)) : content;
+    }
+    return zipSync(repacked);
+  }
+
+  it('rolls back the FK_ORDER wipe when the mem0 insert fails mid-restore (canary survives)', async () => {
+    // Pre-existing canary in a real business table — it must survive a failed restore
+    // unchanged (DB not left half-wiped). The archive's `knowledge` array does NOT
+    // contain this canary (it is built from an EMPTY knowledge table below), so the
+    // ONLY reason the canary still exists after the call is a successful rollback.
+    await testDb().execute(sql.raw('delete from knowledge'));
+    const vec = Array.from({ length: DIMS }, () => 0);
+    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
+
+    // Build the archive from the current (empty knowledge) DB, then add the canary.
+    const good = await buildZipBytes();
+    const bad = corruptMem0Vector(good);
+
+    // NOW seed the canary — it is NOT in the archive, so a non-rolled-back restore
+    // (FK_ORDER wipe runs, then mem0 insert throws) would leave knowledge EMPTY.
+    await seedKnowledgeRow('canary-tx-1', 'CANARY survives rollback');
+    expect(await knowledgeNames()).toEqual(['CANARY survives rollback']);
+
+    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: bad });
+    // The corrupt ::vector cast fails the restore.
+    expect(res.status).toBe(500);
+    expect((res.body as { error: string }).error).toBe('restore_failed_mid_flight');
+
+    // CRITICAL: the whole mutation rolled back — the FK_ORDER wipe was undone, so the
+    // canary (never in the archive) still exists. RED against the non-transactional
+    // restore, where the wipe committed before the mem0 insert threw.
+    expect(await knowledgeNames()).toEqual(['CANARY survives rollback']);
+    // And the mem0 collection still holds its original row (its delete rolled back too).
+    expect(await readRows()).toHaveLength(1);
+  });
+});
