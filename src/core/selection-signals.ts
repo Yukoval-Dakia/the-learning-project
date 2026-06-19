@@ -48,11 +48,18 @@ export interface SelectionCandidateSignal {
   // （examRelevance 据考纲映射、misconceptionRecurrence 据错题家族复发频次、
   // transferGap 据迁移缺口诊断），本 lane 仅定 schema，不算任何值。
   // ───────────────────────────────────────────────────────────────────────────
-  /** 考纲相关度 0-1（考点权重）。computation-deferred：Phase 3 据考纲映射计算。 */
+  /** 考纲相关度 0-1（考点权重）。computation-deferred：仍无 cheap reader（无考纲映射源）。 */
   examRelevance?: number;
-  /** 错误观念复发度 0-1（错题家族复发频次）。computation-deferred：Phase 3 计算。 */
+  /**
+   * 错误观念复发度 0-1（错题家族跨 attempt 复发频次）。**已实现**（P2 D2 / A8）：由
+   * candidate-signals.ts:aggregateMisconceptionRecurrence 按 per-learner SELF-STATE
+   * tally（KC-based linkage：候选 KC → 题 → mistake_variant.cause_category group-count）
+   * 算出，归一化常数 owner-fixed。flag-gated（MISCONCEPTION_RECURRENCE_ENABLED，默认 OFF
+   * → undefined）。SELECTION-ONLY：仅经 buildSelectionOrchestratorInput 进 orchestrator
+   * prompt，绝不进 θ̂/p(L)/FSRS。无数据 → undefined（NEVER zero-fill）。
+   */
   misconceptionRecurrence?: number;
-  /** 迁移缺口 0-1（跨情境迁移诊断）。computation-deferred：Phase 3 计算。 */
+  /** 迁移缺口 0-1（跨情境迁移诊断）。computation-deferred：仍无 cheap reader（无 per-kind 掌握度）。 */
   transferGap?: number;
 }
 

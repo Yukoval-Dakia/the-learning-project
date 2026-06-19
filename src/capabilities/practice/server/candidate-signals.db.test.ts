@@ -34,6 +34,24 @@ vi.mock('@/core/selection-signals', async (importOriginal) => {
   };
 });
 
+// P2 D2 / A8 — MISCONCEPTION_RECURRENCE_ENABLED is a module-level const in
+// ./selection-constants. Its REAL default is false (dark-ship). We mock just this one
+// export (EARLY_KLP pattern) so both flag directions stay covered regardless of the default:
+//   - flag OFF (early/recurrence flag false, restored in beforeEach) → undefined for all
+//     (byte-identical orchestrator/mfi path).
+//   - flag ON (set true per-test) → the aggregate is computed.
+const recurrenceFlag = { value: false };
+vi.mock('@/capabilities/practice/server/selection-constants', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/capabilities/practice/server/selection-constants')>();
+  return {
+    ...actual,
+    get MISCONCEPTION_RECURRENCE_ENABLED() {
+      return recurrenceFlag.value;
+    },
+  };
+});
+
 import {
   type CandidateInput,
   collectCandidateSignals,
@@ -41,13 +59,22 @@ import {
 import { newId } from '@/core/ids';
 import { klpScore, mfiScore } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
-import { item_calibration, item_family_calibration, knowledge, mastery_state } from '@/db/schema';
+import {
+  item_calibration,
+  item_family_calibration,
+  knowledge,
+  mastery_state,
+  mistake_variant,
+  question,
+} from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const db = testDb();
 
 beforeEach(() => {
   earlyKlpFlag.value = false; // restore dark-ship default before every test
+  recurrenceFlag.value = false; // restore misconceptionRecurrence dark-ship default
   return resetDb();
 });
 
@@ -96,6 +123,41 @@ async function seedKnowledge(id: string, domain = 'wenyan'): Promise<void> {
     created_at: now,
     updated_at: now,
     version: 0,
+  });
+}
+
+// P2 D2 / A8 — seed a question row carrying the given KCs (the misconceptionRecurrence
+// KC-based linkage walks question.knowledge_ids @> [kc] to find probed questions).
+async function seedQuestion(id: string, knowledgeIds: string[]): Promise<void> {
+  const now = new Date();
+  await db.insert(question).values({
+    id,
+    kind: 'short_answer',
+    prompt_md: `prompt-${id}`,
+    knowledge_ids: knowledgeIds,
+    difficulty: 3,
+    source: 'manual',
+    draft_status: 'active',
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+}
+
+// P2 D2 / A8 — seed one mistake_variant row = one of THIS learner's recurrences of
+// `causeCategory` on a mistake whose parent question is `parentQuestionId`.
+async function seedMistake(parentQuestionId: string, causeCategory: string | null): Promise<void> {
+  const now = new Date();
+  await db.insert(mistake_variant).values({
+    id: newId(),
+    parent_question_id: parentQuestionId,
+    variant_question_id: null,
+    proposal_event_id: null,
+    status: 'active',
+    failure_reasons: [],
+    cause_category: causeCategory,
+    created_at: now,
+    updated_at: now,
   });
 }
 
@@ -700,5 +762,266 @@ describe('collectCandidateSignals — family b_delta composition (YUK-372 L3)', 
     expect(sigs.map((s) => s.refId)).toEqual(['q-fam2', 'p-mix', 'q-plain']);
     expect(sigs[0].b).toBeCloseTo(0.85 + 0.5, 10); // family delta applied.
     expect(sigs[2].b).toBeCloseTo(0.85, 10); // no delta (source missing).
+  });
+});
+
+// P2 D2 / A8 — misconceptionRecurrence (per-KC cause-family recurrence, soft, flag-gated).
+//   Linkage (KC-based): candidate KC set K → questions with knowledge_ids @> [kc∈K] →
+//   mistake_variant on parent_question_id, GROUP BY cause_category, MAX count → normalized
+//   to 0-1 by owner-fixed RECURRENCE_NORM (=5). SELECTION-ONLY; NEVER zero-fill.
+describe('collectCandidateSignals — misconceptionRecurrence (P2 D2 / A8)', () => {
+  it('(1) flag ON: recurring cause_category on a candidate KC → finite 0-1 value rising with recurrence count', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-mr', 0.0, 4);
+    await seedCalibration('q-mr', 0.5);
+    // A sibling question shares the candidate's KC and carries this learner's mistakes.
+    await seedQuestion('q-sibling', ['kc-mr']);
+
+    const candidate: CandidateInput = {
+      refKind: 'question',
+      refId: 'q-mr',
+      role: 'diagnostic',
+      kind: 'short_answer',
+      knowledgeIds: ['kc-mr'],
+      difficulty: 3,
+    };
+
+    // 2 recurrences of cause 'misread' on a KC-sibling question.
+    await seedMistake('q-sibling', 'misread');
+    await seedMistake('q-sibling', 'misread');
+    const [twoRec] = await collectCandidateSignals(db, [candidate]);
+    expect(twoRec.misconceptionRecurrence).toBeGreaterThan(0);
+    expect(twoRec.misconceptionRecurrence).toBeLessThanOrEqual(1);
+    expect(twoRec.misconceptionRecurrence).toBeCloseTo(2 / 5, 10); // 2 / RECURRENCE_NORM
+
+    // Add 2 more recurrences of the SAME cause → the signal must RISE.
+    await seedMistake('q-sibling', 'misread');
+    await seedMistake('q-sibling', 'misread');
+    const [fourRec] = await collectCandidateSignals(db, [candidate]);
+    expect(fourRec.misconceptionRecurrence).toBeCloseTo(4 / 5, 10);
+    expect(fourRec.misconceptionRecurrence as number).toBeGreaterThan(
+      twoRec.misconceptionRecurrence as number,
+    );
+  });
+
+  it('(1b) flag ON: saturates at 1.0 once recurrences reach the owner-fixed norm', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-sat', 0.0, 4);
+    await seedCalibration('q-sat', 0.5);
+    await seedQuestion('q-sat-sib', ['kc-sat']);
+    // 7 recurrences > RECURRENCE_NORM(5) → clamps to 1.0 (never exceeds 1).
+    for (let i = 0; i < 7; i++) await seedMistake('q-sat-sib', 'overgeneralize');
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-sat',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-sat'],
+        difficulty: 3,
+      },
+    ]);
+    expect(sig.misconceptionRecurrence).toBe(1);
+  });
+
+  it('(1c) flag ON: the candidates OWN question mistakes also count (parent_question_id = candidate, shared KC)', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-self', 0.0, 4);
+    await seedCalibration('q-self', 0.5);
+    // The candidate question itself carries the KC and is the parent of mistakes.
+    await seedQuestion('q-self', ['kc-self']);
+    await seedMistake('q-self', 'sign_error');
+    await seedMistake('q-self', 'sign_error');
+    await seedMistake('q-self', 'sign_error');
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-self',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-self'],
+        difficulty: 3,
+      },
+    ]);
+    expect(sig.misconceptionRecurrence).toBeCloseTo(3 / 5, 10);
+  });
+
+  it('(1d) flag ON: MAX across cause families (the most-recurring misconception), not the sum', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-max', 0.0, 4);
+    await seedCalibration('q-max', 0.5);
+    await seedQuestion('q-max-sib', ['kc-max']);
+    // cause A: 1 recurrence; cause B: 3 recurrences. MAX=3, NOT sum=4.
+    await seedMistake('q-max-sib', 'cause_a');
+    await seedMistake('q-max-sib', 'cause_b');
+    await seedMistake('q-max-sib', 'cause_b');
+    await seedMistake('q-max-sib', 'cause_b');
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-max',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-max'],
+        difficulty: 3,
+      },
+    ]);
+    expect(sig.misconceptionRecurrence).toBeCloseTo(3 / 5, 10); // MAX(1,3)/5, not 4/5.
+  });
+
+  it('(2) flag ON: NO cause data on the candidate KCs → undefined (NOT 0)', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-nodata', 0.0, 4);
+    await seedCalibration('q-nodata', 0.5);
+    // A question on the KC exists but has NO mistakes; and a mistake exists on an
+    // UNRELATED KC's question (must NOT leak in).
+    await seedQuestion('q-nodata-sib', ['kc-nodata']);
+    await seedQuestion('q-other', ['kc-unrelated']);
+    await seedMistake('q-other', 'misread'); // different KC → excluded.
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-nodata',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-nodata'],
+        difficulty: 3,
+      },
+    ]);
+    // undefined = "no data" — distinct from a measured 0 (the NEVER-zero-fill contract).
+    expect(sig.misconceptionRecurrence).toBeUndefined();
+    expect(sig.misconceptionRecurrence).not.toBe(0);
+  });
+
+  it('(2b) flag ON: mistakes with NULL cause_category do not count (undefined, not 0)', async () => {
+    recurrenceFlag.value = true;
+    await seedMastery('kc-null', 0.0, 4);
+    await seedCalibration('q-null', 0.5);
+    await seedQuestion('q-null-sib', ['kc-null']);
+    await seedMistake('q-null-sib', null); // no cause attributed → not a cause recurrence.
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-null',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-null'],
+        difficulty: 3,
+      },
+    ]);
+    expect(sig.misconceptionRecurrence).toBeUndefined();
+  });
+
+  it('(2c) flag ON: candidate with NO KCs → undefined (no KC anchor → no linkage)', async () => {
+    recurrenceFlag.value = true;
+    await seedCalibration('q-nokc', 0.5);
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-nokc',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: [],
+        difficulty: 3,
+      },
+    ]);
+    expect(sig.misconceptionRecurrence).toBeUndefined();
+  });
+
+  it('(3) flag OFF (default): undefined regardless of cause data (byte-identical)', async () => {
+    // recurrenceFlag.value stays false (beforeEach default). Same seed as the ON test (1).
+    await seedMastery('kc-off', 0.0, 4);
+    await seedCalibration('q-off', 0.5);
+    await seedQuestion('q-off-sib', ['kc-off']);
+    await seedMistake('q-off-sib', 'misread');
+    await seedMistake('q-off-sib', 'misread');
+
+    const candidate: CandidateInput = {
+      refKind: 'question',
+      refId: 'q-off',
+      role: 'diagnostic',
+      kind: 'short_answer',
+      knowledgeIds: ['kc-off'],
+      difficulty: 3,
+    };
+    const [sig] = await collectCandidateSignals(db, [candidate]);
+
+    // Flag off → undefined even with recurring cause data present (dark-ship).
+    expect(sig.misconceptionRecurrence).toBeUndefined();
+    // And the mfiScore/diagnosticScore path is unaffected by the new signal (byte-identical).
+    expect(sig.mfiScore).toBe(mfiScore(0.0, 0.5));
+    expect(sig.scoreKind).toBe('mfi');
+  });
+
+  it('(3b) flag OFF: mfiScore/diagnosticScore are byte-identical with vs without cause data present', async () => {
+    // Two identical candidates; one has recurring cause data on its KC, one does not.
+    // With the flag off, their scoring fields must be bit-identical (signal is inert).
+    await seedMastery('kc-iso', 0.0, 4);
+    await seedCalibration('q-iso', 0.5);
+    await seedQuestion('q-iso-sib', ['kc-iso']);
+    await seedMistake('q-iso-sib', 'misread');
+    await seedMistake('q-iso-sib', 'misread');
+
+    const [withData] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-iso',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-iso'],
+        difficulty: 3,
+      },
+    ]);
+    expect(withData.mfiScore).toBe(mfiScore(0.0, 0.5));
+    expect(withData.diagnosticScore).toBeGreaterThan(0); // diagnostic = MFI × uncertainty penalty
+    expect(withData.misconceptionRecurrence).toBeUndefined();
+  });
+
+  it('(4) red line: misconceptionRecurrence is selection-only — the θ̂/p(L) update does not read it', async () => {
+    // updateThetaForAttempt's input shape (UpdateThetaForAttemptInput) has NO field that
+    // could carry misconceptionRecurrence; the value lives only on CollectedSignal in the
+    // selection path. This test pins the structural separation: computing the selection
+    // signal (flag ON) does not mutate any mastery_state row (θ̂/precision/evidence_count).
+    recurrenceFlag.value = true;
+    await seedMastery('kc-redline', 0.42, 7);
+    await seedCalibration('q-redline', 0.5);
+    await seedQuestion('q-redline-sib', ['kc-redline']);
+    await seedMistake('q-redline-sib', 'misread');
+    await seedMistake('q-redline-sib', 'misread');
+
+    const before = await db
+      .select()
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_id, 'kc-redline'));
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-redline',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-redline'],
+        difficulty: 3,
+      },
+    ]);
+    // The selection signal IS produced (proves the read happened) ...
+    expect(sig.misconceptionRecurrence).toBeCloseTo(2 / 5, 10);
+
+    const after = await db
+      .select()
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_id, 'kc-redline'));
+
+    // ... but the θ̂ / precision / evidence_count state is UNTOUCHED by the selection read
+    // (collectCandidateSignals is pure-read; misconceptionRecurrence never feeds the θ path).
+    expect(after[0].theta_hat).toBe(before[0].theta_hat);
+    expect(after[0].theta_precision).toBe(before[0].theta_precision);
+    expect(after[0].evidence_count).toBe(before[0].evidence_count);
+    expect(after[0].theta_hat).toBeCloseTo(0.42, 10);
   });
 });

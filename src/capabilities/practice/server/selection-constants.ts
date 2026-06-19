@@ -45,3 +45,21 @@ export const DEFAULT_SELECTION_POLICY: SelectionPolicyConfig['policy'] = 'softma
  *   LLM 编排意图被抹平。recalibration deferred + PPI++ power-tuning 自降级兜底。
  */
 export const DEFAULT_TEMPERATURE = 0.25;
+
+/**
+ * P2 D2 / A8 — dark-ship flag for the `misconceptionRecurrence` selection signal
+ * (candidate-signals.ts aggregateMisconceptionRecurrence).
+ *
+ * false (DEFAULT) → misconceptionRecurrence stays `undefined` for every candidate → the
+ *   aggregate query is never issued → buildSelectionOrchestratorInput emits
+ *   `misconception_recurrence=n/a` for all (byte-identical orchestrator prompt to today)
+ *   and the mfiScore / diagnosticScore path is untouched.
+ * true → the 0-1 normalized per-learner cross-attempt cause-family recurrence is computed
+ *   and surfaced (SELECTION-ONLY: it feeds only the orchestrator prompt, never θ̂/p(L)/FSRS).
+ *
+ * Lives here (a pure, IO-free dependency module) — NOT inline in candidate-signals.ts — so
+ * tests can mock just this one export via `vi.mock(... importOriginal)` exactly like the
+ * EARLY_KLP_ENABLED pattern, keeping both flag directions covered regardless of the default.
+ * Flip to true is an owner go-live decision.
+ */
+export const MISCONCEPTION_RECURRENCE_ENABLED = false;
