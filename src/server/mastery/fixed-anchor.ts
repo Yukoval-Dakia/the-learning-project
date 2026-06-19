@@ -128,15 +128,28 @@ export async function setFixedAnchor(db: DbLike, input: FixedAnchorInput): Promi
 
 /**
  * Batch convenience — set fixed anchors for several questions in one call.
- * Each is an independent idempotent upsert. Returns the written rows in input order.
+ *
+ * ── ATOMIC（YUK-453，单写者契约 + PR #512 OCR major）──────────────────────────────
+ * 整批跑在**单个 db.transaction** 里：任一锚写失败（DB 约束 / 桶名非法 / 连接断）→ PG
+ * 整体 rollback，**全批回退**（不留「前 k 道已提交、后面没写」的部分写）。这守住 owner
+ * 一次提交「这 5-10 道锚题」的**语义原子性**——锚题集合是给难度尺度定共同原点+单位的整体
+ * （§4.1 缓解 1），半套锚比无锚更坏（尺度被一半 owner 真值 + 一半 LLM offset 污染）。
+ *
+ * 接收 `Db`（非 DbLike）因为只有 `Db` 暴露 `.transaction`；唯一调用方（calibration-anchors
+ * route）传 db 单例。单道 `setFixedAnchor` 仍收 `DbLike`，故 standalone + 在本 tx 内（收 tx）
+ * 两种调用都成立（镜像 verify-and-promote.ts:180 的 db.transaction(tx => fn(tx)) 纪律）。
+ * Returns the written rows in input order.
  */
 export async function setFixedAnchors(
-  db: DbLike,
+  db: Db,
   inputs: ReadonlyArray<FixedAnchorInput>,
 ): Promise<FixedAnchorRow[]> {
-  const out: FixedAnchorRow[] = [];
-  for (const input of inputs) {
-    out.push(await setFixedAnchor(db, input));
-  }
-  return out;
+  return db.transaction(async (tx) => {
+    const out: FixedAnchorRow[] = [];
+    for (const input of inputs) {
+      // setFixedAnchor 收 DbLike，传 tx → 每道锚写进同一事务；任一抛错则整事务 rollback。
+      out.push(await setFixedAnchor(tx, input));
+    }
+    return out;
+  });
 }
