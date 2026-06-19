@@ -1,0 +1,56 @@
+name: CI Gate
+
+# 远端 pre-merge gate（替代本地手跑 full pnpm test）。
+# CI 绿 = mergeable。DB 测经 @testcontainers/postgresql 自起 Postgres（runner 自带 Docker）。
+# 无需 secret：DB 测用 testcontainer、build 用 DATABASE_URL 占位、AI 测全 mock。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: typecheck · lint · audits · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Audit — schema write-path
+        run: pnpm audit:schema
+
+      - name: Audit — test partition
+        run: pnpm audit:partition
+
+      # `pnpm test` = audit:profile + audit:draft-status + test:unit + test:db + test:migration
+      # test:db 经 testcontainers 起真 Postgres（runner Docker socket 自动探测）。
+      - name: Test (profile + draft-status + unit + db + migration)
+        run: pnpm test
+
+      - name: Build (server/worker/migrate + web)
+        run: pnpm build
+        env:
+          DATABASE_URL: postgres://placeholder
