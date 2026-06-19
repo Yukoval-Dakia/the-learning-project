@@ -169,6 +169,16 @@ export const practiceCapability = defineCapability({
         path: '/api/questions/[id]',
         load: () => import('./api/question-detail').then((m) => m.DELETE),
       },
+      // YUK-453 (cold-start inc-A) — owner FIXED-ANCHOR write face. owner 钦定 ~5-10 道
+      // 锚题的难度档（粗分桶）→ item_calibration source='fixed_anchor'。n=1 唯一不违红线
+      // 的「校 LLM 难度系统性 offset」杠杆（cold-start day-one design §5 inc-A / §4.1）。
+      // 写真身在 src/server/mastery/fixed-anchor.ts（item_calibration 单写者契约）；handler
+      // 只 CALL setFixedAnchors。/api/* internal-token 由组合根中间件统一施加。
+      {
+        method: 'POST',
+        path: '/api/practice/calibration/anchors',
+        load: () => import('./api/calibration-anchors').then((m) => m.POST),
+      },
     ],
   },
   jobs: {
