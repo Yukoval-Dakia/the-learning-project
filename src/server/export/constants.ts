@@ -28,7 +28,12 @@
 // calibration_n/calibration_weight/last_calibrated_at 是既有 FK_ORDER 表的 additive
 // **列**，随整行 dump/restore，**不 bump**（同 Phase 2 theta_precision 加列不 bump 4.2
 // 的先例）。表 = bump，列 = 不 bump。
-export const SCHEMA_VERSION = '4.5';
+// YUK-344 (调和环增量 2，ADR-0034 §3): additive `edge_reconciliation_log` table —
+// 结构轴知识边调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由，provenance 值得保留)，
+// 同 memory_reconciliation_log 进 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。29 → 30 tables；bump
+// 4.5 → 4.6 (NEW FK_ORDER table 必 bump，per archive.ts:92)。这是纯备份登记 + 版本号 bump，
+// 不动任何 reconcile runtime。
+export const SCHEMA_VERSION = '4.6';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -113,6 +118,13 @@ export const FK_ORDER = [
   // 软引用 practice_stream_item.id (text ref，no enforced FK)，位置不受 PG FK 约束。
   'selection_observation',
   'memory_reconciliation_log',
+  // YUK-344 调和环增量 2 (ADR-0034 §3): edge_reconciliation_log — 结构轴知识边写入期
+  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)。与 memory_reconciliation_log
+  // (记忆/个性化轴) 结构正交但语义同类 (provenance 值得保留，丢了即灭失 epistemic 来由)，
+  // 故同入 FK_ORDER 备份 (非 BACKUP_EXCLUDED)。软引用 knowledge_edge.id (superseded_edge_id
+  // 是 text ref，无 hard FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持
+  // 两条 reconciliation 日志相邻可读。
+  'edge_reconciliation_log',
 ] as const;
 
 export type TableName = (typeof FK_ORDER)[number];
