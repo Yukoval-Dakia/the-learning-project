@@ -172,25 +172,28 @@ export function maxNgramOverlap(promptMd: string, snippets: string[]): number {
 // above: a deterministic signal that can only BLOCK promotion, never grant it.
 //
 // It is a MEANINGFUL structural property (NOT a tautological reference-vs-reference
-// self-check): for a choice item, `reference_md` must resolve — via the SAME
-// resolveChoiceIndices rules the exact judge uses at grade-time — to EXACTLY ONE valid
-// in-range choice among `choices_md` (and choices_md must be present, length >= 2,
-// distinct after normalize-dedup); for a true_false item, `reference_md` must be a
-// recognised true/false token. The result shape has NO "promote" verb — only `malformed`
-// (+ a reason when malformed). prose/translation/short_answer/essay/reading/derivation
-// (and fill_blank this increment) NEVER enter the filter (the kind guard returns
-// malformed:false → fall through unchanged).
+// self-check): `reference_md` must resolve — via the SAME resolveChoiceIndices rules the
+// exact judge uses at grade-time — to EXACTLY ONE valid in-range choice among `choices_md`
+// (and choices_md must be present, length >= 2, distinct after normalize-dedup).
+//
+// YUK-350 (Bugbot Medium fix): true_false is routed + GRADED IDENTICALLY to choice
+// (judge-routing.ts:43 + route-resolve.ts:145 both map choice||true_false -> exact, and the
+// exact judge grades true_false via resolveChoiceIndices against choices_md), and the QuizGen
+// prompt emits true_false drafts carrying choices_md + reference_md = the correct OPTION TEXT.
+// So a true_false item is validated EXACTLY like choice WHEN choices_md is present (>= 2
+// distinct entries); a true_false item with absent/<2 choices_md (the sourced/practice
+// bare-boolean 判断题 shape) FALLS THROUGH to the LLM rather than being reject-guessed against
+// a boolean-token whitelist — the prior whitelist false-rejected valid option-text references,
+// and falling through is always safe (the reject-filter is an optimization, not a correctness
+// gate). The result shape has NO "promote" verb — only `malformed` (+ a reason when malformed).
+// prose/translation/short_answer/essay/reading/derivation (and fill_blank this increment)
+// NEVER enter the filter (the kind guard returns malformed:false → fall through unchanged).
 //
 // fill_blank is intentionally NOT in scope this increment: it may or may not carry an
 // exact answer + choices, and an over-eager structural reject would false-positive on
 // legitimate keyword/semantic fill-blanks. Left to a follow-up (Linear).
 
 const OBJECTIVE_FILTER_KINDS = new Set(['choice', 'true_false']);
-
-// Recognised true/false tokens (normalized). Covers the current subjects: Chinese
-// 对/错/正确/错误/是/否, English true/false/T/F/yes/no, and the common √/✓ ×/✗ glyphs.
-const TRUE_TOKENS = new Set(['对', '正确', '是', '√', '✓', 'true', 't', 'yes', 'y']);
-const FALSE_TOKENS = new Set(['错', '错误', '否', '×', '✗', 'false', 'f', 'no', 'n']);
 
 function normalizeToken(value: string): string {
   return value.normalize('NFKC').trim().toLowerCase();
@@ -223,34 +226,36 @@ export function runObjectiveStructuralRejectFilter(
   if (!OBJECTIVE_FILTER_KINDS.has(input.kind)) return { malformed: false };
 
   const reference = (input.reference_md ?? '').trim();
-  if (reference.length === 0) {
-    return { malformed: true, reason: 'objective draft has an empty reference answer' };
-  }
+  const choices = input.choices_md ?? [];
 
-  if (input.kind === 'true_false') {
-    const tok = normalizeToken(reference);
-    if (!TRUE_TOKENS.has(tok) && !FALSE_TOKENS.has(tok)) {
-      return {
-        malformed: true,
-        reason: `true_false reference "${reference}" is not a recognised true/false token`,
-      };
-    }
+  // YUK-350 (Bugbot Medium fix) — true_false with absent/<2 choices_md is the sourced/practice
+  // bare-boolean 判断题 shape; the exact judge can't (and doesn't) grade it via choice-resolution
+  // there, and an over-eager boolean-token reject false-positives valid drafts. Fall through to
+  // the LLM verify (always safe — the filter is an optimization, not a correctness gate). choice
+  // ALWAYS validates against choices below (an objective choice with <2 choices is malformed).
+  if (input.kind === 'true_false' && choices.length < 2) {
     return { malformed: false };
   }
 
-  // input.kind === 'choice'
-  const choices = input.choices_md ?? [];
+  // From here both choice and choice-shaped true_false (>= 2 choices) validate IDENTICALLY,
+  // matching how the exact judge grades them at grade-time (resolveChoiceIndices vs choices_md).
+  if (reference.length === 0) {
+    return { malformed: true, reason: 'objective draft has an empty reference answer' };
+  }
   if (choices.length < 2) {
     return {
       malformed: true,
-      reason: `choice draft must have >= 2 choices, got ${choices.length}`,
+      reason: `${input.kind} draft must have >= 2 choices, got ${choices.length}`,
     };
   }
   // Distinct after normalize-dedup: collapse choices that are equal once NFKC + trim +
   // lowercase'd. A choice item with two identical options is structurally broken.
   const normalizedChoices = choices.map(normalizeToken);
   if (new Set(normalizedChoices).size !== normalizedChoices.length) {
-    return { malformed: true, reason: 'choice draft has duplicate choices after normalization' };
+    return {
+      malformed: true,
+      reason: `${input.kind} draft has duplicate choices after normalization`,
+    };
   }
   // MEANINGFUL structural property: reference must resolve to EXACTLY ONE valid in-range
   // choice index (via the SAME resolveChoiceIndices rules the exact judge applies at
@@ -260,7 +265,7 @@ export function runObjectiveStructuralRejectFilter(
   if (referenceIdx === null || referenceIdx.length !== 1) {
     return {
       malformed: true,
-      reason: `choice reference "${reference}" does not resolve to exactly one valid in-range choice`,
+      reason: `${input.kind} reference "${reference}" does not resolve to exactly one valid in-range choice`,
     };
   }
   return { malformed: false };

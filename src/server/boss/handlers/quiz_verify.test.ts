@@ -710,24 +710,67 @@ describe('runObjectiveStructuralRejectFilter (pure, deterministic)', () => {
     expect(r.malformed).toBe(false);
   });
 
-  it('true_false: a valid true/false token is well-formed', () => {
-    for (const tok of ['对', '错', '正确', '错误', 'true', 'False', 'T', 'F', '√', '×']) {
+  // YUK-350 (Bugbot Medium fix) — true_false is routed + graded IDENTICALLY to choice
+  // (judge-routing.ts:43 + route-resolve.ts:145 both map choice||true_false -> exact, and
+  // the exact judge grades via resolveChoiceIndices against choices_md). The QuizGen prompt
+  // (task-prompts.ts: "choice / true_false: ... 给 3–4 个选项，reference_md 第一行必须是正确选项原文")
+  // produces true_false drafts carrying choices_md + reference_md = the correct OPTION TEXT.
+  // So when choices are present, validate true_false EXACTLY like choice (reference must
+  // resolve via resolveChoiceIndices to a single in-range choice). The prior boolean-token
+  // whitelist (TRUE_TOKENS/FALSE_TOKENS) was the WRONG assumption and false-rejected these.
+  it('true_false WITH choices: reference = a valid OPTION TEXT resolves to one choice (fall through, NOT rejected)', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'true_false',
+      reference_md: '正确',
+      choices_md: ['正确', '错误'],
+    });
+    // This is the Bugbot regression lock at the pure-filter layer: an option-text
+    // reference must NOT be falsely rejected.
+    expect(r.malformed).toBe(false);
+    expect(Object.keys(r)).toEqual(['malformed']);
+  });
+
+  it('true_false WITH choices: reference letter resolves to one choice (fall through)', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'true_false',
+      reference_md: 'A',
+      choices_md: ['正确', '错误'],
+    });
+    expect(r.malformed).toBe(false);
+  });
+
+  it('true_false WITH choices: reference that resolves to NO valid choice is malformed (reject)', () => {
+    const r = runObjectiveStructuralRejectFilter({
+      kind: 'true_false',
+      reference_md: 'Z',
+      choices_md: ['正确', '错误'],
+    });
+    expect(r.malformed).toBe(true);
+    if (r.malformed) expect(r.reason).toBeTruthy();
+  });
+
+  it('true_false WITHOUT choices (bare-boolean shape): falls through (NEVER rejected, defers to the LLM)', () => {
+    // The sourced/practice 判断题 shape is kind='true_false' + a bare boolean reference and
+    // NO choices_md. Falling through is always safe (the reject-filter is an optimization,
+    // not a correctness gate); the LLM verify still runs. Even a non-boolean reference falls
+    // through here — we no longer guess at a boolean-token whitelist.
+    for (const ref of ['正确', '错', 'true', '这不是一个判断答案']) {
       const r = runObjectiveStructuralRejectFilter({
         kind: 'true_false',
-        reference_md: tok,
+        reference_md: ref,
         choices_md: null,
       });
-      expect(r.malformed, `token ${tok} should be valid`).toBe(false);
+      expect(r.malformed, `bare-boolean true_false ref ${ref} must not be rejected`).toBe(false);
     }
   });
 
-  it('true_false: a non-boolean reference is malformed', () => {
+  it('true_false with a SINGLE choice (<2): falls through (treated as the bare-boolean case)', () => {
     const r = runObjectiveStructuralRejectFilter({
       kind: 'true_false',
-      reference_md: '这不是一个判断答案',
-      choices_md: null,
+      reference_md: '正确',
+      choices_md: ['正确'],
     });
-    expect(r.malformed).toBe(true);
+    expect(r.malformed).toBe(false);
   });
 
   it('non-objective kinds never enter the filter (always falls through)', () => {
@@ -887,16 +930,48 @@ describe('runQuizVerify — objective structural reject filter (YUK-350)', () =>
     expect(rows[0].draft_status).toBe('draft');
   });
 
-  // (d) true_false malformed vs valid.
-  it('malformed true_false (non-boolean reference): needs_review, LLM NOT called, not promoted', async () => {
+  // (d) true_false: choice-shaped (carries choices_md) vs bare-boolean (no choices_md).
+  // YUK-350 Bugbot Medium fix — true_false is routed + graded identically to choice, and
+  // the QuizGen prompt emits true_false drafts with choices_md + reference_md = the correct
+  // OPTION TEXT. Validate like choice WHEN choices are present; fall through when not.
+  //
+  // (a) THE BUGBOT REGRESSION LOCK: a true_false draft carrying choices_md whose reference_md
+  //     is a valid OPTION TEXT must NOT be falsely rejected — it must fall through to the LLM
+  //     (runTaskFn IS called). Before the fix the boolean-token whitelist rejected this and the
+  //     verify-event idempotency guard made it terminal (stuck in needs_review forever).
+  it('Bugbot regression: true_false with choices_md + reference = OPTION TEXT is NOT falsely rejected (falls through to the LLM)', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'q_tf_optiontext',
+      knowledgeId: 'k1',
+      kind: 'true_false',
+      promptMd: '「之」可作主谓之间的结构助词。',
+      referenceMd: '正确', // the correct OPTION TEXT, exactly as the QuizGen prompt produces it
+      choicesMd: ['正确', '错误'],
+      judgeKindOverride: 'exact',
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_tf_optiontext');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_tf_optiontext', runTaskFn });
+    // The filter granted nothing; it fell through to the LLM verify path.
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('verified');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_tf_optiontext'));
+    // Promotion came from the LLM gate, NOT the filter.
+    expect(rows[0].draft_status).toBe('active');
+  });
+
+  // (b) a true_false draft carrying choices_md whose reference resolves to NO valid choice
+  //     is structurally malformed → rejected (needs_review), LLM NOT called.
+  it('malformed true_false (choices present, reference resolves to no choice): needs_review, LLM NOT called, not promoted', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({
       id: 'q_tf_bad',
       knowledgeId: 'k1',
       kind: 'true_false',
       promptMd: '「之」总是代词。',
-      referenceMd: '这不是一个判断题答案',
-      choicesMd: null,
+      referenceMd: 'Z', // out of range for a 2-option item → resolves to nothing
+      choicesMd: ['正确', '错误'],
       judgeKindOverride: 'exact',
     });
     const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }));
@@ -911,23 +986,25 @@ describe('runQuizVerify — objective structural reject filter (YUK-350)', () =>
     expect(axes.find((a) => a.axis_name === 'structure_completeness')?.verdict).toBe('fail');
   });
 
-  it('valid true_false: falls through to the LLM (runTaskFn IS called) and promotes on the LLM pass', async () => {
+  // (c) a true_false draft with NO choices_md (bare-boolean shape) must NOT be rejected —
+  //     it falls through to the LLM verify (we dropped the TRUE_TOKENS/FALSE_TOKENS whitelist).
+  it('bare-boolean true_false (no choices_md): NOT rejected, falls through to the LLM', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({
-      id: 'q_tf_ok',
+      id: 'q_tf_bareboolean',
       knowledgeId: 'k1',
       kind: 'true_false',
       promptMd: '「之」可作主谓之间的结构助词。',
-      referenceMd: '正确',
+      referenceMd: '正确', // bare boolean, no choices_md attached
       choicesMd: null,
       judgeKindOverride: 'exact',
     });
-    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_tf_ok');
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_tf_bare');
 
-    const result = await runQuizVerify({ db: testDb(), questionId: 'q_tf_ok', runTaskFn });
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_tf_bareboolean', runTaskFn });
     expect(runTaskFn).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('verified');
-    const rows = await testDb().select().from(question).where(eq(question.id, 'q_tf_ok'));
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_tf_bareboolean'));
     expect(rows[0].draft_status).toBe('active');
   });
 
