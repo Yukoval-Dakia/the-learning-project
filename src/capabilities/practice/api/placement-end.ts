@@ -37,6 +37,11 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
       // fall through to default
     }
   }
+  // Default 'completed' (mirrors review session-end.ts): the primary caller is the normal
+  // completion flow (/next reports done → client ends). An intentional abandon sends an
+  // explicit {status:'abandoned'} JSON beacon, handled by the JSON-in-text path above; only a
+  // genuinely empty/unparseable beacon falls here, and treating that as completed (vs leaving
+  // the probe dangling) is the conservative close — the orphan-sweep (YUK-470) catches the rest.
   return { status: 'completed' };
 }
 

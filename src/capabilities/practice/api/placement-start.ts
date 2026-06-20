@@ -71,8 +71,12 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    const { sessionId } = await Placement.startPlacementSession(db, { goalId: goalId ?? null });
+    // Select the first question BEFORE creating the session: the two ops are independent, and
+    // ordering selection first means a selection failure leaves NO orphan 'started' row (nothing
+    // is created yet). The only remaining orphan source — a probe started but never answered /
+    // ended — is covered by the orphan-sweep follow-up (YUK-470).
     const first = await selectNextPlacementItem(db, { knowledgeIds });
+    const { sessionId } = await Placement.startPlacementSession(db, { goalId: goalId ?? null });
 
     // first === null → cold subgraph (no eligible question). The probe stays 'started'; the
     // client should source questions for the goal (§6 Q3 —按目标生成 placement 起始题, via
