@@ -150,6 +150,17 @@ export const fastTestInclude = [
   // 无 unit glob，故必须显式列出，否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer
   // 分区（personalized-difficulty.test.ts 同款）。
   'src/server/mastery/kt-estimator.test.ts',
+  // YUK-461 (axis-2 Wave-0) — the calibration harness pure-math + replay-engine
+  // units. CONVENTION glob: every *.unit.test.ts under src/server/calibration/ runs
+  // no-DB (ECE / forward-AUC / ICC-deff / Cohen's κ / mulberry32 RNG / pure θ̂ replay /
+  // paired cluster bootstrap / V-A1-fwd gate — all pure functions importing only
+  // @/core/theta primitives + sibling pure modules; no @/db/client / postgres /
+  // drizzle / PgBoss). The ONE DB test (replay.fixture.db.test.ts — byte-identity vs
+  // the real updateThetaForAttempt under a testcontainer) is a *.db.test.ts, so it
+  // matches allTestInclude's src/**/*.test.ts and falls through to the db partition,
+  // NOT this fast allowlist. The P0 partition guard still applies: any calibration
+  // *.unit.test.ts that imports DB unmocked fails audit:partition.
+  'src/server/calibration/**/*.unit.test.ts',
   // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
   // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
   // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`
