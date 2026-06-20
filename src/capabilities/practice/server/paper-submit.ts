@@ -79,6 +79,13 @@ export interface PaperSubmitSlotInput {
    * is written with visible_to_user:false (feedback buffered until completion).
    */
   feedbackPolicy?: string | null;
+  /**
+   * YUK-448 — wall-clock RT (ms) from slot reveal to submit. Optional; absent =
+   * no RT data. Frozen into the attempt event payload as `duration_ms` (mirrors
+   * the solo /api/review/submit path, submit.ts:532). Capture only — NOT fed into
+   * θ̂/p(L)/FSRS (ADR-0035 red-line; paper path passes no responseTimeMs).
+   */
+  latencyMs?: number | null;
 }
 
 export interface PaperSubmitSlotResult {
@@ -513,6 +520,11 @@ export async function submitPaperSlot(
         answer_md: input.answerMd,
         answer_image_refs: input.answerImageRefs ?? [],
         referenced_knowledge_ids: referencedKnowledgeIds,
+        // YUK-448 — wall-clock RT, mirroring the solo path (submit.ts:532).
+        // Conditional spread keeps the key ABSENT (not null) when no RT data, so
+        // the read-side AttemptOnQuestion schema (known.ts:37, `duration_ms:
+        // z.number().int().optional()`) parses cleanly — a null would fail it.
+        ...(typeof input.latencyMs === 'number' ? { duration_ms: input.latencyMs } : {}),
         // Only stamped on the un-judged path; absent (→ undefined) for every
         // normal graded attempt so the read shape is unchanged for them.
         ...(photoOnlyUnsupported ? { unsupported_judge: true } : {}),

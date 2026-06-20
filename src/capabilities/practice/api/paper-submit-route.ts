@@ -23,6 +23,11 @@ const SubmitBody = z.object({
   part_ref: z.string().min(1).nullable().optional(),
   answer_md: z.string(),
   image_refs: z.array(z.string()).default([]),
+  // YUK-448 — wall-clock RT (ms) from slot reveal to submit. Mirrors the solo
+  // /api/review/submit body (submit.ts:73). Stricter than the read-side
+  // AttemptOnQuestion schema (.min(0).max(1h) vs bare int) — write-side validation
+  // tightening only; absent = no RT data (0 is a real measurement).
+  latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
 });
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
@@ -65,6 +70,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         primaryKnowledgeId: slot.primaryKnowledgeId,
         secondaryKnowledgeIds: slot.secondaryKnowledgeIds,
         feedbackPolicy: slot.feedbackPolicy,
+        // YUK-448 — thread RT into the attempt payload (capture only; NOT wired
+        // into θ̂/p(L) SRT credit — paper path does not pass responseTimeMs today).
+        latencyMs: body.latency_ms ?? undefined,
       },
       db,
     );
