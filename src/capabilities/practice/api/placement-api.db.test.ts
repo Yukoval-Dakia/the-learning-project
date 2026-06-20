@@ -136,6 +136,16 @@ describe('placement API flow', () => {
     expect(res.status).toBe(400);
   });
 
+  it('start 400s on a malformed JSON body (clear error, not a confusing Zod message)', async () => {
+    const req = new Request('http://t/placement', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{not valid json',
+    });
+    const res = await startPlacement(req);
+    expect(res.status).toBe(400);
+  });
+
   it('start flags sourcingNeeded on a cold subgraph (no eligible questions)', async () => {
     await seedKnowledge('kc1');
     const res = await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }));
