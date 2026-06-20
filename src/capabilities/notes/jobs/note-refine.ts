@@ -85,6 +85,13 @@ type DepsOverride = {
     patch: NotePatchT;
     summary: ReturnType<typeof summarizeNotePatch>;
     triggerEventId: string | null;
+    // YUK-358 (ADR-0040 决定1) — F2: thread the breaker-tripped flag through the
+    // test seam too, mirroring writeNoteRefineProposal's `breakerTripped` param.
+    // `false` = routine over-threshold / user_verified propose; `true` = the
+    // A-track rate breaker's runaway-rate fallback. Without this the onPropose
+    // spy could not tell the two propose origins apart (asymmetric with the
+    // production writer path, which already stamps breaker_tripped).
+    breakerTripped: boolean;
   }) => Promise<void>;
   // YUK-358 (ADR-0040 决定1) — override the A-track rate breaker's window count.
   // Unset (production default) → `countRecentAutoApplies` derives the count from
@@ -231,6 +238,28 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   }
 
   const triggerEventId = trigger.trigger_event_id ?? null;
+
+  // F3 (DRY): both the count/user_verified-gate propose path and the A-track
+  // rate-breaker tripped path dispatch the SAME way — onPropose spy (tests) else
+  // writeNoteRefineProposal (production inbox). The only difference is the
+  // breaker-tripped stamp (F2). One helper, breakerTripped threaded through both
+  // sinks, so the two call sites can never drift apart again.
+  const dispatchPropose = async (breakerTripped: boolean): Promise<void> => {
+    if (onPropose) {
+      await onPropose({ artifactId, patch, summary, triggerEventId, breakerTripped });
+    } else {
+      await writeNoteRefineProposal({
+        db,
+        artifactId,
+        patch,
+        summary,
+        triggerEventId,
+        taskResult,
+        breakerTripped,
+      });
+    }
+  };
+
   // C1a (YUK-358, ADR-0040 决定1): divert to propose when the count-gate says so
   // OR the patch would overwrite/delete a user-verified block. The patch-carrying
   // proposal producer (writeNoteRefineProposal) lands the same patch in the inbox
@@ -242,23 +271,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
       : 'mutator';
 
   if (decision === 'propose') {
-    if (onPropose) {
-      await onPropose({
-        artifactId,
-        patch,
-        summary,
-        triggerEventId,
-      });
-    } else {
-      await writeNoteRefineProposal({
-        db,
-        artifactId,
-        patch,
-        summary,
-        triggerEventId,
-        taskResult,
-      });
-    }
+    await dispatchPropose(false);
     return { status: 'proposed', ops_count: summary.ops_count, new_blocks: summary.new_blocks };
   }
 
@@ -277,24 +290,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   const breaker = checkAutoApplyBreaker({ recentCount });
 
   if (breaker.status === 'tripped') {
-    if (onPropose) {
-      await onPropose({
-        artifactId,
-        patch,
-        summary,
-        triggerEventId,
-      });
-    } else {
-      await writeNoteRefineProposal({
-        db,
-        artifactId,
-        patch,
-        summary,
-        triggerEventId,
-        taskResult,
-        breakerTripped: true,
-      });
-    }
+    await dispatchPropose(true);
     return {
       status: 'proposed:breaker_tripped',
       ops_count: summary.ops_count,
@@ -306,24 +302,38 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     // 零干预只告知：emit one observability event so the owner can watch the rate
     // climbing, but DO NOT change behaviour — the apply proceeds below. This is
     // the warn water-mark layer of the two-layer guard.
-    await writeEvent(db, {
-      id: createId(),
-      session_id: null,
-      actor_kind: 'system',
-      actor_ref: 'note_refine',
-      action: 'experimental:note_refine_autoapply_warned',
-      subject_kind: 'artifact',
-      subject_id: artifactId,
-      outcome: 'success',
-      payload: {
-        artifact_id: artifactId,
-        recent_count: recentCount,
-        ops_count: summary.ops_count,
-        new_blocks: summary.new_blocks,
-      },
-      caused_by_event_id: triggerEventId ?? null,
-      created_at: breakerNow,
-    });
+    //
+    // F1 (OCR MAJOR): the warn event is OBSERVE-ONLY and must NEVER break the
+    // mutator apply that follows. writeEvent runs parseEvent (schema validation)
+    // + a DB INSERT, either of which can throw; an unhandled throw here would
+    // abort the apply path this comment promises to preserve. Swallow + warn so
+    // the apply always proceeds — losing one observability breadcrumb is strictly
+    // better than dropping a user-facing refine because of a telemetry hiccup.
+    try {
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'system',
+        actor_ref: 'note_refine',
+        action: 'experimental:note_refine_autoapply_warned',
+        subject_kind: 'artifact',
+        subject_id: artifactId,
+        outcome: 'success',
+        payload: {
+          artifact_id: artifactId,
+          recent_count: recentCount,
+          ops_count: summary.ops_count,
+          new_blocks: summary.new_blocks,
+        },
+        caused_by_event_id: triggerEventId ?? null,
+        created_at: breakerNow,
+      });
+    } catch (err) {
+      console.warn(
+        `[note_refine] warn-event emit failed for ${artifactId} (observe-only, apply continues)`,
+        err,
+      );
+    }
   }
 
   const applyResult = await enqueueOrApplyNoteRefinePatch({
