@@ -380,8 +380,9 @@ async function collectQuestionSignal(
   let diag: number | undefined;
   let scoreKind: SelectionCandidateSignal['scoreKind'];
   if (!recallLocked && thetaHat !== undefined && b !== undefined) {
-    const useGrid =
-      THETA_GRID_ENABLED && gridPosterior != null && thetaGlobal !== undefined && b !== undefined;
+    // b is already narrowed non-undefined by the enclosing `if`; useGrid only adds the
+    // grid-presence gate (THETA_GRID_ENABLED FIRST so flag-off short-circuits before any read).
+    const useGrid = THETA_GRID_ENABLED && gridPosterior != null && thetaGlobal !== undefined;
     if (useGrid && gridPosterior != null && thetaGlobal !== undefined) {
       mfi = klpScoreFromGrid(gridPosterior, b, thetaGlobal);
       scoreKind = 'klp_grid';
