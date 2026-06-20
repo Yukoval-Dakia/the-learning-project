@@ -9,7 +9,7 @@ export const notesCapability = defineCapability({
   description:
     '笔记域：artifact 笔记的读（note-page 聚合 / notes-read 按知识点）、写（body-blocks 块编辑 ' +
     '乐观锁 / sections / block-refs 反链索引）与 Living Note refine 链（triggers→policy→' +
-    'mutator|propose，D6 后信号源 = mark_wrong/mastery_change/dwell/dreaming）。',
+    'mutator|propose，YUK-358 决定6 后信号源 = mark_wrong/mastery_change/dreaming/verify，dwell 已裁）。',
   api: {
     // M3-T4 (YUK-317)：9 条路由全带 load 懒加载 thunk（M1/M2 配方）。
     // M5-T5a (YUK-321)：/api/editing-session/* 收编。
@@ -72,7 +72,8 @@ export const notesCapability = defineCapability({
         path: '/api/hubs/[id]/dismiss-link',
         load: () => import('./api/hub-dismiss-link').then((m) => m.POST),
       },
-      // M5-T5a (YUK-321) — editing-session（dwell 信号源）收编。
+      // M5-T5a (YUK-321) — editing-session 收编。YUK-358 决定6：heartbeat 的 dwell
+      // note_refine 触发已裁撤，本路由现为纯 presence 写（editing_presence DEFER 仲裁）。
       // YUK-358 决定3：/api/embedded-check/attempt 路由随内嵌判分自测孤儿链真删
       //（graded inline self-test 被 D6 + B1 裁撤，SPA 零消费）。
       {

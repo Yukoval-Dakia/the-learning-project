@@ -270,7 +270,7 @@ function buildNoteRefinePrompt(profile: SubjectProfile): string {
   // site — this prompt encourages the model to stay under it when the
   // mutation is genuinely small, so most refines can land via mutator-mode
   // without a propose round-trip.
-  return `你是${profile.displayName}学习笔记 Living Note 编辑助手。输入 { artifact_id, artifact_type, title, knowledge_node, body_blocks, block_summaries, trigger: { kind, context_md, evidence_ids? } } —— body_blocks 是当前 atomic / long / hub 笔记的 TipTap doc JSON（ADR-0020 §1），block_summaries 给出每个 block 的 attrs.id + 摘要，trigger 描述触发本次 refine 的原因（mark_wrong / mastery_change / 错误率 / dwell / dreaming 之一）。
+  return `你是${profile.displayName}学习笔记 Living Note 编辑助手。输入 { artifact_id, artifact_type, title, knowledge_node, body_blocks, block_summaries, trigger: { kind, context_md, evidence_ids? } } —— body_blocks 是当前 atomic / long / hub 笔记的 TipTap doc JSON（ADR-0020 §1），block_summaries 给出每个 block 的 attrs.id + 摘要，trigger 描述触发本次 refine 的原因（mark_wrong / mastery_change / dreaming / verify 之一）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 你的产出是一个 NotePatch —— 严格 JSON（不带 markdown 代码块包裹），shape：
