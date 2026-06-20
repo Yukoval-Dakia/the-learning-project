@@ -21,6 +21,7 @@
 // (start handler, PR-2b) dispatches quiz_gen to source starter questions (§6 Q3).
 
 import { QuestionKind } from '@/core/schema/business';
+import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { and, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
@@ -56,8 +57,12 @@ export interface PlacementSelection {
   questionId: string;
   /** the information score that won (KLP cold / MFI warm). */
   score: number;
-  /** which criterion produced `score` (provenance; mirrors CollectedSignal.scoreKind). */
-  scoreKind: 'mfi' | 'klp' | undefined;
+  /**
+   * which criterion produced `score` (provenance). Sourced from the signal layer's own
+   * scoreKind so it stays in sync as the criterion set grows (e.g. A4 added 'klp_grid',
+   * YUK-436) — do NOT re-narrow this to a literal subset.
+   */
+  scoreKind: SelectionCandidateSignal['scoreKind'];
 }
 
 /**

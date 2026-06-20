@@ -545,6 +545,107 @@
       ]
     },
     {
+      "name": "placement",
+      "item": [
+        {
+          "name": "POST /api/placement/:id/end",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement/:id/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement", ":id", "end"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "结束 placement probe（completed | abandoned）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** sendBeacon 兼容：非 JSON body 默认 completed",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"completed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/placement/:id/next",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement/:id/next",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement", ":id", "next"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "placement probe 取下一题 + 终止判定\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 答题经 /api/review/submit（session_id=本 probe）后调。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ],\n  \"cap\": 8,\n  \"seThreshold\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/placement/start",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement", "start"]
+            },
+            "description": "启动 placement probe 会话（冷启 inc-B），返回首题\n\n**Notes:** dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"goalId\": null,\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "practice",
       "item": [
         {
