@@ -481,6 +481,19 @@ export async function main(): Promise<void> {
     console.error(`audit:calibration failed (operational error, NOT a gate verdict): ${msg}`);
     if (err instanceof Error && err.stack) console.error(err.stack);
     process.exitCode = 2;
+  } finally {
+    // audit-calibration is the ONLY DB-connecting audit: @/db/client opens a postgres-js
+    // pool (max:10) that holds the event loop open, so WITHOUT closing it the process HANGS
+    // after the report prints — the other audits scan source files, never connect, so they
+    // exit naturally. Close the singleton pool here so this script exits cleanly (graceful
+    // close lets stdout flush — preferable to process.exit() which can truncate piped output).
+    // Best-effort: the verdict is already printed; a close error must not mask it.
+    try {
+      const { db } = await import('@/db/client');
+      await db.$client.end({ timeout: 5 });
+    } catch {
+      // pool already closed / never opened — nothing to clean up.
+    }
   }
 }
 
