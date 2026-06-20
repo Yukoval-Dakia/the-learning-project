@@ -24,7 +24,7 @@ describe('src/server/session index', () => {
 
   it('re-exports LearningSessionTypeT type', () => {
     expectTypeOf<LearningSessionTypeT>().toEqualTypeOf<
-      'ingestion' | 'review' | 'tutor' | 'explore' | 'create' | 'conversation'
+      'ingestion' | 'review' | 'tutor' | 'explore' | 'create' | 'conversation' | 'placement'
     >();
   });
 });
@@ -35,5 +35,13 @@ describe('session barrel — Tutor (YUK-193)', () => {
     expect(typeof Session.Tutor.markSubmitted).toBe('function');
     expect(typeof Session.Tutor.markJudged).toBe('function');
     expect(typeof Session.Tutor.endTutor).toBe('function');
+  });
+});
+
+describe('session barrel — Placement (YUK-468)', () => {
+  it('re-exports the Placement namespace with the transition functions', () => {
+    expect(typeof Session.Placement.startPlacementSession).toBe('function');
+    expect(typeof Session.Placement.completePlacementSession).toBe('function');
+    expect(typeof Session.Placement.abandonPlacementSession).toBe('function');
   });
 });

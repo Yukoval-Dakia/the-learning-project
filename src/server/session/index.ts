@@ -14,4 +14,5 @@ export * as Conversation from './conversation';
 export * as Tutor from './tutor';
 export * as Ingestion from './ingestion';
 export * as Review from './review';
+export * as Placement from './placement';
 export type { LearningSessionTypeT } from '@/core/schema/learning_session';
