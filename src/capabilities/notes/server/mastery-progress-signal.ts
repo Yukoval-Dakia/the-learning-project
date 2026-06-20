@@ -24,6 +24,12 @@ import type { Db } from '@/db/client';
 import { writeEvent } from '@/server/events/queries';
 import { getMasteryProjection, getMasteryState } from '@/server/mastery/state';
 
+// Injectable writeEvent seam (defaults to the real writeEvent). Lets callers/tests
+// substitute the per-event INSERT — used to prove per-event failure isolation
+// (one throwing emit must NOT drop the others) without relying on a flaky DB
+// constraint trick. Matches writeEvent's signature exactly.
+type WriteEventFn = typeof writeEvent;
+
 export const MASTERY_PROGRESS_ACTION = 'experimental:mastery_progress';
 
 // 一个 KC 的 p(L) progress 读数。delta = 本次 attempt 的 Δθ̂（state.ts:657
@@ -52,21 +58,26 @@ export async function readMasteryProgress(
 ): Promise<MasteryProgressReading[]> {
   const ids = Array.from(new Set(knowledgeIds.map((k) => k.trim()).filter((k) => k.length > 0)));
   if (ids.length === 0) return [];
-  // p(L) point estimate（difficulty-aware，B1 FULL）批量读。
-  const projection = await getMasteryProjection(db, ids);
-  const readings: MasteryProgressReading[] = [];
-  for (const knowledgeId of ids) {
-    // last_theta_delta（本次 attempt Δθ̂）只在单 row read 里暴露——getMasteryState。
-    const state = await getMasteryState(db, knowledgeId);
+  // OCR MAJOR (~:67) fix — N+1 → parallel. The per-KC getMasteryState reads are
+  // single-row SELECTs, fully independent, so fan them out concurrently instead of
+  // awaiting serially inside a for...of (one round-trip per KC). getMasteryProjection
+  // is already a single batched read; run it alongside the per-KC reads.
+  // last_theta_delta（本次 attempt Δθ̂）只在单 row read 里暴露——getMasteryState。
+  const [projection, states] = await Promise.all([
+    // p(L) point estimate（difficulty-aware，B1 FULL）批量读。
+    getMasteryProjection(db, ids),
+    Promise.all(ids.map((knowledgeId) => getMasteryState(db, knowledgeId))),
+  ]);
+  return ids.map((knowledgeId, i) => {
+    const state = states[i];
     const proj = projection.get(knowledgeId);
-    readings.push({
+    return {
       knowledge_id: knowledgeId,
       theta_delta: state?.last_theta_delta ?? null,
       p_learned: proj?.mastery ?? null,
       theta_hat: state?.theta_hat ?? null,
-    });
-  }
-  return readings;
+    };
+  });
 }
 
 /**
@@ -80,8 +91,16 @@ export async function readMasteryProgress(
  * （SELECT）+ writeEvent（INSERT 进通用 event outbox）。emit 失败 best-effort 吞掉——绝不
  * 让旁路埋点 fail 主作答路径（caller 已在 tx 外，但仍保守 try/catch）。
  *
- * @returns 实际 emit 的事件 id 列表（cold-start 无 Δ 的 KC 仍 emit，theta_delta=null 是
- *   合法的「首作答」读数，对埋点同样有意义）。
+ * OCR fixes:
+ *  - MAJOR (~:102)：per-KC writeEvent INSERT 并行（Promise.allSettled，各 event 独立，own
+ *    newId()），不再串行 await。
+ *  - MEDIUM (~:101)：**per-event** 错误隔离。一条 writeEvent throw **绝不** cascade 中断其余
+ *    KC 的 emit——否则单点失败会静默丢掉整批 Δ 读数，毁掉本模块唯一用途（采集 ADR-0040 决定2
+ *    阈值分析所需的 Δ 分布）。失败计数经 onEmitFailure 回调 + console.warn 暴露，不静默丢。
+ *
+ * @returns 实际成功 emit 的事件 id 列表（cold-start 无 Δ 的 KC 仍 emit，theta_delta=null 是
+ *   合法的「首作答」读数，对埋点同样有意义）。失败的 KC 不进此列表，但会经 onEmitFailure +
+ *   warn 计数暴露。
  */
 export async function emitMasteryProgressSignal(input: {
   db: Db;
@@ -90,15 +109,32 @@ export async function emitMasteryProgressSignal(input: {
   // 触发它的 attempt event id —— caused_by 链 + payload.evidence。
   attemptEventId?: string | null;
   now?: Date;
+  // 可注入的 writeEvent seam（默认真 writeEvent）——测试用来精确制造单 KC 失败，证明
+  // per-event 隔离。生产路径不传。
+  writeEventFn?: WriteEventFn;
+  // 每条 emit 失败时回调（带失败 KC 的 knowledge_id）。可观测 hook——不传也会 warn 计数。
+  onEmitFailure?: (knowledgeId: string, err: unknown) => void;
 }): Promise<string[]> {
-  const { db, knowledgeIds, questionId, attemptEventId } = input;
+  const { db, knowledgeIds, questionId, attemptEventId, writeEventFn, onEmitFailure } = input;
+  const emit = writeEventFn ?? writeEvent;
   const now = input.now ?? new Date();
-  const emittedIds: string[] = [];
+  // readMasteryProgress 失败（罕见——纯 SELECT）→ best-effort 吞，整体返回空。
+  let readings: MasteryProgressReading[];
   try {
-    const readings = await readMasteryProgress(db, knowledgeIds);
-    for (const reading of readings) {
+    readings = await readMasteryProgress(db, knowledgeIds);
+  } catch (err) {
+    console.warn('[mastery_progress] read failed (non-fatal):', err);
+    return [];
+  }
+
+  // MAJOR + MEDIUM fix — 并行 INSERT + per-event 隔离。每条 event 独立 try（Promise.allSettled
+  // 语义），一条 throw 不连累其余。失败的进 failures 计数，绝不静默丢。
+  const emittedIds: string[] = [];
+  const failures: string[] = [];
+  const results = await Promise.allSettled(
+    readings.map(async (reading) => {
       const eventId = newId();
-      await writeEvent(db, {
+      await emit(db, {
         id: eventId,
         actor_kind: 'system',
         actor_ref: 'mastery_progress_signal',
@@ -123,11 +159,26 @@ export async function emitMasteryProgressSignal(input: {
         caused_by_event_id: attemptEventId ?? null,
         created_at: now,
       });
-      emittedIds.push(eventId);
+      return { eventId, knowledgeId: reading.knowledge_id };
+    }),
+  );
+
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === 'fulfilled') {
+      emittedIds.push(result.value.eventId);
+    } else {
+      const knowledgeId = readings[i].knowledge_id;
+      failures.push(knowledgeId);
+      onEmitFailure?.(knowledgeId, result.reason);
     }
-  } catch (err) {
-    // 旁路埋点 best-effort：绝不让它 fail 主作答 / refine 触发路径。
-    console.warn('[mastery_progress] emit failed (non-fatal):', err);
+  }
+  if (failures.length > 0) {
+    // 不静默丢——把失败计数 + KC 列表 surface（旁路埋点仍 best-effort，主路径不 fail）。
+    console.warn(
+      `[mastery_progress] ${failures.length}/${readings.length} emit(s) failed (non-fatal):`,
+      failures,
+    );
   }
   return emittedIds;
 }
