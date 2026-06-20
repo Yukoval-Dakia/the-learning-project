@@ -15,6 +15,14 @@ import {
   formatReport,
 } from './v-a1-fwd';
 
+const TEST_CONFIG = {
+  effectiveNFloor: 100,
+  minKcClusters: 10,
+  deltaThreshold: 0.02,
+  bootstrapB: 2000,
+  maxDegenerateFraction: 0.05,
+} as const;
+
 // ── Synthetic single-KC attempt generators ───────────────────────────────────────────
 // Each KC gets a time-ordered list of single-KC attempts. The forward predictor uses the
 // PRE-attempt θ̂; for SRT to beat binary, RT must carry outcome signal beyond correctness.
@@ -232,6 +240,7 @@ describe('formatReport', () => {
       familyDeltaTotal: 40,
       partialDropped: 2,
       reason: 'effectiveN 28.5 < floor 100',
+      config: { ...TEST_CONFIG },
     };
     const text = formatReport(result);
     expect(text).toMatch(/INSUFFICIENT/);
@@ -241,6 +250,40 @@ describe('formatReport', () => {
     expect(text).toMatch(/effectiveN|effective N/i);
     // caveat: floor is a coarse heuristic, the CI is the decision
     expect(text.toLowerCase()).toMatch(/heuristic|coarse|ci is the (decision|inference)/);
+  });
+
+  it('prints the actual config thresholds used for the evaluation', () => {
+    const result: VA1Result = {
+      verdict: 'PASS',
+      pointDelta: 0.1,
+      aucSrt: 0.7,
+      aucBinary: 0.6,
+      ci: { lo: 0.05, hi: 0.15 },
+      b: 500,
+      degenerateFraction: 0,
+      nTotal: 200,
+      nWithRt: 180,
+      n1: 100,
+      n0: 80,
+      kClusters: 18,
+      deff: 1.2,
+      effectiveN: 150,
+      familyDeltaAppliedCount: 0,
+      familyDeltaTotal: 180,
+      partialDropped: 0,
+      reason: 'PASS',
+      config: {
+        effectiveNFloor: 75,
+        minKcClusters: 8,
+        deltaThreshold: 0.05,
+        bootstrapB: 500,
+        maxDegenerateFraction: 0.1,
+      },
+    };
+    const text = formatReport(result);
+    expect(text).toMatch(/effectiveN floor \(75\)/);
+    expect(text).toMatch(/minKcClusters \(8\)/);
+    expect(text).toMatch(/ΔAUC threshold 0\.05/);
   });
 
   it('json mode returns parseable JSON', () => {
@@ -263,6 +306,7 @@ describe('formatReport', () => {
       familyDeltaTotal: 180,
       partialDropped: 0,
       reason: 'PASS',
+      config: { ...TEST_CONFIG },
     };
     const text = formatReport(result, { json: true });
     const parsed = JSON.parse(text);
