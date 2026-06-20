@@ -359,39 +359,6 @@
       ]
     },
     {
-      "name": "embedded-check",
-      "item": [
-        {
-          "name": "POST /api/embedded-check/attempt",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/embedded-check/attempt",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "embedded-check", "attempt"]
-            },
-            "description": "提交内联检查题答案，判题并（失败时）记录 mistake + 入队 attribution_followup，不写 FSRS\n\n**Notes:** question.source 须为 embedded 或 teaching_check；answer_md 最大 2000；latency_ms 可选 0-3600000；响应含 outcome + judge + attempt_event_id + (mistake_id)",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question_id\": \"q_abc123\",\n  \"answer_md\": \"答案文本\",\n  \"latency_ms\": 3000\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        }
-      ]
-    },
-    {
       "name": "events",
       "item": [
         {

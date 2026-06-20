@@ -7,10 +7,13 @@ hub-dismiss）与 Living Note refine 链（note-refine-{triggers,policy,proposal
 
 - **表认领**：`artifact`、`artifact_block_ref`。注：`tool_quiz` 形态的 artifact 由 practice
   包过渡期跨域写（卷生成/session 链），M5 manifest 对账时统一裁。
-- **D6 墓碑**（笔记内嵌自测已裁删）：refine 触发器五信号删 `error_rate` 余四
-  （mark_wrong/mastery_change/dwell/dreaming）；新信号源 = 流作答（mastery_change 经
-  practice submit persist 接入）。embedded-check attempt route / 生成链 handler /
-  `artifact.embedded_check_status` 列原地墓碑，M5 拆除采石场统一清。
+- **D6 / YUK-358 决定3**（笔记内嵌判分自测孤儿链已真删）：refine 触发器五信号删
+  `error_rate` 余四（mark_wrong/mastery_change/dwell/dreaming）；新信号源 = 流作答
+  （mastery_change 经 practice submit persist 接入）。graded inline self-test 链
+  （`/api/embedded-check/attempt` 路由 + `embedded_check_generate` 生成链 handler +
+  `EmbeddedCheckGenerateTask` AI task + `artifact.embedded_check_status` 列 +
+  note/node page 投影）已全部删除。`check` 段本身保留为 Phase-3 自解释锚点
+  （ADR-0040 决定3），`NoteSection.embedded_check` 仍是合法 schema 槽（latent，无生产 writer）。
 - **不搬区**：`src/server/artifacts/{editing-session.ts,presence/}` 留旧位置——dwell 遥测
   / 编辑心跳是 ⚖️ 争议行（spec §3.6），未裁前 `/api/editing-session/*` 继续旧栈服务。
 - server/ — 模块本体（测试同居，命名即分区）；jobs/ — note_generate / note_verify /

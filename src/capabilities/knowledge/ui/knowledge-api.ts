@@ -109,7 +109,6 @@ export interface KnowledgeNodePage {
     } | null;
     generation_status: string;
     verification_status: string;
-    embedded_check_status: string;
   } | null;
   notes: NoteSummary[];
   interactive_artifacts: NoteSummary[];

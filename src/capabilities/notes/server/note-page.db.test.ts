@@ -13,7 +13,6 @@ import { loadNotePage } from './note-page';
 const A_BASE = {
   intent_source: 'test',
   source: 'test',
-  embedded_check_status: 'not_required',
 };
 
 async function seedKnowledge(
@@ -169,7 +168,6 @@ describe('loadNotePage', () => {
     expect(page?.interactive).toEqual({ html }); // attrs.html verbatim
     expect(page?.body_blocks).toBeNull();
     expect(page?.sections).toEqual([]);
-    expect(page?.embedded_questions).toEqual([]);
     expect(page?.labels).toEqual([{ id: 'k1', name: '之' }]);
     expect(page?.verification_status).toBe('not_required');
   });
@@ -240,7 +238,6 @@ describe('loadNotePage', () => {
     expect(page?.history.map((h) => h.version)).toEqual([1, 2]);
     expect(page?.verification_status).toBe('pass');
     expect(page?.verification_summary?.verdict).toBe('pass');
-    expect(page?.embedded_questions).toEqual([]);
   });
 
   it('surfaces inbound cross_link backlinks, dropping archived sources', async () => {

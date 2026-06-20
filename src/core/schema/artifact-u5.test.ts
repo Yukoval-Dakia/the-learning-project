@@ -29,7 +29,6 @@ function artifactRow(overrides: Record<string, unknown>): Record<string, unknown
     verification_summary: null,
     generated_by: null,
     verified_by: null,
-    embedded_check_status: 'not_required',
     history: [],
     archived_at: null,
     created_at: now,

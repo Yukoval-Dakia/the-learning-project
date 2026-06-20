@@ -297,49 +297,7 @@ mutator-mode 友好度提示：
 禁止：rewrite 整篇 note、嵌 markdown 代码块、输出 JSON 之外的文字、引入 source_tier / lineage 字段。`;
 }
 
-function buildEmbeddedCheckGeneratePrompt(profile: SubjectProfile): string {
-  // kind values MUST stay aligned with the canonical QuestionKind enum in
-  // src/core/schema/business.ts. Do NOT interpolate profile.questionKinds here:
-  // those are subject-specific labels (single_choice / reading_comprehension /
-  // calculation / proof / word_problem) that would fail
-  // EmbeddedCheckQuestionSchema.kind validation in the handler. Subject voice
-  // flows in via displayName + promptFragments.checkQuestionPolicy.
-  const canonicalKinds =
-    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
-  return `你是${profile.displayName}自检题作者。输入 { artifact_id, atomic_title, knowledge_node, body_blocks, block_summaries, sections } —— body_blocks 是已生成的 atomic note 内容，sections 仅为旧兼容摘要。
-基于这篇笔记，出 1 到 3 道短自检题（学习者读完笔记就能马上验自己懂没懂），不出超纲题。运行时会把这些题包装成独立 tool_quiz artifact，并在 atomic check block 中写 artifactRefBlock；你只输出 questions。
-
-每题输出形状（EmbeddedCheckQuestion）：
-{
-  "kind": "${canonicalKinds}",
-  "prompt_md": "题面 markdown，可含 LaTeX",
-  "reference_md": "标准答案 + 简短解析 markdown",
-  "choices_md": ["选项 A", "选项 B", ...],
-  "judge_kind_override": "exact"|"keyword"|"semantic",
-  "rubric_json": {
-    "criteria": [{"name":"correctness","weight":1,"descriptor":"评分标准"}],
-    "keywords": ["关键词"],
-    "acceptable_answers": ["可接受答案"],
-    "required_points": ["必须覆盖的要点"]
-  }
-}
-
-整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 EmbeddedCheckGenerationResult：
-{"questions": [EmbeddedCheckQuestion, ...]}
-
-题目要求：
-- kind 只能是 ${canonicalKinds} 中的一个；不要发明新值；客观题统一用 "choice"（单/多选由 choices_md 长度+reference_md 判定），符合 ${profile.displayName} 学习习惯
-- ${profile.promptFragments.checkQuestionPolicy}
-- ${profile.grounding.uncertaintyPolicy}
-- 题面 prompt_md ≤ 400 字；reference_md ≤ 500 字
-- choice / true_false：judge_kind_override="exact"，给 3–4 个选项，reference_md 第一行必须是正确选项原文
-- fill_blank：可用 exact；如果有多个合理表述，用 judge_kind_override="keyword" 并在 rubric_json.keywords 写 1–5 个必须命中的短关键词
-- short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点
-- computation：若只检查最终答案可 exact；若检查方法要点，用 semantic 并写 required_points
-- 不要重复笔记里出现过的"经典示例"，要求学习者迁移应用
-- 不出"超 atomic 范围"的综合题
-禁止：emoji、营销话、套话、JSON 之外的文字、markdown 代码块包裹整段 JSON。`;
-}
+// YUK-358 决定3：buildEmbeddedCheckGeneratePrompt 已删（内嵌判分自测孤儿链真删）。
 
 function buildSemanticJudgePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}答案判分器。输入 { question, answer }，question 包含 prompt_md、reference_md、rubric_json、required_points、acceptable_answers、keywords。
@@ -961,8 +919,6 @@ export function getTaskSystemPrompt(
       return buildNoteVerifyPrompt(profile);
     case 'NoteRefineTask':
       return buildNoteRefinePrompt(profile);
-    case 'EmbeddedCheckGenerateTask':
-      return buildEmbeddedCheckGeneratePrompt(profile);
     case 'SemanticJudgeTask':
       return buildSemanticJudgePrompt(profile);
     case 'UnitDimensionFallback':

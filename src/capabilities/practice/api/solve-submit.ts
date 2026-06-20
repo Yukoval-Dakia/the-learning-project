@@ -43,8 +43,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
     // Enqueue attribution after the response path commits (failure only). Gated
     // by the shared shouldEnqueueBackgroundJobs() (YUK-239), mirroring
-    // /api/mistakes + /api/embedded-check/attempt. Uses getStartedBoss
-    // (YUK-192), never createBoss.
+    // /api/mistakes. Uses getStartedBoss (YUK-192), never createBoss.
     if (result.mistake_id !== undefined && shouldEnqueueBackgroundJobs()) {
       try {
         const boss = await getStartedBoss();

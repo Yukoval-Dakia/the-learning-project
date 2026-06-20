@@ -394,7 +394,6 @@ export const artifact = pgTable('artifact', {
   verification_summary: jsonb('verification_summary').$type<NoteVerificationResultT>(),
   generated_by: jsonb('generated_by').$type<AgentRefT>(),
   verified_by: jsonb('verified_by').$type<AgentRefT>(),
-  embedded_check_status: text('embedded_check_status').notNull().default('not_required'),
   history: jsonb('history').$type<ArtifactHistoryEntryT[]>().notNull().default([]),
   archived_at: timestamp('archived_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
