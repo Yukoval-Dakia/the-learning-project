@@ -102,6 +102,12 @@ async function loadAttempts(): Promise<LoadResult> {
   // 1. The attempt events, time-ordered (created_at ASC, id ASC — stable tiebreak).
   //    Solo review path: action='review'; paper path: action='attempt'. Both subject_kind
   //    ='question' (submit.ts:507-509, paper-submit.ts:508-510).
+  //
+  //    n=1 upper bound: this loads the full event log into memory and later issues IN-list
+  //    queries sized by attemptIds/questionIds. For the solo-owner deployment the attempt
+  //    count is bounded by one learner's history, so this stays tractable. If the product
+  //    ever multi-users, revisit with batched IN queries or a CTE join instead of giant
+  //    inArray(...) lists.
   const attemptEvents = await db
     .select({
       id: event.id,

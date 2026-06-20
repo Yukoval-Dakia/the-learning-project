@@ -76,6 +76,15 @@ describe('deltaAucClusterBootstrap', () => {
     expect(r.b).toBeLessThanOrEqual(200);
   });
 
+  it('misaligned cluster arrays throw at entry', () => {
+    const clusters: ClusterForwardPreds[] = [
+      { scoresSrt: [0.9], scoresBinary: [0.6, 0.4], labels: [1] },
+    ];
+    expect(() => deltaAucClusterBootstrap(clusters, { b: 10, rng: mulberry32(1) })).toThrow(
+      /equal length/,
+    );
+  });
+
   it('all-one-class pool → pointDelta NaN', () => {
     const clusters: ClusterForwardPreds[] = [
       { scoresSrt: [0.9, 0.8], scoresBinary: [0.6, 0.5], labels: [1, 1] },
