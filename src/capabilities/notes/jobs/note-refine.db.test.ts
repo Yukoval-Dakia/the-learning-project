@@ -405,6 +405,42 @@ describe('runNoteRefine', () => {
     );
   });
 
+  // RED-3 (YUK-358 决定7) — the verify trigger kind has ZERO privilege at the
+  // gate. A mutator-sized (1 op) verify-kind refine that replaces a user-verified
+  // block must STILL DIVERT to propose via patchTouchesVerifiedBlock, exactly like
+  // any other kind. Proves the verify→refine path does NOT bypass the guard.
+  it('verify kind: a mutator-sized replace of a verified block DIVERTS to propose (gate not bypassed)', async () => {
+    await seedArtifact({
+      artifactId: 'a1',
+      knowledgeId: 'k1',
+      bodyBlocks: noteSectionsToBodyBlocks(VERIFIED_SECTIONS),
+    });
+    const ops = [replaceBlockOp('sv', 'verify 想覆盖人类校验过的内容')];
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(ops) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'verify', context_md: 'Note verification flagged issues' },
+      runTaskFn,
+    });
+
+    // Diverted to propose — NOT applied. verify has no special pass at the gate.
+    expect(result).toMatchObject({ status: 'proposed', ops_count: 1, new_blocks: 0 });
+    const [unchanged] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(unchanged.version).toBe(0);
+    const applyEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_apply'));
+    expect(applyEvents).toHaveLength(0);
+    const proposals = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(1);
+  });
+
   it('user_verified: a mutator-sized replace of a NON-verified block still AUTO-APPLIES (A档)', async () => {
     await seedArtifact({
       artifactId: 'a1',

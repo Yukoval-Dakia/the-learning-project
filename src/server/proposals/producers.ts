@@ -71,42 +71,15 @@ export async function writeVariantQuestionProposal(
   });
 }
 
-export interface WriteNoteUpdateProposalInput extends CommonProducerInput {
-  artifact_id: string;
-  verification_event_id: string;
-  summary_md: string;
-  issues: unknown[];
-}
-
-export async function writeNoteUpdateProposal(
-  db: DbLike,
-  input: WriteNoteUpdateProposalInput,
-): Promise<string> {
-  return writeAiProposal(db, {
-    id: input.id,
-    actor_ref: 'note_verify',
-    payload: {
-      kind: 'note_update',
-      target: { subject_kind: 'artifact', subject_id: input.artifact_id },
-      reason_md: input.reason_md,
-      evidence_refs: input.evidence_refs ?? [
-        { kind: 'artifact', id: input.artifact_id },
-        { kind: 'event', id: input.verification_event_id },
-      ],
-      proposed_change: {
-        artifact_id: input.artifact_id,
-        verification_event_id: input.verification_event_id,
-        summary_md: input.summary_md,
-        issues: input.issues,
-      },
-      rollback_plan: { action: 'write correction event against the note update proposal' },
-      cooldown_key: `note_update:${input.artifact_id}`,
-    },
-    task_run_id: input.task_run_id ?? null,
-    cost_usd: input.cost_usd,
-    created_at: input.created_at,
-  });
-}
+// YUK-358 决定7 (ADR-0040) — writeNoteUpdateProposal (the patch-less
+// note_verify→inbox producer) was DELETED. It wrote a `note_update` proposal
+// carrying only a summary + issues (no NotePatch), so the owner could never act
+// on it (the accept owner acceptNoteUpdateProposal applies a patch that this
+// producer never supplied). note_verify's needs_review verdict is now advisory
+// (verification_summary + the experimental:note_verify event), and acting on the
+// issues is a flag-gated verify→refine enqueue that routes through the NORMAL
+// refine gate. The `note_update` proposal KIND survives — it is still produced
+// (with a patch) by writeNoteRefineProposal and accepted by acceptNoteUpdateProposal.
 
 export interface WriteLearningItemProposalInput extends CommonProducerInput {
   topic: string;
