@@ -19,7 +19,7 @@
 | `promote_conversation_idle` | `* * * * *` | 每分钟 active→idle（5min 无输入）|
 
 ## 事件触发链（enqueue-by-event，非 cron）
-- `note_generate` →`onReady`→ `note_verify` →`onPassed`→ `embedded_check_generate`
+- `note_generate` →`onReady`→ `note_verify`（YUK-358 决定3：`onPassed` 链已删——`embedded_check_generate` 孤儿链真删后无下游消费者）
 - `attribution_followup`（替代 inline `after()`）→ `variant_gen`；accept 后 → `variant_verify`
 - `tencent_ocr_extract` —— 生产 OCR async（R2 creds 缺失不应破坏 test worker：lazy `get r2()`）
 - `session_summary` —— review session end 后 enqueue

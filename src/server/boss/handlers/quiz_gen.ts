@@ -7,7 +7,7 @@
 // self-declares every used URL into source_refs (§0 — provenance is NOT
 // recoverable from runner logs, so the agent MUST self-report).
 //
-// Skeleton copied from embedded_check_generate.ts (parse → INSERT → writeEvent →
+// Skeleton follows the standard boss-handler shape (parse → INSERT → writeEvent →
 // catch). MCP mount copies the verbatim chat.ts:298-306 pattern (Tavily remote
 // MCP via buildTavilyMcpServer() — env-gated graceful degradation — + the
 // in-process domain-tool MCP that reads the user's mistakes + knowledge graph).
@@ -108,7 +108,7 @@ export const QUIZ_GEN_READ_TOOLS = [
 // The handler only consumes { text, task_run_id?, cost_usd? } from the run
 // result (parse + provenance + cost), so the seam returns the loose
 // TaskTextResult shape — structurally satisfied by runAgentTask's RunTaskResult,
-// and easy to fixture in DB tests (mirrors embedded_check_generate's RunTaskFn).
+// and easy to fixture in DB tests (the standard run-agent-task seam shape).
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
