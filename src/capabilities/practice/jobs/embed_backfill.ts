@@ -34,6 +34,14 @@ import type { Job } from 'pg-boss';
 // KC embed text now folds effective-domain → every existing KC vector is stale.
 const EMBED_VERSION = 2;
 
+// YUK-393 F2 — bound the parallel effective-domain resolution. Each
+// getEffectiveDomain call issues up to MAX_DEPTH(32) serial SELECTs (one per
+// ancestor hop); resolving the whole batch sequentially is ~limit×32 serial
+// round-trips. Resolve in fixed-size chunks instead — parallel within a chunk,
+// sequential across chunks — so we cut latency without opening one connection
+// per row (pool exhaustion). Chosen below the default postgres pool size.
+const EFFECTIVE_DOMAIN_CONCURRENCY = 8;
+
 /** Idempotent: embed up to `limit` question rows + `limit` knowledge rows whose
  *  embedding IS NULL OR whose embed_version is behind EMBED_VERSION, stamping
  *  model + version + content-hash. Returns the number embedded. */
@@ -80,34 +88,59 @@ export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
   if (ks.length > 0) {
     // Resolve each KC's effective domain (root-ward walk) so the embed text — and
     // thus the vector + content-hash — disambiguates same-named cross-subject KCs.
-    const texts: string[] = [];
-    for (const k of ks) {
-      // getEffectiveDomain throws on a broken tree (missing node / root with null
-      // domain). One pathological KC must not fail the whole nightly batch, so
-      // degrade to the bare `domain` column on a walk error (matches the legacy
-      // pre-YUK-393 embed text) rather than aborting every other row's re-embed.
-      let effectiveDomain: string | null = null;
-      try {
-        effectiveDomain = await getEffectiveDomain(db, k.id);
-      } catch {
-        effectiveDomain = k.domain;
+    //
+    // F2 — resolve in bounded-concurrency chunks (parallel within a chunk,
+    // sequential across chunks) instead of one serial walk per row, while keeping
+    // each row mapped to its own resolved domain via index alignment.
+    const resolved: { k: (typeof ks)[number]; text: string }[] = [];
+    for (let start = 0; start < ks.length; start += EFFECTIVE_DOMAIN_CONCURRENCY) {
+      const chunk = ks.slice(start, start + EFFECTIVE_DOMAIN_CONCURRENCY);
+      const outcomes = await Promise.allSettled(chunk.map((k) => getEffectiveDomain(db, k.id)));
+      for (let j = 0; j < chunk.length; j++) {
+        const k = chunk[j];
+        const outcome = outcomes[j];
+        // F1 — a THROWN resolution error is transient/broken-tree: do NOT embed,
+        // do NOT stamp version/hash. Skipping leaves the row's prior
+        // embedding/version untouched so the SELECT predicate re-picks it on the
+        // next backfill (a transient failure must not permanently freeze a row
+        // with a degraded — name-only — vector). getEffectiveDomain never returns
+        // a null/empty domain; it either yields a real string or throws, so a
+        // rejected outcome is the only "can't resolve" case to handle here.
+        if (outcome.status === 'rejected') {
+          console.warn(
+            '[embed_backfill] skipping KC %s — effective-domain unresolved, will retry next run:',
+            k.id,
+            outcome.reason,
+          );
+          continue;
+        }
+        resolved.push({
+          k,
+          text: knowledgeEmbedText({ name: k.name, effectiveDomain: outcome.value }),
+        });
       }
-      texts.push(knowledgeEmbedText({ name: k.name, effectiveDomain }));
     }
-    const vecs = await embedMany(texts);
-    for (let i = 0; i < ks.length; i++) {
-      await db
-        .update(knowledge)
-        .set({
-          embedding: vecs[i],
-          embed_model: EMBED_MODEL,
-          embed_version: EMBED_VERSION,
-          embed_content_hash: embedHash(texts[i]),
-        })
-        // write guard (see question update above): concurrency-safe fill.
-        .where(and(eq(knowledge.id, ks[i].id), kStale));
+
+    if (resolved.length > 0) {
+      const vecs = await embedMany(resolved.map((r) => r.text));
+      for (let i = 0; i < resolved.length; i++) {
+        const { k, text } = resolved[i];
+        await db
+          .update(knowledge)
+          .set({
+            embedding: vecs[i],
+            embed_model: EMBED_MODEL,
+            embed_version: EMBED_VERSION,
+            embed_content_hash: embedHash(text),
+          })
+          // write guard (see question update above): concurrency-safe fill.
+          .where(and(eq(knowledge.id, k.id), kStale));
+      }
     }
-    total += ks.length;
+    // Only rows that resolved a correct effective-domain are embedded + counted;
+    // the invariant is that embed_version=EMBED_VERSION is stamped ONLY alongside
+    // a correctly-resolved domain (skipped rows stay re-pickable).
+    total += resolved.length;
   }
 
   return total;

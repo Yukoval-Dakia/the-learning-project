@@ -192,6 +192,131 @@ describe('embed_backfill', () => {
     expect(rootA.embedding).toHaveLength(1024);
   });
 
+  // YUK-393 F1 — a KC whose effective-domain resolution THROWS (broken tree:
+  // child under a root with null domain → invariant-violation throw) must be
+  // SKIPPED, not stamped: its embedding/version stay untouched so the next
+  // backfill retries it, and it must never be frozen with a degraded vector.
+  // A healthy sibling in the same batch still embeds.
+  it('getEffectiveDomain throw → row skipped (not stamped), healthy sibling still embeds', async () => {
+    const now = new Date();
+    // badRoot: root with null domain (invariant violation) → throws on itself.
+    // badChild: walks up to badRoot → also throws.
+    // okRoot: healthy root resolves to its own domain.
+    await db.insert(knowledge).values([
+      {
+        id: 'badRoot',
+        name: 'bad',
+        domain: null,
+        parent_id: null,
+        version: 0,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'badChild',
+        name: '坏',
+        domain: null,
+        parent_id: 'badRoot',
+        version: 0,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'okRoot',
+        name: '好',
+        domain: '物理',
+        parent_id: null,
+        version: 0,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    const { runEmbedBackfill } = await import('./embed_backfill');
+    const n = await runEmbedBackfill(db, 50);
+
+    // Only the resolvable row is embedded + stamped + counted.
+    expect(n).toBe(1);
+    const [okRow] = await db.select().from(knowledge).where(eq(knowledge.id, 'okRoot'));
+    expect(okRow.embedding).toHaveLength(1024);
+    expect(okRow.embed_version).toBe(2);
+    expect(okRow.embed_content_hash).toMatch(/^[0-9a-f]{64}$/);
+
+    // The throwing rows are left fully untouched — NULL embedding + NULL version
+    // + NULL hash → the select predicate re-picks them next backfill.
+    const [badChild] = await db.select().from(knowledge).where(eq(knowledge.id, 'badChild'));
+    expect(badChild.embedding).toBeNull();
+    expect(badChild.embed_version).toBeNull();
+    expect(badChild.embed_content_hash).toBeNull();
+    const [badRoot] = await db.select().from(knowledge).where(eq(knowledge.id, 'badRoot'));
+    expect(badRoot.embedding).toBeNull();
+    expect(badRoot.embed_version).toBeNull();
+
+    // A second backfill must STILL see the throwing rows as stale (never frozen).
+    const ks2 = await db.select().from(knowledge);
+    const stillStale = ks2.filter((k) => k.embed_version === null).map((k) => k.id);
+    expect(stillStale.sort()).toEqual(['badChild', 'badRoot']);
+  });
+
+  // YUK-393 F2 — parallel effective-domain resolution across the batch must keep
+  // each row mapped to ITS OWN domain. Two same-named KCs under different subject
+  // roots get DISTINCT embed text → distinct content hash (no cross-wiring).
+  it('parallel effective-domain resolution maps each row to its own domain', async () => {
+    const now = new Date();
+    await db.insert(knowledge).values([
+      {
+        id: 'rPhys',
+        name: 'P',
+        domain: '物理',
+        parent_id: null,
+        version: 0,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'rChem',
+        name: 'C',
+        domain: '化学',
+        parent_id: null,
+        version: 0,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'kPhys',
+        name: '周期',
+        domain: null,
+        parent_id: 'rPhys',
+        version: 0,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        id: 'kChem',
+        name: '周期',
+        domain: null,
+        parent_id: 'rChem',
+        version: 0,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    const { embedHash, knowledgeEmbedText } = await import('@/server/ai/embed-source');
+    const { runEmbedBackfill } = await import('./embed_backfill');
+    const n = await runEmbedBackfill(db, 50);
+    expect(n).toBe(4);
+
+    const [kPhys] = await db.select().from(knowledge).where(eq(knowledge.id, 'kPhys'));
+    const [kChem] = await db.select().from(knowledge).where(eq(knowledge.id, 'kChem'));
+    // Each same-named child resolved to its OWN effective domain → distinct hash.
+    expect(kPhys.embed_content_hash).toBe(
+      embedHash(knowledgeEmbedText({ name: '周期', effectiveDomain: '物理' })),
+    );
+    expect(kChem.embed_content_hash).toBe(
+      embedHash(knowledgeEmbedText({ name: '周期', effectiveDomain: '化学' })),
+    );
+    expect(kPhys.embed_content_hash).not.toBe(kChem.embed_content_hash);
+  });
+
   // YUK-393 — reparent WITHIN the same domain is a no-op for the embedding.
   it('applyReparent same-domain → moved KC embedding NOT NULLed', async () => {
     const now = new Date();
