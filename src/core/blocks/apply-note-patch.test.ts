@@ -11,6 +11,18 @@ function paragraph(id: string, text: string): Record<string, unknown> {
   };
 }
 
+function verifiedBlock(id: string, text: string, via: 'flag' | 'tier'): Record<string, unknown> {
+  return {
+    type: 'semanticBlock',
+    attrs: {
+      id,
+      semantic_kind: 'definition',
+      ...(via === 'flag' ? { user_verified: true } : { source_tier: 'user_verified' }),
+    },
+    content: [{ type: 'text', text }],
+  };
+}
+
 function doc(...nodes: Record<string, unknown>[]) {
   return { type: 'doc', content: nodes };
 }
@@ -124,6 +136,82 @@ describe('applyNotePatch — pure ops', () => {
       ],
     });
     expect(before).toEqual(snapshot);
+  });
+
+  // C1a (YUK-358, ADR-0040 决定1) — user_verified hard boundary. A
+  // replace_block / delete_block op targeting a user-verified block must throw
+  // user_verified_protected so an AI mutator can never silently overwrite a
+  // block the human owns. This is the cross-caller safety net (direct callers
+  // that bypass the job-gate: hub_auto_sync_nightly, presence-store apply).
+  describe('user_verified hard boundary (C1a)', () => {
+    it('replace_block on a user_verified=true block throws user_verified_protected', () => {
+      const before = doc(verifiedBlock('b1', 'human owns this', 'flag'));
+      try {
+        applyNotePatch(before, {
+          ops: [{ kind: 'replace_block', target_block_id: 'b1', block: paragraph('b1', 'AI new') }],
+        });
+        throw new Error('expected throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NoteRefineApplyError);
+        expect((err as NoteRefineApplyError).code).toBe('user_verified_protected');
+      }
+    });
+
+    it('replace_block on a source_tier=user_verified block throws user_verified_protected', () => {
+      const before = doc(verifiedBlock('b1', 'human owns this', 'tier'));
+      try {
+        applyNotePatch(before, {
+          ops: [{ kind: 'replace_block', target_block_id: 'b1', block: paragraph('b1', 'AI new') }],
+        });
+        throw new Error('expected throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NoteRefineApplyError);
+        expect((err as NoteRefineApplyError).code).toBe('user_verified_protected');
+      }
+    });
+
+    it('delete_block on a user_verified block throws user_verified_protected', () => {
+      const before = doc(verifiedBlock('b1', 'human owns this', 'flag'), paragraph('b2', 'keep'));
+      try {
+        applyNotePatch(before, {
+          ops: [{ kind: 'delete_block', target_block_id: 'b1' }],
+        });
+        throw new Error('expected throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NoteRefineApplyError);
+        expect((err as NoteRefineApplyError).code).toBe('user_verified_protected');
+      }
+    });
+
+    it('replace_block on a NON-verified block still applies (no throw)', () => {
+      const before = doc(paragraph('b1', 'ai owns this'), paragraph('b2', 'keep'));
+      const after = applyNotePatch(before, {
+        ops: [{ kind: 'replace_block', target_block_id: 'b1', block: paragraph('b1', 'new') }],
+      });
+      expect((after.content[0].content as { text: string }[])[0].text).toBe('new');
+    });
+
+    it('insert_after a verified block is ALLOWED (does not touch verified content)', () => {
+      const before = doc(verifiedBlock('b1', 'human owns this', 'flag'));
+      const after = applyNotePatch(before, {
+        ops: [{ kind: 'insert_after', target_block_id: 'b1', block: paragraph('b1a', 'sibling') }],
+      });
+      expect(after.content.map((n) => (n.attrs as { id: string }).id)).toEqual(['b1', 'b1a']);
+    });
+
+    it('accept-path exemption: enforceUserVerifiedGuard=false lets a verified replace land', () => {
+      const before = doc(verifiedBlock('b1', 'human owns this', 'flag'));
+      const after = applyNotePatch(
+        before,
+        {
+          ops: [
+            { kind: 'replace_block', target_block_id: 'b1', block: paragraph('b1', 'approved') },
+          ],
+        },
+        { enforceUserVerifiedGuard: false },
+      );
+      expect((after.content[0].content as { text: string }[])[0].text).toBe('approved');
+    });
   });
 
   it('does not share references between patch.ops blocks and the result', () => {
