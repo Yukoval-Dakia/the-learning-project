@@ -23,7 +23,10 @@ import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
-import { decideNoteRefineMode } from '@/capabilities/notes/server/note-refine-policy';
+import {
+  decideNoteRefineMode,
+  patchTouchesVerifiedBlock,
+} from '@/capabilities/notes/server/note-refine-policy';
 import { writeNoteRefineProposal } from '@/capabilities/notes/server/note-refine-proposals';
 import { NotePatch, type NotePatchT, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
@@ -203,7 +206,15 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   }
 
   const triggerEventId = trigger.trigger_event_id ?? null;
-  const decision = gate(summary);
+  // C1a (YUK-358, ADR-0040 决定1): divert to propose when the count-gate says so
+  // OR the patch would overwrite/delete a user-verified block. The patch-carrying
+  // proposal producer (writeNoteRefineProposal) lands the same patch in the inbox
+  // so a human approves it — never a silent overwrite. This is the PRIMARY guard;
+  // applyNotePatch's `user_verified_protected` throw is the cross-caller safety net.
+  const decision =
+    gate(summary) === 'propose' || patchTouchesVerifiedBlock(row.body_blocks, patch)
+      ? 'propose'
+      : 'mutator';
 
   if (decision === 'propose') {
     if (onPropose) {
