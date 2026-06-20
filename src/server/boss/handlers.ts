@@ -15,7 +15,6 @@ import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { getR2 } from '@/server/r2';
 import type { PgBoss } from 'pg-boss';
 import { buildEchoHandler } from './handlers/echo';
-import { buildEmbeddedCheckGenerateHandler } from './handlers/embedded_check_generate';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
 import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
@@ -40,7 +39,7 @@ import { buildVariantVerifyHandler } from './handlers/variant_verify';
 //   - rejudge（非默认 1s polling + inline 动态 import，非工厂形态）
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
-//   - session_summary / embedded_check_generate（链式 LLM）
+//   - session_summary（链式 LLM）
 //   - note_verify / note_generate（工厂带 boss 二参链式回调，不符 JobHandlerFactory 单参签名）
 //   - quiz_gen / quiz_verify / sourcing / source_verify / variant_gen / variant_verify
 //   - tencent_ocr_extract（0.5s polling + lazy r2 getter）/ auto_enroll
@@ -121,15 +120,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildSessionSummaryHandler(db),
   );
 
-  // Product Track 1: EmbeddedCheckGenerateTask — chained behind note_verify so
-  // that only verified notes spend LLM tokens on inline self-test generation.
-  await createJobQueue(boss, 'embedded_check_generate', EXPIRE_LLM);
-  await boss.work(
-    'embedded_check_generate',
-    { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildEmbeddedCheckGenerateHandler(db),
-  );
-
   // Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-
   // search-grounded-design.md §3 / §4). Manual-first: enqueued by
   // POST /api/questions/quiz-gen (Q4). The tool-calling QuizGenTask agent mounts
@@ -190,11 +180,9 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.work(
     'note_verify',
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildNoteVerifyHandler(db, {
-      onPassed: async (artifactId) => {
-        await boss.send('embedded_check_generate', { artifact_id: artifactId });
-      },
-    }),
+    // YUK-358 决定3：note_verify 不再链式触发 embedded_check_generate
+    //（内嵌判分自测孤儿链真删）。onPassed 是可选回调——无下游消费者，直接省略。
+    buildNoteVerifyHandler(db, {}),
   );
 
   // Phase 2B: NoteGenerateTask — enqueued by /api/learning-intents/[id]/accept,

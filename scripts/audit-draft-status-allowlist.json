@@ -1,5 +1,5 @@
 {
-  "_comment": "question-insert sites that do NOT set draft_status. Each entry MUST have reason + resolves_when {kind,ref,expected_by}. NULL≡active is the legal semantics for these writers (the question IS an active pool item). embedded/teaching also set draft_status explicitly post-YUK-350-L2 — kept here as harmless-redundant (chain-merge guard); the audit silently passes an allowlisted-AND-explicit file. See docs/design/2026-05-15-data-assumptions.md.",
+  "_comment": "question-insert sites that do NOT set draft_status. Each entry MUST have reason + resolves_when {kind,ref,expected_by}. NULL≡active is the legal semantics for these writers (the question IS an active pool item). teaching-check also sets draft_status explicitly post-YUK-350-L2 — kept here as harmless-redundant (chain-merge guard); the audit silently passes an allowlisted-AND-explicit file. (YUK-358 决定3: the embedded_check_generate writer was deleted with the orphan chain.) See docs/design/2026-05-15-data-assumptions.md.",
   "src/capabilities/ingestion/server/auto-enroll.ts": {
     "reason": "Auto-enrolled questions are active pool items by design — NULL≡active is correct; they enter the review pool immediately.",
     "resolves_when": {
@@ -30,14 +30,6 @@
       "kind": "manual",
       "ref": "permanent: paper part questions are intentionally active (NULL≡active)",
       "expected_by": "2027-06-30"
-    }
-  },
-  "src/server/boss/handlers/embedded_check_generate.ts": {
-    "reason": "Container-only embedded checks now set draft_status='draft' explicitly (YUK-350 L2). Kept here as a harmless-redundant chain-merge guard so the L2->L4 chain never fails on either order; the audit silently passes an allowlisted-AND-explicit file.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "redundant post-L2 (file sets draft_status explicitly); remove this entry once W0 is merged — kept only so the L2->L4 chain never hard-fails on merge order",
-      "expected_by": "2026-12-31"
     }
   },
   "src/capabilities/copilot/server/teaching/materialize-ask-check.ts": {

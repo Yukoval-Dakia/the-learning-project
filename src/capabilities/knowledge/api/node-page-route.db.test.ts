@@ -21,7 +21,6 @@ const A_BASE = {
   intent_source: 'test',
   source: 'test',
   verification_status: 'not_required',
-  embedded_check_status: 'not_required',
 };
 
 async function getNode(id: string): Promise<Response> {

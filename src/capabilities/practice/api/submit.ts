@@ -440,16 +440,16 @@ async function persistSubmit(
     primaryResult = primaryUpdate.result;
     primaryFsrsStateAfter = primaryUpdate.stateAfter;
 
-    // YUK-56 — Embed judge result on the review event's payload (mirrors
-    // embedded-check pattern at app/api/embedded-check/attempt/route.ts:122).
+    // YUK-56 — Embed judge result on the review event's payload (the same
+    // jsonb-payload-embed pattern shared by the judge-writing routes).
     // Extra keys are stored via jsonb; ReviewOnQuestion Zod schema strips
     // unknown keys on parse, but writeEvent inserts the raw input.payload.
     //
     // Why not a separate action='judge' event chained via caused_by?
     // JudgeOnEvent requires payload.cause (cause attribution is a downstream
     // 'attribution' agent's job; this route only writes the assessment
-    // trail). Embedding mirrors the embedded-check pattern and keeps the
-    // judge event channel clean for cause-bearing events.
+    // trail). Embedding keeps the judge event channel clean for cause-bearing
+    // events.
     const judgePayload =
       judgeResult !== null && judgeRoute !== null
         ? {

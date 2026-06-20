@@ -96,7 +96,6 @@ async function seedArtifact(opts: {
       verification_summary: null,
       generated_by: null,
       verified_by: null,
-      embedded_check_status: 'not_required',
       history: [],
       archived_at: null,
       created_at: NOW,

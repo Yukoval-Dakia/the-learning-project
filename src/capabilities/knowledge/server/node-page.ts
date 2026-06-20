@@ -13,7 +13,7 @@
 //
 // 复用锚点（不重建）：loadMastery via knowledge_mastery view、listKnowledgeEdges、
 // listBacklinks + getArtifactCorrectionStates（backlinks route 的同款 read-time 过滤）、
-// resolveSubjectProfileForKnowledgeIds + toSlimSubjectProfile、bodyBlocksToNoteSections。
+// resolveSubjectProfileForKnowledgeIds + toSlimSubjectProfile。
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
@@ -25,7 +25,6 @@ import {
   listBacklinks,
   resolveOwningLearningItemIds,
 } from '@/capabilities/notes/server/block-refs';
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import {
   type NoteSummary,
   interactiveForKnowledge,
@@ -33,7 +32,7 @@ import {
 } from '@/capabilities/notes/server/notes-read';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { artifact, event, knowledge, question } from '@/db/schema';
+import { artifact, event, knowledge } from '@/db/schema';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
@@ -42,13 +41,6 @@ const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_ATOMIC_TYPE = 'note_atomic';
 const TIMELINE_LIMIT = 30;
 export type MasteryDecayBucket = 'untrained' | 'fresh' | 'mild' | 'stale' | 'unknown';
-
-export interface NodePageEmbeddedQuestion {
-  id: string;
-  kind: string;
-  prompt_md: string;
-  choices_md: string[] | null;
-}
 
 export interface NodePagePrimaryAtomic {
   id: string;
@@ -63,8 +55,6 @@ export interface NodePagePrimaryAtomic {
   body_blocks: ArtifactBodyBlocksT | null;
   generation_status: string;
   verification_status: string;
-  embedded_check_status: string;
-  embedded_questions: NodePageEmbeddedQuestion[];
 }
 
 export interface NodePageMeshNeighbor {
@@ -262,7 +252,6 @@ export async function loadKnowledgeNodePage(
       body_blocks: artifact.body_blocks,
       generation_status: artifact.generation_status,
       verification_status: artifact.verification_status,
-      embedded_check_status: artifact.embedded_check_status,
     })
     .from(artifact)
     .where(
@@ -279,27 +268,9 @@ export async function loadKnowledgeNodePage(
   const backlinks: NodePageBacklink[] = [];
   const atomic = atomicRows[0];
   if (atomic) {
-    const sections = bodyBlocksToNoteSections(atomic.body_blocks);
-    let embeddedQuestions: NodePageEmbeddedQuestion[] = [];
-    if (atomic.embedded_check_status === 'ready') {
-      const checkSection = sections.find((s) => s.kind === 'check');
-      const ids = checkSection?.embedded_check?.question_ids ?? [];
-      if (ids.length > 0) {
-        const qRows = await db
-          .select({
-            id: question.id,
-            kind: question.kind,
-            prompt_md: question.prompt_md,
-            choices_md: question.choices_md,
-          })
-          .from(question)
-          .where(inArray(question.id, ids));
-        const byId = new Map(qRows.map((r) => [r.id, r]));
-        embeddedQuestions = ids
-          .map((id) => byId.get(id))
-          .filter((r): r is NonNullable<typeof r> => r !== undefined);
-      }
-    }
+    // YUK-358 决定3：graded embedded-check question projection removed with the
+    // orphan chain. The check section itself survives as the Phase-3
+    // self-explanation anchor (body_blocks carries it; rendered downstream).
     // Resolve the primary atomic to its owning learning_item so the title links
     // to /learning-items/<learning_item_id> instead of the artifact id (those are
     // distinct ids; linking by artifact id 404s — Codex #193 / YUK-161). Mirrors
@@ -313,8 +284,6 @@ export async function loadKnowledgeNodePage(
       body_blocks: atomic.body_blocks,
       generation_status: atomic.generation_status,
       verification_status: atomic.verification_status,
-      embedded_check_status: atomic.embedded_check_status,
-      embedded_questions: embeddedQuestions,
     };
 
     // 4. backlinks — inbound cross_links pointing AT the primary atomic. Reuse

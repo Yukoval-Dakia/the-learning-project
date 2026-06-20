@@ -11,7 +11,6 @@ import { GET } from './note-page-route';
 const A_BASE = {
   intent_source: 'test',
   source: 'test',
-  embedded_check_status: 'not_required',
   verification_status: 'not_required',
 };
 
