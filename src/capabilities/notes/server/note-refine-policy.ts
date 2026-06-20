@@ -1,3 +1,4 @@
+import { isVerifiedBlock } from '@/core/blocks/is-verified-block';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { NotePatchSummary, NotePatchT } from '@/core/schema/note-patch';
 
@@ -17,7 +18,8 @@ export function decideNoteRefineMode(summary: NotePatchSummary): NoteRefineApply
 // user-verified block. Kept separate from `decideNoteRefineMode` (count-only)
 // so that gate's existing unit semantics stay untouched. A block is verified
 // when `attrs.user_verified === true` OR `attrs.source_tier === 'user_verified'`
-// (mirrors applyNotePatch's isVerifiedBlock + the read-channel detector).
+// — detected via the shared isVerifiedBlock (core/blocks/is-verified-block.ts),
+// the same口径 applyNotePatch's guard + the read-channel detector consult.
 //
 // NARROW口径: only replace_block | delete_block count — insert_after adds a
 // sibling and never touches the verified block's content, so it is allowed.
@@ -25,14 +27,14 @@ export function patchTouchesVerifiedBlock(bodyBlocks: unknown, patch: NotePatchT
   const parsed = ArtifactBodyBlocks.safeParse(bodyBlocks);
   if (!parsed.success) return false;
 
+  // YUK-358 决定7 rider-1: detection delegates to the shared isVerifiedBlock口径
+  // (flag OR source_tier) so the gate and applyNotePatch's guard never drift.
   const verifiedIds = new Set<string>();
   for (const node of parsed.data.content ?? []) {
-    const attrs = (node as { attrs?: unknown }).attrs;
-    if (attrs === null || typeof attrs !== 'object' || Array.isArray(attrs)) continue;
-    const a = attrs as Record<string, unknown>;
-    const id = a.id;
+    const record = node as Record<string, unknown>;
+    const id = (record.attrs as { id?: unknown } | null | undefined)?.id;
     if (typeof id !== 'string') continue;
-    if (a.user_verified === true || a.source_tier === 'user_verified') verifiedIds.add(id);
+    if (isVerifiedBlock(record)) verifiedIds.add(id);
   }
   if (verifiedIds.size === 0) return false;
 

@@ -249,9 +249,15 @@ describe('runNoteVerify', () => {
       issues: [{ block_id: 'b2', category: 'factuality' }],
     });
 
+    // RED-1 (YUK-358 决定7) — the DEAD patch-less note_update proposal is GONE.
+    // note_verify's needs_review branch no longer writes a proposal at all; the
+    // advisory (verification_summary + the experimental:note_verify event) is the
+    // ONLY artifact of a needs_review verdict. So exactly ONE event row, and it is
+    // the verify event — NOT a proposal.
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     const verifyEvent = rows.find((row) => row.action === 'experimental:note_verify');
+    expect(verifyEvent).toBeDefined();
     expect(verifyEvent?.outcome).toBe('partial');
     // YUK-350 increment 2 — unified verify contract shape: note needs_review →
     // overall 'needs_review' + failure_class 'validation_failure'; NEVER 'fail' (the
@@ -267,10 +273,20 @@ describe('runNoteVerify', () => {
     expect(vp.overall).not.toBe('fail');
     expect(vp.failure_class).toBe('validation_failure');
     expect(vp.axes?.[0]?.axis_name).toBe('factuality');
-    const proposalEvent = rows.find((row) => row.action === 'experimental:proposal');
-    expect((proposalEvent?.payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
-      'note_update',
-    );
+
+    // Advisory NOT regressed: verification_summary still carries the issues so they
+    // stay visible to the owner even with the dead proposal removed (red line 3).
+    expect(updated.verification_summary).toMatchObject({
+      verdict: 'needs_review',
+      issues: [{ block_id: 'b2', message: '例句解释缺少文本证据。' }],
+    });
+
+    // The patch-less note_update proposal MUST NOT exist anymore.
+    const proposalEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposalEvents).toHaveLength(0);
   });
 
   it('passes subject profile from knowledge.domain to NoteVerifyTask', async () => {

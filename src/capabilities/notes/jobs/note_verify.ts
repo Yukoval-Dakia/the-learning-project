@@ -13,6 +13,7 @@ import {
   bodyBlocksToBlockSummaries,
   bodyBlocksToNoteSections,
 } from '@/capabilities/notes/server/body-blocks';
+import { enqueueVerifyNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
@@ -20,7 +21,6 @@ import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import type { TaskTextResult } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
-import { writeNoteUpdateProposal } from '@/server/proposals/producers';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -120,12 +120,19 @@ export function noteBodyBlockContractFailure(
   };
 }
 
+interface PersistVerificationOutcome {
+  status: 'verified' | 'needs_review';
+  // YUK-358 决定7 — the committed verify event id, so the caller can chain a
+  // (flag-gated) verify→refine enqueue to it AFTER the transaction commits.
+  verifyEventId: string;
+}
+
 async function persistNoteVerificationResult(params: {
   db: Db;
   artifactId: string;
   parsed: NoteVerificationResultT;
   taskResult?: TaskTextResult;
-}): Promise<'verified' | 'needs_review'> {
+}): Promise<PersistVerificationOutcome> {
   const { db, artifactId, parsed, taskResult } = params;
   const status = parsed.verdict === 'pass' ? 'verified' : 'needs_review';
 
@@ -148,6 +155,7 @@ async function persistNoteVerificationResult(params: {
     issues: parsed.issues,
   });
 
+  const verifyEventId = createId();
   await db.transaction(async (tx) => {
     await tx
       .update(artifact)
@@ -161,7 +169,6 @@ async function persistNoteVerificationResult(params: {
       })
       .where(eq(artifact.id, artifactId));
 
-    const verifyEventId = createId();
     await writeEvent(tx, {
       id: verifyEventId,
       session_id: null,
@@ -182,20 +189,51 @@ async function persistNoteVerificationResult(params: {
       created_at: new Date(),
     });
 
-    if (status === 'needs_review') {
-      await writeNoteUpdateProposal(tx, {
-        artifact_id: artifactId,
-        verification_event_id: verifyEventId,
-        summary_md: parsed.summary_md,
-        issues: parsed.issues,
-        reason_md: parsed.summary_md,
-        task_run_id: taskResult?.task_run_id ?? null,
-        cost_usd: taskResult?.cost_usd,
-      });
-    }
+    // YUK-358 决定7 (ADR-0040) — the DEAD patch-less note_update proposal is GONE.
+    // It was a permanent inbox occupant carrying only a summary + issues (no patch),
+    // so the owner could never ACT on it (acceptNoteUpdateProposal needs a patch via
+    // writeNoteRefineProposal — the verify-path proposal never carried one). The
+    // needs_review verdict is now ADVISORY: the verification_summary + the
+    // experimental:note_verify event above are the artifacts. Acting on the issues
+    // is a SEPARATE, flag-gated verify→refine enqueue done by the caller AFTER this
+    // transaction commits (see runNoteVerify), which routes through the NORMAL refine
+    // gate so verify gets zero gate privilege (red line 1).
   });
 
-  return status;
+  return { status, verifyEventId };
+}
+
+// YUK-358 决定7 — build the verify→refine context_md from the verdict summary +
+// issues so the refine task sees exactly what the verifier flagged.
+function buildVerifyRefineContext(parsed: NoteVerificationResultT): string {
+  const lines = ['Note verification flagged issues:', parsed.summary_md];
+  for (const issue of parsed.issues) {
+    const where = issue.block_id ? `[block ${issue.block_id}] ` : '';
+    const fix = issue.suggested_fix_md ? ` (suggested: ${issue.suggested_fix_md})` : '';
+    lines.push(`- ${where}${issue.message}${fix}`);
+  }
+  return lines.join('\n');
+}
+
+// YUK-358 决定7 — on needs_review, (flag-gated default-OFF) enqueue a verify-kind
+// refine carrying the verifier context, chained to the committed verify event.
+// Default-OFF + test-env skip mean this is a no-op in tests and in prod unless the
+// owner sets WAVE6_TRIGGER_VERIFY_ENABLED="true" — so the advisory verdict never
+// silently spends background AI budget (red lines 1 & 2). Enqueue happens AFTER
+// the persist transaction commits so the trigger event id is durable.
+async function maybeEnqueueVerifyRefine(params: {
+  db: Db;
+  artifactId: string;
+  parsed: NoteVerificationResultT;
+  outcome: PersistVerificationOutcome;
+}): Promise<void> {
+  if (params.outcome.status !== 'needs_review') return;
+  await enqueueVerifyNoteRefine({
+    db: params.db,
+    artifactId: params.artifactId,
+    contextMd: buildVerifyRefineContext(params.parsed),
+    triggerEventId: params.outcome.verifyEventId,
+  });
 }
 
 export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNoteVerifyResult> {
@@ -225,12 +263,17 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
 
   const contractFailure = noteBodyBlockContractFailure(row.type, row.body_blocks);
   if (contractFailure) {
-    const status = await persistNoteVerificationResult({
+    const outcome = await persistNoteVerificationResult({
       db,
       artifactId,
       parsed: contractFailure,
     });
-    return { status, artifact_type: row.type, issues_count: contractFailure.issues.length };
+    await maybeEnqueueVerifyRefine({ db, artifactId, parsed: contractFailure, outcome });
+    return {
+      status: outcome.status,
+      artifact_type: row.type,
+      issues_count: contractFailure.issues.length,
+    };
   }
 
   const sections = bodyBlocksToNoteSections(row.body_blocks);
@@ -267,14 +310,15 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     });
     taskResult = result;
     const parsed = parseVerificationOutput(result.text);
-    const status = await persistNoteVerificationResult({
+    const outcome = await persistNoteVerificationResult({
       db,
       artifactId,
       parsed,
       taskResult: result,
     });
+    await maybeEnqueueVerifyRefine({ db, artifactId, parsed, outcome });
 
-    return { status, artifact_type: row.type, issues_count: parsed.issues.length };
+    return { status: outcome.status, artifact_type: row.type, issues_count: parsed.issues.length };
   } catch (err) {
     // YUK-350 (B5 increment 2, RL1) — error-safe catch-bottom. note_verify has NO
     // promote-into-the-pool path (a note never enrolls into the question pool / FSRS),

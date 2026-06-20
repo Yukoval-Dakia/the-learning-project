@@ -20,6 +20,7 @@
 
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '../schema/business';
 import type { NotePatchOpT, NotePatchT } from '../schema/note-patch';
+import { isVerifiedBlock } from './is-verified-block';
 
 export class NoteRefineApplyError extends Error {
   // C1a (YUK-358, ADR-0040 决定1): `user_verified_protected` is the hard
@@ -59,16 +60,9 @@ function blockIdOf(node: Record<string, unknown>): string | undefined {
   return typeof id === 'string' ? id : undefined;
 }
 
-// A block is user-owned (protected) when the human explicitly verified it
-// (`attrs.user_verified === true`) or its provenance tier is `user_verified`
-// (NoteSection.source_tier). Mirrors the read-channel detector used by the
-// projection (body-blocks.ts) and UI (NoteBlocks.tsx).
-function isVerifiedBlock(node: Record<string, unknown>): boolean {
-  const attrs = node.attrs;
-  if (attrs === null || typeof attrs !== 'object' || Array.isArray(attrs)) return false;
-  const a = attrs as Record<string, unknown>;
-  return a.user_verified === true || a.source_tier === 'user_verified';
-}
+// YUK-358 决定7 rider-1: isVerifiedBlock now lives in ./is-verified-block so the
+// apply guard and the job-gate (note-refine-policy.ts) share ONE口径. The inline
+// copy was extracted byte-equivalent — semantics here are unchanged.
 
 export function applyNotePatch(
   bodyBlocks: unknown,
