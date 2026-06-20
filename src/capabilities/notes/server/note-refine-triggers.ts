@@ -6,24 +6,24 @@ import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
 
 // M3 (YUK-317, D6)：error_rate 信号已删（内嵌自测链路裁撤）。
+// YUK-358 决定6 (ADR-0040)：dwell 信号已裁（editing presence 不再触发 refine）。
 const FLAG_BY_KIND: Record<NoteRefineTriggerKind, string> = {
   mark_wrong: 'WAVE6_TRIGGER_MARK_WRONG_ENABLED',
   mastery_change: 'WAVE6_TRIGGER_MASTERY_ENABLED',
-  dwell: 'WAVE6_TRIGGER_DWELL_ENABLED',
   dreaming: 'WAVE6_TRIGGER_DREAMING_ENABLED',
   // YUK-358 决定7 (ADR-0040)：verify 是 note_verify→refine 的新 trigger，OPT-IN。
   verify: 'WAVE6_TRIGGER_VERIFY_ENABLED',
 };
 
 // YUK-358 决定7 — per-kind DEFAULT state (the value when the flag env var is
-// UNSET/empty). The original 4 kinds are default-ON (an unset flag means "run");
+// UNSET/empty). The real-signal kinds are default-ON (an unset flag means "run");
 // `verify` is default-OFF so removing note_verify's dead proposal does NOT
 // silently light up a new background AI-cost path. To turn verify→refine on,
 // the owner sets WAVE6_TRIGGER_VERIFY_ENABLED="true" explicitly. (Red line 2.)
+// YUK-358 决定6 — dwell removed (editing presence no longer triggers refine).
 const DEFAULT_ENABLED_BY_KIND: Record<NoteRefineTriggerKind, boolean> = {
   mark_wrong: true,
   mastery_change: true,
-  dwell: true,
   dreaming: true,
   verify: false,
 };
@@ -170,16 +170,12 @@ export const enqueueVerifyNoteRefine = (input: {
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
 
-export const enqueueDwellNoteRefine = (input: {
-  db?: Db;
-  artifactId: string;
-  bossSend?: BossSend;
-}) =>
-  enqueueNoteRefineTrigger({
-    ...input,
-    kind: 'dwell',
-    contextMd: 'User is dwelling in the editor; consider whether a small clarity patch would help.',
-  });
+// YUK-358 决定6 (ADR-0040) — enqueueDwellNoteRefine producer RETIRED. Editing
+// presence (the /api/editing-session/heartbeat heartbeat) no longer enqueues a
+// note_refine; it is now a pure presence write feeding the editing_presence DEFER
+// arbitration only. The dwell signal was a low-value AI-cost driver (no concrete
+// learning event behind it). The 3 real-signal producers below (mark_wrong /
+// mastery_change / dreaming) plus the verify bridge (决定7) remain.
 
 // ADR-0040 决定2 — honest rename: the signal was historically labelled
 // `review_success` (a pure pass/fail proxy that reads NO real mastery value). It is

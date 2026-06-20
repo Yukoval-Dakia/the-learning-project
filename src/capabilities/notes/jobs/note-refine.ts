@@ -38,15 +38,13 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 
 // M3 (YUK-317, D6)：error_rate kind 已删——内嵌自测全链路裁撤后该信号源死亡；
 // 流作答信号 = mastery_change（practice submit persist 接入）。
+// YUK-358 决定6 (ADR-0040)：'dwell' kind 已裁撤——editing presence 不再触发 refine，
+// /api/editing-session/heartbeat 退化为纯 presence 写（editing_presence DEFER 仲裁
+// 仍在，决定1 A-track auto-apply 依赖它）。
 // YUK-358 决定7 (ADR-0040)：'verify' 是新 trigger kind——note_verify 的 needs_review
 // 分支不再写死提议，而是（flag-gated, default-OFF）enqueue 一个 verify-kind refine，
 // 让 verify 发现的问题经 NORMAL refine gate（count + patchTouchesVerifiedBlock）流转。
-export type NoteRefineTriggerKind =
-  | 'mark_wrong'
-  | 'mastery_change'
-  | 'dwell'
-  | 'dreaming'
-  | 'verify';
+export type NoteRefineTriggerKind = 'mark_wrong' | 'mastery_change' | 'dreaming' | 'verify';
 
 export interface NoteRefineJobData {
   artifact_id: string;
