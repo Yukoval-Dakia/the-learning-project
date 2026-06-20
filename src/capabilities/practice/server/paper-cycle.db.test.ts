@@ -1465,4 +1465,66 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       vi.restoreAllMocks();
     }
   });
+
+  // YUK-448 — paper-path RT capture. Mirrors the solo /api/review/submit latency
+  // capture: `latencyMs` lands in the attempt event payload as `duration_ms`.
+  // Capture only — NOT wired into θ̂/p(L)/FSRS (ADR-0035 red-line).
+  it('YUK-448: captures latencyMs as duration_ms in the attempt event payload', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper_rt', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_rt' });
+
+    const submit = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper_rt',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+        latencyMs: 12_500,
+      },
+      db,
+    );
+
+    const rows = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, submit.attemptEventId))
+      .limit(1);
+    const payload = rows[0].payload as Record<string, unknown>;
+    expect(payload.duration_ms).toBe(12_500);
+  });
+
+  // YUK-448 — when latencyMs is not supplied the key must be ABSENT (not null),
+  // because the read-side AttemptOnQuestion schema declares duration_ms as
+  // z.number().int().optional() and a null would fail the discriminated-union
+  // parse on read. Mirrors the conditional-spread idiom in submit.ts:532.
+  it('YUK-448: omits duration_ms when latencyMs is not supplied (no null poison)', async () => {
+    const db = testDb();
+    await seedQuestion('q1', 'true');
+    await seedPaper('paper_rt', ['q1']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_rt' });
+
+    const submit = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper_rt',
+        questionId: 'q1',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    const rows = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.id, submit.attemptEventId))
+      .limit(1);
+    const payload = rows[0].payload as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('duration_ms');
+  });
 });
