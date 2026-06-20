@@ -22,12 +22,30 @@ import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '../schema/business
 import type { NotePatchOpT, NotePatchT } from '../schema/note-patch';
 
 export class NoteRefineApplyError extends Error {
-  readonly code: 'target_not_found' | 'invalid_body_blocks';
-  constructor(code: 'target_not_found' | 'invalid_body_blocks', message: string) {
+  // C1a (YUK-358, ADR-0040 决定1): `user_verified_protected` is the hard
+  // boundary — a replace_block/delete_block op targeting a user-verified block
+  // is rejected so an AI mutator can never silently overwrite a block the human
+  // owns. The job-gate (note-refine.ts) is the primary diversion to propose;
+  // this throw is the cross-caller safety net for callers that bypass the gate
+  // (hub_auto_sync_nightly, presence-store apply).
+  readonly code: 'target_not_found' | 'invalid_body_blocks' | 'user_verified_protected';
+  constructor(
+    code: 'target_not_found' | 'invalid_body_blocks' | 'user_verified_protected',
+    message: string,
+  ) {
     super(message);
     this.name = 'NoteRefineApplyError';
     this.code = code;
   }
+}
+
+export interface ApplyNotePatchOptions {
+  // C1a (YUK-358): when true (default), replace_block/delete_block ops targeting
+  // a user-verified block throw `user_verified_protected`. The accept-path
+  // (acceptNoteUpdateProposal → persistNoteRefineApply actorRef
+  // 'note_refine_accept') sets this false: a HUMAN approved that exact patch
+  // through the inbox, so the AI-mutator guard must NOT kill it.
+  enforceUserVerifiedGuard?: boolean;
 }
 
 function cloneNode(node: Record<string, unknown>): Record<string, unknown> {
@@ -41,7 +59,23 @@ function blockIdOf(node: Record<string, unknown>): string | undefined {
   return typeof id === 'string' ? id : undefined;
 }
 
-export function applyNotePatch(bodyBlocks: unknown, patch: NotePatchT): ArtifactBodyBlocksT {
+// A block is user-owned (protected) when the human explicitly verified it
+// (`attrs.user_verified === true`) or its provenance tier is `user_verified`
+// (NoteSection.source_tier). Mirrors the read-channel detector used by the
+// projection (body-blocks.ts) and UI (NoteBlocks.tsx).
+function isVerifiedBlock(node: Record<string, unknown>): boolean {
+  const attrs = node.attrs;
+  if (attrs === null || typeof attrs !== 'object' || Array.isArray(attrs)) return false;
+  const a = attrs as Record<string, unknown>;
+  return a.user_verified === true || a.source_tier === 'user_verified';
+}
+
+export function applyNotePatch(
+  bodyBlocks: unknown,
+  patch: NotePatchT,
+  options: ApplyNotePatchOptions = {},
+): ArtifactBodyBlocksT {
+  const enforceUserVerifiedGuard = options.enforceUserVerifiedGuard ?? true;
   const parsed = ArtifactBodyBlocks.safeParse(bodyBlocks);
   if (!parsed.success) {
     throw new NoteRefineApplyError(
@@ -55,7 +89,7 @@ export function applyNotePatch(bodyBlocks: unknown, patch: NotePatchT): Artifact
   );
 
   for (const op of patch.ops) {
-    content = applyOp(content, op);
+    content = applyOp(content, op, enforceUserVerifiedGuard);
   }
 
   return {
@@ -64,9 +98,15 @@ export function applyNotePatch(bodyBlocks: unknown, patch: NotePatchT): Artifact
   };
 }
 
-function applyOp(content: Record<string, unknown>[], op: NotePatchOpT): Record<string, unknown>[] {
+function applyOp(
+  content: Record<string, unknown>[],
+  op: NotePatchOpT,
+  enforceUserVerifiedGuard: boolean,
+): Record<string, unknown>[] {
   switch (op.kind) {
     case 'insert_after': {
+      // insert_after adds a sibling AFTER the target; it never touches the
+      // target's content, so a verified target is fine (NARROW口径).
       const idx = content.findIndex((node) => blockIdOf(node) === op.target_block_id);
       if (idx === -1) {
         throw new NoteRefineApplyError(
@@ -88,6 +128,12 @@ function applyOp(content: Record<string, unknown>[], op: NotePatchOpT): Record<s
           `replace_block: target_block_id "${op.target_block_id}" not found in doc root`,
         );
       }
+      if (enforceUserVerifiedGuard && isVerifiedBlock(content[idx])) {
+        throw new NoteRefineApplyError(
+          'user_verified_protected',
+          `replace_block: target_block_id "${op.target_block_id}" is user-verified; AI must propose, not overwrite`,
+        );
+      }
       return [
         ...content.slice(0, idx),
         cloneNode(op.block as Record<string, unknown>),
@@ -100,6 +146,12 @@ function applyOp(content: Record<string, unknown>[], op: NotePatchOpT): Record<s
         throw new NoteRefineApplyError(
           'target_not_found',
           `delete_block: target_block_id "${op.target_block_id}" not found in doc root`,
+        );
+      }
+      if (enforceUserVerifiedGuard && isVerifiedBlock(content[idx])) {
+        throw new NoteRefineApplyError(
+          'user_verified_protected',
+          `delete_block: target_block_id "${op.target_block_id}" is user-verified; AI must propose, not delete`,
         );
       }
       return [...content.slice(0, idx), ...content.slice(idx + 1)];
