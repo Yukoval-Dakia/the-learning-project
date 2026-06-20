@@ -37,7 +37,8 @@ import {
 } from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
-import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
+import { getMasteryState } from '@/server/mastery/state';
+import { updateThetaForAttemptWithOptionalStepGrading } from '@/server/mastery/step-grading-theta';
 import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 
@@ -601,21 +602,25 @@ export async function submitPaperSlot(
         ? ((await getMasteryState(tx, familyPrimaryKnowledgeId))?.theta_hat ?? 0)
         : 0;
 
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: referencedKnowledgeIds,
-        questionId: input.questionId,
-        outcome: attemptOutcome === 'failure' ? 0 : 1,
-        difficulty: q.difficulty,
-        attemptEventId,
-        now,
-        // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
-        kind: q.kind,
-        source: q.source,
-        // Codex review F2 — family_key 必须用 question 规范 primary（q.knowledge_ids[0]），不是
-        // knowledgeIds[0]（= slot 指派 primary，paper 路径可能 ≠ 题 primary）。与 family 写侧
-        // （下面 recordFamilyObservationForAttempt 的 familyPrimaryKnowledgeId）+ 选题读侧同键。
-        familyPrimaryKnowledgeId,
-      });
+      await updateThetaForAttemptWithOptionalStepGrading(
+        tx,
+        {
+          knowledgeIds: referencedKnowledgeIds,
+          questionId: input.questionId,
+          outcome: attemptOutcome === 'failure' ? 0 : 1,
+          difficulty: q.difficulty,
+          attemptEventId,
+          now,
+          // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
+          kind: q.kind,
+          source: q.source,
+          // Codex review F2 — family_key 必须用 question 规范 primary（q.knowledge_ids[0]），不是
+          // knowledgeIds[0]（= slot 指派 primary，paper 路径可能 ≠ 题 primary）。与 family 写侧
+          // （下面 recordFamilyObservationForAttempt 的 familyPrimaryKnowledgeId）+ 选题读侧同键。
+          familyPrimaryKnowledgeId,
+        },
+        judgeResult,
+      );
 
       // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
       // 同 tx（计数与作答一致），best-effort：绝不 fail 上面的 θ̂/FSRS/event 主路径。
