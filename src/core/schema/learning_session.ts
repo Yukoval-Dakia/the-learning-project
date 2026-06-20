@@ -14,6 +14,7 @@ export const LearningSessionType = z.enum([
   'explore',
   'create',
   'conversation',
+  'placement',
 ]);
 export type LearningSessionTypeT = z.infer<typeof LearningSessionType>;
 
@@ -63,6 +64,16 @@ export type ConversationStatusT = z.infer<typeof ConversationStatus>;
 export const TutorStatus = z.enum(['active', 'submitted', 'judged', 'ended', 'abandoned']);
 export type TutorStatusT = z.infer<typeof TutorStatus>;
 
+// placement 状态机 (YUK-468 cold-start inc-B / docs/design/2026-06-20-cold-start-day-one-design.md §2 步骤3)：
+//   started → completed | abandoned
+// 一次性有界第一会话流（每科 ~8 题，cap 防疲劳 + 可选 θ SE 收敛即停）。**没有** paused /
+// reopened —— 不同于 review：placement probe 不暂停续答（中断即 abandoned，可重开新一轮）。
+// started  : 会话已开，逐题选→判→收紧 θ̂/p(L)。
+// completed: 终态 —— 达终止条件（题数 cap 或 SE 收敛），画像落地。
+// abandoned: 终态 —— 中途放弃 / orphan cron 扫。
+export const PlacementStatus = z.enum(['started', 'completed', 'abandoned']);
+export type PlacementStatusT = z.infer<typeof PlacementStatus>;
+
 // explore / create —— 占位 enum，状态待定。**绝不**用 z.string() 兜底，
 // 也不留空 enum。Phase 1d/2 第一次实装时再展开。先用 'placeholder' 单值标记，避免
 // 误把任意字符串吞进生产数据。
@@ -82,6 +93,7 @@ export const LearningSessionStatusByType = z.discriminatedUnion('type', [
   z.object({ type: z.literal('review'), status: ReviewStatus }),
   z.object({ type: z.literal('conversation'), status: ConversationStatus }),
   z.object({ type: z.literal('tutor'), status: TutorStatus }),
+  z.object({ type: z.literal('placement'), status: PlacementStatus }),
   z.object({ type: z.literal('explore'), status: ExploreStatus }),
   z.object({ type: z.literal('create'), status: CreateStatus }),
 ]);
