@@ -113,6 +113,7 @@ jobs:
                       pageInfo{ hasNextPage endCursor }
                       nodes{
                         isResolved
+                        isOutdated
                         id
                         comments(first:100){
                           pageInfo{ hasNextPage endCursor }
@@ -183,6 +184,9 @@ jobs:
                       c.author && c.author.__typename === 'User' && DISAGREE.test(c.body || ''));
                     if (humanDisagree) {
                       verdict = 'rejected';
+                    } else if (th.isOutdated) {
+                      // Commented code changed with no objection => addressed.
+                      verdict = 'accepted';
                     } else {
                       const ageDays = (now - Date.parse(head.createdAt)) / 86400000;
                       if (ageDays > STALE_DAYS) verdict = 'rejected';
@@ -472,7 +476,7 @@ jobs:
                   reviewThreads(first:50, after:$cursor){
                     pageInfo{ hasNextPage endCursor }
                     nodes{
-                      isResolved id
+                      isResolved isOutdated id
                       comments(first:100){
                         pageInfo{ hasNextPage endCursor }
                         nodes{ id body path createdAt author{ login __typename } }
@@ -525,6 +529,7 @@ jobs:
                     const humanDisagree = allComments.slice(1).some(c =>
                       c.author && c.author.__typename === 'User' && DISAGREE.test(c.body || ''));
                     if (humanDisagree) verdict = 'rejected';
+                    else if (th.isOutdated) verdict = 'accepted'; // code changed => addressed
                     // else: unresolved-at-merge is left ambiguous on purpose (skip).
                   }
                   if (!verdict) continue;
