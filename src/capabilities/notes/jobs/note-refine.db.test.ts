@@ -18,6 +18,7 @@ import {
   recordEditingHeartbeat,
   resetEditingSessionStateForTests,
 } from '@/server/artifacts/editing-session';
+import * as eventQueries from '@/server/events/queries';
 import { writeEvent } from '@/server/events/queries';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -816,6 +817,66 @@ describe('runNoteRefine — A-track rate breaker', () => {
     expect(result.status).toBe('proposed:breaker_tripped');
     const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_inj'));
     expect(art.version).toBe(0);
+  });
+
+  // F1 (OCR MAJOR): the warn-water-mark event is OBSERVE-ONLY (零干预只告知). If
+  // its writeEvent (parseEvent schema validation + DB INSERT) throws, the apply
+  // path below MUST still proceed — a telemetry hiccup must never drop a
+  // user-facing refine. spyOn writeEvent so the FIRST call (the warn event) throws
+  // once, then real writeEvent runs for the apply event.
+  it('warn-event writeEvent throwing still lets the apply proceed (status applied)', async () => {
+    const now = new Date('2026-06-18T12:00:00Z');
+    await seedArtifact({ artifactId: 'a_warn_throw', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(appendOps('b_warn_throw')) }));
+
+    const realWriteEvent = eventQueries.writeEvent;
+    const spy = vi
+      .spyOn(eventQueries, 'writeEvent')
+      // first call = the observe-only warn event → throw to simulate a
+      // parseEvent/INSERT failure.
+      .mockImplementationOnce(async () => {
+        throw new Error('simulated warn-event INSERT failure');
+      })
+      // every subsequent call (the apply event) = real writeEvent.
+      .mockImplementation(realWriteEvent);
+
+    try {
+      const result = await runNoteRefine({
+        db: testDb(),
+        artifactId: 'a_warn_throw',
+        trigger: { kind: 'mark_wrong' },
+        runTaskFn,
+        now,
+        // force the warned tier deterministically without seeding a full window.
+        countRecentAutoApplies: async () => REFINE_AUTOAPPLY_WARN,
+      });
+
+      // the warn-event throw was swallowed — the apply still happened.
+      expect(result.status).toBe('applied');
+    } finally {
+      spy.mockRestore();
+    }
+
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_warn_throw'));
+    expect(art.version).toBe(1);
+
+    // the warn event was attempted (and threw) but NOT persisted; the apply
+    // event for this artifact still landed.
+    const warned = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_autoapply_warned'));
+    expect(warned).toHaveLength(0);
+    const applyForArt = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:note_refine_apply'),
+          eq(event.subject_id, 'a_warn_throw'),
+        ),
+      );
+    expect(applyForArt).toHaveLength(1);
   });
 });
 
