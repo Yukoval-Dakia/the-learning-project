@@ -397,6 +397,159 @@ describe('proposal lifecycle owner service', () => {
     );
   });
 
+  // ADR-0040 决定1 (YUK-358) — the undo chain. Retracting an APPLIED note_update
+  // proposal must restore the artifact's prior body_blocks + version from the
+  // reverse payload that persistNoteRefineApply stored at apply time. Without the
+  // retract-side consumer the undo chain is broken in half (apply writes the
+  // reverse payload but nothing reverses it).
+  it('retractAiProposal restores prior body_blocks when retracting an APPLIED note_update', async () => {
+    const db = testDb();
+    const now = new Date();
+    const originalBody = {
+      type: 'doc',
+      content: [paragraphBlock('b1', '原文')],
+    };
+    await db.insert(artifact).values({
+      id: 'artifact_undo',
+      type: 'note_atomic',
+      title: '之的用法',
+      parent_artifact_id: null,
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      body_blocks: originalBody as never,
+      attrs: {} as never,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'verified',
+      verification_summary: null,
+      generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' } as never,
+      verified_by: null,
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await writeAiProposal(db, {
+      id: 'note_undo_p1',
+      payload: {
+        kind: 'note_update',
+        target: { subject_kind: 'artifact', subject_id: 'artifact_undo' },
+        reason_md: 'Living Note patch',
+        evidence_refs: [{ kind: 'artifact', id: 'artifact_undo' }],
+        proposed_change: {
+          artifact_id: 'artifact_undo',
+          source: 'note_refine',
+          patch: {
+            ops: [{ kind: 'append_block', block: paragraphBlock('b2', '新增') }],
+          },
+          summary: { ops_count: 1, new_blocks: 1 },
+        },
+      },
+    });
+
+    // Apply: bumps to version 1 with b2 appended.
+    await acceptAiProposal(db, 'note_undo_p1');
+    const [applied] = await db.select().from(artifact).where(eq(artifact.id, 'artifact_undo'));
+    expect(applied.version).toBe(1);
+    expect(
+      (applied.body_blocks as { content: Array<{ attrs?: { id?: string } }> }).content.some(
+        (node) => node.attrs?.id === 'b2',
+      ),
+    ).toBe(true);
+
+    // Retract: must restore the prior body_blocks (b2 gone) and bump version again.
+    await retractAiProposal(db, 'note_undo_p1', { reason_md: 'mistaken refine' });
+    const [restored] = await db.select().from(artifact).where(eq(artifact.id, 'artifact_undo'));
+    expect(
+      (restored.body_blocks as { content: Array<{ attrs?: { id?: string } }> }).content.some(
+        (node) => node.attrs?.id === 'b2',
+      ),
+    ).toBe(false);
+    // Body content matches the pre-apply state exactly (byte-restore).
+    expect((restored.body_blocks as { content: unknown[] }).content).toEqual(originalBody.content);
+    // version: 0 (seed) → 1 (apply) → 2 (undo restore). Restore is a new revision,
+    // not a rollback of the counter.
+    expect(restored.version).toBe(2);
+
+    // The undo event must be written (apply event id → undo).
+    const undoRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_undo'));
+    expect(undoRows).toHaveLength(1);
+  });
+
+  // The non-applied (still-proposed) retract path must be untouched: no rate
+  // event ever materialized an apply, so there is nothing to reverse and the
+  // artifact stays at its seed state.
+  it('retractAiProposal leaves the artifact untouched when retracting a NON-applied note_update', async () => {
+    const db = testDb();
+    const now = new Date();
+    const originalBody = {
+      type: 'doc',
+      content: [paragraphBlock('b1', '原文')],
+    };
+    await db.insert(artifact).values({
+      id: 'artifact_noapply',
+      type: 'note_atomic',
+      title: '之的用法',
+      parent_artifact_id: null,
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      body_blocks: originalBody as never,
+      attrs: {} as never,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'verified',
+      verification_summary: null,
+      generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' } as never,
+      verified_by: null,
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await writeAiProposal(db, {
+      id: 'note_noapply_p1',
+      payload: {
+        kind: 'note_update',
+        target: { subject_kind: 'artifact', subject_id: 'artifact_noapply' },
+        reason_md: 'Living Note patch',
+        evidence_refs: [{ kind: 'artifact', id: 'artifact_noapply' }],
+        proposed_change: {
+          artifact_id: 'artifact_noapply',
+          source: 'note_refine',
+          patch: {
+            ops: [{ kind: 'append_block', block: paragraphBlock('b2', '新增') }],
+          },
+          summary: { ops_count: 1, new_blocks: 1 },
+        },
+      },
+    });
+
+    // Retract WITHOUT ever accepting — the proposal was never applied.
+    const result = await retractAiProposal(db, 'note_noapply_p1', { reason_md: 'never wanted it' });
+    expect(result.kind).toBe('retracted');
+
+    const [unchanged] = await db.select().from(artifact).where(eq(artifact.id, 'artifact_noapply'));
+    // Still at seed version with the original body — no spurious revert.
+    expect(unchanged.version).toBe(0);
+    expect((unchanged.body_blocks as { content: unknown[] }).content).toEqual(originalBody.content);
+    const undoRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_undo'));
+    expect(undoRows).toHaveLength(0);
+  });
+
   it('decideKnowledgeEdgeProposal preserves reverse/change_type decisions for edge proposals', async () => {
     const db = testDb();
     await seedKnowledge(['k1', 'k2']);
