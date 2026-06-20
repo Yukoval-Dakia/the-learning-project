@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { expectedScore } from './theta';
+import { expectedScore, fisherInformation } from './theta';
 import {
   GRID_MAX,
   GRID_MIN,
@@ -14,11 +14,19 @@ import {
   binaryLikelihood,
   continuousCbLikelihood,
   gridUpdate,
+  klpScoreFromGrid,
   posteriorMean,
   posteriorSe,
   posteriorVar,
   uniformPrior,
 } from './theta-grid';
+
+/** Build a posterior with all mass on the grid point exactly equal to `offset`. */
+function pointPosterior(offset: number): ThetaGridPosterior {
+  const idx = GRID_THETA.indexOf(offset);
+  if (idx < 0) throw new Error(`offset ${offset} is not a grid point`);
+  return { probs: GRID_THETA.map((_, i) => (i === idx ? 1 : 0)), evidence: 1 };
+}
 
 describe('theta-grid constants', () => {
   it('dark-ships: THETA_GRID_ENABLED is false (flag-gated, no live reader inc-1)', () => {
@@ -178,5 +186,55 @@ describe('continuousCbLikelihood — GATED stub (NOT wired inc-1)', () => {
     expect(hi).toBeGreaterThan(lo);
     expect(mid).toBeGreaterThan(Math.min(lo, hi));
     expect(mid).toBeLessThan(Math.max(lo, hi));
+  });
+});
+
+describe('klpScoreFromGrid — posterior-weighted Fisher over the ACTUAL grid (A4 inc-2 selection wiring)', () => {
+  it('a point-mass posterior reduces to point Fisher at the effective ability θ_global + offset', () => {
+    // mass on offset 0, θ_global=0.5, b=0.5 ⇒ effective=0.5=b ⇒ Fisher peak 0.25.
+    const score = klpScoreFromGrid(pointPosterior(0), 0.5, 0.5);
+    expect(score).toBeCloseTo(fisherInformation(0.5, 0.5), 12);
+    expect(score).toBeCloseTo(0.25, 12);
+  });
+
+  it('θ_global translates the effective ability (offset grid is over θ_KC, anchored by θ_global)', () => {
+    // Same point offset 0 and b=0; θ_global=0 sits at the Fisher peak (eff=b=0 ⇒ 0.25),
+    // θ_global=1 moves the effective ability off the peak ⇒ strictly less information.
+    const atPeak = klpScoreFromGrid(pointPosterior(0), 0, 0);
+    const offPeak = klpScoreFromGrid(pointPosterior(0), 0, 1);
+    expect(atPeak).toBeCloseTo(0.25, 12);
+    expect(offPeak).toBeLessThan(atPeak);
+    expect(offPeak).toBeCloseTo(fisherInformation(1, 0), 12);
+  });
+
+  it('a spread posterior is more conservative than the point estimate at the Fisher peak (KLP behavior)', () => {
+    // Uniform posterior over the whole offset grid vs a point at the peak. With b at the
+    // posterior mean (effective peak), the spread mass sits on lower-information offsets ⇒
+    // posterior-weighted Fisher < the point peak 0.25.
+    const uniform = uniformPrior(); // mean offset 0
+    const thetaGlobal = 0;
+    const b = 0; // peak at effective = 0 = θ_global + mean offset
+    const spread = klpScoreFromGrid(uniform, b, thetaGlobal);
+    const point = klpScoreFromGrid(pointPosterior(0), b, thetaGlobal);
+    expect(point).toBeCloseTo(0.25, 12);
+    expect(spread).toBeLessThan(point);
+    expect(spread).toBeGreaterThan(0);
+  });
+
+  it('result is always in (0, 0.25] (a probability-weighted average of Fisher ∈ (0,0.25])', () => {
+    const score = klpScoreFromGrid(uniformPrior(), 1.3, -0.4);
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThanOrEqual(0.25);
+  });
+
+  it('equals the manual Σ probs_i · fisherInformation(θ_global + GRID_THETA_i, b)', () => {
+    const post = gridUpdate(gridUpdate(uniformPrior(), 0.3, 1), -0.5, 0);
+    const b = 0.2;
+    const thetaGlobal = 0.7;
+    const manual = post.probs.reduce(
+      (acc, p, i) => acc + p * fisherInformation(thetaGlobal + GRID_THETA[i], b),
+      0,
+    );
+    expect(klpScoreFromGrid(post, b, thetaGlobal)).toBeCloseTo(manual, 12);
   });
 });

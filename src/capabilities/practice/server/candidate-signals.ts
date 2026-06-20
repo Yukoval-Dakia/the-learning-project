@@ -24,6 +24,7 @@ import {
   mfiScore,
 } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
+import { THETA_GRID_ENABLED, type ThetaGridPosterior, klpScoreFromGrid } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mistake_variant, question } from '@/db/schema';
 import { batchResolveFamilyKeys } from '@/server/mastery/family-key';
@@ -127,13 +128,24 @@ const COLD_START_EVIDENCE = 0;
 async function aggregateWeakestKc(
   db: DbLike,
   knowledgeIds: string[],
-): Promise<{ thetaHat?: number; thetaPrecision?: number; evidenceCount: number }> {
+): Promise<{
+  thetaHat?: number;
+  thetaPrecision?: number;
+  evidenceCount: number;
+  // A4 inc-2 (YUK-436) — the WEAKEST KC's grid posterior + its θ_global anchor, captured
+  // for the SAME KC whose θ̂/precision/evidence is returned (one consistent KC). null grid
+  // (no row / shadow write never ran) → selection falls back to the Gaussian KLP / MFI path.
+  gridPosterior?: ThetaGridPosterior | null;
+  thetaGlobal?: number;
+}> {
   if (knowledgeIds.length === 0) {
     return { thetaHat: undefined, thetaPrecision: undefined, evidenceCount: 0 };
   }
   let weakestTheta = Number.POSITIVE_INFINITY;
   let weakestPrecision = COLD_START_PRECISION;
   let weakestEvidence = COLD_START_EVIDENCE;
+  let weakestGrid: ThetaGridPosterior | null = null;
+  let weakestThetaGlobal = 0;
   for (const kid of knowledgeIds) {
     const row = await getMasteryState(db, kid, 'knowledge');
     const thetaKc = row?.theta_hat ?? COLD_START_THETA;
@@ -145,12 +157,18 @@ async function aggregateWeakestKc(
       weakestTheta = theta;
       weakestPrecision = precision;
       weakestEvidence = evidence;
+      weakestGrid = row?.theta_grid_json ?? null;
+      // θ_global = effective − θ_KC offset (effectiveThetaForKc folds θ_global in; subtract
+      // the offset back out). Flag off → effective === θ_KC → θ_global = 0 (grid over raw b).
+      weakestThetaGlobal = theta - thetaKc;
     }
   }
   return {
     thetaHat: weakestTheta,
     thetaPrecision: weakestPrecision,
     evidenceCount: weakestEvidence,
+    gridPosterior: weakestGrid,
+    thetaGlobal: weakestThetaGlobal,
   };
 }
 
@@ -323,7 +341,8 @@ async function collectQuestionSignal(
   familyRow: FamilyCalibrationRow | null = null,
 ): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
-  const { thetaHat, thetaPrecision, evidenceCount } = await aggregateWeakestKc(db, knowledgeIds);
+  const { thetaHat, thetaPrecision, evidenceCount, gridPosterior, thetaGlobal } =
+    await aggregateWeakestKc(db, knowledgeIds);
   const { b: columnarB, bSource } = await resolveBAnchor(db, cand.refId, cand.difficulty);
   // 家族 delta 叠加（G4 NO-OP-safe）。b===undefined（bSource='none'）→ 无 b 可叠，保持 undefined。
   const b = columnarB !== undefined ? effectiveFamilyB(columnarB, familyRow) : undefined;
@@ -350,13 +369,23 @@ async function collectQuestionSignal(
   //   （bitwise regression anchor，candidate-signals.db.test.ts 用 toBe 钉死）；scoreKind
   //   只是新增的旁路字段，不改任何既有 score 数值。precision 缺失（无 θ̂ 状态）时 KLP
   //   无法算（需 precision）⇒ 退点 MFI（与今天一致）。
+  //
+  // A4 inc-2 (YUK-436) — grid→KLP 接线（dark-ship，THETA_GRID_ENABLED 默认 false）：当该 KC
+  //   有网格后验（theta_grid_json）且 flag ON 时，**优先**用 klpScoreFromGrid——直接对实际
+  //   离散后验加权 Fisher 积分，免去 A3 的 Gaussian(θ̂, thetaSe) 重构（A4「免费 Fisher 选题」
+  //   payoff）。FLAG OFF (DEFAULT)：useGrid 恒 false（短路在 gridPosterior 判定前）⇒ 走 A3 老
+  //   路径 ⇒ 选题评分逐位等同今天（bitwise anchor 不破——即使行里已有 shadow 网格也不读）。
+  //   翻 flag 须 gated on 校准验证（theta-grid.ts 头注 inc-2 deferred）。
   let mfi: number | undefined;
   let diag: number | undefined;
   let scoreKind: SelectionCandidateSignal['scoreKind'];
   if (!recallLocked && thetaHat !== undefined && b !== undefined) {
-    const useEarlyKlp =
-      EARLY_KLP_ENABLED && evidenceCount < EARLY_KLP_N && thetaPrecision !== undefined;
-    if (useEarlyKlp && thetaPrecision !== undefined) {
+    const useGrid =
+      THETA_GRID_ENABLED && gridPosterior != null && thetaGlobal !== undefined && b !== undefined;
+    if (useGrid && gridPosterior != null && thetaGlobal !== undefined) {
+      mfi = klpScoreFromGrid(gridPosterior, b, thetaGlobal);
+      scoreKind = 'klp_grid';
+    } else if (EARLY_KLP_ENABLED && evidenceCount < EARLY_KLP_N && thetaPrecision !== undefined) {
       mfi = klpScore(thetaHat, b, thetaPrecision);
       scoreKind = 'klp';
     } else {
