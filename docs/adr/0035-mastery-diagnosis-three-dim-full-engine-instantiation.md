@@ -64,3 +64,9 @@
 - **选 BKT/DKT/AKT 作掌握引擎**（含「BKT + 强先验」对称变体）——否决：BKT 即便贝叶斯化/灌强先验，仍受「单技能结构 + slip/guess item-level 不可估」所限（先验只让管线不崩、零信息增量），DKT/AKT 要跨大量学生交互 n=1 凑不出一个 batch；PFA 参数随交互而非学生数增长、per-KC 计数对单点更新更平滑——这才是弃 BKT 的根本理由，非仅「序列短」（B1 §4.3 审计 G5）。
 - **引入遗忘感知 KT（DKT-Forget/HawkesKT/KPT）补记忆维**——否决：与 FSRS 的 `R` 维重叠不互补，让 KT 维重复建模 `R` 已管的遗忘正是「耦合 R 制造信号混乱」同款风险，违反三轴正交（B1 §4.4，亦即 FIRe B 面被砍同理）。
 - **difficulty 三层「直接等号」（D = β = b 一处估处处读）**——否决：掩盖 IRT/PFA/FSRS 三者度量差，破坏跨轴独立估计；降格为「同 logit 语义、需 linking 对齐、共享输入各自独立估计」（决定 #1，B1 §6.1 审计 M3）。
+
+## 推论 —— 未校准不确定性 = 软信号伪装成硬（2026-06-20 增补）
+
+**源**：axis-2 校准机制数学 dossier（11 专家审 A1–A12/B1，`docs/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md`；Linear Document 挂 YUK-439）。每个 reviewer 独立抓到同一站岗风险：A4 后验 SE / A5 图-shrunk 方差 / A12 LLM 自述 σ 都是「看起来校准好的」不确定性。
+
+**推论（扩展三维正交红线①「calibration never lets soft feed θ̂」的精神）**：任何 gate 一个 **user-visible 决策** 或 **下游-θ̂ 决策** 的不确定性量（后验 SE、graph-shrunk 方差、LLM 自述 σ、置信度等），在过 **owner-data 校准闸**（如 ECE ≤ 0.10 + 90% 区间覆盖 ∈ [0.80, 0.95]）之前，**一律 shadow-only，不得当硬置信用**。未校准的 confidence 当校准用 = 软信号伪装成硬，与本 ADR 决定 #4「实例化 ≠ 可信」同源。dossier 各 item 的校准闸（V-A4-ECE / V-A5-LOKO / V-A12-σcal）即此推论的逐项落点。
