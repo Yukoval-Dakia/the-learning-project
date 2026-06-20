@@ -57,14 +57,16 @@ describe('note refine trigger producer', () => {
   });
 
   it('honors kill switches before touching pg-boss', async () => {
+    // YUK-358 决定6 — dwell trigger retired; keep kill-switch coverage on a
+    // SURVIVING real-signal kind (mastery_change).
     const bossSend = vi.fn(async () => undefined);
-    const env = { ...process.env, WAVE6_TRIGGER_DWELL_ENABLED: 'false' };
+    const env = { ...process.env, WAVE6_TRIGGER_MASTERY_ENABLED: 'false' };
 
-    expect(noteRefineTriggerEnabled('dwell', env)).toBe(false);
+    expect(noteRefineTriggerEnabled('mastery_change', env)).toBe(false);
     await expect(
       enqueueNoteRefineTrigger({
         artifactId: 'art_1',
-        kind: 'dwell',
+        kind: 'mastery_change',
         env,
         bossSend,
       }),
@@ -120,18 +122,17 @@ describe('note refine trigger producer', () => {
     });
   });
 
-  // The other 4 kinds stay default-ON: an unset flag still enqueues.
+  // The surviving real-signal kinds stay default-ON: an unset flag still enqueues.
+  // (YUK-358 决定6 — dwell removed from this set; verify covered separately above.)
   it('non-verify kinds stay default-ON (unset flag still enabled)', () => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       WAVE6_TRIGGER_MARK_WRONG_ENABLED: undefined,
       WAVE6_TRIGGER_MASTERY_ENABLED: undefined,
-      WAVE6_TRIGGER_DWELL_ENABLED: undefined,
       WAVE6_TRIGGER_DREAMING_ENABLED: undefined,
     };
     expect(noteRefineTriggerEnabled('mark_wrong', env)).toBe(true);
     expect(noteRefineTriggerEnabled('mastery_change', env)).toBe(true);
-    expect(noteRefineTriggerEnabled('dwell', env)).toBe(true);
     expect(noteRefineTriggerEnabled('dreaming', env)).toBe(true);
   });
 
