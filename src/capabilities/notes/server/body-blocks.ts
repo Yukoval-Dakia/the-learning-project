@@ -360,7 +360,16 @@ export function replaceNoteSectionBody(
         : [];
       return {
         ...node,
-        attrs: { ...recordOrEmpty(node.attrs), version, source_markdown: nextBodyMd },
+        // C1a (YUK-358, ADR-0040 决定1) — implicit-on-edit setter. A human edit
+        // promotes the block to user-verified so the AI must propose, never
+        // silently overwrite it (applyNotePatch's user_verified guard fires).
+        attrs: {
+          ...recordOrEmpty(node.attrs),
+          version,
+          source_markdown: nextBodyMd,
+          user_verified: true,
+          source_tier: 'user_verified',
+        },
         content: [paragraphNode(nextBodyMd), ...preservedRefs],
       };
     }),
