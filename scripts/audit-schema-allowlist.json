@@ -304,6 +304,14 @@
       "expected_by": "2026-07-31"
     }
   },
+  "echo_jobs.input": {
+    "reason": "YUK-166 surfaced: the echo job ROW is enqueued from the golden-E2E test harness (no src/ INSERT of echo_jobs); the echo handler only UPDATEs output/status, never input. The old file-level lint falsely counted input as written because the handler's writeJobEvent payload `{ input, output }` shares the column name across tables — exactly the cross-table masking YUK-166 fixes. No src/ write path exists for echo_jobs.input.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Sub 0c echo enqueue path moved into src/ OR field dropped",
+      "expected_by": "2026-07-31"
+    }
+  },
   "_comment_phase1c1_lane_a": "Phase 1c.1 Lane A added 4 new tables (event, learning_session, material_fsrs_state, knowledge_edge). Their write paths land in Lane B (Zod schemas in src/core/schema/event/**) and main-lane Step 4-6 (server read-path rewrite + /api/events + edges CRUD). Lane A only declares schema; write paths must follow.",
   "learning_session.summary_md": {
     "reason": "type='conversation' session summary; Lane B / Step 5 LearningSession module writes",
