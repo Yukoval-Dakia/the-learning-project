@@ -54,30 +54,39 @@ export interface EffectiveNResult {
  *   - zero total variance (every y identical) → 0 'zero-variance'
  */
 export function iccOneWayAnova(clusters: (0 | 1)[][]): IccResult {
-  const k = clusters.length;
+  // OCR finding 5: drop EMPTY clusters before counting. An empty sub-array contributes 0
+  // observations but still inflates the raw cluster count k, so a mix like [[1,0],[],[]]
+  // would pass the (n−k>0) guard with the raw k=3 while N=2, making MSW = ssWithin/(N−k)
+  // = ssWithin/(−1) → a NEGATIVE denominator → a silently wrong ICC. An empty cluster
+  // carries no within- or between-variance, so dropping it is the documented, math-safe
+  // choice (it cannot change MSB/MSW/m0 except via the spurious k inflation we remove).
+  const nonEmpty = clusters.filter((c) => c.length > 0);
+  const k = nonEmpty.length;
   if (k === 0) return { icc: null, reason: 'empty', k: 0, n: 0, m0: 0 };
 
-  const sizes = clusters.map((c) => c.length);
+  const sizes = nonEmpty.map((c) => c.length);
   const n = sizes.reduce((a, b) => a + b, 0);
   if (n === 0) return { icc: null, reason: 'empty', k, n: 0, m0: 0 };
   if (k === 1) return { icc: null, reason: 'single-cluster', k, n, m0: 0 };
+  // After dropping empties, k == number of non-empty clusters and n == Σ non-empty sizes,
+  // so n − k > 0 here iff at least one retained cluster has size ≥ 2 (the within-variance
+  // requirement). all-singleton (every retained cluster size 1) → n − k == 0 → MSW undefined.
   if (n - k === 0) return { icc: null, reason: 'all-singleton', k, n, m0: 0 };
 
+  // From here on operate on `nonEmpty` only — every retained cluster has length ≥ 1.
   let grandSum = 0;
-  for (const c of clusters) for (const y of c) grandSum += y;
+  for (const c of nonEmpty) for (const y of c) grandSum += y;
   const grandMean = grandSum / n;
 
   // Zero total variance (every observation identical) → no signal to partition.
   let totalVar = 0;
-  for (const c of clusters) for (const y of c) totalVar += (y - grandMean) * (y - grandMean);
+  for (const c of nonEmpty) for (const y of c) totalVar += (y - grandMean) * (y - grandMean);
   if (totalVar === 0) {
     const m0z = (n - sizes.reduce((a, s) => a + s * s, 0) / n) / (k - 1);
     return { icc: 0, reason: 'zero-variance', k, n, m0: m0z };
   }
 
-  const clusterMeans = clusters.map((c) =>
-    c.length === 0 ? 0 : c.reduce<number>((a, b) => a + b, 0) / c.length,
-  );
+  const clusterMeans = nonEmpty.map((c) => c.reduce<number>((a, b) => a + b, 0) / c.length);
 
   let ssBetween = 0;
   for (let i = 0; i < k; i++) {
@@ -88,11 +97,13 @@ export function iccOneWayAnova(clusters: (0 | 1)[][]): IccResult {
 
   let ssWithin = 0;
   for (let i = 0; i < k; i++) {
-    for (const y of clusters[i]) {
+    for (const y of nonEmpty[i]) {
       const diff = y - clusterMeans[i];
       ssWithin += diff * diff;
     }
   }
+  // n − k > 0 here (guarded above after dropping empties), so MSW is finite and the
+  // denominator is strictly positive — never a divide-by-negative.
   const msw = ssWithin / (n - k);
 
   const sumSq = sizes.reduce((a, s) => a + s * s, 0);

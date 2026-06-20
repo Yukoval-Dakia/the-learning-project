@@ -156,6 +156,57 @@ describe('evaluateVA1Forward — keystone gate', () => {
     expect(a.ci.lo).toBe(b.ci.lo);
     expect(a.ci.hi).toBe(b.ci.hi);
   });
+
+  // ── OCR finding 6: invalid merged config throws (would otherwise produce nonsense). ──
+  it('OCR finding 6: bootstrapB<=0 throws', () => {
+    eidCounter = 0;
+    const clustersRaw = Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 12000 + i));
+    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    expect(() => evaluateVA1Forward(clusters, { bootstrapB: 0 }, mulberry32(1))).toThrow(
+      /bootstrapB/,
+    );
+  });
+
+  it('OCR finding 6: deltaThreshold<0 throws', () => {
+    eidCounter = 0;
+    const clusters = assembleForwardClusters(
+      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 13000 + i))),
+    );
+    expect(() => evaluateVA1Forward(clusters, { deltaThreshold: -0.5 }, mulberry32(1))).toThrow(
+      /deltaThreshold/,
+    );
+  });
+
+  it('OCR finding 6: minKcClusters=0 throws', () => {
+    eidCounter = 0;
+    const clusters = assembleForwardClusters(
+      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 14000 + i))),
+    );
+    expect(() => evaluateVA1Forward(clusters, { minKcClusters: 0 }, mulberry32(1))).toThrow(
+      /minKcClusters/,
+    );
+  });
+
+  it('OCR finding 6: maxDegenerateFraction>1 throws', () => {
+    eidCounter = 0;
+    const clusters = assembleForwardClusters(
+      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 15000 + i))),
+    );
+    expect(() =>
+      evaluateVA1Forward(clusters, { maxDegenerateFraction: 1.5 }, mulberry32(1)),
+    ).toThrow(/maxDegenerateFraction/);
+  });
+
+  it('OCR finding 6: valid override still runs (does not over-reject)', () => {
+    eidCounter = 0;
+    const clusters = assembleForwardClusters(
+      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 16000 + i))),
+    );
+    // sane overrides must NOT throw.
+    expect(() =>
+      evaluateVA1Forward(clusters, { bootstrapB: 500, deltaThreshold: 0.05 }, mulberry32(1)),
+    ).not.toThrow();
+  });
 });
 
 describe('formatReport', () => {

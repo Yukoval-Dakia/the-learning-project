@@ -46,6 +46,41 @@ interface LoadResult {
   skippedUnsupported: number;
 }
 
+/**
+ * Robustly parse an event's created_at into epoch ms (OCR finding 9). Drizzle normally
+ * hands back a Date, but the loader must tolerate a number (epoch ms) or an ISO string
+ * without silently yielding NaN (which would corrupt the time-ordering the replay relies
+ * on). Anything unparseable throws — a verdict tool must not order attempts by a bogus key.
+ */
+export function parseCreatedAt(value: unknown, eventId: string): number {
+  if (value instanceof Date) {
+    const t = value.getTime();
+    if (Number.isNaN(t))
+      throw new Error(`audit-calibration: invalid Date created_at for event ${eventId}`);
+    return t;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new Error(
+        `audit-calibration: non-finite numeric created_at for event ${eventId} (got ${value})`,
+      );
+    }
+    return value;
+  }
+  if (typeof value === 'string') {
+    const t = Date.parse(value);
+    if (Number.isNaN(t)) {
+      throw new Error(
+        `audit-calibration: unparseable created_at string for event ${eventId} (got "${value}")`,
+      );
+    }
+    return t;
+  }
+  throw new Error(
+    `audit-calibration: unsupported created_at type for event ${eventId} (got ${typeof value})`,
+  );
+}
+
 async function loadAttempts(): Promise<LoadResult> {
   // Dynamic imports — keep loadEnv() the first side effect (db client reads DATABASE_URL
   // at module top). All of these are READ-ONLY helpers.
@@ -54,11 +89,10 @@ async function loadAttempts(): Promise<LoadResult> {
   const { event, item_calibration, question } = await import('@/db/schema');
   const { difficultyToLogitB } = await import('@/core/theta');
   const { effectiveB } = await import('@/server/mastery/recalibration');
-  const { effectiveFamilyB, getFamilyCalibration } = await import(
-    '@/server/mastery/personalized-difficulty'
-  );
-  const { resolveFamilyKeyForQuestion } = await import('@/server/mastery/family-key');
+  const { effectiveFamilyB } = await import('@/server/mastery/personalized-difficulty');
+  const { batchResolveFamilyKeys } = await import('@/server/mastery/family-key');
   const { getEffectiveDomain } = await import('@/capabilities/knowledge/server/domain');
+  const { item_family_calibration } = await import('@/db/schema');
   type ReplayAttempt = import('@/server/calibration/replay').ReplayAttempt;
 
   const DIFFICULTY_PROXY_WEIGHT = 0.3;
@@ -158,18 +192,99 @@ async function loadAttempts(): Promise<LoadResult> {
 
   // 5. Memoize per-KC effective domain (getEffectiveDomain throws on orphan → null, matching
   //    production's degrade, state.ts:586-591).
+  //
+  // OCR finding 10: distinguish a GENUINE "no domain" (orphan / structural) from a
+  // TRANSIENT DB error. The original blanket `catch { null }` cached null for ANY throw,
+  // so one transient connection blip while resolving a KC would permanently mark that KC
+  // domain-less for the whole run (poisoning every later attempt that touches it). Only
+  // the deterministic structural errors thrown by getEffectiveDomain itself (node-not-
+  // found / root-null-domain / max-depth) mean "no resolvable domain" → cache null. Any
+  // OTHER error is transient (query/connection) → rethrow, do NOT poison the cache.
+  const STRUCTURAL_NO_DOMAIN = [
+    'knowledge node not found',
+    'root node has null domain',
+    'max depth',
+  ];
+  const isStructuralNoDomain = (err: unknown): boolean => {
+    const msg = err instanceof Error ? err.message : String(err);
+    return STRUCTURAL_NO_DOMAIN.some((m) => msg.includes(m));
+  };
   const domainCache = new Map<string, string | null>();
   const resolveDomain = async (kc: string): Promise<string | null> => {
     if (domainCache.has(kc)) return domainCache.get(kc) as string | null;
-    let domain: string | null = null;
+    let domain: string | null;
     try {
       domain = await getEffectiveDomain(db, kc);
-    } catch {
-      domain = null;
+    } catch (err) {
+      if (!isStructuralNoDomain(err)) {
+        // Transient (DB/connection) — let it propagate; the run fails loud rather than
+        // silently treating a reachable KC as domain-less.
+        throw err;
+      }
+      domain = null; // genuine orphan / unresolved structure (production degrade).
     }
     domainCache.set(kc, domain);
     return domain;
   };
+
+  // 5b. BATCH family-key + family-calibration (OCR finding 1 — kill the N+1).
+  //     The original loop called resolveFamilyKeyForQuestion + getFamilyCalibration once
+  //     PER attempt event — each a DB round-trip (and resolveFamilyKeyForQuestion does its
+  //     own getEffectiveDomain inside), so a long event log issued thousands of serial
+  //     queries (the audit was pathologically slow). Resolve BOTH once over the distinct
+  //     question set BEFORE the loop, then read from Maps in the loop. Results are
+  //     identical: family_key is a pure function of (question primaryKnowledgeId, kind,
+  //     source) and the family row is keyed by family_key — neither depends on the attempt.
+  const familyKeyByQuestion = await batchResolveFamilyKeys(
+    db,
+    questionRows.map((q) => ({
+      questionId: q.id,
+      primaryKnowledgeId: q.knowledge_ids[0] ?? null, // canonical primary (state.ts:521, F2).
+      kind: q.kind,
+      source: q.source,
+    })),
+  );
+  const distinctFamilyKeys = Array.from(
+    new Set(Array.from(familyKeyByQuestion.values()).filter((k): k is string => k !== null)),
+  );
+  const familyCalByKey = new Map<
+    string,
+    import('@/server/mastery/personalized-difficulty').FamilyCalibrationRow
+  >();
+  if (distinctFamilyKeys.length > 0) {
+    const famRows = await db
+      .select({
+        family_key: item_family_calibration.family_key,
+        b_delta: item_family_calibration.b_delta,
+        evidence_count: item_family_calibration.evidence_count,
+        confidence: item_family_calibration.confidence,
+        calibrated_n: item_family_calibration.calibrated_n,
+      })
+      .from(item_family_calibration)
+      .where(inArray(item_family_calibration.family_key, distinctFamilyKeys));
+    for (const r of famRows) familyCalByKey.set(r.family_key, r);
+  }
+
+  // 5c. PRELOAD per-KC effective domains once (OCR finding 1 — the resolveDomain memo was
+  //     populated lazily INSIDE the loop, one DB round-trip per first-seen KC). Warm the
+  //     cache up front over the distinct KC set so the loop only reads the Map. Transient
+  //     errors still propagate (finding 10); structural no-domain caches null.
+  const distinctKcs = new Set<string>();
+  for (const q of questionRows) {
+    for (const kc of q.knowledge_ids) {
+      const t = kc.trim();
+      if (t.length > 0) distinctKcs.add(t);
+    }
+  }
+  for (const ev of attemptEvents) {
+    const payload = (ev.payload ?? {}) as Record<string, unknown>;
+    if (Array.isArray(payload.referenced_knowledge_ids)) {
+      for (const x of payload.referenced_knowledge_ids as unknown[]) {
+        if (typeof x === 'string' && x.trim().length > 0) distinctKcs.add(x.trim());
+      }
+    }
+  }
+  for (const kc of distinctKcs) await resolveDomain(kc);
 
   // 6. Build a flat, time-ordered list of foldable ReplayAttempts (each carrying its FULL
   //    KC set), then group into per-KC lists.
@@ -239,13 +354,13 @@ async function loadAttempts(): Promise<LoadResult> {
     let b = columnarB;
     familyDeltaTotal++;
     // family_key uses q.knowledge_ids[0] (canonical primary — state.ts:521, F2 fix).
-    const familyKey = await resolveFamilyKeyForQuestion(db, {
-      primaryKnowledgeId: q.knowledge_ids[0],
-      kind: q.kind,
-      source: q.source,
-    });
+    // OCR finding 1: read the PREBATCHED key + row (no per-attempt DB round-trip). The
+    // key is keyed by question id; the row by family_key — both attempt-independent, so
+    // this is byte-identical to the former per-attempt resolveFamilyKeyForQuestion +
+    // getFamilyCalibration, minus the N+1.
+    const familyKey = familyKeyByQuestion.get(ev.subject_id) ?? null;
     if (familyKey !== null) {
-      const familyRow = await getFamilyCalibration(db, familyKey);
+      const familyRow = familyCalByKey.get(familyKey) ?? null;
       b = effectiveFamilyB(columnarB, familyRow);
       if (familyRow !== null && familyRow.b_delta !== 0) familyDeltaApplied++;
     }
@@ -265,7 +380,11 @@ async function loadAttempts(): Promise<LoadResult> {
       b,
       bWeight,
       responseTimeMs,
-      createdAt: ev.created_at instanceof Date ? ev.created_at.getTime() : Number(ev.created_at),
+      // OCR finding 9: robustly parse Date | string (ISO) | number. The old
+      // `Number(ev.created_at)` fallback returned NaN for an ISO string (the normal
+      // Drizzle row is a Date, but the fallback must not silently produce a NaN epoch that
+      // would scramble the time-ordering the replay engine depends on).
+      createdAt: parseCreatedAt(ev.created_at, ev.id),
       eventId: ev.id,
     });
     foldableAttempts++;
@@ -351,7 +470,18 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
 }
 
 export async function main(): Promise<void> {
-  process.exitCode = await runCli();
+  // OCR finding 11: wrap the run with a friendly error + non-zero exit (mirrors the
+  // audit-script pattern). A DB / dynamic-import / query failure would otherwise reject
+  // with a raw unhandled-rejection stack and an ambiguous exit. Operational failures use
+  // exit code 2 to stay distinct from the FAIL gate verdict (exit 1, a real result).
+  try {
+    process.exitCode = await runCli();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`audit:calibration failed (operational error, NOT a gate verdict): ${msg}`);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    process.exitCode = 2;
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

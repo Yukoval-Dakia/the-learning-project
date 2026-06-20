@@ -41,6 +41,43 @@ const DEFAULT_CONFIG: VA1Config = {
   maxDegenerateFraction: 0.05,
 };
 
+/**
+ * Validate a fully-merged VA1Config (OCR finding 6). Each field guards a distinct
+ * silent-wrong-verdict failure mode, so an out-of-range override throws rather than
+ * fabricating a verdict.
+ */
+function validateConfig(config: VA1Config): void {
+  const { effectiveNFloor, minKcClusters, deltaThreshold, bootstrapB, maxDegenerateFraction } =
+    config;
+  if (!Number.isFinite(effectiveNFloor) || effectiveNFloor < 0) {
+    throw new Error(
+      `v-a1-fwd config: effectiveNFloor must be a finite number >= 0 (got ${effectiveNFloor})`,
+    );
+  }
+  if (!Number.isInteger(minKcClusters) || minKcClusters < 1) {
+    throw new Error(
+      `v-a1-fwd config: minKcClusters must be an integer >= 1 (got ${minKcClusters})`,
+    );
+  }
+  if (!Number.isFinite(deltaThreshold) || deltaThreshold < 0) {
+    throw new Error(
+      `v-a1-fwd config: deltaThreshold must be a finite number >= 0 (got ${deltaThreshold})`,
+    );
+  }
+  if (!Number.isInteger(bootstrapB) || bootstrapB < 1) {
+    throw new Error(`v-a1-fwd config: bootstrapB must be an integer >= 1 (got ${bootstrapB})`);
+  }
+  if (
+    !Number.isFinite(maxDegenerateFraction) ||
+    maxDegenerateFraction < 0 ||
+    maxDegenerateFraction > 1
+  ) {
+    throw new Error(
+      `v-a1-fwd config: maxDegenerateFraction must be a finite number in [0,1] (got ${maxDegenerateFraction})`,
+    );
+  }
+}
+
 export type VA1Verdict = 'PASS' | 'FAIL' | 'INSUFFICIENT';
 
 export interface VA1Result {
@@ -86,6 +123,15 @@ export interface AssembledClusters {
  * then keep ONLY the steps that are forward-scorable (scoredKnowledgeId !== null) AND
  * RT-bearing (hasRt). RT-less steps yield IDENTICAL predictions under both variants → 0
  * ΔAUC contribution → excluded from the gate's pool. One cluster per KC.
+ *
+ * ⚠ OCR finding 8: this THIN variant DISCARDS `nTotalScorable` (the count of single-KC
+ *   forward-scorable steps INCLUDING the RT-less ones). A caller that pairs this with
+ *   `evaluateVA1Forward` but does NOT pass `meta.nTotalScorable` will get the result's
+ *   `nTotal` silently falling back to `nWithRt` — under-reporting the evidence context.
+ *   If you need an accurate `nTotal` in the report, call `assembleForwardClustersDetailed`
+ *   and thread its `nTotalScorable` into `meta`. Use this thin variant ONLY when the
+ *   RT-less context count is genuinely irrelevant (e.g. unit tests that assert on the
+ *   gate's pooled decision, not on nTotal).
  */
 export function assembleForwardClusters(
   attemptsByKc: Map<string, ReplayAttempt[]>,
@@ -103,6 +149,16 @@ export function assembleForwardClustersDetailed(
   for (const [kc, attempts] of attemptsByKc) {
     const srtRun = replayTheta(attempts, { srtEnabled: true });
     const binaryRun = replayTheta(attempts, { srtEnabled: false });
+    // OCR finding 7: the index-alignment below assumes both runs produce the SAME number
+    // of steps (they replay the SAME attempt list, so they must). Assert it so a future
+    // divergence in replayTheta fails LOUD here rather than silently mis-pairing
+    // srt/binary scores (which would corrupt every ΔAUC for this KC without any signal).
+    if (srtRun.steps.length !== binaryRun.steps.length) {
+      throw new Error(
+        `assembleForwardClusters: srt/binary step count mismatch for KC ${kc} ` +
+          `(${srtRun.steps.length} vs ${binaryRun.steps.length}) — replay divergence`,
+      );
+    }
     // The two runs share the same step ordering (same attempt list); index-align them.
     const scoresSrt: number[] = [];
     const scoresBinary: number[] = [];
@@ -151,6 +207,11 @@ export function evaluateVA1Forward(
   meta: VA1Meta = {},
 ): VA1Result {
   const config: VA1Config = { ...DEFAULT_CONFIG, ...cfg };
+  // OCR finding 6: the merged config is otherwise unchecked — an override like
+  // bootstrapB<=0 (no replicates → empty CI), deltaThreshold<0 (every positive ΔAUC
+  // "passes"), or minKcClusters=0 (power floor disabled) silently produces a nonsense
+  // verdict. Validate the MERGED values so a bad override fails loud.
+  validateConfig(config);
 
   // Pool counts within the RT-bearing single-KC set.
   let nWithRt = 0;
@@ -164,6 +225,9 @@ export function evaluateVA1Forward(
     }
   }
   const kClusters = clusters.length;
+  // OCR finding 8: nTotalScorable (single-KC scorable steps incl. RT-less) MUST be threaded
+  // from the loader/assembler via meta. When absent it degrades to nWithRt (a strict lower
+  // bound — the RT-less context is simply unknown to this call, never fabricated upward).
   const nTotal = meta.nTotalScorable ?? nWithRt;
   const familyDeltaAppliedCount = meta.familyDeltaAppliedCount ?? 0;
   const familyDeltaTotal = meta.familyDeltaTotal ?? 0;

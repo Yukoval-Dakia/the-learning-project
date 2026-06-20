@@ -58,4 +58,15 @@ describe('forwardAuc — Mann–Whitney U', () => {
   it('length mismatch throws', () => {
     expect(() => forwardAuc([0.1, 0.2], [1])).toThrow(/equal length/);
   });
+
+  // ── OCR edge-case guards (verdict integrity) ───────────────────────────────────────
+  it('OCR finding 4: label=2 throws (would silently fall into the negative branch)', () => {
+    // Before the guard: any non-1 label silently counts as a negative, corrupting n0/n1
+    // and the AUC with no signal.
+    expect(() => forwardAuc([0.9, 0.6, 0.7], [1, 2 as 0 | 1, 0])).toThrow(/must be 0 or 1/);
+  });
+
+  it('OCR finding 4: label=-1 throws', () => {
+    expect(() => forwardAuc([0.9, 0.6], [1, -1 as 0 | 1])).toThrow(/must be 0 or 1/);
+  });
 });

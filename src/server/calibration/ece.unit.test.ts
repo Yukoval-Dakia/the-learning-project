@@ -77,4 +77,33 @@ describe('ece — binned reliability', () => {
   it('length mismatch throws', () => {
     expect(() => ece([0.1, 0.2], [0])).toThrow(/equal length/);
   });
+
+  // ── OCR edge-case guards (verdict integrity) ───────────────────────────────────────
+  it('OCR finding 2: k=0 throws (would silently return ECE=0 = false "calibrated")', () => {
+    // Before the guard: zero bins → the scoring loop never runs → eceSum stays 0 → a
+    // false "perfectly calibrated" verdict on a clearly mis-calibrated sample.
+    expect(() => ece([0.9, 0.1], [0, 1], { binning: 'equal-width', k: 0 })).toThrow(/k must be/);
+  });
+
+  it('OCR finding 2: negative k throws', () => {
+    expect(() => ece([0.9, 0.1], [0, 1], { k: -3 })).toThrow(/k must be/);
+  });
+
+  it('OCR finding 2: non-integer k throws', () => {
+    expect(() => ece([0.9, 0.1], [0, 1], { k: 2.5 })).toThrow(/k must be/);
+  });
+
+  it('OCR finding 3: NaN prediction throws (would crash on undefined bin / corrupt sort)', () => {
+    expect(() => ece([0.5, Number.NaN, 0.3], [1, 0, 1], { binning: 'equal-width' })).toThrow(
+      /not finite/,
+    );
+    // equal-count path too (NaN breaks the comparator sort silently).
+    expect(() => ece([0.5, Number.NaN, 0.3], [1, 0, 1], { binning: 'equal-count' })).toThrow(
+      /not finite/,
+    );
+  });
+
+  it('OCR finding 3: Infinity prediction throws', () => {
+    expect(() => ece([0.5, Number.POSITIVE_INFINITY], [1, 0])).toThrow(/not finite/);
+  });
 });

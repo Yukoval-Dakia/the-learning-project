@@ -48,6 +48,32 @@ export interface DeltaAucCi {
 
 const MAX_POOLED_N_BEFORE_REDUCE = 5000;
 const REDUCED_B = 500;
+// OCR finding 12: the single 5000→500 tier is NOT enough. Each replicate is
+// O(n1·n0)·2 ≈ O(N²/2); at the 5000 boundary that is ~12.5M comparisons × B, and the
+// cost GROWS quadratically with N while B only steps down once. Add a second, stricter
+// tier so a very large pool cannot blow up the wall-clock. TRADEOFF: a percentile
+// bootstrap CI is statistically valid at any B ≥ a few hundred — fewer replicates only
+// widen the Monte-Carlo error of the CI *endpoints* slightly (the estimator is unbiased),
+// it does NOT bias the ΔAUC inference. So capping B on huge pools trades a hair of CI
+// precision for tractability, which is the correct call for a report-only harness.
+const HARD_POOLED_N_BEFORE_REDUCE = 20000;
+const HARD_REDUCED_B = 200;
+
+/**
+ * Resolve the bootstrap replicate count B for a given pooled sample size (OCR finding 12).
+ * Two-tier perf cap: a huge pool (N>20000) is clamped to B=200; a merely large one
+ * (N>5000) to B=500; otherwise the requested B stands. Exported so the cap logic is
+ * unit-testable WITHOUT paying the O(N²) bootstrap itself.
+ */
+export function resolveBootstrapB(pooledN: number, requestedB: number): number {
+  if (pooledN > HARD_POOLED_N_BEFORE_REDUCE && requestedB > HARD_REDUCED_B) {
+    return HARD_REDUCED_B;
+  }
+  if (pooledN > MAX_POOLED_N_BEFORE_REDUCE && requestedB > REDUCED_B) {
+    return REDUCED_B;
+  }
+  return requestedB;
+}
 
 function poolScores(
   clusters: ClusterForwardPreds[],
@@ -93,11 +119,11 @@ export function deltaAucClusterBootstrap(
   const pointDelta = aucSrt !== null && aucBinary !== null ? aucSrt - aucBinary : Number.NaN;
 
   // m3 guard: shrink B on a large pooled sample so the O(n²) AUC × B stays tractable.
+  // OCR finding 12: two-tier cap (resolveBootstrapB) — a very large pool (N>20000) is
+  // clamped harder (B=200) than a merely large one (N>5000 → B=500), because the
+  // per-replicate cost is O(N²).
   const pooledN = pooledSrt.scores.length;
-  let bTarget = opts.b ?? 2000;
-  if (pooledN > MAX_POOLED_N_BEFORE_REDUCE && bTarget > REDUCED_B) {
-    bTarget = REDUCED_B;
-  }
+  const bTarget = resolveBootstrapB(pooledN, opts.b ?? 2000);
 
   // ── Paired cluster bootstrap ──
   const deltas: number[] = [];
@@ -110,7 +136,10 @@ export function deltaAucClusterBootstrap(
       // Resample K cluster INDICES with replacement (whole-KC bootstrap).
       const drawn: number[] = new Array(k);
       for (let i = 0; i < k; i++) {
-        drawn[i] = Math.floor(rng() * k);
+        // OCR finding 13: Math.floor(rng()*k) assumes rng() ∈ [0,1). A defective rng
+        // returning exactly 1.0 would yield index k (out of bounds → clusters[k]
+        // undefined → a crash deep in the resample). Clamp defensively to [0, k-1].
+        drawn[i] = Math.min(k - 1, Math.max(0, Math.floor(rng() * k)));
       }
 
       // Pool the resampled clusters' predictions — SAME draw for srt and binary (paired).

@@ -65,6 +65,33 @@ describe('iccOneWayAnova — ICC(1,1)', () => {
     expect(r.icc).toBeNull();
     expect(r.reason).toBe('empty');
   });
+
+  // ── OCR finding 5: empty sub-arrays must NOT inflate k (would make N−k negative). ──
+  it('OCR finding 5: empty sub-arrays are dropped, not counted in k', () => {
+    // Before the fix: raw k=3, N=2 → N−k = −1 → MSW = ssWithin/(−1) → silently wrong ICC.
+    // After: empties dropped → one real cluster [[1,0]] → single-cluster null (not garbage).
+    const r = iccOneWayAnova([[1, 0], [], []]);
+    expect(r.icc).toBeNull();
+    expect(r.reason).toBe('single-cluster');
+    expect(r.k).toBe(1);
+    expect(r.n).toBe(2);
+  });
+
+  it('OCR finding 5: empties interspersed with real clusters match the no-empty result', () => {
+    // [[1,1,0],[],[0,0,0]] must give the SAME ICC as the anchor [[1,1,0],[0,0,0]] (0.5),
+    // not a negative-denominator artefact from N−k inflation.
+    const r = iccOneWayAnova([[1, 1, 0], [], [0, 0, 0]]);
+    expect(r.icc).toBeCloseTo(0.5, 10);
+    expect(r.k).toBe(2);
+    expect(r.n).toBe(6);
+    expect(r.m0).toBeCloseTo(3, 10);
+  });
+
+  it('OCR finding 5: all-empty clusters → empty (not a crash)', () => {
+    const r = iccOneWayAnova([[], [], []]);
+    expect(r.icc).toBeNull();
+    expect(r.reason).toBe('empty');
+  });
 });
 
 describe('designEffect', () => {
@@ -123,5 +150,12 @@ describe('effectiveNFromClusters — never NaN (m4)', () => {
     expect(r.deff).toBe(1);
     expect(r.effectiveN).toBe(0);
     expect(Number.isNaN(r.effectiveN)).toBe(false);
+  });
+
+  it('OCR finding 5: empty sub-arrays never yield NaN effectiveN', () => {
+    const r = effectiveNFromClusters([[1, 1, 0], [], [0, 0, 0]]);
+    expect(Number.isNaN(r.effectiveN)).toBe(false);
+    expect(r.deff).toBeCloseTo(2.0, 10); // same as the no-empty anchor
+    expect(r.effectiveN).toBeCloseTo(3.0, 10);
   });
 });
