@@ -322,4 +322,20 @@ describe('buildReviewEventsCsv', () => {
     const csv = buildReviewEventsCsv(fixture());
     expect(csv).toContain('虚词');
   });
+
+  // YUK-324 — D1→PG migration drift. The `postgres` driver returns jsonb
+  // columns ALREADY parsed (here knowledge_ids as a string[]). The old code
+  // did a bare JSON.parse(question.knowledge_ids) expecting a string, which
+  // threw on the array form → backup CSV export 500. This asserts the parsed
+  // (array) shape is accepted without throwing and resolves to the name.
+  it('accepts knowledge_ids already parsed as an array (postgres jsonb driver shape)', () => {
+    const f = fixture();
+    // postgres driver hands back the jsonb column as a real array, not a string.
+    (f.question[0] as unknown as { knowledge_ids: string[] }).knowledge_ids = ['k1'];
+    let csv = '';
+    expect(() => {
+      csv = buildReviewEventsCsv(f as unknown as Record<string, Row[]>);
+    }).not.toThrow();
+    expect(csv).toContain('虚词');
+  });
 });
