@@ -1,9 +1,15 @@
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { cost_ledger, event, question } from '@/db/schema';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { parseAttributionOutput, runAttributionAndWriteJudgeEvent } from './attribute';
+import {
+  type AttributionInput,
+  parseAttributionOutput,
+  runAttributionAndWriteJudgeEvent,
+} from './attribute';
+import { K_MAX, K_SMALL, retrieveCauseCandidates } from './attribute-retrieve';
 
 describe('parseAttributionOutput', () => {
   it('parses well-formed JSON with analysis_md (Lane B field name)', () => {
@@ -72,6 +78,65 @@ describe('parseAttributionOutput', () => {
   it('throws when analysis_md missing', () => {
     const text = '{"primary_category":"concept","confidence":0.5}';
     expect(() => parseAttributionOutput(text)).toThrow();
+  });
+});
+
+// ── YUK-462: retrieve→rerank stage 1 (retriever) ──────────────────────────────
+// Pure, no LLM, no DB. Lives in this file for cohesion with the rerank-path DB
+// tests below; executes fine under the db config harness.
+describe('retrieveCauseCandidates', () => {
+  const retrieveInput: AttributionInput = {
+    prompt_md: '"之"在主谓之间的用法?',
+    reference_md: '取消句子独立性',
+    wrong_answer_md: '助词',
+    knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'wenyan' }],
+  };
+
+  it('returns full vocab verbatim (same reference, no reordering) for small-vocab profiles', () => {
+    // EQUIVALENCE CONTRACT: the candidate set handed to stage 2 is byte-identical
+    // to what buildAttributionPrompt embeds inline. Every current profile vocab
+    // (max 11) is <= K_SMALL (15), so the retriever is an identity passthrough.
+    const wenyan = resolveSubjectProfile('wenyan');
+    const math = resolveSubjectProfile('math');
+    expect(wenyan.causeCategories.length).toBeLessThanOrEqual(K_SMALL);
+    expect(math.causeCategories.length).toBeLessThanOrEqual(K_SMALL);
+    // Identity (same array reference) — not just deep-equal — proves zero copy/reorder.
+    expect(retrieveCauseCandidates(retrieveInput, wenyan)).toBe(wenyan.causeCategories);
+    expect(retrieveCauseCandidates(retrieveInput, math)).toBe(math.causeCategories);
+  });
+
+  it('large-vocab retriever truncates to <= K_MAX and includes exact keyword matches', () => {
+    // Synthetic profile with > K_SMALL categories, one of which substring-matches a
+    // token in the input. Marks the large-vocab branch as exercised even though no
+    // real profile reaches it today.
+    const base = resolveSubjectProfile('wenyan');
+    const synthCategories = Array.from({ length: 20 }, (_, i) => ({
+      id: `c${i}`,
+      label: i === 7 ? '助词误用' : `占位错因${i}`,
+      description: i === 7 ? '把动词误判为助词' : undefined,
+    }));
+    const synthProfile: SubjectProfile = { ...base, causeCategories: synthCategories };
+    const result = retrieveCauseCandidates(retrieveInput, synthProfile);
+    expect(result.length).toBeLessThanOrEqual(K_MAX);
+    // The exact-keyword match ('助词' appears in wrong_answer_md) must survive truncation.
+    expect(result.some((c) => c.id === 'c7')).toBe(true);
+  });
+});
+
+// ── YUK-462: rerank task prompt (stage 2 system prompt) ───────────────────────
+describe('AttributionRerankTask system prompt', () => {
+  it('renders the profile taxonomy + the JSON contract tokens', () => {
+    const wenyan = resolveSubjectProfile('wenyan');
+    const prompt = getTaskSystemPrompt('AttributionRerankTask', wenyan);
+    expect(prompt.length).toBeGreaterThan(0);
+    // JSON contract tokens (same as buildAttributionPrompt).
+    expect(prompt).toContain('primary_category');
+    expect(prompt).toContain('analysis_md');
+    expect(prompt).toContain('confidence');
+    // Taxonomy of the profile is embedded (e.g. the 'grammar' cause id for wenyan).
+    expect(prompt).toContain('grammar');
+    // Rerank-specific: the prompt must reference the structured candidates field.
+    expect(prompt).toContain('candidates');
   });
 });
 
@@ -151,6 +216,71 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(payload.cause.primary_category).toBe('concept');
     expect(payload.cause.analysis_md).toBe('why');
     expect(payload.cause.confidence).toBe(0.8);
+  });
+
+  // ── YUK-462: retrieve→rerank pipeline ───────────────────────────────────────
+  // The refactor swaps the single direct-select call for a two-stage
+  // retrieve→rerank. For small-vocab profiles (every current one), the retriever
+  // is an identity passthrough, so behavior is equivalent to direct-select.
+
+  it('YUK-462: small-vocab rerank output passes through identically to direct-select', async () => {
+    // Same JSON the legacy "writes a judge event…" test returns. Proves stage-2
+    // output flows through parseAttributionOutput + validateCauseAgainstProfile +
+    // writeEvent exactly as before — no change to where/how the cause is written.
+    const db = testDb();
+    const attemptId = 'attempt_e_rerank_passthrough';
+    await insertAttemptEvent({ attemptId, questionId: 'q_rerank_passthrough' });
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    });
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+    const judgeRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judgeRows).toHaveLength(1);
+    const payload = judgeRows[0].payload as {
+      cause: { primary_category: string; analysis_md: string; confidence: number };
+    };
+    expect(payload.cause.primary_category).toBe('concept');
+    expect(payload.cause.analysis_md).toBe('why');
+    expect(payload.cause.confidence).toBe(0.8);
+  });
+
+  it('YUK-462: runTaskFn is invoked with kind AttributionRerankTask and candidates == full profile vocab', async () => {
+    // EQUIVALENCE: the candidates handed to stage 2 must equal what the old prompt
+    // embedded inline (the full profile vocab). The original AttributionInput
+    // fields must still flow through untouched.
+    const db = testDb();
+    const attemptId = 'attempt_e_rerank_kind';
+    await insertAttemptEvent({ attemptId, questionId: 'q_rerank_kind' });
+    const wenyan = resolveSubjectProfile('wenyan');
+    const spy = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    }));
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: spy,
+      subjectProfile: wenyan,
+    });
+    expect(spy).toHaveBeenCalledOnce();
+    const [kind, rerankInput] = spy.mock.calls[0];
+    expect(kind).toBe('AttributionRerankTask');
+    const typedInput = rerankInput as AttributionInput & { candidates: unknown };
+    // candidates == the full profile vocab (== inline taxonomy of the old prompt).
+    expect(typedInput.candidates).toEqual(wenyan.causeCategories);
+    // Original AttributionInput fields still passed through.
+    expect(typedInput.prompt_md).toBe(validInput.prompt_md);
+    expect(typedInput.reference_md).toBe(validInput.reference_md);
+    expect(typedInput.wrong_answer_md).toBe(validInput.wrong_answer_md);
+    expect(typedInput.knowledge_context).toEqual(validInput.knowledge_context);
   });
 
   it('copies task provenance from AttributionTask onto the judge event', async () => {
