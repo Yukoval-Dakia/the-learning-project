@@ -502,20 +502,17 @@ export const tasks = {
     kind: 'CopilotTask',
     description:
       'AF S4 / YUK-203 — the single user-facing conversational agent (teach / solve / explain / critique / plan / inspect). The chat endpoint resolves the per-request DomainTool allowlist surface (`copilot` for free-form chat, `copilot_user_suggested_mistake_action` for chip-direct-trigger); teaching/solve skills compose TeachingTurnTask at the service layer, never adding tools to this surface.',
-    // YUK-458 experiment — route the copilot orchestrator to GLM-5.2 (Zhipu
-    // coding plan, Anthropic-compat endpoint). mimo-v2.5-pro could NOT converge
-    // the multi-step propose flow (empty-graph → propose synthetic root) within
-    // its turn budget (error_max_turns); simple read-only queries succeeded.
-    // Testing whether a stronger coding model converges the write-orchestration.
-    // fallbackChain stays mimo so the surface degrades gracefully if GLM errors.
-    defaultProvider: 'zhipu',
-    defaultModel: 'glm-5.2',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
-    // YUK-458 — also raised from 6 turns / 60s: give the multi-step write path
-    // room (10 turns + 120s timeout so the cap under test is turns, not
-    // wall-clock). Stacks with the GLM switch above — combined "make the copilot
-    // converge" config; if it works we can later isolate model vs budget.
-    budget: { ...DEFAULT_BUDGET, maxIterations: 10, timeout: 120_000 },
+    // GLM-5.2 (zhipu) + 10-turn budget were trialed here as the orchestrator
+    // (YUK-458) and REVERTED: the copilot propose failure is an endurance gap —
+    // durable run is dead code (no caller sets durable → all turns run inline),
+    // so long runs die in the inline request window. NOT a model-strength problem;
+    // a slower model just turned error_max_turns into an inline-request abort.
+    // zhipu stays an available provider (providers.ts) for a future durable lane.
+    // Root-cause audit: docs/audit/2026-06-20-copilot-agentic-ux-wiring-audit.md.
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 60_000 },
     needsToolCall: true,
     isMultimodal: false,
     // The chat endpoint resolves surface per request (see two-surface routing).
