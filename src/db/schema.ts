@@ -93,6 +93,31 @@ export const knowledge = pgTable('knowledge', {
   embed_version: integer('embed_version'),
 });
 
+// YUK-454 increment-1 (ADR-0036 身份层) — misconception identity-table skeleton.
+// DORMANT in L1: no writer, NO route/job/copilotTool/manifest wiring. The write
+// path is gated behind the ADR-0034 consistency gate (promotion flow). Mirrors
+// the `knowledge` node conventions above (id/created_at/updated_at/archived_at/
+// proposed_by_ai), with these deliberate RED LINES:
+//   - ADR-0035 SOFT track: NO theta_*/b/p(L)/mastery/FSRS/difficulty columns
+//     ever live here. `weight` is a CONFIDENCE-only salience signal, NOT mastery.
+//   - subject=view: NO subject/domain column (subject is derived, never stored).
+//   - archived_at is the ONLY time dimension — explicitly NO valid_at/invalid_at
+//     (bi-temporal edges are the DEFERRED misconception_edge slice).
+//   - created_at/updated_at are caller-supplied (NO defaultNow, house convention).
+//   - the embedding triplet is OMITTED in L1 — it lands with the promotion-flow
+//     dedup (semantic near-dup detection) when that slice ships.
+export const misconception = pgTable('misconception', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  reasoning: text('reasoning'),
+  weight: real('weight').default(1),
+  created_by: jsonb('created_by').$type<AgentRefT>().notNull(),
+  proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  archived_at: timestamp('archived_at', { withTimezone: true }),
+});
+
 export const source_asset = pgTable('source_asset', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),

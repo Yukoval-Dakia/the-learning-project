@@ -206,6 +206,44 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     ).toEqual([]);
   });
 
+  // YUK-454 inc-1 (ADR-0036 身份层) — misconception is the DORMANT identity-table
+  // skeleton. FORWARD invariant: it has ZERO writers anywhere (no route/job/
+  // copilotTool wiring in L1; the promotion-flow writer is gated behind the
+  // ADR-0034 consistency gate). Mirrors the mastery_state single-owner block
+  // above, with allowed-prefixes = [] (nothing may write it yet).
+  it('db.{insert,update}(misconception) has ZERO writers (DORMANT in L1)', async () => {
+    const ALLOWED_MISCONCEPTION_WRITERS: ReadonlyArray<string> = [];
+    const hits = await findWriteHits('misconception');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_MISCONCEPTION_WRITERS));
+    expect(
+      violations,
+      `\`misconception\` is dormant in L1 (YUK-454 inc-1) — it must have ZERO writers until the ADR-0034-gated promotion flow lands. Found:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  // YUK-454 inc-1 — REVERSE red line (ADR-0035 SOFT track). The misconception
+  // identity module must contain NONE of the soft-track engine markers. This
+  // locks the soft-track invariant at the source level BEFORE any writer exists:
+  // a misconception must never grow a write path into θ̂/p(L)/mastery_state/
+  // item_calibration/FSRS.
+  it('src/core/schema/misconception.ts references NO soft-track engine markers (ADR-0035)', async () => {
+    const SOFT_TRACK_MARKERS = [
+      'updateThetaForAttempt',
+      'mastery_state',
+      'item_calibration',
+      'item_family_calibration',
+      'material_fsrs_state',
+      'theta_hat',
+      'effectiveB',
+    ] as const;
+    const src = await fs.readFile(path.join(REPO_ROOT, 'src/core/schema/misconception.ts'), 'utf8');
+    const present = SOFT_TRACK_MARKERS.filter((marker) => src.includes(marker));
+    expect(
+      present,
+      `misconception identity module leaks soft-track engine markers (ADR-0035 SOFT track violation):\n  ${present.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
   for (const dropped of ['mistake', 'review_event', 'dreaming_proposal', 'ingestion_session']) {
     it(`legacy \`${dropped}\` table has ZERO write-callers in src/ + app/ (DROPped in 9.J)`, async () => {
       const hits = await findWriteHits(dropped, { roots: SCAN_RUNTIME_ROOTS });

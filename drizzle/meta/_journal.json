@@ -330,6 +330,13 @@
       "when": 1781929187690,
       "tag": "0046_redundant_vertigo",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1781934543957,
+      "tag": "0047_right_lady_ursula",
+      "breakpoints": true
     }
   ]
 }
