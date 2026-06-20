@@ -35,6 +35,7 @@
     "audit:profile": "tsx scripts/audit-profile.ts",
     "audit:draft-status": "tsx scripts/audit-draft-status.ts",
     "audit:relations": "tsx scripts/audit-relations.ts",
+    "audit:calibration": "tsx scripts/audit-calibration.ts",
     "compile:profile": "tsx scripts/compile-profile.ts",
     "docs:linear-manifest": "tsx scripts/linear-doc-manifest.ts",
     "preflight:vision": "tsx scripts/preflight-vision.ts",
