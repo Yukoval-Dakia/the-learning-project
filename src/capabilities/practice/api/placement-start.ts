@@ -35,7 +35,12 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('not_found', 'placement probe is not enabled', 404);
     }
 
-    const raw = await req.json().catch(() => ({}));
+    let raw: unknown;
+    try {
+      raw = await req.json();
+    } catch {
+      throw new ApiError('validation_error', 'request body must be valid JSON', 400);
+    }
     const parsed = StartBody.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(

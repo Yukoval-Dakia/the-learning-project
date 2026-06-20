@@ -36,7 +36,12 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   try {
     const { id } = params;
 
-    const raw = await req.json().catch(() => ({}));
+    let raw: unknown;
+    try {
+      raw = await req.json();
+    } catch {
+      throw new ApiError('validation_error', 'request body must be valid JSON', 400);
+    }
     const parsed = NextBody.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
@@ -82,12 +87,11 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     const answeredIds = Array.from(new Set(answeredRows.map((r) => r.subjectId)));
 
     // Per-KC θ precision (cold KC with no mastery_state row → precision 1, the weak-prior cold
-    // value the engine uses). Feeds the SE-convergence early stop.
-    const perKcPrecision: number[] = [];
-    for (const kc of knowledgeIds) {
-      const ms = await getMasteryState(db, kc);
-      perKcPrecision.push(ms?.theta_precision ?? 1);
-    }
+    // value the engine uses). Feeds the SE-convergence early stop. Fan out the independent
+    // single-row reads concurrently (OCR major — avoid the N+1 serial await; same Promise.all
+    // pattern as mastery-progress-signal.ts).
+    const masteryStates = await Promise.all(knowledgeIds.map((kc) => getMasteryState(db, kc)));
+    const perKcPrecision = masteryStates.map((ms) => ms?.theta_precision ?? 1);
 
     const termination = evaluatePlacementTermination({
       answeredCount,
