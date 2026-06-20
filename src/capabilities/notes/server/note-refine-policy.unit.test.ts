@@ -51,6 +51,22 @@ describe('patchTouchesVerifiedBlock (C1a)', () => {
     expect(patchTouchesVerifiedBlock(body, patch)).toBe(true);
   });
 
+  // RED-5 (YUK-358 决定7) — source_tier-only verified block (NO user_verified
+  // flag) must STILL be protected. Proves the shared isVerifiedBlock口径 (both
+  // flag-OR-tier) is what the gate consults, not a flag-only check.
+  it('true when a replace_block targets a source_tier:user_verified block (no flag)', () => {
+    const tierBlock: Record<string, unknown> = {
+      type: 'semanticBlock',
+      attrs: { id: 'bt', semantic_kind: 'definition', source_tier: 'user_verified' },
+      content: [{ type: 'text', text: 'tier-owned' }],
+    };
+    const body = doc(tierBlock, plainBlock('b2', 'ai'));
+    const patch: NotePatchT = {
+      ops: [{ kind: 'replace_block', target_block_id: 'bt', block: plainBlock('bt', 'x') }],
+    };
+    expect(patchTouchesVerifiedBlock(body, patch)).toBe(true);
+  });
+
   it('true when a delete_block targets a verified block', () => {
     const body = doc(verifiedBlock('b1', 'human owns'), plainBlock('b2', 'ai'));
     const patch: NotePatchT = {

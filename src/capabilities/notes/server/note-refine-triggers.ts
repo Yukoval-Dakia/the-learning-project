@@ -11,6 +11,21 @@ const FLAG_BY_KIND: Record<NoteRefineTriggerKind, string> = {
   mastery_change: 'WAVE6_TRIGGER_MASTERY_ENABLED',
   dwell: 'WAVE6_TRIGGER_DWELL_ENABLED',
   dreaming: 'WAVE6_TRIGGER_DREAMING_ENABLED',
+  // YUK-358 决定7 (ADR-0040)：verify 是 note_verify→refine 的新 trigger，OPT-IN。
+  verify: 'WAVE6_TRIGGER_VERIFY_ENABLED',
+};
+
+// YUK-358 决定7 — per-kind DEFAULT state (the value when the flag env var is
+// UNSET/empty). The original 4 kinds are default-ON (an unset flag means "run");
+// `verify` is default-OFF so removing note_verify's dead proposal does NOT
+// silently light up a new background AI-cost path. To turn verify→refine on,
+// the owner sets WAVE6_TRIGGER_VERIFY_ENABLED="true" explicitly. (Red line 2.)
+const DEFAULT_ENABLED_BY_KIND: Record<NoteRefineTriggerKind, boolean> = {
+  mark_wrong: true,
+  mastery_change: true,
+  dwell: true,
+  dreaming: true,
+  verify: false,
 };
 
 type BossSend = (
@@ -44,7 +59,16 @@ export function noteRefineTriggerEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const value = env[FLAG_BY_KIND[kind]];
-  return value === undefined || value === '' || value.toLowerCase() !== 'false';
+  // YUK-358 决定7 — unset/empty falls back to the per-kind default (verify=OFF,
+  // the other 4=ON). When set, an explicit literal wins for EVERY kind: "false"
+  // disables, "true" enables — so verify is a pure opt-in ("true") and the others
+  // keep their kill-switch ("false") semantics. Any other non-empty value keeps
+  // the kind's default (no accidental flip from a typo'd flag).
+  if (value === undefined || value === '') return DEFAULT_ENABLED_BY_KIND[kind];
+  const normalized = value.toLowerCase();
+  if (normalized === 'false') return false;
+  if (normalized === 'true') return true;
+  return DEFAULT_ENABLED_BY_KIND[kind];
 }
 
 export async function enqueueNoteRefineTrigger(input: {
@@ -117,6 +141,32 @@ export const enqueueMarkWrongNoteRefine = (input: {
     ]
       .filter(Boolean)
       .join('\n'),
+    evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
+  });
+
+// YUK-358 决定7 (ADR-0040) — the note_verify→refine bridge. When note_verify
+// returns verdict=needs_review, instead of writing a dead patch-less note_update
+// proposal (deleted), it enqueues a verify-kind refine carrying the verifier
+// summary/issues as context_md. This is flag-gated OPT-IN (default-OFF, see
+// DEFAULT_ENABLED_BY_KIND) so it does NOT silently add background AI cost. The
+// refine then flows through the NORMAL gate (decideNoteRefineMode +
+// patchTouchesVerifiedBlock) — verify gets ZERO privilege at that gate (red
+// line 1). The debounce key is `verify:${artifactId}`, isolated from the
+// mark_wrong/mastery keys (red line 6).
+export const enqueueVerifyNoteRefine = (input: {
+  db?: Db;
+  artifactId: string;
+  contextMd?: string;
+  triggerEventId?: string;
+  bossSend?: BossSend;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+}) =>
+  enqueueNoteRefineTrigger({
+    ...input,
+    kind: 'verify',
+    contextMd:
+      input.contextMd ?? 'Note verification flagged issues; consider a small corrective patch.',
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
 

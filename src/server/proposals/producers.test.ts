@@ -10,7 +10,6 @@ import {
   writeCompletionProposal,
   writeJudgeRetractionProposal,
   writeLearningItemProposal,
-  writeNoteUpdateProposal,
   writeRelearnProposal,
   writeVariantQuestionProposal,
 } from './producers';
@@ -20,7 +19,7 @@ describe('proposal producer helpers', () => {
     await resetDb();
   });
 
-  it('writes the remaining seven producer-backed proposal kinds through the shared inbox reader', async () => {
+  it('writes the remaining six producer-backed proposal kinds through the shared inbox reader', async () => {
     const db = testDb();
     await writeVariantQuestionProposal(db, {
       source_question_id: 'q1',
@@ -34,13 +33,9 @@ describe('proposal producer helpers', () => {
       variant_depth: 1,
       reason_md: 'targets the same cause',
     });
-    await writeNoteUpdateProposal(db, {
-      artifact_id: 'artifact_1',
-      verification_event_id: 'verify_1',
-      summary_md: 'needs a fix',
-      issues: [{ block_id: 'b1', suggested_fix_md: 'tighten the example' }],
-      reason_md: 'verifier found a factuality issue',
-    });
+    // YUK-358 决定7 — writeNoteUpdateProposal (patch-less note_verify producer)
+    // was deleted; the note_update proposal KIND is still produced (with a patch)
+    // by writeNoteRefineProposal, exercised in the note-refine tests.
     await writeLearningItemProposal(db, {
       topic: '虚词',
       knowledge_node: { id: 'k1', name: '虚词' },
@@ -92,7 +87,6 @@ describe('proposal producer helpers', () => {
         'completion',
         'judge_retraction',
         'learning_item',
-        'note_update',
         'relearn',
         'variant_question',
       ].sort(),
