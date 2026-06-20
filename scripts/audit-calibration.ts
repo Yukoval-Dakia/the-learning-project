@@ -1,0 +1,359 @@
+// pnpm audit:calibration (YUK-461, axis-2 Wave-0) — READ-ONLY, REPORT-ONLY retro-
+// validation of the already-LIVE A1 SRT mastery engine via the keystone gate V-A1-fwd.
+//
+// ⚠ NEVER WRITES. NEVER FLIPS A FLAG. The script only SELECTs the event log + calibration
+//   rows, replays the per-KC θ̂ trajectory IN-MEMORY under SRT on/off, and prints a
+//   verdict. SRT_ENABLED / HIERARCHICAL_ELO_ENABLED / EARLY_KLP_ENABLED stay untouched.
+//
+// Mirrors scripts/audit-profile.ts (runCli/main/direct-run guard, --json) and
+// scripts/worker.ts (loadEnv BEFORE any @/db/client import — the db client throws at
+// module load if DATABASE_URL is unset, and most consumers run env from .env.local).
+//
+// The DB-touching loadAttempts() is the ONLY non-pure code; the math/replay/gate it
+// feeds are fully unit-tested. loadAttempts is exercised manually via this script against
+// dev data (not unit-tested — it is the thin seam).
+
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+// loadEnv MUST run before importing @/db/client (worker.ts:29 pattern). The db client +
+// schema + mastery helpers are dynamic-imported inside main()/runCli so this stays first.
+import { loadEnv } from '../server/env';
+
+loadEnv();
+
+// Owner-tunable RNG seed for the bootstrap (deterministic report across re-runs of the
+// SAME data). The mulberry32 import is pure (no DB) so it is safe at module top.
+import { mulberry32 } from '@/server/calibration/rng';
+
+const BOOTSTRAP_SEED = 0x5eed_a1c0;
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// Loader — the thin DB seam. Reads the event log + calibration and builds the per-KC
+// ReplayAttempt lists the pure engine consumes. EVERY exclusion mirrors a production
+// θ̂-skip guard with an inline comment mapping it to the source line.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+interface LoadResult {
+  // Map<scoredKnowledgeId, time-ordered ReplayAttempt[]> — each entry is the ordered list
+  // of ALL attempts whose knowledgeIds include that KC (so a multi-KC attempt appears in
+  // each member KC's list, carrying scoredKnowledgeId:null when the question is multi-KC).
+  attemptsByKc: Map<string, import('@/server/calibration/replay').ReplayAttempt[]>;
+  nTotalScorable: number;
+  familyDeltaApplied: number;
+  familyDeltaTotal: number;
+  partialDropped: number;
+  foldableAttempts: number;
+  skippedUnsupported: number;
+}
+
+async function loadAttempts(): Promise<LoadResult> {
+  // Dynamic imports — keep loadEnv() the first side effect (db client reads DATABASE_URL
+  // at module top). All of these are READ-ONLY helpers.
+  const { and, asc, eq, inArray } = await import('drizzle-orm');
+  const { db } = await import('@/db/client');
+  const { event, item_calibration, question } = await import('@/db/schema');
+  const { difficultyToLogitB } = await import('@/core/theta');
+  const { effectiveB } = await import('@/server/mastery/recalibration');
+  const { effectiveFamilyB, getFamilyCalibration } = await import(
+    '@/server/mastery/personalized-difficulty'
+  );
+  const { resolveFamilyKeyForQuestion } = await import('@/server/mastery/family-key');
+  const { getEffectiveDomain } = await import('@/capabilities/knowledge/server/domain');
+  type ReplayAttempt = import('@/server/calibration/replay').ReplayAttempt;
+
+  const DIFFICULTY_PROXY_WEIGHT = 0.3;
+
+  // 1. The attempt events, time-ordered (created_at ASC, id ASC — stable tiebreak).
+  //    Solo review path: action='review'; paper path: action='attempt'. Both subject_kind
+  //    ='question' (submit.ts:507-509, paper-submit.ts:508-510).
+  const attemptEvents = await db
+    .select({
+      id: event.id,
+      action: event.action,
+      outcome: event.outcome,
+      payload: event.payload,
+      created_at: event.created_at,
+      subject_id: event.subject_id,
+    })
+    .from(event)
+    .where(and(inArray(event.action, ['review', 'attempt']), eq(event.subject_kind, 'question')))
+    .orderBy(asc(event.created_at), asc(event.id));
+
+  // 2. FOLDABILITY GATE (M5). An attempt is foldable iff the production θ̂ path provably
+  //    ran. The robust proxy (robust to paper's forced-'failure' outcome write,
+  //    paper-submit.ts:257,511) is a SIBLING judge event:
+  //      action='judge', caused_by_event_id = attempt.id, payload.coarse_outcome != 'unsupported'.
+  //    BOTH call sites write that judge event under EXACTLY the production θ̂-gate:
+  //      - paper (paper-submit.ts:528): !photoOnlyUnsupported && invoked && judgeResult
+  //        → mirrors the θ̂ gate paper-submit.ts:591 (!photoOnlyUnsupported && scheduled
+  //        && coarseOutcome !== 'unsupported').
+  //      - solo  (submit.ts:551): judgeResult && judgeRoute && JudgeKindZ.safeParse(route)
+  //        → present whenever the solo θ̂ update ran (submit.ts:611; auto_rate+unsupported
+  //        throws 422 before any write, submit.ts:285).
+  //    So: include an attempt ONLY if it has a sibling judge event with a non-unsupported
+  //    coarse_outcome. This is more robust than inverting the forced 'failure' outcome.
+  const attemptIds = attemptEvents.map((e) => e.id);
+  const judgeByAttemptId = new Map<string, string>(); // attempt id → judge coarse_outcome
+  if (attemptIds.length > 0) {
+    const judgeEvents = await db
+      .select({
+        caused_by: event.caused_by_event_id,
+        payload: event.payload,
+      })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'judge'),
+          eq(event.subject_kind, 'event'),
+          inArray(event.caused_by_event_id, attemptIds),
+        ),
+      );
+    for (const j of judgeEvents) {
+      if (j.caused_by === null) continue;
+      const co = (j.payload as Record<string, unknown> | null)?.coarse_outcome;
+      if (typeof co === 'string') judgeByAttemptId.set(j.caused_by, co);
+    }
+  }
+
+  // 3. Per-question metadata (knowledge_ids, difficulty, kind, source) for the attempts.
+  const questionIds = Array.from(
+    new Set(attemptEvents.map((e) => e.subject_id).filter((id): id is string => id !== null)),
+  );
+  const questionRows =
+    questionIds.length > 0
+      ? await db
+          .select({
+            id: question.id,
+            knowledge_ids: question.knowledge_ids,
+            difficulty: question.difficulty,
+            kind: question.kind,
+            source: question.source,
+          })
+          .from(question)
+          .where(inArray(question.id, questionIds))
+      : [];
+  const questionById = new Map(questionRows.map((q) => [q.id, q]));
+
+  // 4. item_calibration (track='hard') b anchor per question.
+  const calByQuestion = new Map<
+    string,
+    { b: number | null; b_anchor: number | null; b_calib: number | null }
+  >();
+  if (questionIds.length > 0) {
+    const calRows = await db
+      .select({
+        question_id: item_calibration.question_id,
+        b: item_calibration.b,
+        b_anchor: item_calibration.b_anchor,
+        b_calib: item_calibration.b_calib,
+      })
+      .from(item_calibration)
+      .where(
+        and(inArray(item_calibration.question_id, questionIds), eq(item_calibration.track, 'hard')),
+      );
+    for (const r of calRows) {
+      calByQuestion.set(r.question_id, { b: r.b, b_anchor: r.b_anchor, b_calib: r.b_calib });
+    }
+  }
+
+  // 5. Memoize per-KC effective domain (getEffectiveDomain throws on orphan → null, matching
+  //    production's degrade, state.ts:586-591).
+  const domainCache = new Map<string, string | null>();
+  const resolveDomain = async (kc: string): Promise<string | null> => {
+    if (domainCache.has(kc)) return domainCache.get(kc) as string | null;
+    let domain: string | null = null;
+    try {
+      domain = await getEffectiveDomain(db, kc);
+    } catch {
+      domain = null;
+    }
+    domainCache.set(kc, domain);
+    return domain;
+  };
+
+  // 6. Build a flat, time-ordered list of foldable ReplayAttempts (each carrying its FULL
+  //    KC set), then group into per-KC lists.
+  const ordered: ReplayAttempt[] = [];
+  let familyDeltaApplied = 0;
+  let familyDeltaTotal = 0;
+  let partialDropped = 0;
+  let foldableAttempts = 0;
+  let skippedUnsupported = 0;
+
+  for (const ev of attemptEvents) {
+    if (ev.subject_id === null) continue;
+    const q = questionById.get(ev.subject_id);
+    if (q === undefined) continue; // question deleted — cannot reconstruct b/KCs.
+
+    // FOLDABILITY (M5): require a sibling judge with a non-unsupported coarse_outcome.
+    const judgeCoarse = judgeByAttemptId.get(ev.id);
+    if (judgeCoarse === undefined || judgeCoarse === 'unsupported') {
+      skippedUnsupported++;
+      continue; // production θ̂ path did NOT run for this attempt.
+    }
+
+    // OUTCOME: 'success'→1, 'failure'→0. DROP 'partial' (no clean binary 1PL label —
+    // production folds partial as 1, but the forward 1PL needs a clean binary; excluding
+    // partial is the conservative documented choice). Report the dropped count.
+    const rawOutcome = ev.outcome;
+    let outcome: 0 | 1;
+    if (rawOutcome === 'success') outcome = 1;
+    else if (rawOutcome === 'failure') outcome = 0;
+    else {
+      partialDropped++;
+      continue;
+    }
+
+    const payload = (ev.payload ?? {}) as Record<string, unknown>;
+
+    // knowledgeIds: the FULL set production updates (B2). payload.referenced_knowledge_ids
+    // (submit.ts:528 / paper-submit.ts:515) with fallback to question.knowledge_ids.
+    const refIds = Array.isArray(payload.referenced_knowledge_ids)
+      ? (payload.referenced_knowledge_ids as unknown[]).filter(
+          (x): x is string => typeof x === 'string',
+        )
+      : [];
+    const fullKcSet = refIds.length > 0 ? refIds : q.knowledge_ids;
+    const dedupKcs = Array.from(
+      new Set(fullKcSet.map((s) => s.trim()).filter((s) => s.length > 0)),
+    );
+    if (dedupKcs.length === 0) continue; // production early-returns (state.ts:460).
+
+    // scoredKnowledgeId: the single KC iff the QUESTION is single-KC (B2 resolution b —
+    // multi-KC attempts are replayed for trajectory fidelity but never forward-scored).
+    const questionIsSingleKc = q.knowledge_ids.length === 1;
+    const scoredKnowledgeId = questionIsSingleKc ? q.knowledge_ids[0] : null;
+
+    // responseTimeMs: payload.duration_ms (solo only — paper writes none → null → binary).
+    const durationMs = payload.duration_ms;
+    const responseTimeMs =
+      typeof durationMs === 'number' && Number.isFinite(durationMs) ? durationMs : null;
+
+    // b RECONSTRUCTION (B3 — production's exact b): effectiveB → columnarB (difficulty
+    // fallback) → effectiveFamilyB(columnarB, familyRow). bWeight keyed on the columnar
+    // anchor source (state.ts:495-500, 515-531).
+    const calRow = calByQuestion.get(ev.subject_id) ?? null;
+    const calB = effectiveB(calRow);
+    const columnarB = calB ?? difficultyToLogitB(q.difficulty);
+    const bWeight = calB !== null ? 1 : DIFFICULTY_PROXY_WEIGHT;
+    let b = columnarB;
+    familyDeltaTotal++;
+    // family_key uses q.knowledge_ids[0] (canonical primary — state.ts:521, F2 fix).
+    const familyKey = await resolveFamilyKeyForQuestion(db, {
+      primaryKnowledgeId: q.knowledge_ids[0],
+      kind: q.kind,
+      source: q.source,
+    });
+    if (familyKey !== null) {
+      const familyRow = await getFamilyCalibration(db, familyKey);
+      b = effectiveFamilyB(columnarB, familyRow);
+      if (familyRow !== null && familyRow.b_delta !== 0) familyDeltaApplied++;
+    }
+
+    // domainByKc: per KC effective domain (memoized).
+    const domainByKc: Record<string, string | null> = {};
+    for (const kc of dedupKcs) {
+      domainByKc[kc] = await resolveDomain(kc);
+    }
+
+    ordered.push({
+      knowledgeIds: dedupKcs,
+      scoredKnowledgeId,
+      domainByKc,
+      outcome,
+      difficulty: q.difficulty,
+      b,
+      bWeight,
+      responseTimeMs,
+      createdAt: ev.created_at instanceof Date ? ev.created_at.getTime() : Number(ev.created_at),
+      eventId: ev.id,
+    });
+    foldableAttempts++;
+  }
+
+  // 7. Group into per-scored-KC lists. Each KC's list = the time-ordered subset of attempts
+  //    whose knowledgeIds include that KC. assembleForwardClusters replays each list (full
+  //    multi-KC update) and scores only the steps where scoredKnowledgeId === that KC.
+  //    Only KCs that are EVER the sole-KC of some attempt can be forward-scored, but we
+  //    include every attempt that touches the KC so its trajectory is faithful.
+  const scoredKcs = new Set<string>();
+  for (const a of ordered) {
+    if (a.scoredKnowledgeId !== null) scoredKcs.add(a.scoredKnowledgeId);
+  }
+  const attemptsByKc = new Map<string, ReplayAttempt[]>();
+  for (const kc of scoredKcs) {
+    const list = ordered.filter((a) => a.knowledgeIds.includes(kc));
+    if (list.length > 0) attemptsByKc.set(kc, list);
+  }
+
+  // nTotalScorable = single-KC scorable steps across all KC lists (incl. RT-less) is
+  // computed by the assembler; here we approximate the per-KC scorable count for the
+  // report's context (the assembler's detailed count is the authoritative one).
+  let nTotalScorable = 0;
+  for (const a of ordered) if (a.scoredKnowledgeId !== null) nTotalScorable++;
+
+  return {
+    attemptsByKc,
+    nTotalScorable,
+    familyDeltaApplied,
+    familyDeltaTotal,
+    partialDropped,
+    foldableAttempts,
+    skippedUnsupported,
+  };
+}
+
+export async function runCli(args: string[] = process.argv.slice(2)): Promise<number> {
+  const { assembleForwardClustersDetailed, evaluateVA1Forward, formatReport } = await import(
+    '@/server/calibration/v-a1-fwd'
+  );
+
+  const loaded = await loadAttempts();
+  const { clusters, nTotalScorable } = assembleForwardClustersDetailed(loaded.attemptsByKc);
+  const result = evaluateVA1Forward(clusters, {}, mulberry32(BOOTSTRAP_SEED), {
+    nTotalScorable: Math.max(nTotalScorable, loaded.nTotalScorable),
+    familyDeltaAppliedCount: loaded.familyDeltaApplied,
+    familyDeltaTotal: loaded.familyDeltaTotal,
+    partialDropped: loaded.partialDropped,
+  });
+
+  if (args.includes('--json')) {
+    console.log(
+      JSON.stringify(
+        {
+          ...result,
+          loaderStats: {
+            foldableAttempts: loaded.foldableAttempts,
+            skippedUnsupported: loaded.skippedUnsupported,
+            partialDropped: loaded.partialDropped,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.log(formatReport(result));
+    console.log('');
+    console.log('Loader stats (READ-ONLY over the event log):');
+    console.log(
+      `  foldable attempts (sibling judge, non-unsupported) = ${loaded.foldableAttempts}`,
+    );
+    console.log(
+      `  skipped (no foldable judge / unsupported)          = ${loaded.skippedUnsupported}`,
+    );
+    console.log(`  dropped 'partial' outcomes                         = ${loaded.partialDropped}`);
+  }
+
+  // EXIT CODE (REPORT-ONLY): PASS → 0; INSUFFICIENT → 0 (A1 stays live PROVISIONALLY —
+  // thin data is NOT a failure); FAIL → 1 (it IS a gate verdict). Never mutates anything.
+  return result.verdict === 'FAIL' ? 1 : 0;
+}
+
+export async function main(): Promise<void> {
+  process.exitCode = await runCli();
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void main();
+}
