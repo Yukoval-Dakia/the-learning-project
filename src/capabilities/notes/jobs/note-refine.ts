@@ -18,10 +18,15 @@
 // trigger producers. See
 // `docs/superpowers/plans/2026-05-26-yuk88-block-tree-rebuild-phase.md` §P4.
 
+import { createId } from '@paralleldrive/cuid2';
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
+import {
+  checkAutoApplyBreaker,
+  countRecentAutoApplies,
+} from '@/capabilities/notes/server/note-refine-breaker';
 import {
   decideNoteRefineMode,
   patchTouchesVerifiedBlock,
@@ -32,6 +37,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { enqueueOrApplyNoteRefinePatch } from '@/server/artifacts/editing-session';
+import { writeEvent } from '@/server/events/queries';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -80,6 +86,11 @@ type DepsOverride = {
     summary: ReturnType<typeof summarizeNotePatch>;
     triggerEventId: string | null;
   }) => Promise<void>;
+  // YUK-358 (ADR-0040 决定1) — override the A-track rate breaker's window count.
+  // Unset (production default) → `countRecentAutoApplies` derives the count from
+  // the event log. Tests inject a fixed number to drive ok / warned / tripped
+  // deterministically without seeding a full window.
+  countRecentAutoApplies?: (input: { now: Date }) => Promise<number>;
 };
 
 async function defaultRunTaskFn(
@@ -124,6 +135,9 @@ export interface RunNoteRefineParams {
   runTaskFn: RunTaskFn;
   gate?: NoteRefineGate;
   onPropose?: DepsOverride['onPropose'];
+  // YUK-358 (ADR-0040 决定1) — inject the A-track rate breaker's window count.
+  // See DepsOverride.countRecentAutoApplies.
+  countRecentAutoApplies?: DepsOverride['countRecentAutoApplies'];
   now?: Date;
 }
 
@@ -136,6 +150,11 @@ export type RunNoteRefineResult =
       artifact_version: number;
     }
   | { status: 'proposed'; ops_count: number; new_blocks: number }
+  // YUK-358 (ADR-0040 决定1) — A-track rate breaker tripped: a mutator-eligible
+  // patch was diverted to a propose (退回人审) because auto-apply rate exceeded
+  // the hard cap in the window. Distinct from plain 'proposed' so callers /
+  // tests can tell a runaway-rate fallback from a routine over-threshold propose.
+  | { status: 'proposed:breaker_tripped'; ops_count: number; new_blocks: number }
   | { status: 'deferred'; ops_count: number; new_blocks: number }
   | { status: 'skipped:empty_patch' }
   | { status: 'skipped:not_found' }
@@ -243,6 +262,70 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     return { status: 'proposed', ops_count: summary.ops_count, new_blocks: summary.new_blocks };
   }
 
+  // YUK-358 (ADR-0040 决定1) — A-track auto-apply rate breaker. Past the
+  // count/user_verified gate the patch is mutator-eligible; now check the
+  // per-unit-time auto-apply rate before the actual apply. Two-layer guard
+  // (mirrors stream-composer R5):
+  //   ok      → auto-apply (normal A-track)
+  //   warned  → STILL auto-apply, just emit one observe-only event (零干预只告知)
+  //   tripped → divert to propose (退回人审 — NOT block; the user can still accept
+  //             the inbox proposal). breaker_tripped:true stamps the fallback.
+  const breakerNow = params.now ?? new Date();
+  const recentCount = params.countRecentAutoApplies
+    ? await params.countRecentAutoApplies({ now: breakerNow })
+    : await countRecentAutoApplies(db, { now: breakerNow });
+  const breaker = checkAutoApplyBreaker({ recentCount });
+
+  if (breaker.status === 'tripped') {
+    if (onPropose) {
+      await onPropose({
+        artifactId,
+        patch,
+        summary,
+        triggerEventId,
+      });
+    } else {
+      await writeNoteRefineProposal({
+        db,
+        artifactId,
+        patch,
+        summary,
+        triggerEventId,
+        taskResult,
+        breakerTripped: true,
+      });
+    }
+    return {
+      status: 'proposed:breaker_tripped',
+      ops_count: summary.ops_count,
+      new_blocks: summary.new_blocks,
+    };
+  }
+
+  if (breaker.status === 'warned') {
+    // 零干预只告知：emit one observability event so the owner can watch the rate
+    // climbing, but DO NOT change behaviour — the apply proceeds below. This is
+    // the warn water-mark layer of the two-layer guard.
+    await writeEvent(db, {
+      id: createId(),
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: 'note_refine',
+      action: 'experimental:note_refine_autoapply_warned',
+      subject_kind: 'artifact',
+      subject_id: artifactId,
+      outcome: 'success',
+      payload: {
+        artifact_id: artifactId,
+        recent_count: recentCount,
+        ops_count: summary.ops_count,
+        new_blocks: summary.new_blocks,
+      },
+      caused_by_event_id: triggerEventId ?? null,
+      created_at: breakerNow,
+    });
+  }
+
   const applyResult = await enqueueOrApplyNoteRefinePatch({
     db,
     artifactId,
@@ -276,6 +359,7 @@ export function buildNoteRefineHandler(
   const runTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
   const gate = deps.gate ?? defaultGate;
   const onPropose = deps.onPropose;
+  const countRecentAutoAppliesOverride = deps.countRecentAutoApplies;
   return async (jobs) => {
     for (const job of jobs) {
       const data = job.data;
@@ -291,6 +375,7 @@ export function buildNoteRefineHandler(
           runTaskFn,
           gate,
           onPropose,
+          countRecentAutoApplies: countRecentAutoAppliesOverride,
         });
         console.log(`[note_refine] ${data.artifact_id} → ${result.status}`);
       } catch (err) {
