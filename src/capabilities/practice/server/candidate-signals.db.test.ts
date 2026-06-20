@@ -1260,4 +1260,51 @@ describe('A4 grid→KLP selection wiring (YUK-436, THETA_GRID_ENABLED)', () => {
     expect(sig.scoreKind).toBe('klp'); // cold-start Gaussian KLP, NOT klp_grid (no grid present)
     expect(sig.mfiScore).toBeCloseTo(klpScore(0.3, 0.85, 0.5), 12);
   });
+
+  it('flag ON: θ_global≠0 — domain global folds into effective θ̂ AND is passed to klpScoreFromGrid (restore sign pinned end-to-end)', async () => {
+    // HIERARCHICAL_ELO_ENABLED is live (true) and NOT mocked here, so a KC with a
+    // resolvable domain + an ability_global anchor row yields θ_global≠0. This pins the
+    // `thetaGlobal = effective − θ_KC` restore (candidate-signals.ts) end-to-end — the
+    // other A4 db tests run at θ_global=0 (orphan KCs), so this is the only e2e guard
+    // against a sign/translation error in the restore reaching klpScoreFromGrid.
+    gridFlag.value = true;
+    const grid = shapedPosterior();
+    await seedKnowledge('kc-grid-global', 'wenyan'); // resolvable domain for getEffectiveDomain
+    const now = new Date();
+    await db.insert(mastery_state).values({
+      id: newId(),
+      subject_kind: 'ability_global', // θ_global anchor row for domain 'wenyan'
+      subject_id: 'wenyan',
+      theta_hat: 0.7,
+      evidence_count: 5,
+      success_count: 4,
+      fail_count: 1,
+      last_outcome_at: now,
+      theta_precision: 2,
+      last_theta_delta: null,
+      updated_at: now,
+    });
+    await seedMasteryWithGrid('kc-grid-global', 0.3, 0.5, 2, grid); // θ_KC offset 0.3
+    await seedCalibration('q-grid-global', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-grid-global',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-grid-global'],
+        difficulty: 3,
+      },
+    ]);
+
+    // effective θ̂ = θ_global(0.7) + θ_KC(0.3) = 1.0; restored θ_global = 1.0 − 0.3 = 0.7.
+    expect(sig.thetaHat).toBeCloseTo(1.0, 10);
+    expect(sig.scoreKind).toBe('klp_grid');
+    // Score uses the NON-ZERO θ_global (0.7) — the exact value the restore must recover.
+    expect(sig.mfiScore).toBeCloseTo(klpScoreFromGrid(grid, 0.85, 0.7), 12);
+    // Non-vacuous: a θ_global=0 computation gives a DIFFERENT score, so this proves the
+    // restored 0.7 (not 0) actually flowed into klpScoreFromGrid.
+    expect(sig.mfiScore).not.toBeCloseTo(klpScoreFromGrid(grid, 0.85, 0), 6);
+  });
 });
