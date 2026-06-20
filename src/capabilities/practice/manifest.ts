@@ -64,6 +64,25 @@ export const practiceCapability = defineCapability({
         path: '/api/review/sessions/[id]/reopen',
         load: () => import('./api/session-reopen').then((m) => m.POST),
       },
+      // YUK-468 cold-start inc-B — placement probe 会话 API (dark-ship, gated on
+      // PLACEMENT_PROBE_ENABLED). start → first question; [id]/next → terminate-check + next
+      // question; [id]/end → complete/abandon. Answers go through /api/review/submit with the
+      // probe's session_id (shared judge + θ̂ path, no separate placement submit).
+      {
+        method: 'POST',
+        path: '/api/placement/start',
+        load: () => import('./api/placement-start').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/placement/[id]/next',
+        load: () => import('./api/placement-next').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/placement/[id]/end',
+        load: () => import('./api/placement-end').then((m) => m.POST),
+      },
       // YUK-402 inc-4a — owner manual gate (draft 池审核面)后端。list draft pool +
       // enable (normal B5 verify→promote) + force-enable (override + reason 留痕)。
       // gate op = verifyAndPromote (src/server/quiz/verify-and-promote.ts)；/api/*
