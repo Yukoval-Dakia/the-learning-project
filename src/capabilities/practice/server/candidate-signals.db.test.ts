@@ -52,6 +52,21 @@ vi.mock('@/capabilities/practice/server/selection-constants', async (importOrigi
   };
 });
 
+// A4 inc-2 (YUK-436) — THETA_GRID_ENABLED is a module-level const in @/core/theta-grid
+// (real default false, dark-ship). Same getter-mock pattern: control the flag explicitly
+// so both directions stay covered; every other theta-grid export (klpScoreFromGrid,
+// gridUpdate, uniformPrior, …) stays REAL via importOriginal.
+const gridFlag = { value: false };
+vi.mock('@/core/theta-grid', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/theta-grid')>();
+  return {
+    ...actual,
+    get THETA_GRID_ENABLED() {
+      return gridFlag.value;
+    },
+  };
+});
+
 import {
   type CandidateInput,
   collectCandidateSignals,
@@ -59,6 +74,12 @@ import {
 import { newId } from '@/core/ids';
 import { klpScore, mfiScore } from '@/core/selection-signals';
 import { difficultyToLogitB } from '@/core/theta';
+import {
+  type ThetaGridPosterior,
+  gridUpdate,
+  klpScoreFromGrid,
+  uniformPrior,
+} from '@/core/theta-grid';
 import {
   item_calibration,
   item_family_calibration,
@@ -75,6 +96,7 @@ const db = testDb();
 beforeEach(() => {
   earlyKlpFlag.value = false; // restore dark-ship default before every test
   recurrenceFlag.value = false; // restore misconceptionRecurrence dark-ship default
+  gridFlag.value = false; // restore THETA_GRID dark-ship default (A4 inc-2)
   return resetDb();
 });
 
@@ -1089,5 +1111,153 @@ describe('collectCandidateSignals — misconceptionRecurrence (P2 D2 / A8)', () 
     expect(after[0].theta_precision).toBe(before[0].theta_precision);
     expect(after[0].evidence_count).toBe(before[0].evidence_count);
     expect(after[0].theta_hat).toBeCloseTo(0.42, 10);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A4 inc-2 (YUK-436) — grid→KLP 选题接线（flag-gated dark-ship）。
+//
+// 当某 KC 有网格后验（theta_grid_json）且 THETA_GRID_ENABLED ON 时，候选信息分改用
+// klpScoreFromGrid（对实际离散后验加权 Fisher），优先于点 MFI / Gaussian-KLP。flag OFF
+// （默认）即便行里已有 shadow 网格也不读 → 选题评分逐位等同今天（bitwise 回归锚）。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('A4 grid→KLP selection wiring (YUK-436, THETA_GRID_ENABLED)', () => {
+  // Seed a mastery_state row carrying an explicit shadow grid posterior + θ̂/precision/evidence.
+  async function seedMasteryWithGrid(
+    knowledgeId: string,
+    thetaHat: number,
+    thetaPrecision: number,
+    evidenceCount: number,
+    grid: ThetaGridPosterior,
+  ): Promise<void> {
+    const now = new Date();
+    await db.insert(mastery_state).values({
+      id: newId(),
+      subject_kind: 'knowledge',
+      subject_id: knowledgeId,
+      theta_hat: thetaHat,
+      evidence_count: evidenceCount,
+      success_count: Math.max(evidenceCount - 1, 0),
+      fail_count: 0,
+      last_outcome_at: now,
+      theta_precision: thetaPrecision,
+      last_theta_delta: null,
+      theta_grid_json: grid,
+      updated_at: now,
+    });
+  }
+
+  // A non-uniform posterior (a few sequential folds) so its weighted-Fisher differs from
+  // both the point MFI at θ̂ and the Gaussian-KLP reconstruction — makes the assertions
+  // non-vacuous. θ_global = 0 in these tests (no `knowledge` row → effectiveThetaForKc
+  // returns θ_KC, anchor 0).
+  function shapedPosterior(): ThetaGridPosterior {
+    let p = uniformPrior();
+    for (let i = 0; i < 3; i++) p = gridUpdate(p, -1.2, 1); // correct answers at a hard b' shift mass up
+    return p;
+  }
+
+  it('flag ON: KC with a grid posterior is scored by klpScoreFromGrid, scoreKind=klp_grid', async () => {
+    gridFlag.value = true;
+    const grid = shapedPosterior();
+    await seedMasteryWithGrid('kc-grid-on', 0.3, 0.5, 2, grid);
+    await seedCalibration('q-grid-on', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-grid-on',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-grid-on'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.scoreKind).toBe('klp_grid');
+    // Score is the posterior-weighted Fisher over the ACTUAL grid (θ_global=0).
+    expect(sig.mfiScore).toBeCloseTo(klpScoreFromGrid(grid, 0.85, 0), 12);
+    // Non-vacuous: distinct from BOTH point MFI and the Gaussian-KLP reconstruction.
+    expect(sig.mfiScore).not.toBeCloseTo(mfiScore(0.3, 0.85), 6);
+    expect(sig.mfiScore).not.toBeCloseTo(klpScore(0.3, 0.85, 0.5), 6);
+  });
+
+  it('flag ON: grid posterior takes PRECEDENCE over cold-start Gaussian KLP (both flags on)', async () => {
+    gridFlag.value = true;
+    earlyKlpFlag.value = true; // cold-start KC would be Gaussian-KLP, but grid wins
+    const grid = shapedPosterior();
+    await seedMasteryWithGrid('kc-grid-prec', 0.3, 0.5, 1, grid); // evidence 1 < EARLY_KLP_N
+    await seedCalibration('q-grid-prec', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-grid-prec',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-grid-prec'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.scoreKind).toBe('klp_grid');
+    expect(sig.mfiScore).toBeCloseTo(klpScoreFromGrid(grid, 0.85, 0), 12);
+  });
+
+  it('flag OFF (default): a present grid posterior is IGNORED → point MFI, scoreKind=mfi (bitwise anchor)', async () => {
+    // gridFlag stays false (beforeEach). Grid posterior IS in the row, but must not be read.
+    const grid = shapedPosterior();
+    await seedMasteryWithGrid('kc-grid-off', 0.3, 0.5, 10, grid); // warm → point MFI baseline
+    await seedCalibration('q-grid-off', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-grid-off',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-grid-off'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.scoreKind).toBe('mfi');
+    expect(sig.mfiScore).toBe(mfiScore(0.3, 0.85)); // byte-identical to today
+    expect(sig.scoreKind).not.toBe('klp_grid');
+  });
+
+  it('flag ON but NO grid posterior on the row → falls back to the Gaussian path (scoreKind!=klp_grid)', async () => {
+    gridFlag.value = true;
+    earlyKlpFlag.value = true;
+    // No grid (seedMasteryWithEvidence-equivalent: theta_grid_json null) → grid branch skipped.
+    const now = new Date();
+    await db.insert(mastery_state).values({
+      id: newId(),
+      subject_kind: 'knowledge',
+      subject_id: 'kc-grid-null',
+      theta_hat: 0.3,
+      evidence_count: 2,
+      success_count: 1,
+      fail_count: 0,
+      last_outcome_at: now,
+      theta_precision: 0.5,
+      last_theta_delta: null,
+      updated_at: now,
+    });
+    await seedCalibration('q-grid-null', 0.85);
+
+    const [sig] = await collectCandidateSignals(db, [
+      {
+        refKind: 'question',
+        refId: 'q-grid-null',
+        role: 'diagnostic',
+        kind: 'short_answer',
+        knowledgeIds: ['kc-grid-null'],
+        difficulty: 3,
+      },
+    ]);
+
+    expect(sig.scoreKind).toBe('klp'); // cold-start Gaussian KLP, NOT klp_grid (no grid present)
+    expect(sig.mfiScore).toBeCloseTo(klpScore(0.3, 0.85, 0.5), 12);
   });
 });

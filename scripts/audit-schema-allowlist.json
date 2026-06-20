@@ -443,7 +443,7 @@
     }
   },
   "mastery_state.theta_grid_json": {
-    "reason": "A4 (YUK-436) 离散网格贝叶斯 θ_KC offset 后验 — inc-1 是 PURE-ADDITIVE SHADOW：写路径已存在（THETA_GRID_ENABLED=true 且单 KC 题时由 updateThetaForAttempt 尾部 shadow-write），但**无 inc-1 live reader**（不喂 p(L)/effectiveB/选题；theta_hat 仍是 SoT）。校准验证后才在 inc-2 grid→SoT cut-over 接读侧（必须排在 A3 之后）。allowlist 诚实记录「有写无读」状态——写侧验证由 state.db.test.ts 的 flag-OFF bit-identical + flag-ON shadow 断言守。",
+    "reason": "A4 (YUK-436) 离散网格贝叶斯 θ_KC offset 后验 — inc-1 是 PURE-ADDITIVE SHADOW：写路径已存在（THETA_GRID_ENABLED=true 且单 KC 题时由 updateThetaForAttempt 尾部 shadow-write）。inc-2 读侧已接线（candidate-signals.ts → klpScoreFromGrid 选题），但**仍 flag-gated dark-ship**（THETA_GRID_ENABLED 默认 false → 选题永不读它，theta_hat 仍是 SoT，选题评分逐位等同今天）。故**尚无 LIVE reader**——真正的 grid→SoT cut-over = 校准验证（audit:calibration verdict）后翻 THETA_GRID_ENABLED，那时本 entry 解除。写侧 + 读侧（flag-OFF byte-identical + flag-ON klp_grid）双向均有单测守（state.db.test.ts + candidate-signals.db.test.ts）。",
     "resolves_when": {
       "kind": "phase",
       "ref": "A4 inc-2 grid→SoT cut-over (YUK-436)",

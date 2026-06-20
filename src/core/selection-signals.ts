@@ -36,10 +36,14 @@ export interface SelectionCandidateSignal {
   /**
    * A3 (YUK-435) — 哪种信息准则算出了 `mfiScore` 字段（provenance）。
    *   'mfi' — 点 MFI（fisherInformation(θ̂, b)）。warm KC / flag off 的默认。
-   *   'klp' — KLP 后验加权 Fisher 网格积分（仅 EARLY_KLP_ENABLED && 冷启 KC）。
+   *   'klp' — KLP 后验加权 Fisher 网格积分，**Gaussian 近似**（θ ~ Normal(θ̂, thetaSe(precision))；
+   *           仅 EARLY_KLP_ENABLED && 冷启 KC）。
+   *   'klp_grid' — A4 inc-2 (YUK-436)：KLP 直接对**实际网格后验**（theta_grid_json）加权 Fisher
+   *           积分（klpScoreFromGrid），免去 Gaussian 重构。仅 THETA_GRID_ENABLED && 该 KC 有
+   *           网格后验时（dark-ship，默认 flag off → 永不取此值）。优先于 'mfi'/'klp'。
    * 缺省（recall-locked / 缺 θ̂ 或 b / 卷候选 → 无评分）时为 undefined。
    */
-  scoreKind?: 'mfi' | 'klp';
+  scoreKind?: 'mfi' | 'klp' | 'klp_grid';
 
   // ───────────────────────────────────────────────────────────────────────────
   // #52 / ADR-0042 编排档2 amendment（GPT 研究稿 §9.2）——选题不止 MFI 中心。
