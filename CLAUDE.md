@@ -72,6 +72,7 @@ pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-l
 pnpm audit:profile    # 检查所有 SubjectProfile 是否通过 schema + capability registry 验证
 pnpm audit:draft-status # 检查每个 question INSERT 都显式 set draft_status 或在 allowlist（防容器题漏进练习池）
 pnpm audit:relations  # KG 死边反向审计：每个 relation_type 是否有特化下游消费（诊断/推荐/复习），report-only
+pnpm audit:calibration # READ-ONLY V-A1-fwd retro-validation of live A1 SRT（forward-AUC θ̂ replay），report-only，永不翻 flag
 ```
 
 `pnpm audit:schema` 扫描 `src/db/schema.ts` 所有业务字段，验证每个都有 INSERT 或 UPDATE write path。例外字段须在 `scripts/audit-schema-allowlist.json` 显式声明 `reason` + `resolves_when`，其中 `resolves_when` 必须是 `{ "kind": "pr" | "phase" | "manual", "ref": string, "expected_by": "YYYY-MM-DD" }`。`kind: "pr"` 的 `ref` 写 GitHub PR 号或 `#N`，若本地 git history 已包含该 PR 会 fail；`kind: "phase"` 的 `ref` 要能匹配 `docs/superpowers/status.md` 的已 ship 行；`kind: "manual"` 只用于无法机器判定的历史解除条件，仍受 `expected_by` 到期约束。引入新表 / 字段时，要么实现 write path，要么加入 allowlist 并标注可检查的解除条件。详见 `docs/design/2026-05-15-data-assumptions.md`。
