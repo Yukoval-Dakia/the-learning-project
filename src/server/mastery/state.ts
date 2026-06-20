@@ -63,6 +63,11 @@ export interface MasteryStateRow {
   // YUK-361 Phase 2 — 累积 Fisher information（SE 从此派生，见 thetaSe）+ 上次 Δθ̂。
   theta_precision: number;
   last_theta_delta: number | null;
+  // A4 inc-2 (YUK-436) — the shadow grid-Bayes θ_KC offset posterior (null until the
+  // dark-ship write path THETA_GRID_ENABLED is on). Surfaced here so the selection read
+  // path (candidate-signals) can feed it to klpScoreFromGrid when wired. ADDITIVE: the
+  // many existing MasteryStateRow consumers ignore it; it stays NULL on the live path.
+  theta_grid_json: ThetaGridPosterior | null;
 }
 
 export interface UpsertMasteryStateInput {
@@ -166,6 +171,7 @@ export async function getMasteryState(
     last_outcome_at: row.last_outcome_at ?? null,
     theta_precision: row.theta_precision,
     last_theta_delta: row.last_theta_delta ?? null,
+    theta_grid_json: (row.theta_grid_json as ThetaGridPosterior | null) ?? null,
   };
 }
 

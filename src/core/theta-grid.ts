@@ -36,7 +36,7 @@
 //   single-KC calibration. The wiring seam (state.ts) enforces the single-KC gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { expectedScore } from './theta';
+import { expectedScore, fisherInformation } from './theta';
 
 /**
  * Master flag for the discrete grid-Bayes θ_KC posterior. **Default false (dark-ship).**
@@ -198,4 +198,53 @@ export function posteriorVar(posterior: ThetaGridPosterior): number {
  */
 export function posteriorSe(posterior: ThetaGridPosterior): number {
   return Math.sqrt(posteriorVar(posterior));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A4 inc-2 (YUK-436) — grid→selection wiring: posterior-weighted Fisher information
+// over the ACTUAL discrete grid posterior (the calibrated payoff over the Gaussian
+// approximation in selection-signals.klpScore).
+//
+// selection-signals.klpScore integrates Fisher over a Gaussian θ ~ Normal(θ̂, SE²)
+// reconstructed from the Elo `theta_precision` — an APPROXIMATION of the posterior. The
+// grid already IS the posterior (a length-GRID_POINTS pmf over the θ_KC offset), so when
+// it is available we can take the EXACT posterior-weighted Fisher integral instead of
+// re-approximating. This is the A4 "免费 Fisher 选题" payoff named in the issue.
+//
+// DARK-SHIP: this function is PURE + always callable, but its ONLY caller
+// (candidate-signals.ts) is gated behind THETA_GRID_ENABLED (default false), so it is a
+// complete NO-OP on the live selection path until the grid→SoT cut-over is flipped after
+// calibration validation. Wiring the reader now (flag off) does not change any live score.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Posterior-weighted Fisher information over the grid posterior of the θ_KC OFFSET.
+ *
+ *   score = Σ_i probs_i · fisherInformation(θ_global + GRID_THETA_i, b)
+ *
+ * The grid runs over the OFFSET; the effective ability at grid point i is
+ * `θ_global + GRID_THETA_i` (the same anchor the write-path likelihood uses via
+ * b' = b − θ_global — see binaryLikelihood). `b` is the item difficulty (LOCKED anchor,
+ * never fit). `probs` already sum to 1 (gridUpdate renormalises), so this is a true
+ * expectation — no extra normalisation needed.
+ *
+ * Relationship to the Gaussian klpScore (selection-signals.ts):
+ *   - a posterior concentrated on one offset reduces to point Fisher at that effective
+ *     ability (== mfiScore when that point is θ̂);
+ *   - a spread posterior down-weights the peak with the surrounding lower-information
+ *     offsets ⇒ more conservative, exactly the KLP intent — but driven by the REAL
+ *     posterior shape rather than a Gaussian(θ̂, thetaSe) stand-in.
+ *
+ * Range: fisherInformation ∈ (0, 0.25] and a convex combination stays in (0, 0.25].
+ * Pure, zero IO, shares the single `fisherInformation` truth with mfiScore/klpScore.
+ */
+export function klpScoreFromGrid(
+  posterior: ThetaGridPosterior,
+  b: number,
+  thetaGlobal: number,
+): number {
+  return posterior.probs.reduce(
+    (acc, mass, i) => acc + mass * fisherInformation(thetaGlobal + GRID_THETA[i], b),
+    0,
+  );
 }
