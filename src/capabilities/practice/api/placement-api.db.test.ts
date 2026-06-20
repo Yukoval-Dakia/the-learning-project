@@ -169,6 +169,21 @@ describe('placement API flow', () => {
     expect(body.question?.questionId).toBe('q-hard');
   });
 
+  it('next counts DISTINCT answered questions (duplicate events on one question count once)', async () => {
+    await seedKnowledge('kc1');
+    await seedQuestion('q-easy', ['kc1'], 3);
+    await seedQuestion('q-hard', ['kc1'], 5);
+    const start = await (await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }))).json();
+    // two events for the SAME question (retry / double-submit) must not inflate the count.
+    await seedAnswer(start.sessionId, 'q-easy');
+    await seedAnswer(start.sessionId, 'q-easy');
+
+    const res = await nextPlacement(jsonReq({ knowledgeIds: ['kc1'] }), { id: start.sessionId });
+    const body = await res.json();
+    expect(body.answeredCount).toBe(1); // distinct, not 2
+    expect(body.question?.questionId).toBe('q-hard');
+  });
+
   it('next reports done(reason=cap) once the cap is reached', async () => {
     await seedKnowledge('kc1');
     for (let i = 0; i < 10; i++) await seedQuestion(`q${i}`, ['kc1'], 3);

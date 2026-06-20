@@ -26,8 +26,9 @@ import {
 const NextBody = z.object({
   /** the goal-subgraph KC set this probe walks (same set passed to /start). */
   knowledgeIds: z.array(z.string().min(1)).min(1),
-  /** hard count cap override; defaults to PLACEMENT_DEFAULT_CAP (§6 Q1 = 8). */
-  cap: z.number().int().min(1).optional(),
+  /** hard count cap override; defaults to PLACEMENT_DEFAULT_CAP (§6 Q1 = 8). Upper-bounded so
+   * the anti-fatigue ceiling can't be trivially disabled by a buggy/oversized client value. */
+  cap: z.number().int().min(1).max(50).optional(),
   /** optional θ SE early-stop threshold; null/omitted → cap-only termination. */
   seThreshold: z.number().positive().nullable().optional(),
 });
@@ -83,8 +84,12 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           inArray(event.action, ['review', 'attempt']),
         ),
       );
-    const answeredCount = answeredRows.length;
+    // DISTINCT answered questions: the cap counts QUESTIONS, not raw events. A question may emit
+    // multiple review/attempt events (paper retry, client double-submit), which must NOT inflate
+    // the count and prematurely terminate the probe. answeredIds drives both the cap evaluation
+    // and the reported answeredCount.
     const answeredIds = Array.from(new Set(answeredRows.map((r) => r.subjectId)));
+    const answeredCount = answeredIds.length;
 
     // Per-KC θ precision (cold KC with no mastery_state row → precision 1, the weak-prior cold
     // value the engine uses). Feeds the SE-convergence early stop. Fan out the independent
