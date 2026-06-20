@@ -598,5 +598,53 @@
         "notes": "响应为 CopilotSummary JSON"
       }
     ]
+  },
+  {
+    "path": "/api/placement/start",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "启动 placement probe 会话（冷启 inc-B），返回首题",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "goalId": null,
+          "knowledgeIds": ["kc-1"]
+        },
+        "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement/:id/next",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "placement probe 取下一题 + 终止判定",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "knowledgeIds": ["kc-1"],
+          "cap": 8,
+          "seThreshold": null
+        },
+        "notes": "答题经 /api/review/submit（session_id=本 probe）后调。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement/:id/end",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "结束 placement probe（completed | abandoned）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "status": "completed"
+        },
+        "notes": "sendBeacon 兼容：非 JSON body 默认 completed"
+      }
+    ]
   }
 ]

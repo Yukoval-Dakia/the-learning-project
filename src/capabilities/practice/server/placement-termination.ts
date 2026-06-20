@@ -13,6 +13,13 @@
 
 import { thetaSe } from '@/core/theta';
 
+/**
+ * Default hard count cap for a placement probe (§6 Q1, owner-locked: fixed 8 questions per
+ * subject — NOT dynamic). Owner-tunable module const, same class as the other selection
+ * weights; the API handler uses it when the caller doesn't override `cap`.
+ */
+export const PLACEMENT_DEFAULT_CAP = 8;
+
 export interface PlacementTerminationInput {
   /** number of questions answered so far in this probe. */
   answeredCount: number;
