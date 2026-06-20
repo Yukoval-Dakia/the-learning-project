@@ -436,3 +436,86 @@ describe('countWriteHits table-awareness (YUK-166)', () => {
     expect(countWriteHits('cost_ledger', 'currency', idx).insert_files).toBe(1);
   });
 });
+
+// YUK-166 follow-up: the chain parser must understand drizzle upsert
+// (`.insert(t).values(...).onConflictDoUpdate({ set: {...} })`), bare-identifier
+// `.values(ident)`, and must bound the `.values(`/`.onConflictDoUpdate(` search to
+// the CURRENT statement so a later insert does not bleed into an earlier one.
+describe('extractWriteStatements upsert + bare-ident + statement bounding (YUK-166)', () => {
+  // F1: onConflictDoUpdate({ set: {...} }) columns are UPDATE write paths.
+  it('attributes onConflictDoUpdate set-object keys as UPDATE writes on the inserted table', () => {
+    const src = 'db.insert(t).values({ a: 1 }).onConflictDoUpdate({ target: t.a, set: { b: 2 } });';
+    const stmts = extractWriteStatements(src);
+    // The inline INSERT payload still carries `a`.
+    expect(stmts).toContainEqual({ kind: 'insert', table: 't', payload: '{ a: 1 }' });
+    // The set-object surfaces as an UPDATE statement scoped to `t` carrying `b`.
+    const upd = stmts.find((s) => s.kind === 'update' && s.table === 't');
+    expect(upd).toBeDefined();
+    expect(upd?.payload).toContain('b');
+    // Field-level: b is detected as an UPDATE write on t (FAILS on pre-fix code).
+    const idx = new Map([['f.ts', stmts]]);
+    expect(countWriteHits('t', 'b', idx)).toEqual({ insert_files: 0, update_files: 1 });
+    expect(countWriteHits('t', 'a', idx)).toEqual({ insert_files: 1, update_files: 0 });
+  });
+
+  // F2: `.values(ident)` is opaque; must NOT swallow the chained onConflictDoUpdate
+  // object as the insert payload (which would falsely satisfy unrelated columns).
+  it('treats .values(bareIdentifier) as an opaque insert and does not misattribute the onConflictDoUpdate set object', () => {
+    const src =
+      'db.insert(t).values(row).onConflictDoUpdate({ target: t.scope_key, set: { x: row.x } });';
+    const stmts = extractWriteStatements(src);
+    // `target`/`scope_key` must NOT appear as INSERT-payload columns of t.
+    const ins = stmts.find((s) => s.kind === 'insert' && s.table === 't');
+    expect(ins).toBeDefined();
+    expect(ins?.payload).not.toContain('target');
+    expect(ins?.payload).not.toContain('scope_key');
+    const idx = new Map([['f.ts', stmts]]);
+    // x is an UPDATE write via set, never a (mis)counted INSERT write.
+    expect(countWriteHits('t', 'x', idx).insert_files).toBe(0);
+    expect(countWriteHits('t', 'x', idx).update_files).toBe(1);
+    // scope_key (a target ref, not a real column write) is not satisfied at all.
+    expect(countWriteHits('t', 'scope_key', idx)).toEqual({
+      insert_files: 0,
+      update_files: 0,
+    });
+  });
+
+  // F3: a head insert with no .values in its own statement must not grab a later
+  // statement's .values payload.
+  it('bounds the .values search to the current statement so a later insert does not bleed in', () => {
+    const src = 'db.insert(tableA).returning(); db.insert(tableB).values({ c: 1 });';
+    const stmts = extractWriteStatements(src);
+    // tableA has no .values of its own → no INSERT statement.
+    const aIns = stmts.filter((s) => s.kind === 'insert' && s.table === 'tableA');
+    expect(aIns).toEqual([]);
+    // tableB carries c.
+    expect(stmts).toContainEqual({ kind: 'insert', table: 'tableB', payload: '{ c: 1 }' });
+    const idx = new Map([['f.ts', stmts]]);
+    // c attributes to tableB only, never tableA (FAILS on pre-fix code).
+    expect(countWriteHits('tableA', 'c', idx)).toEqual({ insert_files: 0, update_files: 0 });
+    expect(countWriteHits('tableB', 'c', idx).insert_files).toBe(1);
+  });
+
+  // F1 with bare-ident insert: the real brief.ts shape — values(row) opaque, set captured.
+  it('handles values(ident) + onConflictDoUpdate set as an opaque insert plus a real update', () => {
+    const src = `await db
+      .insert(memory_brief_note)
+      .values(row)
+      .onConflictDoUpdate({
+        target: memory_brief_note.scope_key,
+        set: { subject_id: row.subject_id, recent_week_md: row.recent_week_md },
+      });`;
+    const stmts = extractWriteStatements(src);
+    const idx = new Map([['brief.ts', stmts]]);
+    // subject_id / recent_week_md are UPDATE writes (via set), not INSERT writes.
+    expect(countWriteHits('memory_brief_note', 'subject_id', idx).update_files).toBe(1);
+    expect(countWriteHits('memory_brief_note', 'recent_week_md', idx).update_files).toBe(1);
+    // They are NOT falsely counted as INSERT columns of the opaque values(row).
+    expect(countWriteHits('memory_brief_note', 'subject_id', idx).insert_files).toBe(0);
+    // `target` (a column ref, not a written column) is never a write path.
+    expect(countWriteHits('memory_brief_note', 'target', idx)).toEqual({
+      insert_files: 0,
+      update_files: 0,
+    });
+  });
+});
