@@ -1,7 +1,7 @@
 // V-A1-fwd — the keystone retro-validation gate for A1 SRT (YUK-461).
 //
-// For each KC, replay the per-KC θ̂ trajectory twice (SRT on vs off) over the SAME
-// time-ordered attempt list; for each forward-scorable RT-bearing single-KC attempt t,
+// Replay the FULL ordered attempt list twice (SRT on vs off) so θ_global accumulates across
+// every KC of a domain (YUK-466); for each forward-scorable RT-bearing single-KC attempt t,
 // predict outcome_t from the PRE-attempt θ̂_{t−1} via the 1PL P = σ(θ̂_{t−1} − b_effective);
 // compute forward-AUC per variant; ΔAUC = AUC_SRT − AUC_binary; PASS iff ΔAUC > 0.02 AND
 // a paired cluster-bootstrap CI on ΔAUC excludes 0. If the RT-bearing evidence base is
@@ -118,11 +118,23 @@ export interface AssembledClusters {
 /**
  * Assemble per-KC forward-prediction clusters (the no-leakage core, M4 split).
  *
- * For each KC's time-ordered attempt list: replay BOTH variants over the SAME list (full
- * multi-KC update each, so the trajectory folds in every attempt that touches the KC),
- * then keep ONLY the steps that are forward-scorable (scoredKnowledgeId !== null) AND
- * RT-bearing (hasRt). RT-less steps yield IDENTICAL predictions under both variants → 0
- * ΔAUC contribution → excluded from the gate's pool. One cluster per KC.
+ * ⚠ θ_GLOBAL FIDELITY (YUK-466): takes the FULL time-ordered attempt list (every KC
+ *   interleaved), NOT a per-KC partition. Production θ̂ = θ_KC + θ_global(domain), and
+ *   θ_global drifts once per touched DOMAIN per attempt (replay.ts:207-227 / state.ts:682-
+ *   735, ELO_K_GLOBAL=0.048) — i.e. it is shared across every KC in a domain. Replaying
+ *   each KC's attempts in isolation would let that KC's θ_global see ONLY its own attempts,
+ *   missing the drift contributed by sibling-KC attempts in the same domain → the forward
+ *   predictor's θ̂ would diverge from production. Replaying the WHOLE ordered list once per
+ *   variant accumulates θ_global correctly across all KCs, then we bucket the forward-
+ *   scorable steps by scoredKnowledgeId. (For ΔAUC = AUC_SRT − AUC_binary this is a 2nd-
+ *   order correction since both variants share θ_global, but the ABSOLUTE forward-AUC
+ *   fidelity requires it — and the verdict must be trustworthy before it is load-bearing.)
+ *
+ * Replay BOTH variants over the SAME full list (full multi-KC update each), then keep ONLY
+ * the steps that are forward-scorable (scoredKnowledgeId !== null, i.e. single-KC question)
+ * AND RT-bearing (hasRt). RT-less steps yield IDENTICAL predictions under both variants → 0
+ * ΔAUC contribution → excluded from the gate's pool. One cluster per scored KC, in order of
+ * first scored appearance in the timeline.
  *
  * ⚠ OCR finding 8: this THIN variant DISCARDS `nTotalScorable` (the count of single-KC
  *   forward-scorable steps INCLUDING the RT-less ones). A caller that pairs this with
@@ -133,51 +145,60 @@ export interface AssembledClusters {
  *   RT-less context count is genuinely irrelevant (e.g. unit tests that assert on the
  *   gate's pooled decision, not on nTotal).
  */
-export function assembleForwardClusters(
-  attemptsByKc: Map<string, ReplayAttempt[]>,
-): ClusterForwardPreds[] {
-  return assembleForwardClustersDetailed(attemptsByKc).clusters;
+export function assembleForwardClusters(orderedAttempts: ReplayAttempt[]): ClusterForwardPreds[] {
+  return assembleForwardClustersDetailed(orderedAttempts).clusters;
 }
 
 /** Same as assembleForwardClusters, also returning the total scorable-step count. */
 export function assembleForwardClustersDetailed(
-  attemptsByKc: Map<string, ReplayAttempt[]>,
+  orderedAttempts: ReplayAttempt[],
 ): AssembledClusters {
-  const clusters: ClusterForwardPreds[] = [];
+  // Replay the WHOLE ordered list once per variant — θ_global accumulates across every KC
+  // in a domain (YUK-466). The engine emits one step per attempt, in list order.
+  const srtRun = replayTheta(orderedAttempts, { srtEnabled: true });
+  const binaryRun = replayTheta(orderedAttempts, { srtEnabled: false });
+  // OCR finding 7: the index-alignment below assumes both runs produce the SAME number of
+  // steps (they replay the SAME attempt list, so they must). Assert it so a future
+  // divergence in replayTheta fails LOUD here rather than silently mis-pairing srt/binary
+  // scores (which would corrupt every ΔAUC without any signal).
+  if (srtRun.steps.length !== binaryRun.steps.length) {
+    throw new Error(
+      `assembleForwardClusters: srt/binary step count mismatch (${srtRun.steps.length} vs ${binaryRun.steps.length}) — replay divergence`,
+    );
+  }
+
+  // Bucket forward-scorable RT-bearing steps by scoredKnowledgeId (one cluster per KC).
+  // Map insertion order = order of first scored appearance → deterministic cluster order.
+  const byKc = new Map<
+    string,
+    { scoresSrt: number[]; scoresBinary: number[]; labels: (0 | 1)[] }
+  >();
   let nTotalScorable = 0;
 
-  for (const [kc, attempts] of attemptsByKc) {
-    const srtRun = replayTheta(attempts, { srtEnabled: true });
-    const binaryRun = replayTheta(attempts, { srtEnabled: false });
-    // OCR finding 7: the index-alignment below assumes both runs produce the SAME number
-    // of steps (they replay the SAME attempt list, so they must). Assert it so a future
-    // divergence in replayTheta fails LOUD here rather than silently mis-pairing
-    // srt/binary scores (which would corrupt every ΔAUC for this KC without any signal).
-    if (srtRun.steps.length !== binaryRun.steps.length) {
-      throw new Error(
-        `assembleForwardClusters: srt/binary step count mismatch for KC ${kc} ` +
-          `(${srtRun.steps.length} vs ${binaryRun.steps.length}) — replay divergence`,
-      );
+  for (let i = 0; i < srtRun.steps.length; i++) {
+    const s = srtRun.steps[i];
+    const bnry = binaryRun.steps[i];
+    // forward-scorable iff the attempt's question is single-KC (scoredKnowledgeId !== null).
+    // scoredKnowledgeId/hasRt are variant-independent (set from the attempt), so reading
+    // them off the SRT run is safe.
+    const kc = s.scoredKnowledgeId;
+    if (kc === null) continue;
+    nTotalScorable++;
+    if (!s.hasRt) continue; // RT-less → identical under both variants → 0 ΔAUC (M4).
+    if (s.predictedP === null || bnry.predictedP === null) continue;
+    let entry = byKc.get(kc);
+    if (entry === undefined) {
+      entry = { scoresSrt: [], scoresBinary: [], labels: [] };
+      byKc.set(kc, entry);
     }
-    // The two runs share the same step ordering (same attempt list); index-align them.
-    const scoresSrt: number[] = [];
-    const scoresBinary: number[] = [];
-    const labels: (0 | 1)[] = [];
-    for (let i = 0; i < srtRun.steps.length; i++) {
-      const s = srtRun.steps[i];
-      const bnry = binaryRun.steps[i];
-      // forward-scorable iff this KC is the sole KC of the attempt's question.
-      if (s.scoredKnowledgeId !== kc) continue;
-      nTotalScorable++;
-      if (!s.hasRt) continue; // RT-less → identical under both variants → 0 ΔAUC (M4).
-      if (s.predictedP === null || bnry.predictedP === null) continue;
-      scoresSrt.push(s.predictedP);
-      scoresBinary.push(bnry.predictedP);
-      labels.push(s.outcome);
-    }
-    if (labels.length > 0) {
-      clusters.push({ scoresSrt, scoresBinary, labels });
-    }
+    entry.scoresSrt.push(s.predictedP);
+    entry.scoresBinary.push(bnry.predictedP);
+    entry.labels.push(s.outcome);
+  }
+
+  const clusters: ClusterForwardPreds[] = [];
+  for (const entry of byKc.values()) {
+    if (entry.labels.length > 0) clusters.push(entry);
   }
 
   return { clusters, nTotalScorable };
