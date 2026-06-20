@@ -91,6 +91,15 @@ export const knowledge = pgTable('knowledge', {
   embedding: vector(1024),
   embed_model: text('embed_model'),
   embed_version: integer('embed_version'),
+  // YUK-393 — re-embed-on-change freshness. sha256 of the embed-source text
+  // (knowledgeEmbedText, which now folds EFFECTIVE-DOMAIN — see src/server/ai/
+  // embed-source.ts). Nullable: existing non-NULL-embedding rows get a NULL hash
+  // at migration time and recompute it on the next reparent (the only KC content
+  // mutation). Write paths: embed_backfill stamps it at fill time; applyReparent
+  // recomputes it on a cross-domain move and NULLs `embedding` when it differs
+  // (next backfill re-embeds). Compared (not read for behaviour) — staleness is
+  // detected by hash mismatch, never by reading the column value directly.
+  embed_content_hash: text('embed_content_hash'),
 });
 
 // YUK-454 increment-1 (ADR-0036 身份层) — misconception identity-table skeleton.
@@ -260,6 +269,15 @@ export const question = pgTable(
     embedding: vector(1024),
     embed_model: text('embed_model'),
     embed_version: integer('embed_version'),
+    // YUK-393 — re-embed-on-change freshness. sha256 of questionEmbedText
+    // (prompt_md/reference_md/choices_md join). OD-2=a: question embed text does
+    // NOT fold effective-domain — only the content-hash column is added here.
+    // Nullable: existing non-NULL-embedding rows get a NULL hash at migration time
+    // and recompute it on the next edit. Write paths: embed_backfill stamps it at
+    // fill time; editQuestion (src/server/questions/write.ts) recomputes it when
+    // prompt_md/reference_md/choices_md change and NULLs `embedding` on mismatch
+    // (next backfill re-embeds). Compared, never read for behaviour.
+    embed_content_hash: text('embed_content_hash'),
   },
   (t) => [
     check('question_difficulty_range', sql`${t.difficulty} BETWEEN 1 AND 5`),

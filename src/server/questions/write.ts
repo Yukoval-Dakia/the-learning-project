@@ -39,6 +39,7 @@ import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import type { Db } from '@/db/client';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
+import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
 
@@ -248,6 +249,37 @@ export async function editQuestion(
         rubric_json: row.rubric_json,
       });
       if (derivedAnswerClass != null) setValues.answer_class = derivedAnswerClass;
+    }
+
+    // YUK-393 — embed freshness on EDIT. The embedding is derived from the
+    // embed-source text (prompt_md + reference_md + choices_md). OD-2=a: question
+    // embed text does NOT fold effective-domain, so only these three editable
+    // fields can drift the vector. If any of them changed, recompute the
+    // content-hash from the MERGED row (patched value when present, else existing)
+    // and compare against the stored hash; on a real drift, NULL the embedding +
+    // stamp the new hash so the nightly embed_backfill re-embeds. We compare the
+    // recomputed hash to row.embed_content_hash (NOT just "a content field is in
+    // `after`") so that a hash-equal edit — or an edit on a row whose stored hash
+    // predates this column (NULL) but whose text genuinely differs — is handled by
+    // value, and a pure whitespace-equal join is left alone. This is a DERIVED
+    // maintenance write, not user-audited content, so it is NOT added to before/
+    // after. Behaviour-neutral for reads: a NULL embedding is already excluded from
+    // cosine and degrades to the scalar path (zero regression).
+    if (
+      Object.hasOwn(after, 'prompt_md') ||
+      Object.hasOwn(after, 'reference_md') ||
+      Object.hasOwn(after, 'choices_md')
+    ) {
+      const nextEmbedText = questionEmbedText({
+        prompt_md: patch.prompt_md !== undefined ? patch.prompt_md : row.prompt_md,
+        reference_md: patch.reference_md !== undefined ? patch.reference_md : row.reference_md,
+        choices_md: patch.choices_md !== undefined ? patch.choices_md : row.choices_md,
+      });
+      const nextHash = embedHash(nextEmbedText);
+      if (nextHash !== row.embed_content_hash) {
+        setValues.embedding = null;
+        setValues.embed_content_hash = nextHash;
+      }
     }
 
     // No real change: return the current version untouched, no event, no bump.
