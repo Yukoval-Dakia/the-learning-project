@@ -48,6 +48,16 @@ export const AttemptOnQuestion = z.object({
     // enum stays `[success|failure|partial]`, avoiding a schema/FSRS/mastery-view
     // ripple). Optional + absent for every normal attempt → no read-shape change.
     unsupported_judge: z.boolean().optional(),
+    // YUK-352 (GPT §3 L3 / §6.4 hint_dependence) — hint 留痕「先攒数据」。hints_used =
+    // 本次作答前在该题上请求过的提示数（solve-tutor 链逐次升级 hint_index；写入路径
+    // submitSolveAttempt 把它落到这里）；final_hint_level = 触达的最高提示档（可选）。
+    // 仅 tutor-solve 提交路径携带，且当前为 CLIENT-REPORTED 计数（单用户工具 + 「先攒
+    // 数据不进算法」，server-authoritative per-session 计数是后续硬化，见 solve-session.ts
+    // submitSolveAttempt 注）。OPTIONAL + 对卷题 / FSRS 复习 / copilot 提示路径恒缺省 →
+    // 既有 attempt 读路径（practice-read.ts / mastery view 只吃扁平 outcome）逐字不变。
+    // hint-discounted accuracy（带提示答对按折扣进 p(L)）是 ADR-0035 的后续，不在本字段。
+    hints_used: z.number().int().nonnegative().optional(),
+    final_hint_level: z.number().int().nonnegative().optional(),
   }),
   ...baseOptionalFields,
 });

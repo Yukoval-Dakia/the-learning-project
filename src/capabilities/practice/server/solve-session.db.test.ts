@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { event, learning_record, learning_session, question } from '@/db/schema';
@@ -247,6 +247,50 @@ describe('submitSolveAttempt', () => {
 
     const attempts = await db.select().from(event).where(eq(event.subject_id, id));
     expect(attempts.some((e) => e.action === 'attempt')).toBe(true);
+  });
+
+  it('YUK-352 — captures hints_used / final_hint_level onto the attempt payload when supplied', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('correct', 0.95);
+
+    await submitSolveAttempt({
+      db,
+      sessionId,
+      submission: { student_final_answer_text: 'a+b' },
+      hintsUsed: 2,
+      finalHintLevel: 1,
+      judgeFn,
+    });
+
+    const [attempt] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.subject_id, id), eq(event.action, 'attempt')));
+    const payload = attempt.payload as Record<string, unknown>;
+    expect(payload.hints_used).toBe(2);
+    expect(payload.final_hint_level).toBe(1);
+  });
+
+  it('YUK-352 — omits hint fields when not supplied (byte-identical legacy attempt payload)', async () => {
+    const id = await seedQuestion(seededRubricQuestion());
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const judgeFn = judgeStub('correct', 0.95);
+
+    await submitSolveAttempt({
+      db,
+      sessionId,
+      submission: { student_final_answer_text: 'a+b' },
+      judgeFn,
+    });
+
+    const [attempt] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.subject_id, id), eq(event.action, 'attempt')));
+    const payload = attempt.payload as Record<string, unknown>;
+    expect('hints_used' in payload).toBe(false);
+    expect('final_hint_level' in payload).toBe(false);
   });
 
   it('handwritten-photo submit (student_image_refs) follows the same path', async () => {

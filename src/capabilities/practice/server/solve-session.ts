@@ -249,6 +249,22 @@ export interface SubmitSolveAttemptParams {
   submission: SolveSubmission;
   /** When set, the session's linked question must equal this (route-level guard). */
   expectedQuestionId?: string;
+  /**
+   * YUK-352 — hint 留痕. Number of escalating hints requested on THIS question before
+   * submitting (the solve-tutor chain bumps hint_index per ask). Written onto the
+   * attempt event payload (AttemptOnQuestion.payload.hints_used) so hint_dependence /
+   * fluency-illusion signals are computable later — "先攒数据，不进算法" (issue scope §1).
+   *
+   * CLIENT-REPORTED (single-user tool + accumulation-only): the count is whatever the
+   * caller threads through from the submit request. A server-authoritative per-session
+   * hint counter (a learning_session column incremented in planSolveHint) is the future
+   * hardening — deferred here to keep the capture zero-dependency (the data already flows
+   * through the hint route). Omitted (undefined) → the field is NOT written, so the
+   * attempt payload stays byte-identical for non-hint paths.
+   */
+  hintsUsed?: number;
+  /** YUK-352 — highest hint tier reached (optional companion to hintsUsed). */
+  finalHintLevel?: number;
   /** Injected in tests; defaults to the production JudgeInvoker. */
   judgeFn?: JudgeFn;
   runTaskFn?: RunTaskFn;
@@ -375,6 +391,12 @@ export async function submitSolveAttempt(
         answer_md: answerMd.length > 0 ? answerMd : null,
         answer_image_refs: submission.student_image_refs ?? [],
         referenced_knowledge_ids: q.knowledge_ids,
+        // YUK-352 — hint 留痕. Conditionally spread so the field is ABSENT (not null/0)
+        // when the caller did not report a count → byte-identical payload for the
+        // pre-YUK-352 path. hints_used=0 (solved without a hint) is a real measured
+        // value and IS written.
+        ...(params.hintsUsed !== undefined ? { hints_used: params.hintsUsed } : {}),
+        ...(params.finalHintLevel !== undefined ? { final_hint_level: params.finalHintLevel } : {}),
         // provenance (stored in jsonb; stripped by the Zod contract on parse)
         source: 'solve_tutor',
         judge_route: judged.route,
