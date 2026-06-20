@@ -19,6 +19,11 @@ const Body = z.object({
   student_text_steps: z.array(z.string()).optional(),
   student_final_answer_text: z.string().optional(),
   student_image_refs: z.array(z.string()).optional(),
+  // YUK-352 — hint 留痕 (client-reported count of escalating hints used on this
+  // question before submit; written onto the attempt payload). Optional → absent =
+  // byte-identical legacy submit.
+  hints_used: z.number().int().nonnegative().optional(),
+  final_hint_level: z.number().int().nonnegative().optional(),
 });
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
@@ -39,6 +44,8 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       sessionId: sid,
       submission: parsed.data,
       expectedQuestionId: id,
+      hintsUsed: parsed.data.hints_used,
+      finalHintLevel: parsed.data.final_hint_level,
     });
 
     // Enqueue attribution after the response path commits (failure only). Gated
