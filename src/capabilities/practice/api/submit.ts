@@ -33,6 +33,7 @@
 import { z } from 'zod';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { emitMasteryProgressSignal } from '@/capabilities/notes/server/mastery-progress-signal';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { newId } from '@/core/ids';
@@ -706,6 +707,20 @@ async function persistSubmit(
   // question.knowledge_ids 派生 labeled notes（D6 后 error_rate 的替代信号源），
   // source_ref 直指来源笔记的旧线保留；triggers 层 1h debounce 防风暴。
   if (outcome === 'success') {
+    // ADR-0040 决定2 — p(L) delta 埋点（READ-only 旁路）。触发条件 outcome===success
+    // **未变**（PHASE-DEFERRED：跨阈 gating 待 N 周埋点选出阈值后才上）。这里只 READ
+    // mastery_state 刚落库的真实 Δθ̂/p(L) 并 EMIT `experimental:mastery_progress` 事件，
+    // 让 owner 从真实 Δ 分布里挑阈值。红线（ADR-0035）：绝不写 mastery_state/item_calibration/
+    // FSRS——helper 内部纯 SELECT + writeEvent，best-effort（emit fail 不连累 refine 触发）。
+    // 在 attempt tx COMMIT 之后调（getMasteryState 读到 POSTERIOR row）。
+    await emitMasteryProgressSignal({
+      db,
+      knowledgeIds: q.knowledge_ids,
+      questionId,
+      attemptEventId: eventId,
+      now,
+    });
+
     const targetArtifactIds = new Set<string>();
     if (q.source_ref) targetArtifactIds.add(q.source_ref);
     for (const kid of q.knowledge_ids) {

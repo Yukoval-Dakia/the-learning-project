@@ -131,6 +131,19 @@ export const enqueueDwellNoteRefine = (input: {
     contextMd: 'User is dwelling in the editor; consider whether a small clarity patch would help.',
   });
 
+// ADR-0040 决定2 — honest rename: the signal was historically labelled
+// `review_success` (a pure pass/fail proxy that reads NO real mastery value). It is
+// renamed to the honest `mastery_change` (the `kind` was already `mastery_change`;
+// the misleading "Review success" context_md label is removed here).
+//
+// PHASE-DEFERRED (ADR-0040 决定2): the trigger STILL fires on outcome===success
+// during the N-week instrumentation window — ZERO behaviour change to WHEN it fires.
+// The p(L)-cross-threshold gating (fire only when the learner's p(L) crosses a
+// threshold) is deferred until that threshold is CHOSEN from telemetry. The threshold
+// is an n=1 magic number; the companion emitMasteryProgressSignal
+// (mastery-progress-signal.ts) reads the real p(L)/Δθ̂ from mastery_state and emits it
+// as `experimental:mastery_progress` events so the threshold can be set after N weeks.
+// Do NOT hardcode a threshold here; do NOT change the trigger CONDITION yet.
 export const enqueueMasteryNoteRefine = (input: {
   db?: Db;
   artifactId: string;
@@ -142,8 +155,8 @@ export const enqueueMasteryNoteRefine = (input: {
     ...input,
     kind: 'mastery_change',
     contextMd: input.questionId
-      ? `Review success raised mastery signal for question ${input.questionId}.`
-      : 'Review success raised mastery signal.',
+      ? `Mastery signal raised for question ${input.questionId} (attempt succeeded).`
+      : 'Mastery signal raised (attempt succeeded).',
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
 

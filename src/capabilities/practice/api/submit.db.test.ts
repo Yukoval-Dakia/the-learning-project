@@ -11,6 +11,8 @@
 //   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+// ADR-0040 决定2 — assert the p(L) delta telemetry event is emitted on a graded success.
+import { MASTERY_PROGRESS_ACTION } from '@/capabilities/notes/server/mastery-progress-signal';
 // YUK-432 — softmax 选题观测 seeder（label hook 的 π_i 直 join 需要一条 softmax_mfi selected 观测 +
 // 一个真物化 slot 才产标签）。
 import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
@@ -197,6 +199,64 @@ describe('POST /api/review/submit', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].theta_hat).toBeLessThan(0);
     expect(rows[0].fail_count).toBe(1);
+  });
+
+  // ADR-0040 决定2 — a graded SUCCESS reads the real p(L)/Δθ̂ from mastery_state and
+  // emits an `experimental:mastery_progress` telemetry event carrying the delta. The
+  // trigger CONDITION is unchanged (still fires on outcome===success); this埋点 is the
+  // read-only side channel that lets the cross-threshold gating be set after N weeks.
+  it('emits experimental:mastery_progress carrying the real Δθ̂ on a graded success', async () => {
+    await seedQuestion('q_mp', { knowledge_ids: ['k_mp'], difficulty: 3 });
+
+    const res = await POST(
+      submitReq({ activity_ref: { kind: 'question', id: 'q_mp' }, rating: 'good' }),
+    );
+    expect(res.status).toBe(200);
+
+    const db = testDb();
+    // The mastery_state row has the freshly-written Δθ̂ (success → θ̂ rose above 0).
+    const stateRows = await db
+      .select()
+      .from(mastery_state)
+      .where(
+        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k_mp')),
+      );
+    expect(stateRows).toHaveLength(1);
+    expect(stateRows[0].last_theta_delta).not.toBeNull();
+    const realDelta = stateRows[0].last_theta_delta as number;
+    expect(realDelta).toBeGreaterThan(0);
+
+    const mpEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, MASTERY_PROGRESS_ACTION), eq(event.subject_id, 'k_mp')));
+    expect(mpEvents).toHaveLength(1);
+    const payload = mpEvents[0].payload as Record<string, unknown>;
+    // The emitted event carries the SAME real delta read from mastery_state.
+    expect(payload.theta_delta).toBeCloseTo(realDelta, 5);
+    expect(payload.p_learned).not.toBeNull();
+    expect(payload.question_id).toBe('q_mp');
+    expect(payload.threshold_deferred).toBe(true);
+    // RED LINE: this is observation only — no success/failure judging semantics.
+    expect(mpEvents[0].outcome).toBeNull();
+  });
+
+  // ADR-0040 决定2 — behavior UNCHANGED: a FAILED review fires NEITHER the mastery
+  // note-refine trigger NOR the progress telemetry (both gate on outcome===success,
+  // exactly as before — no new threshold gating was introduced).
+  it('does NOT emit mastery_progress on a failed review (trigger condition unchanged)', async () => {
+    await seedQuestion('q_mp_fail', { knowledge_ids: ['k_mp_fail'], difficulty: 3 });
+
+    const res = await POST(
+      submitReq({ activity_ref: { kind: 'question', id: 'q_mp_fail' }, rating: 'again' }),
+    );
+    expect(res.status).toBe(200);
+
+    const mpEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, MASTERY_PROGRESS_ACTION));
+    expect(mpEvents).toHaveLength(0);
   });
 
   it('writes FSRS projection per knowledge id, not per reviewed question', async () => {
