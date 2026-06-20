@@ -713,6 +713,12 @@ async function persistSubmit(
     // 让 owner 从真实 Δ 分布里挑阈值。红线（ADR-0035）：绝不写 mastery_state/item_calibration/
     // FSRS——helper 内部纯 SELECT + writeEvent，best-effort（emit fail 不连累 refine 触发）。
     // 在 attempt tx COMMIT 之后调（getMasteryState 读到 POSTERIOR row）。
+    // OCR MINOR (~:722) — kept the await deliberately: after parallelizing the
+    // helper (Promise.all reads + Promise.allSettled writes) this is bounded to
+    // ~1 read + ~1 write round-trip, and the helper swallows all failures
+    // internally (it never rejects), so awaiting it cannot fail/block the submit
+    // path. Awaiting (vs fire-and-forget) keeps ordering deterministic and avoids
+    // an unhandled-rejection risk on the shared pool — the cleaner choice here.
     await emitMasteryProgressSignal({
       db,
       knowledgeIds: q.knowledge_ids,
