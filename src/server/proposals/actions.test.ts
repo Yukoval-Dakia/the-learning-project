@@ -318,6 +318,85 @@ describe('proposal lifecycle owner service', () => {
     expect(rateRows).toHaveLength(1);
   });
 
+  // C1a (YUK-358, ADR-0040 决定1) — accept-path exemption. A human-approved
+  // note_update patch that replaces a USER-VERIFIED block must still LAND. The
+  // applyNotePatch user_verified guard fires for the AI mutator path but is
+  // exempted for actorRef 'note_refine_accept' (a human approved this change).
+  it('acceptAiProposal LANDS a note_update patch that replaces a user_verified block', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(artifact).values({
+      id: 'artifact_verified',
+      type: 'note_atomic',
+      title: '之的用法',
+      parent_artifact_id: null,
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      body_blocks: {
+        type: 'doc',
+        content: [
+          {
+            type: 'semanticBlock',
+            attrs: { id: 'b1', semantic_kind: 'definition', user_verified: true },
+            content: [{ type: 'text', text: '人类校验过的内容' }],
+          },
+        ],
+      } as never,
+      attrs: {} as never,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'verified',
+      verification_summary: null,
+      generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' } as never,
+      verified_by: null,
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await writeAiProposal(db, {
+      id: 'note_verified_p1',
+      payload: {
+        kind: 'note_update',
+        target: { subject_kind: 'artifact', subject_id: 'artifact_verified' },
+        reason_md: 'Living Note patch over a verified block',
+        evidence_refs: [{ kind: 'artifact', id: 'artifact_verified' }],
+        proposed_change: {
+          artifact_id: 'artifact_verified',
+          source: 'note_refine',
+          patch: {
+            ops: [
+              {
+                kind: 'replace_block',
+                target_block_id: 'b1',
+                block: paragraphBlock('b1', '审批后的新内容'),
+              },
+            ],
+          },
+          summary: { ops_count: 1, new_blocks: 0 },
+        },
+      },
+    });
+
+    // Must NOT throw user_verified_protected — a human approved this patch.
+    const result = await acceptAiProposal(db, 'note_verified_p1');
+    expect(result).toMatchObject({ kind: 'note_update', artifact_id: 'artifact_verified' });
+
+    const [updated] = await db.select().from(artifact).where(eq(artifact.id, 'artifact_verified'));
+    expect(updated.version).toBe(1);
+    const content = (updated.body_blocks as { content: Array<{ attrs?: { id?: string } }> })
+      .content;
+    const b1 = content.find((node) => node.attrs?.id === 'b1');
+    expect(b1).toBeTruthy();
+    expect((b1 as { content?: Array<{ text?: string }> }).content?.[0]?.text).toBe(
+      '审批后的新内容',
+    );
+  });
+
   it('decideKnowledgeEdgeProposal preserves reverse/change_type decisions for edge proposals', async () => {
     const db = testDb();
     await seedKnowledge(['k1', 'k2']);
