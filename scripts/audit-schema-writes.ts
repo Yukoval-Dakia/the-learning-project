@@ -312,7 +312,41 @@ export function validateAllowlistHygiene(
   return { allowlist, issues };
 }
 
-function parseSchema(src: string): Field[] {
+// Drizzle column constructors recognised by parseSchema. The first group are
+// native drizzle-orm/pg-core builders; `vector` is the project customType
+// (src/db/vector.ts, YUK-383) — without it the `embedding: vector(1024)` columns
+// escape parsing entirely and stay invisible to write-path drift detection
+// (YUK-385). Append future project customType constructor names here so their
+// columns are audited automatically.
+const PROJECT_CUSTOM_TYPE_CONSTRUCTORS = ['vector'] as const;
+const SCHEMA_CONSTRAINT_HELPERS = new Set(['check', 'primaryKey', 'unique', 'index', 'foreignKey']);
+const NATIVE_COLUMN_CONSTRUCTORS = [
+  'text',
+  'integer',
+  'real',
+  'jsonb',
+  'boolean',
+  'timestamp',
+  'smallint',
+  'bigint',
+  'date',
+  'numeric',
+  'varchar',
+  'json',
+  'uuid',
+  'bytea',
+  'check',
+  'primaryKey',
+  'unique',
+  'index',
+  'foreignKey',
+];
+const COLUMN_CONSTRUCTOR_RE = new RegExp(
+  `^\\s{2,4}(\\w+):\\s+(${[...NATIVE_COLUMN_CONSTRUCTORS, ...PROJECT_CUSTOM_TYPE_CONSTRUCTORS].join('|')})\\(`,
+  'gm',
+);
+
+export function parseSchema(src: string): Field[] {
   const fields: Field[] = [];
   // Find pgTable entry points so we can slice per-table blocks.
   const tableHeads = [...src.matchAll(/export const (\w+) = pgTable\(\s*'(\w+)'/g)];
@@ -328,12 +362,12 @@ function parseSchema(src: string): Field[] {
     const next = boundaries.find((b) => b > start);
     const end = next ?? src.length;
     const block = src.slice(start, end);
-    const fieldMatches = block.matchAll(
-      /^\s{2,4}(\w+):\s+(text|integer|real|jsonb|boolean|timestamp|smallint|bigint|date|numeric|varchar|json|uuid|bytea|check|primaryKey|unique|index|foreignKey)\(/gm,
-    );
+    // `lastIndex` carries between matchAll iterations on a shared /g RegExp; reset per block.
+    COLUMN_CONSTRUCTOR_RE.lastIndex = 0;
+    const fieldMatches = block.matchAll(COLUMN_CONSTRUCTOR_RE);
     for (const m of fieldMatches) {
       // 跳过 schema constraint helpers
-      if (['check', 'primaryKey', 'unique', 'index', 'foreignKey'].includes(m[2])) continue;
+      if (SCHEMA_CONSTRAINT_HELPERS.has(m[2])) continue;
       fields.push({ table: tableName, field: m[1], type: m[2] });
     }
   }
@@ -360,35 +394,169 @@ function walkFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function buildIndex(
-  files: string[],
-): Map<string, { src: string; hasInsert: boolean; hasUpdate: boolean }> {
-  const index = new Map<string, { src: string; hasInsert: boolean; hasUpdate: boolean }>();
+// A single drizzle write statement, scoped to the table it targets. `kind`
+// distinguishes INSERT (`.insert(table).values({...})`) from UPDATE
+// (`.update(table).set({...})`); `payload` is the brace-balanced object literal
+// passed to `.values(` / `.set(` so field matching is confined to THIS statement
+// (YUK-166: the old file-level matcher ignored table identity and let a write to
+// `mistake_variant.parent_question_id` satisfy `question.parent_question_id`).
+export type WriteStatement = { kind: 'insert' | 'update'; table: string; payload: string };
+
+// Balanced-brace / bracket extractor with string + comment awareness, so braces
+// inside strings, template literals, or comments don't throw off the depth count.
+// Starts at `openIdx` (must be `{` or `[`) and returns the inclusive slice through
+// the matching close char, or null if unbalanced.
+function extractBalanced(src: string, openIdx: number): string | null {
+  const open = src[openIdx];
+  if (open !== '{' && open !== '[') return null;
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  for (let i = openIdx; i < src.length; i += 1) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (inLineComment) {
+      if (c === '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (c === '*' && next === '/') {
+        inBlockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (inSingle) {
+      if (c === '\\') i += 1;
+      else if (c === "'") inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (c === '\\') i += 1;
+      else if (c === '"') inDouble = false;
+      continue;
+    }
+    if (inTemplate) {
+      if (c === '\\') i += 1;
+      else if (c === '`') inTemplate = false;
+      continue;
+    }
+    if (c === '/' && next === '/') {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      continue;
+    }
+    if (c === '`') {
+      inTemplate = true;
+      continue;
+    }
+    if (c === '{' || c === '[') {
+      depth += 1;
+      continue;
+    }
+    if (c === '}' || c === ']') {
+      depth -= 1;
+      if (depth === 0) return src.slice(openIdx, i + 1);
+    }
+  }
+  return null;
+}
+
+// Extract every table-scoped INSERT / UPDATE statement in a source file. Matches
+// `(db|tx|...).insert(<table>)` → next `.values(` (object or array of objects) and
+// `(db|tx|...).update(<table>)` → next `.set(`, then brace-balances the payload so
+// shorthand and long-form field references can be checked inside the right table's
+// statement only. Schema var names equal SQL table names in this repo, so the
+// captured `<table>` matches parseSchema's table key directly.
+export function extractWriteStatements(src: string): WriteStatement[] {
+  const statements: WriteStatement[] = [];
+
+  const collect = (kind: 'insert' | 'update', method: string, call: 'values' | 'set') => {
+    const headRe = new RegExp(`\\.${method}\\(\\s*(\\w+)\\s*\\)`, 'g');
+    for (const head of src.matchAll(headRe)) {
+      const table = head[1];
+      const headEnd = (head.index ?? 0) + head[0].length;
+      // Find the `.values(` / `.set(` that belongs to this insert/update — the
+      // first occurrence after the head, before the next insert/update head.
+      const callIdx = src.indexOf(`.${call}(`, headEnd);
+      if (callIdx === -1) continue;
+      // Locate the first `{` or `[` inside the call args.
+      let openIdx = callIdx + `.${call}(`.length;
+      while (openIdx < src.length && src[openIdx] !== '{' && src[openIdx] !== '[') {
+        // Bail if we hit a clear statement break before any object literal.
+        if (src[openIdx] === ';') {
+          openIdx = -1;
+          break;
+        }
+        openIdx += 1;
+      }
+      if (openIdx === -1 || openIdx >= src.length) continue;
+      const payload = extractBalanced(src, openIdx);
+      if (payload) statements.push({ kind, table, payload });
+    }
+  };
+
+  collect('insert', 'insert', 'values');
+  collect('update', 'update', 'set');
+  return statements;
+}
+
+function buildIndex(files: string[]): Map<string, WriteStatement[]> {
+  const index = new Map<string, WriteStatement[]>();
   for (const f of files) {
     const src = readFileSync(f, 'utf8');
-    const hasInsert = /\.values\s*\(|\binsertInto\b/.test(src);
-    const hasUpdate = /\.set\s*\(/.test(src);
-    index.set(f, { src, hasInsert, hasUpdate });
+    index.set(f, extractWriteStatements(src));
   }
   return index;
 }
 
-function countWriteHits(
-  field: string,
-  index: Map<string, { src: string; hasInsert: boolean; hasUpdate: boolean }>,
-): { insert_files: number; update_files: number } {
+function statementMatchesField(payload: string, field: string): boolean {
   // 字段名匹配两种形式：
   //   1. `field: <value>` —— 长形式
   //   2. `field,` 或 `field }` —— Drizzle shorthand（变量名同字段名）
-  // 简化：文件含 .values( 且至少一处匹配 → 计 insert hit；同理 set。
   const longForm = new RegExp(`\\b${field}\\s*:`);
   const shortForm = new RegExp(`[,{(\\s]${field}\\s*[,}]`);
+  return longForm.test(payload) || shortForm.test(payload);
+}
+
+// Table-aware write-path count (YUK-166). A field counts as written only when a
+// statement targeting ITS OWN table carries it; a same-named column on another
+// table no longer cross-satisfies. Counts are per-file (a file with any matching
+// insert/update statement for the table contributes one).
+export function countWriteHits(
+  table: string,
+  field: string,
+  index: Map<string, WriteStatement[]>,
+): { insert_files: number; update_files: number } {
   let insertFiles = 0;
   let updateFiles = 0;
-  for (const [, { src, hasInsert, hasUpdate }] of index) {
-    if (!longForm.test(src) && !shortForm.test(src)) continue;
-    if (hasInsert) insertFiles++;
-    if (hasUpdate) updateFiles++;
+  for (const [, statements] of index) {
+    let fileInsert = false;
+    let fileUpdate = false;
+    for (const st of statements) {
+      if (st.table !== table) continue;
+      if (!statementMatchesField(st.payload, field)) continue;
+      if (st.kind === 'insert') fileInsert = true;
+      else fileUpdate = true;
+    }
+    if (fileInsert) insertFiles++;
+    if (fileUpdate) updateFiles++;
   }
   return { insert_files: insertFiles, update_files: updateFiles };
 }
@@ -406,7 +574,7 @@ function audit(): WriteHit[] {
   const results: WriteHit[] = [];
   for (const f of fields) {
     if (TRIVIAL_FIELDS.has(f.field)) continue;
-    const { insert_files, update_files } = countWriteHits(f.field, index);
+    const { insert_files, update_files } = countWriteHits(f.table, f.field, index);
     let status: WriteHit['status'];
     if (insert_files > 0 && update_files > 0) status = 'live';
     else if (insert_files > 0) status = 'init-only';
