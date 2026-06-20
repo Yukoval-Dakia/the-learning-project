@@ -10,6 +10,7 @@
 import { z } from 'zod';
 
 import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
+import { MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -21,9 +22,10 @@ const Body = z.object({
   student_image_refs: z.array(z.string()).optional(),
   // YUK-352 — hint 留痕 (client-reported count of escalating hints used on this
   // question before submit; written onto the attempt payload). Optional → absent =
-  // byte-identical legacy submit.
-  hints_used: z.number().int().nonnegative().optional(),
-  final_hint_level: z.number().int().nonnegative().optional(),
+  // byte-identical legacy submit. Capped at MAX_HINT_INDEX (shared with the hint
+  // route + the durable payload bound) so a client cannot persist a garbage count.
+  hints_used: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
+  final_hint_level: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
 });
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {

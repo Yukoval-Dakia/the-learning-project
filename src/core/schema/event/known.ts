@@ -15,6 +15,15 @@ const baseOptionalFields = {
   cost_micro_usd: z.number().int().optional(),
 } as const;
 
+/**
+ * YUK-352 — escalating-hint ceiling. Single source of truth for the max hint index /
+ * count, shared by the hint-request route (solve-hint.ts hint_index cap), the submit
+ * route (solve-submit.ts), and the durable AttemptOnQuestion.payload bound below — so
+ * the request cap and the stored value cap can never drift apart. Lives in core (no IO)
+ * so the practice-layer routes import it rather than re-declaring the literal `20`.
+ */
+export const MAX_HINT_INDEX = 20;
+
 // ====================================================================
 // ADR-0006 v2 原 7 个 KnownEvent
 // ====================================================================
@@ -56,8 +65,16 @@ export const AttemptOnQuestion = z.object({
     // submitSolveAttempt 注）。OPTIONAL + 对卷题 / FSRS 复习 / copilot 提示路径恒缺省 →
     // 既有 attempt 读路径（practice-read.ts / mastery view 只吃扁平 outcome）逐字不变。
     // hint-discounted accuracy（带提示答对按折扣进 p(L)）是 ADR-0035 的后续，不在本字段。
-    hints_used: z.number().int().nonnegative().optional(),
-    final_hint_level: z.number().int().nonnegative().optional(),
+    //
+    // .max(MAX_HINT_INDEX)：CLIENT-REPORTED 值须有上界——hint 请求路由（solve-hint.ts）本身
+    // 把 hint_index cap 在 MAX_HINT_INDEX，durable event 字段对齐同一天花板，挡住 buggy/
+    // 恶意 client 写入失真大数。两字段共享 core 单一常量（消除漂移）。
+    //
+    // 跨字段不变式（final_hint_level ≤ hints_used、final_hint_level>0 ⇒ hints_used>0）当前
+    // **有意不强制**——「先攒数据」阶段只做原始捕获、不假设派生语义，故历史行不保证该不变式。
+    // 将来这两字段进算法消费时再 firm-up（届时是收紧契约的自然时机，见 PR 描述）。
+    hints_used: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
+    final_hint_level: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
   }),
   ...baseOptionalFields,
 });

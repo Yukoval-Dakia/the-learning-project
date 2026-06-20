@@ -6,10 +6,13 @@
 import { z } from 'zod';
 
 import { SolveError, planSolveHint } from '@/capabilities/practice/server/solve-session';
+import { MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
-const Body = z.object({ hint_index: z.number().int().min(0).max(20).default(0) }).nullable();
+const Body = z
+  .object({ hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0) })
+  .nullable();
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
