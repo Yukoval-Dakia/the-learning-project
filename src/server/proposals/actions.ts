@@ -36,6 +36,7 @@ import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server
 import {
   NOTE_REFINE_ACCEPT_ACTOR,
   persistNoteRefineApply,
+  undoNoteRefineApplyEvent,
 } from '@/capabilities/notes/server/note-refine-apply';
 // M4-T4 (YUK-319) — variant_question / question_draft accept appliers live in
 // the practice capability package; this shell only routes to them.
@@ -994,6 +995,30 @@ export async function retractAiProposal(
       .update(goal)
       .set({ status: 'dormant', updated_at: now })
       .where(and(eq(goal.id, proposal.target.subject_id), eq(goal.status, 'active')));
+  }
+
+  // YUK-358 / ADR-0040 决定1 — the undo chain. Retracting a note_update proposal
+  // that was already APPLIED (accepted → acceptNoteUpdateProposal → persistNoteRefineApply
+  // mutated artifact.body_blocks) must reverse that mutation, restoring the prior
+  // body_blocks + version from the reverse payload persistNoteRefineApply stored on
+  // the apply event. This mirrors how variant_question / learning_item / goal_scope
+  // retracts above reverse their materialized downstream rows.
+  //
+  // The accept path records the materialized apply event id on its rate event
+  // (payload.materialized_apply_event_id), so we look it up there. A still-proposed
+  // (never-accepted) or dismissed note_update never applied → no rate-accept → no
+  // apply event id → nothing to reverse, and we skip. undoNoteRefineApplyEvent is
+  // idempotent (already-undone / version_conflict short-circuit) and resyncs the L2
+  // backlink index in the same tx, so it is the exact inverse of the apply.
+  if (proposal.kind === 'note_update') {
+    const rate = await findExistingRateEvent(db, proposalId);
+    const applyEventId =
+      rate?.decision === 'accept'
+        ? (rate.payload as { materialized_apply_event_id?: unknown }).materialized_apply_event_id
+        : undefined;
+    if (typeof applyEventId === 'string' && applyEventId.length > 0) {
+      await undoNoteRefineApplyEvent(db, { applyEventId });
+    }
   }
 
   // YUK-15 — retract rolls cited records back from `actioned` to `linked`.
