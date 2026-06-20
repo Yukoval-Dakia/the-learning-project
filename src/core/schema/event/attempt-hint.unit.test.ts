@@ -5,7 +5,7 @@
 // 前置原料）。两字段 OPTIONAL：非 tutor-solve 路径（卷题 / FSRS 复习 / copilot 提示）的
 // attempt 不带 → 既有读路径逐字不变（byte-identical 回归锚）。
 import { describe, expect, it } from 'vitest';
-import { AttemptOnQuestion, KnownEvent } from './known';
+import { AttemptOnQuestion, KnownEvent, MAX_HINT_INDEX } from './known';
 
 function attemptRow(payloadOverrides: Record<string, unknown>) {
   return {
@@ -57,6 +57,22 @@ describe('AttemptOnQuestion hint capture (YUK-352)', () => {
   it('rejects a non-integer hints_used', () => {
     const parsed = AttemptOnQuestion.safeParse(attemptRow({ hints_used: 1.5 }));
     expect(parsed.success).toBe(false);
+  });
+
+  it('rejects hints_used above MAX_HINT_INDEX (durable value is bounded by the hint ceiling)', () => {
+    expect(AttemptOnQuestion.safeParse(attemptRow({ hints_used: MAX_HINT_INDEX })).success).toBe(
+      true,
+    );
+    expect(
+      AttemptOnQuestion.safeParse(attemptRow({ hints_used: MAX_HINT_INDEX + 1 })).success,
+    ).toBe(false);
+  });
+
+  it('applies the same bound + sign/integer validators to final_hint_level (field symmetry)', () => {
+    expect(AttemptOnQuestion.safeParse(attemptRow({ final_hint_level: -1 })).success).toBe(false);
+    expect(
+      AttemptOnQuestion.safeParse(attemptRow({ final_hint_level: MAX_HINT_INDEX + 1 })).success,
+    ).toBe(false);
   });
 
   it('parses through the KnownEvent union with hint fields present', () => {
