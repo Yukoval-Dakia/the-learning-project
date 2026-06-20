@@ -398,6 +398,39 @@
       ]
     },
     {
+      "name": "goals",
+      "item": [
+        {
+          "name": "POST /api/goals",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/goals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "goals"]
+            },
+            "description": "at-entry 直写 goal（冷启 P0 YUK-472）\n\n**Notes:** 冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；二者皆不可解析/空 scope → 400。title 必填。返回 {id,title,subjectId,scopeKnowledgeIds,status}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"高中文言文\",\n  \"subjectId\": \"wenyan\",\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "health",
       "item": [
         {

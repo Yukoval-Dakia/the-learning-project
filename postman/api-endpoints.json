@@ -137,6 +137,25 @@
     ]
   },
   {
+    "path": "/api/goals",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "at-entry 直写 goal（冷启 P0 YUK-472）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "title": "高中文言文",
+          "subjectId": "wenyan",
+          "knowledgeIds": [
+            "kc-1"
+          ]
+        },
+        "notes": "冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；二者皆不可解析/空 scope → 400。title 必填。返回 {id,title,subjectId,scopeKnowledgeIds,status}"
+      }
+    ]
+  },
+  {
     "path": "/api/copilot/chat",
     "methods": [
       {
@@ -301,7 +320,9 @@
           "prompt_md": "下列句子中「而」字的用法是？",
           "reference_md": "《劝学》原文片段",
           "wrong_answer_md": "我认为是转折用法",
-          "knowledge_ids": ["kid_abc123"],
+          "knowledge_ids": [
+            "kid_abc123"
+          ],
           "cause": {
             "primary_category": "misunderstanding",
             "user_notes": "混淆了顺承与转折"
@@ -444,9 +465,16 @@
           "version": 0,
           "prompt_md": "新题目文本",
           "reference_md": "参考答案",
-          "choices_md": ["A", "B", "C", "D"],
+          "choices_md": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
           "difficulty": 3,
-          "knowledge_ids": ["kn_abc"],
+          "knowledge_ids": [
+            "kn_abc"
+          ],
           "kind": "short_answer",
           "draft_status": "active"
         },
@@ -609,7 +637,9 @@
         "contentType": "application/json",
         "bodyExample": {
           "goalId": null,
-          "knowledgeIds": ["kc-1"]
+          "knowledgeIds": [
+            "kc-1"
+          ]
         },
         "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}"
       }
@@ -624,7 +654,9 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "knowledgeIds": ["kc-1"],
+          "knowledgeIds": [
+            "kc-1"
+          ],
           "cap": 8,
           "seThreshold": null
         },
