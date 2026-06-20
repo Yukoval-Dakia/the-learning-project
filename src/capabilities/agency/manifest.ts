@@ -15,6 +15,13 @@ export const agencyCapability = defineCapability({
         // server 组合根挂载时才解析 handler。
         load: () => import('./api/notes').then((m) => m.GET),
       },
+      {
+        // 冷启 P0 (YUK-472)：at-entry 直写 goal（source='manual'），与 ADR-0025
+        // proposal-materialize 路径并存（同走 insertGoal 单写面）。给 placement 探针供 scope。
+        method: 'POST',
+        path: '/api/goals',
+        load: () => import('./api/goal-create').then((m) => m.POST),
+      },
     ],
   },
   jobs: {

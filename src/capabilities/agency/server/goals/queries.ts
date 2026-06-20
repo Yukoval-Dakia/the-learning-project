@@ -1,7 +1,10 @@
 // YUK-143 / ADR-0025 — North-Star `goal` queries (Wave-9 core).
 //
 // Goal rows are materialized from an accepted `goal_scope` proposal (see
-// accept.ts); they are NOT user-INSERTed directly (evidence-first, ADR-0025).
+// accept.ts) — the evidence-first default (ADR-0025). Exception (YUK-472): the
+// cold-start at-entry path (`api/goal-create.ts`) also calls `insertGoal`
+// directly with `source='manual'`, so a day-one user can declare a goal + KC
+// scope before any evidence exists. Both paths share this single write surface.
 // This module is the single write/read surface for the `goal` table:
 //   - insertGoal       — INSERT write path (used by the materializer + tx)
 //   - updateGoalStatus — UPDATE: active | dormant | done transition
