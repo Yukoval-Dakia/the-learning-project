@@ -74,6 +74,29 @@ ${causeTaxonomyList(profile)}
 低信心走 other（若 profile 有 other）或最接近的类别，并在 analysis_md 里说明不确定点。`;
 }
 
+// YUK-462 — stage 2 of the retrieve→rerank cause-attribution pipeline. This MIRRORS
+// buildAttributionPrompt's text (same role line, same taxonomy/grounding/JSON
+// contract, same low-confidence→other clause) with ONE delta: the candidate cause
+// list is also supplied as a structured input field `candidates`, and the model
+// must pick primary_category FROM that set and give a per-candidate rationale
+// (why this, why not the others) in analysis_md. EQUIVALENCE: when the retriever
+// passes the full vocab (every current profile, vocab <= K_SMALL), `candidates`
+// equals this prompt's inline taxonomy — so the selectable set is identical to
+// buildAttributionPrompt's and the selection problem is the same.
+function buildAttributionRerankPrompt(profile: SubjectProfile): string {
+  return `你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context, candidates }（来自一个 attempt event outcome='failure'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+归因 taxonomy 来自当前 SubjectProfile：
+${causeTaxonomyList(profile)}
+另外，输入里附带一个结构化候选集 candidates: [{ id, label, description, review_priority }] —— 这是 L1 召回阶段交给你的候选错因清单。primary_category **必须**从 candidates 的 id 里选；先在 analysis_md 里逐候选权衡（为什么选这个 / 为什么排除其它候选），再给结论。
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+归因结果作为 judge event 写入 (action='judge', subject_kind='event', caused_by_event_id=<attempt event id>)；payload.cause 即此输出。
+输出严格 JSON 格式（不带 markdown 代码块包裹）：
+{"primary_category": "<candidates 里某个 id>", "secondary_categories": [...], "analysis_md": "<逐候选权衡 + 选定理由，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0}
+低信心走 other（若 candidates 含 other）或最接近的候选，并在 analysis_md 里说明不确定点。`;
+}
+
 function buildLearningIntentOutlinePrompt(profile: SubjectProfile): string {
   return `你是学习规划助手。用户声明「我想学 X」，输入 { topic, plan_case, knowledge_node, child_nodes, existing_descendants_count, output_contract }。
 plan_case 有三种：
@@ -893,6 +916,8 @@ export function getTaskSystemPrompt(
   switch (task) {
     case 'AttributionTask':
       return buildAttributionPrompt(profile);
+    case 'AttributionRerankTask':
+      return buildAttributionRerankPrompt(profile);
     case 'KnowledgeProposeTask':
       return buildKnowledgeProposePrompt(profile);
     case 'KnowledgeEdgeProposeTask':
