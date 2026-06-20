@@ -573,7 +573,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
     await expect(listProposalInboxRows(testDb(), { status: 'pending' })).resolves.toHaveLength(0);
   });
 
-  it('attribute_mistake delegates to AttributionTask and skips existing/non-failure attempts', async () => {
+  it('attribute_mistake delegates to AttributionRerankTask and skips existing/non-failure attempts', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
     await seedQuestionAndFailure();
@@ -594,7 +594,10 @@ describe('Wave 3 proposal/action DomainTools', () => {
     expect(written.status).toBe('written');
     expect(written.cause?.primary_category).toBe('concept');
     const [taskKind, taskInput, taskCtx] = mockRunner.runTask.mock.calls[0];
-    expect(taskKind).toBe('AttributionTask');
+    // YUK-462: attribution now runs the retrieve→rerank pipeline; the dispatched
+    // task kind is AttributionRerankTask. The original AttributionInput fields
+    // still flow through (candidates is added on top, so toMatchObject passes).
+    expect(taskKind).toBe('AttributionRerankTask');
     expect(taskInput).toMatchObject({ wrong_answer_md: '代词' });
     expect(taskCtx).toHaveProperty('db');
 

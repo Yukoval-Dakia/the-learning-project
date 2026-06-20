@@ -19,6 +19,7 @@ import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { writeRetryableAiFailureLedger } from './ai_failure_log';
+import { retrieveCauseCandidates } from './attribute-retrieve';
 
 // Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
 // prompt now emits `analysis_md` natively, so the Step 4 `z.preprocess` bridge
@@ -135,23 +136,35 @@ export async function runAttributionAndWriteJudgeEvent(
       };
     }
 
-    const result = await params.runTaskFn('AttributionTask', params.input, {
-      env: params.env,
-      subjectProfile: params.subjectProfile,
-    });
-    const parsed = parseAttributionOutput(
-      result.text,
-      params.subjectProfile ?? defaultSubjectProfile,
+    // YUK-462 — retrieve→rerank-with-rationale. Resolve the profile once and reuse
+    // it for both the L1 retriever and the post-LLM parse/clamp.
+    //
+    // Stage 1 (retrieve): deterministic, no-LLM candidate selection. For every
+    // current profile (cause vocab <= K_SMALL) this returns the full vocab verbatim,
+    // so the candidate set handed to stage 2 is byte-identical to the inline
+    // taxonomy the legacy AttributionTask prompt embedded — behavior-equivalent.
+    //
+    // Stage 2 (rerank): AttributionRerankTask picks primary_category FROM the
+    // candidate list + gives a per-candidate rationale. The candidate field is
+    // added only to this internal rerank input; AttributionInput stays pure for
+    // the 3 external callers. Post-LLM parse/clamp/write are unchanged below.
+    const profile = params.subjectProfile ?? defaultSubjectProfile;
+    const candidates = retrieveCauseCandidates(params.input, profile);
+    const result = await params.runTaskFn(
+      'AttributionRerankTask',
+      { ...params.input, candidates },
+      { env: params.env, subjectProfile: profile },
     );
+    const parsed = parseAttributionOutput(result.text, profile);
 
     const judgeId = newId();
-    // D6 (U4 L-stamp): attribution is a non-routed judge — it runs AttributionTask
+    // D6 (U4 L-stamp): attribution is a non-routed judge — it runs AttributionRerankTask
     // directly (above), never through JudgeInvoker. So the version source here is
     // the resolved SubjectProfile already in scope, not the invoker telemetry.
     // Stamp `profile_version` only; `capability_ref` / `judge_route` stay
     // undefined (attribution has no routed judge capability) — both remain
     // optional on JudgeOnEvent.payload. See docs/design/2026-06-04-u0-decisions.md D6.
-    const profileVersion = (params.subjectProfile ?? defaultSubjectProfile).version;
+    const profileVersion = profile.version;
     await writeEvent(params.db, {
       id: judgeId,
       session_id: null,

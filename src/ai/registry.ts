@@ -86,6 +86,30 @@ export const tasks = {
     systemPrompt:
       '你是错题归因助手。输入字段 { prompt_md, reference_md, wrong_answer_md, knowledge_context }（来自一个 attempt event outcome=\'failure\'）—— 即用户做错的一道题，含 wrong_answer_md（用户错答）、参考答案 reference_md、挂的 knowledge_context，分析错因。归因结果作为 judge event 写入 (action=\'judge\', subject_kind=\'event\', caused_by_event_id=<attempt event id>)；payload.cause 即此输出。\n输出严格 JSON 格式（不带 markdown 代码块包裹）：\n{"primary_category": "<profile cause taxonomy 之一>", "secondary_categories": [...], "analysis_md": "<分析过程，含错答与参考答案差异 + 涉及的知识点 / 概念>", "confidence": 0.0-1.0}\n低信心走 profile 的 other（若存在）或最接近类别，并写详细 analysis_md。',
   },
+  // YUK-462 — cause-attribution L1 retrieve→rerank. Stage 2 of the pipeline: the
+  // L1 retriever (src/capabilities/knowledge/server/attribute-retrieve.ts) hands a
+  // candidate cause list, and this task reranks it + picks primary_category with a
+  // per-candidate rationale. EXACT clone of AttributionTask's knobs so cost/routing
+  // are unchanged; the only delta is the candidate-driven prompt (built in
+  // task-prompts.ts). AttributionTask is kept frozen as the behavioral oracle (its
+  // prompt is DEPRECATED-do-not-edit). Behavior-equivalent for small-vocab profiles:
+  // when candidates == full vocab, the selectable set == the old inline taxonomy.
+  // SOFT-TRACK only (output is payload.cause; never feeds θ̂/p(L)/FSRS).
+  AttributionRerankTask: {
+    kind: 'AttributionRerankTask',
+    description:
+      '错题归因（retrieve→rerank stage 2）：从候选 cause 列表重排 + 选 primary + 逐候选理由',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 4 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // Runtime renders via getTaskSystemPrompt(task, profile) in task-prompts.ts
+    // (buildAttributionRerankPrompt). This string is the type-required fallback.
+    systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
+  },
   VisionExtractTask: {
     kind: 'VisionExtractTask',
     description: '错题图片 → 切块 + 题面 + 答案 + bbox（manual rescue only after Sub 0c）',
