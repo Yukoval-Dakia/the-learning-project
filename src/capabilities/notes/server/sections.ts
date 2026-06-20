@@ -101,6 +101,11 @@ export async function editArtifactSection(
       ...previous,
       body_md: params.nextBodyMd,
       version: previous.version + 1,
+      // C1a (YUK-358) — implicit-on-edit setter: a human edit promotes the
+      // section to user-verified (mirrors replaceNoteSectionBody's attr write),
+      // so the API response + downstream readers see the protected status.
+      user_verified: true,
+      source_tier: 'user_verified',
     };
     const nextArtifactVersion = row.version + 1;
     const payload = {
