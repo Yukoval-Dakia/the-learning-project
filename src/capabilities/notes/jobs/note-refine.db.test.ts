@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
+import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { artifact, event, knowledge } from '@/db/schema';
 import {
   markArtifactIdleAndFlush,
@@ -33,11 +34,42 @@ const ATOMIC_SECTIONS = [
   },
 ];
 
+// C1a (YUK-358): one section is user_verified — the AI must propose, not
+// overwrite, any replace/delete of it.
+const VERIFIED_SECTIONS = [
+  {
+    id: 'sv',
+    kind: 'definition' as const,
+    body_md: '人类校验过的定义。',
+    source_tier: 'user_verified' as const,
+    user_verified: true,
+    embedded_check: null,
+    version: 2,
+  },
+  {
+    id: 'sa',
+    kind: 'mechanism' as const,
+    body_md: 'AI 拥有的内容。',
+    source_tier: 'llm_only' as const,
+    user_verified: false,
+    embedded_check: null,
+    version: 1,
+  },
+];
+
 function paragraphBlock(id: string, text: string) {
   return {
     type: 'paragraph',
     attrs: { id },
     content: [{ type: 'text', text }],
+  };
+}
+
+function replaceBlockOp(targetId: string, text: string) {
+  return {
+    kind: 'replace_block',
+    target_block_id: targetId,
+    block: paragraphBlock(targetId, text),
   };
 }
 
@@ -331,6 +363,128 @@ describe('runNoteRefine', () => {
     expect(proposals).toHaveLength(1);
     expect((proposals[0].payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
       'note_update',
+    );
+  });
+
+  // C1a (YUK-358, ADR-0040 决定1) — user_verified hard boundary divert.
+  it('user_verified: a mutator-sized replace of a verified block DIVERTS to propose (body unchanged)', async () => {
+    await seedArtifact({
+      artifactId: 'a1',
+      knowledgeId: 'k1',
+      bodyBlocks: noteSectionsToBodyBlocks(VERIFIED_SECTIONS),
+    });
+    // 1 op, 0 new blocks → count-gate says mutator. The verified-block divert
+    // must override and route to propose.
+    const ops = [replaceBlockOp('sv', 'AI 想覆盖人类校验过的内容')];
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(ops) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+    });
+
+    expect(result).toMatchObject({ status: 'proposed', ops_count: 1, new_blocks: 0 });
+    // body_blocks UNCHANGED (no silent overwrite), no apply event.
+    const [unchanged] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(unchanged.version).toBe(0);
+    const applyEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_apply'));
+    expect(applyEvents).toHaveLength(0);
+    // a note_update proposal row exists (patch-carrying producer).
+    const proposals = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(1);
+    expect((proposals[0].payload as { ai_proposal?: { kind?: string } }).ai_proposal?.kind).toBe(
+      'note_update',
+    );
+  });
+
+  it('user_verified: a mutator-sized replace of a NON-verified block still AUTO-APPLIES (A档)', async () => {
+    await seedArtifact({
+      artifactId: 'a1',
+      knowledgeId: 'k1',
+      bodyBlocks: noteSectionsToBodyBlocks(VERIFIED_SECTIONS),
+    });
+    // Replace the NON-verified block 'sa' — same op size, must auto-apply.
+    const ops = [replaceBlockOp('sa', 'AI 改自己的内容')];
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(ops) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('applied');
+    const [updated] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    expect(updated.version).toBe(1);
+    const proposals = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(0);
+  });
+
+  it('setter end-to-end: a human edit upgrades a block to user_verified, then an AI replace DIVERTS to propose', async () => {
+    // Seed with an AI-owned, NON-verified section.
+    await seedArtifact({
+      artifactId: 'a1',
+      knowledgeId: 'k1',
+      bodyBlocks: noteSectionsToBodyBlocks([
+        {
+          id: 's1',
+          kind: 'definition' as const,
+          body_md: 'AI 初稿。',
+          source_tier: 'llm_only' as const,
+          user_verified: false,
+          embedded_check: null,
+          version: 1,
+        },
+      ]),
+    });
+
+    // 1) human edits the section → implicit-on-edit setter promotes it.
+    const edited = await editArtifactSection({
+      db: testDb(),
+      artifactId: 'a1',
+      sectionId: 's1',
+      expectedArtifactVersion: 0,
+      expectedSectionVersion: 1,
+      nextBodyMd: '人类改写后的定义。',
+    });
+    expect(edited.section.user_verified).toBe(true);
+    expect(edited.section.source_tier).toBe('user_verified');
+
+    // 2) an AI refine that replaces the now-verified block must DIVERT to propose
+    //    (proves the guard is NOT dead code — it is live via the setter).
+    const ops = [replaceBlockOp('s1', 'AI 想再覆盖')];
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(ops) }));
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a1',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('proposed');
+    const proposals = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(1);
+    // artifact body still holds the human's text (no AI overwrite).
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
+    const content = (art.body_blocks as { content: Array<{ attrs?: { id?: string } }> }).content;
+    const s1 = content.find((node) => node.attrs?.id === 's1');
+    expect((s1 as { attrs?: { source_markdown?: string } }).attrs?.source_markdown).toBe(
+      '人类改写后的定义。',
     );
   });
 

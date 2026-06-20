@@ -30,6 +30,15 @@ type DbLike = Db | Tx;
 // working without a deep-link to core/.
 export { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
 
+// C1a (YUK-358, ADR-0040 决定1) — the accept-path actor. acceptNoteUpdateProposal
+// (src/server/proposals/actions.ts) lands a HUMAN-APPROVED patch through this same
+// persist wrapper with actorRef = NOTE_REFINE_ACCEPT_ACTOR. When the actor is the
+// accept-path, the user_verified guard in applyNotePatch is exempted: a human
+// already approved that exact change through the inbox, so re-rejecting it would
+// be wrong. Every OTHER actor (note_refine AI mutator, hub_auto_sync_nightly,
+// presence-store apply) keeps the guard ON.
+export const NOTE_REFINE_ACCEPT_ACTOR = 'note_refine_accept';
+
 export interface PersistNoteRefineApplyParams {
   db: DbLike;
   artifactId: string;
@@ -126,7 +135,12 @@ export async function persistNoteRefineApply(
       };
     }
 
-    const newBodyBlocks = applyNotePatch(row.body_blocks, patch);
+    // C1a (YUK-358): the accept-path is the ONLY caller exempt from the
+    // user_verified hard boundary — a human approved that patch through the
+    // inbox. All other actors keep the guard ON (cross-caller safety net).
+    const newBodyBlocks = applyNotePatch(row.body_blocks, patch, {
+      enforceUserVerifiedGuard: actorRef !== NOTE_REFINE_ACCEPT_ACTOR,
+    });
     const nowAt = now ?? new Date();
     const nextVersion = (row.version ?? 0) + 1;
     const id = eventId ?? createId();

@@ -33,7 +33,10 @@ import {
 // edges module (raw knowledge_edge writes outside it are forbidden).
 import { archiveKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
-import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
+import {
+  NOTE_REFINE_ACCEPT_ACTOR,
+  persistNoteRefineApply,
+} from '@/capabilities/notes/server/note-refine-apply';
 // M4-T4 (YUK-319) — variant_question / question_draft accept appliers live in
 // the practice capability package; this shell only routes to them.
 import {
@@ -729,7 +732,9 @@ async function acceptNoteUpdateProposal(
       artifactId,
       patch: patchParsed.data,
       triggerEventId: proposalId,
-      actorRef: 'note_refine_accept',
+      // C1a (YUK-358): this actorRef exempts the human-approved accept from the
+      // user_verified guard in applyNotePatch (a human approved this patch).
+      actorRef: NOTE_REFINE_ACCEPT_ACTOR,
       now,
     });
     if (applyResult.status !== 'applied') {
