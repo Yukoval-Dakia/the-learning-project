@@ -45,7 +45,14 @@ export function forwardAuc(scores: number[], labels: (0 | 1)[]): AucResult {
   const pos: number[] = [];
   const neg: number[] = [];
   for (let i = 0; i < n; i++) {
-    if (labels[i] === 1) pos.push(scores[i]);
+    // OCR finding 4: `labels` is typed (0|1)[] but runtime-unchecked — any value other
+    // than 1 (e.g. 2 or -1 from corrupt upstream data) silently falls into the negative
+    // branch, corrupting n0/n1 and the AUC without any signal. Reject non-binary labels.
+    const y = labels[i];
+    if (y !== 0 && y !== 1) {
+      throw new Error(`forwardAuc: label at index ${i} must be 0 or 1 (got ${y})`);
+    }
+    if (y === 1) pos.push(scores[i]);
     else neg.push(scores[i]);
   }
   const n1 = pos.length;

@@ -65,7 +65,23 @@ export function ece(predictions: number[], labels: (0 | 1)[], opts: EceOptions =
   }
   const binning: Binning = opts.binning ?? 'equal-count';
   const k = opts.k ?? 10;
+  // OCR finding 2: k<1 → zero bins → the binning loop never runs → eceSum stays 0 →
+  // a SILENT false 'perfectly calibrated' (ECE=0) verdict on corrupt config. A verdict
+  // tool must fail loud on invalid bin counts, not fabricate a neutral result.
+  if (!Number.isInteger(k) || k < 1) {
+    throw new Error(`ece: k must be an integer >= 1 (got ${k})`);
+  }
   const n = predictions.length;
+
+  // OCR finding 3: a NaN/non-finite prediction → Math.floor(NaN*k)=NaN bin index →
+  // binIndices[NaN] is undefined → .push throws an opaque TypeError (equal-count: the
+  // comparator sort silently mis-orders). A NaN prediction means upstream corruption;
+  // reject it loudly here rather than scoring a garbage reliability table.
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(predictions[i])) {
+      throw new Error(`ece: prediction at index ${i} is not finite (got ${predictions[i]})`);
+    }
+  }
 
   if (n === 0) {
     return { ece: 0, n: 0, bins: [], binning, k };
