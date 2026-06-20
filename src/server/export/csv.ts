@@ -380,7 +380,10 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
       (tables.question ?? []) as Array<{
         id: string;
         prompt_md: string;
-        knowledge_ids?: string;
+        // YUK-324 — knowledge_ids is a jsonb column. The `postgres` driver
+        // returns it ALREADY parsed (string[]); the legacy D1 export dumps
+        // carry the JSON-string form. Accept both shapes.
+        knowledge_ids?: string | string[];
       }>
     ).map((q) => [q.id, q]),
   );
@@ -393,9 +396,12 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
   for (const r of reviews) {
     const qid = r.subject_id as string;
     const question = questionById.get(qid);
-    const kIds: string[] = question?.knowledge_ids
-      ? (JSON.parse(question.knowledge_ids) as string[])
-      : [];
+    // YUK-324 — defensive parse: the postgres jsonb driver hands back an array
+    // directly, while legacy export dumps store a JSON string. A bare
+    // JSON.parse on the array form threw (SyntaxError) → backup CSV export 500.
+    const kIds: string[] = Array.isArray(question?.knowledge_ids)
+      ? question.knowledge_ids
+      : (parseJsonCell<string[]>(question?.knowledge_ids) ?? []);
     const kNames = kIds.map((id) => knowledgeById.get(id) ?? id).join('; ');
     const promptExcerpt = (question?.prompt_md ?? '').slice(0, 80).replace(/[\n\r]/g, ' ');
     const payload = parseJsonCell<{
