@@ -41,7 +41,15 @@
 // 接缝 e (「备 WAL 不备 collection 是半截」)——之前只备 memory_reconciliation_log
 // (WAL/provenance)，慢热软画像本体 (collection 行) 仍在 restore 后灭失。新增数据载荷形态
 // (data.json 多一个 mem0-collection key) 必 bump：4.6 → 4.7。
-export const SCHEMA_VERSION = '4.7';
+// YUK-454 increment-1 (ADR-0036 身份层): additive `misconception` identity table —
+// 身份层骨架 (DORMANT in L1：无 writer，写路径 gated 在 ADR-0034 consistency gate /
+// promotion flow 后)。它是 drizzle-managed pgTable，是 AI-proposed/authored 认知身份
+// 实体 (非 transient/derived/operational state)，故按 peer 身份/校准表惯例进 FK_ORDER
+// 备份 (非 BACKUP_EXCLUDED——后者只收瞬态/派生/运维态)。从第一天起就在备份里 wipe/restore，
+// 即便 L1 是空表。表无 enforced FK (loose-coupling text-ref 惯例)，位置不受 PG FK 约束；
+// 置于 knowledge/mastery_state 身份簇相邻可读。NEW FK_ORDER table 必 bump (per
+// archive.ts assertEveryTableIsBackedUpOrExcluded / 92)：30 → 31 tables，4.7 → 4.8。
+export const SCHEMA_VERSION = '4.8';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -89,6 +97,12 @@ export const MAX_INLINE_ASSETS = 45;
 export const FK_ORDER = [
   'knowledge',
   'mastery_state',
+  // YUK-454 inc-1 (ADR-0036 身份层): misconception — AI-proposed/authored 认知身份实体。
+  // DORMANT in L1 (无 writer)，但备份覆盖是纯声明式 (整行 dump/restore via 这个数组 +
+  // getTableColumns-derived COLUMN_ALLOWLIST)，故按 peer 身份/校准表惯例从第一天就进
+  // FK_ORDER (非 BACKUP_EXCLUDED——它非瞬态/派生态)。无 enforced FK (loose-coupling
+  // text-ref)，位置不受 PG FK 约束；紧邻 knowledge/mastery_state 身份簇可读。
+  'misconception',
   'knowledge_edge',
   'source_asset',
   'source_document',

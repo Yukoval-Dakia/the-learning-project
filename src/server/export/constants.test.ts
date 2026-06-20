@@ -10,21 +10,25 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.7" (YUK-355 mem0 collection 纳入备份/恢复)', () => {
+  it('SCHEMA_VERSION is "4.8" (YUK-454 inc-1 misconception 身份表入备份)', () => {
+    // 4.7 → 4.8 (YUK-454 inc-1 / ADR-0036 身份层): NEW FK_ORDER table misconception
+    // (AI-proposed/authored 认知身份实体，DORMANT in L1 但备份覆盖纯声明式)。新表入
+    // FK_ORDER 必 bump (per archive.ts assertEveryTableIsBackedUpOrExcluded)，同 peer
+    // 身份/校准表先例 (非 BACKUP_EXCLUDED——后者只收瞬态/派生/运维态)。
     // 4.6 → 4.7 (YUK-355): mem0 pgvector collection 表 (默认 learning_project_memories)
     // 纳入备份/恢复 —— data.json 多一个 mem0-collection key，新载荷形态必 bump。
     // 4.5 → 4.6 (YUK-344 调和环增量 2): NEW FK_ORDER table edge_reconciliation_log
     // (结构轴知识边调和的 AUDIT / PROVENANCE 日志，SUPERSEDE 决策来由)。新表入 FK_ORDER
     // 必 bump (per archive.ts:92)，同 memory_reconciliation_log 的先例 (非 BACKUP_EXCLUDED)。
     // 4.4 → 4.5 (YUK-361 Phase 6): difficulty_calibration_label 入 FK_ORDER (前一次 bump)。
-    expect(SCHEMA_VERSION).toBe('4.7');
+    expect(SCHEMA_VERSION).toBe('4.8');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 30 tables in topological order', () => {
+  it('FK_ORDER lists all 31 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -41,8 +45,12 @@ describe('export constants', () => {
     // 29 → 30 (YUK-344 调和环增量 2): added edge_reconciliation_log — 结构轴知识边调和的
     // AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)，同 memory_reconciliation_log 进备份
     // (非 BACKUP_EXCLUDED)；置于 memory_reconciliation_log 后保持两条 reconciliation 日志相邻。
+    // 30 → 31 (YUK-454 inc-1 / ADR-0036 身份层): added misconception — AI-proposed/
+    // authored 认知身份实体 (DORMANT in L1，无 writer，但备份覆盖纯声明式整行 dump/restore)，
+    // 按 peer 身份/校准表惯例进 FK_ORDER (非 BACKUP_EXCLUDED)；紧邻 knowledge/mastery_state
+    // 身份簇 (loose-coupling text-ref，无 enforced FK，位置不受约束)。
     // knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(30);
+    expect(FK_ORDER.length).toBe(31);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('edge_reconciliation_log');
   });
@@ -70,6 +78,20 @@ describe('export constants', () => {
   it('FK_ORDER includes B1-W1 diagnostic tables (mastery_state, item_calibration)', () => {
     expect(FK_ORDER).toContain('mastery_state');
     expect(FK_ORDER).toContain('item_calibration');
+  });
+
+  it('FK_ORDER includes YUK-454 inc-1 misconception (身份层认知实体，承重非排除)', () => {
+    // ADR-0036 身份层骨架 — DORMANT in L1 (无 writer) but backed up from day one:
+    // it is AI-proposed/authored cognitive data, NOT transient/derived/operational
+    // state, so it belongs in FK_ORDER (per peer identity/calibration tables), never
+    // in BACKUP_EXCLUDED. FK_ORDER membership only governs wipe/restore of whatever
+    // rows exist (empty in L1) — it does NOT introduce a writer.
+    expect(FK_ORDER).toContain('misconception');
+    expect(BACKUP_EXCLUDED_TABLES.has('misconception')).toBe(false);
+    // 紧邻 knowledge/mastery_state 身份簇 (loose-coupling text-ref，无 enforced FK).
+    const idx = (t: string) => FK_ORDER.indexOf(t as never);
+    expect(idx('mastery_state')).toBeLessThan(idx('misconception'));
+    expect(idx('misconception')).toBeLessThan(idx('knowledge_edge'));
   });
 
   it('FK_ORDER includes YUK-361 Phase 5 item_family_calibration (家族级 b 慢热资产，承重非排除)', () => {
