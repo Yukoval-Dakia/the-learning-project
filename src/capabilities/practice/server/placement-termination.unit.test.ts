@@ -110,4 +110,18 @@ describe('evaluatePlacementTermination — input guards (fail loud)', () => {
       }),
     ).toThrow(/perKcPrecision/);
   });
+
+  it('throws on an invalid entry positioned AFTER a non-converged one (no .every short-circuit bypass)', () => {
+    // OCR major regression: precision 9 → SE 0.333 (converged), precision 3 → SE ≈ 0.577
+    // (NOT converged → .every() would stop here), then an invalid -5. The pre-pass must
+    // still visit -5 and throw rather than silently returning {shouldStop:false}.
+    expect(() =>
+      evaluatePlacementTermination({
+        answeredCount: 2,
+        cap: 8,
+        perKcPrecision: [9, 3, -5],
+        seThreshold: 0.5,
+      }),
+    ).toThrow(/perKcPrecision/);
+  });
 });

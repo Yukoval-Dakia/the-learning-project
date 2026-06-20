@@ -68,18 +68,27 @@ export function evaluatePlacementTermination(
     return { shouldStop: true, reason: 'cap' };
   }
 
-  // 2. Optional SE convergence early stop (below cap).
-  const seEnabled =
-    typeof seThreshold === 'number' && Number.isFinite(seThreshold) && seThreshold > 0;
-  if (seEnabled && perKcPrecision !== undefined && perKcPrecision.length > 0) {
-    const allConverged = perKcPrecision.every((p) => {
+  // 2. Optional SE convergence early stop (below cap). The full guard is inlined so TS
+  //    narrows `seThreshold` to `number` here (no `as number` assertion — OCR minor).
+  if (
+    typeof seThreshold === 'number' &&
+    Number.isFinite(seThreshold) &&
+    seThreshold > 0 &&
+    perKcPrecision !== undefined &&
+    perKcPrecision.length > 0
+  ) {
+    // Validate ALL entries in a pre-pass BEFORE the convergence check. Doing it inside
+    // `.every()` would let short-circuit skip entries after the first non-converged one,
+    // silently ignoring a later invalid value (OCR major) — a termination oracle must
+    // throw on ANY invalid input, never silently mis-decide.
+    for (const p of perKcPrecision) {
       if (!Number.isFinite(p) || p < 0) {
         throw new Error(
           `evaluatePlacementTermination: perKcPrecision entries must be finite >= 0 (got ${p})`,
         );
       }
-      return thetaSe(p) <= (seThreshold as number);
-    });
+    }
+    const allConverged = perKcPrecision.every((p) => thetaSe(p) <= seThreshold);
     if (allConverged) {
       return { shouldStop: true, reason: 'se_converged' };
     }
