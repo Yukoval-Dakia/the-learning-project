@@ -242,14 +242,15 @@ export function resolveTaskProvider(
     );
   }
 
-  // Only anthropic + xiaomi are wired for key-auth; both speak the Anthropic
-  // Messages protocol and so are transparently routable via ANTHROPIC_BASE_URL.
-  // openrouter / gateway / openai land here as "not implemented" because their
-  // wire shapes differ; revisit if a real trigger fires. ('anthropic-sub' is the
-  // oauth branch above, so it never reaches here.)
-  if (providerName !== 'anthropic' && providerName !== 'xiaomi') {
+  // anthropic + xiaomi + zhipu are wired for key-auth; all speak the Anthropic
+  // Messages protocol and so are transparently routable via ANTHROPIC_BASE_URL
+  // (zhipu = GLM coding plan on /api/anthropic, smoke-tested HTTP 200). openrouter
+  // / gateway / openai land here as "not implemented" because their wire shapes
+  // differ; revisit if a real trigger fires. ('anthropic-sub' is the oauth branch
+  // above, so it never reaches here.)
+  if (providerName !== 'anthropic' && providerName !== 'xiaomi' && providerName !== 'zhipu') {
     throw new Error(
-      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', and 'anthropic-sub' (subscription OAuth) are wired.`,
+      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', and 'anthropic-sub' (subscription OAuth) are wired.`,
     );
   }
 
