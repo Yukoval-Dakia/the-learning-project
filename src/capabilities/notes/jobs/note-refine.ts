@@ -7,16 +7,15 @@
 // proposal (propose).
 //
 // P4-A scope: queue plumbing, loading context, parsing NotePatch, calling
-// `persistNoteRefineApply`. P4-B owns the mutator-vs-propose runtime gate
-// (locked threshold `≤ 3 patch ops AND ≤ 2 new blocks → mutator`). Until
-// P4-B lands we ALWAYS apply (mutator-only path); the gate hook is wired
-// via `deps.gate?.(summary) => 'mutator' | 'propose'` so P4-B can swap in
-// real gating without re-shaping the handler.
+// `persistNoteRefineApply`. The mutator-vs-propose runtime gate is now LIVE:
+// `defaultGate` = `decideNoteRefineMode` (count threshold `≤ 3 patch ops AND
+// ≤ 2 new blocks → mutator`, else propose) and `runNoteRefine` additionally
+// diverts to propose when the patch touches a user-verified block
+// (`patchTouchesVerifiedBlock`). The gate stays injectable via
+// `deps.gate?.(summary) => 'mutator' | 'propose'` for tests / future tuning.
 //
-// PHASE-DEFERRED (P4-B): the default gate returns 'mutator' to keep P4-A
-// scope minimal — P4-B replaces this with the real threshold + editing-
-// session-aware logic. P4-C wires editing-session deferral; P4-D handles
-// undo UI; P4-E adds the trigger producers. See
+// P4-C wires editing-session deferral; P4-D handles undo UI; P4-E adds the
+// trigger producers. See
 // `docs/superpowers/plans/2026-05-26-yuk88-block-tree-rebuild-phase.md` §P4.
 
 import { eq, inArray } from 'drizzle-orm';
@@ -67,13 +66,14 @@ export type NoteRefineGate = (
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
-  // PHASE-DEFERRED (P4-B): real gate goes here. P4-A default returns
-  // 'mutator' unconditionally so the apply path is exercised end-to-end.
+  // Override the live gate (`defaultGate` = `decideNoteRefineMode`, the count
+  // threshold). Tests inject a fixed 'mutator'/'propose' decision here to drive
+  // a specific path deterministically; production leaves it unset.
   gate?: NoteRefineGate;
-  // Hook so P4-B's propose path can plug in its proposal writer without
-  // forcing P4-A to wire that yet. Default is a no-op that returns the
-  // patch summary verbatim so callers can still observe what would have
-  // been proposed.
+  // Override the propose-path writer. Unset (production default) →
+  // `runNoteRefine` calls `writeNoteRefineProposal`, landing the patch in the
+  // inbox for human approval. Tests pass a spy here to assert what would be
+  // proposed without writing a proposal row.
   onPropose?: (input: {
     artifactId: string;
     patch: NotePatchT;
