@@ -3,7 +3,7 @@
 // Deterministic via injected mulberry32. Resample whole CLUSTERS (KCs), never rows.
 
 import { describe, expect, it } from 'vitest';
-import { type ClusterForwardPreds, deltaAucClusterBootstrap } from './bootstrap';
+import { type ClusterForwardPreds, deltaAucClusterBootstrap, resolveBootstrapB } from './bootstrap';
 import { mulberry32 } from './rng';
 
 // Build a cluster where SRT scores rank outcomes BETTER than binary, but neither is
@@ -85,6 +85,21 @@ describe('deltaAucClusterBootstrap', () => {
     expect(Number.isNaN(r.pointDelta)).toBe(true);
   });
 
+  // ── OCR finding 13: defectively-high rng (returns 1.0) must not index out of bounds. ──
+  it('OCR finding 13: rng()===1.0 is clamped to the last cluster (no out-of-bounds crash)', () => {
+    const clusters: ClusterForwardPreds[] = [
+      { scoresSrt: [0.9, 0.1], scoresBinary: [0.6, 0.4], labels: [1, 0] },
+      { scoresSrt: [0.8, 0.2], scoresBinary: [0.55, 0.45], labels: [1, 0] },
+      { scoresSrt: [0.7, 0.3], scoresBinary: [0.52, 0.48], labels: [1, 0] },
+    ];
+    // Before the clamp: floor(1.0 * k) === k → clusters[k] undefined → crash in the draw.
+    // After: index clamped to k-1 → always picks the last cluster (degenerate but safe).
+    expect(() => deltaAucClusterBootstrap(clusters, { b: 50, rng: () => 1.0 })).not.toThrow();
+    const r = deltaAucClusterBootstrap(clusters, { b: 50, rng: () => 1.0 });
+    // Every replicate draws the same single cluster (last one) → a valid, finite result.
+    expect(Number.isFinite(r.pointDelta)).toBe(true);
+  });
+
   it('pairing: aucSrt and aucBinary computed on the SAME resampled multiset', () => {
     // With identical srt/binary scores, every paired replicate Δ* must be exactly 0,
     // so the CI is degenerate at 0 — proves the two AUCs share the resample draw.
@@ -101,5 +116,30 @@ describe('deltaAucClusterBootstrap', () => {
     const r = deltaAucClusterBootstrap(clusters, { b: 300, rng: mulberry32(11) });
     expect(r.ciLo).toBeCloseTo(0, 12);
     expect(r.ciHi).toBeCloseTo(0, 12);
+  });
+});
+
+// ── OCR finding 12: two-tier B cap for large pools (tested directly — the live bootstrap
+//    on a 20k-row pool is O(N²)·B and far too slow to run as a test). ──
+describe('resolveBootstrapB — OCR finding 12 perf cap', () => {
+  it('small pool keeps the requested B', () => {
+    expect(resolveBootstrapB(1000, 2000)).toBe(2000);
+    expect(resolveBootstrapB(5000, 2000)).toBe(2000); // boundary is strictly > 5000
+  });
+
+  it('large pool (>5000) reduces B to 500', () => {
+    expect(resolveBootstrapB(5001, 2000)).toBe(500);
+    expect(resolveBootstrapB(20000, 2000)).toBe(500); // boundary is strictly > 20000
+  });
+
+  it('huge pool (>20000) reduces B to the hard cap 200', () => {
+    expect(resolveBootstrapB(20001, 2000)).toBe(200);
+    expect(resolveBootstrapB(1_000_000, 2000)).toBe(200);
+  });
+
+  it('never RAISES B above the request', () => {
+    // an already-small requested B is left alone even on a huge pool.
+    expect(resolveBootstrapB(1_000_000, 100)).toBe(100);
+    expect(resolveBootstrapB(6000, 300)).toBe(300);
   });
 });
