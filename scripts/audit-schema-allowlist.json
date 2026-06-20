@@ -521,5 +521,46 @@
       "ref": "A4 inc-2 grid→SoT cut-over (YUK-436)",
       "expected_by": "2026-12-15"
     }
+  },
+  "_comment_yuk454_inc1_misconception": "YUK-454 increment-1 (ADR-0036 身份层) — the DORMANT misconception identity-table skeleton. No writer exists in L1: no route/job/copilotTool/manifest wiring. The write path is gated behind the ADR-0034 consistency gate (promotion flow, YUK-454 axis-2/gated lane). The business columns below have NO INSERT/UPDATE write path until that slice lands; the trivial columns (id/created_at/updated_at/archived_at) need no entry.",
+  "misconception.title": {
+    "reason": "misconception identity-table skeleton (YUK-454 increment-1); write path gated behind ADR-0034 consistency gate (promotion flow), dormant in L1",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0034 consistency gate + promotion flow (YUK-454 axis-2/gated lane)",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "misconception.reasoning": {
+    "reason": "misconception identity-table skeleton (YUK-454 increment-1); write path gated behind ADR-0034 consistency gate (promotion flow), dormant in L1",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0034 consistency gate + promotion flow (YUK-454 axis-2/gated lane)",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "misconception.weight": {
+    "reason": "misconception identity-table skeleton (YUK-454 increment-1); write path gated behind ADR-0034 consistency gate (promotion flow), dormant in L1",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0034 consistency gate + promotion flow (YUK-454 axis-2/gated lane)",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "misconception.created_by": {
+    "reason": "misconception identity-table skeleton (YUK-454 increment-1); write path gated behind ADR-0034 consistency gate (promotion flow), dormant in L1",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0034 consistency gate + promotion flow (YUK-454 axis-2/gated lane)",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "misconception.proposed_by_ai": {
+    "reason": "misconception identity-table skeleton (YUK-454 increment-1); write path gated behind ADR-0034 consistency gate (promotion flow), dormant in L1",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0034 consistency gate + promotion flow (YUK-454 axis-2/gated lane)",
+      "expected_by": "2026-09-30"
+    }
   }
 }
