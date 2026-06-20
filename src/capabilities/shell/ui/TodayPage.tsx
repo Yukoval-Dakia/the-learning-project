@@ -87,9 +87,11 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
 // 设计稿 screen-today.jsx CostRibbon 取 DOM。quiet-empty 语义保留：零成本不噪。
 // YUK-359: spend is grouped by currency (USD = mimo/runner, CNY = GLM-OCR /
 // memory reconcile) — never a single cross-currency sum.
+// YUK-330: the per-currency amount key is `cost` (unified with /api/_/admin/cost
+// and the cost_ledger.cost source column); cost-today previously sent `spend`.
 interface CurrencySpend {
   currency: string;
-  spend: number;
+  cost: number;
 }
 interface CostTodayResponse {
   window: { from: number; to: number; label: string };
@@ -117,7 +119,7 @@ function fmtSpend(spend: number, currency = 'USD'): string {
 // Render per-currency spend list (e.g. "$0.42 · ¥1.20"); empty → 真零 $0.00.
 function fmtByCurrency(rows: CurrencySpend[]): string {
   if (rows.length === 0) return fmtSpend(0);
-  return rows.map((r) => fmtSpend(r.spend, r.currency)).join(' · ');
+  return rows.map((r) => fmtSpend(r.cost, r.currency)).join(' · ');
 }
 
 function CostRibbon() {

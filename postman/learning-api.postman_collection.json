@@ -291,7 +291,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "cost", "today"]
             },
-            "description": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon\n\n**Notes:** 按 BJT（UTC+8）午夜划窗口；返回 {window, today:{by_currency,tokens_in,tokens_out,ledger_rows,tool_calls,by_task}}。YUK-359：spend 按币种分组（by_currency / by_task[].by_currency），不跨币种求和"
+            "description": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon\n\n**Notes:** 按 BJT（UTC+8）午夜划窗口；返回 {window, today:{by_currency,tokens_in,tokens_out,ledger_rows,tool_calls,by_task}}。YUK-359：花费按币种分组（by_currency / by_task[].by_currency），不跨币种求和。YUK-330：每币种金额键名为 cost（与 /api/_/admin/cost 统一，原 cost-today 用 spend）"
           },
           "response": []
         }

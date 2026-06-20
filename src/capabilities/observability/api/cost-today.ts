@@ -75,7 +75,10 @@ export async function GET(_req: Request): Promise<Response> {
         label: 'BJT today (from local midnight)',
       },
       today: {
-        by_currency: [...by_currency.entries()].map(([currency, spend]) => ({ currency, spend })),
+        // YUK-330: per-currency amount key is `cost` (unified with /api/_/admin/cost
+        // and the cost_ledger.cost source column). cost-today previously emitted
+        // `spend`, diverging from admin-cost's `cost` for the same concept.
+        by_currency: [...by_currency.entries()].map(([currency, cost]) => ({ currency, cost })),
         tokens_in,
         tokens_out,
         ledger_rows: ledgerRows.length,
@@ -83,7 +86,7 @@ export async function GET(_req: Request): Promise<Response> {
         by_task: [...by_task.entries()].map(([k, v]) => ({
           task_kind: k,
           calls: v.calls,
-          by_currency: [...v.spend.entries()].map(([currency, spend]) => ({ currency, spend })),
+          by_currency: [...v.spend.entries()].map(([currency, cost]) => ({ currency, cost })),
         })),
       },
     });
