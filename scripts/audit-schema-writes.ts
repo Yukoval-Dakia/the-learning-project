@@ -478,42 +478,251 @@ function extractBalanced(src: string, openIdx: number): string | null {
   return null;
 }
 
-// Extract every table-scoped INSERT / UPDATE statement in a source file. Matches
-// `(db|tx|...).insert(<table>)` → next `.values(` (object or array of objects) and
-// `(db|tx|...).update(<table>)` → next `.set(`, then brace-balances the payload so
-// shorthand and long-form field references can be checked inside the right table's
-// statement only. Schema var names equal SQL table names in this repo, so the
-// captured `<table>` matches parseSchema's table key directly.
+// Statement terminator scan (YUK-166 F3). Returns the exclusive end offset of the
+// drizzle write statement that starts at `headEnd` — the first `;` (string/comment
+// aware) OR the next `.insert(<table>)` / `.update(<table>)` head, whichever comes
+// first. Bounding every sub-search (`.values(` / `.set(` / `.onConflictDoUpdate(`)
+// to this window stops a later statement's payload from bleeding into an earlier
+// head that has no payload of its own (e.g. `db.insert(a).returning()` followed by
+// `db.insert(b).values({...})` — `b`'s values must NOT attach to `a`).
+function statementEnd(src: string, headEnd: number): number {
+  const nextHeadRe = /\.(?:insert|update)\(\s*\w+\s*\)/g;
+  nextHeadRe.lastIndex = headEnd;
+  const nextHead = nextHeadRe.exec(src);
+  let bound = nextHead ? nextHead.index : src.length;
+  // Find the first top-level `;` before the next head (string/comment aware).
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  for (let i = headEnd; i < bound; i += 1) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (inLineComment) {
+      if (c === '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (c === '*' && next === '/') {
+        inBlockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (inSingle) {
+      if (c === '\\') i += 1;
+      else if (c === "'") inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (c === '\\') i += 1;
+      else if (c === '"') inDouble = false;
+      continue;
+    }
+    if (inTemplate) {
+      if (c === '\\') i += 1;
+      else if (c === '`') inTemplate = false;
+      continue;
+    }
+    if (c === '/' && next === '/') {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      continue;
+    }
+    if (c === '`') {
+      inTemplate = true;
+      continue;
+    }
+    if (c === ';') {
+      bound = i;
+      break;
+    }
+  }
+  return bound;
+}
+
+// Inspect the argument region of a `.call( ... )` and return the FIRST object /
+// array literal opened anywhere inside that call's parentheses (string + comment
+// aware, paren-depth tracked) — covering inline `{...}`, array-of-objects
+// `[{...}]`, AND builder forms like `rows.map((r) => ({ ... }))`. Returns `'bare'`
+// when the call closes with NO object literal inside (a true bare identifier /
+// variable, e.g. `.values(row)` / `.values(initial)`): such args are opaque —
+// columns cannot be enumerated from a variable, so the caller records an
+// empty-payload insert (table identity known, zero columns claimed) instead of
+// skipping forward into the chain and wrongly grabbing a later object literal
+// (YUK-166 F2). Returns `null` when the call is malformed/unterminated within
+// `bound`.
+function objectArgAfter(
+  src: string,
+  callIdx: number,
+  callLen: number,
+  bound: number,
+): { kind: 'literal'; payload: string } | { kind: 'bare' } | null {
+  // callIdx + callLen points just past the opening `(` of the call.
+  let parenDepth = 1;
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  for (let i = callIdx + callLen; i < bound && i < src.length; i += 1) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (inLineComment) {
+      if (c === '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (c === '*' && next === '/') {
+        inBlockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (inSingle) {
+      if (c === '\\') i += 1;
+      else if (c === "'") inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (c === '\\') i += 1;
+      else if (c === '"') inDouble = false;
+      continue;
+    }
+    if (inTemplate) {
+      if (c === '\\') i += 1;
+      else if (c === '`') inTemplate = false;
+      continue;
+    }
+    if (c === '/' && next === '/') {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      continue;
+    }
+    if (c === '`') {
+      inTemplate = true;
+      continue;
+    }
+    if (c === '{' || c === '[') {
+      // First object/array literal inside the call → enumerable payload.
+      const payload = extractBalanced(src, i);
+      return payload ? { kind: 'literal', payload } : null;
+    }
+    if (c === '(') {
+      parenDepth += 1;
+      continue;
+    }
+    if (c === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) {
+        // Call closed with no object literal inside → opaque bare argument.
+        return { kind: 'bare' };
+      }
+    }
+  }
+  return null;
+}
+
+// Extract every table-scoped INSERT / UPDATE statement in a source file. Handles:
+//   • `(db|tx|...).insert(<table>).values({...} | [{...}] | builder(...))` — inline
+//     object, array-of-objects, and builder forms (`rows.map((r) => ({...}))`).
+//   • `(db|tx|...).insert(<table>).values(<ident>)` — bare identifier ⇒ OPAQUE insert
+//     (table identity known, zero enumerable columns) (YUK-166 F2).
+//   • `.onConflictDoUpdate({ ... set: {...} })` chained on an insert ⇒ the set-object
+//     keys are UPDATE writes on the SAME table (YUK-166 F1: drizzle upsert).
+//   • `(db|tx|...).update(<table>).set({...})` — standalone UPDATE.
+// Every sub-search is bounded to the current statement (YUK-166 F3) so a later
+// statement's payload cannot bleed into an earlier head that has none of its own.
+// Schema var names equal SQL table names in this repo, so the captured `<table>`
+// matches parseSchema's table key directly.
 export function extractWriteStatements(src: string): WriteStatement[] {
   const statements: WriteStatement[] = [];
 
-  const collect = (kind: 'insert' | 'update', method: string, call: 'values' | 'set') => {
-    const headRe = new RegExp(`\\.${method}\\(\\s*(\\w+)\\s*\\)`, 'g');
-    for (const head of src.matchAll(headRe)) {
-      const table = head[1];
-      const headEnd = (head.index ?? 0) + head[0].length;
-      // Find the `.values(` / `.set(` that belongs to this insert/update — the
-      // first occurrence after the head, before the next insert/update head.
-      const callIdx = src.indexOf(`.${call}(`, headEnd);
-      if (callIdx === -1) continue;
-      // Locate the first `{` or `[` inside the call args.
-      let openIdx = callIdx + `.${call}(`.length;
-      while (openIdx < src.length && src[openIdx] !== '{' && src[openIdx] !== '[') {
-        // Bail if we hit a clear statement break before any object literal.
-        if (src[openIdx] === ';') {
-          openIdx = -1;
-          break;
-        }
-        openIdx += 1;
-      }
-      if (openIdx === -1 || openIdx >= src.length) continue;
-      const payload = extractBalanced(src, openIdx);
-      if (payload) statements.push({ kind, table, payload });
-    }
-  };
+  // INSERT statements: `.insert(<table>)` → its own `.values(` (object, array, or
+  // opaque bare ident) AND any chained `.onConflictDoUpdate({ ... set: {...} })`,
+  // both bounded to the current statement.
+  const insertHeadRe = /\.insert\(\s*(\w+)\s*\)/g;
+  for (const head of src.matchAll(insertHeadRe)) {
+    const table = head[1];
+    const headEnd = (head.index ?? 0) + head[0].length;
+    const bound = statementEnd(src, headEnd);
 
-  collect('insert', 'insert', 'values');
-  collect('update', 'update', 'set');
+    // .values(...) — within this statement only.
+    const valuesIdx = src.indexOf('.values(', headEnd);
+    if (valuesIdx !== -1 && valuesIdx < bound) {
+      const arg = objectArgAfter(src, valuesIdx, '.values('.length, bound);
+      if (arg?.kind === 'literal') {
+        statements.push({ kind: 'insert', table, payload: arg.payload });
+      } else if (arg?.kind === 'bare') {
+        // Opaque insert: table identity known, columns unknowable from a variable.
+        // Empty payload claims zero columns (conservative-correct) — it neither
+        // misattributes the chained onConflictDoUpdate set object (F2) nor masks.
+        statements.push({ kind: 'insert', table, payload: '{}' });
+      }
+    }
+
+    // .onConflictDoUpdate({ ... set: { ... } }) — set-object columns are UPDATE
+    // writes on the same table (YUK-166 F1). Bounded to this statement.
+    const upsertIdx = src.indexOf('.onConflictDoUpdate(', headEnd);
+    if (upsertIdx !== -1 && upsertIdx < bound) {
+      const arg = objectArgAfter(src, upsertIdx, '.onConflictDoUpdate('.length, bound);
+      if (arg?.kind === 'literal') {
+        // Find the `set:` key inside the config object and balance its value.
+        // Work within the extracted payload string so offsets stay self-consistent.
+        const slice = arg.payload;
+        const setMatch = /\bset\s*:\s*/.exec(slice);
+        if (setMatch) {
+          let j = setMatch.index + setMatch[0].length;
+          while (j < slice.length && slice[j] !== '{') j += 1;
+          const setPayload = j < slice.length ? extractBalanced(slice, j) : null;
+          if (setPayload) statements.push({ kind: 'update', table, payload: setPayload });
+        }
+      }
+    }
+  }
+
+  // UPDATE statements: `.update(<table>)` → its own `.set(`, bounded to the
+  // current statement.
+  const updateHeadRe = /\.update\(\s*(\w+)\s*\)/g;
+  for (const head of src.matchAll(updateHeadRe)) {
+    const table = head[1];
+    const headEnd = (head.index ?? 0) + head[0].length;
+    const bound = statementEnd(src, headEnd);
+    const setIdx = src.indexOf('.set(', headEnd);
+    if (setIdx === -1 || setIdx >= bound) continue;
+    const arg = objectArgAfter(src, setIdx, '.set('.length, bound);
+    if (arg?.kind === 'literal') {
+      statements.push({ kind: 'update', table, payload: arg.payload });
+    }
+  }
+
   return statements;
 }
 
