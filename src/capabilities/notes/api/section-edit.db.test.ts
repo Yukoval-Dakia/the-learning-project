@@ -111,13 +111,27 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
     const body = (await res.json()) as {
       artifact_id: string;
       artifact_version: number;
-      section: { id: string; body_md: string; version: number };
+      section: {
+        id: string;
+        body_md: string;
+        version: number;
+        user_verified: boolean;
+        source_tier: string;
+      };
       event_id: string;
     };
     expect(body).toMatchObject({
       artifact_id: 'a1',
       artifact_version: 1,
-      section: { id: 's1', body_md: '新定义\n\n- 第一条', version: 2 },
+      // C1a (YUK-358) — implicit-on-edit setter: a human edit promotes the
+      // section to user-verified so the AI must propose, not silently overwrite.
+      section: {
+        id: 's1',
+        body_md: '新定义\n\n- 第一条',
+        version: 2,
+        user_verified: true,
+        source_tier: 'user_verified',
+      },
     });
 
     // 旧 learning-items HTTP 面已随 app/ 拆除退役（M5-T5c）——直接查 artifact 表验证。
@@ -128,6 +142,8 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
       id: 's1',
       body_md: '新定义\n\n- 第一条',
       version: 2,
+      user_verified: true,
+      source_tier: 'user_verified',
     });
 
     const events = await testDb()
