@@ -66,6 +66,16 @@ export const observabilityCapability = defineCapability({
         path: '/api/events/[id]/correct',
         load: () => import('./api/event-correct').then((m) => m.POST),
       },
+      // YUK-310 — 通用异步 job tracker：caller-agnostic SSE。把 ingestion 的
+      // per-domain /api/ingestion/[id]/events 提升为 /api/jobs/[kind]/[id]/events，
+      // kind→business_table、id→business_id；copilot_run 是首个消费者。job_events
+      // 表本就泛型，无 schema 变更。ingestion 路由作为共存别名保留。UI run-card
+      // 绑定 = Phase-3 follow-up。
+      {
+        method: 'GET',
+        path: '/api/jobs/[kind]/[id]/events',
+        load: () => import('./api/job-events').then((m) => m.GET),
+      },
     ],
   },
   // M5-T4b (YUK-321)：admin 四页迁 SPA（ui/observability.tsx + ui/subjects.tsx）。
