@@ -270,23 +270,7 @@ export const tasks = {
     // builder in task-prompts.ts.
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
-  EmbeddedCheckGenerateTask: {
-    kind: 'EmbeddedCheckGenerateTask',
-    description: 'Product Track 1 — generate 1-3 self-test questions for an atomic note',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    // DEPRECATED (2026-05-22 M1): do not edit. Runtime renders via
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
-    // string is kept only as type-required fallback. New tasks MUST add a
-    // builder in task-prompts.ts.
-    systemPrompt:
-      '你是自检题作者。基于 atomic note 输出 1-3 道短自检题。严格输出 EmbeddedCheckGenerationResult JSON。',
-  },
+  // YUK-358 决定3：EmbeddedCheckGenerateTask 已删（内嵌判分自测孤儿链真删）。
   SemanticJudgeTask: {
     kind: 'SemanticJudgeTask',
     description:

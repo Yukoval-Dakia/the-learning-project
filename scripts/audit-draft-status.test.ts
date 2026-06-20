@@ -224,7 +224,7 @@ describe('scanQuestionInserts (classification)', () => {
   });
 });
 
-// No-false-positive regression — run the REAL scanner over the 12 real source sites.
+// No-false-positive regression — run the REAL scanner over the real source sites.
 const REAL_SETTERS = [
   'src/capabilities/ingestion/server/image-candidate-accept.ts',
   'src/capabilities/practice/server/proposal-appliers.ts',
@@ -233,7 +233,7 @@ const REAL_SETTERS = [
   'src/server/boss/handlers/quiz_gen.ts',
   'src/server/proposals/legacy-record-appliers.ts',
   // post-L2 explicit setters (also allowlisted, harmless-redundant):
-  'src/server/boss/handlers/embedded_check_generate.ts',
+  // (YUK-358 决定3: embedded_check_generate.ts removed with the orphan chain.)
   'src/capabilities/copilot/server/teaching/materialize-ask-check.ts',
 ];
 const REAL_NULL_OWNERS = [

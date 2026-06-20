@@ -12,8 +12,8 @@ export const notesCapability = defineCapability({
     'mutator|propose，D6 后信号源 = mark_wrong/mastery_change/dwell/dreaming）。',
   api: {
     // M3-T4 (YUK-317)：9 条路由全带 load 懒加载 thunk（M1/M2 配方）。
-    // M5-T5a (YUK-321)：/api/editing-session/*、/api/embedded-check/* 收编
-    //（M3 时前者 ⚖️ 争议行留旧栈、后者 D6 墓碑；M5 收口等价平移，裁决 g）。
+    // M5-T5a (YUK-321)：/api/editing-session/* 收编。
+    // YUK-358 决定3：/api/embedded-check/* 孤儿链真删（曾随 M5 等价平移留 D6 墓碑）。
     routes: [
       {
         method: 'GET',
@@ -72,8 +72,9 @@ export const notesCapability = defineCapability({
         path: '/api/hubs/[id]/dismiss-link',
         load: () => import('./api/hub-dismiss-link').then((m) => m.POST),
       },
-      // M5-T5a (YUK-321) — editing-session（dwell 信号源）+ embedded-check
-      // attempt（D6 墓碑，等价平移待 feature 级裁撤）收编。
+      // M5-T5a (YUK-321) — editing-session（dwell 信号源）收编。
+      // YUK-358 决定3：/api/embedded-check/attempt 路由随内嵌判分自测孤儿链真删
+      //（graded inline self-test 被 D6 + B1 裁撤，SPA 零消费）。
       {
         method: 'POST',
         path: '/api/editing-session/heartbeat',
@@ -84,20 +85,15 @@ export const notesCapability = defineCapability({
         path: '/api/editing-session/blur',
         load: () => import('./api/editing-blur').then((m) => m.POST),
       },
-      {
-        method: 'POST',
-        path: '/api/embedded-check/attempt',
-        load: () => import('./api/embedded-check-attempt').then((m) => m.POST),
-      },
     ],
   },
   jobs: {
     // M4-T3 (YUK-319)：notes 域 job 归属声明。注册由 server/boss/
     // register-capability-jobs.ts 收集挂载（有 load 的两条）；note_generate /
-    // note_verify 的工厂带 boss 依赖二参（onReady/onPassed 链式 boss.send 回调，
-    // note_generate→note_verify→embedded_check_generate），不符 kernel
-    // JobHandlerFactory 单参签名——注册留在 handlers.ts 渐缩簿（M5 拆簿时
-    // 链式回调依赖随容器方案一并收编），此处声明无 load 纯归属元数据。
+    // note_verify 的工厂带 boss 依赖二参（onReady 链式 boss.send 回调，
+    // note_generate→note_verify），不符 kernel JobHandlerFactory 单参签名——注册
+    // 留在 handlers.ts 渐缩簿，此处声明无 load 纯归属元数据。
+    // YUK-358 决定3：note_verify→embedded_check_generate 链已删（孤儿链真删）。
     handlers: [
       {
         // Wave 7 / YUK-95 P5 Lane-C：nightly hub auto-sync（BJT 02:45，edge propose 后 15min）。

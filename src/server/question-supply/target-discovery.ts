@@ -174,11 +174,12 @@ export interface ScanInput {
  *   - web_sourced 已通过 source_verify 的 active 题 → provenance 2 → 获取 2 ✓
  *   - llm-only / 草稿（quiz_gen / variant / 未 verify）→ provenance 3|4 → 获取 3 ✓
  *
- * **`'embedded'` 刻意不在此集合**（review FINDING #3 修正）：source='embedded' 行是
- * embedded_check_generate.ts 写的 **AI 生成练习检测题**（provenance.ts §MIX-LAYER DEFENCE：
- * 无 ingestion_session_id → deriveSourceTier 正确落 tier 4 'generated'）。若把 embedded 当
- * 获取档 1，「只被 embedded AI 检测题覆盖」的 KC 会误判 hasHighTier=true → R2 永不请求真正
- * 的高可信题。embedded 是低可信生成档（→ 获取档 3），故按 provenance tier 降档，不进白名单。
+ * **`'embedded'` 刻意不在此集合**（review FINDING #3 修正）：source='embedded' 行历史上是
+ * AI 生成练习检测题（provenance.ts §MIX-LAYER DEFENCE：无 ingestion_session_id →
+ * deriveSourceTier 正确落 tier 4 'generated'）。若把 embedded 当获取档 1，「只被 embedded
+ * AI 检测题覆盖」的 KC 会误判 hasHighTier=true → R2 永不请求真正的高可信题。embedded 是
+ * 低可信生成档（→ 获取档 3），故按 provenance tier 降档，不进白名单。
+ * （YUK-358 决定3：embedded 生成链已删，无新 writer；此分类保留为对历史 'embedded' 行的防御。）
  */
 const HIGH_TIER_MANUAL_SOURCES = new Set(['manual', 'imported']);
 

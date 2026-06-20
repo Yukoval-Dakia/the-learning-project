@@ -239,23 +239,6 @@
     ]
   },
   {
-    "path": "/api/embedded-check/attempt",
-    "methods": [
-      {
-        "method": "POST",
-        "summary": "提交内联检查题答案，判题并（失败时）记录 mistake + 入队 attribution_followup，不写 FSRS",
-        "query": [],
-        "contentType": "application/json",
-        "bodyExample": {
-          "question_id": "q_abc123",
-          "answer_md": "答案文本",
-          "latency_ms": 3000
-        },
-        "notes": "question.source 须为 embedded 或 teaching_check；answer_md 最大 2000；latency_ms 可选 0-3600000；响应含 outcome + judge + attempt_event_id + (mistake_id)"
-      }
-    ]
-  },
-  {
     "path": "/api/events/:id/correct",
     "methods": [
       {

@@ -84,7 +84,6 @@ export interface NotePage {
   interactive: { html: string } | null;
   generation_status: string;
   verification_status: string;
-  embedded_check_status: string;
   version: number;
   history: Array<{ version: number; at: string; actor?: string; note?: string }>;
   backlinks: NotePageBacklink[];

@@ -3,11 +3,12 @@
 // A note(artifact) is now a first-class knowledge-labeled entity with its own
 // canonical reader page (/notes/[id], 2b brief §G2). This aggregates everything
 // the NoteReader needs into one server call: content blocks + resolved labels +
-// verification + version history + inbound backlinks + related learning_items +
-// embedded-check questions. Mirrors loadKnowledgeNodePage's read patterns
-// (block→embedded-question resolve, XC-5 backlink read-time filters) but is keyed
-// on the note id, not a knowledge id. Label model only (ADR-0020 §3): a note's
-// knowledge association is `knowledge_ids`, never learning_item ownership.
+// verification + version history + inbound backlinks + related learning_items.
+// Mirrors loadKnowledgeNodePage's read patterns (XC-5 backlink read-time
+// filters) but is keyed on the note id, not a knowledge id. Label model only
+// (ADR-0020 §3): a note's knowledge association is `knowledge_ids`, never
+// learning_item ownership.
+// (YUK-358 决定3: embedded-check question projection removed with the orphan chain.)
 
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
@@ -26,7 +27,7 @@ import type {
 } from '@/core/schema/business';
 import { InteractiveArtifactAttrs } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { artifact, knowledge, learning_item, question } from '@/db/schema';
+import { artifact, knowledge, learning_item } from '@/db/schema';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
@@ -44,13 +45,6 @@ export type NotePageSection = ReturnType<typeof bodyBlocksToNoteSections>[number
 export interface NotePageLabel {
   id: string;
   name: string;
-}
-
-export interface NotePageEmbeddedQuestion {
-  id: string;
-  kind: string;
-  prompt_md: string;
-  choices_md: string[] | null;
 }
 
 export interface NotePageBacklink {
@@ -83,8 +77,6 @@ export interface NotePage {
   generation_status: string;
   verification_status: string;
   verification_summary: NoteVerificationResultT | null;
-  embedded_check_status: string;
-  embedded_questions: NotePageEmbeddedQuestion[];
   // ADR-0033 — non-null only when type='interactive' (attrs.html feeds the
   // sandboxed renderer); note types are always null; an interactive row whose
   // attrs fails schema validation is also null (the page renders a degraded
@@ -107,8 +99,8 @@ export interface NotePage {
  * so the route can 404 instead of rendering an empty shell. READER_TYPES =
  * note types + 'interactive' (ADR-0033 D5): the interactive artifact reuses
  * this page as its reader shell, but stays invisible to note-only machinery —
- * its body_blocks is null, so sections/embedded-check resolve to empty and the
- * client never mounts the editor for it.
+ * its body_blocks is null, so sections resolve to empty and the client never
+ * mounts the editor for it.
  */
 export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | null> {
   // 1. the artifact (non-archived, reader types only).
@@ -123,7 +115,6 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
       generation_status: artifact.generation_status,
       verification_status: artifact.verification_status,
       verification_summary: artifact.verification_summary,
-      embedded_check_status: artifact.embedded_check_status,
       history: artifact.history,
       version: artifact.version,
       created_at: artifact.created_at,
@@ -150,28 +141,10 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
             .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)))
         ).map((r) => ({ id: r.id, name: r.name }));
 
-  // 3. embedded-check questions — resolve the check section's question_ids when
-  // the embedded check is ready (mirrors loadKnowledgeNodePage).
+  // 3. sections — the note five-section view. The `check` section stays as the
+  // Phase-3 self-explanation anchor (ADR-0040 决定3); the graded embedded-check
+  // projection was removed with the orphan chain (YUK-358 决定3).
   const sections = bodyBlocksToNoteSections(note.body_blocks);
-  let embeddedQuestions: NotePageEmbeddedQuestion[] = [];
-  if (note.embedded_check_status === 'ready') {
-    const ids = sections.find((s) => s.kind === 'check')?.embedded_check?.question_ids ?? [];
-    if (ids.length > 0) {
-      const qRows = await db
-        .select({
-          id: question.id,
-          kind: question.kind,
-          prompt_md: question.prompt_md,
-          choices_md: question.choices_md,
-        })
-        .from(question)
-        .where(inArray(question.id, ids));
-      const byId = new Map(qRows.map((r) => [r.id, r]));
-      embeddedQuestions = ids
-        .map((id) => byId.get(id))
-        .filter((r): r is NonNullable<typeof r> => r !== undefined);
-    }
-  }
 
   // 4. backlinks — inbound cross_links pointing AT this note, with the same XC-5
   // read-time filters as the node page / backlink panel (archived / non-ready /
@@ -204,8 +177,6 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
     generation_status: note.generation_status,
     verification_status: note.verification_status,
     verification_summary: note.verification_summary,
-    embedded_check_status: note.embedded_check_status,
-    embedded_questions: embeddedQuestions,
     interactive,
     subject_profile: toSlimSubjectProfile(profile),
     version: note.version,

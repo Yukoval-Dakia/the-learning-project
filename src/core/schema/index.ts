@@ -169,7 +169,6 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   verification_status: b.ArtifactVerificationStatus,
   verification_summary: b.NoteVerificationResult.nullable(),
   verified_by: b.AgentRef.nullable(),
-  embedded_check_status: b.ArtifactEmbeddedCheckStatus,
 });
 export type Artifact = z.infer<typeof Artifact>;
 

@@ -15,7 +15,6 @@ const A_BASE = {
   intent_source: 'test',
   source: 'test',
   verification_status: 'not_required',
-  embedded_check_status: 'not_required',
 };
 
 async function seedKnowledge(id: string): Promise<void> {
