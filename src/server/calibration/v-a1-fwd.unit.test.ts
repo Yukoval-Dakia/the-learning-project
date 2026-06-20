@@ -3,12 +3,14 @@
 // human report. Synthetic end-to-end tests are answer-BY-CONSTRUCTION (the generating
 // model determines the verdict; RNG seeded for determinism).
 
+import { HIERARCHICAL_ELO_ENABLED } from '@/core/theta';
 import { describe, expect, it } from 'vitest';
-import type { ReplayAttempt } from './replay';
+import { type ReplayAttempt, replayTheta } from './replay';
 import { mulberry32 } from './rng';
 import {
   type VA1Result,
   assembleForwardClusters,
+  assembleForwardClustersDetailed,
   evaluateVA1Forward,
   formatReport,
 } from './v-a1-fwd';
@@ -73,19 +75,19 @@ function nullCluster(kc: string, n: number, seed: number): ReplayAttempt[] {
   return out;
 }
 
-function toMap(clusters: ReplayAttempt[][]): Map<string, ReplayAttempt[]> {
-  const m = new Map<string, ReplayAttempt[]>();
-  for (const c of clusters) {
-    if (c.length > 0) m.set(c[0].knowledgeIds[0], c);
-  }
-  return m;
+// Flatten per-KC synthetic lists into ONE time-ordered attempt list (YUK-466: the assembler
+// now takes the full interleaved list). These synthetics are all single-KC with domain=null,
+// so θ_global never drifts and each KC's θ_KC evolves only on its own (contiguous) attempts →
+// concatenating cluster-by-cluster reproduces each KC's trajectory identically.
+function flatten(clusters: ReplayAttempt[][]): ReplayAttempt[] {
+  return clusters.flat();
 }
 
 describe('evaluateVA1Forward — keystone gate', () => {
   it('PASS: ample RT-bearing single-KC data where SRT clearly helps', () => {
     eidCounter = 0;
     const clustersRaw = Array.from({ length: 18 }, (_, i) => signalCluster(`kc${i}`, 14, 5000 + i));
-    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    const clusters = assembleForwardClusters(flatten(clustersRaw));
     const r = evaluateVA1Forward(clusters, {}, mulberry32(42));
     expect(r.verdict).toBe('PASS');
     expect(r.pointDelta).toBeGreaterThan(0.02);
@@ -98,7 +100,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('INSUFFICIENT (thin): 3 KCs × 2 attempts → effectiveN < 100, pointDelta still reported', () => {
     eidCounter = 0;
     const clustersRaw = Array.from({ length: 3 }, (_, i) => signalCluster(`t${i}`, 2, 100 + i));
-    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    const clusters = assembleForwardClusters(flatten(clustersRaw));
     const r = evaluateVA1Forward(clusters, {}, mulberry32(1));
     expect(r.verdict).toBe('INSUFFICIENT');
     // pointDelta still computed for information (NaN only if a class is missing)
@@ -112,7 +114,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
       for (let t = 0; t < 10; t++) out.push(singleKcAttempt(`o${i}`, 1, 6000, t + 1));
       return out;
     });
-    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    const clusters = assembleForwardClusters(flatten(clustersRaw));
     const r = evaluateVA1Forward(clusters, {}, mulberry32(2));
     expect(r.verdict).toBe('INSUFFICIENT');
     expect(r.reason).toMatch(/class/i);
@@ -129,7 +131,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
       }
       return out;
     });
-    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    const clusters = assembleForwardClusters(flatten(clustersRaw));
     const r = evaluateVA1Forward(clusters, {}, mulberry32(3));
     expect(r.nWithRt).toBe(0);
     expect(r.verdict).toBe('INSUFFICIENT'); // RT-less corpus cannot pass (M4)
@@ -138,7 +140,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('FAIL: ample RT but RT independent of correctness (null signal)', () => {
     eidCounter = 0;
     const clustersRaw = Array.from({ length: 18 }, (_, i) => nullCluster(`f${i}`, 14, 7000 + i));
-    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    const clusters = assembleForwardClusters(flatten(clustersRaw));
     const r = evaluateVA1Forward(clusters, {}, mulberry32(11));
     // Clears the floors (ample data) but no SRT advantage → not a PASS. Either FAIL
     // (CI straddles 0 / pointDelta <= threshold).
@@ -149,7 +151,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('determinism: same seed → identical verdict + CI', () => {
     eidCounter = 0;
     const clustersRaw = Array.from({ length: 15 }, (_, i) => signalCluster(`d${i}`, 12, 9000 + i));
-    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    const clusters = assembleForwardClusters(flatten(clustersRaw));
     const a = evaluateVA1Forward(clusters, {}, mulberry32(77));
     const b = evaluateVA1Forward(clusters, {}, mulberry32(77));
     expect(a.verdict).toBe(b.verdict);
@@ -161,7 +163,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('OCR finding 6: bootstrapB<=0 throws', () => {
     eidCounter = 0;
     const clustersRaw = Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 12000 + i));
-    const clusters = assembleForwardClusters(toMap(clustersRaw));
+    const clusters = assembleForwardClusters(flatten(clustersRaw));
     expect(() => evaluateVA1Forward(clusters, { bootstrapB: 0 }, mulberry32(1))).toThrow(
       /bootstrapB/,
     );
@@ -170,7 +172,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('OCR finding 6: deltaThreshold<0 throws', () => {
     eidCounter = 0;
     const clusters = assembleForwardClusters(
-      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 13000 + i))),
+      flatten(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 13000 + i))),
     );
     expect(() => evaluateVA1Forward(clusters, { deltaThreshold: -0.5 }, mulberry32(1))).toThrow(
       /deltaThreshold/,
@@ -180,7 +182,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('OCR finding 6: minKcClusters=0 throws', () => {
     eidCounter = 0;
     const clusters = assembleForwardClusters(
-      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 14000 + i))),
+      flatten(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 14000 + i))),
     );
     expect(() => evaluateVA1Forward(clusters, { minKcClusters: 0 }, mulberry32(1))).toThrow(
       /minKcClusters/,
@@ -190,7 +192,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('OCR finding 6: maxDegenerateFraction>1 throws', () => {
     eidCounter = 0;
     const clusters = assembleForwardClusters(
-      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 15000 + i))),
+      flatten(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 15000 + i))),
     );
     expect(() =>
       evaluateVA1Forward(clusters, { maxDegenerateFraction: 1.5 }, mulberry32(1)),
@@ -200,7 +202,7 @@ describe('evaluateVA1Forward — keystone gate', () => {
   it('OCR finding 6: valid override still runs (does not over-reject)', () => {
     eidCounter = 0;
     const clusters = assembleForwardClusters(
-      toMap(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 16000 + i))),
+      flatten(Array.from({ length: 12 }, (_, i) => signalCluster(`c${i}`, 8, 16000 + i))),
     );
     // sane overrides must NOT throw.
     expect(() =>
@@ -266,5 +268,78 @@ describe('formatReport', () => {
     const parsed = JSON.parse(text);
     expect(parsed.verdict).toBe('PASS');
     expect(parsed.pointDelta).toBe(0.1);
+  });
+});
+
+// ── YUK-466: θ_global fidelity — the assembler replays the FULL ordered list (every KC of a
+// domain interleaved), so a scored KC's forward θ̂ folds in θ_global drift contributed by
+// SIBLING-KC attempts in the same domain. A per-KC partition (the old bug) would replay only
+// the scored KC's own attempts, missing that shared-domain drift. ──
+describe('assembleForwardClusters — θ_global cross-KC fidelity (YUK-466)', () => {
+  it('forward prediction folds in θ_global drift from same-domain sibling-KC attempts', () => {
+    expect(HIERARCHICAL_ELO_ENABLED).toBe(true); // guard: θ_global only drifts when live flag on
+
+    const DOMAIN = 'dShared';
+    const list: ReplayAttempt[] = [];
+    let t = 0;
+
+    // 6 MULTI-KC sibling attempts in the SAME domain: NOT forward-scorable (scoredKnowledgeId
+    // null), but each drifts θ_global(dShared) up (replay.ts:207-227). 'a' touches none of them.
+    for (let i = 0; i < 6; i++) {
+      list.push({
+        knowledgeIds: ['sibA', 'sibB'],
+        scoredKnowledgeId: null,
+        domainByKc: { sibA: DOMAIN, sibB: DOMAIN },
+        outcome: 1,
+        difficulty: 3,
+        b: 0,
+        bWeight: 1,
+        responseTimeMs: 8000,
+        createdAt: ++t,
+        eventId: `sib${i}`,
+      });
+    }
+    // Then scored single-KC 'a' attempts in the SAME domain, RT-bearing, both classes.
+    for (let i = 0; i < 4; i++) {
+      list.push({
+        knowledgeIds: ['a'],
+        scoredKnowledgeId: 'a',
+        domainByKc: { a: DOMAIN },
+        outcome: (i % 2) as 0 | 1,
+        difficulty: 3,
+        b: 0,
+        bWeight: 1,
+        responseTimeMs: 8000,
+        createdAt: ++t,
+        eventId: `a${i}`,
+      });
+    }
+
+    // Only 'a' is forward-scorable → exactly one cluster.
+    const { clusters } = assembleForwardClustersDetailed(list);
+    expect(clusters).toHaveLength(1);
+    const aCluster = clusters[0];
+
+    // Ground truth: replay the FULL list vs replay ONLY 'a''s attempts (the old per-KC view).
+    const aStepFull = replayTheta(list, { srtEnabled: false }).steps.find(
+      (s) => s.scoredKnowledgeId === 'a',
+    );
+    const aOnly = list.filter((x) => x.scoredKnowledgeId === 'a');
+    const aStepOnly = replayTheta(aOnly, { srtEnabled: false }).steps.find(
+      (s) => s.scoredKnowledgeId === 'a',
+    );
+    expect(aStepFull).toBeDefined();
+    expect(aStepOnly).toBeDefined();
+
+    // The sibling attempts drifted θ_global(dShared) UP before 'a''s first attempt, so the
+    // full-timeline pre-attempt θ̂ strictly exceeds the per-KC-only one (which sees no drift).
+    expect(aStepFull?.preAttemptEffectiveTheta ?? 0).toBeGreaterThan(
+      aStepOnly?.preAttemptEffectiveTheta ?? 0,
+    );
+
+    // The assembler's first scored prediction MUST equal the full-timeline value (YUK-466),
+    // and must NOT equal the per-KC-only value the old partition would have produced.
+    expect(aCluster.scoresBinary[0]).toBeCloseTo(aStepFull?.predictedP ?? Number.NaN, 12);
+    expect(aCluster.scoresBinary[0]).not.toBeCloseTo(aStepOnly?.predictedP ?? Number.NaN, 6);
   });
 });

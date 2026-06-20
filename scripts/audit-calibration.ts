@@ -34,10 +34,12 @@ const BOOTSTRAP_SEED = 0x5eed_a1c0;
 // ─────────────────────────────────────────────────────────────────────────────────────
 
 interface LoadResult {
-  // Map<scoredKnowledgeId, time-ordered ReplayAttempt[]> — each entry is the ordered list
-  // of ALL attempts whose knowledgeIds include that KC (so a multi-KC attempt appears in
-  // each member KC's list, carrying scoredKnowledgeId:null when the question is multi-KC).
-  attemptsByKc: Map<string, import('@/server/calibration/replay').ReplayAttempt[]>;
+  // The FULL time-ordered (created_at, id) ReplayAttempt list — every attempt, every KC
+  // interleaved (YUK-466). assembleForwardClusters replays this WHOLE list once per variant
+  // so θ_global accumulates correctly across all KCs of a domain, then buckets the forward-
+  // scorable single-KC steps by scoredKnowledgeId. (Previously this was a per-KC partition,
+  // which let each KC's θ_global see only its own attempts — missing sibling-KC domain drift.)
+  orderedAttempts: import('@/server/calibration/replay').ReplayAttempt[];
   nTotalScorable: number;
   familyDeltaApplied: number;
   familyDeltaTotal: number;
@@ -287,7 +289,7 @@ async function loadAttempts(): Promise<LoadResult> {
   for (const kc of distinctKcs) await resolveDomain(kc);
 
   // 6. Build a flat, time-ordered list of foldable ReplayAttempts (each carrying its FULL
-  //    KC set), then group into per-KC lists.
+  //    KC set). This list is returned AS-IS — the assembler replays the whole list (YUK-466).
   const ordered: ReplayAttempt[] = [];
   let familyDeltaApplied = 0;
   let familyDeltaTotal = 0;
@@ -390,29 +392,18 @@ async function loadAttempts(): Promise<LoadResult> {
     foldableAttempts++;
   }
 
-  // 7. Group into per-scored-KC lists. Each KC's list = the time-ordered subset of attempts
-  //    whose knowledgeIds include that KC. assembleForwardClusters replays each list (full
-  //    multi-KC update) and scores only the steps where scoredKnowledgeId === that KC.
-  //    Only KCs that are EVER the sole-KC of some attempt can be forward-scored, but we
-  //    include every attempt that touches the KC so its trajectory is faithful.
-  const scoredKcs = new Set<string>();
-  for (const a of ordered) {
-    if (a.scoredKnowledgeId !== null) scoredKcs.add(a.scoredKnowledgeId);
-  }
-  const attemptsByKc = new Map<string, ReplayAttempt[]>();
-  for (const kc of scoredKcs) {
-    const list = ordered.filter((a) => a.knowledgeIds.includes(kc));
-    if (list.length > 0) attemptsByKc.set(kc, list);
-  }
-
-  // nTotalScorable = single-KC scorable steps across all KC lists (incl. RT-less) is
-  // computed by the assembler; here we approximate the per-KC scorable count for the
-  // report's context (the assembler's detailed count is the authoritative one).
+  // 7. Return the FULL time-ordered list AS-IS (YUK-466). No per-KC partition: the assembler
+  //    replays this whole list once per variant so θ_global accumulates across every KC in a
+  //    domain — partitioning per KC would let each KC's θ_global see only its own attempts,
+  //    dropping the drift contributed by sibling-KC attempts in the same domain.
+  //
+  // nTotalScorable = single-KC forward-scorable steps incl. RT-less (the assembler computes
+  //    the authoritative count over the same full list; this is the loader's identical view).
   let nTotalScorable = 0;
   for (const a of ordered) if (a.scoredKnowledgeId !== null) nTotalScorable++;
 
   return {
-    attemptsByKc,
+    orderedAttempts: ordered,
     nTotalScorable,
     familyDeltaApplied,
     familyDeltaTotal,
@@ -428,7 +419,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   );
 
   const loaded = await loadAttempts();
-  const { clusters, nTotalScorable } = assembleForwardClustersDetailed(loaded.attemptsByKc);
+  const { clusters, nTotalScorable } = assembleForwardClustersDetailed(loaded.orderedAttempts);
   const result = evaluateVA1Forward(clusters, {}, mulberry32(BOOTSTRAP_SEED), {
     nTotalScorable: Math.max(nTotalScorable, loaded.nTotalScorable),
     familyDeltaAppliedCount: loaded.familyDeltaApplied,

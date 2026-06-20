@@ -46,7 +46,7 @@ describe('OCR finding 7 — srt/binary step-count mismatch fails loud', () => {
       createdAt: 1,
       eventId: 'e1',
     } satisfies ReplayAttempt;
-    const map = new Map<string, ReplayAttempt[]>([['kcX', [attempt]]]);
-    expect(() => assembleForwardClusters(map)).toThrow(/step count mismatch|divergence/i);
+    // YUK-466: assembler now takes the full ordered list (not a per-KC Map).
+    expect(() => assembleForwardClusters([attempt])).toThrow(/step count mismatch|divergence/i);
   });
 });
