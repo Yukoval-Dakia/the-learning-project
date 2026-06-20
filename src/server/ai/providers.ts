@@ -66,6 +66,17 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     apiKeyEnv: 'XIAOMI_API_KEY',
     description: 'Xiaomi Mimo Anthropic-protocol-compat endpoint (mimo-v2.5* models)',
   },
+  // Zhipu BigModel GLM coding plan. Anthropic-protocol-compat endpoint (the same
+  // one Claude Code points at for GLM). No `/v1` suffix — the SDK appends
+  // `/v1/messages`. Key forwarded as ANTHROPIC_API_KEY (x-api-key); GLM accepts
+  // it. glm-5.2 is coding-plan only (standard /api/paas/v4 → 403); it is served
+  // on this /api/anthropic endpoint. ZHIPU_API_KEY already in env (GLM-OCR).
+  zhipu: {
+    authMode: 'key',
+    baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+    apiKeyEnv: 'ZHIPU_API_KEY',
+    description: 'Zhipu BigModel GLM coding plan Anthropic-compat endpoint (glm-5.2 etc.)',
+  },
   openrouter: {
     authMode: 'key',
     baseUrl: 'https://openrouter.ai/api/v1',
