@@ -1,7 +1,8 @@
 import { job_events } from '@/db/schema';
+import * as sseReplay from '@/server/events/sse_replay';
 import { _clearSubscribersForTests, broadcast } from '@/server/events/sse_router';
 import { writeJobEvent } from '@/server/events/writer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './job-events';
 
@@ -105,6 +106,7 @@ describe('GET /api/jobs/[kind]/[id]/events', () => {
 
   afterEach(() => {
     _clearSubscribersForTests();
+    vi.restoreAllMocks();
   });
 
   it('full replay: no Last-Event-ID returns all seeded frames in id order', async () => {
@@ -175,6 +177,86 @@ describe('GET /api/jobs/[kind]/[id]/events', () => {
     expect(resNoId.status).toBe(400);
 
     // non-vacuous: a valid pair does NOT 400
+    const ok = await GET(
+      new Request('http://localhost/api/jobs/copilot_run/run_X/events', {
+        signal: new AbortController().signal,
+      }),
+      { kind: 'copilot_run', id: 'run_X' },
+    );
+    expect(ok.status).toBe(200);
+    await (ok.body as ReadableStream).cancel();
+  });
+
+  it('NaN cursor: a non-numeric Last-Event-ID falls back to full replay (not empty)', async () => {
+    // F1: Number.parseInt('abc', 10) === NaN; without a guard it flows into
+    // gt(id, NaN) → unpredictable (Postgres: id > NaN is NULL → zero rows).
+    const id1 = await seedEvent('copilot_run', 'run_NaN', 'started', { step: 1 });
+    const id2 = await seedEvent('copilot_run', 'run_NaN', 'done', { step: 2 });
+
+    const controller = new AbortController();
+    const req = new Request('http://localhost/api/jobs/copilot_run/run_NaN/events', {
+      headers: { 'Last-Event-ID': 'not-a-number' },
+      signal: controller.signal,
+    });
+    const res = await GET(req, { kind: 'copilot_run', id: 'run_NaN' });
+    expect(res.status).toBe(200);
+
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (parseFrames(buffer).length < 2) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+    }
+    controller.abort();
+    await reader.cancel().catch(() => {});
+
+    const frames = parseFrames(buffer);
+    // Malformed cursor must degrade to "no cursor" → all rows replayed.
+    expect(frames.map((f) => f.id)).toEqual([id1, id2]);
+  });
+
+  it('thrown computeReplay: emits an SSE error event and closes the stream (does not hang)', async () => {
+    // F2: if computeReplay rejects (DB/connection error), the async start callback
+    // must not silently hang — it should surface an error frame and close.
+    await seedEvent('copilot_run', 'run_err', 'started', { step: 1 });
+    vi.spyOn(sseReplay, 'computeReplay').mockRejectedValue(new Error('boom'));
+
+    const controller = new AbortController();
+    const req = new Request('http://localhost/api/jobs/copilot_run/run_err/events', {
+      signal: controller.signal,
+    });
+    const res = await GET(req, { kind: 'copilot_run', id: 'run_err' });
+    expect(res.status).toBe(200);
+
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let done = false;
+    // The stream must terminate on its own (done === true) within a bounded read —
+    // a hang would loop here forever (the test runner timeout would catch it, but
+    // the assertion below proves the stream actually closed).
+    while (!done) {
+      const r = await reader.read();
+      if (r.value) buffer += decoder.decode(r.value, { stream: true });
+      done = r.done;
+    }
+    controller.abort();
+
+    // An error event frame was emitted before close.
+    expect(buffer).toContain('event: error');
+  });
+
+  it('unknown kind: a business_table not in the allowlist returns 400', async () => {
+    // F3: kind is user-supplied; only known job tables may be subscribed to.
+    const res = await GET(new Request('http://localhost/api/jobs/secret_table/run_X/events'), {
+      kind: 'secret_table',
+      id: 'run_X',
+    });
+    expect(res.status).toBe(400);
+
+    // non-vacuous: a known kind is NOT rejected.
     const ok = await GET(
       new Request('http://localhost/api/jobs/copilot_run/run_X/events', {
         signal: new AbortController().signal,
