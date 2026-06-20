@@ -1,65 +1,111 @@
-// YUK-383 Phase 0 — idempotent embed backfill job. One job covers all three
-// cases: existing-corpus backfill, next-day new rows, and embed-API-failure retry
+// YUK-383 Phase 0 — idempotent embed backfill job. One job covers all four
+// cases: existing-corpus backfill, next-day new rows, embed-API-failure retry
 // (§9 fallback: a question is always inserted with embedding NULL; this nightly
-// job fills it). Idempotent because it only touches rows where embedding IS NULL —
-// a second run with no NULL rows is a no-op. embed_version stamps which join rule
-// / model produced the vector; bump EMBED_VERSION to trigger a background re-embed
-// (clear embedding for stale versions in a future migration). embedMany throwing
-// (API down) fails the job and leaves rows NULL → pg-boss retries next run; the
-// question-insert path never calls this job, so ingestion is unaffected.
+// job fills it), AND (YUK-393) corpus re-embed when EMBED_VERSION bumps.
+// Idempotent because the select predicate is `embedding IS NULL OR
+// embed_version < EMBED_VERSION` — a second run with no matching rows is a no-op.
+// embed_version stamps which join rule / model produced the vector; bump
+// EMBED_VERSION to trigger a background re-embed of older-version rows.
+// embedMany throwing (API down) fails the job and leaves rows untouched →
+// pg-boss retries next run; the question-insert path never calls this job, so
+// ingestion is unaffected.
 //
-// SCOPE — NULL-backfill only; re-embed-on-edit is DEFERRED (PR #439 review).
-// This job intentionally selects ONLY `embedding IS NULL` rows. It does NOT
-// re-embed when source text/context changes after the fact — e.g. editQuestion
-// (src/server/questions/write.ts) rewriting prompt_md/reference_md/choices_md, or
-// applyReparent (src/capabilities/knowledge/server/proposals.ts) nulling a moved
-// root's domain (which shifts knowledgeEmbedText / effective-domain context).
-// After such edits the stored vector is STALE until a manual re-embed.
-// Refreshing on content edit is the deferred "embed-on-write" capability: it
-// needs a content-hash/version column + a migration (and the embed-source join
-// would gain effective-domain context for child KCs), which collides with this
-// PR's migration numbering. Tracked as a follow-up — do not bolt it on here.
+// YUK-393 — re-embed-on-change wiring (the formerly DEFERRED "embed-on-write"):
+//   • editQuestion (src/server/questions/write.ts) NULLs a question's embedding
+//     when prompt_md/reference_md/choices_md change (hash mismatch);
+//   • applyReparent (src/capabilities/knowledge/server/proposals.ts) NULLs a
+//     moved KC's embedding when its effective-domain hash changes (cross-domain
+//     move) — KC-only, never cascaded to the question subtree.
+// Those edits drop the row back to `embedding IS NULL`, so THIS job picks it up
+// and re-embeds with the fresh source text + stamps a fresh embed_content_hash.
+// Each KC's embed text now folds its EFFECTIVE domain (getEffectiveDomain walk),
+// disambiguating same-named cross-subject KCs.
 
+import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { EMBED_MODEL, embedMany } from '@/server/ai/embed';
-import { knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
-import { and, eq, isNull } from 'drizzle-orm';
+import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 // Bump when the embedder model or the embed-source join rule changes, to trigger
-// a background re-embed of rows stamped with an older version.
-const EMBED_VERSION = 1;
+// a background re-embed of rows stamped with an older version. v2 (YUK-393):
+// KC embed text now folds effective-domain → every existing KC vector is stale.
+const EMBED_VERSION = 2;
 
 /** Idempotent: embed up to `limit` question rows + `limit` knowledge rows whose
- *  embedding IS NULL, stamping model + version. Returns the number embedded. */
+ *  embedding IS NULL OR whose embed_version is behind EMBED_VERSION, stamping
+ *  model + version + content-hash. Returns the number embedded. */
 export async function runEmbedBackfill(db: Db, limit = 100): Promise<number> {
   let total = 0;
 
-  const qs = await db.select().from(question).where(isNull(question.embedding)).limit(limit);
+  // Re-embed predicate (YUK-393): NULL embedding (never embedded / edit-NULLed)
+  // OR a row stamped behind the current EMBED_VERSION (corpus re-embed). A NULL
+  // embed_version (legacy / pre-version rows) also satisfies the staleness intent;
+  // `lt(embed_version, EMBED_VERSION)` is NULL-tolerant only via the OR isNull
+  // branch, so include isNull(embed_version) explicitly.
+  const qStale = or(
+    isNull(question.embedding),
+    isNull(question.embed_version),
+    lt(question.embed_version, EMBED_VERSION),
+  );
+  const qs = await db.select().from(question).where(qStale).limit(limit);
   if (qs.length > 0) {
-    const vecs = await embedMany(qs.map((q) => questionEmbedText(q)));
+    const texts = qs.map((q) => questionEmbedText(q));
+    const vecs = await embedMany(texts);
     for (let i = 0; i < qs.length; i++) {
       await db
         .update(question)
-        .set({ embedding: vecs[i], embed_model: EMBED_MODEL, embed_version: EMBED_VERSION })
-        // isNull write guard: only fill rows still NULL, so a concurrent worker /
-        // pg-boss retry that already embedded this row between our SELECT and
-        // UPDATE can't be clobbered by a stale vector.
-        .where(and(eq(question.id, qs[i].id), isNull(question.embedding)));
+        .set({
+          embedding: vecs[i],
+          embed_model: EMBED_MODEL,
+          embed_version: EMBED_VERSION,
+          embed_content_hash: embedHash(texts[i]),
+        })
+        // write guard: only fill rows still matching the stale predicate, so a
+        // concurrent worker / pg-boss retry that already re-embedded this row
+        // between our SELECT and UPDATE can't be clobbered by a stale vector.
+        .where(and(eq(question.id, qs[i].id), qStale));
     }
     total += qs.length;
   }
 
-  const ks = await db.select().from(knowledge).where(isNull(knowledge.embedding)).limit(limit);
+  const kStale = or(
+    isNull(knowledge.embedding),
+    isNull(knowledge.embed_version),
+    lt(knowledge.embed_version, EMBED_VERSION),
+  );
+  const ks = await db.select().from(knowledge).where(kStale).limit(limit);
   if (ks.length > 0) {
-    const vecs = await embedMany(ks.map((k) => knowledgeEmbedText(k)));
+    // Resolve each KC's effective domain (root-ward walk) so the embed text — and
+    // thus the vector + content-hash — disambiguates same-named cross-subject KCs.
+    const texts: string[] = [];
+    for (const k of ks) {
+      // getEffectiveDomain throws on a broken tree (missing node / root with null
+      // domain). One pathological KC must not fail the whole nightly batch, so
+      // degrade to the bare `domain` column on a walk error (matches the legacy
+      // pre-YUK-393 embed text) rather than aborting every other row's re-embed.
+      let effectiveDomain: string | null = null;
+      try {
+        effectiveDomain = await getEffectiveDomain(db, k.id);
+      } catch {
+        effectiveDomain = k.domain;
+      }
+      texts.push(knowledgeEmbedText({ name: k.name, effectiveDomain }));
+    }
+    const vecs = await embedMany(texts);
     for (let i = 0; i < ks.length; i++) {
       await db
         .update(knowledge)
-        .set({ embedding: vecs[i], embed_model: EMBED_MODEL, embed_version: EMBED_VERSION })
-        // isNull write guard (see question update above): concurrency-safe fill.
-        .where(and(eq(knowledge.id, ks[i].id), isNull(knowledge.embedding)));
+        .set({
+          embedding: vecs[i],
+          embed_model: EMBED_MODEL,
+          embed_version: EMBED_VERSION,
+          embed_content_hash: embedHash(texts[i]),
+        })
+        // write guard (see question update above): concurrency-safe fill.
+        .where(and(eq(knowledge.id, ks[i].id), kStale));
     }
     total += ks.length;
   }

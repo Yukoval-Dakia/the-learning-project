@@ -18,10 +18,12 @@ import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
+import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
 import { writeArchiveProposal } from '@/server/proposals/producers';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import { getEffectiveDomain } from './domain';
 
 type DbLike = Db | Tx;
 
@@ -275,6 +277,20 @@ export async function applyReparent(db: DbLike, payload: ReparentPayload): Promi
   }
   await assertParentExists(db, payload.new_parent_id);
   const now = new Date();
+
+  // YUK-393 — snapshot name + stored embed hash BEFORE the move so we can detect a
+  // cross-domain shift afterwards. A reparent can change the KC's EFFECTIVE domain
+  // (effective-domain is resolved root-ward; moving under a different-subject root
+  // changes it), and knowledgeEmbedText now folds effective-domain — so a
+  // cross-domain move makes the stored vector stale. (Read here, recomputed after
+  // the parent_id commit so the walk sees the new position.)
+  const beforeRows = await db
+    .select({ name: knowledge.name, hash: knowledge.embed_content_hash })
+    .from(knowledge)
+    .where(eq(knowledge.id, payload.node_id))
+    .limit(1);
+  const moved = beforeRows[0];
+
   const result = await db
     .update(knowledge)
     .set({
@@ -293,6 +309,35 @@ export async function applyReparent(db: DbLike, payload: ReparentPayload): Promi
   const changes = (result as { count?: number }).count ?? 0;
   if (changes !== 1) {
     throw new Error(`stale: knowledge ${payload.node_id} version mismatch or archived`);
+  }
+
+  // YUK-393 — re-embed-on-reparent (KC-ONLY). Resolve the NEW effective domain
+  // (the walk now reflects the committed parent_id), recompute the embed hash, and
+  // if it differs from the stored one, NULL this KC's embedding so the nightly
+  // embed_backfill re-embeds with the new effective-domain context. RED LINE: this
+  // touches ONLY the moved node — it does NOT cascade to descendant KCs or to the
+  // question subtree (a same-domain move is a no-op; a child's effective domain is
+  // unchanged when the moved node keeps the same root subject). NULLing embedding
+  // degrades gracefully (excluded from cosine → scalar path), zero read regression.
+  if (moved) {
+    let newEffectiveDomain: string | null = null;
+    try {
+      newEffectiveDomain = await getEffectiveDomain(db, payload.node_id);
+    } catch {
+      // Broken tree (root with null domain etc.) — don't fail the reparent over an
+      // embed-maintenance recompute; leave the (now possibly stale) vector for the
+      // backfill version net to catch. NULL effective domain ≡ legacy bare text.
+      newEffectiveDomain = null;
+    }
+    const newHash = embedHash(
+      knowledgeEmbedText({ name: moved.name, effectiveDomain: newEffectiveDomain }),
+    );
+    if (newHash !== moved.hash) {
+      await db
+        .update(knowledge)
+        .set({ embedding: null, embed_content_hash: newHash, updated_at: now })
+        .where(eq(knowledge.id, payload.node_id));
+    }
   }
 }
 

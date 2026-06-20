@@ -337,6 +337,13 @@
       "when": 1781934543957,
       "tag": "0047_right_lady_ursula",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1781940449505,
+      "tag": "0048_bouncy_spiral",
+      "breakpoints": true
     }
   ]
 }
