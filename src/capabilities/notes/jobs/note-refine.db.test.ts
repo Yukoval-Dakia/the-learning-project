@@ -1,7 +1,16 @@
-import { eq } from 'drizzle-orm';
+import { createId } from '@paralleldrive/cuid2';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
+import {
+  NOTE_REFINE_ACCEPT_ACTOR,
+  NOTE_REFINE_AUTOAPPLY_ACTOR,
+} from '@/capabilities/notes/server/note-refine-apply';
+import {
+  REFINE_AUTOAPPLY_MAX,
+  REFINE_AUTOAPPLY_WARN,
+} from '@/capabilities/notes/server/note-refine-breaker';
 import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { artifact, event, knowledge } from '@/db/schema';
 import {
@@ -9,6 +18,7 @@ import {
   recordEditingHeartbeat,
   resetEditingSessionStateForTests,
 } from '@/server/artifacts/editing-session';
+import { writeEvent } from '@/server/events/queries';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildNoteRefineHandler, parseNoteRefineOutput, runNoteRefine } from './note-refine';
@@ -601,6 +611,211 @@ describe('runNoteRefine', () => {
         skills: ['note-wenyan'],
       }),
     );
+  });
+});
+
+// YUK-358 / ADR-0040 决定1 — A-track auto-apply rate breaker. A mutator-eligible
+// patch (1 append op → within the count gate, non-verified block) is the unit
+// under test; the breaker decides ok / warned / tripped purely from the
+// auto-apply rate, never touching the count/user_verified gate.
+describe('runNoteRefine — A-track rate breaker', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await resetEditingSessionStateForTests();
+  });
+
+  // Seed `count` prior `experimental:note_refine_apply` events inside the window
+  // (created_at = now), all by the AI mutator actor, so countRecentAutoApplies
+  // returns exactly `count`.
+  async function seedAutoApplyEvents(opts: {
+    count: number;
+    now: Date;
+    actorRef?: string;
+  }) {
+    const db = testDb();
+    for (let i = 0; i < opts.count; i++) {
+      await writeEvent(db, {
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: opts.actorRef ?? NOTE_REFINE_AUTOAPPLY_ACTOR,
+        action: 'experimental:note_refine_apply',
+        subject_kind: 'artifact',
+        // distinct subject per row so we don't depend on a real artifact existing.
+        subject_id: `seed_art_${i}`,
+        outcome: 'success',
+        payload: {
+          artifact_id: `seed_art_${i}`,
+          previous_artifact_version: 0,
+          next_artifact_version: 1,
+          ops_count: 1,
+          new_blocks: 1,
+          ops: [],
+          previous_body_blocks: { type: 'doc', content: [] },
+          reverse_patch: { kind: 'restore_body_blocks', body_blocks: {}, artifact_version: 0 },
+        },
+        caused_by_event_id: null,
+        created_at: opts.now,
+      });
+    }
+  }
+
+  const appendOps = (id: string) => [
+    { kind: 'append_block', block: paragraphBlock(id, '熔断器测试段落') },
+  ];
+
+  it('under the warn water-mark → auto-applies, no warned event', async () => {
+    const now = new Date('2026-06-18T12:00:00Z');
+    await seedAutoApplyEvents({ count: REFINE_AUTOAPPLY_WARN - 1, now });
+    await seedArtifact({ artifactId: 'a_ok', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(appendOps('b_ok')) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a_ok',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+      now,
+    });
+
+    expect(result.status).toBe('applied');
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_ok'));
+    expect(art.version).toBe(1);
+    const warned = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_autoapply_warned'));
+    expect(warned).toHaveLength(0);
+  });
+
+  it('at the warn water-mark → STILL auto-applies + emits exactly one warned event (观测 only)', async () => {
+    const now = new Date('2026-06-18T12:00:00Z');
+    await seedAutoApplyEvents({ count: REFINE_AUTOAPPLY_WARN, now });
+    await seedArtifact({ artifactId: 'a_warn', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(appendOps('b_warn')) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a_warn',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+      now,
+    });
+
+    // warn is observe-only: the apply STILL happens (零干预只告知).
+    expect(result.status).toBe('applied');
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_warn'));
+    expect(art.version).toBe(1);
+
+    const warned = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:note_refine_autoapply_warned'));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toMatchObject({
+      subject_kind: 'artifact',
+      subject_id: 'a_warn',
+      actor_ref: 'note_refine',
+      outcome: 'success',
+    });
+    expect((warned[0].payload as { recent_count?: number }).recent_count).toBe(
+      REFINE_AUTOAPPLY_WARN,
+    );
+
+    // the apply event itself was also written (warn does not suppress it).
+    const applyForArt = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'experimental:note_refine_apply'), eq(event.subject_id, 'a_warn')),
+      );
+    expect(applyForArt).toHaveLength(1);
+  });
+
+  it('at the hard cap (max) → the (N+1)th refine TRIPS to propose, no apply, breaker_tripped stamped', async () => {
+    const now = new Date('2026-06-18T12:00:00Z');
+    // Seed a full window: exactly REFINE_AUTOAPPLY_MAX prior auto-applies.
+    await seedAutoApplyEvents({ count: REFINE_AUTOAPPLY_MAX, now });
+    await seedArtifact({ artifactId: 'a_trip', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(appendOps('b_trip')) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a_trip',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+      now,
+    });
+
+    expect(result.status).toBe('proposed:breaker_tripped');
+
+    // NO apply: artifact untouched, no apply event for this artifact.
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_trip'));
+    expect(art.version).toBe(0);
+    const applyForArt = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'experimental:note_refine_apply'), eq(event.subject_id, 'a_trip')),
+      );
+    expect(applyForArt).toHaveLength(0);
+
+    // a note_update proposal landed in the inbox, stamped breaker_tripped.
+    const proposals = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(1);
+    const proposal = proposals[0].payload as {
+      ai_proposal?: { kind?: string; proposed_change?: { breaker_tripped?: boolean } };
+    };
+    expect(proposal.ai_proposal?.kind).toBe('note_update');
+    expect(proposal.ai_proposal?.proposed_change?.breaker_tripped).toBe(true);
+  });
+
+  it('accept-path apply events are EXCLUDED from the rate count (only the AI mutator counts)', async () => {
+    const now = new Date('2026-06-18T12:00:00Z');
+    // A full window of ACCEPT-path applies (human-approved) must NOT trip the
+    // breaker — they are not AI auto-applies.
+    await seedAutoApplyEvents({
+      count: REFINE_AUTOAPPLY_MAX,
+      now,
+      actorRef: NOTE_REFINE_ACCEPT_ACTOR,
+    });
+    await seedArtifact({ artifactId: 'a_accept', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(appendOps('b_accept')) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a_accept',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+      now,
+    });
+
+    // count of AI-mutator applies is 0 → ok → auto-applies.
+    expect(result.status).toBe('applied');
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_accept'));
+    expect(art.version).toBe(1);
+  });
+
+  it('injected count seam drives tripped deterministically without seeding', async () => {
+    const now = new Date('2026-06-18T12:00:00Z');
+    await seedArtifact({ artifactId: 'a_inj', knowledgeId: 'k1' });
+    const runTaskFn = vi.fn(async () => ({ text: refinePayload(appendOps('b_inj')) }));
+
+    const result = await runNoteRefine({
+      db: testDb(),
+      artifactId: 'a_inj',
+      trigger: { kind: 'mark_wrong' },
+      runTaskFn,
+      now,
+      countRecentAutoApplies: async () => REFINE_AUTOAPPLY_MAX,
+    });
+
+    expect(result.status).toBe('proposed:breaker_tripped');
+    const [art] = await testDb().select().from(artifact).where(eq(artifact.id, 'a_inj'));
+    expect(art.version).toBe(0);
   });
 });
 

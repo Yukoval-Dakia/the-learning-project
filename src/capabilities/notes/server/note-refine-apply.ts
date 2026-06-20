@@ -39,6 +39,13 @@ export { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-p
 // presence-store apply) keeps the guard ON.
 export const NOTE_REFINE_ACCEPT_ACTOR = 'note_refine_accept';
 
+// YUK-358 (ADR-0040 决定1) — the AI mutator actor (the default for an auto-apply).
+// The A-track rate breaker (note-refine-breaker.ts) counts ONLY this actor's
+// apply events so the human accept-path (NOTE_REFINE_ACCEPT_ACTOR) never pushes
+// the breaker toward a trip. Kept as a shared const so the apply-default and the
+// breaker count stay the same literal.
+export const NOTE_REFINE_AUTOAPPLY_ACTOR = 'note_refine';
+
 export interface PersistNoteRefineApplyParams {
   db: DbLike;
   artifactId: string;
@@ -171,7 +178,7 @@ export async function persistNoteRefineApply(
       id,
       session_id: null,
       actor_kind: taskResult ? 'agent' : 'system',
-      actor_ref: actorRef ?? 'note_refine',
+      actor_ref: actorRef ?? NOTE_REFINE_AUTOAPPLY_ACTOR,
       action: 'experimental:note_refine_apply',
       subject_kind: 'artifact',
       subject_id: artifactId,
