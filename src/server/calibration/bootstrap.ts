@@ -75,6 +75,17 @@ export function resolveBootstrapB(pooledN: number, requestedB: number): number {
   return requestedB;
 }
 
+/** Defense-in-depth: each cluster's three parallel arrays must stay aligned. */
+function assertClusterAligned(c: ClusterForwardPreds, clusterIndex: number): void {
+  const n = c.labels.length;
+  if (c.scoresSrt.length !== n || c.scoresBinary.length !== n) {
+    throw new Error(
+      `cluster ${clusterIndex}: scoresSrt (${c.scoresSrt.length}), ` +
+        `scoresBinary (${c.scoresBinary.length}), labels (${n}) must be equal length`,
+    );
+  }
+}
+
 function poolScores(
   clusters: ClusterForwardPreds[],
   which: 'srt' | 'binary',
@@ -106,6 +117,10 @@ export function deltaAucClusterBootstrap(
   clusters: ClusterForwardPreds[],
   opts: { b?: number; rng: () => number },
 ): DeltaAucCi {
+  for (let i = 0; i < clusters.length; i++) {
+    assertClusterAligned(clusters[i], i);
+  }
+
   const rng = opts.rng;
   const k = clusters.length;
 

@@ -106,6 +106,8 @@ export interface VA1Result {
   /** attempts dropped because outcome was 'partial' (no clean binary 1PL label). */
   partialDropped: number;
   reason: string;
+  /** merged config used for this evaluation (for audit traceability in formatReport). */
+  config: VA1Config;
 }
 
 export interface AssembledClusters {
@@ -275,6 +277,7 @@ export function evaluateVA1Forward(
     familyDeltaAppliedCount,
     familyDeltaTotal,
     partialDropped,
+    config,
   };
 
   // Hard class floor — a forward AUC needs BOTH classes among the RT-bearing attempts.
@@ -388,8 +391,9 @@ export function formatReport(result: VA1Result, opts: { json?: boolean } = {}): 
   );
   lines.push('  - A2 (HIERARCHICAL_ELO_ENABLED) held LIVE for both variants so ΔAUC isolates SRT.');
   lines.push(`  - 'partial' outcomes dropped from forward scoring: ${result.partialDropped}.`);
+  const cfg = result.config;
   lines.push(
-    '  - effectiveN floor (100) + minKcClusters (10) are OWNER-CHOSEN; ΔAUC threshold 0.02 from the dossier V-A1-fwd cell.',
+    `  - effectiveN floor (${cfg.effectiveNFloor}) + minKcClusters (${cfg.minKcClusters}) are OWNER-CHOSEN; ΔAUC threshold ${cfg.deltaThreshold} from the dossier V-A1-fwd cell.`,
   );
   if (result.verdict === 'INSUFFICIENT') {
     lines.push('');
