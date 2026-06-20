@@ -504,7 +504,12 @@ export const tasks = {
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
-    budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 60_000 },
+    // YUK-458 — raise from 6 turns / 60s. mimo-v2.5-pro could not converge the
+    // multi-step propose flow (empty-graph → propose synthetic root) within 6
+    // turns (error_max_turns); simple read-only queries succeeded. 10 turns +
+    // 120s gives the write-orchestration path room (timeout bumped so the cap
+    // we are testing is turns, not wall-clock).
+    budget: { ...DEFAULT_BUDGET, maxIterations: 10, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
     // The chat endpoint resolves surface per request (see two-surface routing).
