@@ -148,6 +148,7 @@ Question (统一题库，single source of truth)
 | `QuizGenTask` | mimo-v2.5-pro | pg-boss `quiz_gen` (T-SQ) | 是 | — | search-grounded 原创题（Tavily + domain MCP）|
 | `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）|
 | `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
+| `ColdStartPlacementBridgeTask` | mimo-v2.5 | ingestion 上传 accept（抽题无 KC 匹配时，YUK-478） | 否 | — | 冷启上传题一次 pass：classify subject（∈KNOWN_SUBJECT_IDS）+ kc_name + reference 答案（OCR 无答案则生成，有则 echo）→ 喂建子 KC + auto-promote |
 
 **与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `CoachTask` / `BlockAssemblyTask` 早期作为 lane 级编排概念保留，现已落地为 registry 中的具体 task + 对应 pg-boss handler（见上表）。
 
