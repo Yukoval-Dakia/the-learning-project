@@ -107,12 +107,14 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     goalIdRef.current ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}` : '/today';
 
   // After the probe completes (settling): end it, then navigate to the profile (Slice 4).
+  // profileDest only reads goalIdRef (a ref) and returns a string; the real triggers are
+  // phase/sessionId/navigate (listed). Re-running on its render-fresh identity would
+  // needlessly re-arm the 1700ms timer.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: profileDest reads only a ref; see above.
   useEffect(() => {
     if (phase !== 'settling' || !sessionId) return;
     let cancelled = false;
-    const dest = goalIdRef.current
-      ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}`
-      : '/today';
+    const dest = profileDest();
     const t = setTimeout(() => {
       if (!cancelled) navigate(dest);
     }, 1700);

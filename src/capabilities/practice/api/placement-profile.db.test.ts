@@ -91,7 +91,9 @@ describe('GET /api/placement/profile', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.kcs).toEqual([]);
-    expect(body.answeredCount).toBe(0);
+    expect(body.evidenceCount).toBe(0);
+    expect(body.testedCount).toBe(0);
+    expect(body.totalKcs).toBe(0);
   });
 
   it('projects per-KC mastery; tested first, untested in-scope KCs surface as tested:false', async () => {
@@ -128,7 +130,10 @@ describe('GET /api/placement/profile', () => {
     expect(k2.evidence_count).toBe(0);
     expect(k2.p_l).toBeUndefined();
 
-    // answeredCount = summed evidence across tested KCs.
-    expect(body.answeredCount).toBe(3);
+    // evidenceCount = summed evidence across tested KCs (coverage signal, not distinct Qs).
+    expect(body.evidenceCount).toBe(3);
+    // testedCount = KCs with a mastery_state row (kc1); totalKcs = full in-scope set (kc1+kc2).
+    expect(body.testedCount).toBe(1);
+    expect(body.totalKcs).toBe(2);
   });
 });
