@@ -56,7 +56,14 @@ export async function GET(req: Request): Promise<Response> {
     );
     if (scope.length === 0) {
       // Cold goal (north-star, no resolvable scope yet) — nothing to project.
-      return Response.json({ goalId, title: g.title, kcs: [], answeredCount: 0 });
+      return Response.json({
+        goalId,
+        title: g.title,
+        kcs: [],
+        evidenceCount: 0,
+        testedCount: 0,
+        totalKcs: 0,
+      });
     }
 
     // Projection (mastery_state SoT) + names, fanned out (independent reads).
@@ -90,10 +97,15 @@ export async function GET(req: Request): Promise<Response> {
       };
     });
 
-    // answeredCount = evidence across tested KCs (a question touching multiple KCs counts per
-    // KC — same per-KC summation the design profile uses; it's a coverage signal, not a
-    // distinct-question count).
-    const answeredCount = kcs.reduce((a, k) => a + (k.tested ? k.evidence_count : 0), 0);
+    // evidenceCount = evidence summed across tested KCs (a question touching multiple KCs
+    // counts once per KC). It's a coverage signal, NOT a distinct-question count — a single
+    // question labeled with 3 KCs contributes 3 here. Computed on the FULL kcs set, before
+    // the slice below, so it reflects all evidence even when the surfaced list is truncated.
+    const evidenceCount = kcs.reduce((a, k) => a + (k.tested ? k.evidence_count : 0), 0);
+    // testedCount / totalKcs let the UI speak honestly (how many KCs actually have evidence)
+    // and disclose truncation (totalKcs vs PROFILE_KC_LIMIT). Also computed on the full set.
+    const testedCount = kcs.reduce((a, k) => a + (k.tested ? 1 : 0), 0);
+    const totalKcs = kcs.length;
 
     // Lead with what we know: tested KCs first (most evidence), then untested. Stable
     // tie-break by id so the order is deterministic across reloads.
@@ -101,14 +113,16 @@ export async function GET(req: Request): Promise<Response> {
       (a, b) =>
         Number(b.tested) - Number(a.tested) ||
         b.evidence_count - a.evidence_count ||
-        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        a.id.localeCompare(b.id),
     );
 
     return Response.json({
       goalId,
       title: g.title,
       kcs: kcs.slice(0, PROFILE_KC_LIMIT),
-      answeredCount,
+      evidenceCount,
+      testedCount,
+      totalKcs,
     });
   } catch (err) {
     return errorResponse(err);

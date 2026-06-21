@@ -25,6 +25,20 @@ import './onboarding.css';
 
 const pct = (v: number) => Math.round(v * 100);
 
+// Clamp a 0..1 band coordinate (mastery_lo/hi, p(L)) into range so a stray projection
+// value can't push a band edge or the mark off the track.
+const clamp01 = (v: number | undefined, fb: number) => Math.max(0, Math.min(1, v ?? fb));
+
+type Conf = 'none' | 'low' | 'ok';
+const CONF_LABEL: Record<Conf, string> = { none: '未测', low: '低置信', ok: '较可信' };
+// Confidence bucket for a KC: untested (no evidence) → none; otherwise the projection's
+// low_confidence flag decides low vs ok.
+const confOf = (kc: ProfileKc): Conf => {
+  const untested = !kc.tested || kc.evidence_count === 0;
+  if (untested) return 'none';
+  return kc.low_confidence ? 'low' : 'ok';
+};
+
 export interface ScreenProfileProps {
   navigate: (to: string) => void;
 }
@@ -82,7 +96,9 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
     );
   }
 
-  const { kcs, answeredCount } = profileQ.data;
+  const { kcs, testedCount, totalKcs } = profileQ.data;
+  const shown = kcs.length;
+  const truncated = totalKcs > shown;
 
   if (kcs.length === 0) {
     return (
@@ -104,8 +120,8 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
   }
 
   const narrative =
-    answeredCount > 0
-      ? `基于你答的 ${answeredCount} 道题，这是一份初步画像——多数判断证据还少，会随你练习一起收紧。`
+    testedCount > 0
+      ? `基于你在 ${testedCount} 个知识点上的作答，这是一份初步画像——多数判断证据还少，会随你练习一起收紧。`
       : '还没有作答证据，先做一轮定位或上传材料，画像会随练习长出来。';
 
   return (
@@ -113,7 +129,7 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
       <p className="ob-prof-narr ob-rise">{narrative}</p>
       <div className="ob-prof-honest ob-rise">
         <LoomIcon name="alert" size={13} />
-        基于 {answeredCount} 道答题的<b style={{ margin: '0 3px' }}>初步信念</b> ·
+        基于 {testedCount} 个知识点的<b style={{ margin: '0 3px' }}>初步信念</b> ·
         多数还需更多练习确认，下面把不确定一并摆出来
       </div>
 
@@ -138,6 +154,12 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
             灰带 = 低置信，区间很宽
           </span>
         </div>
+
+        {truncated && (
+          <div className="ob-prof-trunc meta">
+            显示前 {shown} · 共 {totalKcs} 个知识点
+          </div>
+        )}
       </LoomCard>
 
       <div className="ob-prof-foot">
@@ -169,10 +191,18 @@ function ProfileShell({ children }: { children: React.ReactNode }) {
 
 function KcRow({ kc }: { kc: ProfileKc }) {
   const untested = !kc.tested || kc.evidence_count === 0;
-  const conf = untested ? 'none' : kc.low_confidence ? 'low' : 'ok';
-  const lo = kc.mastery_lo ?? 0;
-  const hi = kc.mastery_hi ?? 0;
-  const point = kc.p_l ?? lo;
+  const conf = confOf(kc);
+  // Clamp to [0,1] so a stray projection value can't push the band edges or the mark off the
+  // track. The mark stays at p(L) (the documented deviation — band mark = p(L) point estimate,
+  // not theta_hat logit); clamping only guards the rendered position, not which field drives it.
+  // Order the clamped pair so an inverted CI (mastery_hi < mastery_lo from a degenerate
+  // projection) can't yield a negative band width (which CSS silently renders as 0 → the band
+  // vanishes). Well-formed projections always have hi ≥ lo; this just makes the edge robust.
+  const rawLo = clamp01(kc.mastery_lo, 0);
+  const rawHi = clamp01(kc.mastery_hi, 0);
+  const lo = Math.min(rawLo, rawHi);
+  const hi = Math.max(rawLo, rawHi);
+  const point = clamp01(kc.p_l, lo);
 
   return (
     <div
@@ -206,9 +236,7 @@ function KcRow({ kc }: { kc: ProfileKc }) {
         )}
       </div>
       <div className="ob-kc-conf">
-        <span className={`ob-conf-pill t-${conf}`}>
-          {conf === 'none' ? '未测' : conf === 'low' ? '低置信' : '较可信'}
-        </span>
+        <span className={`ob-conf-pill t-${conf}`}>{CONF_LABEL[conf]}</span>
         <span className="ob-kc-ev">
           {untested ? '0 题' : `${kc.evidence_count} 题 · SE ${(kc.theta_se ?? 0).toFixed(2)}`}
         </span>

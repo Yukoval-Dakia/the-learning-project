@@ -25,8 +25,13 @@ export interface PlacementProfile {
   goalId: string;
   title: string;
   kcs: ProfileKc[];
-  /** evidence summed across tested KCs (per-KC; coverage signal, not distinct questions). */
-  answeredCount: number;
+  /** Evidence summed across tested KCs — a coverage signal, NOT a distinct-question count
+   * (one question labeled with N KCs contributes N). Computed over the full scope. */
+  evidenceCount: number;
+  /** Number of in-scope KCs that actually have evidence (a mastery_state row). */
+  testedCount: number;
+  /** Full in-scope KC count, before the surfaced list is capped (PROFILE_KC_LIMIT). */
+  totalKcs: number;
 }
 
 export const getPlacementProfile = (goalId: string) =>
