@@ -223,6 +223,7 @@ Single-context layout with CONTEXT.md and docs/adr/ at repo root. See `docs/agen
 ## Code Review Workflow
 
 - When spawning review subagents, ensure each agent has Bash access (or dump the diff to disk and feed it) so it can fetch the PR diff.
+- After addressing review findings on a PR, **resolve the corresponding review threads** (CodeRabbit / OCR github-actions / codex / Cursor bots). For findings you intentionally skip, reply with the rationale first, then resolve (or leave for the owner). Do this *after* the fix is committed + pushed, so threads anchor to the landed diff. Mechanics: `pull_request_read` method `get_review_comments` → thread node IDs (`PRRT_…`); `pull_request_review_write` method `resolve_thread` (threadId); `add_reply_to_pull_request_comment` for skip rationale. Rationale: approval-gate bots (e.g. Cursor's "未批准 / Risk medium") stay stale-blocked while threads are unresolved, and the unresolved-conversation count misrepresents reality. Resolving threads is cleanup only — it never authorizes a merge (PRs are owner-merged, never auto-merged).
 
 ## Shell / Environment
 
