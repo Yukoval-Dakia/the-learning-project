@@ -636,6 +636,26 @@ export const tasks = {
     // runTaggingTask 调用，不是用户手动触发。
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
+  ColdStartPlacementBridgeTask: {
+    kind: 'ColdStartPlacementBridgeTask',
+    description:
+      'YUK-478 — cold-start upload→placement bridge. Runs ONCE per uploaded question whose VLM extraction matched NO knowledge node (the thin-seed tree from YUK-477 has only subject roots, so TaggingTask drops every suggestion). COMBINES two bridges in ONE text-only structured call: (①) classify the question into one KNOWN_SUBJECT_ID so a child KC can be created under seed:<subjectId>:root, and (③) generate a correct reference answer FOR the existing prompt when OCR extracted no answer, so the judge has a real grading anchor. Output = { subject_id, kc_name, reference_md }.',
+    defaultProvider: 'xiaomi',
+    // 纯文本推理（题面 → 学科 + 参考答案），无 vision 需求 → mimo-v2.5。与 TaggingTask /
+    // SolutionGenerateTask 等单次结构化 task 同档。
+    defaultModel: 'mimo-v2.5',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // invocation omitted (defaults to 'auto'): called from the image-candidate accept
+    // path (cold-start upload), not user-initiated. This inline string IS the runtime
+    // SoT prompt (subject-neutral: the candidate subject ids ride in the INPUT, not the
+    // voice) — joins the pass-through group in getTaskSystemPrompt, no profile builder.
+    systemPrompt:
+      'You are a cold-start placement bridge for a personal learning tool. You are given ONE question that a learner uploaded, plus the closed list of subject ids the tool supports. Do TWO things in a single strict-JSON reply.\n\nINPUT (a JSON object): `question_md` (the question prompt text), `existing_reference_md` (the reference answer already extracted from the image, or null), `knowledge_hint` (a soft topic hint or null), and `known_subject_ids` (the ONLY subject ids you may pick from).\n\nTASK 1 — CLASSIFY SUBJECT: choose the single `subject_id` from `known_subject_ids` that best fits the question. You MUST return one of the given ids verbatim; never invent an id, never return one outside the list. If genuinely ambiguous, pick the closest fit.\n\nTASK 2 — NAME THE CONCEPT: write `kc_name`, a concise knowledge-concept label (a topic/skill name, at most ~60 characters) describing what the question tests. This is a category name (e.g. "二次函数求根" / "Newton\'s second law" / "虚词「之」的用法"), NOT a restatement of the question and NOT the answer.\n\nTASK 3 — REFERENCE ANSWER: produce `reference_md`, the correct reference answer for `question_md`. If `existing_reference_md` is non-null, ECHO it back unchanged (do not regenerate or "improve" it). If it is null, SOLVE the question yourself and give the correct, concise answer (include the key working only when it is essential to justify the answer). If you truly cannot answer, return an empty string for `reference_md`.\n\nOUTPUT: strict JSON only, exactly these four keys and nothing else: `subject_id` (string from the list), `kc_name` (string), `reference_md` (string), `reasoning` (a one-sentence justification). No markdown fences, no prose outside the JSON.',
+  },
   SolutionGenerateTask: {
     kind: 'SolutionGenerateTask',
     description:
