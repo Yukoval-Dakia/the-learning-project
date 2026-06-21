@@ -13,6 +13,9 @@ import {
   AdminRunsSurface,
 } from '@/capabilities/observability/ui/observability';
 import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
+import PlacementStubPage from '@/capabilities/onboarding/ui/PlacementStubPage';
+import UploadStubPage from '@/capabilities/onboarding/ui/UploadStubPage';
+import WelcomePage from '@/capabilities/onboarding/ui/WelcomePage';
 import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
 import QuestionDetailPage from '@/capabilities/practice/ui/QuestionDetailPage';
@@ -209,6 +212,43 @@ const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/today',
   component: TodayRoute,
+});
+
+// YUK-473 Slice 1 — cold-start onboarding flow. /welcome 是 /today 冷拦截
+// （goal_count===0）的 CTA 落点（设定 ①）；/onboarding/upload 与 /placement 是
+// Welcome 分叉的两条 stub 落点（下一片替换为真录入 / 真定位）。导航走壳层 prop
+// 注入（同 TodayRoute）。
+function WelcomeRoute() {
+  const router = useRouter();
+  return <WelcomePage navigate={(to) => router.history.push(to)} />;
+}
+
+const welcomeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/welcome',
+  component: WelcomeRoute,
+});
+
+function OnboardingUploadRoute() {
+  const router = useRouter();
+  return <UploadStubPage navigate={(to) => router.history.push(to)} />;
+}
+
+const onboardingUploadRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/onboarding/upload',
+  component: OnboardingUploadRoute,
+});
+
+function PlacementRoute() {
+  const router = useRouter();
+  return <PlacementStubPage navigate={(to) => router.history.push(to)} />;
+}
+
+const placementRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/placement',
+  component: PlacementRoute,
 });
 
 function InboxRoute() {
@@ -443,6 +483,9 @@ const adminSubjectsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   todayRoute,
+  welcomeRoute,
+  onboardingUploadRoute,
+  placementRoute,
   inboxRoute,
   mistakesRoute,
   agentNotesRoute,
