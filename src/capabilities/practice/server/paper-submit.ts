@@ -285,6 +285,14 @@ export async function submitPaperSlot(
   // id always points at a real row instead of a dangling fresh id.
   let judgeEventId = photoOnlyUnsupported ? attemptEventId : newId();
   let frozenAnswerId = '';
+  // YUK-459 review — guard the post-tx success block against the in-tx race-loser
+  // REPLAY path: a concurrent same-content double-submit whose non-locking pre-check
+  // missed the freeze re-runs the judge, enters the tx, hits the FOR UPDATE duplicate
+  // guard, and `return`s from the callback (writing NO new rows). Without this flag,
+  // execution would still fall through to the success block and DOUBLE-emit the
+  // mastery_progress 埋点 (polluting the ADR-0040 决定2 Δ distribution). Set true ONLY
+  // on the path that actually persists a new attempt; the replay return leaves it false.
+  let wroteNewAttempt = false;
   // Round-4 fix #3: these shadow the loser's locally-computed values when the
   // locked duplicate path reloads the winner's persisted judge payload.
   let persistedCoarseOutcome: string = coarseOutcome;
@@ -718,6 +726,7 @@ export async function submitPaperSlot(
       paperArtifactId: input.paperArtifactId,
     });
     frozenAnswerId = frozen.answerId;
+    wroteNewAttempt = true; // a new attempt was actually persisted (not a replay).
   });
 
   // YUK-459 — paper/exam 作答的 success 块，与 solo submit (submit.ts:709) 对齐。paper 路径过去
@@ -726,7 +735,8 @@ export async function submitPaperSlot(
   // 在 attempt tx COMMIT **之后**调（getMasteryState / notesForKnowledge 读 POSTERIOR row），
   // best-effort：两个 helper 内部各自吞错、绝不连累已 COMMIT 的 attempt。gate 同 solo：仅 success
   //（attemptOutcome==='success' ⇒ θ̂ 已被本次作答更新，emit 读到真实 Δ；非 success 不发以免读陈值）。
-  if (attemptOutcome === 'success') {
+  // `&& wroteNewAttempt`：仅在真持久化了新 attempt 时发——挡住 in-tx 竞态-loser 回放双发（见上）。
+  if (attemptOutcome === 'success' && wroteNewAttempt) {
     await emitMasteryProgressSignal({
       db,
       knowledgeIds: q.knowledge_ids,
