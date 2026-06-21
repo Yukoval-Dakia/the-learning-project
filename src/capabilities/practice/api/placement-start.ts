@@ -76,7 +76,12 @@ export async function POST(req: Request): Promise<Response> {
     // is created yet). The only remaining orphan source — a probe started but never answered /
     // ended — is covered by the orphan-sweep follow-up (YUK-470).
     const first = await selectNextPlacementItem(db, { knowledgeIds });
-    const { sessionId } = await Placement.startPlacementSession(db, { goalId: goalId ?? null });
+    // Persist the resolved scope on the session (YUK-470): /next reads it server-side rather
+    // than trusting the client to re-send knowledgeIds every call.
+    const { sessionId } = await Placement.startPlacementSession(db, {
+      goalId: goalId ?? null,
+      knowledgeIds,
+    });
 
     // first === null → cold subgraph (no eligible question). The probe stays 'started'; the
     // client should source questions for the goal (§6 Q3 —按目标生成 placement 起始题, via

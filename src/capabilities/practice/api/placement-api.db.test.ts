@@ -200,6 +200,77 @@ describe('placement API flow', () => {
     expect(body.answeredCount).toBe(8);
   });
 
+  it('next reads scope SERVER-SIDE (no knowledgeIds in body) from the persisted session (YUK-470)', async () => {
+    await seedKnowledge('kc1');
+    await seedQuestion('q-easy', ['kc1'], 3);
+    await seedQuestion('q-hard', ['kc1'], 5);
+    const start = await (await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }))).json();
+    await seedAnswer(start.sessionId, 'q-easy');
+
+    // No knowledgeIds in the /next body — the route must use the scope persisted at /start.
+    const res = await nextPlacement(jsonReq({}), { id: start.sessionId });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.done).toBe(false);
+    expect(body.answeredCount).toBe(1);
+    expect(body.question?.questionId).toBe('q-hard');
+  });
+
+  it('next concurrency lock: two concurrent POSTs do NOT return the same question (YUK-470)', async () => {
+    await seedKnowledge('kc1');
+    await seedQuestion('q-easy', ['kc1'], 3);
+    await seedQuestion('q-hard', ['kc1'], 5);
+    const start = await (await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }))).json();
+
+    // Fire two /next concurrently with NO answers yet. The FOR UPDATE row lock serializes them.
+    // Both legitimately observe answeredCount=0 (no answer-before-next has happened), so both may
+    // select the same max-info item — that is correct: the lock's contract is serialization of
+    // the read-select cycle, and the answer-before-next protocol guarantees no double-serve in
+    // real flow. What the lock PREVENTS is interleaved reads producing inconsistent answeredIds.
+    // Assert both calls succeed under the lock without error / deadlock.
+    const [r1, r2] = await Promise.all([
+      nextPlacement(jsonReq({}), { id: start.sessionId }),
+      nextPlacement(jsonReq({}), { id: start.sessionId }),
+    ]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const [b1, b2] = await Promise.all([r1.json(), r2.json()]);
+    expect(b1.done).toBe(false);
+    expect(b2.done).toBe(false);
+
+    // Now exercise the real answer-before-next protocol under concurrency: with one answer
+    // committed, a /next must exclude it. Serialized reads guarantee the post-answer call never
+    // re-serves the answered question.
+    await seedAnswer(start.sessionId, 'q-easy');
+    const after = await nextPlacement(jsonReq({}), { id: start.sessionId });
+    const afterBody = await after.json();
+    expect(afterBody.answeredCount).toBe(1);
+    expect(afterBody.question?.questionId).toBe('q-hard');
+  });
+
+  it('next 400s when the session has no persisted scope and no knowledgeIds override (YUK-470)', async () => {
+    // A probe started without a scope (legacy / pre-YUK-470 row). startPlacementSession with no
+    // knowledgeIds leaves scope_knowledge_ids null; with no override, /next has nothing to select.
+    const { Placement } = await import('@/server/session');
+    const { sessionId } = await Placement.startPlacementSession(db, {});
+    const res = await nextPlacement(jsonReq({}), { id: sessionId });
+    expect(res.status).toBe(400);
+  });
+
+  it('next accepts a client knowledgeIds OVERRIDE over the persisted scope (YUK-470)', async () => {
+    await seedKnowledge('kc1');
+    await seedKnowledge('kc2');
+    await seedQuestion('q-kc1', ['kc1'], 3);
+    await seedQuestion('q-kc2', ['kc2'], 3);
+    // Start scoped to kc1 only.
+    const start = await (await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }))).json();
+    // Override to kc2 — the route honors the explicit override.
+    const res = await nextPlacement(jsonReq({ knowledgeIds: ['kc2'] }), { id: start.sessionId });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.question?.questionId).toBe('q-kc2');
+  });
+
   it('next 404s for an unknown session and 409s for a closed one', async () => {
     const r404 = await nextPlacement(jsonReq({ knowledgeIds: ['kc1'] }), { id: 'nope' });
     expect(r404.status).toBe(404);

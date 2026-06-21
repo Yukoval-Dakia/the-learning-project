@@ -1,0 +1,1 @@
+ALTER TABLE "learning_session" ADD COLUMN "scope_knowledge_ids" jsonb;
