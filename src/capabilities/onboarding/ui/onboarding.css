@@ -1,0 +1,421 @@
+/* Onboarding · cold-start first-session flow (YUK-473 Slice 1).
+   Ported 1:1 from the onboarding design CSS — only the classes used by
+   ColdToday + ScreenWelcome + ObSteps (Slice 1). Later slices port the rest.
+   All custom properties (coral, ink, paper, spacing, radius scales) are the
+   existing design tokens already defined in web/src/globals.css. */
+
+/* ── shared flow chrome ─────────────────────────────────────── */
+.ob-steps {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin: calc(var(--s-1) * -1) 0 var(--s-5);
+}
+.ob-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+.ob-step .ob-step-n {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--paper-sunk);
+  color: var(--ink-4);
+  border: 1px solid var(--line);
+}
+.ob-step.is-on {
+  color: var(--ink);
+  font-weight: 500;
+}
+.ob-step.is-on .ob-step-n {
+  background: var(--coral);
+  color: #fff;
+  border-color: var(--coral);
+}
+.ob-step.is-done .ob-step-n {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+  border-color: var(--coral-line);
+}
+.ob-step-sep {
+  width: 16px;
+  height: 1px;
+  background: var(--line);
+  flex: none;
+}
+
+/* ── ① welcome ──────────────────────────────────────────────── */
+.ob-welcome {
+  max-width: var(--cap-app);
+}
+.ob-hero {
+  display: flex;
+  gap: var(--s-5);
+  align-items: flex-start;
+  margin-bottom: var(--s-6);
+}
+.ob-hero-mark {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-4);
+  display: grid;
+  place-items: center;
+  color: var(--coral);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+}
+.ob-hero-title {
+  font-size: var(--fs-h1);
+  line-height: var(--lh-tight);
+  color: var(--ink);
+  letter-spacing: var(--ls-tight);
+}
+.ob-hero-sub {
+  margin-top: var(--s-2);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-prose);
+  color: var(--ink-3);
+  max-width: 46ch;
+  text-wrap: pretty;
+}
+
+.ob-field {
+  margin-bottom: var(--s-5);
+}
+.ob-field-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.ob-field-q {
+  font-size: var(--fs-h5);
+  color: var(--ink);
+  font-weight: 600;
+}
+.ob-field-q .ob-q-no {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--coral);
+  margin-right: 8px;
+  letter-spacing: var(--ls-wide);
+}
+.ob-field-opt {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.ob-field-hint {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+  margin-top: var(--s-2);
+  line-height: var(--lh-snug);
+}
+
+/* stage / pace pickers — bigger tap targets than chips */
+.ob-pick {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: var(--s-2);
+}
+.ob-pick-btn {
+  text-align: left;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: var(--s-3) var(--s-3);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.ob-pick-btn:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-1);
+}
+.ob-pick-btn.is-on {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+  box-shadow: var(--shadow-focus);
+}
+.ob-pick-l {
+  font-size: var(--fs-body);
+  color: var(--ink);
+  font-weight: 500;
+}
+.ob-pick-btn.is-on .ob-pick-l {
+  color: var(--coral-ink);
+}
+.ob-pick-s {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-top: 2px;
+}
+
+/* goal textarea + subject hint chips.
+   Deviation (documented): the design prototype wraps the textarea in a bare
+   `.composer`, but that class is chat-scoped only in globals.css
+   (:is(.teach-chat-page,.teach-drawer) .composer) — there is no global base, so
+   a bare .composer renders unstyled. We fold the box styling (border + bg +
+   textarea padding/focus) directly into the .ob-goal-box .composer rule here,
+   mirroring the precedent set by .record-composer (globals.css L1390). Visual
+   result matches the prototype 1:1 without depending on chat-scoped CSS. */
+.ob-goal-box {
+  position: relative;
+}
+.ob-goal-box .composer {
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-raised);
+  overflow: hidden;
+}
+.ob-goal-box textarea {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  resize: none;
+  padding: var(--s-3) var(--s-4);
+  font-family: var(--font-sans);
+  color: var(--ink);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-snug);
+}
+.ob-goal-box textarea:focus-visible {
+  outline: none;
+}
+.ob-goal-box .composer:focus-within {
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+.ob-subjects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  align-items: center;
+}
+.ob-subjects-lbl {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  margin-right: 2px;
+}
+
+.ob-scope-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: var(--s-3);
+  font-size: var(--fs-caption);
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+}
+.ob-scope-note .mono {
+  font-family: var(--font-mono);
+}
+
+/* fork — two big route cards */
+.ob-fork {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+.ob-fork-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  text-align: left;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  padding: var(--s-5);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base)
+    var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.ob-fork-card:hover {
+  border-color: var(--coral-line);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+}
+.ob-fork-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ob-fork-card.is-primary {
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.ob-fork-ic {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-3);
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--paper-raised);
+  color: var(--coral);
+  border: 1px solid var(--coral-line);
+}
+.ob-fork-card.is-primary .ob-fork-ic {
+  background: var(--coral);
+  color: #fff;
+  border-color: var(--coral);
+}
+.ob-fork-t {
+  font-size: var(--fs-h5);
+  color: var(--ink);
+  font-weight: 600;
+}
+.ob-fork-d {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+  line-height: var(--lh-snug);
+}
+.ob-fork-go {
+  margin-top: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  font-weight: 500;
+}
+
+.ob-inline-err {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--s-3);
+  font-size: var(--fs-caption);
+  color: var(--again-ink);
+  background: var(--again-soft);
+  border: 1px solid var(--again-line);
+  border-radius: var(--r-2);
+  padding: 8px 12px;
+}
+
+/* ── cold /today intercept ─────────────────────────────────── */
+.ob-cold {
+  max-width: var(--cap-app);
+}
+.ob-cold-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--s-12) var(--s-5) var(--s-10);
+}
+.ob-cold-mark {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--r-4);
+  display: grid;
+  place-items: center;
+  color: var(--coral);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  margin-bottom: var(--s-5);
+}
+.ob-cold-title {
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  color: var(--ink);
+  letter-spacing: var(--ls-tight);
+}
+.ob-cold-sub {
+  margin-top: var(--s-3);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-prose);
+  color: var(--ink-3);
+  max-width: 40ch;
+  text-wrap: pretty;
+}
+.ob-cold-cta {
+  margin-top: var(--s-6);
+}
+.ob-cold-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  justify-content: center;
+  margin-top: var(--s-8);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+}
+.ob-cold-empty .ico {
+  color: var(--ink-5);
+}
+.ob-cold-lanes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+}
+.ob-cold-lane {
+  background: var(--paper-raised);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-3);
+  padding: var(--s-4);
+  text-align: center;
+  color: var(--ink-4);
+}
+.ob-cold-lane .ico {
+  color: var(--ink-5);
+  margin-bottom: var(--s-2);
+}
+.ob-cold-lane-t {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.ob-cold-lane-s {
+  font-size: var(--fs-meta);
+  color: var(--ink-5);
+  margin-top: 3px;
+}
+
+/* entrance */
+@media (prefers-reduced-motion: no-preference) {
+  [data-anim="on"] .ob-rise {
+    animation: ob-rise var(--dur-slow) var(--ease-out) both;
+  }
+  @keyframes ob-rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+@media (max-width: 720px) {
+  .ob-fork {
+    grid-template-columns: 1fr;
+  }
+  .ob-cold-lanes {
+    grid-template-columns: 1fr;
+  }
+  .ob-hero {
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+}

@@ -11,6 +11,7 @@
 
 import { AgentNotesBoard } from '@/capabilities/agency/ui/AgentNotesBoard';
 import type { AgentNotesResponse } from '@/capabilities/agency/ui/types';
+import ColdStart from '@/capabilities/onboarding/ui/ColdStart';
 import { apiJson } from '@/ui/lib/api';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -225,6 +226,13 @@ export default function TodayPage({ navigate }: TodayPageProps) {
       : 'ok';
   const s = summaryQ.data;
   const threads = s ? deriveThreads(s) : [];
+
+  // 冷启动拦截（YUK-473 Slice 1）：summary 已加载且无 active goal → 渲染冷开屏
+  // hero（ColdStart），而非工作台。仅在数据 present 时分支——loading / error 仍
+  // 走下面的 Stateful（不在三冷表为空时误判加载中/失败态为冷启动）。
+  if (s && s.kpi.goal_count === 0) {
+    return <ColdStart navigate={navigate} />;
+  }
 
   return (
     <main className="page wide today-page today-loom">

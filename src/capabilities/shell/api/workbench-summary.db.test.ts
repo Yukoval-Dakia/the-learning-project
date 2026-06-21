@@ -2,7 +2,7 @@
 // week_heat 七天补零）+ 种子形态（archived 排除 / 提议 KPI / review 会话
 // reviewed_count / week_heat 今日计数）。
 
-import { event, knowledge, learning_session } from '@/db/schema';
+import { event, goal, knowledge, learning_session } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -23,6 +23,7 @@ interface SummaryBody {
     due_count: number;
     pending_attribution_count: number;
     knowledge_count: number;
+    goal_count: number;
   };
   active_sessions: Array<{
     id: string;
@@ -56,6 +57,8 @@ describe('GET /api/workbench/summary (shell)', () => {
       due_count: 0,
       pending_attribution_count: 0,
       knowledge_count: 0,
+      // 冷库无 active goal → 0（YUK-473 Slice 1 冷启动拦截信号）。
+      goal_count: 0,
     });
     expect(body.active_sessions).toEqual([]);
 
@@ -104,6 +107,21 @@ describe('GET /api/workbench/summary (shell)', () => {
       },
     });
 
+    // goal_count 数 active goal：g1（active）计入，g2（done）不计——YUK-473 Slice 1。
+    for (const [id, status] of [
+      ['g1', 'active'],
+      ['g2', 'done'],
+    ] as const) {
+      await db.insert(goal).values({
+        id,
+        title: id,
+        status,
+        source: 'manual',
+        created_at: now,
+        updated_at: now,
+      });
+    }
+
     const startedAt = new Date(now.getTime() - 60_000);
     await db.insert(learning_session).values({
       id: 's1',
@@ -134,6 +152,8 @@ describe('GET /api/workbench/summary (shell)', () => {
     expect(body.kpi.knowledge_count).toBe(1);
     expect(body.kpi.due_count).toBe(0);
     expect(body.kpi.pending_attribution_count).toBe(0);
+    // active goal g1 计入、done goal g2 排除 → 1（YUK-473 Slice 1）。
+    expect(body.kpi.goal_count).toBe(1);
 
     expect(body.active_sessions).toHaveLength(1);
     expect(body.active_sessions[0]).toMatchObject({
