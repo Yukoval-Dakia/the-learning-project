@@ -31,8 +31,11 @@ async function main(): Promise<void> {
     await migrate(db, { migrationsFolder: './drizzle' });
     console.log('[migrate] done');
 
-    // 冷启薄 seed（YUK-477）：每个已知科目一个 domain-root 节点。幂等（稳定 id，重跑 skip），
-    // 所以 init container 每次启动安全调用——让 fresh DB 树非空，给上传子 KC 挂靠锚。
+    // 冷启薄 seed（YUK-477）：每个已知科目一个 domain-root 节点。幂等（ON CONFLICT DO NOTHING +
+    // 稳定 id，重跑/并发均安全），所以 init container 每次启动安全调用——让 fresh DB 树非空，给上传
+    // 子 KC 挂靠锚。**seed 失败有意 fatal**（在 migrate 的 try 内，throw → main().catch 的
+    // process.exit(1)）：空树正是 YUK-477 要防的失效（上传无锚 / goal·placement 落空），所以 seed
+    // 是 day-one 硬前置而非可降级——不要把它包成吞错的 best-effort（会让 fresh DB 静默落空树）。
     const seeded = await seedKnowledge(db);
     console.log(
       `[migrate] subject-root seed: +${seeded.inserted} inserted, ${seeded.skipped} existing`,
