@@ -83,6 +83,14 @@ export const practiceCapability = defineCapability({
         path: '/api/placement/[id]/end',
         load: () => import('./api/placement-end').then((m) => m.POST),
       },
+      // YUK-473 Slice 4 — placement-done 起始档案读：GET ?goal=<id> → per-KC mastery over
+      // the goal scope (getMasteryProjection SoT; untested in-scope KCs → tested:false).
+      // Read-only. Literal `/profile` segment — distinct from `/placement/[id]/*`.
+      {
+        method: 'GET',
+        path: '/api/placement/profile',
+        load: () => import('./api/placement-profile').then((m) => m.GET),
+      },
       // YUK-402 inc-4a — owner manual gate (draft 池审核面)后端。list draft pool +
       // enable (normal B5 verify→promote) + force-enable (override + reason 留痕)。
       // gate op = verifyAndPromote (src/server/quiz/verify-and-promote.ts)；/api/*

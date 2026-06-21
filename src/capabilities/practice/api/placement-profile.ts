@@ -1,0 +1,116 @@
+// GET /api/placement/profile?goal=<id> — cold-start inc-B profile read (YUK-473 Slice 4).
+//
+// The placement-done "起始档案": per-KC mastery over the goal's scope, derived from the
+// LIVE mastery_state projection (getMasteryProjection — the B1 single source of truth, NOT
+// the deprecated knowledge_mastery view). In-scope KCs with no mastery_state row come back
+// as `tested:false` (untested · 0 题). Read-only; no θ̂/FSRS writes.
+//
+// Scope resolution mirrors placement-start: the goal's scope_knowledge_ids (subject = view,
+// no root node). The probe's answers populated those KCs' mastery_state; untested in-scope
+// KCs surface as the profile's "未测" rows so the picture is honest about coverage.
+
+import { db } from '@/db/client';
+import { goal, knowledge } from '@/db/schema';
+import { ApiError, errorResponse } from '@/server/http/errors';
+import { getMasteryProjection } from '@/server/mastery/state';
+import { eq, inArray } from 'drizzle-orm';
+
+/** How many in-scope KCs the profile surfaces (tested first). A broad goal can scope many
+ * KCs; the probe only touched a handful, so cap the list to keep the reveal legible. */
+const PROFILE_KC_LIMIT = 20;
+
+export interface ProfileKc {
+  id: string;
+  name: string;
+  tested: boolean;
+  evidence_count: number;
+  /** present only when tested (a mastery_state row exists). */
+  theta_hat?: number;
+  theta_precision?: number;
+  theta_se?: number;
+  p_l?: number;
+  mastery_lo?: number;
+  mastery_hi?: number;
+  low_confidence?: boolean;
+}
+
+export async function GET(req: Request): Promise<Response> {
+  try {
+    const goalId = new URL(req.url).searchParams.get('goal');
+    if (!goalId) {
+      throw new ApiError('validation_error', 'goal query param is required', 400);
+    }
+
+    const goalRows = await db
+      .select({ scope: goal.scope_knowledge_ids, title: goal.title })
+      .from(goal)
+      .where(eq(goal.id, goalId))
+      .limit(1);
+    const g = goalRows[0];
+    if (!g) {
+      throw new ApiError('not_found', `goal ${goalId} not found`, 404);
+    }
+
+    const scope = Array.from(
+      new Set((g.scope ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
+    );
+    if (scope.length === 0) {
+      // Cold goal (north-star, no resolvable scope yet) — nothing to project.
+      return Response.json({ goalId, title: g.title, kcs: [], answeredCount: 0 });
+    }
+
+    // Projection (mastery_state SoT) + names, fanned out (independent reads).
+    const [proj, nameRows] = await Promise.all([
+      getMasteryProjection(db, scope),
+      db
+        .select({ id: knowledge.id, name: knowledge.name })
+        .from(knowledge)
+        .where(inArray(knowledge.id, scope)),
+    ]);
+    const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
+
+    const kcs: ProfileKc[] = scope.map((id) => {
+      const m = proj.get(id);
+      const name = nameById.get(id) ?? id;
+      if (!m) {
+        return { id, name, tested: false, evidence_count: 0 };
+      }
+      return {
+        id,
+        name,
+        tested: true,
+        evidence_count: m.evidence_count,
+        theta_hat: m.theta_hat,
+        theta_precision: m.theta_precision,
+        theta_se: m.theta_se,
+        p_l: m.mastery,
+        mastery_lo: m.mastery_lo,
+        mastery_hi: m.mastery_hi,
+        low_confidence: m.low_confidence,
+      };
+    });
+
+    // answeredCount = evidence across tested KCs (a question touching multiple KCs counts per
+    // KC — same per-KC summation the design profile uses; it's a coverage signal, not a
+    // distinct-question count).
+    const answeredCount = kcs.reduce((a, k) => a + (k.tested ? k.evidence_count : 0), 0);
+
+    // Lead with what we know: tested KCs first (most evidence), then untested. Stable
+    // tie-break by id so the order is deterministic across reloads.
+    kcs.sort(
+      (a, b) =>
+        Number(b.tested) - Number(a.tested) ||
+        b.evidence_count - a.evidence_count ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
+
+    return Response.json({
+      goalId,
+      title: g.title,
+      kcs: kcs.slice(0, PROFILE_KC_LIMIT),
+      answeredCount,
+    });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
