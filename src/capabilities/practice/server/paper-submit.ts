@@ -20,6 +20,9 @@
 // validateCauseAgainstProfile; a later attribution agent supersedes it.
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { emitMasteryProgressSignal } from '@/capabilities/notes/server/mastery-progress-signal';
+import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
+import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { scheduleReview } from '@/capabilities/practice/server/fsrs';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { newId } from '@/core/ids';
@@ -716,6 +719,37 @@ export async function submitPaperSlot(
     });
     frozenAnswerId = frozen.answerId;
   });
+
+  // YUK-459 — paper/exam 作答的 success 块，与 solo submit (submit.ts:709) 对齐。paper 路径过去
+  // 既不 emit p(L) delta 埋点（ADR-0040 决定2 的 experimental:mastery_progress）也不触发
+  // mastery_change note-refine——卷题作答的掌握变化对笔记精炼是死线（solo 单题已接，paper 无）。
+  // 在 attempt tx COMMIT **之后**调（getMasteryState / notesForKnowledge 读 POSTERIOR row），
+  // best-effort：两个 helper 内部各自吞错、绝不连累已 COMMIT 的 attempt。gate 同 solo：仅 success
+  //（attemptOutcome==='success' ⇒ θ̂ 已被本次作答更新，emit 读到真实 Δ；非 success 不发以免读陈值）。
+  if (attemptOutcome === 'success') {
+    await emitMasteryProgressSignal({
+      db,
+      knowledgeIds: q.knowledge_ids,
+      questionId: input.questionId,
+      attemptEventId,
+      now,
+    });
+
+    const targetArtifactIds = new Set<string>();
+    if (q.source_ref) targetArtifactIds.add(q.source_ref);
+    for (const kid of q.knowledge_ids) {
+      const labeled = await notesForKnowledge(db, kid);
+      for (const note of labeled) targetArtifactIds.add(note.id);
+    }
+    for (const artifactId of targetArtifactIds) {
+      await enqueueMasteryNoteRefine({
+        db,
+        artifactId,
+        questionId: input.questionId,
+        triggerEventId: attemptEventId,
+      });
+    }
+  }
 
   return {
     attemptEventId,
