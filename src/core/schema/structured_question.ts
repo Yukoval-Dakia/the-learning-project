@@ -190,6 +190,32 @@ export function structuredToReferenceMarkdown(q: StructuredQuestionT): string {
   return parts.join('\n');
 }
 
+/**
+ * Find the FIRST node (depth-first pre-order) whose `id` matches `target` in a
+ * StructuredQuestion tree. Read-only, no clone — returns the live node reference
+ * (or undefined when absent).
+ *
+ * First-match is safe because ids are UNIQUE per tree (ADR-0032 read≡write
+ * coords — the addressable projection exposes each node's id as its sole write
+ * coordinate; duplicate ids would make a write ambiguous, so the write path
+ * never produces them). Lives in core (not in a capability) so the practice
+ * question-edit applier (proposal-appliers.ts) can import it without owning it.
+ * NOTE: the judge narrowing helper (server/judge/narrow-part.ts) needs the
+ * matched node's PARENT (for passage-preserving wrap), so it uses its own
+ * parent-tracking variant rather than this id-only walker.
+ */
+export function findStructuredNode(
+  node: StructuredQuestionT,
+  target: string,
+): StructuredQuestionT | undefined {
+  if (node.id === target) return node;
+  for (const sub of node.sub_questions ?? []) {
+    const hit = findStructuredNode(sub, target);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 // ---------- 可寻址结构投影：read≡write 坐标修复（ADR-0032 D6-R6 / D6-draftread） ----------
 //
 // 让 AI 能像写一样按【节点】寻址地读题结构：投影只保留写路径会用到的寻址坐标

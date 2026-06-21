@@ -1,3 +1,4 @@
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -129,6 +130,107 @@ describe('JudgeInvoker', () => {
       expect.objectContaining({ answer: { content: '覆盖 p1' } }),
       expect.objectContaining({ db: mockDb, subjectProfile: wenyanProfile }),
     );
+  });
+
+  // YUK-212 + YUK-484(B) critic §6b — the C1 leak proof at the INVOKER layer.
+  // part_ref must narrow `question.structured` (NOT only prompt_md) before the
+  // semantic judge sees it: semanticInput() ships question.structured into the
+  // task input verbatim, so a whole-row structured leaks every sibling sub. The
+  // captured runTaskFn input's `structured` field is asserted to be the narrowed
+  // subtree (p1 present, p2 ABSENT).
+  it('part_ref narrows question.structured before the semantic judge (C1 proof)', async () => {
+    const runTaskFn = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        score: 0.9,
+        coarse_outcome: 'correct',
+        confidence: 0.8,
+        feedback_md: 'ok',
+        evidence_json: { matched_points: [], missing_points: [] },
+      }),
+    });
+    const invoker = new JudgeInvoker({ runTaskFn });
+
+    const composite: JudgeQuestionRow = {
+      ...baseQuestion,
+      id: 'q-composite',
+      judge_kind_override: 'semantic',
+      prompt_md: '阅读下文。\n\n1. 第一问\n\n2. 第二问',
+      reference_md: 'A\n\nB',
+      structured: {
+        id: 'stem',
+        role: 'stem',
+        prompt_text: '阅读下文。',
+        sub_questions: [
+          { id: 'p1', role: 'sub', prompt_text: '第一问', answers: ['A'] },
+          { id: 'p2', role: 'sub', prompt_text: '第二问', answers: ['B'] },
+        ],
+      },
+    };
+
+    await invoker.invoke({
+      db: mockDb,
+      question: composite,
+      answer_md: '我的答案',
+      subjectProfile: wenyanProfile,
+      part_ref: 'p1',
+    });
+
+    // The semantic task input carries question.structured verbatim — assert the
+    // STRUCTURED subtree (not just prompt_md) is narrowed to p1 with p2 dropped.
+    const [, taskInput] = runTaskFn.mock.calls[0];
+    const passedQuestion = (taskInput as { question: { structured: StructuredQuestionT } })
+      .question;
+    const passedSubIds = (passedQuestion.structured.sub_questions ?? []).map((s) => s.id);
+    expect(passedSubIds).toContain('p1');
+    expect(passedSubIds).not.toContain('p2');
+    // prompt_md is narrowed too (passage + p1, not p2).
+    expect((taskInput as { question: { prompt_md: string } }).question.prompt_md).not.toContain(
+      '第二问',
+    );
+  });
+
+  it('part_ref absent → whole-row structured reaches the semantic judge (back-compat)', async () => {
+    const runTaskFn = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        score: 0.9,
+        coarse_outcome: 'correct',
+        confidence: 0.8,
+        feedback_md: 'ok',
+        evidence_json: { matched_points: [], missing_points: [] },
+      }),
+    });
+    const invoker = new JudgeInvoker({ runTaskFn });
+
+    const composite: JudgeQuestionRow = {
+      ...baseQuestion,
+      id: 'q-composite-whole',
+      judge_kind_override: 'semantic',
+      structured: {
+        id: 'stem',
+        role: 'stem',
+        prompt_text: '阅读下文。',
+        sub_questions: [
+          { id: 'p1', role: 'sub', prompt_text: '第一问', answers: ['A'] },
+          { id: 'p2', role: 'sub', prompt_text: '第二问', answers: ['B'] },
+        ],
+      },
+    };
+
+    await invoker.invoke({
+      db: mockDb,
+      question: composite,
+      answer_md: '我的答案',
+      subjectProfile: wenyanProfile,
+      // no part_ref → whole-row.
+    });
+
+    const [, taskInput] = runTaskFn.mock.calls[0];
+    const passedQuestion = (taskInput as { question: { structured: StructuredQuestionT } })
+      .question;
+    const passedSubIds = (passedQuestion.structured.sub_questions ?? []).map((s) => s.id);
+    // Whole-row: BOTH subs reach the judge.
+    expect(passedSubIds).toContain('p1');
+    expect(passedSubIds).toContain('p2');
   });
 
   it('reports semantic provider failures as unsupported telemetry', async () => {
