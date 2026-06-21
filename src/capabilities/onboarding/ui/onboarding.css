@@ -756,17 +756,16 @@
   color: var(--ink);
   font-weight: 500;
 }
-.ob-kc-track {
-  align-self: flex-start;
-  font-size: 11px;
-  color: var(--ink-3);
-  background: var(--paper-sunk);
-  border-radius: var(--r-1);
-  padding: 1px 7px;
-}
 .ob-band {
   position: relative;
 }
+/* DEVIATION from the prototype's literal CSS (docs/design/loom-refresh/project/
+   onboarding.css §.ob-band-track): the prototype sets `overflow: hidden`, which clips
+   the slider-thumb mark (.ob-band-mark protrudes top:-3px / 18px tall + box-shadow) and
+   the lo/hi ticks (top/bottom:-2px) flat against the 12px track — a latent clip bug, not
+   intent. We honor the protruding-thumb visual by omitting it. The rounded band shape is
+   preserved without it: the track gradient is bounded by border-radius automatically, and
+   .ob-band-fill carries its own border-radius: var(--r-pill). */
 .ob-band-track {
   position: relative;
   height: 12px;
@@ -778,7 +777,6 @@
     var(--good-soft) 100%
   );
   border: 1px solid var(--line);
-  overflow: hidden;
 }
 .ob-band-fill {
   position: absolute;
@@ -891,6 +889,12 @@
   height: 8px;
   border-radius: 2px;
   flex: none;
+}
+.ob-prof-trunc {
+  margin-top: var(--s-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
 }
 .ob-prof-foot {
   display: flex;
