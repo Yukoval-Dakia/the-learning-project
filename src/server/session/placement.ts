@@ -154,10 +154,10 @@ export async function completePlacementSession(db: Db, sessionId: string): Promi
  * This is the single terminal transition for an interrupted probe. No data loss — any
  * per-question events already written stay chained by session_id.
  *
- * NOTE: the `prune_orphan_review_sessions` cron handler sweeps type='review' only (a sibling
- * handler sweeps conversation); extending an orphan sweep to stale started placement sessions
- * is a PR-2 follow-up (no orphans exist yet — PLACEMENT_PROBE_ENABLED is false, so no
- * placement session is ever created).
+ * NOTE: stale started placement probes (>6h) are swept by the `prune_orphan_placement_sessions`
+ * cron (YUK-470 orphan-sweep leg, src/server/boss/handlers/), a sibling of the review/conversation
+ * sweeps. It is a no-op today (PLACEMENT_PROBE_ENABLED is false → no probe is ever created),
+ * landing the go-live prerequisite ahead of the flag flip.
  */
 export async function abandonPlacementSession(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {

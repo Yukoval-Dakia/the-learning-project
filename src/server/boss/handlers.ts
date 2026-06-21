@@ -90,12 +90,13 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.schedule('prune_orphan_review_sessions', '15 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-470 (orphan-sweep leg): abandon placement probes stuck in 'started' >6h
-  // (sibling of the review sweep; placement has no 'paused'). BJT 04:25, staggered
-  // after the review sweep to avoid lock contention. Dark-ship today (no probe is
-  // created while PLACEMENT_PROBE_ENABLED=false) — lands ahead of the go-live flip.
+  // (sibling of the review sweep; placement has no 'paused'). BJT 04:35 — the three
+  // learning_session sweeps are staggered 04:15 (review) / 04:25 (conversation) /
+  // 04:35 (placement) so they never hit the table on the same minute. Dark-ship
+  // today (no probe created while PLACEMENT_PROBE_ENABLED=false) — lands ahead of go-live.
   await createOrUpdateQueue(boss, 'prune_orphan_placement_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
   await boss.work('prune_orphan_placement_sessions', buildPruneOrphanPlacementSessionsHandler(db));
-  await boss.schedule('prune_orphan_placement_sessions', '25 4 * * *', {}, { tz: 'Asia/Shanghai' });
+  await boss.schedule('prune_orphan_placement_sessions', '35 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-14 (docs/design/2026-05-24-teaching-idle-state-machine.md): promote
   // active conversation sessions to 'idle' after 5min of no user input.

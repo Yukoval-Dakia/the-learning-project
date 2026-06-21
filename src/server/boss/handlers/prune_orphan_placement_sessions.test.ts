@@ -1,5 +1,5 @@
 import { learning_session } from '@/db/schema';
-import { Placement } from '@/server/session';
+import { Placement, Review } from '@/server/session';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -53,17 +53,19 @@ describe('runPruneOrphanPlacementSessions', () => {
 
   it('does not touch review sessions (scopes to type=placement only)', async () => {
     const db = testDb();
-    // a stale STARTED placement + a same-age started review: only the placement is swept.
+    // a stale STARTED placement + a same-age stale started review: only the placement
+    // is swept; the review is left to its own sibling sweep (type-scoping via WHERE).
     const { sessionId: placement } = await Placement.startPlacementSession(db, { goalId: null });
+    const { sessionId: review } = await Review.startReviewSession(db);
     await ageSession(placement, 9 * 60 * 60 * 1000);
+    await ageSession(review, 9 * 60 * 60 * 1000);
 
     const result = await runPruneOrphanPlacementSessions(db);
-    expect(result.abandoned).toBe(1);
-    const rows = await db
-      .select({ status: learning_session.status })
-      .from(learning_session)
-      .where(eq(learning_session.id, placement));
-    expect(rows[0].status).toBe('abandoned');
+    expect(result.abandoned).toBe(1); // only the placement probe
+
+    const byId = new Map((await db.select().from(learning_session)).map((r) => [r.id, r.status]));
+    expect(byId.get(placement)).toBe('abandoned');
+    expect(byId.get(review)).toBe('started'); // review untouched by the placement sweep
   });
 
   it('returns abandoned=0 when no orphans', async () => {
