@@ -40,7 +40,9 @@ export default function ColdStart({ navigate }: ColdStartProps) {
           昨晚没有 Dreaming agent 跑过 · 冷库 goal·learning_item·mastery_state 三表皆空
         </div>
       </div>
-      <div className="ob-cold-lanes" aria-hidden="true">
+      {/* OCR #551: not aria-hidden — these lanes carry real status (复习队列/学习意图/
+          Coach 各自为何空)，对屏幕阅读器同样有信息价值。 */}
+      <div className="ob-cold-lanes">
         {LANES.map((l) => (
           <div key={l.t} className="ob-cold-lane">
             <LoomIcon name={l.ic} size={20} className="ico" />

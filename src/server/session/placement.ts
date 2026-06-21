@@ -34,7 +34,11 @@ import { assertFromState } from './guards';
 // go-live decision for the cold-start first-session journey; it does NOT touch steady-state
 // selection (softmax-selection / composeDailyStream are not read here). Mirror of the
 // EARLY_KLP_ENABLED dark-ship pattern (src/core/selection-signals.ts).
-export const PLACEMENT_PROBE_ENABLED = false;
+//
+// YUK-473 Slice 3: env-driven so the flip is CONFIG, not code (defer-flip-not-build).
+// Default false → prod stays dark until the env var is set; dev opts in via
+// `.env.local` (PLACEMENT_PROBE_ENABLED=true). Same shape as the auto-enroll flag.
+export const PLACEMENT_PROBE_ENABLED = process.env.PLACEMENT_PROBE_ENABLED === 'true';
 
 const SESSION_TABLE = 'learning_session' as const;
 

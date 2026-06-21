@@ -100,12 +100,27 @@ function computeRows(
   ];
 }
 
+// Dropzone label — extracted from a nested ternary (OCR #551: nested ternaries banned).
+function dropzoneTitle(files: File[]): string {
+  if (files.length === 0) return '拖照片到此处 · 或点这里上传';
+  const f0 = files[0];
+  if (isPdf(f0)) return '已选 1 个 PDF · 点击重选';
+  if (isDocx(f0)) return '已选 1 个 DOCX · 点击重选';
+  return `已选 ${files.length} 张 · 点击重选`;
+}
+
 export interface OnboardRecordProps {
   navigate: (to: string) => void;
 }
 
 export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // OCR review (#551): synchronous re-entrancy lock (state is async → a rapid
+  // double-click could fire two uploads before the button hides) + a mounted flag
+  // so the multi-await `start` chain never setState after an unmount (e.g. the user
+  // hits 跳过 mid-flight).
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
   const [files, setFiles] = useState<File[]>([]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -140,6 +155,15 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
     }
   }, [phase, sse.events]);
 
+  // OCR #551: flip the mounted flag on unmount so `start`'s post-await setState calls
+  // (after expand/upload/create) are skipped if the user navigated away mid-flight.
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
+
   const prog = latestProgress(sse.events);
   const done = phase === 'done';
   const inFlight =
@@ -147,6 +171,11 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
     phase === 'uploading' ||
     phase === 'creating' ||
     phase === 'extracting';
+
+  // Forward the goal id (threaded via ?goal from Welcome) into placement so the probe
+  // can scope to the goal's KCs (Slice 3 reads it from the query).
+  const goalParam = new URLSearchParams(window.location.search).get('goal');
+  const placementTo = goalParam ? `/placement?goal=${encodeURIComponent(goalParam)}` : '/placement';
 
   const onPick = (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -175,7 +204,10 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   };
 
   const start = async () => {
-    if (files.length === 0) return;
+    // OCR #551: synchronous re-entrancy lock — a rapid double-click would otherwise
+    // fire two uploads before the idle button hides (state is async).
+    if (files.length === 0 || inFlightRef.current) return;
+    inFlightRef.current = true;
     setErrorMsg(null);
     try {
       const f0 = files[0];
@@ -184,6 +216,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
       if (files.length === 1 && isDocx(f0)) {
         setPhase('expanding');
         const ingested = await expandDocx(f0);
+        if (!mountedRef.current) return;
         setSessionId(ingested.session_id);
         setPhase('extracting');
         return;
@@ -192,10 +225,12 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
       if (files.length === 1 && isPdf(f0)) {
         setPhase('expanding');
         const expanded = await expandPdf(f0);
+        if (!mountedRef.current) return;
         assetIds = expanded.asset_ids;
       } else {
         setPhase('uploading');
         const assets = await Promise.all(files.map((f) => uploadAsset(f)));
+        if (!mountedRef.current) return;
         assetIds = assets.map((a) => a.id);
       }
       setPhase('creating');
@@ -204,13 +239,17 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
         body: JSON.stringify({ entrypoint: 'vision_paper', asset_ids: assetIds }),
       });
       await apiJson(`/api/ingestion/${session.session.id}/extract`, { method: 'POST' });
+      if (!mountedRef.current) return;
       setSessionId(session.session.id);
       setPhase('extracting');
     } catch (e) {
+      if (!mountedRef.current) return;
       setErrorMsg(
         e instanceof ApiAuthError ? e.message : e instanceof Error ? e.message : String(e),
       );
       setPhase('error');
+    } finally {
+      inFlightRef.current = false;
     }
   };
 
@@ -268,15 +307,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
             onClick={() => fileInputRef.current?.click()}
           >
             <LoomIcon name="image" size={32} />
-            <span className="dropzone-title">
-              {files.length > 0
-                ? isPdf(files[0])
-                  ? '已选 1 个 PDF · 点击重选'
-                  : isDocx(files[0])
-                    ? '已选 1 个 DOCX · 点击重选'
-                    : `已选 ${files.length} 张 · 点击重选`
-                : '拖照片到此处 · 或点这里上传'}
-            </span>
+            <span className="dropzone-title">{dropzoneTitle(files)}</span>
             <span className="hint">
               JPEG / PNG / WebP · 单次最多 5 页 · 或 1 个 PDF / DOCX · 抽题进度走 SSE
             </span>
@@ -284,7 +315,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
           {files.length > 0 && (
             <ul className="record-file-list">
               {files.map((f) => (
-                <li key={f.name}>
+                <li key={`${f.name}-${f.size}-${f.lastModified}`}>
                   <span>{f.name}</span>
                   <span className="meta">{(f.size / 1024).toFixed(1)} KB</span>
                 </li>
@@ -369,7 +400,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
               variant="primary"
               iconEnd="arrow"
               disabled={!done}
-              onClick={() => navigate('/placement')}
+              onClick={() => navigate(placementTo)}
             >
               去做定位练习
             </Btn>
