@@ -9,10 +9,10 @@
 
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import type { Db } from '@/db/client';
-import { event, knowledge, learning_session } from '@/db/schema';
+import { event, goal, knowledge, learning_session } from '@/db/schema';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { type TodayProposalKpi, loadTodayProposalKpi } from '@/server/today/proposal-kpi';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 // 与旧 today 页一致的采样上限：KPI 是「今日量级」信号，不是精确总量。
 const KPI_SAMPLE_LIMIT = 200;
@@ -41,6 +41,10 @@ export interface WorkbenchSummary {
     due_count: number;
     pending_attribution_count: number;
     knowledge_count: number;
+    // 冷启动信号（YUK-473 Slice 1）：active goal 数。0 → /today 拦截到冷开屏
+    // （ColdStart hero），> 0 → 正常工作台。goal 是 cold-start openable 的锚
+    // （goal/learning_item/mastery_state 三冷表之一），count active goals。
+    goal_count: number;
   };
   active_sessions: WorkbenchSessionRow[];
   week_heat: WorkbenchHeatDay[];
@@ -71,6 +75,12 @@ async function countKnowledge(db: Db): Promise<number> {
     .from(knowledge)
     .where(isNull(knowledge.archived_at));
   return row?.count ?? 0;
+}
+
+// 冷启动信号（YUK-473 Slice 1）：active goal 数。0 → /today 渲染冷开屏拦截。
+async function countActiveGoals(db: Db): Promise<number> {
+  const [row] = await db.select({ c: count() }).from(goal).where(eq(goal.status, 'active'));
+  return row?.c ?? 0;
 }
 
 async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
@@ -139,21 +149,30 @@ async function loadWeekHeat(db: Db): Promise<WorkbenchHeatDay[]> {
 }
 
 export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
-  const [proposals, dueCount, pendingAttributionCount, knowledgeCount, activeSessions, weekHeat] =
-    await Promise.all([
-      loadTodayProposalKpi(db),
-      countDue(),
-      countPendingAttribution(db),
-      countKnowledge(db),
-      listActiveSessions(db),
-      loadWeekHeat(db),
-    ]);
+  const [
+    proposals,
+    dueCount,
+    pendingAttributionCount,
+    knowledgeCount,
+    goalCount,
+    activeSessions,
+    weekHeat,
+  ] = await Promise.all([
+    loadTodayProposalKpi(db),
+    countDue(),
+    countPendingAttribution(db),
+    countKnowledge(db),
+    countActiveGoals(db),
+    listActiveSessions(db),
+    loadWeekHeat(db),
+  ]);
   return {
     proposals,
     kpi: {
       due_count: dueCount,
       pending_attribution_count: pendingAttributionCount,
       knowledge_count: knowledgeCount,
+      goal_count: goalCount,
     },
     active_sessions: activeSessions,
     week_heat: weekHeat,

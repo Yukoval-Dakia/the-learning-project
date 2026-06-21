@@ -14,6 +14,8 @@ export interface WorkbenchSummary {
     due_count: number;
     pending_attribution_count: number;
     knowledge_count: number;
+    // 冷启动信号（YUK-473 Slice 1）：active goal 数。TodayPage 在 0 时渲染冷开屏拦截。
+    goal_count: number;
   };
   active_sessions: Array<{
     id: string;
