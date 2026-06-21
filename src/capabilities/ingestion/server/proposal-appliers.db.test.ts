@@ -3,11 +3,14 @@
 // 测试继续从公共 API（acceptAiProposal / dismissAiProposal）进入，以覆盖
 // 「壳路由 → 包 applier」整条链。
 
+import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
+import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   ai_task_runs,
   cost_ledger,
   event,
+  knowledge,
   proposal_signals,
   question,
   question_block,
@@ -329,12 +332,23 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       enqueueSourceVerify?: ReturnType<typeof vi.fn>;
       writeCostLedgerFn?: ReturnType<typeof vi.fn>;
       fetchImageBytesFn?: ReturnType<typeof vi.fn>;
+      runColdStartBridgeFn?: ReturnType<typeof vi.fn>;
       r2?: { put: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> };
     } = {},
   ) {
     const runTaskFn =
       overrides.runTaskFn ??
       vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({ text: VLM_OUTPUT }));
+    // YUK-478 — these legacy fixtures carry NO knowledge_ids, so the accept path would
+    // otherwise invoke the cold-start bridge (which would attempt a REAL model call). The
+    // default stub THROWS, so the bridge's best-effort catch fires and the question stays
+    // an un-attributed 'draft' — preserving the pre-YUK-478 behaviour these tests assert
+    // WITHOUT a real LLM call. The dedicated cold-start test below injects a SUCCESS stub.
+    const runColdStartBridgeFn =
+      overrides.runColdStartBridgeFn ??
+      vi.fn(async (_k: string, _i: unknown, _c: unknown) => {
+        throw new Error('cold-start bridge not stubbed for this legacy fixture');
+      });
     const enqueueSourceVerify = overrides.enqueueSourceVerify ?? vi.fn(async () => {});
     const r2 = overrides.r2 ?? { put: vi.fn(async () => {}), get: vi.fn(async () => null) };
     const fetchImageBytesFn =
@@ -353,6 +367,8 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       r2: r2 as never,
       fetchImageBytesFn:
         fetchImageBytesFn as unknown as ImageCandidateAcceptDeps['fetchImageBytesFn'],
+      runColdStartBridgeFn:
+        runColdStartBridgeFn as unknown as ImageCandidateAcceptDeps['runColdStartBridgeFn'],
       ...(overrides.writeCostLedgerFn
         ? {
             writeCostLedgerFn:
@@ -365,6 +381,7 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       enqueueSourceVerify,
       r2,
       fetchImageBytesFn,
+      runColdStartBridgeFn,
       deps,
     };
   }
@@ -918,5 +935,200 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     expect(extract).toBe(VLM_OUTPUT);
     expect(extract).toContain('extracted_prompt_md');
     expect(meta.single_source_grounding).toBe(true);
+  });
+});
+
+// YUK-478 — cold-start upload→placement bridges. On a fresh DB the knowledge tree
+// carries ONLY subject-root seed nodes (YUK-477). An uploaded question matches no
+// node, so the accept path must: ① LLM-classify the subject + create a child KC under
+// seed:<subjectId>:root + tag the question with it, ③ LLM-generate the reference answer
+// when OCR extracted none, and ② auto-promote draft→active on structural verify so the
+// question is immediately placement-selectable. The LLM is MOCKED throughout.
+describe('image_candidate cold-start bridges (YUK-478)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // A VLM output whose block has the PROMPT but NO reference answer (reference_md null) —
+  // the cold-start OCR-got-the-prompt-not-the-answer case (bridge ③).
+  const VLM_OUTPUT_NO_REF = JSON.stringify({
+    blocks: [
+      {
+        extracted_prompt_md: '解方程 x^2 - 5x + 6 = 0。',
+        reference_md: null,
+        wrong_answer_md: null,
+        page_index: 0,
+        bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.4 },
+        role: 'prompt',
+        visual_complexity: 'low',
+        extraction_confidence: 0.9,
+        knowledge_hint: '一元二次方程',
+      },
+    ],
+  });
+
+  async function seedColdStartProposal(id: string): Promise<void> {
+    const db = testDb();
+    const sourceUrl = 'https://example.edu/math/quadratic.png';
+    // No knowledge_ids on the proposed_change — the cold-start (thin-seed) case.
+    await writeAiProposal(db, {
+      id,
+      actor_ref: 'sourcing',
+      outcome: 'partial',
+      payload: {
+        kind: 'image_candidate',
+        target: { subject_kind: 'source_asset', subject_id: null },
+        reason_md: '该页题干在图片里，tavily_extract 抽不出文本。',
+        evidence_refs: [],
+        proposed_change: {
+          source_url: sourceUrl,
+          source_title: '一元二次方程 扫描卷',
+          summary_md: '图片型源：题干为扫描图片，无参考答案。',
+        },
+        cooldown_key: `image_candidate:${sourceUrl}`,
+      },
+    });
+  }
+
+  function coldStartDeps(bridgeReturn: {
+    subject_id: string;
+    kc_name: string;
+    reference_md: string;
+    reasoning?: string;
+  }) {
+    const runColdStartBridgeFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: JSON.stringify({ reasoning: '', ...bridgeReturn }),
+    }));
+    const deps: ImageCandidateAcceptDeps = {
+      runTaskFn: vi.fn(async () => ({ text: VLM_OUTPUT_NO_REF })) as never,
+      enqueueSourceVerify: vi.fn(async () => {}) as never,
+      r2: { put: vi.fn(async () => {}), get: vi.fn(async () => null) } as never,
+      fetchImageBytesFn: vi.fn(async () => ({
+        bytes: new Uint8Array([1, 2, 3, 4]),
+        mimeType: 'image/png',
+      })) as never,
+      runColdStartBridgeFn: runColdStartBridgeFn as never,
+    };
+    return { deps, runColdStartBridgeFn };
+  }
+
+  it('no-KC-match upload → child KC under subject root + tag + generated reference_md + draft→active + placement-selectable', async () => {
+    const db = testDb();
+    // Thin seed: only subject-root nodes (seed:<subjectId>:root) exist.
+    await seedKnowledge(db);
+    await seedColdStartProposal('img_cand_coldstart');
+
+    const { deps, runColdStartBridgeFn } = coldStartDeps({
+      subject_id: 'math',
+      kc_name: '一元二次方程求根',
+      reference_md: 'x = 2 或 x = 3',
+    });
+
+    const result = await acceptAiProposal(db, 'img_cand_coldstart', { imageCandidateDeps: deps });
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+
+    // The bridge ran exactly once (one combined classify+answer LLM pass).
+    expect(runColdStartBridgeFn).toHaveBeenCalledTimes(1);
+
+    // ① a child KC was created under the math subject root and the question tagged with it.
+    const rootId = 'seed:math:root';
+    const children = await db.select().from(knowledge).where(eq(knowledge.parent_id, rootId));
+    expect(children).toHaveLength(1);
+    const childKc = children[0];
+    expect(childKc.name).toBe('一元二次方程求根');
+    expect(childKc.approval_status).toBe('approved');
+    // domain:null → inherits the subject (math) via the parent chain (effective-domain).
+    expect(childKc.domain).toBeNull();
+
+    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
+    const q = rows[0];
+    expect(q.knowledge_ids).toEqual([childKc.id]);
+
+    // ③ the generated reference answer populated reference_md (OCR had none).
+    expect(q.reference_md).toBe('x = 2 或 x = 3');
+
+    // ② structural verify (prompt + kind + ≥1 live KC) auto-promoted draft→active.
+    expect(q.draft_status).toBe('active');
+
+    // The question is now selectable by placement against the new KC's subgraph.
+    const pick = await selectNextPlacementItem(db, { knowledgeIds: [childKc.id] });
+    expect(pick).not.toBeNull();
+    expect(pick?.questionId).toBe(result.question_id);
+  });
+
+  it('echoes the OCR-extracted reference answer (does not regenerate) when one was present', async () => {
+    const db = testDb();
+    await seedKnowledge(db);
+    // A VLM output that DID extract a reference answer.
+    const withRef = JSON.stringify({
+      blocks: [
+        {
+          extracted_prompt_md: '解方程 x^2 - 5x + 6 = 0。',
+          reference_md: 'x = 2 or x = 3 (OCR original)',
+          wrong_answer_md: null,
+          page_index: 0,
+          bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.4 },
+          role: 'prompt',
+          visual_complexity: 'low',
+          extraction_confidence: 0.9,
+          knowledge_hint: null,
+        },
+      ],
+    });
+    await seedColdStartProposal('img_cand_coldstart_withref');
+    // The bridge still classifies the subject (no KC match), but echoes the existing answer.
+    const { deps } = coldStartDeps({
+      subject_id: 'math',
+      kc_name: '一元二次方程求根',
+      reference_md: 'x = 2 or x = 3 (OCR original)',
+    });
+    (deps.runTaskFn as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      text: withRef,
+    }));
+
+    const result = await acceptAiProposal(db, 'img_cand_coldstart_withref', {
+      imageCandidateDeps: deps,
+    });
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
+    // The OCR-extracted reference answer is preserved (the cold-start bridge must not
+    // overwrite a real OCR answer with a regenerated one).
+    expect(rows[0].reference_md).toBe('x = 2 or x = 3 (OCR original)');
+    expect(rows[0].draft_status).toBe('active');
+  });
+
+  it('bridge failure → un-attributed draft (no KC, stays draft, not placement-selectable) — upload is not lost', async () => {
+    const db = testDb();
+    await seedKnowledge(db);
+    await seedColdStartProposal('img_cand_coldstart_fail');
+    const deps: ImageCandidateAcceptDeps = {
+      runTaskFn: vi.fn(async () => ({ text: VLM_OUTPUT_NO_REF })) as never,
+      enqueueSourceVerify: vi.fn(async () => {}) as never,
+      r2: { put: vi.fn(async () => {}), get: vi.fn(async () => null) } as never,
+      fetchImageBytesFn: vi.fn(async () => ({
+        bytes: new Uint8Array([1, 2, 3, 4]),
+        mimeType: 'image/png',
+      })) as never,
+      // Bridge LLM unavailable → the accept path swallows it and persists un-attributed.
+      runColdStartBridgeFn: vi.fn(async () => {
+        throw new Error('bridge provider down');
+      }) as never,
+    };
+
+    const result = await acceptAiProposal(db, 'img_cand_coldstart_fail', {
+      imageCandidateDeps: deps,
+    });
+    if (result.kind !== 'image_candidate') throw new Error('unreachable');
+
+    // The question persisted (upload not lost) but un-attributed + still a draft.
+    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
+    expect(rows[0].knowledge_ids).toEqual([]);
+    expect(rows[0].draft_status).toBe('draft');
+    // No child KC was created under any subject root.
+    const created = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:math:root'));
+    expect(created).toHaveLength(0);
   });
 });

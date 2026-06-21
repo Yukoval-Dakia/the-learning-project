@@ -33,15 +33,20 @@
 // See docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
+import {
+  type ColdStartBridgeRunTaskFn,
+  runColdStartBridge,
+} from '@/capabilities/ingestion/server/cold-start-bridge';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
+import { applyProposeNew } from '@/capabilities/knowledge/server/proposals';
 import { newId } from '@/core/ids';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { ImageCandidateProposalChangeT } from '@/core/schema/proposal';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { ai_task_runs, event, question, source_asset } from '@/db/schema';
+import { ai_task_runs, event, knowledge, question, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
@@ -53,6 +58,7 @@ import {
 } from '@/server/proposals/signals';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type R2Client, getR2 } from '@/server/r2';
+import { KNOWN_SUBJECT_IDS } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 export interface ImageCandidateAcceptResult {
@@ -77,6 +83,12 @@ export interface ImageCandidateAcceptDeps {
   enqueueSourceVerify?: (questionIds: string[]) => Promise<void>;
   /** Cost-ledger writer seam (defaults to writeCostLedger). */
   writeCostLedgerFn?: typeof writeCostLedger;
+  /**
+   * YUK-478 — ColdStartPlacementBridgeTask LLM seam. DB tests inject a stub so the
+   * cold-start bridge (subject-classify + reference-answer generation) runs WITHOUT
+   * a real model. Defaults to the production runner via runColdStartBridge.
+   */
+  runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
 }
 
 const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -588,7 +600,7 @@ export async function acceptImageCandidateProposal(
     // was lifted from this exact image page, so prompt↔extract overlap is total (mirrors
     // the SourcingTask text path where the agent's self-reported extract grounds the URL).
     const promptMd = block.extracted_prompt_md;
-    const referenceMd = block.reference_md ?? '';
+    let referenceMd = block.reference_md ?? '';
     // The accept run id correlates the cost_ledger correlation row + the question's
     // created_by. `text` is unused downstream (aiAgentRef only reads task_run_id) but
     // TaskTextResult requires it.
@@ -597,7 +609,53 @@ export async function acceptImageCandidateProposal(
     // (carried on the proposal at propose time) — identical column semantics to the text
     // path's question.knowledge_ids. Empty when the run resolved no node (legacy proposal
     // or free-form manual ref) → empty attribution, same as before FIX-3.
-    const knowledgeIds = change.knowledge_ids ?? [];
+    let knowledgeIds = change.knowledge_ids ?? [];
+
+    // ── YUK-478 cold-start bridges ① + ③ ─────────────────────────────────────────
+    // On a fresh DB the knowledge tree carries ONLY subject-root nodes (YUK-477 thin
+    // seed: stable id seed:<subjectId>:root). The sourcing/tagging path matches NOTHING
+    // on it, so an uploaded question would persist with knowledge_ids:[] → invisible to
+    // placement (selectNextPlacementItem requires knowledge_ids @> [kc]). When no node was
+    // resolved AND no OCR reference answer was extracted, run ONE LLM pass that combines:
+    //   ① classify the question into a KNOWN_SUBJECT_ID and name a concise child concept,
+    //   ③ generate (or echo) the reference answer for the prompt.
+    // We then create that child KC under the subject root (applyProposeNew sets
+    // approval_status:'approved' + domain:null which inherits the subject via the parent
+    // chain) and attribute the question to it — INSIDE the terminal tx below, so the KC +
+    // question commit atomically. The LLM call itself runs HERE, outside any tx (no
+    // long-running model call inside a DB transaction).
+    let coldStartKcName: string | null = null;
+    let coldStartSubjectRootId: string | null = null;
+    if (knowledgeIds.length === 0) {
+      try {
+        const bridge = await runColdStartBridge({
+          db,
+          questionMd: promptMd,
+          existingReferenceMd: block.reference_md,
+          knowledgeHint: block.knowledge_hint,
+          knownSubjectIds: KNOWN_SUBJECT_IDS,
+          runTaskFn: deps.runColdStartBridgeFn,
+        });
+        // ③ fill the judge anchor when OCR extracted no reference answer. Never overwrite
+        // a real OCR-extracted answer (referenceMd already non-empty in that case).
+        if (referenceMd.trim().length === 0 && bridge.reference_md.trim().length > 0) {
+          referenceMd = bridge.reference_md;
+        }
+        // ① stage the child-KC create for the terminal tx. Subject root id is literally
+        // seed:<subjectId>:root (the bridge subject_id is validated ∈ KNOWN_SUBJECT_IDS).
+        coldStartKcName = bridge.kc_name;
+        coldStartSubjectRootId = `seed:${bridge.subject_id}:root`;
+      } catch (bridgeErr) {
+        // The bridge is best-effort: a provider outage / unparseable output must NOT lose
+        // the user's upload. Persist the draft un-attributed (knowledge_ids:[], stays a
+        // draft — see structural-verify gate below) exactly as the pre-YUK-478 behaviour.
+        console.error(
+          '[image_candidate_accept] cold-start bridge failed; persisting un-attributed draft for',
+          proposalId,
+          bridgeErr,
+        );
+      }
+    }
     // FIX-R2-6 — the extract is the RAW VLM output (block-serialized text from the same
     // call), NOT the final promptMd. Storing promptMd made source_verify's source
     // consistency n-gram overlap an identity (extract === prompt → always passes), so the
@@ -676,6 +734,43 @@ export async function acceptImageCandidateProposal(
         );
       }
 
+      // ── YUK-478 bridge ① — create the cold-start child KC + attribute the question ──
+      // Staged above (outside the tx) when the upload matched no node on the thin seed.
+      // applyProposeNew inserts an approved child under the subject root (domain:null →
+      // inherits the subject via the parent chain) and asserts the parent exists; the root
+      // always exists (YUK-477 seed). Done INSIDE the tx so the KC + question commit
+      // atomically — a crash leaves neither.
+      if (coldStartKcName && coldStartSubjectRootId) {
+        const newKcId = await applyProposeNew(tx, {
+          mutation: 'propose_new',
+          name: coldStartKcName,
+          parent_id: coldStartSubjectRootId,
+        });
+        knowledgeIds = [newKcId];
+      }
+
+      // ── YUK-478 bridge ② — structural verify → auto-promote draft→active ──────────
+      // Mirrors verify-and-promote.ts: a question is structurally sound when it has a
+      // non-empty prompt, a valid (normalized) kind, and ≥1 knowledge id. We additionally
+      // honour the archived-KC guard (a referenced KC must be live) — a freshly-created
+      // cold-start KC is approved+live, but change.knowledge_ids could reference an archived
+      // node. FSRS enroll is DEFERRED to first answer (placement is read-only), so we only
+      // flip draft_status; we do NOT enroll here. No inbox accept wall — auto-flow.
+      let liveKnowledgeCount = 0;
+      if (knowledgeIds.length > 0) {
+        const liveKnowledge = await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)));
+        liveKnowledgeCount = liveKnowledge.length;
+      }
+      const structurallyVerified =
+        promptMd.trim().length > 0 &&
+        Boolean(resolvedKind) &&
+        liveKnowledgeCount === knowledgeIds.length &&
+        liveKnowledgeCount > 0;
+      const draftStatus = structurallyVerified ? 'active' : 'draft';
+
       await tx.insert(question).values(
         withAnswerClass({
           id: questionId,
@@ -684,14 +779,18 @@ export async function acceptImageCandidateProposal(
           prompt_md: promptMd,
           reference_md: referenceMd || null,
           judge_kind_override: judgeKind,
-          // FIX-3 — attribute to the originating 知识点 (text path parity).
+          // FIX-3 / YUK-478 — attribute to the originating 知识点 (sourcing-resolved) OR the
+          // cold-start child KC created just above.
           knowledge_ids: knowledgeIds,
           difficulty: draftQuestion.difficulty,
           // source_ref = the page URL + source_ref_kind='url' so deriveSourceTier lands tier 2
           // (合约三), identical to the SourcingTask text path.
           source_ref: change.source_url,
-          // Option B (R6) — drafts do NOT enter the pool / FSRS until source_verify passes.
-          draft_status: 'draft',
+          // YUK-478 — auto-promote on structural verify (prompt + kind + ≥1 live KC). The
+          // source_verify job still runs (enqueued below) and remains the deeper grounding
+          // gate; this just removes the cold-start inbox wall so the upload is immediately
+          // placement-selectable. A bridge failure (no KC) leaves it a 'draft' as before.
+          draft_status: draftStatus,
           created_by: aiAgentRef(IMAGE_EXTRACT_TASK_KIND, result),
           metadata: {
             web_sourced: webSourced,

@@ -998,6 +998,11 @@ export function getTaskSystemPrompt(
     // voice. Joins the pass-through group (registry-inline systemPrompt IS the
     // runtime SoT, Q3) — no buildProfileCriticPrompt(profile) builder.
     case 'ProfileCriticTask':
+    // YUK-478 — ColdStartPlacementBridgeTask is subject-NEUTRAL: the candidate
+    // subject ids ride in the input, not the prompt voice, and the classify+answer
+    // instructions are generic across subjects. Joins the pass-through group
+    // (registry-inline systemPrompt IS the runtime SoT) — no profile builder.
+    case 'ColdStartPlacementBridgeTask':
       return tasks[task].systemPrompt;
     default:
       return assertNever(task);
