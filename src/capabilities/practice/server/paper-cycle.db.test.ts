@@ -25,6 +25,7 @@ import {
   question,
 } from '@/db/schema';
 import * as invokerModule from '@/server/judge/invoker';
+import * as masteryStateModule from '@/server/mastery/state';
 import { Review } from '@/server/session';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1526,5 +1527,119 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       .limit(1);
     const payload = rows[0].payload as Record<string, unknown>;
     expect(payload).not.toHaveProperty('duration_ms');
+  });
+
+  // ── YUK-212 + YUK-484(B) "Lane C cut 1": per-sub verdict 落点 + B proof ───────
+  //
+  // A composite (stem + single sub) question submitted with part_ref='p1' must:
+  //   (1) stamp sub_ref='p1' on the independent judge event;
+  //   (2) still call updateThetaForAttempt EXACTLY ONCE, keyed on the slot's
+  //       referenced_knowledge_ids — NO per-sub θ̂ fan-out (Option B proof).
+  // An atomic slot (no part_ref) must leave sub_ref ABSENT (not null).
+  //
+  // Uses the deterministic `exact` judge: kind=true_false routes to exact, and
+  // narrowing reduces reference_md to the sub's stored answer ('true'), so the
+  // text answer 'true' grades `correct` with no LLM.
+  async function seedCompositeQuestion(id: string, subAnswer: string) {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(question).values({
+      id,
+      kind: 'true_false',
+      prompt_md: `Prompt ${id}`,
+      reference_md: `${subAnswer}\n\nother`,
+      structured: {
+        id: 'stem',
+        role: 'stem',
+        prompt_text: '阅读下文，回答问题。',
+        sub_questions: [
+          { id: 'p1', role: 'sub', question_no: '1', prompt_text: '第一问', answers: [subAnswer] },
+          { id: 'p2', role: 'sub', question_no: '2', prompt_text: '第二问', answers: ['other'] },
+        ],
+      },
+      knowledge_ids: ['k1'],
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+
+  it('cut1: composite slot submit with part_ref stamps sub_ref + keeps θ̂ per-KC (one call)', async () => {
+    const db = testDb();
+    await seedCompositeQuestion('qc', 'true');
+    await seedPaper('paper_sub', ['qc']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_sub' });
+
+    // Spy θ̂ — assert it fires exactly once for the attempt, NOT once-per-sub.
+    // Mocked to a no-op resolve so it never touches real mastery_state (the rest
+    // of the attempt tx still commits).
+    const thetaSpy = vi
+      .spyOn(masteryStateModule, 'updateThetaForAttempt')
+      .mockResolvedValue(undefined as never);
+
+    try {
+      const submit = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'paper_sub',
+          questionId: 'qc',
+          partRef: 'p1',
+          answerMd: 'true',
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'immediate',
+        },
+        db,
+      );
+
+      // The exact judge graded the NARROWED sub (reference_md → 'true') correct.
+      expect(submit.coarseOutcome).toBe('correct');
+
+      // (1) the independent judge event carries sub_ref='p1'.
+      const judgeRows = await db
+        .select({ payload: event.payload })
+        .from(event)
+        .where(and(eq(event.action, 'judge'), eq(event.subject_id, submit.attemptEventId)))
+        .limit(1);
+      const judgePayload = judgeRows[0].payload as Record<string, unknown>;
+      expect(judgePayload.sub_ref).toBe('p1');
+
+      // (2) B proof — θ̂ called EXACTLY ONCE, keyed on the slot's referenced KCs
+      // (primary k1, no secondaries). No per-sub fan-out.
+      expect(thetaSpy).toHaveBeenCalledTimes(1);
+      expect(thetaSpy.mock.calls[0][1]).toMatchObject({ knowledgeIds: ['k1'] });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('cut1: atomic slot submit (no part_ref) leaves sub_ref ABSENT', async () => {
+    const db = testDb();
+    await seedQuestion('qa', 'true');
+    await seedPaper('paper_atomic', ['qa']);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_atomic' });
+
+    const submit = await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper_atomic',
+        questionId: 'qa',
+        answerMd: 'true',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'immediate',
+      },
+      db,
+    );
+
+    const judgeRows = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.subject_id, submit.attemptEventId)))
+      .limit(1);
+    const judgePayload = judgeRows[0].payload as Record<string, unknown>;
+    // Conditional spread keeps the key ABSENT (not null) for atomic verdicts.
+    expect('sub_ref' in judgePayload).toBe(false);
   });
 });

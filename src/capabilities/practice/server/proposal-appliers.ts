@@ -18,7 +18,11 @@ import { and, eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
-import { StructuredQuestion, type StructuredQuestionT } from '@/core/schema/structured_question';
+import {
+  StructuredQuestion,
+  type StructuredQuestionT,
+  findStructuredNode,
+} from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -413,19 +417,6 @@ export async function acceptQuestionDraftProposal(
 // ['structure']). So the agent reads a node id and writes the same node id
 // (read≡write).
 // ===========================================================================
-
-/** Find a node by id in a StructuredQuestion tree (read-only, no clone). */
-function findStructuredNode(
-  node: StructuredQuestionT,
-  target: string,
-): StructuredQuestionT | undefined {
-  if (node.id === target) return node;
-  for (const sub of node.sub_questions ?? []) {
-    const hit = findStructuredNode(sub, target);
-    if (hit) return hit;
-  }
-  return undefined;
-}
 
 /**
  * Copy-on-write (path-copy) `node` and apply `mutate` to the node whose id

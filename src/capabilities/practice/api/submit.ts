@@ -101,6 +101,12 @@ const SubmitBody = z.object({
   // （红线 #2：无 slot id 不退回 (date, ref) 近似）。optional+nullable → 旧 client 不传 → 无 π_i
   // 标签，向后兼容。
   stream_item_id: z.string().min(1).nullable().optional(),
+  // YUK-212 + YUK-484(B) — StructuredQuestion.id of the sub-node being submitted.
+  // When present, the judge is narrowed to that single sub (passage-preserving)
+  // and the judge event is stamped with sub_ref. Back-compat: absent (every
+  // atomic single-question submit) → no-op (whole-row judging, no sub_ref). This
+  // is the structured-jsonb axis id, NOT a question_part id.
+  part_ref: z.string().min(1).nullable().optional(),
 });
 
 type Rating = z.infer<typeof FsrsRating>;
@@ -239,6 +245,10 @@ async function judgeSubmit({ body, questionId, q }: ValidatedSubmit): Promise<Ju
       // client-supplied-judge submits are byte-for-byte unchanged.
       student_image_refs: body.answer_image_refs,
       subjectProfile,
+      // YUK-212 + YUK-484(B) — narrow the judge to the submitted sub. null for
+      // atomic single-question submits → no-op (whole-row). Narrows text +
+      // structured before routing.
+      part_ref: body.part_ref ?? null,
     });
     judgeResult = invoked.result;
     judgeRoute = invoked.route;
@@ -574,6 +584,11 @@ async function persistSubmit(
           ...(judgeResult.score != null ? { score: judgeResult.score } : {}),
           feedback_md: judgeResult.feedback_md,
           attribution_pending: true,
+          // YUK-212 + YUK-484(B) — per-sub verdict 落点. Conditional spread keeps
+          // the key ABSENT (not null) for atomic submits → byte-identical parse.
+          // Use body.part_ref (this route has no `partRef` local). Cut-1:
+          // observability only — mastery stays per-KC (θ̂ below is one per-KC call).
+          ...(body.part_ref ? { sub_ref: body.part_ref } : {}),
         },
         caused_by_event_id: eventId,
         task_run_id: null,
