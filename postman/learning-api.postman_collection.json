@@ -581,6 +581,28 @@
       "name": "placement",
       "item": [
         {
+          "name": "GET /api/placement/profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement", "profile"],
+              "query": [
+                {
+                  "key": "goal",
+                  "value": "goal-1",
+                  "disabled": false,
+                  "description": "required"
+                }
+              ]
+            },
+            "description": "placement-done 起始档案：按 goal scope 读 per-KC mastery（冷启 inc-B / Slice 4）\n\n**Query:**\n- `goal` (required) e.g. `goal-1`\n\n**Notes:** 只读，复用 getMasteryProjection（mastery_state SoT）。in-scope 但无 mastery_state 行的 KC → tested:false。缺 goal→400，未知 goal→404。返回 {goalId, title, kcs[], answeredCount}"
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/placement/:id/end",
           "request": {
             "method": "POST",

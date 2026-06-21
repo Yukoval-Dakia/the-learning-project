@@ -696,6 +696,224 @@
   margin-top: var(--s-2);
 }
 
+/* ── ④ profile reveal (YUK-473 Slice 4) ────────────────────────
+   Ported 1:1 from the onboarding design CSS §④. The band MARK is positioned at
+   p_l (0..1) by ScreenProfile, not theta_hat (a logit) — see that file's header. */
+.ob-prof {
+  max-width: var(--cap-app);
+}
+.ob-prof-narr {
+  max-width: var(--cap-prose);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  margin-bottom: var(--s-3);
+  text-wrap: pretty;
+}
+.ob-prof-narr strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.ob-prof-honest {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: var(--s-5);
+  font-size: var(--fs-caption);
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-pill);
+  padding: 4px 12px;
+}
+.ob-kc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.ob-kc {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) auto;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.ob-kc:last-child {
+  border-bottom: 0;
+}
+.ob-kc.is-untested {
+  opacity: 0.72;
+}
+.ob-kc-id {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.ob-kc-name {
+  font-size: var(--fs-body);
+  color: var(--ink);
+  font-weight: 500;
+}
+.ob-kc-track {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border-radius: var(--r-1);
+  padding: 1px 7px;
+}
+.ob-band {
+  position: relative;
+}
+.ob-band-track {
+  position: relative;
+  height: 12px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+    90deg,
+    var(--paper-sunk) 0%,
+    var(--paper-sunk) 38%,
+    var(--good-soft) 100%
+  );
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.ob-band-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--coral) 26%, transparent);
+}
+.ob-band-lo,
+.ob-band-hi {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--coral-line);
+}
+.ob-band-mark {
+  position: absolute;
+  top: -3px;
+  width: 12px;
+  height: 18px;
+  border-radius: var(--r-pill);
+  transform: translateX(-50%);
+  background: var(--coral);
+  border: 2px solid var(--paper-raised);
+  box-shadow: var(--shadow-1);
+}
+.ob-kc.is-lowconf .ob-band-fill {
+  background: color-mix(in oklab, var(--ink-4) 20%, transparent);
+}
+.ob-kc.is-lowconf .ob-band-mark {
+  background: var(--ink-3);
+}
+.ob-kc.is-lowconf .ob-band-lo,
+.ob-kc.is-lowconf .ob-band-hi {
+  background: var(--ink-5);
+}
+.ob-band-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--ink-5);
+  font-family: var(--font-mono);
+}
+.ob-band-untested {
+  height: 12px;
+  border-radius: var(--r-pill);
+  border: 1px dashed var(--line-strong);
+  background: var(--paper-sunk);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.ob-kc-conf {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ob-conf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  border-radius: var(--r-pill);
+  padding: 2px 9px;
+}
+.ob-conf-pill.t-low {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+}
+.ob-conf-pill.t-ok {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+}
+.ob-conf-pill.t-none {
+  color: var(--ink-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+}
+.ob-kc-ev {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-5);
+}
+.ob-prof-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.ob-prof-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.ob-prof-legend i {
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.ob-prof-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+  flex-wrap: wrap;
+}
+.ob-prof-foot .meta {
+  max-width: 42ch;
+  line-height: var(--lh-snug);
+}
+@media (max-width: 720px) {
+  .ob-kc {
+    grid-template-columns: 1fr;
+    gap: var(--s-2);
+  }
+  .ob-kc-conf {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
 /* ── cold /today intercept ─────────────────────────────────── */
 .ob-cold {
   max-width: var(--cap-app);

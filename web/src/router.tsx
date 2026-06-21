@@ -15,6 +15,7 @@ import {
 import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
 import OnboardRecord from '@/capabilities/onboarding/ui/OnboardRecord';
 import ScreenPlacement from '@/capabilities/onboarding/ui/ScreenPlacement';
+import ScreenProfile from '@/capabilities/onboarding/ui/ScreenProfile';
 import WelcomePage from '@/capabilities/onboarding/ui/WelcomePage';
 import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
@@ -252,6 +253,19 @@ const placementRoute = createRoute({
   component: PlacementRoute,
 });
 
+// YUK-473 Slice 4 — placement-done 起始档案。placement 的 settling 落到这里
+//（?goal 串过来）；「开始日常练习」→ /today。
+function ProfileRoute() {
+  const router = useRouter();
+  return <ScreenProfile navigate={(to) => router.history.push(to)} />;
+}
+
+const profileRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/profile',
+  component: ProfileRoute,
+});
+
 function InboxRoute() {
   const router = useRouter();
   return <InboxPage navigate={(to) => router.history.push(to)} />;
@@ -487,6 +501,7 @@ const routeTree = rootRoute.addChildren([
   welcomeRoute,
   onboardingUploadRoute,
   placementRoute,
+  profileRoute,
   inboxRoute,
   mistakesRoute,
   agentNotesRoute,

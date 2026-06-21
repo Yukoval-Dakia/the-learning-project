@@ -56,6 +56,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [qRef, setQRef] = useState<PlacementQuestionRef | null>(null);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  // Captured at mount from ?goal; reused to land on /profile?goal after the probe.
+  const goalIdRef = useRef<string | null>(null);
 
   // Mount: read ?goal and start the probe. The probe's scope is the goal's
   // scope_knowledge_ids (server-side). 400 = empty scope (cold) → sourcing; 404 =
@@ -66,6 +68,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       setPhase('nogoal');
       return;
     }
+    goalIdRef.current = goal;
     let cancelled = false;
     (async () => {
       try {
@@ -99,12 +102,19 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     };
   }, []);
 
-  // settling → end the probe → land. Slice 4 will route to /profile; for now /today.
+  // Land on the starter profile (?goal threaded) after the probe; /today fallback.
+  const profileDest = () =>
+    goalIdRef.current ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}` : '/today';
+
+  // After the probe completes (settling): end it, then navigate to the profile (Slice 4).
   useEffect(() => {
     if (phase !== 'settling' || !sessionId) return;
     let cancelled = false;
+    const dest = goalIdRef.current
+      ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}`
+      : '/today';
     const t = setTimeout(() => {
-      if (!cancelled) navigate('/today');
+      if (!cancelled) navigate(dest);
     }, 1700);
     void placementEnd(sessionId, 'completed').catch(() => {});
     return () => {
@@ -219,8 +229,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         <LoomCard pad padLg>
           <ErrorState text="评分管道暂时不可用 · judge 降级。你已答的题会保留，画像稍后补算。" />
           <div className="hero-cta" style={{ justifyContent: 'center', marginTop: 'var(--s-3)' }}>
-            <Btn variant="primary" iconEnd="arrow" onClick={() => navigate('/today')}>
-              先回今日
+            <Btn variant="primary" iconEnd="arrow" onClick={() => navigate(profileDest())}>
+              先看初步档案
             </Btn>
           </div>
         </LoomCard>
