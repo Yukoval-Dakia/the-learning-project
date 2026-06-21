@@ -1,5 +1,5 @@
 import { knowledge } from '@/db/schema';
-import { resolveKnownSubjectId } from '@/subjects/profile';
+import { resolveKnownSubjectId, subjectProfiles } from '@/subjects/profile';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -24,7 +24,11 @@ describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点, YUK-477)', (
     for (const row of rows) {
       expect(row.parent_id).toBeNull();
       expect(row.approval_status).toBe('approved');
-      expect(KNOWN_SUBJECT_IDS).toContain(row.domain as (typeof KNOWN_SUBJECT_IDS)[number]);
+      const subjectId = row.domain as (typeof KNOWN_SUBJECT_IDS)[number];
+      expect(KNOWN_SUBJECT_IDS).toContain(subjectId);
+      // name is profile-derived (displayName), not the raw subjectId — guards a
+      // regression where the displayName lookup silently falls through.
+      expect(row.name).toBe(subjectProfiles[subjectId].displayName);
     }
     // one node per subject, no duplicates.
     const domains = rows.map((r) => r.domain).sort();

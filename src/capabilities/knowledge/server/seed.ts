@@ -1,7 +1,6 @@
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { KNOWN_SUBJECT_IDS, subjectProfiles } from '@/subjects/profile';
-import { eq } from 'drizzle-orm';
 
 export interface SeedResult {
   inserted: number;
@@ -29,31 +28,32 @@ export async function seedKnowledge(db: Db): Promise<SeedResult> {
   let skipped = 0;
 
   for (const subjectId of KNOWN_SUBJECT_IDS) {
-    const id = `seed:${subjectId}:root`;
-    const existing = (
-      await db.select({ id: knowledge.id }).from(knowledge).where(eq(knowledge.id, id)).limit(1)
-    )[0];
-    if (existing) {
-      skipped += 1;
-      continue;
-    }
     const now = new Date();
-    await db.insert(knowledge).values({
-      id,
-      // displayName 是科目的人读名（profile 必有，schema min(1)）；理论兜底 subjectId。
-      name: subjectProfiles[subjectId]?.displayName ?? subjectId,
-      // domain = subjectId：self-alias 使 resolveKnownSubjectId(domain)===subjectId，
-      // 上传子 KC 经父链继承此 domain（effective-domain 派生轴）。
-      domain: subjectId,
-      parent_id: null,
-      merged_from: [],
-      proposed_by_ai: false,
-      approval_status: 'approved',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-    inserted += 1;
+    // Race-safe idempotency via ON CONFLICT DO NOTHING — a single round-trip with
+    // no check-then-act TOCTOU (review nit: the old SELECT-then-INSERT could double
+    // -insert under concurrent invocation → PK violation → fatal migrate). `.returning()`
+    // is empty on conflict, so its length drives the inserted/skipped tally.
+    const written = await db
+      .insert(knowledge)
+      .values({
+        id: `seed:${subjectId}:root`,
+        // displayName 是科目的人读名（profile 必有，schema min(1)）；理论兜底 subjectId。
+        name: subjectProfiles[subjectId]?.displayName ?? subjectId,
+        // domain = subjectId：self-alias 使 resolveKnownSubjectId(domain)===subjectId，
+        // 上传子 KC 经父链继承此 domain（effective-domain 派生轴）。
+        domain: subjectId,
+        parent_id: null,
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })
+      .onConflictDoNothing({ target: knowledge.id })
+      .returning({ id: knowledge.id });
+    if (written.length > 0) inserted += 1;
+    else skipped += 1;
   }
 
   return { inserted, skipped };
