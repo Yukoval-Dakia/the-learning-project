@@ -49,7 +49,9 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
   const profileQ = useQuery({
     queryKey: ['placement-profile', goalId],
     queryFn: () => getPlacementProfile(goalId as string),
-    enabled: goalId !== null,
+    // Boolean(goalId) (not `!== null`) so an empty `?goal=` ('' from URLSearchParams) doesn't
+    // fire a doomed request — the `!goalId` render guard below already treats '' as no-goal.
+    enabled: Boolean(goalId),
   });
 
   if (!goalId) {
