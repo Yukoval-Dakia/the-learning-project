@@ -13,7 +13,16 @@ const STEPS: Array<{ id: ObStepId; n: string; label: string }> = [
   { id: 'placement', n: '3', label: '定位' },
   { id: 'profile', n: '4', label: '档案' },
 ];
-const ORDER: ObStepId[] = ['welcome', 'source', 'placement', 'profile'];
+// OCR #551: derive ORDER from STEPS so there's a single source of truth (reordering
+// STEPS can't silently desync the rail).
+const ORDER: ObStepId[] = STEPS.map((s) => s.id);
+
+// OCR #551: extracted from a nested ternary (banned by the review checklist).
+function stepCls(si: number, ai: number): string {
+  if (si === ai) return 'is-on';
+  if (si < ai) return 'is-done';
+  return '';
+}
 
 export interface ObStepsProps {
   active: ObStepId;
@@ -25,7 +34,7 @@ export function ObSteps({ active }: ObStepsProps) {
     <div className="ob-steps" aria-label="首会流进度">
       {STEPS.map((s, i) => {
         const si = ORDER.indexOf(s.id);
-        const cls = si === ai ? 'is-on' : si < ai ? 'is-done' : '';
+        const cls = stepCls(si, ai);
         return (
           <Fragment key={s.id}>
             {i > 0 && <span className="ob-step-sep" />}

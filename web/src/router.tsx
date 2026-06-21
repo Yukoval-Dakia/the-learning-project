@@ -14,7 +14,7 @@ import {
 } from '@/capabilities/observability/ui/observability';
 import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
 import OnboardRecord from '@/capabilities/onboarding/ui/OnboardRecord';
-import PlacementStubPage from '@/capabilities/onboarding/ui/PlacementStubPage';
+import ScreenPlacement from '@/capabilities/onboarding/ui/ScreenPlacement';
 import WelcomePage from '@/capabilities/onboarding/ui/WelcomePage';
 import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
@@ -215,9 +215,10 @@ const todayRoute = createRoute({
 });
 
 // YUK-473 cold-start onboarding flow. /welcome 是 /today 冷拦截（goal_count===0）
-// 的 CTA 落点（设定 ①）。Slice 2：/onboarding/upload 已是真 OnboardRecord（②a 上传→
-// OCR→auto-enroll 尾巴入池→/placement）；/placement 仍是 stub（下一片替换为真定位）。
-// 导航走壳层 prop 注入（同 TodayRoute）。
+// 的 CTA 落点（设定 ①）。Slice 2：/onboarding/upload = 真 OnboardRecord（②a 上传→OCR→
+// auto-enroll 尾巴入池）。Slice 3：/placement = 真 ScreenPlacement（③ 探针 start→submit
+// (auto_rate→θ̂)→next→end），gated on PLACEMENT_PROBE_ENABLED；goalId 经 `?goal=<id>`
+// query 从 Welcome 串过来。导航走壳层 prop 注入（同 TodayRoute）。
 function WelcomeRoute() {
   const router = useRouter();
   return <WelcomePage navigate={(to) => router.history.push(to)} />;
@@ -242,7 +243,7 @@ const onboardingUploadRoute = createRoute({
 
 function PlacementRoute() {
   const router = useRouter();
-  return <PlacementStubPage navigate={(to) => router.history.push(to)} />;
+  return <ScreenPlacement navigate={(to) => router.history.push(to)} />;
 }
 
 const placementRoute = createRoute({
