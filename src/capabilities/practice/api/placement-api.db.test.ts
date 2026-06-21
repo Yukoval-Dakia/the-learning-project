@@ -125,6 +125,81 @@ describe('placement API flow', () => {
     expect(body.question?.questionId).toBe('q1');
   });
 
+  it('start LIVE-resolves an empty frozen goal scope from the goal subject (YUK-482 Lane B)', async () => {
+    // Cold-start goal: declared on an empty tree → frozen scope_knowledge_ids is empty. A KC
+    // was later bridged under the subject (effective domain 'wenyan') with a live active
+    // question. The frozen-only read would see [] → sourcingNeeded; live-resolve must pick the
+    // KC up via the subject's effective-domain axis and return a REAL question.
+    await seedKnowledge('kc-bridged'); // domain 'wenyan' (seedKnowledge sets domain: 'wenyan')
+    await seedQuestion('q-bridged', ['kc-bridged'], 3);
+    const now = new Date();
+    await db.insert(goal).values({
+      id: 'g-cold',
+      title: 'Cold goal',
+      subject_id: 'wenyan',
+      scope_knowledge_ids: [], // frozen empty (cold-start)
+      status: 'active',
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const res = await startPlacement(jsonReq({ goalId: 'g-cold' }));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    // The live-resolved subject KC set entered scope.
+    expect(body.knowledgeIds).toEqual(['kc-bridged']);
+    expect(body.question?.questionId).toBe('q-bridged');
+    expect(body.sourcingNeeded).toBe(false);
+  });
+
+  it('start RESPECTS a non-empty frozen goal scope (no live-resolve override) (YUK-482 Lane B)', async () => {
+    // An explicit narrow scope must be honored as-is: even though the subject has TWO live KCs,
+    // a goal frozen to only kc-a must keep scope=[kc-a] (live-resolve is NOT triggered when the
+    // frozen scope is non-empty), so the probe never widens to kc-b.
+    await seedKnowledge('kc-a');
+    await seedKnowledge('kc-b');
+    await seedQuestion('q-a', ['kc-a'], 3);
+    await seedQuestion('q-b', ['kc-b'], 3);
+    const now = new Date();
+    await db.insert(goal).values({
+      id: 'g-narrow',
+      title: 'Narrow goal',
+      subject_id: 'wenyan', // subject has both kc-a + kc-b live...
+      scope_knowledge_ids: ['kc-a'], // ...but the goal is explicitly narrowed to kc-a only
+      status: 'active',
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const res = await startPlacement(jsonReq({ goalId: 'g-narrow' }));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    // Frozen scope respected — NOT widened to the full subject set.
+    expect(body.knowledgeIds).toEqual(['kc-a']);
+    expect(body.question?.questionId).toBe('q-a');
+  });
+
+  it('start still flags sourcingNeeded when live-resolve yields nothing (YUK-482 Lane B)', async () => {
+    // A cold goal whose subject has NO live KC at all → live-resolve returns [] → the start
+    // handler 400s (no resolvable scope), preserving the pre-YUK-482 "no scope" contract rather
+    // than silently selecting over nothing.
+    const now = new Date();
+    await db.insert(goal).values({
+      id: 'g-empty',
+      title: 'Empty subject goal',
+      subject_id: 'physics', // no physics KC seeded
+      scope_knowledge_ids: [],
+      status: 'active',
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+    const res = await startPlacement(jsonReq({ goalId: 'g-empty' }));
+    expect(res.status).toBe(400);
+  });
+
   it('start 404s when the dark-ship flag is off', async () => {
     placementFlag.value = false;
     const res = await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }));

@@ -13,6 +13,7 @@
 
 import { z } from 'zod';
 
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -57,11 +58,25 @@ export async function POST(req: Request): Promise<Response> {
     let knowledgeIds = explicit ?? [];
     if (knowledgeIds.length === 0 && goalId) {
       const rows = await db
-        .select({ scope: goal.scope_knowledge_ids })
+        .select({ scope: goal.scope_knowledge_ids, subjectId: goal.subject_id })
         .from(goal)
         .where(eq(goal.id, goalId))
         .limit(1);
-      knowledgeIds = rows[0]?.scope ?? [];
+      const goalRow = rows[0];
+      const frozenScope = goalRow?.scope ?? [];
+      // YUK-482 Lane B (decision b-i, live-resolve guarded) — a cold-start goal is declared
+      // on an empty tree (goal-create.ts: empty resolved scope is ALLOWED), so its FROZEN
+      // scope_knowledge_ids stays empty even after uploads bridge new child KCs under the
+      // subject root. A frozen-only read would make placement permanently blind to those KCs
+      // (sourcingNeeded forever). When the frozen scope is empty/null AND the goal carries a
+      // subject, RE-RESOLVE the subject's KC set LIVE (resolveSubjectKnowledgeIds → effective-
+      // domain axis), so newly-bridged KCs enter scope. A NON-empty frozen scope is an
+      // EXPLICIT narrow scope and is respected as-is (no live-resolve override). See
+      // docs/design/2026-06-20-cold-start-day-one-design.md / YUK-481.
+      knowledgeIds =
+        frozenScope.length === 0 && goalRow?.subjectId
+          ? await resolveSubjectKnowledgeIds(db, goalRow.subjectId)
+          : frozenScope;
     }
     if (knowledgeIds.length === 0) {
       throw new ApiError(
