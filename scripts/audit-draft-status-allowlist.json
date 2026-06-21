@@ -1,10 +1,10 @@
 {
   "_comment": "question-insert sites that do NOT set draft_status. Each entry MUST have reason + resolves_when {kind,ref,expected_by}. NULL≡active is the legal semantics for these writers (the question IS an active pool item). teaching-check also sets draft_status explicitly post-YUK-350-L2 — kept here as harmless-redundant (chain-merge guard); the audit silently passes an allowlisted-AND-explicit file. (YUK-358 决定3: the embedded_check_generate writer was deleted with the orphan chain.) See docs/design/2026-05-15-data-assumptions.md.",
   "src/capabilities/ingestion/server/auto-enroll.ts": {
-    "reason": "Auto-enrolled questions are active pool items by design — NULL≡active is correct; they enter the review pool immediately.",
+    "reason": "Auto-enrolled questions are active pool items by design — NULL≡active is correct; they enter the review pool immediately. YUK-482 Lane A: the cold-start bridge row now sets draft_status='active' EXPLICITLY (placement-visibility contract line-of-sight); the normal auto path stays undefined≡NULL. Allowlisted-AND-explicit — the gate silently passes it (same harmless-redundant case as materialize-ask-check.ts).",
     "resolves_when": {
       "kind": "manual",
-      "ref": "permanent: auto-enroll questions are intentionally active (NULL≡active); revisit only if a draft-then-promote flow is introduced for auto-enroll",
+      "ref": "permanent: auto-enroll questions are intentionally active (NULL≡active, or explicit 'active' for the cold-start row); revisit only if a draft-then-promote flow is introduced for auto-enroll",
       "expected_by": "2027-06-30"
     }
   },

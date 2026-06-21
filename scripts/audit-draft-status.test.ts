@@ -235,9 +235,14 @@ const REAL_SETTERS = [
   // post-L2 explicit setters (also allowlisted, harmless-redundant):
   // (YUK-358 决定3: embedded_check_generate.ts removed with the orphan chain.)
   'src/capabilities/copilot/server/teaching/materialize-ask-check.ts',
+  // YUK-482 Lane A: the auto-enroll question INSERT now sets draft_status explicitly
+  // ('active' on the cold-start bridge row, undefined≡NULL on the normal auto path —
+  // both detected as carrying the draft_status KEY). The file stays allowlisted
+  // (NULL≡active remains the legal default), so this is the same allowlisted-AND-explicit
+  // "harmless-redundant" case as materialize-ask-check.ts — the gate silently passes it.
+  'src/capabilities/ingestion/server/auto-enroll.ts',
 ];
 const REAL_NULL_OWNERS = [
-  'src/capabilities/ingestion/server/auto-enroll.ts',
   'src/capabilities/ingestion/api/import.ts',
   'src/capabilities/ingestion/api/mistakes.ts',
   'src/server/questions/parts.ts',

@@ -23,8 +23,10 @@ import {
   question_block,
 } from '@/db/schema';
 import type { WriteEventInput } from '@/server/events/queries';
+import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { observeEventId, runAutoEnrollForSession } from './auto-enroll';
+import { ColdStartBridgeError, type ColdStartBridgeRunTaskFn } from './cold-start-bridge';
 import { MistakeEnrollTaskError, type RunMistakeEnrollTaskParams } from './mistake_enroll';
 import { TaggingTaskError } from './tagging';
 
@@ -352,6 +354,420 @@ describe('runAutoEnrollForSession', () => {
       runTaggingFn: highConfidenceTagging,
     });
     expect(result.status).toBe('skipped:session_not_found');
+  });
+
+  // ===========================================================================
+  // YUK-482 Lane A — cold-start bridge: a thin-seed tree (only a subject-root KC)
+  // + a block whose tagging matches NO KC must (with enroll ON) run the bridge,
+  // auto-create a child KC under the subject root (live + approved), leave a
+  // propose-event audit trail, and materialize a placement-answerable question
+  // (knowledge_ids=[newKc], draft_status active, reference_md from the bridge).
+  // ===========================================================================
+
+  // Tagging that is HIGH confidence but produces ZERO surviving suggestions — the
+  // exact cold-start signature on a thin-seed tree (grid filter empties suggestions →
+  // route='review' "no surviving knowledge suggestions" but confidence over the bar).
+  const coldStartTagging = async (): Promise<TaggingOutputT> => ({
+    suggestions: [],
+    overall_confidence: 0.95,
+    reasoning: 'no grid match (thin seed)',
+  });
+
+  // Deterministic cold-start bridge stub — returns the JSON the production runTask would
+  // (the invoker parses strict JSON via ColdStartBridgeOutput). subject_id MUST be one of
+  // KNOWN_SUBJECT_IDS (the invoker rejects out-of-vocabulary picks).
+  const coldStartBridgeStub =
+    (out: {
+      subject_id: string;
+      kc_name: string;
+      reference_md: string;
+    }): ColdStartBridgeRunTaskFn =>
+    async () => ({ text: JSON.stringify({ ...out, reasoning: 'stub' }) });
+
+  // Seed a THIN tree: only the wenyan subject-root seed node (id seed:wenyan:root,
+  // domain 'wenyan'), plus one ingestion session + one draft block. No concept KCs —
+  // so any tagging suggestion would be grid-filtered to [] (the cold-start condition).
+  async function seedThinTree(
+    db: ReturnType<typeof testDb>,
+  ): Promise<{ sessionId: string; blockId: string }> {
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'seed:wenyan:root',
+      name: '文言文',
+      domain: 'wenyan',
+      parent_id: null,
+      archived_at: null,
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const sessionId = createId();
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'extracted',
+      source_document_id: createId(),
+      source_asset_ids: ['asset_1'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const blockId = createId();
+    await db.insert(question_block).values({
+      id: blockId,
+      ingestion_session_id: sessionId,
+      source_document_id: null,
+      source_asset_ids: ['asset_1'],
+      page_spans: [],
+      structured: structured('翻译：学而时习之，不亦说乎'),
+      figures: [],
+      layout_quality: 'structured',
+      image_refs: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      status: 'draft',
+      // OCR got the prompt but NOT the reference answer → the bridge generates one.
+      reference_md: null,
+      knowledge_hint: '论语',
+      merged_from_block_ids: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    return { sessionId, blockId };
+  }
+
+  it('cold-start bridge: thin tree + no KC match → auto-creates child KC + propose trail + placement-answerable question', async () => {
+    const db = testDb();
+    const { sessionId, blockId } = await seedThinTree(db);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      // High confidence + ZERO suggestions → route='review' but cold-start signature matches.
+      runTaggingFn: coldStartTagging,
+      // Deterministic bridge: classify into wenyan, name a child concept, supply an answer.
+      runColdStartBridgeFn: coldStartBridgeStub({
+        subject_id: 'wenyan',
+        kc_name: '《论语》句子翻译',
+        reference_md: '学习并按时温习，不也很愉快吗？',
+      }),
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(1);
+    expect(result.routed_to_review).toBe(0);
+
+    // A child KC was created under the subject root — live (not archived) + approved.
+    const children = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+    expect(children).toHaveLength(1);
+    const newKc = children[0];
+    expect(newKc.name).toBe('《论语》句子翻译');
+    expect(newKc.approval_status).toBe('approved');
+    expect(newKc.archived_at).toBeNull();
+    expect(newKc.proposed_by_ai).toBe(true);
+
+    // HIGH fix — the audit trail is an AUDIT-ONLY event (distinct action
+    // 'experimental:cold_start_kc_created', subject_kind='knowledge', actor_ref='workflow_judge')
+    // recording the already-applied KC id — NOT a propose-event. The silent cold-start
+    // auto-create is visible in the event log, but it is NOT an inbox proposal (cannot be
+    // re-accepted into a duplicate KC). See the dedicated regression test below.
+    const auditEvents = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:cold_start_kc_created'),
+          eq(event.subject_kind, 'knowledge'),
+        ),
+      );
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]?.actor_ref).toBe('workflow_judge');
+    expect(auditEvents[0]?.subject_id).toBe(newKc.id);
+    expect((auditEvents[0]?.payload as Record<string, unknown>).auto_created_kc_id).toBe(newKc.id);
+    expect((auditEvents[0]?.payload as Record<string, unknown>).source).toBe('cold_start_bridge');
+
+    // The cold-start KC create writes ZERO propose-events (the inbox would surface a propose
+    // event as pending → accepting it re-applies → duplicate KC). The mirror writes none either.
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
+    expect(proposeEvents).toHaveLength(0);
+
+    // The materialized question attributes to the new KC, is placement-answerable, and carries
+    // the bridge reference answer. The structural-verify gate (prompt + valid kind + 1 live KC)
+    // promotes it to 'active' (MEDIUM-1).
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
+    const q = questions[0];
+    expect(q.knowledge_ids).toEqual([newKc.id]);
+    expect(q.draft_status).toBe('active');
+    expect(q.reference_md).toBe('学习并按时温习，不也很愉快吗？');
+
+    // The block flipped to 'auto_enrolled' + linked to the question.
+    const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(blocks[0]?.status).toBe('auto_enrolled');
+    expect(blocks[0]?.imported_question_id).toBe(q.id);
+  });
+
+  // HIGH-fix regression: the cold-start audit trail must NEVER surface as a pending/acceptable
+  // proposal, and there must be NO path that re-creates a duplicate KC under the root. Before
+  // the fix the trail was a live `propose_new` propose-event (outcome 'partial', no rate →
+  // resolveStatus 'pending'); it showed in GET /api/knowledge/proposals?status=pending and
+  // accepting it ran applyProposeNew AGAIN → a SECOND duplicate KC. This proves the fix.
+  it('cold-start audit trail is NOT a pending proposal and cannot re-create a duplicate KC', async () => {
+    const db = testDb();
+    const { sessionId } = await seedThinTree(db);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: coldStartTagging,
+      runColdStartBridgeFn: coldStartBridgeStub({
+        subject_id: 'wenyan',
+        kc_name: '《论语》句子翻译',
+        reference_md: '学习并按时温习，不也很愉快吗？',
+      }),
+    });
+    expect(result.enrolled).toBe(1);
+
+    // Exactly ONE KC under the subject root after the cold-start enroll.
+    const kcCountBefore = (
+      await db.select().from(knowledge).where(eq(knowledge.parent_id, 'seed:wenyan:root'))
+    ).length;
+    expect(kcCountBefore).toBe(1);
+
+    // The pending proposal inbox does NOT surface the cold-start KC create (no propose-event
+    // was written; the audit event has a distinct action proposalWhere() never folds).
+    const pending = await listProposalInboxRows(db, { status: 'pending' });
+    expect(pending).toHaveLength(0);
+
+    // The audit event itself is not addressable as a proposal (getProposalInboxRow → null), so
+    // there is no id an owner could POST to the accept endpoint to trigger a re-apply.
+    const auditEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:cold_start_kc_created'));
+    expect(auditEvents).toHaveLength(1);
+    expect(await getProposalInboxRow(db, auditEvents[0].id)).toBeNull();
+
+    // No propose-event exists at all → no acceptProposal codepath → the KC count under the
+    // root is unchanged (still exactly 1, no duplicate).
+    const kcCountAfter = (
+      await db.select().from(knowledge).where(eq(knowledge.parent_id, 'seed:wenyan:root'))
+    ).length;
+    expect(kcCountAfter).toBe(1);
+  });
+
+  // LOW-fix regression: a subject in KNOWN_SUBJECT_IDS whose seed root was NEVER planted must
+  // route-to-review (block stays draft, upload preserved) rather than throw inside the enroll
+  // tx (which would abort the whole batch → pg-boss retry-forever). Here the bridge classifies
+  // into 'wenyan' but the thin tree has NO seed:wenyan:root node.
+  it('cold-start missing seed root: routes to review, no throw, no KC, block stays draft', async () => {
+    const db = testDb();
+    // Seed a session + block but NO seed:wenyan:root node (the missing-root case).
+    const now = new Date();
+    const sessionId = createId();
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'extracted',
+      source_document_id: createId(),
+      source_asset_ids: ['asset_1'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const blockId = createId();
+    await db.insert(question_block).values({
+      id: blockId,
+      ingestion_session_id: sessionId,
+      source_document_id: null,
+      source_asset_ids: ['asset_1'],
+      page_spans: [],
+      structured: structured('翻译：学而时习之，不亦说乎'),
+      figures: [],
+      layout_quality: 'structured',
+      image_refs: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      status: 'draft',
+      reference_md: null,
+      knowledge_hint: '论语',
+      merged_from_block_ids: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: coldStartTagging,
+      runColdStartBridgeFn: coldStartBridgeStub({
+        subject_id: 'wenyan',
+        kc_name: '《论语》句子翻译',
+        reference_md: 'answer',
+      }),
+    });
+
+    // No throw; the block routed to review (upload not lost), nothing enrolled.
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    expect(result.routed_to_review).toBe(1);
+    expect(await db.select().from(knowledge)).toHaveLength(0);
+    expect(await db.select().from(question)).toHaveLength(0);
+    const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(blocks[0]?.status).toBe('draft');
+  });
+
+  // MEDIUM-2 regression: when OCR already extracted a reference answer, the cold-start bridge
+  // must NOT overwrite it with the LLM's generated answer (the OCR answer is ground truth).
+  it('cold-start preserves the OCR reference answer over the bridge answer', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'seed:wenyan:root',
+      name: '文言文',
+      domain: 'wenyan',
+      parent_id: null,
+      archived_at: null,
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const sessionId = createId();
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'extracted',
+      source_document_id: createId(),
+      source_asset_ids: ['asset_1'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const blockId = createId();
+    await db.insert(question_block).values({
+      id: blockId,
+      ingestion_session_id: sessionId,
+      source_document_id: null,
+      source_asset_ids: ['asset_1'],
+      page_spans: [],
+      structured: structured('翻译：学而时习之，不亦说乎'),
+      figures: [],
+      layout_quality: 'structured',
+      image_refs: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      status: 'draft',
+      // OCR DID extract a reference answer → it must win over the bridge's.
+      reference_md: 'OCR真实答案',
+      knowledge_hint: '论语',
+      merged_from_block_ids: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: coldStartTagging,
+      runColdStartBridgeFn: coldStartBridgeStub({
+        subject_id: 'wenyan',
+        kc_name: '《论语》句子翻译',
+        reference_md: 'LLM生成的答案（不应覆盖OCR）',
+      }),
+    });
+
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.reference_md).toBe('OCR真实答案');
+  });
+
+  it('cold-start bridge failure: block routed to review, nothing enrolled (upload not lost)', async () => {
+    const db = testDb();
+    const { sessionId, blockId } = await seedThinTree(db);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      runTaggingFn: coldStartTagging,
+      // Bridge throws (provider outage) → swallow → fall through to review.
+      runColdStartBridgeFn: async () => {
+        throw new ColdStartBridgeError('provider down');
+      },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    expect(result.routed_to_review).toBe(1);
+    // No KC created, no question — the block stays a draft for human review.
+    const children = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+    expect(children).toHaveLength(0);
+    expect(await db.select().from(question)).toHaveLength(0);
+    const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(blocks[0]?.status).toBe('draft');
+  });
+
+  it('cold-start bridge does NOT fire in observe mode (zero mutation)', async () => {
+    const db = testDb();
+    const { sessionId } = await seedThinTree(db);
+
+    let bridgeCalled = false;
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: {}, // enroll OFF, observe ON (default) — must NOT run the bridge / mutate
+      runTaggingFn: coldStartTagging,
+      runColdStartBridgeFn: async () => {
+        bridgeCalled = true;
+        return { text: JSON.stringify({ subject_id: 'wenyan', kc_name: 'x', reference_md: 'y' }) };
+      },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    expect(bridgeCalled).toBe(false);
+    // No child KC, no question — observe stays zero-mutation.
+    const children = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+    expect(children).toHaveLength(0);
+    expect(await db.select().from(question)).toHaveLength(0);
   });
 
   // ===========================================================================
