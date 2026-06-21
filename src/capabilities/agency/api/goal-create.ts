@@ -10,8 +10,15 @@
 // path needs pre-existing evidence, so day-one (zero data) it yields no goal.
 // This handler is the ADDITIVE at-entry write path (source='manual'); it does NOT
 // replace the proposal path — both call the single `insertGoal` write surface.
-// Cross-subject / no-scope goals still go through the proposal path; this entry
-// path requires a resolvable scope (placement needs KCs).
+//
+// COLD-START (YUK-473 live find): a day-one user declares a goal on an EMPTY tree
+// (only subject-root seeds — often a cross-subject goal or no subject picked), so the
+// resolved scope is legitimately empty/thin at entry. The goal is a north-star; its KC
+// scope GROWS as uploads populate the tree. We therefore do NOT reject an empty scope
+// (the original "require a resolvable scope" guard blocked the cold-start entry — the
+// very flow this endpoint exists for). Only a title is required. Downstream placement
+// must resolve scope dynamically (goal.scope_knowledge_ids OR, when empty, subject-
+// derived) so it picks up newly-uploaded KCs — tracked in YUK-481.
 
 import { z } from 'zod';
 
@@ -55,18 +62,13 @@ export async function POST(req: Request): Promise<Response> {
 
     // Resolve the goal's KC scope: explicit set wins; else derive from the subject
     // via the effective-domain axis (a question/KC's subject is a DERIVED join, never
-    // a column — subject 模型终版第 2 条). An empty resolved scope is rejected here:
-    // this entry path exists to seed placement, which needs KCs to walk.
+    // a column — subject 模型终版第 2 条). An empty resolved scope is ALLOWED — a
+    // cold-start day-one goal is a north-star declared on an empty tree; its scope
+    // grows as uploads populate KCs (see docblock + YUK-481). Only the title is
+    // required (enforced by the Body schema above).
     let scopeKnowledgeIds = explicit ?? [];
     if (scopeKnowledgeIds.length === 0 && subjectId) {
       scopeKnowledgeIds = await resolveSubjectKnowledgeIds(db, subjectId);
-    }
-    if (scopeKnowledgeIds.length === 0) {
-      throw new ApiError(
-        'validation_error',
-        'goal requires a non-empty knowledgeIds set, or a subjectId that resolves to knowledge nodes',
-        400,
-      );
     }
 
     const id = newId();
