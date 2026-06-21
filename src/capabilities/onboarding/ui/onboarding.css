@@ -248,7 +248,7 @@
   transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base)
     var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
-.ob-fork-card:hover {
+.ob-fork-card:hover:not(:disabled) {
   border-color: var(--coral-line);
   box-shadow: var(--shadow-2);
   transform: translateY(-1px);
@@ -465,6 +465,235 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ── ③ placement probe (YUK-473 Slice 3) ───────────────────────
+   Ported 1:1 from the onboarding design CSS §③. The open-answer `.composer` box
+   styling is folded in here (mirrors the §① ob-goal-box precedent) because the
+   bare `.composer` class is chat-scoped only in globals.css. */
+.ob-pl {
+  max-width: var(--cap-prose);
+}
+.ob-pl-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.ob-pl-prog {
+  flex: 1;
+  min-width: 0;
+}
+.ob-pl-prog-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+.ob-pl-prog-k {
+  font-size: var(--fs-body);
+  color: var(--ink);
+  font-weight: 600;
+}
+.ob-pl-prog-k b {
+  color: var(--coral);
+  font-size: var(--fs-h5);
+  font-family: var(--font-mono);
+}
+.ob-pl-prog-cap {
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.ob-pl-track {
+  display: flex;
+  gap: 4px;
+}
+.ob-pl-seg {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+  transition: background var(--dur-base) var(--ease-out);
+}
+.ob-pl-seg.is-done {
+  background: var(--coral);
+}
+.ob-pl-seg.is-cur {
+  background: var(--coral-soft);
+  box-shadow: inset 0 0 0 1px var(--coral-line);
+}
+.ob-pl-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+  flex-wrap: wrap;
+}
+.ob-pl-kind {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  background: var(--paper-sunk);
+  border-radius: var(--r-1);
+  padding: 2px 7px;
+}
+.ob-pl-stem {
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-prose);
+  color: var(--ink);
+  margin: var(--s-2) 0 var(--s-4);
+  white-space: pre-wrap;
+}
+.ob-pl-stem strong {
+  font-weight: 600;
+}
+.ob-opts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.ob-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  text-align: left;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: var(--s-3) var(--s-4);
+  cursor: pointer;
+  width: 100%;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast)
+    var(--ease-out);
+}
+.ob-opt:hover {
+  border-color: var(--line-strong);
+}
+.ob-opt.is-sel {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+  box-shadow: var(--shadow-focus);
+}
+.ob-opt-k {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-2);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+}
+.ob-opt.is-sel .ob-opt-k {
+  background: var(--coral);
+  color: #fff;
+  border-color: var(--coral);
+}
+.ob-opt-t {
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+  padding-top: 2px;
+}
+.ob-opt-t strong {
+  font-weight: 600;
+}
+.ob-pl-answer .composer {
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-raised);
+  overflow: hidden;
+}
+.ob-pl-answer .composer:focus-within {
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+.ob-pl-answer textarea {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  resize: none;
+  padding: var(--s-3) var(--s-4);
+  font-family: var(--font-sans);
+  color: var(--ink);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-snug);
+}
+.ob-pl-answer textarea:focus-visible {
+  outline: none;
+}
+.ob-pl-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+  color: var(--good-ink);
+}
+.ob-pl-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-5);
+}
+.ob-pl-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.ob-pl-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-5);
+  margin-left: auto;
+}
+.ob-pl-reassure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--s-4);
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.ob-pl-reassure svg {
+  color: var(--coral);
+  flex: none;
+}
+
+/* settling (probe end → compute profile) */
+.ob-settle {
+  text-align: center;
+  padding: var(--s-10) var(--s-4);
+}
+.ob-settle-ring {
+  width: 54px;
+  height: 54px;
+  margin: 0 auto var(--s-4);
+  border-radius: 50%;
+  border: 3px solid var(--coral-soft);
+  border-top-color: var(--coral);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ob-settle-ring {
+    animation: ob-spin 0.8s linear infinite;
+  }
+}
+.ob-settle-t {
+  font-size: var(--fs-h5);
+  color: var(--ink);
+  font-weight: 600;
+  font-family: var(--font-serif);
+}
+.ob-settle-s {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+  margin-top: var(--s-2);
 }
 
 /* ── cold /today intercept ─────────────────────────────────── */

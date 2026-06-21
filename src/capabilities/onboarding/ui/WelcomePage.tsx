@@ -6,7 +6,6 @@
 // authoritative scopeKnowledgeIds come from that response, so the inline scope
 // hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
-import { ApiError } from '@/ui/lib/api';
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -39,15 +38,18 @@ export interface WelcomePageProps {
 }
 
 export default function WelcomePage({ navigate }: WelcomePageProps) {
-  // 自述（轻 · 不落库，仅引导排序）。
+  // 自述（轻 · 不落库，仅引导排序）。OCR #551：这三个 state 目前是**显示态**——
+  // 还没接进 createGoal / 导航（设计 §6 的「排序起始题」接线留待后续 slice）。
   const [stage, setStage] = useState<string | null>(null);
   const [leanings, setLeanings] = useState<string[]>([]);
   const [pace, setPace] = useState<string>('medium');
   // 目标 · 核心（驱动 POST /api/goals）。
   const [goal, setGoal] = useState('');
   const [subject, setSubject] = useState<string | null>(null);
-  // err: false=无错 · 'empty'=未写目标 · 'scope'=后端 400 解析不出范围 · 'generic'=其它失败（token/网络/500）。
-  const [err, setErr] = useState<false | 'empty' | 'scope' | 'generic'>(false);
+  // err: false=无错 · 'empty'=未写目标 · 'generic'=建 goal 失败（token/网络/500/校验）。
+  // OCR #551：'scope' 变体已删——goal-create 不再对空 scope 报 400（冷启允许空 scope），
+  // 故不存在「解析不出范围」这条；任何错都归 generic，不误导用户改目标。
+  const [err, setErr] = useState<false | 'empty' | 'generic'>(false);
   const [submitting, setSubmitting] = useState(false);
 
   const togLean = (id: string) =>
@@ -64,11 +66,14 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
     setErr(false);
     setSubmitting(true);
     try {
-      await createGoal({ title: goal.trim(), subjectId: subject });
-      navigate(route);
-    } catch (e) {
-      // 仅 400=后端解析不出 scope（换说法/直接上传）；其它（token/网络/500）→ generic，别误导用户改目标。
-      setErr(e instanceof ApiError && e.status === 400 ? 'scope' : 'generic');
+      // Thread the new goal id through the flow as `?goal=<id>`: the upload screen
+      // forwards it and the placement probe (Slice 3) reads it to scope the probe.
+      const created = await createGoal({ title: goal.trim(), subjectId: subject });
+      const sep = route.includes('?') ? '&' : '?';
+      navigate(`${route}${sep}goal=${encodeURIComponent(created.id)}`);
+    } catch {
+      // goal-create 不再对空 scope 报 400（冷启允许）→ 任何失败都归 generic（不误导用户改目标）。
+      setErr('generic');
     } finally {
       setSubmitting(false);
     }
@@ -185,12 +190,6 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
             <div className="ob-inline-err">
               <LoomIcon name="alert" size={14} />
               先写一句你想学什么，我才好圈定范围。
-            </div>
-          )}
-          {err === 'scope' && (
-            <div className="ob-inline-err">
-              <LoomIcon name="alert" size={14} />
-              这个目标暂时解析不出可用范围。换个说法，或直接上传材料。
             </div>
           )}
           {err === 'generic' && (

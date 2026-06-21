@@ -212,6 +212,9 @@ export default function TodayPage({ navigate }: TodayPageProps) {
   const notesQ = useQuery({
     queryKey: ['agent-notes', 'board'],
     queryFn: () => apiJson<AgentNotesResponse>('/api/agents/notes?limit=20'),
+    // OCR #551: skip in cold-start (goal_count===0) — the ColdStart view never renders
+    // notes, so the fetch would be wasted. Gated on the same summary the cold intercept reads.
+    enabled: summaryQ.data?.kpi.goal_count !== 0,
   });
 
   const placeholder = (text: string) => {
