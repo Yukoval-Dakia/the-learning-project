@@ -131,6 +131,15 @@ export const JudgeOnEvent = z.object({
     // (written by the attribution agent) is found. Optional + defaults false so
     // every historical judge event still parses with no backfill.
     attribution_pending: z.boolean().optional(),
+    // YUK-212 + YUK-484(B) "Lane C cut 1" — StructuredQuestion.id of the sub this
+    // verdict targets. ABSENT for atomic verdicts (conditional-spread on the
+    // writer keeps the key absent, not null, so every historical/atomic judge
+    // event parses byte-identically). Cut-1 use is observability / addressability
+    // ONLY — it does NOT drive mastery fan-out (mastery stays per-KC, ADR-0028);
+    // per-sub θ̂ / one-judge-event-per-sub is a later cut (YUK-485). This is the
+    // structured-jsonb axis id, NOT a question_part id. Not mirrored onto
+    // AttemptOnQuestion.payload in cut 1.
+    sub_ref: z.string().optional(),
   }),
   ...baseOptionalFields,
 });

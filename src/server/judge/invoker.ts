@@ -21,6 +21,7 @@ import {
   unsupportedResult,
 } from '../ai/judges/question-contract';
 // F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
+import { narrowQuestionToPart } from './narrow-part';
 import { resolveQuestionJudgeRoute } from './route-resolve';
 
 export const JudgeInvokerQuestionSchema = z
@@ -49,6 +50,10 @@ export const JudgeInvokerInputSchema = z.object({
   runTaskFn: z
     .custom<NonNullable<JudgeAnswerParams['runTaskFn']>>((value) => typeof value === 'function')
     .optional(),
+  // YUK-212 + YUK-484(B) — optional StructuredQuestion.id of the sub-node to
+  // grade. Narrowed in invoke() before route resolution + dispatch; absent /
+  // unresolvable → whole-row (back-compat). NOT a question_part id.
+  part_ref: z.string().nullable().optional(),
 });
 
 export const JudgeInvocationTelemetrySchema = z.object({
@@ -93,9 +98,19 @@ export class JudgeInvoker {
   }
 
   async invoke(input: JudgeAnswerParams): Promise<JudgeInvokerOutput> {
-    const route = resolveQuestionJudgeRoute(input.question, input.subjectProfile);
+    // YUK-212 + YUK-484(B) — single chokepoint: narrow the question to the
+    // addressed sub BEFORE route resolution + dispatch so every runner receives
+    // the narrowed row through the existing plumbing (no per-runner edits).
+    // narrowQuestionToPart returns the input row BY REFERENCE on a no-op (absent
+    // / unresolvable part_ref, or no structured tree), so `narrowed === input`
+    // and the whole-row path is byte-identical. Narrowing swaps text + structured
+    // but NEVER identity: telemetry question_id stays the PARENT row id below.
+    const question = narrowQuestionToPart(input.question, input.part_ref);
+    const narrowed = question === input.question ? input : { ...input, question };
+
+    const route = resolveQuestionJudgeRoute(narrowed.question, narrowed.subjectProfile);
     const startedAt = nowMs();
-    const dispatched = await this.dispatch(route, input);
+    const dispatched = await this.dispatch(route, narrowed);
 
     // D6 (U4 L-stamp, critic-R2 HIGH): pin capability_ref.version from the
     // active SubjectProfile.version, NOT the judge runners' module-level
@@ -106,7 +121,7 @@ export class JudgeInvoker {
     // as the runner reported it; only the version is re-sourced.
     const pinnedCapabilityRef = {
       ...dispatched.capability_ref,
-      version: input.subjectProfile.version,
+      version: narrowed.subjectProfile.version,
     };
     const result = { ...dispatched, capability_ref: pinnedCapabilityRef };
 
@@ -117,9 +132,11 @@ export class JudgeInvoker {
       coarse_outcome: result.coarse_outcome,
       confidence: result.confidence,
       elapsed_ms: Math.max(0, nowMs() - startedAt),
-      question_id: input.question.id,
-      subject_id: input.subjectProfile.id,
-      profile_version: input.subjectProfile.version,
+      // Narrowing swaps text, not identity — the PARENT row id is the telemetry
+      // anchor (narrowed.question.id === input.question.id on every path).
+      question_id: narrowed.question.id,
+      subject_id: narrowed.subjectProfile.id,
+      profile_version: narrowed.subjectProfile.version,
     });
 
     await this.emitTelemetry(telemetry);

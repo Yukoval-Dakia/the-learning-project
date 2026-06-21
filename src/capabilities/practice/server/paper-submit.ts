@@ -234,6 +234,10 @@ export async function submitPaperSlot(
   // "无法判分" / cannot judge), so the user sees that this question type does not
   // support photo-only grading instead of a silent (false) wrong.
   const photoOnly = input.answerMd.trim().length === 0 && (input.answerImageRefs?.length ?? 0) > 0;
+  // YUK-212 — the route gate pre-resolves on the WHOLE row (q), not the narrowed
+  // sub: narrowing only swaps the LLM-facing text (prompt_md / reference_md /
+  // structured), never the route-deciding fields (kind / rubric_json / choices_md
+  // / image_refs / judge_kind_override), so the gate's route choice is unaffected.
   const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
   const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(resolvedRoute);
 
@@ -255,6 +259,10 @@ export async function submitPaperSlot(
         // was the one missing wire. Optional → no-image submits are unchanged.
         student_image_refs: input.answerImageRefs,
         subjectProfile,
+        // YUK-212 + YUK-484(B) — narrow the judge to the submitted sub (the
+        // structured node addressed by partRef). null for atomic slots → no-op
+        // (whole-row). The invoker narrows text + structured before routing.
+        part_ref: partRef,
       });
   const judgeResult = invoked?.result ?? null;
   // 'unsupported' for the photo-only no-judge path; otherwise the judge's verdict.
@@ -583,6 +591,11 @@ export async function submitPaperSlot(
           // judge event (with a non-placeholder cause) that supersedes via
           // newest-wins (D6).
           attribution_pending: true,
+          // YUK-212 + YUK-484(B) — per-sub verdict 落点. Conditional spread keeps
+          // the key ABSENT (not null) for atomic slots, so atomic judge events
+          // parse byte-identically. Cut-1: observability / addressability only —
+          // mastery (above) stays per-KC, NOT fanned out per sub.
+          ...(partRef ? { sub_ref: partRef } : {}),
         },
         caused_by_event_id: attemptEventId,
         created_at: now,

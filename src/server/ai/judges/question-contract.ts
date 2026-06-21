@@ -84,6 +84,14 @@ export interface JudgeAnswerParams {
    * 消费（rejudge 走 judge_kind_override='semantic' 强制语义复核）；其它路由忽略。
    */
   appeal_context?: { prior_outcome: string; user_reason_md: string };
+  /**
+   * YUK-212 + YUK-484(B) — StructuredQuestion.id of the target sub-node to grade.
+   * When present and resolvable, the invoker narrows the question to that single
+   * sub (passage-preserving) BEFORE routing/dispatch so the judge sees only the
+   * addressed sub, not its siblings. Absent / unresolvable → whole-row (today's
+   * behavior). This is the structured-jsonb axis id — NOT a question_part id.
+   */
+  part_ref?: string | null;
 }
 
 export interface JudgeAnswerResult {
