@@ -6,8 +6,8 @@
 // authoritative scopeKnowledgeIds come from that response, so the inline scope
 // hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
+import { ApiError } from '@/ui/lib/api';
 import { BrandMark } from '@/ui/primitives/BrandMark';
-import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useState } from 'react';
@@ -46,8 +46,8 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
   // 目标 · 核心（驱动 POST /api/goals）。
   const [goal, setGoal] = useState('');
   const [subject, setSubject] = useState<string | null>(null);
-  // err: false=无错 · 'empty'=未写目标 · 'scope'=后端解析不出范围（400）。
-  const [err, setErr] = useState<false | 'empty' | 'scope'>(false);
+  // err: false=无错 · 'empty'=未写目标 · 'scope'=后端 400 解析不出范围 · 'generic'=其它失败（token/网络/500）。
+  const [err, setErr] = useState<false | 'empty' | 'scope' | 'generic'>(false);
   const [submitting, setSubmitting] = useState(false);
 
   const togLean = (id: string) =>
@@ -66,9 +66,9 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
     try {
       await createGoal({ title: goal.trim(), subjectId: subject });
       navigate(route);
-    } catch {
-      // 后端解析不出可用范围（400）或其它失败：换说法或直接上传。
-      setErr('scope');
+    } catch (e) {
+      // 仅 400=后端解析不出 scope（换说法/直接上传）；其它（token/网络/500）→ generic，别误导用户改目标。
+      setErr(e instanceof ApiError && e.status === 400 ? 'scope' : 'generic');
     } finally {
       setSubmitting(false);
     }
@@ -191,6 +191,12 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
             <div className="ob-inline-err">
               <LoomIcon name="alert" size={14} />
               这个目标暂时解析不出可用范围。换个说法，或直接上传材料。
+            </div>
+          )}
+          {err === 'generic' && (
+            <div className="ob-inline-err">
+              <LoomIcon name="alert" size={14} />
+              出了点问题，没能保存目标。稍后再试，或直接上传材料。
             </div>
           )}
         </div>

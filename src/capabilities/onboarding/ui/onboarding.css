@@ -390,9 +390,10 @@
   margin-top: 3px;
 }
 
-/* entrance */
+/* entrance — no [data-anim] gate (RootShell never sets it; mirrors practice-face.css
+   which dropped the gate so the entrance actually plays). reduced-motion still honored. */
 @media (prefers-reduced-motion: no-preference) {
-  [data-anim="on"] .ob-rise {
+  .ob-rise {
     animation: ob-rise var(--dur-slow) var(--ease-out) both;
   }
   @keyframes ob-rise {
