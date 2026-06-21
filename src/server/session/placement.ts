@@ -38,17 +38,23 @@ export const PLACEMENT_PROBE_ENABLED = false;
 
 const SESSION_TABLE = 'learning_session' as const;
 
-async function loadPlacementSessionForUpdate(
+// Row-lock the placement session for the duration of the surrounding tx (FOR UPDATE). Returns
+// the status AND the server-side scope (scope_knowledge_ids) captured at start. Exported so the
+// /next route can serialize concurrent POSTs on the same probe (two concurrent /next must not
+// both pass the started check and serve the same question — YUK-470 part 1) and read the
+// persisted scope instead of trusting the client body (YUK-470 part 2). Mirrors review.ts's
+// loadReviewSessionForUpdate locking idiom.
+export async function loadPlacementSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
-): Promise<{ status: string } | null> {
+): Promise<{ status: string; scopeKnowledgeIds: string[] | null } | null> {
   const rows = await tx.execute(
-    sql`SELECT status FROM learning_session WHERE id = ${sessionId} AND type = 'placement' FOR UPDATE`,
+    sql`SELECT status, scope_knowledge_ids FROM learning_session WHERE id = ${sessionId} AND type = 'placement' FOR UPDATE`,
   );
-  const arr = rows as unknown as Array<{ status: string }>;
+  const arr = rows as unknown as Array<{ status: string; scope_knowledge_ids: string[] | null }>;
   const row = arr[0];
   if (!row) return null;
-  return { status: row.status };
+  return { status: row.status, scopeKnowledgeIds: row.scope_knowledge_ids ?? null };
 }
 
 // ---------- startPlacementSession ----------
@@ -59,6 +65,15 @@ export type StartPlacementSessionParams = {
    * determine which KCs the frontier walks). Optional for a subject-only probe.
    */
   goalId?: string | null;
+  /**
+   * YUK-470 — the resolved goal-subgraph KC set this probe walks, captured at start and
+   * persisted server-side on the session (scope_knowledge_ids). The /next route reads this
+   * instead of trusting a client-supplied knowledgeIds body. Covers BOTH probe shapes
+   * uniformly (goal-scoped AND explicit-knowledgeIds) — goal_id alone would not, since
+   * explicit-knowledgeIds probes have a null goal_id. Optional for back-compat; the start
+   * handler always supplies the resolved set.
+   */
+  knowledgeIds?: readonly string[];
 };
 
 /**
@@ -86,6 +101,9 @@ export async function startPlacementSession(
       summary_md: null,
       goal_id: params.goalId ?? null,
       artifact_id: null,
+      // Persist the resolved probe scope server-side (YUK-470). null only when the caller
+      // omits it (legacy/test back-compat) — the start handler always passes the resolved set.
+      scope_knowledge_ids: params.knowledgeIds ? Array.from(params.knowledgeIds) : null,
       started_at: now,
       created_at: now,
       updated_at: now,

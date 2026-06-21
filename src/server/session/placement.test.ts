@@ -8,6 +8,7 @@ import { ApiError } from '@/server/http/errors';
 import {
   abandonPlacementSession,
   completePlacementSession,
+  loadPlacementSessionForUpdate,
   startPlacementSession,
 } from './placement';
 
@@ -37,6 +38,20 @@ describe('Placement.startPlacementSession', () => {
     await cleanup(sessionId);
   });
 
+  it('persists scope_knowledge_ids server-side (YUK-470) when knowledgeIds is supplied', async () => {
+    const { sessionId } = await startPlacementSession(db, { knowledgeIds: ['kc1', 'kc2'] });
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows[0].scope_knowledge_ids).toEqual(['kc1', 'kc2']);
+    await cleanup(sessionId);
+  });
+
+  it('leaves scope_knowledge_ids null when knowledgeIds is omitted (back-compat)', async () => {
+    const { sessionId } = await startPlacementSession(db);
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows[0].scope_knowledge_ids).toBeNull();
+    await cleanup(sessionId);
+  });
+
   it('writes a job_events placement.started row but NO domain event', async () => {
     const { sessionId } = await startPlacementSession(db);
     const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
@@ -44,6 +59,27 @@ describe('Placement.startPlacementSession', () => {
     const events = await db.select().from(event).where(eq(event.session_id, sessionId));
     expect(events).toHaveLength(0);
     await cleanup(sessionId);
+  });
+});
+
+describe('Placement.loadPlacementSessionForUpdate (YUK-470 row lock + server-side scope)', () => {
+  it('returns status + persisted scope_knowledge_ids under FOR UPDATE', async () => {
+    const { sessionId } = await startPlacementSession(db, { knowledgeIds: ['kc1', 'kc2'] });
+    const locked = await db.transaction((tx) => loadPlacementSessionForUpdate(tx, sessionId));
+    expect(locked).toEqual({ status: 'started', scopeKnowledgeIds: ['kc1', 'kc2'] });
+    await cleanup(sessionId);
+  });
+
+  it('returns null scope when none was persisted', async () => {
+    const { sessionId } = await startPlacementSession(db);
+    const locked = await db.transaction((tx) => loadPlacementSessionForUpdate(tx, sessionId));
+    expect(locked).toEqual({ status: 'started', scopeKnowledgeIds: null });
+    await cleanup(sessionId);
+  });
+
+  it('returns null for a missing / non-placement session', async () => {
+    const missing = await db.transaction((tx) => loadPlacementSessionForUpdate(tx, 'never'));
+    expect(missing).toBeNull();
   });
 });
 

@@ -682,6 +682,12 @@ export const learning_session = pgTable('learning_session', {
   // startReviewSession({ artifactId }) binding (RL4: write path same PR → no
   // allowlist entry).
   artifact_id: text('artifact_id'),
+  // YUK-470 — placement-only: the resolved goal-subgraph KC set this probe walks, captured at
+  // start (Placement.startPlacementSession). The placement /next route reads it server-side
+  // instead of trusting a client-supplied knowledgeIds body (pre-go-live hardening). NULL for
+  // non-placement sessions (review/ingestion/conversation/tutor never scope by a KC set here).
+  // Write path = startPlacementSession({ knowledgeIds }) in the same PR (RL4 → no allowlist).
+  scope_knowledge_ids: jsonb('scope_knowledge_ids').$type<string[]>(),
   started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   ended_at: timestamp('ended_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
