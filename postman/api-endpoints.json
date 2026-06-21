@@ -663,5 +663,16 @@
         "notes": "sendBeacon 兼容：非 JSON body 默认 completed"
       }
     ]
+  },
+  {
+    "path": "/api/placement/profile",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "placement-done 起始档案：按 goal scope 读 per-KC mastery（冷启 inc-B / Slice 4）",
+        "query": [{ "name": "goal", "required": true, "example": "goal-1" }],
+        "notes": "只读，复用 getMasteryProjection（mastery_state SoT）。in-scope 但无 mastery_state 行的 KC → tested:false。缺 goal→400，未知 goal→404。返回 {goalId, title, kcs[], answeredCount}"
+      }
+    ]
   }
 ]
