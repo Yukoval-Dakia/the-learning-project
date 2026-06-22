@@ -34,6 +34,7 @@ import { embedText } from '@/server/ai/embed';
 import { questionEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
+import { getEffectiveDomain } from './domain';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { applyProposeNew } from './proposals';
 import { MATCH_THRESHOLD } from './tagging-flags';
@@ -156,11 +157,27 @@ export async function tagKnowledge(
   // (2) retrieve nearest active embedded KCs (pure read; [] for empty query vec).
   const candidates = await matchKnowledgeBySimilarity(db, qvec, { topK: RETRIEVAL_TOP_K });
 
-  // (3) decide MATCH vs PROPOSE. matchKnowledgeBySimilarity returns nearest-first, so the
-  // first candidate is the nearest. MATCH when it is within the (distance) threshold.
-  const nearest = candidates[0];
+  // (2b) D1 (YUK-489) — SUBJECT-SCOPE the candidates. matchKnowledgeBySimilarity is a GLOBAL
+  // top-K retriever (it documents that the caller applies the effective-domain filter), so a
+  // math question whose nearest vector happens to be a physics KC would otherwise return
+  // kind:'match' under the WRONG subject. Resolve the target subject's effective domain once,
+  // then keep only candidates that resolve to the SAME effective domain. The cross-subject
+  // near-neighbour is dropped here (BEFORE the match/propose decision) so it can never cause a
+  // match; the question falls through to PROPOSE under the correct subject root. topK=10 →
+  // ≤11 short parent-walks per tag (the target + ≤10 candidates), not a hot loop.
+  const targetDomain = await getEffectiveDomain(db, input.subjectRootId);
+  const subjectScoped: KnowledgeSimilarityCandidate[] = [];
+  for (const c of candidates) {
+    const candidateDomain = await getEffectiveDomain(db, c.knowledge_id);
+    if (candidateDomain === targetDomain) subjectScoped.push(c);
+  }
+
+  // (3) decide MATCH vs PROPOSE. matchKnowledgeBySimilarity returns nearest-first and the
+  // subject filter preserves that order, so the first candidate is the nearest IN-SUBJECT one.
+  // MATCH when it is within the (distance) threshold.
+  const nearest = subjectScoped[0];
   if (nearest && nearest.cosine_distance <= threshold) {
-    const matchingIds = candidates
+    const matchingIds = subjectScoped
       .filter((c: KnowledgeSimilarityCandidate) => c.cosine_distance <= threshold)
       .map((c) => c.knowledge_id);
     return { kind: 'match', knowledge_ids: matchingIds };

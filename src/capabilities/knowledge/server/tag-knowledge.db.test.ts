@@ -2,7 +2,7 @@
 //
 // Uses orthogonal unit basis vectors for predictable cosine distances (mirrors
 // match-similarity.db.test.ts): <=>(unit(i),unit(i))=0 (a guaranteed MATCH), and
-// <=>(unit(i),unit(j≠i))=1 (well past MATCH_THRESHOLD=0.35 → PROPOSE). NO real model /
+// <=>(unit(i),unit(j≠i))=1 (well past MATCH_THRESHOLD=0.55 → PROPOSE). NO real model /
 // embedder is called — embedFn + nameKcFn are stubbed.
 import { event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
@@ -112,7 +112,7 @@ describe('tagKnowledge', () => {
     const db = testDb();
     await seedRoot(db);
     // Place candidates in distinct directions (each mixes e0 with a different orthogonal axis)
-    // so query=unit(0) sees cosine DISTANCE = 1 - cos. Two land inside MATCH_THRESHOLD (0.35),
+    // so query=unit(0) sees cosine DISTANCE = 1 - cos. Two land inside MATCH_THRESHOLD (0.55),
     // one lands outside. The load-bearing assertion: tagKnowledge returns BOTH inner ids in
     // nearest-first order and DROPS the outer — not just the single nearest.
     function mixedAxis(cos: number, axis: number): number[] {
@@ -141,7 +141,7 @@ describe('tagKnowledge', () => {
   it('PROPOSE: no candidate within threshold → kind:propose, new approved KC + audit event', async () => {
     const db = testDb();
     await seedRoot(db);
-    // An existing KC orthogonal to the query (distance ~1, well past 0.35) → no match.
+    // An existing KC orthogonal to the query (distance ~1, well past 0.55) → no match.
     await seedKc(db, 'kc-far', unitVec(1), { name: 'Trigonometry', parent_id: SUBJECT_ROOT });
 
     const namer = stubName('Probability');
@@ -283,6 +283,43 @@ describe('tagKnowledge', () => {
     )[0];
     expect(created.name).toBe('FirstConcept');
     expect(created.parent_id).toBe(SUBJECT_ROOT);
+  });
+
+  it('D1 subject filter: a near candidate under a DIFFERENT subject root → propose, not a cross-subject match', async () => {
+    const db = testDb();
+    // Target subject root = math (domain math). Plant a SECOND subject root (physics) and a
+    // near candidate (distance 0 to the query) UNDER it. Nothing matchable lives under math.
+    await seedRoot(db); // seed:math:root, domain 'math'
+    await seedKc(db, 'seed:physics:root', unitVec(700), { name: 'Physics', domain: 'physics' });
+    // The query vector exactly equals this physics KC's embedding → distance 0 (well inside
+    // MATCH_THRESHOLD). Without the D1 subject filter this would yield a WRONG cross-subject
+    // match. With the filter it is dropped and the question proposes under the math root.
+    await seedKc(db, 'kc-physics-near', unitVec(0), {
+      name: 'Projectile Motion',
+      parent_id: 'seed:physics:root',
+    });
+
+    const namer = stubName('Quadratic Equations');
+    const out = await tagKnowledge(
+      { db, embedFn: stubEmbed(unitVec(0)), nameKcFn: namer.fn },
+      { questionText: 'solve x^2 - 5x + 6 = 0', subjectRootId: SUBJECT_ROOT },
+    );
+
+    // The cross-subject near-neighbour was filtered out → no match → PROPOSE under math root.
+    expect(out.kind).toBe('propose');
+    expect(namer.calls).toBe(1);
+    expect(out.knowledge_ids).toHaveLength(1);
+    const created = (
+      await db.select().from(knowledge).where(eq(knowledge.id, out.knowledge_ids[0]))
+    )[0];
+    expect(created.name).toBe('Quadratic Equations');
+    // Minted under the MATH root, not orphaned under physics.
+    expect(created.parent_id).toBe(SUBJECT_ROOT);
+    // The physics KC was untouched (not returned, not re-parented).
+    const physicsKc = (
+      await db.select().from(knowledge).where(eq(knowledge.id, 'kc-physics-near'))
+    )[0];
+    expect(physicsKc.parent_id).toBe('seed:physics:root');
   });
 
   it('PROPOSE with an empty name from the namer → throws, creates nothing', async () => {

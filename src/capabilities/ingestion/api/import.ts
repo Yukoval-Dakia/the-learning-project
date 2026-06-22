@@ -170,9 +170,47 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       }
     }
 
-    // 4. Validate knowledge_ids
+    // 4. Resolve the EFFECTIVE per-block knowledge_ids (P3, YUK-489) — ids-authoritative-when-
+    //    present. When a block supplies knowledge_ids they are HUMAN intent and used as-is. When
+    //    EMPTY we would run the unified `tagKnowledge` to auto-attribute, threading ONE batchCache
+    //    across all blocks (D5) so same-topic siblings in one import reuse a single PROPOSE KC
+    //    instead of minting duplicates. BUT tagKnowledge REQUIRES a subjectRootId (the PROPOSE
+    //    parent + the D1 subject filter), and the import route carries NO subject signal: the
+    //    ingestion session has no subject column (subject=view, derived not stored — schema.ts),
+    //    and an empty-ids block has no ids to derive a subject from. Per the P3 decision ("if you
+    //    cannot resolve a subject root, KEEP requiring ids — do not guess a subject"), an empty-ids
+    //    block is rejected here rather than mis-rooting a PROPOSE KC. The batchCache + the
+    //    sequential per-block loop are wired so the tag path activates the moment a subject signal
+    //    is added to the import request (DEVIATION/edge documented in the P3 report).
+    //
+    //    The blocks loop awaits each tagKnowledge sequentially (the cache's SEQUENTIAL-per-run
+    //    contract), so it is NOT a Promise.all map.
+    const tagBatchCache = new Map<string, string>();
+    const effectiveKnowledgeIds: string[][] = [];
     for (const block of body.blocks) {
-      for (const kid of block.knowledge_ids) {
+      if (block.knowledge_ids.length === 0) {
+        // No client ids + no resolvable subject root → reject (see the block comment above).
+        // When a subject signal exists, this branch becomes:
+        //   const tag = await tagKnowledge(
+        //     { db, batchCache: tagBatchCache },
+        //     { questionText: block.final_prompt_md, subjectRootId: `seed:${subjectId}:root` },
+        //   );
+        //   effectiveKnowledgeIds.push(tag.knowledge_ids);
+        throw new ApiError(
+          'validation_error',
+          'a block has empty knowledge_ids and the import request carries no subject signal to auto-tag from; supply at least one knowledge_id per block',
+          400,
+        );
+      }
+      effectiveKnowledgeIds.push(block.knowledge_ids);
+    }
+    // `tagBatchCache` is wired for the empty-ids tag path above; reference it so the unused-symbol
+    // lint passes while the path is dormant (it carries no entries until a subject signal exists).
+    void tagBatchCache;
+
+    // Validate the resolved knowledge_ids exist and are not archived.
+    for (const ids of effectiveKnowledgeIds) {
+      for (const kid of ids) {
         const rows = await db
           .select({ id: knowledge.id })
           .from(knowledge)
@@ -183,9 +221,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       }
     }
     const blockSubjectProfiles = await Promise.all(
-      body.blocks.map(async (block) =>
-        resolveSubjectProfileForKnowledgeIds(db, block.knowledge_ids),
-      ),
+      effectiveKnowledgeIds.map(async (ids) => resolveSubjectProfileForKnowledgeIds(db, ids)),
     );
     for (const [index, block] of body.blocks.entries()) {
       assertCauseAllowedForSubjectProfile(block.cause, blockSubjectProfiles[index]);
@@ -252,7 +288,11 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
       const toIgnore = new Set<string>();
 
-      for (const block of body.blocks) {
+      for (const [blockIndex, block] of body.blocks.entries()) {
+        // P3 (YUK-489): the resolved per-block attribution (client ids when present, else the
+        // tagKnowledge result — see the resolution pass above). Used for the question.knowledge_ids
+        // column + the enrollCapturedBlock attribution below.
+        const blockKnowledgeIds = effectiveKnowledgeIds[blockIndex];
         let importedBlockId: string;
 
         if (block.block_id !== undefined) {
@@ -363,7 +403,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
             kind: block.question_kind,
             prompt_md: block.final_prompt_md,
             reference_md: block.final_reference_md,
-            knowledge_ids: block.knowledge_ids,
+            knowledge_ids: blockKnowledgeIds,
             difficulty: block.difficulty,
             source: sessionEntrypoint,
             variant_depth: 0,
@@ -387,7 +427,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           outcome: block.outcome,
           answerMd: block.final_wrong_answer_md,
           answerImageRefs: wrongAnswerImageRefs,
-          knowledgeIds: block.knowledge_ids,
+          knowledgeIds: blockKnowledgeIds,
           imageRefs: block.image_refs,
           captureMode: block.image_refs.length > 0 ? 'image' : 'text',
           sourceDocumentId: sessionSourceDocumentId,

@@ -37,7 +37,6 @@ import {
   runBlockAssemblyForSession,
 } from '@/capabilities/ingestion/server/block-assembly';
 import {
-  ColdStartBridgeError,
   type ColdStartBridgeRunTaskFn,
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
@@ -60,8 +59,8 @@ import {
   observeEnabled,
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
-import { applyProposeNew } from '@/capabilities/knowledge/server/proposals';
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
+import { type NameKcFn, tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
 import type { CoarseOutcomeT } from '@/core/schema/capability';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import {
@@ -84,7 +83,8 @@ import {
 } from '@/server/mastery/personalized-difficulty';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { KNOWN_SUBJECT_IDS, resolveSubjectProfile } from '@/subjects/profile';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -154,8 +154,20 @@ export interface RunAutoEnrollParams {
   sessionId: string;
   /** Restrict TaggingTask's candidate grid to one subject (single-subject default omits). */
   subjectId?: string;
-  /** Inject in tests; defaults to the production TaggingTask invoker. */
+  /**
+   * Inject in tests; defaults to the production TaggingTask invoker. OBSERVE-mode only — the
+   * ENROLL path runs the unified `tagKnowledge` (P3, YUK-489), not this grid-prefill TaggingTask.
+   */
   runTaggingFn?: (params: RunTaggingTaskParams) => Promise<TaggingOutputT>;
+  /**
+   * P3 (YUK-489) — the unified ENROLL-path tagging step. Defaults to the production `tagKnowledge`
+   * (embedding match-or-propose). DB tests inject a stub so the embedding/naming model is not
+   * called (mirrors tag-knowledge.db.test.ts's embedFn/nameKcFn stubs at one level up): the stub
+   * returns the attributed ids directly, and a throw routes the block to review (tagging outage).
+   * Receives the same deps shape tagKnowledge does (db / runTaskFn / ctx / batchCache) plus the
+   * input, so a real-default test can still seed embeddings + stub only the naming model.
+   */
+  tagKnowledgeFn?: typeof tagKnowledge;
   /**
    * Inject in tests; defaults to the real `writeEvent`. Used by observe mode to
    * write the per-block audit event. Mirrors `runTaggingFn?` — tests inject a fn
@@ -174,10 +186,11 @@ export interface RunAutoEnrollParams {
    */
   runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
   /**
-   * YUK-482 Lane A — ColdStartPlacementBridgeTask LLM seam. DB tests inject a stub so
-   * the cold-start bridge (subject-classify + reference-answer generation) runs WITHOUT
-   * a real model. Defaults to the production runner via runColdStartBridge. Mirrors the
-   * image-candidate accept path's `runColdStartBridgeFn` seam (image-candidate-accept.ts).
+   * P3 (YUK-489) — model seam for the unified `tagKnowledge` step's NAMING invoker. tagKnowledge's
+   * default `nameKcFn` (makeDefaultNameKc → runColdStartBridge) names a PROPOSE child KC via one
+   * LLM pass; this fn is threaded as tagKnowledge's `runTaskFn` so DB tests stub the model without
+   * a real call. (The name is historical — the cold-start bridge module is now tagKnowledge's
+   * naming engine, not a direct caller here.) Mirrors image-candidate-accept's `runColdStartBridgeFn`.
    */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
   /**
@@ -260,6 +273,7 @@ export async function runAutoEnrollForSession(
   const threshold = autoEnrollThreshold(env);
   const now = params.now ?? new Date();
   const runTaggingFn = params.runTaggingFn ?? runTaggingTask;
+  const tagKnowledgeFn = params.tagKnowledgeFn ?? tagKnowledge;
   const writeEventFn = params.writeEventFn ?? writeEvent;
   const runMistakeEnrollFn = params.runMistakeEnrollFn ?? runMistakeEnrollTask;
   // YUK-482 cut ④ — student-answer grading is a SEPARATE opt-in knob (independent
@@ -337,6 +351,14 @@ export async function runAutoEnrollForSession(
 
   const enrolled: AutoEnrolledBlock[] = [];
   let routedToReview = 0;
+
+  // D5 (YUK-489) — ONE batch-coherence cache per ingestion-session run, shared across every
+  // block's tagKnowledge call below. A single upload often has same-topic sibling questions; with
+  // one shared cache the first sibling that PROPOSEs a KC name caches its id and every later
+  // sibling proposing the same name reuses it (one KC, not N duplicates the P5 dedup lane would
+  // otherwise reconcile). The loop awaits each block sequentially, satisfying the cache's
+  // SEQUENTIAL-per-run contract. Used only on the enroll path (observe never tags via tagKnowledge).
+  const tagBatchCache = new Map<string, string>();
 
   for (const block of blocks) {
     // Render the question text from the structured tree (the canonical source).
@@ -426,20 +448,108 @@ export async function runAutoEnrollForSession(
       }
     }
 
-    // TaggingTask. A tagging outage must NEVER auto-enroll — route to review.
+    // ---- Tagging (CONTENT/KC axis). ----------------------------------------------
+    // P3 (YUK-489): the ENROLL path now runs the UNIFIED `tagKnowledge` (embedding
+    // match-or-propose) instead of the old grid-prefill TaggingTask + cold-start-bridge.
+    // `tagKnowledge` ALWAYS yields ≥1 knowledge_id (match an existing KC OR auto-approve a
+    // freshly-PROPOSED child under the subject root, INSIDE its own tx, with an audit event) —
+    // the dead `knowledge_ids:[]` zero-match window is gone (design §2/§3). We then SYNTHESIZE a
+    // TaggingOutputT from the result so the EXISTING deterministic runWorkflowJudge stays
+    // UNCHANGED: tagKnowledge attribution is structurally valid (matched existing OR
+    // proposed-exactly-for-this), so tagging is no longer a routing-uncertainty source —
+    // route='auto' fires on extraction confidence (always 1.0) ≥ threshold and hasSuggestions is
+    // always true. The judge + mistakeDraft + observe paths keep reading
+    // verdict.prefilled.knowledge_ids unchanged.
+    //
+    // OBSERVE mode keeps the old grid-prefill TaggingTask: tagKnowledge auto-approves a PROPOSE
+    // KC (a mutation), which would violate observe's zero-domain-mutation contract (§5.4). Observe
+    // is the audit-only quality probe — it must NOT create KCs — so it stays on runTaggingFn.
     let tagging: TaggingOutputT;
-    try {
-      tagging = await runTaggingFn({
-        db: params.db,
-        questionMd,
-        knowledgeHint: block.knowledge_hint,
-        subjectId: params.subjectId,
-        ctx: params.ctx,
-      });
-    } catch (err) {
-      if (!(err instanceof TaggingTaskError)) throw err;
-      routedToReview += 1;
-      continue;
+    if (mode === 'enroll') {
+      try {
+        // Resolve the PROPOSE parent + D1 subject root. params.subjectId is the cheap signal when
+        // a caller supplies it (tests / any subject-pinned invocation). But the PRODUCTION job
+        // (jobs/auto_enroll.ts) passes NO subjectId — subject is a derived view, never stored on
+        // learning_session — so when it is absent we CLASSIFY the subject per-block via the
+        // cold-start bridge (one LLM pass, mirroring image-candidate-accept), derive
+        // seed:<subject>:root, and run tagKnowledge under it REUSING the bridge's name (no second
+        // model call). Without this an absent subjectId would build `seed:undefined:root`, every
+        // PROPOSE would throw in applyProposeNew→assertParentExists, and every thin-tree block
+        // would silently route to review the moment the enroll flag is flipped on.
+        let subjectRootId: string;
+        let bridgeNameKc: NameKcFn | undefined;
+        if (params.subjectId) {
+          subjectRootId = `seed:${params.subjectId}:root`;
+        } else {
+          const bridge = await runColdStartBridge({
+            db: params.db,
+            questionMd,
+            // Placeholder so the bridge takes its ECHO path — we discard its reference_md (P4a
+            // owns reference generation) and use only the classified subject_id.
+            existingReferenceMd: '(reference answer not needed for tagging)',
+            knowledgeHint: block.knowledge_hint,
+            knownSubjectIds: KNOWN_SUBJECT_IDS,
+            runTaskFn: params.runColdStartBridgeFn,
+            ctx: params.ctx ?? { db: params.db },
+          });
+          subjectRootId = `seed:${bridge.subject_id}:root`;
+          // Reuse the bridge's already-classified name so a PROPOSE does NOT make a second model
+          // call (mirrors image-candidate-accept).
+          bridgeNameKc = async () => ({ kc_name: bridge.kc_name });
+        }
+        const tag = await tagKnowledgeFn(
+          {
+            db: params.db,
+            // Thread the bridge runTask seam through tagKnowledge's default naming invoker
+            // (makeDefaultNameKc → runColdStartBridge) so DB tests stub the model exactly as
+            // before. `ctx` defaults to { db } when the caller omits one.
+            runTaskFn: params.runColdStartBridgeFn,
+            ctx: params.ctx ?? { db: params.db },
+            // When the subject was bridge-classified (no subjectId), reuse the already-named KC.
+            ...(bridgeNameKc ? { nameKcFn: bridgeNameKc } : {}),
+            // D5 (YUK-489): ONE per-run cache shared across every block in this session, so
+            // sibling questions proposing the same KC name reuse the first-minted id instead of
+            // minting duplicates. The loop awaits each block sequentially (the cache's contract).
+            batchCache: tagBatchCache,
+          },
+          {
+            questionText: questionMd,
+            knowledgeHint: block.knowledge_hint,
+            subjectRootId,
+          },
+        );
+        tagging = synthesizeTaggingOutput(tag.knowledge_ids);
+      } catch (err) {
+        // A tagging outage (provider down / unparseable name / missing seed root inside
+        // applyProposeNew) must NEVER auto-enroll — route to review (block stays 'draft', upload
+        // preserved). Mirrors the old TaggingTaskError swallow. We swallow ANY throw here (not
+        // just a typed error) because tagKnowledge can throw a plain Error from applyProposeNew's
+        // assertParentExists when the subject's seed root was never planted — that must
+        // route-to-review, not abort the whole batch into a pg-boss retry-forever loop (the LOW
+        // missing-seed-root guard the old inline cold-start path enforced).
+        console.error(
+          `[auto_enroll] tagKnowledge failed for block ${block.id}; routing to review`,
+          err,
+        );
+        routedToReview += 1;
+        continue;
+      }
+    } else {
+      // OBSERVE — the old grid-prefill TaggingTask (zero mutation). A tagging outage routes to
+      // review (no observe event, block stays 'draft').
+      try {
+        tagging = await runTaggingFn({
+          db: params.db,
+          questionMd,
+          knowledgeHint: block.knowledge_hint,
+          subjectId: params.subjectId,
+          ctx: params.ctx,
+        });
+      } catch (err) {
+        if (!(err instanceof TaggingTaskError)) throw err;
+        routedToReview += 1;
+        continue;
+      }
     }
 
     // Deterministic confidence gate.
@@ -524,114 +634,30 @@ export async function runAutoEnrollForSession(
       continue;
     }
 
-    // ---- YUK-482 Lane A — cold-start bridge gate (Option C, architect-confirmed). ----
-    // The judge routes 'auto' ONLY when tagging produced ≥1 surviving suggestion
-    // (workflow-judge.ts:64-65), so on a thin-seed tree (only seed:<subject>:root nodes,
-    // YUK-477) the grid anti-hallucination filter empties suggestions → route='review'
-    // with reasoning "no surviving knowledge suggestions" → the block would drop to the
-    // human review pool and NEVER become placement-answerable (placement-select.ts requires
-    // knowledge_ids @> [kc]). The cold-start SIGNATURE is exactly this: enroll mode +
-    // high-confidence extraction + zero surviving KC match. When it matches, run ONE LLM
-    // pass (runColdStartBridge: ① classify into a KNOWN_SUBJECT_ID + name a child concept,
-    // ③ generate a reference answer) and stage a child-KC create under seed:<subject>:root
-    // for the enroll tx below — mirroring image-candidate-accept.ts:614-658. We do NOT
-    // mutate runWorkflowJudge (it stays a pure deterministic aggregator); we redirect at
-    // the call site. The bridge LLM call runs HERE, OUTSIDE the tx (no long model call in a
-    // DB transaction). Anything that is NOT this signature (low confidence, a non-cold
-    // review, or a bridge failure) falls through to the unchanged review path.
-    let coldStartKcName: string | null = null;
-    let coldStartSubjectRootId: string | null = null;
-    let coldStartReferenceMd: string | null = null;
-    const isColdStartSignature =
-      mode === 'enroll' &&
-      verdict.route !== 'auto' &&
-      verdict.prefilled.knowledge_ids.length === 0 &&
-      verdict.confidence >= threshold;
-    if (isColdStartSignature) {
-      try {
-        const bridge = await runColdStartBridge({
-          db: params.db,
-          questionMd,
-          // The block's OCR-extracted reference answer, when present (echoed by the bridge);
-          // null → the bridge GENERATES one. Mirrors image-accept's block.reference_md feed.
-          existingReferenceMd: block.reference_md,
-          knowledgeHint: block.knowledge_hint,
-          knownSubjectIds: KNOWN_SUBJECT_IDS,
-          runTaskFn: params.runColdStartBridgeFn,
-          ctx: params.ctx ?? { db: params.db },
-        });
-        coldStartKcName = bridge.kc_name;
-        // subject_id is validated ∈ KNOWN_SUBJECT_IDS by the invoker; seed root id is
-        // literally seed:<subjectId>:root (YUK-477 stable seed).
-        const candidateRootId = `seed:${bridge.subject_id}:root`;
-        // LOW fix — missing-seed-root guard. Membership in KNOWN_SUBJECT_IDS does NOT
-        // guarantee a PLANTED seed root (a subject can be in the vocabulary while its
-        // seed:<subject>:root node was never inserted). applyProposeNew → assertParentExists
-        // throws a PLAIN Error on a missing/archived parent; inside the enroll tx that throw
-        // escapes and aborts the WHOLE enroll batch → pg-boss retries the job forever (the
-        // root never appears, so it never recovers). Pre-check the root HERE (outside the tx)
-        // so a missing root routes-to-review (block stays 'draft', upload not lost) — the same
-        // best-effort swallow contract as the bridge-failure branch below, not a throw.
-        const rootRows = await params.db
-          .select({ id: knowledge.id })
-          .from(knowledge)
-          .where(and(eq(knowledge.id, candidateRootId), isNull(knowledge.archived_at)))
-          .limit(1);
-        if (rootRows.length === 0) {
-          // Leave coldStartKcName null + root unstaged so this falls through to the line-below
-          // review path (routedToReview += 1; block stays 'draft'). No throw → the enroll batch
-          // continues; the upload is preserved for human review instead of being lost to a
-          // pg-boss retry loop.
-          coldStartKcName = null;
-          console.error(
-            `[auto_enroll] cold-start seed root ${candidateRootId} not planted for block ${block.id}; routing to review`,
-          );
-        } else {
-          coldStartSubjectRootId = candidateRootId;
-          // ③ Reference-answer precedence (MEDIUM-2): NEVER overwrite a real OCR-extracted
-          // answer with the LLM's. Prefer the block's OCR reference_md when present; the bridge
-          // answer is the judge anchor ONLY when OCR got none. Mirrors image-candidate-accept.ts
-          // (referenceMd already-non-empty short-circuit, :639-643).
-          coldStartReferenceMd = block.reference_md?.trim()
-            ? block.reference_md
-            : bridge.reference_md.trim().length > 0
-              ? bridge.reference_md
-              : null;
-        }
-      } catch (bridgeErr) {
-        // Best-effort: a provider outage / unparseable output must NOT lose the block. Fall
-        // through to the normal review path (block stays 'draft') — same swallow contract as
-        // image-candidate-accept.ts:648-657 and the slice-3 review fallback.
-        if (!(bridgeErr instanceof ColdStartBridgeError)) throw bridgeErr;
-        console.error(
-          `[auto_enroll] cold-start bridge failed for block ${block.id}; routing to review`,
-          bridgeErr,
-        );
-      }
-    }
-
-    // Not 'auto' AND no cold-start KC staged → the unchanged review path. (A non-cold
-    // review, or a cold-start bridge that failed/was skipped: leave 'draft'.)
-    if (verdict.route !== 'auto' && coldStartKcName === null) {
+    // ---- Review gate. -----------------------------------------------------------------
+    // P3 (YUK-489): the old cold-start-bridge gate is GONE — tagKnowledge subsumes it. The
+    // thin-seed "zero KC match → invisible to placement" failure mode that the bridge worked
+    // around can no longer occur: tagKnowledge ALWAYS attributes ≥1 KC (match OR a freshly
+    // auto-approved PROPOSE child under the subject root, created in its own tx pre-enroll with
+    // an audit event), so on the enroll path runWorkflowJudge always sees ≥1 suggestion +
+    // extraction confidence 1.0 → route='auto'. A 'review' route here therefore means a genuine
+    // low-confidence extraction — leave it 'draft' for human review (unchanged).
+    if (verdict.route !== 'auto') {
       routedToReview += 1;
       continue;
     }
 
     // ---- MEDIUM-2 (independent review) — graded attempt MUST be mastery-attributable. ----
-    // The student-grade gate and the cold-start gate are independent, so a
-    // student-graded block could reach enroll with ZERO attributable KCs (a tagging
-    // outcome that survives the route gate but yields no knowledge ids, and no
-    // cold-start KC minted). If we enrolled it, the `enrollKnowledgeIds.length>0` θ̂
-    // guard below would silently skip mastery while the graded attempt + 错因 are
-    // still written → an asymmetric attempt-without-mastery row. A graded verdict
-    // that cannot be attributed to any KC belongs in HUMAN review, consistent with
-    // the YUK-485 needs-review philosophy: route to review (block stays 'draft')
-    // rather than synthesizing a half-enrolled graded attempt. The pre-tx
-    // attributable count is 1 for a cold-start enroll (KC minted in-tx) else the
-    // judge's surviving suggestions (non-empty whenever route==='auto'). The normal
-    // (non-graded) auto / cold-start path is UNCHANGED — this only gates the graded path.
-    const attributableKcCount =
-      coldStartKcName !== null ? 1 : verdict.prefilled.knowledge_ids.length;
+    // The student-grade gate and the tagging gate are independent, so a student-graded block
+    // could in principle reach enroll with ZERO attributable KCs. If we enrolled it, the
+    // `enrollKnowledgeIds.length>0` θ̂ guard below would silently skip mastery while the graded
+    // attempt + 错因 are still written → an asymmetric attempt-without-mastery row. A graded
+    // verdict that cannot be attributed to any KC belongs in HUMAN review (YUK-485). Kept as a
+    // DEFENSIVE gate: with tagKnowledge always yielding ≥1 id (verdict.prefilled.knowledge_ids
+    // is non-empty whenever route==='auto'), attributableKcCount is always ≥1 today, so this
+    // never fires on the live enroll path — but it stays so a future tagging change that could
+    // yield [] cannot synthesize a half-enrolled graded attempt. Only gates the graded path.
+    const attributableKcCount = verdict.prefilled.knowledge_ids.length;
     if (studentGradeVerdict && attributableKcCount === 0) {
       routedToReview += 1;
       continue;
@@ -641,10 +667,9 @@ export async function runAutoEnrollForSession(
     // A2 (YUK-164): an ANSWERED block enrolls its REAL outcome from the draft
     // (failure/partial/success); an unanswered block (or a draft outage) stays
     // 'unanswered' (item-bank, no attempt) — the safest fallback (slice-3 behavior). A
-    // cold-start enroll has no mistakeDraft (that path is gated on route==='auto', and the
-    // cold KC has no prior attempt), so it stays 'unanswered' = item-bank — matching the
-    // judge's outcome:'unanswered' contract (workflow-judge.ts:79).
-    const isColdStartEnroll = coldStartKcName !== null;
+    // PROPOSE-tagged enroll (a freshly-minted KC, no prior attempt) has no mistakeDraft when
+    // unanswered, so it stays 'unanswered' = item-bank — matching the judge's outcome:'unanswered'
+    // contract (workflow-judge.ts:79).
     // YUK-482 cut ④ — on the STUDENT-GRADED path the outcome comes from the vision
     // verdict (graded OUTSIDE the tx, above) and the answer IS the whole page image
     // (handwriting stays pixels: answerMd:'' + answerImageRefs = source_asset_ids,
@@ -680,81 +705,32 @@ export async function runAutoEnrollForSession(
       captureMode = 'text';
     }
     const result = await params.db.transaction(async (tx) => {
-      // ---- YUK-482 cold-start bridge ① — create the child KC + attribute the question. ----
-      // applyProposeNew inserts an approved child under the subject root (domain:null →
-      // inherits the subject via the parent chain, so it resolves into the subject subgraph
-      // for placement) and asserts the parent exists (pre-checked OUTSIDE the tx — see the
-      // missing-root guard at the cold-start signature block above). Done INSIDE the tx so
-      // the KC + question + audit-trail commit atomically.
+      // ---- KC attribution (P3, YUK-489). -----------------------------------------------
+      // The attributed KCs are exactly what tagKnowledge returned pre-tx (matched existing KCs,
+      // or a single auto-approved PROPOSE child it already created under the subject root in its
+      // OWN tx + its own `experimental:auto_tag_kc_created` audit event). The old in-tx
+      // applyProposeNew + `experimental:cold_start_kc_created` block is GONE — tagKnowledge owns
+      // KC creation now (the cold-start bridge ① is subsumed).
       //
-      // Cold-start review gate = AUTO-CREATE LIVE + AUDIT TRAIL (owner-approved, YUK-482): the
-      // KC must be live & usable day-one (no manual review wall) BUT must leave a VISIBLE trail
-      // that it was AI-auto-created from a cold-start upload — so it is correctable later.
-      //
-      // HIGH fix (independent review): the trail must NEVER surface as a pending/acceptable
-      // proposal and must NEVER enable a re-apply. Earlier this wrote a `propose_new`
-      // propose-event via writeKnowledgeProposeEvent — but that event has outcome:'partial'
-      // with no chained rate, so inbox.ts resolveStatus → 'pending'; it would surface in
-      // GET /api/knowledge/proposals?status=pending, and accepting it would run applyProposeNew
-      // AGAIN → a SECOND duplicate KC under the same root (the KC is already created live by
-      // the direct applyProposeNew below). The mirror (image-candidate-accept.ts) writes NO
-      // propose-event at all for its cold-start KC, exactly to avoid this.
-      //
-      // Chosen mechanism (brief's PREFERRED "audit-only event"): write a PLAIN event with a
-      // DISTINCT action `experimental:cold_start_kc_created`. proposalWhere() (inbox.ts:176-187)
-      // only folds `action='propose'`, `experimental:knowledge_%`, `experimental:proposal`, and
-      // `experimental:propose_learning_intent` into the proposal inbox — a generic
-      // `experimental:cold_start_*` action matches NONE, so it appears in the event log /
-      // history but is NEVER an inbox action item, has NO acceptProposal codepath, and cannot
-      // re-apply. ExperimentalEvent (experimental.ts) accepts any non-reserved experimental
-      // action with a loose record payload, so parseEvent passes.
-      let enrollKnowledgeIds = verdict.prefilled.knowledge_ids;
-      if (coldStartKcName && coldStartSubjectRootId) {
-        const newKcId = await applyProposeNew(tx, {
-          mutation: 'propose_new',
-          name: coldStartKcName,
-          parent_id: coldStartSubjectRootId,
-        });
-        enrollKnowledgeIds = [newKcId];
-        // Audit-only provenance: NOT a proposal (distinct action → never pending, never
-        // acceptable, no re-apply). Records the already-applied KC id for later inspection.
-        await writeEvent(tx, {
-          id: createId(),
-          session_id: null,
-          actor_kind: 'agent',
-          actor_ref: 'workflow_judge',
-          action: 'experimental:cold_start_kc_created',
-          subject_kind: 'knowledge',
-          subject_id: newKcId,
-          outcome: 'success',
-          payload: {
-            source: 'cold_start_bridge',
-            auto_created_kc_id: newKcId,
-            subject_id: coldStartSubjectRootId,
-            parent_id: coldStartSubjectRootId,
-            name: coldStartKcName,
-            ingestion_block_id: block.id,
-            ingestion_session_id: params.sessionId,
-            generated_by: 'workflow_judge',
-            reasoning: `cold-start bridge auto-created KC for ingestion block ${block.id} (no live KC matched the thin-seed tree); auto-approved day-one, applied as ${newKcId}`,
-          },
-          caused_by_event_id: null,
-          task_run_id: null,
-          cost_micro_usd: null,
-          created_at: now,
-        });
-      }
+      // ATOMICITY (D2.7, accepted): tagKnowledge mints a PROPOSE KC in ITS OWN tx, BEFORE this
+      // enroll tx opens. If this enroll tx rolls back, that auto-approved KC is already committed
+      // (orphaned). This is BENIGN and matches image-candidate-accept's existing posture: the
+      // orphan is a valid leaf under the subject root (live, approved, effective-domain-inherited),
+      // harmless to placement, and reconciled by the P5 dedup-on-maintenance lane. We deliberately
+      // do NOT fold tagKnowledge into this tx (its LLM naming call must never sit inside a DB tx —
+      // design §3).
+      const enrollKnowledgeIds = verdict.prefilled.knowledge_ids;
 
-      // ---- MEDIUM-1 — structural-verify gate for the cold-start draft_status. ----
-      // Mirrors image-candidate-accept.ts:759-772: a cold-start question is structurally
-      // sound (→ 'active') only when it has a non-empty prompt AND a valid (truthy) kind AND
-      // ≥1 LIVE (non-archived) KC equal to the attributed-id count. ENFORCE the contract
-      // instead of force-flipping 'active'. In the happy path (bridge created exactly one
-      // live KC, prompt non-empty, valid kind) it is 'active' as before; but a structurally
-      // incomplete cold-start row (e.g. the bridge attributed an id that resolves to no live
-      // KC) can no longer be silently forced active — it lands 'draft' for human review.
-      let coldStartDraftStatus: 'active' | 'draft' | undefined;
-      if (isColdStartEnroll) {
+      // ---- Structural-verify gate (D2.6, ex-MEDIUM-1) — enforced for EVERY enroll. ----
+      // A question is 'active' (placement-answerable) only when it has a non-empty prompt AND a
+      // valid (truthy) kind AND ≥1 LIVE (non-archived) KC equal to the attributed-id count.
+      // Previously this gated only cold-start enrolls; now it applies to ALL enrolled questions
+      // (tagKnowledge always attributes a LIVE KC — matched or freshly auto-approved — so the
+      // happy path is 'active' as before, but a structurally incomplete row, e.g. an id that
+      // resolves to no live KC, can NEVER be silently forced active — it lands 'draft' for human
+      // review). The invariant "active ⇔ ≥1 live KC" now holds for every enroll, never force-'active'.
+      let draftStatus: 'active' | 'draft';
+      {
         let liveKnowledgeCount = 0;
         if (enrollKnowledgeIds.length > 0) {
           const liveKnowledge = await tx
@@ -768,7 +744,7 @@ export async function runAutoEnrollForSession(
           Boolean(verdict.prefilled.question_kind) &&
           liveKnowledgeCount === enrollKnowledgeIds.length &&
           liveKnowledgeCount > 0;
-        coldStartDraftStatus = structurallyVerified ? 'active' : 'draft';
+        draftStatus = structurallyVerified ? 'active' : 'draft';
       }
 
       const questionId = createId();
@@ -777,9 +753,11 @@ export async function runAutoEnrollForSession(
           id: questionId,
           kind: verdict.prefilled.question_kind,
           prompt_md: questionMd,
-          // YUK-482 — carry the bridge-generated reference answer (the judge anchor) for a
-          // cold-start enroll; null for the normal auto path (unchanged).
-          reference_md: coldStartReferenceMd,
+          // P3 (YUK-489) — reference_md is the OCR-extracted answer directly (block.reference_md),
+          // or null. The cold-start bridge ③ reference GENERATION (when OCR got the prompt but no
+          // answer, reference_md===null) is OUT of scope here — it is decoupled to P4a (the
+          // `reference_md===null` trigger). We never synthesize a reference on this path.
+          reference_md: block.reference_md ?? null,
           knowledge_ids: enrollKnowledgeIds,
           difficulty: verdict.prefilled.difficulty,
           source: sessionEntrypoint,
@@ -790,35 +768,29 @@ export async function runAutoEnrollForSession(
           // (ADR-0002 revision invariant). questionMd is derived from structured,
           // so when structured exists they always match.
           structured: block.structured ?? null,
-          // YUK-482 — cold-start draft_status from the structural-verify gate above
-          // ('active' when prompt + valid kind + ≥1 live KC; else 'draft'). placement-select.ts
-          // excludes only draft_status='draft' (NULL and 'active' both pass), so an 'active'
-          // cold-start row is immediately placement-answerable. The normal auto path stays
-          // undefined (NULL≡active, allowlisted). Setting it explicitly here makes the
-          // placement-visibility contract line-of-sight at the INSERT site (image-accept sets
-          // it explicitly too); the audit:draft-status gate silently passes an
-          // allowlisted-AND-explicit file.
-          draft_status: coldStartDraftStatus,
+          // draft_status from the structural-verify gate above ('active' when prompt + valid kind
+          // + ≥1 live KC; else 'draft'). placement-select.ts excludes only draft_status='draft'
+          // (NULL and 'active' both pass), so an 'active' row is immediately placement-answerable.
+          // Set explicitly for EVERY enroll now (P3): tagKnowledge always attributes a live KC, so
+          // the happy path is 'active'. The audit:draft-status gate passes an allowlisted-AND-
+          // explicit file.
+          draft_status: draftStatus,
           metadata: {
             source_document_id: sourceDocumentId,
             ingestion_session_id: params.sessionId,
             question_block_id: block.id,
-            // OC-5: surface the judge decision on the question for traceability. For a
-            // cold-start enroll the judge ROUTED 'review' (no surviving KC), but the question
-            // was materialized via the cold-start bridge — so record an explicit
-            // route:'cold_start' decision so the traceability record is not self-contradictory
-            // (route:'review' alongside cold_start_bridge:true read as a contradiction). The
-            // raw judge route stays available as judge_route for the full picture.
+            // OC-5: surface the judge decision on the question for traceability. With tagKnowledge
+            // always attributing ≥1 KC, the enroll path is reached only when route==='auto', so
+            // route + judge_route agree.
             workflow_judge: {
-              route: isColdStartEnroll ? 'cold_start' : verdict.route,
+              route: verdict.route,
               judge_route: verdict.route,
               confidence: verdict.confidence,
               reasoning: verdict.reasoning,
               // YUK-482 cut ④ — traceability for a student-graded enroll: mark that
               // the whole page image was vision-graded + the graded confidence (the
               // YUK-485 gate above already enforced confidence >= threshold). Absent
-              // (→ undefined) on the normal auto / cold-start path so the metadata
-              // shape is unchanged for them.
+              // (→ undefined) on the normal auto path so the metadata shape is unchanged.
               ...(gradedVerdict
                 ? {
                     student_answer_graded: true,
@@ -827,8 +799,6 @@ export async function runAutoEnrollForSession(
                   }
                 : {}),
             },
-            // YUK-482 — mark the cold-start provenance so the row is traceable.
-            ...(isColdStartEnroll ? { cold_start_bridge: true } : {}),
           },
           created_at: now,
           updated_at: now,
@@ -858,8 +828,8 @@ export async function runAutoEnrollForSession(
       // enrollCapturedBlock writes the attempt + record but does NOT touch θ̂ (the
       // live paper path does it separately at paper-submit.ts:640). Add it here ONLY
       // for the student-graded path, keyed on the question's primary KC (the
-      // attributed enrollKnowledgeIds — the bridge-created KC for a cold-start enroll,
-      // else the judge's prefilled suggestions). Mirrors paper-submit's call shape:
+      // attributed enrollKnowledgeIds — the unified tagKnowledge verdict's ids, a MATCH to
+      // existing KC(s) or a freshly auto-approved PROPOSE child). Mirrors paper-submit's call shape:
       // outcome success/partial → 1, failure → 0 (partial≈success evidence, conservative
       // — same as paper-submit.ts:643). No responseTimeMs (no RT on the ingestion path).
       // Skipped for an unanswered enroll (no attempt event) and the normal text path.
@@ -983,8 +953,8 @@ export async function runAutoEnrollForSession(
         attempt_event_id: enroll.attemptEventId,
         record_id: enroll.recordId,
         confidence: verdict.confidence,
-        // The actually-attributed set: the bridge-created KC for a cold-start enroll,
-        // else the judge's prefilled suggestions (unchanged for the normal auto path).
+        // The actually-attributed set: the unified tagKnowledge verdict's ids (a MATCH to
+        // existing KC(s) or a freshly auto-approved PROPOSE child), uniform for every enroll.
         knowledge_ids: enrollKnowledgeIds,
       } satisfies AutoEnrolledBlock;
     });
@@ -1034,6 +1004,26 @@ export async function runAutoEnrollForSession(
  */
 export function observeEventId(sessionId: string, blockId: string): string {
   return createHash('sha256').update(`auto_enroll_observed:${sessionId}:${blockId}`).digest('hex');
+}
+
+/**
+ * P3 (YUK-489) — adapt a tagKnowledge result (a list of attributed knowledge ids) into the
+ * TaggingOutputT shape the EXISTING deterministic runWorkflowJudge consumes, so the judge stays
+ * UNCHANGED. tagKnowledge attribution is structurally valid (matched an existing KC OR proposed a
+ * KC exactly for this question), so tagging is no longer a routing-uncertainty source: every
+ * suggestion is full-confidence and overall_confidence is 1.0. With extraction confidence always
+ * 1.0 and ≥1 suggestion, the weakest-link judge routes 'auto' on the enroll path.
+ */
+function synthesizeTaggingOutput(knowledgeIds: string[]): TaggingOutputT {
+  return {
+    suggestions: knowledgeIds.map((id) => ({
+      knowledge_id: id,
+      confidence: 1,
+      reasoning: 'unified tagKnowledge attribution (match or auto-approved propose)',
+    })),
+    overall_confidence: 1,
+    reasoning: 'tagKnowledge: structurally valid attribution',
+  };
 }
 
 /**

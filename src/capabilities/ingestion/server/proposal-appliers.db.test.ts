@@ -996,9 +996,36 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     reference_md: string;
     reasoning?: string;
   }) {
+    // The cold-start subject-classify bridge stub (resolves the subject root for tagKnowledge).
     const runColdStartBridgeFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
       text: JSON.stringify({ reasoning: '', ...bridgeReturn }),
     }));
+    // P3 (YUK-489): tagKnowledge runs under the resolved subject root. Stub it (no embedding
+    // model) so it PROPOSEs — mint an approved child KC named kc_name under the subject root and
+    // return its id (mirrors the real tagKnowledge propose path).
+    const tagKnowledgeFn = vi.fn(
+      async (deps: { db: ReturnType<typeof testDb> }, input: { subjectRootId: string }) => {
+        const childId = createId();
+        const now = new Date();
+        await deps.db.insert(knowledge).values({
+          id: childId,
+          name: bridgeReturn.kc_name,
+          domain: null,
+          parent_id: input.subjectRootId,
+          merged_from: [],
+          proposed_by_ai: true,
+          approval_status: 'approved',
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        } as typeof knowledge.$inferInsert);
+        return {
+          kind: 'propose' as const,
+          knowledge_ids: [childId],
+          kc_name: bridgeReturn.kc_name,
+        };
+      },
+    );
     const deps: ImageCandidateAcceptDeps = {
       runTaskFn: vi.fn(async () => ({ text: VLM_OUTPUT_NO_REF })) as never,
       enqueueSourceVerify: vi.fn(async () => {}) as never,
@@ -1008,17 +1035,18 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
         mimeType: 'image/png',
       })) as never,
       runColdStartBridgeFn: runColdStartBridgeFn as never,
+      tagKnowledgeFn: tagKnowledgeFn as unknown as ImageCandidateAcceptDeps['tagKnowledgeFn'],
     };
-    return { deps, runColdStartBridgeFn };
+    return { deps, runColdStartBridgeFn, tagKnowledgeFn };
   }
 
-  it('no-KC-match upload → child KC under subject root + tag + generated reference_md + draft→active + placement-selectable', async () => {
+  it('no-KC-match upload → child KC under subject root via tagKnowledge + draft→active + placement-selectable', async () => {
     const db = testDb();
     // Thin seed: only subject-root nodes (seed:<subjectId>:root) exist.
     await seedKnowledge(db);
     await seedColdStartProposal('img_cand_coldstart');
 
-    const { deps, runColdStartBridgeFn } = coldStartDeps({
+    const { deps, runColdStartBridgeFn, tagKnowledgeFn } = coldStartDeps({
       subject_id: 'math',
       kc_name: '一元二次方程求根',
       reference_md: 'x = 2 或 x = 3',
@@ -1027,10 +1055,12 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     const result = await acceptAiProposal(db, 'img_cand_coldstart', { imageCandidateDeps: deps });
     if (result.kind !== 'image_candidate') throw new Error('unreachable');
 
-    // The bridge ran exactly once (one combined classify+answer LLM pass).
+    // P3: the subject-classify bridge ran once (resolving seed:math:root for tagKnowledge), then
+    // tagKnowledge ran once under that root.
     expect(runColdStartBridgeFn).toHaveBeenCalledTimes(1);
+    expect(tagKnowledgeFn).toHaveBeenCalledTimes(1);
 
-    // ① a child KC was created under the math subject root and the question tagged with it.
+    // tagKnowledge PROPOSEd a child KC under the math subject root + the question tagged with it.
     const rootId = 'seed:math:root';
     const children = await db.select().from(knowledge).where(eq(knowledge.parent_id, rootId));
     expect(children).toHaveLength(1);
@@ -1044,10 +1074,11 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     const q = rows[0];
     expect(q.knowledge_ids).toEqual([childKc.id]);
 
-    // ③ the generated reference answer populated reference_md (OCR had none).
-    expect(q.reference_md).toBe('x = 2 或 x = 3');
+    // P3 (YUK-489): reference generation is DECOUPLED to P4a. OCR extracted no answer
+    // (VLM_OUTPUT_NO_REF) → reference_md stays null (the bridge answer is NOT used here anymore).
+    expect(q.reference_md).toBeNull();
 
-    // ② structural verify (prompt + kind + ≥1 live KC) auto-promoted draft→active.
+    // structural verify (prompt + kind + ≥1 live KC) auto-promoted draft→active.
     expect(q.draft_status).toBe('active');
 
     // The question is now selectable by placement against the new KC's subgraph.
