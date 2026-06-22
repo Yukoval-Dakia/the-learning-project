@@ -456,17 +456,8 @@ ${variantCauseStrategyList(profile)}
 - 禁止：直接照抄 original prompt 的句子；套话；复杂多义题面`;
 }
 
-function buildKnowledgeProposePrompt(profile: SubjectProfile): string {
-  return `你是知识图谱编辑助手。用户新写入了一个 attempt event (outcome='failure')。
-科目上下文：${profile.displayName}。${profile.languageStyle}
-输入字段 { mistake_content: { prompt_md, reference_md, wrong_answer_md, knowledge_ids_picked }, tree_snapshot } —— mistake_content.knowledge_ids_picked 即 attempt 的 referenced_knowledge_ids（用户自选）。
-看 mistake_content (prompt_md + wrong_answer_md) + tree_snapshot，如果你认为 tree 里缺一个**更精确**的子节点能挂这条 attempt，就 propose 它。0-3 条，不必凑数。
-证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
-每条返回 { name, parent_id, reasoning }。parent_id 必须是 tree 里已有节点 id；若找不到合适 parent，跳过这条。
-严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"name":"...","parent_id":"...","reasoning":"..."}]}
-禁止：把节点挂成 root；编造 tree_snapshot 不存在的 parent_id；写泛化到无法练习的抽象节点。`;
-}
+// Lane D (YUK-482): buildKnowledgeProposePrompt removed alongside KnowledgeProposeTask
+// (answer-wrong → propose-new-KC coupling). Content-driven KC creation does not use it.
 
 function buildKnowledgeEdgeProposePrompt(profile: SubjectProfile): string {
   return `你是知识图谱 mesh 编辑助手。输入 { tree_snapshot, existing_edges, recent_failures } —— recent_failures 是过去 24h 的 attempt event (outcome='failure')，每条含 referenced_knowledge_ids + cause（来自 chained judge / user_cause）。
@@ -918,8 +909,6 @@ export function getTaskSystemPrompt(
       return buildAttributionPrompt(profile);
     case 'AttributionRerankTask':
       return buildAttributionRerankPrompt(profile);
-    case 'KnowledgeProposeTask':
-      return buildKnowledgeProposePrompt(profile);
     case 'KnowledgeEdgeProposeTask':
       return buildKnowledgeEdgeProposePrompt(profile);
     case 'SessionSummaryTask':

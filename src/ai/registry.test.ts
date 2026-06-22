@@ -39,25 +39,8 @@ describe('AttributionTask.systemPrompt', () => {
   });
 });
 
-describe('KnowledgeProposeTask.systemPrompt', () => {
-  it('speaks attempt-event vocabulary, not legacy "做错的题"', () => {
-    const p = tasks.KnowledgeProposeTask.systemPrompt;
-    expect(p).toContain('attempt event');
-    expect(p).toContain('referenced_knowledge_ids');
-    expect(p).not.toContain('做错的题');
-  });
-
-  // Codex P1-E — input fields must match runtime input shape
-  // { mistake_content: { prompt_md, reference_md, wrong_answer_md,
-  //   knowledge_ids_picked }, tree_snapshot }. Prompt previously referenced
-  // payload.referenced_knowledge_ids, payload.answer_md, question.prompt_md.
-  it('references the mistake_content input shape (not payload.* or question.prompt_md)', () => {
-    const p = tasks.KnowledgeProposeTask.systemPrompt;
-    expect(p).toContain('mistake_content');
-    expect(p).not.toContain('payload.answer_md');
-    expect(p).not.toContain('question.prompt_md');
-  });
-});
+// Lane D (YUK-482): KnowledgeProposeTask.systemPrompt assertions removed — the
+// task was deleted (answer-wrong → propose-new-KC coupling unwired).
 
 describe('KnowledgeReviewTask.systemPrompt', () => {
   it('mentions attempt events + propose_knowledge_edge + relation_type', () => {

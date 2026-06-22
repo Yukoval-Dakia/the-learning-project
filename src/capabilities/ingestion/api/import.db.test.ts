@@ -3,8 +3,11 @@
  *
  * Strategy:
  * - Use testDb() / resetDb() for actual Postgres integration
- * - Mock @/capabilities/knowledge/server/propose and attribute to avoid real AI calls
+ * - Mock @/capabilities/knowledge/server/attribute to avoid real AI calls
  * - Mock @/server/ai/runner
+ * - Lane D (YUK-482): the failure→propose-new-KC side-effect was removed from
+ *   import; these tests assert NO propose event is written while attribution
+ *   still runs.
  */
 
 import { createId } from '@paralleldrive/cuid2';
@@ -37,11 +40,6 @@ vi.mock('@/server/ai/runner', () => ({
     finishReason: 'stop',
     usage: { inputTokens: 1, outputTokens: 1 },
   })),
-}));
-
-const mockRunProposeAndWrite = vi.fn(async () => {});
-vi.mock('@/capabilities/knowledge/server/propose', () => ({
-  runProposeAndWrite: (...args: unknown[]) => mockRunProposeAndWrite(...(args as [])),
 }));
 
 const mockRunAttributionAndWriteJudgeEvent = vi.fn(async () => {});
@@ -200,10 +198,8 @@ describe('POST /api/ingestion/[id]/import', () => {
   beforeEach(async () => {
     r2._store.clear();
     await resetDb();
-    mockRunProposeAndWrite.mockReset();
     mockRunAttributionAndWriteJudgeEvent.mockReset();
     vi.clearAllMocks();
-    mockRunProposeAndWrite.mockResolvedValue(undefined);
     mockRunAttributionAndWriteJudgeEvent.mockResolvedValue(undefined);
   });
 
@@ -243,6 +239,15 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(blocks[0].status).toBe('imported');
     expect(blocks[0].imported_question_id).toBe(body.question_ids[0]);
     expect(blocks[0].imported_attempt_event_id).toBe(body.mistake_ids[0]);
+
+    // Lane D (YUK-482): an imported wrong attempt must NOT propose a new KC.
+    // CONTENT-axis KC creation is decoupled from answer correctness; no
+    // action='propose' knowledge event is written by this endpoint.
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
+    expect(proposeEvents).toHaveLength(0);
   });
 
   it('writes a learning_record(kind=mistake) per imported attempt so GET /api/mistakes can surface it', async () => {
@@ -403,7 +408,11 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(events[0].action).toBe('attempt');
   });
 
-  it('passes the imported block subject profile to KnowledgeProposeTask', async () => {
+  it('writes no propose event for an imported failure regardless of block subject', async () => {
+    // Lane D (YUK-482): previously this asserted the imported block's subject
+    // profile was passed to KnowledgeProposeTask. The failure→propose coupling is
+    // gone — a wrong imported attempt records 错因/attribution but never proposes a
+    // KC, whatever subject the selected knowledge belongs to.
     const db = testDb();
     const { sessionId, sourceDocId } = await setupSession(db);
     await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
@@ -411,13 +420,12 @@ describe('POST /api/ingestion/[id]/import', () => {
 
     const res = await post(sessionId, makeImportBody());
     expect(res.status).toBe(200);
-    await vi.waitFor(() => {
-      expect(mockRunProposeAndWrite).toHaveBeenCalled();
-    });
-    const params = (mockRunProposeAndWrite.mock.calls as unknown[][])[0]?.[0] as
-      | { subjectProfile?: { id: string } }
-      | undefined;
-    expect(params?.subjectProfile?.id).toBe('math');
+
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
+    expect(proposeEvents).toHaveLength(0);
   });
 
   it('rejects a provided cause outside the imported block subject profile', async () => {
