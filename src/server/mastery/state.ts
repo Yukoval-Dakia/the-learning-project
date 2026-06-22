@@ -399,8 +399,16 @@ export interface UpdateThetaForAttemptInput {
   knowledgeIds: string[];
   /** read item_calibration.b for the anchor. */
   questionId: string;
-  /** success=1, failure=0. */
+  /** success=1, failure=0. When continuousCredit is set to a non-endpoint, PFA counts use
+   *  continuousCredit >= 0.5 as success (partial 0.5 counts as success evidence). */
   outcome: 0 | 1;
+  /**
+   * A9 (YUK-438) — optional per-step FIXED partial-binarize credit ∈ [0,1]. When set to a
+   * non-endpoint (e.g. 0.5), drives conjunctiveCreditsContinuous on the credit path while
+   * leaving eloK / bWeight / Fisher math untouched. Endpoints 0/1 delegate to binary path
+   * (bit-identical). Omit on the legacy single-binary attempt path.
+   */
+  continuousCredit?: number;
   /** fallback anchor source (1-5) when no item_calibration.b. */
   difficulty: number;
   /**
@@ -632,12 +640,28 @@ export async function updateThetaForAttempt(
   //   bWeight, srtOutcome, and the precision/Fisher math are all untouched.
   const rtMs = input.responseTimeMs;
   const useSrt = SRT_ENABLED && typeof rtMs === 'number' && Number.isFinite(rtMs);
+  const rawContinuous = input.continuousCredit;
+  const hasContinuous =
+    typeof rawContinuous === 'number' &&
+    Number.isFinite(rawContinuous) &&
+    rawContinuous >= 0 &&
+    rawContinuous <= 1;
+  const continuousCredit = hasContinuous ? rawContinuous : null;
+  /** PFA success/fail tallies — partial 0.5 counts as success (>= 0.5 threshold). */
+  const countOutcome: 0 | 1 =
+    continuousCredit !== null && continuousCredit !== 0 && continuousCredit !== 1
+      ? continuousCredit >= 0.5
+        ? 1
+        : 0
+      : input.outcome;
   let credits: number[];
   if (useSrt) {
     const d = resolveSrtTimeLimit(input.difficulty); // seconds (module const)
     const tSeconds = (rtMs as number) / 1000; // ms → s
     const srt = srtOutcome(input.outcome === 1, d, tSeconds); // ∈ [0,1]
     credits = conjunctiveCreditsContinuous(effectiveThetas, b, srt);
+  } else if (continuousCredit !== null && continuousCredit !== 0 && continuousCredit !== 1) {
+    credits = conjunctiveCreditsContinuous(effectiveThetas, b, continuousCredit);
   } else {
     credits = conjunctiveCredits(effectiveThetas, b, input.outcome);
   }
@@ -665,8 +689,8 @@ export async function updateThetaForAttempt(
       subject_id: s.id,
       theta_hat: newTheta,
       evidence_count: s.evidence + 1,
-      success_count: s.success + (input.outcome === 1 ? 1 : 0),
-      fail_count: s.fail + (input.outcome === 0 ? 1 : 0),
+      success_count: s.success + (countOutcome === 1 ? 1 : 0),
+      fail_count: s.fail + (countOutcome === 0 ? 1 : 0),
       last_outcome_at: input.now,
       theta_precision: newPrecision,
       last_theta_delta: delta,

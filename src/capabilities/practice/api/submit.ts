@@ -52,7 +52,8 @@ import {
 } from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
-import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
+import { getMasteryState } from '@/server/mastery/state';
+import { updateThetaForAttemptWithOptionalStepGrading } from '@/server/mastery/step-grading-theta';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
@@ -608,26 +609,30 @@ async function persistSubmit(
     // q.knowledge_ids，差集 KC 靠模块自锁兜住）。outcome 复用上面的 success/failure
     // 派生（review 路径 finalRating 二分，无 partial）。写独立 mastery_state 表，
     // 不碰 event/learning_record count——hermetic 不破。
-    await updateThetaForAttempt(tx, {
-      knowledgeIds: q.knowledge_ids,
-      questionId,
-      outcome: outcome === 'success' ? 1 : 0,
-      difficulty: q.difficulty,
-      attemptEventId: eventId,
-      now,
-      // A1 (YUK-433) — thread the solo review latency (ms) into the SRT credit path.
-      // SRT is now LIVE (SRT_ENABLED=true, P1 go-live YUK-361): when latency_ms is
-      // present, fast-correct moves θ̂ more than slow-correct (continuous srtOutcome).
-      // body.latency_ms is number|null|undefined; undefined coerces to undefined →
-      // binary fallback (paper path passes nothing; solo attempts lacking RT → binary).
-      responseTimeMs: body.latency_ms ?? undefined,
-      // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
-      kind: q.kind,
-      source: q.source,
-      // Codex review F2 — 显式传 question 规范 primary（与 family 写/读两侧同键）。review 路径
-      // knowledgeIds 本就是 q.knowledge_ids，故 [0] 已等于 primaryKnowledgeId；显式传保契约一致。
-      familyPrimaryKnowledgeId: primaryKnowledgeId,
-    });
+    await updateThetaForAttemptWithOptionalStepGrading(
+      tx,
+      {
+        knowledgeIds: q.knowledge_ids,
+        questionId,
+        outcome: outcome === 'success' ? 1 : 0,
+        difficulty: q.difficulty,
+        attemptEventId: eventId,
+        now,
+        // A1 (YUK-433) — thread the solo review latency (ms) into the SRT credit path.
+        // SRT is now LIVE (SRT_ENABLED=true, P1 go-live YUK-361): when latency_ms is
+        // present, fast-correct moves θ̂ more than slow-correct (continuous srtOutcome).
+        // body.latency_ms is number|null|undefined; undefined coerces to undefined →
+        // binary fallback (paper path passes nothing; solo attempts lacking RT → binary).
+        responseTimeMs: body.latency_ms ?? undefined,
+        // YUK-372 L3 — enable family b_delta composition (NO-OP until the family gate passes).
+        kind: q.kind,
+        source: q.source,
+        // Codex review F2 — 显式传 question 规范 primary（与 family 写/读两侧同键）。review 路径
+        // knowledgeIds 本就是 q.knowledge_ids，故 [0] 已等于 primaryKnowledgeId；显式传保契约一致。
+        familyPrimaryKnowledgeId: primaryKnowledgeId,
+      },
+      judgeResult,
+    );
 
     // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
     // 同 tx（计数与作答一致），但 best-effort：绝不让它 fail 上面的 θ̂/FSRS/event 主路径。
