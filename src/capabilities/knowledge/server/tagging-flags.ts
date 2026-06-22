@@ -15,18 +15,31 @@
  * candidate is a MATCH when its `cosine_distance <= MATCH_THRESHOLD`; otherwise
  * the question gets a freshly-PROPOSED child KC.
  *
- * Default 0.35 mirrors the quiz matcher's `MATCHER_COSINE_MAX_DISTANCE` (≈ cosine
- * similarity ≥ 0.65 to match). It is **UNTUNED** — there is no production embedding
- * distribution behind it yet, so a thin/cold-start tree intentionally errs toward
- * PROPOSE (too-eager MATCH would mis-attribute to the only available node, the
- * subject root). Tighten toward reuse once the tree grows. Calibration is a
- * follow-up (Refs YUK-396 — the same un-tuned-threshold concern as the matcher).
+ * Default 0.55, set from a real-embedder probe (YUK-489 P3 gate, n=6 across
+ * 数学/物理/生物/语文). This axis uses ASYMMETRIC embed sources — the QUERY embeds the
+ * full question text (questionEmbedText), while each KC embeds only `name\ndomain`
+ * (knowledgeEmbedText) — which systematically inflates the distance vs a symmetric
+ * question↔question compare. In the probe a CORRECT match landed at cosine distance
+ * 0.39–0.57, while a wrong-subject KC or a genuinely novel concept stayed ≥ 0.60
+ * (clean separation; nearest-is-correct was 5/5 — the RANKING is sound).
+ *
+ * The quiz matcher's 0.35 (`MATCHER_COSINE_MAX_DISTANCE`, a question↔question axis)
+ * is far too tight HERE: it matched 0/5 correct pairs in the probe → every upload
+ * would PROPOSE and never MATCH (KC explosion, defeating P1+P2). 0.55 sits inside the
+ * correct band yet below the wrong/novel floor (≈ cosine similarity ≥ 0.45 to match).
+ *
+ * Still **UNTUNED** on a production corpus — n=6 cannot pin the boundary precisely;
+ * rigorous calibration on real KC vectors + question text is a follow-up (Refs
+ * YUK-396). Failure mode is non-destructive either way: too-tight → duplicate KCs
+ * (caught by the P5 dedup-on-maintenance lane); too-loose → a related-but-wrong match
+ * (rarer). A future refinement is to embed a concept-shaped projection of the question
+ * (not the raw prompt) for a more symmetric query↔label distance.
  *
  * Env override: set `TAGGING_MATCH_THRESHOLD` to a finite number to override the
  * default at boot (dark-ship / per-env tuning). A non-finite / unparseable value
  * falls back to the default (never silently disables matching).
  */
-const DEFAULT_MATCH_THRESHOLD = 0.35;
+const DEFAULT_MATCH_THRESHOLD = 0.55;
 
 function resolveMatchThreshold(): number {
   const raw = process.env.TAGGING_MATCH_THRESHOLD;
