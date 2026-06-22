@@ -78,7 +78,10 @@ import {
 } from '@/server/ai/judges/multimodal-direct-judge';
 import type { JudgeQuestionRow } from '@/server/ai/judges/question-contract';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
-import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
+import {
+  isObjectiveJudgeRoute,
+  recordFamilyObservationForAttempt,
+} from '@/server/mastery/personalized-difficulty';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { KNOWN_SUBJECT_IDS, resolveSubjectProfile } from '@/subjects/profile';
@@ -124,7 +127,6 @@ export type GradeStudentAnswerFn = (params: {
   subjectId?: string;
   runTaskFn?: MultimodalDirectRunTaskFn;
   imageFetchFn?: MultimodalDirectImageFetchFn;
-  ctx?: unknown;
 }) => Promise<StudentGradeVerdict>;
 
 export interface AutoEnrolledBlock {
@@ -245,6 +247,16 @@ export async function runAutoEnrollForSession(
     return { status: 'skipped:flag_off', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
 
+  // SHARED confidence threshold (default 0.85, env `AUTO_ENROLL_THRESHOLD`).
+  // Two semantically distinct gates reuse this ONE number:
+  //   (a) the TAGGING/routing judge — does this block auto-enroll vs route to human
+  //       review (the historical use, gates the per-block `verdict` below);
+  //   (b) the STUDENT-GRADE vision judge (cut ④) — is the vision verdict reliable
+  //       enough to synthesize a graded attempt (gates `studentGradeVerdict`).
+  // Deliberately shared for cut ④: introducing a separate `STUDENT_GRADE_THRESHOLD`
+  // is deferred to YUK-485 (per-question narrowing), which is also where the
+  // dense-page attribution concern lands. Flip ONE env to tune both today; revisit
+  // if real rollout data shows the two judges need different bars.
   const threshold = autoEnrollThreshold(env);
   const now = params.now ?? new Date();
   const runTaggingFn = params.runTaggingFn ?? runTaggingTask;
@@ -385,7 +397,6 @@ export async function runAutoEnrollForSession(
           // is injected; threaded so the REAL default grader is testable model-free).
           runTaskFn: params.gradeRunTaskFn,
           imageFetchFn: params.gradeImageFetchFn,
-          ctx: params.ctx ?? { db: params.db },
         });
       } catch (err) {
         // A grading outage must NEVER synthesize an attempt — route to review.
@@ -395,6 +406,8 @@ export async function runAutoEnrollForSession(
       }
       if (
         studentGradeVerdict.coarse_outcome === 'unsupported' ||
+        // NOTE: shared threshold (see declaration above) — deliberately the SAME
+        // bar as the tagging/routing judge for cut ④; split is YUK-485 follow-up.
         studentGradeVerdict.confidence < threshold
       ) {
         // YUK-485 gate: unconfident / ungradable → human review, block stays draft.
@@ -632,17 +645,30 @@ export async function runAutoEnrollForSession(
     const outcome = gradedVerdict
       ? gradeOutcomeFromVerdict(gradedVerdict.coarse_outcome)
       : (mistakeDraft?.wrong_answer ?? 'unanswered');
-    const answerMd = gradedVerdict
-      ? ''
-      : outcome === 'unanswered'
-        ? ''
-        : (block.wrong_answer_md ?? '');
+
+    // Explicit if/else (biome/OCR readability): graded verdict → the answer is the
+    // page image (no text); unanswered → empty; otherwise the drafted wrong-answer md.
+    let answerMd: string;
+    if (gradedVerdict) {
+      answerMd = '';
+    } else if (outcome === 'unanswered') {
+      answerMd = '';
+    } else {
+      answerMd = block.wrong_answer_md ?? '';
+    }
+
     const answerImageRefs = gradedVerdict ? block.source_asset_ids : [];
-    const captureMode: 'text' | 'image' = gradedVerdict
-      ? 'image'
-      : block.image_refs.length > 0
-        ? 'image'
-        : 'text';
+
+    // Explicit if/else (biome/OCR readability): graded or figure-bearing → image
+    // capture; otherwise text capture.
+    let captureMode: 'text' | 'image';
+    if (gradedVerdict) {
+      captureMode = 'image';
+    } else if (block.image_refs.length > 0) {
+      captureMode = 'image';
+    } else {
+      captureMode = 'text';
+    }
     const result = await params.db.transaction(async (tx) => {
       // ---- YUK-482 cold-start bridge ① — create the child KC + attribute the question. ----
       // applyProposeNew inserts an approved child under the subject root (domain:null →
@@ -861,32 +887,40 @@ export async function runAutoEnrollForSession(
         // (advisory-lock serialization, 23505 first-insert race, malformed-jsonb
         // cast) → the whole enroll tx would roll back. tx.transaction(...) becomes a
         // SAVEPOINT so a family-write failure rolls back only the savepoint; the
-        // committed attempt survives. NOTE: judgeRoute='multimodal_direct' is NOT an
-        // objective route (OBJECTIVE_JUDGE_ROUTES = exact/keyword), so the hook
-        // early-returns (NO-OP) — impact is bounded, but the call parity matters and
-        // the route is recorded honestly. partial also early-returns inside the hook.
-        try {
-          await tx.transaction(async (sp) => {
-            await recordFamilyObservationForAttempt(sp, {
-              primaryKnowledgeId: familyPrimaryKnowledgeId,
-              questionId,
-              kind: verdict.prefilled.question_kind,
-              source: sessionEntrypoint,
-              difficulty: verdict.prefilled.difficulty,
-              outcome: outcome === 'failure' ? 0 : 1,
-              attemptOutcome: outcome === 'unanswered' ? undefined : outcome,
-              // The student-graded path runs the multimodal_direct vision judge
-              // directly (defaultGradeStudentAnswer) — record that route verbatim.
-              judgeRoute: 'multimodal_direct',
-              thetaBefore: familyThetaBefore,
-              now,
+        // committed attempt survives.
+        //
+        // The hook early-returns unless judgeRoute ∈ OBJECTIVE_JUDGE_ROUTES
+        // (exact/keyword). The student-graded path runs the `multimodal_direct`
+        // vision judge — NOT an objective route — so the hook is GUARANTEED to be a
+        // NO-OP today. Guard with `isObjectiveJudgeRoute('multimodal_direct')` so the
+        // SAVEPOINT (and its DB round-trip) is skipped entirely when the route is
+        // non-objective; the block re-enables automatically if `multimodal_direct`
+        // is ever added to OBJECTIVE_JUDGE_ROUTES. partial is also early-returned
+        // inside the hook (kept out of family calibration by design).
+        if (isObjectiveJudgeRoute('multimodal_direct')) {
+          try {
+            await tx.transaction(async (sp) => {
+              await recordFamilyObservationForAttempt(sp, {
+                primaryKnowledgeId: familyPrimaryKnowledgeId,
+                questionId,
+                kind: verdict.prefilled.question_kind,
+                source: sessionEntrypoint,
+                difficulty: verdict.prefilled.difficulty,
+                outcome: outcome === 'failure' ? 0 : 1,
+                attemptOutcome: outcome === 'unanswered' ? undefined : outcome,
+                // The student-graded path runs the multimodal_direct vision judge
+                // directly (defaultGradeStudentAnswer) — record that route verbatim.
+                judgeRoute: 'multimodal_direct',
+                thetaBefore: familyThetaBefore,
+                now,
+              });
             });
-          });
-        } catch (err) {
-          console.warn(
-            `[auto_enroll:student_grade] recordFamilyObservationForAttempt failed (non-fatal) for block ${block.id}:`,
-            err,
-          );
+          } catch (err) {
+            console.warn(
+              `[auto_enroll:student_grade] recordFamilyObservationForAttempt failed (non-fatal) for block ${block.id}:`,
+              err,
+            );
+          }
         }
       }
 
@@ -957,7 +991,19 @@ export async function runAutoEnrollForSession(
     // mirrors import.ts which sends after the writes commit) — best-effort, never
     // aborts the committed enroll.
     if (gradedVerdict && outcome === 'failure' && result.attempt_event_id) {
-      await enqueueAttributionFollowupFn(result.attempt_event_id);
+      // Best-effort: the default impl (`defaultEnqueueAttributionFollowup`) already
+      // swallows internal errors, but an injected test seam (or a future impl) is
+      // not contractually required to. Wrap so a throwing seam NEVER aborts the
+      // already-committed enroll — matches the comment above and the import-route
+      // precedent (import.ts logs + continues on boss.send failure).
+      try {
+        await enqueueAttributionFollowupFn(result.attempt_event_id);
+      } catch (err) {
+        console.warn(
+          `[auto_enroll:student_grade] attribution_followup enqueue threw (non-fatal) for attempt ${result.attempt_event_id}:`,
+          err,
+        );
+      }
     }
   }
 
@@ -1050,7 +1096,6 @@ async function defaultGradeStudentAnswer(params: {
   subjectId?: string;
   runTaskFn?: MultimodalDirectRunTaskFn;
   imageFetchFn?: MultimodalDirectImageFetchFn;
-  ctx?: unknown;
 }): Promise<StudentGradeVerdict> {
   const subjectProfile = params.subjectId
     ? resolveSubjectProfile(params.subjectId)
