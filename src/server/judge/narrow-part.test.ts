@@ -147,28 +147,31 @@ describe('narrowQuestionToPart', () => {
     expect(narrowed.reference_md).toBe('C');
   });
 
-  it('sub with no stored answer → reference_md falls back to the whole-row reference (not blanked)', () => {
+  it('answer-less sub → reference_md is empty, NOT the whole-row (no sibling leak via reference channel — C1)', () => {
     const structured: StructuredQuestionT = {
       id: 'stem',
       role: 'stem',
       prompt_text: '阅读下文。',
       sub_questions: [
         { id: 'p1', role: 'sub', prompt_text: '无答案的小题。' }, // no answers/analysis
+        { id: 'p2', role: 'sub', prompt_text: '有答案的兄弟题。', answers: ['SIBLING-ANSWER-B'] },
       ],
     };
     const row: JudgeQuestionRow = {
       id: 'q-noanswer',
       kind: 'short_answer',
       prompt_md: 'old',
-      reference_md: 'WHOLE-ROW-REF',
+      // whole-row reference (derived from the full tree) contains the sibling's answer:
+      reference_md: '答案：\n(2) SIBLING-ANSWER-B',
       rubric_json: null,
       choices_md: null,
       judge_kind_override: null,
       structured,
     };
     const narrowed = narrowQuestionToPart(row, 'p1');
-    // structuredToReferenceMarkdown returns '' for an answerless sub → guard
-    // falls back to the whole-row reference so it is not blanked.
-    expect(narrowed.reference_md).toBe('WHOLE-ROW-REF');
+    // The narrowed reference must NOT fall back to the whole-row reference (which
+    // holds the sibling's answer) — that would re-open the C1 leak via reference_md.
+    expect(narrowed.reference_md).not.toContain('SIBLING-ANSWER-B');
+    expect(narrowed.reference_md).toBe('');
   });
 });
