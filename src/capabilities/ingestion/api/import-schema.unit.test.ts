@@ -98,9 +98,9 @@ describe('ImportBody bounds (YUK-234)', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects an empty knowledge_ids array (min 1 preserved)', () => {
+  it('accepts an empty knowledge_ids array at the schema level (P3 YUK-489: array .min(1) relaxed so tagKnowledge can attribute when absent; the handler still rejects empty when no subject is resolvable)', () => {
     const result = ImportBody.safeParse({ blocks: [validBlock({ knowledge_ids: [] })] });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('keeps the unanswered superRefine: empty answer ok only for outcome=unanswered', () => {
