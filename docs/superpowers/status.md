@@ -413,7 +413,6 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 
 | 队列 | 触发 | 任务 |
 |---|---|---|
-| `knowledge_propose_nightly` | cron @ BJT 02:00 | 节点提议 |
 | `knowledge_edge_propose_nightly` | cron @ BJT 02:30 | 边提议 |
 | `hub_auto_sync_nightly` | cron @ BJT 02:45 | hub auto-link mesh 同步（iii-curated cross_link → AutoLinksContainer）+ 乐观版本锁 + per-hub try/catch（YUK-95 P5-C）|
 | `knowledge_maintenance_nightly` | cron @ BJT 03:00 | KnowledgeReviewTask → tree / mesh maintenance proposals |

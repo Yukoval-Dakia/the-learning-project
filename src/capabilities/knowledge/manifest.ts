@@ -65,16 +65,13 @@ export const knowledgeCapability = defineCapability({
     // 照 handlers.ts 现状一字不改；注册由 server/boss/register-capability-jobs.ts
     // 收集挂载，此处声明是唯一归属源。
     handlers: [
-      {
-        // Step 5 先例：nightly 节点 propose（BJT 02:00，夜链最先）。
-        name: 'knowledge_propose_nightly',
-        schedule: { cron: '0 2 * * *', tz: 'Asia/Shanghai' },
-        queue: 'llm',
-        load: () =>
-          import('./jobs/knowledge_propose_nightly').then(
-            (m) => m.buildKnowledgePropoNightlyHandler,
-          ),
-      },
+      // Lane D (YUK-482): knowledge_propose_nightly was removed — its sole job was
+      // getFailureAttempts → propose-new-KC, i.e. answer-wrong → propose coupling.
+      // KC creation is a CONTENT-axis action (driven by what the material covers),
+      // independent of answer correctness; failures are PERFORMANCE-axis and feed
+      // 错因/mastery only. KC creation lives in the content-driven paths
+      // (cold-start-bridge / image-candidate-accept matcher / agent proposal tools)
+      // plus the maintenance producer KnowledgeReviewTask (knowledge_maintenance_nightly).
       {
         // Phase 2 Dreaming：knowledge_edge mesh propose（BJT 02:30，node propose 后）。
         name: 'knowledge_edge_propose_nightly',

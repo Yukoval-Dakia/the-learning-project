@@ -10,8 +10,8 @@ const MAX_DEPTH = 32; // 防 cycle
  * Invariant: parent_id IS NULL ↔ domain IS NOT NULL（root 必有 domain）。
  *
  * GET /api/knowledge does its own in-memory walk over the full tree (batch-friendly),
- * so this single-node helper is reserved for Sub 2's KnowledgeProposeTask which will
- * need point lookups during tool calling (resolving a node's domain in tool results).
+ * so this single-node helper is for per-node domain lookups (e.g. resolving a node's
+ * domain within an attempt tx — see the YUK-361 Phase 5 family-calibration caller below).
  *
  * Accepts `Db | Tx` (read-only SELECTs only) so callers inside an attempt tx
  * (YUK-361 Phase 5 家族级校准的 subject 派生) can resolve a node's domain within

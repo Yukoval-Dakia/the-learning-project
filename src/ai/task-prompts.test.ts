@@ -183,13 +183,8 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).not.toContain('古文');
   });
 
-  it('builds subject-specific KnowledgeProposeTask prompts', () => {
-    const prompt = getTaskSystemPrompt('KnowledgeProposeTask', resolveSubjectProfile('math'));
-
-    expect(prompt).toContain('科目上下文：数学');
-    expect(prompt).toContain('题面条件、定义、定理或用户已有步骤');
-    expect(prompt).not.toContain('虚词');
-  });
+  // Lane D (YUK-482): KnowledgeProposeTask prompt test removed — task deleted
+  // (answer-wrong → propose-new-KC coupling unwired).
 
   it('builds VariantGenTask prompt from the subject cause taxonomy', () => {
     const prompt = getTaskSystemPrompt('VariantGenTask', resolveSubjectProfile('math'));

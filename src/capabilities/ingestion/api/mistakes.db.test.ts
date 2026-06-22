@@ -6,25 +6,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET, POST } from './mistakes';
 
-// Mock the AI background tasks so tests don't call Anthropic
-vi.mock('@/capabilities/knowledge/server/propose', () => ({
-  runProposeAndWrite: vi.fn().mockResolvedValue(undefined),
-}));
+// Mock the AI background tasks so tests don't call Anthropic.
+// Lane D (YUK-482): the failure→propose-new-KC coupling was removed from POST
+// /api/mistakes. There is no longer a propose module import here; mistakes only
+// records the attempt + enqueues attribution. We assert NO propose event is
+// written while attribution still fires.
 vi.mock('@/capabilities/knowledge/server/attribute', () => ({
   runAttributionAndWriteJudgeEvent: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('@/capabilities/knowledge/server/tree', () => ({
-  loadTreeSnapshot: vi.fn().mockResolvedValue([
-    {
-      id: 'k1',
-      name: 'X',
-      domain: 'wenyan',
-      parent_id: null,
-      effective_domain: 'wenyan',
-      archived_at: null,
-    },
-  ]),
-}));
+// Lane D (YUK-482): the loadTreeSnapshot mock was removed — it only served the
+// (now-deleted) failure→propose path; POST /api/mistakes no longer loads the tree.
 
 // M5-T5a (YUK-321)：路由 after() 已改写为 fire-and-forget（POST 内同步发起，
 // mock 立即 resolve），不再需要 the old after mock / runAfterCallbacks 钩子。
@@ -115,21 +106,20 @@ describe('POST /api/mistakes', () => {
     expect(body.message).toMatch(/k_archived/);
   });
 
-  it('inserts question + attempt event on valid body, queues propose task', async () => {
+  it('inserts question + attempt event + record on valid body (no propose event)', async () => {
     const res = await postMistake(validBody());
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       question_id: string;
       mistake_id: string;
       record_id: string;
-      propose_task: string;
     };
     expect(body.question_id).toBeTruthy();
     expect(body.mistake_id).toBeTruthy();
     expect(body.record_id).toBeTruthy();
-    // mistake_id == attempt event id post-Step-9 (opaque to clients)
-    expect(body.mistake_id).toBe(body.mistake_id);
-    expect(body.propose_task).toBe('queued');
+    // Lane D (YUK-482): the response no longer carries a `propose_task` field —
+    // recording a mistake records + attributes (错因/mastery) but never proposes a KC.
+    expect('propose_task' in body).toBe(false);
 
     const db = testDb();
     const { eq, and } = await import('drizzle-orm');
@@ -150,6 +140,14 @@ describe('POST /api/mistakes', () => {
     expect(records[0].kind).toBe('mistake');
     expect(records[0].question_id).toBe(body.question_id);
     expect(records[0].origin_event_id).toBe(body.mistake_id);
+
+    // Lane D (YUK-482): a wrong attempt must NOT create/propose a KC. No
+    // action='propose' knowledge event is written by this endpoint.
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
+    expect(proposeEvents).toHaveLength(0);
   });
 
   it('does not write any mistake row (legacy table dropped)', async () => {
@@ -216,37 +214,49 @@ describe('POST /api/mistakes', () => {
     expect((events[0].payload as Record<string, unknown>).answer_image_refs).toEqual(['asset_w']);
   });
 
-  it('queues both propose + attribution when cause is null', async () => {
-    const { runProposeAndWrite } = await import('@/capabilities/knowledge/server/propose');
-    const { runAttributionAndWriteJudgeEvent } = await import(
-      '@/capabilities/knowledge/server/attribute'
-    );
-    vi.mocked(runProposeAndWrite).mockClear();
-    vi.mocked(runAttributionAndWriteJudgeEvent).mockClear();
-
+  // Lane D (YUK-482): a failed attempt with no user-supplied cause still enqueues
+  // attribution (PERFORMANCE-axis 错因), but must NOT propose a new KC.
+  it('records the failure + attribution-eligible, but writes no propose event (cause null)', async () => {
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
+
+    const db = testDb();
+    const { eq, and } = await import('drizzle-orm');
+    // The attempt event is recorded (PERFORMANCE-axis signal survives).
+    const attempts = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'attempt'), eq(event.outcome, 'failure')));
+    expect(attempts.length).toBeGreaterThanOrEqual(1);
+    // No KC was proposed off the failure (CONTENT-axis decoupled).
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
+    expect(proposeEvents).toHaveLength(0);
   });
 
-  it('passes the selected knowledge subject profile to KnowledgeProposeTask', async () => {
-    const { runProposeAndWrite } = await import('@/capabilities/knowledge/server/propose');
-    vi.mocked(runProposeAndWrite).mockClear();
+  // Lane D (YUK-482): even when a different-subject KC is selected, a wrong
+  // attempt produces no propose event (previously this fed KnowledgeProposeTask
+  // with the selected knowledge's subject profile).
+  it('writes no propose event regardless of the selected knowledge subject', async () => {
     const db = testDb();
-    const { eq } = await import('drizzle-orm');
+    const { eq, and } = await import('drizzle-orm');
     await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'k1'));
 
     const res = await postMistake(validBody({ cause: null }));
     expect(res.status).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
 
-    const params = vi.mocked(runProposeAndWrite).mock.calls[0]?.[0] as
-      | { subjectProfile?: { id: string } }
-      | undefined;
-    expect(params?.subjectProfile?.id).toBe('math');
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
+    expect(proposeEvents).toHaveLength(0);
   });
 
-  it('queues only propose when cause is provided manually', async () => {
+  it('skips attribution when cause is provided manually (and never proposes a KC)', async () => {
     const { runAttributionAndWriteJudgeEvent } = await import(
       '@/capabilities/knowledge/server/attribute'
     );
@@ -258,6 +268,14 @@ describe('POST /api/mistakes', () => {
     expect(res.status).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
     expect(vi.mocked(runAttributionAndWriteJudgeEvent)).not.toHaveBeenCalled();
+
+    const db = testDb();
+    const { eq, and } = await import('drizzle-orm');
+    const proposeEvents = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
+    expect(proposeEvents).toHaveLength(0);
   });
 
   it('writes an experimental:user_cause event when body.cause !== null', async () => {
