@@ -36,6 +36,23 @@ export const AUTO_ENROLL_THRESHOLD_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD'
  */
 export const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
 
+/**
+ * YUK-482 cut ④ — Env var that gates the STUDENT-ANSWER GRADING path. Default
+ * OFF. INDEPENDENT of `AUTO_ENROLL_FLAG`: when this is unset (the default), the
+ * detect-student-work branch in `runAutoEnrollForSession` is skipped ENTIRELY →
+ * byte-for-byte today's behavior (the existing text-draft outcome). When set to
+ * the string 'true' (case-insensitive) AND a block carries student work
+ * (handwriting / a VLM `student_answer_present` signal), the whole page image is
+ * graded via the existing `multimodal_direct` judge and the verdict drives a
+ * real graded attempt → 错因 (attribution) + mastery (θ̂) chains.
+ *
+ * Polarity is opt-IN (default off), same as `autoEnrollEnabled` — grading writes
+ * durable learning data (attempt + record + θ̂) on the user's behalf, so it must
+ * be unmissably OFF by default. It is a SEPARATE knob from auto-enroll so the two
+ * can be rolled out independently; do NOT overload `AUTO_ENROLL_FLAG`.
+ */
+export const STUDENT_ANSWER_GRADING_FLAG = 'WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED';
+
 /** Conservative default threshold: high bar → most blocks go to human review. */
 export const DEFAULT_AUTO_ENROLL_THRESHOLD = 0.85;
 
@@ -78,4 +95,16 @@ export function autoEnrollThreshold(env: FlagEnv = process.env): number {
 export function observeEnabled(env: FlagEnv = process.env): boolean {
   const value = env[OBSERVE_FLAG];
   return !(typeof value === 'string' && value.toLowerCase() === 'false');
+}
+
+/**
+ * YUK-482 cut ④ — True ONLY when `WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED`
+ * is explicitly 'true' (case-insensitive). Undefined / '' / 'false' / any other
+ * value → false. Opt-IN (default off), mirroring `autoEnrollEnabled`: the
+ * student-grading branch writes a real graded attempt + θ̂ on the user's behalf,
+ * so absence of the var = today's text-draft behavior, byte-for-byte.
+ */
+export function studentAnswerGradingEnabled(env: FlagEnv = process.env): boolean {
+  const value = env[STUDENT_ANSWER_GRADING_FLAG];
+  return typeof value === 'string' && value.toLowerCase() === 'true';
 }
