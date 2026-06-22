@@ -124,7 +124,7 @@ describe('tagKnowledge', () => {
     }
     await seedKc(db, 'kc-near1', mixedAxis(0.9, 1), { name: 'Near1', parent_id: SUBJECT_ROOT }); // dist ~0.10
     await seedKc(db, 'kc-near2', mixedAxis(0.75, 2), { name: 'Near2', parent_id: SUBJECT_ROOT }); // dist ~0.25
-    await seedKc(db, 'kc-far', mixedAxis(0.5, 3), { name: 'Far', parent_id: SUBJECT_ROOT }); // dist ~0.50 → out
+    await seedKc(db, 'kc-far', mixedAxis(0.3, 3), { name: 'Far', parent_id: SUBJECT_ROOT }); // dist ~0.70 → out (> 0.55)
 
     const namer = stubName('SHOULD-NOT-BE-CALLED');
     const out = await tagKnowledge(
@@ -283,5 +283,27 @@ describe('tagKnowledge', () => {
     )[0];
     expect(created.name).toBe('FirstConcept');
     expect(created.parent_id).toBe(SUBJECT_ROOT);
+  });
+
+  it('PROPOSE with an empty name from the namer → throws, creates nothing', async () => {
+    const db = testDb();
+    await seedRoot(db);
+    const before = (await db.select({ id: knowledge.id }).from(knowledge)).length;
+
+    await expect(
+      tagKnowledge(
+        { db, embedFn: stubEmbed(unitVec(0)), nameKcFn: stubName('   ').fn }, // whitespace-only
+        { questionText: 'q', subjectRootId: SUBJECT_ROOT },
+      ),
+    ).rejects.toThrow(/empty KC name/);
+
+    // No KC minted, no audit event.
+    const after = (await db.select({ id: knowledge.id }).from(knowledge)).length;
+    expect(after).toBe(before);
+    const events = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_created'));
+    expect(events).toHaveLength(0);
   });
 });
