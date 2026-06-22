@@ -122,6 +122,17 @@ export type StructuredQuestionT = {
    * will pre-fill the import kind selector from it.
    */
   kind?: z.infer<typeof QuestionKind>;
+  /**
+   * YUK-482 cut ④ — advisory "this node carries student work" flag emitted by the
+   * VLM StructureTask (per-node / per-page). The VLM NEVER transcribes handwriting
+   * (pixels stay pixels — constraint #3 / OC-1); it only reports PRESENCE so the
+   * student-answer grading path (auto-enroll.ts `detectStudentWork`) knows the page
+   * image holds a learner's answer to grade. jsonb-internal — NOT a DDL column, NOT
+   * an `audit:schema` business field (rides inside the existing `structured` jsonb,
+   * same precedent as the `kind` hint above). Absent ⇒ no VLM signal (detection
+   * degrades to the Tencent `extraction_evidence.handwriting` signal alone).
+   */
+  student_answer_present?: boolean;
 };
 
 export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
@@ -142,6 +153,8 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       last_modified_by: z.string().optional(),
       // YUK-195 §4.3 — advisory question-type hint (jsonb-internal, no DDL).
       kind: QuestionKind.optional(),
+      // YUK-482 cut ④ — advisory student-work presence flag (jsonb-internal, no DDL).
+      student_answer_present: z.boolean().optional(),
     })
     .refine(
       (q) => {

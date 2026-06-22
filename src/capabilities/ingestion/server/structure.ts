@@ -60,6 +60,13 @@ type StructureNodeT = {
    * means the VLM did not assign any figures to this node.
    */
   figure_ids?: number[] | null;
+  /**
+   * YUK-482 cut ④ — VLM "this node carries student work" presence flag. The VLM
+   * NEVER transcribes the handwriting (pixels stay pixels); it only reports
+   * PRESENCE so the student-answer grading path can detect a learner's answer on
+   * the page image. Absence (null/false) means no student work was seen here.
+   */
+  student_answer_present?: boolean | null;
 };
 
 const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
@@ -74,6 +81,8 @@ const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
     sub_questions: z.array(StructureNode).nullable().optional(),
     // YUK-227 S3 Slice A: figure indices reported by the VLM (see StructureNodeT).
     figure_ids: z.array(z.number().int().min(0)).nullable().optional(),
+    // YUK-482 cut ④: VLM student-work presence flag (see StructureNodeT).
+    student_answer_present: z.boolean().nullable().optional(),
   }),
 );
 
@@ -186,6 +195,12 @@ function nodeToStructured(
   // isAllPlaceholderPageIndex can distinguish VLM (real values) from
   // Tencent fallback (all page 0 via ??0 placeholder).
   if (node.page_index != null) out.page_index = node.page_index;
+
+  // YUK-482 cut ④: carry the VLM student-work presence flag onto the structured
+  // node so detectStudentWork (auto-enroll.ts) can read it. Only set when truthy
+  // — absence keeps the structured tree byte-identical for nodes without student
+  // work (the field stays undefined, same as the pre-cut-④ shape).
+  if (node.student_answer_present) out.student_answer_present = true;
 
   // YUK-227 S3 Slice A: record figure_ids → question_id assignments while
   // traversing the tree so the caller can build figureAssignments.
