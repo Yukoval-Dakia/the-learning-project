@@ -19,19 +19,23 @@
  * `VISION_JUDGE_PROVIDER` explicitly. Optional `VISION_JUDGE_MODEL` overrides
  * the model (for `anthropic-sub` the resolver defaults to `claude-opus-4-8`).
  *
- * TOKEN-AVAILABILITY DEGRADE (the caveat): the OAuth lane (`anthropic-sub`)
- * needs `CLAUDE_CODE_OAUTH_TOKEN`. If the operator names that lane but the token
- * is absent, returning the override would only push the failure to call time
- * (resolveTaskProvider throws when the token env is missing). Instead we log a
- * warning and return `undefined` → degrade to the mimo default rather than fail
- * the judge. The warning fires per call (vision judging is low-frequency, and a
- * repeated warning helps surface the misconfig); it is not de-duplicated. Non-
- * OAuth providers are trusted as-is — an unknown provider string still reaches
+ * TOKEN-AVAILABILITY DEGRADE (the caveat): OAuth-lane providers (the set
+ * exported as `OAUTH_PROVIDERS` from providers.ts — currently just
+ * `anthropic-sub`) need `CLAUDE_CODE_OAUTH_TOKEN`. If the operator names such a
+ * lane but the token is absent, returning the override would only push the
+ * failure to call time (resolveTaskProvider throws when the token env is
+ * missing). Instead we log a warning and return `undefined` → the caller falls
+ * through to the standard provider resolution (registry default, OR
+ * `AI_PROVIDER_OVERRIDE` if globally set) rather than fail the judge. The
+ * warning fires per call (vision judging is low-frequency, and a repeated
+ * warning helps surface the misconfig); it is not de-duplicated. Non-OAuth
+ * providers are trusted as-is — an unknown provider string still reaches
  * resolveTaskProvider, which throws a clear "expected one of ..." error per
  * YUK-365 (deferred to call time, not validated here).
  */
 
 import type { Provider } from '@/ai/registry';
+import { isOauthProvider } from '@/server/ai/providers';
 
 /** Env var that names the provider for the two vision judges. Default UNSET. */
 export const VISION_JUDGE_PROVIDER_FLAG = 'VISION_JUDGE_PROVIDER';
@@ -43,11 +47,12 @@ const OAUTH_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 
 /**
  * Providers that authenticate via the subscription-OAuth lane and therefore
- * require `CLAUDE_CODE_OAUTH_TOKEN` at call time. Mirrors the single oauth
- * entry in providers.ts `PROVIDERS` (`anthropic-sub`). Kept as a local set so
- * this reader can degrade BEFORE the runner ever resolves the provider.
+ * require `CLAUDE_CODE_OAUTH_TOKEN` at call time. Delegates to the single source
+ * of truth (`OAUTH_PROVIDERS`) exported from providers.ts — adding a new OAuth
+ * provider there automatically flows into this degrade-before-call check, with
+ * no local mirror to drift. Kept as a local alias only for readable call sites.
  */
-const OAUTH_LANE_PROVIDERS = new Set<Provider>(['anthropic-sub']);
+const isOAuthLaneProvider = isOauthProvider;
 
 /** Minimal env shape this reader needs (a superset of NodeJS.ProcessEnv). */
 export type VisionJudgeEnv = Record<string, string | undefined>;
@@ -57,8 +62,13 @@ export type VisionJudgeEnv = Record<string, string | undefined>;
  *
  * - `VISION_JUDGE_PROVIDER` unset → `undefined` (judges keep mimo default).
  * - OAuth-lane provider named but `CLAUDE_CODE_OAUTH_TOKEN` absent → warn (per
- *   call) and return `undefined` (degrade to mimo) rather than a provider that
- *   would throw at call time.
+ *   call) and return `undefined` so the caller falls through to the standard
+ *   `resolveTaskProvider` resolution chain (registry default, OR a global
+ *   `AI_PROVIDER_OVERRIDE` if one is set) — NOT necessarily "the mimo default",
+ *   which is why the warning says "falling back to standard provider resolution"
+ *   rather than naming mimo. Returning the override here would only push the
+ *   failure to call time (resolveTaskProvider throws when the token env is
+ *   missing).
  * - Otherwise → `{ provider, model? }` (model only when `VISION_JUDGE_MODEL`
  *   is set; the resolver supplies the lane default, e.g. claude-opus-4-8).
  */
@@ -68,9 +78,9 @@ export function visionJudgeProviderOverride(
   const provider = env[VISION_JUDGE_PROVIDER_FLAG];
   if (!provider) return undefined;
 
-  if (OAUTH_LANE_PROVIDERS.has(provider as Provider) && !env[OAUTH_TOKEN_ENV]) {
+  if (isOAuthLaneProvider(provider as Provider) && !env[OAUTH_TOKEN_ENV]) {
     console.warn(
-      `[vision-judge] ${VISION_JUDGE_PROVIDER_FLAG}=${provider} but ${OAUTH_TOKEN_ENV} missing — falling back to default vision model`,
+      `[vision-judge] ${VISION_JUDGE_PROVIDER_FLAG}=${provider} but ${OAUTH_TOKEN_ENV} missing — omitting the override so resolution falls through to the standard chain (registry default OR AI_PROVIDER_OVERRIDE if set)`,
     );
     return undefined;
   }
