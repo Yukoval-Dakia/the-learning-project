@@ -1064,19 +1064,13 @@ export function detectStudentWork(block: { structured: StructuredQuestionT | nul
 }
 
 /**
- * YUK-487 — whether the extraction engine that produced this block RELIABLY assessed
- * handwriting (and therefore whether a *false* detectStudentWork is a TRUSTWORTHY "no
- * student work"). Only the VLM StructureTask ('vlm_structure', sets student_answer_present)
- * and Tencent QuestionMark ('tencent_ocr', sets extraction_evidence.handwriting) do — the
- * exact two signals detectStudentWork reads. Every OTHER source falls to fail-open (the
- * safe direction): 'glm_ocr' (the VLM-down fallback) never assesses; 'vision_rescue' sets
- * handwriting evidence only OPPORTUNISTICALLY (from legacy wrong_answer_md), so its absence
- * is still uninformative; text/manual sources ('docx_text' / 'manual' / 'agent_edit') and
- * an absent/unknown source carry no whole-page handwriting signal. So a false
- * detectStudentWork from any of them is uninformative — never a trustworthy "no student
- * work" — and must NOT gate out the whole-page judge. (A block with no page image to grade
- * is cheaply handled downstream: runMultimodalDirectJudge returns 'unsupported' WITHOUT an
- * LLM call when there are neither images nor answer text → route-to-review, no wasted cost.)
+ * YUK-487 — whether the extraction engine RELIABLY assessed handwriting (so a *false*
+ * detectStudentWork from this block is a TRUSTWORTHY "no student work"). Only the VLM
+ * StructureTask ('vlm_structure', sets student_answer_present) and Tencent QuestionMark
+ * ('tencent_ocr', sets extraction_evidence.handwriting) do — the exact two signals
+ * detectStudentWork reads. 'glm_ocr' (the VLM-down fallback) never assesses; 'vision_rescue'
+ * sets handwriting evidence only OPPORTUNISTICALLY (from legacy wrong_answer_md), so its
+ * absence is still uninformative.
  */
 export function extractionAssessedHandwriting(block: {
   structured: StructuredQuestionT | null;
@@ -1086,17 +1080,38 @@ export function extractionAssessedHandwriting(block: {
 }
 
 /**
+ * Scan/photo extraction sources — the ones where handwriting is physically possible, so a
+ * degraded "no handwriting" reading is worth fail-opening on. Text/manual sources
+ * ('docx_text' / 'manual' / 'agent_edit') and an absent/unknown source have no whole-page
+ * handwriting to miss, so they are NEVER failed-open.
+ */
+const SCAN_SOURCES: ReadonlySet<string> = new Set([
+  'glm_ocr',
+  'vlm_structure',
+  'tencent_ocr',
+  'vision_rescue',
+]);
+
+/**
  * YUK-487 — gate for whole-page student-answer grading. Grade when EITHER detectStudentWork
- * flagged real handwriting, OR extraction did not reliably assess handwriting (fail-OPEN):
- * the reliable whole-page Opus judge must not be blocked by an uninformative negative from
- * a degraded extraction (the YUK-487 failure: StructureTask down → 'glm_ocr' → false despite
- * real handwriting → judge never ran). Only skip when extraction DID assess and found none
- * (cost guard). Per-page holistic grading that removes the extraction dependency = YUK-488.
+ * flagged real handwriting, OR the block came from a SCAN/photo source whose handwriting was
+ * NOT reliably assessed (fail-OPEN) — the YUK-487 failure: StructureTask down → 'glm_ocr' →
+ * detectStudentWork false despite real handwriting → judge never ran.
+ *
+ * The fail-open is SCOPED to scan sources on purpose: the grading branch routes an
+ * 'unsupported' verdict to review and `continue`s (skipping tagging/auto-enroll), so
+ * fail-opening a non-scan block (e.g. a 'docx_text' question with evidence images) would
+ * DIVERT a normally-auto-enrollable question into review. Text/manual sources have no
+ * handwriting to miss, so they keep the normal path. Skip when a scan source assessed and
+ * found none (cost guard). Holistic per-page grading that drops the extraction dependency
+ * entirely = YUK-488.
  */
 export function shouldGradeStudentWork(block: {
   structured: StructuredQuestionT | null;
 }): boolean {
-  return detectStudentWork(block) || !extractionAssessedHandwriting(block);
+  if (detectStudentWork(block)) return true;
+  const source = block.structured?.source;
+  return source != null && SCAN_SOURCES.has(source) && !extractionAssessedHandwriting(block);
 }
 
 /**
