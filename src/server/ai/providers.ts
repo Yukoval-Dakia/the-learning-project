@@ -111,6 +111,24 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
 export const ANTHROPIC_SUB_DEFAULT_MODEL = 'claude-opus-4-8';
 
 /**
+ * Single source of truth for which providers authenticate via the OAuth lane
+ * and therefore require `oauthTokenEnv` at call time. Derived by filtering
+ * `PROVIDERS` on `authMode === 'oauth'` so adding a new OAuth provider cannot
+ * drift — every caller (vision-judge degrade-before-call check, future hooks)
+ * delegates to this set rather than re-declaring provider names.
+ */
+export const OAUTH_PROVIDERS: ReadonlySet<Provider> = new Set(
+  Object.entries(PROVIDERS)
+    .filter(([, config]) => config.authMode === 'oauth')
+    .map(([name]) => name as Provider),
+);
+
+/** Predicate form of `OAUTH_PROVIDERS` for readability at call sites. */
+export function isOauthProvider(provider: Provider): boolean {
+  return OAUTH_PROVIDERS.has(provider);
+}
+
+/**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
  *   - 'key'   → { apiKey, baseUrl? } forwarded as ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL.
  *   - 'oauth' → { oauthTokenEnv } whose value the runner SETS as CLAUDE_CODE_OAUTH_TOKEN
