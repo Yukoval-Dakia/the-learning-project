@@ -78,6 +78,8 @@ KnowledgeProposeTask + KnowledgeReviewTask（已有）扩 prompt：rather than o
 >
 > 节点提议和边提议的 event 形态都按原 ADR 走 `subject_kind: 'knowledge' | 'knowledge_edge'`——event 层契约未变，只是产生 event 的 task 分了两个。
 
+> **2026-06-22 修订（Lane D / YUK-482）**：上文 "`KnowledgeProposeTask` + `KnowledgeReviewTask` 扩 prompt" 的实施做了**进一步调整** —— `KnowledgeProposeTask` **整体被移除**（连同 nightly cron `knowledge_propose_nightly` 与 `runProposeAndWrite`）。原任务把"答错 attempt → 提议新 KC"耦合在 performance 轴；按 axis-cleanup 重整，**KC 创建 / 提议是 CONTENT 轴动作**（由材料覆盖什么知识驱动），**与学生答题正误无关**。答错只喂错因 / attribution + mastery。`KnowledgeEdgeProposeTask`（边提议，现仍走 `knowledge_edge_propose_nightly` cron）保留，但其输入仍是 `recent_failures` 的模式匹配视图，**不是**驱动 KC 创建。KC 创建现完全走 content-driven 路径（cold-start-bridge / image-candidate-accept matcher / agent proposal-tools）+ 维护流 `KnowledgeReviewTask`。下文出现 `KnowledgeProposeTask` 的历史段落（含本节首句扩 prompt 设想、§接受的代价中的 prompt 复杂度顾虑、迁移路径 Step 4）保留作演进记录，**不再现役**。详见 `docs/architecture.md` §5.1 与 PR #559。
+
 ---
 
 ## 理由

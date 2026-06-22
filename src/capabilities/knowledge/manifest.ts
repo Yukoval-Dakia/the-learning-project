@@ -61,8 +61,8 @@ export const knowledgeCapability = defineCapability({
     ],
   },
   jobs: {
-    // M4-T3 (YUK-319)：夜链三 cron + 链式归因 followup 入容器。cron/链式形态
-    // 照 handlers.ts 现状一字不改；注册由 server/boss/register-capability-jobs.ts
+    // M4-T3 (YUK-319) + Lane D (YUK-482)：夜链 cron + 链式 attribution followup 入容器。
+    // cron/链式形态照 handlers.ts 现状；注册由 server/boss/register-capability-jobs.ts
     // 收集挂载，此处声明是唯一归属源。
     handlers: [
       // Lane D (YUK-482): knowledge_propose_nightly was removed — its sole job was

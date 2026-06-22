@@ -1,8 +1,18 @@
 // Phase 2 Dreaming — nightly knowledge_edge propose handler.
 //
-// 和 knowledge_propose_nightly 配对：node propose 每条 attempt 单独跑（per-attempt
-// 局部判断），edge propose 是 batch 一次跑（跨 attempt 找模式）。每天 BJT 02:30 触发
-// （offset 30min 跟 node propose 错峰）。
+// Edge propose is a batch run once per day across recent failure attempts
+// (cross-attempt pattern matching). Triggered daily at BJT 02:30.
+//
+// Lane D (YUK-482): this job used to be described as paired with the
+// `knowledge_propose_nightly` cron (per-attempt node propose at BJT 02:00, then
+// edge propose at 02:30). The node-propose cron + `KnowledgeProposeTask` have
+// been removed — see docs/architecture.md §5.1. This edge-propose job is RETAINED
+// because edge proposal is a graph-topology maintenance concern (it reads
+// `recent_failures` as one input among several), not the "答错 → propose new KC"
+// coupling that Lane D unwired. The 02:30 slot no longer has a 02:00 partner to
+// 错峰 against, but the time itself is harmless and changing cron schedules has
+// ops cost (unregister/re-register queue+schedule); kept as-is until a separate
+// reason to move it.
 
 import type { Job } from 'pg-boss';
 
