@@ -103,6 +103,24 @@ describe('matchKnowledgeBySimilarity', () => {
     expect(child?.parent_id).toBe('math-root');
   });
 
+  it('clamps topK <= 0 to 1 (never silently returns [] → propose-everything)', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-a', unitVec(0));
+    await seedKc(db, 'kc-b', unitVec(1));
+
+    const out = await matchKnowledgeBySimilarity(db, unitVec(0), { topK: 0 });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.knowledge_id).toBe('kc-a');
+  });
+
+  it('returns [] when no active embedded KC exists (all candidates filtered)', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-null', null); // awaiting backfill → excluded
+    await seedKc(db, 'kc-archived', unitVec(0), { archived: true }); // archived → excluded
+
+    expect(await matchKnowledgeBySimilarity(db, unitVec(0), { topK: 5 })).toEqual([]);
+  });
+
   it('returns [] for an empty query vector (caller routes to propose)', async () => {
     const db = testDb();
     await seedKc(db, 'kc-a', unitVec(0));

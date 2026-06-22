@@ -43,6 +43,10 @@ export interface MatchKnowledgeOptions {
  * Fetch the top-K active, embedded KCs nearest to `queryEmbedding` by pgvector cosine
  * distance (nearest first). Pure read; no writes. Returns `[]` for an empty query vector
  * (the caller routes that to the PROPOSE path — there is nothing to match against).
+ *
+ * `queryEmbedding` MUST be EMBED_DIMS (1024)-length — the same single internal embedder that
+ * populated `knowledge.embedding`. A wrong length is a programmer error and fails loud at
+ * query time (pgvector dim mismatch); P1 does not soft-guard it (caller contract, like poolFetch).
  */
 export async function matchKnowledgeBySimilarity(
   db: Db,
@@ -51,22 +55,36 @@ export async function matchKnowledgeBySimilarity(
 ): Promise<KnowledgeSimilarityCandidate[]> {
   if (queryEmbedding.length === 0) return [];
 
+  // Clamp topK to a valid LIMIT (>= 1). A caller that mis-sets topK <= 0 would otherwise
+  // either SILENTLY return [] (→ the caller routes EVERYTHING to propose — the opposite of
+  // intent, and exactly the silent-degradation class this redesign kills) or error at the DB
+  // (negative LIMIT). Clamp-to-1 always yields at least the nearest candidate to decide
+  // match-vs-propose against.
+  const limit = Math.max(1, Math.trunc(opts.topK));
+
   // Single source of truth: the same distance expression feeds both the SELECT projection
   // and the ORDER BY (the column the caller thresholds on IS the column we sort by), exactly
   // as poolFetch reuses its distanceExpr. A bare expression in ORDER BY sorts ASC → nearest
   // first (smaller cosine distance = nearer).
   const distanceExpr = sql<number>`${knowledge.embedding} <=> ${toSqlVector(queryEmbedding)}::vector`;
 
-  return db
-    .select({
-      knowledge_id: knowledge.id,
-      name: knowledge.name,
-      domain: knowledge.domain,
-      parent_id: knowledge.parent_id,
-      cosine_distance: distanceExpr,
-    })
-    .from(knowledge)
-    .where(and(isNull(knowledge.archived_at), sql`${knowledge.embedding} IS NOT NULL`))
-    .orderBy(distanceExpr)
-    .limit(opts.topK);
+  return (
+    db
+      .select({
+        knowledge_id: knowledge.id,
+        name: knowledge.name,
+        domain: knowledge.domain,
+        parent_id: knowledge.parent_id,
+        cosine_distance: distanceExpr,
+      })
+      .from(knowledge)
+      // Active + embedded only. NOTE: `approval_status` is intentionally NOT filtered — today
+      // every KC is auto-approved ('approved' is the only value with a write path, so it is
+      // inert). When the AI-review/approval flow lands, this MUST add `approval_status =
+      // 'approved'` (latent dep, YUK-489) so unreviewed `pending` KCs aren't matchable. Mirrors
+      // poolFetch's documented answer_class deferral.
+      .where(and(isNull(knowledge.archived_at), sql`${knowledge.embedding} IS NOT NULL`))
+      .orderBy(distanceExpr)
+      .limit(limit)
+  );
 }
