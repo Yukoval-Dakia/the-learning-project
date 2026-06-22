@@ -28,13 +28,13 @@ import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/i
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type GradeStudentAnswerFn,
+  type RunAutoEnrollParams,
   detectStudentWork,
   extractionAssessedHandwriting,
   observeEventId,
   runAutoEnrollForSession,
   shouldGradeStudentWork,
 } from './auto-enroll';
-import { ColdStartBridgeError, type ColdStartBridgeRunTaskFn } from './cold-start-bridge';
 import { MistakeEnrollTaskError, type RunMistakeEnrollTaskParams } from './mistake_enroll';
 import { TaggingTaskError } from './tagging';
 
@@ -173,6 +173,17 @@ const lowConfidenceTagging = async (): Promise<TaggingOutputT> => ({
   reasoning: 'low',
 });
 
+// P3 (YUK-489): the ENROLL path runs the unified `tagKnowledge`, not the grid-prefill
+// TaggingTask. DB tests inject a `tagKnowledgeFn` stub (mirroring tag-knowledge.db.test.ts's
+// embedFn/nameKcFn stubs) so no embedding/naming model is called.
+//
+// matchK1 — always MATCHES the seeded `k1` KC (the common enroll case): the question attributes
+// to k1 with no new KC minted.
+const matchK1: RunAutoEnrollParams['tagKnowledgeFn'] = async () => ({
+  kind: 'match',
+  knowledge_ids: ['k1'],
+});
+
 describe('runAutoEnrollForSession', () => {
   beforeEach(async () => {
     await resetDb();
@@ -244,7 +255,7 @@ describe('runAutoEnrollForSession', () => {
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
     });
 
     expect(result.status).toBe('completed');
@@ -286,18 +297,27 @@ describe('runAutoEnrollForSession', () => {
   });
 
   // ===========================================================================
-  // Flag ON: low confidence → routed to review, block stays draft (no change).
+  // Flag ON: low EXTRACTION confidence → routed to review, block stays draft.
+  // P3 (YUK-489): tagging is no longer a routing-uncertainty source on the enroll path
+  // (tagKnowledge always attributes ≥1 KC at full confidence), so the only thing that can
+  // route an enroll block to review is the weakest-link extraction confidence falling below the
+  // threshold. Seed a block with low extraction_confidence to exercise that gate.
   // ===========================================================================
-  it('flag ON + low confidence: routes to review, block stays draft', async () => {
+  it('flag ON + low EXTRACTION confidence: routes to review, block stays draft', async () => {
     const db = testDb();
     const { sessionId } = await seed(db);
+    // Drop both blocks' extraction confidence below the default 0.85 threshold.
+    await db
+      .update(question_block)
+      .set({ extraction_confidence: 0.3 })
+      .where(eq(question_block.ingestion_session_id, sessionId));
 
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: lowConfidenceTagging,
+      tagKnowledgeFn: matchK1,
     });
 
     expect(result.status).toBe('completed');
@@ -322,8 +342,9 @@ describe('runAutoEnrollForSession', () => {
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: async () => {
-        throw new TaggingTaskError('provider down');
+      // A tagKnowledge throw (provider down / missing seed root) must NEVER auto-enroll.
+      tagKnowledgeFn: async () => {
+        throw new Error('tagKnowledge provider down');
       },
     });
 
@@ -367,36 +388,63 @@ describe('runAutoEnrollForSession', () => {
   });
 
   // ===========================================================================
-  // YUK-482 Lane A — cold-start bridge: a thin-seed tree (only a subject-root KC)
-  // + a block whose tagging matches NO KC must (with enroll ON) run the bridge,
-  // auto-create a child KC under the subject root (live + approved), leave a
-  // propose-event audit trail, and materialize a placement-answerable question
-  // (knowledge_ids=[newKc], draft_status active, reference_md from the bridge).
+  // P3 (YUK-489) — unified tagKnowledge on the ENROLL path. The old cold-start-bridge
+  // signature gate is GONE; tagKnowledge subsumes it. On a thin-seed tree (only a subject-root
+  // KC) a block whose content matches no in-subject KC PROPOSEs a fresh child (tagKnowledge mints
+  // it live + approved in its OWN tx + an `experimental:auto_tag_kc_created` audit event), and the
+  // enroll path materializes a placement-answerable question attributed to it. A tagKnowledge
+  // outage (provider down / missing seed root) routes-to-review. tagKnowledge is stubbed (no real
+  // embedding/naming model) — these tests assert the auto-enroll WIRING around it, not its
+  // internals (those live in tag-knowledge.db.test.ts).
   // ===========================================================================
 
-  // Tagging that is HIGH confidence but produces ZERO surviving suggestions — the
-  // exact cold-start signature on a thin-seed tree (grid filter empties suggestions →
-  // route='review' "no surviving knowledge suggestions" but confidence over the bar).
-  const coldStartTagging = async (): Promise<TaggingOutputT> => ({
-    suggestions: [],
-    overall_confidence: 0.95,
-    reasoning: 'no grid match (thin seed)',
-  });
-
-  // Deterministic cold-start bridge stub — returns the JSON the production runTask would
-  // (the invoker parses strict JSON via ColdStartBridgeOutput). subject_id MUST be one of
-  // KNOWN_SUBJECT_IDS (the invoker rejects out-of-vocabulary picks).
-  const coldStartBridgeStub =
-    (out: {
-      subject_id: string;
-      kc_name: string;
-      reference_md: string;
-    }): ColdStartBridgeRunTaskFn =>
-    async () => ({ text: JSON.stringify({ ...out, reasoning: 'stub' }) });
+  // A tagKnowledgeFn stub that PROPOSEs a fresh KC: it mimics the real tagKnowledge propose path
+  // by minting an approved child under the subject root + the audit event, then returning
+  // kind:'propose'. (The auto-enroll path only consumes `knowledge_ids`; we create the row so the
+  // structural-verify gate sees a live KC and the question lands 'active'.)
+  const proposeChildKc =
+    (kcName: string): NonNullable<RunAutoEnrollParams['tagKnowledgeFn']> =>
+    async (deps, input) => {
+      const childId = createId();
+      const now = new Date();
+      await deps.db.insert(knowledge).values({
+        id: childId,
+        name: kcName,
+        domain: null,
+        parent_id: input.subjectRootId,
+        archived_at: null,
+        proposed_by_ai: true,
+        approval_status: 'approved',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      } as typeof knowledge.$inferInsert);
+      await deps.db.insert(event).values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'tag_knowledge',
+        action: 'experimental:auto_tag_kc_created',
+        subject_kind: 'knowledge',
+        subject_id: childId,
+        outcome: 'success',
+        payload: {
+          source: 'tag_knowledge',
+          auto_created_kc_id: childId,
+          subject_root_id: input.subjectRootId,
+          name: kcName,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+      return { kind: 'propose', knowledge_ids: [childId], kc_name: kcName };
+    };
 
   // Seed a THIN tree: only the wenyan subject-root seed node (id seed:wenyan:root,
-  // domain 'wenyan'), plus one ingestion session + one draft block. No concept KCs —
-  // so any tagging suggestion would be grid-filtered to [] (the cold-start condition).
+  // domain 'wenyan'), plus one ingestion session + one draft block. No concept KCs — the
+  // tagKnowledge stub PROPOSEs a child under the root.
   async function seedThinTree(
     db: ReturnType<typeof testDb>,
   ): Promise<{ sessionId: string; blockId: string }> {
@@ -441,7 +489,7 @@ describe('runAutoEnrollForSession', () => {
       visual_complexity: 'low',
       extraction_confidence: 1,
       status: 'draft',
-      // OCR got the prompt but NOT the reference answer → the bridge generates one.
+      // OCR got the prompt but NOT the reference answer. P3: we do NOT synthesize one (P4a).
       reference_md: null,
       knowledge_hint: '论语',
       merged_from_block_ids: [],
@@ -452,7 +500,49 @@ describe('runAutoEnrollForSession', () => {
     return { sessionId, blockId };
   }
 
-  it('cold-start bridge: thin tree + no KC match → auto-creates child KC + propose trail + placement-answerable question', async () => {
+  it('tagKnowledge PROPOSE with NO subjectId (prod job shape) → bridge classifies subject → child under seed:<classified>:root', async () => {
+    const db = testDb();
+    const { sessionId } = await seedThinTree(db);
+
+    // The production job (jobs/auto_enroll.ts) calls runAutoEnrollForSession WITHOUT a subjectId.
+    // The enroll path must CLASSIFY the subject via the cold-start bridge, resolve
+    // seed:<subject>:root, and tag under it — NOT build `seed:undefined:root` (which would throw
+    // in applyProposeNew and route every thin-tree block to review the moment enroll is flipped).
+    let tagRootSeen: string | null = null;
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      // subjectId omitted on purpose (prod job shape).
+      env: { [FLAG]: 'true' },
+      // Bridge classifies the subject (+ names the KC); only its subject_id is load-bearing here.
+      runColdStartBridgeFn: async () => ({
+        text: JSON.stringify({
+          reasoning: '',
+          subject_id: 'wenyan',
+          kc_name: '《论语》句子翻译',
+          reference_md: '',
+        }),
+      }),
+      tagKnowledgeFn: async (deps, input) => {
+        tagRootSeen = input.subjectRootId;
+        return proposeChildKc('《论语》句子翻译')(deps, input);
+      },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(1);
+    expect(result.routed_to_review).toBe(0);
+    // The bridge-classified root was used — NOT seed:undefined:root.
+    expect(tagRootSeen).toBe('seed:wenyan:root');
+    const children = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+    expect(children).toHaveLength(1);
+    expect(children[0].name).toBe('《论语》句子翻译');
+  });
+
+  it('tagKnowledge PROPOSE: thin tree + no KC match → mints child KC + audit trail + placement-answerable question', async () => {
     const db = testDb();
     const { sessionId, blockId } = await seedThinTree(db);
 
@@ -461,14 +551,7 @@ describe('runAutoEnrollForSession', () => {
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      // High confidence + ZERO suggestions → route='review' but cold-start signature matches.
-      runTaggingFn: coldStartTagging,
-      // Deterministic bridge: classify into wenyan, name a child concept, supply an answer.
-      runColdStartBridgeFn: coldStartBridgeStub({
-        subject_id: 'wenyan',
-        kc_name: '《论语》句子翻译',
-        reference_md: '学习并按时温习，不也很愉快吗？',
-      }),
+      tagKnowledgeFn: proposeChildKc('《论语》句子翻译'),
     });
 
     expect(result.status).toBe('completed');
@@ -487,43 +570,37 @@ describe('runAutoEnrollForSession', () => {
     expect(newKc.archived_at).toBeNull();
     expect(newKc.proposed_by_ai).toBe(true);
 
-    // HIGH fix — the audit trail is an AUDIT-ONLY event (distinct action
-    // 'experimental:cold_start_kc_created', subject_kind='knowledge', actor_ref='workflow_judge')
-    // recording the already-applied KC id — NOT a propose-event. The silent cold-start
-    // auto-create is visible in the event log, but it is NOT an inbox proposal (cannot be
-    // re-accepted into a duplicate KC). See the dedicated regression test below.
+    // tagKnowledge's audit trail is an AUDIT-ONLY event (distinct action
+    // 'experimental:auto_tag_kc_created', subject_kind='knowledge') recording the already-applied
+    // KC id — NOT a pending/acceptable propose-event.
     const auditEvents = await db
       .select()
       .from(event)
       .where(
         and(
-          eq(event.action, 'experimental:cold_start_kc_created'),
+          eq(event.action, 'experimental:auto_tag_kc_created'),
           eq(event.subject_kind, 'knowledge'),
         ),
       );
     expect(auditEvents).toHaveLength(1);
-    expect(auditEvents[0]?.actor_ref).toBe('workflow_judge');
     expect(auditEvents[0]?.subject_id).toBe(newKc.id);
     expect((auditEvents[0]?.payload as Record<string, unknown>).auto_created_kc_id).toBe(newKc.id);
-    expect((auditEvents[0]?.payload as Record<string, unknown>).source).toBe('cold_start_bridge');
 
-    // The cold-start KC create writes ZERO propose-events (the inbox would surface a propose
-    // event as pending → accepting it re-applies → duplicate KC). The mirror writes none either.
+    // No `propose` knowledge event (the inbox would surface it as pending → re-apply → duplicate).
     const proposeEvents = await db
       .select()
       .from(event)
       .where(and(eq(event.action, 'propose'), eq(event.subject_kind, 'knowledge')));
     expect(proposeEvents).toHaveLength(0);
 
-    // The materialized question attributes to the new KC, is placement-answerable, and carries
-    // the bridge reference answer. The structural-verify gate (prompt + valid kind + 1 live KC)
-    // promotes it to 'active' (MEDIUM-1).
+    // The materialized question attributes to the new KC + is placement-answerable. P3: NO
+    // reference answer is synthesized (block.reference_md was null → reference_md stays null).
     const questions = await db.select().from(question);
     expect(questions).toHaveLength(1);
     const q = questions[0];
     expect(q.knowledge_ids).toEqual([newKc.id]);
     expect(q.draft_status).toBe('active');
-    expect(q.reference_md).toBe('学习并按时温习，不也很愉快吗？');
+    expect(q.reference_md).toBeNull();
 
     // The block flipped to 'auto_enrolled' + linked to the question.
     const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
@@ -531,12 +608,8 @@ describe('runAutoEnrollForSession', () => {
     expect(blocks[0]?.imported_question_id).toBe(q.id);
   });
 
-  // HIGH-fix regression: the cold-start audit trail must NEVER surface as a pending/acceptable
-  // proposal, and there must be NO path that re-creates a duplicate KC under the root. Before
-  // the fix the trail was a live `propose_new` propose-event (outcome 'partial', no rate →
-  // resolveStatus 'pending'); it showed in GET /api/knowledge/proposals?status=pending and
-  // accepting it ran applyProposeNew AGAIN → a SECOND duplicate KC. This proves the fix.
-  it('cold-start audit trail is NOT a pending proposal and cannot re-create a duplicate KC', async () => {
+  // The tagKnowledge audit trail must NEVER surface as a pending/acceptable proposal.
+  it('tagKnowledge audit trail is NOT a pending proposal', async () => {
     const db = testDb();
     const { sessionId } = await seedThinTree(db);
 
@@ -545,114 +618,123 @@ describe('runAutoEnrollForSession', () => {
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: coldStartTagging,
-      runColdStartBridgeFn: coldStartBridgeStub({
-        subject_id: 'wenyan',
-        kc_name: '《论语》句子翻译',
-        reference_md: '学习并按时温习，不也很愉快吗？',
-      }),
+      tagKnowledgeFn: proposeChildKc('《论语》句子翻译'),
     });
     expect(result.enrolled).toBe(1);
 
-    // Exactly ONE KC under the subject root after the cold-start enroll.
-    const kcCountBefore = (
+    const kcCount = (
       await db.select().from(knowledge).where(eq(knowledge.parent_id, 'seed:wenyan:root'))
     ).length;
-    expect(kcCountBefore).toBe(1);
+    expect(kcCount).toBe(1);
 
-    // The pending proposal inbox does NOT surface the cold-start KC create (no propose-event
-    // was written; the audit event has a distinct action proposalWhere() never folds).
+    // The pending proposal inbox does NOT surface the tag KC create.
     const pending = await listProposalInboxRows(db, { status: 'pending' });
     expect(pending).toHaveLength(0);
 
-    // The audit event itself is not addressable as a proposal (getProposalInboxRow → null), so
-    // there is no id an owner could POST to the accept endpoint to trigger a re-apply.
+    // The audit event itself is not addressable as a proposal.
     const auditEvents = await db
       .select()
       .from(event)
-      .where(eq(event.action, 'experimental:cold_start_kc_created'));
+      .where(eq(event.action, 'experimental:auto_tag_kc_created'));
     expect(auditEvents).toHaveLength(1);
     expect(await getProposalInboxRow(db, auditEvents[0].id)).toBeNull();
-
-    // No propose-event exists at all → no acceptProposal codepath → the KC count under the
-    // root is unchanged (still exactly 1, no duplicate).
-    const kcCountAfter = (
-      await db.select().from(knowledge).where(eq(knowledge.parent_id, 'seed:wenyan:root'))
-    ).length;
-    expect(kcCountAfter).toBe(1);
   });
 
-  // LOW-fix regression: a subject in KNOWN_SUBJECT_IDS whose seed root was NEVER planted must
-  // route-to-review (block stays draft, upload preserved) rather than throw inside the enroll
-  // tx (which would abort the whole batch → pg-boss retry-forever). Here the bridge classifies
-  // into 'wenyan' but the thin tree has NO seed:wenyan:root node.
-  it('cold-start missing seed root: routes to review, no throw, no KC, block stays draft', async () => {
+  // tagKnowledge MATCH: an existing in-subject KC is matched → the question attributes to it, NO
+  // new KC minted, NO audit event.
+  it('tagKnowledge MATCH: attributes the existing KC, mints nothing', async () => {
     const db = testDb();
-    // Seed a session + block but NO seed:wenyan:root node (the missing-root case).
-    const now = new Date();
-    const sessionId = createId();
-    await db.insert(learning_session).values({
-      id: sessionId,
-      type: 'ingestion',
-      status: 'extracted',
-      source_document_id: createId(),
-      source_asset_ids: ['asset_1'],
-      entrypoint: 'vision_paper',
-      warnings: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-    const blockId = createId();
-    await db.insert(question_block).values({
-      id: blockId,
-      ingestion_session_id: sessionId,
-      source_document_id: null,
-      source_asset_ids: ['asset_1'],
-      page_spans: [],
-      structured: structured('翻译：学而时习之，不亦说乎'),
-      figures: [],
-      layout_quality: 'structured',
-      image_refs: [],
-      crop_refs: [],
-      visual_complexity: 'low',
-      extraction_confidence: 1,
-      status: 'draft',
-      reference_md: null,
-      knowledge_hint: '论语',
-      merged_from_block_ids: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
+    const { sessionId } = await seed(db); // seeds k1 (domain wenyan)
 
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: coldStartTagging,
-      runColdStartBridgeFn: coldStartBridgeStub({
-        subject_id: 'wenyan',
-        kc_name: '《论语》句子翻译',
-        reference_md: 'answer',
-      }),
+      tagKnowledgeFn: matchK1,
     });
 
-    // No throw; the block routed to review (upload not lost), nothing enrolled.
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(2);
+    // No new KC under any root (matchK1 attributes the seeded k1).
+    const questions = await db.select().from(question);
+    expect(questions.every((q) => q.knowledge_ids.includes('k1'))).toBe(true);
+    // No tag audit event (MATCH never mints).
+    const auditEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_created'));
+    expect(auditEvents).toHaveLength(0);
+  });
+
+  // A tagKnowledge outage (provider down / missing seed root → a thrown error) must route the
+  // block to review (upload not lost), no throw out of the runner, nothing enrolled.
+  it('tagKnowledge outage: routes to review, no throw, no question, block stays draft', async () => {
+    const db = testDb();
+    const { sessionId, blockId } = await seedThinTree(db);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      tagKnowledgeFn: async () => {
+        throw new Error('tagKnowledge: missing seed root / provider down');
+      },
+    });
+
     expect(result.status).toBe('completed');
     expect(result.enrolled).toBe(0);
     expect(result.routed_to_review).toBe(1);
-    expect(await db.select().from(knowledge)).toHaveLength(0);
+    // No KC created beyond the seed root, no question — the block stays draft for human review.
+    const children = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+    expect(children).toHaveLength(0);
     expect(await db.select().from(question)).toHaveLength(0);
     const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
     expect(blocks[0]?.status).toBe('draft');
   });
 
-  // MEDIUM-2 regression: when OCR already extracted a reference answer, the cold-start bridge
-  // must NOT overwrite it with the LLM's generated answer (the OCR answer is ground truth).
-  it('cold-start preserves the OCR reference answer over the bridge answer', async () => {
+  // tagKnowledge does NOT fire in observe mode (zero mutation): observe keeps the old grid-prefill
+  // TaggingTask, so the tagKnowledge stub is never consulted and no KC is minted.
+  it('tagKnowledge does NOT fire in observe mode (zero mutation)', async () => {
     const db = testDb();
+    const { sessionId } = await seedThinTree(db);
+
+    let tagCalled = false;
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: {}, // enroll OFF, observe ON (default) — must NOT run tagKnowledge / mutate
+      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: async (deps, input) => {
+        tagCalled = true;
+        return proposeChildKc('x')(deps, input);
+      },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    expect(tagCalled).toBe(false);
+    // No child KC, no question — observe stays zero-mutation.
+    const children = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+    expect(children).toHaveLength(0);
+    expect(await db.select().from(question)).toHaveLength(0);
+  });
+
+  // P3 batch cache: two sibling blocks both PROPOSE the same KC name → the unified per-run
+  // batchCache (threaded by runAutoEnrollForSession) makes the second reuse the first's id, so
+  // ONE KC is minted, not two. We assert via the REAL tagKnowledge default (a stub embedFn so no
+  // model runs) to exercise the actual cache threading, not a hand-rolled stub.
+  it('batch cache: sibling blocks proposing the same KC reuse one minted id (one KC, not two)', async () => {
+    const db = testDb();
+    // Thin tree with seed:wenyan:root + TWO draft blocks.
     const now = new Date();
     await db.insert(knowledge).values({
       id: 'seed:wenyan:root',
@@ -679,105 +761,73 @@ describe('runAutoEnrollForSession', () => {
       updated_at: now,
       version: 0,
     });
-    const blockId = createId();
-    await db.insert(question_block).values({
-      id: blockId,
-      ingestion_session_id: sessionId,
-      source_document_id: null,
-      source_asset_ids: ['asset_1'],
-      page_spans: [],
-      structured: structured('翻译：学而时习之，不亦说乎'),
-      figures: [],
-      layout_quality: 'structured',
-      image_refs: [],
-      crop_refs: [],
-      visual_complexity: 'low',
-      extraction_confidence: 1,
-      status: 'draft',
-      // OCR DID extract a reference answer → it must win over the bridge's.
-      reference_md: 'OCR真实答案',
-      knowledge_hint: '论语',
-      merged_from_block_ids: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
+    const blockIds = [createId(), createId()];
+    await db.insert(question_block).values(
+      blockIds.map((id) => ({
+        id,
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        structured: structured(`翻译题 ${id}`),
+        figures: [],
+        layout_quality: 'structured' as const,
+        image_refs: [],
+        crop_refs: [],
+        visual_complexity: 'low' as const,
+        extraction_confidence: 1,
+        status: 'draft' as const,
+        reference_md: null,
+        knowledge_hint: '论语',
+        merged_from_block_ids: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })),
+    );
 
-    await runAutoEnrollForSession({
+    // Use the REAL tagKnowledge default but stub its model seams: an embedFn returning an
+    // orthogonal vector (→ no match → PROPOSE) + a nameKcFn returning a FIXED name (so both
+    // siblings propose the same name → the batchCache dedups the second).
+    const { tagKnowledge } = await import('@/capabilities/knowledge/server/tag-knowledge');
+    const fixedVec = new Array<number>(1024).fill(0);
+    fixedVec[3] = 1; // orthogonal to the root's seeded embedding (none here → no candidates anyway)
+    const tagKnowledgeFn: RunAutoEnrollParams['tagKnowledgeFn'] = (deps, input) =>
+      tagKnowledge(
+        {
+          ...deps,
+          embedFn: async () => fixedVec,
+          nameKcFn: async () => ({ kc_name: '《论语》句子翻译' }),
+        },
+        input,
+      );
+
+    const result = await runAutoEnrollForSession({
       db,
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: coldStartTagging,
-      runColdStartBridgeFn: coldStartBridgeStub({
-        subject_id: 'wenyan',
-        kc_name: '《论语》句子翻译',
-        reference_md: 'LLM生成的答案（不应覆盖OCR）',
-      }),
+      tagKnowledgeFn,
     });
 
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(2);
+    // Exactly ONE KC minted under the root (the second sibling reused the first via the cache).
+    const children = await db
+      .select()
+      .from(knowledge)
+      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+    expect(children).toHaveLength(1);
+    // Both questions attribute to that same single KC.
     const questions = await db.select().from(question);
-    expect(questions).toHaveLength(1);
-    expect(questions[0]?.reference_md).toBe('OCR真实答案');
-  });
-
-  it('cold-start bridge failure: block routed to review, nothing enrolled (upload not lost)', async () => {
-    const db = testDb();
-    const { sessionId, blockId } = await seedThinTree(db);
-
-    const result = await runAutoEnrollForSession({
-      db,
-      sessionId,
-      subjectId: 'wenyan',
-      env: { [FLAG]: 'true' },
-      runTaggingFn: coldStartTagging,
-      // Bridge throws (provider outage) → swallow → fall through to review.
-      runColdStartBridgeFn: async () => {
-        throw new ColdStartBridgeError('provider down');
-      },
-    });
-
-    expect(result.status).toBe('completed');
-    expect(result.enrolled).toBe(0);
-    expect(result.routed_to_review).toBe(1);
-    // No KC created, no question — the block stays a draft for human review.
-    const children = await db
+    expect(questions).toHaveLength(2);
+    expect(questions.every((q) => q.knowledge_ids[0] === children[0].id)).toBe(true);
+    // Exactly one audit event (one mint).
+    const auditEvents = await db
       .select()
-      .from(knowledge)
-      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
-    expect(children).toHaveLength(0);
-    expect(await db.select().from(question)).toHaveLength(0);
-    const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
-    expect(blocks[0]?.status).toBe('draft');
-  });
-
-  it('cold-start bridge does NOT fire in observe mode (zero mutation)', async () => {
-    const db = testDb();
-    const { sessionId } = await seedThinTree(db);
-
-    let bridgeCalled = false;
-    const result = await runAutoEnrollForSession({
-      db,
-      sessionId,
-      subjectId: 'wenyan',
-      env: {}, // enroll OFF, observe ON (default) — must NOT run the bridge / mutate
-      runTaggingFn: coldStartTagging,
-      runColdStartBridgeFn: async () => {
-        bridgeCalled = true;
-        return { text: JSON.stringify({ subject_id: 'wenyan', kc_name: 'x', reference_md: 'y' }) };
-      },
-    });
-
-    expect(result.status).toBe('completed');
-    expect(result.enrolled).toBe(0);
-    expect(bridgeCalled).toBe(false);
-    // No child KC, no question — observe stays zero-mutation.
-    const children = await db
-      .select()
-      .from(knowledge)
-      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
-    expect(children).toHaveLength(0);
-    expect(await db.select().from(question)).toHaveLength(0);
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_created'));
+    expect(auditEvents).toHaveLength(1);
   });
 
   // ===========================================================================
@@ -1101,7 +1151,7 @@ describe('runAutoEnrollForSession', () => {
       sessionId: enrollSeed.sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
     });
     expect(await dbEnroll.select().from(question)).toHaveLength(2);
     expect(await dbEnroll.select().from(learning_record)).toHaveLength(2);
@@ -1416,7 +1466,7 @@ describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       runMistakeEnrollFn,
     });
 
@@ -1464,7 +1514,7 @@ describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       runMistakeEnrollFn,
     });
 
@@ -1487,7 +1537,7 @@ describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       runMistakeEnrollFn,
     });
 
@@ -1677,7 +1727,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true' }, // GRADE_FLAG unset → grading OFF
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
     });
 
@@ -1711,7 +1761,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
       enqueueAttributionFollowupFn,
     });
@@ -1777,7 +1827,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
       enqueueAttributionFollowupFn,
     });
@@ -1812,7 +1862,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
       enqueueAttributionFollowupFn,
     });
@@ -1845,7 +1895,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
     });
 
@@ -1872,7 +1922,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       sessionId,
       subjectId: 'wenyan',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
     });
 
@@ -1948,7 +1998,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       // invoker — proving the direct call ignores preferredRoutes.
       subjectId: 'wenyan',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
-      runTaggingFn: highConfidenceTagging,
+      tagKnowledgeFn: matchK1,
       // NO gradeStudentAnswerFn → the production defaultGradeStudentAnswer runs.
       gradeRunTaskFn,
       gradeImageFetchFn,
