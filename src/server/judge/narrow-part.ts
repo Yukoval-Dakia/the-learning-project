@@ -88,10 +88,16 @@ export function narrowQuestionToPart(
     parent && parent.role === 'stem' ? { ...parent, sub_questions: [node] } : node;
 
   const prompt_md = structuredToPromptMarkdown(narrowedStructured);
-  // Guard: don't blank the reference when the sub has no stored answer — fall
-  // back to the whole-row reference_md so a sub-with-no-answer is no worse off
-  // than before narrowing.
-  const reference_md = structuredToReferenceMarkdown(narrowedStructured) || question.reference_md;
+  // reference_md is derived ONLY from the narrowed subtree (stem passage + this
+  // sub). Do NOT fall back to the whole-row question.reference_md when the sub has
+  // no stored answer: the whole-row reference is structuredToReferenceMarkdown over
+  // the FULL tree (every sibling sub's answers), so a fallback would re-open the
+  // C1 leak via semanticInput().reference_md (which the runner JSON.stringifies into
+  // the model message). An empty reference for an answer-less sub is strictly safer
+  // than leaking siblings — and loses nothing, since the whole-row reference holds
+  // no extra answer for THIS sub (same derivation source). Answer-less subs route to
+  // the semantic/vision judge, which grades by solving independently.
+  const reference_md = structuredToReferenceMarkdown(narrowedStructured);
 
   return { ...question, structured: narrowedStructured, prompt_md, reference_md };
 }
