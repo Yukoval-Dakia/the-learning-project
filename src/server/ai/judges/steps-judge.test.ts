@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JudgeQuestionRow } from './question-contract';
 import { runStepsJudge } from './steps-judge';
 
@@ -98,6 +98,63 @@ describe('runStepsJudge — accelerator path', () => {
     });
     expect(runTaskFn).toHaveBeenCalledOnce();
     expect(result.coarse_outcome).toBe('incorrect');
+  });
+});
+
+describe('runStepsJudge — vision-judge provider override (YUK-482)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // A non-accelerator LLM response so runTaskFn is actually invoked (answer
+  // differs from answer_equivalents → LLM path), letting us capture its ctx.
+  const llmWrong = async () => ({
+    text: JSON.stringify({
+      extracted_steps: [],
+      extracted_final_answer: 'wrong',
+      signal_verdicts: [{ signal_idx: 0, verdict: 'wrong', comment: '' }],
+      final_answer_match: false,
+      final_answer_comment: 'no',
+      confidence: 0.9,
+    }),
+  });
+
+  it('passes override.provider into ctx when VISION_JUDGE_PROVIDER is set (+ token)', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok-123');
+    let ctx: unknown;
+    await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'not the answer', // differs from equivalents → LLM path, not accelerator
+      subjectProfile: mathProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return llmWrong();
+      },
+      imageFetchFn: async () => [],
+    });
+    expect((ctx as { override?: { provider?: string } }).override).toEqual({
+      provider: 'anthropic-sub',
+      model: undefined,
+    });
+  });
+
+  it('leaves ctx.override undefined when VISION_JUDGE_PROVIDER is unset', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', '');
+    let ctx: unknown;
+    await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'not the answer',
+      subjectProfile: mathProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return llmWrong();
+      },
+      imageFetchFn: async () => [],
+    });
+    expect((ctx as { override?: unknown }).override).toBeUndefined();
   });
 });
 

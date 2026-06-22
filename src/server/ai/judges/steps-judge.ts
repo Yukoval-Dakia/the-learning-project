@@ -3,6 +3,7 @@ import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
+import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import type { JudgeQuestionRow } from './question-contract';
@@ -241,10 +242,19 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
   let llmText: string;
   try {
+    // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
+    // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
+    // unset → undefined → registry mimo default (byte-identical to today). The
+    // override is merged into ctx here (the call site), so an injected test
+    // runTaskFn still receives it and can assert on ctx.override.
     const result = await runTaskFn(
       'StepsJudgeTask',
       { text: llmTextPayload, images },
-      { db: params.db, subjectProfile: params.subjectProfile },
+      {
+        db: params.db,
+        subjectProfile: params.subjectProfile,
+        override: visionJudgeProviderOverride(),
+      },
     );
     llmText = result.text;
   } catch (err) {
