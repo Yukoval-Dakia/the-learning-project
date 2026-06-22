@@ -4,6 +4,7 @@ import {
 } from '@/core/capability/judges/multimodal_direct';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
+import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { JudgeQuestionRow } from './question-contract';
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
@@ -170,10 +171,19 @@ export async function runMultimodalDirectJudge(
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
   let llmText: string;
   try {
+    // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
+    // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
+    // unset → undefined → registry mimo default (byte-identical to today). The
+    // override is merged into ctx here (the call site), so an injected test
+    // runTaskFn still receives it and can assert on ctx.override.
     const result = await runTaskFn(
       'MultimodalDirectJudgeTask',
       { text: llmTextPayload, images },
-      { db: params.db, subjectProfile: params.subjectProfile },
+      {
+        db: params.db,
+        subjectProfile: params.subjectProfile,
+        override: visionJudgeProviderOverride(),
+      },
     );
     llmText = result.text;
   } catch (err) {

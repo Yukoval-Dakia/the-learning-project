@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runMultimodalDirectJudge } from './multimodal-direct-judge';
 import type { JudgeQuestionRow } from './question-contract';
 
@@ -228,6 +228,50 @@ describe('runMultimodalDirectJudge — manifest / payload parse', () => {
     });
     const payload = JSON.parse((taskInput as { text: string }).text);
     expect(payload.reference_md).toBeNull();
+  });
+});
+
+describe('runMultimodalDirectJudge — vision-judge provider override (YUK-482)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('passes override.provider into ctx when VISION_JUDGE_PROVIDER is set (+ token)', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok-123');
+    let ctx: unknown;
+    await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return llmResponse('correct', 0.9);
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect((ctx as { override?: { provider?: string } }).override).toEqual({
+      provider: 'anthropic-sub',
+      model: undefined,
+    });
+  });
+
+  it('leaves ctx.override undefined when VISION_JUDGE_PROVIDER is unset', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', '');
+    let ctx: unknown;
+    await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return llmResponse('correct', 0.9);
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect((ctx as { override?: unknown }).override).toBeUndefined();
   });
 });
 
