@@ -1,5 +1,7 @@
 # 抽取层 = 确定性 OCR，LLM 只做分析
 
+> **2026-06-22 修订注记（Lane D / YUK-482）**：本 ADR 第一段列举的 LLM 任务里，`KnowledgeProposeTask` 已被移除。原计划由「答错 attempt → 触发 KC 提议」走该 task，现按 axis-cleanup 拆除：**提议 / 创建 KC 是 CONTENT 轴动作**（由材料覆盖内容驱动），**与学生答题正误无关**；答错是 PERFORMANCE 轴信号 → 只喂错因 / attribution + mastery。KC 创建现完全走 content-driven 路径（cold-start-bridge / image-candidate-accept matcher / agent proposal-tools）+ 维护流 `KnowledgeReviewTask`。详见 `docs/architecture.md` §5.1 与 PR #559。下文出现 `KnowledgeProposeTask` 的历史段落保留作演进记录，**不再现役**。
+
 **决策**：所有自动抽取走 Tencent QuestionSplitOCR（确定性 API），LLM 不参与主链路抽取。LLM 任务（AttributionTask / JudgeTask / KnowledgeProposeTask）只负责语义分析 / 归因 / 判分。Vision 任务（VisionExtractTask / VisionExtractTaskHeavy）保留在 task registry，但**降级为用户手动触发的"救援工具"**，由 `/api/ingestion/[id]/rescue` 端点同步调用，不再作为 cascade 自动 fallback。
 
 **理由**：

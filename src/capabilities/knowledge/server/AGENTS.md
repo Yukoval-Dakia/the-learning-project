@@ -10,7 +10,7 @@
 | `edges.ts` / `propose_edge.ts` | mesh edge CRUD + 提议（5 类 `relation_type` + `experimental:*`）|
 | `hub-mesh.ts` | hub auto-zone / AutoLinksContainer 计算（hub_auto_sync_nightly 消费）|
 | `node-page.ts` | 单节点页面聚合 reader |
-| `propose.ts` / `proposals.ts` | 知识节点 propose event + accept/dismiss |
+| `proposals.ts` | 知识节点 propose event + accept/dismiss（content-driven：cold-start-bridge / image-candidate-accept / agent proposal-tools / KnowledgeReviewTask 的写路径）|
 | `attribute.ts` | 错题归因（写 judge event，`payload.cause` 10 类，`caused_by_event_id` 链 attempt）|
 | `review.ts` | KnowledgeReviewTask（维护流 producer）+ legacy `write_proposal` MCP tool 入口 |
 | `rubric-validator.ts` | 知识 rubric 校验 |
