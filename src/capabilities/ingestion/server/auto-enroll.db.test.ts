@@ -2079,8 +2079,17 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       expect(detectStudentWork({ structured: node })).toBe(false);
       expect(shouldGradeStudentWork({ structured: node })).toBe(true);
     });
-    it('no structured tree → GRADE (fail-open; extraction produced nothing)', () => {
-      expect(shouldGradeStudentWork({ structured: null })).toBe(true);
+    it('manual (non-scan source) + no handwriting → SKIP (not diverted from auto-enroll)', () => {
+      const node: StructuredQuestionT = {
+        id: createId(),
+        role: 'standalone',
+        prompt_text: '题面',
+        source: 'manual',
+      };
+      expect(shouldGradeStudentWork({ structured: node })).toBe(false);
+    });
+    it('no structured tree (absent source, non-scan) → SKIP (no fail-open; stays on tagging path)', () => {
+      expect(shouldGradeStudentWork({ structured: null })).toBe(false);
     });
   });
 });
