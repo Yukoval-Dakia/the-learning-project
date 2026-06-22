@@ -40,7 +40,7 @@ import {
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
-import { applyProposeNew } from '@/capabilities/knowledge/server/proposals';
+import { tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
 import { newId } from '@/core/ids';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import type { ImageCandidateProposalChangeT } from '@/core/schema/proposal';
@@ -84,11 +84,18 @@ export interface ImageCandidateAcceptDeps {
   /** Cost-ledger writer seam (defaults to writeCostLedger). */
   writeCostLedgerFn?: typeof writeCostLedger;
   /**
-   * YUK-478 — ColdStartPlacementBridgeTask LLM seam. DB tests inject a stub so the
-   * cold-start bridge (subject-classify + reference-answer generation) runs WITHOUT
-   * a real model. Defaults to the production runner via runColdStartBridge.
+   * Cold-start SUBJECT-CLASSIFY LLM seam. DB tests inject a stub so the subject classification
+   * (runColdStartBridge, used only to resolve the subject root for tagKnowledge when the candidate
+   * carries no knowledge_ids) runs WITHOUT a real model. Defaults to the production runner.
+   * (P3, YUK-489: reference-answer generation is no longer used on this path — decoupled to P4a.)
    */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
+  /**
+   * P3 (YUK-489) — the unified tagging step run when the candidate's knowledge_ids are empty.
+   * Defaults to the production `tagKnowledge` (embedding match-or-propose). DB tests inject a stub
+   * so the embedding model is not called; the stub returns the attributed ids directly.
+   */
+  tagKnowledgeFn?: typeof tagKnowledge;
 }
 
 const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -600,7 +607,9 @@ export async function acceptImageCandidateProposal(
     // was lifted from this exact image page, so prompt↔extract overlap is total (mirrors
     // the SourcingTask text path where the agent's self-reported extract grounds the URL).
     const promptMd = block.extracted_prompt_md;
-    let referenceMd = block.reference_md ?? '';
+    // P3 (YUK-489) — reference_md is the OCR-extracted answer directly. Bridge-GENERATED
+    // reference (when OCR got none) is decoupled to P4a; we never synthesize one here.
+    const referenceMd = block.reference_md ?? '';
     // The accept run id correlates the cost_ledger correlation row + the question's
     // created_by. `text` is unused downstream (aiAgentRef only reads task_run_id) but
     // TaskTextResult requires it.
@@ -611,46 +620,58 @@ export async function acceptImageCandidateProposal(
     // or free-form manual ref) → empty attribution, same as before FIX-3.
     let knowledgeIds = change.knowledge_ids ?? [];
 
-    // ── YUK-478 cold-start bridges ① + ③ ─────────────────────────────────────────
-    // On a fresh DB the knowledge tree carries ONLY subject-root nodes (YUK-477 thin
-    // seed: stable id seed:<subjectId>:root). The sourcing/tagging path matches NOTHING
-    // on it, so an uploaded question would persist with knowledge_ids:[] → invisible to
-    // placement (selectNextPlacementItem requires knowledge_ids @> [kc]). When no node was
-    // resolved AND no OCR reference answer was extracted, run ONE LLM pass that combines:
-    //   ① classify the question into a KNOWN_SUBJECT_ID and name a concise child concept,
-    //   ③ generate (or echo) the reference answer for the prompt.
-    // We then create that child KC under the subject root (applyProposeNew sets
-    // approval_status:'approved' + domain:null which inherits the subject via the parent
-    // chain) and attribute the question to it — INSIDE the terminal tx below, so the KC +
-    // question commit atomically. The LLM call itself runs HERE, outside any tx (no
-    // long-running model call inside a DB transaction).
-    let coldStartKcName: string | null = null;
-    let coldStartSubjectRootId: string | null = null;
+    // ── P3 (YUK-489) unified tagging — ids-authoritative-when-present ─────────────
+    // ids-authoritative: the accepted candidate's change.knowledge_ids are HUMAN-confirmed at
+    // accept time — KEEP them when present (manual intent wins; tagKnowledge is NOT run). Only
+    // when EMPTY (a thin-seed upload that resolved no node) run the unified `tagKnowledge`:
+    //
+    // tagKnowledge needs a `subjectRootId` (the PROPOSE parent + the D1 subject filter), but an
+    // image_candidate proposal carries NO subject signal (the schema has none — see DEVIATION
+    // note in the P3 report). The old cold-start bridge RESOLVED the subject via its LLM
+    // (bridge.subject_id). We keep exactly ONE LLM pass: call runColdStartBridge to classify the
+    // subject (+ name a child concept), derive seed:<subject>:root, then run tagKnowledge under
+    // that root with a nameKcFn that REUSES the bridge's kc_name (no second model call). This
+    // gives the embedding match-or-propose its correct subject root while subsuming bridge ① —
+    // tagKnowledge MATCHes an existing in-subject KC if one is near enough, else auto-approves a
+    // PROPOSE child (in its own tx + audit event). The bridge ③ reference generation is dropped
+    // (P4a). The whole thing runs OUTSIDE the terminal tx (no model call inside a DB tx).
     if (knowledgeIds.length === 0) {
       try {
         const bridge = await runColdStartBridge({
           db,
           questionMd: promptMd,
-          existingReferenceMd: block.reference_md,
+          // A non-empty placeholder so the bridge takes its ECHO path (we discard its
+          // reference_md anyway — P4a owns reference generation).
+          existingReferenceMd: '(reference answer not needed for tagging)',
           knowledgeHint: block.knowledge_hint,
           knownSubjectIds: KNOWN_SUBJECT_IDS,
           runTaskFn: deps.runColdStartBridgeFn,
         });
-        // ③ fill the judge anchor when OCR extracted no reference answer. Never overwrite
-        // a real OCR-extracted answer (referenceMd already non-empty in that case).
-        if (referenceMd.trim().length === 0 && bridge.reference_md.trim().length > 0) {
-          referenceMd = bridge.reference_md;
-        }
-        // ① stage the child-KC create for the terminal tx. Subject root id is literally
-        // seed:<subjectId>:root (the bridge subject_id is validated ∈ KNOWN_SUBJECT_IDS).
-        coldStartKcName = bridge.kc_name;
-        coldStartSubjectRootId = `seed:${bridge.subject_id}:root`;
+        const subjectRootId = `seed:${bridge.subject_id}:root`;
+        const tagKnowledgeFn = deps.tagKnowledgeFn ?? tagKnowledge;
+        const tag = await tagKnowledgeFn(
+          {
+            db,
+            // Reuse the bridge's already-classified name — NO second model call.
+            nameKcFn: async () => ({ kc_name: bridge.kc_name }),
+          },
+          {
+            questionText: promptMd,
+            knowledgeHint: block.knowledge_hint,
+            subjectRootId,
+          },
+        );
+        // tagKnowledge already created any PROPOSE KC (live + approved) in its own tx + audit
+        // event, so the terminal tx just attributes the question to the returned ids.
+        knowledgeIds = tag.knowledge_ids;
       } catch (bridgeErr) {
-        // The bridge is best-effort: a provider outage / unparseable output must NOT lose
-        // the user's upload. Persist the draft un-attributed (knowledge_ids:[], stays a
-        // draft — see structural-verify gate below) exactly as the pre-YUK-478 behaviour.
+        // Best-effort: a provider outage / unparseable output / a missing seed root must NOT lose
+        // the user's upload. Persist the draft un-attributed (knowledge_ids:[], stays a 'draft'
+        // — see structural-verify gate below), exactly as the pre-YUK-478 behaviour. We swallow
+        // ANY throw (tagKnowledge can throw a plain Error from applyProposeNew's
+        // assertParentExists when the subject's seed root was never planted).
         console.error(
-          '[image_candidate_accept] cold-start bridge failed; persisting un-attributed draft for',
+          '[image_candidate_accept] tagKnowledge failed; persisting un-attributed draft for',
           proposalId,
           bridgeErr,
         );
@@ -734,26 +755,19 @@ export async function acceptImageCandidateProposal(
         );
       }
 
-      // ── YUK-478 bridge ① — create the cold-start child KC + attribute the question ──
-      // Staged above (outside the tx) when the upload matched no node on the thin seed.
-      // applyProposeNew inserts an approved child under the subject root (domain:null →
-      // inherits the subject via the parent chain) and asserts the parent exists; the root
-      // always exists (YUK-477 seed). Done INSIDE the tx so the KC + question commit
-      // atomically — a crash leaves neither.
-      if (coldStartKcName && coldStartSubjectRootId) {
-        const newKcId = await applyProposeNew(tx, {
-          mutation: 'propose_new',
-          name: coldStartKcName,
-          parent_id: coldStartSubjectRootId,
-        });
-        knowledgeIds = [newKcId];
-      }
+      // ── P3 (YUK-489) — KC attribution comes from tagKnowledge (pre-tx). ──────────
+      // The now-redundant in-tx applyProposeNew is GONE: when change.knowledge_ids was empty,
+      // tagKnowledge already MATCHed an existing KC or auto-approved a PROPOSE child (in its own
+      // tx + audit event) OUTSIDE this tx, and `knowledgeIds` now holds those ids. ATOMICITY
+      // (accepted): a PROPOSE KC is committed before this tx, so a rollback orphans it — benign
+      // (a valid leaf under the subject root, reconciled by the P5 dedup-on-maintenance lane),
+      // matching this path's pre-existing posture (the VLM spend is likewise already irreversible).
 
-      // ── YUK-478 bridge ② — structural verify → auto-promote draft→active ──────────
+      // ── Structural verify → auto-promote draft→active ─────────────────────────────
       // Mirrors verify-and-promote.ts: a question is structurally sound when it has a
       // non-empty prompt, a valid (normalized) kind, and ≥1 knowledge id. We additionally
       // honour the archived-KC guard (a referenced KC must be live) — a freshly-created
-      // cold-start KC is approved+live, but change.knowledge_ids could reference an archived
+      // PROPOSE KC is approved+live, but change.knowledge_ids could reference an archived
       // node. FSRS enroll is DEFERRED to first answer (placement is read-only), so we only
       // flip draft_status; we do NOT enroll here. No inbox accept wall — auto-flow.
       let liveKnowledgeCount = 0;

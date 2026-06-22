@@ -461,6 +461,26 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(questions).toHaveLength(0);
   });
 
+  // P3 (YUK-489) — ids-authoritative-when-present. The schema now ALLOWS an empty per-block
+  // knowledge_ids array (relaxed from .min(1)), but the import route carries NO subject signal to
+  // run the unified tagKnowledge against, so an empty-ids block is rejected (do not guess a
+  // subject). Client ids when present are used as-is (covered by the happy-path tests above).
+  it('empty per-block knowledge_ids → 400 (no subject signal to auto-tag), NO inserts', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    const res = await post(sessionId, makeImportBody({ knowledge_ids: [] }));
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe('validation_error');
+    expect(body.message).toMatch(/no subject signal/);
+    const questions = await db.select().from(question);
+    expect(questions).toHaveLength(0);
+  });
+
   it('session not found → 404', async () => {
     const db = testDb();
     await insertKnowledge(db, 'k1');

@@ -24,7 +24,11 @@ const Body = z.object({
   prompt_md: z.string().min(1, 'prompt_md is required'),
   reference_md: z.string().nullable(),
   wrong_answer_md: z.string().min(1, 'wrong_answer_md is required'),
-  knowledge_ids: z.array(z.string().min(1)).min(1, 'at least one knowledge_id is required'),
+  // P3 (YUK-489): relaxed from .min(1) to allow an empty array. When present the client ids are
+  // authoritative (manual intent wins). When empty, the handler would run the unified
+  // `tagKnowledge` — but only if it can resolve a subject root from the request. See the
+  // empty-ids branch in POST for why /api/mistakes still effectively requires ids today.
+  knowledge_ids: z.array(z.string().min(1)),
   cause: z
     .object({
       primary_category: CauseCategory,
@@ -64,6 +68,23 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('validation_error', message, 400);
     }
     const body = parsed.data;
+
+    // P3 (YUK-489) — ids-authoritative-when-present. When the client supplies knowledge_ids they
+    // are HUMAN intent and are used as-is (validated below). When EMPTY we would run the unified
+    // `tagKnowledge` to auto-attribute — but tagKnowledge REQUIRES a subjectRootId (the PROPOSE
+    // parent + the D1 subject filter), and a /api/mistakes request carries NO subject signal: no
+    // session, no subject param, and (in this branch) no knowledge_ids to derive a subject from.
+    // Per the P3 decision ("if you cannot resolve a subject root, KEEP requiring ids — do not
+    // guess a subject"), we reject an empty-ids mistake with a clear validation error rather than
+    // mis-rooting a PROPOSE KC under an arbitrary subject. DEVIATION/edge documented in the P3
+    // report: a future request shape carrying a subject signal would enable the tag path here.
+    if (body.knowledge_ids.length === 0) {
+      throw new ApiError(
+        'validation_error',
+        'knowledge_ids is empty and /api/mistakes carries no subject signal to auto-tag from; supply at least one knowledge_id',
+        400,
+      );
+    }
 
     // Validate knowledge_ids exist and are not archived
     const foundKnowledge = await db
