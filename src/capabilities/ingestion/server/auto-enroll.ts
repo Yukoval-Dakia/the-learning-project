@@ -1064,13 +1064,19 @@ export function detectStudentWork(block: { structured: StructuredQuestionT | nul
 }
 
 /**
- * YUK-487 — whether the extraction engine that produced this block ASSESSED handwriting
- * (and therefore whether a *false* detectStudentWork is a TRUSTWORTHY "no student work").
- * Only the VLM StructureTask ('vlm_structure', sets student_answer_present) and Tencent
- * QuestionMark ('tencent_ocr', sets extraction_evidence.handwriting) assess handwriting —
- * the exact two signals detectStudentWork reads. The GLM-OCR fallback ('glm_ocr', the
- * VLM-down path), 'vision_rescue', and an absent/unknown source do NOT reliably set them,
- * so their negative is uninformative and must NOT gate out the whole-page judge.
+ * YUK-487 — whether the extraction engine that produced this block RELIABLY assessed
+ * handwriting (and therefore whether a *false* detectStudentWork is a TRUSTWORTHY "no
+ * student work"). Only the VLM StructureTask ('vlm_structure', sets student_answer_present)
+ * and Tencent QuestionMark ('tencent_ocr', sets extraction_evidence.handwriting) do — the
+ * exact two signals detectStudentWork reads. Every OTHER source falls to fail-open (the
+ * safe direction): 'glm_ocr' (the VLM-down fallback) never assesses; 'vision_rescue' sets
+ * handwriting evidence only OPPORTUNISTICALLY (from legacy wrong_answer_md), so its absence
+ * is still uninformative; text/manual sources ('docx_text' / 'manual' / 'agent_edit') and
+ * an absent/unknown source carry no whole-page handwriting signal. So a false
+ * detectStudentWork from any of them is uninformative — never a trustworthy "no student
+ * work" — and must NOT gate out the whole-page judge. (A block with no page image to grade
+ * is cheaply handled downstream: runMultimodalDirectJudge returns 'unsupported' WITHOUT an
+ * LLM call when there are neither images nor answer text → route-to-review, no wasted cost.)
  */
 export function extractionAssessedHandwriting(block: {
   structured: StructuredQuestionT | null;
