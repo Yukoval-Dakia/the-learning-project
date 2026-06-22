@@ -4,7 +4,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
-import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
@@ -12,7 +11,6 @@ import {
 import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
-import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -188,23 +186,14 @@ export async function POST(req: Request): Promise<Response> {
       }
     });
 
-    // Next after() 等价改写（M5-T5a / YUK-321）：Hono 栈无 request-lifecycle 钩子。
-    // fire-and-forget + catch 落日志；语义差异（不等响应 flush 即启动）对单用户
-    // 工具无影响——回调不回写响应。原 after(() => fn(args)) 的 fn 与 args 逐字保留：
-    void runProposeAndWrite({
-      db,
-      mistakeContent: {
-        prompt_md: body.prompt_md,
-        reference_md: body.reference_md,
-        wrong_answer_md: body.wrong_answer_md,
-        knowledge_ids_picked: body.knowledge_ids,
-      },
-      runTaskFn: async (kind, input, ctx) => {
-        const result = await runTask(kind, input, ctx as Parameters<typeof runTask>[2]);
-        return { text: result.text };
-      },
-      subjectProfile,
-    }).catch((err) => console.error('[mistakes] propose-and-write failed', err));
+    // Lane D (YUK-482): the failure→propose-new-KC side-effect was removed here.
+    // Creating/proposing a knowledge concept is a CONTENT-axis action (driven by
+    // what the material covers), independent of answer correctness. A wrong
+    // attempt is a PERFORMANCE-axis signal → it feeds 错因/attribution + mastery
+    // below, and must NOT drive KC creation. KC creation lives entirely in the
+    // content-driven paths (ingestion cold-start-bridge / image-candidate-accept
+    // matcher / agent proposal tools / KnowledgeReviewTask). The attribution
+    // enqueue below is unchanged.
 
     // Async attribution via pg-boss (Task #16): user-supplied cause skips this,
     // otherwise the worker picks up the job and calls AttributionTask. Durable
@@ -225,7 +214,6 @@ export async function POST(req: Request): Promise<Response> {
       question_id: questionId,
       mistake_id: mistakeId,
       record_id: recordId,
-      propose_task: 'queued' as const,
     });
   } catch (err) {
     return errorResponse(err);

@@ -22,7 +22,6 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 // routed by enrollCapturedBlock instead of the old hardcoded
 // attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
-import { runProposeAndWrite } from '@/capabilities/knowledge/server/propose';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
@@ -30,11 +29,9 @@ import {
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
-import { runTask } from '@/server/ai/runner';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { getR2 } from '@/server/r2';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -469,32 +466,17 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     });
 
     // Queue post-write tasks (fire-and-forget with Promise.allSettled)
-    const r2 = getR2();
     void Promise.allSettled(
       queueData.flatMap((q) => {
         const tasks: Promise<void>[] = [];
-        tasks.push(
-          runProposeAndWrite({
-            db,
-            mistakeContent: {
-              prompt_md: q.prompt_md,
-              reference_md: q.reference_md,
-              wrong_answer_md: q.wrong_answer_md,
-              knowledge_ids_picked: q.knowledge_ids,
-            },
-            runTaskFn: async (kind, input) => {
-              const result = await runTask(kind, input, {
-                db,
-                r2,
-                subjectProfile: q.subjectProfile,
-              });
-              return { text: result.text };
-            },
-            subjectProfile: q.subjectProfile,
-          }).catch((err) => {
-            console.error('propose prep failed (mistake unaffected)', err);
-          }),
-        );
+        // Lane D (YUK-482): the failure→propose-new-KC side-effect was removed
+        // here. Proposing a knowledge concept is a CONTENT-axis action (driven by
+        // what the material covers), independent of answer correctness; a wrong
+        // imported attempt is a PERFORMANCE-axis signal → 错因/attribution
+        // (enqueued below) + mastery, never KC creation. KC creation lives in the
+        // content-driven paths (cold-start-bridge / image-candidate-accept matcher
+        // / agent proposal tools / KnowledgeReviewTask). Attribution unchanged.
+
         // Task #16: attribution via pg-boss instead of inline. Worker process
         // owns the LLM call; ingestion route returns as soon as DB writes
         // commit.

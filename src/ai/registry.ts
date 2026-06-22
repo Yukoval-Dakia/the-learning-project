@@ -173,23 +173,12 @@ export const tasks = {
     // type-required fallback only (new tasks add a builder in task-prompts.ts).
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
   },
-  KnowledgeProposeTask: {
-    kind: 'KnowledgeProposeTask',
-    description: '看新录入的 mistake 提议 0-3 个 propose_new 知识点（挂在合适 parent 下）',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
-    budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    // DEPRECATED (2026-05-22 M1): do not edit. Runtime renders via
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
-    // string is kept only as type-required fallback. New tasks MUST add a
-    // builder in task-prompts.ts.
-    systemPrompt:
-      "你是知识图谱编辑助手。用户新写入了一个 attempt event (outcome='failure')。输入字段 { mistake_content: { prompt_md, reference_md, wrong_answer_md, knowledge_ids_picked }, tree_snapshot } —— mistake_content.knowledge_ids_picked 即 attempt 的 referenced_knowledge_ids（用户自选）。看 mistake_content (prompt_md + wrong_answer_md) + tree_snapshot，如果你认为 tree 里缺一个**更精确**的子节点能挂这条 attempt（例：「之-主谓间用法」之于「虚词」），propose 它。0-3 条，不必凑数。每条返回 { name, parent_id, reasoning }。parent_id 必须是 tree 里已有节点 id；若找不到合适 parent，跳过这条。",
-  },
+  // Lane D (YUK-482): KnowledgeProposeTask was removed. It existed solely for the
+  // answer-wrong → propose-new-KC coupling (failure attempt → propose a more
+  // precise child node). KC creation is a CONTENT-axis action, independent of
+  // answer correctness; the surviving content-driven KC paths use applyProposeNew /
+  // writeKnowledgeProposeEvent directly (cold-start-bridge / image-candidate-accept
+  // matcher / agent proposal-tools) and the maintenance producer KnowledgeReviewTask.
   KnowledgeEdgeProposeTask: {
     kind: 'KnowledgeEdgeProposeTask',
     description: '看 tree + 最近 failure attempts + 已有 edge，提议 0-5 条新 knowledge_edge',

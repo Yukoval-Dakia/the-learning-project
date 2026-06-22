@@ -111,7 +111,6 @@ Question (统一题库，single source of truth)
 | --- | --- | --- | --- | --- | --- |
 | `AttributionTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因（10 类 cause）+ analysis |
 | `AttributionRerankTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因 retrieve→rerank stage 2（从 L1 候选 cause 列表重排选 primary + 逐候选理由，YUK-462；小词表时 == AttributionTask） |
-| `KnowledgeProposeTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 0-3 条 `propose_new` 知识点 |
 | `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | maintenance / nightly | 否 | — | 0-5 条 knowledge_edge proposal |
 | `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | ≤120 字 session summary |
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
@@ -150,7 +149,7 @@ Question (统一题库，single source of truth)
 | `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
 | `ColdStartPlacementBridgeTask` | mimo-v2.5 | ingestion 上传 accept（抽题无 KC 匹配时，YUK-478） | 否 | — | 冷启上传题一次 pass：classify subject（∈KNOWN_SUBJECT_IDS）+ kc_name + reference 答案（OCR 无答案则生成，有则 echo）→ 喂建子 KC + auto-promote |
 
-**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+ `KnowledgeProposeTask`（知识点提议）。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `CoachTask` / `BlockAssemblyTask` 早期作为 lane 级编排概念保留，现已落地为 registry 中的具体 task + 对应 pg-boss handler（见上表）。
+**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+（曾经的）`KnowledgeProposeTask`（知识点提议）。`KnowledgeProposeTask` 已于 Lane D（YUK-482）移除——答错→提议新 KC 的耦合被解除：创建/提议知识点是 CONTENT 轴动作（由材料覆盖内容驱动），与答题正误无关；答错只喂错因/mastery。KC 创建现完全走 content-driven 路径（cold-start-bridge / image-candidate-accept matcher / agent proposal-tools）+ 维护流 `KnowledgeReviewTask`。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `CoachTask` / `BlockAssemblyTask` 早期作为 lane 级编排概念保留，现已落地为 registry 中的具体 task + 对应 pg-boss handler（见上表）。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 
@@ -253,7 +252,6 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 
 | Job | 触发 | 产出 |
 | --- | --- | --- |
-| `knowledge_propose_nightly` | BJT 02:00 schedule | `event(action='propose', subject_kind='knowledge')` |
 | `knowledge_edge_propose_nightly` | BJT 02:30 schedule | `event(action='propose', subject_kind='knowledge_edge')` |
 | `knowledge_maintenance_nightly` | BJT 03:00 schedule | `KnowledgeReviewTask` tool calls → proposal inbox rows |
 | `note_generate` | learning-intent accept 后 enqueue | 填充 atomic artifact sections |

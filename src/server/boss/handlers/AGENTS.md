@@ -5,7 +5,6 @@
 ## CRON（夜间链，按时序串）
 | Queue | cron | 说明 |
 |-------|------|------|
-| `knowledge_propose_nightly` | `0 2` | 提议新知识节点 |
 | `knowledge_edge_propose_nightly` | `30 2` | mesh edge propose（看同夜 fresh 节点）|
 | `hub_auto_sync_nightly` | `45 2` | hub auto-zone 重算（靠 version lock，非 heartbeat）|
 | `knowledge_maintenance_nightly` | `0 3` | KnowledgeReviewTask 维护流 |
