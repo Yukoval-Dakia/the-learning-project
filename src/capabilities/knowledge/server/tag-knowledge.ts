@@ -79,6 +79,12 @@ export interface TagKnowledgeDeps {
    * that would PROPOSE the same name reuse the first-proposed KC id instead of re-proposing
    * a duplicate. The caller owns the Map's lifetime (one per upload pass) — `tagKnowledge`
    * reads + writes it but never clears it. Omit for one-shot tags.
+   *
+   * CONTRACT — calls sharing one `batchCache` MUST run SEQUENTIALLY (await each before the
+   * next), NOT concurrently (no `Promise.all`). The cache GET (miss) and SET straddle two
+   * awaits (the propose tx), so concurrent siblings proposing the same name would BOTH miss
+   * and double-create, the later SET silently overwriting the first (OCR #562). All P3
+   * callers loop sequentially (auto-enroll per-question, import per-block), satisfying this.
    */
   batchCache?: Map<string, string>;
   /** Forwarded to runTask ctx (db / subjectProfile). Ignored when nameKcFn is set. */
@@ -136,7 +142,10 @@ export async function tagKnowledge(
   const embedFn = deps.embedFn ?? embedText;
   const nameKcFn = deps.nameKcFn ?? makeDefaultNameKc(deps);
   const threshold = deps.threshold ?? MATCH_THRESHOLD;
-  const knownSubjectIds = input.knownSubjectIds ?? KNOWN_SUBJECT_IDS;
+  // Guard the explicit-empty-array case too: `?? default` fires only on `undefined`, so a
+  // caller passing `[]` would otherwise leave `knownSubjectIds[0]` undefined and propagate
+  // `[undefined]` into the naming invoker (OCR #562). Treat empty as "use the default vocab".
+  const knownSubjectIds = input.knownSubjectIds?.length ? input.knownSubjectIds : KNOWN_SUBJECT_IDS;
   const knowledgeHint = input.knowledgeHint ?? null;
 
   // (1) embed the question text → query vector.
@@ -168,6 +177,13 @@ export async function tagKnowledge(
     knownSubjectIds,
   });
 
+  // Defensive: nameKcFn is injectable and ultimately model-backed; an empty / whitespace-only
+  // name would persist a blank KC (OCR #562). Fail loud instead. The bridge schema already
+  // caps length (≤60 chars), so we only guard the empty case here.
+  if (!kc_name || !kc_name.trim()) {
+    throw new Error('tagKnowledge: nameKcFn returned an empty KC name');
+  }
+
   // Batch-coherence (design §4): a sibling this run already proposed this name under this
   // root → reuse its id instead of minting a duplicate. Returned as a propose result (it WAS
   // a propose decision) but creates nothing.
@@ -179,41 +195,47 @@ export async function tagKnowledge(
     }
   }
 
-  // Auto-approve: applyProposeNew inserts an APPROVED child (domain:null → inherits the
-  // subject via the parent chain) and asserts the parent exists. Then the audit-only event.
-  const newKcId = await applyProposeNew(db, {
-    mutation: 'propose_new',
-    name: kc_name,
-    parent_id: input.subjectRootId,
-  });
-
-  // Audit-only provenance — a PLAIN event with a DISTINCT action so it is NEVER a pending
-  // inbox proposal (proposalWhere() folds only `propose` / `experimental:knowledge_%` /
+  // Auto-approve + audit, ATOMIC (OCR #562). applyProposeNew inserts an APPROVED child
+  // (domain:null → inherits the subject via the parent chain) and asserts the parent exists;
+  // the audit-only event records provenance. Both share ONE tx so a writeEvent failure rolls
+  // back the KC rather than orphaning it — safe because NO model call sits between them (the
+  // LLM naming already ran above, OUTSIDE any tx — design §3).
+  //
+  // Audit event design: a PLAIN event with a DISTINCT action so it is NEVER a pending inbox
+  // proposal (proposalWhere() folds only `propose` / `experimental:knowledge_%` /
   // `experimental:proposal` / `experimental:propose_learning_intent` — a generic
   // `experimental:auto_tag_kc_created` matches none) and has no acceptProposal re-apply path.
   // Generalizes auto-enroll.ts's `experimental:cold_start_kc_created` to the unified tagger.
-  await writeEvent(db, {
-    id: newId(),
-    session_id: null,
-    actor_kind: 'agent',
-    actor_ref: 'tag_knowledge',
-    action: 'experimental:auto_tag_kc_created',
-    subject_kind: 'knowledge',
-    subject_id: newKcId,
-    outcome: 'success',
-    payload: {
-      source: 'tag_knowledge',
-      auto_created_kc_id: newKcId,
-      subject_root_id: input.subjectRootId,
-      parent_id: input.subjectRootId,
+  const newKcId = await db.transaction(async (tx) => {
+    const createdId = await applyProposeNew(tx, {
+      mutation: 'propose_new',
       name: kc_name,
-      knowledge_hint: knowledgeHint,
-      generated_by: 'tag_knowledge',
-      reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within MATCH_THRESHOLD=${threshold}); auto-approved day-one, applied as ${newKcId}`,
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
+      parent_id: input.subjectRootId,
+    });
+    await writeEvent(tx, {
+      id: newId(),
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'tag_knowledge',
+      action: 'experimental:auto_tag_kc_created',
+      subject_kind: 'knowledge',
+      subject_id: createdId,
+      outcome: 'success',
+      payload: {
+        source: 'tag_knowledge',
+        auto_created_kc_id: createdId,
+        subject_root_id: input.subjectRootId,
+        parent_id: input.subjectRootId,
+        name: kc_name,
+        knowledge_hint: knowledgeHint,
+        generated_by: 'tag_knowledge',
+        reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within MATCH_THRESHOLD=${threshold}); auto-approved day-one, applied as ${createdId}`,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+    });
+    return createdId;
   });
 
   if (deps.batchCache) {
