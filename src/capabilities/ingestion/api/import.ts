@@ -34,7 +34,6 @@ import { ApiError, errorResponse } from '@/server/http/errors';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';
-import type { SubjectProfile } from '@/subjects/profile';
 // YUK-234 (SEC-4): request-body schema (incl. per-array .max() bounds) lives in
 // ./schema so the bounds are unit-testable without the route's DB/R2/AI import
 // graph. The capture-outcome / cause / kind semantics are unchanged.
@@ -210,15 +209,15 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     const questionIds: string[] = [];
     const mistakeIds: string[] = [];
     const recordIds: string[] = [];
+    // queueData only carries the fields the post-txn enqueue (attribution_followup
+    // when cause is null) actually reads. Lane D (YUK-482) removed the failure→
+    // propose-new-KC side-effect that previously consumed prompt_md / reference_md /
+    // wrong_answer_md / knowledge_ids / subjectProfile here; keeping them would be
+    // dead data on the post-write path (no other reader).
     const queueData: Array<{
       mistakeId: string;
       attemptEventId: string;
-      prompt_md: string;
-      reference_md: string | null;
-      wrong_answer_md: string;
-      knowledge_ids: string[];
       cause: { primary_category: string; user_notes: string | null } | null;
-      subjectProfile: SubjectProfile;
     }> = [];
 
     await db.transaction(async (tx) => {
@@ -253,8 +252,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
       const toIgnore = new Set<string>();
 
-      for (const [blockIndex, block] of body.blocks.entries()) {
-        const subjectProfile = blockSubjectProfiles[blockIndex];
+      for (const block of body.blocks) {
         let importedBlockId: string;
 
         if (block.block_id !== undefined) {
@@ -421,12 +419,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           queueData.push({
             mistakeId,
             attemptEventId: enroll.attemptEventId,
-            prompt_md: block.final_prompt_md,
-            reference_md: block.final_reference_md,
-            wrong_answer_md: block.final_wrong_answer_md,
-            knowledge_ids: block.knowledge_ids,
             cause: block.cause,
-            subjectProfile,
           });
         }
       }
