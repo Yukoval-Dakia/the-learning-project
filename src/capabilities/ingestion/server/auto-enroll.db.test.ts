@@ -19,13 +19,19 @@ import {
   knowledge,
   learning_record,
   learning_session,
+  mastery_state,
   question,
   question_block,
 } from '@/db/schema';
 import type { WriteEventInput } from '@/server/events/queries';
 import { getProposalInboxRow, listProposalInboxRows } from '@/server/proposals/inbox';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { observeEventId, runAutoEnrollForSession } from './auto-enroll';
+import {
+  type GradeStudentAnswerFn,
+  detectStudentWork,
+  observeEventId,
+  runAutoEnrollForSession,
+} from './auto-enroll';
 import { ColdStartBridgeError, type ColdStartBridgeRunTaskFn } from './cold-start-bridge';
 import { MistakeEnrollTaskError, type RunMistakeEnrollTaskParams } from './mistake_enroll';
 import { TaggingTaskError } from './tagging';
@@ -33,6 +39,8 @@ import { TaggingTaskError } from './tagging';
 const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
 const OBSERVE_ACTION = 'experimental:auto_enroll_observed';
+// YUK-482 cut ④ — student-answer grading flag (independent of auto-enroll FLAG).
+const GRADE_FLAG = 'WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED';
 
 function structured(prompt: string): StructuredQuestionT {
   return { id: createId(), role: 'standalone', prompt_text: prompt, source: 'vlm_structure' };
@@ -1492,5 +1500,447 @@ describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(blocks.every((b) => b.status === 'auto_enrolled')).toBe(true);
+  });
+});
+
+// =============================================================================
+// YUK-482 cut ④ — ingestion student-answer grading. A block carrying student work
+// (handwriting / VLM student_answer_present) is graded WHOLE-PAGE via the existing
+// multimodal_direct judge → a real graded attempt → 错因 + θ̂. Dark-shippable behind
+// WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED (default OFF → byte-identical today).
+// =============================================================================
+
+/** A standalone structured node carrying Tencent handwriting evidence (student work). */
+function structuredWithHandwriting(prompt: string): StructuredQuestionT {
+  return {
+    id: createId(),
+    role: 'standalone',
+    prompt_text: prompt,
+    source: 'tencent_ocr',
+    extraction_evidence: {
+      handwriting: [{ text: 'ignored-pixels', bbox: { x: 0, y: 0, width: 0.1, height: 0.1 } }],
+    },
+  };
+}
+
+/**
+ * Seed an extracted ingestion session with ONE draft block that carries student
+ * work (handwriting evidence). source_asset_ids = the whole page asset.
+ */
+async function seedStudentWork(
+  db: ReturnType<typeof testDb>,
+): Promise<{ sessionId: string; blockId: string }> {
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id: 'k1',
+    name: '虚词',
+    domain: 'wenyan',
+    parent_id: null,
+    archived_at: null,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const sessionId = createId();
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'ingestion',
+    status: 'extracted',
+    source_document_id: createId(),
+    source_asset_ids: ['page_asset_1'],
+    entrypoint: 'vision_paper',
+    warnings: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const blockId = createId();
+  await db.insert(question_block).values({
+    id: blockId,
+    ingestion_session_id: sessionId,
+    source_document_id: null,
+    source_asset_ids: ['page_asset_1'],
+    page_spans: [],
+    structured: structuredWithHandwriting('下列句中「之」的用法'),
+    reference_md: '参考答案',
+    figures: [],
+    layout_quality: 'structured',
+    image_refs: ['fig_asset_1'],
+    crop_refs: [],
+    visual_complexity: 'low',
+    extraction_confidence: 1,
+    status: 'draft',
+    knowledge_hint: '之',
+    merged_from_block_ids: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  return { sessionId, blockId };
+}
+
+const gradeFailure: GradeStudentAnswerFn = async () => ({
+  coarse_outcome: 'incorrect',
+  confidence: 0.95,
+});
+const gradeCorrect: GradeStudentAnswerFn = async () => ({
+  coarse_outcome: 'correct',
+  confidence: 0.95,
+});
+const gradeLowConfidence: GradeStudentAnswerFn = async () => ({
+  coarse_outcome: 'incorrect',
+  confidence: 0.4, // < default threshold 0.85 → YUK-485 review gate
+});
+
+describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Dark default: grading flag OFF → NO judge call, today's text-draft path.
+  // (enroll FLAG on so the block enrolls — but via the unanswered text path, NOT
+  // a graded attempt; the grader is never called.)
+  // ---------------------------------------------------------------------------
+  it('grading flag OFF (default): no judge call, text-draft path (byte-identical)', async () => {
+    const db = testDb();
+    const { sessionId } = await seedStudentWork(db);
+
+    const gradeStudentAnswerFn = vi.fn(gradeFailure);
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' }, // GRADE_FLAG unset → grading OFF
+      runTaggingFn: highConfidenceTagging,
+      gradeStudentAnswerFn,
+    });
+
+    expect(result.status).toBe('completed');
+    // The grader is NEVER consulted on the dark default.
+    expect(gradeStudentAnswerFn).not.toHaveBeenCalled();
+    // The block still enrolls (enroll FLAG on) but via the text path: no
+    // student-graded attempt (no wrong_answer_md → unanswered/open_question).
+    const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect(attempts).toHaveLength(0);
+    const records = await db.select().from(learning_record);
+    expect(records.every((r) => r.kind === 'open_question')).toBe(true);
+    // No θ̂ written on the text path.
+    const mastery = await db.select().from(mastery_state);
+    expect(mastery).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Flag ON + student work + confident FAILURE verdict → graded attempt synthesized:
+  // outcome from verdict, answerImageRefs = source_asset_ids, attribution_followup
+  // enqueued, updateThetaForAttempt called once keyed on the KC.
+  // ---------------------------------------------------------------------------
+  it('flag ON + confident failure: graded attempt + attribution + θ̂', async () => {
+    const db = testDb();
+    const { sessionId, blockId } = await seedStudentWork(db);
+
+    const gradeStudentAnswerFn = vi.fn<GradeStudentAnswerFn>(gradeFailure);
+    const enqueueAttributionFollowupFn = vi.fn<(id: string) => Promise<void>>(async () => {});
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      gradeStudentAnswerFn,
+      enqueueAttributionFollowupFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(1);
+    expect(gradeStudentAnswerFn).toHaveBeenCalledTimes(1);
+    // The grader received the whole-page asset ids as the student images.
+    const gradeCall = gradeStudentAnswerFn.mock.calls[0]?.[0];
+    expect(gradeCall?.studentImageRefs).toEqual(['page_asset_1']);
+
+    // A real failure attempt event (NOT the unanswered text path).
+    const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.outcome).toBe('failure');
+    const attemptPayload = attempts[0]?.payload as Record<string, unknown>;
+    // answer_md empty (handwriting stays pixels), answer images = page assets.
+    expect(attemptPayload.answer_md).toBe('');
+    expect(attemptPayload.answer_image_refs).toEqual(['page_asset_1']);
+    expect(attemptPayload.generated_by).toBe('workflow_judge');
+
+    // mistake record (failure → kind='mistake').
+    const records = await db.select().from(learning_record);
+    expect(records[0]?.kind).toBe('mistake');
+
+    // attribution_followup enqueued for the failure with the attempt event id.
+    expect(enqueueAttributionFollowupFn).toHaveBeenCalledTimes(1);
+    expect(enqueueAttributionFollowupFn.mock.calls[0]?.[0]).toBe(attempts[0]?.id);
+
+    // θ̂ written for the question's primary KC (k1). mastery_state keys KC
+    // granularity on (subject_kind='knowledge', subject_id=kc). (updateThetaForAttempt
+    // also writes a per-domain θ_global row under a distinct subject_kind when
+    // HIERARCHICAL_ELO_ENABLED — same as paper-submit; we assert the KC row exists.)
+    const masteryKc = await db
+      .select()
+      .from(mastery_state)
+      .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k1')));
+    expect(masteryKc).toHaveLength(1);
+    expect(masteryKc[0]?.evidence_count).toBeGreaterThan(0);
+
+    // Question metadata carries the student-graded traceability stamp.
+    const questions = await db.select().from(question);
+    const meta = questions[0]?.metadata as { workflow_judge?: Record<string, unknown> } | null;
+    expect(meta?.workflow_judge?.student_answer_graded).toBe(true);
+    expect(meta?.workflow_judge?.student_grade_confidence).toBe(0.95);
+
+    // Block flipped to auto_enrolled.
+    const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(blocks[0]?.status).toBe('auto_enrolled');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Flag ON + confident CORRECT verdict → success attempt, NO attribution, θ̂ written.
+  // ---------------------------------------------------------------------------
+  it('flag ON + confident correct: success attempt, no attribution, θ̂ written', async () => {
+    const db = testDb();
+    const { sessionId } = await seedStudentWork(db);
+
+    const gradeStudentAnswerFn = vi.fn(gradeCorrect);
+    const enqueueAttributionFollowupFn = vi.fn<(id: string) => Promise<void>>(async () => {});
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      gradeStudentAnswerFn,
+      enqueueAttributionFollowupFn,
+    });
+
+    expect(result.enrolled).toBe(1);
+    const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect(attempts[0]?.outcome).toBe('success');
+    // success → worked_example record, NO attribution_followup.
+    const records = await db.select().from(learning_record);
+    expect(records[0]?.kind).toBe('worked_example');
+    expect(enqueueAttributionFollowupFn).not.toHaveBeenCalled();
+    // θ̂ still written for the success evidence (KC row exists).
+    const masteryKc = await db
+      .select()
+      .from(mastery_state)
+      .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k1')));
+    expect(masteryKc).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // YUK-485 gate: low-confidence verdict (< threshold) → NO graded attempt, block
+  // stays draft, routed to review.
+  // ---------------------------------------------------------------------------
+  it('flag ON + low-confidence verdict: no graded attempt, block stays draft (YUK-485)', async () => {
+    const db = testDb();
+    const { sessionId, blockId } = await seedStudentWork(db);
+
+    const gradeStudentAnswerFn = vi.fn(gradeLowConfidence);
+    const enqueueAttributionFollowupFn = vi.fn<(id: string) => Promise<void>>(async () => {});
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      gradeStudentAnswerFn,
+      enqueueAttributionFollowupFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(0);
+    expect(result.routed_to_review).toBe(1);
+    // Judge ran, but no downstream synthesis.
+    expect(gradeStudentAnswerFn).toHaveBeenCalledTimes(1);
+    expect(enqueueAttributionFollowupFn).not.toHaveBeenCalled();
+    expect(await db.select().from(event).where(eq(event.action, 'attempt'))).toHaveLength(0);
+    expect(await db.select().from(question)).toHaveLength(0);
+    expect(await db.select().from(mastery_state)).toHaveLength(0);
+    // Block untouched — still draft for human review.
+    const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    expect(blocks[0]?.status).toBe('draft');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Flag ON + NO student work → no judge call, today's text path.
+  // ---------------------------------------------------------------------------
+  it('flag ON + no student work: no judge call, text path', async () => {
+    const db = testDb();
+    // seedAnswered seeds a block WITHOUT handwriting evidence / student_answer_present.
+    const { sessionId } = await seedAnswered(db);
+
+    const gradeStudentAnswerFn = vi.fn(gradeFailure);
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      gradeStudentAnswerFn,
+    });
+
+    expect(result.status).toBe('completed');
+    // Detection negative → grader never called.
+    expect(gradeStudentAnswerFn).not.toHaveBeenCalled();
+    // No θ̂ (text path does not write it).
+    expect(await db.select().from(mastery_state)).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // CRITICAL (independent review): exercise the REAL default grader
+  // (defaultGradeStudentAnswer — NOT an injected gradeStudentAnswerFn stub) and
+  // prove the vision judge actually runs on the page image. We seam only the
+  // runMultimodalDirectJudge LLM (gradeRunTaskFn) + R2 fetch (gradeImageFetchFn).
+  //
+  // The defect this catches that the stub-only suite can't: the prior code routed
+  // through createDefaultJudgeInvoker().invoke() → resolveQuestionJudgeRoute, which
+  // for a wenyan short_answer block (general profile, no multimodal_direct in
+  // preferredRoutes) resolves to `semantic` — a TEXT route that ignores
+  // student_image_refs and judges an empty answer_md. The vision judge would never
+  // see the handwriting. This test FAILS against that code (the stubbed
+  // MultimodalDirectJudgeTask runTask is never called; a semantic-task runTask would
+  // be) and PASSES after the direct runMultimodalDirectJudge call.
+  // ---------------------------------------------------------------------------
+  it('REAL default grader runs the vision judge on the page image (not a text route)', async () => {
+    const db = testDb();
+    const { sessionId } = await seedStudentWork(db);
+
+    // The runMultimodalDirectJudge LLM seam. It is ONLY reached on the
+    // multimodal_direct path; if route resolution sent us to `semantic`, this kind
+    // would be a semantic task and this stub would never fire for
+    // 'MultimodalDirectJudgeTask'. Capture every call to assert the route + images.
+    const runTaskCalls: Array<{
+      kind: string;
+      images: Array<{ data: string; mediaType: string }>;
+      textPayload: string;
+    }> = [];
+    const gradeRunTaskFn = vi.fn(
+      async (
+        kind: string,
+        input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
+      ): Promise<{ text: string }> => {
+        const typed = input as {
+          text: string;
+          images: Array<{ data: string; mediaType: string }>;
+        };
+        runTaskCalls.push({ kind, images: typed.images ?? [], textPayload: typed.text });
+        return {
+          text: JSON.stringify({
+            coarse_outcome: 'incorrect',
+            score: 0,
+            feedback_md: '判分：作答有误',
+            evidence: { observed_md: '看到手写作答', matched_points: [], missing_points: [] },
+            confidence: 0.95,
+          }),
+        };
+      },
+    );
+    // The R2 image-fetch seam — return one fake image per requested asset id so we
+    // can assert the page asset reached the vision payload as a real image.
+    const imageFetchCalls: string[][] = [];
+    const gradeImageFetchFn = vi.fn(
+      async (assetIds: string[]): Promise<Array<{ data: string; mediaType: string }>> => {
+        imageFetchCalls.push(assetIds);
+        return assetIds.map((id) => ({ data: `b64-${id}`, mediaType: 'image/png' }));
+      },
+    );
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      // Deliberately NOT 'physics': wenyan would resolve to `semantic` via the
+      // invoker — proving the direct call ignores preferredRoutes.
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      // NO gradeStudentAnswerFn → the production defaultGradeStudentAnswer runs.
+      gradeRunTaskFn,
+      gradeImageFetchFn,
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.enrolled).toBe(1);
+
+    // (a) The vision judge actually ran: the MultimodalDirectJudgeTask runTask fired
+    // with the page image present (NOT a text-only route, which never calls this kind).
+    const visionCalls = runTaskCalls.filter((c) => c.kind === 'MultimodalDirectJudgeTask');
+    expect(visionCalls).toHaveLength(1);
+    // The whole page asset reached the LLM as a real image (handwriting pixels).
+    expect(visionCalls[0]?.images).toContainEqual({
+      data: 'b64-page_asset_1',
+      mediaType: 'image/png',
+    });
+    // The student-image refs were fetched (the page asset, NOT only the prompt figure).
+    expect(imageFetchCalls).toContainEqual(['page_asset_1']);
+    // answer_md is empty in the vision payload — handwriting stays pixels, never
+    // transcribed into the text answer (would be the text-route failure mode).
+    const visionPayload = JSON.parse(visionCalls[0]?.textPayload ?? '{}') as {
+      student_image_refs?: string[];
+      student_final_answer_text?: string;
+    };
+    expect(visionPayload.student_image_refs).toEqual(['page_asset_1']);
+    expect(visionPayload.student_final_answer_text).toBeUndefined();
+
+    // (b) It did NOT fall through to a text route: no semantic/other text task fired.
+    expect(runTaskCalls.every((c) => c.kind === 'MultimodalDirectJudgeTask')).toBe(true);
+
+    // The graded verdict (incorrect, conf 0.95) drove a real failure attempt.
+    const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.outcome).toBe('failure');
+  });
+
+  // ---------------------------------------------------------------------------
+  // detectStudentWork — pure detection (no DB): Tencent handwriting OR VLM
+  // student_answer_present → true; neither → false.
+  // ---------------------------------------------------------------------------
+  describe('detectStudentWork', () => {
+    it('Tencent handwriting evidence present → true', () => {
+      expect(detectStudentWork({ structured: structuredWithHandwriting('题面') })).toBe(true);
+    });
+
+    it('VLM student_answer_present → true', () => {
+      const node: StructuredQuestionT = {
+        id: createId(),
+        role: 'standalone',
+        prompt_text: '题面',
+        source: 'vlm_structure',
+        student_answer_present: true,
+      };
+      expect(detectStudentWork({ structured: node })).toBe(true);
+    });
+
+    it('VLM student_answer_present on a nested sub → true (walks the tree)', () => {
+      const stem: StructuredQuestionT = {
+        id: createId(),
+        role: 'stem',
+        prompt_text: 'passage',
+        source: 'vlm_structure',
+        sub_questions: [
+          { id: createId(), role: 'sub', prompt_text: '小问1', source: 'vlm_structure' },
+          {
+            id: createId(),
+            role: 'sub',
+            prompt_text: '小问2',
+            source: 'vlm_structure',
+            student_answer_present: true,
+          },
+        ],
+      };
+      expect(detectStudentWork({ structured: stem })).toBe(true);
+    });
+
+    it('neither signal → false', () => {
+      expect(detectStudentWork({ structured: structured('纯题面无作答') })).toBe(false);
+    });
+
+    it('no structured tree → false', () => {
+      expect(detectStudentWork({ structured: null })).toBe(false);
+    });
   });
 });
