@@ -29,8 +29,10 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type GradeStudentAnswerFn,
   detectStudentWork,
+  extractionAssessedHandwriting,
   observeEventId,
   runAutoEnrollForSession,
+  shouldGradeStudentWork,
 } from './auto-enroll';
 import { ColdStartBridgeError, type ColdStartBridgeRunTaskFn } from './cold-start-bridge';
 import { MistakeEnrollTaskError, type RunMistakeEnrollTaskParams } from './mistake_enroll';
@@ -1579,6 +1581,69 @@ async function seedStudentWork(
   return { sessionId, blockId };
 }
 
+/**
+ * YUK-487 — seed an extracted session with ONE 'glm_ocr'-fallback block (VLM
+ * StructureTask down): NO handwriting evidence + NO student_answer_present,
+ * source='glm_ocr'. Handwriting was NEVER assessed, so detectStudentWork returns
+ * false UNINFORMATIVELY — the exact case where the old gate wrongly skipped grading.
+ */
+async function seedGlmFallbackNoHandwriting(
+  db: ReturnType<typeof testDb>,
+): Promise<{ sessionId: string; blockId: string }> {
+  const now = new Date();
+  await db.insert(knowledge).values({
+    id: 'k1',
+    name: '虚词',
+    domain: 'wenyan',
+    parent_id: null,
+    archived_at: null,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const sessionId = createId();
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'ingestion',
+    status: 'extracted',
+    source_document_id: createId(),
+    source_asset_ids: ['page_asset_1'],
+    entrypoint: 'vision_paper',
+    warnings: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  const blockId = createId();
+  await db.insert(question_block).values({
+    id: blockId,
+    ingestion_session_id: sessionId,
+    source_document_id: null,
+    source_asset_ids: ['page_asset_1'],
+    page_spans: [],
+    structured: {
+      id: createId(),
+      role: 'standalone',
+      prompt_text: '计算下列各式的值',
+      source: 'glm_ocr',
+    },
+    reference_md: '参考答案',
+    figures: [],
+    layout_quality: 'structured',
+    image_refs: ['fig_asset_1'],
+    crop_refs: [],
+    visual_complexity: 'low',
+    extraction_confidence: 1,
+    status: 'draft',
+    knowledge_hint: '之',
+    merged_from_block_ids: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  return { sessionId, blockId };
+}
+
 const gradeFailure: GradeStudentAnswerFn = async () => ({
   coarse_outcome: 'incorrect',
   confidence: 0.95,
@@ -1792,6 +1857,32 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
   });
 
   // ---------------------------------------------------------------------------
+  // YUK-487 — fail-OPEN when extraction did NOT assess handwriting. A 'glm_ocr'
+  // fallback block (VLM StructureTask down) carries no handwriting flag, so the OLD
+  // gate (detectStudentWork only) skipped the judge despite possible real handwriting.
+  // The fix grades anyway and lets the judge be the detector.
+  // ---------------------------------------------------------------------------
+  it('flag ON + glm_ocr fallback, no handwriting flag: fail-OPEN → judge IS called (YUK-487)', async () => {
+    const db = testDb();
+    const { sessionId } = await seedGlmFallbackNoHandwriting(db);
+
+    const gradeStudentAnswerFn = vi.fn(gradeCorrect);
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
+      runTaggingFn: highConfidenceTagging,
+      gradeStudentAnswerFn,
+    });
+
+    expect(result.status).toBe('completed');
+    // glm_ocr never assessed handwriting → detectStudentWork's false is uninformative →
+    // fail-open → the whole-page judge IS invoked (pre-fix it was skipped).
+    expect(gradeStudentAnswerFn).toHaveBeenCalledTimes(1);
+  });
+
+  // ---------------------------------------------------------------------------
   // CRITICAL (independent review): exercise the REAL default grader
   // (defaultGradeStudentAnswer — NOT an injected gradeStudentAnswerFn stub) and
   // prove the vision judge actually runs on the page image. We seam only the
@@ -1941,6 +2032,55 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
 
     it('no structured tree → false', () => {
       expect(detectStudentWork({ structured: null })).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // YUK-487 — extractionAssessedHandwriting + shouldGradeStudentWork (pure, no DB).
+  // ---------------------------------------------------------------------------
+  describe('extractionAssessedHandwriting (YUK-487)', () => {
+    it('vlm_structure → true (StructureTask assesses handwriting)', () => {
+      expect(extractionAssessedHandwriting({ structured: structured('题面') })).toBe(true);
+    });
+    it('tencent_ocr → true (Tencent sets handwriting evidence)', () => {
+      expect(extractionAssessedHandwriting({ structured: structuredWithHandwriting('题面') })).toBe(
+        true,
+      );
+    });
+    it('glm_ocr fallback → false (handwriting never assessed)', () => {
+      const node: StructuredQuestionT = {
+        id: createId(),
+        role: 'standalone',
+        prompt_text: '题面',
+        source: 'glm_ocr',
+      };
+      expect(extractionAssessedHandwriting({ structured: node })).toBe(false);
+    });
+    it('no structured tree → false', () => {
+      expect(extractionAssessedHandwriting({ structured: null })).toBe(false);
+    });
+  });
+
+  describe('shouldGradeStudentWork (YUK-487 fail-open gate)', () => {
+    it('handwriting flagged → grade (regardless of source)', () => {
+      expect(shouldGradeStudentWork({ structured: structuredWithHandwriting('题面') })).toBe(true);
+    });
+    it('vlm_structure assessed + no handwriting → SKIP (trusted negative, cost guard)', () => {
+      expect(shouldGradeStudentWork({ structured: structured('纯题面无作答') })).toBe(false);
+    });
+    it('glm_ocr fallback + no handwriting → GRADE (fail-open; the YUK-487 fix)', () => {
+      const node: StructuredQuestionT = {
+        id: createId(),
+        role: 'standalone',
+        prompt_text: '题面',
+        source: 'glm_ocr',
+      };
+      // pre-fix the gate (detectStudentWork only) would have skipped this block:
+      expect(detectStudentWork({ structured: node })).toBe(false);
+      expect(shouldGradeStudentWork({ structured: node })).toBe(true);
+    });
+    it('no structured tree → GRADE (fail-open; extraction produced nothing)', () => {
+      expect(shouldGradeStudentWork({ structured: null })).toBe(true);
     });
   });
 });

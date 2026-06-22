@@ -350,8 +350,8 @@ export async function runAutoEnrollForSession(
     }
 
     // ---- YUK-482 cut ④ — student-answer grading (OUTSIDE the tx). ----
-    // When the flag is ON and the block carries student work (handwriting / a VLM
-    // student_answer_present signal), grade the WHOLE PAGE IMAGE via the existing
+    // When the flag is ON and student work is plausible on the page (see the
+    // YUK-487 fail-open gate below), grade the WHOLE PAGE IMAGE via the existing
     // multimodal_direct judge BEFORE any tagging/enroll. The judge does an R2 image
     // fetch + an LLM call, so — like the cold-start bridge — it MUST run outside the
     // DB transaction; the resulting verdict is stashed and consumed at the enroll
@@ -364,7 +364,17 @@ export async function runAutoEnrollForSession(
     // route to human review (block stays 'draft'), mirroring the review-routing
     // below. This keeps dense-page bleed out of mastery / 错因.
     let studentGradeVerdict: StudentGradeVerdict | null = null;
-    if (studentGrading && detectStudentWork(block)) {
+    // YUK-487 — fail-OPEN the whole-page judge when extraction did not reliably assess
+    // handwriting. detectStudentWork reads signals (student_answer_present /
+    // extraction_evidence.handwriting) that ONLY the VLM StructureTask ('vlm_structure')
+    // and Tencent ('tencent_ocr') set; on the 'glm_ocr' fallback (StructureTask down) or
+    // an unknown/absent source a *false* result is uninformative, NOT a real "no student
+    // work" — so grade anyway and let the judge be the detector (it returns
+    // 'unsupported'/low-confidence → route-to-review below for blocks with no real
+    // answer, so fail-open never synthesizes a bogus attempt). The reliable Opus judge
+    // must not be blocked by a degraded extraction. Holistic per-page grading that drops
+    // the extraction dependency entirely = YUK-488 (Fix B).
+    if (studentGrading && shouldGradeStudentWork(block)) {
       // Build the judge row from the BLOCK's content (available pre-tx) — NOT a
       // persisted question row. image_refs = the prompt figures (NOT the student
       // work); the student work is fed via studentImageRefs = source_asset_ids.
@@ -1051,6 +1061,36 @@ export function detectStudentWork(block: { structured: StructuredQuestionT | nul
     }
   }
   return false;
+}
+
+/**
+ * YUK-487 — whether the extraction engine that produced this block ASSESSED handwriting
+ * (and therefore whether a *false* detectStudentWork is a TRUSTWORTHY "no student work").
+ * Only the VLM StructureTask ('vlm_structure', sets student_answer_present) and Tencent
+ * QuestionMark ('tencent_ocr', sets extraction_evidence.handwriting) assess handwriting —
+ * the exact two signals detectStudentWork reads. The GLM-OCR fallback ('glm_ocr', the
+ * VLM-down path), 'vision_rescue', and an absent/unknown source do NOT reliably set them,
+ * so their negative is uninformative and must NOT gate out the whole-page judge.
+ */
+export function extractionAssessedHandwriting(block: {
+  structured: StructuredQuestionT | null;
+}): boolean {
+  const source = block.structured?.source;
+  return source === 'vlm_structure' || source === 'tencent_ocr';
+}
+
+/**
+ * YUK-487 — gate for whole-page student-answer grading. Grade when EITHER detectStudentWork
+ * flagged real handwriting, OR extraction did not reliably assess handwriting (fail-OPEN):
+ * the reliable whole-page Opus judge must not be blocked by an uninformative negative from
+ * a degraded extraction (the YUK-487 failure: StructureTask down → 'glm_ocr' → false despite
+ * real handwriting → judge never ran). Only skip when extraction DID assess and found none
+ * (cost guard). Per-page holistic grading that removes the extraction dependency = YUK-488.
+ */
+export function shouldGradeStudentWork(block: {
+  structured: StructuredQuestionT | null;
+}): boolean {
+  return detectStudentWork(block) || !extractionAssessedHandwriting(block);
 }
 
 /**
