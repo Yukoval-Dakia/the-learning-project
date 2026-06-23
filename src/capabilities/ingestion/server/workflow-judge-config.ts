@@ -56,6 +56,26 @@ export const STUDENT_ANSWER_GRADING_FLAG = 'WORKFLOW_JUDGE_STUDENT_ANSWER_GRADIN
 /** Conservative default threshold: high bar → most blocks go to human review. */
 export const DEFAULT_AUTO_ENROLL_THRESHOLD = 0.85;
 
+/**
+ * YUK-486 — singleton debounce window (seconds) for the `auto_enroll` enqueue.
+ * Passing `singletonKey: sessionId` + `singletonSeconds` to `boss.send` populates
+ * pg-boss's `singleton_on`, engaging the policy-INDEPENDENT partial-unique index
+ * (`job_i4`), so two near-simultaneous sends for the same session within this window
+ * collapse to ONE job — killing the duplicate-job symptom (dev double-consume:
+ * rw:api's embedded RW_WORKER + standalone worker:dev; or an extract retry re-sending).
+ *
+ * IMPORTANT: a BARE `singletonKey` with no `singletonSeconds` is a NO-OP on a
+ * standard-policy queue in pg-boss v12 — every other singleton unique index is gated on
+ * a non-standard queue policy, and `auto_enroll` is created with no policy (standard).
+ * The seconds are what make the dedup real. CORRECTNESS does NOT depend on this window:
+ * the per-block FOR UPDATE claim in `runAutoEnrollForSession` is the structural guarantee
+ * against double-INSERT regardless of how many jobs run; this window only reduces
+ * redundant (no-op) job runs. 60s comfortably covers the observed same-timestamp
+ * double-send and is kept short so it can never suppress a legitimate distinct
+ * re-process (there is none — extraction enqueues auto_enroll once per session).
+ */
+export const AUTO_ENROLL_SINGLETON_SECONDS = 60;
+
 /** Minimal env shape these readers need (a superset of NodeJS.ProcessEnv). */
 export type FlagEnv = Record<string, string | undefined>;
 

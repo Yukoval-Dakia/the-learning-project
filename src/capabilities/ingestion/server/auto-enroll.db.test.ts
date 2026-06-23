@@ -301,8 +301,9 @@ describe('runAutoEnrollForSession', () => {
   // or a pg-boss retry re-delivering the same session) must NOT double-INSERT
   // questions. The status='draft' SELECT + per-block 'auto_enrolled' flip make a
   // sequential re-run a no-op; the in-tx FOR UPDATE claim is the concurrent backstop
-  // (singletonKey on the send prevents the duplicate job in the first place). This is
-  // the observable contract; the truly-concurrent race needs a timing seam to exercise.
+  // (singletonKey+singletonSeconds on the send only REDUCES duplicate jobs — the FOR UPDATE
+  // claim is the structural guarantee). This is the observable contract; the truly-concurrent
+  // race needs a timing seam to exercise.
   // ===========================================================================
   it('YUK-486 idempotent re-run: a duplicate/retry auto_enroll does not double-enroll', async () => {
     const db = testDb();

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { setDocxConverterForTests } from '@/capabilities/ingestion/server/docx/convert';
+import { AUTO_ENROLL_SINGLETON_SECONDS } from '@/capabilities/ingestion/server/workflow-judge-config';
 import { event, job_events, learning_session, question_block, source_asset } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -163,9 +164,12 @@ describe('POST /api/ingestion/docx', () => {
     // the visual/PDF/image entrypoints). Assert exactly that one send and that
     // no tencent_ocr_extract sneaks in.
     expect(bossSend).toHaveBeenCalledTimes(1);
-    expect(bossSend).toHaveBeenCalledWith('auto_enroll', {
-      sessionId: body.session_id,
-    });
+    // YUK-486 — the send carries the singleton dedup options (parity with the tencent path).
+    expect(bossSend).toHaveBeenCalledWith(
+      'auto_enroll',
+      { sessionId: body.session_id },
+      { singletonKey: body.session_id, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
+    );
   });
 
   it('visual line: mathtype docx → queued session + tencent_ocr_extract enqueued', async () => {
