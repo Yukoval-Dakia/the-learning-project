@@ -1,0 +1,3 @@
+{
+  "_comment": "YUK-471 W1 PR-A2a — known-acceptable projection drift. Each entry keys a knowledge.id / knowledge_edge.id whose live row is allowed to differ from fold(events). Mirror scripts/audit-schema-allowlist.json: each entry MUST carry reason + resolves_when{kind,ref,expected_by}. audit:projection is a STANDALONE tool run against a prod-clone (NOT in the pnpm test chain — see scripts/audit-projection.ts header). Empty by default: pre-flip there is no double-write, so on a freshly genesis-backfilled + rebuilt clone fold(events)==row holds for every id."
+}
