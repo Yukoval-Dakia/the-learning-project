@@ -99,6 +99,25 @@ export const knowledgeCapability = defineCapability({
         load: () =>
           import('./jobs/attribution_followup').then((m) => m.buildAttributionFollowupHandler),
       },
+      {
+        // P5 (YUK-489): dedup-on-maintenance. Deterministic (zero-LLM) nightly scan
+        // for near-duplicate auto-created KC pairs by pgvector cosine distance →
+        // emits MERGE PROPOSALS (pending inbox items). PROPOSE-ONLY: it NEVER calls
+        // applyMerge (a merge is destructive — archives the from-KC, rewrites
+        // knowledge_ids attribution + merged_from[]; stays behind the human accept
+        // gate). cron 02:00 Asia/Shanghai — BEFORE knowledge_edge_propose 02:30 +
+        // knowledge_maintenance 03:00, so the night's merge proposals are already in
+        // the inbox when those run. queue 'llm': matches the pure-derivation sibling
+        // answer_class_backfill (also declared 'llm') and every other nightly
+        // backfill — even though the scan makes NO model call, the 'llm' tier is the
+        // family's shared DLQ/retry bucket; 'fast' would skip the DLQ (a dropped run
+        // would just wait for the next cron, but the merge-propose write deserves DLQ
+        // retry coverage like its siblings). Auto-mounted by register-capability-jobs.
+        name: 'kc_dedup_nightly',
+        schedule: { cron: '0 2 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () => import('./jobs/kc_dedup_nightly').then((m) => m.buildKcDedupNightlyHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。knowledge_node / knowledge_mutation 的
