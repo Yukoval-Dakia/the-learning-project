@@ -81,6 +81,29 @@ async function markAutoCreated(
   });
 }
 
+/** Seed a prior merge proposal event for an unordered pair (into, from) — the
+ *  cross-run idempotency skip-set keys on `experimental:knowledge_merge` events
+ *  with top-level payload `into_id` + `from_ids` within the window. */
+async function seedPriorMergeProposal(
+  db: ReturnType<typeof testDb>,
+  into: string,
+  from: string,
+  opts: { createdAt?: Date } = {},
+): Promise<void> {
+  await db.insert(event).values({
+    id: newId(),
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'kc_dedup_nightly',
+    action: 'experimental:knowledge_merge',
+    subject_kind: 'knowledge',
+    subject_id: into,
+    outcome: 'partial',
+    payload: { into_id: into, from_ids: [from] },
+    created_at: opts.createdAt ?? new Date(),
+  });
+}
+
 describe('runKcDedupNightly', () => {
   beforeEach(async () => {
     await resetDb();
@@ -290,5 +313,41 @@ describe('runKcDedupNightly', () => {
     expect(res.merge_proposals_created).toBe(1);
     expect(res.skipped).toBe(1);
     expect(proposeFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('cross-run idempotency: a pair already proposed within the window is NOT re-proposed', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-old', unitVec(0), { createdAt: new Date('2026-06-20T00:00:00Z') });
+    await seedKc(db, 'kc-new', nearUnit0(0.1), { createdAt: new Date('2026-06-21T00:00:00Z') });
+    await markAutoCreated(db, 'kc-old');
+    await markAutoCreated(db, 'kc-new');
+    // A prior merge proposal for this exact pair, written recently (within the window).
+    await seedPriorMergeProposal(db, 'kc-old', 'kc-new');
+
+    const proposeFn = vi.fn(async () => newId());
+    const res = await runKcDedupNightly(db, { proposeFn });
+
+    // Still SCANNED (it is a near-dup) but NOT re-proposed — counted skipped.
+    expect(res.scanned_pairs).toBe(1);
+    expect(res.merge_proposals_created).toBe(0);
+    expect(res.skipped).toBe(1);
+    expect(proposeFn).not.toHaveBeenCalled();
+  });
+
+  it('cross-run idempotency: a prior proposal OUTSIDE the window does NOT suppress (re-proposes)', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-old', unitVec(0), { createdAt: new Date('2026-06-20T00:00:00Z') });
+    await seedKc(db, 'kc-new', nearUnit0(0.1), { createdAt: new Date('2026-06-21T00:00:00Z') });
+    await markAutoCreated(db, 'kc-old');
+    await markAutoCreated(db, 'kc-new');
+    // Prior merge proposal 30 days ago — outside the 7-day window → not in the skip-set.
+    const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await seedPriorMergeProposal(db, 'kc-old', 'kc-new', { createdAt: longAgo });
+
+    const proposeFn = vi.fn(async () => newId());
+    const res = await runKcDedupNightly(db, { proposeFn });
+
+    expect(res.merge_proposals_created).toBe(1);
+    expect(proposeFn).toHaveBeenCalledTimes(1);
   });
 });
