@@ -129,7 +129,7 @@ Question (统一题库，single source of truth)
 | `VariantVerifyTask` | mimo-v2.5-pro | pg-boss `variant_verify` (YUK-17 / ADR-0018) | 否 | — | second-pass content alignment for accepted mistake variant; verdict='fail' → mistake_variant.status='broken' |
 | `MultimodalDirectJudgeTask` | mimo-v2.5 | judge router (multimodal_direct route, YUK-201) | 否 | 输入 | holistic vision-aware answer judging（无 step-rubric 的带图题）|
 | `StructureTask` | mimo-v2.5 | OCR extraction job（tencent_ocr_extract handler, YUK-145 OC-1/2） | 否 | 输入 | N 页图 + OCR hint → 规范结构树 |
-| `TaggingTask` | mimo-v2.5 | auto-enroll server path (YUK-145 OC-4) | 否 | — | 题面 + 网格 → knowledge_id 建议 + confidence |
+| `TaggingTask` | mimo-v2.5 | auto-enroll **OBSERVE** path (YUK-145 OC-4) | 否 | — | 题面 + 网格 → knowledge_id 建议 + confidence。**YUK-489：ENROLL 路径改走统一 `tagKnowledge`（embedding cosine match-or-propose，非 registry task）；TaggingTask 仅留 observe 零-mutation 质量探针** |
 | `BlockAssemblyTask` | mimo-v2.5 | auto-enroll server pass (YUK-202) | 否 | — | 相邻 draft block 合并候选（propose-only）|
 | `MistakeEnrollTask` | mimo-v2.5-pro | auto-enroll observe path (YUK-145 OC-5) | 否 | — | 录入题错题元数据草稿（observe-only）|
 | `NoteRefineTask` | mimo-v2.5-pro | pg-boss `note_refine` (T-88 P4-A) | 否 | — | Living Note refine → NotePatch ops |
@@ -149,7 +149,7 @@ Question (统一题库，single source of truth)
 | `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
 | `ColdStartPlacementBridgeTask` | mimo-v2.5 | ingestion 上传 accept（抽题无 KC 匹配时，YUK-478） | 否 | — | 冷启上传题一次 pass：classify subject（∈KNOWN_SUBJECT_IDS）+ kc_name + reference 答案（OCR 无答案则生成，有则 echo）→ 喂建子 KC + auto-promote |
 
-**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+（曾经的）`KnowledgeProposeTask`（知识点提议）。`KnowledgeProposeTask` 已于 Lane D（YUK-482）移除——答错→提议新 KC 的耦合被解除：创建/提议知识点是 CONTENT 轴动作（由材料覆盖内容驱动），与答题正误无关；答错只喂错因/mastery。KC 创建现完全走 content-driven 路径（cold-start-bridge / image-candidate-accept matcher / agent proposal-tools）+ 维护流 `KnowledgeReviewTask`。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `CoachTask` / `BlockAssemblyTask` 早期作为 lane 级编排概念保留，现已落地为 registry 中的具体 task + 对应 pg-boss handler（见上表）。
+**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+（曾经的）`KnowledgeProposeTask`（知识点提议）。`KnowledgeProposeTask` 已于 Lane D（YUK-482）移除——答错→提议新 KC 的耦合被解除：创建/提议知识点是 CONTENT 轴动作（由材料覆盖内容驱动），与答题正误无关；答错只喂错因/mastery。KC 创建现完全走 content-driven 路径：**YUK-489 起统一 `tagKnowledge`（`src/capabilities/knowledge/server/tag-knowledge.ts`，embedding cosine match-or-propose — `matchKnowledgeBySimilarity` + `MATCH_THRESHOLD`，effective-domain subject 过滤；PROPOSE 自动批准 + audit-only `experimental:auto_tag_kc_created`）跑在全部题目创建入口（auto-enroll ENROLL / image-candidate-accept / 手动 `/api/mistakes` / `/api/import`）**，外加 agent proposal-tools + 维护流 `KnowledgeReviewTask`；近重复 KC 由 `kc_dedup_nightly`（确定性 cosine 自连接 → merge 提议，**propose-only**，复用 live `applyMerge` accept 路径）兜底。死的 `knowledge_ids:[]` 零匹配门已删（提议恒产具体 KC id，无「空→不可见」失效）。cold-start-bridge 仍在，角色收窄为 subject 分类器 + tagKnowledge 的命名引擎；其 ③ reference 生成解耦为独立 `reference_answer_backfill`（`reference_md IS NULL` nightly 触发）。详见 `docs/design/2026-06-22-unified-tagging-axis.md` + ADR-0045。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `CoachTask` / `BlockAssemblyTask` 早期作为 lane 级编排概念保留，现已落地为 registry 中的具体 task + 对应 pg-boss handler（见上表）。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 
