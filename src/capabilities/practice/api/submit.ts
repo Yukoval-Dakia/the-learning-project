@@ -413,9 +413,17 @@ async function persistSubmit(
 
     for (const subjectId of fsrsSubjectIds) {
       let prevStateRow: Awaited<ReturnType<typeof getFsrsState>> = null;
+      // YUK-471 W0 (augment review) — the snapshot `before` must reflect THIS subject's own
+      // row existence (null = cold-start for the snapshot subject → revert DELETEs the row),
+      // NOT the legacy question-card fallback below (which only seeds scheduling continuity).
+      // Captured BEFORE the fallback overwrites prevStateRow.
+      let snapshotFsrsBefore:
+        | NonNullable<Awaited<ReturnType<typeof getFsrsState>>>['state']
+        | null = null;
       let result: ReturnType<typeof scheduleReview>;
       try {
         prevStateRow = await getFsrsState(tx, fsrsSubjectKind, subjectId);
+        snapshotFsrsBefore = prevStateRow?.state ?? null;
         if (!prevStateRow && fsrsSubjectKind === 'knowledge') {
           prevStateRow = await getFsrsState(tx, 'question', questionId);
         }
@@ -452,12 +460,13 @@ async function persistSubmit(
           due: result.nextState.due,
           last_review: result.nextState.last_review ?? null,
         },
-        // YUK-471 Wave 0 (ADR-0044 §3) — retain this subject's PRE-attempt Card for the
-        // snapshot. null = cold-start (no prior row → revert deletes the row). Note the
-        // `getFsrsState(tx, 'question', questionId)` fallback above (knowledge-keyed cold
-        // start reading the legacy question row) IS the real prior state, so `before`
-        // reflects whatever scheduleReview was fed — the exact bracketed transition.
-        before: prevStateRow?.state ?? null,
+        // YUK-471 Wave 0 (ADR-0044 §3) — this subject's PRE-attempt Card for the snapshot.
+        // `snapshotFsrsBefore` (captured pre-fallback) reflects the SNAPSHOT SUBJECT row's
+        // own existence: null = cold-start (no prior row for THIS subject → revert DELETEs
+        // it). The question-card fallback only seeds scheduleReview; it must NOT make
+        // `before` non-null for a knowledge subject whose own row was absent (else revert
+        // would UPSERT a row that did not exist pre-attempt — table-shape drift).
+        before: snapshotFsrsBefore,
       });
     }
     const primaryUpdate = fsrsUpdates[0];

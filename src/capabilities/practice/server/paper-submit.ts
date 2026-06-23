@@ -498,12 +498,15 @@ export async function submitPaperSlot(
       );
 
       let prevStateRow = await getFsrsState(tx, fsrsSubjectKind, fsrsSubjectId);
+      // YUK-471 W0 (augment review) — snapshot `before` must reflect the SNAPSHOT SUBJECT
+      // row's own existence (null = cold-start → revert DELETEs the row), NOT the legacy
+      // question-card fallback below (which only seeds scheduleReview). Captured BEFORE the
+      // fallback overwrites prevStateRow — else a knowledge subject whose own row was absent
+      // would snapshot a non-null `before` and revert would UPSERT a row that never existed.
+      fsrsBefore = prevStateRow?.state ?? null;
       if (!prevStateRow && fsrsSubjectKind === 'knowledge') {
         prevStateRow = await getFsrsState(tx, 'question', input.questionId);
       }
-      // Capture the PRE-attempt Card BEFORE scheduleReview/upsert moves it (mirrors the
-      // θ̂ before-capture discipline) — this is the exact `before` the upsert overwrites.
-      fsrsBefore = prevStateRow?.state ?? null;
       scheduled = scheduleReview(
         prevStateRow?.state
           ? { ...prevStateRow.state, last_review: prevStateRow.state.last_review ?? null }

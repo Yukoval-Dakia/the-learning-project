@@ -147,6 +147,8 @@ describe('collectCascadeFromCheckpoint (recursive CTE)', () => {
 
     // Depth cap reached on a chain deeper than 64 → honest-reject (truncated).
     expect(result.truncated).toBe(true);
+    // Honest-reject contract: a truncated result returns NO half set.
+    expect(result.nodes).toHaveLength(0);
   });
 
   // Test 24 — node cap → truncated=true (refuse; return no half set).
@@ -163,6 +165,22 @@ describe('collectCascadeFromCheckpoint (recursive CTE)', () => {
     expect(result.truncated).toBe(true);
     // Honest-reject: no half set is returned.
     expect(result.nodes).toHaveLength(0);
+  });
+
+  // Test 24b — invalid opts.nodeCap fast-fails before reaching the SQL LIMIT
+  // (CodeRabbit: a negative or non-integer nodeCap would otherwise surface as a
+  // runtime SQL error). The depth limit is a const, not caller input, so it is
+  // not exercised here.
+  it('throws on an invalid opts.nodeCap (non-positive or non-integer)', async () => {
+    const db = testDb();
+    const root = await seedEvent({ action: 'attempt' });
+    await seedEvent({ action: 'judge', caused_by_event_id: root });
+
+    for (const badNodeCap of [0, -1, 1.5]) {
+      await expect(collectCascadeFromCheckpoint(db, root, { nodeCap: badNodeCap })).rejects.toThrow(
+        /nodeCap must be a positive integer/,
+      );
+    }
   });
 
   // Test 25 — outer ORDER BY depth DESC (reverse-dependency order; Codex fix ④).

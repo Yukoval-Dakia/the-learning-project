@@ -105,12 +105,13 @@ export async function restoreStateSnapshot(
         subject_id: snap.subject_id,
         state: snap.before,
         due_at: snap.before.due,
-        // The snapshot event is an internal ledger row; last_review_event_id
-        // back-references the attempt event whose state we are reverting. The
-        // before-Card pre-dates that attempt, so we point at the attempt_event_id
-        // for audit traceability (the orchestrator passes the true prior review
-        // event id if it has one; the primitive just needs a non-null marker).
-        last_review_event_id: payload.attempt_event_id,
+        // augment review — the before-Card pre-dates the reverted attempt, so it must NOT
+        // back-reference that attempt: a downstream reader/audit would be misled into
+        // thinking the restored card was last reviewed by the very attempt we just undid.
+        // The snapshot's `before` carries only the FSRS Card scalars (not the prior
+        // last_review_event_id), so the primitive restores this to null ("unknown prior").
+        // The orchestrator wave passes the true prior review event id when it has one.
+        last_review_event_id: null,
       });
     }
   }

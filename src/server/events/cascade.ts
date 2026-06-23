@@ -88,6 +88,16 @@ export async function collectCascadeFromCheckpoint(
 ): Promise<CascadeResult> {
   const nodeCap = opts?.nodeCap ?? CASCADE_DEFAULT_NODE_CAP;
 
+  // Fast-fail on an invalid caller-supplied nodeCap before it reaches the SQL
+  // LIMIT (a negative or non-integer would surface as a confusing runtime SQL
+  // error rather than a clear contract violation). The depth limit is a const,
+  // not caller input, so it needs no such guard.
+  if (!Number.isInteger(nodeCap) || nodeCap < 1) {
+    throw new Error(
+      `collectCascadeFromCheckpoint: opts.nodeCap must be a positive integer (got ${nodeCap})`,
+    );
+  }
+
   // Recurse ONE level past the depth limit so an over-deep chain is detectable
   // (any returned row with depth > CASCADE_DEPTH_LIMIT signals truncation), and
   // fetch ONE row past the node cap so cap-overflow is detectable without a
