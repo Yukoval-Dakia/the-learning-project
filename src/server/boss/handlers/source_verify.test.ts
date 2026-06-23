@@ -186,6 +186,73 @@ describe('runSourceVerify', () => {
   // reachable source_verify failure mode (a hard check fail) IS asserted above
   // (validation_failure).
 
+  // ── YUK-479 — auto-promote one-way gate fix (demote a pre-promoted draft on FAIL) ──
+  it('YUK-479 demotes a pre-promoted (active) cold-start draft back to draft when a check fails', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // Cold-start image-upload shape: web_sourced + draft_status='active' PRE-PROMOTED before
+    // source_verify runs (image-candidate-accept.ts, no inbox wall).
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], draftStatus: 'active' });
+    // solver disagrees with the reference → solve_check fail → no promote.
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('助词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('failed');
+
+    // The failed-verify question is demoted OUT of the pool (the one-way gate is closed).
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+
+    const events = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(events).toHaveLength(1);
+    expect(events[0].outcome).toBe('failure');
+    expect((events[0].payload as Record<string, unknown>).demoted).toBe(true);
+  });
+
+  it('YUK-479 does NOT demote a normal draft on FAIL (demoted:false, no-op — scoped by construction)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    // Normal sourcing.ts shape: draft_status defaults to 'draft' before verify.
+    const qid = await seedQuestion({ knowledgeIds: ['k1'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('助词') })); // solve_check fail
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('failed');
+
+    // Already 'draft' → the demote WHERE draft_status='active' guard is a no-op; unchanged.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('draft');
+    const events = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect((events[0].payload as Record<string, unknown>).demoted).toBe(false);
+  });
+
+  it('YUK-479 leaves a pre-promoted (active) cold-start draft active when verify passes (demoted:false)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'], draftStatus: 'active' });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') })); // solve_check pass
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('verified');
+
+    // Pass keeps it active (and now FSRS-enrolls it); the demote branch never runs.
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+    const fsrs = await getFsrsState(db, 'knowledge', 'k1');
+    expect(fsrs).not.toBeNull();
+    const events = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect((events[0].payload as Record<string, unknown>).demoted).toBe(false);
+  });
+
   it('fails source_consistency for a web_sourced row missing its provenance block', async () => {
     const db = testDb();
     await seedKnowledge('k1');
