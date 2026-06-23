@@ -351,6 +351,13 @@
       "when": 1782004562340,
       "tag": "0049_low_zzzax",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1782256063817,
+      "tag": "0050_wild_zaladane",
+      "breakpoints": true
     }
   ]
 }
