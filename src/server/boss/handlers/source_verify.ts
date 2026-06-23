@@ -415,6 +415,7 @@ export async function runSourceVerify(
       checks: checks.map((c) => ({ check: c.check, verdict: c.verdict, reason: c.reason })),
     });
 
+    let wasDemoted = false;
     await db.transaction(async (tx) => {
       if (promote) {
         await tx
@@ -451,6 +452,33 @@ export async function runSourceVerify(
             });
           }
         }
+      } else {
+        // ---- YUK-479 — auto-promote one-way gate fix: demote a pre-promoted draft on FAIL. ----
+        // The cold-start image-upload path (image-candidate-accept.ts) PRE-PROMOTES a
+        // structurally-sound draft to draft_status='active' (no inbox wall, YUK-478) BEFORE this
+        // source_verify runs, relying on source_verify as the deeper grounding gate. Until now
+        // source_verify had only a PROMOTE branch, so a FAIL left such a question 'active' →
+        // unverified content stayed placement-selectable (the "one-way gate"). Demote it back to
+        // 'draft' so a failed-verify cold-start question leaves the pool.
+        //
+        // SCOPED-BY-CONSTRUCTION (no marker column needed): the ONLY question that can be 'active'
+        // when source_verify reaches this !promote branch is a cold-start pre-promote. A normal
+        // web_sourced draft (sourcing.ts) is 'draft' here → the WHERE draft_status='active' guard
+        // makes the demote a no-op; an already-verified question is short-circuited by the
+        // idempotency guard above (terminal verify event) and never reaches this branch;
+        // verify-and-promote.ts gates draft_status='draft' before dispatching runSourceVerify. So
+        // this UPDATE fires ONLY for the cold-start pre-promote case — a global no-op everywhere
+        // else. No FSRS to clean: the pre-promote does not enroll FSRS (only the promote branch
+        // above does, and it didn't run). draft_status='draft' is non-destructive pool-exclusion —
+        // it stops FUTURE selection; any existing history is untouched. A later re-enqueue is
+        // short-circuited by the failure verify event (idempotency), so the question stays out of
+        // the pool until a human (verify-and-promote owner override) intervenes.
+        const demotedRows = await tx
+          .update(question)
+          .set({ draft_status: 'draft', updated_at: now })
+          .where(and(eq(question.id, questionId), eq(question.draft_status, 'active')))
+          .returning({ id: question.id });
+        wasDemoted = demotedRows.length > 0;
       }
 
       await writeEvent(tx, {
@@ -466,6 +494,9 @@ export async function runSourceVerify(
           question_id: questionId,
           tier: 2,
           promoted: promote,
+          // YUK-479 — true when this FAIL demoted a cold-start pre-promoted draft
+          // (draft_status active→draft); false on a normal draft FAIL (no-op) and on promote.
+          demoted: wasDemoted,
           // YUK-350 (B5 increment C) — unified verify contract shape (axes + overall +
           // failure_class? + summary_md + confidence). SUPERSET: the tier-2-specific keys
           // below (checks / knowledge_archived) stay unchanged. `unified.failure_class`
