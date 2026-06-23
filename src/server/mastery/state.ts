@@ -455,15 +455,38 @@ export interface UpdateThetaForAttemptInput {
  *   VERIFY:difficulty-logit-map 吸收）。
  *
  * θ̂_min 是选题聚合（ex-ante），本 wave 不实现，仅此注释留口。
+ *
+ * YUK-471 Wave 0 (ADR-0044 §3) — returns the per-KC θ̂ `before`/`after` snapshot so
+ * the attempt-tx snapshot append (submit.ts / paper-submit.ts) can bracket the EXACT
+ * mastery_state transition this fn performed (A-class snapshot reversibility). `before`
+ * is captured from the RAW pre-attempt row presence (`row === undefined ? null :
+ * row.theta_hat`) — null≠0 is PRESERVED (0 is a real prior θ̂; cold-start has no row →
+ * null → revert deletes the row instead of writing θ̂=0). `after` is the `newTheta`
+ * written via upsertMasteryState.
+ *
+ * SCOPE (§6.6): this returns ONLY the per-KC 'knowledge' rows. The A2 hierarchical-Elo
+ * 'ability_global' rows (HIERARCHICAL_ELO_ENABLED, default OFF → no global rows written)
+ * are NOT bracketed here. When A2 ships, theta_snapshots MUST extend to the
+ * 'ability_global' subjects (the per-domain global drift block below) so cascade-revert
+ * restores the global layer too — otherwise a revert would leave θ_global stale.
  */
+export interface ThetaSnapshotEntry {
+  kc_id: string;
+  before: number | null;
+  after: number;
+}
+export interface UpdateThetaForAttemptResult {
+  theta_snapshots: ThetaSnapshotEntry[];
+}
+
 export async function updateThetaForAttempt(
   tx: Tx,
   input: UpdateThetaForAttemptInput,
-): Promise<void> {
+): Promise<UpdateThetaForAttemptResult> {
   const knowledgeIds = Array.from(
     new Set(input.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
   );
-  if (knowledgeIds.length === 0) return;
+  if (knowledgeIds.length === 0) return { theta_snapshots: [] };
 
   // 0. Serialize the read-modify-write per KC (review SF-2). The caller's FSRS
   //    advisory lock only covers fsrsSubjectIds (a possible SUBSET of these KCs —
@@ -551,6 +574,10 @@ export async function updateThetaForAttempt(
     const row = byId.get(id);
     return {
       id,
+      // YUK-471 Wave 0 (ADR-0044 §3) — RAW pre-attempt θ̂ presence for the snapshot
+      // `before`. null≠0 is PRESERVED here (do NOT use the `theta` coercion below):
+      // no row → null (cold-start → revert deletes the row); 0 is a real prior θ̂.
+      thetaBefore: row === undefined ? null : row.theta_hat,
       theta: row?.theta_hat ?? 0,
       evidence: row?.evidence_count ?? 0,
       success: row?.success_count ?? 0,
@@ -650,6 +677,10 @@ export async function updateThetaForAttempt(
   //   off → θ_global≡0 → θ_KC IS the ability → byte-identical to single-layer Elo.
   //   Precision/Fisher stays on the KC layer at thetaBefore = s.theta (the KC offset,
   //   layer-independent — constraint iii: precision UNCHANGED, RT/layer-independent).
+  // YUK-471 Wave 0 (ADR-0044 §3) — accumulate the per-KC θ̂ before/after snapshot as
+  // we perform the in-place overwrite, so the caller's snapshot append brackets the
+  // EXACT transition (before = raw pre-attempt presence, after = newTheta written).
+  const thetaSnapshots: ThetaSnapshotEntry[] = [];
   for (let i = 0; i < states.length; i++) {
     const s = states[i];
     const k = eloK(s.evidence);
@@ -671,6 +702,9 @@ export async function updateThetaForAttempt(
       theta_precision: newPrecision,
       last_theta_delta: delta,
     });
+    // YUK-471 Wave 0 — bracket THIS KC's transition. before = RAW pre-attempt row
+    // presence (null = cold-start, distinct from 0); after = the newTheta just written.
+    thetaSnapshots.push({ kc_id: s.id, before: s.thetaBefore, after: newTheta });
   }
 
   // ── A2 (YUK-434) — per-domain θ_global drift (ONCE per touched domain) ──────────
@@ -793,4 +827,9 @@ export async function updateThetaForAttempt(
       .set({ theta_grid_json: posterior, updated_at: input.now })
       .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, s.id)));
   }
+
+  // YUK-471 Wave 0 (ADR-0044 §3) — return the per-KC θ̂ before/after snapshot for the
+  // attempt-tx snapshot append. Only 'knowledge' rows (A2 'ability_global' is OUT — see
+  // the fn doc / §6.6: extend here when HIERARCHICAL_ELO_ENABLED ships).
+  return { theta_snapshots: thetaSnapshots };
 }

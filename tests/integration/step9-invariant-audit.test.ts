@@ -244,6 +244,45 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     ).toEqual([]);
   });
 
+  // YUK-471 Wave 0 (ADR-0044 §3) — REVERSE invariant: each A-class attempt tx (solo
+  // submit.ts + paper paper-submit.ts) MUST append exactly one
+  // `experimental:state_snapshot` event anchored to the attempt event, so the θ̂/FSRS
+  // in-place overwrite it performs is always bracketed (A-class snapshot reversibility).
+  // This is the source-level companion to the DB tests (submit-snapshot.db.test.ts /
+  // paper-submit-snapshot.db.test.ts): those prove the runtime behaviour against the
+  // live rows; this static walker proves the WRITER exists in each attempt path's source
+  // (and would catch a future edit that silently drops the append). We assert on the
+  // source text because the step9 audit is a pure-Node fs walker, not a DB harness.
+  it('each attempt tx (solo + paper) appends exactly one experimental:state_snapshot anchored to the attempt event', async () => {
+    const ATTEMPT_PATHS = [
+      'src/capabilities/practice/api/submit.ts',
+      'src/capabilities/practice/server/paper-submit.ts',
+    ] as const;
+    for (const rel of ATTEMPT_PATHS) {
+      const src = await fs.readFile(path.join(REPO_ROOT, rel), 'utf8');
+      // Exactly one snapshot writeEvent literal per attempt path (the single append
+      // site). More than one would mean a duplicate (double snapshot per attempt);
+      // zero would mean the A-class invariant is unestablished for that path.
+      const actionLiterals = src.match(/action:\s*'experimental:state_snapshot'/g) ?? [];
+      expect(
+        actionLiterals.length,
+        `${rel} must contain EXACTLY one experimental:state_snapshot append (found ${actionLiterals.length})`,
+      ).toBe(1);
+      // The append must back-link to the attempt event via caused_by_event_id (the
+      // cascade CTE chain edge). submit.ts uses `eventId`; paper-submit.ts uses
+      // `attemptEventId` — accept either attempt-event identifier.
+      expect(
+        /caused_by_event_id:\s*(eventId|attemptEventId)\b/.test(src),
+        `${rel} snapshot append must set caused_by_event_id to the attempt event id`,
+      ).toBe(true);
+      // HARD REQ 2 — the snapshot opts out of the memory outbox (ingest_at non-NULL).
+      expect(
+        /ingest_at:\s*now/.test(src),
+        `${rel} snapshot append must stamp ingest_at: now (HARD REQ 2 — skip the memory outbox)`,
+      ).toBe(true);
+    }
+  });
+
   for (const dropped of ['mistake', 'review_event', 'dreaming_proposal', 'ingestion_session']) {
     it(`legacy \`${dropped}\` table has ZERO write-callers in src/ + app/ (DROPped in 9.J)`, async () => {
       const hits = await findWriteHits(dropped, { roots: SCAN_RUNTIME_ROOTS });

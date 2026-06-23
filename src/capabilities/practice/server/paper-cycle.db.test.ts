@@ -1576,9 +1576,12 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     // Spy θ̂ — assert it fires exactly once for the attempt, NOT once-per-sub.
     // Mocked to a no-op resolve so it never touches real mastery_state (the rest
     // of the attempt tx still commits).
+    // YUK-471 Wave 0 — updateThetaForAttempt now returns { theta_snapshots } (the
+    // attempt-tx state_snapshot append reads it). Mock returns an empty snapshot so the
+    // snapshot writeEvent still gets a valid (empty) θ̂ segment and the tx commits.
     const thetaSpy = vi
       .spyOn(masteryStateModule, 'updateThetaForAttempt')
-      .mockResolvedValue(undefined as never);
+      .mockResolvedValue({ theta_snapshots: [] });
 
     try {
       const submit = await submitPaperSlot(
