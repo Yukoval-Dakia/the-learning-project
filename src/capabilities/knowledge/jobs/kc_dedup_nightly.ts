@@ -120,6 +120,7 @@ export async function runKcDedupNightly(
       FROM event
       WHERE action = 'experimental:auto_tag_kc_created'
         AND subject_kind = 'knowledge'
+        AND outcome = 'success'
         AND created_at > now() - make_interval(days => ${windowDays})
     )
     SELECT
