@@ -371,6 +371,12 @@ export async function runAutoEnrollForSession(
       continue;
     }
 
+    // YUK-488 — the page(s) THIS question spans (full source_asset_ids fallback when the
+    // structured tree carries no page_index). Used as BOTH the judge's prompt image_refs and
+    // the student image_refs below, AND the stored answer image_refs at enroll — so the judge
+    // sees only this question's pages (not every sibling's), narrowing inter-page bleed.
+    const scopedPageRefs = pageScopedQuestionImageRefs(block);
+
     // ---- YUK-482 cut ④ — student-answer grading (OUTSIDE the tx). ----
     // When the flag is ON and student work is plausible on the page (see the
     // YUK-487 fail-open gate below), grade the WHOLE PAGE IMAGE via the existing
@@ -398,8 +404,8 @@ export async function runAutoEnrollForSession(
     // the extraction dependency entirely = YUK-488 (Fix B).
     if (studentGrading && shouldGradeStudentWork(block)) {
       // Build the judge row from the BLOCK's content (available pre-tx) — NOT a
-      // persisted question row. image_refs = the prompt figures (NOT the student
-      // work); the student work is fed via studentImageRefs = source_asset_ids.
+      // persisted question row. image_refs = the whole-page images (YUK-488: scoped to
+      // THIS question's pages, not all session pages), fed as the judge's prompt images.
       const judgeQuestion: JudgeQuestionRow = {
         id: block.id,
         kind: block.structured?.kind ?? 'short_answer',
@@ -411,16 +417,20 @@ export async function runAutoEnrollForSession(
         knowledge_ids: null,
         metadata: null,
         figures: block.figures,
-        image_refs: block.image_refs,
+        // YUK-488 — page-scoped (was block.image_refs = all session pages). Scoping ONLY
+        // studentImageRefs below would be insufficient: the judge also fetches prompt
+        // image_refs, so the page bleed would persist through this field. Both narrowed.
+        image_refs: scopedPageRefs,
         structured: block.structured ?? null,
       };
       try {
         studentGradeVerdict = await gradeStudentAnswerFn({
           db: params.db,
           question: judgeQuestion,
-          // Whole page image = the student's answer photo (cut ④ grades the whole
-          // page, no figure/bbox cropping). source_asset_ids carries the page assets.
-          studentImageRefs: block.source_asset_ids,
+          // YUK-488 — the student answer photo(s), page-scoped to THIS question's pages
+          // (was block.source_asset_ids = every session page → inter-page bleed). cut ④
+          // still grades the whole PAGE (no figure/bbox cropping) — just the right pages.
+          studentImageRefs: scopedPageRefs,
           // Best pre-tx subject signal = the ingestion session's subject (the
           // grader resolves the SubjectProfile from it; the vision judge uses the
           // profile but does NOT gate on preferredRoutes — see GradeStudentAnswerFn).
@@ -699,7 +709,10 @@ export async function runAutoEnrollForSession(
       answerMd = block.wrong_answer_md ?? '';
     }
 
-    const answerImageRefs = gradedVerdict ? block.source_asset_ids : [];
+    // YUK-488 — store the SAME page-scoped images the judge graded (was
+    // block.source_asset_ids = all session pages). The stored answer photos must match
+    // what produced the verdict — this question's pages, not every sibling's.
+    const answerImageRefs = gradedVerdict ? scopedPageRefs : [];
 
     // Explicit if/else (biome/OCR readability): graded or figure-bearing → image
     // capture; otherwise text capture.
@@ -1138,6 +1151,61 @@ export function shouldGradeStudentWork(block: {
   if (detectStudentWork(block)) return true;
   const source = block.structured?.source;
   return source != null && SCAN_SOURCES.has(source) && !extractionAssessedHandwriting(block);
+}
+
+/**
+ * YUK-488 — page-scope the images fed to the whole-page student-answer judge.
+ *
+ * Before this, cut ④ fed EVERY session page (block.source_asset_ids = all assets, and the
+ * judge's prompt image_refs = block.image_refs = all assets too) to every block's judge
+ * call — so the judge grading question A also saw questions B/C/D's pages. On a MULTI-PAGE
+ * upload that is the inter-page attribution bleed YUK-485 flagged. This narrows the fed
+ * images to the page(s) THIS question actually spans.
+ *
+ * Page set = every `page_index` in the question's structured subtree (top node + all
+ * sub_questions). The VLM StructureTask populates page_index per node — incl. subs —
+ * (nodeToStructured copies it recursively, YUK-227 P1; a cross-page 大题 carries DIFFERENT
+ * page_index across its subs), and the Tencent multi-page fallback stamps it per page. Each
+ * index maps to source_asset_ids[idx] (asset ids are stored in page order by
+ * tencent_ocr_extract). Returns the matched assets in ascending page order, deduped.
+ *
+ * FALLBACK to the full source_asset_ids (today's behavior, ZERO regression) when the tree
+ * yields NO page_index (legacy single-page tree / a fallback path that omits it) OR any
+ * derived index is out of range. Deliberately conservative: an unreliable/absent page
+ * signal must never DROP a page the answer might be on — better to over-feed (today's
+ * bleed) than to silently starve the judge.
+ *
+ * KNOWN LIMIT (accepted — narrow scope, owner-directed): scoping to the structured (prompt)
+ * pages can drop a SEPARATE answer-sheet page (机读卡 / a continuation not in the prompt's
+ * span). For the cold-start worked-paper upload (handwriting inline ON the question page)
+ * the answer shares the prompt's page → kept. The separate-answer-sheet case degrades to the
+ * judge seeing no answer → unsupported/low-confidence → the EXISTING needs-review gate routes
+ * it to a human (never a silent wrong grade). SAME-PAGE dense attribution (the YUK-485
+ * headline) is NOT addressed by page-scoping — it is a no-op when every question is on one
+ * page; that needs whole-page holistic reasoning, deferred out of this cut.
+ */
+export function pageScopedQuestionImageRefs(block: {
+  structured: StructuredQuestionT | null;
+  source_asset_ids: string[];
+}): string[] {
+  const all = block.source_asset_ids;
+  const root = block.structured;
+  if (!root || all.length === 0) return all;
+  const pages = new Set<number>();
+  const stack: StructuredQuestionT[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (typeof node.page_index === 'number') pages.add(node.page_index);
+    if (node.sub_questions) {
+      for (const sub of node.sub_questions) stack.push(sub);
+    }
+  }
+  if (pages.size === 0) return all; // no reliable page signal → feed all (no regression)
+  const sorted = [...pages].sort((a, b) => a - b);
+  // Defensive: any out-of-range index ⇒ the page map is untrustworthy → feed all.
+  if (sorted.some((p) => p < 0 || p >= all.length)) return all;
+  return sorted.map((p) => all[p]);
 }
 
 /**

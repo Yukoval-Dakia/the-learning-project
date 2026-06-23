@@ -32,6 +32,7 @@ import {
   detectStudentWork,
   extractionAssessedHandwriting,
   observeEventId,
+  pageScopedQuestionImageRefs,
   runAutoEnrollForSession,
   shouldGradeStudentWork,
 } from './auto-enroll';
@@ -2100,6 +2101,102 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
   });
 
   // ---------------------------------------------------------------------------
+  // YUK-488 — multi-page upload: the judge (and the stored answer images) get ONLY
+  // the page(s) THIS question spans, not every session page. Proves the page-scoping
+  // narrows the inter-page bleed end-to-end (the single-page seeds above are an
+  // identity no-op for scoping; this one has 3 pages with the question on page 1).
+  // ---------------------------------------------------------------------------
+  it('multi-page upload: judge + stored answer images are scoped to the question page (YUK-488)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: '虚词',
+      domain: 'wenyan',
+      parent_id: null,
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const sessionId = createId();
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'extracted',
+      source_document_id: createId(),
+      source_asset_ids: ['pa', 'pb', 'pc'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const blockId = createId();
+    await db.insert(question_block).values({
+      id: blockId,
+      ingestion_session_id: sessionId,
+      source_document_id: null,
+      // The whole upload's pages (page order). The question is on page index 1.
+      source_asset_ids: ['pa', 'pb', 'pc'],
+      page_spans: [],
+      structured: {
+        id: createId(),
+        role: 'standalone',
+        prompt_text: '下列句中「之」的用法',
+        source: 'vlm_structure',
+        page_index: 1,
+        extraction_evidence: {
+          handwriting: [{ text: 'ignored', bbox: { x: 0, y: 0, width: 0.1, height: 0.1 } }],
+        },
+      },
+      reference_md: '参考答案',
+      figures: [],
+      layout_quality: 'structured',
+      image_refs: ['pa', 'pb', 'pc'],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      status: 'draft',
+      knowledge_hint: '之',
+      merged_from_block_ids: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const gradeStudentAnswerFn = vi.fn<GradeStudentAnswerFn>(async () => ({
+      coarse_outcome: 'incorrect',
+      confidence: 0.95,
+    }));
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
+      tagKnowledgeFn: matchK1,
+      gradeStudentAnswerFn,
+    });
+    expect(result.enrolled).toBe(1);
+
+    // The judge was fed ONLY the question's page (index 1 → 'pb'), not all 3 pages.
+    expect(gradeStudentAnswerFn).toHaveBeenCalledTimes(1);
+    expect(gradeStudentAnswerFn.mock.calls[0]?.[0]?.studentImageRefs).toEqual(['pb']);
+    // …and the judge's prompt image_refs were narrowed the same way (else the bleed
+    // would persist through the prompt-image fetch).
+    expect(gradeStudentAnswerFn.mock.calls[0]?.[0]?.question.image_refs).toEqual(['pb']);
+
+    // The stored attempt's answer images match what was judged (the scoped page).
+    const attempts = await db.select().from(event).where(eq(event.action, 'attempt'));
+    expect((attempts[0]?.payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
+      'pb',
+    ]);
+    // The enrolled question keeps its FULL page images for display (not scoped).
+    const questions = await db.select().from(question);
+    expect(questions[0]?.image_refs).toEqual(['pa', 'pb', 'pc']);
+  });
+
+  // ---------------------------------------------------------------------------
   // detectStudentWork — pure detection (no DB): Tencent handwriting OR VLM
   // student_answer_present → true; neither → false.
   // ---------------------------------------------------------------------------
@@ -2203,6 +2300,79 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     });
     it('no structured tree (absent source, non-scan) → SKIP (no fail-open; stays on tagging path)', () => {
       expect(shouldGradeStudentWork({ structured: null })).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // YUK-488 — pageScopedQuestionImageRefs (pure, no DB): narrow the judge's images
+  // to the page(s) a question spans, with a full-page fallback when there is no
+  // reliable page_index signal.
+  // ---------------------------------------------------------------------------
+  describe('pageScopedQuestionImageRefs (YUK-488)', () => {
+    const pageNode = (pageIndex: number, subs?: StructuredQuestionT[]): StructuredQuestionT => ({
+      id: createId(),
+      role: subs ? 'stem' : 'standalone',
+      prompt_text: '题',
+      source: 'vlm_structure',
+      page_index: pageIndex,
+      ...(subs ? { sub_questions: subs } : {}),
+    });
+
+    it('single-page question on a multi-page upload → only that page', () => {
+      const block = {
+        structured: pageNode(1),
+        source_asset_ids: ['p0', 'p1', 'p2'],
+      };
+      expect(pageScopedQuestionImageRefs(block)).toEqual(['p1']);
+    });
+
+    it('cross-page 大题 (subs on p0 and p2) → both pages, ascending + deduped', () => {
+      const block = {
+        structured: pageNode(0, [
+          {
+            id: createId(),
+            role: 'sub',
+            prompt_text: 's1',
+            source: 'vlm_structure',
+            page_index: 2,
+          },
+          {
+            id: createId(),
+            role: 'sub',
+            prompt_text: 's2',
+            source: 'vlm_structure',
+            page_index: 0,
+          },
+        ]),
+        source_asset_ids: ['p0', 'p1', 'p2'],
+      };
+      // top node p0 + subs p2/p0 → {0,2} → ascending ['p0','p2'] (p1 excluded, p0 deduped).
+      expect(pageScopedQuestionImageRefs(block)).toEqual(['p0', 'p2']);
+    });
+
+    it('NO page_index in the tree (fallback path) → full source_asset_ids (no regression)', () => {
+      const block = {
+        structured: structured('无 page_index 的题'), // structured() omits page_index
+        source_asset_ids: ['p0', 'p1', 'p2'],
+      };
+      expect(pageScopedQuestionImageRefs(block)).toEqual(['p0', 'p1', 'p2']);
+    });
+
+    it('out-of-range page_index → full source_asset_ids (untrustworthy map → feed all)', () => {
+      const block = {
+        structured: pageNode(5), // 5 >= 2 pages
+        source_asset_ids: ['p0', 'p1'],
+      };
+      expect(pageScopedQuestionImageRefs(block)).toEqual(['p0', 'p1']);
+    });
+
+    it('null structured / empty assets → returned unchanged', () => {
+      expect(pageScopedQuestionImageRefs({ structured: null, source_asset_ids: ['p0'] })).toEqual([
+        'p0',
+      ]);
+      expect(
+        pageScopedQuestionImageRefs({ structured: pageNode(0), source_asset_ids: [] }),
+      ).toEqual([]);
     });
   });
 });
