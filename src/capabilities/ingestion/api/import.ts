@@ -259,9 +259,11 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       const toIgnore = new Set<string>();
 
       for (const [blockIndex, block] of body.blocks.entries()) {
-        // P3 (YUK-489): the resolved per-block attribution (client ids when present, else the
-        // tagKnowledge result — see the resolution pass above). Used for the question.knowledge_ids
-        // column + the enrollCapturedBlock attribution below.
+        // P3 (YUK-489): the per-block attribution = the client-supplied knowledge_ids
+        // (schema enforces ≥1; import carries no subject signal, so there is no
+        // tagKnowledge call here — see the ids-required note where effectiveKnowledgeIds
+        // is built above). Used for the question.knowledge_ids column + the
+        // enrollCapturedBlock attribution below.
         const blockKnowledgeIds = effectiveKnowledgeIds[blockIndex];
         let importedBlockId: string;
 
