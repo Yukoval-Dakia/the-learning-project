@@ -101,11 +101,15 @@ export type StructuredQuestionT = {
   analysis?: string;
   bbox?: BBoxT;
   /**
-   * 0-based source page this question was extracted from. Set on the Tencent
-   * multi-page fallback path (parser stamps it per page); ABSENT on the VLM
-   * structure tree and single-page legacy trees. Used by `assignFigures` to gate
-   * figure↔question attachment to the same page so a page-1 figure can't match a
-   * page-0 question on normalized (0–1) bbox overlap (YUK-163).
+   * 0-based source page this question/node was extracted from. Populated per node
+   * (incl. sub_questions) on BOTH the VLM StructureTask path (nodeToStructured copies
+   * node.page_index recursively — YUK-227 S3 Slice A P1 fix, structure.ts:197) and the
+   * Tencent multi-page fallback path (parser stamps it per page). A cross-page 大题
+   * carries DIFFERENT page_index across its sub_questions. ABSENT only on legacy
+   * single-page trees / the GLM fallback when it omits it. Used by `assignFigures` to
+   * gate figure↔question attachment to the same page (YUK-163), and by YUK-488's
+   * `pageScopedQuestionImageRefs` to feed the whole-page judge only the page(s) a
+   * question spans (with a full-page fallback when this signal is absent).
    */
   page_index?: number;
   sub_questions?: StructuredQuestionT[];
