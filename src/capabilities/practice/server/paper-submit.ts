@@ -618,7 +618,10 @@ export async function submitPaperSlot(
     // though θ̂ (d) is skipped (YUK-471 W0 invariant: every imperative FSRS overwrite is
     // revertable).
     const fsrsWrote = !photoOnlyUnsupported && scheduled !== null && stateAfter !== null;
-    if (fsrsWrote) {
+    // Re-state the explicit predicate (not `if (fsrsWrote)`) so TS narrows the mutable
+    // `let scheduled` / `let stateAfter` inside the block — an aliased boolean const does
+    // NOT propagate narrowing to reassignable lets. `fsrsWrote` is still consumed by (e).
+    if (!photoOnlyUnsupported && scheduled !== null && stateAfter !== null) {
       await upsertFsrsState(tx, {
         subject_kind: fsrsSubjectKind,
         subject_id: fsrsSubjectId,
