@@ -1,9 +1,11 @@
 # ADR-0026 — WorkflowJudge 置信闸门 + flag-gated 保守自动入库（OC-4 / OC-5）
 
-**状态**：accepted
+**状态**：accepted（§1–2 partially superseded — 见下方 2026-06-23 amendment）
 **日期**：2026-05-30 (T-OC slice 3 / YUK-145)
 **Supersedes**：—
-**Superseded by**：—
+**Superseded by**：ADR-0045（§1–2 tagging 机制；§3–4 仍有效）
+
+> **Amendment 2026-06-23 (YUK-489)** — §1（TaggingTask = 题面+网格→{suggestions,confidence}）与 §2（WorkflowJudge `min(extraction,tagging)` 置信门驱动 KC 归属）**已被取代**：标注轴现走统一 `tagKnowledge`（embedding cosine match-or-propose，跑全部题目创建入口），auto-enroll ENROLL 路径不再用 grid-tagging 的 confidence 驱动归属（合成一个 full-confidence TaggingOutput 喂 judge 以保结构不变），死的 `knowledge_ids:[]` 零匹配门已删。详见 `docs/design/2026-06-22-unified-tagging-axis.md` + ADR-0045。**§3（flag-gated 保守 rollout）+ §4（`enrollCapturedBlock` 唯一入库 owner）仍完全有效**——本 amendment 只取代 tagging/judge 前半，不动入库 owner 与 flag rollout。OBSERVE 模式仍跑原 TaggingTask（零-mutation 探针）。
 **Related**：ADR-0024（泛化捕获 — outcome 是 signal；本 ADR 复用其 `enrollCapturedBlock` 作为唯一入库 owner）/ ADR-0012（mastery as derived view）/ ADR-0014（generalized activity & capability registry）/ ADR-0002（VLM-owns-structure 方向，slice 2 已实装）
 
 > 起源：T-OC OCR/录入 pipeline 重建 design
