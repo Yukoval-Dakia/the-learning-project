@@ -527,6 +527,13 @@ export async function runAutoEnrollForSession(
         // assertParentExists when the subject's seed root was never planted — that must
         // route-to-review, not abort the whole batch into a pg-boss retry-forever loop (the LOW
         // missing-seed-root guard the old inline cold-start path enforced).
+        //
+        // DELIBERATE best-effort contract: an UNEXPECTED fault (DB blip, programming bug) is ALSO
+        // caught here — it is LOGGED via console.error (visible to monitoring) and the block is
+        // routed to review rather than re-thrown. A best-effort enroll lane must never abort the
+        // whole session batch, and the human review surface is the backstop for any block that did
+        // not auto-enroll (nothing is lost). We trade pg-boss retry-on-transient for batch
+        // resilience; a systemic fault surfaces as "everything routed to review" + the error log.
         console.error(
           `[auto_enroll] tagKnowledge failed for block ${block.id}; routing to review`,
           err,

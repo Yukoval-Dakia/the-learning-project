@@ -667,11 +667,12 @@ export async function acceptImageCandidateProposal(
       } catch (bridgeErr) {
         // Best-effort: a provider outage / unparseable output / a missing seed root must NOT lose
         // the user's upload. Persist the draft un-attributed (knowledge_ids:[], stays a 'draft'
-        // — see structural-verify gate below), exactly as the pre-YUK-478 behaviour. We swallow
-        // ANY throw (tagKnowledge can throw a plain Error from applyProposeNew's
+        // — see structural-verify gate below), exactly as the pre-YUK-478 behaviour. This catch
+        // covers BOTH the subject-classify bridge AND tagKnowledge (either can throw — the bridge
+        // on a provider/parse fault, tagKnowledge on a plain Error from applyProposeNew's
         // assertParentExists when the subject's seed root was never planted).
         console.error(
-          '[image_candidate_accept] tagKnowledge failed; persisting un-attributed draft for',
+          '[image_candidate_accept] subject-classify/tagKnowledge failed; persisting un-attributed draft for',
           proposalId,
           bridgeErr,
         );

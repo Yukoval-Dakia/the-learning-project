@@ -170,43 +170,13 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       }
     }
 
-    // 4. Resolve the EFFECTIVE per-block knowledge_ids (P3, YUK-489) — ids-authoritative-when-
-    //    present. When a block supplies knowledge_ids they are HUMAN intent and used as-is. When
-    //    EMPTY we would run the unified `tagKnowledge` to auto-attribute, threading ONE batchCache
-    //    across all blocks (D5) so same-topic siblings in one import reuse a single PROPOSE KC
-    //    instead of minting duplicates. BUT tagKnowledge REQUIRES a subjectRootId (the PROPOSE
-    //    parent + the D1 subject filter), and the import route carries NO subject signal: the
-    //    ingestion session has no subject column (subject=view, derived not stored — schema.ts),
-    //    and an empty-ids block has no ids to derive a subject from. Per the P3 decision ("if you
-    //    cannot resolve a subject root, KEEP requiring ids — do not guess a subject"), an empty-ids
-    //    block is rejected here rather than mis-rooting a PROPOSE KC. The batchCache + the
-    //    sequential per-block loop are wired so the tag path activates the moment a subject signal
-    //    is added to the import request (DEVIATION/edge documented in the P3 report).
-    //
-    //    The blocks loop awaits each tagKnowledge sequentially (the cache's SEQUENTIAL-per-run
-    //    contract), so it is NOT a Promise.all map.
-    const tagBatchCache = new Map<string, string>();
-    const effectiveKnowledgeIds: string[][] = [];
-    for (const block of body.blocks) {
-      if (block.knowledge_ids.length === 0) {
-        // No client ids + no resolvable subject root → reject (see the block comment above).
-        // When a subject signal exists, this branch becomes:
-        //   const tag = await tagKnowledge(
-        //     { db, batchCache: tagBatchCache },
-        //     { questionText: block.final_prompt_md, subjectRootId: `seed:${subjectId}:root` },
-        //   );
-        //   effectiveKnowledgeIds.push(tag.knowledge_ids);
-        throw new ApiError(
-          'validation_error',
-          'a block has empty knowledge_ids and the import request carries no subject signal to auto-tag from; supply at least one knowledge_id per block',
-          400,
-        );
-      }
-      effectiveKnowledgeIds.push(block.knowledge_ids);
-    }
-    // `tagBatchCache` is wired for the empty-ids tag path above; reference it so the unused-symbol
-    // lint passes while the path is dormant (it carries no entries until a subject signal exists).
-    void tagBatchCache;
+    // 4. Per-block knowledge_ids are client-supplied + authoritative (schema enforces ≥1).
+    //    /api/import carries no subject signal (the ingestion session has no subject column —
+    //    subject is a derived view), so the unified `tagKnowledge` cannot auto-attribute an
+    //    empty-ids block (it needs a subjectRootId for the PROPOSE parent + D1 filter). Imported
+    //    blocks therefore stay ids-required; auto-tagging import via tagKnowledge is a YUK-489
+    //    follow-up that needs a request-level subject signal first.
+    const effectiveKnowledgeIds: string[][] = body.blocks.map((b) => b.knowledge_ids);
 
     // Validate the resolved knowledge_ids exist and are not archived.
     for (const ids of effectiveKnowledgeIds) {
