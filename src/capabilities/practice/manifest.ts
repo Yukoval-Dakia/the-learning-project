@@ -287,6 +287,28 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/embed_backfill').then((m) => m.buildEmbedBackfillHandler),
       },
+      // YUK-489 (P4a) — reference-answer backfill. P3 decoupled cold-start-bridge ③
+      // (reference generation) from KC tagging: a prompt-only OCR question persists
+      // with reference_md IS NULL (auto-enroll / image-candidate-accept). This job
+      // fills those nulls nightly + independently, REUSING generateReferenceSolution
+      // (no new task). Trigger = reference_md IS NULL AND ≥1 knowledge_id (resolvable
+      // subject); no-knowledge_id rows are skipped. cron 05:20 Asia/Shanghai: in a
+      // clear slot after the data-prep chain (item_prior 04:20 / recalibration 04:50 /
+      // answer_class 05:00 / kt_estimate 05:10) and BEFORE compose 05:30 — so a freshly
+      // filled reference_md is available to the day's stream selection + judge. queue=llm:
+      // generateReferenceSolution runs SolutionGenerateTask (LLM) — same DLQ/retry bucket
+      // as the other slow backfills. Idempotent via the reference_md IS NULL filter
+      // (no NULL rows = no-op); a per-row solver skipped_error leaves the row NULL for
+      // the next run, the batch continues (embed_backfill per-row contract).
+      {
+        name: 'reference_answer_backfill',
+        schedule: { cron: '20 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/reference_answer_backfill').then(
+            (m) => m.buildReferenceAnswerBackfillHandler,
+          ),
+      },
       // YUK-390 kind Step 3 — answer_class materialization backfill. Classifies
       // answer_class IS NULL question rows via deriveAnswerClass (pure, no API),
       // for retrieval filtering + the kind reshape. cron 05:00 Asia/Shanghai: a

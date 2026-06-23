@@ -10,7 +10,7 @@
 // LOGGED SKIP — never a thrown 500, never a retry storm. The caller (solve
 // orchestrator) degrades gracefully; the manual flow is untouched. Lazy +
 // idempotent (skip when reference_solution already exists, unless regenerate).
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
@@ -135,14 +135,25 @@ export async function generateReferenceSolution(
     reference_solution_source: 'ai_generated' as const,
   };
 
-  await db
+  // Write-guard (concurrent-safe): unless an explicit regenerate, write ONLY when reference_md is
+  // STILL null. A concurrent writer (an OCR enroll/import, a manual edit) may have set a REAL
+  // reference between our initial SELECT and this UPDATE (TOCTOU) — we must never clobber an
+  // externally-set answer with an AI guess. If the guard matches 0 rows a reference landed
+  // concurrently → skip (the nightly reference_answer_backfill counts it skipped, not filled).
+  const updateWhere = params.regenerate
+    ? eq(question.id, questionId)
+    : and(eq(question.id, questionId), isNull(question.reference_md));
+  const written = await db
     .update(question)
     .set({
       rubric_json: mergedRubric as RubricT,
       reference_md: parsed.worked_solution_md,
       updated_at: new Date(),
     })
-    .where(eq(question.id, questionId));
+    .where(updateWhere)
+    .returning({ id: question.id });
+
+  if (written.length === 0) return { status: 'skipped_exists' };
 
   return { status: 'generated', final_answer: parsed.reference_solution.final_answer };
 }
