@@ -89,7 +89,10 @@ export async function runReferenceAnswerBackfill(
         // profile + generate against a guess), so it must never be fetched. Gating in app code
         // instead (a post-SELECT skip) let knowledge_ids=[] rows consume the LIMIT budget and,
         // with oldest-first ordering, STARVE the newer generate-able rows every nightly run.
-        // knowledge_ids is jsonb (GIN-indexed) → jsonb_array_length.
+        // knowledge_ids is jsonb → jsonb_array_length. NOTE this is a seq-scan predicate, NOT
+        // index-accelerated: the GIN(jsonb_path_ops) index on knowledge_ids only serves `@>`
+        // containment, not a function call / "non-empty" test. That is fine here — the nightly
+        // batch is bounded (LIMIT) and the question table is single-user scale (OCR #571).
         sql`jsonb_array_length(${question.knowledge_ids}) > 0`,
       ),
     )
