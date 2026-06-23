@@ -34,7 +34,7 @@ import {
   type SolutionGenerateRunTaskFn,
   generateReferenceSolution,
 } from '@/server/ai/solution-generate';
-import { isNull } from 'drizzle-orm';
+import { asc, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 export interface ReferenceAnswerBackfillResult {
@@ -81,6 +81,10 @@ export async function runReferenceAnswerBackfill(
     .select({ id: question.id, knowledge_ids: question.knowledge_ids })
     .from(question)
     .where(isNull(question.reference_md))
+    // Oldest-first: an LLM-per-row job at batch 50 needs fairness — without a stable order a
+    // repeatedly-failing (skipped_error) or perpetually-overflowed row could starve across nightly
+    // runs. created_at ASC guarantees the oldest null-reference rows are retried first (OCR #569).
+    .orderBy(asc(question.created_at))
     .limit(limit);
 
   let filled = 0;
