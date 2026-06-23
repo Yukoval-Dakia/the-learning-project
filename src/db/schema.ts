@@ -752,6 +752,54 @@ export const event = pgTable(
   ],
 );
 
+// YUK-471 W1 PR-A2a — the A2 reverse-index (owner fork (a)): materialized id → anchor event.
+//
+// WHY THIS EXISTS. The W1 fold reducers (foldKnowledgeNode / foldKnowledgeEdge) replay
+// the `event` log to project a node/edge row. Most mutations key on the event's own
+// `subject_id` (reparent/archive/merge/auto_tag → subject_id IS the node id; all edge
+// events → subject_id IS the edge id). But two CREATE shapes mint a node id that is NOT
+// the event subject_id: `propose_new` (subject_id = the PROPOSAL id; the created node id
+// is minted at accept and recorded in the accepting RATE's payload.materialized_ids
+// .knowledge[0]) and `split` (subject_id = the source node; the new node ids live in the
+// accepting RATE's materialized_ids.knowledge, ordered to match payload.into[]). To fold a
+// node BY its id, the IO shell therefore needs an explicit id → anchor-event path. This
+// reverse index supplies it: materialized_id → the propose/split event (post-keystone) or
+// the genesis event (backfill) whose accept/seed materialized that id.
+//
+// HOW IT IS POPULATED. It is itself a tiny projection of the event log, written in two
+// places, both behavior-preserving until the SoT flip:
+//   - same-tx at accept-time (PR-A2b): when acceptProposal materializes a node id, it
+//     upserts (materialized_id, anchor_event_id) inside the SAME transaction as the RATE
+//     write, so the index never lags the log.
+//   - at genesis-backfill-time (PR-A2a script): the backfill seeds one genesis event per
+//     pre-event-sourcing row and upserts its id → genesis-event anchor here.
+// PR-A2a only ADDS this table + the IO shells + the backfill/audit scripts; nothing on the
+// live write path writes here yet (no double-write, no SoT flip — that is PR-A2b / PR-B).
+//
+// AUDIT. Because the index is a derived projection, `pnpm audit:projection` re-derives the
+// expected (materialized_id → anchor_event_id) set from the event log and diffs it against
+// this table to catch drift.
+export const materialized_id_index = pgTable(
+  'materialized_id_index',
+  {
+    // the knowledge.id / knowledge_edge.id this row anchors. Minted exactly once, so it is
+    // the natural PK (one anchor per materialized id).
+    materialized_id: text('materialized_id').primaryKey(),
+    // the propose/split event (post-keystone) OR genesis event (backfill) whose accept/seed
+    // materialized `materialized_id`. The fold starts its replay from here.
+    anchor_event_id: text('anchor_event_id').notNull(),
+    // 'knowledge' | 'knowledge_edge' — which fold (node vs edge) consumes this anchor.
+    subject_kind: text('subject_kind').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // reverse lookup: an anchor event can materialize several ids (split mints N nodes; a
+    // genesis-backfill batch shares context) — index the FK side so "ids anchored by event X"
+    // is cheap for the audit re-derivation.
+    index('materialized_id_index_anchor_idx').on(t.anchor_event_id),
+  ],
+);
+
 export const proposal_signals = pgTable(
   'proposal_signals',
   {
