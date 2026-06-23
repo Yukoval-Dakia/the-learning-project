@@ -142,19 +142,22 @@ describe('reference_answer_backfill', () => {
     expect(okRow.reference_md).toBe('FILLED-OK');
   });
 
-  it('subject-unresolvable: a reference_md IS NULL question with NO knowledge_id is skipped, not attempted', async () => {
-    // knowledge_ids defaults to [] (notNull default) — no resolvable subject.
+  it('excludes no-knowledge_id rows from the scan (SQL predicate) so they cannot starve generate-able rows', async () => {
+    await seedKnowledge();
+    // A no-knowledge_id reference-null row (knowledge_ids defaults to []) must be EXCLUDED by the
+    // predicate (never fetched) — and a generate-able (≥1 knowledge_id) row in the SAME batch must
+    // still be filled. This is the anti-starvation point: the no-kc row does not consume the LIMIT
+    // budget (augment #569 — gating in app code after the SELECT let it starve generate-able rows).
     await seedQuestion({ id: 'q-no-kc', kind: 'short_answer' });
-    const generateFn = vi.fn(async (): Promise<GenerateReferenceSolutionResult> => {
-      throw new Error('must not attempt a no-knowledge_id row');
-    });
+    await seedQuestion({ id: 'q-ok-kc', kind: 'short_answer', knowledge_ids: ['kc-root'] });
 
-    const res = await runReferenceAnswerBackfill(db, { generateFn });
+    const res = await runReferenceAnswerBackfill(db, { runTaskFn: okRunTask });
 
-    // The row is scanned (reference_md IS NULL) but skipped before the solver call.
-    expect(generateFn).not.toHaveBeenCalled();
-    expect(res).toEqual({ scanned: 1, filled: 0, skipped: 1 });
-    const [row] = await db.select().from(question).where(eq(question.id, 'q-no-kc'));
-    expect(row.reference_md).toBeNull();
+    // Only the generate-able row is scanned + filled; the no-kc row is never fetched.
+    expect(res).toEqual({ scanned: 1, filled: 1, skipped: 0 });
+    const [noKc] = await db.select().from(question).where(eq(question.id, 'q-no-kc'));
+    expect(noKc.reference_md).toBeNull(); // never attempted
+    const [okKc] = await db.select().from(question).where(eq(question.id, 'q-ok-kc'));
+    expect(okKc.reference_md).toBe('WORKED-SOLUTION');
   });
 });

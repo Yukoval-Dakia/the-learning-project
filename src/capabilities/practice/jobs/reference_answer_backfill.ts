@@ -16,9 +16,10 @@
 // which falls back to the DEFAULT profile for an empty/orphaned id list (it does
 // NOT throw — see subject-profile.ts:11-12). The P4a contract is stricter: only
 // attempt rows with ≥1 knowledge_id so the profile is genuinely resolvable; rows
-// with no knowledge_id are SKIPPED (counted, not attempted) rather than generated
-// against a default-profile guess. We gate at THIS layer (SELECT predicate),
-// because the solver alone would silently generate against the default profile.
+// with no knowledge_id are EXCLUDED by the SELECT PREDICATE
+// (jsonb_array_length(knowledge_ids) > 0) — never fetched, so they cannot consume the
+// LIMIT budget and, with oldest-first ordering, starve newer generate-able rows
+// (augment #569). Gating in app code after the SELECT had exactly that starvation bug.
 //
 // PER-ROW FAILURE CONTRACT (mirror embed_backfill): a single row's
 // skipped_error leaves that row's reference_md NULL (next nightly run retries) and
@@ -34,7 +35,7 @@ import {
   type SolutionGenerateRunTaskFn,
   generateReferenceSolution,
 } from '@/server/ai/solution-generate';
-import { asc, isNull } from 'drizzle-orm';
+import { and, asc, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 export interface ReferenceAnswerBackfillResult {
@@ -78,12 +79,25 @@ export async function runReferenceAnswerBackfill(
   const generateFn = opts.generateFn ?? generateReferenceSolution;
 
   const rows = await db
-    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+    .select({ id: question.id })
     .from(question)
-    .where(isNull(question.reference_md))
+    .where(
+      and(
+        isNull(question.reference_md),
+        // Subject-resolvability gate pushed into the PREDICATE (augment #569): a row with no
+        // knowledge_id has no resolvable subject (the solver would fall back to the default
+        // profile + generate against a guess), so it must never be fetched. Gating in app code
+        // instead (a post-SELECT skip) let knowledge_ids=[] rows consume the LIMIT budget and,
+        // with oldest-first ordering, STARVE the newer generate-able rows every nightly run.
+        // knowledge_ids is jsonb (GIN-indexed) → jsonb_array_length.
+        sql`jsonb_array_length(${question.knowledge_ids}) > 0`,
+      ),
+    )
     // Oldest-first: an LLM-per-row job at batch 50 needs fairness — without a stable order a
     // repeatedly-failing (skipped_error) or perpetually-overflowed row could starve across nightly
-    // runs. created_at ASC guarantees the oldest null-reference rows are retried first (OCR #569).
+    // runs. created_at ASC guarantees the oldest generate-able null-reference rows are retried
+    // first (OCR #569). Combined with the predicate gate above, the LIMIT now returns only
+    // generate-able rows, so no-knowledge_id rows can never crowd them out.
     .orderBy(asc(question.created_at))
     .limit(limit);
 
@@ -91,14 +105,6 @@ export async function runReferenceAnswerBackfill(
   let skipped = 0;
 
   for (const row of rows) {
-    // Subject-resolvability gate (spec case 5): a row with no knowledge_id has no
-    // resolvable subject — skip + count, do NOT attempt (the solver would fall
-    // back to the default profile and generate against a guess).
-    if ((row.knowledge_ids?.length ?? 0) === 0) {
-      skipped += 1;
-      continue;
-    }
-
     // generateReferenceSolution write-guards (idempotent skip when a
     // reference_solution already exists) + swallows LLM/parse errors into
     // skipped_error. A skipped_error leaves reference_md NULL → next run retries;
