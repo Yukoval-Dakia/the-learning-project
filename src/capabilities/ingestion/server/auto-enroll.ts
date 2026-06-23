@@ -1169,11 +1169,13 @@ export function shouldGradeStudentWork(block: {
  * index maps to source_asset_ids[idx] (asset ids are stored in page order by
  * tencent_ocr_extract). Returns the matched assets in ascending page order, deduped.
  *
- * FALLBACK to the full source_asset_ids (today's behavior, ZERO regression) when the tree
- * yields NO page_index (legacy single-page tree / a fallback path that omits it) OR any
- * derived index is out of range. Deliberately conservative: an unreliable/absent page
- * signal must never DROP a page the answer might be on — better to over-feed (today's
- * bleed) than to silently starve the judge.
+ * FALLBACK to the full source_asset_ids (today's behavior, ZERO regression) UNLESS EVERY node
+ * in the subtree carries a valid integer page_index. So it falls back on: NO page_index at all
+ * (legacy single-page tree / a fallback path that omits it), PARTIAL population (some nodes have
+ * it, some don't — trusting a partial set could DROP a page the answer is on), a non-integer
+ * value (NaN/float from a bad edit), OR any derived index out of range. Deliberately
+ * conservative: an incomplete/unreliable page signal must never narrow — better to over-feed
+ * (today's bleed) than to silently starve the judge of the answer page.
  *
  * KNOWN LIMIT (accepted — narrow scope, owner-directed): scoping to the structured (prompt)
  * pages can drop a SEPARATE answer-sheet page (机读卡 / a continuation not in the prompt's
@@ -1192,18 +1194,39 @@ export function pageScopedQuestionImageRefs(block: {
   const root = block.structured;
   if (!root || all.length === 0) return all;
   const pages = new Set<number>();
+  let totalNodes = 0;
+  let nodesWithPage = 0;
   const stack: StructuredQuestionT[] = [root];
   while (stack.length > 0) {
     const node = stack.pop();
     if (!node) continue;
-    if (typeof node.page_index === 'number') pages.add(node.page_index);
+    totalNodes += 1;
+    // Number.isInteger (not `typeof === 'number'`): the schema types page_index as int≥0, but
+    // structured is jsonb and an agent-edit / malformed VLM output could carry NaN or a float.
+    // typeof would admit those; then NaN slips the out-of-range guard below (NaN<0 and
+    // NaN>=len are both false) → all[NaN] = undefined fed to R2/judge. Integer-only entry keeps
+    // such a node OUT of the trusted set (and, via the complete-signal gate below, forces the
+    // feed-all fallback). (augment review #573 + independent reviewer #7.)
+    const pi = node.page_index;
+    if (typeof pi === 'number' && Number.isInteger(pi)) {
+      pages.add(pi);
+      nodesWithPage += 1;
+    }
     if (node.sub_questions) {
       for (const sub of node.sub_questions) stack.push(sub);
     }
   }
-  if (pages.size === 0) return all; // no reliable page signal → feed all (no regression)
+  // COMPLETE-signal gate (concern #2 — both reviewers): scope ONLY when EVERY node in the subtree
+  // carries a valid integer page_index. PARTIAL population (some nodes have it, some don't) is NOT
+  // trusted: a sub on a page whose node omitted page_index would be DROPPED, starving the judge of
+  // the answer page (the VLM does not guarantee per-node page_index — figure_attach.ts:27 documents
+  // the same partial-population reality). Partial OR zero signal → feed all (today's behavior, ZERO
+  // regression — the conservative direction: never drop a page the answer might be on). The
+  // dominant win is preserved: a standalone question wholly on one page has its single node carry
+  // page_index → complete → scoped; a cross-page 大题 narrows only when the VLM stamped EVERY node.
+  if (pages.size === 0 || nodesWithPage < totalNodes) return all;
   const sorted = [...pages].sort((a, b) => a - b);
-  // Defensive: any out-of-range index ⇒ the page map is untrustworthy → feed all.
+  // Belt-and-suspenders: any out-of-range index ⇒ the page map is untrustworthy → feed all.
   if (sorted.some((p) => p < 0 || p >= all.length)) return all;
   return sorted.map((p) => all[p]);
 }

@@ -2366,6 +2366,41 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
       expect(pageScopedQuestionImageRefs(block)).toEqual(['p0', 'p1']);
     });
 
+    it('PARTIAL page_index (stem has it, a sub omits it) → full fallback, never drops a page', () => {
+      // The dangerous case: trusting the partial set {0} would scope to [p0] and DROP p1 where
+      // the sub (and its answer) lives. The complete-signal gate forces feed-all instead.
+      const block = {
+        structured: pageNode(0, [
+          {
+            id: createId(),
+            role: 'sub',
+            prompt_text: 's1',
+            source: 'vlm_structure',
+            page_index: 1,
+          },
+          { id: createId(), role: 'sub', prompt_text: 's2-no-page', source: 'vlm_structure' },
+        ]),
+        source_asset_ids: ['p0', 'p1', 'p2'],
+      };
+      expect(pageScopedQuestionImageRefs(block)).toEqual(['p0', 'p1', 'p2']);
+    });
+
+    it('non-integer page_index (NaN/float) → not trusted → full fallback (never all[NaN])', () => {
+      // float: 1.5 is a `number` but not an integer → excluded → incomplete signal → feed all
+      // (would otherwise produce all[1.5] = undefined). augment review #573.
+      const floatBlock = {
+        structured: { ...pageNode(0), page_index: 1.5 as number },
+        source_asset_ids: ['p0', 'p1', 'p2'],
+      };
+      expect(pageScopedQuestionImageRefs(floatBlock)).toEqual(['p0', 'p1', 'p2']);
+      // NaN cast through the jsonb type — same outcome (no undefined leaks to R2/judge).
+      const nanBlock = {
+        structured: { ...pageNode(0), page_index: Number.NaN as number },
+        source_asset_ids: ['p0', 'p1', 'p2'],
+      };
+      expect(pageScopedQuestionImageRefs(nanBlock)).toEqual(['p0', 'p1', 'p2']);
+    });
+
     it('null structured / empty assets → returned unchanged', () => {
       expect(pageScopedQuestionImageRefs({ structured: null, source_asset_ids: ['p0'] })).toEqual([
         'p0',
