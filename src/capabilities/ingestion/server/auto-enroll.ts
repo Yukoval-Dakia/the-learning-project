@@ -712,6 +712,28 @@ export async function runAutoEnrollForSession(
       captureMode = 'text';
     }
     const result = await params.db.transaction(async (tx) => {
+      // ---- YUK-486 idempotency claim — guard concurrent double-consume. ----------------
+      // Two pg-boss consumers (dev: rw:api's embedded RW_WORKER + standalone worker:dev; or a
+      // prod retry re-delivered mid-flight) can both fetch an `auto_enroll` job for this session
+      // and race: both pass the status='draft' SELECT above before either flips the block, then
+      // both INSERT a question → duplicate enrollment (the YUK-486 symptom: 1 session/2 blocks →
+      // 4 questions). Re-read THIS block FOR UPDATE inside the tx and bail if it is no longer
+      // 'draft'. The row lock serializes the two runners on this block row: the first acquires it,
+      // enrolls + flips status='auto_enrolled', commits → releases; the second then acquires it,
+      // sees 'auto_enrolled', and skips (returns null). singletonKey on the send
+      // (tencent_ocr_extract) prevents the duplicate job in the first place; this is the
+      // defense-in-depth that structurally guarantees no double-INSERT even if two runs slip
+      // through. The pre-tx tagKnowledge/grade LLM work the loser already did is wasted but
+      // harmless — correctness, not cost, is the contract here. Precedent: revert-auto-enroll.ts.
+      const claimRows = await tx
+        .select({ status: question_block.status })
+        .from(question_block)
+        .where(eq(question_block.id, block.id))
+        .for('update');
+      if (claimRows[0]?.status !== 'draft') {
+        return null; // already enrolled by a concurrent runner — skip (idempotent no-op)
+      }
+
       // ---- KC attribution (P3, YUK-489). -----------------------------------------------
       // The attributed KCs are exactly what tagKnowledge returned pre-tx (matched existing KCs,
       // or a single auto-approved PROPOSE child it already created under the subject root in its
@@ -965,6 +987,10 @@ export async function runAutoEnrollForSession(
         knowledge_ids: enrollKnowledgeIds,
       } satisfies AutoEnrolledBlock;
     });
+
+    // YUK-486 — the tx returned null because the idempotency claim found this block already
+    // enrolled by a concurrent runner; skip without counting or enqueuing follow-up work.
+    if (result === null) continue;
 
     enrolled.push(result);
 
