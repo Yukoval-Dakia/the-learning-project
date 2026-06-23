@@ -101,7 +101,11 @@ async function seedAndAutoEnroll(
     sessionId,
     subjectId: 'wenyan',
     env: { [FLAG]: 'true' },
+    // P3 (YUK-489): the ENROLL path now tags via the unified `tagKnowledge` (embedding
+    // match-or-propose), not runTaggingFn — inject a stub that MATCHes the seeded KC so no real
+    // embedding model is called (runTaggingFn is OBSERVE-only now; kept harmless for parity).
     runTaggingFn: highConfidenceTagging,
+    tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
     runMistakeEnrollFn: draft === 'unanswered' ? undefined : vi.fn(async () => draft),
   });
   expect(result.enrolled).toBe(1);
