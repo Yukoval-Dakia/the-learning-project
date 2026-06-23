@@ -117,6 +117,10 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:user_cause',
   'experimental:record_capture',
   'experimental:memory_brief_refresh',
+  // ADR-0044 §3 (YUK-471 Wave 0) — A-class θ̂/FSRS snapshot has a dedicated
+  // StateSnapshotExperimental schema (./state-snapshot.ts). Generic fallback
+  // must reject it so malformed snapshot payloads can't lose schema validation.
+  'experimental:state_snapshot',
 ]);
 
 // ====================================================================

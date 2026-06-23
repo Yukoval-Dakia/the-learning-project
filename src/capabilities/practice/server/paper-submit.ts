@@ -27,6 +27,8 @@ import { scheduleReview } from '@/capabilities/practice/server/fsrs';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { newId } from '@/core/ids';
 import { validateCauseAgainstProfile } from '@/core/schema/cause';
+// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the snapshot `before`.
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db as defaultDb } from '@/db/client';
 import type { Db } from '@/db/client';
 import { answer, event, learning_session, question } from '@/db/schema';
@@ -485,6 +487,9 @@ export async function submitPaperSlot(
     let stateAfter:
       | (ReturnType<typeof scheduleReview>['nextState'] & { last_review: Date | null })
       | null = null;
+    // YUK-471 Wave 0 (ADR-0044 §3) — the PRE-attempt FSRS Card for the slot's subject,
+    // retained for the state_snapshot append (null = cold-start → revert deletes row).
+    let fsrsBefore: FsrsStateSchemaT | null = null;
     if (!photoOnlyUnsupported) {
       // Per-knowledge FSRS advisory lock (ADR-0028) — serializes read/compute/
       // upsert even across different questions touching the same knowledge.
@@ -496,6 +501,9 @@ export async function submitPaperSlot(
       if (!prevStateRow && fsrsSubjectKind === 'knowledge') {
         prevStateRow = await getFsrsState(tx, 'question', input.questionId);
       }
+      // Capture the PRE-attempt Card BEFORE scheduleReview/upsert moves it (mirrors the
+      // θ̂ before-capture discipline) — this is the exact `before` the upsert overwrites.
+      fsrsBefore = prevStateRow?.state ?? null;
       scheduled = scheduleReview(
         prevStateRow?.state
           ? { ...prevStateRow.state, last_review: prevStateRow.state.last_review ?? null }
@@ -604,7 +612,13 @@ export async function submitPaperSlot(
 
     // (c) FSRS upsert on the slot's knowledge (or question fallback). SKIPPED on
     // the photo-only unsupported path — an ungraded answer schedules nothing.
-    if (!photoOnlyUnsupported && scheduled !== null && stateAfter !== null) {
+    // `fsrsWrote` is reused by the (e) snapshot append below to decide bracketing:
+    // a non-photo `unsupported` answer maps to 'again' (re-judgeable) and DOES overwrite
+    // material_fsrs_state here, so its FSRS transition must be snapshot-bracketed even
+    // though θ̂ (d) is skipped (YUK-471 W0 invariant: every imperative FSRS overwrite is
+    // revertable).
+    const fsrsWrote = !photoOnlyUnsupported && scheduled !== null && stateAfter !== null;
+    if (fsrsWrote) {
       await upsertFsrsState(tx, {
         subject_kind: fsrsSubjectKind,
         subject_id: fsrsSubjectId,
@@ -624,6 +638,10 @@ export async function submitPaperSlot(
     // 语义，Wave2 复盘可细化为 0.5，需扩 updateTheta 签名，本 wave 不扩）。用 slot
     // 的 referencedKnowledgeIds（primary+secondary，无 primary 回落 q.knowledge_ids，
     // 与 FSRS / judge event 同源）。写独立 mastery_state 表——hermetic 不破。
+    // YUK-471 Wave 0 — captured inside the θ̂ gate, consumed by the (e) snapshot append
+    // below. Empty when θ̂ is skipped (photo-only / unsupported) — those paths still
+    // snapshot their FSRS transition (if any) with theta_snapshots: [].
+    let thetaSnapshots: { kc_id: string; before: number | null; after: number }[] = [];
     if (!photoOnlyUnsupported && scheduled !== null && coarseOutcome !== 'unsupported') {
       // YUK-361 finding #3 修复 — 在 updateThetaForAttempt **之前**捕获 family primary
       // knowledge（q.knowledge_ids[0]）的 PRE-attempt θ̂。家族残差必须对着作答前的 θ̂
@@ -637,7 +655,7 @@ export async function submitPaperSlot(
         ? ((await getMasteryState(tx, familyPrimaryKnowledgeId))?.theta_hat ?? 0)
         : 0;
 
-      await updateThetaForAttempt(tx, {
+      const thetaResult = await updateThetaForAttempt(tx, {
         knowledgeIds: referencedKnowledgeIds,
         questionId: input.questionId,
         outcome: attemptOutcome === 'failure' ? 0 : 1,
@@ -652,6 +670,11 @@ export async function submitPaperSlot(
         // （下面 recordFamilyObservationForAttempt 的 familyPrimaryKnowledgeId）+ 选题读侧同键。
         familyPrimaryKnowledgeId,
       });
+
+      // YUK-471 Wave 0 — capture the θ̂ transition for the (e) snapshot append below.
+      // The snapshot itself is appended once, after this block, so the non-photo
+      // `unsupported` path (FSRS wrote, θ̂ skipped) is also bracketed.
+      thetaSnapshots = thetaResult.theta_snapshots;
 
       // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
       // 同 tx（计数与作答一致），best-effort：绝不 fail 上面的 θ̂/FSRS/event 主路径。
@@ -724,6 +747,56 @@ export async function submitPaperSlot(
       } catch (err) {
         console.warn('recordDifficultyCalibrationLabel (paper) failed (non-fatal):', err);
       }
+    }
+
+    // (e) YUK-471 Wave 0 (ADR-0044 §3) — A-class state_snapshot append on the PAPER path
+    // (mirrors submit.ts). Brackets the EXACT θ̂ (mastery_state) + FSRS (material_fsrs_state)
+    // transition this slot attempt performed, so cascade-revert restores both segments
+    // independently (ADR-0035 R⟂p(L)). Fires whenever EITHER axis moved:
+    //  - a graded answer moves θ̂ (+ usually FSRS) → theta_snapshots non-empty;
+    //  - a non-photo `unsupported` answer (judge route unregistered / semantic provider
+    //    failed — reachable, see embedded-check tests) maps to 'again' and overwrites
+    //    material_fsrs_state at (c) WITHOUT touching θ̂ (SF-3: don't penalize p(L) for an
+    //    ungradeable answer) → its FSRS overwrite is still bracketed with theta_snapshots: [].
+    // MUST be in the OUTER `tx`, NOT a SAVEPOINT — a HARD invariant of the attempt (dies with
+    // it on rollback). The best-effort family/calibration SAVEPOINTs above touch neither
+    // mastery_state nor material_fsrs_state, so the snapshot's scope is unaffected by being
+    // appended after them. `fsrsBefore` was captured before the (c) upsert overwrote it.
+    // HARD REQ 2 — `ingest_at: now` skips the memory outbox (internal rollback ledger row,
+    //   not a learner fact). §6.7 — deterministic id `${attemptEventId}:snapshot` +
+    //   writeEvent onConflictDoNothing makes a retried tx idempotent.
+    if (fsrsWrote || thetaSnapshots.length > 0) {
+      await writeEvent(tx, {
+        id: `${attemptEventId}:snapshot`,
+        session_id: input.sessionId,
+        actor_kind: 'system',
+        actor_ref: 'attempt_snapshot',
+        action: 'experimental:state_snapshot',
+        subject_kind: 'event',
+        subject_id: attemptEventId,
+        outcome: 'success',
+        payload: {
+          attempt_event_id: attemptEventId,
+          theta_snapshots: thetaSnapshots,
+          fsrs_snapshots:
+            fsrsWrote && stateAfter !== null
+              ? [
+                  {
+                    subject_kind: fsrsSubjectKind,
+                    subject_id: fsrsSubjectId,
+                    before: fsrsBefore,
+                    after: stateAfter,
+                  },
+                ]
+              : [],
+        },
+        caused_by_event_id: attemptEventId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        // HARD REQ 2 — skip the memory outbox (non-NULL opt-out at INSERT).
+        ingest_at: now,
+        created_at: now,
+      });
     }
 
     // Freeze the answer draft (set submitted_at + event_id). Re-submission after

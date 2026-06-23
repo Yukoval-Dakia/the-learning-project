@@ -40,6 +40,8 @@ import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { FsrsRating, JudgeKind as JudgeKindZ } from '@/core/schema/business';
 import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
+// YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
@@ -396,6 +398,11 @@ async function persistSubmit(
       subject_id: string;
       result: ReturnType<typeof scheduleReview>;
       stateAfter: PersistedSubmit['finalFsrsStateAfter'];
+      // YUK-471 Wave 0 (ADR-0044 §3) — the PRE-attempt FSRS Card per subject, retained
+      // for the state_snapshot append. `prevStateRow` is loop-local below; capturing
+      // `before` per entry here keeps the FULL multi-subject snapshot (without this only
+      // the primary's before would survive the loop → partial revert).
+      before: FsrsStateSchemaT | null;
     }> = [];
 
     for (const subjectId of [...fsrsSubjectIds].sort()) {
@@ -445,6 +452,12 @@ async function persistSubmit(
           due: result.nextState.due,
           last_review: result.nextState.last_review ?? null,
         },
+        // YUK-471 Wave 0 (ADR-0044 §3) — retain this subject's PRE-attempt Card for the
+        // snapshot. null = cold-start (no prior row → revert deletes the row). Note the
+        // `getFsrsState(tx, 'question', questionId)` fallback above (knowledge-keyed cold
+        // start reading the legacy question row) IS the real prior state, so `before`
+        // reflects whatever scheduleReview was fed — the exact bracketed transition.
+        before: prevStateRow?.state ?? null,
       });
     }
     const primaryUpdate = fsrsUpdates[0];
@@ -623,7 +636,7 @@ async function persistSubmit(
     // q.knowledge_ids，差集 KC 靠模块自锁兜住）。outcome 复用上面的 success/failure
     // 派生（review 路径 finalRating 二分，无 partial）。写独立 mastery_state 表，
     // 不碰 event/learning_record count——hermetic 不破。
-    await updateThetaForAttempt(tx, {
+    const thetaResult = await updateThetaForAttempt(tx, {
       knowledgeIds: q.knowledge_ids,
       questionId,
       outcome: outcome === 'success' ? 1 : 0,
@@ -642,6 +655,49 @@ async function persistSubmit(
       // Codex review F2 — 显式传 question 规范 primary（与 family 写/读两侧同键）。review 路径
       // knowledgeIds 本就是 q.knowledge_ids，故 [0] 已等于 primaryKnowledgeId；显式传保契约一致。
       familyPrimaryKnowledgeId: primaryKnowledgeId,
+    });
+
+    // YUK-471 Wave 0 (ADR-0044 §3) — A-class state_snapshot append. The 6th atomic
+    // write of the attempt tx: brackets the EXACT θ̂ (mastery_state) + FSRS
+    // (material_fsrs_state) transition this attempt just performed, so cascade-revert
+    // can restore both segments independently (ADR-0035 R⟂p(L)). MUST be in the OUTER
+    // `tx`, NOT a SAVEPOINT — the snapshot is a HARD invariant of the attempt (it dies
+    // with the attempt on rollback, never half-committed). Appended BEFORE the
+    // best-effort family/calibration SAVEPOINTs below so a SAVEPOINT rollback there
+    // never touches it.
+    //
+    // HARD REQ 2 — `ingest_at: now` opts the snapshot out of the memory outbox (it is
+    //   an internal rollback ledger row, not a learner fact; the poller's
+    //   `WHERE ingest_at IS NULL` never selects it).
+    // §6.7 idempotency — deterministic id `${eventId}:snapshot` + writeEvent's
+    //   onConflictDoNothing: a retried/redelivered attempt tx never double-writes a
+    //   fresh row (which would re-arm ingest_at=null on a new id). Mirrors the
+    //   auto-enroll stable-id precedent.
+    await writeEvent(tx, {
+      id: `${eventId}:snapshot`,
+      session_id: body.session_id ?? null,
+      actor_kind: 'system',
+      actor_ref: 'attempt_snapshot',
+      action: 'experimental:state_snapshot',
+      subject_kind: 'event',
+      subject_id: eventId,
+      outcome: 'success',
+      payload: {
+        attempt_event_id: eventId,
+        theta_snapshots: thetaResult.theta_snapshots,
+        fsrs_snapshots: fsrsUpdates.map((update) => ({
+          subject_kind: update.subject_kind,
+          subject_id: update.subject_id,
+          before: update.before,
+          after: update.stateAfter,
+        })),
+      },
+      caused_by_event_id: eventId,
+      task_run_id: null,
+      cost_micro_usd: null,
+      // HARD REQ 2 — skip the memory outbox (non-NULL opt-out at INSERT).
+      ingest_at: now,
+      created_at: now,
     });
 
     // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。
