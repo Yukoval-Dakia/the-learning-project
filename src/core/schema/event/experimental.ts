@@ -121,6 +121,11 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // StateSnapshotExperimental schema (./state-snapshot.ts). Generic fallback
   // must reject it so malformed snapshot payloads can't lose schema validation.
   'experimental:state_snapshot',
+  // YUK-471 Wave 1 (Codex #4 parse barrier) — pre-W1 row backfill seed has a
+  // dedicated GenesisExperimental schema (./genesis.ts). The fold trusts genesis
+  // as ground truth, so a malformed seed would corrupt the whole projection;
+  // generic fallback must reject it so the typed schema always validates the seed.
+  'experimental:genesis',
 ]);
 
 // ====================================================================
