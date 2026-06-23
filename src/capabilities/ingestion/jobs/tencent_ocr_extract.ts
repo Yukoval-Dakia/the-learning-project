@@ -529,7 +529,13 @@ async function processOneOcrJob(
     try {
       const { getStartedBoss } = await import('@/server/boss/client');
       const boss = await getStartedBoss();
-      await boss.send('auto_enroll', { sessionId });
+      // YUK-486 — singletonKey=sessionId dedups the enqueue: while one auto_enroll job for
+      // this session is active/queued, a duplicate send is suppressed (pg-boss partial-unique
+      // index on the singleton key). This kills the duplicate-job root cause behind the dev
+      // double-consume (rw:api's embedded RW_WORKER + standalone worker:dev both poll this
+      // queue) and any prod retry-storm that would re-enqueue. The per-block FOR UPDATE claim
+      // in runAutoEnrollForSession is the defense-in-depth for any job that still slips through.
+      await boss.send('auto_enroll', { sessionId }, { singletonKey: sessionId });
     } catch (err) {
       console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
     }

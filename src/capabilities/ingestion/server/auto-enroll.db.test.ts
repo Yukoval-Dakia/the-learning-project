@@ -297,6 +297,68 @@ describe('runAutoEnrollForSession', () => {
   });
 
   // ===========================================================================
+  // YUK-486 — idempotent re-run: a duplicate auto_enroll job (dev double-consume,
+  // or a pg-boss retry re-delivering the same session) must NOT double-INSERT
+  // questions. The status='draft' SELECT + per-block 'auto_enrolled' flip make a
+  // sequential re-run a no-op; the in-tx FOR UPDATE claim is the concurrent backstop
+  // (singletonKey on the send prevents the duplicate job in the first place). This is
+  // the observable contract; the truly-concurrent race needs a timing seam to exercise.
+  // ===========================================================================
+  it('YUK-486 idempotent re-run: a duplicate/retry auto_enroll does not double-enroll', async () => {
+    const db = testDb();
+    const { sessionId } = await seed(db);
+
+    const first = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      tagKnowledgeFn: matchK1,
+    });
+    expect(first.status).toBe('completed');
+    expect(first.enrolled).toBe(2);
+
+    expect(await db.select().from(question)).toHaveLength(2);
+    const importedIds = (
+      await db
+        .select({ id: question_block.imported_question_id })
+        .from(question_block)
+        .where(eq(question_block.ingestion_session_id, sessionId))
+    )
+      .map((b) => b.id)
+      .sort();
+
+    // Re-run the SAME session (duplicate job / pg-boss retry).
+    const second = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [FLAG]: 'true' },
+      tagKnowledgeFn: matchK1,
+    });
+    expect(second.status).toBe('completed');
+    expect(second.enrolled).toBe(0); // no draft blocks left → nothing re-enrolled
+    expect(second.routed_to_review).toBe(0);
+
+    // No duplicate questions; the block→question links are unchanged.
+    expect(await db.select().from(question)).toHaveLength(2);
+    const importedIds2 = (
+      await db
+        .select({ id: question_block.imported_question_id })
+        .from(question_block)
+        .where(eq(question_block.ingestion_session_id, sessionId))
+    )
+      .map((b) => b.id)
+      .sort();
+    expect(importedIds2).toEqual(importedIds);
+    const blocks = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(blocks.every((b) => b.status === 'auto_enrolled')).toBe(true);
+  });
+
+  // ===========================================================================
   // Flag ON: low EXTRACTION confidence → routed to review, block stays draft.
   // P3 (YUK-489): tagging is no longer a routing-uncertainty source on the enroll path
   // (tagKnowledge always attributes ≥1 KC at full confidence), so the only thing that can
