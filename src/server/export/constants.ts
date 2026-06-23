@@ -49,7 +49,9 @@
 // 即便 L1 是空表。表无 enforced FK (loose-coupling text-ref 惯例)，位置不受 PG FK 约束；
 // 置于 knowledge/mastery_state 身份簇相邻可读。NEW FK_ORDER table 必 bump (per
 // archive.ts assertEveryTableIsBackedUpOrExcluded / 92)：30 → 31 tables，4.7 → 4.8。
-export const SCHEMA_VERSION = '4.8';
+// YUK-471 W1 PR-A2a (ADR-0044): additive `materialized_id_index` projection reverse-index
+// → FK_ORDER 备份 (见该数组末尾的 rationale)。31 → 32 tables，4.8 → 4.9 (NEW FK_ORDER table 必 bump)。
+export const SCHEMA_VERSION = '4.9';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -147,6 +149,16 @@ export const FK_ORDER = [
   // 是 text ref，无 hard FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持
   // 两条 reconciliation 日志相邻可读。
   'edge_reconciliation_log',
+  // YUK-471 W1 PR-A2a (ADR-0044): materialized_id_index — the projection reverse-index
+  // (materialized knowledge/knowledge_edge id → anchor event). Cheaply rebuildable from
+  // the event log (db:backfill:genesis), but knowledge/knowledge_edge ARE backed up, so
+  // the index MUST be backed up too — else a restore leaves it empty and a subsequent
+  // rebuild would fold propose_new/split-born nodes to null and DELETE them. Same
+  // "derived-but-physical → FK_ORDER, not BACKUP_EXCLUDED" convention as the calibration
+  // /FSRS projections above. No enforced FK (text refs to knowledge/event ids), position
+  // unconstrained; placed last as the newest additive table. NEW FK_ORDER table → bump
+  // SCHEMA_VERSION (per archive.ts assertEveryTableIsBackedUpOrExcluded).
+  'materialized_id_index',
 ] as const;
 
 export type TableName = (typeof FK_ORDER)[number];
