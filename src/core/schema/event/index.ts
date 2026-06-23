@@ -5,6 +5,7 @@ import {
   RecordCaptureExperimental,
   UserCauseExperimental,
 } from './experimental';
+import { GenesisExperimental } from './genesis';
 import { KnownEvent } from './known';
 import { StateSnapshotExperimental } from './state-snapshot';
 
@@ -12,6 +13,7 @@ export * from './blocks';
 export * from './known';
 export * from './experimental';
 export * from './state-snapshot';
+export * from './genesis';
 
 // ====================================================================
 // Event — 顶层 union
@@ -25,7 +27,8 @@ export * from './state-snapshot';
 //   3. RecordCaptureExperimental — experimental:record_capture
 //   4. MemoryBriefRefreshExperimental — experimental:memory_brief_refresh
 //   5. StateSnapshotExperimental — experimental:state_snapshot 的特化（ADR-0044 §3）
-//   6. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
+//   6. GenesisExperimental — experimental:genesis 的特化（YUK-471 W1, Codex #4 parse barrier）
+//   7. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
 // payload (任意 record) 会先 match 走，结构信息丢失。
@@ -36,6 +39,7 @@ export const Event = z.union([
   RecordCaptureExperimental,
   MemoryBriefRefreshExperimental,
   StateSnapshotExperimental,
+  GenesisExperimental,
   ExperimentalEvent,
 ]);
 export type EventT = z.infer<typeof Event>;

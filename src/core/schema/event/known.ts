@@ -251,6 +251,18 @@ export const RateEvent = z.object({
   payload: z.object({
     rating: z.enum(['accept', 'dismiss', 'rollback']),
     user_note: z.string().optional(),
+    // YUK-471 W1 payload #1 (Codex #3 keystone) — when this rate event ACCEPTS a
+    // structural proposal (applyProposeNew / applySplit), it pins the ids the
+    // accept path minted so the W1 fold can REPRODUCE the same knowledge.id /
+    // knowledge_edge.id on replay (deterministic projection). MUST be .optional():
+    // dismiss / rollback rate events mint nothing and must still parse. Each array
+    // is .optional() too (an accept may touch only nodes, only edges, or both).
+    materialized_ids: z
+      .object({
+        knowledge: z.array(z.string()).optional(),
+        knowledge_edge: z.array(z.string()).optional(),
+      })
+      .optional(),
   }),
   ...baseOptionalFields,
 });
