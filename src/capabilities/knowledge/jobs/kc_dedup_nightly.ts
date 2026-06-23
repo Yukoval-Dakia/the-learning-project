@@ -45,7 +45,8 @@ export interface KcDedupNightlyResult {
   scanned_pairs: number;
   /** pairs for which a merge proposal event was successfully written. */
   merge_proposals_created: number;
-  /** pairs whose propose write threw (best-effort; counted + skipped, batch continues). */
+  /** pairs NOT proposed: already proposed within the window (cross-run dedup) OR the
+   *  propose write threw (best-effort; counted, batch continues). */
   skipped: number;
 }
 
@@ -147,6 +148,27 @@ export async function runKcDedupNightly(
   let merge_proposals_created = 0;
   let skipped = 0;
 
+  // Cross-run idempotency (OCR #1/#5): build a skip-set of unordered KC pairs ALREADY
+  // proposed for merge within the window. The raw writeKnowledgeProposeEvent path does NOT
+  // enforce a cooldown (proposalGateCandidate in review.ts returns null for merge — there is
+  // no merge dedup anywhere), so without this a still-unresolved pair would re-propose every
+  // night → duplicate pending inbox items. Semantics: accept → the `from` KC is archived
+  // (excluded by the scan's archived filter next run); reject → not re-proposed within the
+  // window (respects the rejection); pending → no duplicate. After the window a still-present
+  // dup may re-propose (acceptable). The merge event payload carries top-level `into_id` +
+  // `from_ids` (proposals.ts generic branch spreads `...rest` into event_override.payload).
+  const priorMergeRows = (await db.execute(sql`
+    SELECT payload FROM event
+    WHERE action = 'experimental:knowledge_merge'
+      AND created_at > now() - make_interval(days => ${windowDays})
+  `)) as unknown as Array<{ payload: { into_id?: string; from_ids?: string[] } | null }>;
+  const proposedPairKeys = new Set<string>();
+  for (const row of priorMergeRows) {
+    const into = row.payload?.into_id;
+    if (!into) continue;
+    for (const f of row.payload?.from_ids ?? []) proposedPairKeys.add([into, f].sort().join('::'));
+  }
+
   for (const pair of pairRows) {
     // Coerce driver-native shapes defensively: the `postgres` driver returns
     // timestamptz as Date and numeric/int as number, but raw-execute results can
@@ -174,6 +196,13 @@ export async function runKcDedupNightly(
     // by applyMerge's own `WHERE version = expected_versions[fromId]` guard, which
     // makes the accept a no-op-throw if the KC changed between propose and accept.)
     const expected_versions: Record<string, number> = { [fromId]: fromVersion };
+
+    // Cross-run dedup: this unordered pair already has a merge proposal within the window
+    // → skip rather than pile up a duplicate pending item (OCR #1/#5).
+    if (proposedPairKeys.has([intoId, fromId].sort().join('::'))) {
+      skipped += 1;
+      continue;
+    }
 
     const reasoning = `kc_dedup_nightly: cosine_distance ${distance.toFixed(4)} ≤ ${distanceMax} near-duplicate auto-created KCs ("${pair.a_name}" / "${pair.b_name}"); proposing merge of ${fromId} into ${intoId} (older = into)`;
 
@@ -211,30 +240,38 @@ export async function runKcDedupNightly(
   // matches none, so it is audit-only, never a pending inbox item. The merge
   // proposals themselves (action `experimental:knowledge_merge`) ARE folded → those
   // are the human-acceptable items.
-  await writeEvent(db, {
-    id: newId(),
-    session_id: null,
-    actor_kind: 'agent',
-    actor_ref: 'kc_dedup_nightly',
-    action: 'experimental:kc_dedup_scan',
-    subject_kind: 'knowledge',
-    // No single KC is the subject of a scan; pin a stable sentinel so the audit
-    // row has a non-null subject_id (writeEvent requires one) without implying a
-    // target KC. The counts live in the payload.
-    subject_id: 'kc_dedup_scan',
-    outcome: 'success',
-    payload: {
-      scanned_pairs: result.scanned_pairs,
-      merge_proposals_created: result.merge_proposals_created,
-      skipped: result.skipped,
-      threshold: distanceMax,
-      window_days: windowDays,
-      max_pairs: maxPairs,
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
-  });
+  // Best-effort (OCR #2): a failed audit write must NOT throw — the merge proposals already
+  // committed above, and throwing would send the job to pg-boss DLQ whose retry would re-scan
+  // (the idempotency skip-set above bounds the damage, but a needless retry is still wrong for
+  // a counts-only observability write). Log + continue with the real result.
+  try {
+    await writeEvent(db, {
+      id: newId(),
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'kc_dedup_nightly',
+      action: 'experimental:kc_dedup_scan',
+      subject_kind: 'knowledge',
+      // No single KC is the subject of a scan; pin a stable sentinel so the audit
+      // row has a non-null subject_id (writeEvent requires one) without implying a
+      // target KC. The counts live in the payload.
+      subject_id: 'kc_dedup_scan',
+      outcome: 'success',
+      payload: {
+        scanned_pairs: result.scanned_pairs,
+        merge_proposals_created: result.merge_proposals_created,
+        skipped: result.skipped,
+        threshold: distanceMax,
+        window_days: windowDays,
+        max_pairs: maxPairs,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+    });
+  } catch (err) {
+    console.error('[kc_dedup_nightly] audit event write failed (proposals already committed)', err);
+  }
 
   return result;
 }

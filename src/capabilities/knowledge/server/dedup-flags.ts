@@ -28,8 +28,10 @@
  * missed (stays as two KCs, no harm beyond minor redundancy); too-loose → a
  * related-but-distinct pair proposes (the human dismisses it).
  *
- * Env override: set `KC_DEDUP_DISTANCE_MAX` to a finite number to override the
- * default at boot. A non-finite / unparseable value falls back to the default.
+ * Env override: set `KC_DEDUP_DISTANCE_MAX` to a POSITIVE finite number to override
+ * the default at boot. A non-finite, non-positive (≤0), or unparseable value falls
+ * back to the default — cosine distance is always > 0, so a ≤0 ceiling would silently
+ * disable all dedup (OCR #4).
  */
 const DEFAULT_DEDUP_DISTANCE_MAX = 0.1;
 
@@ -58,15 +60,22 @@ function resolveFinite(raw: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function resolvePositiveInt(raw: string | undefined, fallback: number): number {
+function resolvePositive(raw: string | undefined, fallback: number): number {
   const n = resolveFinite(raw, fallback);
-  // A non-positive override (0 / negative) would silently disable the scan or
-  // error at the DB LIMIT — fall back to the default instead.
+  // A non-positive override (0 / negative) would silently DISABLE the scan: cosine
+  // distance is always > 0, so a `distance <= 0` ceiling never matches → no dedup.
+  // Fall back to the default instead (OCR #4).
   if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.trunc(n);
+  return n;
 }
 
-export const DEDUP_DISTANCE_MAX: number = resolveFinite(
+function resolvePositiveInt(raw: string | undefined, fallback: number): number {
+  // Same non-positive guard as resolvePositive (0 / negative would disable the scan or
+  // error at the DB LIMIT), then truncate to an integer.
+  return Math.trunc(resolvePositive(raw, fallback));
+}
+
+export const DEDUP_DISTANCE_MAX: number = resolvePositive(
   process.env.KC_DEDUP_DISTANCE_MAX,
   DEFAULT_DEDUP_DISTANCE_MAX,
 );
