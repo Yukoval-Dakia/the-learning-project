@@ -720,11 +720,14 @@ export async function runAutoEnrollForSession(
       // 4 questions). Re-read THIS block FOR UPDATE inside the tx and bail if it is no longer
       // 'draft'. The row lock serializes the two runners on this block row: the first acquires it,
       // enrolls + flips status='auto_enrolled', commits → releases; the second then acquires it,
-      // sees 'auto_enrolled', and skips (returns null). singletonKey on the send
-      // (tencent_ocr_extract) prevents the duplicate job in the first place; this is the
-      // defense-in-depth that structurally guarantees no double-INSERT even if two runs slip
-      // through. The pre-tx tagKnowledge/grade LLM work the loser already did is wasted but
-      // harmless — correctness, not cost, is the contract here. Precedent: revert-auto-enroll.ts.
+      // sees 'auto_enrolled', and skips (returns null). THIS claim is the STRUCTURAL guarantee
+      // against double-INSERT — it holds for every producer and every run, including two jobs that
+      // run truly concurrently. The singletonKey+singletonSeconds on the sends
+      // (tencent_ocr_extract / docx-ingestion) is a best-effort layer that only REDUCES how many
+      // duplicate jobs reach here; it does not bear correctness (and a bare singletonKey with no
+      // seconds is inert on a standard-policy queue — see AUTO_ENROLL_SINGLETON_SECONDS). The
+      // pre-tx tagKnowledge/grade LLM work the loser already did is wasted but harmless —
+      // correctness, not cost, is the contract here. Precedent: revert-auto-enroll.ts.
       const claimRows = await tx
         .select({ status: question_block.status })
         .from(question_block)
