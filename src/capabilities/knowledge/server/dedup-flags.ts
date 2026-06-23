@@ -70,9 +70,11 @@ function resolvePositive(raw: string | undefined, fallback: number): number {
 }
 
 function resolvePositiveInt(raw: string | undefined, fallback: number): number {
-  // Same non-positive guard as resolvePositive (0 / negative would disable the scan or
-  // error at the DB LIMIT), then truncate to an integer.
-  return Math.trunc(resolvePositive(raw, fallback));
+  // resolvePositive guarantees > 0, but a FRACTIONAL override (e.g. 0.5) truncates to 0 →
+  // would disable the scan / set LIMIT 0. Require the truncated value to be ≥ 1 (a true
+  // positive integer); else fall back to the default (augment #570).
+  const n = Math.trunc(resolvePositive(raw, fallback));
+  return n >= 1 ? n : fallback;
 }
 
 export const DEDUP_DISTANCE_MAX: number = resolvePositive(
