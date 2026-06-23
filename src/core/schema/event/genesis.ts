@@ -65,7 +65,7 @@ export const KnowledgeEdgeRowSnapshot = z.object({
   from_knowledge_id: z.string().min(1),
   to_knowledge_id: z.string().min(1),
   relation_type: z.string(), // 5 core enum | experimental:* — Zod-validated upstream at propose time
-  weight: z.number(), // real, default 1
+  weight: z.number().finite(), // real, default 1 — reject NaN/Infinity (genesis is ground truth)
   created_by: z.record(z.string(), z.unknown()), // AgentRef jsonb (opaque provenance)
   reasoning: z.string().nullable(), // nullable column
   created_at: z.coerce.date(),
@@ -83,9 +83,12 @@ export type KnowledgeEdgeRowSnapshotT = z.infer<typeof KnowledgeEdgeRowSnapshot>
 // the loose generic.
 //
 // `subject_kind` is the row's table; `subject_id` is the row id. `payload.row`
-// is the snapshot, a DISCRIMINATED union keyed by subject_kind so the wrong
-// snapshot shape under a given subject_kind is rejected at the schema boundary
-// (a `knowledge` subject carrying an edge-shaped row fails to parse).
+// is the snapshot, a PLAIN `z.union` of the two row shapes (NOT a discriminated
+// union — the knowledge and knowledge_edge row shapes share no literal
+// discriminant). The subject_kind ↔ row-shape coherence is enforced POST-PARSE by
+// the superRefine cross-check below (a `knowledge` subject carrying an edge-shaped
+// row is rejected there), so a wrong snapshot shape under a given subject_kind
+// still fails at the schema boundary.
 
 export const GenesisExperimental = z
   .object({
@@ -96,9 +99,10 @@ export const GenesisExperimental = z
     subject_id: z.string().min(1), // = the projected row id
     outcome: z.literal('success').nullable().optional(),
     payload: z.object({
-      // Discriminated snapshot: the row shape must match subject_kind. The cross
-      // check (payload.row matches subject_kind, and subject_id === row.id) is
-      // enforced in the superRefine below so fold(genesis) == row holds.
+      // PLAIN union of the two row shapes (NOT discriminated — they share no
+      // literal discriminant). The cross-check (payload.row shape matches
+      // subject_kind, and subject_id === row.id) is enforced post-parse by the
+      // superRefine below so fold(genesis) == row holds.
       row: z.union([KnowledgeRowSnapshot, KnowledgeEdgeRowSnapshot]),
     }),
     // baseOptionalFields parity (mirror the other reserved schemas):

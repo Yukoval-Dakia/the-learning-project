@@ -262,6 +262,11 @@ export const RateEvent = z.object({
         knowledge: z.array(z.string()).optional(),
         knowledge_edge: z.array(z.string()).optional(),
       })
+      // .strict() — reject unknown keys so a typo (e.g. `knowledge_edges`) fails
+      // loudly at the parse barrier instead of silently dropping the minted ids,
+      // which would break the W1 fold's deterministic replay (the projection would
+      // mint nothing for those rows). YUK-471 W1 PR-A1 (CodeRabbit MAJOR).
+      .strict()
       .optional(),
   }),
   ...baseOptionalFields,
