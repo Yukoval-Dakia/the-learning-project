@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   GenesisExperimental,
   KnowledgeRowSnapshot,
@@ -7,6 +8,17 @@ import {
 } from '../schema/event';
 import { KnowledgeMutationProposalChange } from '../schema/proposal';
 import type { FoldEvent } from './fold-event';
+
+// Archive-propose payload shape (writeArchiveProposal: { node_id, expected_version,
+// reasoning }). The archive branch validates the payload through this so a
+// malformed archive event is rejected at the reducer boundary rather than applied
+// blindly off the envelope subject_id (YUK-471 W1 PR-A1, consistency with the
+// other branches' safeParse).
+const KnowledgeArchivePayload = z.object({
+  node_id: z.string().min(1),
+  expected_version: z.number().int().optional(),
+  reasoning: z.string().nullable().optional(),
+});
 
 // ====================================================================
 // foldKnowledgeNode — the W1 structural fold for a single `knowledge` row
@@ -170,7 +182,14 @@ export function foldKnowledgeNode(
       fe.subject_id === nodeId
     ) {
       const payload = fe.payload;
-      const name = typeof payload.name === 'string' ? payload.name : '';
+      // A KC with no real name is structurally useless (the auto_tag writer always
+      // supplies one) — warn + skip rather than projecting a row with name='' that
+      // would silently land an empty-name node in the tree.
+      if (typeof payload.name !== 'string' || payload.name.length === 0) {
+        warnMalformed('experimental:auto_tag_kc_created', fe.id, 'missing or empty name');
+        continue;
+      }
+      const name = payload.name;
       const parent_id = typeof payload.parent_id === 'string' ? payload.parent_id : null;
       if (parent_id === null) continue;
       row = createRow(fe.subject_id, name, parent_id, fe.created_at);
@@ -203,6 +222,17 @@ export function foldKnowledgeNode(
     // event subject_id (== payload.node_id, asserted by writeArchiveProposal).
     if (fe.action === 'experimental:knowledge_archive' && fe.subject_kind === 'knowledge') {
       if (!acceptedProposeIds.has(fe.id)) continue; // accepted-only gate
+      // Validate the archive payload (consistency with the other branches' safeParse)
+      // and assert node_id === subject_id (the writer guarantees this) before applying.
+      const ap = KnowledgeArchivePayload.safeParse(fe.payload);
+      if (!ap.success) {
+        warnMalformed('experimental:knowledge_archive', fe.id, ap.error);
+        continue;
+      }
+      if (ap.data.node_id !== fe.subject_id) {
+        warnMalformed('experimental:knowledge_archive', fe.id, 'node_id !== subject_id');
+        continue;
+      }
       if (fe.subject_id !== nodeId || row === null) continue;
       row = {
         ...row,

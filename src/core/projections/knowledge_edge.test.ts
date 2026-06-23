@@ -4,7 +4,7 @@
 //   - generate (create) → row with archived_at=null
 //   - generate (archive) → row with archived_at stamped
 //   - experimental:genesis → seed row (payload.row byte for byte)
-//   - order-stability (created_at asc, id asc — the caller pre-sorts)
+//   - order-stability (created_at asc, id asc — sorted INTERNALLY, caller order not load-bearing)
 //   - unknown edge → null
 //   - ADR-0034 topology at fold-apply: prerequisite REJECT (cycle) throws,
 //     WARN proceeds, non-prerequisite is passthrough (no topology check)
@@ -125,9 +125,9 @@ describe('foldKnowledgeEdge', () => {
 
   it("generate (create) projects reasoning='' (absent) as NULL on the row", () => {
     // The generate-event payload encodes absent reasoning as '' (actions.ts:512)
-    // while the ROW stores null (actions.ts:496). The fold uses `|| null` to recover
-    // the absent case — so an empty-string reasoning must project to null, matching
-    // the row. (HIGH regression: prior `?? null` left '' as '' and diverged.)
+    // while the ROW stores null (actions.ts:496). reasonOrNull coerces '' → null to
+    // recover the absent case — so an empty-string reasoning must project to null,
+    // matching the row. (HIGH regression: prior `?? null` left '' as '' and diverged.)
     const row = foldKnowledgeEdge(
       'edge-empty-reason',
       [
@@ -145,6 +145,24 @@ describe('foldKnowledgeEdge', () => {
       [],
     );
     expect((row as KnowledgeEdgeRowSnapshotT).reasoning).toBeNull();
+  });
+
+  it('skips a MALFORMED generate-create payload (missing from_knowledge_id) — row stays null', () => {
+    // A generate-create event whose payload is missing a required endpoint must NOT
+    // project a row with an empty-string field: that would fail KnowledgeEdgeRowSnapshot
+    // .min(1) AND make a malformed prerequisite silently bypass the topology gate.
+    // The create-branch guard rejects it → row null.
+    const malformed = generateCreateEvent('edge-bad', {
+      payload: {
+        from_knowledge_id: undefined, // overrides the base 'kc-A' → missing endpoint
+        to_knowledge_id: 'kc-B',
+        relation_type: 'prerequisite',
+        weight: 1,
+        propose_event_id: 'p-bad',
+      },
+    });
+    const row = foldKnowledgeEdge('edge-bad', [malformed], []);
+    expect(row).toBeNull();
   });
 
   // ---------- ARCHIVE ----------
@@ -239,17 +257,19 @@ describe('foldKnowledgeEdge', () => {
 
   // ---------- ORDER STABILITY ----------
 
-  it('folds events in given order (caller pre-sorts by created_at asc, id asc)', () => {
-    // Three events out of chronological order in the array — the CALLER is
-    // responsible for pre-sorting (mirrors getCorrectionStatuses' orderBy).
-    // Here we pass them already sorted to confirm the reducer applies them
-    // left-to-right: create → archive.
-    const sorted = [
-      generateCreateEvent('edge-1', { id: 'a', created_at: new Date(t0) }),
+  it('sorts events INTERNALLY by (created_at asc, id asc) — caller order not load-bearing', () => {
+    // Pass the events OUT of chronological order (archive BEFORE create in the
+    // array). The reducer sorts internally, so the create (t0) applies before the
+    // archive (t1) and the final state is a properly-archived edge — not a stray
+    // archive-without-create followed by a clobbering re-create.
+    const outOfOrder = [
       generateArchiveEvent('edge-1', { id: 'b', created_at: new Date(t1) }),
+      generateCreateEvent('edge-1', { id: 'a', created_at: new Date(t0) }),
     ];
-    const row = foldKnowledgeEdge('edge-1', sorted, []);
+    const row = foldKnowledgeEdge('edge-1', outOfOrder, []);
+    expect(row).not.toBeNull();
     expect((row as KnowledgeEdgeRowSnapshotT).archived_at).toEqual(new Date(t1));
+    expect((row as KnowledgeEdgeRowSnapshotT).created_at).toEqual(new Date(t0));
   });
 
   it('a later create following an archive re-creates a live row (idempotent re-fold)', () => {
@@ -419,5 +439,51 @@ describe('foldKnowledgeEdge', () => {
     };
     const row = foldKnowledgeEdge('edge-archived-seed', [genesisEvent], []);
     expect(row).toEqual(archivedSeed);
+  });
+
+  it('does NOT re-gate topology on a LIVE prerequisite genesis seed — genesis is trusted ground truth', () => {
+    // T1/T2: a genesis seed reproduces an EXISTING already-live row (it passed the
+    // gate when first created). Re-running topology during replay could reject a
+    // historically-valid row and break fold(genesis)==row. So even a LIVE prerequisite
+    // seed that WOULD form a cycle with liveMesh passes through verbatim (no throw).
+    const liveMesh: KnowledgeEdgeRowSnapshotT[] = [
+      {
+        id: 'edge-live-BA',
+        from_knowledge_id: 'kc-B',
+        to_knowledge_id: 'kc-A',
+        relation_type: 'prerequisite',
+        weight: 1,
+        created_by: { actor_kind: 'system', actor_ref: 'seed' },
+        reasoning: null,
+        created_at: new Date(t0),
+        archived_at: null,
+      },
+    ];
+    const cyclicLiveSeed: KnowledgeEdgeRowSnapshotT = {
+      id: 'edge-cyclic-seed',
+      from_knowledge_id: 'kc-A',
+      to_knowledge_id: 'kc-B', // reverses the live kc-B → kc-A — a CREATE would REJECT
+      relation_type: 'prerequisite',
+      weight: 1,
+      created_by: { actor_kind: 'system', actor_ref: 'seed' },
+      reasoning: null,
+      created_at: new Date(t0),
+      archived_at: null, // LIVE
+    };
+    const genesisEvent: FoldEvent = {
+      id: 'genesis-cyclic',
+      created_at: new Date(t0),
+      actor_kind: 'system',
+      actor_ref: 'genesis-backfill',
+      action: 'experimental:genesis',
+      subject_kind: 'knowledge_edge',
+      subject_id: 'edge-cyclic-seed',
+      outcome: 'success',
+      caused_by_event_id: null,
+      payload: { row: cyclicLiveSeed },
+    };
+    // Must NOT throw (genesis bypasses topology) and must reproduce the seed verbatim.
+    const row = foldKnowledgeEdge('edge-cyclic-seed', [genesisEvent], liveMesh);
+    expect(row).toEqual(cyclicLiveSeed);
   });
 });
