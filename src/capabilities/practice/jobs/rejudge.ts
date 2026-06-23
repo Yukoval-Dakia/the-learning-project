@@ -4,8 +4,11 @@
 // （judge_kind_override='semantic' 强制语义复核，appeal_context 注入异议）→
 //   改判：新 judge event（newest-wins，D6）+ CorrectEvent(supersede) 留痕，直接生效
 //   不改判：experimental:appeal_upheld event 留痕（带复核理由）
-// 无 proposal（判分属软判断层）；幂等键 = appeal_request event id（boss
-// singletonKey + 本 handler 的 caused_by 查重双保险）。
+// 无 proposal（判分属软判断层）；幂等键 = appeal_request event id。两道去重：
+// ① send 层 singletonKey + singletonSeconds（REJUDGE_SINGLETON_SECONDS）杀重复
+//   enqueue（YUK-491：裸 singletonKey 在 standard-policy 队列上 inert，需配
+//   singletonSeconds 才真生效）；② 本 handler 下方 caused_by 查重 = 结构性兜底
+//   （结论已写则跳过，即使 send 层漏过也不会重复改判）。
 //
 // FSRS 刻意不在此重写：设计稿语义里评级是用户确认动作——改判回执把「评级建议
 // 上调」推回反馈卡，用户确认评级走既有 submit/rate 单一入口；全历史重投影属
