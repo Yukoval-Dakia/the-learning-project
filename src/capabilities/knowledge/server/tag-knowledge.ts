@@ -166,11 +166,15 @@ export async function tagKnowledge(
   // match; the question falls through to PROPOSE under the correct subject root. topK=10 →
   // ≤11 short parent-walks per tag (the target + ≤10 candidates), not a hot loop.
   const targetDomain = await getEffectiveDomain(db, input.subjectRootId);
-  const subjectScoped: KnowledgeSimilarityCandidate[] = [];
-  for (const c of candidates) {
-    const candidateDomain = await getEffectiveDomain(db, c.knowledge_id);
-    if (candidateDomain === targetDomain) subjectScoped.push(c);
-  }
+  // Resolve each candidate's effective domain in PARALLEL — the lookups are independent (each a
+  // short parent-walk) and Promise.all preserves input order, so the nearest-first property of
+  // the retriever is retained while collapsing 10 sequential multi-query chains into one batch.
+  const candidateDomains = await Promise.all(
+    candidates.map((c) => getEffectiveDomain(db, c.knowledge_id)),
+  );
+  const subjectScoped: KnowledgeSimilarityCandidate[] = candidates.filter(
+    (_c, i) => candidateDomains[i] === targetDomain,
+  );
 
   // (3) decide MATCH vs PROPOSE. matchKnowledgeBySimilarity returns nearest-first and the
   // subject filter preserves that order, so the first candidate is the nearest IN-SUBJECT one.

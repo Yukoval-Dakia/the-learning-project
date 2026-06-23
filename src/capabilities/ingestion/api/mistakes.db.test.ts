@@ -74,15 +74,15 @@ describe('POST /api/mistakes', () => {
     expect(body.error).toBe('validation_error');
   });
 
-  // P3 (YUK-489) — ids-authoritative-when-present. The schema now ALLOWS an empty knowledge_ids
-  // array (relaxed from .min(1)), but /api/mistakes carries no subject signal to run the unified
-  // tagKnowledge against, so an empty array is rejected by the handler (do not guess a subject).
-  it('rejects empty knowledge_ids array (no subject signal to auto-tag)', async () => {
+  // P3 (YUK-489) — /api/mistakes stays ids-required (schema enforces ≥1). It carries no subject
+  // signal for the unified tagKnowledge to auto-attribute against, so an empty array is rejected at
+  // the schema boundary (auto-tagging a manual mistake is a follow-up needing a subject signal).
+  it('rejects empty knowledge_ids array (min 1 enforced)', async () => {
     const res = await postMistake(validBody({ knowledge_ids: [] }));
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe('validation_error');
-    expect(body.message).toMatch(/no subject signal/);
+    expect(body.message).toMatch(/at least one knowledge_id/);
   });
 
   it('returns 400 when knowledge_ids contains non-existent id', async () => {

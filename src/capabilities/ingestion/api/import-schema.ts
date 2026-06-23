@@ -44,11 +44,11 @@ export const ImportBlock = z
     // so empty is allowed; otherwise the answer markdown is required.
     final_wrong_answer_md: z.string(),
     outcome: EnrollOutcomeSchema.default('failure'),
-    // P3 (YUK-489): relaxed from .min(1) to allow an empty per-block array. When present the
-    // client ids are authoritative (manual intent wins). When empty the import handler would run
-    // the unified `tagKnowledge` to auto-attribute — but only if it can resolve a subject root.
-    // See the empty-ids branch in import.ts for why import still effectively requires ids today.
-    knowledge_ids: z.array(z.string().min(1)).max(MAX_KNOWLEDGE_IDS),
+    // ≥1 required: /api/import carries no subject signal (the ingestion session has no subject
+    // column — subject is a derived view), so the unified `tagKnowledge` cannot resolve a PROPOSE
+    // parent / D1 subject filter for an empty array. Imported blocks stay ids-required; auto-tagging
+    // import is a YUK-489 follow-up that needs a request-level subject signal first.
+    knowledge_ids: z.array(z.string().min(1)).min(1).max(MAX_KNOWLEDGE_IDS),
     cause: z
       .object({
         primary_category: CauseCategory,
