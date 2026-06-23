@@ -29,6 +29,7 @@ import {
   type LayoutQuality,
   parseMarkAgentResponse,
 } from '@/capabilities/ingestion/server/tencent_mark_parser';
+import { AUTO_ENROLL_SINGLETON_SECONDS } from '@/capabilities/ingestion/server/workflow-judge-config';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
@@ -529,13 +530,18 @@ async function processOneOcrJob(
     try {
       const { getStartedBoss } = await import('@/server/boss/client');
       const boss = await getStartedBoss();
-      // YUK-486 — singletonKey=sessionId dedups the enqueue: while one auto_enroll job for
-      // this session is active/queued, a duplicate send is suppressed (pg-boss partial-unique
-      // index on the singleton key). This kills the duplicate-job root cause behind the dev
-      // double-consume (rw:api's embedded RW_WORKER + standalone worker:dev both poll this
-      // queue) and any prod retry-storm that would re-enqueue. The per-block FOR UPDATE claim
-      // in runAutoEnrollForSession is the defense-in-depth for any job that still slips through.
-      await boss.send('auto_enroll', { sessionId }, { singletonKey: sessionId });
+      // YUK-486 — dedup the enqueue: singletonKey=sessionId + singletonSeconds collapses two
+      // near-simultaneous sends for the same session into one job (dev double-consume:
+      // rw:api's embedded RW_WORKER + standalone worker:dev both poll this queue; or an extract
+      // retry re-sending). singletonSeconds is REQUIRED — a bare singletonKey is a no-op on a
+      // standard-policy queue in pg-boss v12 (see AUTO_ENROLL_SINGLETON_SECONDS). This only
+      // REDUCES redundant jobs; the per-block FOR UPDATE claim in runAutoEnrollForSession is the
+      // structural guarantee against double-INSERT for any job that still runs.
+      await boss.send(
+        'auto_enroll',
+        { sessionId },
+        { singletonKey: sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
+      );
     } catch (err) {
       console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
     }

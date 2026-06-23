@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
+import { AUTO_ENROLL_SINGLETON_SECONDS } from '@/capabilities/ingestion/server/workflow-judge-config';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
@@ -216,7 +217,15 @@ export async function initiateDocxTextUpload(
   try {
     const { getStartedBoss } = await import('@/server/boss/client');
     const boss = await getStartedBoss();
-    await boss.send('auto_enroll', { sessionId: result.sessionId });
+    // YUK-486 — same enqueue dedup as the tencent path (parity): singletonKey + singletonSeconds
+    // collapses near-simultaneous duplicate sends for one session into a single job. The per-block
+    // FOR UPDATE claim in runAutoEnrollForSession is the producer-agnostic structural guarantee
+    // against double-INSERT; this key only reduces redundant job runs.
+    await boss.send(
+      'auto_enroll',
+      { sessionId: result.sessionId },
+      { singletonKey: result.sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
+    );
   } catch (err) {
     console.error('[docx_text] failed to enqueue auto_enroll', err);
   }
