@@ -273,6 +273,68 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(fsrsSnap?.before?.reps).toBe((cardAfter1 as { reps: number }).reps);
   });
 
+  // Test 10c (augment #1 regression) — a knowledge subject with NO knowledge FSRS row
+  //   but a LEGACY question-keyed card present. scheduleReview falls back to the question
+  //   card to seed continuity, but the SNAPSHOT `before` must reflect the knowledge
+  //   subject's OWN absence (null → revert DELETEs the freshly-created knowledge row),
+  //   NOT the legacy question card (else revert would UPSERT a row that never existed).
+  it('FSRS snapshot before is null for a cold-start knowledge subject even when a legacy question card exists (augment #1)', async () => {
+    const db = testDb();
+    await seedQuestion('q_fb', { knowledge_ids: ['kc_fb'] });
+    // Seed a LEGACY question-keyed FSRS card — the scheduling fallback source. The
+    // knowledge subject 'kc_fb' has NO row of its own → cold-start for the snapshot subject.
+    await db.insert(material_fsrs_state).values({
+      id: newId(),
+      subject_kind: 'question',
+      subject_id: 'q_fb',
+      state: {
+        due: new Date('2026-06-01T00:00:00Z'),
+        stability: 5,
+        difficulty: 5,
+        scheduled_days: 3,
+        learning_steps: 0,
+        reps: 2,
+        lapses: 0,
+        state: 'review',
+        last_review: new Date('2026-05-29T00:00:00Z'),
+      },
+      due_at: new Date('2026-06-01T00:00:00Z'),
+      last_review_event_id: null,
+      updated_at: new Date(),
+    });
+    // Preconditions: the knowledge row is absent; the legacy question card is present.
+    expect(await getFsrsState(db, 'knowledge', 'kc_fb')).toBeNull();
+    expect(await getFsrsState(db, 'question', 'q_fb')).not.toBeNull();
+
+    const res = await POST(
+      submitReq({ activity_ref: { kind: 'question', id: 'q_fb' }, rating: 'good' }),
+    );
+    expect(res.status).toBe(200);
+    const reviewEventId = ((await res.json()) as { review_event: { id: string } }).review_event.id;
+
+    // The knowledge row was created by THIS attempt (seeded from the question card).
+    expect(await getFsrsState(db, 'knowledge', 'kc_fb')).not.toBeNull();
+
+    const snap = (await readSnapshot(reviewEventId))[0];
+    const payload = StateSnapshotExperimental.parse({
+      actor_kind: snap.actor_kind,
+      actor_ref: snap.actor_ref,
+      action: snap.action,
+      subject_kind: snap.subject_kind,
+      subject_id: snap.subject_id,
+      outcome: snap.outcome,
+      payload: snap.payload,
+    }).payload;
+    const fsrsSnap = payload.fsrs_snapshots.find(
+      (f) => f.subject_kind === 'knowledge' && f.subject_id === 'kc_fb',
+    );
+    expect(fsrsSnap).toBeDefined();
+    // augment #1 — `before` MUST be null: the knowledge row did not exist pre-attempt, so
+    // revert DELETEs it. The legacy question card only seeds scheduling; it must NOT leak
+    // into `before` (else revert would UPSERT a knowledge row that never existed).
+    expect(fsrsSnap?.before).toBeNull();
+  });
+
   // Test 12 (Group C) — HARD REQ 2: the snapshot row skips the outbox (ingest_at
   //   non-NULL at INSERT), while the attempt's own review event has ingest_at NULL.
   it('snapshot event has ingest_at non-null at INSERT; the review event has ingest_at NULL', async () => {

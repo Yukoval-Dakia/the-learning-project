@@ -23,8 +23,12 @@ export interface UpsertFsrsStateInput {
   subject_id: string;
   state: FsrsStateSchemaT;
   due_at: Date;
-  /** review event id that produced this state — back-reference for audit / replay */
-  last_review_event_id: string;
+  /**
+   * Review event id that produced this state — back-reference for audit / replay.
+   * Nullable (the column is nullable): a snapshot revert restores a Card whose prior
+   * review event id is unknown (YUK-471 W0 restore-snapshot) → null = "unknown prior".
+   */
+  last_review_event_id: string | null;
 }
 
 /**

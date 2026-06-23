@@ -263,22 +263,51 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // Exactly one snapshot writeEvent literal per attempt path (the single append
       // site). More than one would mean a duplicate (double snapshot per attempt);
       // zero would mean the A-class invariant is unestablished for that path.
-      const actionLiterals = src.match(/action:\s*'experimental:state_snapshot'/g) ?? [];
+      const actionRe = /action:\s*'experimental:state_snapshot'/;
+      const actionLiterals = src.match(new RegExp(actionRe, 'g')) ?? [];
       expect(
         actionLiterals.length,
         `${rel} must contain EXACTLY one experimental:state_snapshot append (found ${actionLiterals.length})`,
       ).toBe(1);
+
+      // SCOPE the field assertions to the snapshot writeEvent block. The whole-file
+      // regexes used previously could match a `caused_by_event_id: eventId` /
+      // `ingest_at: now` field in ANY other event block (e.g. the attempt event
+      // itself), letting the invariant pass without truly covering the snapshot
+      // writeEvent. We slice from the `action: 'experimental:state_snapshot'`
+      // literal through the close of its enclosing writeEvent call (`});`), then
+      // run the field regexes against that scoped substring.
+      const actionIdx = src.search(actionRe);
+      expect(
+        actionIdx,
+        `${rel} must contain an experimental:state_snapshot action literal`,
+      ).toBeGreaterThanOrEqual(0);
+      const writeEventOpenIdx = src.lastIndexOf('writeEvent(', actionIdx);
+      expect(
+        writeEventOpenIdx,
+        `${rel} snapshot action literal must live inside a writeEvent( call`,
+      ).toBeGreaterThanOrEqual(0);
+      // The block ends at the matching `});` that closes the writeEvent call that
+      // opens at/before the action literal. Find the first `});` at or after the
+      // action literal — that is the tail of this writeEvent argument object.
+      const closeIdx = src.indexOf('});', actionIdx);
+      expect(
+        closeIdx,
+        `${rel} snapshot writeEvent call must be terminated by '});'`,
+      ).toBeGreaterThanOrEqual(0);
+      const snapshotBlock = src.slice(writeEventOpenIdx, closeIdx + '});'.length);
+
       // The append must back-link to the attempt event via caused_by_event_id (the
       // cascade CTE chain edge). submit.ts uses `eventId`; paper-submit.ts uses
       // `attemptEventId` — accept either attempt-event identifier.
       expect(
-        /caused_by_event_id:\s*(eventId|attemptEventId)\b/.test(src),
-        `${rel} snapshot append must set caused_by_event_id to the attempt event id`,
+        /caused_by_event_id:\s*(eventId|attemptEventId)\b/.test(snapshotBlock),
+        `${rel} snapshot append must set caused_by_event_id to the attempt event id (inside the snapshot writeEvent block)`,
       ).toBe(true);
       // HARD REQ 2 — the snapshot opts out of the memory outbox (ingest_at non-NULL).
       expect(
-        /ingest_at:\s*now/.test(src),
-        `${rel} snapshot append must stamp ingest_at: now (HARD REQ 2 — skip the memory outbox)`,
+        /ingest_at:\s*now/.test(snapshotBlock),
+        `${rel} snapshot append must stamp ingest_at: now (HARD REQ 2 — skip the memory outbox; inside the snapshot writeEvent block)`,
       ).toBe(true);
     }
   });
