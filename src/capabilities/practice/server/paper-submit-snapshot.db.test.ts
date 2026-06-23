@@ -225,7 +225,8 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
     // (cold-start → written) and pins this attempt as its last review.
     const liveFsrs = await getFsrsState(db, 'knowledge', 'kc_unsup');
     expect(liveFsrs).not.toBeNull();
-    expect(liveFsrs?.last_review_event_id).toBe(attemptEventId);
+    if (!liveFsrs) throw new Error('liveFsrs should exist after the unsupported attempt');
+    expect(liveFsrs.last_review_event_id).toBe(attemptEventId);
 
     // (3) exactly ONE experimental:state_snapshot anchored to the attempt event.
     const snaps = await db
@@ -278,8 +279,6 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
     // `due` is jsonb-roundtripped; normalize both sides through Date and compare
     // the epoch ms (the live row's state.due may be a raw string/number from the
     // jsonb cast, not a Date instance — coerce both for an apples-to-apples compare).
-    expect(new Date(fsrsSnap.after.due).getTime()).toBe(
-      new Date(liveFsrs?.state.due as Parameters<typeof Date>[0]).getTime(),
-    );
+    expect(new Date(fsrsSnap.after.due).getTime()).toBe(new Date(liveFsrs.state.due).getTime());
   });
 });
