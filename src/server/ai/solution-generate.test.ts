@@ -110,6 +110,24 @@ describe('generateReferenceSolution', () => {
     ).toBe('AUTHORED');
   });
 
+  it('write-guard: skips (does NOT clobber) a reference_md set concurrently — reference_md non-null + no rubric solution + !regenerate', async () => {
+    // TOCTOU window: a row whose reference_md was set by another path (e.g. OCR enroll) but whose
+    // rubric has no reference_solution. The early rubric idempotency check does NOT catch this (it
+    // keys on rubric_json.reference_solution), so we reach the UPDATE — which must be guarded on
+    // reference_md IS NULL and therefore SKIP rather than overwrite the real answer with an AI guess.
+    const id = await seedQuestion({
+      reference_md: 'REAL OCR ANSWER',
+      rubric_json: { criteria: [] },
+    });
+    const runTaskFn = vi.fn(async () => ({ text: validLlmText() }));
+
+    const result = await generateReferenceSolution({ db, questionId: id, runTaskFn });
+
+    expect(result.status).toBe('skipped_exists');
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    expect(row.reference_md).toBe('REAL OCR ANSWER'); // NOT clobbered by the AI worked solution
+  });
+
   it('regenerate=true overwrites an existing reference_solution', async () => {
     const id = await seedQuestion({
       rubric_json: {
