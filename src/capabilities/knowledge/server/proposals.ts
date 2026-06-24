@@ -576,6 +576,13 @@ function affectedNodeIds(result: AcceptResult): string[] {
       return [result.into_id, ...result.archived_ids];
     case 'split_applied':
       return [result.archived_id, ...result.new_node_ids];
+    default: {
+      // Exhaustiveness guard — tsconfig has noImplicitReturns OFF, so a new AcceptResult kind
+      // would otherwise slip through returning undefined. `never` forces a compile error here
+      // until the new kind is handled above. (OCR #580.)
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
   }
 }
 
