@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { runB3Gate } from '../../../scripts/b3-gate';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { projectKnowledgeEdge } from './knowledge_edge';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z'); // pre-existing rows + generate-create events
 const TGEN = new Date('2026-06-02T00:00:00.000Z'); // backfill genesis time (AFTER T0)
@@ -96,6 +97,59 @@ async function seedGenerateCreatePrereq(opts: {
   });
 }
 
+// A generate-create related_to edge with a given weight (no topology gate runs for related_to).
+async function seedGenerateCreateRelated(opts: {
+  edgeId: string;
+  from: string;
+  to: string;
+  weight: number;
+}): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: `ev_gen_${opts.edgeId}`,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'generate',
+    subject_kind: 'knowledge_edge',
+    subject_id: opts.edgeId,
+    outcome: 'partial',
+    payload: {
+      edge_op: 'create',
+      from_knowledge_id: opts.from,
+      to_knowledge_id: opts.to,
+      relation_type: 'related_to',
+      weight: opts.weight,
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: T0,
+  });
+}
+
+// A generate-ARCHIVE event with NO preceding create — a malformed history that folds to null
+// (the archive branch has no prior row + no structural fields). It IS event-sourced (has a
+// generate event), so the scoped backfill skips it → the fold drops it → the rebuild DELETEs it.
+async function seedGenerateArchiveOnly(edgeId: string): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: `ev_arch_${edgeId}`,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'generate',
+    subject_kind: 'knowledge_edge',
+    subject_id: edgeId,
+    outcome: 'partial',
+    payload: { edge_op: 'archive', archive_edge_id: edgeId },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: T0,
+  });
+}
+
 describe('runB3Gate', () => {
   beforeEach(async () => {
     await resetDb();
@@ -120,9 +174,13 @@ describe('runB3Gate', () => {
     expect(report.rebuild.topologyReject).toBeNull();
     expect(report.audit.clean).toBe(true);
     expect(report.audit.driftCount).toBe(0);
+    expect(report.audit.topologyReject).toBeNull();
     expect(report.survival.ok).toBe(true);
     expect(report.survival.deletedKnowledge).toEqual([]);
     expect(report.survival.deletedEdges).toEqual([]);
+    // The rebuild actually re-folded the world (not a silent no-op that would make survival pass trivially).
+    expect(report.rebuild.counts?.nodes).toBeGreaterThan(0);
+    expect(report.rebuild.counts?.edges).toBeGreaterThan(0);
     // Backfill anchored the pre-event-sourcing rows (4 nodes + 3 edges).
     expect(report.backfill.knowledge.seeded).toBe(4);
     expect(report.backfill.knowledge_edge.seeded).toBe(3);
@@ -146,7 +204,50 @@ describe('runB3Gate', () => {
     const report = await runB3Gate(db, {}, TGEN);
 
     expect(report.go).toBe(false);
+    // The PRE-rebuild audit folds the cyclic edge and throws first → caught as a topology NO-GO.
+    expect(report.audit.topologyReject).toMatch(/topology reject/i);
+    expect(report.audit.clean).toBe(false);
+    // The rebuild independently re-confirms it.
     expect(report.rebuild.ok).toBe(false);
     expect(report.rebuild.topologyReject).toMatch(/topology reject/i);
+  });
+
+  it('NO-GO (real value teeth): an accept-path row whose imperative value DIVERGES from its fold is caught as audit DRIFT', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_a', name: 'A' });
+    await insertKnowledge({ id: 'kn_b', name: 'B' });
+    // An event-sourced edge: a generate-create event (weight 1) + the row materialized by the shell
+    // so it starts EQUAL to its fold. The scoped backfill will NOT anchor it (it has a generate
+    // event), so the audit re-folds it from the event — the teeth the scoped backfill unlocks.
+    await seedGenerateCreateRelated({ edgeId: 'ke_rel', from: 'kn_a', to: 'kn_b', weight: 1 });
+    await projectKnowledgeEdge(db, 'ke_rel');
+    // Corrupt the LIVE row out-of-band so it diverges from fold(events) — stands in for a
+    // mutation-reducer value bug the imperative write would have produced but the fold would not.
+    await db.update(knowledge_edge).set({ weight: 5 }).where(eq(knowledge_edge.id, 'ke_rel'));
+
+    const report = await runB3Gate(db, {}, TGEN);
+
+    // The PRE-rebuild audit compares fold(weight=1) vs the imperative row (weight=5) → DRIFT.
+    // (A post-rebuild audit would miss this — the rebuild overwrites the row with the fold.)
+    expect(report.go).toBe(false);
+    expect(report.audit.clean).toBe(false);
+    expect(report.audit.driftCount).toBeGreaterThan(0);
+    expect(report.audit.topologyReject).toBeNull();
+  });
+
+  it('NO-GO (survival): a row the rebuild would DELETE (folds to null) is caught — data-loss teeth', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_a', name: 'A' });
+    await insertKnowledge({ id: 'kn_b', name: 'B' });
+    // A live edge whose ONLY event is a generate-ARCHIVE (no create) → folds to null. It is
+    // event-sourced (has a generate event), so the scoped backfill skips it → the rebuild DELETEs it.
+    await insertEdge({ id: 'ke_archonly', from: 'kn_a', to: 'kn_b' });
+    await seedGenerateArchiveOnly('ke_archonly');
+
+    const report = await runB3Gate(db, {}, TGEN);
+
+    expect(report.go).toBe(false);
+    expect(report.survival.ok).toBe(false);
+    expect(report.survival.deletedEdges).toContain('ke_archonly');
   });
 });
