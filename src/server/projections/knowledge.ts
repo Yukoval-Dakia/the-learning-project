@@ -45,9 +45,12 @@
 
 import { eq } from 'drizzle-orm';
 
+import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { gatherAndFoldKnowledgeNode } from './gather';
+// YUK-471 W1 PR-B — the keystone non-delete guard reuses A2b's genesis-anchor check.
+import { hasKnowledgeNodeGenesisAnchor } from './parity';
 
 type DbLike = Db | Tx;
 
@@ -85,10 +88,39 @@ export async function projectKnowledgeNode(db: DbLike, nodeId: string): Promise<
     await db.delete(knowledge).where(eq(knowledge.id, nodeId));
     return;
   }
+  await upsertProjectedKnowledgeNode(db, projected);
+}
 
-  // Upsert the projected STRUCTURAL columns. embed_* are deliberately omitted from BOTH the
-  // INSERT values (left at NULL default on a fresh row) and the UPDATE set (preserved on an
-  // existing row) — the fold does not own derived embedding state.
+/**
+ * YUK-471 W1 PR-B — the GUARDED node write-through (the SoT-flip row writer). Identical to
+ * projectKnowledgeNode EXCEPT the null branch: a fold of null DELETEs the live row ONLY when
+ * the node HAS a genesis anchor (a genuine revert of an event-sourced node). A fold-null on an
+ * UN-anchored node — a seed root or any pre-event-sourced row the fold is blind to — must NOT
+ * delete the live row; that would destroy data on a normal merge/reparent/archive whose target
+ * predates event-sourcing. This is the keystone that lets the flip be activated before every
+ * node is backfilled: under the flip the accept seam calls THIS for every touched node, so a
+ * mutation against an un-backfilled node leaves its imperative row intact instead of deleting it.
+ */
+export async function projectKnowledgeNodeGuarded(db: DbLike, nodeId: string): Promise<void> {
+  const projected = await gatherAndFoldKnowledgeNode(db, nodeId);
+  if (projected === null) {
+    if (await hasKnowledgeNodeGenesisAnchor(db, nodeId)) {
+      // Genuine revert — the node was event-sourced and every creating mutation un-accepted.
+      await db.delete(knowledge).where(eq(knowledge.id, nodeId));
+    }
+    // else: fold-blind pre-event-sourced node — keep the imperative row (NEVER delete).
+    return;
+  }
+  await upsertProjectedKnowledgeNode(db, projected);
+}
+
+// Shared upsert of the projected STRUCTURAL columns. embed_* are deliberately omitted from BOTH
+// the INSERT values (left at NULL default on a fresh row) and the UPDATE set (preserved on an
+// existing row) — the fold does not own derived embedding state.
+async function upsertProjectedKnowledgeNode(
+  db: DbLike,
+  projected: KnowledgeRowSnapshotT,
+): Promise<void> {
   await db
     .insert(knowledge)
     .values({
