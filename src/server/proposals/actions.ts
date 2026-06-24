@@ -410,7 +410,7 @@ export async function decideKnowledgeEdgeProposal(
 
       // Single-owner soft-delete. Throws not_found if the edge id is unknown;
       // returns { archived:false } if it was already archived (idempotent).
-      await archiveKnowledgeEdge(tx, archiveEdgeId);
+      await archiveKnowledgeEdge(tx, archiveEdgeId, now);
 
       // Provenance + idempotency anchor: a `generate` event whose subject is the
       // archived edge, mirroring the create path so the re-decide guard above
