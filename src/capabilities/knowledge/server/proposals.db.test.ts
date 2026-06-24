@@ -7,7 +7,7 @@ import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
 import { event, knowledge, materialized_id_index } from '@/db/schema';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   acceptProposal,
@@ -874,5 +874,113 @@ describe('acceptProposal — PR-A2b projection parity', () => {
     expect(live?.archived_at).toBeTruthy();
     expect(live?.version).toBe(1);
     expect(folded).toEqual(live);
+  });
+});
+
+// =============================================================================
+// YUK-471 W1 PR-B1 — propose_new SoT flip (PROJECTION_IS_WRITER). Flag ON: the
+// imperative applier INSERT is SKIPPED (writeRow=false); the projection writes the
+// row from events at the accept seam. The row must EXIST (proving the seam fired —
+// without the projection call it would be absent) and equal its own fold, and be
+// structurally identical to the flag-OFF imperative row. Flag OFF keeps A2b behavior
+// (imperative write + parity assert) — the rollback state.
+// =============================================================================
+
+function stripVolatile(r: {
+  name: string;
+  domain: string | null;
+  parent_id: string | null;
+  merged_from: string[];
+  proposed_by_ai: boolean;
+  approval_status: string;
+  version: number;
+  archived_at: Date | null;
+}) {
+  // id + created_at/updated_at differ across runs by construction (fresh mint + fresh `now`);
+  // compare only the structural fields the imperative writer and the projection must agree on.
+  return {
+    name: r.name,
+    domain: r.domain,
+    parent_id: r.parent_id,
+    merged_from: r.merged_from,
+    proposed_by_ai: r.proposed_by_ai,
+    approval_status: r.approval_status,
+    version: r.version,
+    archived_at: r.archived_at,
+  };
+}
+
+describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)', () => {
+  beforeEach(async () => {
+    vi.unstubAllEnvs();
+    await resetDb();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('flag OFF (default): imperative INSERT writes the row; A2b fold==row holds', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'pb1_off',
+      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:p' },
+    });
+    const result = await acceptProposal(db, 'pb1_off');
+    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
+    const live = await liveSnapshot(result.new_node_id);
+    expect(live).not.toBeNull();
+    const folded = await gatherAndFoldKnowledgeNode(db, result.new_node_id);
+    expect(folded).toEqual(live);
+  });
+
+  it('flag ON: the projection writes the row (imperative INSERT skipped) — row exists and equals its fold', async () => {
+    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    const db = testDb();
+    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'pb1_on',
+      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:p' },
+    });
+    const result = await acceptProposal(db, 'pb1_on');
+    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
+
+    // The imperative INSERT was skipped (writeRow=false). The row EXISTS only because the
+    // projection wrote it from the events — a broken seam would leave the row absent.
+    const live = await liveSnapshot(result.new_node_id);
+    expect(live).not.toBeNull();
+    const folded = await gatherAndFoldKnowledgeNode(db, result.new_node_id);
+    expect(folded).toEqual(live);
+  });
+
+  it('flag ON vs OFF: the projected row is structurally identical to the imperative row', async () => {
+    const db = testDb();
+    // OFF run
+    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'pb1_cmp_off',
+      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:wenyan:p' },
+    });
+    const off = await acceptProposal(db, 'pb1_cmp_off');
+    if (off.kind !== 'propose_new_applied') throw new Error('unexpected kind');
+    const offRow = await liveSnapshot(off.new_node_id);
+
+    await resetDb();
+
+    // ON run (fresh DB, same shape)
+    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'pb1_cmp_on',
+      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:wenyan:p' },
+    });
+    const on = await acceptProposal(db, 'pb1_cmp_on');
+    if (on.kind !== 'propose_new_applied') throw new Error('unexpected kind');
+    const onRow = await liveSnapshot(on.new_node_id);
+
+    expect(offRow).not.toBeNull();
+    expect(onRow).not.toBeNull();
+    if (!offRow || !onRow) throw new Error('rows missing');
+    expect(stripVolatile(onRow)).toEqual(stripVolatile(offRow));
   });
 });
