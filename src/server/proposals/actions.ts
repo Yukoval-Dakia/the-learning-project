@@ -70,7 +70,10 @@ import { ApiError } from '@/server/http/errors';
 // the shared edge→snapshot mapper (one definition lives with the edge fold in gather.ts so
 // the assert compares the SAME shape the fold produces).
 import { edgeRowToSnapshot } from '@/server/projections/gather';
+import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { assertKnowledgeEdgeParity } from '@/server/projections/parity';
+// YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the edge row when ON).
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 // YUK-15 — record→proposal evidence loop: accept flips cited records to
 // `actioned`, retract rolls them back to `linked`.
 import {
@@ -383,6 +386,10 @@ export async function decideKnowledgeEdgeProposal(
     }
 
     const generateEventId = createId();
+    // YUK-471 W1 PR-B — SoT flip gate (archive branch). ON: keep the imperative archive UPDATE
+    // (the soft-delete mutation) AND project the edge from its events so the row reflects
+    // archived_at.
+    const flip = projectionIsWriter();
     await db.transaction(async (tx) => {
       await writeEvent(tx, {
         id: rateEventId,
@@ -430,6 +437,13 @@ export async function decideKnowledgeEdgeProposal(
         caused_by_event_id: proposeEventId,
         created_at: now,
       });
+
+      // YUK-471 W1 PR-B — flip ON: project the archived edge from its events (its create
+      // generate + this archive generate) so the projection reflects archived_at; the
+      // imperative archiveKnowledgeEdge UPDATE above stays (the soft-delete mutation). Guarded.
+      if (flip) {
+        await projectKnowledgeEdgeGuarded(tx, archiveEdgeId);
+      }
     });
 
     if (proposal) {
@@ -469,6 +483,9 @@ export async function decideKnowledgeEdgeProposal(
 
   const edgeId = createId();
   const generateEventId = createId();
+  // YUK-471 W1 PR-B — SoT flip gate. ON: skip the imperative edge INSERT; the projection
+  // writes the edge row from the generate event below.
+  const flip = projectionIsWriter();
 
   try {
     await db.transaction(async (tx) => {
@@ -490,20 +507,24 @@ export async function decideKnowledgeEdgeProposal(
         created_at: now,
       });
 
-      await tx.insert(knowledge_edge).values({
-        id: edgeId,
-        from_knowledge_id: fromId,
-        to_knowledge_id: toId,
-        relation_type: relationType,
-        weight,
-        created_by: {
-          actor_kind: 'user',
-          actor_ref: 'self',
-          propose_event_id: proposeEventId,
-        } as never,
-        reasoning: proposePayload.reasoning ?? null,
-        created_at: now,
-      });
+      // YUK-471 W1 PR-B — under the flip the imperative INSERT is skipped; the projection
+      // (projectKnowledgeEdgeGuarded below) writes the edge row from the generate event.
+      if (!flip) {
+        await tx.insert(knowledge_edge).values({
+          id: edgeId,
+          from_knowledge_id: fromId,
+          to_knowledge_id: toId,
+          relation_type: relationType,
+          weight,
+          created_by: {
+            actor_kind: 'user',
+            actor_ref: 'self',
+            propose_event_id: proposeEventId,
+          } as never,
+          reasoning: proposePayload.reasoning ?? null,
+          created_at: now,
+        });
+      }
 
       await writeEvent(tx, {
         id: generateEventId,
@@ -528,20 +549,25 @@ export async function decideKnowledgeEdgeProposal(
         created_at: now,
       });
 
-      // YUK-471 W1 PR-A2b — accept-time projection parity assert. The imperative
-      // edge write above stays the SoT; this re-projects the edge from its events
-      // (the generate just written, in THIS tx) and deep-compares against the row we
-      // just inserted. Dev/test THROW on divergence, prod warn+returns (never break a
-      // live accept over a fold bug) — see src/server/projections/parity.ts. Read the
-      // just-written row back so the snapshot reflects DB defaults/coercion exactly.
-      const writtenEdge = (
-        await tx.select().from(knowledge_edge).where(eq(knowledge_edge.id, edgeId)).limit(1)
-      )[0];
-      await assertKnowledgeEdgeParity(
-        tx,
-        edgeId,
-        writtenEdge ? edgeRowToSnapshot(writtenEdge) : null,
-      );
+      // YUK-471 W1 PR-B — flip ON: the projection writes the edge row from the generate event
+      // (the imperative INSERT was skipped). Guarded; the fold is non-null here (the generate
+      // event creates the edge) so the delete branch is unreachable, and a topology reject still
+      // propagates to roll back the accept. A unique-tuple (from,to,relation_type) conflict
+      // surfaces 23505 from the upsert and is mapped to 409 by the catch below — same as the
+      // imperative INSERT. Flip OFF: the A2b parity assert — re-project the just-written edge and
+      // deep-compare fold == row (read the row back so the snapshot reflects DB coercion).
+      if (flip) {
+        await projectKnowledgeEdgeGuarded(tx, edgeId);
+      } else {
+        const writtenEdge = (
+          await tx.select().from(knowledge_edge).where(eq(knowledge_edge.id, edgeId)).limit(1)
+        )[0];
+        await assertKnowledgeEdgeParity(
+          tx,
+          edgeId,
+          writtenEdge ? edgeRowToSnapshot(writtenEdge) : null,
+        );
+      }
     });
   } catch (err) {
     const pgCode =

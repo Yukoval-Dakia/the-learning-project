@@ -12,7 +12,7 @@ import {
 } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   acceptAiProposal,
@@ -1226,5 +1226,61 @@ describe('YUK-15 record evidence flip on accept / retract', () => {
     await acceptAiProposal(db, 'node_p2');
     // Unrelated record stays raw.
     expect(await getRecordStatus('rec_unrelated')).toBe('raw');
+  });
+});
+
+// =============================================================================
+// YUK-471 W1 PR-B (full flip) — edge SoT flip. Flag ON: the imperative edge INSERT is
+// skipped; the projection writes the edge row from the generate event. The row must EXIST
+// (proving the seam fired — without the projection it would be absent) with the correct shape.
+// =============================================================================
+
+describe('decideKnowledgeEdgeProposal — PR-B edge SoT flip (PROJECTION_IS_WRITER)', () => {
+  beforeEach(async () => {
+    vi.unstubAllEnvs();
+    await resetDb();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('flag ON: the projection writes the edge row (imperative INSERT skipped) — row exists with the correct shape', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    await writeAiProposal(db, {
+      id: 'edge_flip_p1',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'k1 unlocks k2',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'k1',
+          to_knowledge_id: 'k2',
+          relation_type: 'prerequisite',
+          weight: 0.7,
+        },
+      },
+    });
+
+    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    const result = await acceptAiProposal(db, 'edge_flip_p1');
+    expect(result.kind).toBe('knowledge_edge');
+    if (result.kind !== 'knowledge_edge') throw new Error('unexpected result');
+    if (!result.edge_id) throw new Error('missing edge_id');
+
+    // The imperative INSERT was skipped (flip ON). The row exists ONLY because the projection
+    // wrote it from the generate event — a broken seam would leave it absent.
+    const edges = await db
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, result.edge_id));
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'prerequisite',
+      weight: 0.7,
+    });
   });
 });
