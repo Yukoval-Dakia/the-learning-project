@@ -21,7 +21,8 @@ describe('export constants', () => {
     // (结构轴知识边调和的 AUDIT / PROVENANCE 日志，SUPERSEDE 决策来由)。新表入 FK_ORDER
     // 必 bump (per archive.ts:92)，同 memory_reconciliation_log 的先例 (非 BACKUP_EXCLUDED)。
     // 4.4 → 4.5 (YUK-361 Phase 6): difficulty_calibration_label 入 FK_ORDER (前一次 bump)。
-    expect(SCHEMA_VERSION).toBe('4.8');
+    // 4.8 → 4.9 (YUK-471 W1 PR-A2a / ADR-0044): materialized_id_index 投影反查表入 FK_ORDER。
+    expect(SCHEMA_VERSION).toBe('4.9');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
@@ -49,10 +50,14 @@ describe('export constants', () => {
     // authored 认知身份实体 (DORMANT in L1，无 writer，但备份覆盖纯声明式整行 dump/restore)，
     // 按 peer 身份/校准表惯例进 FK_ORDER (非 BACKUP_EXCLUDED)；紧邻 knowledge/mastery_state
     // 身份簇 (loose-coupling text-ref，无 enforced FK，位置不受约束)。
+    // 31 → 32 (YUK-471 W1 PR-A2a / ADR-0044): added materialized_id_index — projection
+    // reverse-index (materialized id → anchor event). Derived-but-physical → FK_ORDER
+    // (rebuildable from the event log, but knowledge/knowledge_edge are backed up so the
+    // index must be too); placed last as the newest additive table.
     // knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(31);
+    expect(FK_ORDER.length).toBe(32);
     expect(FK_ORDER[0]).toBe('knowledge');
-    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('edge_reconciliation_log');
+    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('materialized_id_index');
   });
 
   it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {
