@@ -35,7 +35,10 @@ import { embedText } from '@/server/ai/embed';
 import { questionEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns).
+import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
+// YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the row when ON).
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
 import { eq } from 'drizzle-orm';
 import { getEffectiveDomain } from './domain';
@@ -240,6 +243,9 @@ export async function tagKnowledge(
     // (Previously applyProposeNew's internal `new Date()` and the event's defaulted
     // created_at diverged, so the projection's created_at would not match the row.)
     const now = new Date();
+    // YUK-471 W1 PR-B — SoT flip gate. ON: skip applyProposeNew's INSERT (writeRow=false) and
+    // let the projection write the row from the auto_tag genesis event below.
+    const flip = projectionIsWriter();
     const createdId = await applyProposeNew(
       tx,
       {
@@ -248,6 +254,7 @@ export async function tagKnowledge(
         parent_id: input.subjectRootId,
       },
       now,
+      /* writeRow */ !flip,
     );
     await writeEvent(tx, {
       id: newId(),
@@ -274,20 +281,24 @@ export async function tagKnowledge(
       created_at: now,
     });
 
-    // YUK-471 W1 PR-A2b — accept-time projection parity. The auto_tag create writes
-    // the row + the auto_tag genesis event in this tx; re-project that node and assert
-    // fold(events) == the row just written. The reducer reconstructs the row from the
-    // auto_tag event (subject_kind/subject_id on the envelope, name/parent_id from the
-    // payload, timestamps from the event's created_at = `now`). Dev/test THROW on
-    // divergence; prod warn+returns (see parity.ts).
-    const writtenRow = (
-      await tx.select().from(knowledge).where(eq(knowledge.id, createdId)).limit(1)
-    )[0];
-    await assertKnowledgeNodeParity(
-      tx,
-      createdId,
-      writtenRow ? knowledgeLiveRowToSnapshot(writtenRow) : null,
-    );
+    // YUK-471 W1 PR-B — flip ON: the projection writes the row from the auto_tag genesis
+    // event (the imperative INSERT was skipped). Guarded for symmetry, though the fold is
+    // non-null here (the auto_tag event creates the node) so the delete branch is unreachable.
+    // Flip OFF: the A2b accept-time parity assert — re-project the just-written row and assert
+    // fold(events) == row (the reducer reconstructs from the auto_tag event; timestamps from
+    // its created_at = `now`). Dev/test THROW on divergence; prod warn+returns (see parity.ts).
+    if (flip) {
+      await projectKnowledgeNodeGuarded(tx, createdId);
+    } else {
+      const writtenRow = (
+        await tx.select().from(knowledge).where(eq(knowledge.id, createdId)).limit(1)
+      )[0];
+      await assertKnowledgeNodeParity(
+        tx,
+        createdId,
+        writtenRow ? knowledgeLiveRowToSnapshot(writtenRow) : null,
+      );
+    }
     return createdId;
   });
 

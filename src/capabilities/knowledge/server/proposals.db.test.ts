@@ -984,3 +984,95 @@ describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)',
     expect(stripVolatile(onRow)).toEqual(stripVolatile(offRow));
   });
 });
+
+// =============================================================================
+// YUK-471 W1 PR-B (full flip) — the keystone NON-DELETE guard + mutation projection.
+// The full flip generalizes the seam to project EVERY touched node (guarded). The guard
+// is what makes activation safe before backfill: a touched node that folds to null but has
+// NO genesis anchor (a seed root / any pre-event-sourced row) must be LEFT INTACT, never
+// deleted. A naive (unguarded) flip would DELETE it on a normal merge/reparent/archive.
+// =============================================================================
+
+describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutation projection', () => {
+  beforeEach(async () => {
+    vi.unstubAllEnvs();
+    await resetDb();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('flag ON: merge into a SEED ROOT (no events / no anchor) leaves BOTH rows surviving — guard skips the delete', async () => {
+    const db = testDb();
+    // Seed root + a from node, BOTH inserted directly with NO events (pre-event-sourced).
+    await insertKnowledge({ id: 'seed_root', domain: 'wenyan', version: 0, merged_from: [] });
+    await insertKnowledge({ id: 'k_from_seed', domain: 'wenyan', version: 0 });
+    await insertProposeEvent({
+      id: 'p_merge_seed',
+      subject_id: 'seed_root',
+      payload: {
+        mutation: 'merge',
+        from_ids: ['k_from_seed'],
+        into_id: 'seed_root',
+        expected_versions: { k_from_seed: 0 },
+      },
+    });
+
+    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    const result = await acceptProposal(db, 'p_merge_seed');
+    expect(result.kind).toBe('merge_applied');
+
+    // The seam projects [seed_root, k_from_seed] GUARDED. Both fold to null (no creating
+    // event) and have NO genesis anchor → the guard SKIPS the delete. A naive unguarded
+    // projection would DELETE both = data loss. Assert BOTH rows survive.
+    const root = await liveSnapshot('seed_root');
+    const from = await liveSnapshot('k_from_seed');
+    expect(root).not.toBeNull(); // seed root NOT deleted (this is the keystone)
+    expect(from).not.toBeNull(); // from node NOT deleted (only soft-archived)
+    // The imperative mutation still applied: into.merged_from gained the from; from archived.
+    expect(root?.merged_from).toContain('k_from_seed');
+    expect(from?.archived_at).toBeTruthy();
+  });
+
+  it('flag ON vs OFF: reparent of an EVENT-SOURCED node projects a structurally identical row', async () => {
+    // run() builds an event-sourced node via a propose_new accept (so it HAS a genesis anchor),
+    // then reparents it under the given flag and returns the structural row.
+    async function run(flip: boolean) {
+      await resetDb();
+      const db = testDb();
+      await insertKnowledge({ id: 'rp_oldp', domain: 'wenyan' });
+      await insertKnowledge({ id: 'rp_newp', domain: 'wenyan' });
+      await insertProposeEvent({
+        id: 'p_seed_rp',
+        payload: { mutation: 'propose_new', name: 'movable', parent_id: 'rp_oldp' },
+      });
+      const seed = await acceptProposal(db, 'p_seed_rp'); // flag OFF — imperative create
+      if (seed.kind !== 'propose_new_applied') throw new Error('seed');
+      const nodeId = seed.new_node_id;
+      await insertProposeEvent({
+        id: 'p_rp',
+        subject_id: nodeId,
+        payload: {
+          mutation: 'reparent',
+          node_id: nodeId,
+          new_parent_id: 'rp_newp',
+          expected_version: 0,
+        },
+      });
+      if (flip) vi.stubEnv('PROJECTION_IS_WRITER', '1');
+      const r = await acceptProposal(db, 'p_rp');
+      if (r.kind !== 'reparent_applied') throw new Error('reparent');
+      vi.unstubAllEnvs();
+      const row = await liveSnapshot(nodeId);
+      return row ? stripVolatile(row) : null;
+    }
+    const off = await run(false);
+    const on = await run(true);
+    expect(off).not.toBeNull();
+    expect(on).not.toBeNull();
+    // Projection-written reparent row == imperative reparent row (parent moved, version bumped).
+    expect(on).toEqual(off);
+    expect(on?.parent_id).toBe('rp_newp');
+    expect(on?.version).toBe(1);
+  });
+});

@@ -22,10 +22,11 @@
 // IDENTICALLY (single gather implementation — see gather.ts header). This shell adds only
 // the WRITE-THROUGH.
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
+import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { knowledge_edge } from '@/db/schema';
+import { event, knowledge_edge } from '@/db/schema';
 import { gatherAndFoldKnowledgeEdge } from './gather';
 
 type DbLike = Db | Tx;
@@ -63,9 +64,49 @@ export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<
     await db.delete(knowledge_edge).where(eq(knowledge_edge.id, edgeId));
     return;
   }
+  await upsertProjectedKnowledgeEdge(db, projected);
+}
 
-  // Upsert the projected columns. knowledge_edge has NO version column and NO embed_*; the
-  // full snapshot shape is the row.
+/**
+ * YUK-471 W1 PR-B — the GUARDED edge write-through (the SoT-flip edge writer). Same as
+ * projectKnowledgeEdge EXCEPT the null branch DELETEs only when the edge HAS a creating event
+ * (genesis / generate) — a genuine revert. A fold-null on an edge with NO event (a
+ * pre-event-sourced edge, e.g. one written by the public POST /edges path that emits no event)
+ * must NOT be deleted. In practice an event-sourced edge never folds to null (a generate-create
+ * always yields a non-null row, archived or not), so this guard fires only for truly un-anchored
+ * edges — the symmetric keystone to the node guard and the safety net for a rebuild over
+ * un-migrated edges. Like projectKnowledgeEdge it lets a topology reject from the fold propagate.
+ */
+export async function projectKnowledgeEdgeGuarded(db: DbLike, edgeId: string): Promise<void> {
+  const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
+  if (projected === null) {
+    if (await hasKnowledgeEdgeGenesisAnchor(db, edgeId)) {
+      await db.delete(knowledge_edge).where(eq(knowledge_edge.id, edgeId));
+    }
+    // else: fold-blind pre-event-sourced edge — keep the imperative row (NEVER delete).
+    return;
+  }
+  await upsertProjectedKnowledgeEdge(db, projected);
+}
+
+// An edge is event-sourced iff at least one event keys on it — every edge event uses
+// subject_kind='knowledge_edge', subject_id=edgeId (genesis seed or generate create/archive).
+// READ-ONLY.
+async function hasKnowledgeEdgeGenesisAnchor(db: DbLike, edgeId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, edgeId)))
+    .limit(1);
+  return rows.length > 0;
+}
+
+// Shared upsert of the projected columns. knowledge_edge has NO version column and NO embed_*;
+// the full snapshot shape is the row.
+async function upsertProjectedKnowledgeEdge(
+  db: DbLike,
+  projected: KnowledgeEdgeRowSnapshotT,
+): Promise<void> {
   await db
     .insert(knowledge_edge)
     .values({

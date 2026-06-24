@@ -20,7 +20,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
-import { projectKnowledgeNode } from '@/server/projections/knowledge';
+import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
 // the applicability gate (skip nodes that predate event-sourcing — no genesis anchor → fold
@@ -801,15 +801,20 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // warn+returns (never break a live accept over a fold bug — see parity.ts). NOTE
       // the merge into_id node also folds here: its merged_from append + version bump
       // must reproduce.
-      // YUK-471 W1 PR-B1 — the SoT seam. When the flip is ON for a WIRED minting kind, the
-      // projection is the row writer (the imperative INSERT was skipped via writeRow=false):
-      // gather→fold→write-through the just-minted node from the events written above (rate +
-      // materialized_id_index). The fold sees them because this runs AFTER both writes, in the
-      // same tx — the exact point the A2b parity assert already ran. Only propose_new is wired
-      // in PR-B1; every other kind (and the entire flag-OFF path) keeps the A2b parity assert,
-      // which is what makes flag-OFF a true rollback (full fold==row verification restored).
-      if (flip && result.kind === 'propose_new_applied') {
-        await projectKnowledgeNode(tx, result.new_node_id);
+      // YUK-471 W1 PR-B — the SoT seam. Flag ON: the projection is the row writer for EVERY
+      // node the accept touched (affectedNodeIds). GUARDED — a touched node that folds to null
+      // but has NO genesis anchor (a seed root / any pre-event-sourced node) is left intact,
+      // NEVER deleted (keystone, see knowledge.ts projectKnowledgeNodeGuarded). For propose_new
+      // the imperative INSERT was skipped (writeRow=false); the mutation appliers (reparent /
+      // archive / merge / split) keep their version-guarded imperative UPDATE and the projection
+      // overwrites it from events (last-write-wins for an event-sourced node, skipped for a
+      // blind one). This runs AFTER the rate + materialized_id_index writes, in the same tx, so
+      // the fold sees them — the exact point the A2b parity assert ran. Flag OFF keeps that
+      // assert (true rollback: full fold==row verification restored).
+      if (flip) {
+        for (const id of affectedNodeIds(result)) {
+          await projectKnowledgeNodeGuarded(tx, id);
+        }
       } else {
         await assertAcceptParity(tx, result);
       }
