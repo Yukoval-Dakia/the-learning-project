@@ -228,6 +228,12 @@ export interface ArchiveKnowledgeEdgeResult {
 export async function archiveKnowledgeEdge(
   db: DbLike,
   id: string,
+  // YUK-471 W1 PR-B — stamp archived_at from the caller's accept-time `now` so it matches the
+  // generate-archive event's created_at (fold == row for an archived edge). Without this the
+  // projection's archived_at, derived from the event, diverges from the imperative one by a few
+  // ms, and the B3 audit would flag every archived edge as drift. Defaults to new Date() for the
+  // other callers that don't thread an accept-time instant.
+  now: Date = new Date(),
 ): Promise<ArchiveKnowledgeEdgeResult> {
   const existing = await db
     .select({ id: knowledge_edge.id, archived_at: knowledge_edge.archived_at })
@@ -246,7 +252,7 @@ export async function archiveKnowledgeEdge(
 
   await db
     .update(knowledge_edge)
-    .set({ archived_at: new Date() })
+    .set({ archived_at: now })
     .where(and(eq(knowledge_edge.id, id), isNull(knowledge_edge.archived_at)));
 
   return { id, archived: true };

@@ -653,10 +653,12 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // stamped from the same instant. (Sub-ms shift from the old per-applier
       // `new Date()` is the only behavior change for live users.)
       const now = new Date();
-      // YUK-471 W1 PR-B1 — read the SoT-flip gate ONCE per accept. OFF (default): imperative
+      // YUK-471 W1 PR-B — read the SoT-flip gate ONCE per accept. OFF (default): imperative
       // appliers write the row + the A2b parity assert verifies fold==row. ON: the projection
-      // writes the row for the wired minting site(s). PR-B1 wires ONLY propose_new; every other
-      // kind keeps A2b behavior even under the flag.
+      // is the row writer for EVERY kind the accept touches (propose_new / reparent / archive /
+      // merge / split) — propose_new skips its imperative INSERT; the mutation appliers keep
+      // their version-guarded UPDATE and the projection overwrites from events (see the seam
+      // below). Flag OFF stays the full-verification rollback.
       const flip = projectionIsWriter();
 
       // Reconstruct mutation payload from event shape
