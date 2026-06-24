@@ -3,35 +3,36 @@
 // WHAT. One command that runs the documented B3 cutover gate against a (clone) database and
 // prints a GO / NO-GO verdict for flipping PROJECTION_IS_WRITER=1 (the projection becoming the
 // sole writer of knowledge / knowledge_edge). It chains the three already-landed primitives and
-// adds the two structural safety checks the flip requires:
+// adds the structural safety checks the flip requires:
 //
 //   1. snapshot the live `knowledge` / `knowledge_edge` id sets (the "before").
-//   2. genesis backfill (idempotent) — anchor every un-anchored row so the fold can reproduce it.
-//   3. full projection rebuild IN ONE TX — re-fold every node + edge through the IO shells in
-//      place. A topology reject (ADR-0034 cycle/direction) rolls the whole rebuild back.
-//   4. survival check — diff the live id sets: did the rebuild DELETE any pre-existing row? With
-//      the keystone non-delete guard (PR-B) + the backfill anchors this must be empty; a deletion
-//      means a row would be LOST on the flip → hard NO-GO.
-//   5. audit:projection — fold(events) == row for every live row (zero non-allowlisted drift).
+//   2. SCOPED genesis backfill (idempotent) — anchor only TRULY event-less rows (seed roots /
+//      pre-W1 legacy). Already-event-sourced rows are NOT anchored (see backfill-genesis-events.ts).
+//   3. AUDIT (the real teeth) — fold(events) vs the CURRENT imperative row, BEFORE the rebuild
+//      overwrites anything. Value drift (a mutation-reducer bug), present→fold-null, and a cyclic
+//      prerequisite (fold THROWS) all surface here.
+//   4. full projection rebuild IN ONE TX — re-fold every node + edge through the IO shells in
+//      place (materialize the post-flip state). A topology reject rolls the whole rebuild back.
+//   5. survival check — diff the live id sets: did the rebuild DELETE any pre-existing row? A
+//      deletion means a row would be LOST on the flip → hard NO-GO.
 //
-//   GO  iff  rebuild.ok && survival.ok && audit.clean.
+//   GO  iff  audit.clean && rebuild.ok && survival.ok.
 //
-// SAFETY — THIS SCRIPT MUTATES THE TARGET DATABASE (steps 2 + 3 WRITE: genesis events +
+// SAFETY — THIS SCRIPT MUTATES THE TARGET DATABASE (steps 2 + 4 WRITE: genesis events +
 // materialized_id_index entries, and re-fold every row in place). Run it ONLY against a
 // PROD-CLONE, NEVER live prod. The CLI refuses unless B3_GATE_CONFIRM_CLONE=1 is set. The
 // exported runB3Gate() is unguarded so the DB test can drive it against the testcontainer.
 //
-// WHAT THE GATE DOES AND DOES NOT PROVE. The genesis backfill seeds, for every row lacking a
-// genesis event, a system `experimental:genesis` snapshot of that row's CURRENT state, stamped
-// at backfill time — i.e. LATER than any accept-path event the row already has. Because the fold
-// applies events in (created_at, id) order, that genesis snapshot is applied LAST, so after the
-// backfill fold(events) == row holds by construction for value columns. The gate's load-bearing
-// teeth are therefore (a) the topology reject (a create event is folded BEFORE the genesis and
-// re-runs the ADR-0034 gate the imperative accept path never ran — this catches a cyclic
-// prerequisite pair that exists imperatively) and (b) the survival check (no row dropped). The
-// per-accept fold-CORRECTNESS of event-sourced rows is verified separately and continuously by
-// the A2b parity assert on the live OFF path (src/server/projections/parity.ts); this gate is the
-// offline pre-flip dry-run of the prod prep, not a substitute for it.
+// WHY THE AUDIT RUNS BEFORE THE REBUILD (real value teeth). The rebuild WRITES the fold through,
+// so a post-rebuild audit would compare the fold against itself — tautologically clean. Run BEFORE
+// the rebuild, the audit compares fold(events) against the IMPERATIVE row the live accept path
+// wrote, so a mutation-reducer value bug (reparent / merge / archive / split) surfaces as DRIFT.
+// This is only real teeth because the backfill is SCOPED: an already-event-sourced row is NOT
+// genesis-anchored, so its fold re-derives through its reducers rather than collapsing to a
+// current-state snapshot (an unscoped backfill stamps a genesis snapshot LAST in the fold and
+// masks exactly this divergence). Together: scoped backfill + pre-rebuild audit = the gate
+// independently verifies per-accept fold correctness on the clone, complementing the live A2b
+// parity assert (src/server/projections/parity.ts), which only warns (not blocks) in production.
 //
 // PROD FLIP. A clean GO on the clone means: apply the SAME genesis backfill to prod (idempotent,
 // outbox-opt-out), THEN set PROJECTION_IS_WRITER=1 on all three processes (API / worker / Vite)
@@ -39,8 +40,9 @@
 // the dry-run; it does not itself touch prod.
 //
 // NOT in the `pnpm test` chain — like audit:projection it needs a populated DB and is meaningless
-// against the empty CI testcontainer. CI coverage is the DB test (b3-gate.db.test.ts), which
-// drives runB3Gate against a seeded testcontainer for both the GO and the NO-GO (topology) paths.
+// against the empty CI testcontainer. CI coverage is the DB test (b3-gate.db.test.ts), which drives
+// runB3Gate against a seeded testcontainer for the GO path and all three NO-GO legs: topology
+// reject, audit value-drift (fold != imperative row), and survival (a row the rebuild would delete).
 //
 // CLI:
 //   B3_GATE_CONFIRM_CLONE=1 pnpm b3:gate          # human-readable GO / NO-GO; exit 0 (GO) / 1 (NO-GO)
@@ -58,14 +60,20 @@ import { type RebuildCounts, rebuildProjection } from './rebuild-projection';
 export interface B3GateReport {
   go: boolean;
   backfill: BackfillCounts;
-  // rebuild.ok=false with a topologyReject means the rebuild aborted (rolled back) on an ADR-0034
-  // cycle/direction reject — a hard NO-GO. counts is the re-folded id counts on success.
+  // audit runs BEFORE the rebuild — it compares fold(events) against the CURRENT imperative row,
+  // which is the real value-drift teeth (AFTER a rebuild the row IS the fold, so a post-rebuild
+  // audit is tautological). driftCount = non-allowlisted drift (a value mismatch or a
+  // present→fold-null); topologyReject is set if folding a cyclic prerequisite THROWS mid-scan.
+  audit: {
+    clean: boolean;
+    driftCount: number;
+    allowedCount: number;
+    topologyReject: string | null;
+  };
+  // rebuild materializes the post-flip state + independently re-confirms topology. ok=false with a
+  // topologyReject means it aborted (rolled back) on an ADR-0034 cycle/direction reject — hard NO-GO.
   rebuild: { ok: boolean; counts: RebuildCounts | null; topologyReject: string | null };
-  // audit runs only when the rebuild SUCCEEDED — a rebuild that topology-rejected leaves the
-  // cyclic edge live, so the audit's fold would re-throw on the same reject; the gate is already
-  // NO-GO, so the audit is skipped (ran=false) rather than crashing the run.
-  audit: { ran: boolean; clean: boolean; driftCount: number; allowedCount: number };
-  // survival: ids present before the gate but gone after the rebuild (should be empty).
+  // survival: ids present before the gate but gone after the rebuild (should be empty — data loss).
   survival: { ok: boolean; deletedKnowledge: string[]; deletedEdges: string[] };
 }
 
@@ -100,23 +108,42 @@ export async function runB3Gate(
   // 2. genesis backfill (idempotent) — anchor every un-anchored row.
   const backfill = await backfillGenesisEvents(db, now);
 
-  // 3. full rebuild IN ONE TX. A topology reject rolls the whole rebuild back and is reported as
-  // NO-GO (not a crash); any OTHER error is a real failure and propagates.
+  // 3. AUDIT — the real teeth. Compare fold(events) against the CURRENT imperative row BEFORE the
+  // rebuild overwrites anything (a post-rebuild audit would be tautological: the row IS the fold).
+  // With the scoped backfill, accept-path rows are NOT genesis-masked, so a mutation-reducer value
+  // bug surfaces here as DRIFT; a present row that folds to null surfaces as a "present → fold-null"
+  // drift; a cyclic prerequisite makes the fold THROW — caught here as a topology NO-GO (the rebuild
+  // re-confirms it at step 4). A NON-topology error is a real failure and propagates.
+  let audit: B3GateReport['audit'];
+  try {
+    const r = await auditProjection(db, allowlist);
+    audit = {
+      clean: r.ok,
+      driftCount: r.drift.length,
+      allowedCount: r.allowed.length,
+      topologyReject: null,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/topology reject/i.test(msg)) throw err;
+    audit = { clean: false, driftCount: 0, allowedCount: 0, topologyReject: msg };
+  }
+
+  // 4. rebuild IN ONE TX — materialize the post-flip state + independently re-confirm topology. A
+  // topology reject rolls it back and is reported as NO-GO (not a crash); any OTHER error propagates.
   let rebuild: B3GateReport['rebuild'];
   try {
     const counts = await db.transaction((tx) => rebuildProjection(tx));
     rebuild = { ok: true, counts, topologyReject: null };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/topology reject/i.test(msg)) {
-      rebuild = { ok: false, counts: null, topologyReject: msg };
-    } else {
-      throw err;
-    }
+    if (!/topology reject/i.test(msg)) throw err;
+    rebuild = { ok: false, counts: null, topologyReject: msg };
   }
 
-  // 4. survival — did the rebuild drop any pre-existing row? (The keystone non-delete guard +
-  // backfill anchors should make this empty; a non-empty set is a hard NO-GO — data loss on flip.)
+  // 5. survival — did the rebuild drop any pre-existing row? (Backfill anchors event-less rows + the
+  // keystone non-delete guard protects un-anchored fold-nulls, so this should be empty; a non-empty
+  // set is a hard NO-GO — data loss. A row that folds to null also shows as a step-3 audit drift.)
   const afterNodes = await liveNodeIds(db);
   const afterEdges = await liveEdgeIds(db);
   const deletedKnowledge = [...beforeNodes].filter((id) => !afterNodes.has(id));
@@ -127,24 +154,8 @@ export async function runB3Gate(
     deletedEdges,
   };
 
-  // 5. audit — fold(events) == row for every live row (zero non-allowlisted drift). Skipped when
-  // the rebuild already topology-rejected: that leaves the cyclic edge live, so the audit's fold
-  // would re-throw on the same reject, and the gate is already NO-GO.
-  let audit: B3GateReport['audit'];
-  if (rebuild.ok) {
-    const auditResult = await auditProjection(db, allowlist);
-    audit = {
-      ran: true,
-      clean: auditResult.ok,
-      driftCount: auditResult.drift.length,
-      allowedCount: auditResult.allowed.length,
-    };
-  } else {
-    audit = { ran: false, clean: false, driftCount: 0, allowedCount: 0 };
-  }
-
-  const go = rebuild.ok && survival.ok && audit.clean;
-  return { go, backfill, rebuild, audit, survival };
+  const go = audit.clean && rebuild.ok && survival.ok;
+  return { go, backfill, audit, rebuild, survival };
 }
 
 function printReport(report: B3GateReport): void {
@@ -153,6 +164,19 @@ function printReport(report: B3GateReport): void {
     `backfill — knowledge: seeded ${report.backfill.knowledge.seeded}, skipped ${report.backfill.knowledge.skipped}; ` +
       `edge: seeded ${report.backfill.knowledge_edge.seeded}, skipped ${report.backfill.knowledge_edge.skipped}`,
   );
+  // audit FIRST (it runs before the rebuild — the real fold-vs-imperative teeth).
+  if (report.audit.topologyReject) {
+    console.log(
+      `audit    — NO-GO: ADR-0034 topology reject during fold — ${report.audit.topologyReject}`,
+    );
+  } else {
+    const allowed =
+      report.audit.allowedCount > 0 ? ` (${report.audit.allowedCount} allowlisted)` : '';
+    const verdict = report.audit.clean
+      ? 'CLEAN'
+      : `DRIFT: ${report.audit.driftCount} drifted id(s) (fold != imperative row)`;
+    console.log(`audit    — ${verdict}${allowed}`);
+  }
   if (report.rebuild.ok) {
     console.log(
       `rebuild  — OK: re-folded ${report.rebuild.counts?.nodes ?? 0} node(s) + ${report.rebuild.counts?.edges ?? 0} edge(s)`,
@@ -172,16 +196,6 @@ function printReport(report: B3GateReport): void {
     if (report.survival.deletedEdges.length > 0) {
       console.log(`  deleted edges: ${report.survival.deletedEdges.join(', ')}`);
     }
-  }
-  if (!report.audit.ran) {
-    console.log('audit    — skipped (rebuild did not complete)');
-  } else {
-    const allowed =
-      report.audit.allowedCount > 0 ? ` (${report.audit.allowedCount} allowlisted)` : '';
-    const verdict = report.audit.clean
-      ? 'CLEAN'
-      : `DRIFT: ${report.audit.driftCount} drifted id(s)`;
-    console.log(`audit    — ${verdict}${allowed}`);
   }
   console.log(
     report.go
