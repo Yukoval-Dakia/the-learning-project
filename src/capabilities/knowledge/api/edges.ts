@@ -16,9 +16,12 @@
 
 import { z } from 'zod';
 
+import { createId } from '@paralleldrive/cuid2';
+
 import { createKnowledgeEdge, listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
+import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 const QuerySchema = z.object({
@@ -36,7 +39,9 @@ const BodySchema = z.object({
   to_knowledge_id: z.string().min(1, 'to_knowledge_id is required'),
   relation_type: RelationTypeSchema,
   weight: z.number().min(0).max(1).optional(),
-  created_by: z.unknown().optional(),
+  // created_by is no longer accepted from the request — a manual edge create is fixed to the
+  // {user, self} actor so the stored created_by matches the fold (YUK-471). Any client-sent
+  // created_by is ignored (Zod strips unknown keys).
   reasoning: z.string().nullable().optional(),
 });
 
@@ -74,13 +79,43 @@ export async function POST(req: Request): Promise<Response> {
         .join('; ');
       throw new ApiError('validation_error', message, 400);
     }
-    const id = await createKnowledgeEdge(db, {
-      from_knowledge_id: parsed.data.from_knowledge_id,
-      to_knowledge_id: parsed.data.to_knowledge_id,
-      relation_type: parsed.data.relation_type,
-      weight: parsed.data.weight,
-      created_by: parsed.data.created_by,
-      reasoning: parsed.data.reasoning ?? null,
+    // YUK-471 BYPASS-2 fence — a manual edge create must be EVENT-SOURCED: write the edge row AND
+    // a `generate`(create) event in ONE tx, with the SAME actor + created_at, so the edge folds ==
+    // its row (the projection SoT). Without the event a POST-created edge would have no fold source
+    // → post-flip it diverges / is dropped on a rebuild. The request's loose `created_by` is
+    // intentionally NOT used: created_by is fixed to the manual-user actor {user, self} so the row
+    // matches the fold (which derives created_by from the event envelope), not a free-form string.
+    const now = new Date();
+    const id = await db.transaction(async (tx) => {
+      const edgeId = await createKnowledgeEdge(tx, {
+        from_knowledge_id: parsed.data.from_knowledge_id,
+        to_knowledge_id: parsed.data.to_knowledge_id,
+        relation_type: parsed.data.relation_type,
+        weight: parsed.data.weight,
+        reasoning: parsed.data.reasoning ?? null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        created_at: now,
+      });
+      await writeEvent(tx, {
+        id: createId(),
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'generate',
+        subject_kind: 'knowledge_edge',
+        subject_id: edgeId,
+        outcome: 'success',
+        payload: {
+          edge_op: 'create',
+          from_knowledge_id: parsed.data.from_knowledge_id,
+          to_knowledge_id: parsed.data.to_knowledge_id,
+          relation_type: parsed.data.relation_type,
+          weight: parsed.data.weight ?? 1,
+          reasoning: parsed.data.reasoning ?? null,
+        },
+        created_at: now,
+      });
+      return edgeId;
     });
     return Response.json({ id }, { status: 201 });
   } catch (err) {

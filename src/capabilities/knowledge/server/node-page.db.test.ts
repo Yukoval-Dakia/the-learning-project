@@ -77,7 +77,6 @@ async function seedEdge(
     from_knowledge_id: from,
     to_knowledge_id: to,
     relation_type: relationType,
-    created_by: 'user',
   });
 }
 

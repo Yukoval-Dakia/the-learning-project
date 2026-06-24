@@ -25,8 +25,6 @@ type DbLike = Db | Tx;
 
 // ---------- Types ----------
 
-const AgentRefLike = z.union([z.literal('user'), z.string().min(1)]);
-
 export interface KnowledgeEdgeRow {
   id: string;
   from_knowledge_id: string;
@@ -105,8 +103,19 @@ export interface CreateKnowledgeEdgeInput {
   to_knowledge_id: string;
   relation_type: string;
   weight?: number;
-  created_by?: unknown;
   reasoning?: string | null;
+  // YUK-471 — created_by is stored as the {actor_kind, actor_ref(, propose_event_id)} shape the
+  // edge FOLD reconstructs (src/core/projections/knowledge_edge.ts rowFromGenerateEvent), NOT a
+  // bare string, so a createKnowledgeEdge-created edge folds == its row (the projection SoT). The
+  // caller MUST write a `generate`(create) event with the SAME actor_kind/actor_ref + this created_at.
+  // Default {user, self} (the manual-user case). A caller that ALSO writes a generate event MUST
+  // pass the matching actor (POST=user/self, reconcile=agent/dreaming) or the fold won't reproduce.
+  actor_kind?: string;
+  actor_ref?: string;
+  propose_event_id?: string;
+  // created_at must equal the caller's generate event's created_at — the fold takes the row's
+  // created_at FROM that event. Defaults to now() only for a caller with no paired event.
+  created_at?: Date;
 }
 
 /**
@@ -134,19 +143,15 @@ export async function createKnowledgeEdge(
     );
   }
 
-  // 2) created_by defaults to 'user' (single-user assumption per ADR-0007);
-  //    AgentRef shape passes through unchanged for AI-generated edges.
-  //    Codex P2-H: convert ZodError to ApiError(400) so callers get a clean
-  //    `validation_error` response instead of a raw 500.
-  const createdBy = input.created_by ?? 'user';
-  const createdByParsed = AgentRefLike.safeParse(createdBy);
-  if (!createdByParsed.success) {
-    throw new ApiError(
-      'validation_error',
-      `invalid created_by: ${createdByParsed.error.issues.map((i) => i.message).join('; ')}`,
-      400,
-    );
-  }
+  // 2) created_by — the edge FOLD's {actor_kind, actor_ref(, propose_event_id)} shape (see the
+  //    input doc). Built from the explicit actor fields so every createKnowledgeEdge edge stores
+  //    the EXACT shape the fold reconstructs → fold(events) == row. (Previously stored a bare
+  //    string default 'user', which the fold could never reproduce — YUK-471 BYPASS-2 fix.)
+  const createdBy: Record<string, string> = {
+    actor_kind: input.actor_kind ?? 'user',
+    actor_ref: input.actor_ref ?? 'self',
+    ...(input.propose_event_id ? { propose_event_id: input.propose_event_id } : {}),
+  };
 
   // 3) FK existence: both endpoints must point at non-archived knowledge nodes.
   //    Drizzle's `.references()` only declares FK at DDL; here we surface a
@@ -168,7 +173,7 @@ export async function createKnowledgeEdge(
   }
 
   const id = createId();
-  const now = new Date();
+  const createdAt = input.created_at ?? new Date();
 
   try {
     await db.insert(knowledge_edge).values({
@@ -179,7 +184,7 @@ export async function createKnowledgeEdge(
       weight: input.weight ?? 1,
       created_by: createdBy as never,
       reasoning: input.reasoning ?? null,
-      created_at: now,
+      created_at: createdAt,
     });
   } catch (err) {
     // Drizzle wraps the raw postgres-js error in its own Error. The original pg

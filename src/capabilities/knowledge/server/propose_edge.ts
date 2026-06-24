@@ -750,8 +750,12 @@ async function applyEdgeSupersede(
       to_knowledge_id: p.to_knowledge_id,
       relation_type: p.relation_type,
       weight: p.weight,
-      created_by: 'dreaming',
       reasoning: p.reasoning,
+      // YUK-471 — fold-consistent created_by + created_at aligned to the `generate` event below
+      // (same `now`, same actor) so this reconcile edge folds == its row.
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      created_at: now,
     });
     await writeEvent(tx, {
       id: newGenerateEventId,
