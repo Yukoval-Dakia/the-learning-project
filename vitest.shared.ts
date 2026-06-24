@@ -278,6 +278,9 @@ export const fastTestInclude = [
   // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
   // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).
   'src/server/proposals/adaptive-bias.unit.test.ts',
+  // YUK-471 W1 PR-A2b — parity assert throw-routing (mocks ./gather, no DB). The live
+  // gather→fold parity coverage is parity.db.test.ts (DB partition).
+  'src/server/projections/parity.unit.test.ts',
   // Memory tests are mostly unit-mocked. The outbox real-path integration
   // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) and the P5.2
   // activity-gated brief test (active-subjects.db.test.ts, YUK-143) hit live

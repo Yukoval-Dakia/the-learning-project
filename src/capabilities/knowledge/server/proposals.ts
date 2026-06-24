@@ -723,12 +723,17 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       //   - propose_new_applied → { knowledge: [new_node_id] }
       //   - split_applied       → { knowledge: new_node_ids } (N minted)
       //   - reparent/merge/archive → no minted ids (omit materialized_ids entirely)
-      const mintedKnowledgeIds: string[] =
-        result.kind === 'propose_new_applied'
-          ? [result.new_node_id]
-          : result.kind === 'split_applied'
-            ? result.new_node_ids
-            : [];
+      let mintedKnowledgeIds: string[];
+      switch (result.kind) {
+        case 'propose_new_applied':
+          mintedKnowledgeIds = [result.new_node_id];
+          break;
+        case 'split_applied':
+          mintedKnowledgeIds = result.new_node_ids;
+          break;
+        default:
+          mintedKnowledgeIds = [];
+      }
       const materializedIds =
         mintedKnowledgeIds.length > 0 ? { knowledge: mintedKnowledgeIds } : undefined;
 
