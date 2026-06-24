@@ -534,7 +534,14 @@ export const GenerateKnowledgeEdge = z
       to_knowledge_id: z.string(),
       relation_type: RelationTypeSchema,
       weight: z.number().min(0).max(1).default(1),
-      reasoning: z.string().optional(),
+      // YUK-471 W1 PR-A2b — accept `null` (not just absent) so the generate-event
+      // payload can encode an explicitly-absent reasoning the SAME way the ROW does
+      // (`reasoning ?? null`, actions.ts). This makes the edge fold lossless: the
+      // event payload now matches the row byte-for-byte, so foldKnowledgeEdge no
+      // longer needs the `'' → null` coercion workaround (reasonOrNull). user-actor
+      // generate events (actions.ts) may carry null; agent-actor still requires a
+      // non-empty string (the superRefine below — null is falsy → rejected for agent).
+      reasoning: z.string().nullable().optional(),
       propose_event_id: z.string().optional(),
     }),
     ...baseOptionalFields,
