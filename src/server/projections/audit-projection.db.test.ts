@@ -13,13 +13,14 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { knowledge, knowledge_edge } from '@/db/schema';
+import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { auditProjection } from '../../../scripts/audit-projection';
 import {
   backfillKnowledgeEdgeGenesis,
   backfillKnowledgeGenesis,
 } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { projectKnowledgeEdge } from './knowledge_edge';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
 
@@ -46,18 +47,56 @@ async function insertKnowledge(opts: {
   });
 }
 
-async function insertEdge(opts: { id: string; from: string; to: string }): Promise<void> {
+async function insertEdge(opts: {
+  id: string;
+  from: string;
+  to: string;
+  relation_type?: string;
+  archived_at?: Date | null;
+}): Promise<void> {
   const db = testDb();
   await db.insert(knowledge_edge).values({
     id: opts.id,
     from_knowledge_id: opts.from,
     to_knowledge_id: opts.to,
-    relation_type: 'related_to',
+    relation_type: opts.relation_type ?? 'related_to',
     weight: 1,
     created_by: { by: 'user' },
     reasoning: null,
     created_at: T0,
-    archived_at: null,
+    archived_at: opts.archived_at ?? null,
+  });
+}
+
+// Seed a generate-create event for a PREREQUISITE edge (no genesis), so folding it re-runs the
+// ADR-0034 topology gate against the live mesh. Materialize the row via the shell so the live
+// row EQUALS fold(events) by construction (no hand-matched created_by).
+async function seedGenerateCreatePrereq(opts: {
+  edgeId: string;
+  from: string;
+  to: string;
+}): Promise<void> {
+  const db = testDb();
+  await db.insert(event).values({
+    id: `ev_gen_${opts.edgeId}`,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'generate',
+    subject_kind: 'knowledge_edge',
+    subject_id: opts.edgeId,
+    outcome: 'partial',
+    payload: {
+      edge_op: 'create',
+      from_knowledge_id: opts.from,
+      to_knowledge_id: opts.to,
+      relation_type: 'prerequisite',
+      weight: 1,
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: T0,
   });
 }
 
@@ -86,6 +125,31 @@ describe('auditProjection', () => {
     expect(result.checkedEdges).toBe(1);
     expect(result.drift).toEqual([]);
     expect(result.allowed).toEqual([]);
+  });
+
+  it('reports CLEAN across a multi-edge world (once-fetched mesh: live + archived + generate-create prerequisite)', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_a', name: 'A' });
+    await insertKnowledge({ id: 'kn_b', name: 'B' });
+    await insertKnowledge({ id: 'kn_c', name: 'C' });
+    // Two live related_to edges + one ARCHIVED edge — genesis-backfilled so fold(genesis)==row.
+    await insertEdge({ id: 'ke_ab', from: 'kn_a', to: 'kn_b' });
+    await insertEdge({ id: 'ke_ac', from: 'kn_a', to: 'kn_c' });
+    await insertEdge({ id: 'ke_bc_arch', from: 'kn_b', to: 'kn_c', archived_at: T0 });
+    await backfillKnowledgeGenesis(db, T0);
+    await backfillKnowledgeEdgeGenesis(db, T0);
+    // A generate-create PREREQUISITE edge (b → c) added AFTER backfill (so it has ONLY the
+    // generate event, no genesis), materialized via the shell so the live row EQUALS fold(events).
+    // Folding it re-runs ADR-0034 topology against the auditor's once-fetched (filter-built) mesh.
+    await seedGenerateCreatePrereq({ edgeId: 'ke_bc_prereq', from: 'kn_b', to: 'kn_c' });
+    await projectKnowledgeEdge(db, 'ke_bc_prereq');
+
+    const result = await auditProjection(db);
+    expect(result.ok).toBe(true);
+    expect(result.drift).toEqual([]);
+    expect(result.checkedNodes).toBe(3);
+    // 4 edges: ke_ab, ke_ac, ke_bc_arch (archived), ke_bc_prereq (generate-create).
+    expect(result.checkedEdges).toBe(4);
   });
 
   it('flags exactly the out-of-band-mutated row as DRIFT', async () => {

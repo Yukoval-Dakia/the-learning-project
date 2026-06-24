@@ -38,11 +38,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { KnowledgeEdgeRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
+import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import {
-  gatherAndFoldKnowledgeEdge,
+  edgeRowToSnapshot,
+  gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
 // SHARED structural deep-diff — the B3 audit MUST use the same equality as the in-tx accept
@@ -51,7 +52,39 @@ import { diffSnapshots } from '@/server/projections/snapshot-diff';
 
 type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
-type EdgeRow = typeof knowledge_edge.$inferSelect;
+// The auditor reads ONLY the structural snapshot columns — NOT the large embed_* vectors
+// (embedding / embed_model / embed_version / embed_content_hash). A narrow-column read keeps the
+// full-table scan from pulling every node's embedding into memory at prod-clone scale.
+type KnowledgeStructuralRow = Pick<
+  KnowledgeRow,
+  | 'id'
+  | 'name'
+  | 'domain'
+  | 'parent_id'
+  | 'merged_from'
+  | 'archived_at'
+  | 'proposed_by_ai'
+  | 'approval_status'
+  | 'created_at'
+  | 'updated_at'
+  | 'version'
+>;
+
+// The structural columns to SELECT for the node scan (skips embed_*). Mirrors the
+// KnowledgeStructuralRow field set above — keep the two in sync.
+const KNOWLEDGE_STRUCTURAL_COLUMNS = {
+  id: knowledge.id,
+  name: knowledge.name,
+  domain: knowledge.domain,
+  parent_id: knowledge.parent_id,
+  merged_from: knowledge.merged_from,
+  archived_at: knowledge.archived_at,
+  proposed_by_ai: knowledge.proposed_by_ai,
+  approval_status: knowledge.approval_status,
+  created_at: knowledge.created_at,
+  updated_at: knowledge.updated_at,
+  version: knowledge.version,
+} as const;
 
 // ── Allowlist shape (mirror audit-schema-allowlist.json) ──────────────────────────────
 export interface AllowlistEntry {
@@ -94,9 +127,9 @@ export interface AuditResult {
   allowed: DriftRecord[]; // drifted ids covered by the allowlist (reported, not failures)
 }
 
-// Map a live knowledge row to its STRUCTURAL snapshot (excludes embed_*, mirroring the fold
-// output shape) so the deep-diff compares like-for-like.
-function knowledgeRowToSnapshot(row: KnowledgeRow): KnowledgeRowSnapshotT {
+// Map a live knowledge row (narrow structural read) to its snapshot so the deep-diff compares
+// like-for-like against the fold output. embed_* are excluded both here AND from the SELECT.
+function knowledgeRowToSnapshot(row: KnowledgeStructuralRow): KnowledgeRowSnapshotT {
   return {
     id: row.id,
     name: row.name,
@@ -112,19 +145,10 @@ function knowledgeRowToSnapshot(row: KnowledgeRow): KnowledgeRowSnapshotT {
   };
 }
 
-function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
-  return {
-    id: row.id,
-    from_knowledge_id: row.from_knowledge_id,
-    to_knowledge_id: row.to_knowledge_id,
-    relation_type: row.relation_type,
-    weight: row.weight,
-    created_by: row.created_by as Record<string, unknown>,
-    reasoning: row.reasoning,
-    created_at: row.created_at,
-    archived_at: row.archived_at,
-  };
-}
+// NOTE: the live-edge → snapshot mapper is the one EXPORTED from gather.ts (imported above), so
+// the auditor maps the live edge row + builds the topology mesh through the EXACT same function
+// the per-edge gather uses — a second local copy could drift and make the audit compare a
+// different shape than the fold produced.
 
 /**
  * Re-derive fold(events) for every live knowledge + knowledge_edge id and deep-diff against
@@ -143,8 +167,10 @@ export async function auditProjection(
   const drift: DriftRecord[] = [];
   const allowed: DriftRecord[] = [];
 
-  // ── nodes ──
-  const nodes = await db.select().from(knowledge);
+  // ── nodes ── narrow-column read (no embed_* vectors). The per-node gather still issues its
+  // own Q1/Q2/Q3 + rate queries (O(N) round-trips); node-side batching is a future optimization
+  // — the named full-table hotspot this pass eliminates is the edge mesh re-fetch (below).
+  const nodes = await db.select(KNOWLEDGE_STRUCTURAL_COLUMNS).from(knowledge);
   for (const row of nodes) {
     const expected = await gatherAndFoldKnowledgeNode(db, row.id);
     const diffs = diffSnapshots(
@@ -157,10 +183,16 @@ export async function auditProjection(
     }
   }
 
-  // ── edges ──
+  // ── edges ── fetch the live topology mesh ONCE for the whole scan, not once per edge. The
+  // per-edge gatherAndFoldKnowledgeEdge re-queries the ENTIRE live edge set on every call, so
+  // folding all E edges was O(E²). In a READ-ONLY scan the live mesh is constant, so building it
+  // once + gatherAndFoldKnowledgeEdgeWithMesh is byte-identical and O(E). The mesh is the live
+  // (archived_at IS NULL) edges mapped via the SAME edgeRowToSnapshot the per-edge path uses;
+  // checkEdgeTopology treats the mesh as a SET (graph reachability), so row order is irrelevant.
   const edges = await db.select().from(knowledge_edge);
+  const liveMesh = edges.filter((e) => e.archived_at === null).map(edgeRowToSnapshot);
   for (const row of edges) {
-    const expected = await gatherAndFoldKnowledgeEdge(db, row.id);
+    const expected = await gatherAndFoldKnowledgeEdgeWithMesh(db, row.id, liveMesh);
     const diffs = diffSnapshots(edgeRowToSnapshot(row), expected as Record<string, unknown> | null);
     if (diffs.length > 0) {
       const rec: DriftRecord = { id: row.id, subject_kind: 'knowledge_edge', diffs };
