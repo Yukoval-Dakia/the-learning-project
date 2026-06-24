@@ -22,66 +22,25 @@
 //     divergence immediately (a silently-passing mismatch in CI would let a real reducer
 //     bug land), so the assert is a hard gate everywhere except prod.
 //
-// The deep-equal is OBJECT-KEY-ORDER-INSENSITIVE (arrays are still compared POSITIONALLY):
-// Dates compared by getTime(), object keys sorted before stringify — mirrors
-// scripts/audit-projection.ts normalize() so a jsonb key-order difference (created_by coming
-// back from Postgres in a different key order) never reads as a spurious mismatch. The one
-// array field, knowledge.merged_from, is order-SENSITIVE here on purpose: its element order
-// is meaningful (merge history) and matches on both sides (the imperative merge append and
-// the fold's merge-event replay both follow chronological order), so a positional compare is
-// correct, not a hazard. A null live row + null fold both pass (a node/edge that the fold says
-// should not exist and that the live path did not write is parity-OK).
+// The deep-equal (diffSnapshots / normalize) lives in ./snapshot-diff and is SHARED with
+// scripts/audit-projection.ts so the in-tx assert and the offline B3 audit agree byte-for-byte
+// on what "fold == row" means. It is OBJECT-KEY-ORDER-INSENSITIVE (jsonb key-order from
+// Postgres never reads as drift) but compares ARRAYS positionally — the one array field,
+// knowledge.merged_from, is meaningfully ordered (merge history) and matches on both sides. A
+// null live row + null fold both pass (a node/edge the fold says should not exist and the live
+// path did not write is parity-OK).
 
 import type { KnowledgeEdgeRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { gatherAndFoldKnowledgeEdge, gatherAndFoldKnowledgeNode } from './gather';
+import { diffSnapshots } from './snapshot-diff';
 
 type DbLike = Db | Tx;
 
 /** Which fold the mismatch came from (for the structured warn / thrown message). */
 type ParitySubjectKind = 'knowledge' | 'knowledge_edge';
-
-// normalize — stable structural value for deep-equality. Dates → epoch ms; object keys are
-// sorted so JSON.stringify is OBJECT-KEY-ORDER-INSENSITIVE (a jsonb object whose keys come
-// back from Postgres in a different order than the fold built them must NOT read as a
-// mismatch). ARRAYS keep their order — element compare stays POSITIONAL (order-SENSITIVE),
-// which is intended: merged_from records merge history and its order is meaningful. Identical
-// to scripts/audit-projection.ts normalize() so the in-tx assert and the standalone auditor
-// agree on what "equal" means.
-function normalize(value: unknown): unknown {
-  if (value instanceof Date) return value.getTime();
-  if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === 'object') {
-    const obj = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(obj).sort()) out[k] = normalize(obj[k]);
-    return out;
-  }
-  return value;
-}
-
-// diffSnapshots — field-by-field deep-diff; returns human-readable "col: live → folded"
-// lines (empty array = parity). A null live with a non-null fold (or vice-versa) is a
-// whole-row mismatch. Mirrors scripts/audit-projection.ts diffSnapshots().
-function diffSnapshots(
-  live: Record<string, unknown> | null,
-  folded: Record<string, unknown> | null,
-): string[] {
-  if (live === null && folded === null) return [];
-  if (live === null) return ['<row>: absent → fold-produced (live write missing a row)'];
-  if (folded === null)
-    return ['<row>: present → fold-null (live row not reproducible from events)'];
-  const diffs: string[] = [];
-  const keys = new Set([...Object.keys(live), ...Object.keys(folded)]);
-  for (const k of keys) {
-    const a = JSON.stringify(normalize(live[k]));
-    const b = JSON.stringify(normalize(folded[k]));
-    if (a !== b) diffs.push(`${k}: ${a} → ${b}`);
-  }
-  return diffs;
-}
 
 // onParityMismatch — the dev-throws / prod-logs severity switch (see the file header for the
 // full contract). PROD: structured warn + return (never break a live accept). ELSE: throw.
@@ -308,8 +267,15 @@ export async function assertKnowledgeEdgeParity(
     // A fold-side throw (ADR-0034 topology reject on a prerequisite the imperative path did
     // not gate, or any gather failure) must never break a live accept in prod. Route it
     // through the prod-logs / dev-throws switch as a whole-row mismatch.
+    // Tag a topology-reject distinctly from a generic reducer/gather throw: the fold re-runs
+    // the ADR-0034 gate the imperative path skipped, so a throw here can mean a cyclic/invalid
+    // edge was committed (a data-integrity gap) rather than a plain projection bug. In prod
+    // both only warn, and they'd log identically without this tag — so an operator can't tell
+    // them apart. (OCR #580.)
+    const msg = err instanceof Error ? err.message : String(err);
+    const isTopologyReject = /topology|cycle|prerequisite|direction/i.test(msg);
     onParityMismatch('knowledge_edge', edgeId, [
-      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+      `<fold-threw${isTopologyReject ? ':topology' : ''}>: ${msg}`,
     ]);
     return;
   }
