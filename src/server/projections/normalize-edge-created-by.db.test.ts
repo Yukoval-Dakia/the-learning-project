@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
+import { backfillKnowledgeEdgeGenesis } from '../../../scripts/backfill-genesis-events';
 import { normalizeEdgeCreatedBy } from '../../../scripts/normalize-edge-created-by';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
@@ -119,6 +120,44 @@ describe('normalizeEdgeCreatedBy', () => {
 
     expect((await normalizeEdgeCreatedBy(db)).normalized).toBe(1);
     expect((await normalizeEdgeCreatedBy(db)).normalized).toBe(0);
+  });
+
+  // YUK-471 W1 B3 — pins the safety invariant that makes this migration's ordering vs the genesis
+  // backfill non-hazardous. An adversarial review raised a HIGH: "if the genesis backfill runs
+  // BEFORE normalize, the seed snapshots the legacy bare string, wins the fold (later created_at),
+  // and normalize then sees no diff → the bare string is silently frozen + the B3 gate goes falsely
+  // GREEN." That chain is IMPOSSIBLE on two independent levels:
+  //   (1) PRIMARY — the SCOPED edge backfill (edgesWithOriginatingEvent) SKIPS any edge that already
+  //       carries a `generate` event, so a legacy reconcile/POST edge is never seeded at all — no
+  //       genesis seed can exist to mask its fold, regardless of run order.
+  //   (2) BACKSTOP — even an UNSCOPED seed attempt would be FAIL-LOUD: writeEvent validates the seed
+  //       payload through GenesisExperimental → KnowledgeEdgeRowSnapshot (`created_by: z.record(...)`),
+  //       so a bare-string created_by THROWS at write time and no seed is ever persisted.
+  // Either way the fold always exposes the generate event's OBJECT created_by for normalize to repair.
+  // This test fails loudly if the scoping regresses (the edge gets seeded) or a future schema
+  // loosening lets a bare-string seed through.
+  it('scoped genesis backfill skips a generate-sourced legacy edge — no masking seed, fold exposes the object', async () => {
+    const db = testDb();
+    await insertNode('a');
+    await insertNode('b');
+    await insertLegacyEdge('ke_legacy', 'a', 'b'); // bare-string created_by + a generate event, no genesis
+
+    // The SCOPED backfill (run time LATER than the generate event) SKIPS the edge — it only anchors
+    // event-LESS rows, and this edge already carries a `generate` event. Neither seeds nor throws.
+    const later = new Date('2026-06-24T00:00:00.000Z'); // > T_EVENT
+    const counts = await backfillKnowledgeEdgeGenesis(db, later);
+    expect(counts.seeded).toBe(0);
+    expect(counts.skipped).toBe(1);
+
+    // No genesis seed was persisted — only the generate event remains, so nothing can mask the fold.
+    const evs = await db.select().from(event).where(eq(event.subject_id, 'ke_legacy'));
+    expect(evs.map((e) => e.action)).toEqual(['generate']);
+
+    // The fold yields the generate event's OBJECT created_by (not the bare string), so normalize
+    // sees the divergence and repairs the row — fold == row on the object shape.
+    const folded = await gatherAndFoldKnowledgeEdge(db, 'ke_legacy');
+    expect(folded?.created_by).toEqual({ actor_kind: 'agent', actor_ref: 'dreaming' });
+    expect((await normalizeEdgeCreatedBy(db)).normalized).toBe(1);
   });
 
   it('skips an event-less edge (no generate event → handled by the genesis backfill, not deleted)', async () => {

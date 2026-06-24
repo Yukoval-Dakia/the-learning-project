@@ -22,8 +22,21 @@
 // unrelated drift is never re-touched in a loop.
 //
 // NOT in the `pnpm test` chain — it needs a populated DB. Run it on a prod-CLONE (and on prod,
-// before flipping PROJECTION_IS_WRITER=1), alongside the genesis backfill. CI coverage is the DB
-// test (normalize-edge-created-by.db.test.ts).
+// before flipping PROJECTION_IS_WRITER=1).
+//
+// ORDER vs the genesis backfill (scripts/backfill-genesis-events.ts) is non-hazardous on two
+// independent levels, so a genesis seed can NEVER mask a legacy bare-string created_by into the
+// fold (the false-GREEN an adversarial review feared):
+//   (1) PRIMARY — the genesis backfill is SCOPED (edgesWithOriginatingEvent): it SKIPS any edge
+//       that already carries a `generate` event, so a legacy reconcile/POST edge is never seeded
+//       at all, regardless of run order.
+//   (2) BACKSTOP — even an unscoped seed attempt is FAIL-LOUD: writeEvent validates the seed
+//       payload through GenesisExperimental → KnowledgeEdgeRowSnapshot (`created_by: z.record(...)`),
+//       so a bare-string created_by THROWS at write time and can never be persisted (and would
+//       also be rejected at fold time).
+// Either way the fold always exposes the generate event's {actor_kind, actor_ref} object for this
+// migration to repair. Pinned by the scoped-skip regression test in
+// normalize-edge-created-by.db.test.ts. CI coverage is that DB test.
 //
 // CLI:
 //   pnpm normalize:edge-created-by   # repair legacy edges; idempotent
@@ -33,7 +46,7 @@ import './load-env';
 
 import { type Db, type Tx, db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
-import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
+import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdgeWithMesh } from '@/server/projections/gather';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { eq } from 'drizzle-orm';
 
@@ -52,9 +65,15 @@ export interface NormalizeCounts {
  */
 export async function normalizeEdgeCreatedBy(db: DbLike): Promise<NormalizeCounts> {
   const rows = await db.select().from(knowledge_edge);
+  // Build the live topology mesh ONCE from the rows we already read (archived_at IS NULL) and
+  // fold each edge against it via the mesh-injected form — instead of the single-edge gather that
+  // re-SELECTs the entire live edge set per edge (O(E²) → O(E)). Safe because this migration only
+  // UPDATEs created_by/created_at, never archived_at or topology fields, so the mesh is invariant
+  // across the loop.
+  const liveMesh = rows.filter((r) => r.archived_at === null).map(edgeRowToSnapshot);
   let normalized = 0;
   for (const row of rows) {
-    const folded = await gatherAndFoldKnowledgeEdge(db, row.id);
+    const folded = await gatherAndFoldKnowledgeEdgeWithMesh(db, row.id, liveMesh);
     // Event-less edge (no generate event) — folds to null. The scoped genesis backfill anchors
     // these; this migration only repairs event-sourced edges.
     if (!folded) continue;
