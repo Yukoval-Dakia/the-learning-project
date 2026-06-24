@@ -69,13 +69,13 @@ export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<
 
 /**
  * YUK-471 W1 PR-B — the GUARDED edge write-through (the SoT-flip edge writer). Same as
- * projectKnowledgeEdge EXCEPT the null branch DELETEs only when the edge HAS a creating event
- * (genesis / generate) — a genuine revert. A fold-null on an edge with NO event (a
- * pre-event-sourced edge, e.g. one written by the public POST /edges path that emits no event)
- * must NOT be deleted. In practice an event-sourced edge never folds to null (a generate-create
- * always yields a non-null row, archived or not), so this guard fires only for truly un-anchored
- * edges — the symmetric keystone to the node guard and the safety net for a rebuild over
- * un-migrated edges. Like projectKnowledgeEdge it lets a topology reject from the fold propagate.
+ * projectKnowledgeEdge EXCEPT the null branch NEVER deletes. An edge folds to null IFF it has no
+ * CREATE event (an archive only sets archived_at on an already-non-null row; an event-sourced
+ * edge never folds to null), so a fold-null always means a pre-event-sourced / legacy edge the
+ * fold is blind to (e.g. one written by the public POST /edges path that emits no event) — the
+ * guarded write-through keeps the imperative row intact rather than destroying it. Only the
+ * unguarded projectKnowledgeEdge (rebuild / auditor) deletes on fold-null. Like
+ * projectKnowledgeEdge it lets a topology reject from the fold propagate.
  */
 export async function projectKnowledgeEdgeGuarded(db: DbLike, edgeId: string): Promise<void> {
   const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
