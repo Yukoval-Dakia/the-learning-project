@@ -20,6 +20,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
+import { projectKnowledgeNode } from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
 // the applicability gate (skip nodes that predate event-sourcing — no genesis anchor → fold
@@ -29,6 +30,8 @@ import {
   knowledgeLiveRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
 } from '@/server/projections/parity';
+// YUK-471 W1 PR-B1 — the SoT-flip gate (default OFF; projection becomes the row writer when ON).
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { writeArchiveProposal } from '@/server/proposals/producers';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -263,6 +266,11 @@ export async function applyProposeNew(
   db: DbLike,
   payload: ProposeNewPayload,
   now: Date = new Date(),
+  // YUK-471 W1 PR-B1 — when false (SoT flip ON), validate + mint but SKIP the imperative
+  // INSERT; the projection write-through writes the row from events at the accept seam. The
+  // minted node is event-sourced THIS tx (propose + rate + index anchor), so its fold is
+  // non-null — projectKnowledgeNode never hits its delete-on-null branch (zero delete risk).
+  writeRow = true,
 ): Promise<string> {
   if (payload.parent_id === null) {
     throw new Error(
@@ -271,18 +279,20 @@ export async function applyProposeNew(
   }
   await assertParentExists(db, payload.parent_id);
   const newId_ = newId();
-  await db.insert(knowledge).values({
-    id: newId_,
-    name: payload.name,
-    domain: null,
-    parent_id: payload.parent_id,
-    merged_from: [],
-    proposed_by_ai: true,
-    approval_status: 'approved',
-    created_at: now,
-    updated_at: now,
-    version: 0,
-  });
+  if (writeRow) {
+    await db.insert(knowledge).values({
+      id: newId_,
+      name: payload.name,
+      domain: null,
+      parent_id: payload.parent_id,
+      merged_from: [],
+      proposed_by_ai: true,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
   return newId_;
 }
 
@@ -643,6 +653,11 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // stamped from the same instant. (Sub-ms shift from the old per-applier
       // `new Date()` is the only behavior change for live users.)
       const now = new Date();
+      // YUK-471 W1 PR-B1 — read the SoT-flip gate ONCE per accept. OFF (default): imperative
+      // appliers write the row + the A2b parity assert verifies fold==row. ON: the projection
+      // writes the row for the wired minting site(s). PR-B1 wires ONLY propose_new; every other
+      // kind keeps A2b behavior even under the flag.
+      const flip = projectionIsWriter();
 
       // Reconstruct mutation payload from event shape
       const mutationKind: string =
@@ -661,7 +676,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       try {
         switch (apply.mutation) {
           case 'propose_new': {
-            const newNodeId = await applyProposeNew(tx, apply, now);
+            const newNodeId = await applyProposeNew(tx, apply, now, /* writeRow */ !flip);
             result = { kind: 'propose_new_applied', new_node_id: newNodeId };
             break;
           }
@@ -786,7 +801,18 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // warn+returns (never break a live accept over a fold bug — see parity.ts). NOTE
       // the merge into_id node also folds here: its merged_from append + version bump
       // must reproduce.
-      await assertAcceptParity(tx, result);
+      // YUK-471 W1 PR-B1 — the SoT seam. When the flip is ON for a WIRED minting kind, the
+      // projection is the row writer (the imperative INSERT was skipped via writeRow=false):
+      // gather→fold→write-through the just-minted node from the events written above (rate +
+      // materialized_id_index). The fold sees them because this runs AFTER both writes, in the
+      // same tx — the exact point the A2b parity assert already ran. Only propose_new is wired
+      // in PR-B1; every other kind (and the entire flag-OFF path) keeps the A2b parity assert,
+      // which is what makes flag-OFF a true rollback (full fold==row verification restored).
+      if (flip && result.kind === 'propose_new_applied') {
+        await projectKnowledgeNode(tx, result.new_node_id);
+      } else {
+        await assertAcceptParity(tx, result);
+      }
 
       return result;
     });
