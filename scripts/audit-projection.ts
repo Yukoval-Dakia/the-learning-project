@@ -44,7 +44,7 @@ import { knowledge, knowledge_edge } from '@/db/schema';
 import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
-} from '../src/server/projections/gather';
+} from '@/server/projections/gather';
 
 type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
@@ -130,8 +130,13 @@ function normalize(value: unknown): unknown {
   if (value instanceof Date) return value.getTime();
   if (Array.isArray(value)) return value.map(normalize);
   if (value && typeof value === 'object') {
+    // Sort keys so the downstream JSON.stringify is ORDER-INSENSITIVE: a jsonb object
+    // (e.g. created_by) whose keys come back from Postgres in a different order than the
+    // fold built them must NOT read as drift. (CodeRabbit/augment MAJOR — key-order
+    // false-positive would make the B3 gate spuriously exit 1.)
+    const obj = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = normalize(v);
+    for (const k of Object.keys(obj).sort()) out[k] = normalize(obj[k]);
     return out;
   }
   return value;

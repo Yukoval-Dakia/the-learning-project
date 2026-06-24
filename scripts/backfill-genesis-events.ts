@@ -16,10 +16,14 @@
 // `WHERE ingest_at IS NULL`; a non-NULL stamp at INSERT skips the row — see WriteEventInput
 // .ingest_at / ADR-0021).
 //
-// IDEMPOTENT. A row that already has an experimental:genesis event is SKIPPED (we pre-scan
-// the existing genesis subject_ids per table). Re-running is a no-op. writeEvent itself is
-// also PK-conflict-do-nothing, and upsertMaterializedIdIndex is onConflictDoNothing, so the
-// belt-and-suspenders holds even under concurrent/partial runs.
+// IDEMPOTENT (single-run). A row that already has an experimental:genesis event is SKIPPED
+// (we pre-scan the existing genesis subject_ids per table). Re-running is a no-op. Each row's
+// genesis event + its materialized_id_index entry are written in ONE transaction, so a crash
+// mid-row leaves NEITHER and the re-run redoes both — closing the "event committed, index
+// write lost, re-run skips the row → permanent index gap" hole (CodeRabbit MAJOR). NOTE: this
+// is a one-shot maintenance script, NOT designed to run CONCURRENTLY with itself — two parallel
+// runs could each pass the point-in-time pre-scan and write two genesis events for the same row
+// (each uses a fresh newId(), so the event PK never collides). Run it once, not in parallel.
 //
 // ORDER. knowledge rows first, THEN knowledge_edge rows — FK order (edges reference
 // knowledge.id); also the node shell's Q2 wants the index populated before a node projects.
@@ -41,8 +45,8 @@ import type { KnowledgeEdgeRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/sc
 import { type Db, type Tx, db } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { and, eq } from 'drizzle-orm';
-import { upsertMaterializedIdIndex } from '../src/server/projections/materialized-id-index';
 
 type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
@@ -124,23 +128,27 @@ export async function backfillKnowledgeGenesis(
       continue;
     }
     const genesisEventId = newId();
-    await writeEvent(db, {
-      id: genesisEventId,
-      actor_kind: 'system',
-      actor_ref: GENESIS_ACTOR_REF,
-      action: GENESIS_ACTION,
-      subject_kind: 'knowledge',
-      subject_id: row.id,
-      outcome: 'success',
-      payload: { row: knowledgeRowToSnapshot(row) },
-      // OUTBOX OPT-OUT: stamp ingest_at non-NULL at INSERT so the memory poller
-      // (WHERE ingest_at IS NULL) never picks up the backfill flood (ADR-0021).
-      ingest_at: now,
-    });
-    await upsertMaterializedIdIndex(db, {
-      materialized_id: row.id,
-      anchor_event_id: genesisEventId,
-      subject_kind: 'knowledge',
+    // ATOMIC per row: the genesis event + its index entry commit together (see header) so a
+    // crash can never leave the event without its anchor index row.
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: GENESIS_ACTOR_REF,
+        action: GENESIS_ACTION,
+        subject_kind: 'knowledge',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: { row: knowledgeRowToSnapshot(row) },
+        // OUTBOX OPT-OUT: stamp ingest_at non-NULL at INSERT so the memory poller
+        // (WHERE ingest_at IS NULL) never picks up the backfill flood (ADR-0021).
+        ingest_at: now,
+      });
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: row.id,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'knowledge',
+      });
     });
     seeded += 1;
   }
@@ -165,21 +173,24 @@ export async function backfillKnowledgeEdgeGenesis(
       continue;
     }
     const genesisEventId = newId();
-    await writeEvent(db, {
-      id: genesisEventId,
-      actor_kind: 'system',
-      actor_ref: GENESIS_ACTOR_REF,
-      action: GENESIS_ACTION,
-      subject_kind: 'knowledge_edge',
-      subject_id: row.id,
-      outcome: 'success',
-      payload: { row: edgeRowToSnapshot(row) },
-      ingest_at: now,
-    });
-    await upsertMaterializedIdIndex(db, {
-      materialized_id: row.id,
-      anchor_event_id: genesisEventId,
-      subject_kind: 'knowledge_edge',
+    // ATOMIC per row: genesis event + index entry commit together (see header).
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: GENESIS_ACTOR_REF,
+        action: GENESIS_ACTION,
+        subject_kind: 'knowledge_edge',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: { row: edgeRowToSnapshot(row) },
+        ingest_at: now,
+      });
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: row.id,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'knowledge_edge',
+      });
     });
     seeded += 1;
   }
