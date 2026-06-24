@@ -190,4 +190,39 @@ describe('gatherAndFoldKnowledgeEdgeWithMesh', () => {
     expect(projected?.from_knowledge_id).toBe('kn_y');
     expect(projected?.to_knowledge_id).toBe('kn_x');
   });
+
+  it('a FOREIGN multi-hop prerequisite chain in the mesh drives the verdict (non-degenerate: not a self-edge short-circuit)', async () => {
+    const db = testDb();
+    await insertNode('kn_p');
+    await insertNode('kn_q');
+    await insertNode('kn_r');
+    // Two FOREIGN live prerequisites forming a chain p → q → r. Neither is the candidate, so the
+    // verdict is driven by REAL mesh content (the chain), not the candidate's own self-edge — this
+    // is the non-degenerate case the self-edge tests above could not exercise.
+    await insertEdge({ id: 'ke_pq', from: 'kn_p', to: 'kn_q', relation_type: 'prerequisite' });
+    await insertEdge({ id: 'ke_qr', from: 'kn_q', to: 'kn_r', relation_type: 'prerequisite' });
+    // Candidate generate-create prerequisite r → p — closes the transitive cycle p → q → r → p.
+    await seedGenerateCreateEvent({
+      id: 'ev_cycle_rp',
+      edgeId: 'ke_rp',
+      from: 'kn_r',
+      to: 'kn_p',
+      relation_type: 'prerequisite',
+      created_at: T1,
+    });
+
+    const mesh = await liveMesh(); // holds the foreign chain p → q, q → r
+
+    // The cycle exists ONLY because the mesh carries BOTH foreign edges (p → q AND q → r): folding
+    // r → p must transitively reach r. The injected-mesh and self-fetching paths reject identically.
+    await expect(gatherAndFoldKnowledgeEdgeWithMesh(db, 'ke_rp', mesh)).rejects.toThrow(
+      /topology reject/i,
+    );
+    await expect(gatherAndFoldKnowledgeEdge(db, 'ke_rp')).rejects.toThrow(/topology reject/i);
+    // Empty mesh: no chain → no cycle → the create projects a row. Proves the foreign chain, carried
+    // identically by both mesh-construction paths, is what drives the reject (mesh is not inert).
+    const projected = await gatherAndFoldKnowledgeEdgeWithMesh(db, 'ke_rp', []);
+    expect(projected?.from_knowledge_id).toBe('kn_r');
+    expect(projected?.to_knowledge_id).toBe('kn_p');
+  });
 });
