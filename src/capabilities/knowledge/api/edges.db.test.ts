@@ -1,5 +1,8 @@
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
-import { knowledge } from '@/db/schema';
+import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
+import { diffSnapshots } from '@/server/projections/snapshot-diff';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET, POST } from './edges';
@@ -208,18 +211,39 @@ describe('POST /api/knowledge/edges', () => {
     expect(res.status).toBe(201);
   });
 
-  // Codex P2-H — invalid `created_by` shape (AgentRefLike rejects it) currently
-  // bubbles a raw ZodError → 500 instead of 4xx. Should be a 400 validation_error.
-  it('400s when created_by is the wrong shape (not 500)', async () => {
+  // YUK-471 BYPASS-2 fence — a manual edge create is EVENT-SOURCED + uses the fixed {user, self}
+  // actor; any client-sent `created_by` is ignored (stripped). Replaces the old "400 on bad
+  // created_by shape" test: created_by is no longer a route input.
+  it('writes an event-sourced edge with the fixed {user, self} actor, ignoring a client created_by', async () => {
+    const db = testDb();
     await seedKnowledge(['k1', 'k2']);
     const res = await postEdge({
       from_knowledge_id: 'k1',
       to_knowledge_id: 'k2',
       relation_type: 'related_to',
-      created_by: { kind: 'agent', task: 'x' }, // object — AgentRefLike accepts user|string only
+      created_by: { kind: 'agent', task: 'x' }, // ignored now (was rejected pre-fence)
     });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('validation_error');
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+
+    // created_by is the fold's {actor_kind, actor_ref} object (NOT the client value, NOT a string).
+    const edge = (await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, id)))[0];
+    expect(edge?.created_by).toEqual({ actor_kind: 'user', actor_ref: 'self' });
+
+    // a generate(create) event was written for the edge (event-sourced — survives the SoT flip).
+    const events = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, id)));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.action).toBe('generate');
+
+    // the keystone: fold(events) == the live row (the projection reproduces this edge).
+    const folded = await gatherAndFoldKnowledgeEdge(db, id);
+    const diffs = diffSnapshots(
+      edgeRowToSnapshot(edge as never) as Record<string, unknown>,
+      folded as Record<string, unknown> | null,
+    );
+    expect(diffs).toEqual([]);
   });
 });

@@ -40,6 +40,7 @@
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
     "rebuild:projection": "tsx scripts/rebuild-projection.ts",
     "b3:gate": "tsx scripts/b3-gate.ts",
+    "normalize:edge-created-by": "tsx scripts/normalize-edge-created-by.ts",
     "compile:profile": "tsx scripts/compile-profile.ts",
     "docs:linear-manifest": "tsx scripts/linear-doc-manifest.ts",
     "preflight:vision": "tsx scripts/preflight-vision.ts",
