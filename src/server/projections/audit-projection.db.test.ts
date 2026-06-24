@@ -127,29 +127,42 @@ describe('auditProjection', () => {
     expect(result.allowed).toEqual([]);
   });
 
-  it('reports CLEAN across a multi-edge world (once-fetched mesh: live + archived + generate-create prerequisite)', async () => {
+  it('reports CLEAN across a multi-edge world; the archived_at filter is LOAD-BEARING (archived reverse prerequisite must be excluded or folding the live one cycle-rejects)', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'kn_a', name: 'A' });
     await insertKnowledge({ id: 'kn_b', name: 'B' });
     await insertKnowledge({ id: 'kn_c', name: 'C' });
-    // Two live related_to edges + one ARCHIVED edge — genesis-backfilled so fold(genesis)==row.
+    // Breadth: a live related_to edge (genesis-backfilled; topology ignores non-prerequisite).
     await insertEdge({ id: 'ke_ab', from: 'kn_a', to: 'kn_b' });
-    await insertEdge({ id: 'ke_ac', from: 'kn_a', to: 'kn_c' });
-    await insertEdge({ id: 'ke_bc_arch', from: 'kn_b', to: 'kn_c', archived_at: T0 });
+    // The LOAD-BEARING fixture: an ARCHIVED reverse PREREQUISITE c → a (genesis-backfilled →
+    // fold(genesis)==archived row). It MUST be excluded from the once-fetched live mesh. If the
+    // auditor's archived_at===null filter were broken (dropped / wrong sense), this c → a would
+    // wrongly enter the prerequisite mesh and folding the live a → c below would see its reverse
+    // → ADR-0034 direction_contradiction → foldKnowledgeEdge THROWS → auditProjection throws →
+    // this test FAILS. So a wrong filter is caught here (unlike a non-prerequisite archived edge,
+    // which topology ignores). This is what makes the filter provably correct at the auditor level.
+    await insertEdge({
+      id: 'ke_ca_arch',
+      from: 'kn_c',
+      to: 'kn_a',
+      relation_type: 'prerequisite',
+      archived_at: T0,
+    });
     await backfillKnowledgeGenesis(db, T0);
     await backfillKnowledgeEdgeGenesis(db, T0);
-    // A generate-create PREREQUISITE edge (b → c) added AFTER backfill (so it has ONLY the
-    // generate event, no genesis), materialized via the shell so the live row EQUALS fold(events).
-    // Folding it re-runs ADR-0034 topology against the auditor's once-fetched (filter-built) mesh.
-    await seedGenerateCreatePrereq({ edgeId: 'ke_bc_prereq', from: 'kn_b', to: 'kn_c' });
-    await projectKnowledgeEdge(db, 'ke_bc_prereq');
+    // A LIVE generate-create PREREQUISITE a → c added AFTER backfill (only the generate event, no
+    // genesis), materialized via the shell so the live row EQUALS fold(events). Folding it re-runs
+    // ADR-0034 topology against the auditor's once-fetched (filter-built) mesh — which, with a
+    // correct filter, holds a → c (self) but NOT the archived reverse c → a, so the verdict is ok.
+    await seedGenerateCreatePrereq({ edgeId: 'ke_ac_pre', from: 'kn_a', to: 'kn_c' });
+    await projectKnowledgeEdge(db, 'ke_ac_pre');
 
     const result = await auditProjection(db);
     expect(result.ok).toBe(true);
     expect(result.drift).toEqual([]);
     expect(result.checkedNodes).toBe(3);
-    // 4 edges: ke_ab, ke_ac, ke_bc_arch (archived), ke_bc_prereq (generate-create).
-    expect(result.checkedEdges).toBe(4);
+    // 3 edges: ke_ab (related_to), ke_ca_arch (archived prerequisite), ke_ac_pre (live prerequisite).
+    expect(result.checkedEdges).toBe(3);
   });
 
   it('flags exactly the out-of-band-mutated row as DRIFT', async () => {
