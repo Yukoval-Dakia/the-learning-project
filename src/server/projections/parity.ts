@@ -238,9 +238,13 @@ export async function knowledgeNodesWithGenesisAnchor(
  * dev/test THROW on mismatch, prod warn+return (see file header). A null live row that folds
  * to null passes.
  *
- * Unlike the edge assert, the node gather is throw-free by construction (no topology gate;
- * malformed events warn+skip in the reducer), so it is NOT try-wrapped — an actual exception
- * here would be a DB/tx failure that SHOULD propagate, not a fold concern to swallow.
+ * The node gather is try-wrapped the SAME way as the edge assert: foldKnowledgeNode is a large
+ * pure reducer that could throw on an unanticipated event shape (e.g. a TypeError), and the
+ * gather runs AFTER the SoT write inside the accept tx — letting such a throw propagate would
+ * roll back a successful accept, violating the contract "never break a live accept over a
+ * fold/parity bug." Any gather throw is routed through the SAME dev-throws/prod-logs switch as
+ * a mismatch (prod warn + return, dev/test rethrow). A genuine DB error already poisons the tx
+ * so the commit fails regardless — the wrap only rescues the pure-reducer-throw case.
  *
  * @param db       Db or Tx — pass the SAME tx the accept wrote in so the gather sees the
  *                 just-written row + rate event.
@@ -253,7 +257,17 @@ export async function assertKnowledgeNodeParity(
   nodeId: string,
   liveRow: KnowledgeRowSnapshotT | null,
 ): Promise<void> {
-  const folded = await gatherAndFoldKnowledgeNode(db, nodeId);
+  let folded: KnowledgeRowSnapshotT | null;
+  try {
+    folded = await gatherAndFoldKnowledgeNode(db, nodeId);
+  } catch (err) {
+    // A reducer/gather throw (unanticipated event shape, etc.) must never abort the live
+    // accept in prod — route it through the same switch as a mismatch (see the doc comment).
+    onParityMismatch('knowledge', nodeId, [
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+    ]);
+    return;
+  }
   const diff = diffSnapshots(
     liveRow as Record<string, unknown> | null,
     folded as Record<string, unknown> | null,
