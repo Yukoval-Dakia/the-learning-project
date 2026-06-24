@@ -52,6 +52,7 @@ import {
 import { newId } from '@/core/ids';
 import type { ActivityRefT } from '@/core/schema/activity';
 import type { RelationTypeSchemaT } from '@/core/schema/event/blocks';
+import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import { NotePatch } from '@/core/schema/note-patch';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
@@ -66,6 +67,8 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
+// YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns).
+import { assertKnowledgeEdgeParity } from '@/server/projections/parity';
 // YUK-15 — record→proposal evidence loop: accept flips cited records to
 // `actioned`, retract rolls them back to `linked`.
 import {
@@ -186,6 +189,23 @@ export interface RetractAiProposalOpts {
 
 function proposalNotFound(proposalId: string): ApiError {
   return new ApiError('not_found', `proposal ${proposalId} not found`, 404);
+}
+
+// YUK-471 W1 PR-A2b — map a live `knowledge_edge` DB row to the structural
+// KnowledgeEdgeRowSnapshot shape the edge fold produces, so the accept-time parity
+// assert compares like-for-like (identical to gather.ts's private edgeRowToSnapshot).
+function edgeRowToSnapshot(row: typeof knowledge_edge.$inferSelect): KnowledgeEdgeRowSnapshotT {
+  return {
+    id: row.id,
+    from_knowledge_id: row.from_knowledge_id,
+    to_knowledge_id: row.to_knowledge_id,
+    relation_type: row.relation_type,
+    weight: row.weight,
+    created_by: row.created_by as Record<string, unknown>,
+    reasoning: row.reasoning ?? null,
+    created_at: row.created_at,
+    archived_at: row.archived_at ?? null,
+  };
 }
 
 async function requireProposal(db: Db, proposalId: string): Promise<ProposalInboxRow> {
@@ -417,7 +437,9 @@ export async function decideKnowledgeEdgeProposal(
           from_knowledge_id: proposePayload.from_knowledge_id,
           to_knowledge_id: proposePayload.to_knowledge_id,
           relation_type: proposePayload.relation_type,
-          reasoning: proposePayload.reasoning ?? '',
+          // YUK-471 W1 PR-A2b — encode absent reasoning as null (not ''), matching the
+          // ROW's `?? null` so the edge fold is lossless (see GenerateKnowledgeEdge note).
+          reasoning: proposePayload.reasoning ?? null,
           propose_event_id: proposeEventId,
         },
         caused_by_event_id: proposeEventId,
@@ -511,12 +533,30 @@ export async function decideKnowledgeEdgeProposal(
           to_knowledge_id: toId,
           relation_type: relationType,
           weight,
-          reasoning: proposePayload.reasoning ?? '',
+          // YUK-471 W1 PR-A2b — encode absent reasoning as null (not ''), matching the
+          // ROW's `?? null` above so the edge fold is lossless (see GenerateKnowledgeEdge
+          // note). The generate-event payload now equals the row byte-for-byte.
+          reasoning: proposePayload.reasoning ?? null,
           propose_event_id: proposeEventId,
         },
         caused_by_event_id: proposeEventId,
         created_at: now,
       });
+
+      // YUK-471 W1 PR-A2b — accept-time projection parity assert. The imperative
+      // edge write above stays the SoT; this re-projects the edge from its events
+      // (the generate just written, in THIS tx) and deep-compares against the row we
+      // just inserted. Dev/test THROW on divergence, prod warn+returns (never break a
+      // live accept over a fold bug) — see src/server/projections/parity.ts. Read the
+      // just-written row back so the snapshot reflects DB defaults/coercion exactly.
+      const writtenEdge = (
+        await tx.select().from(knowledge_edge).where(eq(knowledge_edge.id, edgeId)).limit(1)
+      )[0];
+      await assertKnowledgeEdgeParity(
+        tx,
+        edgeId,
+        writtenEdge ? edgeRowToSnapshot(writtenEdge) : null,
+      );
     });
   } catch (err) {
     const pgCode =

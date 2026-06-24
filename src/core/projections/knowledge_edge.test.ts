@@ -123,11 +123,37 @@ describe('foldKnowledgeEdge', () => {
     expect((row as KnowledgeEdgeRowSnapshotT).weight).toBe(0.7);
   });
 
-  it("generate (create) projects reasoning='' (absent) as NULL on the row", () => {
-    // The generate-event payload encodes absent reasoning as '' (actions.ts:512)
-    // while the ROW stores null (actions.ts:496). reasonOrNull coerces '' → null to
-    // recover the absent case — so an empty-string reasoning must project to null,
-    // matching the row. (HIGH regression: prior `?? null` left '' as '' and diverged.)
+  it('generate (create) projects ABSENT reasoning (null in payload) as NULL on the row', () => {
+    // YUK-471 W1 PR-A2b — the writer now encodes absent reasoning as `null` (actions.ts
+    // `?? null`), matching the ROW's `?? null`, and GenerateKnowledgeEdge accepts
+    // null. The fold's `?? null` carries that through, so an absent reasoning projects
+    // to null exactly as the row stores it. (Lossless: the prior '' → null coercion
+    // workaround is closed.)
+    const row = foldKnowledgeEdge(
+      'edge-null-reason',
+      [
+        generateCreateEvent('edge-null-reason', {
+          payload: {
+            from_knowledge_id: 'kc-A',
+            to_knowledge_id: 'kc-B',
+            relation_type: 'prerequisite',
+            weight: 1,
+            reasoning: null,
+            propose_event_id: 'p-null',
+          },
+        }),
+      ],
+      [],
+    );
+    expect((row as KnowledgeEdgeRowSnapshotT).reasoning).toBeNull();
+  });
+
+  it('generate (create) preserves a GENUINE empty-string reasoning as "" (lossless)', () => {
+    // YUK-471 W1 PR-A2b — with the writer fixed to encode absent as null, a literal ''
+    // in the payload is now a GENUINE empty-string reasoning (no longer a stand-in for
+    // absent), and the fold preserves it verbatim — the lossless behavior the PR-A1
+    // residual asked for. (A row that genuinely stored '' would now match its event '',
+    // whereas the old `'' → null` coercion would have diverged from such a row.)
     const row = foldKnowledgeEdge(
       'edge-empty-reason',
       [
@@ -144,7 +170,7 @@ describe('foldKnowledgeEdge', () => {
       ],
       [],
     );
-    expect((row as KnowledgeEdgeRowSnapshotT).reasoning).toBeNull();
+    expect((row as KnowledgeEdgeRowSnapshotT).reasoning).toBe('');
   });
 
   it('skips a MALFORMED generate-create payload (missing from_knowledge_id) — row stays null', () => {

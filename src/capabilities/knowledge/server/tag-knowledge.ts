@@ -30,10 +30,14 @@ import {
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { knowledge } from '@/db/schema';
 import { embedText } from '@/server/ai/embed';
 import { questionEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
+// YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns).
+import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
+import { eq } from 'drizzle-orm';
 import { getEffectiveDomain } from './domain';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { applyProposeNew } from './proposals';
@@ -228,11 +232,23 @@ export async function tagKnowledge(
   // `experimental:auto_tag_kc_created` matches none) and has no acceptProposal re-apply path.
   // Generalizes auto-enroll.ts's `experimental:cold_start_kc_created` to the unified tagger.
   const newKcId = await db.transaction(async (tx) => {
-    const createdId = await applyProposeNew(tx, {
-      mutation: 'propose_new',
-      name: kc_name,
-      parent_id: input.subjectRootId,
-    });
+    // YUK-471 W1 PR-A2b — single accept/create-time `now` shared by BOTH the row
+    // (applyProposeNew stamps created_at/updated_at) and the auto_tag event's
+    // created_at. The node reducer stamps an auto_tag-created row's timestamps from
+    // the EVENT's created_at (auto_tag is NOT a proposal — its create IS the write
+    // moment), so the row and the event must carry the SAME instant for fold == row.
+    // (Previously applyProposeNew's internal `new Date()` and the event's defaulted
+    // created_at diverged, so the projection's created_at would not match the row.)
+    const now = new Date();
+    const createdId = await applyProposeNew(
+      tx,
+      {
+        mutation: 'propose_new',
+        name: kc_name,
+        parent_id: input.subjectRootId,
+      },
+      now,
+    );
     await writeEvent(tx, {
       id: newId(),
       session_id: null,
@@ -255,7 +271,23 @@ export async function tagKnowledge(
       caused_by_event_id: null,
       task_run_id: null,
       cost_micro_usd: null,
+      created_at: now,
     });
+
+    // YUK-471 W1 PR-A2b — accept-time projection parity. The auto_tag create writes
+    // the row + the auto_tag genesis event in this tx; re-project that node and assert
+    // fold(events) == the row just written. The reducer reconstructs the row from the
+    // auto_tag event (subject_kind/subject_id on the envelope, name/parent_id from the
+    // payload, timestamps from the event's created_at = `now`). Dev/test THROW on
+    // divergence; prod warn+returns (see parity.ts).
+    const writtenRow = (
+      await tx.select().from(knowledge).where(eq(knowledge.id, createdId)).limit(1)
+    )[0];
+    await assertKnowledgeNodeParity(
+      tx,
+      createdId,
+      writtenRow ? knowledgeLiveRowToSnapshot(writtenRow) : null,
+    );
     return createdId;
   });
 
