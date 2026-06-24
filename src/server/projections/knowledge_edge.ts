@@ -22,11 +22,11 @@
 // IDENTICALLY (single gather implementation — see gather.ts header). This shell adds only
 // the WRITE-THROUGH.
 
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge_edge } from '@/db/schema';
+import { knowledge_edge } from '@/db/schema';
 import { gatherAndFoldKnowledgeEdge } from './gather';
 
 type DbLike = Db | Tx;
@@ -80,25 +80,15 @@ export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<
 export async function projectKnowledgeEdgeGuarded(db: DbLike, edgeId: string): Promise<void> {
   const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
   if (projected === null) {
-    if (await hasKnowledgeEdgeGenesisAnchor(db, edgeId)) {
-      await db.delete(knowledge_edge).where(eq(knowledge_edge.id, edgeId));
-    }
-    // else: fold-blind pre-event-sourced edge — keep the imperative row (NEVER delete).
+    // An edge folds to null IFF it has no CREATE event (the reducer needs a create to produce a
+    // row; an archive only sets archived_at on an already-non-null row), so fold-null always
+    // means a pre-event-sourced / legacy edge the fold is blind to. The GUARDED write-through
+    // NEVER deletes on fold-null — only the unguarded projectKnowledgeEdge (rebuild / auditor)
+    // deletes. On the accept path the edge always has its generate event this tx, so this branch
+    // is unreachable there anyway.
     return;
   }
   await upsertProjectedKnowledgeEdge(db, projected);
-}
-
-// An edge is event-sourced iff at least one event keys on it — every edge event uses
-// subject_kind='knowledge_edge', subject_id=edgeId (genesis seed or generate create/archive).
-// READ-ONLY.
-async function hasKnowledgeEdgeGenesisAnchor(db: DbLike, edgeId: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, edgeId)))
-    .limit(1);
-  return rows.length > 0;
 }
 
 // Shared upsert of the projected columns. knowledge_edge has NO version column and NO embed_*;
