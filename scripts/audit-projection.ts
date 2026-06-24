@@ -45,6 +45,9 @@ import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
+// SHARED structural deep-diff — the B3 audit MUST use the same equality as the in-tx accept
+// assert (src/server/projections/parity.ts), or it would be blind to the drift it gates. (#580)
+import { diffSnapshots } from '@/server/projections/snapshot-diff';
 
 type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
@@ -121,45 +124,6 @@ function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
     created_at: row.created_at,
     archived_at: row.archived_at,
   };
-}
-
-// Normalise a value for stable deep-equality: Dates → epoch ms, everything else via JSON. The
-// snapshot shapes hold scalars / nullable scalars / string[] / a Date pair (+ created_by jsonb
-// on edges), so JSON-with-Date-coercion is a faithful structural compare.
-function normalize(value: unknown): unknown {
-  if (value instanceof Date) return value.getTime();
-  if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === 'object') {
-    // Sort keys so the downstream JSON.stringify is ORDER-INSENSITIVE: a jsonb object
-    // (e.g. created_by) whose keys come back from Postgres in a different order than the
-    // fold built them must NOT read as drift. (CodeRabbit/augment MAJOR — key-order
-    // false-positive would make the B3 gate spuriously exit 1.)
-    const obj = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(obj).sort()) out[k] = normalize(obj[k]);
-    return out;
-  }
-  return value;
-}
-
-// Deep-diff two snapshots field by field; return human-readable "col: live → expected" lines.
-// `live` may be null (the live row is absent but the fold produced one) and `expected` may be
-// null (the fold says the row should NOT exist but a live row is present) — both are drift.
-function diffSnapshots(
-  live: Record<string, unknown> | null,
-  expected: Record<string, unknown> | null,
-): string[] {
-  if (live === null && expected === null) return [];
-  if (live === null) return ['<row>: absent → fold-produced (projection missing a row)'];
-  if (expected === null) return ['<row>: present → fold-null (stale row not in event log)'];
-  const diffs: string[] = [];
-  const keys = new Set([...Object.keys(live), ...Object.keys(expected)]);
-  for (const k of keys) {
-    const a = JSON.stringify(normalize(live[k]));
-    const b = JSON.stringify(normalize(expected[k]));
-    if (a !== b) diffs.push(`${k}: ${a} → ${b}`);
-  }
-  return diffs;
 }
 
 /**
