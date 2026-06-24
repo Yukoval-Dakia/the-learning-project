@@ -769,6 +769,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
       .select()
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_split')));
+    expect(rateRows).toHaveLength(1);
     const ratePayload = rateRows[0].payload as {
       rating: string;
       materialized_ids?: { knowledge?: string[] };
@@ -827,6 +828,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
       .select()
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_reparent')));
+    expect(rateRows).toHaveLength(1);
     const ratePayload = rateRows[0].payload as { materialized_ids?: unknown };
     expect(ratePayload.materialized_ids).toBeUndefined();
 
@@ -862,6 +864,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
       .select()
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_archive')));
+    expect(rateRows).toHaveLength(1);
     const ratePayload = rateRows[0].payload as { materialized_ids?: unknown };
     expect(ratePayload.materialized_ids).toBeUndefined();
 

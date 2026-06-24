@@ -22,10 +22,14 @@
 //     divergence immediately (a silently-passing mismatch in CI would let a real reducer
 //     bug land), so the assert is a hard gate everywhere except prod.
 //
-// The deep-equal is ORDER-INSENSITIVE: Dates compared by getTime(), object keys sorted
-// before stringify — mirrors scripts/audit-projection.ts normalize() so a jsonb key-order
-// difference (created_by coming back from Postgres in a different key order) never reads as
-// a spurious mismatch. A null live row + null fold both pass (a node/edge that the fold says
+// The deep-equal is OBJECT-KEY-ORDER-INSENSITIVE (arrays are still compared POSITIONALLY):
+// Dates compared by getTime(), object keys sorted before stringify — mirrors
+// scripts/audit-projection.ts normalize() so a jsonb key-order difference (created_by coming
+// back from Postgres in a different key order) never reads as a spurious mismatch. The one
+// array field, knowledge.merged_from, is order-SENSITIVE here on purpose: its element order
+// is meaningful (merge history) and matches on both sides (the imperative merge append and
+// the fold's merge-event replay both follow chronological order), so a positional compare is
+// correct, not a hazard. A null live row + null fold both pass (a node/edge that the fold says
 // should not exist and that the live path did not write is parity-OK).
 
 import type { KnowledgeEdgeRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
@@ -39,11 +43,13 @@ type DbLike = Db | Tx;
 /** Which fold the mismatch came from (for the structured warn / thrown message). */
 type ParitySubjectKind = 'knowledge' | 'knowledge_edge';
 
-// normalize — stable structural value for deep-equality. Dates → epoch ms; objects have
-// their keys sorted so JSON.stringify is ORDER-INSENSITIVE (a jsonb object whose keys come
+// normalize — stable structural value for deep-equality. Dates → epoch ms; object keys are
+// sorted so JSON.stringify is OBJECT-KEY-ORDER-INSENSITIVE (a jsonb object whose keys come
 // back from Postgres in a different order than the fold built them must NOT read as a
-// mismatch). Identical to scripts/audit-projection.ts normalize() so the in-tx assert and
-// the standalone auditor agree on what "equal" means.
+// mismatch). ARRAYS keep their order — element compare stays POSITIONAL (order-SENSITIVE),
+// which is intended: merged_from records merge history and its order is meaningful. Identical
+// to scripts/audit-projection.ts normalize() so the in-tx assert and the standalone auditor
+// agree on what "equal" means.
 function normalize(value: unknown): unknown {
   if (value instanceof Date) return value.getTime();
   if (Array.isArray(value)) return value.map(normalize);
@@ -82,7 +88,18 @@ function diffSnapshots(
 function onParityMismatch(subjectKind: ParitySubjectKind, id: string, diff: string[]): void {
   const diffText = diff.join('; ');
   if (process.env.NODE_ENV === 'production') {
-    console.warn('[projection-parity] fold != live row', { subject_kind: subjectKind, id, diff });
+    // PROD: log only the diverged FIELD NAMES + count — NEVER the values. Each diff line is
+    // "<col>: <live> → <folded>", so the prefix before the first ':' is the column (or a
+    // '<row>' / '<fold-threw>' sentinel). Knowledge names, domains and edge reasoning are
+    // user content and must not leak into prod logs; full per-value detail stays in the
+    // dev/test thrown message and is recoverable offline via `pnpm audit:projection` against
+    // a prod-clone (PR-B's B3 SoT-flip gate).
+    console.warn('[projection-parity] fold != live row', {
+      subject_kind: subjectKind,
+      id,
+      diff_fields: diff.map((line) => line.split(':', 1)[0] ?? line),
+      diff_count: diff.length,
+    });
     return;
   }
   throw new Error(
@@ -165,7 +182,14 @@ export async function hasKnowledgeNodeGenesisAnchor(db: DbLike, nodeId: string):
   const indexed = await db
     .select({ id: materialized_id_index.materialized_id })
     .from(materialized_id_index)
-    .where(eq(materialized_id_index.materialized_id, nodeId))
+    .where(
+      and(
+        eq(materialized_id_index.materialized_id, nodeId),
+        // genesis anchor for a NODE — materialized_id_index also carries edge anchors, so
+        // constrain by subject_kind to never read an edge anchor as a node's genesis anchor.
+        eq(materialized_id_index.subject_kind, 'knowledge'),
+      ),
+    )
     .limit(1);
   return indexed.length > 0;
 }
@@ -198,7 +222,13 @@ export async function knowledgeNodesWithGenesisAnchor(
   const idxRows = await db
     .select({ materialized_id: materialized_id_index.materialized_id })
     .from(materialized_id_index)
-    .where(inArray(materialized_id_index.materialized_id, nodeIds));
+    .where(
+      and(
+        inArray(materialized_id_index.materialized_id, nodeIds),
+        // NODE anchors only — see hasKnowledgeNodeGenesisAnchor (edge anchors share the table).
+        eq(materialized_id_index.subject_kind, 'knowledge'),
+      ),
+    );
   for (const r of idxRows) out.add(r.materialized_id);
   return out;
 }
@@ -265,7 +295,7 @@ export async function assertKnowledgeEdgeParity(
     // not gate, or any gather failure) must never break a live accept in prod. Route it
     // through the prod-logs / dev-throws switch as a whole-row mismatch.
     onParityMismatch('knowledge_edge', edgeId, [
-      `<fold-threw>: ${(err as Error).message ?? String(err)}`,
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
     ]);
     return;
   }

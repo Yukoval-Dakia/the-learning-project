@@ -50,8 +50,11 @@ export function rowToFoldEvent(row: EventRow): FoldEvent {
 }
 
 // edgeRowToSnapshot — map a live `knowledge_edge` DB row to the KnowledgeEdgeRowSnapshotT
-// shape the edge reducer's liveMesh (topology fixture) expects.
-function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
+// shape the edge fold produces. EXPORTED as the single definition shared by (a) this gather's
+// liveMesh topology fixture and (b) the accept-time edge parity assert (actions.ts): parity
+// must compare the SAME shape the fold builds, so both sides map through THIS function — a
+// second copy could drift and make the assert compare mismatched shapes.
+export function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
   return {
     id: row.id,
     from_knowledge_id: row.from_knowledge_id,
