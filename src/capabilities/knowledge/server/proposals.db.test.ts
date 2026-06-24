@@ -3,7 +3,9 @@
 // Pre-Step-9 tests INSERTed dreaming_proposal rows; post-Step-9 the legacy
 // table is gone. Seed propose events directly + assert event-driven flow.
 
-import { event, knowledge } from '@/db/schema';
+import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
+import { event, knowledge, materialized_id_index } from '@/db/schema';
+import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -17,6 +19,17 @@ import {
   dismissProposal,
   writeKnowledgeProposeEvent,
 } from './proposals';
+
+// liveSnapshot — project the live `knowledge` row down to the structural
+// KnowledgeRowSnapshot subset (drops embed_* columns, coerces timestamps to
+// Date) so it deep-equals what gatherAndFoldKnowledgeNode returns. This is the
+// exact parity the PR-B double-write phase will assert at accept time.
+async function liveSnapshot(id: string) {
+  const db = testDb();
+  const rows = await db.select().from(knowledge).where(eq(knowledge.id, id));
+  if (!rows[0]) return null;
+  return KnowledgeRowSnapshot.parse(rows[0]);
+}
 
 async function insertKnowledge(opts: {
   id: string;
@@ -666,5 +679,197 @@ describe('acceptProposal — high-tier mutations', () => {
     expect(
       acceptRows.filter((r) => (r.payload as { rating?: string }).rating === 'accept'),
     ).toHaveLength(1);
+  });
+});
+
+// =============================================================================
+// YUK-471 W1 PR-A2b — accept-path projection wiring. After acceptProposal the
+// rate=accept event must carry materialized_ids, the reverse index must record
+// (mintedId → proposalId), and gatherAndFoldKnowledgeNode(db, id) must deep-equal
+// the live row (the parity the PR-B double-write phase will assert). For minting
+// mutations (propose_new / split) timestamps now come from a single accept-time
+// `now`, so created_at/updated_at match too.
+// =============================================================================
+
+describe('acceptProposal — PR-A2b projection parity', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('propose_new accept: rate carries materialized_ids, index row written, fold == row', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'p_a2b_new',
+      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:shici' },
+    });
+
+    const result = await acceptProposal(db, 'p_a2b_new');
+    expect(result.kind).toBe('propose_new_applied');
+    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
+    const newId_ = result.new_node_id;
+
+    // (a) rate=accept payload carries materialized_ids.knowledge = [newId]
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_new')));
+    expect(rateRows).toHaveLength(1);
+    const ratePayload = rateRows[0].payload as {
+      rating: string;
+      materialized_ids?: { knowledge?: string[] };
+    };
+    expect(ratePayload.rating).toBe('accept');
+    expect(ratePayload.materialized_ids?.knowledge).toEqual([newId_]);
+
+    // (b) materialized_id_index row: newId → proposalId, subject_kind='knowledge'
+    const idxRows = await db
+      .select()
+      .from(materialized_id_index)
+      .where(eq(materialized_id_index.materialized_id, newId_));
+    expect(idxRows).toHaveLength(1);
+    expect(idxRows[0].anchor_event_id).toBe('p_a2b_new');
+    expect(idxRows[0].subject_kind).toBe('knowledge');
+
+    // (c) fold(events) deep-equals the live structural row (incl created_at/updated_at)
+    const folded = await gatherAndFoldKnowledgeNode(db, newId_);
+    const live = await liveSnapshot(newId_);
+    expect(live).not.toBeNull();
+    expect(folded).toEqual(live);
+  });
+
+  it('split accept: N minted ids in materialized_ids + index; fold == row for each new node', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'k_p1', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_p2', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_p1', version: 7 });
+    // split subject_id convention = from_id (mutationSubjectId proposals.ts:30-42)
+    await insertProposeEvent({
+      id: 'p_a2b_split',
+      subject_id: 'k_from',
+      payload: {
+        mutation: 'split',
+        from_id: 'k_from',
+        into: [
+          { name: 'A', parent_id: 'k_p1' },
+          { name: 'B', parent_id: 'k_p2' },
+        ],
+        expected_version: 7,
+      },
+    });
+
+    const result = await acceptProposal(db, 'p_a2b_split');
+    expect(result.kind).toBe('split_applied');
+    if (result.kind !== 'split_applied') throw new Error('unexpected kind');
+    const newIds = result.new_node_ids;
+    expect(newIds).toHaveLength(2);
+
+    // (a) rate=accept payload carries all N minted ids
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_split')));
+    const ratePayload = rateRows[0].payload as {
+      rating: string;
+      materialized_ids?: { knowledge?: string[] };
+    };
+    expect(ratePayload.materialized_ids?.knowledge).toEqual(newIds);
+
+    // (b) one index row per minted id, all anchored to the split proposal
+    for (const id of newIds) {
+      const idxRows = await db
+        .select()
+        .from(materialized_id_index)
+        .where(eq(materialized_id_index.materialized_id, id));
+      expect(idxRows).toHaveLength(1);
+      expect(idxRows[0].anchor_event_id).toBe('p_a2b_split');
+    }
+
+    // (c) fold == row for each newly minted node (created from accept-time `now`)
+    for (const id of newIds) {
+      const folded = await gatherAndFoldKnowledgeNode(db, id);
+      const live = await liveSnapshot(id);
+      expect(live).not.toBeNull();
+      expect(folded).toEqual(live);
+    }
+  });
+
+  it('reparent accept: no materialized_ids; fold == row with accept-time timestamps', async () => {
+    const db = testDb();
+    // Seed the node via a propose_new accept so its genesis lives in the event log
+    // (gatherAndFoldKnowledgeNode reconstructs from events, not from a bare INSERT).
+    await insertKnowledge({ id: 'k_oldparent', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_newparent', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'p_seed_node',
+      payload: { mutation: 'propose_new', name: 'movable', parent_id: 'k_oldparent' },
+    });
+    const seed = await acceptProposal(db, 'p_seed_node');
+    if (seed.kind !== 'propose_new_applied') throw new Error('seed failed');
+    const nodeId = seed.new_node_id;
+
+    // Reparent that node. The node currently has version 0 (createRow seeds 0).
+    await insertProposeEvent({
+      id: 'p_a2b_reparent',
+      subject_id: nodeId,
+      payload: {
+        mutation: 'reparent',
+        node_id: nodeId,
+        new_parent_id: 'k_newparent',
+        expected_version: 0,
+      },
+    });
+    const result = await acceptProposal(db, 'p_a2b_reparent');
+    expect(result.kind).toBe('reparent_applied');
+
+    // No materialized_ids on a reparent accept (mints nothing).
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_reparent')));
+    const ratePayload = rateRows[0].payload as { materialized_ids?: unknown };
+    expect(ratePayload.materialized_ids).toBeUndefined();
+
+    // fold == row: parent moved, version bumped, updated_at = reparent accept-time.
+    const folded = await gatherAndFoldKnowledgeNode(db, nodeId);
+    const live = await liveSnapshot(nodeId);
+    expect(live).not.toBeNull();
+    expect(live?.parent_id).toBe('k_newparent');
+    expect(live?.version).toBe(1);
+    expect(folded).toEqual(live);
+  });
+
+  it('archive accept: no materialized_ids; fold == row with archived_at from accept-time', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'k_arch_parent', domain: 'wenyan' });
+    await insertProposeEvent({
+      id: 'p_seed_arch',
+      payload: { mutation: 'propose_new', name: 'doomed', parent_id: 'k_arch_parent' },
+    });
+    const seed = await acceptProposal(db, 'p_seed_arch');
+    if (seed.kind !== 'propose_new_applied') throw new Error('seed failed');
+    const nodeId = seed.new_node_id;
+
+    await insertProposeEvent({
+      id: 'p_a2b_archive',
+      subject_id: nodeId,
+      payload: { mutation: 'archive', node_id: nodeId, expected_version: 0 },
+    });
+    const result = await acceptProposal(db, 'p_a2b_archive');
+    expect(result.kind).toBe('archive_applied');
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_archive')));
+    const ratePayload = rateRows[0].payload as { materialized_ids?: unknown };
+    expect(ratePayload.materialized_ids).toBeUndefined();
+
+    const folded = await gatherAndFoldKnowledgeNode(db, nodeId);
+    const live = await liveSnapshot(nodeId);
+    expect(live).not.toBeNull();
+    expect(live?.archived_at).toBeTruthy();
+    expect(live?.version).toBe(1);
+    expect(folded).toEqual(live);
   });
 });

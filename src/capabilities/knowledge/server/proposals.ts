@@ -20,9 +20,18 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+// YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
+// the applicability gate (skip nodes that predate event-sourcing — no genesis anchor → fold
+// is null → not a real mismatch; the backfill establishes those anchors later).
+import {
+  assertKnowledgeNodeParity,
+  knowledgeLiveRowToSnapshot,
+  knowledgeNodesWithGenesisAnchor,
+} from '@/server/projections/parity';
 import { writeArchiveProposal } from '@/server/proposals/producers';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { getEffectiveDomain } from './domain';
 
 type DbLike = Db | Tx;
@@ -245,7 +254,16 @@ async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
   }
 }
 
-export async function applyProposeNew(db: DbLike, payload: ProposeNewPayload): Promise<string> {
+// YUK-471 W1 PR-A2b — `now` is the SINGLE accept-time timestamp the caller stamps
+// the row with. Defaulted to `new Date()` so the other (non-accept) callers
+// (tag-knowledge.ts, tests) keep working; acceptProposal passes its tx-scoped
+// `now` so the row's created_at/updated_at === the rate=accept event's created_at
+// === what the node reducer stamps from (fold(events) == row byte-exact).
+export async function applyProposeNew(
+  db: DbLike,
+  payload: ProposeNewPayload,
+  now: Date = new Date(),
+): Promise<string> {
   if (payload.parent_id === null) {
     throw new Error(
       'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
@@ -253,7 +271,6 @@ export async function applyProposeNew(db: DbLike, payload: ProposeNewPayload): P
   }
   await assertParentExists(db, payload.parent_id);
   const newId_ = newId();
-  const now = new Date();
   await db.insert(knowledge).values({
     id: newId_,
     name: payload.name,
@@ -269,14 +286,17 @@ export async function applyProposeNew(db: DbLike, payload: ProposeNewPayload): P
   return newId_;
 }
 
-export async function applyReparent(db: DbLike, payload: ReparentPayload): Promise<void> {
+export async function applyReparent(
+  db: DbLike,
+  payload: ReparentPayload,
+  now: Date = new Date(),
+): Promise<void> {
   if (payload.new_parent_id === null) {
     throw new Error(
       'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
     );
   }
   await assertParentExists(db, payload.new_parent_id);
-  const now = new Date();
 
   // YUK-393 — snapshot name + stored embed hash BEFORE the move so we can detect a
   // cross-domain shift afterwards. A reparent can change the KC's EFFECTIVE domain
@@ -341,8 +361,11 @@ export async function applyReparent(db: DbLike, payload: ReparentPayload): Promi
   }
 }
 
-export async function applyArchive(db: DbLike, payload: ArchivePayload): Promise<void> {
-  const now = new Date();
+export async function applyArchive(
+  db: DbLike,
+  payload: ArchivePayload,
+  now: Date = new Date(),
+): Promise<void> {
   const result = await db
     .update(knowledge)
     .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
@@ -359,7 +382,11 @@ export async function applyArchive(db: DbLike, payload: ArchivePayload): Promise
   }
 }
 
-export async function applySplit(db: DbLike, payload: SplitPayload): Promise<string[]> {
+export async function applySplit(
+  db: DbLike,
+  payload: SplitPayload,
+  now: Date = new Date(),
+): Promise<string[]> {
   for (const entry of payload.into) {
     if (entry.parent_id === null) {
       throw new Error(
@@ -368,7 +395,6 @@ export async function applySplit(db: DbLike, payload: SplitPayload): Promise<str
     }
     await assertParentExists(db, entry.parent_id);
   }
-  const now = new Date();
   const newIds: string[] = payload.into.map(() => newId());
 
   // Drizzle transaction (the API surface uses Db; transaction wrapping below
@@ -407,7 +433,11 @@ export async function applySplit(db: DbLike, payload: SplitPayload): Promise<str
   });
 }
 
-export async function applyMerge(db: DbLike, payload: MergePayload): Promise<void> {
+export async function applyMerge(
+  db: DbLike,
+  payload: MergePayload,
+  now: Date = new Date(),
+): Promise<void> {
   if (payload.from_ids.includes(payload.into_id)) {
     throw new Error(`merge: into_id (${payload.into_id}) cannot also appear in from_ids`);
   }
@@ -416,7 +446,6 @@ export async function applyMerge(db: DbLike, payload: MergePayload): Promise<voi
       throw new Error(`merge: expected_versions missing entry for ${fromId}`);
     }
   }
-  const now = new Date();
 
   await (db as Db).transaction(async (tx) => {
     const intoRow = (
@@ -528,6 +557,60 @@ async function assertNotAlreadyRated(db: DbLike, proposalId: string): Promise<vo
   }
 }
 
+// YUK-471 W1 PR-A2b — the set of knowledge ids an accept TOUCHED, derived from the
+// AcceptResult. The accept-time parity assert re-projects EACH and compares against the
+// live row the imperative path just wrote (in the same tx):
+//   - propose_new → the new node
+//   - reparent / archive → the mutated node
+//   - merge → into_id (merged_from appended) + each from_id (now archived)
+//   - split → from_id (now archived) + each new node
+function affectedNodeIds(result: AcceptResult): string[] {
+  switch (result.kind) {
+    case 'propose_new_applied':
+      return [result.new_node_id];
+    case 'reparent_applied':
+      return [result.node_id];
+    case 'archive_applied':
+      return [result.node_id];
+    case 'merge_applied':
+      return [result.into_id, ...result.archived_ids];
+    case 'split_applied':
+      return [result.archived_id, ...result.new_node_ids];
+  }
+}
+
+// YUK-471 W1 PR-A2b — read each affected `knowledge` row from THIS tx, project it to the
+// structural KnowledgeRowSnapshot shape (drops embed_*, coerces timestamps), and assert
+// fold(events) == that row. Read-only gather→fold; dev/test THROW on mismatch, prod
+// warn+returns (see parity.ts).
+//
+// APPLICABILITY GATE: only assert for nodes that are EVENT-SOURCED (have a genesis anchor —
+// genesis seed / auto_tag create / materialized_id_index row). A pre-event-sourcing node
+// (seed root, legacy pre-W1 row) folds to null because it has no originating event, so a
+// reparent/archive/merge of such a node would FALSE-mismatch (fold(null) != live row). Those
+// nodes get their anchor from the PR-A2a backfill later; until then they are correctly
+// SKIPPED here (the standalone audit:projection + its allowlist own that backfill window).
+// A minting accept (propose_new / split) always anchors its new node THIS tx, so those
+// always assert.
+async function assertAcceptParity(db: DbLike, result: AcceptResult): Promise<void> {
+  const ids = affectedNodeIds(result);
+  if (ids.length === 0) return;
+  const eventSourced = await knowledgeNodesWithGenesisAnchor(db, ids);
+  if (eventSourced.size === 0) return;
+  const rows = await db.select().from(knowledge).where(inArray(knowledge.id, ids));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  for (const id of ids) {
+    if (!eventSourced.has(id)) continue; // pre-event-sourcing node — fold can't reproduce it yet
+    const live = byId.get(id);
+    // knowledgeLiveRowToSnapshot picks the structural fields (drops embed_*) WITHOUT a Zod
+    // parse — a .parse() throw here would abort the live accept in prod (hot-path contract).
+    // A missing row (should not happen on a successful accept) is passed as null — fold must
+    // then also be null for parity to hold.
+    const liveSnapshot = live ? knowledgeLiveRowToSnapshot(live) : null;
+    await assertKnowledgeNodeParity(db, id, liveSnapshot);
+  }
+}
+
 export async function acceptProposal(db: Db, proposalId: string): Promise<AcceptResult> {
   // Codex P1-F — concurrent double-accept must not produce duplicate apply
   // side effects. The status check (assertNotAlreadyRated) and the mutation
@@ -544,6 +627,15 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
 
       const propose = await readProposeEvent(tx, proposalId);
       await assertNotAlreadyRated(tx, proposalId);
+
+      // YUK-471 W1 PR-A2b — the SINGLE accept-time timestamp. Computed ONCE here
+      // and threaded through (1) the applyX call (row created_at/updated_at) and
+      // (2) the rate=accept event's created_at. One shared `now` is what makes
+      // fold(events) == row reproducible byte-exact: the node reducer stamps the
+      // projected row from the accept event's created_at, so the live row must be
+      // stamped from the same instant. (Sub-ms shift from the old per-applier
+      // `new Date()` is the only behavior change for live users.)
+      const now = new Date();
 
       // Reconstruct mutation payload from event shape
       const mutationKind: string =
@@ -562,12 +654,12 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       try {
         switch (apply.mutation) {
           case 'propose_new': {
-            const newNodeId = await applyProposeNew(tx, apply);
+            const newNodeId = await applyProposeNew(tx, apply, now);
             result = { kind: 'propose_new_applied', new_node_id: newNodeId };
             break;
           }
           case 'reparent': {
-            await applyReparent(tx, apply);
+            await applyReparent(tx, apply, now);
             if (apply.new_parent_id === null) {
               throw new Error('reparent payload must have new_parent_id');
             }
@@ -579,12 +671,12 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
             break;
           }
           case 'archive': {
-            await applyArchive(tx, apply);
+            await applyArchive(tx, apply, now);
             result = { kind: 'archive_applied', node_id: apply.node_id };
             break;
           }
           case 'merge': {
-            await applyMerge(tx, apply);
+            await applyMerge(tx, apply, now);
             result = {
               kind: 'merge_applied',
               into_id: apply.into_id,
@@ -593,7 +685,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
             break;
           }
           case 'split': {
-            const newIds = await applySplit(tx, apply);
+            const newIds = await applySplit(tx, apply, now);
             result = {
               kind: 'split_applied',
               archived_id: apply.from_id,
@@ -621,7 +713,40 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         throw e;
       }
 
+      // YUK-471 W1 PR-A2b — thread the minted node ids onto the rate=accept event
+      // AND into the reverse index, both in THIS tx. The minted ids are the only
+      // record of which knowledge.id a propose_new / split materialized (the propose
+      // event itself never carried them). materialized_ids on the rate payload lets
+      // the node reducer reproduce those ids on replay; the materialized_id_index
+      // row gives the reducer's reverse lookup (nodeId → anchor propose event) so a
+      // node folded BY its id finds where replay starts.
+      //   - propose_new_applied → { knowledge: [new_node_id] }
+      //   - split_applied       → { knowledge: new_node_ids } (N minted)
+      //   - reparent/merge/archive → no minted ids (omit materialized_ids entirely)
+      const mintedKnowledgeIds: string[] =
+        result.kind === 'propose_new_applied'
+          ? [result.new_node_id]
+          : result.kind === 'split_applied'
+            ? result.new_node_ids
+            : [];
+      const materializedIds =
+        mintedKnowledgeIds.length > 0 ? { knowledge: mintedKnowledgeIds } : undefined;
+
+      // Same-tx reverse-index write — anchor = the propose event id (proposalId).
+      // The node reducer's Q2 resolves a minted nodeId → this anchor, then gathers
+      // `id = anchor OR caused_by = anchor` (= the propose event + its accepting
+      // rate, which carries materialized_ids). First-write-wins / idempotent.
+      for (const mintedId of mintedKnowledgeIds) {
+        await upsertMaterializedIdIndex(tx, {
+          materialized_id: mintedId,
+          anchor_event_id: proposalId,
+          subject_kind: 'knowledge',
+        });
+      }
+
       // Apply succeeded — write rate=accept event chained to the propose event.
+      // created_at = the shared `now` (same instant the row was stamped) so
+      // fold(events) == row reproduces created_at/updated_at exactly.
       await writeEvent(tx, {
         id: newId(),
         session_id: null,
@@ -631,12 +756,25 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         subject_kind: 'event',
         subject_id: proposalId,
         outcome: 'success',
-        payload: { rating: 'accept' },
+        payload: {
+          rating: 'accept',
+          ...(materializedIds ? { materialized_ids: materializedIds } : {}),
+        },
         caused_by_event_id: proposalId,
         task_run_id: null,
         cost_micro_usd: null,
-        created_at: new Date(),
+        created_at: now,
       });
+
+      // YUK-471 W1 PR-A2b — accept-time projection parity assert. Runs AFTER the rate
+      // write + index write (so the gather sees the chained accept + materialized_ids)
+      // and INSIDE this tx (so it reads the just-written rows + events). The imperative
+      // write stays the SoT; this proves fold(events) == row for every node the accept
+      // touched. Dev/test THROW on divergence (catch reducer bugs immediately); prod
+      // warn+returns (never break a live accept over a fold bug — see parity.ts). NOTE
+      // the merge into_id node also folds here: its merged_from append + version bump
+      // must reproduce.
+      await assertAcceptParity(tx, result);
 
       return result;
     });

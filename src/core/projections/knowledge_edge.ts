@@ -226,14 +226,15 @@ export function foldKnowledgeEdge(
 
 // ---------- row builders (pure) ----------
 
-// reasonOrNull — the generate-event payload encodes absent reasoning as '' (actions.ts:512
-// `?? ''`) while the ROW stores null (actions.ts:496 `?? null`). Coerce ONLY '' → null
-// (not other falsy values) so fold==row holds for the common absent case. RESIDUAL: an
-// explicitly-empty-string reasoning is indistinguishable from absent in the event
-// encoding — PR-A2 must fix the writer (generate payload `reasoning ?? ''` → `?? null`)
-// to make it lossless, then this becomes a plain `?? null`.
+// reasonOrNull — coerce an absent (null | undefined) reasoning to null. YUK-471 W1 PR-A2b
+// closed the lossy-encoding residual: the generate-event writer (actions.ts) now encodes
+// absent reasoning as `null` (matching the ROW's `?? null`), and GenerateKnowledgeEdge's
+// payload accepts `string | null | undefined`, so the event and the row agree byte-for-byte.
+// The fold no longer needs the old `'' → null` workaround — an explicitly-empty-string
+// reasoning is now a GENUINE '' (not a stand-in for absent) and is preserved verbatim, which
+// is the lossless behavior. This is a plain `?? null`.
 function reasonOrNull(reasoning: string | null | undefined): string | null {
-  return reasoning === '' ? null : (reasoning ?? null);
+  return reasoning ?? null;
 }
 
 /**
