@@ -13,8 +13,9 @@
 //      prerequisite (fold THROWS) all surface here.
 //   4. full projection rebuild IN ONE TX — re-fold every node + edge through the IO shells in
 //      place (materialize the post-flip state). A topology reject rolls the whole rebuild back.
-//   5. survival check — diff the live id sets: did the rebuild DELETE any pre-existing row? A
-//      deletion means a row would be LOST on the flip → hard NO-GO.
+//   5. rowset parity — diff the live id sets BOTH ways: a row the rebuild DELETED (data loss) OR
+//      MATERIALIZED with no live counterpart (a stale-anchor resurrection the live-only audit never
+//      sees) is a divergence the flip would introduce → hard NO-GO.
 //
 //   GO  iff  audit.clean && rebuild.ok && survival.ok.
 //
@@ -73,8 +74,20 @@ export interface B3GateReport {
   // rebuild materializes the post-flip state + independently re-confirms topology. ok=false with a
   // topologyReject means it aborted (rolled back) on an ADR-0034 cycle/direction reject — hard NO-GO.
   rebuild: { ok: boolean; counts: RebuildCounts | null; topologyReject: string | null };
-  // survival: ids present before the gate but gone after the rebuild (should be empty — data loss).
-  survival: { ok: boolean; deletedKnowledge: string[]; deletedEdges: string[] };
+  // rowset parity (named `survival` for back-compat) — the rebuild must reproduce the EXACT
+  // pre-existing live id set. deleted* = rows the rebuild dropped (data LOSS on flip). created* =
+  // rows the rebuild MATERIALIZED that had no live counterpart — the rebuild's id universe is
+  // BROADER than the audit's live-only scan (it also projects materialized_id_index anchors + every
+  // edge subject_id in the event log), so an anchored id whose live row was dropped out-of-band
+  // folds non-null and the flip would RESURRECT it (a row the audit never sees). Either direction is
+  // a divergence the flip introduces → hard NO-GO.
+  survival: {
+    ok: boolean;
+    deletedKnowledge: string[];
+    deletedEdges: string[];
+    createdKnowledge: string[];
+    createdEdges: string[];
+  };
 }
 
 async function liveNodeIds(db: Db): Promise<Set<string>> {
@@ -148,10 +161,23 @@ export async function runB3Gate(
   const afterEdges = await liveEdgeIds(db);
   const deletedKnowledge = [...beforeNodes].filter((id) => !afterNodes.has(id));
   const deletedEdges = [...beforeEdges].filter((id) => !afterEdges.has(id));
+  // created* — the rebuild materialized a row with NO pre-existing live counterpart. The rebuild's
+  // id universe is BROADER than the audit's live-only scan (it also projects materialized_id_index
+  // anchors + every edge subject_id in the event log), so an anchored id whose live row was dropped
+  // out-of-band folds non-null → the flip RESURRECTS it. The audit never sees this class, so the
+  // rowset diff is the only leg that catches it.
+  const createdKnowledge = [...afterNodes].filter((id) => !beforeNodes.has(id));
+  const createdEdges = [...afterEdges].filter((id) => !beforeEdges.has(id));
   const survival = {
-    ok: deletedKnowledge.length === 0 && deletedEdges.length === 0,
+    ok:
+      deletedKnowledge.length === 0 &&
+      deletedEdges.length === 0 &&
+      createdKnowledge.length === 0 &&
+      createdEdges.length === 0,
     deletedKnowledge,
     deletedEdges,
+    createdKnowledge,
+    createdEdges,
   };
 
   const go = audit.clean && rebuild.ok && survival.ok;
@@ -185,10 +211,14 @@ function printReport(report: B3GateReport): void {
     console.log(`rebuild  — NO-GO: ADR-0034 topology reject — ${report.rebuild.topologyReject}`);
   }
   if (report.survival.ok) {
-    console.log('survival — OK: zero rows deleted by the rebuild');
-  } else {
     console.log(
-      `survival — NO-GO: rebuild dropped ${report.survival.deletedKnowledge.length} node(s) + ${report.survival.deletedEdges.length} edge(s)`,
+      'survival — OK: rebuild reproduced the exact live id set (no deletions, no resurrections)',
+    );
+  } else {
+    const deleted = report.survival.deletedKnowledge.length + report.survival.deletedEdges.length;
+    const created = report.survival.createdKnowledge.length + report.survival.createdEdges.length;
+    console.log(
+      `survival — NO-GO: rebuild dropped ${deleted} row(s) + resurrected ${created} row(s)`,
     );
     if (report.survival.deletedKnowledge.length > 0) {
       console.log(`  deleted knowledge: ${report.survival.deletedKnowledge.join(', ')}`);
@@ -196,10 +226,21 @@ function printReport(report: B3GateReport): void {
     if (report.survival.deletedEdges.length > 0) {
       console.log(`  deleted edges: ${report.survival.deletedEdges.join(', ')}`);
     }
+    if (report.survival.createdKnowledge.length > 0) {
+      console.log(
+        `  resurrected knowledge (no live row, anchor/events present): ${report.survival.createdKnowledge.join(', ')}`,
+      );
+    }
+    if (report.survival.createdEdges.length > 0) {
+      console.log(
+        `  resurrected edges (no live row, events present): ${report.survival.createdEdges.join(', ')}`,
+      );
+    }
   }
   console.log(
     report.go
-      ? '\nGO: this clone backfilled, rebuilt, and audited clean with zero deletions. To flip prod: apply the\n' +
+      ? '\nGO: this clone backfilled, audited clean (fold == imperative row), and rebuilt to the exact same\n' +
+          'row set (no deletions, no resurrections). To flip prod: apply the\n' +
           'SAME genesis backfill to prod, then set PROJECTION_IS_WRITER=1 on all three processes + restart.\n' +
           'Rollback = unset the flag + restart (the A2b OFF path resumes).'
       : '\nNO-GO: resolve the failures above on the clone (and fix the live source), then re-run. Do NOT flip.',

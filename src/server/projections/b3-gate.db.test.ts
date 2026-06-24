@@ -1,13 +1,17 @@
 // YUK-471 W1 B3 — DB tests for the prod-clone SoT-flip gate orchestrator (testcontainer).
 //
-// runB3Gate runs the documented B3 procedure against a (clone) DB: snapshot live ids →
-// genesis backfill → full projection rebuild → audit + survival/topology verification → a
-// go/no-go report. These tests prove the two verdicts that matter:
-//   (GO)    a coherent pre-event-sourcing world backfills+rebuilds+audits CLEAN with zero
-//           deletions (seed roots survive) → go=true.
-//   (NO-GO) an imperatively-created CYCLIC prerequisite pair — which the accept path never
-//           gated (ADR-0034 runs only in the fold) — is caught: the rebuild topology-rejects
-//           → go=false, with the reject surfaced (not swallowed).
+// runB3Gate runs the documented B3 procedure against a (clone) DB: snapshot live ids → scoped
+// genesis backfill → pre-rebuild audit → full rebuild → rowset parity → a go/no-go report. These
+// tests prove the GO path plus every NO-GO leg:
+//   (GO)            a coherent pre-event-sourcing world backfills + audits CLEAN + rebuilds to the
+//                   same row set (seed root survives) → go=true.
+//   (NO-GO topology) an imperatively-created CYCLIC prerequisite pair (the accept path never gated)
+//                   → the pre-rebuild fold THROWS + the rebuild re-confirms → go=false.
+//   (NO-GO drift)   an accept-path row whose imperative value diverges from its fold → the
+//                   pre-rebuild audit reports DRIFT (the real value teeth the scoped backfill unlocks).
+//   (NO-GO deletion) a row that folds to null → the rebuild DELETEs it → rowset parity flags it.
+//   (NO-GO resurrection) an event-only row with no live counterpart → the rebuild MATERIALIZEs it →
+//                   the rowset creation check flags it (the live-only audit never sees this class).
 //
 // FK: knowledge_edge.from/to reference knowledge.id, so endpoint nodes exist first.
 // Hermetic: resetDb() in beforeEach.
@@ -249,5 +253,29 @@ describe('runB3Gate', () => {
     expect(report.go).toBe(false);
     expect(report.survival.ok).toBe(false);
     expect(report.survival.deletedEdges).toContain('ke_archonly');
+  });
+
+  it('NO-GO (resurrection): the rebuild MATERIALIZES an event-only row with no live counterpart — caught by the rowset creation check', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_a', name: 'A' });
+    await insertKnowledge({ id: 'kn_b', name: 'B' });
+    // A generate-create event for an edge with NO live row (its live row was dropped out-of-band; the
+    // event remains). The rebuild's edge universe includes event subject_ids → it RE-CREATES the edge.
+    // The live-only audit never sees this class, so the rowset creation diff is the only leg that
+    // catches the flip resurrecting it.
+    await seedGenerateCreateRelated({
+      edgeId: 'ke_resurrect',
+      from: 'kn_a',
+      to: 'kn_b',
+      weight: 1,
+    });
+
+    const report = await runB3Gate(db, {}, TGEN);
+
+    expect(report.go).toBe(false);
+    expect(report.survival.ok).toBe(false);
+    expect(report.survival.createdEdges).toContain('ke_resurrect');
+    // the audit (live-only scan) does NOT see the event-only row — the creation check is what catches it.
+    expect(report.audit.clean).toBe(true);
   });
 });
