@@ -1,0 +1,19 @@
+[package]
+name = "calibration-native"
+version = "0.0.0"
+edition = "2021"
+description = "YUK-493 Phase -1 — Rust napi port of the offline calibration core (mulberry32 + forwardAuc + paired cluster bootstrap). JS (src/server/calibration/*) stays the oracle + fallback; this is bit-exact-parity verified."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3", default-features = false, features = ["napi9"] }
+napi-derive = "3"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true

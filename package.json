@@ -10,6 +10,7 @@
     "build": "pnpm rw:web:build && pnpm build:server && pnpm build:worker && pnpm build:migrate",
     "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:native": "cd crates/calibration-native && pnpm --package=@napi-rs/cli dlx napi build --release",
     "start": "node dist/server.cjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
