@@ -133,12 +133,45 @@ export async function gatherAndFoldKnowledgeNode(
 }
 
 /**
- * Gather all events for `edgeId` + the live topology mesh, then run the PURE edge fold.
- * READ-ONLY.
+ * Gather all events for `edgeId` and run the PURE edge fold against a CALLER-SUPPLIED live
+ * topology mesh. READ-ONLY.
  *
- * Edges are simple — every edge event keys on the edge's own subject_id, so the gather is a
- * single subject-keyed query. The reducer re-checks ADR-0034 topology for a create that adds
- * a LIVE prerequisite edge, against `liveMesh` (the current archived_at IS NULL edge set).
+ * This is the mesh-injected form used by full-table callers (the auditor). The live mesh is
+ * the SAME for every edge in a single read-only scan, so a batch caller fetches it ONCE and
+ * passes it here, instead of re-querying the entire live edge set per edge — turning an O(E²)
+ * full-table audit into O(E). The single-edge `gatherAndFoldKnowledgeEdge` below is now a thin
+ * wrapper that fetches the mesh then delegates here, so both paths fold IDENTICALLY (one
+ * reducer, one mesh shape — the auditor can never diverge from the live write path).
+ *
+ * `liveMesh` MUST be the current archived_at IS NULL edge set, mapped via `edgeRowToSnapshot`.
+ * It INCLUDES the edge being re-projected (self-inclusion) when that edge is itself live — this
+ * is intentional-and-benign: checkEdgeTopology short-circuits a candidate already present in
+ * `existing` (③ cycle finds no new reverse path from a self-edge; ④ transitive-redundancy is
+ * skipped because the edge is alreadyDirect). A batch caller builds the mesh from the same live
+ * snapshot it scans, so self-inclusion is preserved exactly as the per-edge fetch produced it.
+ *
+ * @throws when foldKnowledgeEdge rejects on ADR-0034 topology — NOT caught (propagates so the
+ *         caller decides; the shell lets it abort the accept tx, the auditor surfaces it).
+ */
+export async function gatherAndFoldKnowledgeEdgeWithMesh(
+  db: DbLike,
+  edgeId: string,
+  liveMesh: KnowledgeEdgeRowSnapshotT[],
+): Promise<KnowledgeEdgeRowSnapshotT | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, edgeId)));
+  const foldEvents = rows.map(rowToFoldEvent);
+  return foldKnowledgeEdge(edgeId, foldEvents, liveMesh);
+}
+
+/**
+ * Gather all events for `edgeId` + the live topology mesh, then run the PURE edge fold.
+ * READ-ONLY. Single-edge form: fetches the full live mesh itself, then delegates to
+ * `gatherAndFoldKnowledgeEdgeWithMesh`. Used by the accept-time parity assert + IO shell where
+ * each call is for ONE edge and the per-call mesh fetch is appropriate. Full-table callers
+ * (the auditor) fetch the mesh once and call the WithMesh form to avoid the O(E²) re-fetch.
  *
  * @throws when foldKnowledgeEdge rejects on ADR-0034 topology — NOT caught (propagates so the
  *         caller decides; the shell lets it abort the accept tx, the auditor surfaces it).
@@ -147,20 +180,7 @@ export async function gatherAndFoldKnowledgeEdge(
   db: DbLike,
   edgeId: string,
 ): Promise<KnowledgeEdgeRowSnapshotT | null> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, edgeId)));
-  const foldEvents = rows.map(rowToFoldEvent);
-
-  // liveMesh is the full live-edge set and INCLUDES the edge being re-projected
-  // (self-inclusion). This is intentional-and-benign for re-projection: checkEdgeTopology
-  // short-circuits a candidate that already exists in `existing` (③ cycle finds no new
-  // reverse path from a self-edge; ④ transitive-redundancy is skipped because the edge
-  // is alreadyDirect). If a future topology check stops tolerating the candidate appearing
-  // in `existing`, exclude this edgeId from liveMesh here.
   const liveRows = await db.select().from(knowledge_edge).where(isNull(knowledge_edge.archived_at));
   const liveMesh = liveRows.map(edgeRowToSnapshot);
-
-  return foldKnowledgeEdge(edgeId, foldEvents, liveMesh);
+  return gatherAndFoldKnowledgeEdgeWithMesh(db, edgeId, liveMesh);
 }
