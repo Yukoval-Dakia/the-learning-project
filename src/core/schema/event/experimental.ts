@@ -138,6 +138,14 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // genesis must NOT be used on the creation hot path). The fold trusts payload.row as the row's
   // base/ground truth, so a malformed create payload must be rejected here, not fall through.
   'experimental:mistake_variant_create',
+  // YUK-471 Wave 2 (learning_item fold) — the three status-transition action events
+  // (./learning-item-events.ts) make a complete/relearn/archive fold-visible via Q1 (the
+  // recommended route — no rate-payload side-channel reverse-lookup). The fold trusts them to
+  // reproduce status/completed_at/archived_at/version; a malformed payload must be rejected at
+  // the barrier, not fall through to the loose generic.
+  'experimental:learning_item_complete',
+  'experimental:learning_item_relearn',
+  'experimental:learning_item_archive',
 ]);
 
 // ====================================================================

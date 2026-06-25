@@ -34,6 +34,7 @@ import type {
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
+  LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
@@ -43,6 +44,7 @@ import {
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
+  gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
@@ -50,7 +52,12 @@ import { diffSnapshots } from './snapshot-diff';
 type DbLike = Db | Tx;
 
 /** Which fold the mismatch came from (for the structured warn / thrown message). */
-type ParitySubjectKind = 'knowledge' | 'knowledge_edge' | 'goal' | 'mistake_variant';
+type ParitySubjectKind =
+  | 'knowledge'
+  | 'knowledge_edge'
+  | 'goal'
+  | 'mistake_variant'
+  | 'learning_item';
 
 // onParityMismatch — the dev-throws / prod-logs severity switch (see the file header for the
 // full contract). PROD: structured warn + return (never break a live accept). ELSE: throw.
@@ -622,4 +629,183 @@ export async function assertMistakeVariantParity(
     folded as Record<string, unknown> | null,
   );
   if (diff.length > 0) onParityMismatch('mistake_variant', mvId, diff);
+}
+
+// ── learning_item genesis-anchor helpers (YUK-471 Wave 2) ────────────────────────────────────
+//
+// A learning_item is EVENT-SOURCED (reproducible by foldLearningItem, so its fold-null is a genuine
+// "should not exist" rather than a fold-blind miss) iff it has any of:
+//   1. an `experimental:genesis` seed (backfilled pre-W2 row, OR the per-id genesis written at the
+//      learning_intent / ai_dream INSERT sites under the recommended route), OR
+//   2. a `materialized_id_index` row keyed by itemId with subject_kind='learning_item' (the
+//      genesis/creation anchor).
+// (The W2 complete/relearn/archive action events are NOT anchors on their own — they mutate an
+// already-seeded row; a row with ONLY a mutation event but no genesis base would fold to null, so
+// the genesis/index anchor is the real "event-sourced" predicate.) The genesis subject_id = itemId
+// (no minting indirection), so the event check is a single subject-keyed scan over the genesis action.
+
+const LEARNING_ITEM_ANCHOR_ACTIONS = ['experimental:genesis'] as const;
+
+/**
+ * Does this `learning_item` have a genesis anchor — i.e. is it event-sourced (reproducible by
+ * foldLearningItem) at all? READ-ONLY. Used by the guarded write-through (a fold-null on a
+ * NON-event-sourced item must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor.
+ */
+export async function hasLearningItemGenesisAnchor(db: DbLike, itemId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'learning_item'),
+        eq(event.subject_id, itemId),
+        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  if (ev.length > 0) return true;
+  const indexed = await db
+    .select({ id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        eq(materialized_id_index.materialized_id, itemId),
+        eq(materialized_id_index.subject_kind, 'learning_item'),
+      ),
+    )
+    .limit(1);
+  return indexed.length > 0;
+}
+
+/**
+ * Batch form of hasLearningItemGenesisAnchor — the subset of `itemIds` that ARE event-sourced. One
+ * query per source (events / index). READ-ONLY. Used by the backfill to SKIP items that already
+ * re-fold from their own log (anchoring an already-event-sourced row with a current-state genesis
+ * snapshot would mask reducer drift — same rationale as goalsWithGenesisAnchor). DOUBLES as the
+ * backfill idempotency pre-scan (a previously-backfilled item now carries a genesis event → skipped).
+ */
+export async function learningItemsWithGenesisAnchor(
+  db: DbLike,
+  itemIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (itemIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'learning_item'),
+        inArray(event.subject_id, itemIds),
+        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  const idxRows = await db
+    .select({ materialized_id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        inArray(materialized_id_index.materialized_id, itemIds),
+        eq(materialized_id_index.subject_kind, 'learning_item'),
+      ),
+    );
+  for (const r of idxRows) out.add(r.materialized_id);
+  return out;
+}
+
+// ── learning_item parity assert (YUK-471 Wave 2) ──────────────────────────────────────────────
+//
+// The write-time fold==row guard for the learning_item imperative sites (creation / complete /
+// relearn / archive-retract), mirroring assertGoalParity. After an OFF-path imperative write, the
+// site re-selects the row → maps to LearningItemRowSnapshot → calls this, which gather→folds the
+// SAME id read-only and deep-compares. dev/test THROW on mismatch, prod warn+return (the shared
+// onParityMismatch switch).
+//
+// APPLICABILITY GATE: the CALLER must only invoke this for a learning_item that is EVENT-SOURCED
+// (hasLearningItemGenesisAnchor) — a pre-event-sourced row folds to null and would FALSE-mismatch
+// its live row. The wired creation sites always anchor the item this tx (genesis + index), so they
+// always assert; the complete/relearn/archive sites gate on hasLearningItemGenesisAnchor (an
+// un-backfilled pre-W2 item carries no anchor and is skipped).
+//
+// EXCLUDED columns (child_learning_item_ids / ai_score / due_at / reviewed_at) are NOT in the
+// snapshot the row-pick produces, so they never enter the deep-diff — a row differing ONLY in those
+// columns folds clean.
+
+/**
+ * Pick the LearningItemRowSnapshot fields from a live `learning_item` DB row (NO Zod parse — a
+ * .parse() throw on the hot path could abort a live write in prod, defeating the never-throw
+ * contract). EXCLUDES child_learning_item_ids / ai_score / due_at / reviewed_at (not in the
+ * snapshot). `status` is a free `text` column; the field-pick passes it through unchanged
+ * (the snapshot's `status` is z.string(), so no narrowing is needed — a plain pick cannot throw).
+ */
+export function learningItemLiveRowToSnapshot(row: {
+  id: string;
+  source: string;
+  source_ref: string | null;
+  title: string;
+  content: string;
+  knowledge_ids: string[] | null;
+  primary_artifact_id: string | null;
+  parent_learning_item_id: string | null;
+  status: string;
+  user_pinned: boolean;
+  completed_at: Date | null;
+  dismissed_at: Date | null;
+  archived_at: Date | null;
+  archived_reason: string | null;
+  created_at: Date;
+  updated_at: Date;
+  version: number;
+}): LearningItemRowSnapshotT {
+  return {
+    id: row.id,
+    source: row.source,
+    source_ref: row.source_ref,
+    title: row.title,
+    content: row.content,
+    knowledge_ids: row.knowledge_ids ?? [],
+    primary_artifact_id: row.primary_artifact_id,
+    parent_learning_item_id: row.parent_learning_item_id,
+    status: row.status,
+    user_pinned: row.user_pinned,
+    completed_at: row.completed_at,
+    dismissed_at: row.dismissed_at,
+    archived_at: row.archived_at,
+    archived_reason: row.archived_reason,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
+
+/**
+ * Assert the learning_item fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test
+ * THROW on mismatch, prod warn+return (file header contract). A null live row that folds to null
+ * passes. The gather is try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated
+ * reducer throw never aborts a live write in prod.
+ *
+ * @param itemId  the learning_item id to re-project.
+ * @param liveRow the structural snapshot of the row the imperative path just wrote (or null), in
+ *                LearningItemRowSnapshot shape.
+ */
+export async function assertLearningItemParity(
+  db: DbLike,
+  itemId: string,
+  liveRow: LearningItemRowSnapshotT | null,
+): Promise<void> {
+  let folded: LearningItemRowSnapshotT | null;
+  try {
+    folded = await gatherAndFoldLearningItem(db, itemId);
+  } catch (err) {
+    onParityMismatch('learning_item', itemId, [
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+    ]);
+    return;
+  }
+  const diff = diffSnapshots(
+    liveRow as Record<string, unknown> | null,
+    folded as Record<string, unknown> | null,
+  );
+  if (diff.length > 0) onParityMismatch('learning_item', itemId, diff);
 }

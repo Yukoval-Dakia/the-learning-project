@@ -26,6 +26,18 @@ import {
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from '@/server/orchestrator/learning_intent';
+// YUK-471 W2 — learning_item projection seam (completion / relearn). The accept writes a dedicated
+// subject-keyed action event (experimental:learning_item_complete / _relearn) so the transition is
+// fold-visible via Q1 (the recommended route — no rate-payload side-channel reverse-lookup);
+// projectionIsWriter('learning_item') gates ONLY who writes the ROW (projection write-through when
+// ON, the imperative UPDATE when OFF + a write-time fold==row parity assert, applicability-gated).
+import { projectLearningItemGuarded } from '@/server/projections/learning_item';
+import {
+  assertLearningItemParity,
+  hasLearningItemGenesisAnchor,
+  learningItemLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -289,19 +301,26 @@ export async function acceptCompletionProposal(
   };
 
   await db.transaction(async (tx) => {
-    const updated = await tx
-      .update(learning_item)
-      .set({
-        status: 'done',
-        completed_at: now,
-        updated_at: now,
-        version: item.version + 1,
-      })
-      .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
-      .returning({ id: learning_item.id });
-    if (updated.length !== 1) {
-      throw new ApiError('conflict', `learning_item ${learningItemId} concurrently modified`, 409);
-    }
+    // YUK-471 W2 — write the dedicated complete action event FIRST (subject_kind='learning_item',
+    // subject_id=itemId, created_at=now) so the fold (when the flag is ON) sees the transition via
+    // Q1 in the same tx. created_at=now is the SINGLE CLOCK (HIGH-1): the reducer derives the row's
+    // completed_at + updated_at from THIS event's created_at, and the imperative UPDATE below reuses
+    // the SAME `now`, so fold(events) == live row deterministically (a second `new Date()` would
+    // drift by a cross-ms delta). ingest_at=now → outbox opt-out (a status flip is not a
+    // memory-worthy activity; mirrors the goal/variant seams).
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_complete',
+      subject_kind: 'learning_item',
+      subject_id: learningItemId,
+      outcome: 'success',
+      payload: {},
+      caused_by_event_id: proposalId,
+      created_at: now,
+      ingest_at: now,
+    });
 
     await tx.insert(completion_evidence).values({
       id: newId(),
@@ -311,6 +330,9 @@ export async function acceptCompletionProposal(
       decided_at: now,
     });
 
+    // The accept `rate` event (proposal-decision signal) — kept regardless of the flag. It is
+    // subject_kind='event' (chained to the proposal), NOT subject_kind='learning_item', so the
+    // learning_item Q1 fold never gathers it; it is the proposal inbox's decision marker.
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -332,6 +354,46 @@ export async function acceptCompletionProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+
+    // ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build): ON →
+    // projectLearningItemGuarded folds (genesis + complete → done) + writes through; OFF → the
+    // imperative UPDATE (current behavior — status→done, completed_at=now, version+1; the SAME `now`
+    // the complete event carries) + a write-time fold==row parity assert (applicability-gated on
+    // hasLearningItemGenesisAnchor — a pre-W2 un-backfilled item carries no genesis base, folds to
+    // null, and would FALSE-mismatch its live row).
+    if (projectionIsWriter('learning_item')) {
+      await projectLearningItemGuarded(tx, learningItemId);
+    } else {
+      const updated = await tx
+        .update(learning_item)
+        .set({
+          status: 'done',
+          completed_at: now,
+          updated_at: now,
+          version: item.version + 1,
+        })
+        .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
+        .returning({ id: learning_item.id });
+      if (updated.length !== 1) {
+        throw new ApiError(
+          'conflict',
+          `learning_item ${learningItemId} concurrently modified`,
+          409,
+        );
+      }
+      if (await hasLearningItemGenesisAnchor(tx, learningItemId)) {
+        const [written] = await tx
+          .select()
+          .from(learning_item)
+          .where(eq(learning_item.id, learningItemId))
+          .limit(1);
+        await assertLearningItemParity(
+          tx,
+          learningItemId,
+          written ? learningItemLiveRowToSnapshot(written) : null,
+        );
+      }
+    }
   });
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
@@ -378,19 +440,25 @@ export async function acceptRelearnProposal(
   const now = new Date();
   const rateEventId = newId();
   await db.transaction(async (tx) => {
-    const updated = await tx
-      .update(learning_item)
-      .set({
-        status: 'in_progress',
-        completed_at: null,
-        updated_at: now,
-        version: item.version + 1,
-      })
-      .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
-      .returning({ id: learning_item.id });
-    if (updated.length !== 1) {
-      throw new ApiError('conflict', `learning_item ${learningItemId} concurrently modified`, 409);
-    }
+    // YUK-471 W2 — write the dedicated relearn action event FIRST (subject_kind='learning_item',
+    // created_at=now) so the fold sees the transition via Q1. created_at=now is the SINGLE CLOCK
+    // (HIGH-1): the reducer derives updated_at from THIS event's created_at and clears completed_at,
+    // and the imperative UPDATE below reuses the SAME `now`. ingest_at=now → outbox opt-out.
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_relearn',
+      subject_kind: 'learning_item',
+      subject_id: learningItemId,
+      outcome: 'success',
+      payload: {},
+      caused_by_event_id: proposalId,
+      created_at: now,
+      ingest_at: now,
+    });
+    // The accept `rate` event (proposal-decision signal) — kept regardless of the flag (subject_kind
+    // ='event', NOT gathered by the learning_item fold).
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -414,6 +482,44 @@ export async function acceptRelearnProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    // ROW writer — gated on the per-entity flag (critic A1): ON → projectLearningItemGuarded folds
+    // (genesis + … + relearn → in_progress, completed_at cleared) + writes through; OFF → the
+    // imperative UPDATE (current behavior — status→in_progress, completed_at=null, version+1; the
+    // SAME `now` the relearn event carries) + a write-time fold==row parity assert (applicability-
+    // gated on hasLearningItemGenesisAnchor).
+    if (projectionIsWriter('learning_item')) {
+      await projectLearningItemGuarded(tx, learningItemId);
+    } else {
+      const updated = await tx
+        .update(learning_item)
+        .set({
+          status: 'in_progress',
+          completed_at: null,
+          updated_at: now,
+          version: item.version + 1,
+        })
+        .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
+        .returning({ id: learning_item.id });
+      if (updated.length !== 1) {
+        throw new ApiError(
+          'conflict',
+          `learning_item ${learningItemId} concurrently modified`,
+          409,
+        );
+      }
+      if (await hasLearningItemGenesisAnchor(tx, learningItemId)) {
+        const [written] = await tx
+          .select()
+          .from(learning_item)
+          .where(eq(learning_item.id, learningItemId))
+          .limit(1);
+        await assertLearningItemParity(
+          tx,
+          learningItemId,
+          written ? learningItemLiveRowToSnapshot(written) : null,
+        );
+      }
+    }
   });
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
