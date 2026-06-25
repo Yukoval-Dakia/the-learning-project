@@ -304,7 +304,7 @@ export function buildMemoryEventIngestHandler(
   const loadEvent = deps.loadEvent ?? defaultLoadEvent;
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
-    memoryClient ??= createMemoryClient();
+    memoryClient ??= createMemoryClient({ costTracking: { db } });
     const client = memoryClient;
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
@@ -381,7 +381,7 @@ export function buildMemoryBriefRegenHandler(
           // instead throws later inside generateBrief, caught by the F-1
           // per-scope catch → logged skip. Neither path storms the job.
           try {
-            memoryClient ??= createMemoryClient();
+            memoryClient ??= createMemoryClient({ costTracking: { db } });
             // P3 (YUK-351): read through the searchMemories wrapper so the brief
             // never fixes already-superseded facts into its long-term summary
             // (brief.ts:195 design note). Filters soft-superseded + recency-reranks.
@@ -504,7 +504,7 @@ export function buildMemoryReconcileHandler(
         let client = memoryClient;
         if (!client) {
           try {
-            client = createMemoryClient();
+            client = createMemoryClient({ costTracking: { db } });
             memoryClient = client;
           } catch (err) {
             console.warn(
