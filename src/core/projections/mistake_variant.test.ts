@@ -304,6 +304,49 @@ describe('foldMistakeVariant — E4 dismiss / E5 retract', () => {
     ]);
     expect(row?.status).toBe('dismissed');
   });
+
+  // ── BLOCKER boundary (review fix) — retract is a NO-OP on a terminal (broken|dismissed) row ──
+  //
+  // The imperative writer (actions.ts retractAiProposal) guards BOTH its SELECT and its UPDATE
+  // WHERE on `inArray(status, ['draft','active'])`, so a broken / dismissed row is NEVER touched
+  // by retract. retractAiProposal only requireProposal (not assertPending), so a retract `correct`
+  // event CAN be written after a verify-FAIL or a dismiss — the fold sees it and MUST mirror the
+  // imperative no-op (status-guard), else fold != row. (foldGoal has the same guard, goal.ts:208.)
+  it('retract is a NO-OP on a BROKEN row (verify-FAIL then retract → status stays broken)', () => {
+    const snap = mvSnapshot({ status: 'draft', proposal_event_id: 'evt_propose' });
+    const row = foldMistakeVariant('mv_1', [
+      create({ created_at: at(0), row: snap }),
+      rateAccept({
+        created_at: at(1000),
+        proposalId: 'evt_propose',
+        materializedQuestionId: 'q_variant',
+      }),
+      verify({
+        created_at: at(2000),
+        proposalId: 'evt_propose',
+        variantQuestionId: 'q_variant',
+        verdict: 'fail',
+        failureReasons: ['off-target'],
+      }),
+      correctRetract({ created_at: at(3000), proposalId: 'evt_propose' }),
+    ]);
+    // imperative retract excludes broken → live row stays broken at the verify-FAIL timestamp.
+    expect(row?.status).toBe('broken');
+    expect(row?.failure_reasons).toEqual(['off-target']);
+    expect(row?.updated_at.getTime()).toBe(at(2000).getTime()); // NOT bumped to the retract time
+  });
+
+  it('retract is a NO-OP on a DISMISSED row (dismiss then retract → updated_at unchanged)', () => {
+    const snap = mvSnapshot({ status: 'draft', proposal_event_id: 'evt_propose' });
+    const row = foldMistakeVariant('mv_1', [
+      create({ created_at: at(0), row: snap }),
+      rateDismiss({ created_at: at(1000), proposalId: 'evt_propose' }),
+      correctRetract({ created_at: at(2000), proposalId: 'evt_propose' }),
+    ]);
+    // imperative retract excludes dismissed → live row keeps the dismiss-time updated_at.
+    expect(row?.status).toBe('dismissed');
+    expect(row?.updated_at.getTime()).toBe(at(1000).getTime()); // NOT overwritten by the retract
+  });
 });
 
 describe('foldMistakeVariant — isolation', () => {

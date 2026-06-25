@@ -303,6 +303,11 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       outcome: 'success',
       payload: { row: baseRow },
       caused_by_event_id: proposalId,
+      // Stamp the event with `now` (the SAME timestamp baseRow.created_at/updated_at carry) so the
+      // create event's created_at == the row's timestamps. Today parity-safe regardless (the fold
+      // reads timestamps from payload.row, not the event), but aligning the sibling runtime seam +
+      // hardening against a future fold that reads the event created_at. (review NIT.)
+      created_at: now,
       ingest_at: now,
     });
     // 2. ALWAYS write the materialized_id_index anchor (mvId → the create event) regardless of the
