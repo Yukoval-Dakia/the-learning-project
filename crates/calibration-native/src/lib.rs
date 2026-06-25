@@ -458,3 +458,80 @@ pub fn poly_exp_batch(xs: Vec<f64>) -> Vec<f64> {
 pub fn poly_sigmoid_batch(xs: Vec<f64>) -> Vec<f64> {
     xs.into_iter().map(poly_sigmoid_scalar).collect()
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-495 Phase 1 (#125 rider) — one-KC cold-start θ̂ grid solver.
+// BIT-EXACT port of src/core/coldstart-solver.ts. Same GRID (-4 + i·step), the SHARED
+// poly_sigmoid likelihood (NOT a libm exp), the same left-fold accumulation order, no FMA.
+// One KC → no cross-KC coupling → sequential-Bayes grid fold (the determinism-clean core
+// of #125; the coupled message-passing sweep layers on top in Phase 3).
+// ─────────────────────────────────────────────────────────────────────────────
+const GRID_MIN: f64 = -4.0;
+const GRID_MAX: f64 = 4.0;
+const GRID_POINTS: usize = 41;
+
+#[napi(object)]
+pub struct OneKcSolution {
+    pub theta_hat: f64,
+    pub se: f64,
+    pub evidence: u32,
+}
+
+#[inline]
+fn poly_binary_likelihood(offset: f64, b_prime: f64, outcome: f64) -> f64 {
+    let p = poly_sigmoid_scalar(offset - b_prime);
+    if outcome == 1.0 {
+        p
+    } else {
+        1.0 - p
+    }
+}
+
+/// One-KC cold-start θ̂ from a locked difficulty anchor b' + binary answers, by
+/// sequential-Bayes grid folding on the shared poly σ. Bit-parity target for
+/// src/core/coldstart-solver.ts `solveThetaOneKc` (Object.is). `answers` are f64 (0.0/1.0),
+/// mirroring forwardAuc's labels — avoids N-API ToUint32 coercion of non-binary inputs.
+#[napi]
+pub fn solve_theta_one_kc(b_prime: f64, answers: Vec<f64>) -> OneKcSolution {
+    // GRID_STEP / GRID_THETA[i] built the SAME way as theta-grid.ts: -4 + i·((8)/(40)).
+    let grid_step = (GRID_MAX - GRID_MIN) / ((GRID_POINTS - 1) as f64);
+    let grid_theta: Vec<f64> = (0..GRID_POINTS)
+        .map(|i| GRID_MIN + (i as f64) * grid_step)
+        .collect();
+
+    let mass = 1.0 / (GRID_POINTS as f64);
+    let mut probs: Vec<f64> = vec![mass; GRID_POINTS];
+
+    for &outcome in &answers {
+        let mut unnorm: Vec<f64> = vec![0.0; GRID_POINTS];
+        let mut total = 0.0_f64;
+        for i in 0..GRID_POINTS {
+            let m = probs[i] * poly_binary_likelihood(grid_theta[i], b_prime, outcome);
+            unnorm[i] = m;
+            total = total + m; // left fold i=0..40, no reorder, no FMA
+        }
+        if !(total > 0.0) {
+            // degenerate (underflow over the whole grid): keep prior shape, still count.
+            continue;
+        }
+        for i in 0..GRID_POINTS {
+            unnorm[i] = unnorm[i] / total;
+        }
+        probs = unnorm;
+    }
+
+    let mut mean = 0.0_f64;
+    for i in 0..GRID_POINTS {
+        mean = mean + probs[i] * grid_theta[i];
+    }
+    let mut var_acc = 0.0_f64;
+    for i in 0..GRID_POINTS {
+        let d = grid_theta[i] - mean;
+        var_acc = var_acc + probs[i] * (d * d);
+    }
+    OneKcSolution {
+        theta_hat: mean,
+        se: var_acc.sqrt(),
+        evidence: answers.len() as u32,
+    }
+}
