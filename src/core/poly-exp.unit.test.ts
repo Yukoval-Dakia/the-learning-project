@@ -100,4 +100,20 @@ describe('poly-exp — shared fixed-polynomial exp/σ (YUK-495 Phase 0)', () => 
     expect(polyExp(-800)).toBe(0);
     expect(Number.isNaN(polyExp(Number.NaN))).toBe(true);
   });
+
+  it('no sign-flip garbage anywhere: polyExp ≥ 0 and never NaN/−Inf for real x', () => {
+    // Regression for the −745 guard bug (review finding): pow2i can only build NORMAL
+    // exponents, so an over-loose lower guard let x ≈ −709 produce sign-flipped garbage.
+    // The −708 symmetric guard must keep polyExp non-negative and finite (or +Inf) everywhere.
+    for (let x = -800; x <= 800; x += 0.13) {
+      const y = polyExp(x);
+      expect(y).toBeGreaterThanOrEqual(0); // never negative
+      expect(Number.isNaN(y)).toBe(false);
+      expect(y === Number.NEGATIVE_INFINITY).toBe(false);
+    }
+    // boundary: −708 still in the normal-exponent window (small positive), −709 saturates to 0.
+    expect(polyExp(-708)).toBeGreaterThan(0);
+    expect(polyExp(-708)).toBeLessThan(1e-300);
+    expect(polyExp(-709)).toBe(0);
+  });
 });

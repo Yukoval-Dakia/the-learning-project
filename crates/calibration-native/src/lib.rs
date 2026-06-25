@@ -407,10 +407,13 @@ fn poly_exp_scalar(x: f64) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
+    // Symmetric ±708 saturation. Lower guard MUST be -708 (not -745): pow2i builds only
+    // NORMAL exponents (k >= -1022); for x <~ -709, k leaves that window and pow2i yields
+    // sign-flipped garbage (cannot synthesise sub-normals). Mirror of poly-exp.ts.
     if x > 708.0 {
         return f64::INFINITY;
     }
-    if x < -745.0 {
+    if x < -708.0 {
         return 0.0;
     }
     // k = round-half-up(x·log2e) via floor (identical to JS Math.floor; round() would

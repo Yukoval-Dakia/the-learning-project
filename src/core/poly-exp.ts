@@ -98,10 +98,14 @@ function pow2i(k: number): number {
  */
 export function polyExp(x: number): number {
   if (Number.isNaN(x)) return Number.NaN;
-  // Saturate the tails (outside the θ̂/p(L) range these feed σ→{0,1} anyway; this also
-  // keeps k inside the exact-pow2i exponent window). 708.0 ≈ ln(f64::MAX).
+  // Saturate the tails SYMMETRICALLY at ±708 (outside the θ̂/p(L) range these feed
+  // σ→{0,1} anyway). The lower guard MUST be −708, not −745: `pow2i` builds only NORMAL
+  // exponents (k ≥ −1022); for x ≲ −709, k drops below that window and pow2i produces
+  // sign-flipped garbage (it cannot synthesise sub-normals). −708 keeps k inside the
+  // exact-pow2i window on both sides. 708.0 ≈ ln(f64::MAX); below −708 exp(x) would be
+  // sub-normal/0 → saturate to 0. (Bit-identical to the Rust guard.)
   if (x > 708.0) return Number.POSITIVE_INFINITY;
-  if (x < -745.0) return 0.0;
+  if (x < -708.0) return 0.0;
 
   // Range reduction: x = k·ln2 + r, |r| ≤ ln2/2.  k = round-half-up(x·log2(e)).
   const k = Math.floor(x * LOG2E + 0.5);

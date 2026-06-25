@@ -50,6 +50,8 @@ function buildGrid(): number[] {
   }
   // exact anchors + signed zero + sub-normal-ish + tails + non-finite.
   xs.push(0, -0, 1, -1, 0.5, -0.5, 1e-300, -1e-300, 708, -745, 709, -746);
+  // negative-tail guard region (review finding): both sides must saturate identically.
+  xs.push(-700, -707.9, -708, -708.5, -709, -710, -720, 707.9, 708.1);
   xs.push(Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY);
   // realistic pLearnedBand inputs: pointLogit ± thetaSe for representative (β, succ, fail, se).
   const PFA_GAMMA = 0.4;

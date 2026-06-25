@@ -52,6 +52,10 @@ The deepest determinism risk: σ(x)=1/(1+exp(-x)) (theta.ts `logistic`, pfa.ts `
 
 Identical coefficients + identical Horner order + **no FMA** (`f64::mul_add` banned) + floor-based range reduction (`floor(x·LOG2E+0.5)` — `round` disagrees at ties) + Cody–Waite 2-part ln2 + 2^k via exponent bits + constants from `from_bits` (no decimal ambiguity). The 1000s of grid points passing `Object.is` is the empirical guarantee these hold (incl. that Rust did not auto-contract to FMA under `lto=true`).
 
+## Adversarial review (independent opus, 2026-06-25)
+
+Verdict **SHIP-WITH-NITS**; could NOT break bit-parity across **8.2M+ `Object.is` comparisons** (floor-tie windows at every k·ln2, saturation boundaries, denormal exponents, exact powers, ±0/±Inf/NaN/MIN/MAX, 2M-point seeded sweep) — **zero divergences**. FMA absence confirmed by **aarch64 disassembly** (17 `fmul`+17 `fadd`, zero `fmadd`) + Rust's no-contract default; `pow2i` construction parity confirmed over k∈[−1100,1100]. **One real finding fixed**: the original `−745` lower guard was too loose — `pow2i` builds only NORMAL exponents, so `polyExp(x)` for x ≲ −709 returned sign-flipped garbage (bit-identical both sides, so parity held; dormant — no live callers, σ-wrapper safe). Fixed to a symmetric **−708** guard + a no-sign-flip regression test; the "keeps k inside the exact-pow2i window" comment is now true on both sides.
+
 ## Gate (this spike)
 
 cargo build (release) ✓ · biome (3 new TS files) clean ✓ · full `pnpm typecheck` ✓ · `poly-exp.unit.test.ts` 5/5 ✓ · `poly-exp-parity.unit.test.ts` 3/3 ✓ · native-parity regression 12/12 (unchanged) ✓ · `audit:partition` no P0 (2 pre-existing P1 WARNs unrelated) ✓. The `.node` is opt-in/dev-CI-only (gitignored); the poly TS module is the always-on path.
