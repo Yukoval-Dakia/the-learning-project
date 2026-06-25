@@ -24,6 +24,7 @@ import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { StateSnapshotExperimentalT } from '@/core/schema/event/state-snapshot';
 import { event, knowledge, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
+import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -271,7 +272,21 @@ describe('orchestrateCascadeRevert', () => {
 
     // HIGH-2: the live knowledge_edge ROW is actually ARCHIVED (not just a
     // `correct` event) — without the imperative undo this row stays active.
-    expect(await readEdgeArchivedAt(edgeId)).not.toBeNull();
+    const liveArchivedAt = await readEdgeArchivedAt(edgeId);
+    expect(liveArchivedAt).not.toBeNull();
+    expect(liveArchivedAt).not.toBeUndefined();
+
+    // HIGH (fold parity): re-folding the edge from its event log must ALSO produce
+    // archived — proving the fold-visible generate(edge_op='archive') was written.
+    // Without it, the still-present generate(create) re-folds to a LIVE row and a
+    // projection rebuild would RESURRECT the edge. This assertion FAILS on an
+    // imperative-only undo and PASSES once the archive event is written.
+    const folded = await gatherAndFoldKnowledgeEdge(db, edgeId);
+    expect(folded).not.toBeNull();
+    expect(folded?.archived_at).not.toBeNull();
+    // The folded archived_at == the imperative archived_at (same tx-wide `now`, no
+    // ms drift) — the NIT "now not threaded into archiveKnowledgeEdge" guard.
+    expect(folded?.archived_at?.getTime()).toBe((liveArchivedAt as Date).getTime());
 
     // Every reverted node gets a `correct` compensation event.
     expect(await countCorrectionsFor(reply)).toBe(1);
@@ -320,22 +335,34 @@ describe('orchestrateCascadeRevert', () => {
     expect(await readTheta(kcId)).toBe(Math.fround(0.5));
   });
 
-  // ── revert an ARCHIVE generate → un-archive the edge ────────────────────────
-  it('reverts an archive-generate by RE-ACTIVATING the edge (un-archive)', async () => {
+  // ── fail-closed: reverting an ARCHIVE generate has no clean fold-visible inverse
+  it('refuses (irreversible) on reverting a generate(edge_op=archive); no silent un-archive', async () => {
     const db = testDb();
     const checkpoint = await seedEvent({ action: 'experimental:copilot_user_ask' });
-    const { edgeId } = await seedLiveEdgeWithGenerate({
+    const { edgeId, generateEventId } = await seedLiveEdgeWithGenerate({
       checkpointEventId: checkpoint,
       archived: true, // the generate ARCHIVED this edge
     });
-    expect(await readEdgeArchivedAt(edgeId)).not.toBeNull();
+    const archivedBefore = await readEdgeArchivedAt(edgeId);
+    expect(archivedBefore).not.toBeNull();
 
     const result = await orchestrateCascadeRevert(db, checkpoint);
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected ok');
-    expect(result.reverted.structuralRowsArchived).toBe(1);
-    // Reverting the archive re-activates the edge.
-    expect(await readEdgeArchivedAt(edgeId)).toBeNull();
+
+    // Reverting an archive would have to RE-ACTIVATE the edge, but the edge fold has
+    // no fold-visible event that restores a live row without rewriting its create
+    // metadata → fail-closed rather than ship an undo a rebuild silently re-archives.
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected refusal');
+    if (result.refusal !== 'irreversible')
+      throw new Error(`expected irreversible, got ${result.refusal}`);
+    expect(result.irreversibleEventIds).toContain(generateEventId);
+
+    // Atomicity: the edge is untouched (still archived at its original time), no
+    // compensation written.
+    expect(((await readEdgeArchivedAt(edgeId)) as Date)?.getTime()).toBe(
+      (archivedBefore as Date).getTime(),
+    );
+    expect(await countCorrectionsFor(generateEventId)).toBe(0);
   });
 
   // ── fail-closed: a structural shape with no clean inverse (extract) ──────────
