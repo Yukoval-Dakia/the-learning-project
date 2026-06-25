@@ -231,6 +231,97 @@ describe('parseEvent — experimental:genesis goal routing + coherence (W2)', ()
   });
 });
 
+// ====================================================================
+// YUK-471 Wave 2 — mistake_variant genesis parse-barrier tests (critic B5 honest-reject).
+//
+// Genesis is the BACKFILL base event for pre-W2 mistake_variant rows (runtime creation uses the
+// dedicated experimental:mistake_variant_create event, critic A4). A malformed genesis payload for
+// subject_kind='mistake_variant' must be REJECTED at parseEvent, NOT fall through to the generic
+// ExperimentalEvent: wrong row shape, subject_id != row.id, the .strict() extra-field case, and the
+// discriminating-column (parent_question_id) guard that stops a sibling-entity row false-passing.
+// ====================================================================
+
+// A well-formed MistakeVariantRowSnapshot (dates as ISO strings — z.coerce.date() accepts them).
+function mistakeVariantRow(id = 'mv_1') {
+  return {
+    id,
+    parent_question_id: 'q_parent',
+    variant_question_id: null,
+    proposal_event_id: 'evt_propose',
+    status: 'draft' as const,
+    failure_reasons: [],
+    cause_category: 'concept_confusion',
+    created_at: '2026-06-25T00:00:00.000Z',
+    updated_at: '2026-06-25T00:00:00.000Z',
+  };
+}
+
+describe('parseEvent — experimental:genesis mistake_variant routing + coherence (W2)', () => {
+  it('ACCEPTS a well-formed genesis for a mistake_variant row (carries cause_category)', () => {
+    const parsed = parseEvent(
+      genesisEnvelope({
+        subject_kind: 'mistake_variant',
+        subject_id: 'mv_1',
+        payload: { row: mistakeVariantRow('mv_1') },
+      }),
+    );
+    expect((parsed as { subject_kind: string }).subject_kind).toBe('mistake_variant');
+    expect((parsed as { subject_id: string }).subject_id).toBe('mv_1');
+  });
+
+  it('REJECTS a mistake_variant genesis whose payload.row is a GOAL row (wrong shape, superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'mistake_variant',
+          subject_id: 'goal_1',
+          payload: { row: goalRow('goal_1') },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a mistake_variant genesis where subject_id !== payload.row.id (superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'mistake_variant',
+          subject_id: 'mv_mismatch',
+          payload: { row: mistakeVariantRow('mv_1') },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a mistake_variant genesis with an EXTRA unknown field (.strict(), critic B3)', () => {
+    const badRow = mistakeVariantRow('mv_1') as Record<string, unknown>;
+    badRow.bogus_extra = 'nope';
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'mistake_variant',
+          subject_id: 'mv_1',
+          payload: { row: badRow },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a mistake_variant genesis MISSING the discriminating column parent_question_id', () => {
+    const badRow = mistakeVariantRow('mv_1') as Record<string, unknown>;
+    badRow.parent_question_id = undefined;
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'mistake_variant',
+          subject_id: 'mv_1',
+          payload: { row: badRow },
+        }),
+      ),
+    ).toThrow();
+  });
+});
+
 describe('parseEvent — RateEvent.materialized_ids optionality', () => {
   function rateEnvelope(over: Record<string, unknown> = {}): Record<string, unknown> {
     return {
