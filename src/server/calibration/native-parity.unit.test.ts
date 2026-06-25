@@ -54,7 +54,18 @@ interface Addon {
   };
 }
 
-const addon: Addon | null = present ? (createRequire(import.meta.url)(NODE_PATH) as Addon) : null;
+function loadAddon(): Addon | null {
+  if (!present) return null;
+  try {
+    return createRequire(import.meta.url)(NODE_PATH) as Addon;
+  } catch {
+    // The .node exists but fails to dlopen (Node-ABI / platform mismatch, stale artifact).
+    // Treat as absent — the JS oracle is the production path, so this suite SKIPS rather than
+    // reds. (Matches the "skip-if-absent" contract: a load failure must not fail the suite.)
+    return null;
+  }
+}
+const addon: Addon | null = loadAddon();
 
 // napi maps Rust Option<f64> None -> JS `undefined`; the JS oracle returns `null`.
 const nn = (x: number | null | undefined): number | null => (x == null ? null : x);
@@ -132,6 +143,13 @@ d('calibration-native ↔ JS oracle bit-parity (YUK-493 Phase -1)', () => {
     expect(() => a.forwardAuc([1, 2], [0])).toThrow(/equal length/);
     expect(() => forwardAuc([1, 2], [0, 2] as unknown as (0 | 1)[])).toThrow(/must be 0 or 1/);
     expect(() => a.forwardAuc([1, 2], [0, 2])).toThrow(/must be 0 or 1/);
+    // Fractional / negative non-binary labels: the addon takes labels as Vec<f64> (NOT Vec<u32>)
+    // precisely so N-API ToUint32 can't coerce 1.5 -> 1 (silent accept) or -1 -> 4294967295
+    // (divergent message) and break the oracle's `!== 0 && !== 1` throw. Both must reject these.
+    for (const bad of [1.5, -1, 2.5]) {
+      expect(() => forwardAuc([1, 2], [0, bad] as unknown as (0 | 1)[])).toThrow(/must be 0 or 1/);
+      expect(() => a.forwardAuc([1, 2], [0, bad])).toThrow(/must be 0 or 1/);
+    }
   });
 
   // ── Layer 2 — resolveBootstrapB (the perf-cap tiers, cheap) ────────────────

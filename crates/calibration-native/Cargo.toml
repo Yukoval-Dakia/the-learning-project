@@ -15,5 +15,8 @@ napi-derive = "3"
 [build-dependencies]
 napi-build = "2"
 
+# Standalone crate (no workspace root) — this [profile.release] IS honored today.
+# NOTE: if a workspace root Cargo.toml is ever added, Cargo ignores member-crate [profile]
+# tables, so move this `lto = true` to the workspace root manifest to keep it in effect.
 [profile.release]
 lto = true
