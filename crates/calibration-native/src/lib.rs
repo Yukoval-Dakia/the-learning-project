@@ -364,3 +364,94 @@ pub fn delta_auc_cluster_bootstrap(
         excludes_zero,
     })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-495 Phase 0 (decision ②) — shared fixed-polynomial exp / σ.
+// BIT-EXACT port of src/core/poly-exp.ts. Every constant, the Horner order, the
+// floor-based range reduction, the Cody–Waite 2-part ln2, and the exponent-bit 2^k
+// are copied verbatim from the TS oracle so polyExp/polySigmoid are Object.is-equal
+// across V8 and this addon (verified by native-parity.unit.test.ts). NO mul_add:
+// `p * r + c` must round twice exactly as V8 does — f64::mul_add would round once
+// and break parity.
+// ─────────────────────────────────────────────────────────────────────────────
+// Built from exact IEEE-754 bit patterns — byte-identical to the TS `f64FromBits(...)`
+// oracle, no decimal-parse ambiguity. LOG2E === Math.LOG2E === std LOG2_E.
+const LOG2E: f64 = std::f64::consts::LOG2_E; // 0x3FF71547652B82FE
+const LN2_HI: f64 = f64::from_bits(0x3FE6_2E42_FEE0_0000); // low mantissa zeroed → k·LN2_HI exact
+const LN2_LO: f64 = f64::from_bits(0x3DEA_39EF_3579_3C76);
+
+// Taylor 1/n! coefficients (exact rationals → identical to the TS literals).
+const C2: f64 = 1.0 / 2.0;
+const C3: f64 = 1.0 / 6.0;
+const C4: f64 = 1.0 / 24.0;
+const C5: f64 = 1.0 / 120.0;
+const C6: f64 = 1.0 / 720.0;
+const C7: f64 = 1.0 / 5040.0;
+const C8: f64 = 1.0 / 40320.0;
+const C9: f64 = 1.0 / 362880.0;
+const C10: f64 = 1.0 / 3628800.0;
+const C11: f64 = 1.0 / 39916800.0;
+const C12: f64 = 1.0 / 479001600.0;
+const C13: f64 = 1.0 / 6227020800.0;
+
+/// 2^k via IEEE-754 exponent bits — exact, mirror of the TS `pow2i` typed-array
+/// construction. k is an exact integer-valued f64 (output of floor); the cast is lossless
+/// in the guarded range (|x| ≤ 708 → |k| ≤ ~1022, inside the normal-exponent window).
+#[inline]
+fn pow2i(k: f64) -> f64 {
+    f64::from_bits((((1023.0 + k) as i64) as u64) << 52)
+}
+
+#[inline]
+fn poly_exp_scalar(x: f64) -> f64 {
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x > 708.0 {
+        return f64::INFINITY;
+    }
+    if x < -745.0 {
+        return 0.0;
+    }
+    // k = round-half-up(x·log2e) via floor (identical to JS Math.floor; round() would
+    // disagree at ties). k stays an f64 so `k * LN2_*` matches the TS float multiply.
+    let k = (x * LOG2E + 0.5).floor();
+    let r = x - k * LN2_HI - k * LN2_LO;
+
+    // Horner, highest degree first, NO FMA.
+    let mut p = C13;
+    p = p * r + C12;
+    p = p * r + C11;
+    p = p * r + C10;
+    p = p * r + C9;
+    p = p * r + C8;
+    p = p * r + C7;
+    p = p * r + C6;
+    p = p * r + C5;
+    p = p * r + C4;
+    p = p * r + C3;
+    p = p * r + C2;
+    p = p * r + 1.0; // r¹/1!
+    p = p * r + 1.0; // r⁰/0!
+
+    p * pow2i(k)
+}
+
+#[inline]
+fn poly_sigmoid_scalar(x: f64) -> f64 {
+    1.0 / (1.0 + poly_exp_scalar(-x))
+}
+
+/// Batch polyExp over `xs` — dev/CI-only differential-test binding for bit-parity
+/// against src/core/poly-exp.ts `polyExp`.
+#[napi]
+pub fn poly_exp_batch(xs: Vec<f64>) -> Vec<f64> {
+    xs.into_iter().map(poly_exp_scalar).collect()
+}
+
+/// Batch polySigmoid over `xs` — bit-parity target for src/core/poly-exp.ts `polySigmoid`
+/// (the decision-② σ the live theta.ts/pfa.ts sigmoid will swap to in Phase 1).
+#[napi]
+pub fn poly_sigmoid_batch(xs: Vec<f64>) -> Vec<f64> {
+    xs.into_iter().map(poly_sigmoid_scalar).collect()
+}
