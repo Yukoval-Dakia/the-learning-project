@@ -138,3 +138,15 @@ export function polyExp(x: number): number {
 export function polySigmoid(x: number): number {
   return 1 / (1 + polyExp(-x));
 }
+
+/**
+ * Dark-ship flag (decision ②, Phase 1 S3) — mirrors `THETA_GRID_ENABLED`'s module-const
+ * pattern. When `false` (default), theta.ts `logistic` / pfa.ts `sigmoid` keep the live
+ * `Math.exp` path → behaviour byte-identical to today (the whole existing suite is the
+ * off-anchor). When flipped `true`, both route through `polySigmoid` so the displayed
+ * θ̂/p(L) become bit-for-bit re-derivable (the #41 recompute badge's premise) — at the cost
+ * of a ≤1-ULP shift (poly-exp.unit.test.ts measures it). The flip is owner-in-loop and must
+ * re-green the value-asserting suites (theta/pfa/replay/personalized-difficulty/
+ * recalibration/placement-profile) — see docs/design/2026-06-25-rust-coldstart-phase0-spike.md.
+ */
+export const POLY_SIGMOID_ENABLED = false;

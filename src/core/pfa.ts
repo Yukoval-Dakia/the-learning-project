@@ -25,9 +25,13 @@
 //   refit 的统计验证**（YUK-361）。owner 裁定：现在就建、hardcode 系数 + flag。
 //   refit 落地前，调本模块的 caller 不该假设这些值是标定真值。
 
-/** Logistic CDF（与 core/theta.ts 的 1PL ICC 同形）。 */
+import { POLY_SIGMOID_ENABLED, polySigmoid } from './poly-exp';
+
+/** Logistic CDF（与 core/theta.ts 的 1PL ICC 同形）。
+ * decision ②（dark-ship，POLY_SIGMOID_ENABLED=false 今日）：flip 后走共享 bit-exact
+ * `polySigmoid`，否则 live `Math.exp`（与今日 byte-identical）。 */
 function sigmoid(x: number): number {
-  return 1 / (1 + Math.exp(-x));
+  return POLY_SIGMOID_ENABLED ? polySigmoid(x) : 1 / (1 + Math.exp(-x));
 }
 
 /**
