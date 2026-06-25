@@ -990,118 +990,131 @@ export async function retractAiProposal(
 ): Promise<RetractAiProposalResult> {
   const proposal = await requireProposal(db, proposalId);
   const correctionEventId = newId();
-  await writeEvent(db, {
-    id: correctionEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'correct',
-    subject_kind: 'event',
-    subject_id: proposalId,
-    outcome: 'success',
-    payload: {
-      correction_kind: 'retract',
-      reason_md: opts.reason_md ?? 'proposal retracted from inbox',
-      affected_refs: opts.affected_refs ?? activityRefsForProposal(proposal),
-    },
-    caused_by_event_id: proposalId,
-    created_at: new Date(),
-  });
 
-  // YUK-17 / ADR-0018 — retracting a variant_question proposal frees the
-  // in-flight slot regardless of where the row was in its lifecycle. We
-  // intentionally accept that this also retracts already-active variants:
-  // the proposal-level retract is an L3 correction and outweighs the
-  // mistake_variant row, mirroring how retracted knowledge proposals also
-  // tombstone their materialized rows.
-  if (proposal.kind === 'variant_question') {
-    await db
-      .update(mistake_variant)
-      .set({ status: 'dismissed', updated_at: new Date() })
-      .where(
-        and(
-          eq(mistake_variant.proposal_event_id, proposalId),
-          inArray(mistake_variant.status, ['draft', 'active']),
-        ),
-      );
-  }
+  // YUK-471 (retract fold/rollback) — SINGLE retract transaction (augment#3 + OCR
+  // relearn-tx). The `correct` event AND every kind-specific reversal below run in ONE
+  // tx, so a throw anywhere (e.g. applyArchive version-mismatch, a parity-assert dev
+  // throw) rolls back the WHOLE retract — never the half-state "correct event committed
+  // but the materialized row not reversed". All reads/writes use `tx`; findExistingRateEvent
+  // (immutable-event read) and undoNoteRefineApplyEvent (its internal tx becomes a nested
+  // savepoint) were widened to Db|Tx to join this tx. The pre-existing kinds
+  // (variant_question / learning_item / goal_scope) are folded in too — strictly safer,
+  // behavior unchanged.
+  await db.transaction(async (tx) => {
+    await writeEvent(tx, {
+      id: correctionEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: opts.reason_md ?? 'proposal retracted from inbox',
+        affected_refs: opts.affected_refs ?? activityRefsForProposal(proposal),
+      },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    });
 
-  // YUK-19 — retracting a learning_item proposal tombstones any materialized
-  // hub + atomic learning_items + paired artifacts. Mirrors the variant_question
-  // policy above: proposal-level retract is an L3 correction and outweighs the
-  // downstream rows. Idempotent: rows that are already archived stay put so a
-  // second retract doesn't bump archived_at / archived_reason.
-  if (proposal.kind === 'learning_item') {
-    const now = new Date();
-    await db
-      .update(learning_item)
-      .set({
-        archived_at: now,
-        archived_reason: 'proposal_retracted',
-        updated_at: now,
-      })
-      .where(and(eq(learning_item.source_ref, proposalId), isNull(learning_item.archived_at)));
-    await db
-      .update(artifact)
-      .set({
-        archived_at: now,
-        updated_at: now,
-      })
-      .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)));
-  }
+    // YUK-17 / ADR-0018 — retracting a variant_question proposal frees the
+    // in-flight slot regardless of where the row was in its lifecycle. We
+    // intentionally accept that this also retracts already-active variants:
+    // the proposal-level retract is an L3 correction and outweighs the
+    // mistake_variant row, mirroring how retracted knowledge proposals also
+    // tombstone their materialized rows.
+    if (proposal.kind === 'variant_question') {
+      await tx
+        .update(mistake_variant)
+        .set({ status: 'dismissed', updated_at: new Date() })
+        .where(
+          and(
+            eq(mistake_variant.proposal_event_id, proposalId),
+            inArray(mistake_variant.status, ['draft', 'active']),
+          ),
+        );
+    }
 
-  // YUK-143 / ADR-0024 — retracting a goal_scope proposal tombstones the
-  // materialized goal to 'dormant' (the goal is the downstream materialization;
-  // proposal-level retract is an L3 correction that outweighs it, mirroring the
-  // variant_question / learning_item policy above). We dormant rather than hard
-  // delete so the evidence chain (goal.source_ref → proposal) stays intact.
-  // Idempotent: a goal already non-active stays put.
-  if (proposal.kind === 'goal_scope' && proposal.target.subject_id) {
-    const now = new Date();
-    await db
-      .update(goal)
-      .set({ status: 'dormant', updated_at: now })
-      .where(and(eq(goal.id, proposal.target.subject_id), eq(goal.status, 'active')));
-  }
+    // YUK-19 — retracting a learning_item proposal tombstones any materialized
+    // hub + atomic learning_items + paired artifacts. Mirrors the variant_question
+    // policy above: proposal-level retract is an L3 correction and outweighs the
+    // downstream rows. Idempotent: rows that are already archived stay put so a
+    // second retract doesn't bump archived_at / archived_reason.
+    if (proposal.kind === 'learning_item') {
+      const now = new Date();
+      await tx
+        .update(learning_item)
+        .set({
+          archived_at: now,
+          archived_reason: 'proposal_retracted',
+          updated_at: now,
+        })
+        .where(and(eq(learning_item.source_ref, proposalId), isNull(learning_item.archived_at)));
+      await tx
+        .update(artifact)
+        .set({
+          archived_at: now,
+          updated_at: now,
+        })
+        .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)));
+    }
 
-  // YUK-471 (retract fold/rollback) — completion retract. An ACCEPTED completion
-  // (acceptCompletionProposal) set the learning_item to status='done', stamped
-  // completed_at, bumped version, and INSERTed an ai_propose completion_evidence row.
-  // Retract reverses that: restore the EXACT pre-accept status + completed_at (pinned on
-  // the rate=accept payload as materialized_prior_status / materialized_prior_completed_at
-  // — completion accepts a pending OR in_progress item, so we restore the true prior one
-  // instead of guessing), then DELETE the evidence row this proposal created (targeted by
-  // learning_item_id + path='ai_propose' + evidence_json.proposal_id === proposalId,
-  // exactly what the accept stamped).
-  //
-  // A still-proposed / dismissed completion never materialized (no rate=accept) → we skip,
-  // leaving only the correct marker. IDEMPOTENCY / L3 trade-off: the version-guarded UPDATE
-  // is keyed on status='done', so a SECOND retract of the SAME proposal is a no-op (the
-  // item is no longer 'done'). It is NOT provenance-checked, so it does not verify the
-  // current 'done' state was produced by THIS accept — a cross-proposal re-accept that
-  // re-completed the item could be clobbered by a late retract. That matches the sibling
-  // L3-retract policy (variant_question / learning_item / goal_scope): a proposal-level
-  // retract is an L3 correction that outweighs the downstream row, with the correct event
-  // as the durable audit trail. (learning_item is NOT event-sourced; no fold==row gate.)
-  if (proposal.kind === 'completion') {
-    const rate = await findExistingRateEvent(db, proposalId);
-    if (rate?.decision === 'accept') {
-      const ratePayload = rate.payload as {
-        materialized_learning_item_id?: unknown;
-        materialized_prior_status?: unknown;
-        materialized_prior_completed_at?: unknown;
-      };
-      const learningItemId = ratePayload.materialized_learning_item_id;
-      if (typeof learningItemId === 'string' && learningItemId.length > 0) {
-        const priorStatus =
-          typeof ratePayload.materialized_prior_status === 'string'
-            ? ratePayload.materialized_prior_status
-            : 'in_progress'; // pre-prior-capture accepts: re-open (safe, actionable).
-        const priorCompletedAt =
-          typeof ratePayload.materialized_prior_completed_at === 'string'
-            ? new Date(ratePayload.materialized_prior_completed_at)
-            : null;
-        const now = new Date();
-        await db.transaction(async (tx) => {
+    // YUK-143 / ADR-0024 — retracting a goal_scope proposal tombstones the
+    // materialized goal to 'dormant' (the goal is the downstream materialization;
+    // proposal-level retract is an L3 correction that outweighs it, mirroring the
+    // variant_question / learning_item policy above). We dormant rather than hard
+    // delete so the evidence chain (goal.source_ref → proposal) stays intact.
+    // Idempotent: a goal already non-active stays put.
+    if (proposal.kind === 'goal_scope' && proposal.target.subject_id) {
+      const now = new Date();
+      await tx
+        .update(goal)
+        .set({ status: 'dormant', updated_at: now })
+        .where(and(eq(goal.id, proposal.target.subject_id), eq(goal.status, 'active')));
+    }
+
+    // YUK-471 (retract fold/rollback) — completion retract. An ACCEPTED completion
+    // (acceptCompletionProposal) set the learning_item to status='done', stamped
+    // completed_at, bumped version, and INSERTed an ai_propose completion_evidence row.
+    // Retract reverses that: restore the EXACT pre-accept status + completed_at (pinned on
+    // the rate=accept payload as materialized_prior_status / materialized_prior_completed_at
+    // — completion accepts a pending OR in_progress item, so we restore the true prior one
+    // instead of guessing), then DELETE the evidence row this proposal created (targeted by
+    // learning_item_id + path='ai_propose' + evidence_json.proposal_id === proposalId,
+    // exactly what the accept stamped). All on the outer retract `tx` — the SELECT-guard +
+    // UPDATE + evidence DELETE + the correct event above are now one atomic unit.
+    //
+    // A still-proposed / dismissed completion never materialized (no rate=accept) → we skip,
+    // leaving only the correct marker. IDEMPOTENCY / L3 trade-off: the version-guarded UPDATE
+    // is keyed on status='done', so a SECOND retract of the SAME proposal is a no-op (the
+    // item is no longer 'done'). It is NOT provenance-checked, so it does not verify the
+    // current 'done' state was produced by THIS accept — a cross-proposal re-accept that
+    // re-completed the item could be clobbered by a late retract. That matches the sibling
+    // L3-retract policy (variant_question / learning_item / goal_scope): a proposal-level
+    // retract is an L3 correction that outweighs the downstream row, with the correct event
+    // as the durable audit trail. (learning_item is NOT event-sourced; no fold==row gate.)
+    if (proposal.kind === 'completion') {
+      const rate = await findExistingRateEvent(tx, proposalId);
+      if (rate?.decision === 'accept') {
+        const ratePayload = rate.payload as {
+          materialized_learning_item_id?: unknown;
+          materialized_prior_status?: unknown;
+          materialized_prior_completed_at?: unknown;
+        };
+        const learningItemId = ratePayload.materialized_learning_item_id;
+        if (typeof learningItemId === 'string' && learningItemId.length > 0) {
+          // pre-prior-capture accepts (no pinned status) re-open to in_progress (safe,
+          // actionable); with prior-capture the true prior (pending|in_progress) is restored.
+          const priorStatus =
+            typeof ratePayload.materialized_prior_status === 'string'
+              ? ratePayload.materialized_prior_status
+              : 'in_progress';
+          const priorCompletedAt =
+            typeof ratePayload.materialized_prior_completed_at === 'string'
+              ? new Date(ratePayload.materialized_prior_completed_at)
+              : null;
+          const now = new Date();
           const item = (
             await tx
               .select({ id: learning_item.id, version: learning_item.version })
@@ -1134,113 +1147,119 @@ export async function retractAiProposal(
                 sql`${completion_evidence.evidence_json} ->> 'proposal_id' = ${proposalId}`,
               ),
             );
-        });
-      }
-    }
-  }
-
-  // YUK-471 (retract fold/rollback) — relearn retract. An ACCEPTED relearn
-  // (acceptRelearnProposal) moved the item to status='in_progress' and cleared
-  // completed_at (it had been done OR resting). Retract restores the EXACT pre-accept
-  // status + completed_at pinned on the rate=accept payload. This is critical: relearn
-  // accepts both `done` (completed_at set) and `resting` (completed_at null), so a naive
-  // "restore to done + completed_at=now" would CORRUPT a `resting` item into `done` with a
-  // fabricated timestamp (and contradict the relearn producer's rollback_plan, which says
-  // keep a resting item resting). Restoring the captured prior state avoids that entirely.
-  //
-  // A non-accepted relearn never moved the item → skip. IDEMPOTENCY / L3 trade-off: same as
-  // completion above — the version-guarded UPDATE keyed on status='in_progress' makes a
-  // second retract of the same proposal a no-op, but is not provenance-checked against a
-  // cross-proposal re-accept (sibling L3-retract policy; correct event is the audit trail).
-  if (proposal.kind === 'relearn') {
-    const rate = await findExistingRateEvent(db, proposalId);
-    if (rate?.decision === 'accept') {
-      const ratePayload = rate.payload as {
-        materialized_learning_item_id?: unknown;
-        materialized_prior_status?: unknown;
-        materialized_prior_completed_at?: unknown;
-      };
-      const learningItemId = ratePayload.materialized_learning_item_id;
-      if (typeof learningItemId === 'string' && learningItemId.length > 0) {
-        // Pre-prior-capture accepts (no pinned status) fall back to 'done' — the dominant
-        // prior case before resting became reachable. With prior-capture, the exact state
-        // (done or resting, with its real completed_at) is restored, so no corruption.
-        const priorStatus =
-          typeof ratePayload.materialized_prior_status === 'string'
-            ? ratePayload.materialized_prior_status
-            : 'done';
-        const priorCompletedAt =
-          typeof ratePayload.materialized_prior_completed_at === 'string'
-            ? new Date(ratePayload.materialized_prior_completed_at)
-            : typeof ratePayload.materialized_prior_status === 'string'
-              ? null // prior state captured AND completed_at was null (e.g. resting)
-              : new Date(); // legacy fallback: prior was 'done' but completed_at unknown
-        const now = new Date();
-        const item = (
-          await db
-            .select({ id: learning_item.id, version: learning_item.version })
-            .from(learning_item)
-            .where(
-              and(eq(learning_item.id, learningItemId), eq(learning_item.status, 'in_progress')),
-            )
-            .limit(1)
-        )[0];
-        if (item) {
-          await db
-            .update(learning_item)
-            .set({
-              status: priorStatus,
-              completed_at: priorCompletedAt,
-              updated_at: now,
-              version: item.version + 1,
-            })
-            .where(
-              and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)),
-            );
         }
       }
     }
-  }
 
-  // YUK-471 (retract fold/rollback) — knowledge_node retract. An ACCEPTED knowledge_node
-  // (acceptProposal → applyProposeNew) minted a NEW knowledge row (version 0) and anchored
-  // it via materialized_id_index + the rate=accept's materialized_ids. Retract soft-deletes
-  // that node. To preserve the project-critical fold(events)==row invariant we do BOTH, in
-  // one tx, mirroring the imperative archive-accept seam:
-  //   (a) append an `experimental:knowledge_archive` event (subject = node id) + its chained
-  //       rate=accept — the node fold's archive branch consumes this pair and sets
-  //       archived_at + version+1; and
-  //   (b) imperatively applyArchive the row with the SAME `now`, so the row's archived_at /
-  //       version match what the fold reproduces (fold(create + archive) == archived row).
-  // The minted node id is read off the rate=accept payload.materialized_ids.knowledge (the
-  // ONLY record of which id propose_new materialized). A still-proposed / dismissed node
-  // never materialized → skip. Idempotent: applyArchive throws on an already-archived node,
-  // so we guard on archived_at IS NULL before synthesizing the archive pair; a second retract
-  // is a no-op (no new events, no version bump). NOTE: knowledge_mutation retract
-  // (reparent/merge/split/archive of PRE-EXISTING nodes) is intentionally NOT auto-reversed
-  // here — a generic parity-preserving inverse for those is not available (the prior parent /
-  // merged_from / archived sibling state was not captured); they keep only the correct marker
-  // (no row reversal, hence no fold==row regression). Tracked as a YUK-471 follow-up.
-  if (proposal.kind === 'knowledge_node') {
-    const rate = await findExistingRateEvent(db, proposalId);
-    if (rate?.decision === 'accept') {
-      const mintedIds = (rate.payload as { materialized_ids?: { knowledge?: unknown } })
-        .materialized_ids?.knowledge;
-      const nodeId =
-        Array.isArray(mintedIds) && typeof mintedIds[0] === 'string' ? mintedIds[0] : null;
-      if (nodeId) {
-        const now = new Date();
-        const node = (
-          await db
-            .select({ id: knowledge.id, version: knowledge.version })
-            .from(knowledge)
-            .where(and(eq(knowledge.id, nodeId), isNull(knowledge.archived_at)))
-            .limit(1)
-        )[0];
-        if (node) {
-          const archiveEventId = createId();
-          const archiveRateId = createId();
-          await db.transaction(async (tx) => {
+    // YUK-471 (retract fold/rollback) — relearn retract. An ACCEPTED relearn
+    // (acceptRelearnProposal) moved the item to status='in_progress' and cleared
+    // completed_at (it had been done OR resting). Retract restores the EXACT pre-accept
+    // status + completed_at pinned on the rate=accept payload. This is critical: relearn
+    // accepts both `done` (completed_at set) and `resting` (completed_at null), so a naive
+    // "restore to done + completed_at=now" would CORRUPT a `resting` item into `done` with a
+    // fabricated timestamp (and contradict the relearn producer's rollback_plan, which says
+    // keep a resting item resting). Restoring the captured prior state avoids that entirely.
+    //
+    // A non-accepted relearn never moved the item → skip. IDEMPOTENCY / L3 trade-off: same as
+    // completion above — the version-guarded UPDATE keyed on status='in_progress' makes a
+    // second retract of the same proposal a no-op, but is not provenance-checked against a
+    // cross-proposal re-accept (sibling L3-retract policy; correct event is the audit trail).
+    if (proposal.kind === 'relearn') {
+      const rate = await findExistingRateEvent(tx, proposalId);
+      if (rate?.decision === 'accept') {
+        const ratePayload = rate.payload as {
+          materialized_learning_item_id?: unknown;
+          materialized_prior_status?: unknown;
+          materialized_prior_completed_at?: unknown;
+        };
+        const learningItemId = ratePayload.materialized_learning_item_id;
+        if (typeof learningItemId === 'string' && learningItemId.length > 0) {
+          const hasPriorStatus = typeof ratePayload.materialized_prior_status === 'string';
+          // Pre-prior-capture accepts (no pinned status) fall back to 'done' — the dominant
+          // prior case before resting became reachable. With prior-capture, the exact state
+          // (done or resting, with its real completed_at) is restored, so no corruption.
+          const priorStatus = hasPriorStatus
+            ? (ratePayload.materialized_prior_status as string)
+            : 'done';
+          // Resolve completed_at explicitly (was a nested ternary — OCR readability nit). The
+          // resting-corruption guard lives here: only fall back to a synthetic `now` for the
+          // LEGACY no-capture path; a captured null (e.g. resting) restores to null.
+          let priorCompletedAt: Date | null;
+          if (typeof ratePayload.materialized_prior_completed_at === 'string') {
+            priorCompletedAt = new Date(ratePayload.materialized_prior_completed_at);
+          } else if (hasPriorStatus) {
+            priorCompletedAt = null; // captured prior, completed_at was NULL (e.g. resting)
+          } else {
+            priorCompletedAt = new Date(); // legacy: prior was 'done', original timestamp lost
+          }
+          const now = new Date();
+          const item = (
+            await tx
+              .select({ id: learning_item.id, version: learning_item.version })
+              .from(learning_item)
+              .where(
+                and(eq(learning_item.id, learningItemId), eq(learning_item.status, 'in_progress')),
+              )
+              .limit(1)
+          )[0];
+          if (item) {
+            await tx
+              .update(learning_item)
+              .set({
+                status: priorStatus,
+                completed_at: priorCompletedAt,
+                updated_at: now,
+                version: item.version + 1,
+              })
+              .where(
+                and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)),
+              );
+          }
+        }
+      }
+    }
+
+    // YUK-471 (retract fold/rollback) — knowledge_node retract. An ACCEPTED knowledge_node
+    // (acceptProposal → applyProposeNew) minted a NEW knowledge row (version 0) and anchored
+    // it via materialized_id_index + the rate=accept's materialized_ids. Retract soft-deletes
+    // that node. To preserve the project-critical fold(events)==row invariant we do BOTH, on
+    // the outer retract `tx`, mirroring the imperative archive-accept seam:
+    //   (a) append an `experimental:knowledge_archive` event (subject = node id) + its chained
+    //       rate=accept — the node fold's archive branch consumes this pair and sets
+    //       archived_at + version+1; and
+    //   (b) imperatively applyArchive the row with the SAME `now`, so the row's archived_at /
+    //       version match what the fold reproduces (fold(create + archive) == archived row).
+    // The minted node id is read off the rate=accept payload.materialized_ids.knowledge (the
+    // ONLY record of which id propose_new materialized). A still-proposed / dismissed node
+    // never materialized → skip. Idempotent: applyArchive throws on an already-archived node,
+    // so we guard on archived_at IS NULL before synthesizing the archive pair; a second retract
+    // is a no-op (no new events, no version bump). Running on the outer tx (no inner
+    // transaction) means a parity-assert throw or applyArchive version-mismatch rolls back the
+    // WHOLE retract including the correct event — no "retracted but not reversed" half-state.
+    // NOTE: knowledge_mutation retract (reparent/merge/split/archive of PRE-EXISTING nodes) is
+    // intentionally NOT auto-reversed here — a generic parity-preserving inverse for those is
+    // not available (the prior parent / merged_from / archived sibling state was not captured);
+    // they keep only the correct marker (no row reversal, hence no fold==row regression).
+    // Tracked as a YUK-471 follow-up.
+    if (proposal.kind === 'knowledge_node') {
+      const rate = await findExistingRateEvent(tx, proposalId);
+      if (rate?.decision === 'accept') {
+        const mintedIds = (rate.payload as { materialized_ids?: { knowledge?: unknown } })
+          .materialized_ids?.knowledge;
+        const nodeId =
+          Array.isArray(mintedIds) && typeof mintedIds[0] === 'string' ? mintedIds[0] : null;
+        if (nodeId) {
+          const now = new Date();
+          const node = (
+            await tx
+              .select({ id: knowledge.id, version: knowledge.version })
+              .from(knowledge)
+              .where(and(eq(knowledge.id, nodeId), isNull(knowledge.archived_at)))
+              .limit(1)
+          )[0];
+          if (node) {
+            const archiveEventId = createId();
+            const archiveRateId = createId();
             // (b) imperative soft-delete (single-owner applyArchive: archived_at + version+1).
             await applyArchive(
               tx,
@@ -1293,43 +1312,44 @@ export async function retractAiProposal(
               nodeId,
               archivedRow ? knowledgeLiveRowToSnapshot(archivedRow) : null,
             );
-          });
+          }
         }
       }
     }
-  }
 
-  // YUK-358 / ADR-0040 决定1 — the undo chain. Retracting a note_update proposal
-  // that was already APPLIED (accepted → acceptNoteUpdateProposal → persistNoteRefineApply
-  // mutated artifact.body_blocks) must reverse that mutation, restoring the prior
-  // body_blocks + version from the reverse payload persistNoteRefineApply stored on
-  // the apply event. This mirrors how variant_question / learning_item / goal_scope
-  // retracts above reverse their materialized downstream rows.
-  //
-  // The accept path records the materialized apply event id on its rate event
-  // (payload.materialized_apply_event_id), so we look it up there. A still-proposed
-  // (never-accepted) or dismissed note_update never applied → no rate-accept → no
-  // apply event id → nothing to reverse, and we skip. undoNoteRefineApplyEvent is
-  // idempotent (already-undone / version_conflict short-circuit) and resyncs the L2
-  // backlink index in the same tx, so it is the exact inverse of the apply.
-  if (proposal.kind === 'note_update') {
-    const rate = await findExistingRateEvent(db, proposalId);
-    const applyEventId =
-      rate?.decision === 'accept'
-        ? (rate.payload as { materialized_apply_event_id?: unknown }).materialized_apply_event_id
-        : undefined;
-    if (typeof applyEventId === 'string' && applyEventId.length > 0) {
-      await undoNoteRefineApplyEvent(db, { applyEventId });
+    // YUK-358 / ADR-0040 决定1 — the undo chain. Retracting a note_update proposal
+    // that was already APPLIED (accepted → acceptNoteUpdateProposal → persistNoteRefineApply
+    // mutated artifact.body_blocks) must reverse that mutation, restoring the prior
+    // body_blocks + version from the reverse payload persistNoteRefineApply stored on
+    // the apply event. This mirrors how variant_question / learning_item / goal_scope
+    // retracts above reverse their materialized downstream rows.
+    //
+    // The accept path records the materialized apply event id on its rate event
+    // (payload.materialized_apply_event_id), so we look it up there. A still-proposed
+    // (never-accepted) or dismissed note_update never applied → no rate-accept → no
+    // apply event id → nothing to reverse, and we skip. undoNoteRefineApplyEvent is
+    // idempotent (already-undone / version_conflict short-circuit) and resyncs the L2
+    // backlink index; passing the outer `tx` makes its internal transaction a nested
+    // SAVEPOINT so the undo joins this single atomic retract.
+    if (proposal.kind === 'note_update') {
+      const rate = await findExistingRateEvent(tx, proposalId);
+      const applyEventId =
+        rate?.decision === 'accept'
+          ? (rate.payload as { materialized_apply_event_id?: unknown }).materialized_apply_event_id
+          : undefined;
+      if (typeof applyEventId === 'string' && applyEventId.length > 0) {
+        await undoNoteRefineApplyEvent(tx, { applyEventId });
+      }
     }
-  }
 
-  // YUK-15 — retract rolls cited records back from `actioned` to `linked`.
-  // We keep them at `linked` rather than `raw` because the same record may
-  // still be evidence for other active proposals (see follow-up B in plan).
-  const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
-  if (recordIds.length > 0) {
-    await rollbackRecordsActioned(db, recordIds);
-  }
+    // YUK-15 — retract rolls cited records back from `actioned` to `linked`.
+    // We keep them at `linked` rather than `raw` because the same record may
+    // still be evidence for other active proposals (see follow-up B in plan).
+    const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
+    if (recordIds.length > 0) {
+      await rollbackRecordsActioned(tx, recordIds);
+    }
+  });
 
   return { kind: 'retracted', correction_event_id: correctionEventId };
 }
