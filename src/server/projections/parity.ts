@@ -34,6 +34,7 @@ import type {
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
+  MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
@@ -42,13 +43,14 @@ import {
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
+  gatherAndFoldMistakeVariant,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
 
 type DbLike = Db | Tx;
 
 /** Which fold the mismatch came from (for the structured warn / thrown message). */
-type ParitySubjectKind = 'knowledge' | 'knowledge_edge' | 'goal';
+type ParitySubjectKind = 'knowledge' | 'knowledge_edge' | 'goal' | 'mistake_variant';
 
 // onParityMismatch — the dev-throws / prod-logs severity switch (see the file header for the
 // full contract). PROD: structured warn + return (never break a live accept). ELSE: throw.
@@ -458,4 +460,166 @@ export async function assertGoalParity(
     folded as Record<string, unknown> | null,
   );
   if (diff.length > 0) onParityMismatch('goal', goalId, diff);
+}
+
+// ── mistake_variant genesis-anchor helpers (YUK-471 Wave 2) ──────────────────────────────────
+//
+// A mistake_variant is EVENT-SOURCED (reproducible by foldMistakeVariant, so its fold-null is a
+// genuine "should not exist" rather than a fold-blind miss) iff it has any of:
+//   1. an `experimental:mistake_variant_create` runtime base event (post-W2 creation), OR
+//   2. an `experimental:genesis` backfill seed (pre-W2 row), OR
+//   3. a `materialized_id_index` row keyed by mvId with subject_kind='mistake_variant' (the
+//      backfill/creation anchor).
+// Both base events have subject_id = mvId (createId()-preallocated, no minting indirection), so the
+// event check is a single subject-keyed scan over the two base actions.
+
+const MISTAKE_VARIANT_ANCHOR_ACTIONS = [
+  'experimental:mistake_variant_create',
+  'experimental:genesis',
+] as const;
+
+/**
+ * Does this `mistake_variant` have a base/genesis anchor — i.e. is it event-sourced (reproducible
+ * by foldMistakeVariant) at all? READ-ONLY. Used by the guarded write-through (a fold-null on a
+ * NON-event-sourced variant must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor.
+ */
+export async function hasMistakeVariantGenesisAnchor(db: DbLike, mvId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'mistake_variant'),
+        eq(event.subject_id, mvId),
+        inArray(event.action, [...MISTAKE_VARIANT_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  if (ev.length > 0) return true;
+  const indexed = await db
+    .select({ id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        eq(materialized_id_index.materialized_id, mvId),
+        eq(materialized_id_index.subject_kind, 'mistake_variant'),
+      ),
+    )
+    .limit(1);
+  return indexed.length > 0;
+}
+
+/**
+ * Batch form of hasMistakeVariantGenesisAnchor — the subset of `mvIds` that ARE event-sourced. One
+ * query per source (events / index). READ-ONLY. Used by the backfill to SKIP variants that already
+ * re-fold from their own log (anchoring an already-event-sourced row with a current-state genesis
+ * snapshot would mask reducer drift — same rationale as goalsWithGenesisAnchor). DOUBLES as the
+ * backfill idempotency pre-scan (a previously-backfilled variant now carries a genesis event, and a
+ * runtime-created variant carries a create event → both skipped).
+ */
+export async function mistakeVariantsWithGenesisAnchor(
+  db: DbLike,
+  mvIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (mvIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'mistake_variant'),
+        inArray(event.subject_id, mvIds),
+        inArray(event.action, [...MISTAKE_VARIANT_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  const idxRows = await db
+    .select({ materialized_id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        inArray(materialized_id_index.materialized_id, mvIds),
+        eq(materialized_id_index.subject_kind, 'mistake_variant'),
+      ),
+    );
+  for (const r of idxRows) out.add(r.materialized_id);
+  return out;
+}
+
+// ── mistake_variant parity assert (YUK-471 Wave 2) ───────────────────────────────────────────
+//
+// The write-time fold==row guard for the mistake_variant imperative sites (creation / accept /
+// verify / dismiss / retract), mirroring assertGoalParity. After an OFF-path imperative write, the
+// site re-selects the row → maps to MistakeVariantRowSnapshot → calls this, which gather→folds the
+// SAME id read-only and deep-compares. dev/test THROW on mismatch, prod warn+return (the shared
+// onParityMismatch switch). This is the "real teeth" that catches a reducer/wiring drift the moment
+// it happens — especially the fold-blind cause_category (the base event must carry it).
+//
+// APPLICABILITY GATE: the CALLER must only invoke this for a mistake_variant that is EVENT-SOURCED
+// (hasMistakeVariantGenesisAnchor) — a pre-event-sourced row folds to null and would FALSE-mismatch
+// its live row. The wired sites always anchor the variant this tx (creation writes the create event
+// + index; accept/verify/dismiss/retract operate on an already-anchored row), so they always assert.
+
+/**
+ * Pick the MistakeVariantRowSnapshot fields from a live `mistake_variant` DB row (NO Zod parse — a
+ * .parse() throw on the hot path could abort a live write in prod, defeating the never-throw
+ * contract). The row has no derived/version columns, so the full row IS the snapshot.
+ */
+export function mistakeVariantLiveRowToSnapshot(row: {
+  id: string;
+  parent_question_id: string;
+  variant_question_id: string | null;
+  proposal_event_id: string | null;
+  status: string;
+  failure_reasons: string[] | null;
+  cause_category: string | null;
+  created_at: Date;
+  updated_at: Date;
+}): MistakeVariantRowSnapshotT {
+  return {
+    id: row.id,
+    parent_question_id: row.parent_question_id,
+    variant_question_id: row.variant_question_id,
+    proposal_event_id: row.proposal_event_id,
+    // status is a free `text` column on the table; narrow to the snapshot enum (the wired writers
+    // only ever set draft|active|broken|dismissed, so the cast holds — a plain field-pick cannot
+    // throw, unlike a Zod .parse() on the hot path).
+    status: row.status as MistakeVariantRowSnapshotT['status'],
+    failure_reasons: row.failure_reasons ?? [],
+    cause_category: row.cause_category,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+/**
+ * Assert the mistake_variant fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test
+ * THROW on mismatch, prod warn+return (file header contract). A null live row that folds to null
+ * passes. The gather is try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated
+ * reducer throw never aborts a live write in prod.
+ *
+ * @param mvId    the mistake_variant id to re-project.
+ * @param liveRow the structural snapshot of the row the imperative path just wrote (or null), in
+ *                MistakeVariantRowSnapshot shape.
+ */
+export async function assertMistakeVariantParity(
+  db: DbLike,
+  mvId: string,
+  liveRow: MistakeVariantRowSnapshotT | null,
+): Promise<void> {
+  let folded: MistakeVariantRowSnapshotT | null;
+  try {
+    folded = await gatherAndFoldMistakeVariant(db, mvId);
+  } catch (err) {
+    onParityMismatch('mistake_variant', mvId, [
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+    ]);
+    return;
+  }
+  const diff = diffSnapshots(
+    liveRow as Record<string, unknown> | null,
+    folded as Record<string, unknown> | null,
+  );
+  if (diff.length > 0) onParityMismatch('mistake_variant', mvId, diff);
 }

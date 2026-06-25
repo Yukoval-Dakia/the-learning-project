@@ -32,6 +32,17 @@ import {
 } from '@/server/ai/provenance';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttemptById, writeEvent } from '@/server/events/queries';
+// YUK-471 W2 — mistake_variant verify (E3) write-through. verify already writes the
+// experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
+// imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on
+// pass). OFF still runs the write-time fold==row parity assert.
+import { projectMistakeVariant } from '@/server/projections/mistake_variant';
+import {
+  assertMistakeVariantParity,
+  hasMistakeVariantGenesisAnchor,
+  mistakeVariantLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface VariantVerifyJobData {
@@ -290,24 +301,13 @@ export async function runVariantVerify(
     confidence: parsed.confidence,
   });
 
-  await db.transaction(async (tx) => {
-    if (parsed.verdict === 'fail') {
-      await tx
-        .update(mistake_variant)
-        .set({
-          status: 'broken',
-          failure_reasons: parsed.failure_reasons,
-          updated_at: now,
-        })
-        .where(eq(mistake_variant.id, mistakeVariantId));
-    } else {
-      // verdict='pass' — touch updated_at only so we can tell verify ran.
-      await tx
-        .update(mistake_variant)
-        .set({ updated_at: now })
-        .where(eq(mistake_variant.id, mistakeVariantId));
-    }
+  // YUK-471 W2 — gate who writes the mistake_variant ROW (read ONCE outside the tx).
+  const flip = projectionIsWriter('mistake_variant');
 
+  await db.transaction(async (tx) => {
+    // The verify event — written BEFORE the row write-through so the fold (when the flag is ON)
+    // sees the chained verify in the same tx and projects broken+failure_reasons (fail) / touch
+    // updated_at (pass). caused_by = the proposal (the chain key the fold routes on, E3).
     await writeEvent(tx, {
       id: verifyEventId,
       session_id: null,
@@ -343,6 +343,47 @@ export async function runVariantVerify(
       cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
       created_at: now,
     });
+
+    // ROW writer — gated on the per-entity flag (critic A1). ON → the projection folds (create base
+    // + accept + this verify) and writes the row; OFF → the imperative UPDATE (current behavior:
+    // fail → broken+failure_reasons, pass → touch updated_at) + the write-time fold==row assert.
+    if (flip) {
+      await projectMistakeVariant(tx, mistakeVariantId);
+    } else {
+      if (parsed.verdict === 'fail') {
+        await tx
+          .update(mistake_variant)
+          .set({
+            status: 'broken',
+            failure_reasons: parsed.failure_reasons,
+            updated_at: now,
+          })
+          .where(eq(mistake_variant.id, mistakeVariantId));
+      } else {
+        // verdict='pass' — touch updated_at only so we can tell verify ran.
+        await tx
+          .update(mistake_variant)
+          .set({ updated_at: now })
+          .where(eq(mistake_variant.id, mistakeVariantId));
+      }
+      // APPLICABILITY GATE (mirror the goal/node asserts): only assert when the variant is
+      // EVENT-SOURCED (has a create-base / genesis / index anchor). A pre-W2 / fixture-seeded row
+      // written by the imperative INSERT without a base event folds to null and would
+      // FALSE-mismatch its live row; the backfill anchors those later. Real variant_gen-created
+      // variants always carry the create base, so the assert always runs for them.
+      if (await hasMistakeVariantGenesisAnchor(tx, mistakeVariantId)) {
+        const [written] = await tx
+          .select()
+          .from(mistake_variant)
+          .where(eq(mistake_variant.id, mistakeVariantId))
+          .limit(1);
+        await assertMistakeVariantParity(
+          tx,
+          mistakeVariantId,
+          written ? mistakeVariantLiveRowToSnapshot(written) : null,
+        );
+      }
+    }
   });
 
   return {
