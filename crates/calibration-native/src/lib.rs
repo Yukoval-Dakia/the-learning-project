@@ -13,7 +13,10 @@
 //!   - FFI passes the SEED (u32), never an rng closure → the whole PRNG stream runs in Rust.
 //!   - forwardAuc accumulates +1.0 / +0.5 in pos-major,neg-minor order (integer-exact).
 //!   - percentile uses two multiplies + one add, NO fused-multiply-add (f64::mul_add banned).
-//!   - labels marshalled as Vec<u32> (a plain JS number[]); Vec<u8> would expect a Buffer.
+//!   - labels marshalled as Vec<f64> (a plain JS number[]) — NOT Vec<u32>: N-API ToUint32 would
+//!     coerce a fractional/negative non-binary label (1.5 -> 1, -1 -> 4294967295) and silently
+//!     diverge from the JS oracle's `!== 0 && !== 1` throw. f64 keeps the reject-non-binary error
+//!     path byte-identical to auc.ts. (Vec<u8> would expect a Buffer.)
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -48,14 +51,22 @@ impl Mulberry32 {
 }
 
 /// First `n` mulberry32 draws for `seed` (each in [0, 1)). Mirrors rng.ts.
+/// dev/CI-only differential-test binding; guards an absurd `n` so a stray caller can't
+/// trigger an unbounded allocation that would crash the host Node process.
 #[napi]
-pub fn mulberry32_draws(seed: u32, n: u32) -> Vec<f64> {
+pub fn mulberry32_draws(seed: u32, n: u32) -> Result<Vec<f64>> {
+    const MAX_DRAWS: u32 = 10_000_000; // far above any parity-test need (<= 1000)
+    if n > MAX_DRAWS {
+        return Err(Error::from_reason(format!(
+            "mulberry32Draws: n ({n}) exceeds the {MAX_DRAWS} guard"
+        )));
+    }
     let mut rng = Mulberry32::new(seed);
     let mut out = Vec::with_capacity(n as usize);
     for _ in 0..n {
         out.push(rng.next_f64());
     }
-    out
+    Ok(out)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +80,7 @@ struct AucInner {
     reason: Option<&'static str>,
 }
 
-fn forward_auc_inner(scores: &[f64], labels: &[u32]) -> std::result::Result<AucInner, String> {
+fn forward_auc_inner(scores: &[f64], labels: &[f64]) -> std::result::Result<AucInner, String> {
     if scores.len() != labels.len() {
         return Err("forwardAuc: scores and labels must have equal length".to_string());
     }
@@ -78,12 +89,14 @@ fn forward_auc_inner(scores: &[f64], labels: &[u32]) -> std::result::Result<AucI
     let mut neg: Vec<f64> = Vec::new();
     for i in 0..n {
         let y = labels[i];
-        if y != 0 && y != 1 {
+        // Mirror auc.ts:52 `y !== 0 && y !== 1` on the raw f64 (no ToUint32 coercion), so a
+        // fractional/negative non-binary label throws byte-identically to the JS oracle.
+        if y != 0.0 && y != 1.0 {
             return Err(format!(
                 "forwardAuc: label at index {i} must be 0 or 1 (got {y})"
             ));
         }
-        if y == 1 {
+        if y == 1.0 {
             pos.push(scores[i]);
         } else {
             neg.push(scores[i]);
@@ -135,7 +148,7 @@ pub struct AucResult {
 }
 
 #[napi]
-pub fn forward_auc(scores: Vec<f64>, labels: Vec<u32>) -> Result<AucResult> {
+pub fn forward_auc(scores: Vec<f64>, labels: Vec<f64>) -> Result<AucResult> {
     match forward_auc_inner(&scores, &labels) {
         Ok(r) => Ok(AucResult {
             auc: r.auc,
@@ -200,7 +213,7 @@ fn percentile(sorted_asc: &[f64], p: f64) -> f64 {
 pub struct ClusterForwardPreds {
     pub scores_srt: Vec<f64>,
     pub scores_binary: Vec<f64>,
-    pub labels: Vec<u32>,
+    pub labels: Vec<f64>,
 }
 
 #[napi(object)]
@@ -216,9 +229,9 @@ pub struct DeltaAucCi {
     pub excludes_zero: bool,
 }
 
-fn pool_scores(clusters: &[ClusterForwardPreds], srt: bool) -> (Vec<f64>, Vec<u32>) {
+fn pool_scores(clusters: &[ClusterForwardPreds], srt: bool) -> (Vec<f64>, Vec<f64>) {
     let mut scores: Vec<f64> = Vec::new();
-    let mut labels: Vec<u32> = Vec::new();
+    let mut labels: Vec<f64> = Vec::new();
     for c in clusters {
         let src = if srt { &c.scores_srt } else { &c.scores_binary };
         for i in 0..src.len() {
@@ -297,7 +310,7 @@ pub fn delta_auc_cluster_bootstrap(
             // Pool the resampled clusters — SAME draw for srt and binary (paired).
             let mut srt_scores: Vec<f64> = Vec::new();
             let mut bin_scores: Vec<f64> = Vec::new();
-            let mut labels: Vec<u32> = Vec::new();
+            let mut labels: Vec<f64> = Vec::new();
             for &ci in &drawn {
                 let c = &clusters[ci];
                 for i in 0..c.labels.len() {
@@ -327,11 +340,12 @@ pub fn delta_auc_cluster_bootstrap(
     };
 
     let (ci_lo, ci_hi) = if usable_b > 0 {
-        let mut sorted = deltas.clone();
-        // deltas are finite by construction (degenerate replicates are skipped above),
-        // so partial_cmp is total and unwrap never panics.
-        sorted.sort_by(|x, y| x.partial_cmp(y).expect("deltas are finite"));
-        (percentile(&sorted, 0.025), percentile(&sorted, 0.975))
+        // deltas are finite by construction (degenerate replicates are skipped above).
+        // total_cmp is a total order (NaN-safe, never panics) and is identical to partial_cmp
+        // for finite values; deltas is not read after this, so sort in place (no clone). The JS
+        // oracle's [...deltas].sort() clone is a JS necessity, not a parity constraint.
+        deltas.sort_by(|x, y| x.total_cmp(y));
+        (percentile(&deltas, 0.025), percentile(&deltas, 0.975))
     } else {
         (f64::NAN, f64::NAN)
     };
