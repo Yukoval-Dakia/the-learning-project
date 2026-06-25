@@ -23,11 +23,13 @@ import type { FoldEvent } from '@/core/projections/fold-event';
 import { foldGoal } from '@/core/projections/goal';
 import { foldKnowledgeNode } from '@/core/projections/knowledge';
 import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
+import { foldLearningItem } from '@/core/projections/learning_item';
 import { foldMistakeVariant } from '@/core/projections/mistake_variant';
 import type {
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
+  LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
@@ -241,6 +243,32 @@ export async function gatherAndFoldMistakeVariant(
 
   const foldEvents = [...byId.values()].map(rowToFoldEvent);
   return foldMistakeVariant(mvId, foldEvents);
+}
+
+/**
+ * Gather the superset of events affecting `itemId` and run the PURE learning_item fold. READ-ONLY.
+ * (YUK-471 Wave 2.)
+ *
+ * The learning_item gather is the SIMPLEST of the W2 trio (design §3④): the recommended route
+ * writes dedicated subject-keyed action events (experimental:learning_item_complete / _relearn /
+ * _archive), so EVERY mutation — and the genesis base — keys on the item id. So it is Q1 ONLY
+ * (subject_kind='learning_item' AND subject_id=itemId): genesis + the W2 complete/relearn/archive
+ * events. NO caused_by chain (the status transitions are fold-visible via Q1, NOT a rate-payload
+ * `materialized_learning_item_id` side-channel reverse-lookup), NO Q2 reverse index (itemId ==
+ * genesis subject_id) and NO Q3 merge-into (each item folds independently — child_learning_item_ids
+ * is excluded, so the hub never depends on child state). Returns the projected row or null. Writes
+ * NOTHING.
+ */
+export async function gatherAndFoldLearningItem(
+  db: DbLike,
+  itemId: string,
+): Promise<LearningItemRowSnapshotT | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.subject_kind, 'learning_item'), eq(event.subject_id, itemId)));
+  const foldEvents = rows.map(rowToFoldEvent);
+  return foldLearningItem(itemId, foldEvents);
 }
 
 /**
