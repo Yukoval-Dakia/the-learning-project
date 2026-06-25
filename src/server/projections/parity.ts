@@ -192,6 +192,91 @@ export async function knowledgeNodesWithGenesisAnchor(
   return out;
 }
 
+// ── goal genesis-anchor helpers (YUK-471 Wave 2) ─────────────────────────────────────────────
+//
+// A goal is EVENT-SOURCED (reproducible by foldGoal, so its fold-null is a genuine "should not
+// exist" rather than a fold-blind miss) iff it has any of:
+//   1. an `experimental:genesis` seed (backfilled pre-W2 / event-less manual goal),
+//   2. an `experimental:proposal` event with subject_kind='goal' subject_id=goalId (the
+//      goal_scope proposal that materialized it — the proposal+accept chain folds it),
+//   3. a W2 goal action event (`experimental:goal_status_update` / `experimental:goal_scope_update`),
+//   4. a `materialized_id_index` row keyed by goalId with subject_kind='goal' (the backfill anchor).
+// All of these have subject_id = goalId (no minting indirection), so the event check is a single
+// subject-keyed scan over the action set.
+
+const GOAL_ANCHOR_ACTIONS = [
+  'experimental:genesis',
+  'experimental:proposal',
+  'experimental:goal_status_update',
+  'experimental:goal_scope_update',
+] as const;
+
+/**
+ * Does this `goal` have a genesis anchor / originating event chain — i.e. is it event-sourced
+ * (reproducible by foldGoal) at all? READ-ONLY. Used by the guarded write-through (a fold-null
+ * on a NON-event-sourced goal must NOT delete the imperative row) — mirrors
+ * hasKnowledgeNodeGenesisAnchor.
+ */
+export async function hasGoalGenesisAnchor(db: DbLike, goalId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'goal'),
+        eq(event.subject_id, goalId),
+        inArray(event.action, [...GOAL_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  if (ev.length > 0) return true;
+  const indexed = await db
+    .select({ id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        eq(materialized_id_index.materialized_id, goalId),
+        eq(materialized_id_index.subject_kind, 'goal'),
+      ),
+    )
+    .limit(1);
+  return indexed.length > 0;
+}
+
+/**
+ * Batch form of hasGoalGenesisAnchor — the subset of `goalIds` that ARE event-sourced. One
+ * query per source (events / index). READ-ONLY. Used by the backfill to SKIP goals that already
+ * re-fold from their own log (anchoring them with a current-state genesis snapshot would mask
+ * reducer drift — same rationale as knowledgeNodesWithGenesisAnchor). DOUBLES as the backfill
+ * idempotency pre-scan (a previously-backfilled goal now carries a genesis event → skipped).
+ */
+export async function goalsWithGenesisAnchor(db: DbLike, goalIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (goalIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'goal'),
+        inArray(event.subject_id, goalIds),
+        inArray(event.action, [...GOAL_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  const idxRows = await db
+    .select({ materialized_id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        inArray(materialized_id_index.materialized_id, goalIds),
+        eq(materialized_id_index.subject_kind, 'goal'),
+      ),
+    );
+  for (const r of idxRows) out.add(r.materialized_id);
+  return out;
+}
+
 /**
  * Assert the node fold reproduces the live `knowledge` row passed in. READ-ONLY gather→fold;
  * dev/test THROW on mismatch, prod warn+return (see file header). A null live row that folds
