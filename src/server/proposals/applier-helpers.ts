@@ -6,14 +6,20 @@
 
 import { and, eq } from 'drizzle-orm';
 
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
 
+type DbLike = Db | Tx;
+
 export type ExistingRateDecision = 'accept' | 'dismiss' | 'reverse' | 'change_type' | 'rollback';
 
+// YUK-471 (retract fold/rollback) — accepts Db | Tx so a caller (retractAiProposal) can read
+// the existing rate event INSIDE its single retract transaction (consistent snapshot). It is a
+// pure read of an immutable historical event row, so widening is safe; existing Db callers are
+// unaffected (Db is assignable to DbLike).
 export async function findExistingRateEvent(
-  db: Db,
+  db: DbLike,
   proposalId: string,
 ): Promise<(typeof event.$inferSelect & { decision: ExistingRateDecision }) | null> {
   const existingRows = await db
