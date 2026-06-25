@@ -41,15 +41,17 @@ import { fileURLToPath } from 'node:url';
 import type {
   GoalRowSnapshotT,
   KnowledgeRowSnapshotT,
+  LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { goal, knowledge, knowledge_edge, mistake_variant } from '@/db/schema';
+import { goal, knowledge, knowledge_edge, learning_item, mistake_variant } from '@/db/schema';
 import {
   edgeRowToSnapshot,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldKnowledgeNode,
+  gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
 } from '@/server/projections/gather';
 // SHARED structural deep-diff — the B3 audit MUST use the same equality as the in-tx accept
@@ -120,7 +122,7 @@ export function loadAllowlist(path: string = ALLOWLIST_PATH): ProjectionAllowlis
 // ── Drift representation ──────────────────────────────────────────────────────────────
 export interface DriftRecord {
   id: string;
-  subject_kind: 'knowledge' | 'knowledge_edge' | 'goal' | 'mistake_variant';
+  subject_kind: 'knowledge' | 'knowledge_edge' | 'goal' | 'mistake_variant' | 'learning_item';
   // human-readable field-level differences (column: live → expected).
   diffs: string[];
 }
@@ -131,6 +133,7 @@ export interface AuditResult {
   checkedEdges: number;
   checkedGoals: number;
   checkedMistakeVariants: number;
+  checkedLearningItems: number;
   drift: DriftRecord[]; // non-allowlisted drift (the failures)
   allowed: DriftRecord[]; // drifted ids covered by the allowlist (reported, not failures)
 }
@@ -169,6 +172,74 @@ function mistakeVariantRowToSnapshot(
     cause_category: row.cause_category,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+// ── learning_item structural read (YUK-471 W2) ── the auditor reads ONLY the snapshot columns,
+// EXCLUDING the non-structural / derived columns the fold does not own (child_learning_item_ids /
+// ai_score / due_at / reviewed_at — design §3①). Excluding them from BOTH the SELECT and the
+// snapshot keeps them out of the deep-diff (a row differing only in those columns folds clean).
+const LEARNING_ITEM_STRUCTURAL_COLUMNS = {
+  id: learning_item.id,
+  source: learning_item.source,
+  source_ref: learning_item.source_ref,
+  title: learning_item.title,
+  content: learning_item.content,
+  knowledge_ids: learning_item.knowledge_ids,
+  primary_artifact_id: learning_item.primary_artifact_id,
+  parent_learning_item_id: learning_item.parent_learning_item_id,
+  status: learning_item.status,
+  user_pinned: learning_item.user_pinned,
+  completed_at: learning_item.completed_at,
+  dismissed_at: learning_item.dismissed_at,
+  archived_at: learning_item.archived_at,
+  archived_reason: learning_item.archived_reason,
+  created_at: learning_item.created_at,
+  updated_at: learning_item.updated_at,
+  version: learning_item.version,
+} as const;
+
+type LearningItemStructuralRow = {
+  id: string;
+  source: string;
+  source_ref: string | null;
+  title: string;
+  content: string;
+  knowledge_ids: string[];
+  primary_artifact_id: string | null;
+  parent_learning_item_id: string | null;
+  status: string;
+  user_pinned: boolean;
+  completed_at: Date | null;
+  dismissed_at: Date | null;
+  archived_at: Date | null;
+  archived_reason: string | null;
+  created_at: Date;
+  updated_at: Date;
+  version: number;
+};
+
+// Map a live learning_item row (narrow structural read) to its snapshot so the deep-diff compares
+// like-for-like against the fold output. The excluded columns are dropped from the SELECT too.
+function learningItemRowToSnapshot(row: LearningItemStructuralRow): LearningItemRowSnapshotT {
+  return {
+    id: row.id,
+    source: row.source,
+    source_ref: row.source_ref,
+    title: row.title,
+    content: row.content,
+    knowledge_ids: row.knowledge_ids ?? [],
+    primary_artifact_id: row.primary_artifact_id,
+    parent_learning_item_id: row.parent_learning_item_id,
+    status: row.status,
+    user_pinned: row.user_pinned,
+    completed_at: row.completed_at,
+    dismissed_at: row.dismissed_at,
+    archived_at: row.archived_at,
+    archived_reason: row.archived_reason,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
   };
 }
 
@@ -275,12 +346,32 @@ export async function auditProjection(
     }
   }
 
+  // ── learning_item (YUK-471 W2) ── narrow-column read (excludes child_learning_item_ids / ai_score
+  // / due_at / reviewed_at — design §3①). The per-item gatherAndFoldLearningItem issues a single Q1
+  // (subject-keyed: genesis + the complete/relearn/archive action events; no mesh/reverse-index/
+  // caused_by — itemId == subject_id and each item folds independently). A row that differs from
+  // fold(events) on a snapshot column is DRIFT; a difference only in an excluded column never enters
+  // the diff (those columns are absent from both the SELECT and the snapshot).
+  const learningItems = await db.select(LEARNING_ITEM_STRUCTURAL_COLUMNS).from(learning_item);
+  for (const row of learningItems) {
+    const expected = await gatherAndFoldLearningItem(db, row.id);
+    const diffs = diffSnapshots(
+      learningItemRowToSnapshot(row),
+      expected as Record<string, unknown> | null,
+    );
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'learning_item', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
   return {
     ok: drift.length === 0,
     checkedNodes: nodes.length,
     checkedEdges: edges.length,
     checkedGoals: goals.length,
     checkedMistakeVariants: mistakeVariants.length,
+    checkedLearningItems: learningItems.length,
     drift,
     allowed,
   };
@@ -295,7 +386,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s).`,
+      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s).`,
     );
     if (result.allowed.length > 0) {
       console.log(`\nALLOWED drift (covered by allowlist):  ${result.allowed.length}`);

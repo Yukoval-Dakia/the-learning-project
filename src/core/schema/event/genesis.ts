@@ -151,6 +151,62 @@ export const MistakeVariantRowSnapshot = z
   .strict();
 export type MistakeVariantRowSnapshotT = z.infer<typeof MistakeVariantRowSnapshot>;
 
+// ---------- LearningItemRowSnapshot (YUK-471 Wave 2 — learning_item entity fold) ----------
+//
+// The projected (fold) shape of a `learning_item` row (src/db/schema.ts:304-343). This entity
+// has the MOST EXCLUDED columns of the W2 trio (design §3①). EXCLUDED from the snapshot (no
+// write path / derived state the fold does NOT own):
+//   - child_learning_item_ids — always [], no UPDATE path (the tree is read via
+//     parent_learning_item_id, never the child array); excluded so the fold does not assert it.
+//   - ai_score — no write path (read-only derived placeholder).
+//   - due_at — no write path (FSRS due_at lives on material_fsrs_state, not here).
+//   - reviewed_at — no write path (read path derives it from the event log).
+// RETAINED but PARITY-SKIP at the imperative writers: `user_pinned` is in the snapshot (so a
+// genesis seed carries its current value VERBATIM and fold(genesis)==row holds for a backfilled
+// row) but NO action event drives a later change to it — the fold can only ever reproduce its
+// SEED value, so a runtime toggle would (correctly) read as drift until pin is event-sourced.
+// Keeping it in the snapshot (rather than excluding) means a freshly-created/backfilled row
+// still parity-checks on it; the "skip" is that no W2 event mutates it.
+//
+// `status` is a FREE TEXT column on the table (src/server/learning-items/queries.ts:9 — NOT a
+// pgEnum; values seen: pending / in_progress / done / resting / active). So the snapshot uses
+// `z.string()` (NOT an enum) — a status the fold reproduces from the imperative writers
+// (complete→'done', relearn→'in_progress', the INSERT default 'pending') must never fail to
+// parse. archived/dismissed are NOT statuses — they are timestamp columns (archived_at /
+// dismissed_at), set independently of status.
+//
+// Each learning_item folds INDEPENDENTLY (no cross-tree fold): child_learning_item_ids is
+// excluded, so the hub does not depend on child state; parent_learning_item_id is just a
+// snapshot field that the genesis carries verbatim and no event mutates.
+//
+// `.strict()` (critic B3): the DISCRIMINATING column vs the sibling entities is `content` +
+// `knowledge_ids` (goal has scope_knowledge_ids + sequence_hint, NOT content/knowledge_ids;
+// mistake_variant has parent_question_id). .strict() rejects a wrong/extra-field payload at the
+// genesis parse barrier so a sibling row can never seed a learning_item genesis. Dates are
+// z.coerce.date() (jsonb ISO-string roundtrip — same precedent as the other snapshots).
+export const LearningItemRowSnapshot = z
+  .object({
+    id: z.string().min(1),
+    source: z.string(), // provenance, set-once (learning_intent / ai_dream / …)
+    source_ref: z.string().nullable(), // nullable column (the originating proposal/event id)
+    title: z.string(),
+    content: z.string(), // notNull, default '' at the table — the goal-distinguishing column
+    knowledge_ids: z.array(z.string()), // jsonb string[], default [] — the goal-distinguishing column
+    primary_artifact_id: z.string().nullable(), // nullable pointer (ADR-0027 — not DB-unique)
+    parent_learning_item_id: z.string().nullable(), // nullable self-ref (tree parent; snapshot-only)
+    status: z.string(), // FREE TEXT column (pending|in_progress|done|resting|active) — NOT an enum
+    user_pinned: z.boolean(), // snapshot-RETAINED but no event drives a later change (parity-skip)
+    completed_at: z.coerce.date().nullable(), // nullable timestamp (set by complete, cleared by relearn)
+    dismissed_at: z.coerce.date().nullable(), // nullable timestamp (always null today; retained)
+    archived_at: z.coerce.date().nullable(), // nullable timestamp (set by archive/retract)
+    archived_reason: z.string().nullable(), // nullable column (archive reason)
+    created_at: z.coerce.date(),
+    updated_at: z.coerce.date(),
+    version: z.number().int(),
+  })
+  .strict();
+export type LearningItemRowSnapshotT = z.infer<typeof LearningItemRowSnapshot>;
+
 // ---------- GenesisExperimental ----------
 //
 // Field-level parity with the existing reserved experimental schemas
@@ -192,6 +248,7 @@ const SNAPSHOT_BY_SUBJECT_KIND = {
   knowledge_edge: KnowledgeEdgeRowSnapshot,
   goal: GoalRowSnapshot,
   mistake_variant: MistakeVariantRowSnapshot,
+  learning_item: LearningItemRowSnapshot,
 } as const;
 
 // Columns that MUST be present on a row to discriminate it as the named entity, even after a
@@ -203,6 +260,10 @@ const DISCRIMINATING_COLUMNS: Record<string, readonly string[]> = {
   // mistake_variant is uniquely identified by parent_question_id (no sibling entity carries it),
   // so requiring it closes any residual shape-overlap window (critic B3).
   mistake_variant: ['parent_question_id'],
+  // learning_item shares title/status/source/source_ref/version with goal, so the goal-LACKING
+  // columns `content` + `knowledge_ids` discriminate it (goal has scope_knowledge_ids +
+  // sequence_hint, NOT content/knowledge_ids). Requiring both closes any residual overlap window.
+  learning_item: ['content', 'knowledge_ids'],
 };
 
 export const GenesisExperimental = z
@@ -210,7 +271,13 @@ export const GenesisExperimental = z
     actor_kind: z.literal('system'), // backfill is an internal seed writer
     actor_ref: z.string().min(1), // e.g. 'genesis-backfill'
     action: z.literal('experimental:genesis'),
-    subject_kind: z.enum(['knowledge', 'knowledge_edge', 'goal', 'mistake_variant']),
+    subject_kind: z.enum([
+      'knowledge',
+      'knowledge_edge',
+      'goal',
+      'mistake_variant',
+      'learning_item',
+    ]),
     subject_id: z.string().min(1), // = the projected row id
     outcome: z.literal('success').nullable().optional(),
     payload: z.object({
@@ -223,6 +290,7 @@ export const GenesisExperimental = z
         KnowledgeEdgeRowSnapshot,
         GoalRowSnapshot,
         MistakeVariantRowSnapshot,
+        LearningItemRowSnapshot,
       ]),
     }),
     // baseOptionalFields parity (mirror the other reserved schemas):
