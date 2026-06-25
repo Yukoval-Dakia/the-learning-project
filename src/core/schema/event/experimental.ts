@@ -126,6 +126,12 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // as ground truth, so a malformed seed would corrupt the whole projection;
   // generic fallback must reject it so the typed schema always validates the seed.
   'experimental:genesis',
+  // YUK-471 Wave 2 (goal fold) — goal status/scope action events have dedicated
+  // typed schemas (./goal-events.ts) so a status/scope transition is fold-visible.
+  // The fold trusts these to reproduce version/updated_at; a malformed payload must
+  // be rejected at the barrier, not fall through to the loose generic.
+  'experimental:goal_status_update',
+  'experimental:goal_scope_update',
 ]);
 
 // ====================================================================

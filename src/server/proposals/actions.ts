@@ -70,6 +70,9 @@ import { ApiError } from '@/server/http/errors';
 // the shared edge→snapshot mapper (one definition lives with the edge fold in gather.ts so
 // the assert compares the SAME shape the fold produces).
 import { edgeRowToSnapshot } from '@/server/projections/gather';
+// YUK-471 W2 — goal retract write-through (guarded; projection writes the dormant goal when the
+// per-entity flag is ON).
+import { projectGoalGuarded } from '@/server/projections/goal';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { assertKnowledgeEdgeParity } from '@/server/projections/parity';
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the edge row when ON).
@@ -1040,12 +1043,24 @@ export async function retractAiProposal(
   // variant_question / learning_item policy above). We dormant rather than hard
   // delete so the evidence chain (goal.source_ref → proposal) stays intact.
   // Idempotent: a goal already non-active stays put.
+  //
+  // YUK-471 W2 — the `correct` (retract) event was already appended at the top of this fn
+  // (subject=the proposal, caused_by=proposalId), so the goal fold can now reproduce the dormant
+  // row from its proposal+rate+correct chain. ROW writer gated on the per-entity flag (critic
+  // A1): ON → projectGoalGuarded folds (status→dormant, NO version bump) + writes through; OFF →
+  // the imperative bare UPDATE (current behavior — dormant + updated_at, no version bump). The
+  // reducer mirrors the bare UPDATE exactly (no version bump), so fold==row holds either way.
   if (proposal.kind === 'goal_scope' && proposal.target.subject_id) {
-    const now = new Date();
-    await db
-      .update(goal)
-      .set({ status: 'dormant', updated_at: now })
-      .where(and(eq(goal.id, proposal.target.subject_id), eq(goal.status, 'active')));
+    const goalId = proposal.target.subject_id;
+    if (projectionIsWriter('goal')) {
+      await projectGoalGuarded(db, goalId);
+    } else {
+      const now = new Date();
+      await db
+        .update(goal)
+        .set({ status: 'dormant', updated_at: now })
+        .where(and(eq(goal.id, goalId), eq(goal.status, 'active')));
+    }
   }
 
   // YUK-358 / ADR-0040 决定1 — the undo chain. Retracting a note_update proposal

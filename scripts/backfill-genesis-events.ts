@@ -53,20 +53,29 @@
 import './load-env';
 
 import { newId } from '@/core/ids';
-import type { KnowledgeEdgeRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
+import type {
+  GoalRowSnapshotT,
+  KnowledgeEdgeRowSnapshotT,
+  KnowledgeRowSnapshotT,
+} from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { event, goal, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // The SCOPED backfill skips already-event-sourced NODES — reuse the SAME genesis-anchor check the
 // accept-time parity assert uses (genesis / auto_tag event, or a materialized_id_index anchor), so
-// "event-sourced" means exactly the same thing on both sides.
-import { knowledgeNodesWithGenesisAnchor } from '@/server/projections/parity';
+// "event-sourced" means exactly the same thing on both sides. (YUK-471 W2: goalsWithGenesisAnchor
+// is the goal analog — genesis / proposal / status-scope action event, or a goal index anchor.)
+import {
+  goalsWithGenesisAnchor,
+  knowledgeNodesWithGenesisAnchor,
+} from '@/server/projections/parity';
 import { and, eq, inArray, or } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
+type GoalRow = typeof goal.$inferSelect;
 
 const GENESIS_ACTION = 'experimental:genesis';
 const GENESIS_ACTOR_REF = 'genesis-backfill';
@@ -74,6 +83,7 @@ const GENESIS_ACTOR_REF = 'genesis-backfill';
 export interface BackfillCounts {
   knowledge: { seeded: number; skipped: number };
   knowledge_edge: { seeded: number; skipped: number };
+  goal: { seeded: number; skipped: number };
 }
 
 // knowledgeRowToSnapshot — map a live `knowledge` DB row to KnowledgeRowSnapshotT, EXCLUDING
@@ -239,8 +249,85 @@ export async function backfillKnowledgeEdgeGenesis(
   return { seeded, skipped };
 }
 
+// goalRowToSnapshot — map a live `goal` DB row to GoalRowSnapshotT (the FULL row — goal has no
+// derived/embed columns). Dates stay Date (GenesisExperimental's z.coerce.date() accepts both).
+// scope_knowledge_ids defaults to [] at the column, so it is always a string[] here.
+function goalRowToSnapshot(row: GoalRow): GoalRowSnapshotT {
+  return {
+    id: row.id,
+    title: row.title,
+    subject_id: row.subject_id,
+    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
+    sequence_hint: row.sequence_hint,
+    status: row.status,
+    source: row.source,
+    source_ref: row.source_ref,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
+
 /**
- * Run both backfills in FK order (knowledge first, then knowledge_edge). Returns the counts.
+ * Seed genesis events + index entries for every `goal` row lacking an originating event chain.
+ * (YUK-471 W2.) Same shape as backfillKnowledgeGenesis (outbox opt-out, atomic per-row tx,
+ * idempotent). Returns { seeded, skipped }.
+ *
+ * SCOPED (mirror the W1 node/edge backfill): skip goals already event-sourced — a goal with a
+ * genesis / goal_scope proposal / status-scope action event, or a goal materialized_id_index
+ * anchor (goalsWithGenesisAnchor). A proposal-accepted goal re-folds from its OWN proposal+rate
+ * chain, so anchoring it with a current-state genesis snapshot would MASK reducer drift (the
+ * genesis snapshot sorts last in the fold and overwrites the reducer output) — the exact reason
+ * the design's "absence of genesis" predicate must NOT seed proposal-accepted goals. Only truly
+ * EVENT-LESS goals (the manual at-entry path, goal-create.ts source='manual', which writes NO
+ * event) need a genesis base. The pre-scan DOUBLES as the idempotency check (a previously
+ * backfilled goal now carries a genesis event → skipped). timestamps verbatim from the row.
+ */
+export async function backfillGoalGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(goal);
+  const eventSourced = await goalsWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  let seeded = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    // ATOMIC per row: genesis event + index entry commit together (see header).
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: GENESIS_ACTOR_REF,
+        action: GENESIS_ACTION,
+        subject_kind: 'goal',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: { row: goalRowToSnapshot(row) },
+        ingest_at: now,
+      });
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: row.id,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'goal',
+      });
+    });
+    seeded += 1;
+  }
+  return { seeded, skipped };
+}
+
+/**
+ * Run all backfills in FK order (knowledge → knowledge_edge → goal). goal is last because it
+ * softly references knowledge (scope_knowledge_ids) + event (source_ref); the goal genesis +
+ * index writes only ADD event/index rows, but the FK order keeps the convention. Returns counts.
  */
 export async function backfillGenesisEvents(
   db: DbLike,
@@ -248,15 +335,20 @@ export async function backfillGenesisEvents(
 ): Promise<BackfillCounts> {
   const knowledgeCounts = await backfillKnowledgeGenesis(db, now);
   const edgeCounts = await backfillKnowledgeEdgeGenesis(db, now);
-  return { knowledge: knowledgeCounts, knowledge_edge: edgeCounts };
+  const goalCounts = await backfillGoalGenesis(db, now);
+  return { knowledge: knowledgeCounts, knowledge_edge: edgeCounts, goal: goalCounts };
 }
 
 async function main(): Promise<void> {
   const counts = await backfillGenesisEvents(db);
   console.log('[backfill-genesis] knowledge:', JSON.stringify(counts.knowledge));
   console.log('[backfill-genesis] knowledge_edge:', JSON.stringify(counts.knowledge_edge));
+  console.log('[backfill-genesis] goal:', JSON.stringify(counts.goal));
+  const totalSeeded = counts.knowledge.seeded + counts.knowledge_edge.seeded + counts.goal.seeded;
+  const totalSkipped =
+    counts.knowledge.skipped + counts.knowledge_edge.skipped + counts.goal.skipped;
   console.log(
-    `[backfill-genesis] done — seeded ${counts.knowledge.seeded + counts.knowledge_edge.seeded} genesis event(s), skipped ${counts.knowledge.skipped + counts.knowledge_edge.skipped} already-seeded row(s).`,
+    `[backfill-genesis] done — seeded ${totalSeeded} genesis event(s), skipped ${totalSkipped} already-seeded row(s).`,
   );
 }
 

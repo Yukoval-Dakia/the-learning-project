@@ -17,6 +17,13 @@ import type { Db } from '@/db/client';
 import { event, goal } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
+// YUK-471 W2 — goal projection seam. The accept tx always writes the materialized_id_index
+// anchor (goalId → the propose event) so the SoT-flip guard's O(1) genesis-anchor check resolves
+// a proposal-materialized goal; the per-entity flag projectionIsWriter('goal') gates ONLY who
+// writes the ROW (projection write-through when ON, imperative insertGoal when OFF).
+import { projectGoal } from '@/server/projections/goal';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { insertGoal } from './queries';
 
@@ -102,17 +109,8 @@ export async function acceptGoalScopeProposal(
   const now = new Date();
   const rateEventId = newId();
   await db.transaction(async (tx) => {
-    await insertGoal(tx, {
-      id: goalId,
-      title,
-      subject_id: subjectId,
-      scope_knowledge_ids: scopeKnowledgeIds,
-      sequence_hint: sequenceHint,
-      status: 'active',
-      source: 'goal_scope_proposal',
-      source_ref: proposalId,
-      now,
-    });
+    // 1. The accept `rate` event — written FIRST so the goal fold (when the flag is ON) sees
+    //    the chained accept in the same tx and projects status='active'.
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -129,6 +127,33 @@ export async function acceptGoalScopeProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    // 2. ALWAYS write the materialized_id_index anchor (goalId → the propose event) regardless
+    //    of the flag. The event log + anchor is the source of truth; the flag only switches the
+    //    ROW writer. The anchor lets the SoT-flip guard resolve this proposal-materialized goal
+    //    O(1) (mirrors the W1 accept seam writing the propose anchor).
+    await upsertMaterializedIdIndex(tx, {
+      materialized_id: goalId,
+      anchor_event_id: proposalId,
+      subject_kind: 'goal',
+    });
+    // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
+    //    ON  → the projection write-through folds (propose + rate) and writes the row;
+    //    OFF → the imperative insertGoal stays the writer (current behavior).
+    if (projectionIsWriter('goal')) {
+      await projectGoal(tx, goalId);
+    } else {
+      await insertGoal(tx, {
+        id: goalId,
+        title,
+        subject_id: subjectId,
+        scope_knowledge_ids: scopeKnowledgeIds,
+        sequence_hint: sequenceHint,
+        status: 'active',
+        source: 'goal_scope_proposal',
+        source_ref: proposalId,
+        now,
+      });
+    }
   });
 
   return { kind: 'goal_scope', rate_event_id: rateEventId, goal_id: goalId };

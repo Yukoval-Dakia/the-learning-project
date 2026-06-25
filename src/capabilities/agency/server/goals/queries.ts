@@ -14,8 +14,17 @@
 
 import { and, asc, eq } from 'drizzle-orm';
 
+import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
+// YUK-471 W2 — goal status/scope events make these transitions fold-visible. These helpers have
+// NO live caller today, but per defer-flip-not-build the event path + write-through are wired now
+// so the moment a caller appears the goal fold already models the transition. The per-entity flag
+// projectionIsWriter('goal') gates ONLY who writes the ROW (projection write-through when ON,
+// imperative UPDATE when OFF).
+import { projectGoalGuarded } from '@/server/projections/goal';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 
 type DbLike = Db | Tx;
 
@@ -72,10 +81,27 @@ export async function updateGoalStatus(
     await db.select({ version: goal.version }).from(goal).where(eq(goal.id, goalId)).limit(1)
   )[0];
   if (!existing) return;
-  await db
-    .update(goal)
-    .set({ status, updated_at: now, version: existing.version + 1 })
-    .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
+  // YUK-471 W2 — append the fold-visible status event FIRST so the goal fold reproduces the
+  // transition (status→new, version+1). The reducer mirrors the imperative +1 below.
+  await writeEvent(db, {
+    id: newId(),
+    actor_kind: 'system',
+    actor_ref: 'goal-status-update',
+    action: 'experimental:goal_status_update',
+    subject_kind: 'goal',
+    subject_id: goalId,
+    outcome: 'success',
+    payload: { status },
+    created_at: now,
+  });
+  if (projectionIsWriter('goal')) {
+    await projectGoalGuarded(db, goalId);
+  } else {
+    await db
+      .update(goal)
+      .set({ status, updated_at: now, version: existing.version + 1 })
+      .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
+  }
 }
 
 /**
@@ -94,18 +120,42 @@ export async function updateGoalScope(
     await db.select({ version: goal.version }).from(goal).where(eq(goal.id, goalId)).limit(1)
   )[0];
   if (!existing) return;
-  await db
-    .update(goal)
-    .set({
+  // YUK-471 W2 — append the fold-visible scope event FIRST. The payload carries ONLY the patch
+  // fields (the .strict() schema rejects mutating set-once provenance like subject_id). The
+  // reducer applies the same patch + version+1 the imperative UPDATE does below.
+  await writeEvent(db, {
+    id: newId(),
+    actor_kind: 'system',
+    actor_ref: 'goal-scope-update',
+    action: 'experimental:goal_scope_update',
+    subject_kind: 'goal',
+    subject_id: goalId,
+    outcome: 'success',
+    payload: {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.scope_knowledge_ids !== undefined
         ? { scope_knowledge_ids: patch.scope_knowledge_ids }
         : {}),
       ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
-      updated_at: now,
-      version: existing.version + 1,
-    })
-    .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
+    },
+    created_at: now,
+  });
+  if (projectionIsWriter('goal')) {
+    await projectGoalGuarded(db, goalId);
+  } else {
+    await db
+      .update(goal)
+      .set({
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.scope_knowledge_ids !== undefined
+          ? { scope_knowledge_ids: patch.scope_knowledge_ids }
+          : {}),
+        ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
+        updated_at: now,
+        version: existing.version + 1,
+      })
+      .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
+  }
 }
 
 /**
