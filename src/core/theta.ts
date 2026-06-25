@@ -14,9 +14,13 @@
 //   （ex-ante 选哪道题），不是更新语义（ex-post 这道题怎么动 θ̂）。本模块只做
 //   ex-post 在线更新；选题聚合不在本 wave 范围。
 
-/** Logistic CDF — the 1PL/Rasch item characteristic curve P = σ(θ - b). */
+import { POLY_SIGMOID_ENABLED, polySigmoid } from './poly-exp';
+
+/** Logistic CDF — the 1PL/Rasch item characteristic curve P = σ(θ - b).
+ * decision ② (dark-ship, POLY_SIGMOID_ENABLED=false today): routes through the shared
+ * bit-exact `polySigmoid` when flipped, else the live `Math.exp` (byte-identical to today). */
 function logistic(x: number): number {
-  return 1 / (1 + Math.exp(-x));
+  return POLY_SIGMOID_ENABLED ? polySigmoid(x) : 1 / (1 + Math.exp(-x));
 }
 
 /**
