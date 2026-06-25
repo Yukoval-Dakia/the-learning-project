@@ -20,7 +20,9 @@ import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, goal, materialized_id_index } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { retractAiProposal } from '@/server/proposals/actions';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import { writeAiProposal } from '@/server/proposals/writer';
 import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillGoalGenesis } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -351,6 +353,71 @@ describe('per-entity flag — OFF vs ON yield identical rows', () => {
     const norm = (r: GoalRowSnapshotT | null) =>
       r && { ...r, id: 'X', source_ref: 'X', created_at: 0, updated_at: 0 };
     expect(norm(onRow)).toEqual(norm(offRow));
+  });
+});
+
+describe('retractAiProposal (goal_scope, flag OFF) — fold==row parity', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await resetIndex();
+    delete process.env[FLAG]; // OFF — imperative dormant UPDATE writes the row
+  });
+  afterEach(() => {
+    delete process.env[FLAG];
+  });
+
+  it('the imperative dormant UPDATE stamps the SAME updated_at the fold derives (HIGH-1 double-clock guard)', async () => {
+    const db = testDb();
+    // 1. A real goal_scope proposal (via writeAiProposal so the inbox reader can load it).
+    const goalId = 'goal_retract';
+    const proposalId = await writeAiProposal(db as never, {
+      actor_ref: 'goal_scope',
+      outcome: 'partial',
+      payload: {
+        kind: 'goal_scope',
+        target: { subject_kind: 'goal', subject_id: goalId },
+        reason_md: 'because',
+        evidence_refs: [],
+        proposed_change: {
+          title: 'Retract me',
+          subject_id: 'subj_x',
+          scope_knowledge_ids: ['k_a'],
+          sequence_hint: 1,
+          reasoning: 'because',
+        },
+        cooldown_key: `goal_scope:${goalId}`,
+      },
+    });
+    // 2. Accept it (flag OFF → imperative insertGoal makes the goal active + writes rate + index).
+    await acceptGoalScopeProposal(
+      db as never,
+      proposalId,
+      inboxRow({
+        goalId,
+        title: 'Retract me',
+        subjectId: 'subj_x',
+        scope: ['k_a'],
+        sequenceHint: 1,
+      }),
+    );
+    expect((await liveGoal(goalId))?.status).toBe('active');
+
+    // 3. Retract it (flag OFF → writes the `correct` event + the imperative dormant UPDATE).
+    await retractAiProposal(db as never, proposalId, { reason_md: 'changed my mind' });
+
+    // 4. Parity: the live dormant row must EQUAL the fold (proposal + rate + correct). The
+    //    load-bearing assertion is updated_at: before HIGH-1 the imperative UPDATE used its own
+    //    `new Date()` (≠ the correct event's created_at the fold reads) → cross-ms drift → FAIL.
+    const live = await liveGoal(goalId);
+    const folded = await gatherAndFoldGoal(db, goalId);
+    expect(live?.status).toBe('dormant');
+    expect(folded).toEqual(live);
+    expect(folded?.updated_at.getTime()).toBe(live?.updated_at.getTime());
+    expect(folded?.version).toBe(0); // retract does NOT bump version
+
+    // 5. The auditor also sees zero goal drift on this retracted goal.
+    const audit = await auditProjection(db, {});
+    expect(audit.drift.filter((d) => d.id === goalId)).toEqual([]);
   });
 });
 
