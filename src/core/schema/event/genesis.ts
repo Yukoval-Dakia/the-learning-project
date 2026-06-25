@@ -105,6 +105,38 @@ export const GoalRowSnapshot = z
   .strict();
 export type GoalRowSnapshotT = z.infer<typeof GoalRowSnapshot>;
 
+// ---------- MistakeVariantRowSnapshot (YUK-471 Wave 2 — mistake_variant entity fold) ----------
+//
+// The projected (fold) shape of a `mistake_variant` row (src/db/schema.ts:1145-1162). NO
+// derived/embed columns, so EVERY column is structural fold truth (design §2①). NO `version`
+// column on this table (like knowledge_edge — the row has no optimistic-concurrency counter).
+//
+// `cause_category` is the FOLD-BLIND field (design §2 + critic A4): variant_gen computes it at
+// INSERT time (effectiveCauseForFailureAttempt) and NO downstream event carries it. The
+// compensation is that BOTH base events — `experimental:genesis` (backfill) AND
+// `experimental:mistake_variant_create` (runtime creation, critic A4) — snapshot the WHOLE row
+// INCLUDING cause_category, so the fold reproduces it from its base. `updated_at` is event-chain
+// keep-last (each accept/verify/dismiss/retract stamps it); the base seeds the initial value.
+//
+// `.strict()` (critic B3): mistake_variant is well-distinguished by `parent_question_id`
+// (no sibling entity has it), but .strict() still rejects a wrong/extra-field payload at the
+// genesis/create parse barrier so a malformed snapshot can never silently seed the projection.
+// Dates are z.coerce.date() (jsonb ISO-string roundtrip — same precedent as the other snapshots).
+export const MistakeVariantRowSnapshot = z
+  .object({
+    id: z.string().min(1),
+    parent_question_id: z.string().min(1), // notNull column; the goal-distinguishing column
+    variant_question_id: z.string().nullable(), // nullable until accept materializes the question
+    proposal_event_id: z.string().nullable(), // nullable column (the variant_question propose id)
+    status: z.enum(['draft', 'active', 'broken', 'dismissed']),
+    failure_reasons: z.array(z.string()), // jsonb string[], default [] at the table
+    cause_category: z.string().nullable(), // FOLD-BLIND field — carried by the base event only
+    created_at: z.coerce.date(),
+    updated_at: z.coerce.date(),
+  })
+  .strict();
+export type MistakeVariantRowSnapshotT = z.infer<typeof MistakeVariantRowSnapshot>;
+
 // ---------- GenesisExperimental ----------
 //
 // Field-level parity with the existing reserved experimental schemas
@@ -142,6 +174,7 @@ const SNAPSHOT_BY_SUBJECT_KIND = {
   knowledge: KnowledgeRowSnapshot,
   knowledge_edge: KnowledgeEdgeRowSnapshot,
   goal: GoalRowSnapshot,
+  mistake_variant: MistakeVariantRowSnapshot,
 } as const;
 
 // Columns that MUST be present on a row to discriminate it as the named entity, even after a
@@ -150,6 +183,9 @@ const SNAPSHOT_BY_SUBJECT_KIND = {
 // requiring them closes any residual overlap window (critic B3).
 const DISCRIMINATING_COLUMNS: Record<string, readonly string[]> = {
   goal: ['scope_knowledge_ids', 'sequence_hint'],
+  // mistake_variant is uniquely identified by parent_question_id (no sibling entity carries it),
+  // so requiring it closes any residual shape-overlap window (critic B3).
+  mistake_variant: ['parent_question_id'],
 };
 
 export const GenesisExperimental = z
@@ -157,7 +193,7 @@ export const GenesisExperimental = z
     actor_kind: z.literal('system'), // backfill is an internal seed writer
     actor_ref: z.string().min(1), // e.g. 'genesis-backfill'
     action: z.literal('experimental:genesis'),
-    subject_kind: z.enum(['knowledge', 'knowledge_edge', 'goal']),
+    subject_kind: z.enum(['knowledge', 'knowledge_edge', 'goal', 'mistake_variant']),
     subject_id: z.string().min(1), // = the projected row id
     outcome: z.literal('success').nullable().optional(),
     payload: z.object({
@@ -165,7 +201,12 @@ export const GenesisExperimental = z
       // discriminant). The cross-check (payload.row shape matches subject_kind via
       // per-kind safeParse, and subject_id === row.id) is enforced post-parse by the
       // superRefine below so fold(genesis) == row holds.
-      row: z.union([KnowledgeRowSnapshot, KnowledgeEdgeRowSnapshot, GoalRowSnapshot]),
+      row: z.union([
+        KnowledgeRowSnapshot,
+        KnowledgeEdgeRowSnapshot,
+        GoalRowSnapshot,
+        MistakeVariantRowSnapshot,
+      ]),
     }),
     // baseOptionalFields parity (mirror the other reserved schemas):
     caused_by_event_id: z.string().optional(),

@@ -74,10 +74,16 @@ import { edgeRowToSnapshot } from '@/server/projections/gather';
 // per-entity flag is ON).
 import { projectGoalGuarded } from '@/server/projections/goal';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
+// YUK-471 W2 — mistake_variant dismiss (E4) / retract (E5) write-through (guarded; projection writes
+// the dismissed row when the per-entity flag is ON).
+import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
   assertGoalParity,
   assertKnowledgeEdgeParity,
+  assertMistakeVariantParity,
   goalLiveRowToSnapshot,
+  hasMistakeVariantGenesisAnchor,
+  mistakeVariantLiveRowToSnapshot,
 } from '@/server/projections/parity';
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the edge row when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
@@ -840,7 +846,7 @@ async function writeGenericRateEvent(
   proposalId: string,
   rating: 'accept' | 'dismiss',
   userNote?: string,
-): Promise<{ rate_event_id: string | null; idempotent?: boolean }> {
+): Promise<{ rate_event_id: string | null; idempotent?: boolean; rate_at?: Date }> {
   const existingRows = await db
     .select()
     .from(event)
@@ -856,10 +862,16 @@ async function writeGenericRateEvent(
         409,
       );
     }
-    return { rate_event_id: existing.id, idempotent: true };
+    return { rate_event_id: existing.id, idempotent: true, rate_at: existing.created_at };
   }
 
   const rateEventId = newId();
+  // YUK-471 W2 — capture the rate event's created_at ONCE so a downstream imperative UPDATE (e.g.
+  // the variant_question dismiss → mistake_variant.updated_at) can stamp the SAME value the fold
+  // reads off this event. A second `new Date()` for the UPDATE would make fold(events) != live row
+  // by a cross-ms delta → non-deterministic parity drift (the HIGH-1 double-clock guard the goal
+  // retract slice established). Returned in `rate_at` (benign superset — existing callers ignore it).
+  const rateAt = new Date();
   await writeEvent(db, {
     id: rateEventId,
     actor_kind: 'user',
@@ -873,9 +885,9 @@ async function writeGenericRateEvent(
       ...(userNote ? { user_note: userNote } : {}),
     },
     caused_by_event_id: proposalId,
-    created_at: new Date(),
+    created_at: rateAt,
   });
-  return { rate_event_id: rateEventId };
+  return { rate_event_id: rateEventId, rate_at: rateAt };
 }
 
 export async function dismissAiProposal(
@@ -912,15 +924,55 @@ export async function dismissAiProposal(
       if (!result.idempotent) {
         // Flip the draft mistake_variant row to 'dismissed' so the in-flight
         // count (variants_max=3) frees up the slot.
-        await db
-          .update(mistake_variant)
-          .set({ status: 'dismissed', updated_at: new Date() })
+        //
+        // YUK-471 W2 (E4) — the rate(dismiss) event is already written above (caused_by=proposalId,
+        // rating='dismiss'), so the fold reproduces the dismissed row. ROW writer gated on the
+        // per-entity flag (critic A1): ON → projectMistakeVariantGuarded folds (status→dismissed)
+        // + writes through; OFF → the imperative dismiss UPDATE (current behavior) + the write-time
+        // fold==row parity assert. The dismiss only acts on a DRAFT row (the WHERE guard), so an
+        // already-accepted variant is untouched on both paths.
+        const [draftMv] = await db
+          .select({ id: mistake_variant.id })
+          .from(mistake_variant)
           .where(
             and(
               eq(mistake_variant.proposal_event_id, proposalId),
               eq(mistake_variant.status, 'draft'),
             ),
-          );
+          )
+          .limit(1);
+        if (draftMv) {
+          if (projectionIsWriter('mistake_variant')) {
+            await projectMistakeVariantGuarded(db, draftMv.id);
+          } else {
+            // REUSE the rate(dismiss) event's created_at (result.rate_at) for updated_at so the
+            // imperative row and the fold stamp the SAME value — fold(events) == live row
+            // deterministically (HIGH-1 double-clock guard). Do NOT open a new `new Date()`.
+            await db
+              .update(mistake_variant)
+              .set({ status: 'dismissed', updated_at: result.rate_at ?? new Date() })
+              .where(
+                and(
+                  eq(mistake_variant.proposal_event_id, proposalId),
+                  eq(mistake_variant.status, 'draft'),
+                ),
+              );
+            // APPLICABILITY GATE — only assert for an EVENT-SOURCED variant (create-base/genesis/
+            // index anchor); a pre-W2 / fixture row folds to null and would FALSE-mismatch.
+            if (await hasMistakeVariantGenesisAnchor(db, draftMv.id)) {
+              const [written] = await db
+                .select()
+                .from(mistake_variant)
+                .where(eq(mistake_variant.id, draftMv.id))
+                .limit(1);
+              await assertMistakeVariantParity(
+                db,
+                draftMv.id,
+                written ? mistakeVariantLiveRowToSnapshot(written) : null,
+              );
+            }
+          }
+        }
         await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
       }
       return { kind: 'dismissed', ...result };
@@ -1013,16 +1065,55 @@ export async function retractAiProposal(
   // the proposal-level retract is an L3 correction and outweighs the
   // mistake_variant row, mirroring how retracted knowledge proposals also
   // tombstone their materialized rows.
+  //
+  // YUK-471 W2 (E5) — the `correct` (retract) event was already appended at the top of this fn
+  // (subject=the proposal, caused_by=proposalId, correction_kind='retract'), so the fold reproduces
+  // the dismissed row from its create-base + chain. ROW writer gated on the per-entity flag (critic
+  // A1): ON → projectMistakeVariantGuarded folds (status→dismissed) + writes through; OFF → the
+  // imperative dismiss UPDATE (current behavior) + the write-time fold==row parity assert. The
+  // UPDATE reuses correctionAt (the correct event's created_at) so the row + fold stamp the SAME
+  // updated_at (HIGH-1 double-clock guard). The retract acts on draft|active rows on both paths.
   if (proposal.kind === 'variant_question') {
-    await db
-      .update(mistake_variant)
-      .set({ status: 'dismissed', updated_at: new Date() })
+    const retractedMvs = await db
+      .select({ id: mistake_variant.id })
+      .from(mistake_variant)
       .where(
         and(
           eq(mistake_variant.proposal_event_id, proposalId),
           inArray(mistake_variant.status, ['draft', 'active']),
         ),
       );
+    if (projectionIsWriter('mistake_variant')) {
+      for (const mv of retractedMvs) {
+        await projectMistakeVariantGuarded(db, mv.id);
+      }
+    } else {
+      await db
+        .update(mistake_variant)
+        .set({ status: 'dismissed', updated_at: correctionAt })
+        .where(
+          and(
+            eq(mistake_variant.proposal_event_id, proposalId),
+            inArray(mistake_variant.status, ['draft', 'active']),
+          ),
+        );
+      for (const mv of retractedMvs) {
+        // APPLICABILITY GATE — only assert for an EVENT-SOURCED variant (create-base/genesis/index
+        // anchor); a pre-W2 / fixture row folds to null and would FALSE-mismatch.
+        if (await hasMistakeVariantGenesisAnchor(db, mv.id)) {
+          const [written] = await db
+            .select()
+            .from(mistake_variant)
+            .where(eq(mistake_variant.id, mv.id))
+            .limit(1);
+          await assertMistakeVariantParity(
+            db,
+            mv.id,
+            written ? mistakeVariantLiveRowToSnapshot(written) : null,
+          );
+        }
+      }
+    }
   }
 
   // YUK-19 — retracting a learning_item proposal tombstones any materialized

@@ -57,18 +57,21 @@ import type {
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
+  MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { event, goal, knowledge, knowledge_edge } from '@/db/schema';
+import { event, goal, knowledge, knowledge_edge, mistake_variant } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // The SCOPED backfill skips already-event-sourced NODES — reuse the SAME genesis-anchor check the
 // accept-time parity assert uses (genesis / auto_tag event, or a materialized_id_index anchor), so
 // "event-sourced" means exactly the same thing on both sides. (YUK-471 W2: goalsWithGenesisAnchor
-// is the goal analog — genesis / proposal / status-scope action event, or a goal index anchor.)
+// is the goal analog; mistakeVariantsWithGenesisAnchor is the mistake_variant analog — a runtime
+// create event / backfill genesis / index anchor.)
 import {
   goalsWithGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
+  mistakeVariantsWithGenesisAnchor,
 } from '@/server/projections/parity';
 import { and, eq, inArray, or } from 'drizzle-orm';
 
@@ -76,6 +79,7 @@ type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
 type GoalRow = typeof goal.$inferSelect;
+type MistakeVariantRow = typeof mistake_variant.$inferSelect;
 
 const GENESIS_ACTION = 'experimental:genesis';
 const GENESIS_ACTOR_REF = 'genesis-backfill';
@@ -84,6 +88,7 @@ export interface BackfillCounts {
   knowledge: { seeded: number; skipped: number };
   knowledge_edge: { seeded: number; skipped: number };
   goal: { seeded: number; skipped: number };
+  mistake_variant: { seeded: number; skipped: number };
 }
 
 // knowledgeRowToSnapshot — map a live `knowledge` DB row to KnowledgeRowSnapshotT, EXCLUDING
@@ -324,10 +329,88 @@ export async function backfillGoalGenesis(
   return { seeded, skipped };
 }
 
+// mistakeVariantRowToSnapshot — map a live `mistake_variant` DB row to MistakeVariantRowSnapshotT
+// (the FULL row — no derived/embed/version columns). The fold-blind `cause_category` is snapshotted
+// here (the backfill compensation, critic A4 — the same field the runtime create event carries).
+// Dates stay Date (GenesisExperimental's z.coerce.date() accepts both). failure_reasons defaults to
+// [] at the column, so it is always a string[] here.
+function mistakeVariantRowToSnapshot(row: MistakeVariantRow): MistakeVariantRowSnapshotT {
+  return {
+    id: row.id,
+    parent_question_id: row.parent_question_id,
+    variant_question_id: row.variant_question_id,
+    proposal_event_id: row.proposal_event_id,
+    status: row.status as MistakeVariantRowSnapshotT['status'],
+    failure_reasons: row.failure_reasons ?? [],
+    cause_category: row.cause_category,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 /**
- * Run all backfills in FK order (knowledge → knowledge_edge → goal). goal is last because it
- * softly references knowledge (scope_knowledge_ids) + event (source_ref); the goal genesis +
- * index writes only ADD event/index rows, but the FK order keeps the convention. Returns counts.
+ * Seed genesis events + index entries for every `mistake_variant` row lacking a base anchor.
+ * (YUK-471 W2 — the HARDEST entity; cause_category is fold-blind.) Same shape as backfillGoalGenesis
+ * (outbox opt-out, atomic per-row tx, idempotent). Returns { seeded, skipped }.
+ *
+ * SCOPED (mirror the W1 node/edge + W2 goal backfill): skip variants already event-sourced — a
+ * variant with a runtime `experimental:mistake_variant_create` event, a backfill
+ * `experimental:genesis`, or a mistake_variant materialized_id_index anchor
+ * (mistakeVariantsWithGenesisAnchor). A runtime-created variant re-folds from its OWN create + chain,
+ * so anchoring it with a current-state genesis snapshot would MASK reducer drift (the genesis sorts
+ * last in the fold and overwrites the reducer output). Only truly EVENT-LESS variants (pre-W2 rows
+ * written by the imperative variant_gen INSERT before this wave) need a genesis base. The pre-scan
+ * DOUBLES as the idempotency check. cause_category MUST go into the snapshot (fold-blindness
+ * compensation). timestamps verbatim from the row. FK ORDER: AFTER question + event (mistake_variant
+ * softly references parent_question_id + proposal_event_id) — handled by backfillGenesisEvents below.
+ */
+export async function backfillMistakeVariantGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(mistake_variant);
+  const eventSourced = await mistakeVariantsWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  let seeded = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    // ATOMIC per row: genesis event + index entry commit together (see header).
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: GENESIS_ACTOR_REF,
+        action: GENESIS_ACTION,
+        subject_kind: 'mistake_variant',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: { row: mistakeVariantRowToSnapshot(row) },
+        ingest_at: now,
+      });
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: row.id,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'mistake_variant',
+      });
+    });
+    seeded += 1;
+  }
+  return { seeded, skipped };
+}
+
+/**
+ * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant).
+ * mistake_variant is last because it softly references question (parent_question_id /
+ * variant_question_id) + event (proposal_event_id) — both already event-sourced upstream; the
+ * mistake_variant genesis + index writes only ADD event/index rows, but the FK order keeps the
+ * convention. Returns counts.
  */
 export async function backfillGenesisEvents(
   db: DbLike,
@@ -336,7 +419,13 @@ export async function backfillGenesisEvents(
   const knowledgeCounts = await backfillKnowledgeGenesis(db, now);
   const edgeCounts = await backfillKnowledgeEdgeGenesis(db, now);
   const goalCounts = await backfillGoalGenesis(db, now);
-  return { knowledge: knowledgeCounts, knowledge_edge: edgeCounts, goal: goalCounts };
+  const mistakeVariantCounts = await backfillMistakeVariantGenesis(db, now);
+  return {
+    knowledge: knowledgeCounts,
+    knowledge_edge: edgeCounts,
+    goal: goalCounts,
+    mistake_variant: mistakeVariantCounts,
+  };
 }
 
 async function main(): Promise<void> {
@@ -344,9 +433,17 @@ async function main(): Promise<void> {
   console.log('[backfill-genesis] knowledge:', JSON.stringify(counts.knowledge));
   console.log('[backfill-genesis] knowledge_edge:', JSON.stringify(counts.knowledge_edge));
   console.log('[backfill-genesis] goal:', JSON.stringify(counts.goal));
-  const totalSeeded = counts.knowledge.seeded + counts.knowledge_edge.seeded + counts.goal.seeded;
+  console.log('[backfill-genesis] mistake_variant:', JSON.stringify(counts.mistake_variant));
+  const totalSeeded =
+    counts.knowledge.seeded +
+    counts.knowledge_edge.seeded +
+    counts.goal.seeded +
+    counts.mistake_variant.seeded;
   const totalSkipped =
-    counts.knowledge.skipped + counts.knowledge_edge.skipped + counts.goal.skipped;
+    counts.knowledge.skipped +
+    counts.knowledge_edge.skipped +
+    counts.goal.skipped +
+    counts.mistake_variant.skipped;
   console.log(
     `[backfill-genesis] done — seeded ${totalSeeded} genesis event(s), skipped ${totalSkipped} already-seeded row(s).`,
   );

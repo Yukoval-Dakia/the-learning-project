@@ -28,6 +28,16 @@ import { event, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { ApiError } from '@/server/http/errors';
+// YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
+// event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
+// writes the row. OFF still runs the write-time fold==row parity assert.
+import { projectMistakeVariant } from '@/server/projections/mistake_variant';
+import {
+  assertMistakeVariantParity,
+  hasMistakeVariantGenesisAnchor,
+  mistakeVariantLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -202,6 +212,9 @@ export async function acceptVariantQuestionProposal(
   const now = new Date();
   const newQuestionId = createId();
   const rateEventId = newId();
+  // YUK-471 W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
+  // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
+  const flip = projectionIsWriter('mistake_variant');
 
   await db.transaction(async (tx) => {
     await tx.insert(question).values(
@@ -227,15 +240,9 @@ export async function acceptVariantQuestionProposal(
       }),
     );
 
-    await tx
-      .update(mistake_variant)
-      .set({
-        status: 'active',
-        variant_question_id: newQuestionId,
-        updated_at: now,
-      })
-      .where(eq(mistake_variant.id, mv.id));
-
+    // The accept `rate` event — written BEFORE the row write-through so the fold (when the flag is
+    // ON) sees the chained accept in the same tx and projects status='active' +
+    // variant_question_id=materialized_question_id (E2). caused_by = the proposal (the chain key).
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -253,6 +260,38 @@ export async function acceptVariantQuestionProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+
+    // ROW writer — gated on the per-entity flag (critic A1). ON → the projection folds (create base
+    // + accept rate) and writes status='active' + variant_question_id; OFF → the imperative UPDATE
+    // (current behavior) + the write-time fold==row parity assert.
+    if (flip) {
+      await projectMistakeVariant(tx, mv.id);
+    } else {
+      await tx
+        .update(mistake_variant)
+        .set({
+          status: 'active',
+          variant_question_id: newQuestionId,
+          updated_at: now,
+        })
+        .where(eq(mistake_variant.id, mv.id));
+      // APPLICABILITY GATE — only assert for an EVENT-SOURCED variant (create-base/genesis/index
+      // anchor). A pre-W2 / fixture-seeded mv row (no base event) folds to null and would
+      // FALSE-mismatch; the backfill anchors those later. variant_gen-created variants always carry
+      // the create base, so the assert runs for the real accept path.
+      if (await hasMistakeVariantGenesisAnchor(tx, mv.id)) {
+        const [written] = await tx
+          .select()
+          .from(mistake_variant)
+          .where(eq(mistake_variant.id, mv.id))
+          .limit(1);
+        await assertMistakeVariantParity(
+          tx,
+          mv.id,
+          written ? mistakeVariantLiveRowToSnapshot(written) : null,
+        );
+      }
+    }
   });
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
