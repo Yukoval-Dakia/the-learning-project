@@ -12,8 +12,10 @@
 //     out-of-band write (incl. a cause_category tamper).
 //   - assertMistakeVariantParity catches a deliberate drift.
 //
-// Hermetic: resetDb() in beforeEach truncates `mistake_variant` (in ALL_TABLES) but NOT
-// materialized_id_index (no FK → not CASCADE-reached), so we truncate the index explicitly.
+// Hermetic: resetDb() in beforeEach TRUNCATEs every table in ALL_TABLES — which INCLUDES both
+// `mistake_variant` and `materialized_id_index` (tests/helpers/db.ts) — so cross-file state never
+// leaks. The explicit resetIndex() below is belt-and-suspenders (re-truncating an already-cleared
+// index) to make the index reset intent obvious at each describe; it is not load-bearing.
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -314,6 +316,48 @@ describe('gatherAndFoldMistakeVariant — shell parity over the event chain', ()
     const folded = await gatherAndFoldMistakeVariant(db, 'mv_1');
     expect(folded?.status).toBe('dismissed');
     expect(folded?.variant_question_id).toBe('q_variant'); // preserved
+  });
+
+  // ── BLOCKER boundary (review fix) — retract is a NO-OP on a terminal row (fold==row) ──
+  // The imperative retract guards on inArray(status,['draft','active']) in BOTH SELECT + UPDATE, so
+  // a broken/dismissed row is untouched. The fold MUST mirror that (status-guard), else fold!=row.
+  it('retract-after-verify-FAIL: fold leaves the row BROKEN (not dismissed), updated_at at the FAIL', async () => {
+    const db = testDb();
+    await writeCreateBase({ mvId: 'mv_1', proposalId: 'prop_1', created_at: T0 });
+    await writeRate({
+      proposalId: 'prop_1',
+      rating: 'accept',
+      materializedQuestionId: 'q_variant',
+      mvId: 'mv_1',
+      created_at: new Date(T0.getTime() + 1000),
+    });
+    await writeVerify({
+      proposalId: 'prop_1',
+      variantQuestionId: 'q_variant',
+      verdict: 'fail',
+      failureReasons: ['off-target'],
+      created_at: new Date(T0.getTime() + 2000),
+    });
+    // retract written AFTER the verify-FAIL (retractAiProposal only requireProposal, not pending).
+    await writeRetract({ proposalId: 'prop_1', created_at: new Date(T0.getTime() + 3000) });
+    const folded = await gatherAndFoldMistakeVariant(db, 'mv_1');
+    expect(folded?.status).toBe('broken'); // retract is a no-op on broken (mirrors imperative WHERE)
+    expect(folded?.failure_reasons).toEqual(['off-target']);
+    expect(folded?.updated_at.getTime()).toBe(T0.getTime() + 2000); // NOT the retract time
+  });
+
+  it('retract-after-dismiss: fold keeps the dismiss-time updated_at (retract is a no-op)', async () => {
+    const db = testDb();
+    await writeCreateBase({ mvId: 'mv_1', proposalId: 'prop_1', created_at: T0 });
+    await writeRate({
+      proposalId: 'prop_1',
+      rating: 'dismiss',
+      created_at: new Date(T0.getTime() + 1000),
+    });
+    await writeRetract({ proposalId: 'prop_1', created_at: new Date(T0.getTime() + 2000) });
+    const folded = await gatherAndFoldMistakeVariant(db, 'mv_1');
+    expect(folded?.status).toBe('dismissed');
+    expect(folded?.updated_at.getTime()).toBe(T0.getTime() + 1000); // dismiss time, NOT retract time
   });
 });
 

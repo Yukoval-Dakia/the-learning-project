@@ -948,6 +948,8 @@ export async function dismissAiProposal(
             // REUSE the rate(dismiss) event's created_at (result.rate_at) for updated_at so the
             // imperative row and the fold stamp the SAME value — fold(events) == live row
             // deterministically (HIGH-1 double-clock guard). Do NOT open a new `new Date()`.
+            // The `?? new Date()` is type-only (rate_at is typed optional); both writeGenericRateEvent
+            // branches always return rate_at, so the fallback is unreachable at runtime. (review NIT.)
             await db
               .update(mistake_variant)
               .set({ status: 'dismissed', updated_at: result.rate_at ?? new Date() })
@@ -975,7 +977,12 @@ export async function dismissAiProposal(
         }
         await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
       }
-      return { kind: 'dismissed', ...result };
+      // STRIP the internal rate_at timestamp at the HTTP boundary — it threads the OFF-path
+      // updated_at reuse (above) but is NOT part of DismissAiProposalResult; leaking it would
+      // surface an internal timestamp in the dismiss HTTP response (proposal-decide.ts JSONs the
+      // whole result). (review LOW — rate_at is for internal clock-reuse only.)
+      const { rate_at: _rateAt, ...rest } = result;
+      return { kind: 'dismissed', ...rest };
     }
     case 'learning_item': {
       // YUK-19 — dismiss before accept just writes a rate event. There are no
@@ -986,14 +993,16 @@ export async function dismissAiProposal(
       if (!result.idempotent) {
         await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
       }
-      return { kind: 'dismissed', ...result };
+      const { rate_at: _rateAt, ...rest } = result; // strip internal timestamp (see above)
+      return { kind: 'dismissed', ...rest };
     }
     default: {
       const result = await writeGenericRateEvent(db, proposalId, 'dismiss', opts.user_note);
       if (!result.idempotent) {
         await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
       }
-      return { kind: 'dismissed', ...result };
+      const { rate_at: _rateAt, ...rest } = result; // strip internal timestamp (see above)
+      return { kind: 'dismissed', ...rest };
     }
   }
 }

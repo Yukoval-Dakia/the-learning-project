@@ -119,6 +119,11 @@ export function foldMistakeVariant(
       fe.action === 'experimental:mistake_variant_create' &&
       fe.subject_kind === 'mistake_variant'
     ) {
+      // FIRST BASE WINS (self-defense, matching the file-header contract) — once a base has seeded
+      // the row, a second base event is ignored. Today backfill scoping guarantees a create + a
+      // genesis never coexist for the same id, so this is unreachable; the guard makes the reducer
+      // robust if that invariant ever weakens (no silent re-seed clobbering the chain state).
+      if (row !== null) continue;
       const c = MistakeVariantCreateExperimental.safeParse(toParseInput(fe));
       if (!c.success) {
         warnMalformed('experimental:mistake_variant_create', fe.id, c.error);
@@ -135,6 +140,8 @@ export function foldMistakeVariant(
 
     // ---------- BASE: experimental:genesis (backfill seed of a pre-W2 row) ----------
     if (fe.action === 'experimental:genesis' && fe.subject_kind === 'mistake_variant') {
+      // FIRST BASE WINS (see the create branch above).
+      if (row !== null) continue;
       const g = GenesisExperimental.safeParse(toParseInput(fe));
       if (!g.success) {
         warnMalformed('experimental:genesis', fe.id, g.error);
@@ -207,6 +214,13 @@ export function foldMistakeVariant(
     if (fe.action === 'correct' && fe.subject_kind === 'event') {
       const cp = CorrectionPayload.safeParse(fe.payload);
       if (!cp.success || cp.data.correction_kind !== 'retract') continue;
+      // STATUS GUARD (mirrors foldGoal:208 + the imperative writer's WHERE) — the imperative
+      // retract (actions.ts retractAiProposal) guards BOTH its SELECT and UPDATE on
+      // `inArray(status, ['draft','active'])`, so a terminal (broken | dismissed) row is NEVER
+      // touched. retractAiProposal only requireProposal (not assertPending), so a retract event CAN
+      // be written after a verify-FAIL (broken) or a dismiss (dismissed) — the fold must MIRROR the
+      // imperative no-op (leave status + updated_at), else fold != row.
+      if (row.status !== 'draft' && row.status !== 'active') continue;
       row = { ...row, status: 'dismissed', updated_at: fe.created_at };
     }
   }
