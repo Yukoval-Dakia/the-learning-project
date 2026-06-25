@@ -1159,11 +1159,18 @@ export async function retractAiProposal(
     const flip = projectionIsWriter('learning_item');
     for (const item of affectedItems) {
       // genesis-IF-MISSING — anchor a pre-W2 / un-backfilled item with a snapshot of its CURRENT
-      // (not-yet-archived) state so the archive event has a base to fold from. created_at = the
-      // row's own updated_at (verbatim; mirrors the backfill timestamp convention) so the seeded
-      // base reproduces the pre-archive row.
+      // (not-yet-archived) state so the archive event has a base to fold from.
       if (!(await hasLearningItemGenesisAnchor(db, item.id))) {
         const genesisEventId = newId();
+        // CLAMP the genesis created_at STRICTLY EARLIER than the archive event (review #1 — LOW,
+        // root-cause hardening). The fold sorts by (created_at asc, id asc) and event ids are
+        // non-temporal cuid2s, so if item.updated_at == correctionAt (same-ms, cross-tx) the random
+        // archive id could sort BEFORE the genesis → the archive would hit an absent/null row
+        // (no-op) and the genesis would then seed an UN-archived row → fold.archived_at=null !=
+        // live correctionAt (a false parity failure). min(item.updated_at, correctionAt - 1ms)
+        // guarantees genesis < archive regardless of id, while staying ≤ the row's own time so the
+        // seeded base still reproduces the pre-archive row.
+        const genesisAt = new Date(Math.min(item.updated_at.getTime(), correctionAt.getTime() - 1));
         await writeEvent(db, {
           id: genesisEventId,
           actor_kind: 'system',
@@ -1173,8 +1180,8 @@ export async function retractAiProposal(
           subject_id: item.id,
           outcome: 'success',
           payload: { row: learningItemLiveRowToSnapshot(item) },
-          // verbatim row time so the seeded base == the pre-archive row; sorts BEFORE the archive.
-          created_at: item.updated_at,
+          // strictly < archive so the genesis sorts BEFORE it (see the clamp rationale above).
+          created_at: genesisAt,
           ingest_at: correctionAt,
         });
         await upsertMaterializedIdIndex(db, {
