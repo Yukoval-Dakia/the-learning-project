@@ -172,6 +172,24 @@ describe('foldLearningItem — complete', () => {
     expect(folded?.completed_at?.getTime()).toBe(T0.getTime());
     expect(folded?.version).toBe(5);
   });
+
+  it('ARCHIVED-GUARD: complete on an archived (but pending) row is a no-op (full imperative WHERE mirror, review #3)', () => {
+    // The imperative SELECT guards isNull(archived_at) before the status assert — an archived row
+    // 404s before any UPDATE. The reducer mirrors the FULL WHERE: a status-match alone is not enough.
+    const row = liSnapshot({
+      status: 'pending',
+      archived_at: T0,
+      archived_reason: 'gone',
+      version: 0,
+    });
+    const folded = foldLearningItem('li_1', [
+      genesis({ created_at: T0, row }),
+      complete({ created_at: at(1000), itemId: 'li_1' }),
+    ]);
+    expect(folded?.status).toBe('pending'); // NOT done
+    expect(folded?.completed_at).toBeNull();
+    expect(folded?.version).toBe(0);
+  });
 });
 
 describe('foldLearningItem — relearn', () => {
@@ -207,6 +225,22 @@ describe('foldLearningItem — relearn', () => {
     expect(folded?.version).toBe(0);
   });
 
+  it('ARCHIVED-GUARD: relearn on an archived (but done) row is a no-op (full imperative WHERE mirror, review #3)', () => {
+    const row = liSnapshot({
+      status: 'done',
+      completed_at: T0,
+      archived_at: at(500),
+      archived_reason: 'gone',
+      version: 1,
+    });
+    const folded = foldLearningItem('li_1', [
+      genesis({ created_at: T0, row }),
+      relearn({ created_at: at(2000), itemId: 'li_1' }),
+    ]);
+    expect(folded?.status).toBe('done'); // NOT in_progress
+    expect(folded?.version).toBe(1);
+  });
+
   it('complete then relearn round-trip (done → in_progress with both version bumps)', () => {
     const row = liSnapshot({ status: 'pending', version: 0 });
     const folded = foldLearningItem('li_1', [
@@ -233,6 +267,52 @@ describe('foldLearningItem — archive', () => {
     expect(folded?.version).toBe(3); // NO bump (mirrors the bare retract UPDATE)
     // status is untouched by archive — archived is a tombstone timestamp, NOT a status.
     expect(folded?.status).toBe('pending');
+  });
+
+  it('TIEBREAK CAPTURE (review #1): same-ms genesis+archive with archive id sorting FIRST mis-orders WITHOUT a strict-earlier genesis', () => {
+    // This is the exact failure mode the actions.ts genesis-if-missing clamp prevents at the WRITE
+    // side: the reducer sorts by (created_at asc, id asc). If a genesis-if-missing and its archive
+    // share created_at (same-ms, cross-tx) AND the archive's cuid2 id sorts BEFORE the genesis's,
+    // the archive applies to a not-yet-seeded (null) row → no-op → the genesis then seeds an
+    // UN-archived row → fold.archived_at = null. Constructed with EXPLICIT ids so the (created_at,
+    // id) order is deterministic ('aaa_archive' < 'zzz_genesis').
+    const row = liSnapshot({ status: 'pending', archived_at: null, version: 0 });
+    const sameMs = T0;
+    const genesisLate: FoldEvent = {
+      id: 'zzz_genesis', // sorts AFTER the archive id at equal created_at
+      created_at: sameMs,
+      actor_kind: 'system',
+      actor_ref: 'genesis-backfill',
+      action: 'experimental:genesis',
+      subject_kind: 'learning_item',
+      subject_id: 'li_1',
+      outcome: 'success',
+      caused_by_event_id: null,
+      payload: { row },
+    };
+    const archiveEarlyId: FoldEvent = {
+      id: 'aaa_archive', // sorts BEFORE the genesis id at equal created_at
+      created_at: sameMs,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_archive',
+      subject_kind: 'learning_item',
+      subject_id: 'li_1',
+      outcome: 'success',
+      caused_by_event_id: null,
+      payload: { reason: 'proposal_retracted' },
+    };
+    const folded = foldLearningItem('li_1', [genesisLate, archiveEarlyId]);
+    // The bug WOULD have manifested here (archive no-ops before the base exists) — captured.
+    expect(folded?.archived_at).toBeNull();
+
+    // The CLAMP fix makes the WRITER stamp genesis STRICTLY EARLIER (created_at - 1ms), so the
+    // genesis always sorts first regardless of the id coin-flip → the archive lands → archived_at
+    // set. (This is what actions.ts now writes.)
+    const genesisEarly: FoldEvent = { ...genesisLate, created_at: new Date(sameMs.getTime() - 1) };
+    const foldedFixed = foldLearningItem('li_1', [genesisEarly, archiveEarlyId]);
+    expect(foldedFixed?.archived_at?.getTime()).toBe(sameMs.getTime());
+    expect(foldedFixed?.archived_reason).toBe('proposal_retracted');
   });
 
   it('TERMINAL-GUARD: archive on an already-archived row is a no-op (idempotent retract)', () => {

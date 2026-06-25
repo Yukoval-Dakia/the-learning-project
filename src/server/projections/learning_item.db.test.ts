@@ -26,6 +26,7 @@ import { writeEvent } from '@/server/events/queries';
 import { planLearningIntent } from '@/server/orchestrator/learning_intent';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillLearningItemGenesis } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -352,6 +353,58 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
     // the auditor sees zero learning_item drift on the retracted items.
     const audit = await auditProjection(db, {});
     expect(audit.drift.filter((d) => d.subject_kind === 'learning_item')).toEqual([]);
+  });
+
+  it('GENESIS-IF-MISSING: retracting an eventless (un-backfilled) item writes the genesis base + archive; fold==row (review #2)', async () => {
+    const db = testDb();
+    // A real learning_item proposal in the inbox (so retractAiProposal's requireProposal resolves)
+    // — but NOTHING materialized through the genesis-writing INSERT path.
+    const proposalId = await writeLearningItemProposal(db as never, {
+      topic: 'Eventless topic',
+      knowledge_node: { id: 'k_x', name: 'X', domain: 'wenyan' },
+      hub: { title: 'Hub', summary_md: 'overview' },
+      atomics: [],
+      reason_md: 'because',
+      evidence_refs: [],
+      created_at: T0,
+    });
+    // Directly INSERT an EVENTLESS item with source_ref=proposalId — NO genesis event, so
+    // hasLearningItemGenesisAnchor is FALSE and the retract MUST exercise the genesis-if-missing
+    // branch (the lane's only novel double-clock path, otherwise never executed by the e2e test).
+    await insertEventlessItem('li_eventless', {
+      source_ref: proposalId,
+      status: 'pending',
+      updated_at: new Date(T0.getTime() + 5000),
+    });
+    // sanity: the item has no genesis anchor before the retract.
+    const preGenesis = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.subject_id, 'li_eventless'));
+    expect(preGenesis).toHaveLength(0);
+
+    await retractAiProposal(db, proposalId, { reason_md: 'eventless retract' });
+
+    // the genesis base was written this tx (so the archive event has a base to fold from).
+    const genesisRows = await db
+      .select({ action: event.action })
+      .from(event)
+      .where(eq(event.subject_id, 'li_eventless'));
+    const actions = genesisRows.map((r) => r.action);
+    expect(actions).toContain('experimental:genesis');
+    expect(actions).toContain('experimental:learning_item_archive');
+
+    const live = await liveItem('li_eventless');
+    const folded = await gatherAndFoldLearningItem(db, 'li_eventless');
+    expect(live?.archived_at).not.toBeNull();
+    expect(live?.archived_reason).toBe('proposal_retracted');
+    // The clamp (review #1) guarantees genesis sorts strictly before the archive regardless of the
+    // cuid2 id coin-flip, so the archive ALWAYS hits the seeded row → fold.archived_at == live.
+    expect(folded).toEqual(live);
+    expect(folded?.archived_at?.getTime()).toBe(live?.archived_at?.getTime());
+
+    const audit = await auditProjection(db, {});
+    expect(audit.drift.filter((d) => d.id === 'li_eventless')).toEqual([]);
   });
 });
 
