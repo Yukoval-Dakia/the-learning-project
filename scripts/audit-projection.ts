@@ -38,14 +38,19 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { GoalRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
+import type {
+  GoalRowSnapshotT,
+  KnowledgeRowSnapshotT,
+  MistakeVariantRowSnapshotT,
+} from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { goal, knowledge, knowledge_edge } from '@/db/schema';
+import { goal, knowledge, knowledge_edge, mistake_variant } from '@/db/schema';
 import {
   edgeRowToSnapshot,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldKnowledgeNode,
+  gatherAndFoldMistakeVariant,
 } from '@/server/projections/gather';
 // SHARED structural deep-diff — the B3 audit MUST use the same equality as the in-tx accept
 // assert (src/server/projections/parity.ts), or it would be blind to the drift it gates. (#580)
@@ -115,7 +120,7 @@ export function loadAllowlist(path: string = ALLOWLIST_PATH): ProjectionAllowlis
 // ── Drift representation ──────────────────────────────────────────────────────────────
 export interface DriftRecord {
   id: string;
-  subject_kind: 'knowledge' | 'knowledge_edge' | 'goal';
+  subject_kind: 'knowledge' | 'knowledge_edge' | 'goal' | 'mistake_variant';
   // human-readable field-level differences (column: live → expected).
   diffs: string[];
 }
@@ -125,6 +130,7 @@ export interface AuditResult {
   checkedNodes: number;
   checkedEdges: number;
   checkedGoals: number;
+  checkedMistakeVariants: number;
   drift: DriftRecord[]; // non-allowlisted drift (the failures)
   allowed: DriftRecord[]; // drifted ids covered by the allowlist (reported, not failures)
 }
@@ -144,6 +150,25 @@ function goalRowToSnapshot(row: typeof goal.$inferSelect): GoalRowSnapshotT {
     created_at: row.created_at,
     updated_at: row.updated_at,
     version: row.version,
+  };
+}
+
+// Map a live `mistake_variant` row to its snapshot so the deep-diff compares like-for-like against
+// the mistake_variant fold output. No derived/embed/version columns — the full row IS the snapshot
+// (incl. the fold-blind cause_category the base event reproduces, critic A4).
+function mistakeVariantRowToSnapshot(
+  row: typeof mistake_variant.$inferSelect,
+): MistakeVariantRowSnapshotT {
+  return {
+    id: row.id,
+    parent_question_id: row.parent_question_id,
+    variant_question_id: row.variant_question_id,
+    proposal_event_id: row.proposal_event_id,
+    status: row.status as MistakeVariantRowSnapshotT['status'],
+    failure_reasons: row.failure_reasons ?? [],
+    cause_category: row.cause_category,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }
 
@@ -233,11 +258,29 @@ export async function auditProjection(
     }
   }
 
+  // ── mistake_variant (YUK-471 W2) ── full-table fold-diff. No derived columns, so the full row is
+  // read + compared. The per-variant gatherAndFoldMistakeVariant issues its own Q1 (base) + the
+  // caused_by chain (no mesh / reverse-index — mvId == subject_id). The fold-blind cause_category is
+  // reproduced from the base event; a row whose cause_category drifts from its base seed is DRIFT.
+  const mistakeVariants = await db.select().from(mistake_variant);
+  for (const row of mistakeVariants) {
+    const expected = await gatherAndFoldMistakeVariant(db, row.id);
+    const diffs = diffSnapshots(
+      mistakeVariantRowToSnapshot(row),
+      expected as Record<string, unknown> | null,
+    );
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'mistake_variant', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
   return {
     ok: drift.length === 0,
     checkedNodes: nodes.length,
     checkedEdges: edges.length,
     checkedGoals: goals.length,
+    checkedMistakeVariants: mistakeVariants.length,
     drift,
     allowed,
   };
@@ -252,7 +295,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s).`,
+      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s).`,
     );
     if (result.allowed.length > 0) {
       console.log(`\nALLOWED drift (covered by allowlist):  ${result.allowed.length}`);
