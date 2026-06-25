@@ -322,6 +322,11 @@ export async function acceptCompletionProposal(
       payload: {
         rating: 'accept',
         materialized_learning_item_id: learningItemId,
+        // YUK-471 (retract fold/rollback) — pin the EXACT pre-accept state so retract
+        // restores it instead of guessing. completion accepts pending|in_progress; we
+        // record which (and the prior completed_at, normally null) here.
+        materialized_prior_status: item.status,
+        materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
         ...(opts.user_note ? { user_note: opts.user_note } : {}),
       },
       caused_by_event_id: proposalId,
@@ -397,6 +402,13 @@ export async function acceptRelearnProposal(
       payload: {
         rating: 'accept',
         materialized_learning_item_id: learningItemId,
+        // YUK-471 (retract fold/rollback) — pin the EXACT pre-accept state. relearn
+        // accepts done|resting and clears completed_at; without this, retract cannot
+        // tell a `resting` (completed_at was already null) item from a `done` one and
+        // would corrupt it into `done` with a fabricated completed_at. Record both so
+        // retract restores byte-for-byte.
+        materialized_prior_status: item.status,
+        materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
         ...(opts.user_note ? { user_note: opts.user_note } : {}),
       },
       caused_by_event_id: proposalId,

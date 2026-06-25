@@ -1450,8 +1450,151 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       await db.select().from(learning_item).where(eq(learning_item.id, 'li_relearn_r')).limit(1)
     )[0];
     expect(item.status).toBe('done');
-    expect(item.completed_at).toBeInstanceOf(Date);
+    // The EXACT prior completed_at is restored from the captured prior-state (NOT `now`).
+    expect(item.completed_at?.getTime()).toBe(completedAt.getTime());
     expect(item.version).toBe(2); // accept 0→1, retract 1→2
+  });
+
+  it('retracting an ACCEPTED relearn of a RESTING item restores resting (no fabricated completed_at)', async () => {
+    const db = testDb();
+    const now = new Date();
+    // resting item: completed_at is null (decayed, not freshly done).
+    await db.insert(learning_item).values({
+      id: 'li_resting',
+      source: 'manual',
+      title: '休眠候选',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'resting',
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+    });
+    await writeAiProposal(db, {
+      id: 'relearn_resting_p1',
+      payload: {
+        kind: 'relearn',
+        target: { subject_kind: 'learning_item', subject_id: 'li_resting' },
+        reason_md: 'resurface resting item',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_resting' },
+        cooldown_key: 'relearn:li_resting',
+      },
+    });
+    await acceptAiProposal(db, 'relearn_resting_p1');
+
+    let item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_resting')).limit(1)
+    )[0];
+    expect(item.status).toBe('in_progress');
+
+    await retractAiProposal(db, 'relearn_resting_p1', { reason_md: 'leave it resting' });
+
+    item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_resting')).limit(1)
+    )[0];
+    // REGRESSION GUARD: must restore to 'resting' (NOT 'done'), and must NOT fabricate a
+    // completed_at — the prior state was resting/null.
+    expect(item.status).toBe('resting');
+    expect(item.completed_at).toBeNull();
+  });
+
+  it('double-retract of completion is idempotent (second retract is a no-op)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(learning_item).values({
+      id: 'li_dr_completion',
+      source: 'manual',
+      title: '幂等完成',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'pending',
+      created_at: now,
+      updated_at: now,
+    });
+    await writeAiProposal(db, {
+      id: 'completion_dr_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_dr_completion' },
+        reason_md: 'mastered',
+        evidence_refs: [],
+        proposed_change: {
+          learning_item_id: 'li_dr_completion',
+          triggering_signals: [],
+          evidence_json: {},
+        },
+        cooldown_key: 'completion:li_dr_completion',
+      },
+    });
+    await acceptAiProposal(db, 'completion_dr_p1');
+
+    await retractAiProposal(db, 'completion_dr_p1', { reason_md: 'first' });
+    const afterFirst = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_dr_completion')).limit(1)
+    )[0];
+    // Restored to the captured prior status (pending), not in_progress.
+    expect(afterFirst.status).toBe('pending');
+    expect(afterFirst.completed_at).toBeNull();
+
+    await retractAiProposal(db, 'completion_dr_p1', { reason_md: 'second' });
+    const afterSecond = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_dr_completion')).limit(1)
+    )[0];
+    // Second retract must NOT touch the item again (status no longer 'done' → guard skips).
+    expect(afterSecond.status).toBe('pending');
+    expect(afterSecond.version).toBe(afterFirst.version);
+    expect(afterSecond.updated_at.getTime()).toBe(afterFirst.updated_at.getTime());
+    // The evidence row stays gone (no resurrection).
+    expect(
+      await db
+        .select()
+        .from(completion_evidence)
+        .where(eq(completion_evidence.learning_item_id, 'li_dr_completion')),
+    ).toHaveLength(0);
+  });
+
+  it('double-retract of relearn is idempotent (second retract is a no-op)', async () => {
+    const db = testDb();
+    const completedAt = new Date('2026-05-20T00:00:00.000Z');
+    await db.insert(learning_item).values({
+      id: 'li_dr_relearn',
+      source: 'manual',
+      title: '幂等复学',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'done',
+      completed_at: completedAt,
+      created_at: completedAt,
+      updated_at: completedAt,
+    });
+    await writeAiProposal(db, {
+      id: 'relearn_dr_p1',
+      payload: {
+        kind: 'relearn',
+        target: { subject_kind: 'learning_item', subject_id: 'li_dr_relearn' },
+        reason_md: 'decayed',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_dr_relearn' },
+        cooldown_key: 'relearn:li_dr_relearn',
+      },
+    });
+    await acceptAiProposal(db, 'relearn_dr_p1');
+
+    await retractAiProposal(db, 'relearn_dr_p1', { reason_md: 'first' });
+    const afterFirst = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_dr_relearn')).limit(1)
+    )[0];
+    expect(afterFirst.status).toBe('done');
+
+    await retractAiProposal(db, 'relearn_dr_p1', { reason_md: 'second' });
+    const afterSecond = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_dr_relearn')).limit(1)
+    )[0];
+    // Second retract is a no-op (status no longer 'in_progress' → guard skips).
+    expect(afterSecond.status).toBe('done');
+    expect(afterSecond.version).toBe(afterFirst.version);
+    expect(afterSecond.completed_at?.getTime()).toBe(afterFirst.completed_at?.getTime());
   });
 });
 
