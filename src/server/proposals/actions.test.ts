@@ -10,8 +10,10 @@ import {
   proposal_signals,
   question,
 } from '@/db/schema';
+import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
+import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -1282,5 +1284,268 @@ describe('decideKnowledgeEdgeProposal — PR-B edge SoT flip (PROJECTION_IS_WRIT
       relation_type: 'prerequisite',
       weight: 0.7,
     });
+  });
+});
+
+// =============================================================================
+// YUK-471 (retract fold/rollback) — retractAiProposal now reverses the kinds it
+// previously only marked: completion / relearn (imperative learning_item row
+// reversal) and knowledge_node (soft-delete the created node + keep fold==row).
+// =============================================================================
+
+describe('retractAiProposal — completion / relearn row reversal (YUK-471)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('retracting an ACCEPTED completion re-opens the item + deletes the ai_propose evidence', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(learning_item).values({
+      id: 'li_done',
+      source: 'manual',
+      title: '完成候选',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'in_progress',
+      created_at: now,
+      updated_at: now,
+    });
+    await writeAiProposal(db, {
+      id: 'completion_retract_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_done' },
+        reason_md: 'item appears mastered',
+        evidence_refs: [],
+        proposed_change: {
+          learning_item_id: 'li_done',
+          triggering_signals: ['check_all_passed'],
+          evidence_json: {},
+        },
+        cooldown_key: 'completion:li_done',
+      },
+    });
+    await acceptAiProposal(db, 'completion_retract_p1');
+
+    // Sanity: accept landed.
+    let item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_done')).limit(1)
+    )[0];
+    expect(item.status).toBe('done');
+    expect(item.completed_at).toBeInstanceOf(Date);
+    expect(
+      await db
+        .select()
+        .from(completion_evidence)
+        .where(eq(completion_evidence.learning_item_id, 'li_done')),
+    ).toHaveLength(1);
+
+    const result = await retractAiProposal(db, 'completion_retract_p1', {
+      reason_md: 'completion was premature',
+    });
+    expect(result.kind).toBe('retracted');
+
+    // The item is re-opened (not done), completed_at cleared, version bumped.
+    item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_done')).limit(1)
+    )[0];
+    expect(item.status).toBe('in_progress');
+    expect(item.completed_at).toBeNull();
+    expect(item.version).toBe(2); // accept bumped 0→1, retract bumped 1→2
+
+    // The ai_propose evidence row this proposal created is gone.
+    expect(
+      await db
+        .select()
+        .from(completion_evidence)
+        .where(eq(completion_evidence.learning_item_id, 'li_done')),
+    ).toHaveLength(0);
+
+    // The correction event was chained.
+    const correctionRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.id, result.correction_event_id));
+    expect(correctionRows[0]).toMatchObject({
+      action: 'correct',
+      subject_id: 'completion_retract_p1',
+    });
+  });
+
+  it('retracting a completion that was never accepted is a no-op on the item (only the correct event)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(learning_item).values({
+      id: 'li_open',
+      source: 'manual',
+      title: '未完成',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'in_progress',
+      created_at: now,
+      updated_at: now,
+    });
+    await writeAiProposal(db, {
+      id: 'completion_noacc_p1',
+      payload: {
+        kind: 'completion',
+        target: { subject_kind: 'learning_item', subject_id: 'li_open' },
+        reason_md: 'item appears mastered',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_open', triggering_signals: [], evidence_json: {} },
+        cooldown_key: 'completion:li_open',
+      },
+    });
+
+    await retractAiProposal(db, 'completion_noacc_p1', { reason_md: 'never wanted it' });
+
+    const item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_open')).limit(1)
+    )[0];
+    expect(item.status).toBe('in_progress');
+    expect(item.completed_at).toBeNull();
+    expect(item.version).toBe(0); // untouched
+  });
+
+  it('retracting an ACCEPTED relearn restores the item to done', async () => {
+    const db = testDb();
+    const completedAt = new Date('2026-05-20T00:00:00.000Z');
+    await db.insert(learning_item).values({
+      id: 'li_relearn_r',
+      source: 'manual',
+      title: '复学候选',
+      content: 'content',
+      knowledge_ids: [],
+      status: 'done',
+      completed_at: completedAt,
+      created_at: completedAt,
+      updated_at: completedAt,
+    });
+    await writeAiProposal(db, {
+      id: 'relearn_retract_p1',
+      payload: {
+        kind: 'relearn',
+        target: { subject_kind: 'learning_item', subject_id: 'li_relearn_r' },
+        reason_md: 'mastery decayed',
+        evidence_refs: [],
+        proposed_change: { learning_item_id: 'li_relearn_r' },
+        cooldown_key: 'relearn:li_relearn_r',
+      },
+    });
+    await acceptAiProposal(db, 'relearn_retract_p1');
+
+    let item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_relearn_r')).limit(1)
+    )[0];
+    expect(item.status).toBe('in_progress');
+    expect(item.completed_at).toBeNull();
+
+    const result = await retractAiProposal(db, 'relearn_retract_p1', {
+      reason_md: 'still mastered',
+    });
+    expect(result.kind).toBe('retracted');
+
+    item = (
+      await db.select().from(learning_item).where(eq(learning_item.id, 'li_relearn_r')).limit(1)
+    )[0];
+    expect(item.status).toBe('done');
+    expect(item.completed_at).toBeInstanceOf(Date);
+    expect(item.version).toBe(2); // accept 0→1, retract 1→2
+  });
+});
+
+describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('retracting an ACCEPTED knowledge_node archives the created node AND keeps fold==row', async () => {
+    const db = testDb();
+    await seedKnowledge(['parent_node']);
+    await writeAiProposal(db, {
+      id: 'knode_retract_p1',
+      payload: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: 'a useful KC',
+        evidence_refs: [],
+        proposed_change: {
+          mutation: 'propose_new',
+          name: '待撤回节点',
+          parent_id: 'parent_node',
+        },
+        cooldown_key: 'knowledge_node:parent_node:待撤回节点',
+      },
+    });
+
+    const accept = await acceptAiProposal(db, 'knode_retract_p1');
+    if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
+    const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
+    expect(newNodeId).not.toBe('');
+
+    // After accept: node is live, and fold==row.
+    let liveRows = await db.select().from(knowledge).where(eq(knowledge.id, newNodeId));
+    expect(liveRows[0].archived_at).toBeNull();
+    let fold = await gatherAndFoldKnowledgeNode(db, newNodeId);
+    expect(fold).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: asserted non-null above.
+    expect(fold).toEqual(knowledgeLiveRowToSnapshot(liveRows[0]!));
+
+    await retractAiProposal(db, 'knode_retract_p1', { reason_md: 'wrong node' });
+
+    // After retract: node is soft-deleted (archived_at set), version bumped.
+    liveRows = await db.select().from(knowledge).where(eq(knowledge.id, newNodeId));
+    expect(liveRows[0].archived_at).toBeInstanceOf(Date);
+    expect(liveRows[0].version).toBe(1);
+    // It no longer shows up among live (archived_at IS NULL) nodes.
+    const stillLive = await db
+      .select()
+      .from(knowledge)
+      .where(and(eq(knowledge.id, newNodeId), isNull(knowledge.archived_at)));
+    expect(stillLive).toHaveLength(0);
+
+    // CRITICAL: fold(events) still equals the row after the retract reversal.
+    fold = await gatherAndFoldKnowledgeNode(db, newNodeId);
+    expect(fold).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: asserted non-null above.
+    expect(fold).toEqual(knowledgeLiveRowToSnapshot(liveRows[0]!));
+    // biome-ignore lint/style/noNonNullAssertion: asserted non-null above.
+    expect(fold!.archived_at).toBeInstanceOf(Date);
+  });
+
+  it('retracting a knowledge_node twice is idempotent (no double archive bump)', async () => {
+    const db = testDb();
+    await seedKnowledge(['parent_node2']);
+    await writeAiProposal(db, {
+      id: 'knode_retract_p2',
+      payload: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: 'a KC',
+        evidence_refs: [],
+        proposed_change: { mutation: 'propose_new', name: '幂等节点', parent_id: 'parent_node2' },
+        cooldown_key: 'knowledge_node:parent_node2:幂等节点',
+      },
+    });
+    const accept = await acceptAiProposal(db, 'knode_retract_p2');
+    if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
+    const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
+
+    await retractAiProposal(db, 'knode_retract_p2', { reason_md: 'first retract' });
+    const afterFirst = (
+      await db.select().from(knowledge).where(eq(knowledge.id, newNodeId)).limit(1)
+    )[0];
+    await retractAiProposal(db, 'knode_retract_p2', { reason_md: 'second retract' });
+    const afterSecond = (
+      await db.select().from(knowledge).where(eq(knowledge.id, newNodeId)).limit(1)
+    )[0];
+
+    // Second retract must NOT re-archive / bump version again.
+    expect(afterSecond.version).toBe(afterFirst.version);
+    expect(afterSecond.archived_at?.getTime()).toBe(afterFirst.archived_at?.getTime());
+    // And fold==row still holds.
+    const fold = await gatherAndFoldKnowledgeNode(db, newNodeId);
+    expect(fold).toEqual(knowledgeLiveRowToSnapshot(afterSecond));
   });
 });
