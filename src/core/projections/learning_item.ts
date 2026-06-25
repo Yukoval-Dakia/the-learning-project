@@ -130,10 +130,11 @@ export function foldLearningItem(
     if (row === null) continue;
 
     // ---------- complete — status→done, completed_at=event time, version+1 ----------
-    // Mirrors acceptCompletionProposal (proposal-appliers.ts): WHERE status IN (pending,in_progress).
-    // The reducer applies it ONLY when the row matches that WHERE; a row in any other status is a
-    // no-op (terminal-status guard — the imperative writer would have thrown a 409 conflict, never
-    // UPDATEd, so a complete event chained to a non-pending/in_progress row must leave the row).
+    // Mirrors acceptCompletionProposal (proposal-appliers.ts): the imperative pre-check SELECT is
+    // WHERE id=itemId AND archived_at IS NULL, then asserts status IN (pending,in_progress). The
+    // reducer applies it ONLY when the row matches that FULL WHERE; any other status OR an archived
+    // row is a no-op (terminal-status guard — the imperative writer would have 404'd on an archived
+    // row or 409'd on a wrong status, never UPDATEd, so the fold must leave the row).
     if (
       fe.action === 'experimental:learning_item_complete' &&
       fe.subject_kind === 'learning_item' &&
@@ -144,7 +145,13 @@ export function foldLearningItem(
         warnMalformed('experimental:learning_item_complete', fe.id, c.error);
         continue;
       }
-      if (row.status !== 'pending' && row.status !== 'in_progress') continue;
+      // FULL imperative WHERE mirror: status IN (pending,in_progress) AND archived_at IS NULL
+      // (proposal-appliers.ts SELECT guards isNull(archived_at) before the status assert). live path
+      // 404s before any UPDATE on an archived row, so this never diverges live — it just makes the
+      // reducer an exact mirror (review #3).
+      if ((row.status !== 'pending' && row.status !== 'in_progress') || row.archived_at !== null) {
+        continue;
+      }
       row = {
         ...row,
         status: 'done',
@@ -156,10 +163,11 @@ export function foldLearningItem(
     }
 
     // ---------- relearn — status→in_progress, completed_at=null, version+1 ----------
-    // Mirrors acceptRelearnProposal (proposal-appliers.ts): WHERE status IN (done, resting). The
-    // reducer applies it ONLY when the row matches that WHERE; any other status is a no-op
-    // (terminal-status guard). completed_at=null is a structural reset (a relearn-retract synthetic
-    // clock cannot restore the original complete time — the fold accepts null).
+    // Mirrors acceptRelearnProposal (proposal-appliers.ts): the imperative pre-check SELECT is
+    // WHERE id=itemId AND archived_at IS NULL, then asserts status IN (done, resting). The reducer
+    // applies it ONLY when the row matches that FULL WHERE; any other status OR an archived row is a
+    // no-op (terminal-status guard). completed_at=null is a structural reset (a relearn-retract
+    // synthetic clock cannot restore the original complete time — the fold accepts null).
     if (
       fe.action === 'experimental:learning_item_relearn' &&
       fe.subject_kind === 'learning_item' &&
@@ -170,7 +178,12 @@ export function foldLearningItem(
         warnMalformed('experimental:learning_item_relearn', fe.id, r.error);
         continue;
       }
-      if (row.status !== 'done' && row.status !== 'resting') continue;
+      // FULL imperative WHERE mirror: status IN (done,resting) AND archived_at IS NULL
+      // (proposal-appliers.ts SELECT guards isNull(archived_at) before the status assert). live path
+      // 404s before any UPDATE on an archived row, so this never diverges live (review #3).
+      if ((row.status !== 'done' && row.status !== 'resting') || row.archived_at !== null) {
+        continue;
+      }
       row = {
         ...row,
         status: 'in_progress',
