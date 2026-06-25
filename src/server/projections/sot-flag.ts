@@ -51,6 +51,8 @@ const PER_ENTITY_FLAG_ENV: Record<string, string> = {
   goal: 'PROJECTION_IS_WRITER_GOAL',
   // YUK-471 W2 — mistake_variant fold flips independently (default OFF until its own B3 gate).
   mistake_variant: 'PROJECTION_IS_WRITER_MISTAKE_VARIANT',
+  // YUK-471 W2 — learning_item fold flips independently (default OFF until its own B3 gate).
+  learning_item: 'PROJECTION_IS_WRITER_LEARNING_ITEM',
 };
 
 /** Which named entities have a per-entity SoT-flip flag (the overloaded arg domain). */

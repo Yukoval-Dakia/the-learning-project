@@ -74,15 +74,22 @@ import { edgeRowToSnapshot } from '@/server/projections/gather';
 // per-entity flag is ON).
 import { projectGoalGuarded } from '@/server/projections/goal';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
+// YUK-471 W2 — learning_item retract write-through (guarded; projection writes the archived row when
+// the per-entity flag is ON).
+import { projectLearningItemGuarded } from '@/server/projections/learning_item';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // YUK-471 W2 — mistake_variant dismiss (E4) / retract (E5) write-through (guarded; projection writes
 // the dismissed row when the per-entity flag is ON).
 import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
   assertGoalParity,
   assertKnowledgeEdgeParity,
+  assertLearningItemParity,
   assertMistakeVariantParity,
   goalLiveRowToSnapshot,
+  hasLearningItemGenesisAnchor,
   hasMistakeVariantGenesisAnchor,
+  learningItemLiveRowToSnapshot,
   mistakeVariantLiveRowToSnapshot,
 } from '@/server/projections/parity';
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the edge row when ON).
@@ -1130,21 +1137,109 @@ export async function retractAiProposal(
   // policy above: proposal-level retract is an L3 correction and outweighs the
   // downstream rows. Idempotent: rows that are already archived stay put so a
   // second retract doesn't bump archived_at / archived_reason.
+  //
+  // YUK-471 W2 — the learning_item rows are now fold-visible. For EACH affected item (a hub +
+  // atomics + longs share source_ref=proposalId) we write a per-id experimental:learning_item_archive
+  // action event (subject_kind='learning_item', created_at=correctionAt — the SINGLE CLOCK, HIGH-1:
+  // the reducer derives archived_at + updated_at from THIS event's created_at and the imperative
+  // UPDATE reuses the SAME correctionAt). A pre-W2 / un-backfilled item carries no genesis BASE, so
+  // the archive event alone folds to null (no base to mutate) — to make fold==archived_row hold we
+  // write a genesis-IF-MISSING (a snapshot of the CURRENT, not-yet-archived row) BEFORE the archive
+  // event (design §3⑥ / §7.5; the anchor is captured before the action). ROW writer gated on the
+  // per-entity flag (critic A1): ON → projectLearningItemGuarded folds (genesis + archive) + writes
+  // through; OFF → the imperative UPDATE (current behavior — archived_at + archived_reason +
+  // updated_at, NO version bump) + a write-time fold==row parity assert.
   if (proposal.kind === 'learning_item') {
-    const now = new Date();
-    await db
-      .update(learning_item)
-      .set({
-        archived_at: now,
-        archived_reason: 'proposal_retracted',
-        updated_at: now,
-      })
+    // Capture the affected items BEFORE the archive (the imperative WHERE: source_ref=proposalId AND
+    // archived_at IS NULL). The genesis-if-missing snapshots the row in this not-yet-archived state.
+    const affectedItems = await db
+      .select()
+      .from(learning_item)
       .where(and(eq(learning_item.source_ref, proposalId), isNull(learning_item.archived_at)));
+    const flip = projectionIsWriter('learning_item');
+    for (const item of affectedItems) {
+      // genesis-IF-MISSING — anchor a pre-W2 / un-backfilled item with a snapshot of its CURRENT
+      // (not-yet-archived) state so the archive event has a base to fold from. created_at = the
+      // row's own updated_at (verbatim; mirrors the backfill timestamp convention) so the seeded
+      // base reproduces the pre-archive row.
+      if (!(await hasLearningItemGenesisAnchor(db, item.id))) {
+        const genesisEventId = newId();
+        await writeEvent(db, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: 'genesis-backfill',
+          action: 'experimental:genesis',
+          subject_kind: 'learning_item',
+          subject_id: item.id,
+          outcome: 'success',
+          payload: { row: learningItemLiveRowToSnapshot(item) },
+          // verbatim row time so the seeded base == the pre-archive row; sorts BEFORE the archive.
+          created_at: item.updated_at,
+          ingest_at: correctionAt,
+        });
+        await upsertMaterializedIdIndex(db, {
+          materialized_id: item.id,
+          anchor_event_id: genesisEventId,
+          subject_kind: 'learning_item',
+        });
+      }
+      // The archive action event (created_at=correctionAt — single clock with the UPDATE below).
+      await writeEvent(db, {
+        id: newId(),
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:learning_item_archive',
+        subject_kind: 'learning_item',
+        subject_id: item.id,
+        outcome: 'success',
+        payload: { reason: 'proposal_retracted' },
+        caused_by_event_id: proposalId,
+        created_at: correctionAt,
+        ingest_at: correctionAt,
+      });
+    }
+    if (flip) {
+      for (const item of affectedItems) {
+        await projectLearningItemGuarded(db, item.id);
+      }
+    } else {
+      // REUSE correctionAt (the archive event's created_at) so the imperative archived row and the
+      // fold stamp the SAME archived_at/updated_at — fold(events) == live row deterministically.
+      await db
+        .update(learning_item)
+        .set({
+          archived_at: correctionAt,
+          archived_reason: 'proposal_retracted',
+          updated_at: correctionAt,
+        })
+        .where(and(eq(learning_item.source_ref, proposalId), isNull(learning_item.archived_at)));
+      for (const item of affectedItems) {
+        // The item is event-sourced this tx (the genesis-if-missing + archive), so it always
+        // re-folds — assert fold(events) == the archived row. dev/test throw on mismatch, prod warn.
+        const [written] = await db
+          .select()
+          .from(learning_item)
+          .where(eq(learning_item.id, item.id))
+          .limit(1);
+        await assertLearningItemParity(
+          db,
+          item.id,
+          written ? learningItemLiveRowToSnapshot(written) : null,
+        );
+      }
+    }
+    // ⚠️ W3 COUPLING (B2/C5) — this retract ALSO archives the paired `artifact` rows
+    // (source_ref=proposalId). artifact is a Wave 3 entity (NOT folded in W2), so this imperative
+    // artifact UPDATE is left AS-IS. WHEN W3 FOLDS artifact, this UPDATE must instead write an
+    // artifact action event (so the artifact fold reproduces the archived artifact). Do NOT fold it
+    // into the learning_item seam above — it is a separate entity. Uses its own `now` (the artifact
+    // entity has no fold clock to align with yet).
+    const artifactNow = new Date();
     await db
       .update(artifact)
       .set({
-        archived_at: now,
-        updated_at: now,
+        archived_at: artifactNow,
+        updated_at: artifactNow,
       })
       .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)));
   }

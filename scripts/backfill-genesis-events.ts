@@ -57,20 +57,29 @@ import type {
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
+  LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { event, goal, knowledge, knowledge_edge, mistake_variant } from '@/db/schema';
+import {
+  event,
+  goal,
+  knowledge,
+  knowledge_edge,
+  learning_item,
+  mistake_variant,
+} from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // The SCOPED backfill skips already-event-sourced NODES — reuse the SAME genesis-anchor check the
 // accept-time parity assert uses (genesis / auto_tag event, or a materialized_id_index anchor), so
 // "event-sourced" means exactly the same thing on both sides. (YUK-471 W2: goalsWithGenesisAnchor
-// is the goal analog; mistakeVariantsWithGenesisAnchor is the mistake_variant analog — a runtime
-// create event / backfill genesis / index anchor.)
+// is the goal analog; mistakeVariantsWithGenesisAnchor is the mistake_variant analog;
+// learningItemsWithGenesisAnchor is the learning_item analog — a genesis / index anchor.)
 import {
   goalsWithGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
+  learningItemsWithGenesisAnchor,
   mistakeVariantsWithGenesisAnchor,
 } from '@/server/projections/parity';
 import { and, eq, inArray, or } from 'drizzle-orm';
@@ -80,6 +89,7 @@ type KnowledgeRow = typeof knowledge.$inferSelect;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
 type GoalRow = typeof goal.$inferSelect;
 type MistakeVariantRow = typeof mistake_variant.$inferSelect;
+type LearningItemRow = typeof learning_item.$inferSelect;
 
 const GENESIS_ACTION = 'experimental:genesis';
 const GENESIS_ACTOR_REF = 'genesis-backfill';
@@ -89,6 +99,7 @@ export interface BackfillCounts {
   knowledge_edge: { seeded: number; skipped: number };
   goal: { seeded: number; skipped: number };
   mistake_variant: { seeded: number; skipped: number };
+  learning_item: { seeded: number; skipped: number };
 }
 
 // knowledgeRowToSnapshot — map a live `knowledge` DB row to KnowledgeRowSnapshotT, EXCLUDING
@@ -405,12 +416,113 @@ export async function backfillMistakeVariantGenesis(
   return { seeded, skipped };
 }
 
+// learningItemRowToSnapshot — map a live `learning_item` DB row to LearningItemRowSnapshotT,
+// EXCLUDING the non-structural / derived columns (child_learning_item_ids / ai_score / due_at /
+// reviewed_at — design §3①). Those have no write path the fold owns, so they are NOT part of the
+// structural snapshot fold(genesis) reproduces (mirrors the node shell's embed_* exclusion).
+// user_pinned IS retained (carried verbatim). Dates stay Date (z.coerce.date() accepts both).
+// knowledge_ids defaults to [] at the column, so it is always a string[] here.
+function learningItemRowToSnapshot(row: LearningItemRow): LearningItemRowSnapshotT {
+  return {
+    id: row.id,
+    source: row.source,
+    source_ref: row.source_ref,
+    title: row.title,
+    content: row.content,
+    knowledge_ids: row.knowledge_ids ?? [],
+    primary_artifact_id: row.primary_artifact_id,
+    parent_learning_item_id: row.parent_learning_item_id,
+    status: row.status,
+    user_pinned: row.user_pinned,
+    completed_at: row.completed_at,
+    dismissed_at: row.dismissed_at,
+    archived_at: row.archived_at,
+    archived_reason: row.archived_reason,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
+
 /**
- * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant).
- * mistake_variant is last because it softly references question (parent_question_id /
- * variant_question_id) + event (proposal_event_id) — both already event-sourced upstream; the
- * mistake_variant genesis + index writes only ADD event/index rows, but the FK order keeps the
- * convention. Returns counts.
+ * Seed genesis events + index entries for every `learning_item` row lacking a genesis anchor.
+ * (YUK-471 W2.) Same shape as backfillGoalGenesis (outbox opt-out, atomic per-row tx, idempotent).
+ * Returns { seeded, skipped }.
+ *
+ * PER-ID genesis (design §3②/§3⑤): hub + each child item gets its OWN genesis event (subject_id =
+ * item.id), NOT one genesis per tree — each learning_item folds INDEPENDENTLY (child_learning_item_ids
+ * is excluded from the snapshot, so the hub never depends on child state).
+ *
+ * C3 HUB-BEFORE-CHILD TOPO ORDER (design §3⑦): the rows are seeded sorted so a parent is anchored
+ * BEFORE its children (rows with parent_learning_item_id === null first, then children). The genesis
+ * writes only ADD event/index rows (no learning_item FK on parent_learning_item_id is enforced here),
+ * but the deterministic parent-first order keeps the convention + makes the seeded sequence stable.
+ *
+ * SCOPED (mirror the W1 node/edge + W2 goal/mistake_variant backfill): skip items already
+ * event-sourced — an item with a backfill `experimental:genesis` or a learning_item
+ * materialized_id_index anchor (learningItemsWithGenesisAnchor). The pre-scan DOUBLES as the
+ * idempotency check (a previously backfilled item now carries a genesis event → skipped). Only truly
+ * EVENT-LESS items (pre-W2 rows written by the imperative learning_intent / ai_dream INSERT before
+ * this wave) need a genesis base. timestamps verbatim from the row. FK ORDER: AFTER artifact + event
+ * (learning_item softly references primary_artifact_id + source_ref→event) — handled by
+ * backfillGenesisEvents below.
+ */
+export async function backfillLearningItemGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(learning_item);
+  const eventSourced = await learningItemsWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  // C3 HUB-BEFORE-CHILD: stable sort with parentless (hub) rows first, then children. Among rows
+  // of the same parent-ness the input order is preserved (Array.prototype.sort is stable), so the
+  // seeded sequence is deterministic.
+  const ordered = [...rows].sort((a, b) => {
+    const aHub = a.parent_learning_item_id === null ? 0 : 1;
+    const bHub = b.parent_learning_item_id === null ? 0 : 1;
+    return aHub - bHub;
+  });
+  let seeded = 0;
+  let skipped = 0;
+  for (const row of ordered) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    // ATOMIC per row: genesis event + index entry commit together (see header).
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: GENESIS_ACTOR_REF,
+        action: GENESIS_ACTION,
+        subject_kind: 'learning_item',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: { row: learningItemRowToSnapshot(row) },
+        ingest_at: now,
+      });
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: row.id,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'learning_item',
+      });
+    });
+    seeded += 1;
+  }
+  return { seeded, skipped };
+}
+
+/**
+ * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant →
+ * learning_item).
+ * mistake_variant softly references question (parent_question_id / variant_question_id) + event
+ * (proposal_event_id); learning_item softly references artifact (primary_artifact_id) + event
+ * (source_ref) — all already event-sourced upstream; the genesis + index writes only ADD
+ * event/index rows, but the FK order keeps the convention. Returns counts.
  */
 export async function backfillGenesisEvents(
   db: DbLike,
@@ -420,11 +532,13 @@ export async function backfillGenesisEvents(
   const edgeCounts = await backfillKnowledgeEdgeGenesis(db, now);
   const goalCounts = await backfillGoalGenesis(db, now);
   const mistakeVariantCounts = await backfillMistakeVariantGenesis(db, now);
+  const learningItemCounts = await backfillLearningItemGenesis(db, now);
   return {
     knowledge: knowledgeCounts,
     knowledge_edge: edgeCounts,
     goal: goalCounts,
     mistake_variant: mistakeVariantCounts,
+    learning_item: learningItemCounts,
   };
 }
 
@@ -434,16 +548,19 @@ async function main(): Promise<void> {
   console.log('[backfill-genesis] knowledge_edge:', JSON.stringify(counts.knowledge_edge));
   console.log('[backfill-genesis] goal:', JSON.stringify(counts.goal));
   console.log('[backfill-genesis] mistake_variant:', JSON.stringify(counts.mistake_variant));
+  console.log('[backfill-genesis] learning_item:', JSON.stringify(counts.learning_item));
   const totalSeeded =
     counts.knowledge.seeded +
     counts.knowledge_edge.seeded +
     counts.goal.seeded +
-    counts.mistake_variant.seeded;
+    counts.mistake_variant.seeded +
+    counts.learning_item.seeded;
   const totalSkipped =
     counts.knowledge.skipped +
     counts.knowledge_edge.skipped +
     counts.goal.skipped +
-    counts.mistake_variant.skipped;
+    counts.mistake_variant.skipped +
+    counts.learning_item.skipped;
   console.log(
     `[backfill-genesis] done — seeded ${totalSeeded} genesis event(s), skipped ${totalSkipped} already-seeded row(s).`,
   );

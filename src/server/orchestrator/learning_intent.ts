@@ -19,10 +19,22 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { summaryBodyBlocks } from '@/capabilities/notes/server/body-blocks';
-import type { Db } from '@/db/client';
+import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
+import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
+// YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
+// event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
+// the row) + the materialized_id_index anchor regardless of the flag; projectionIsWriter('learning_item')
+// gates ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF).
+import { projectLearningItem } from '@/server/projections/learning_item';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import {
+  assertLearningItemParity,
+  learningItemLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -470,6 +482,76 @@ async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> 
   }
 }
 
+// YUK-471 W2 — materialize ONE learning_item under the projection seam (shared by the hub / atomic
+// / long INSERT loops in acceptLearningIntent so all three follow the identical genesis→index→
+// write-through path). The full initial row snapshot is the BASE state; learning_item has NO
+// fold-blind field (unlike mistake_variant), so a per-id experimental:genesis fully seeds the row
+// (design §3②/§3⑥ — NOT a dedicated create event). Steps:
+//   1. ALWAYS write the per-id genesis BASE event (subject_id=row.id) FIRST so the fold (when the
+//      flag is ON) sees it in the same tx. ingest_at=now → outbox opt-out (a creation seed is not a
+//      memory-worthy activity; mirrors the goal/variant accept seams).
+//   2. ALWAYS write the materialized_id_index anchor (id → the genesis event) regardless of the flag
+//      (the event log + anchor is the source of truth; the flag only switches the ROW writer).
+//   3. ROW writer gated on projectionIsWriter('learning_item') (critic A1, defer-flip-not-build):
+//      ON → projectLearningItem folds the genesis + writes the row; OFF → the imperative INSERT
+//      stays the writer + a write-time fold==row parity assert (the item is event-sourced this tx).
+async function materializeLearningItem(
+  tx: Tx,
+  row: LearningItemRowSnapshotT,
+  now: Date,
+): Promise<void> {
+  const flip = projectionIsWriter('learning_item');
+  const genesisEventId = newId();
+  await writeEvent(tx, {
+    id: genesisEventId,
+    actor_kind: 'system',
+    actor_ref: 'genesis-backfill',
+    action: 'experimental:genesis',
+    subject_kind: 'learning_item',
+    subject_id: row.id,
+    outcome: 'success',
+    payload: { row },
+    created_at: now,
+    ingest_at: now,
+  });
+  await upsertMaterializedIdIndex(tx, {
+    materialized_id: row.id,
+    anchor_event_id: genesisEventId,
+    subject_kind: 'learning_item',
+  });
+  if (flip) {
+    await projectLearningItem(tx, row.id);
+  } else {
+    await tx.insert(learning_item).values({
+      id: row.id,
+      source: row.source,
+      source_ref: row.source_ref,
+      title: row.title,
+      content: row.content,
+      knowledge_ids: row.knowledge_ids,
+      primary_artifact_id: row.primary_artifact_id,
+      parent_learning_item_id: row.parent_learning_item_id,
+      child_learning_item_ids: [],
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      version: row.version,
+    });
+    // write-time fold==row guard: the item is event-sourced this tx (genesis + index anchor), so
+    // the fold reproduces the seeded row. dev/test throw on mismatch, prod warn.
+    const [written] = await tx
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.id, row.id))
+      .limit(1);
+    await assertLearningItemParity(
+      tx,
+      row.id,
+      written ? learningItemLiveRowToSnapshot(written) : null,
+    );
+  }
+}
+
 /**
  * Materializes a proposal: creates 1 hub LearningItem + N atomic LearningItems
  * (parent_learning_item_id linked) + paired hub artifact + N atomic artifact
@@ -601,21 +683,29 @@ export async function acceptLearningIntent(
     const hubLiId = newId();
     const hubArtifactId = newId();
 
-    await tx.insert(learning_item).values({
-      id: hubLiId,
-      source: 'learning_intent',
-      source_ref: proposalId,
-      title: hub.title,
-      content: hub.summary_md,
-      knowledge_ids: [rootKnowledgeId],
-      primary_artifact_id: hubArtifactId,
-      parent_learning_item_id: null,
-      child_learning_item_ids: [],
-      status: 'pending',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
+    await materializeLearningItem(
+      tx,
+      {
+        id: hubLiId,
+        source: 'learning_intent',
+        source_ref: proposalId,
+        title: hub.title,
+        content: hub.summary_md,
+        knowledge_ids: [rootKnowledgeId],
+        primary_artifact_id: hubArtifactId,
+        parent_learning_item_id: null,
+        status: 'pending',
+        user_pinned: false,
+        completed_at: null,
+        dismissed_at: null,
+        archived_at: null,
+        archived_reason: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      now,
+    );
 
     // Atomic LearningItems
     const atomicLiIds: string[] = [];
@@ -626,21 +716,29 @@ export async function acceptLearningIntent(
       atomicLiIds.push(atomicLiId);
       atomicArtifactIds.push(atomicArtifactId);
 
-      await tx.insert(learning_item).values({
-        id: atomicLiId,
-        source: 'learning_intent',
-        source_ref: proposalId,
-        title: atomic.title,
-        content: atomic.one_line_intent,
-        knowledge_ids: [atomic.knowledge_id],
-        primary_artifact_id: atomicArtifactId,
-        parent_learning_item_id: hubLiId,
-        child_learning_item_ids: [],
-        status: 'pending',
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
+      await materializeLearningItem(
+        tx,
+        {
+          id: atomicLiId,
+          source: 'learning_intent',
+          source_ref: proposalId,
+          title: atomic.title,
+          content: atomic.one_line_intent,
+          knowledge_ids: [atomic.knowledge_id],
+          primary_artifact_id: atomicArtifactId,
+          parent_learning_item_id: hubLiId,
+          status: 'pending',
+          user_pinned: false,
+          completed_at: null,
+          dismissed_at: null,
+          archived_at: null,
+          archived_reason: null,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        },
+        now,
+      );
     }
 
     // Long LearningItems
@@ -652,21 +750,29 @@ export async function acceptLearningIntent(
       longLiIds.push(longLiId);
       longArtifactIds.push(longArtifactId);
 
-      await tx.insert(learning_item).values({
-        id: longLiId,
-        source: 'learning_intent',
-        source_ref: proposalId,
-        title: long.title,
-        content: long.one_line_intent,
-        knowledge_ids: long.knowledge_ids,
-        primary_artifact_id: longArtifactId,
-        parent_learning_item_id: hubLiId,
-        child_learning_item_ids: [],
-        status: 'pending',
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
+      await materializeLearningItem(
+        tx,
+        {
+          id: longLiId,
+          source: 'learning_intent',
+          source_ref: proposalId,
+          title: long.title,
+          content: long.one_line_intent,
+          knowledge_ids: long.knowledge_ids,
+          primary_artifact_id: longArtifactId,
+          parent_learning_item_id: hubLiId,
+          status: 'pending',
+          user_pinned: false,
+          completed_at: null,
+          dismissed_at: null,
+          archived_at: null,
+          archived_reason: null,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        },
+        now,
+      );
     }
 
     // Hub artifact (synchronous summary; no async generation needed)
