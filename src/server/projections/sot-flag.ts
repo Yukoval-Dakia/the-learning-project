@@ -49,6 +49,8 @@
 /** Per-entity SoT-flip flag env var name. Wave 2/3 entities extend this map. */
 const PER_ENTITY_FLAG_ENV: Record<string, string> = {
   goal: 'PROJECTION_IS_WRITER_GOAL',
+  // YUK-471 W2 — mistake_variant fold flips independently (default OFF until its own B3 gate).
+  mistake_variant: 'PROJECTION_IS_WRITER_MISTAKE_VARIANT',
 };
 
 /** Which named entities have a per-entity SoT-flip flag (the overloaded arg domain). */
