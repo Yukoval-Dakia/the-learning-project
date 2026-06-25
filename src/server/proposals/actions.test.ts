@@ -1691,4 +1691,54 @@ describe('retractAiProposal — knowledge_node soft-delete + fold==row (YUK-471)
     const fold = await gatherAndFoldKnowledgeNode(db, newNodeId);
     expect(fold).toEqual(knowledgeLiveRowToSnapshot(afterSecond));
   });
+
+  it('ATOMICITY: a reversal throw rolls back the WHOLE retract (no orphan correct event)', async () => {
+    const db = testDb();
+    await seedKnowledge(['parent_atomic']);
+    await writeAiProposal(db, {
+      id: 'knode_atomic_p1',
+      payload: {
+        kind: 'knowledge_node',
+        target: { subject_kind: 'knowledge', subject_id: null },
+        reason_md: 'a KC',
+        evidence_refs: [],
+        proposed_change: { mutation: 'propose_new', name: '原子节点', parent_id: 'parent_atomic' },
+        cooldown_key: 'knowledge_node:parent_atomic:原子节点',
+      },
+    });
+    const accept = await acceptAiProposal(db, 'knode_atomic_p1');
+    if (accept.kind !== 'knowledge_node') throw new Error('unexpected accept kind');
+    const newNodeId = accept.result.kind === 'propose_new_applied' ? accept.result.new_node_id : '';
+
+    // Corrupt the node row OUT OF BAND (rename it without an event) so the in-tx parity
+    // assert (fold != row) THROWS during the knowledge_node retract reversal. In test env
+    // a parity mismatch throws (dev/test-throws switch). This makes the reversal fail AFTER
+    // the correct event was queued inside the SAME tx — proving the single-tx wrap rolls the
+    // whole thing back.
+    await db
+      .update(knowledge)
+      .set({ name: 'out-of-band-rename', version: 99 })
+      .where(eq(knowledge.id, newNodeId));
+
+    await expect(
+      retractAiProposal(db, 'knode_atomic_p1', { reason_md: 'should roll back' }),
+    ).rejects.toThrow();
+
+    // The correct (retract) event must NOT have been committed — the whole tx rolled back.
+    const correctEvents = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'correct'),
+          eq(event.subject_kind, 'event'),
+          eq(event.subject_id, 'knode_atomic_p1'),
+        ),
+      );
+    expect(correctEvents).toHaveLength(0);
+
+    // And the node was NOT archived (the applyArchive UPDATE rolled back too).
+    const node = (await db.select().from(knowledge).where(eq(knowledge.id, newNodeId)).limit(1))[0];
+    expect(node.archived_at).toBeNull();
+  });
 });

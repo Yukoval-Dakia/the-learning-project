@@ -272,8 +272,12 @@ export async function listNoteRefineChanges(
   });
 }
 
+// YUK-471 (retract fold/rollback) — accepts Db | Tx so retractAiProposal can run the undo
+// INSIDE its single retract transaction (atomic with the correct event). When passed a Tx the
+// internal `db.transaction(...)` below becomes a nested SAVEPOINT, which composes correctly:
+// it rolls back with the outer tx on error. Existing Db callers are unaffected.
 export async function undoNoteRefineApplyEvent(
-  db: Db,
+  db: DbLike,
   params: { applyEventId: string; actorRef?: string; now?: Date },
 ): Promise<{
   status: 'undone' | 'skipped:already_undone' | 'skipped:version_conflict';
