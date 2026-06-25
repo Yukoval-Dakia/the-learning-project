@@ -23,6 +23,10 @@ import { ApiError } from '@/server/http/errors';
 // writes the ROW (projection write-through when ON, imperative insertGoal when OFF).
 import { projectGoal } from '@/server/projections/goal';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+// YUK-471 W2 HIGH-2 — write-time fold==row guard on the OFF (imperative) branch (dev/test throw,
+// prod warn). The goal is event-sourced this tx (proposal + rate + index anchor), so the assert
+// always applies. Mirrors W1's assertKnowledgeNodeParity at the knowledge accept site.
+import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { insertGoal } from './queries';
@@ -153,6 +157,10 @@ export async function acceptGoalScopeProposal(
         source_ref: proposalId,
         now,
       });
+      // HIGH-2 — re-select the just-written row + assert fold(events) == row (the goal is
+      // event-sourced this tx via the proposal + rate + index anchor, so the fold reproduces it).
+      const [written] = await tx.select().from(goal).where(eq(goal.id, goalId)).limit(1);
+      await assertGoalParity(tx, goalId, written ? goalLiveRowToSnapshot(written) : null);
     }
   });
 

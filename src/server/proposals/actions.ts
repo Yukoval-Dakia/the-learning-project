@@ -74,7 +74,11 @@ import { edgeRowToSnapshot } from '@/server/projections/gather';
 // per-entity flag is ON).
 import { projectGoalGuarded } from '@/server/projections/goal';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
-import { assertKnowledgeEdgeParity } from '@/server/projections/parity';
+import {
+  assertGoalParity,
+  assertKnowledgeEdgeParity,
+  goalLiveRowToSnapshot,
+} from '@/server/projections/parity';
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the edge row when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 // YUK-15 — record→proposal evidence loop: accept flips cited records to
@@ -978,6 +982,14 @@ export async function retractAiProposal(
 ): Promise<RetractAiProposalResult> {
   const proposal = await requireProposal(db, proposalId);
   const correctionEventId = newId();
+  // YUK-471 W2 — capture the correction timestamp ONCE so the goal_scope dormant UPDATE below
+  // can stamp the row's updated_at with the SAME value the `correct` event carries. The goal
+  // reducer reads updated_at from the correct event's created_at, so a second `new Date()` for
+  // the imperative UPDATE (across the writeEvent DB round-trip) would make fold(events) !=
+  // live row by a cross-ms delta → non-deterministic audit:projection drift. Anchoring on the
+  // correct event's created_at keeps this correct after the PR #592 tx-wrapping rebase (the
+  // correct event exists in both structures).
+  const correctionAt = new Date();
   await writeEvent(db, {
     id: correctionEventId,
     actor_kind: 'user',
@@ -992,7 +1004,7 @@ export async function retractAiProposal(
       affected_refs: opts.affected_refs ?? activityRefsForProposal(proposal),
     },
     caused_by_event_id: proposalId,
-    created_at: new Date(),
+    created_at: correctionAt,
   });
 
   // YUK-17 / ADR-0018 — retracting a variant_question proposal frees the
@@ -1055,11 +1067,18 @@ export async function retractAiProposal(
     if (projectionIsWriter('goal')) {
       await projectGoalGuarded(db, goalId);
     } else {
-      const now = new Date();
+      // REUSE the correct event's created_at (correctionAt) so the imperative dormant row and
+      // the goal fold stamp the SAME updated_at — fold(events) == live row deterministically
+      // (see the correctionAt rationale at the top of this fn). Do NOT open a new `new Date()`.
       await db
         .update(goal)
-        .set({ status: 'dormant', updated_at: now })
+        .set({ status: 'dormant', updated_at: correctionAt })
         .where(and(eq(goal.id, goalId), eq(goal.status, 'active')));
+      // HIGH-2 — write-time fold==row guard. The goal is event-sourced (proposal + rate + index
+      // anchor from accept), so the fold reproduces the dormant row (status→dormant via the
+      // correct chain, NO version bump). dev/test throw on mismatch, prod warn.
+      const [written] = await db.select().from(goal).where(eq(goal.id, goalId)).limit(1);
+      await assertGoalParity(db, goalId, written ? goalLiveRowToSnapshot(written) : null);
     }
   }
 

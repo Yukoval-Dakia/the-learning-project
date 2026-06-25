@@ -26,6 +26,7 @@ import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/doma
 import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
+import { goal } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 // YUK-471 W2 — goal projection seam. The MANUAL at-entry path has NO proposal chain, so the
@@ -35,7 +36,10 @@ import { writeEvent } from '@/server/events/queries';
 // write-through when ON, imperative insertGoal when OFF — defer-flip-not-build).
 import { projectGoal } from '@/server/projections/goal';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+// HIGH-2 — write-time fold==row guard on the OFF branch (genesis written this tx → event-sourced).
+import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { eq } from 'drizzle-orm';
 import { insertGoal } from '../server/goals/queries';
 
 const Body = z.object({
@@ -133,6 +137,10 @@ export async function POST(req: Request): Promise<Response> {
           source: 'manual',
           now,
         });
+        // HIGH-2 — re-select + assert fold(genesis) == row (the genesis written above makes the
+        // manual goal event-sourced this tx, so the fold reproduces it byte-for-byte).
+        const [written] = await tx.select().from(goal).where(eq(goal.id, id)).limit(1);
+        await assertGoalParity(tx, id, written ? goalLiveRowToSnapshot(written) : null);
       }
     });
 
