@@ -37,27 +37,30 @@ import { z } from 'zod';
 // reducer imports it as the canonical projected-knowledge-row contract: genesis
 // and the reducer share ONE row shape (no drift between seed and fold output).
 
-// `.strict()` (A8 — close the gap the per-kind safeParse contract assumes): the genesis
-// superRefine re-parses payload.row against the schema for the declared subject_kind to reject a
-// wrong-entity row. A non-strict object STRIPS unknown keys instead of rejecting, so a row
-// carrying a sibling entity's extra column could survive that check. The backfill writes a
-// field-picked snapshot (exactly these columns, no embed_*), so strict never rejects a legitimate
-// genesis — it only hardens the wrong-shape reject. Matches GoalRowSnapshot below.
-export const KnowledgeRowSnapshot = z
-  .object({
-    id: z.string().min(1),
-    name: z.string(),
-    domain: z.string().nullable(), // nullable column
-    parent_id: z.string().nullable(), // nullable column
-    merged_from: z.array(z.string()), // jsonb string[], default [] at the table
-    archived_at: z.coerce.date().nullable(), // nullable timestamp
-    proposed_by_ai: z.boolean(),
-    approval_status: z.enum(['pending', 'approved', 'rejected']),
-    created_at: z.coerce.date(),
-    updated_at: z.coerce.date(),
-    version: z.number().int(),
-  })
-  .strict();
+// NON-strict, intentionally (A8 — original brief's REVERT path). This is a W1-LIVE schema with
+// live-row `.parse()` callers: the proposals.db.test `liveSnapshot` helper and the projection
+// parity sites parse a FULL `knowledge` DB row, which carries the DERIVED embed_* columns
+// (embedding / embed_model / embed_version / embed_content_hash). Non-strict STRIPS those extras
+// down to the structural subset; `.strict()` would instead throw `unrecognized_keys` and break
+// those callers (proposals.db.test.ts fails). The genesis per-kind safeParse dispatch stays safe
+// today WITHOUT strict here because the three entity field sets are disjoint — a wrong-entity row
+// fails on missing required fields (a knowledge row lacks goal's scope_knowledge_ids / a goal row
+// lacks `name`), and the B3 discriminating-column assertion is the real wrong-entity guard. Only
+// add `.strict()` to a knowledge schema if a future higher-overlap sibling makes silent-stripping
+// unsafe AND the live-row callers are first migrated to omit the derived columns.
+export const KnowledgeRowSnapshot = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  domain: z.string().nullable(), // nullable column
+  parent_id: z.string().nullable(), // nullable column
+  merged_from: z.array(z.string()), // jsonb string[], default [] at the table
+  archived_at: z.coerce.date().nullable(), // nullable timestamp
+  proposed_by_ai: z.boolean(),
+  approval_status: z.enum(['pending', 'approved', 'rejected']),
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date(),
+  version: z.number().int(),
+});
 export type KnowledgeRowSnapshotT = z.infer<typeof KnowledgeRowSnapshot>;
 
 // ---------- KnowledgeEdgeRowSnapshot ----------
@@ -68,23 +71,20 @@ export type KnowledgeRowSnapshotT = z.infer<typeof KnowledgeRowSnapshot>;
 // envelope the row already persisted; the reducer treats it as opaque provenance.
 // EXPORTED for the W1 edge reducer (same single-row-contract rationale as above).
 
-// `.strict()` (A8 — same rationale as KnowledgeRowSnapshot): reject unknown TOP-LEVEL keys so the
-// genesis per-kind safeParse rejects a wrong-shape row instead of stripping it. (`created_by` stays
-// a loose nested record — strict only constrains the outer envelope.) The backfill writes exactly
-// these columns, so strict never rejects a legitimate edge genesis.
-export const KnowledgeEdgeRowSnapshot = z
-  .object({
-    id: z.string().min(1),
-    from_knowledge_id: z.string().min(1),
-    to_knowledge_id: z.string().min(1),
-    relation_type: z.string(), // 5 core enum | experimental:* — Zod-validated upstream at propose time
-    weight: z.number().finite(), // real, default 1 — reject NaN/Infinity (genesis is ground truth)
-    created_by: z.record(z.string(), z.unknown()), // AgentRef jsonb (opaque provenance)
-    reasoning: z.string().nullable(), // nullable column
-    created_at: z.coerce.date(),
-    archived_at: z.coerce.date().nullable(), // nullable timestamp
-  })
-  .strict();
+// NON-strict, intentionally (A8 REVERT — same rationale as KnowledgeRowSnapshot): a W1-LIVE schema
+// whose live-row `.parse()` callers must STRIP, not reject, columns absent from this structural
+// subset. The disjoint-field-set + B3 discriminating-column dispatch is the wrong-entity guard.
+export const KnowledgeEdgeRowSnapshot = z.object({
+  id: z.string().min(1),
+  from_knowledge_id: z.string().min(1),
+  to_knowledge_id: z.string().min(1),
+  relation_type: z.string(), // 5 core enum | experimental:* — Zod-validated upstream at propose time
+  weight: z.number().finite(), // real, default 1 — reject NaN/Infinity (genesis is ground truth)
+  created_by: z.record(z.string(), z.unknown()), // AgentRef jsonb (opaque provenance)
+  reasoning: z.string().nullable(), // nullable column
+  created_at: z.coerce.date(),
+  archived_at: z.coerce.date().nullable(), // nullable timestamp
+});
 export type KnowledgeEdgeRowSnapshotT = z.infer<typeof KnowledgeEdgeRowSnapshot>;
 
 // ---------- GoalRowSnapshot (YUK-471 Wave 2 — goal entity fold) ----------
@@ -141,9 +141,12 @@ export type GoalRowSnapshotT = z.infer<typeof GoalRowSnapshot>;
 // follow) with HIGH field overlap (goal + the future learning_item both have
 // id/title/status/source/source_ref/created_at/updated_at/version). Field-sniffing cannot
 // safely tell them apart, so the superRefine now does an EXPLICIT per-subject_kind
-// `SpecificSnapshot.safeParse(row)` (the snapshot schemas are ALL `.strict()` (A8), so a row
-// carrying the WRONG entity's extra/missing columns is REJECTED, not stripped)
-// PLUS a discriminating-column assertion (a goal row MUST carry the goal-specific
+// `SpecificSnapshot.safeParse(row)`. GoalRowSnapshot is `.strict()` (new entity, no live-row
+// `.parse()` caller passing extra columns); KnowledgeRowSnapshot / KnowledgeEdgeRowSnapshot are
+// intentionally NON-strict (W1-LIVE schemas whose live-row callers strip derived embed_* columns —
+// see their docblocks). The dispatch stays safe because the three entity field sets are DISJOINT
+// (a wrong-entity row fails on a missing required field), reinforced by the
+// discriminating-column assertion below (a goal row MUST carry the goal-specific
 // `scope_knowledge_ids` + `sequence_hint` columns) so a sibling-entity row that happens to be
 // shape-compatible can never false-pass. subject_id === row.id is preserved. The
 // `SNAPSHOT_BY_SUBJECT_KIND` map + `DISCRIMINATING_COLUMNS` are the shared extension point:
