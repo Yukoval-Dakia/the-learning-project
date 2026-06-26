@@ -313,7 +313,10 @@ export const QuestionBlockRowSnapshot = z
     image_refs: z.array(z.string()), // jsonb string[], notNull default []
     crop_refs: z.array(z.string()), // jsonb string[], notNull default [] — A3: own truth column (F5)
     visual_complexity: z.string(), // free text (notNull default 'low')
-    extraction_confidence: z.number(), // real (notNull default 1; DB CHECK 0..1) — verbatim, no re-validate
+    // real (notNull default 1). Mirrors the DB CHECK `question_block_extraction_confidence_range`
+    // (BETWEEN 0 AND 1): a faithful backfilled row always satisfies it, so the bound never
+    // false-rejects — it only rejects a writer bug at the genesis/create barrier (§10 B5).
+    extraction_confidence: z.number().min(0).max(1),
     status: z.string(), // free text (notNull default 'draft') — 'draft' | 'ignored' | …
     knowledge_hint: z.string().nullable(), // nullable column
     merged_from_block_ids: z.array(z.string()), // jsonb string[], notNull default []
