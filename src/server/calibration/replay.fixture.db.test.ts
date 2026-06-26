@@ -310,13 +310,14 @@ describe('replayTheta — byte-identity vs production updateThetaForAttempt', ()
     // replayTheta exposes finalState (the running maps production persists), so we replay
     // the prefix [0..i] and read the final state directly — no probe trickery.
     //
-    // TOLERANCE 5 (≈1e-6, the real-column text-serialization precision): production
-    // persists θ̂ to Postgres `real` and re-reads it between attempts; the `postgres`
-    // driver round-trips a `real` through ~7 sig-digit text (0.28877070890471374 →
-    // '0.2887707'), so the live trajectory is NOT float64-exact. The PURE float64 replay
-    // agrees with the live trajectory to that precision — which is the precision the
-    // forward gate's predictedP actually carries. A tighter assertion would test
-    // Postgres's float-to-text rounding, not the harness's arithmetic faithfulness.
+    // TOLERANCE 5 (≈1e-6) — now a CONSERVATIVE bound (YUK-495 S4 widened
+    // mastery_state.theta_hat to `double precision`, so the live θ̂ re-reads bit-exactly;
+    // the pre-S4 `real`/~7-sig-digit text truncation this tolerance was sized for is gone).
+    // Any residual gap is replay-recompute arithmetic, not column truncation. Tightening
+    // toward bit-exact is the Tier-2 bit-exact-replay slice's job (#46 / decision-②: the
+    // replay must route through the shared polySigmoid the live θ̂ uses once
+    // POLY_SIGMOID_ENABLED flips) — see the PERSISTENCE-PRECISION NOTE in replay.ts. The
+    // forward gate's predictedP is robust to ~1e-6 regardless.
     for (let i = 0; i < seq.length; i++) {
       const prefix = replayAttempts.slice(0, i + 1);
       const { finalState } = replayTheta(prefix, { srtEnabled: true });
@@ -366,7 +367,7 @@ describe('replayTheta — byte-identity vs production updateThetaForAttempt', ()
       eventId: 'b0',
     };
     const { finalState } = replayTheta([replayAttempt], { srtEnabled: false });
-    // tol 5 (real-column text precision — see the SRT-on test's tolerance note).
+    // tol 5 (now a conservative bound post-S4 double-precision widen — see the SRT-on test's tolerance note).
     expect(finalState.thetaKc.get(kc) ?? 0).toBeCloseTo(prodTheta, 5);
   });
 });
@@ -464,8 +465,9 @@ describe('replayTheta — grid-Bayes posterior faithfulness vs production theta_
     const rp = replayPosterior as ThetaGridPosterior;
     expect(rp.evidence).toBe(outcomes.length);
 
-    // Elementwise probability match to ~1e-6 (real-column / float text precision — the
-    // bPrime depends on the persisted θ_global, a `real` column round-tripped through text).
+    // Elementwise probability match to ~1e-6 (conservative bound post-S4: bPrime depends on
+    // the persisted θ_global, now a `double precision` column round-tripped bit-exactly —
+    // any residual gap is recompute arithmetic, not column truncation).
     const persistedProbs = (persisted as ThetaGridPosterior).probs;
     expect(rp.probs).toHaveLength(persistedProbs.length);
     for (let j = 0; j < persistedProbs.length; j++) {
