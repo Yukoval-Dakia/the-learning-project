@@ -459,6 +459,45 @@ describe('parseEvent — experimental:note_refine_undo routing + back-compat', (
     ).toThrow();
   });
 
+  // W3-C3 flip-gate hardening — the self-sufficiency DISCRIMINATOR. A NEW undo that signals
+  // self-sufficiency (carries next_artifact_version OR history_after) MUST carry the restored body, or
+  // the reducer would fold an undefined body and silently drop the restore. Old loose undos (no marker)
+  // stay exempt (the read-path back-compat test above).
+  it('REJECTS a self-sufficient undo carrying next_artifact_version but MISSING body_blocks (W3-C3 barrier)', () => {
+    expect(() =>
+      parseEvent(
+        undoEnvelope({
+          payload: {
+            artifact_id: 'art_1',
+            undone_event_id: 'apply_1',
+            restored_from_artifact_version: 1,
+            restored_to_artifact_version: 2,
+            source_previous_artifact_version: 0,
+            next_artifact_version: 2, // self-sufficiency marker present …
+            // … but body_blocks ABSENT → reject (a non-self-sufficient new undo).
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a self-sufficient undo carrying history_after but MISSING body_blocks (W3-C3 barrier)', () => {
+    expect(() =>
+      parseEvent(
+        undoEnvelope({
+          payload: {
+            artifact_id: 'art_1',
+            undone_event_id: 'apply_1',
+            restored_from_artifact_version: 1,
+            restored_to_artifact_version: 2,
+            source_previous_artifact_version: 0,
+            history_after: [], // self-sufficiency marker present, body_blocks ABSENT → reject.
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
   it('REJECTS a wrong subject_kind for the undo action', () => {
     expect(() => parseEvent(undoEnvelope({ subject_kind: 'question' }))).toThrow();
   });

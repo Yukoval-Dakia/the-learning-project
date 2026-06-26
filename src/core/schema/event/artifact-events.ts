@@ -333,5 +333,26 @@ export const NoteRefineUndoExperimental = z
         path: ['payload', 'next_artifact_version'],
       });
     }
+    // W3-C3 FLIP-GATE HARDENING — the self-sufficiency DISCRIMINATOR. The migrated writer
+    // (undoNoteRefineApplyEvent) ALWAYS emits the full triple { body_blocks, next_artifact_version,
+    // history_after }; an OLD loose undo (pre-C1γ) carries NONE of them. So the presence of EITHER
+    // self-sufficient marker (next_artifact_version OR history_after) DISCRIMINATES "this is a NEW
+    // self-sufficient undo" — and a NEW undo MUST carry the restored body, else the reducer would fold
+    // an undefined body and silently drop the restore (a fold≠row gap the C3 parity assert would only
+    // catch post-hoc). Reject the non-self-sufficient NEW form at the parse barrier instead (fail-loud).
+    // Old loose events (no marker) are EXEMPT, preserving the read-path back-compat the schema header
+    // documents (getEvents STRICT-parses historical rows — a required body would throw on a legacy undo).
+    if (
+      data.payload.body_blocks === undefined &&
+      (data.payload.next_artifact_version !== undefined || data.payload.history_after !== undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'body_blocks (the restored body) is required when next_artifact_version or history_after ' +
+          'is carried — a self-sufficient undo must carry the body it restores (W3-C3 flip-gate)',
+        path: ['payload', 'body_blocks'],
+      });
+    }
   });
 export type NoteRefineUndoExperimentalT = z.infer<typeof NoteRefineUndoExperimental>;

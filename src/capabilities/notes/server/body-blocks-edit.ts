@@ -8,6 +8,17 @@ import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { emitArtifactBodyBlocksEditEvent } from '@/server/artifacts/mutation-events';
 import { ApiError } from '@/server/http/errors';
+// YUK-471 W3-C3 — the per-entity SoT-flip wiring. ON → the projection write-through is the row writer;
+// OFF (default) → the imperative UPDATE stays the SoT and the parity assert catches fold↔row drift
+// during the double-write phase. Gated on hasArtifactGenesisAnchor (a pre-W3 un-backfilled artifact
+// folds to null → stays imperative; mirrors the W2 goal queries pattern).
+import { projectArtifactGuarded } from '@/server/projections/artifact';
+import {
+  artifactLiveRowToSnapshot,
+  assertArtifactParity,
+  hasArtifactGenesisAnchor,
+} from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 
 // ADR-0033 D1 (YUK-309) — body_blocks block-tree editing is a NOTE-ONLY write path.
 // Opaque artifact types (tool_quiz, interactive) MUST keep body_blocks null and never
@@ -55,6 +66,13 @@ export async function editArtifactBodyBlocks(
       })
       .from(artifact)
       .where(eq(artifact.id, params.artifactId))
+      // W3-C3 (review) — FOR UPDATE: lock the row for the whole tx (mirror block-structured-edit's
+      // loadBlockForUpdate). When projectionIsWriter('artifact') is ON, the version-guarded imperative
+      // UPDATE is SKIPPED and projectArtifactGuarded's unconditional upsert is the sole writer — without
+      // the lock a concurrent edit could interleave between this read and the upsert (lost update). The
+      // lock serializes both edits on the row, closing that window on the ON path (and is a no-op cost on
+      // the OFF path, which also holds the lock through its version-guarded UPDATE).
+      .for('update')
       .limit(1);
     const row = rows[0];
     if (!row) throw new ApiError('not_found', `artifact ${params.artifactId} not found`, 404);
@@ -88,35 +106,19 @@ export async function editArtifactBodyBlocks(
       next_artifact_version: nextArtifactVersion,
     });
 
-    const updated = await tx
-      .update(artifact)
-      .set({
-        body_blocks: bodyBlocks as never,
-        history: history as never,
-        updated_at: now,
-        version: nextArtifactVersion,
-      })
-      .where(
-        and(
-          eq(artifact.id, params.artifactId),
-          eq(artifact.version, params.expectedArtifactVersion),
-        ),
-      )
-      .returning({ version: artifact.version });
-    if (updated.length === 0) {
-      throw new ApiError('conflict', `artifact ${params.artifactId} concurrently modified`, 409);
-    }
+    // YUK-471 W3-C3 — applicability gate captured BEFORE the fold-source event is written (mirror the
+    // W2 goal queries pattern). A pre-W3 artifact with no create/genesis/index anchor folds to null, so
+    // it must STAY on the imperative path (the projection would refuse to write it / the assert would
+    // false-mismatch fold-null vs the live row).
+    const wasEventSourced = await hasArtifactGenesisAnchor(tx, params.artifactId);
 
-    // YUK-95 P5: keep the L2 cross_link backlink index in sync within the same tx.
-    await syncBlockRefsForArtifact(tx, params.artifactId, bodyBlocks);
-
-    // YUK-471 W3-C1γ — migrate off the body-LESS `experimental:artifact_body_blocks_edit` onto the
-    // A1 self-sufficient `experimental:body_blocks_edit` carrying the full AFTER body_blocks +
-    // previous (for revert) + after-history + version, so foldArtifact reproduces the row VERBATIM
-    // (additive double-write; projection flag OFF). Same tx — a malformed payload rolls back the
-    // paired UPDATE (parseEvent barrier). The event id stays = eventId (the value pinned into the
-    // history entry above). optOutMemoryIngestion:false preserves the OLD edit event's outbox
-    // behaviour (a hand edit IS a user activity — byte-preserve the prior ingest_at=NULL).
+    // YUK-471 W3-C1γ — emit the self-sufficient `experimental:body_blocks_edit` event FIRST (BEFORE the
+    // row write) so both the projection (ON) and the parity assert (OFF) read it. It carries the full
+    // AFTER body_blocks + previous (for revert) + after-history + version (all computed above, no
+    // dependency on the UPDATE), so foldArtifact reproduces the row VERBATIM. Same tx — a malformed
+    // payload rolls back the whole edit (parseEvent barrier). The event id stays = eventId (the value
+    // pinned into the history entry above). optOutMemoryIngestion:false preserves the OLD edit event's
+    // outbox behaviour (a hand edit IS a user activity — byte-preserve the prior ingest_at=NULL).
     await emitArtifactBodyBlocksEditEvent(tx, {
       subjectId: params.artifactId,
       eventId,
@@ -130,6 +132,52 @@ export async function editArtifactBodyBlocks(
       createdAt: now,
       optOutMemoryIngestion: false,
     });
+
+    if (projectionIsWriter('artifact') && wasEventSourced) {
+      // ON (W3-D flip) — the projection write-through becomes the SOLE row writer; the imperative
+      // UPDATE is skipped. The read-time `row.version !== expectedArtifactVersion` check above already
+      // rejected a stale write (the 409 optimistic guard for the common case); the narrow lost-update
+      // window left without the UPDATE's version-guarded `.returning()` matches the W2 goal posture
+      // (projectGoalGuarded also has no row-level version guard). projectArtifactGuarded re-folds the
+      // create/genesis base + every edit (incl. the one just emitted) and upserts the row.
+      await projectArtifactGuarded(tx, params.artifactId);
+    } else {
+      // OFF (default) — the version-guarded imperative UPDATE stays the SoT. `.returning()` yields the
+      // FULL written row so the parity snapshot is built straight from it — no second full-row SELECT
+      // round-trip (the initial SELECT above already FOR-UPDATE-locked this row, so the returned row is
+      // the authoritative AFTER state).
+      const [written] = await tx
+        .update(artifact)
+        .set({
+          body_blocks: bodyBlocks as never,
+          history: history as never,
+          updated_at: now,
+          version: nextArtifactVersion,
+        })
+        .where(
+          and(
+            eq(artifact.id, params.artifactId),
+            eq(artifact.version, params.expectedArtifactVersion),
+          ),
+        )
+        .returning();
+      if (!written) {
+        throw new ApiError('conflict', `artifact ${params.artifactId} concurrently modified`, 409);
+      }
+      // OFF — assert fold == the row the imperative UPDATE just wrote (only when the artifact is
+      // event-sourced; a pre-W3 row folds to null and would false-mismatch). dev/test THROW, prod warn.
+      if (wasEventSourced) {
+        await assertArtifactParity(tx, params.artifactId, artifactLiveRowToSnapshot(written));
+      }
+    }
+
+    // YUK-95 P5: keep the L2 cross_link backlink index in sync within the same tx (both paths wrote
+    // the same AFTER body_blocks, so this runs once after the branch).
+    // W3-C3 (review) — syncing the parsed `bodyBlocks` (not a re-read of the row) is correct on BOTH
+    // paths: the ON-path projection re-folds the SAME full-snapshot body_blocks_edit event just emitted,
+    // so the projected row's body_blocks == `bodyBlocks` (the parity tests assert this fold==row), and
+    // the OFF path wrote `bodyBlocks` verbatim. No drift between the row's body_blocks and the synced set.
+    await syncBlockRefsForArtifact(tx, params.artifactId, bodyBlocks);
 
     return {
       artifact_id: params.artifactId,

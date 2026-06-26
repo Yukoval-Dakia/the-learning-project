@@ -734,3 +734,160 @@ describe('foldArtifact — interleaving, ordering, dedup, isolation', () => {
     expect(row?.body_blocks).toEqual(doc(block('a', 'A'))); // art_2's edit did not touch art_1
   });
 });
+
+// Deterministic in-place permutation (no RNG → reproducible). seedShift varies the permutation.
+function permute<T>(arr: T[], seedShift: number): T[] {
+  const out = [...arr];
+  for (let i = 0; i < out.length; i += 1) {
+    const j = (i * 7 + seedShift) % out.length;
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+// ====================================================================
+// W3-C3 (F7) — interleave convergence + version monotonicity + version-gap fail-loud.
+//
+// foldArtifact sorts by (created_at asc, id asc), so a SHUFFLED / out-of-order delivery MUST converge
+// to the SAME row as the in-order fold — the SoT flip rests on this determinism. version is folded
+// VERBATIM, so the final version reflects the created_at-LATEST mutator; a NON-advancing
+// body_blocks_edit (next <= previous) is rejected at the schema barrier (fail-loud) → warn-skipped by
+// the reducer so a bad event can never regress the row version.
+// ====================================================================
+describe('foldArtifact — W3-C3 interleave convergence + version monotonicity (F7)', () => {
+  const base = artifactSnapshot({ id: 'art_i', version: 0, body_blocks: doc(block('a', 'v0')) });
+  const chain: FoldEvent[] = [
+    create({ created_at: at(0), row: base }),
+    bodyEdit({
+      created_at: at(1000),
+      artifactId: 'art_i',
+      bodyBlocks: doc(block('a', 'v1')),
+      previousVersion: 0,
+      nextVersion: 1,
+    }),
+    bodyEdit({
+      created_at: at(2000),
+      artifactId: 'art_i',
+      bodyBlocks: doc(block('a', 'v2')),
+      previousVersion: 1,
+      nextVersion: 2,
+    }),
+    bodyEdit({
+      created_at: at(3000),
+      artifactId: 'art_i',
+      bodyBlocks: doc(block('a', 'v3')),
+      previousVersion: 2,
+      nextVersion: 3,
+    }),
+  ];
+
+  it('fold(shuffled) == fold(ordered) — order-independent convergence', () => {
+    const ordered = foldArtifact('art_i', chain);
+    for (let s = 0; s < 5; s += 1) {
+      expect(foldArtifact('art_i', permute(chain, s))).toEqual(ordered);
+    }
+  });
+
+  it('final version + body reflect the created_at-LATEST edit regardless of input order', () => {
+    const row = foldArtifact('art_i', permute(chain, 3));
+    expect(row?.version).toBe(3);
+    expect(row?.body_blocks).toEqual(doc(block('a', 'v3')));
+  });
+
+  it('version-gap fail-loud: a non-advancing body_blocks_edit (next <= previous) is warn-skipped, never regresses the row', () => {
+    // good edit v0→1, then a MALFORMED edit carrying next(1) <= previous(1): the BodyBlocksEdit
+    // superRefine rejects it → the reducer warn-skips → the row stays at the good edit (version 1).
+    const events: FoldEvent[] = [
+      create({ created_at: at(0), row: base }),
+      bodyEdit({
+        created_at: at(1000),
+        artifactId: 'art_i',
+        bodyBlocks: doc(block('a', 'v1')),
+        previousVersion: 0,
+        nextVersion: 1,
+      }),
+      bodyEdit({
+        created_at: at(2000),
+        artifactId: 'art_i',
+        bodyBlocks: doc(block('a', 'BAD')),
+        previousVersion: 1,
+        nextVersion: 1,
+      }),
+    ];
+    const row = foldArtifact('art_i', events);
+    expect(row?.version).toBe(1);
+    expect(row?.body_blocks).toEqual(doc(block('a', 'v1'))); // the bad (non-advancing) edit did not apply
+  });
+});
+
+// ====================================================================
+// W3-C3 flip-gate hardening — hub-dismiss set_attrs / note_refine_apply ordering (now + 1ms).
+//
+// persistHubLinkDismiss writes a set_attrs lifecycle (version UNCHANGED) at `now` and the inner
+// note_refine_apply (version + 1) at `now + 1ms`, so the set_attrs ALWAYS folds BEFORE the apply.
+// This pins that ordering: an id-tiebreak at the SAME ms could otherwise fold set_attrs LAST and
+// regress the version below the apply's bump — a fold≠row flake the writer's +1ms guard prevents.
+// ====================================================================
+describe('foldArtifact — W3-C3 hub-dismiss set_attrs→note_refine_apply ordering (now+1ms guard)', () => {
+  const base = artifactSnapshot({
+    id: 'art_h',
+    version: 2,
+    attrs: {},
+    body_blocks: doc(block('a', 'before')),
+  });
+  const suppressedAttrs = { suppressed_block_refs: [{ artifact_id: 'art_dismissed' }] };
+  // Adversarial ids: the set_attrs id sorts AFTER the apply id, so at EQUAL timestamps the id-tiebreak
+  // would WRONGLY fold set_attrs last. The +1ms (apply at 1001 > set_attrs at 1000) is what saves it.
+  const setAttrs = lifecycle({
+    id: 'zzz_setattrs',
+    created_at: at(1000),
+    artifactId: 'art_h',
+    nextVersion: 2,
+    payload: { op: 'set_attrs', attrs: suppressedAttrs },
+  });
+  const apply = noteRefine({
+    id: 'aaa_apply',
+    created_at: at(1001),
+    artifactId: 'art_h',
+    ops: [{ kind: 'replace_block', target_block_id: 'a', block: block('a', 'after') }],
+    nextVersion: 3,
+  });
+
+  it('set_attrs (version 2) folds BEFORE note_refine_apply (version 3) regardless of array order', () => {
+    for (const events of [
+      [create({ created_at: at(0), row: base }), setAttrs, apply],
+      [create({ created_at: at(0), row: base }), apply, setAttrs],
+    ]) {
+      const row = foldArtifact('art_h', events);
+      expect(row?.version).toBe(3); // the apply (created_at-later) wins the version
+      expect(row?.attrs).toEqual(suppressedAttrs); // set_attrs applied
+      expect(row?.body_blocks).toEqual(doc(block('a', 'after'))); // the apply's body
+    }
+  });
+
+  it('WITHOUT the +1ms guard (equal timestamps + adversarial ids) the version WOULD regress — proving the guard is load-bearing', () => {
+    const sameMsSetAttrs = lifecycle({
+      id: 'zzz_setattrs',
+      created_at: at(1000),
+      artifactId: 'art_h',
+      nextVersion: 2,
+      payload: { op: 'set_attrs', attrs: suppressedAttrs },
+    });
+    const sameMsApply = noteRefine({
+      id: 'aaa_apply',
+      created_at: at(1000), // SAME ms — the failure mode the +1ms prevents
+      artifactId: 'art_h',
+      ops: [{ kind: 'replace_block', target_block_id: 'a', block: block('a', 'after') }],
+      nextVersion: 3,
+    });
+    const row = foldArtifact('art_h', [
+      create({ created_at: at(0), row: base }),
+      sameMsSetAttrs,
+      sameMsApply,
+    ]);
+    // id-tiebreak folds aaa_apply (v3) BEFORE zzz_setattrs (v2) → set_attrs wins the version → REGRESSION.
+    expect(row?.version).toBe(2);
+  });
+});

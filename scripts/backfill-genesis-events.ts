@@ -54,13 +54,11 @@ import './load-env';
 
 import { newId } from '@/core/ids';
 import type {
-  ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
-  QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
 import {
@@ -91,7 +89,18 @@ import {
   mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
+// SHARED artifact / question_block row→snapshot mappers (W3-C3 review) — the genesis backfill, the
+// audit, and the parity assert all map through the SAME field-pick so the snapshot shape can't drift
+// (esp. the question_block extracted_prompt_md strip, design §5.2).
+import {
+  artifactRowToSnapshot,
+  questionBlockRowToSnapshot,
+} from '@/server/projections/snapshot-mappers';
 import { and, eq, inArray, or } from 'drizzle-orm';
+// ZodError is the genesis parse-barrier failure (writeEvent → parseEvent). Only THAT is a per-row data
+// problem to accumulate; anything else (DB connectivity / deadlock / constraint from db.insert or
+// upsertMaterializedIdIndex) is infra and must abort the whole backfill loud — see the catch blocks.
+import { ZodError } from 'zod';
 
 type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
@@ -99,8 +108,8 @@ type EdgeRow = typeof knowledge_edge.$inferSelect;
 type GoalRow = typeof goal.$inferSelect;
 type MistakeVariantRow = typeof mistake_variant.$inferSelect;
 type LearningItemRow = typeof learning_item.$inferSelect;
-type ArtifactRow = typeof artifact.$inferSelect;
-type QuestionBlockRow = typeof question_block.$inferSelect;
+// artifact / question_block row types live with the shared mappers (artifactRowToSnapshot /
+// questionBlockRowToSnapshot, ./snapshot-mappers) — imported above (W3-C3 review dedup).
 
 const GENESIS_ACTION = 'experimental:genesis';
 const GENESIS_ACTOR_REF = 'genesis-backfill';
@@ -538,38 +547,44 @@ export async function backfillLearningItemGenesis(
   return { seeded, skipped };
 }
 
-// artifactRowToSnapshot — map a live `artifact` DB row to ArtifactRowSnapshotT. artifact has NO
-// derived/embed columns (design §5.1), so the FULL 22-column row IS the snapshot — every column is
-// carried verbatim. The jsonb columns (body_blocks / attrs / tool_state / verification_summary /
-// generated_by / verified_by / history) are passed through untouched (the snapshot REUSES the
-// canonical business schemas for them, so writeEvent's parseEvent barrier validates them as ground
-// truth). Dates stay Date (GenesisExperimental's z.coerce.date() accepts both Date and the jsonb ISO
-// string). The array columns default to [] at the table, so they are always present.
-function artifactRowToSnapshot(row: ArtifactRow): ArtifactRowSnapshotT {
-  return {
-    id: row.id,
-    type: row.type,
-    title: row.title,
-    parent_artifact_id: row.parent_artifact_id,
-    knowledge_ids: row.knowledge_ids ?? [],
-    intent_source: row.intent_source,
-    source: row.source,
-    source_ref: row.source_ref,
-    body_blocks: row.body_blocks,
-    attrs: row.attrs ?? {},
-    tool_kind: row.tool_kind,
-    tool_state: row.tool_state,
-    generation_status: row.generation_status,
-    verification_status: row.verification_status,
-    verification_summary: row.verification_summary,
-    generated_by: row.generated_by,
-    verified_by: row.verified_by,
-    history: row.history ?? [],
-    archived_at: row.archived_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
+// artifactRowToSnapshot — map a live `artifact` DB row to ArtifactRowSnapshotT — is imported from the
+// shared ./snapshot-mappers module (W3-C3 review dedup; see import block).
+
+// W3-C3 FLIP-GATE HARDENING — per-row backfill error accumulation. A malformed row (e.g. an
+// out-of-range structured/figure bbox failing the strict QuestionBlockRowSnapshot / ArtifactRowSnapshot
+// parse at writeEvent) aborts ONLY its OWN per-row tx; the loop CONTINUES and records { id, error }.
+// After the whole scan, if ANY row failed, throw ONCE listing EVERY bad id — so the owner fixes all bad
+// rows in a SINGLE §9.3 data-fix pass instead of re-running the gate N times (fix one → hit the next →
+// rerun → …). Successfully-seeded rows already committed their own txs and are NOT rolled back (the
+// aggregate throw is a post-scan REPORT, not a transaction boundary). This is the form runB3Gate's
+// step-2 backfill inherits (it calls backfillGenesisEvents → these per-entity functions).
+interface BackfillRowFailure {
+  id: string;
+  error: string;
+}
+
+// Cap the per-row detail so a wholesale-bad table can't produce an unbounded error string (the message
+// must stay operator-readable in a log/CI line). The remainder is summarised as "... and N more" — the
+// full set re-derives on the next run after the shown batch is fixed.
+const MAX_FAILURE_DETAIL = 50;
+
+function throwIfBackfillFailures(
+  entity: string,
+  failures: BackfillRowFailure[],
+  seeded: number,
+): void {
+  if (failures.length === 0) return;
+  const shown = failures.slice(0, MAX_FAILURE_DETAIL);
+  const detail = shown.map((f) => `  - ${f.id}: ${f.error}`).join('\n');
+  const more =
+    failures.length > MAX_FAILURE_DETAIL
+      ? `\n  ... and ${failures.length - MAX_FAILURE_DETAIL} more`
+      : '';
+  throw new Error(
+    `[backfill-genesis] ${entity}: ${failures.length} row(s) failed the genesis parse barrier ` +
+      `(${seeded} row(s) seeded OK before the throw) — fix ALL of them in ONE data-fix pass (§9.3), ` +
+      `then re-run:\n${detail}${more}`,
+  );
 }
 
 /**
@@ -605,72 +620,52 @@ export async function backfillArtifactGenesis(
   );
   let seeded = 0;
   let skipped = 0;
+  // W3-C3 — accumulate per-row parse failures, throw ONCE after the scan (see throwIfBackfillFailures).
+  const failures: BackfillRowFailure[] = [];
   for (const row of rows) {
     if (eventSourced.has(row.id)) {
       skipped += 1;
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: genesis event + index entry commit together (see header).
-    await db.transaction(async (tx) => {
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: GENESIS_ACTOR_REF,
-        action: GENESIS_ACTION,
-        subject_kind: 'artifact',
-        subject_id: row.id,
-        outcome: 'success',
-        payload: { row: artifactRowToSnapshot(row) },
-        ingest_at: now,
+    try {
+      // ATOMIC per row: genesis event + index entry commit together (see header).
+      await db.transaction(async (tx) => {
+        await writeEvent(tx, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: GENESIS_ACTOR_REF,
+          action: GENESIS_ACTION,
+          subject_kind: 'artifact',
+          subject_id: row.id,
+          outcome: 'success',
+          payload: { row: artifactRowToSnapshot(row) },
+          ingest_at: now,
+        });
+        await upsertMaterializedIdIndex(tx, {
+          materialized_id: row.id,
+          anchor_event_id: genesisEventId,
+          subject_kind: 'artifact',
+        });
       });
-      await upsertMaterializedIdIndex(tx, {
-        materialized_id: row.id,
-        anchor_event_id: genesisEventId,
-        subject_kind: 'artifact',
-      });
-    });
-    seeded += 1;
+      seeded += 1;
+    } catch (err) {
+      // ACCUMULATE only the genesis parse-barrier failure (a ZodError from writeEvent → parseEvent on a
+      // malformed snapshot — a real per-row §9.3 data problem). RE-THROW everything else IMMEDIATELY:
+      // a db.insert / upsertMaterializedIdIndex infra failure (connectivity / deadlock / constraint) is
+      // NOT a bad row, and silently recording it as one would let a transient/systemic failure pass the
+      // flip gate as "N rows to fix" instead of aborting the whole backfill loud.
+      if (!(err instanceof ZodError)) throw err;
+      failures.push({ id: row.id, error: err.message });
+    }
   }
+  throwIfBackfillFailures('artifact', failures, seeded);
   return { seeded, skipped };
 }
 
-// questionBlockRowToSnapshot — map a live `question_block` DB row to QuestionBlockRowSnapshotT,
-// EXCLUDING the LEGACY `extracted_prompt_md` column (the snapshot omits it — markdown views derive
-// from `structured`, ADR-0002; DROP deferred to Step 11.5). This is the "strip the excluded column
-// BEFORE the snapshot is built" step (design §5.2): the strict QuestionBlockRowSnapshot would
-// `unrecognized_keys`-reject a payload carrying extracted_prompt_md, so it is never picked. Every
-// OTHER column is fold truth (carried verbatim). `structured` / `figures` REUSE the canonical
-// StructuredQuestion / FigureRef schemas (incl. the 0-1 normalized BBox refinements) — a row whose
-// structured/figure bbox is out of range FAILS the strict parse at writeEvent (fail-loud, NOT
-// clamp; see backfillQuestionBlockGenesis). Dates stay Date (z.coerce.date() accepts both).
-function questionBlockRowToSnapshot(row: QuestionBlockRow): QuestionBlockRowSnapshotT {
-  return {
-    id: row.id,
-    ingestion_session_id: row.ingestion_session_id,
-    source_document_id: row.source_document_id,
-    source_asset_ids: row.source_asset_ids ?? [],
-    page_spans: row.page_spans ?? [],
-    structured: row.structured ?? null,
-    figures: row.figures ?? [],
-    layout_quality: row.layout_quality,
-    reference_md: row.reference_md,
-    wrong_answer_md: row.wrong_answer_md,
-    image_refs: row.image_refs ?? [],
-    crop_refs: row.crop_refs ?? [],
-    visual_complexity: row.visual_complexity,
-    extraction_confidence: row.extraction_confidence,
-    status: row.status,
-    knowledge_hint: row.knowledge_hint,
-    merged_from_block_ids: row.merged_from_block_ids ?? [],
-    imported_question_id: row.imported_question_id,
-    imported_attempt_event_id: row.imported_attempt_event_id,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-    // EXCLUDED: extracted_prompt_md (legacy deprecated — stripped before parse, design §5.2).
-  };
-}
+// questionBlockRowToSnapshot — map a live `question_block` DB row to QuestionBlockRowSnapshotT
+// (EXCLUDING the legacy extracted_prompt_md column, design §5.2) — is imported from the shared
+// ./snapshot-mappers module (W3-C3 review dedup; see import block).
 
 /**
  * Seed genesis events for every `question_block` row lacking a base anchor. (YUK-471 W3-C2.) Same
@@ -705,28 +700,42 @@ export async function backfillQuestionBlockGenesis(
   );
   let seeded = 0;
   let skipped = 0;
+  // W3-C3 — accumulate per-row parse failures (the bad-bbox rows the docblock above warns about), throw
+  // ONCE after the scan so the owner fixes EVERY bad block in one §9.3 pass (see throwIfBackfillFailures).
+  const failures: BackfillRowFailure[] = [];
   for (const row of rows) {
     if (eventSourced.has(row.id)) {
       skipped += 1;
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: ONLY the genesis event (no index entry — question_block is not in the index).
-    await db.transaction(async (tx) => {
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: GENESIS_ACTOR_REF,
-        action: GENESIS_ACTION,
-        subject_kind: 'question_block',
-        subject_id: row.id,
-        outcome: 'success',
-        payload: { row: questionBlockRowToSnapshot(row) },
-        ingest_at: now,
+    try {
+      // ATOMIC per row: ONLY the genesis event (no index entry — question_block is not in the index).
+      await db.transaction(async (tx) => {
+        await writeEvent(tx, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: GENESIS_ACTOR_REF,
+          action: GENESIS_ACTION,
+          subject_kind: 'question_block',
+          subject_id: row.id,
+          outcome: 'success',
+          payload: { row: questionBlockRowToSnapshot(row) },
+          ingest_at: now,
+        });
       });
-    });
-    seeded += 1;
+      seeded += 1;
+    } catch (err) {
+      // ACCUMULATE only the genesis parse-barrier failure (a ZodError from writeEvent → parseEvent on a
+      // malformed snapshot — a real per-row §9.3 data problem). RE-THROW everything else IMMEDIATELY:
+      // a db.insert / upsertMaterializedIdIndex infra failure (connectivity / deadlock / constraint) is
+      // NOT a bad row, and silently recording it as one would let a transient/systemic failure pass the
+      // flip gate as "N rows to fix" instead of aborting the whole backfill loud.
+      if (!(err instanceof ZodError)) throw err;
+      failures.push({ id: row.id, error: err.message });
+    }
   }
+  throwIfBackfillFailures('question_block', failures, seeded);
   return { seeded, skipped };
 }
 

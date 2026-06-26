@@ -13,11 +13,13 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { artifact, event, knowledge, knowledge_edge, question_block } from '@/db/schema';
 import { auditProjection } from '../../../scripts/audit-projection';
 import {
+  backfillArtifactGenesis,
   backfillKnowledgeEdgeGenesis,
   backfillKnowledgeGenesis,
+  backfillQuestionBlockGenesis,
 } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { projectKnowledgeEdge } from './knowledge_edge';
@@ -218,5 +220,128 @@ describe('auditProjection', () => {
     expect(result.drift).toEqual([]);
     expect(result.allowed).toHaveLength(1);
     expect(result.allowed[0]?.id).toBe('kn_a');
+  });
+});
+
+// ── YUK-471 W3-C3 — artifact + question_block coverage in the audit:projection gate ──────────────
+async function insertArtifactRow(id: string, title: string): Promise<void> {
+  await testDb().insert(artifact).values({
+    id,
+    type: 'note_atomic',
+    title,
+    parent_artifact_id: null,
+    knowledge_ids: [],
+    intent_source: 'manual',
+    source: 'manual',
+    source_ref: null,
+    body_blocks: null,
+    attrs: {},
+    tool_kind: null,
+    tool_state: null,
+    generation_status: 'ready',
+    verification_status: 'not_required',
+    verification_summary: null,
+    generated_by: null,
+    verified_by: null,
+    history: [],
+    archived_at: null,
+    created_at: T0,
+    updated_at: T0,
+    version: 0,
+  });
+}
+
+async function insertBlockRow(id: string): Promise<void> {
+  await testDb()
+    .insert(question_block)
+    .values({
+      id,
+      ingestion_session_id: 'sess_1',
+      source_document_id: null,
+      source_asset_ids: [],
+      page_spans: [],
+      extracted_prompt_md: 'legacy prompt md', // legacy column — must NOT enter the fold (design §5.2)
+      structured: { id, role: 'standalone', prompt_text: 'original' },
+      figures: [],
+      layout_quality: 'structured',
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: T0,
+      updated_at: T0,
+      version: 0,
+    });
+}
+
+describe('auditProjection — artifact + question_block (W3-C3)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('reports CLEAN when every artifact + question_block row is genesis-backfilled', async () => {
+    const db = testDb();
+    await insertArtifactRow('art_a', 'A');
+    await insertArtifactRow('art_b', 'B');
+    await insertBlockRow('qb_a');
+    await backfillArtifactGenesis(db, T0);
+    await backfillQuestionBlockGenesis(db, T0);
+
+    const result = await auditProjection(db);
+    expect(result.ok).toBe(true);
+    expect(result.checkedArtifacts).toBe(2);
+    expect(result.checkedQuestionBlocks).toBe(1);
+    expect(result.drift).toEqual([]);
+  });
+
+  it('flags exactly the out-of-band-mutated artifact as DRIFT', async () => {
+    const db = testDb();
+    await insertArtifactRow('art_a', 'A');
+    await insertArtifactRow('art_b', 'B');
+    await backfillArtifactGenesis(db, T0);
+    expect((await auditProjection(db)).ok).toBe(true);
+
+    // Tamper art_b's title directly (bypass the projection) — fold(genesis) still says 'B'.
+    await db.update(artifact).set({ title: 'TAMPERED' }).where(eq(artifact.id, 'art_b'));
+
+    const result = await auditProjection(db);
+    expect(result.ok).toBe(false);
+    expect(result.drift).toHaveLength(1);
+    expect(result.drift[0]?.id).toBe('art_b');
+    expect(result.drift[0]?.subject_kind).toBe('artifact');
+    expect(result.drift[0]?.diffs.some((d) => d.startsWith('title:'))).toBe(true);
+  });
+
+  it('flags an out-of-band-mutated question_block as DRIFT; the legacy extracted_prompt_md change is INVISIBLE', async () => {
+    const db = testDb();
+    await insertBlockRow('qb_a');
+    await backfillQuestionBlockGenesis(db, T0);
+    expect((await auditProjection(db)).ok).toBe(true);
+
+    // Mutating ONLY the legacy extracted_prompt_md is NOT drift (excluded from the fold, design §5.2).
+    await db
+      .update(question_block)
+      .set({ extracted_prompt_md: 'changed legacy md' })
+      .where(eq(question_block.id, 'qb_a'));
+    expect((await auditProjection(db)).ok).toBe(true);
+
+    // Mutating a fold-truth column (reference_md) IS drift.
+    await db
+      .update(question_block)
+      .set({ reference_md: 'TAMPERED' })
+      .where(eq(question_block.id, 'qb_a'));
+    const result = await auditProjection(db);
+    expect(result.ok).toBe(false);
+    expect(result.drift).toHaveLength(1);
+    expect(result.drift[0]?.id).toBe('qb_a');
+    expect(result.drift[0]?.subject_kind).toBe('question_block');
+    expect(result.drift[0]?.diffs.some((d) => d.startsWith('reference_md:'))).toBe(true);
   });
 });
