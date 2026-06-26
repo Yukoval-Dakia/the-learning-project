@@ -9,6 +9,16 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
+// YUK-471 W2 — learning_item projection seam (ai_dream record_promotion). The INSERT writes a per-id
+// genesis BASE event + index anchor regardless of the flag; projectionIsWriter('learning_item') gates
+// ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF + parity assert).
+import { projectLearningItem } from '@/server/projections/learning_item';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import {
+  assertLearningItemParity,
+  learningItemLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { and, eq, isNull } from 'drizzle-orm';
 import {
@@ -354,17 +364,88 @@ export async function acceptRecordPromotionProposal(
         }),
       );
     } else if (target === 'learning_item') {
-      await tx.insert(learning_item).values({
+      // YUK-471 W2 — the full initial row snapshot is the genesis BASE state (learning_item has no
+      // fold-blind field; per-id genesis fully seeds the row — design §3②/§3⑥). version defaults to
+      // 0 at the column (the original INSERT did not set it), so the snapshot mirrors that.
+      const liRow = {
         id: materializedId,
         source: 'ai_dream',
         source_ref: proposalId,
         title,
         content,
         knowledge_ids: knowledgeIds,
+        primary_artifact_id: null,
+        parent_learning_item_id: null,
         status: 'pending',
+        user_pinned: false,
+        completed_at: null,
+        dismissed_at: null,
+        archived_at: null,
+        archived_reason: null,
         created_at: now,
         updated_at: now,
+        version: 0,
+      };
+      // 1. ALWAYS write the per-id genesis BASE event FIRST (subject_id=materializedId) so the fold
+      //    (when the flag is ON) sees it in the same tx. ingest_at=now → outbox opt-out.
+      const genesisEventId = newId();
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: 'genesis-backfill',
+        action: 'experimental:genesis',
+        subject_kind: 'learning_item',
+        subject_id: materializedId,
+        outcome: 'success',
+        payload: { row: liRow },
+        created_at: now,
+        ingest_at: now,
       });
+      // 2. ALWAYS write the materialized_id_index anchor (id → the genesis event) regardless of the flag.
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: materializedId,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'learning_item',
+      });
+      // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
+      //    ON → projectLearningItem folds the genesis + writes the row; OFF → the imperative INSERT
+      //    stays the writer (current behavior) + a write-time fold==row parity assert.
+      if (projectionIsWriter('learning_item')) {
+        await projectLearningItem(tx, materializedId);
+      } else {
+        // A4 — set ALL snapshot fields explicitly from the genesis `liRow` (not by DB-default
+        // coincidence) so the imperative OFF-path row matches the genesis payload by construction;
+        // a default change can no longer silently diverge the two from the seeded snapshot.
+        await tx.insert(learning_item).values({
+          id: liRow.id,
+          source: liRow.source,
+          source_ref: liRow.source_ref,
+          title: liRow.title,
+          content: liRow.content,
+          knowledge_ids: liRow.knowledge_ids,
+          primary_artifact_id: liRow.primary_artifact_id,
+          parent_learning_item_id: liRow.parent_learning_item_id,
+          status: liRow.status,
+          user_pinned: liRow.user_pinned,
+          completed_at: liRow.completed_at,
+          dismissed_at: liRow.dismissed_at,
+          archived_at: liRow.archived_at,
+          archived_reason: liRow.archived_reason,
+          created_at: liRow.created_at,
+          updated_at: liRow.updated_at,
+          version: liRow.version,
+        });
+        const [written] = await tx
+          .select()
+          .from(learning_item)
+          .where(eq(learning_item.id, materializedId))
+          .limit(1);
+        await assertLearningItemParity(
+          tx,
+          materializedId,
+          written ? learningItemLiveRowToSnapshot(written) : null,
+        );
+      }
     } else {
       await tx.insert(artifact).values({
         id: materializedId,

@@ -38,13 +38,21 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
+import type {
+  GoalRowSnapshotT,
+  KnowledgeRowSnapshotT,
+  LearningItemRowSnapshotT,
+  MistakeVariantRowSnapshotT,
+} from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { knowledge, knowledge_edge } from '@/db/schema';
+import { goal, knowledge, knowledge_edge, learning_item, mistake_variant } from '@/db/schema';
 import {
   edgeRowToSnapshot,
+  gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldKnowledgeNode,
+  gatherAndFoldLearningItem,
+  gatherAndFoldMistakeVariant,
 } from '@/server/projections/gather';
 // SHARED structural deep-diff — the B3 audit MUST use the same equality as the in-tx accept
 // assert (src/server/projections/parity.ts), or it would be blind to the drift it gates. (#580)
@@ -114,7 +122,7 @@ export function loadAllowlist(path: string = ALLOWLIST_PATH): ProjectionAllowlis
 // ── Drift representation ──────────────────────────────────────────────────────────────
 export interface DriftRecord {
   id: string;
-  subject_kind: 'knowledge' | 'knowledge_edge';
+  subject_kind: 'knowledge' | 'knowledge_edge' | 'goal' | 'mistake_variant' | 'learning_item';
   // human-readable field-level differences (column: live → expected).
   diffs: string[];
 }
@@ -123,8 +131,121 @@ export interface AuditResult {
   ok: boolean; // true iff zero NON-allowlisted drift
   checkedNodes: number;
   checkedEdges: number;
+  checkedGoals: number;
+  checkedMistakeVariants: number;
+  checkedLearningItems: number;
   drift: DriftRecord[]; // non-allowlisted drift (the failures)
   allowed: DriftRecord[]; // drifted ids covered by the allowlist (reported, not failures)
+}
+
+// Map a live `goal` row to its snapshot so the deep-diff compares like-for-like against the goal
+// fold output. goal has NO derived/embed columns — the full row IS the snapshot.
+function goalRowToSnapshot(row: typeof goal.$inferSelect): GoalRowSnapshotT {
+  return {
+    id: row.id,
+    title: row.title,
+    subject_id: row.subject_id,
+    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
+    sequence_hint: row.sequence_hint,
+    status: row.status,
+    source: row.source,
+    source_ref: row.source_ref,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
+
+// Map a live `mistake_variant` row to its snapshot so the deep-diff compares like-for-like against
+// the mistake_variant fold output. No derived/embed/version columns — the full row IS the snapshot
+// (incl. the fold-blind cause_category the base event reproduces, critic A4).
+function mistakeVariantRowToSnapshot(
+  row: typeof mistake_variant.$inferSelect,
+): MistakeVariantRowSnapshotT {
+  return {
+    id: row.id,
+    parent_question_id: row.parent_question_id,
+    variant_question_id: row.variant_question_id,
+    proposal_event_id: row.proposal_event_id,
+    status: row.status as MistakeVariantRowSnapshotT['status'],
+    failure_reasons: row.failure_reasons ?? [],
+    cause_category: row.cause_category,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+// ── learning_item structural read (YUK-471 W2) ── the auditor reads ONLY the snapshot columns,
+// EXCLUDING the non-structural / derived columns the fold does not own (child_learning_item_ids /
+// ai_score / due_at / reviewed_at — design §3①). Excluding them from BOTH the SELECT and the
+// snapshot keeps them out of the deep-diff (a row differing only in those columns folds clean).
+const LEARNING_ITEM_STRUCTURAL_COLUMNS = {
+  id: learning_item.id,
+  source: learning_item.source,
+  source_ref: learning_item.source_ref,
+  title: learning_item.title,
+  content: learning_item.content,
+  knowledge_ids: learning_item.knowledge_ids,
+  primary_artifact_id: learning_item.primary_artifact_id,
+  parent_learning_item_id: learning_item.parent_learning_item_id,
+  status: learning_item.status,
+  user_pinned: learning_item.user_pinned,
+  completed_at: learning_item.completed_at,
+  dismissed_at: learning_item.dismissed_at,
+  archived_at: learning_item.archived_at,
+  archived_reason: learning_item.archived_reason,
+  created_at: learning_item.created_at,
+  updated_at: learning_item.updated_at,
+  version: learning_item.version,
+} as const;
+
+// Derive the structural row from the schema (mirror KnowledgeStructuralRow) so it stays in sync
+// with learning_item.$inferSelect — a hand-redefined type could silently drift from the columns.
+// The excluded columns (child_learning_item_ids / ai_score / due_at / reviewed_at) are simply not
+// picked, matching the LEARNING_ITEM_STRUCTURAL_COLUMNS select above.
+type LearningItemStructuralRow = Pick<
+  typeof learning_item.$inferSelect,
+  | 'id'
+  | 'source'
+  | 'source_ref'
+  | 'title'
+  | 'content'
+  | 'knowledge_ids'
+  | 'primary_artifact_id'
+  | 'parent_learning_item_id'
+  | 'status'
+  | 'user_pinned'
+  | 'completed_at'
+  | 'dismissed_at'
+  | 'archived_at'
+  | 'archived_reason'
+  | 'created_at'
+  | 'updated_at'
+  | 'version'
+>;
+
+// Map a live learning_item row (narrow structural read) to its snapshot so the deep-diff compares
+// like-for-like against the fold output. The excluded columns are dropped from the SELECT too.
+function learningItemRowToSnapshot(row: LearningItemStructuralRow): LearningItemRowSnapshotT {
+  return {
+    id: row.id,
+    source: row.source,
+    source_ref: row.source_ref,
+    title: row.title,
+    content: row.content,
+    knowledge_ids: row.knowledge_ids ?? [],
+    primary_artifact_id: row.primary_artifact_id,
+    parent_learning_item_id: row.parent_learning_item_id,
+    status: row.status,
+    user_pinned: row.user_pinned,
+    completed_at: row.completed_at,
+    dismissed_at: row.dismissed_at,
+    archived_at: row.archived_at,
+    archived_reason: row.archived_reason,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
 }
 
 // Map a live knowledge row (narrow structural read) to its snapshot so the deep-diff compares
@@ -200,10 +321,62 @@ export async function auditProjection(
     }
   }
 
+  // ── goals (YUK-471 W2) ── full-table fold-diff. goal has no derived columns, so the full row
+  // is read + compared. The per-goal gatherAndFoldGoal issues its own Q1 + caused_by chain (no
+  // mesh / reverse-index needed — goalId == proposal subject_id).
+  const goals = await db.select().from(goal);
+  for (const row of goals) {
+    const expected = await gatherAndFoldGoal(db, row.id);
+    const diffs = diffSnapshots(goalRowToSnapshot(row), expected as Record<string, unknown> | null);
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'goal', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
+  // ── mistake_variant (YUK-471 W2) ── full-table fold-diff. No derived columns, so the full row is
+  // read + compared. The per-variant gatherAndFoldMistakeVariant issues its own Q1 (base) + the
+  // caused_by chain (no mesh / reverse-index — mvId == subject_id). The fold-blind cause_category is
+  // reproduced from the base event; a row whose cause_category drifts from its base seed is DRIFT.
+  const mistakeVariants = await db.select().from(mistake_variant);
+  for (const row of mistakeVariants) {
+    const expected = await gatherAndFoldMistakeVariant(db, row.id);
+    const diffs = diffSnapshots(
+      mistakeVariantRowToSnapshot(row),
+      expected as Record<string, unknown> | null,
+    );
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'mistake_variant', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
+  // ── learning_item (YUK-471 W2) ── narrow-column read (excludes child_learning_item_ids / ai_score
+  // / due_at / reviewed_at — design §3①). The per-item gatherAndFoldLearningItem issues a single Q1
+  // (subject-keyed: genesis + the complete/relearn/archive action events; no mesh/reverse-index/
+  // caused_by — itemId == subject_id and each item folds independently). A row that differs from
+  // fold(events) on a snapshot column is DRIFT; a difference only in an excluded column never enters
+  // the diff (those columns are absent from both the SELECT and the snapshot).
+  const learningItems = await db.select(LEARNING_ITEM_STRUCTURAL_COLUMNS).from(learning_item);
+  for (const row of learningItems) {
+    const expected = await gatherAndFoldLearningItem(db, row.id);
+    const diffs = diffSnapshots(
+      learningItemRowToSnapshot(row),
+      expected as Record<string, unknown> | null,
+    );
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'learning_item', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
   return {
     ok: drift.length === 0,
     checkedNodes: nodes.length,
     checkedEdges: edges.length,
+    checkedGoals: goals.length,
+    checkedMistakeVariants: mistakeVariants.length,
+    checkedLearningItems: learningItems.length,
     drift,
     allowed,
   };
@@ -218,7 +391,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s).`,
+      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s).`,
     );
     if (result.allowed.length > 0) {
       console.log(`\nALLOWED drift (covered by allowlist):  ${result.allowed.length}`);
