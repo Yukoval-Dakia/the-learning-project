@@ -18,10 +18,19 @@ import {
   bodyBlocksToNoteSections,
   noteSectionsToBodyBlocks,
 } from '@/capabilities/notes/server/body-blocks';
-import { ArtifactBodyBlocks, NoteSection } from '@/core/schema/business';
+import {
+  ArtifactBodyBlocks,
+  type ArtifactBodyBlocksT,
+  type ArtifactHistoryEntryT,
+  NoteSection,
+} from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
-import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import {
+  emitArtifactBodyBlocksEditEvent,
+  emitArtifactLifecycleEvent,
+} from '@/server/artifacts/mutation-events';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -201,27 +210,83 @@ export async function runNoteGenerate(
     });
     const parsed = parseNoteGenerateOutput(result.text);
 
-    // Wrap the body_blocks UPDATE + cross_link index sync in one tx so the L2
-    // backlink index never lags the AI-authored note (YUK-95 P5). An
-    // AI-generated note may emit crossLinkBlock nodes.
+    // W3-C1γ — note_generate is a COMPOUND mutation (body_blocks + generation_status='ready' +
+    // verification_status='queued' + generated_by). To make it fold-visible additively it emits TWO
+    // same-tx events: a body_blocks_edit (the generated body) + a lifecycle(set_generation_status)
+    // carrying the two statuses AND the generated_by provenance (full-row parity, design §2.1 "无排除
+    // 列"). body_blocks_edit's version-monotonicity barrier REQUIRES next > previous, so the UPDATE now
+    // ALSO bumps version (pending→ready IS the note's first content write — a genuine version advance;
+    // verified test-safe: note_generate.db.test asserts statuses/generated_by, not version). The
+    // events opt OUT of memory ingestion (background plumbing).
+    const now = new Date();
+    const generatedByRef = aiAgentRef('NoteGenerateTask', result);
+    // Wrap the body_blocks UPDATE + cross_link index sync + fold events in one tx so the L2 backlink
+    // index never lags the AI-authored note (YUK-95 P5) AND a malformed event rolls back the UPDATE.
     const updated = await db.transaction(async (tx) => {
+      // Re-read INSIDE the tx (FOR UPDATE) so the event payloads are built from the REAL current
+      // version/body/history the UPDATE is about to advance (rollback-safe, mirror create-event.ts).
+      const beforeRows = await tx
+        .select({
+          version: artifact.version,
+          body_blocks: artifact.body_blocks,
+          history: artifact.history,
+        })
+        .from(artifact)
+        .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
+        .for('update')
+        .limit(1);
+      const before = beforeRows[0];
+      if (!before) return []; // concurrently no longer pending
+      const nextVersion = before.version + 1;
+      // note_generate does NOT push a history entry — carry the CURRENT history so the body_blocks_edit
+      // reducer reproduces the column unchanged (its full-snapshot replace would otherwise blank it).
+      const historyAfter = (
+        Array.isArray(before.history) ? before.history : []
+      ) as ArtifactHistoryEntryT[];
+
       const rows = await tx
         .update(artifact)
         .set({
           body_blocks: parsed.body_blocks as never,
           generation_status: 'ready',
           verification_status: 'queued',
-          generated_by: {
-            ...aiAgentRef('NoteGenerateTask', result),
-          } as never,
-          updated_at: new Date(),
+          generated_by: { ...generatedByRef } as never,
+          version: nextVersion,
+          updated_at: now,
         })
         .where(and(eq(artifact.id, artifactId), eq(artifact.generation_status, 'pending')))
         .returning({ id: artifact.id });
+      if (rows.length === 0) return [];
 
-      if (rows.length > 0) {
-        await syncBlockRefsForArtifact(tx, artifactId, parsed.body_blocks);
-      }
+      await syncBlockRefsForArtifact(tx, artifactId, parsed.body_blocks);
+
+      await emitArtifactBodyBlocksEditEvent(tx, {
+        subjectId: artifactId,
+        previousArtifactVersion: before.version,
+        nextArtifactVersion: nextVersion,
+        bodyBlocks: parsed.body_blocks,
+        previousBodyBlocks: (before.body_blocks ?? null) as ArtifactBodyBlocksT | null,
+        historyAfter,
+        actorKind: 'agent',
+        actorRef: 'note_generate',
+        taskRunId: result.task_run_id ?? null,
+        costMicroUsd: costUsdToMicroUsd(result.cost_usd),
+        createdAt: now,
+        optOutMemoryIngestion: true,
+      });
+      await emitArtifactLifecycleEvent(tx, {
+        subjectId: artifactId,
+        op: 'set_generation_status',
+        generationStatus: 'ready',
+        verificationStatus: 'queued',
+        generatedBy: generatedByRef,
+        nextVersion,
+        actorKind: 'agent',
+        actorRef: 'note_generate',
+        taskRunId: result.task_run_id ?? null,
+        costMicroUsd: costUsdToMicroUsd(result.cost_usd),
+        createdAt: now,
+      });
       return rows;
     });
 
@@ -237,10 +302,41 @@ export async function runNoteGenerate(
   } catch (err) {
     // Mark failed so UI doesn't sit on "pending" forever; pg-boss will still
     // retry per policy because we rethrow.
-    await db
-      .update(artifact)
-      .set({ generation_status: 'failed', updated_at: new Date() })
-      .where(eq(artifact.id, artifactId));
+    //
+    // W3-C1γ — event-source the failed status flip too (so the fold reproduces generation_status=
+    // 'failed' and NOTHING about artifact stays KNOWN-UNFOLDED). Atomic in its own tx; failure does
+    // NOT bump version. Best-effort: a cleanup throw is logged, never masking the original error
+    // (which is rethrown so pg-boss retries per policy).
+    const failedAt = new Date();
+    try {
+      await db.transaction(async (tx) => {
+        const beforeRows = await tx
+          .select({ version: artifact.version })
+          .from(artifact)
+          .where(eq(artifact.id, artifactId))
+          .for('update')
+          .limit(1);
+        const before = beforeRows[0];
+        if (!before) return;
+        const rows = await tx
+          .update(artifact)
+          .set({ generation_status: 'failed', updated_at: failedAt })
+          .where(eq(artifact.id, artifactId))
+          .returning({ id: artifact.id });
+        if (rows.length === 0) return;
+        await emitArtifactLifecycleEvent(tx, {
+          subjectId: artifactId,
+          op: 'set_generation_status',
+          generationStatus: 'failed',
+          nextVersion: before.version,
+          actorKind: 'agent',
+          actorRef: 'note_generate',
+          createdAt: failedAt,
+        });
+      });
+    } catch (cleanupErr) {
+      console.error('[note_generate] failed-status cleanup failed for', artifactId, cleanupErr);
+    }
     throw err;
   }
 }

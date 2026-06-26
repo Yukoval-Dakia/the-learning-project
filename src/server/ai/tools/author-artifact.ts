@@ -47,12 +47,17 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { INTERACTIVE_HTML_MAX_CHARS, InteractiveArtifactAttrs } from '@/core/schema/business';
+import {
+  type ArtifactHistoryEntryT,
+  INTERACTIVE_HTML_MAX_CHARS,
+  InteractiveArtifactAttrs,
+} from '@/core/schema/business';
 import { artifact } from '@/db/schema';
 import {
   artifactRowToCreateSnapshot,
   emitArtifactCreateEvent,
 } from '@/server/artifacts/create-event';
+import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import type { DomainTool, ToolContext } from './types';
 
 // ---------------------------------------------------------------------------
@@ -215,12 +220,13 @@ async function executeUpdateArtifact(
 
   // Version + history mechanics follow body-blocks-edit.ts. Two deliberate
   // deviations for a DomainTool:
-  //   - NO writeEvent here: that service is a user-route owner writing its own
-  //     event; this tool gets its event via the bridge's mirrorEvent=
-  //     'when_causal' (mcp-bridge.ts) — a second event would double-count.
-  //     Consequently the history entry omits `event_id` (the mirror-event id is
-  //     minted AFTER execute returns); correlation goes via
-  //     tool_call_log.mirrored_event_id instead.
+  //   - The MIRROR event (mcp-bridge.ts mirrorEvent='when_causal', minted AFTER execute returns) is
+  //     the observability/rollback trail — kept AS-IS. W3-C1γ ADDS a SEPARATE fold-source event
+  //     (experimental:artifact_lifecycle op='set_attrs') in THIS tx so foldArtifact reproduces the
+  //     attrs(html)+history+version the UPDATE wrote (additive double-write; flag OFF — distinct from
+  //     the mirror, exactly like author_artifact's create event vs its mirror). The history entry
+  //     still omits `event_id` (the lifecycle event id is minted here but correlation stays via
+  //     tool_call_log.mirrored_event_id, unchanged).
   //   - NO caller-supplied expected_version: the in-tx read supplies it and the
   //     `WHERE version =` guard still protects against concurrent writers
   //     (single-user tool — the model shouldn't have to track
@@ -282,6 +288,24 @@ async function executeUpdateArtifact(
     if (updated.length === 0) {
       throw new Error(`update_artifact: artifact ${input.artifact_id} concurrently modified`);
     }
+
+    // W3-C1γ — fold-source set_attrs event (the UPDATE bumped version + pushed a history entry, so
+    // the event carries attrs + history_after + next_version; the reducer replaces all three). Same
+    // tx — a malformed payload rolls back the paired UPDATE (parseEvent barrier). Provenance attributes
+    // to the REAL caller (cron→system, mirror create-event.ts). optOutMemoryIngestion defaults TRUE —
+    // the mirror event already trails the html change; the fold event is plumbing.
+    await emitArtifactLifecycleEvent(tx, {
+      subjectId: input.artifact_id,
+      op: 'set_attrs',
+      attrs: attrs as Record<string, unknown>,
+      historyAfter: history as ArtifactHistoryEntryT[],
+      nextVersion,
+      actorKind: ctx.callerActor.kind === 'cron' ? 'system' : ctx.callerActor.kind,
+      actorRef: ctx.callerActor.ref,
+      causedByEventId: ctx.causedByEventId ?? null,
+      taskRunId: ctx.taskRunId,
+      createdAt: now,
+    });
 
     return {
       artifact_id: input.artifact_id,

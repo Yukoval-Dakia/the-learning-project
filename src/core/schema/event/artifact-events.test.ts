@@ -326,6 +326,142 @@ describe('parseEvent — experimental:artifact_lifecycle routing + coherence', (
   it('REJECTS a wrong subject_kind for the lifecycle action', () => {
     expect(() => parseEvent(lifecycleEnvelope({ subject_kind: 'event' }))).toThrow();
   });
+
+  // ---------- W3-C1γ — set_attrs op + provenance/history superset fields ----------
+
+  it('ACCEPTS a set_attrs carrying the new attrs object', () => {
+    const parsed = parseEvent(
+      lifecycleEnvelope({
+        payload: {
+          op: 'set_attrs',
+          attrs: { suppressed_block_refs: [{ artifact_id: 'art_x' }] },
+          next_version: 3,
+        },
+      }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:artifact_lifecycle');
+  });
+
+  it('REJECTS a set_attrs MISSING attrs (op→field coupling, superRefine)', () => {
+    expect(() =>
+      parseEvent(lifecycleEnvelope({ payload: { op: 'set_attrs', next_version: 3 } })),
+    ).toThrow();
+  });
+
+  it('ACCEPTS a set_generation_status carrying verification_status + generated_by (note_generate)', () => {
+    const parsed = parseEvent(
+      lifecycleEnvelope({
+        actor_kind: 'agent',
+        actor_ref: 'note_generate',
+        payload: {
+          op: 'set_generation_status',
+          generation_status: 'ready',
+          verification_status: 'queued',
+          generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' },
+          next_version: 1,
+        },
+      }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:artifact_lifecycle');
+  });
+
+  it('ACCEPTS a set_attrs carrying history_after (updateArtifactTool pushes a history entry)', () => {
+    const parsed = parseEvent(
+      lifecycleEnvelope({
+        payload: {
+          op: 'set_attrs',
+          attrs: { format: 'html', html: '<p>v1</p>' },
+          history_after: [{ version: 1, at: '2026-06-26T00:00:00.000Z' }],
+          next_version: 1,
+        },
+      }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:artifact_lifecycle');
+  });
+});
+
+// ---------- #4b experimental:note_refine_undo (W3-C1γ self-sufficient body restore) ----------
+
+function undoEnvelope(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:note_refine_undo',
+    subject_kind: 'artifact',
+    subject_id: 'art_1',
+    outcome: 'success',
+    payload: {
+      artifact_id: 'art_1',
+      undone_event_id: 'apply_1',
+      restored_from_artifact_version: 1,
+      restored_to_artifact_version: 2,
+      source_previous_artifact_version: 0,
+      body_blocks: { type: 'doc', content: [] },
+      next_artifact_version: 2,
+      history_after: [],
+    },
+    ...over,
+  };
+}
+
+describe('parseEvent — experimental:note_refine_undo routing + back-compat', () => {
+  it('ACCEPTS a well-formed self-sufficient undo (carries restored body + version + history)', () => {
+    const parsed: EventT = parseEvent(undoEnvelope());
+    expect((parsed as { action: string }).action).toBe('experimental:note_refine_undo');
+    expect((parsed as { subject_kind: string }).subject_kind).toBe('artifact');
+  });
+
+  it('ACCEPTS a LEGACY loose undo (bookkeeping only, no fold fields) — read-path back-compat', () => {
+    const parsed = parseEvent(
+      undoEnvelope({
+        payload: {
+          artifact_id: 'art_1',
+          undone_event_id: 'apply_1',
+          restored_from_artifact_version: 1,
+          restored_to_artifact_version: 2,
+          source_previous_artifact_version: 0,
+        },
+      }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:note_refine_undo');
+  });
+
+  it('REJECTS a body_blocks carried WITHOUT next_artifact_version (superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        undoEnvelope({
+          payload: {
+            artifact_id: 'art_1',
+            undone_event_id: 'apply_1',
+            restored_from_artifact_version: 1,
+            restored_to_artifact_version: 2,
+            source_previous_artifact_version: 0,
+            body_blocks: { type: 'doc', content: [] },
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS an unknown payload key (.strict())', () => {
+    expect(() =>
+      parseEvent(
+        undoEnvelope({
+          payload: {
+            artifact_id: 'art_1',
+            undone_event_id: 'apply_1',
+            restored_from_artifact_version: 1,
+            restored_to_artifact_version: 2,
+            bogus_extra: 'nope',
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a wrong subject_kind for the undo action', () => {
+    expect(() => parseEvent(undoEnvelope({ subject_kind: 'question' }))).toThrow();
+  });
 });
 
 // ====================================================================

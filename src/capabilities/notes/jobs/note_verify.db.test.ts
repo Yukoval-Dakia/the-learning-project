@@ -197,22 +197,37 @@ describe('runNoteVerify', () => {
     expect(updated.verification_summary).toMatchObject({ verdict: 'pass', confidence: 0.82 });
     expect(updated.verified_by).toMatchObject({ by: 'ai', task_kind: 'NoteVerifyTask' });
 
+    // W3-C1γ — persistNoteVerificationResult now writes TWO events: the observability
+    // experimental:note_verify (unchanged) + the fold-source experimental:artifact_lifecycle
+    // (set_verification_status) carrying status + summary + verified_by.
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    expect(rows).toHaveLength(2);
+    const verifyRow = rows.find((r) => r.action === 'experimental:note_verify');
+    expect(verifyRow).toMatchObject({
       action: 'experimental:note_verify',
       subject_kind: 'artifact',
       outcome: 'success',
       actor_ref: 'note_verify',
     });
     // SUPERSET payload: existing `verdict` kept byte-identical + unified contract keys.
-    expect(rows[0].payload).toMatchObject({ verdict: 'pass' });
+    expect(verifyRow?.payload).toMatchObject({ verdict: 'pass' });
     // YUK-350 increment 2 — unified verify contract shape: note pass → overall 'pass',
     // NO failure_class.
-    const payload = rows[0].payload as { overall?: string; failure_class?: string; axes?: unknown };
+    const payload = verifyRow?.payload as {
+      overall?: string;
+      failure_class?: string;
+      axes?: unknown;
+    };
     expect(payload.overall).toBe('pass');
     expect(payload.failure_class).toBeUndefined();
     expect(Array.isArray(payload.axes)).toBe(true);
+    // W3-C1γ fold-source lifecycle event: op=set_verification_status + carried summary + verified_by.
+    const lifecycleRow = rows.find((r) => r.action === 'experimental:artifact_lifecycle');
+    expect(lifecycleRow?.payload).toMatchObject({
+      op: 'set_verification_status',
+      verification_status: 'verified',
+    });
+    expect((lifecycleRow?.payload as { verified_by?: { by?: string } }).verified_by?.by).toBe('ai');
 
     // PROMOTE semantics byte-identical: a note promote = an owner-readable ACTIVE
     // artifact (verification_status='verified'). NO FSRS enroll and NO practice-pool
@@ -252,10 +267,12 @@ describe('runNoteVerify', () => {
     // RED-1 (YUK-358 决定7) — the DEAD patch-less note_update proposal is GONE.
     // note_verify's needs_review branch no longer writes a proposal at all; the
     // advisory (verification_summary + the experimental:note_verify event) is the
-    // ONLY artifact of a needs_review verdict. So exactly ONE event row, and it is
-    // the verify event — NOT a proposal.
+    // ONLY user-facing artifact of a needs_review verdict — NOT a proposal. W3-C1γ
+    // ADDS the fold-source experimental:artifact_lifecycle event (set_verification_status),
+    // so there are TWO events: the verify event + the lifecycle event (no proposal).
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => r.action === 'experimental:artifact_lifecycle')).toBe(true);
     const verifyEvent = rows.find((row) => row.action === 'experimental:note_verify');
     expect(verifyEvent).toBeDefined();
     expect(verifyEvent?.outcome).toBe('partial');
@@ -340,9 +357,18 @@ describe('runNoteVerify', () => {
     // The catch-bottom writes a TRANSIENT system-error verify event. overall='error'
     // (the result-layer 'error' value can ONLY come from here — the note LLM-parse
     // schema can never self-report it, red line 1) + failure_class='system_error'.
+    // W3-C1γ — the catch-bottom now ALSO emits the fold-source lifecycle event
+    // (set_verification_status='failed') in the SAME tx, so there are TWO events.
     const rows = await testDb().select().from(event).where(eq(event.subject_id, 'a1'));
-    expect(rows).toHaveLength(1);
-    const errEvent = rows[0];
+    expect(rows).toHaveLength(2);
+    const failedLifecycle = rows.find((r) => r.action === 'experimental:artifact_lifecycle');
+    expect(failedLifecycle?.payload).toMatchObject({
+      op: 'set_verification_status',
+      verification_status: 'failed',
+    });
+    const errEvent = rows.find((r) => r.action === 'experimental:note_verify');
+    expect(errEvent).toBeDefined();
+    if (!errEvent) throw new Error('expected note_verify error event');
     expect(errEvent.action).toBe('experimental:note_verify');
     expect(errEvent.subject_kind).toBe('artifact');
     // outcome='error' (NOT 'failure') marks it transient/retriable, distinct from a
