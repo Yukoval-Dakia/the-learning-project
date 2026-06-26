@@ -18,7 +18,10 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { acceptCompletionProposal } from '@/capabilities/agency/server/proposal-appliers';
+import {
+  acceptCompletionProposal,
+  acceptRelearnProposal,
+} from '@/capabilities/agency/server/proposal-appliers';
 import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import { event, knowledge, learning_item, materialized_id_index } from '@/db/schema';
@@ -98,6 +101,15 @@ async function liveItem(id: string): Promise<LearningItemRowSnapshotT | null> {
 function completionInboxRow(learningItemId: string): ProposalInboxRow {
   return {
     kind: 'completion',
+    payload: {
+      proposed_change: { learning_item_id: learningItemId },
+    },
+  } as unknown as ProposalInboxRow;
+}
+
+function relearnInboxRow(learningItemId: string): ProposalInboxRow {
+  return {
+    kind: 'relearn',
     payload: {
       proposed_change: { learning_item_id: learningItemId },
     },
@@ -275,6 +287,106 @@ describe('per-entity flag — completion accept OFF vs ON yield identical rows',
     const norm = (r: LearningItemRowSnapshotT | null) =>
       r && { ...r, id: 'X', created_at: 0, updated_at: 0, completed_at: 0 };
     expect(norm(onRow)).toEqual(norm(offRow));
+  });
+});
+
+describe('A1 — pre-W2 (un-backfilled) item accept: genesis-if-missing → fold==row + real transition', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await resetIndex();
+  });
+  afterEach(() => {
+    delete process.env[FLAG];
+  });
+
+  // A pre-W2 item is event-LESS (no genesis, no index anchor) — hasLearningItemGenesisAnchor is
+  // FALSE. Without A1 the accept's complete/relearn event folds to NULL (no base): OFF a later
+  // backfill would sort AFTER the action → fold != row; ON the guarded projection keeps the
+  // never-written imperative row → silent no-op. A1 writes a genesis-IF-MISSING base BEFORE the
+  // action, so the row really transitions AND fold(events) == the live row on BOTH paths.
+
+  it('completion OFF: eventless item → genesis written, status→done, fold==row, audit clean', async () => {
+    const db = testDb();
+    delete process.env[FLAG]; // OFF — imperative UPDATE writes the row
+    await insertEventlessItem('li_pw2_off', { status: 'pending', version: 0 });
+    // sanity: NO event sources the item before the accept.
+    const pre = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.subject_id, 'li_pw2_off'));
+    expect(pre).toHaveLength(0);
+
+    await acceptCompletionProposal(db as never, newId(), completionInboxRow('li_pw2_off'), {});
+
+    // the genesis-if-missing fired (the action now has a base) + the row really transitioned.
+    const actions = (
+      await db
+        .select({ action: event.action })
+        .from(event)
+        .where(eq(event.subject_id, 'li_pw2_off'))
+    ).map((r) => r.action);
+    expect(actions).toContain('experimental:genesis');
+    expect(actions).toContain('experimental:learning_item_complete');
+    const live = await liveItem('li_pw2_off');
+    expect(live?.status).toBe('done');
+    expect(live?.completed_at).not.toBeNull();
+    expect(live?.version).toBe(1);
+    // fold(genesis + complete) reproduces the transitioned live row EXACTLY.
+    expect(await gatherAndFoldLearningItem(db, 'li_pw2_off')).toEqual(live);
+    // a subsequent backfill is a no-op (already anchored) — so the fold can never drift later.
+    const bf = await backfillLearningItemGenesis(db, T0);
+    expect(bf.seeded).toBe(0);
+    const audit = await auditProjection(db, {});
+    expect(audit.drift.filter((d) => d.id === 'li_pw2_off')).toEqual([]);
+  });
+
+  it('completion ON: eventless item → projection write-through transitions the row (no silent no-op)', async () => {
+    const db = testDb();
+    process.env[FLAG] = '1'; // ON — projection write-through is the sole row writer
+    await insertEventlessItem('li_pw2_on', { status: 'pending', version: 0 });
+
+    await acceptCompletionProposal(db as never, newId(), completionInboxRow('li_pw2_on'), {});
+
+    const live = await liveItem('li_pw2_on');
+    // WITHOUT A1 the ON path would leave the row at 'pending' (guarded projection folds null + keeps
+    // the never-written imperative row). With A1 it genuinely transitions.
+    expect(live?.status).toBe('done');
+    expect(live?.completed_at).not.toBeNull();
+    expect(live?.version).toBe(1);
+    expect(await gatherAndFoldLearningItem(db, 'li_pw2_on')).toEqual(live);
+  });
+
+  it('relearn OFF: eventless done item → genesis written, status→in_progress, fold==row', async () => {
+    const db = testDb();
+    delete process.env[FLAG];
+    await insertEventlessItem('li_pw2_relearn', {
+      status: 'done',
+      completed_at: new Date(T0.getTime() + 1000),
+      version: 3,
+    });
+    const pre = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.subject_id, 'li_pw2_relearn'));
+    expect(pre).toHaveLength(0);
+
+    await acceptRelearnProposal(db as never, newId(), relearnInboxRow('li_pw2_relearn'), {});
+
+    const actions = (
+      await db
+        .select({ action: event.action })
+        .from(event)
+        .where(eq(event.subject_id, 'li_pw2_relearn'))
+    ).map((r) => r.action);
+    expect(actions).toContain('experimental:genesis');
+    expect(actions).toContain('experimental:learning_item_relearn');
+    const live = await liveItem('li_pw2_relearn');
+    expect(live?.status).toBe('in_progress');
+    expect(live?.completed_at).toBeNull();
+    expect(live?.version).toBe(4);
+    expect(await gatherAndFoldLearningItem(db, 'li_pw2_relearn')).toEqual(live);
+    const audit = await auditProjection(db, {});
+    expect(audit.drift.filter((d) => d.id === 'li_pw2_relearn')).toEqual([]);
   });
 });
 

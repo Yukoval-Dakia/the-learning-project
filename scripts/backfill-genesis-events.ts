@@ -479,6 +479,15 @@ export async function backfillLearningItemGenesis(
   // C3 HUB-BEFORE-CHILD: stable sort with parentless (hub) rows first, then children. Among rows
   // of the same parent-ness the input order is preserved (Array.prototype.sort is stable), so the
   // seeded sequence is deterministic.
+  //
+  // 2-LEVEL TREE ASSUMPTION (A7): this is a BINARY parentless-first partition, NOT a true topo sort
+  // — it only guarantees every hub precedes every child, not that an arbitrary grandchild follows
+  // its parent. That is sufficient because the learning_item tree is structurally 2-level by the
+  // current data model: the ONLY writers of parent_learning_item_id set it to either null (a hub:
+  // learning_intent hub / ai_dream single item) or the hub's id (atomic/long children of that hub
+  // — learning_intent.ts) — no site ever points a child at another child, so no grandchildren
+  // exist. IF the model ever grows a deeper hierarchy (>2 levels), this MUST become a real
+  // dependency topo sort (e.g. Kahn) so every node is anchored after its parent.
   const ordered = [...rows].sort((a, b) => {
     const aHub = a.parent_learning_item_id === null ? 0 : 1;
     const bHub = b.parent_learning_item_id === null ? 0 : 1;
