@@ -19,12 +19,19 @@ export interface ProfileKc {
   mastery_lo?: number;
   mastery_hi?: number;
   low_confidence?: boolean;
+  // YUK-495 #41 — raw evidence for client-side bit-exact re-derivation (deriveProfileKc).
+  success_count?: number;
+  fail_count?: number;
+  beta?: number;
 }
 
 export interface PlacementProfile {
   goalId: string;
   title: string;
   kcs: ProfileKc[];
+  /** YUK-495 #41 — which σ the server display used: 'poly' = device re-derivation matches
+   *  bit-for-bit; 'libm' = Math.exp (≤1-ULP off) → badge shows honest "preview". */
+  sigma_mode?: 'poly' | 'libm';
   /** Evidence summed across tested KCs — a coverage signal, NOT a distinct-question count
    * (one question labeled with N KCs contributes N). Computed over the full scope. */
   evidenceCount: number;

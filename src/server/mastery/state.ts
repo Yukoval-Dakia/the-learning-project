@@ -275,6 +275,9 @@ export interface MasteryProjection {
   success_count: number;
   fail_count: number;
   last_outcome_at: Date | null;
+  /** YUK-495 #41 — the representative β anchor fed to pfaLogit, exposed so the client can
+   *  re-derive the band bit-for-bit from raw evidence (success/fail/β/precision). */
+  beta: number;
 }
 
 export async function getMasteryProjection(
@@ -331,6 +334,7 @@ export async function getMasteryProjection(
           success_count: row.success_count,
           fail_count: row.fail_count,
           last_outcome_at: row.last_outcome_at ?? null,
+          beta,
         },
       ];
     }),
