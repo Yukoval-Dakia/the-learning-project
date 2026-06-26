@@ -94,32 +94,44 @@ export async function updateGoalStatus(
   // proposal) BEFORE writing the action event (the status event itself is an anchor action, so
   // checking after would always read true even for a base-less goal whose fold is null).
   const wasEventSourced = await hasGoalGenesisAnchor(db, goalId);
-  // YUK-471 W2 — append the fold-visible status event FIRST so the goal fold reproduces the
-  // transition (status→new, version+1). The reducer mirrors the imperative +1 below.
-  await writeEvent(db, {
-    id: newId(),
-    actor_kind: 'system',
-    actor_ref: 'goal-status-update',
-    action: 'experimental:goal_status_update',
-    subject_kind: 'goal',
-    subject_id: goalId,
-    outcome: 'success',
-    payload: { status },
-    created_at: now,
-  });
-  if (projectionIsWriter('goal')) {
-    await projectGoalGuarded(db, goalId);
-  } else {
-    await db
-      .update(goal)
-      .set({ status, updated_at: now, version: existing.version + 1 })
-      .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
-    // HIGH-2 — re-select + assert, only when the goal had a base the fold can seed from.
-    if (wasEventSourced) {
-      const [written] = await db.select().from(goal).where(eq(goal.id, goalId)).limit(1);
-      await assertGoalParity(db, goalId, written ? goalLiveRowToSnapshot(written) : null);
+  // A3 (OCR major) — wrap the event write + ROW write in ONE tx so they commit atomically. A
+  // future caller passing a plain Db (not an outer tx) would otherwise persist the status event
+  // and then, if the UPDATE / parity throws, be left with the event but no matching row → a
+  // permanent fold!=row divergence. db.transaction() opens a savepoint when `db` is already a Tx.
+  await db.transaction(async (tx) => {
+    // YUK-471 W2 — append the fold-visible status event FIRST so the goal fold reproduces the
+    // transition (status→new, version+1). The reducer mirrors the imperative +1 below.
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'goal-status-update',
+      action: 'experimental:goal_status_update',
+      subject_kind: 'goal',
+      subject_id: goalId,
+      outcome: 'success',
+      payload: { status },
+      created_at: now,
+    });
+    // A2 (OCR blocker) — only let the projection WRITE the row when the goal was already
+    // event-sourced BEFORE this status event. The status event is itself a goal anchor, so by now
+    // hasGoalGenesisAnchor would read true even for a base-less goal — calling projectGoalGuarded
+    // on one would fold null yet PASS its (now-defeated) anchor guard → DELETE the live row. Fall
+    // back to the imperative UPDATE to preserve it (the imperative write stays the SoT until the
+    // goal is genuinely event-sourced).
+    if (projectionIsWriter('goal') && wasEventSourced) {
+      await projectGoalGuarded(tx, goalId);
+    } else {
+      await tx
+        .update(goal)
+        .set({ status, updated_at: now, version: existing.version + 1 })
+        .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
+      // HIGH-2 — re-select + assert, only when the goal had a base the fold can seed from.
+      if (wasEventSourced) {
+        const [written] = await tx.select().from(goal).where(eq(goal.id, goalId)).limit(1);
+        await assertGoalParity(tx, goalId, written ? goalLiveRowToSnapshot(written) : null);
+      }
     }
-  }
+  });
 }
 
 /**
@@ -141,47 +153,55 @@ export async function updateGoalScope(
   // HIGH-2 applicability gate — capture base presence BEFORE writing the action event (see
   // updateGoalStatus).
   const wasEventSourced = await hasGoalGenesisAnchor(db, goalId);
-  // YUK-471 W2 — append the fold-visible scope event FIRST. The payload carries ONLY the patch
-  // fields (the .strict() schema rejects mutating set-once provenance like subject_id). The
-  // reducer applies the same patch + version+1 the imperative UPDATE does below.
-  await writeEvent(db, {
-    id: newId(),
-    actor_kind: 'system',
-    actor_ref: 'goal-scope-update',
-    action: 'experimental:goal_scope_update',
-    subject_kind: 'goal',
-    subject_id: goalId,
-    outcome: 'success',
-    payload: {
-      ...(patch.title !== undefined ? { title: patch.title } : {}),
-      ...(patch.scope_knowledge_ids !== undefined
-        ? { scope_knowledge_ids: patch.scope_knowledge_ids }
-        : {}),
-      ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
-    },
-    created_at: now,
-  });
-  if (projectionIsWriter('goal')) {
-    await projectGoalGuarded(db, goalId);
-  } else {
-    await db
-      .update(goal)
-      .set({
+  // A3 (OCR major) — wrap the event write + ROW write in ONE tx (atomic), mirroring
+  // updateGoalStatus. db.transaction() is a savepoint when `db` is already a Tx.
+  await db.transaction(async (tx) => {
+    // YUK-471 W2 — append the fold-visible scope event FIRST. The payload carries ONLY the patch
+    // fields (the .strict() schema rejects mutating set-once provenance like subject_id). The
+    // reducer applies the same patch + version+1 the imperative UPDATE does below.
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'goal-scope-update',
+      action: 'experimental:goal_scope_update',
+      subject_kind: 'goal',
+      subject_id: goalId,
+      outcome: 'success',
+      payload: {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.scope_knowledge_ids !== undefined
           ? { scope_knowledge_ids: patch.scope_knowledge_ids }
           : {}),
         ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
-        updated_at: now,
-        version: existing.version + 1,
-      })
-      .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
-    // HIGH-2 — re-select + assert, only when the goal had a base the fold can seed from.
-    if (wasEventSourced) {
-      const [written] = await db.select().from(goal).where(eq(goal.id, goalId)).limit(1);
-      await assertGoalParity(db, goalId, written ? goalLiveRowToSnapshot(written) : null);
+      },
+      created_at: now,
+    });
+    // A2 (OCR blocker) — only let the projection WRITE the row when the goal was already
+    // event-sourced BEFORE this scope event (see updateGoalStatus): the scope event is itself a
+    // goal anchor, so projectGoalGuarded on a base-less goal would fold null, pass its
+    // now-defeated anchor guard, and DELETE the live row. Fall back to the imperative UPDATE.
+    if (projectionIsWriter('goal') && wasEventSourced) {
+      await projectGoalGuarded(tx, goalId);
+    } else {
+      await tx
+        .update(goal)
+        .set({
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.scope_knowledge_ids !== undefined
+            ? { scope_knowledge_ids: patch.scope_knowledge_ids }
+            : {}),
+          ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
+          updated_at: now,
+          version: existing.version + 1,
+        })
+        .where(and(eq(goal.id, goalId), eq(goal.version, existing.version)));
+      // HIGH-2 — re-select + assert, only when the goal had a base the fold can seed from.
+      if (wasEventSourced) {
+        const [written] = await tx.select().from(goal).where(eq(goal.id, goalId)).limit(1);
+        await assertGoalParity(tx, goalId, written ? goalLiveRowToSnapshot(written) : null);
+      }
     }
-  }
+  });
 }
 
 /**

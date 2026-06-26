@@ -46,10 +46,17 @@
 // Read per-call (a cheap `process.env` read) so tests can parameterize OFF/ON; in prod the env
 // is fixed at boot, so the effective activation/rollback unit is an env change + restart.
 
-/** Per-entity SoT-flip flag env var name. Wave 2/3 entities extend this map. */
-const PER_ENTITY_FLAG_ENV: Record<string, string> = {
+/**
+ * Per-entity SoT-flip flag env var name. Wave 2/3 entities extend this map.
+ *
+ * `as const` (NOT a `Record<string, string>` annotation): the explicit Record annotation widened
+ * the KEY type to `string`, so `ProjectionEntity` (= keyof typeof) collapsed to `string` and
+ * `projectionIsWriter('typo')` would compile. `as const` keeps the keys as the literal union
+ * (`'goal' | …`) so a non-entity arg is a compile error.
+ */
+const PER_ENTITY_FLAG_ENV = {
   goal: 'PROJECTION_IS_WRITER_GOAL',
-};
+} as const;
 
 /** Which named entities have a per-entity SoT-flip flag (the overloaded arg domain). */
 export type ProjectionEntity = keyof typeof PER_ENTITY_FLAG_ENV;

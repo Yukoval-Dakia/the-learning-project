@@ -100,6 +100,14 @@ function warnMalformed(action: string, eventId: string, error: unknown): void {
  * @returns the projected row, or `null` if `goalId` was never created/seeded.
  */
 export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT | null {
+  // A4 (augment) — sort the events ONCE up front so BOTH passes read the canonical
+  // (created_at asc, id asc) order. Pass 1 previously iterated the RAW unsorted `events`, so a
+  // duplicate / retried accept `rate` (same caused_by propose id) resolved order-dependently
+  // (Map.set last-write wins by ARRAY position, not event order) → a non-deterministic fold.
+  // Iterating `ordered` makes the picked accept deterministic (last-by-sorted-order), keeping the
+  // reducer a pure function of the event SET (not its arrival order).
+  const ordered = [...events].sort(byCreatedThenId);
+
   // ---------- pass 1: accept resolution index ----------
   //
   // A goal_scope proposal materializes the goal ONLY if its propose event was ACCEPTED — a
@@ -112,7 +120,7 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
   const acceptedAtByProposeId = new Map<string, Date>();
   const materializedGoalByProposeId = new Map<string, string>();
 
-  for (const fe of events) {
+  for (const fe of ordered) {
     if (fe.action !== 'rate' || fe.subject_kind !== 'event') continue;
     const payload = fe.payload as { rating?: unknown; materialized_goal_id?: unknown };
     if (payload.rating !== 'accept') continue;
@@ -125,8 +133,7 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
   }
 
   // ---------- pass 2: apply in (created_at asc, id asc) order ----------
-  const ordered = [...events].sort(byCreatedThenId);
-
+  // (`ordered` was sorted once at the top of the fn — both passes share it; see A4.)
   let row: GoalRowSnapshotT | null = null;
   // The propose event id that materialized goalId (set when the proposal branch creates the
   // row) — used to route the retract `correct` event (whose subject is the proposal, not the
@@ -258,6 +265,11 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         updated_at: fe.created_at,
         version: row.version + 1,
       };
+      // A5 — trailing continue for parity with every other branch: defends against a fall-through
+      // if a new branch is appended after this (currently last) one. Biome flags it as unnecessary
+      // TODAY precisely because it is the last branch — the suppression keeps the guard intentional.
+      // biome-ignore lint/correctness/noUnnecessaryContinue: defensive — keeps every reducer branch uniformly terminated so appending a branch can't introduce silent fall-through.
+      continue;
     }
   }
 

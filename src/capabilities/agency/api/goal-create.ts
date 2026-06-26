@@ -116,6 +116,9 @@ export async function POST(req: Request): Promise<Response> {
         subject_id: id,
         outcome: 'success',
         payload: { row: snapshot },
+        // A7 — stamp created_at explicitly (parity with the accept path) so the genesis event's
+        // fold-order timestamp is the same `now` as the row snapshot, not a separate DB default.
+        created_at: now,
         ingest_at: now,
       });
       await upsertMaterializedIdIndex(tx, {
