@@ -126,6 +126,26 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // as ground truth, so a malformed seed would corrupt the whole projection;
   // generic fallback must reject it so the typed schema always validates the seed.
   'experimental:genesis',
+  // YUK-471 Wave 2 (goal fold) — goal status/scope action events have dedicated
+  // typed schemas (./goal-events.ts) so a status/scope transition is fold-visible.
+  // The fold trusts these to reproduce version/updated_at; a malformed payload must
+  // be rejected at the barrier, not fall through to the loose generic.
+  'experimental:goal_status_update',
+  'experimental:goal_scope_update',
+  // YUK-471 Wave 2 (mistake_variant fold, critic A4) — the RUNTIME creation BASE event
+  // (./mistake-variant-events.ts) carries the full initial row INCLUDING the fold-blind
+  // cause_category. It is the runtime analog of the backfill-only experimental:genesis (A4:
+  // genesis must NOT be used on the creation hot path). The fold trusts payload.row as the row's
+  // base/ground truth, so a malformed create payload must be rejected here, not fall through.
+  'experimental:mistake_variant_create',
+  // YUK-471 Wave 2 (learning_item fold) — the three status-transition action events
+  // (./learning-item-events.ts) make a complete/relearn/archive fold-visible via Q1 (the
+  // recommended route — no rate-payload side-channel reverse-lookup). The fold trusts them to
+  // reproduce status/completed_at/archived_at/version; a malformed payload must be rejected at
+  // the barrier, not fall through to the loose generic.
+  'experimental:learning_item_complete',
+  'experimental:learning_item_relearn',
+  'experimental:learning_item_archive',
 ]);
 
 // ====================================================================

@@ -6,7 +6,14 @@ import {
   UserCauseExperimental,
 } from './experimental';
 import { GenesisExperimental } from './genesis';
+import { GoalScopeUpdateExperimental, GoalStatusUpdateExperimental } from './goal-events';
 import { KnownEvent } from './known';
+import {
+  LearningItemArchiveExperimental,
+  LearningItemCompleteExperimental,
+  LearningItemRelearnExperimental,
+} from './learning-item-events';
+import { MistakeVariantCreateExperimental } from './mistake-variant-events';
 import { StateSnapshotExperimental } from './state-snapshot';
 
 export * from './blocks';
@@ -14,6 +21,9 @@ export * from './known';
 export * from './experimental';
 export * from './state-snapshot';
 export * from './genesis';
+export * from './goal-events';
+export * from './learning-item-events';
+export * from './mistake-variant-events';
 
 // ====================================================================
 // Event — 顶层 union
@@ -28,7 +38,14 @@ export * from './genesis';
 //   4. MemoryBriefRefreshExperimental — experimental:memory_brief_refresh
 //   5. StateSnapshotExperimental — experimental:state_snapshot 的特化（ADR-0044 §3）
 //   6. GenesisExperimental — experimental:genesis 的特化（YUK-471 W1, Codex #4 parse barrier）
-//   7. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
+//   7. GoalStatusUpdateExperimental / GoalScopeUpdateExperimental — goal 动作事件特化
+//      （YUK-471 W2，使 status/scope 变更 fold-visible，./goal-events.ts）
+//   8. MistakeVariantCreateExperimental — mistake_variant 运行时 creation BASE 事件特化
+//      （YUK-471 W2 critic A4：携带 fold-blind cause_category；genesis 仅 backfill，
+//       runtime create 用专属事件，./mistake-variant-events.ts）
+//   9. LearningItemComplete/Relearn/ArchiveExperimental — learning_item 状态转移动作事件特化
+//      （YUK-471 W2：使 complete/relearn/archive fold-visible via Q1，./learning-item-events.ts）
+//  10. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
 // payload (任意 record) 会先 match 走，结构信息丢失。
@@ -40,6 +57,12 @@ export const Event = z.union([
   MemoryBriefRefreshExperimental,
   StateSnapshotExperimental,
   GenesisExperimental,
+  GoalStatusUpdateExperimental,
+  GoalScopeUpdateExperimental,
+  MistakeVariantCreateExperimental,
+  LearningItemCompleteExperimental,
+  LearningItemRelearnExperimental,
+  LearningItemArchiveExperimental,
   ExperimentalEvent,
 ]);
 export type EventT = z.infer<typeof Event>;

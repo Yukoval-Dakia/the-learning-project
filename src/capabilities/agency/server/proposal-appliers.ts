@@ -18,7 +18,7 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
@@ -26,6 +26,19 @@ import {
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from '@/server/orchestrator/learning_intent';
+// YUK-471 W2 — learning_item projection seam (completion / relearn). The accept writes a dedicated
+// subject-keyed action event (experimental:learning_item_complete / _relearn) so the transition is
+// fold-visible via Q1 (the recommended route — no rate-payload side-channel reverse-lookup);
+// projectionIsWriter('learning_item') gates ONLY who writes the ROW (projection write-through when
+// ON, the imperative UPDATE when OFF + a write-time fold==row parity assert, applicability-gated).
+import { projectLearningItemGuarded } from '@/server/projections/learning_item';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import {
+  assertLearningItemParity,
+  hasLearningItemGenesisAnchor,
+  learningItemLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -243,6 +256,56 @@ async function summarizeLearningItemMaterialization(
   };
 }
 
+/**
+ * A1 — genesis-IF-MISSING for a pre-W2 / un-backfilled learning_item, written BEFORE a
+ * complete/relearn action event so fold(events) == live row holds. (Mirrors the inline
+ * genesis-if-missing in the actions.ts retract block; shared here so the complete + relearn accept
+ * paths cannot drift on the load-bearing clamp.)
+ *
+ * WHY: a complete/relearn action event on an UN-anchored item folds to NULL (no genesis base to
+ * mutate). Two failure modes that fix:
+ *   (a) OFF path — the imperative UPDATE flips the row fine, but a LATER backfill genesis (created
+ *       AFTER the action) would sort AFTER it → the fold processes the action before the base and
+ *       skips it → fold != live row (audit:projection drift the moment the backfill runs).
+ *   (b) ON path — projectLearningItemGuarded folds null + (no anchor) keeps the imperative row, but
+ *       the ON path NEVER writes the imperative row → the accept silently no-ops at the row level.
+ *
+ * Anchoring the item with a snapshot of its CURRENT (pre-mutation) state, with a created_at CLAMPED
+ * strictly earlier than the action event (min(updated_at, actionAt - 1ms)), makes the genesis sort
+ * BEFORE the action regardless of the cuid2 id coin-flip — so fold(genesis + action) reproduces the
+ * transitioned row on BOTH paths. No-op when the item is already event-sourced (a later backfill is
+ * then itself a no-op). Caller passes the SAME tx so genesis + action commit atomically.
+ */
+async function ensureLearningItemGenesisAnchor(
+  tx: Db | Tx,
+  item: typeof learning_item.$inferSelect,
+  actionAt: Date,
+): Promise<void> {
+  if (await hasLearningItemGenesisAnchor(tx, item.id)) return;
+  const genesisEventId = newId();
+  // CLAMP strictly earlier than the action event (mirrors actions.ts retract review #1): the fold
+  // sorts (created_at asc, id asc) and ids are non-temporal cuid2s, so if item.updated_at ==
+  // actionAt (same-ms) the random action id could otherwise sort before the genesis.
+  const genesisAt = new Date(Math.min(item.updated_at.getTime(), actionAt.getTime() - 1));
+  await writeEvent(tx, {
+    id: genesisEventId,
+    actor_kind: 'system',
+    actor_ref: 'genesis-backfill',
+    action: 'experimental:genesis',
+    subject_kind: 'learning_item',
+    subject_id: item.id,
+    outcome: 'success',
+    payload: { row: learningItemLiveRowToSnapshot(item) },
+    created_at: genesisAt,
+    ingest_at: actionAt,
+  });
+  await upsertMaterializedIdIndex(tx, {
+    materialized_id: item.id,
+    anchor_event_id: genesisEventId,
+    subject_kind: 'learning_item',
+  });
+}
+
 export async function acceptCompletionProposal(
   db: Db,
   proposalId: string,
@@ -289,19 +352,31 @@ export async function acceptCompletionProposal(
   };
 
   await db.transaction(async (tx) => {
-    const updated = await tx
-      .update(learning_item)
-      .set({
-        status: 'done',
-        completed_at: now,
-        updated_at: now,
-        version: item.version + 1,
-      })
-      .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
-      .returning({ id: learning_item.id });
-    if (updated.length !== 1) {
-      throw new ApiError('conflict', `learning_item ${learningItemId} concurrently modified`, 409);
-    }
+    // A1 — genesis-IF-MISSING for a pre-W2 / un-backfilled item, written BEFORE the complete action
+    // event (clamped strictly earlier) so the action has a base to fold from. Fixes both the OFF
+    // later-backfill-drift case AND the ON silent-row-no-op case (see the helper doc). No-op for an
+    // already-event-sourced item.
+    await ensureLearningItemGenesisAnchor(tx, item, now);
+    // YUK-471 W2 — write the dedicated complete action event (subject_kind='learning_item',
+    // subject_id=itemId, created_at=now) so the fold (when the flag is ON) sees the transition via
+    // Q1 in the same tx. created_at=now is the SINGLE CLOCK (HIGH-1): the reducer derives the row's
+    // completed_at + updated_at from THIS event's created_at, and the imperative UPDATE below reuses
+    // the SAME `now`, so fold(events) == live row deterministically (a second `new Date()` would
+    // drift by a cross-ms delta). ingest_at=now → outbox opt-out (a status flip is not a
+    // memory-worthy activity; mirrors the goal/variant seams).
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_complete',
+      subject_kind: 'learning_item',
+      subject_id: learningItemId,
+      outcome: 'success',
+      payload: {},
+      caused_by_event_id: proposalId,
+      created_at: now,
+      ingest_at: now,
+    });
 
     await tx.insert(completion_evidence).values({
       id: newId(),
@@ -311,6 +386,9 @@ export async function acceptCompletionProposal(
       decided_at: now,
     });
 
+    // The accept `rate` event (proposal-decision signal) — kept regardless of the flag. It is
+    // subject_kind='event' (chained to the proposal), NOT subject_kind='learning_item', so the
+    // learning_item Q1 fold never gathers it; it is the proposal inbox's decision marker.
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -322,11 +400,65 @@ export async function acceptCompletionProposal(
       payload: {
         rating: 'accept',
         materialized_learning_item_id: learningItemId,
+        // YUK-471 (retract fold/rollback) — pin the EXACT pre-accept state so retract
+        // restores it instead of guessing. completion accepts pending|in_progress; we
+        // record which (and the prior completed_at, normally null) here.
+        materialized_prior_status: item.status,
+        materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
         ...(opts.user_note ? { user_note: opts.user_note } : {}),
       },
       caused_by_event_id: proposalId,
       created_at: now,
     });
+
+    // ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build): ON →
+    // projectLearningItemGuarded folds (genesis + complete → done) + writes through; OFF → the
+    // imperative UPDATE (current behavior — status→done, completed_at=now, version+1; the SAME `now`
+    // the complete event carries) + a write-time fold==row parity assert.
+    //
+    // A2 (DEFERRED follow-up — concurrency-semantics gap behind an OFF-by-default flag, NOT
+    // data-loss): the ON branch upserts via onConflictDoUpdate with NO version/FOR-UPDATE check,
+    // whereas the OFF branch uses eq(version, item.version) optimistic locking + 409, and the status
+    // precondition runs OUTSIDE the tx. So under the flag two concurrent accepts both project (no
+    // 409 for the loser, duplicate complete/evidence/rate events). The fold's terminal-status guard
+    // keeps the FINAL row deterministic (status→done is idempotent), so this never loses data — it
+    // only diverges the concurrency semantics from the OFF path. Adding an in-tx FOR-UPDATE re-check
+    // + version guard to the ON path broadens this lane meaningfully (new locking semantics + a
+    // dedicated concurrency test), so it is left for a follow-up rather than over-engineered here.
+    if (projectionIsWriter('learning_item')) {
+      await projectLearningItemGuarded(tx, learningItemId);
+    } else {
+      const updated = await tx
+        .update(learning_item)
+        .set({
+          status: 'done',
+          completed_at: now,
+          updated_at: now,
+          version: item.version + 1,
+        })
+        .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
+        .returning({ id: learning_item.id });
+      if (updated.length !== 1) {
+        throw new ApiError(
+          'conflict',
+          `learning_item ${learningItemId} concurrently modified`,
+          409,
+        );
+      }
+      // The item is event-sourced this tx (ensureLearningItemGenesisAnchor + complete), so it always
+      // re-folds — assert fold(events) == the updated row UNCONDITIONALLY (mirrors the retract OFF
+      // branch; the prior hasLearningItemGenesisAnchor gate is now always true after A1).
+      const [written] = await tx
+        .select()
+        .from(learning_item)
+        .where(eq(learning_item.id, learningItemId))
+        .limit(1);
+      await assertLearningItemParity(
+        tx,
+        learningItemId,
+        written ? learningItemLiveRowToSnapshot(written) : null,
+      );
+    }
   });
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
@@ -373,19 +505,30 @@ export async function acceptRelearnProposal(
   const now = new Date();
   const rateEventId = newId();
   await db.transaction(async (tx) => {
-    const updated = await tx
-      .update(learning_item)
-      .set({
-        status: 'in_progress',
-        completed_at: null,
-        updated_at: now,
-        version: item.version + 1,
-      })
-      .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
-      .returning({ id: learning_item.id });
-    if (updated.length !== 1) {
-      throw new ApiError('conflict', `learning_item ${learningItemId} concurrently modified`, 409);
-    }
+    // A1 — genesis-IF-MISSING for a pre-W2 / un-backfilled item, written BEFORE the relearn action
+    // event (clamped strictly earlier) so the action has a base to fold from. Fixes both the OFF
+    // later-backfill-drift case AND the ON silent-row-no-op case (see the helper doc). No-op for an
+    // already-event-sourced item.
+    await ensureLearningItemGenesisAnchor(tx, item, now);
+    // YUK-471 W2 — write the dedicated relearn action event (subject_kind='learning_item',
+    // created_at=now) so the fold sees the transition via Q1. created_at=now is the SINGLE CLOCK
+    // (HIGH-1): the reducer derives updated_at from THIS event's created_at and clears completed_at,
+    // and the imperative UPDATE below reuses the SAME `now`. ingest_at=now → outbox opt-out.
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_relearn',
+      subject_kind: 'learning_item',
+      subject_id: learningItemId,
+      outcome: 'success',
+      payload: {},
+      caused_by_event_id: proposalId,
+      created_at: now,
+      ingest_at: now,
+    });
+    // The accept `rate` event (proposal-decision signal) — kept regardless of the flag (subject_kind
+    // ='event', NOT gathered by the learning_item fold).
     await writeEvent(tx, {
       id: rateEventId,
       actor_kind: 'user',
@@ -397,11 +540,61 @@ export async function acceptRelearnProposal(
       payload: {
         rating: 'accept',
         materialized_learning_item_id: learningItemId,
+        // YUK-471 (retract fold/rollback) — pin the EXACT pre-accept state. relearn
+        // accepts done|resting and clears completed_at; without this, retract cannot
+        // tell a `resting` (completed_at was already null) item from a `done` one and
+        // would corrupt it into `done` with a fabricated completed_at. Record both so
+        // retract restores byte-for-byte.
+        materialized_prior_status: item.status,
+        materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
         ...(opts.user_note ? { user_note: opts.user_note } : {}),
       },
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    // ROW writer — gated on the per-entity flag (critic A1): ON → projectLearningItemGuarded folds
+    // (genesis + … + relearn → in_progress, completed_at cleared) + writes through; OFF → the
+    // imperative UPDATE (current behavior — status→in_progress, completed_at=null, version+1; the
+    // SAME `now` the relearn event carries) + a write-time fold==row parity assert.
+    //
+    // A2 (DEFERRED follow-up — same OFF-by-default concurrency-semantics gap as the completion path:
+    // the ON branch has no version/FOR-UPDATE check vs the OFF optimistic lock + out-of-tx status
+    // precondition; the terminal-status guard keeps the final row deterministic so this is not
+    // data-loss). Left for a follow-up rather than bolting OFF-path locking onto the ON path here.
+    if (projectionIsWriter('learning_item')) {
+      await projectLearningItemGuarded(tx, learningItemId);
+    } else {
+      const updated = await tx
+        .update(learning_item)
+        .set({
+          status: 'in_progress',
+          completed_at: null,
+          updated_at: now,
+          version: item.version + 1,
+        })
+        .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)))
+        .returning({ id: learning_item.id });
+      if (updated.length !== 1) {
+        throw new ApiError(
+          'conflict',
+          `learning_item ${learningItemId} concurrently modified`,
+          409,
+        );
+      }
+      // The item is event-sourced this tx (ensureLearningItemGenesisAnchor + relearn), so it always
+      // re-folds — assert fold(events) == the updated row UNCONDITIONALLY (mirrors the retract OFF
+      // branch; the prior hasLearningItemGenesisAnchor gate is now always true after A1).
+      const [written] = await tx
+        .select()
+        .from(learning_item)
+        .where(eq(learning_item.id, learningItemId))
+        .limit(1);
+      await assertLearningItemParity(
+        tx,
+        learningItemId,
+        written ? learningItemLiveRowToSnapshot(written) : null,
+      );
+    }
   });
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
