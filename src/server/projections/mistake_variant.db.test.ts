@@ -28,8 +28,12 @@ import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillMistakeVariantGenesis } from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { gatherAndFoldMistakeVariant } from './gather';
-import { projectMistakeVariant } from './mistake_variant';
-import { assertMistakeVariantParity, mistakeVariantLiveRowToSnapshot } from './parity';
+import { projectMistakeVariant, projectMistakeVariantGuarded } from './mistake_variant';
+import {
+  assertMistakeVariantParity,
+  hasMistakeVariantGenesisAnchor,
+  mistakeVariantLiveRowToSnapshot,
+} from './parity';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
 const FLAG = 'PROJECTION_IS_WRITER_MISTAKE_VARIANT';
@@ -399,6 +403,61 @@ describe('projectMistakeVariant write-through — per-entity flag ON', () => {
     expect(onRow?.cause_category).toBe('method_gap'); // survived
     // write-through row == fold
     expect(onRow).toEqual(await gatherAndFoldMistakeVariant(db, 'mv_on'));
+  });
+});
+
+describe('projectMistakeVariantGuarded — anchor-gated fold-null delete (B1 data-loss-on-flip)', () => {
+  // The GUARDED write-through is what the ON-path accept/verify sites use (variant_verify.ts +
+  // proposal-appliers.ts): a fold of null must DELETE the live row ONLY when the row is
+  // event-sourced (has a genesis/create/index anchor). A pre-W2 / fixture-seeded variant the fold
+  // is blind to (no base event) folds to null and MUST be kept — else flipping the per-entity flag
+  // ON would silently DELETE a live variant the imperative path created. Mirrors projectGoalGuarded.
+  beforeEach(async () => {
+    await resetDb();
+    await resetIndex();
+    process.env[FLAG] = '1';
+  });
+  afterEach(() => {
+    delete process.env[FLAG];
+  });
+
+  it('fold-null on an UN-anchored variant does NOT delete the live row', async () => {
+    const db = testDb();
+    // event-less / fixture-seeded variant — no create base, no genesis, no index anchor.
+    await insertEventlessMv('mv_unanchored', { cause_category: 'concept_confusion' });
+    // PRECONDITIONS: the fold is blind to it (null) AND it is NOT event-sourced (no anchor).
+    expect(await gatherAndFoldMistakeVariant(db, 'mv_unanchored')).toBeNull();
+    expect(await hasMistakeVariantGenesisAnchor(db, 'mv_unanchored')).toBe(false);
+
+    await projectMistakeVariantGuarded(db, 'mv_unanchored');
+
+    // The guard KEPT the imperative row (NEVER delete a fold-blind pre-event-sourced variant).
+    const kept = await liveMv('mv_unanchored');
+    expect(kept).not.toBeNull();
+    expect(kept?.cause_category).toBe('concept_confusion');
+  });
+
+  it('fold-null on an ANCHORED variant DELETES the live row (genuine revert)', async () => {
+    const db = testDb();
+    // A variant that IS event-sourced (carries an index anchor) but whose fold yields null — a
+    // genuine "should not exist" reversion. The mistake_variant gather does NOT read the index
+    // (it folds from the base create/genesis event by subject_id), so an index-only anchor flips
+    // hasMistakeVariantGenesisAnchor=true while the fold stays null. anchor_event_id has no FK, so
+    // a fabricated id is a valid minimal anchor.
+    await insertEventlessMv('mv_anchored');
+    await db.insert(materialized_id_index).values({
+      materialized_id: 'mv_anchored',
+      anchor_event_id: newId(),
+      subject_kind: 'mistake_variant',
+    });
+    // PRECONDITIONS: fold null AND event-sourced (has an anchor).
+    expect(await gatherAndFoldMistakeVariant(db, 'mv_anchored')).toBeNull();
+    expect(await hasMistakeVariantGenesisAnchor(db, 'mv_anchored')).toBe(true);
+
+    await projectMistakeVariantGuarded(db, 'mv_anchored');
+
+    // Anchored fold-null = genuine revert → the guard DELETES the live row.
+    expect(await liveMv('mv_anchored')).toBeNull();
   });
 });
 

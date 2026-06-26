@@ -222,6 +222,8 @@ export function foldMistakeVariant(
       // imperative no-op (leave status + updated_at), else fold != row.
       if (row.status !== 'draft' && row.status !== 'active') continue;
       row = { ...row, status: 'dismissed', updated_at: fe.created_at };
+      // biome-ignore lint/correctness/noUnnecessaryContinue: defensive — guards a future appended branch
+      continue;
     }
   }
 
