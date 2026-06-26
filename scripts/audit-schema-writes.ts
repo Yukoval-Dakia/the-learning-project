@@ -324,6 +324,7 @@ const NATIVE_COLUMN_CONSTRUCTORS = [
   'text',
   'integer',
   'real',
+  'doublePrecision',
   'jsonb',
   'boolean',
   'timestamp',

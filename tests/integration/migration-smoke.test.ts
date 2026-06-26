@@ -358,6 +358,19 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     }
   });
 
+  it('YUK-495 S4 (0051) — mastery_state.theta_hat/theta_precision widened to double precision', async () => {
+    const rows = await db.execute<{ column_name: string; data_type: string }>(sql`
+      SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'mastery_state'
+        AND column_name IN ('theta_hat', 'theta_precision')
+      ORDER BY column_name
+    `);
+    const byCol = Object.fromEntries(rows.map((r) => [r.column_name, r.data_type]));
+    // decision-④: f64 live column matches the JSONB f64 state_snapshot → Tier-2 bit-exact replay.
+    expect(byCol.theta_hat).toBe('double precision');
+    expect(byCol.theta_precision).toBe('double precision');
+  });
+
   it('creates YUK-361 Phase 1 selection_observation table + practice_stream_item.signals (0035)', async () => {
     // 表存在 + 期望列齐全。
     const tableRows = await db.execute<{ table_name: string }>(sql`

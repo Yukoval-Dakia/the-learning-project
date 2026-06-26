@@ -66,12 +66,11 @@
 // CONFLICT GUARD: before restoring an A-class snapshot, assert the CURRENT state
 // row equals snapshot.after. If not (something outside the cascade moved it) →
 // 409-style refuse the WHOLE revert. This guard is the orchestrator's job; the
-// restore primitive deliberately omits it (restore-snapshot.ts:16-20). For float4
-// columns (mastery_state.theta_hat is `real`) the compare is on the float4 grid:
-// the payload's `after` is a full-precision JS double and the live row was stored
-// at single precision, so we compare Math.fround(current) === Math.fround(after)
-// (BOTH sides rounded — postgres-js returns the shortest-round-trippable double,
-// not Math.fround(written); see float4Eq).
+// restore primitive deliberately omits it (restore-snapshot.ts:16-20). YUK-495 S4
+// widened mastery_state.theta_hat to `double precision`, so the live row now stores
+// the exact f64 the snapshot `after` holds (same compute, lossless round-trip) — the
+// compare is an exact `current === after` (see thetaExactEq); any drift down to 1 ULP
+// is a real conflict that must trip the guard (decision-④ bit-exact intent).
 //
 // DETERMINISM: single tx, reverse-dependency order (cascade nodes are already
 // depth-DESC; the root checkpoint is reverted LAST). Parse-barrier-clean: every
@@ -578,7 +577,7 @@ async function assertSnapshotMatchesCurrent(
     const current = rows[0]?.theta_hat;
     // The current θ̂ must equal the snapshot's after. A missing row means the
     // after-state is gone → conflict.
-    if (current === undefined || !float4Eq(current, snap.after)) {
+    if (current === undefined || !thetaExactEq(current, snap.after)) {
       return { kind: 'theta', subjectKind: 'knowledge', subjectId: snap.kc_id };
     }
   }
@@ -604,24 +603,20 @@ async function assertSnapshotMatchesCurrent(
 }
 
 /**
- * float4 (`real`) column compare. HIGH-1: `mastery_state.theta_hat` is a Postgres
- * `real`/float4 (schema.ts:877). The snapshot payload's `after` is the UN-truncated
- * JS double (JSONB stores full precision), but the live column stored only single
- * precision. A bare `current === after` is false for ANY θ̂ that is not float4-exact
- * (0.1, 2/3, real K·credit products) → every warm A-class revert would be a false
- * conflict, and the in-tx re-check would throw + roll back a legitimate revert.
+ * θ̂ conflict-guard compare — EXACT f64 equality (YUK-495 S4 / decision-④).
  *
- * Crucially, postgres-js does NOT return `Math.fround(written)` — it parses
- * Postgres's shortest-round-trippable TEXT form of the float4 (e.g. the stored
- * 0.30000001192092896 prints as "0.3", parsed back to the double 0.3). That double
- * is itself NOT fround-equal to the payload double, but BOTH map to the same float4.
- * So compare on the float4 grid by rounding BOTH sides: Math.fround collapses the
- * pretty-printed double and the payload double onto the identical single-precision
- * value. (Empirically verified against the testcontainer: current=0.3,
- * fround(current)===fround(0.1+0.2).)
+ * `mastery_state.theta_hat` is now `double precision` (was `real`/float4 — widened in
+ * YUK-495 S4, migration 0051). The live column therefore stores the SAME un-truncated
+ * f64 as the snapshot payload's `after` (both derive from the one `newTheta` compute;
+ * postgres-js round-trips binary64 losslessly via its TEXT form). So the conflict guard
+ * is now an exact `===`: identical inputs ⇒ no conflict; any genuine external drift —
+ * down to a single ULP — IS a real conflict and MUST trip the guard. (The old float4
+ * version rounded BOTH sides with Math.fround to compensate for the truncated column;
+ * keeping that after the widen would mask sub-float4 drift and silently defeat the
+ * guard — the exact opposite of decision-④'s bit-exact intent.)
  */
-function float4Eq(current: number, payloadAfter: number): boolean {
-  return Math.fround(current) === Math.fround(payloadAfter);
+function thetaExactEq(current: number, payloadAfter: number): boolean {
+  return current === payloadAfter;
 }
 
 /** Compare two FsrsState cards on their scalar identity (jsonb roundtrip-safe). */

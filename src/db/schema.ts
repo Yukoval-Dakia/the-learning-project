@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -396,10 +397,11 @@ export const memory_brief_note = pgTable(
     long_term_evidence_ids: jsonb('long_term_evidence_ids').$type<string[]>().notNull().default([]),
     // P5.3 (YUK-183) — evidence-decay freshness score over long_term_evidence_ids
     // (SoT event.created_at). nullable; null = unjudgeable (no known backing
-    // timestamps, knownCount === 0), distinct from a scored 0. `real` (not
-    // doublePrecision): matches the project float type + is the only float the
-    // audit:schema parser recognizes. Render-annotation signal only — no row
-    // mutation. Spec §5.
+    // timestamps, knownCount === 0), distinct from a scored 0. Stays `real` (the
+    // project float type for this render-only signal). NOTE: as of YUK-495 the
+    // audit:schema parser also recognizes `doublePrecision` (scripts/audit-schema-writes.ts),
+    // so that constructor is now a valid choice elsewhere. Render-annotation signal
+    // only — no row mutation. Spec §5.
     long_term_freshness_score: real('long_term_freshness_score'),
     source_event_id: text('source_event_id'),
     latest_evidence_at: timestamp('latest_evidence_at', { withTimezone: true }),
@@ -875,7 +877,7 @@ export const mastery_state = pgTable(
     subject_id: text('subject_id').notNull(),
     // θ̂：个体能力估计，logit 尺度（与 b 同度量，B1 foundation）。
     // DEFAULT 0 = logit 原点（先验中性），冷启首次 attempt 从此出发。
-    theta_hat: real('theta_hat').notNull().default(0),
+    theta_hat: doublePrecision('theta_hat').notNull().default(0),
     // K schedule + credit-assignment 的输入。DEFAULT 0，每次 attempt +1。
     evidence_count: integer('evidence_count').notNull().default(0),
     // PFA 天然形态：per-KC success/fail 累积计数（B1 foundation）。
@@ -887,7 +889,7 @@ export const mastery_state = pgTable(
     // 每次 attempt += weight²·p(1−p)（同 θ̂ 更新的 b 锚 + bWeight，见 state.ts）。
     // DEFAULT 1 = 弱先验 1 单位信息（SE=1），既有行 backfill-safe。**不存 theta_se**——
     // SE 从此列派生（thetaSe，src/core/theta.ts）。后续 MFI 用它给高不确定 θ 降权。
-    theta_precision: real('theta_precision').notNull().default(1),
+    theta_precision: doublePrecision('theta_precision').notNull().default(1),
     // 本次 attempt 的 θ̂ 变化量（newTheta − thetaBefore），可观测/调试用。nullable：
     // 冷启或从未 attempt 的行为 NULL。default 1 不适用（这是有符号增量非信息量）。
     last_theta_delta: real('last_theta_delta'),
