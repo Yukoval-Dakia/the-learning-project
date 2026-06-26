@@ -31,7 +31,7 @@ import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
-import { projectMistakeVariant } from '@/server/projections/mistake_variant';
+import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
   assertMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
@@ -261,11 +261,14 @@ export async function acceptVariantQuestionProposal(
       created_at: now,
     });
 
-    // ROW writer — gated on the per-entity flag (critic A1). ON → the projection folds (create base
-    // + accept rate) and writes status='active' + variant_question_id; OFF → the imperative UPDATE
-    // (current behavior) + the write-time fold==row parity assert.
+    // ROW writer — gated on the per-entity flag (critic A1). ON → the GUARDED projection folds
+    // (create base + accept rate) and writes status='active' + variant_question_id; OFF → the
+    // imperative UPDATE (current behavior) + the write-time fold==row parity assert. GUARDED (not
+    // bare projectMistakeVariant): a pre-W2 / fixture-seeded variant with no create base folds to
+    // null; the guard's anchor gate keeps that live row instead of DELETing it just after a question
+    // was inserted + linked (B1 data-loss-on-flip — mirrors the dismiss/retract sites).
     if (flip) {
-      await projectMistakeVariant(tx, mv.id);
+      await projectMistakeVariantGuarded(tx, mv.id);
     } else {
       await tx
         .update(mistake_variant)

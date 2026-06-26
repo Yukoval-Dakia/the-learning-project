@@ -861,7 +861,7 @@ async function writeGenericRateEvent(
   proposalId: string,
   rating: 'accept' | 'dismiss',
   userNote?: string,
-): Promise<{ rate_event_id: string | null; idempotent?: boolean; rate_at?: Date }> {
+): Promise<{ rate_event_id: string | null; idempotent?: boolean; rate_at: Date }> {
   const existingRows = await db
     .select()
     .from(event)
@@ -963,11 +963,12 @@ export async function dismissAiProposal(
             // REUSE the rate(dismiss) event's created_at (result.rate_at) for updated_at so the
             // imperative row and the fold stamp the SAME value — fold(events) == live row
             // deterministically (HIGH-1 double-clock guard). Do NOT open a new `new Date()`.
-            // The `?? new Date()` is type-only (rate_at is typed optional); both writeGenericRateEvent
-            // branches always return rate_at, so the fallback is unreachable at runtime. (review NIT.)
+            // rate_at is a non-optional return (both writeGenericRateEvent branches always set it),
+            // so no `?? new Date()` fallback is needed — a fallback would silently reintroduce the
+            // HIGH-1 double-clock drift if a future branch ever omitted it. (review NIT.)
             await db
               .update(mistake_variant)
-              .set({ status: 'dismissed', updated_at: result.rate_at ?? new Date() })
+              .set({ status: 'dismissed', updated_at: result.rate_at })
               .where(
                 and(
                   eq(mistake_variant.proposal_event_id, proposalId),
