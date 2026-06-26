@@ -43,6 +43,7 @@ import {
   questionBlockLiveRowToSnapshot,
 } from '@/server/projections/parity';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
+import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 
 // ---------------------------------------------------------------------------
@@ -760,13 +761,18 @@ export async function reassignFigure(
       return { status: 'skipped:target_not_found' };
     }
 
+    // SINGLE clock (YUK-471 W3-D §3): one `now` stamps the figure's last_reassigned_at, the row's
+    // updated_at, AND the canonical lifecycle event's created_at — so the carried figures array (which
+    // embeds last_reassigned_at) matches between row and event, and the fold's updated_at = the event
+    // time equals the row's updated_at (byte-exact parity).
+    const now = new Date();
     const updatedFigures: FigureRefT[] = figures.map((f, i) =>
       i === idx
         ? {
             ...f,
             attached_to_index: params.attachedToIndex,
             attach_confidence: 'manual' as const,
-            last_reassigned_at: new Date(),
+            last_reassigned_at: now,
           }
         : f,
     );
@@ -775,7 +781,7 @@ export async function reassignFigure(
       .update(question_block)
       .set({
         figures: updatedFigures,
-        updated_at: new Date(),
+        updated_at: now,
         version: sql`${question_block.version} + 1`,
       })
       .where(eq(question_block.id, params.blockId))
@@ -786,6 +792,19 @@ export async function reassignFigure(
       business_id: params.blockId,
       event_type: 'figure.reassigned',
       payload: { asset_id: params.assetId, attached_to_index: params.attachedToIndex },
+    });
+
+    // YUK-471 W3-D — make the figure re-point fold-visible: ONE canonical lifecycle event carries the
+    // FULL re-pointed figures array + bumped version (additive double-write; `writeJobEvent` above is
+    // the orthogonal SSE transport, left untouched). subject_id = the block (the SoT anchor).
+    await writeQuestionBlockLifecycleEvent(tx, {
+      blockId: params.blockId,
+      op: 'reassign_figures',
+      figures: updatedFigures,
+      nextVersion: updated[0].version,
+      actorKind: params.actorKind ?? 'agent',
+      actorRef: params.actorRef,
+      now,
     });
 
     return { status: 'written', figures: updatedFigures, version: updated[0].version };

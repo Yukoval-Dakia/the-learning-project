@@ -32,6 +32,7 @@ import { knowledge, learning_session, question, question_block } from '@/db/sche
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
+import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';
@@ -429,7 +430,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
         // UPDATE question_block: link to question + attempt event (null for
         // unanswered captures), transition to 'imported'.
-        await tx
+        const [{ version: importedBlockVersion }] = await tx
           .update(question_block)
           .set({
             imported_question_id: questionId,
@@ -438,7 +439,23 @@ export async function POST(req: Request, params: Record<string, string>): Promis
             updated_at: now,
             version: sql`${question_block.version} + 1`,
           })
-          .where(eq(question_block.id, importedBlockId));
+          .where(eq(question_block.id, importedBlockId))
+          .returning({ version: question_block.version });
+
+        // YUK-471 W3-D — make the import status/imports transition fold-visible (additive double-write;
+        // same `now`/tx). op='set_status' carries status='imported' + imported_* + bumped version so
+        // foldQuestionBlock reproduces this row. actor mirrors the create event ('user'/'block_import').
+        await writeQuestionBlockLifecycleEvent(tx, {
+          blockId: importedBlockId,
+          op: 'set_status',
+          status: 'imported',
+          importedQuestionId: questionId,
+          importedAttemptEventId: enroll.attemptEventId,
+          nextVersion: importedBlockVersion,
+          actorKind: 'user',
+          actorRef: 'block_import',
+          now,
+        });
 
         // Only failure captures have a cause to attribute. success/partial/
         // unanswered never queue attribution_followup.
@@ -469,14 +486,28 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
       // UPDATE source blocks → status='ignored'
       for (const sid of toIgnore) {
-        await tx
+        const [{ version: ignoredBlockVersion }] = await tx
           .update(question_block)
           .set({
             status: 'ignored',
             updated_at: now,
             version: sql`${question_block.version} + 1`,
           })
-          .where(eq(question_block.id, sid));
+          .where(eq(question_block.id, sid))
+          .returning({ version: question_block.version });
+
+        // YUK-471 W3-D — make the ignore sweep fold-visible (additive double-write; same `now`/tx).
+        // op='set_status' carries ONLY status + bumped version (the sweep does NOT touch imported_*, so
+        // they are OMITTED → the fold leaves them unchanged). foldQuestionBlock reproduces this row.
+        await writeQuestionBlockLifecycleEvent(tx, {
+          blockId: sid,
+          op: 'set_status',
+          status: 'ignored',
+          nextVersion: ignoredBlockVersion,
+          actorKind: 'user',
+          actorRef: 'block_import',
+          now,
+        });
       }
 
       // Terminal transition extracted | reviewed → imported. Re-asserts state

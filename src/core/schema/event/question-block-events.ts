@@ -219,3 +219,85 @@ export const QuestionBlockCreateExperimental = z
     }
   });
 export type QuestionBlockCreateExperimentalT = z.infer<typeof QuestionBlockCreateExperimental>;
+
+// ── #7 experimental:question_block_lifecycle (the 5 eventless fold-truth mutators → fold-visible) ──
+//
+// W3-D FLIP PREREQUISITE — closes the LAST question_block fold-visibility gap (the C3 review's
+// question_block flip prerequisite). Before this action, FIVE live writers mutated question_block
+// fold-truth columns with NO fold-reducible event, so foldQuestionBlock would silently DROP their
+// effect (a post-flip projected row would lose the mutation). This makes them fold-visible:
+//   - reassignFigure          (block-structured-edit.ts) → op='reassign_figures': the FULL re-pointed
+//                                                          figures array (+ last_reassigned_at) + version
+//   - runAutoEnrollForSession (auto-enroll.ts)           → op='set_status': status='auto_enrolled' +
+//                                                          imported_question_id + imported_attempt_event_id
+//   - import POST (enroll)     (ingestion/api/import.ts)  → op='set_status': status='imported' + imported_*
+//   - import POST (ignore)     (ingestion/api/import.ts)  → op='set_status': status='ignored' (imports left)
+//   - revertAutoEnrolledBlock (revert-auto-enroll.ts)    → op='set_status': status='draft' + imported_* = null
+// (applyRescue / mergeQuestions are NOT here — rescue emits a question_block_create event, merge emits
+// the canonical edit_question_block_structured event; both already fold last-write-wins.)
+//
+// MIRRORS artifact_lifecycle (ArtifactLifecycleExperimental, the proven W3-B1/C1γ precedent): a
+// PRESENCE-BASED payload — a writer carries EXACTLY the columns its UPDATE touched, the reducer
+// applies whatever is carried (an undefined field ⇒ the writer left that column untouched → the fold
+// keeps the running value). The imported_* fields are NULLABLE: an explicit `null` is an honest clear
+// (revert resets imports), an OMITTED key leaves the column unchanged (the ignore sweep does not touch
+// imports). `next_version` is folded VERBATIM (the writer owns the bump rule — every site does +1, but
+// the fold trusts the carried value so a future writer change can't silently drift).
+//
+// `.strict()` payload so a stray key fails loud at the parseEvent barrier. The superRefine couples
+// op→mandatory-target (reassign_figures MUST carry figures; set_status MUST carry a non-empty status),
+// so a writer that forgot its target value — which the reducer would otherwise fold as `undefined`,
+// corrupting the column — is rejected at the barrier (honest-reject, §10 B5).
+export const QuestionBlockLifecycleExperimental = z
+  .object({
+    actor_kind: z.enum(['agent', 'user', 'system']),
+    actor_ref: z.string().min(1),
+    action: z.literal('experimental:question_block_lifecycle'),
+    subject_kind: z.literal('question_block'),
+    subject_id: z.string().min(1), // = question_block.id
+    outcome: z.literal('success').nullable().optional(),
+    payload: z
+      .object({
+        op: z.enum(['reassign_figures', 'set_status']),
+        // reassign_figures → the FULL re-pointed figures array (last-write-wins). Required-when via superRefine.
+        figures: z.array(FigureRef).optional(),
+        // set_status → the new status (free text on the table: 'draft' | 'imported' | 'auto_enrolled' |
+        // 'ignored' | …). Required-when-non-empty via superRefine.
+        status: z.string().optional(),
+        // imports a set_status write co-mutates. nullable: an explicit null is a clear (revert resets
+        // imports), an OMITTED key leaves the column (the ignore sweep does not touch imports).
+        imported_question_id: z.string().nullable().optional(),
+        imported_attempt_event_id: z.string().nullable().optional(),
+        next_version: z.number().int().nonnegative(),
+      })
+      .strict(),
+    caused_by_event_id: z.string().optional(),
+    task_run_id: z.string().optional(),
+    cost_micro_usd: z.number().int().optional(),
+  })
+  .superRefine((data, ctx) => {
+    // op→field coupling: reassign_figures MUST carry the new figures array (the fold trusts it as
+    // ground truth; folding an `undefined` over the notNull jsonb column would corrupt it).
+    if (data.payload.op === 'reassign_figures' && data.payload.figures === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "figures (the full re-pointed array) is required when op='reassign_figures'",
+        path: ['payload', 'figures'],
+      });
+    }
+    // set_status MUST carry a non-empty status (the reducer would otherwise fold `undefined`/'' over
+    // the notNull status column).
+    if (
+      data.payload.op === 'set_status' &&
+      (data.payload.status === undefined || data.payload.status.length === 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "status (non-empty) is required when op='set_status'",
+        path: ['payload', 'status'],
+      });
+    }
+  });
+export type QuestionBlockLifecycleExperimentalT = z.infer<
+  typeof QuestionBlockLifecycleExperimental
+>;
