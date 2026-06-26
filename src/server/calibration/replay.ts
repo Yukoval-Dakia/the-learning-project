@@ -157,18 +157,22 @@ function isFiniteNum(x: number | null | undefined): x is number {
   return typeof x === 'number' && Number.isFinite(x);
 }
 
-// PERSISTENCE-PRECISION NOTE (faithfulness bound, surfaced in the PR description):
-//   production persists θ̂ to Postgres `real` columns (mastery_state.theta_hat /
-//   ability_global theta_hat — src/db/schema.ts:821,833) and re-reads them between
-//   attempts (getMasteryState → states[i].theta). The `postgres` driver round-trips a
-//   `real` value through its TEXT serialization (~7 significant decimal digits), e.g.
-//   0.28877070890471374 → '0.2887707' → parseFloat = 0.2887707 — which is NEITHER the
-//   original float64 NOR Math.fround(x) (0.2887707054615021). There is no cheap pure-JS
-//   reproduction of Postgres's float-to-text algorithm, so the replay stays pure float64
-//   (the natural in-memory arithmetic) and the byte-identity fixture asserts agreement to
-//   ~1e-6 (float32/real-text precision) — the actual precision the LIVE θ̂ trajectory
-//   carries. The forward-AUC verdict is robust to this: σ() of a ~1e-6 θ̂ difference moves
-//   the predicted P by ~1e-6, far below any ranking-flip / ΔAUC-threshold scale.
+// PERSISTENCE-PRECISION NOTE (faithfulness bound):
+//   As of YUK-495 S4, production persists θ̂ to a Postgres `double precision` column
+//   (mastery_state.theta_hat — src/db/schema.ts:880; the per-domain 'ability_global' θ̂ is
+//   itself a mastery_state row, not a separate table) and re-reads it between attempts
+//   (getMasteryState → states[i].theta). double precision is binary64, so the `postgres`
+//   driver now round-trips the LIVE θ̂ **bit-exactly** (no float32/real-text truncation —
+//   the old note here described the pre-S4 `real` column, where 0.28877070890471374 read
+//   back as 0.2887707). The replay stays pure float64 (the natural in-memory arithmetic),
+//   so the persistence layer no longer introduces a precision gap.
+//   The byte-identity fixture still asserts agreement to ~1e-6 — now a CONSERVATIVE bound,
+//   not the persistence limit: any residual gap is replay-recompute arithmetic, not column
+//   truncation. Tightening this toward bit-exact is the Tier-2 bit-exact-replay slice's job
+//   (#46 / decision-②: the replay recompute must route through the shared polySigmoid that
+//   the live θ̂ uses once POLY_SIGMOID_ENABLED flips). The forward-AUC verdict is robust to
+//   the current bound regardless: σ() of a ~1e-6 θ̂ difference moves predicted P by ~1e-6,
+//   far below any ranking-flip / ΔAUC-threshold scale.
 
 /** Dedup + trim + drop-empty, identical to state.ts:457-459. */
 function dedupKcs(ids: string[]): string[] {
