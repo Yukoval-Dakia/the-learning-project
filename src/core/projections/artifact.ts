@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { applyNotePatch } from '../blocks/apply-note-patch';
-import { ArtifactBodyBlocks } from '../schema/business';
 import {
   ArtifactCreateExperimental,
   ArtifactLifecycleExperimental,
@@ -280,6 +279,18 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
       // biome-ignore lint/correctness/noUnnecessaryContinue: defensive — keeps every reducer branch uniformly terminated so appending a branch can't introduce silent fall-through.
       continue;
     }
+
+    // ⚠️ KNOWN-UNFOLDED LIVE ARTIFACT MUTATORS — FLIP PREREQUISITE (YUK-471 W3-C1/C3).
+    // Any other `subject_kind:'artifact'` action falls through here unfolded. While the projection
+    // is NOT the writer (PROJECTION_IS_WRITER_ARTIFACT OFF) this is harmless. But BEFORE that flag
+    // flips to 1, W3-C1 MUST event-source these live row mutators (or the guarded projection will
+    // overwrite a live row with a stale fold == silent data loss), and W3-C3's parity harness MUST
+    // flag any of them on a real artifact:
+    //   • experimental:artifact_section_edit (sections.ts editArtifactSection — body_blocks/history/version)
+    //   • experimental:note_refine_undo      (note-refine-apply.ts — restores body_blocks/version; also
+    //                                          backs the ADR-0040 §1 "unified undo = fold auto-restores")
+    //   • suppress / hub-dismiss             (hub-dismiss.ts — artifact.attrs)
+    // (legacy experimental:artifact_body_blocks_edit is already covered by the body_blocks_edit migration.)
   }
 
   return row;
