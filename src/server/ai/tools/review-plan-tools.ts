@@ -826,6 +826,8 @@ async function executeWriteReviewPlan(
         intent_tags: plan.labels.intent_tags,
       },
       sourceRef: null,
+      // YUK-471 W3-C1β — chain the same-tx artifact_create to the copilot turn's causing event.
+      causedByEventId: ctx.causedByEventId ?? null,
       now,
     });
   });

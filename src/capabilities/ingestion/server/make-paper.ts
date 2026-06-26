@@ -18,6 +18,10 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { ToolState, type ToolStateT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact, question, question_block, source_document } from '@/db/schema';
+import {
+  artifactRowToCreateSnapshot,
+  emitArtifactCreateEvent,
+} from '@/server/artifacts/create-event';
 import { ApiError } from '@/server/http/errors';
 
 /** Minimal question shape the builder needs (subset of the question row). */
@@ -321,31 +325,44 @@ export async function createIngestionPaper(
     const knowledgeIds = [...new Set(questions.flatMap((q) => q.knowledge_ids))];
     const artifactId = `ingestion_paper_${createId()}`;
 
-    await tx.insert(artifact).values({
-      id: artifactId,
-      type: 'tool_quiz',
-      title,
-      parent_artifact_id: null,
-      knowledge_ids: knowledgeIds,
-      intent_source: INGESTION_PAPER_INTENT_SOURCE,
-      // 'imported' (user's real paper), NOT 'ai_generated'.
-      source: 'imported',
-      // Back-reference to the ingestion session (idempotency key + traceability).
-      source_ref: params.sessionId,
-      body_blocks: null,
-      attrs: {
-        ingestion_session_id: params.sessionId,
-        source_document_id: sourceDocumentId,
-        entrypoint: 'ingestion_make_paper',
-      } as never,
-      tool_kind: INGESTION_PAPER_INTENT_SOURCE,
-      tool_state: toolState as never,
-      generation_status: 'ready',
-      verification_status: 'not_required',
-      history: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
+    // YUK-471 W3-C1β — INSERT … RETURNING the full row, then emit the same-tx artifact_create event
+    // from the MATERIALIZED row (all 22 columns, defaults applied) so the fold reproduces it and the
+    // ArtifactRowSnapshot.strict() barrier never false-rejects (rollback-safe). Imported paper →
+    // actor user/self; no causing event (a make-paper request is not driven by a propose/rate event).
+    const [insertedArtifact] = await tx
+      .insert(artifact)
+      .values({
+        id: artifactId,
+        type: 'tool_quiz',
+        title,
+        parent_artifact_id: null,
+        knowledge_ids: knowledgeIds,
+        intent_source: INGESTION_PAPER_INTENT_SOURCE,
+        // 'imported' (user's real paper), NOT 'ai_generated'.
+        source: 'imported',
+        // Back-reference to the ingestion session (idempotency key + traceability).
+        source_ref: params.sessionId,
+        body_blocks: null,
+        attrs: {
+          ingestion_session_id: params.sessionId,
+          source_document_id: sourceDocumentId,
+          entrypoint: 'ingestion_make_paper',
+        } as never,
+        tool_kind: INGESTION_PAPER_INTENT_SOURCE,
+        tool_state: toolState as never,
+        generation_status: 'ready',
+        verification_status: 'not_required',
+        history: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })
+      .returning();
+    await emitArtifactCreateEvent(tx, {
+      row: artifactRowToCreateSnapshot(insertedArtifact),
+      actorKind: 'user',
+      actorRef: 'self',
+      createdAt: now,
     });
 
     return { artifactId, reused: false };
