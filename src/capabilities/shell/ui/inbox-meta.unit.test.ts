@@ -42,7 +42,10 @@ describe('KIND_META vs aiProposalKinds 对账', () => {
 // dispatchAccept（src/server/proposals/actions.ts）新增/移除 case 时，必须同步
 // 更新 core 的 acceptSupportedProposalKinds，否则这里漂移警报。
 describe('acceptSupportedProposalKinds 分区对账', () => {
-  const unsupported = ['defer', 'archive', 'judge_retraction'] as const;
+  // conjecture (YUK-440/YUK-406 教研团 Phase 0) is propose-only in this MVP — no accept
+  // applier (the 备课台 accept/edit lane is design-gated), so it joins the unsupported
+  // partition alongside defer/archive/judge_retraction.
+  const unsupported = ['defer', 'archive', 'judge_retraction', 'conjecture'] as const;
 
   it('acceptSupported ∪ {defer, archive, judge_retraction} === aiProposalKinds', () => {
     const union = new Set<string>([...acceptSupportedProposalKinds, ...unsupported]);
