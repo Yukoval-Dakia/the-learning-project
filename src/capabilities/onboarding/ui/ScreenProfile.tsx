@@ -10,6 +10,11 @@
 //  - Narrative is templated from the data (honest, deterministic) — no AI call. The richer
 //    prototype narrative is a later enrich.
 //  - `track` (KC category chip) is omitted — real knowledge nodes carry no track field yet.
+//
+// YUK-495 #41 — the recompute verify layer (RcVerify bar + per-KC chips + bit-for-bit ledger
+// / drift detail + boundary note) hangs off this screen, gated by RECOMPUTE_BADGE_ENABLED.
+// It re-derives each displayed KC number ON-DEVICE from the raw evidence (recompute-core →
+// src/core/recompute) and checks it against the server. Read-only.
 
 import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
@@ -19,9 +24,19 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
 import { ObSteps } from './ObSteps';
-import { type ProfileKc, getPlacementProfile } from './profile-api';
+import { type PlacementProfile, type ProfileKc, getPlacementProfile } from './profile-api';
+import { RcDetailPanel, RcKcChip, RcVerify } from './recompute/RecomputeComponents';
+import {
+  RECOMPUTE_BADGE_ENABLED,
+  type RcKcVerdict,
+  type SigmaMode,
+  summarizeRecompute,
+} from './recompute/recompute-core';
+import { useRecompute } from './recompute/useRecompute';
 import './onboarding.css';
+import './recompute/recompute.css';
 
 const pct = (v: number) => Math.round(v * 100);
 
@@ -98,11 +113,7 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
     );
   }
 
-  const { kcs, testedCount, totalKcs } = profileQ.data;
-  const shown = kcs.length;
-  const truncated = totalKcs > shown;
-
-  if (kcs.length === 0) {
+  if (profileQ.data.kcs.length === 0) {
     return (
       <ProfileShell>
         <LoomCard pad padLg>
@@ -121,6 +132,39 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
     );
   }
 
+  return <ProfileBody data={profileQ.data} navigate={navigate} />;
+}
+
+// The data-bearing body — split out so the recompute hooks (useRecompute / detail toggle) run
+// unconditionally, after ScreenProfile's data-dependent early returns.
+function ProfileBody({
+  data,
+  navigate,
+}: {
+  data: PlacementProfile;
+  navigate: (to: string) => void;
+}) {
+  const { kcs, testedCount, totalKcs } = data;
+  const shown = kcs.length;
+  const truncated = totalKcs > shown;
+  const sigmaMode: SigmaMode = data.sigma_mode ?? 'libm';
+
+  // Re-derive every KC on-device and roll up the verify summary (only when the layer is on).
+  const summary = useMemo(
+    () => (RECOMPUTE_BADGE_ENABLED ? summarizeRecompute(kcs, sigmaMode) : null),
+    [kcs, sigmaMode],
+  );
+  const verdictById = useMemo(
+    () => new Map<string, RcKcVerdict>(summary?.verdicts.map((v) => [v.id, v]) ?? []),
+    [summary],
+  );
+  const { state: rcState, run: rcRun } = useRecompute({
+    auto: true,
+    outcome: summary?.overall ?? 'preview',
+  });
+  const [detailOpen, setDetailOpen] = useState(false);
+  const showVerify = RECOMPUTE_BADGE_ENABLED && summary !== null;
+
   const narrative =
     testedCount > 0
       ? `基于你在 ${testedCount} 个知识点上的作答，这是一份初步画像——多数判断证据还少，会随你练习一起收紧。`
@@ -135,12 +179,29 @@ export default function ScreenProfile({ navigate }: ScreenProfileProps) {
         多数还需更多练习确认，下面把不确定一并摆出来
       </div>
 
-      <LoomCard pad padLg className="ob-rise">
+      <LoomCard pad padLg className="ob-rise" {...(showVerify ? { 'data-rc': rcState } : {})}>
+        {showVerify && summary && (
+          <RcVerify
+            state={rcState}
+            summary={summary}
+            detailOpen={detailOpen}
+            onToggleDetail={() => setDetailOpen((o) => !o)}
+            onRerun={rcRun}
+          />
+        )}
+
         <div className="ob-kc-list">
           {kcs.map((k) => (
-            <KcRow key={k.id} kc={k} />
+            <KcRow
+              key={k.id}
+              kc={k}
+              verdict={showVerify ? verdictById.get(k.id) : undefined}
+              rcState={rcState}
+            />
           ))}
         </div>
+
+        {showVerify && detailOpen && summary && <RcDetailPanel summary={summary} />}
 
         <div className="ob-prof-legend">
           <span>
@@ -191,7 +252,15 @@ function ProfileShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function KcRow({ kc }: { kc: ProfileKc }) {
+function KcRow({
+  kc,
+  verdict,
+  rcState,
+}: {
+  kc: ProfileKc;
+  verdict?: RcKcVerdict;
+  rcState: ReturnType<typeof useRecompute>['state'];
+}) {
   const untested = !kc.tested || kc.evidence_count === 0;
   const conf = confOf(kc);
   // Clamp to [0,1] so a stray projection value can't push the band edges or the mark off the
@@ -206,9 +275,14 @@ function KcRow({ kc }: { kc: ProfileKc }) {
   const hi = Math.max(rawLo, rawHi);
   const point = clamp01(kc.p_l, lo);
 
+  // YUK-495 #41 — calm ochre hairline on a KC whose displayed numbers don't re-derive.
+  const drifted = verdict?.kind === 'drift';
+
   return (
     <div
-      className={`ob-kc${kc.low_confidence ? ' is-lowconf' : ''}${untested ? ' is-untested' : ''}`}
+      className={`ob-kc${kc.low_confidence ? ' is-lowconf' : ''}${untested ? ' is-untested' : ''}${
+        drifted ? ' rc-kc-drift' : ''
+      }`}
     >
       <div className="ob-kc-id">
         <span className="ob-kc-name">{kc.name}</span>
@@ -238,6 +312,7 @@ function KcRow({ kc }: { kc: ProfileKc }) {
         )}
       </div>
       <div className="ob-kc-conf">
+        {verdict && <RcKcChip state={rcState} kind={verdict.kind} />}
         <span className={`ob-conf-pill t-${conf}`}>{CONF_LABEL[conf]}</span>
         <span className="ob-kc-ev">
           {untested ? '0 题' : `${kc.evidence_count} 题 · SE ${(kc.theta_se ?? 0).toFixed(2)}`}
