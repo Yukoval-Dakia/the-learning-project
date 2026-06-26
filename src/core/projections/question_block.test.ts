@@ -630,3 +630,70 @@ describe('foldQuestionBlock — interleaving, ordering, dedup, isolation', () =>
     expect(row).toEqual(s9); // untouched
   });
 });
+
+// Deterministic in-place permutation (no RNG → reproducible). seedShift varies the permutation.
+function permute<T>(arr: T[], seedShift: number): T[] {
+  const out = [...arr];
+  for (let i = 0; i < out.length; i += 1) {
+    const j = (i * 7 + seedShift) % out.length;
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+// ====================================================================
+// W3-C3 (F7) — interleave convergence + version monotonicity.
+//
+// foldQuestionBlock sorts by (created_at asc, id asc), so a SHUFFLED / out-of-order delivery MUST
+// converge to the SAME row as the in-order fold — the SoT flip rests on this determinism. The qb edit
+// event has NO version-monotonicity superRefine (unlike artifact's body_blocks_edit): the fold does
+// LAST-WRITE-WINS by created_at, so the final version/structured reflect the created_at-LATEST edit
+// even when an EARLIER-versioned edit is delivered last.
+// ====================================================================
+describe('foldQuestionBlock — W3-C3 interleave convergence + version monotonicity (F7)', () => {
+  const base = qbSnapshot({ id: 'qb_i', version: 0, structured: node('qb_i', 'v0') });
+  const chain: FoldEvent[] = [
+    create({ created_at: at(0), row: base }),
+    singleEdit({
+      created_at: at(1000),
+      blockId: 'qb_i',
+      structured: node('qb_i', 'v1'),
+      version: 1,
+    }),
+    singleEdit({
+      created_at: at(2000),
+      blockId: 'qb_i',
+      structured: node('qb_i', 'v2'),
+      version: 2,
+    }),
+    singleEdit({
+      created_at: at(3000),
+      blockId: 'qb_i',
+      structured: node('qb_i', 'v3'),
+      version: 3,
+    }),
+  ];
+
+  it('fold(shuffled) == fold(ordered) — order-independent convergence', () => {
+    const ordered = foldQuestionBlock('qb_i', chain);
+    for (let s = 0; s < 5; s += 1) {
+      expect(foldQuestionBlock('qb_i', permute(chain, s))).toEqual(ordered);
+    }
+  });
+
+  it('final version + structured reflect the created_at-LATEST edit regardless of input order', () => {
+    const row = foldQuestionBlock('qb_i', permute(chain, 3));
+    expect(row?.version).toBe(3);
+    expect(row?.structured).toEqual(node('qb_i', 'v3'));
+  });
+
+  it('an out-of-order EARLIER edit (lower created_at) never overrides a later one (last-write-wins by clock, not delivery order)', () => {
+    // Deliver v3 FIRST in the array, v1 LAST: the fold still sorts by created_at, so v3 (at 3000) wins.
+    const reordered = [chain[0], chain[3], chain[2], chain[1]];
+    const row = foldQuestionBlock('qb_i', reordered);
+    expect(row?.version).toBe(3);
+    expect(row?.structured).toEqual(node('qb_i', 'v3'));
+  });
+});

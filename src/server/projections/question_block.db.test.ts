@@ -18,7 +18,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, materialized_id_index, question_block } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { backfillQuestionBlockGenesis } from '../../../scripts/backfill-genesis-events';
@@ -254,5 +254,49 @@ describe('gatherAndFoldQuestionBlock — Q2 top-level @> merge containment (hits
     expect(primary?.status).toBe('draft');
     expect(primary?.version).toBe(1);
     expect(primary?.merged_from_block_ids).toContain('qb_absorbed');
+  });
+});
+
+// W3-C3 flip-gate hardening (c) — the per-row backfill accumulates parse failures and throws ONCE with
+// the FULL list, so the owner fixes EVERY bad-bbox block in one §9.3 data-fix pass (not N reruns).
+describe('backfillQuestionBlockGenesis — accumulate per-row failures, throw once', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await resetIndex();
+  });
+
+  // A figure whose source_bbox violates the 0-1 normalized BBox refinement (x + width > 1) → the strict
+  // QuestionBlockRowSnapshot parse THROWS at writeEvent for this row (fail-loud, NOT clamp).
+  const badFigure: FigureRefT = {
+    asset_id: 'asset_bad',
+    role: 'diagram',
+    source_page_index: 0,
+    source_bbox: { x: 0.9, y: 0, width: 0.5, height: 0.5 }, // 0.9 + 0.5 = 1.4 > 1 → out of range
+    attached_to_index: 'qb_x',
+    attach_confidence: 'high',
+  };
+
+  it('collects ALL bad rows and throws ONE error naming every bad id (good rows still seed)', async () => {
+    const db = testDb();
+    await insertBlock('qb_good'); // valid → seeds fine
+    await insertBlock('qb_bad1', { figures: [{ ...badFigure }] });
+    await insertBlock('qb_bad2', { figures: [{ ...badFigure }] });
+
+    let thrown: Error | null = null;
+    try {
+      await backfillQuestionBlockGenesis(db, T0);
+    } catch (err) {
+      thrown = err instanceof Error ? err : new Error(String(err));
+    }
+    expect(thrown).not.toBeNull();
+    // ONE throw lists BOTH bad ids (one pass, not fix-one-rerun-repeat).
+    expect(thrown?.message).toContain('qb_bad1');
+    expect(thrown?.message).toContain('qb_bad2');
+    expect(thrown?.message).toMatch(/2 row\(s\) failed/);
+    // The good row's per-row tx committed before the aggregate throw → it IS anchored.
+    expect(await genesisCount('qb_good')).toBe(1);
+    // The bad rows aborted their own tx → no genesis written.
+    expect(await genesisCount('qb_bad1')).toBe(0);
+    expect(await genesisCount('qb_bad2')).toBe(0);
   });
 });
