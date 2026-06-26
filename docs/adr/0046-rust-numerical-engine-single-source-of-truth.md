@@ -9,7 +9,7 @@
 
 ## 背景
 
-YUK-493 滩头定的姿势（至今）：**TS = oracle + 生产路径，Rust = 被 parity test 验证的镜像**。`src/server/calibration/*` 与 `src/core/poly-exp.ts` 在生产里真的跑算法；`crates/calibration-native` 是 bit-exact 镜像，`.node`/`.wasm` **opt-in / gitignored / dev-CI-only**，`native-parity`/`poly-exp-parity`/`wasm-parity` 三套件 skip-if-absent，**JS 永远是 always-on 生产路 + fallback**。后果：一份算法**维护两遍**（`poly-exp.ts` ↔ `poly_exp.rs` 靠 parity test 锁同步），drift-risk + parity-ceremony 是持续代价。
+YUK-493 滩头定的姿势（至今）：**TS = oracle + 生产路径，Rust = 被 parity test 验证的镜像**。生产里真正跑数值的 live TS 是 `src/core/theta.ts`/`pfa.ts`（θ̂/PFA——**当前仍用 `Math.exp`**，polySigmoid swap 是**未落的 Phase-1 动作**，不是已接线）。`src/core/poly-exp.ts` 是 Phase-0 de-risk 模块，与 crate 的 `poly_exp.rs` **双维护 + parity-locked**（drift-risk + parity-ceremony 的代价是真的）但**尚未接进 live sigmoid**；`src/server/calibration/*` 是 offline / report-only、**不在 prod 镜像**。`crates/calibration-native` 的 `.node`/`.wasm` **opt-in / gitignored / dev-CI-only**，`native-parity`/`poly-exp-parity`/`wasm-parity` 三套件 skip-if-absent，**JS 永远是 always-on 生产路 + fallback**。后果：数值算法**维护两遍**靠 parity test 锁同步（poly 已是 `poly-exp.ts` ↔ `poly_exp.rs`；θ̂/PFA 一旦 port 就成同样双份）——这正是反转要消除的。
 
 owner 2026-06-26 的观察：**Rust 被摆成 check（验证镜像），不是引擎。** 双实现 + 同步成本是错的取舍。
 
@@ -24,11 +24,13 @@ owner 选**架构纯度（single-source-of-truth）**，明确**不是为速度*
 
 ### 1. 确定性数值核 = Rust single-source-of-truth
 
-θ̂ / PFA / FSRS retention / calibration（AUC/bootstrap/ECE）/ proper-scoring-rule / 任何**纯数值确定性 kernel**：**一份 Rust 实现**，napi 喂服务端、WASM 喂客户端（仅在计算真露出客户端处，如 #41/#45）。**TS 不再重写这些算法——只调 binding。** `poly-exp.ts` 这类 TS 数值实现是迁移期 oracle，终态删除（见 §4/§5）。
+θ̂ / PFA / calibration（AUC/bootstrap/ECE）/ proper-scoring-rule / 任何**纯数值确定性 kernel**：**一份 Rust 实现**，napi 喂服务端、WASM 喂客户端（仅在计算真露出客户端处，如 #41/#45）。**TS 不再重写这些算法——只调 binding。** `poly-exp.ts` 这类 TS 数值实现是迁移期 oracle，终态删除（见 §4/§5）。
+
+**FSRS 例外说明**：repo **不自造 FSRS**（`fsrs.ts` 是第三方 `ts-fsrs` 薄封装，无 first-party retrievability 公式可 port）。「FSRS 进 Rust」**仅指 retrievability 公式那一截**（对齐 Rust catalog decision③ / #105 含 FSRS / #30 Twin 用 Rust FSRS），且 `ts-fsrs` 仍是持久化 Card 的 **TS single-writer**（ADR-0005/0035），**不是迁移 FSRS 调度**。ADR-0044 已记「ts-fsrs Card 重放确定性难保证」→ 排序 **deferred 到 #105/#30**，**非近期 §4 迁移项**。
 
 ### 2. 边界（铁律）：数字 → Rust；编排 → TS
 
-**只有确定性数值计算进 Rust。** LLM 推理 / matcher / judge / 错因归因 / conjecture 引擎 LLM 半边 / 组卷流 / DB 读写 / HTTP / 调度*决策* → 全留 TS。**Rust NEVER touch LLM / DB / OCR**（不变红线，ADR-0035 + 滩头）——它们 I/O-bound、Rust ≈0、且会把 Agent SDK / pg / R2 拖进 crate。判据一句话：**「给定输入纯靠 + − × ÷ compare sort floor exp 算出确定输出」→ Rust；「要问模型 / 查库 / 发请求 / 软判断」→ TS。**
+**只有确定性数值计算进 Rust。** LLM 推理 / matcher / judge / 错因归因 / conjecture 引擎 LLM 半边 / 组卷流 / DB 读写 / HTTP / 调度*决策* → 全留 TS。**Rust NEVER touch LLM / DB / OCR**（不变红线，权威 = 滩头 §2.3「Rust 只收已组装数组、绝不跨 FFI 碰 DB」+ 本节 +−×÷ 判据；ADR-0035 只管三轴正交，非本边界）——它们 I/O-bound、Rust ≈0、且会把 Agent SDK / pg / R2 拖进 crate。判据一句话：**「给定输入纯靠 + − × ÷ compare sort floor exp 算出确定输出」→ Rust；「要问模型 / 查库 / 发请求 / 软判断」→ TS。**
 
 ### 3. Rust 进 prod（反转滩头立场）
 
@@ -46,9 +48,9 @@ owner 选**架构纯度（single-source-of-truth）**，明确**不是为速度*
 
 ### 6. napi/WASM 安全约定（working-name「ability-island」）升格为 prod-safety 契约
 
-既有 dev/CI gate 的 napi 约定——**反转后是生产正确性契约**，本 ADR 吸收（不另开 ADR）：
-- `#![forbid(unsafe_code)]`（crate 级）。
-- **owned args**（`Vec<f64>` 传值，非 borrow / 非 Buffer）——N-API ToUint32 强制类型语义对齐 oracle（见 `lib.rs` labels 注释）。
+napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本 ADR 吸收（不另开 ADR）：
+- `#![forbid(unsafe_code)]`（crate 级）——⚠️ **当前 crate 实测无 unsafe 但尚未加该 lint attribute，待 Rust 线落地**（下列其余约定已在 `lib.rs` 落地）。
+- **owned args**（`Vec<f64>` 传值，非 borrow / 非 Buffer）——labels 用 `Vec<f64>`（非 `Vec<u32>`）以**避开** N-API ToUint32 对非二元 label 的静默强转（`1.5→1` / `-1→4294967295`），保持非法-label throw 与 oracle 字节一致（见 `lib.rs:16-19` labels 注释）。
 - **无 FMA**（`f64::mul_add` banned）+ 冻结 Horner 序 + floor-based range reduction + 常量 from_bits——确定性不变量，跨 V8/native/wasm 位等的前提。
 - **迁移期 = diff-test**（vs TS oracle，Object.is）；**单实现后 = Rust-native KAT/property test**（无 oracle 可比时）。
 - `seed-not-closure`（FFI 传 seed 非 rng 闭包，整条 PRNG 流在 Rust 跑）。
