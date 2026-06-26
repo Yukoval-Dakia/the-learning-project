@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActivityRef } from '../activity';
-import { JudgeKind } from '../business';
+import { JudgeKind, LearningItemStatus } from '../business';
 import { CapabilityRef } from '../capability';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
@@ -251,6 +251,24 @@ export const RateEvent = z.object({
   payload: z.object({
     rating: z.enum(['accept', 'dismiss', 'rollback']),
     user_note: z.string().optional(),
+    // YUK-471 (retract fold/rollback) — when this rate event ACCEPTS a
+    // completion / relearn proposal it pins the learning_item it materialized so
+    // retract can find the row to reverse (the proposal payload carries the id too,
+    // but pinning it on the accept keeps the reversal self-contained). Optional —
+    // only completion/relearn accepts set it.
+    materialized_learning_item_id: z.string().optional(),
+    // YUK-471 (retract fold/rollback) — PRIOR-STATE CAPTURE. completion accepts a
+    // pending|in_progress item and relearn accepts a done|resting item, then both
+    // overwrite status (+ completed_at). The pre-accept values are otherwise
+    // UNRECOVERABLE, so retract would have to guess (and a wrong guess corrupts a
+    // `resting` item into `done` with a fabricated completed_at). The accept pins the
+    // exact prior state here so retract restores it byte-for-byte. Optional — only
+    // completion/relearn accepts set them; `null` means the prior completed_at was NULL.
+    // Reuse the shared LearningItemStatus enum (single source of truth — learning_item.status
+    // is bare text with no DB constraint, so this parse barrier is the only gate; a junk status
+    // fails loudly here instead of silently restoring an invalid state on retract).
+    materialized_prior_status: LearningItemStatus.optional(),
+    materialized_prior_completed_at: z.string().nullable().optional(),
     // YUK-471 W1 payload #1 (Codex #3 keystone) — when this rate event ACCEPTS a
     // structural proposal (applyProposeNew / applySplit), it pins the ids the
     // accept path minted so the W1 fold can REPRODUCE the same knowledge.id /
