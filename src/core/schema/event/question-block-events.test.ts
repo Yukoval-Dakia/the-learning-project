@@ -113,6 +113,36 @@ describe('parseEvent — experimental:edit_question_block_structured routing + c
     );
   });
 
+  it('REJECTS a single-block op carrying a merged_source (op→cardinality, superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        editEnvelope({
+          payload: {
+            op: 'update_prompt',
+            affected_blocks: [
+              primaryBlock(),
+              {
+                block_id: 'blk_2',
+                role: 'merged_source',
+                structured: null,
+                version: 1,
+                status: 'ignored',
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS merge_questions with NO merged_source (op→cardinality, superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        editEnvelope({ payload: { op: 'merge_questions', affected_blocks: [primaryBlock()] } }),
+      ),
+    ).toThrow();
+  });
+
   it('REJECTS reassign_figure (not a structured-edit op — separate figure.reassigned surface)', () => {
     expect(() =>
       parseEvent(
@@ -261,6 +291,16 @@ describe('parseEvent — experimental:question_block_create routing + coherence'
       }),
     );
     expect((parsed as { action: string }).action).toBe('experimental:question_block_create');
+  });
+
+  it('REJECTS a create with an unknown payload key (.strict() payload boundary)', () => {
+    expect(() =>
+      parseEvent(
+        createEnvelope({
+          payload: { row: questionBlockRow('blk_1'), origin: 'ocr', bogus_key: 'nope' },
+        }),
+      ),
+    ).toThrow();
   });
 
   it('REJECTS a create whose payload.row is missing ingestion_session_id (the notNull column)', () => {

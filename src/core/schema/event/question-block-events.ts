@@ -142,6 +142,28 @@ export const EditQuestionBlockStructuredExperimental = z
         path: ['payload', 'affected_blocks'],
       });
     }
+    // op→cardinality coupling: a single-block op (update_prompt / add_option / set_question_type /
+    // split_stem) touches ONLY the primary — no merged_source. merge_questions MUST carry the
+    // primary + ≥1 merged_source (the absorbed blocks). A mismatch (a single-block edit smuggling
+    // merged_sources, or a merge with no absorbed rows) would have the fold rewrite the projection
+    // from a structurally-wrong multi-row event — reject at the barrier (honest-reject, §10 B5).
+    const mergedSources = data.payload.affected_blocks.filter((b) => b.role === 'merged_source');
+    if (data.payload.op === 'merge_questions') {
+      if (mergedSources.length < 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "op='merge_questions' must carry at least one role='merged_source' (an absorbed block)",
+          path: ['payload', 'affected_blocks'],
+        });
+      }
+    } else if (mergedSources.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `op='${data.payload.op}' is a single-block edit — affected_blocks must contain only the primary (no merged_source)`,
+        path: ['payload', 'affected_blocks'],
+      });
+    }
   });
 export type EditQuestionBlockStructuredExperimentalT = z.infer<
   typeof EditQuestionBlockStructuredExperimental
@@ -171,13 +193,15 @@ export const QuestionBlockCreateExperimental = z
     subject_kind: z.literal('question_block'),
     subject_id: z.string().min(1), // = question_block.id (== payload.row.id)
     outcome: z.literal('success').nullable().optional(),
-    payload: z.object({
-      // FULL initial row snapshot (structured / figures / crop_refs / page_spans / status / …). The
-      // reducer reads it VERBATIM as the row's base state — same shape genesis carries.
-      row: QuestionBlockRowSnapshot,
-      // creation provenance; rescue = overwrite of an existing blockId (fold last-write-wins, §5.2).
-      origin: z.enum(['ocr', 'rescue', 'docx', 'import']),
-    }),
+    payload: z
+      .object({
+        // FULL initial row snapshot (structured / figures / crop_refs / page_spans / status / …). The
+        // reducer reads it VERBATIM as the row's base state — same shape genesis carries.
+        row: QuestionBlockRowSnapshot,
+        // creation provenance; rescue = overwrite of an existing blockId (fold last-write-wins, §5.2).
+        origin: z.enum(['ocr', 'rescue', 'docx', 'import']),
+      })
+      .strict(), // event-contract boundary: a stray key fails loud (like the edit payload + row snapshot)
     caused_by_event_id: z.string().optional(),
     task_run_id: z.string().optional(),
     cost_micro_usd: z.number().int().optional(),
