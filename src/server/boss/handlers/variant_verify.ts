@@ -36,7 +36,7 @@ import { getFailureAttemptById, writeEvent } from '@/server/events/queries';
 // experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on
 // pass). OFF still runs the write-time fold==row parity assert.
-import { projectMistakeVariant } from '@/server/projections/mistake_variant';
+import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
   assertMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
@@ -344,11 +344,14 @@ export async function runVariantVerify(
       created_at: now,
     });
 
-    // ROW writer — gated on the per-entity flag (critic A1). ON → the projection folds (create base
-    // + accept + this verify) and writes the row; OFF → the imperative UPDATE (current behavior:
-    // fail → broken+failure_reasons, pass → touch updated_at) + the write-time fold==row assert.
+    // ROW writer — gated on the per-entity flag (critic A1). ON → the GUARDED projection folds
+    // (create base + accept + this verify) and writes the row; OFF → the imperative UPDATE (current
+    // behavior: fail → broken+failure_reasons, pass → touch updated_at) + the write-time fold==row
+    // assert. GUARDED (not bare projectMistakeVariant): a pre-W2 / fixture-seeded variant with no
+    // create base folds to null; the guard's anchor gate keeps that live row instead of DELETing it
+    // (B1 data-loss-on-flip — mirrors the dismiss/retract sites + projectGoalGuarded).
     if (flip) {
-      await projectMistakeVariant(tx, mistakeVariantId);
+      await projectMistakeVariantGuarded(tx, mistakeVariantId);
     } else {
       if (parsed.verdict === 'fail') {
         await tx
