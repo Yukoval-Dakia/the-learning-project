@@ -19,95 +19,25 @@
 // null: until backfill (C2) writes a genesis anchor for every artifact, a fold-null on an
 // un-anchored row is fold-BLINDNESS, not a revert, so the guard keeps the imperative row.
 //
-// ── Gather + anchor kept LOCAL (deliberately, design §7 lane split) ─────────────────────────────
+// ── Gather + anchor HOISTED to the shared modules (W3-C2) ───────────────────────────────────────
 // The W1/W2 IO shells import gatherAndFoldX from the SHARED gather.ts (so the projection auditor
-// reconstructs a row identically) and hasXGenesisAnchor from parity.ts. W3-B1's scope is the
-// reducer + an INERT IO shell ONLY — the gather.ts extension + the materialized_id_index leg
-// (`MaterializedSubjectKind` += 'artifact', design §5.3) + the full assertArtifactParity are C2/C3.
-// So the minimal gather (Q1-only) + the event-table anchor check the shell NEEDS live HERE as
-// private helpers; C2 hoists them into gather.ts/parity.ts (and adds the index anchor leg) when it
-// wires the auditor + backfill. Keeping them local keeps this lane self-contained and inert.
+// reconstructs a row identically) and hasXGenesisAnchor from parity.ts. W3-B1 kept a private
+// Q1-only gather + event-table anchor here while inert; C2 HOISTS them into gather.ts
+// (gatherAndFoldArtifact) and parity.ts (hasArtifactGenesisAnchor — now WITH the materialized_id_index
+// leg, since artifact enters the index in C2, design §5.3) so the auditor + backfill share ONE gather
+// and ONE anchor definition with this shell. This shell now just imports them.
 //
 // Db|Tx polymorphic.
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
-import { foldArtifact } from '@/core/projections/artifact';
-import type { FoldEvent } from '@/core/projections/fold-event';
 import type { ArtifactRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { artifact, event } from '@/db/schema';
+import { artifact } from '@/db/schema';
+import { gatherAndFoldArtifact } from './gather';
+import { hasArtifactGenesisAnchor } from './parity';
 
 type DbLike = Db | Tx;
-type EventRow = typeof event.$inferSelect;
-
-// The base events that establish an artifact as event-sourced (reproducible by foldArtifact). Both
-// carry the FULL initial ArtifactRowSnapshot in payload.row (design §5.1, fork #2).
-const ARTIFACT_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:artifact_create'] as const;
-
-// rowToFoldEvent — map ONE `event` DB row to the flat FoldEvent envelope the reducer consumes.
-// (Local copy of gather.ts's exported mapper; C2 collapses this onto the shared one when the
-// artifact gather is hoisted into gather.ts.)
-function rowToFoldEvent(row: EventRow): FoldEvent {
-  return {
-    id: row.id,
-    created_at: row.created_at,
-    actor_kind: row.actor_kind,
-    actor_ref: row.actor_ref,
-    action: row.action,
-    subject_kind: row.subject_kind,
-    subject_id: row.subject_id,
-    outcome: row.outcome ?? null,
-    payload: (row.payload ?? {}) as Record<string, unknown>,
-    caused_by_event_id: row.caused_by_event_id ?? null,
-  };
-}
-
-/**
- * Gather the superset of events affecting `artifactId` and run the PURE artifact fold. READ-ONLY.
- *
- * The artifact gather is the SIMPLEST of the epic (design §5.3): EVERY artifact event
- * (genesis / artifact_create / body_blocks_edit / artifact_lifecycle / note_refine_apply) keys on
- * the artifact's OWN id, so it is Q1 ONLY (subject_kind='artifact' AND subject_id=artifactId). NO
- * Q2 reverse index (artifactId == the create event's subject_id — no minting indirection), NO Q3
- * merged-into, NO rate caused_by chain (create/edit/lifecycle are direct, not propose→accept).
- * Returns the projected row or null (artifact never created / fully reverted). Writes NOTHING.
- */
-async function gatherAndFoldArtifact(
-  db: DbLike,
-  artifactId: string,
-): Promise<ArtifactRowSnapshotT | null> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'artifact'), eq(event.subject_id, artifactId)));
-  const foldEvents = rows.map(rowToFoldEvent);
-  return foldArtifact(artifactId, foldEvents);
-}
-
-/**
- * Does this `artifact` have a genesis/create anchor — i.e. is it event-sourced (reproducible by
- * foldArtifact) at all? READ-ONLY. Used by the guarded write-through (a fold-null on a NON-event-
- * sourced artifact must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor, MINUS its
- * materialized_id_index leg: artifacts have no minting indirection (the anchor is always a
- * subject-keyed event), and `MaterializedSubjectKind` does not include 'artifact' until C2 (design
- * §5.3). C2 adds the index leg when artifact enters the index; the event-table check is complete
- * for B1 because every artifact anchor is subject-keyed.
- */
-async function hasArtifactGenesisAnchor(db: DbLike, artifactId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'artifact'),
-        eq(event.subject_id, artifactId),
-        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  return ev.length > 0;
-}
 
 /**
  * Project the current structural state of a single `artifact` from the event log and write it

@@ -54,20 +54,24 @@ import './load-env';
 
 import { newId } from '@/core/ids';
 import type {
+  ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
+  QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
 import {
+  artifact,
   event,
   goal,
   knowledge,
   knowledge_edge,
   learning_item,
   mistake_variant,
+  question_block,
 } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
@@ -75,12 +79,17 @@ import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-
 // accept-time parity assert uses (genesis / auto_tag event, or a materialized_id_index anchor), so
 // "event-sourced" means exactly the same thing on both sides. (YUK-471 W2: goalsWithGenesisAnchor
 // is the goal analog; mistakeVariantsWithGenesisAnchor is the mistake_variant analog;
-// learningItemsWithGenesisAnchor is the learning_item analog — a genesis / index anchor.)
+// learningItemsWithGenesisAnchor is the learning_item analog — a genesis / index anchor. YUK-471
+// W3-C2: artifactsWithGenesisAnchor (genesis/create event OR index anchor) is the artifact analog;
+// questionBlocksWithGenesisAnchor (genesis/create event ONLY — question_block is not in the index)
+// is the question_block analog.)
 import {
+  artifactsWithGenesisAnchor,
   goalsWithGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
   learningItemsWithGenesisAnchor,
   mistakeVariantsWithGenesisAnchor,
+  questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
 import { and, eq, inArray, or } from 'drizzle-orm';
 
@@ -90,6 +99,8 @@ type EdgeRow = typeof knowledge_edge.$inferSelect;
 type GoalRow = typeof goal.$inferSelect;
 type MistakeVariantRow = typeof mistake_variant.$inferSelect;
 type LearningItemRow = typeof learning_item.$inferSelect;
+type ArtifactRow = typeof artifact.$inferSelect;
+type QuestionBlockRow = typeof question_block.$inferSelect;
 
 const GENESIS_ACTION = 'experimental:genesis';
 const GENESIS_ACTOR_REF = 'genesis-backfill';
@@ -99,7 +110,9 @@ export interface BackfillCounts {
   knowledge_edge: { seeded: number; skipped: number };
   goal: { seeded: number; skipped: number };
   mistake_variant: { seeded: number; skipped: number };
+  artifact: { seeded: number; skipped: number };
   learning_item: { seeded: number; skipped: number };
+  question_block: { seeded: number; skipped: number };
 }
 
 // knowledgeRowToSnapshot — map a live `knowledge` DB row to KnowledgeRowSnapshotT, EXCLUDING
@@ -525,13 +538,208 @@ export async function backfillLearningItemGenesis(
   return { seeded, skipped };
 }
 
+// artifactRowToSnapshot — map a live `artifact` DB row to ArtifactRowSnapshotT. artifact has NO
+// derived/embed columns (design §5.1), so the FULL 22-column row IS the snapshot — every column is
+// carried verbatim. The jsonb columns (body_blocks / attrs / tool_state / verification_summary /
+// generated_by / verified_by / history) are passed through untouched (the snapshot REUSES the
+// canonical business schemas for them, so writeEvent's parseEvent barrier validates them as ground
+// truth). Dates stay Date (GenesisExperimental's z.coerce.date() accepts both Date and the jsonb ISO
+// string). The array columns default to [] at the table, so they are always present.
+function artifactRowToSnapshot(row: ArtifactRow): ArtifactRowSnapshotT {
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    parent_artifact_id: row.parent_artifact_id,
+    knowledge_ids: row.knowledge_ids ?? [],
+    intent_source: row.intent_source,
+    source: row.source,
+    source_ref: row.source_ref,
+    body_blocks: row.body_blocks,
+    attrs: row.attrs ?? {},
+    tool_kind: row.tool_kind,
+    tool_state: row.tool_state,
+    generation_status: row.generation_status,
+    verification_status: row.verification_status,
+    verification_summary: row.verification_summary,
+    generated_by: row.generated_by,
+    verified_by: row.verified_by,
+    history: row.history ?? [],
+    archived_at: row.archived_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
+
 /**
- * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant →
- * learning_item).
+ * Seed genesis events + index entries for every `artifact` row lacking a base anchor. (YUK-471 W3-C2.)
+ * Same shape as backfillGoalGenesis (outbox opt-out, atomic per-row tx, idempotent). Returns
+ * { seeded, skipped }.
+ *
+ * SCOPED (mirror the W1/W2 backfills): skip artifacts already event-sourced — a row with a runtime
+ * `experimental:artifact_create` event, a backfill `experimental:genesis`, or an artifact
+ * materialized_id_index anchor (artifactsWithGenesisAnchor). A runtime-created artifact re-folds from
+ * its OWN create + edit/lifecycle chain, so anchoring it with a current-state genesis snapshot would
+ * MASK reducer drift (the genesis sorts last in the fold and overwrites the reducer output). Only
+ * truly EVENT-LESS artifacts (pre-W3 rows written by the imperative INSERT sites before this wave)
+ * need a genesis base. The pre-scan DOUBLES as the idempotency check.
+ *
+ * artifact ENTERS the materialized_id_index (subject_kind='artifact', design §5.3 — the ONE
+ * intentional asymmetry vs question_block, which does NOT), so each genesis writes an index entry too.
+ *
+ * FAIL-LOUD (NOT skip/clamp): the snapshot is built by faithful field-pick; writeEvent's parseEvent
+ * barrier then validates it against the strict ArtifactRowSnapshot. A row whose body_blocks /
+ * generated_by / verification_summary violate the canonical business schemas throws at writeEvent,
+ * aborting the per-row tx → the whole backfill fails loud (genesis is ground truth; a malformed row
+ * is a real data problem, not a row to silently drop). timestamps verbatim from the row.
+ */
+export async function backfillArtifactGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(artifact);
+  const eventSourced = await artifactsWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  let seeded = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    // ATOMIC per row: genesis event + index entry commit together (see header).
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: GENESIS_ACTOR_REF,
+        action: GENESIS_ACTION,
+        subject_kind: 'artifact',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: { row: artifactRowToSnapshot(row) },
+        ingest_at: now,
+      });
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: row.id,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'artifact',
+      });
+    });
+    seeded += 1;
+  }
+  return { seeded, skipped };
+}
+
+// questionBlockRowToSnapshot — map a live `question_block` DB row to QuestionBlockRowSnapshotT,
+// EXCLUDING the LEGACY `extracted_prompt_md` column (the snapshot omits it — markdown views derive
+// from `structured`, ADR-0002; DROP deferred to Step 11.5). This is the "strip the excluded column
+// BEFORE the snapshot is built" step (design §5.2): the strict QuestionBlockRowSnapshot would
+// `unrecognized_keys`-reject a payload carrying extracted_prompt_md, so it is never picked. Every
+// OTHER column is fold truth (carried verbatim). `structured` / `figures` REUSE the canonical
+// StructuredQuestion / FigureRef schemas (incl. the 0-1 normalized BBox refinements) — a row whose
+// structured/figure bbox is out of range FAILS the strict parse at writeEvent (fail-loud, NOT
+// clamp; see backfillQuestionBlockGenesis). Dates stay Date (z.coerce.date() accepts both).
+function questionBlockRowToSnapshot(row: QuestionBlockRow): QuestionBlockRowSnapshotT {
+  return {
+    id: row.id,
+    ingestion_session_id: row.ingestion_session_id,
+    source_document_id: row.source_document_id,
+    source_asset_ids: row.source_asset_ids ?? [],
+    page_spans: row.page_spans ?? [],
+    structured: row.structured ?? null,
+    figures: row.figures ?? [],
+    layout_quality: row.layout_quality,
+    reference_md: row.reference_md,
+    wrong_answer_md: row.wrong_answer_md,
+    image_refs: row.image_refs ?? [],
+    crop_refs: row.crop_refs ?? [],
+    visual_complexity: row.visual_complexity,
+    extraction_confidence: row.extraction_confidence,
+    status: row.status,
+    knowledge_hint: row.knowledge_hint,
+    merged_from_block_ids: row.merged_from_block_ids ?? [],
+    imported_question_id: row.imported_question_id,
+    imported_attempt_event_id: row.imported_attempt_event_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+    // EXCLUDED: extracted_prompt_md (legacy deprecated — stripped before parse, design §5.2).
+  };
+}
+
+/**
+ * Seed genesis events for every `question_block` row lacking a base anchor. (YUK-471 W3-C2.) Same
+ * shape as backfillArtifactGenesis (outbox opt-out, atomic per-row tx, idempotent) EXCEPT it writes
+ * NO materialized_id_index entry — question_block does NOT enter the index (design §5.3 — the row id
+ * is always the subject_id, the anchor is always a subject-keyed event). Returns { seeded, skipped }.
+ *
+ * SCOPED (mirror the W1/W2/artifact backfills): skip blocks already event-sourced — a row with a
+ * runtime `experimental:question_block_create` or a backfill `experimental:genesis`
+ * (questionBlocksWithGenesisAnchor, event leg only). The pre-scan DOUBLES as the idempotency check.
+ * Only truly EVENT-LESS blocks (pre-W3 rows written by the imperative OCR/rescue/docx INSERT before
+ * this wave) need a genesis base.
+ *
+ * FAIL-LOUD on the C1-δ legacy-bbox / out-of-range rows (NOT skip/clamp): the snapshot omits the
+ * legacy extracted_prompt_md column then field-picks the rest; writeEvent's parseEvent barrier
+ * validates against the strict QuestionBlockRowSnapshot. `page_spans` is deliberately tolerant (raw
+ * 4-number bbox, not the 0-1 BBox) so a faithful coordinate envelope never false-rejects, and
+ * extraction_confidence is DB-CHECK-guaranteed in [0,1]; but `structured`/`figures` reuse the
+ * canonical schemas (0-1 normalized BBox + sum refinements). A row whose structured/figure bbox is
+ * out of range throws at writeEvent → the per-row tx aborts → the whole backfill fails loud. That is
+ * a genuine data-integrity problem (genesis is ground truth) the design routes to the §9.3 owner
+ * data-fix follow-up, NOT a row this backfill silently clamps or drops.
+ */
+export async function backfillQuestionBlockGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(question_block);
+  const eventSourced = await questionBlocksWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  let seeded = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    // ATOMIC per row: ONLY the genesis event (no index entry — question_block is not in the index).
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: GENESIS_ACTOR_REF,
+        action: GENESIS_ACTION,
+        subject_kind: 'question_block',
+        subject_id: row.id,
+        outcome: 'success',
+        payload: { row: questionBlockRowToSnapshot(row) },
+        ingest_at: now,
+      });
+    });
+    seeded += 1;
+  }
+  return { seeded, skipped };
+}
+
+/**
+ * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant → artifact →
+ * learning_item → question_block).
  * mistake_variant softly references question (parent_question_id / variant_question_id) + event
  * (proposal_event_id); learning_item softly references artifact (primary_artifact_id) + event
- * (source_ref) — all already event-sourced upstream; the genesis + index writes only ADD
- * event/index rows, but the FK order keeps the convention. Returns counts.
+ * (source_ref), so artifact is backfilled BEFORE learning_item (the order the learning_item docblock
+ * anticipates); question_block is independent (mistake_variant references `question`, NOT
+ * question_block) so it runs last. The genesis + index writes only ADD event/index rows (no entity
+ * FK is enforced here — materialized_id_index has no FK to the entity tables), so the order is a
+ * stable-output convention, not a hard constraint. Returns counts.
  */
 export async function backfillGenesisEvents(
   db: DbLike,
@@ -541,13 +749,17 @@ export async function backfillGenesisEvents(
   const edgeCounts = await backfillKnowledgeEdgeGenesis(db, now);
   const goalCounts = await backfillGoalGenesis(db, now);
   const mistakeVariantCounts = await backfillMistakeVariantGenesis(db, now);
+  const artifactCounts = await backfillArtifactGenesis(db, now);
   const learningItemCounts = await backfillLearningItemGenesis(db, now);
+  const questionBlockCounts = await backfillQuestionBlockGenesis(db, now);
   return {
     knowledge: knowledgeCounts,
     knowledge_edge: edgeCounts,
     goal: goalCounts,
     mistake_variant: mistakeVariantCounts,
+    artifact: artifactCounts,
     learning_item: learningItemCounts,
+    question_block: questionBlockCounts,
   };
 }
 
@@ -557,19 +769,25 @@ async function main(): Promise<void> {
   console.log('[backfill-genesis] knowledge_edge:', JSON.stringify(counts.knowledge_edge));
   console.log('[backfill-genesis] goal:', JSON.stringify(counts.goal));
   console.log('[backfill-genesis] mistake_variant:', JSON.stringify(counts.mistake_variant));
+  console.log('[backfill-genesis] artifact:', JSON.stringify(counts.artifact));
   console.log('[backfill-genesis] learning_item:', JSON.stringify(counts.learning_item));
+  console.log('[backfill-genesis] question_block:', JSON.stringify(counts.question_block));
   const totalSeeded =
     counts.knowledge.seeded +
     counts.knowledge_edge.seeded +
     counts.goal.seeded +
     counts.mistake_variant.seeded +
-    counts.learning_item.seeded;
+    counts.artifact.seeded +
+    counts.learning_item.seeded +
+    counts.question_block.seeded;
   const totalSkipped =
     counts.knowledge.skipped +
     counts.knowledge_edge.skipped +
     counts.goal.skipped +
     counts.mistake_variant.skipped +
-    counts.learning_item.skipped;
+    counts.artifact.skipped +
+    counts.learning_item.skipped +
+    counts.question_block.skipped;
   console.log(
     `[backfill-genesis] done — seeded ${totalSeeded} genesis event(s), skipped ${totalSkipped} already-seeded row(s).`,
   );
