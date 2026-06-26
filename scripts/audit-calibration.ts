@@ -423,6 +423,10 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   const { assembleForwardClustersDetailed, evaluateVA1Forward, formatReport } = await import(
     '@/server/calibration/v-a1-fwd'
   );
+  // A4 (YUK-436) — grid-Bayes vs live-Elo forward retro-validation (ADVISORY, READ-ONLY).
+  const { assembleGridForwardClusters, evaluateGridForward, formatGridReport } = await import(
+    '@/server/calibration/v-grid-fwd'
+  );
 
   const loaded = await loadAttempts();
   const { clusters, nTotalScorable } = assembleForwardClustersDetailed(loaded.orderedAttempts);
@@ -432,6 +436,17 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
     familyDeltaTotal: loaded.familyDeltaTotal,
     partialDropped: loaded.partialDropped,
   });
+
+  // A4 — reuse the SAME loaded.orderedAttempts (do NOT re-load). The grid track replays the
+  // whole list once more (gridEnabled), buckets single-KC scorable steps grid-vs-live, and
+  // produces an ADVISORY verdict. This NEVER flips THETA_GRID_ENABLED and NEVER writes the DB.
+  const grid = assembleGridForwardClusters(loaded.orderedAttempts);
+  const gridResult = evaluateGridForward(
+    grid.clusters,
+    grid.pooled,
+    {},
+    mulberry32(BOOTSTRAP_SEED),
+  );
 
   if (args.includes('--json')) {
     console.log(
@@ -443,6 +458,8 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
             skippedUnsupported: loaded.skippedUnsupported,
             partialDropped: loaded.partialDropped,
           },
+          // A4 advisory grid retro-validation (does NOT affect exit code).
+          gridResult,
         },
         null,
         2,
@@ -459,10 +476,14 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
       `  skipped (no foldable judge / unsupported)          = ${loaded.skippedUnsupported}`,
     );
     console.log(`  dropped 'partial' outcomes                         = ${loaded.partialDropped}`);
+    console.log('');
+    console.log(formatGridReport(gridResult));
   }
 
   // EXIT CODE (REPORT-ONLY): PASS → 0; INSUFFICIENT → 0 (A1 stays live PROVISIONALLY —
   // thin data is NOT a failure); FAIL → 1 (it IS a gate verdict). Never mutates anything.
+  // The A4 grid verdict is ADVISORY and DELIBERATELY does NOT affect the exit code — the
+  // grid→live flip is an owner decision after reviewing the evidence, not a CI gate.
   return result.verdict === 'FAIL' ? 1 : 0;
 }
 
