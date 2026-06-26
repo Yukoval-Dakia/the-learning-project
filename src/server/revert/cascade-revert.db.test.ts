@@ -295,18 +295,18 @@ describe('orchestrateCascadeRevert', () => {
     expect(await countCorrectionsFor(checkpoint)).toBe(1);
   });
 
-  // ── HIGH-1: non-float4-exact warm θ̂ must NOT false-conflict ─────────────────
-  it('reverts a warm θ̂ whose after is NOT float4-exact (no false conflict)', async () => {
+  // ── YUK-495 S4: full-precision warm θ̂ round-trips EXACTLY (no false conflict) ──
+  it('reverts a full-precision (non-float4-exact) warm θ̂ with no false conflict', async () => {
     const db = testDb();
     const kcId = newId();
-    // 0.1 + 0.2 = 0.30000000000000004 (a full-precision JS double). When written to
-    // a float4 column it is truncated to Math.fround(...) and read back truncated.
-    // The snapshot payload stores the UN-truncated double — a bare === would
-    // false-conflict. The conflict guard must compare on the float4 grid.
+    // 0.1 + 0.2 = 0.30000000000000004 (a full-precision JS double, NOT float4-exact).
+    // Since YUK-495 S4 widened theta_hat to `double precision`, the live column now stores
+    // this EXACTLY (no truncation) and reads it back identical to the snapshot payload's
+    // `after` — so the exact `thetaExactEq` guard sees no drift and the warm revert proceeds.
     const afterDouble = 0.1 + 0.2;
     await upsertMasteryState(db, {
       subject_id: kcId,
-      theta_hat: afterDouble, // stored as Math.fround(afterDouble)
+      theta_hat: afterDouble, // stored full-precision in the double column
       evidence_count: 1,
       success_count: 1,
       fail_count: 0,
@@ -332,7 +332,50 @@ describe('orchestrateCascadeRevert', () => {
     if (!result.ok)
       throw new Error(`expected ok, got refusal: ${result.refusal} — ${result.reason}`);
     expect(result.reverted.snapshotsRestored).toBe(1);
-    expect(await readTheta(kcId)).toBe(Math.fround(0.5));
+    expect(await readTheta(kcId)).toBe(0.5);
+  });
+
+  // ── YUK-495 S4: the exact guard now CATCHES sub-float4 external drift ──────────
+  it('refuses (conflict) when current θ̂ drifted by a sub-float4 amount vs snapshot.after', async () => {
+    const db = testDb();
+    const kcId = newId();
+    // after and a drifted-current that map to the SAME float4 grid point (their gap is
+    // below float4 resolution). The OLD float4Eq guard rounded both with Math.fround and
+    // saw them as equal → MASKED the drift → silent false "no conflict". After the S4 widen
+    // (double column) + the exact `thetaExactEq` guard, this genuine external drift IS a
+    // conflict and the whole revert must refuse — decision-④'s bit-exact intent.
+    const snapAfter = 0.3;
+    const driftedCurrent = snapAfter + 1e-9; // ~3e-9 < float4 ULP near 0.3 (~3e-8): same float4, distinct f64
+    expect(Math.fround(snapAfter)).toBe(Math.fround(driftedCurrent)); // old guard would have masked it
+    expect(snapAfter === driftedCurrent).toBe(false); // exact guard sees the drift
+
+    await upsertMasteryState(db, {
+      subject_id: kcId,
+      theta_hat: driftedCurrent,
+      evidence_count: 1,
+      success_count: 1,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+
+    const checkpoint = await seedEvent({ action: 'experimental:copilot_user_ask' });
+    await seedEvent({
+      action: 'experimental:state_snapshot',
+      subject_kind: 'event',
+      subject_id: newId(),
+      caused_by_event_id: checkpoint,
+      payload: snapshotPayload({
+        attemptEventId: checkpoint,
+        theta: { kc_id: kcId, before: 0.5, after: snapAfter },
+      }),
+    });
+
+    const result = await orchestrateCascadeRevert(db, checkpoint);
+
+    // The strengthened guard catches it: refuse the WHOLE revert (no partial undo).
+    expect(result.ok).toBe(false);
+    // current θ̂ untouched by the refused revert.
+    expect(await readTheta(kcId)).toBe(driftedCurrent);
   });
 
   // ── fail-closed: reverting an ARCHIVE generate has no clean fold-visible inverse

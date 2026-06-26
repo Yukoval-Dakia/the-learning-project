@@ -358,6 +358,13 @@
       "when": 1782256063817,
       "tag": "0050_wild_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1782482189393,
+      "tag": "0051_mastery_theta_double",
+      "breakpoints": true
     }
   ]
 }

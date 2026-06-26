@@ -315,6 +315,7 @@ export const question = pgTable('question', {
   prompt_md: text('prompt_md').notNull(),
   embedding: vector(1024),
   difficulty: real('difficulty'),
+  theta_hat: doublePrecision('theta_hat'),
 });
 `;
     const fields = parseSchema(src);
@@ -322,6 +323,9 @@ export const question = pgTable('question', {
     expect(byField.prompt_md).toBe('text');
     expect(byField.embedding).toBe('vector');
     expect(byField.difficulty).toBe('real');
+    // YUK-495: doublePrecision must be a recognized native constructor, else
+    // widened θ̂ columns silently drop out of write-path drift detection.
+    expect(byField.theta_hat).toBe('doublePrecision');
   });
 
   it('does not emit schema constraint helpers as fields', () => {
