@@ -37,6 +37,17 @@ import { z } from 'zod';
 // reducer imports it as the canonical projected-knowledge-row contract: genesis
 // and the reducer share ONE row shape (no drift between seed and fold output).
 
+// NON-strict, intentionally (A8 — original brief's REVERT path). This is a W1-LIVE schema with
+// live-row `.parse()` callers: the proposals.db.test `liveSnapshot` helper and the projection
+// parity sites parse a FULL `knowledge` DB row, which carries the DERIVED embed_* columns
+// (embedding / embed_model / embed_version / embed_content_hash). Non-strict STRIPS those extras
+// down to the structural subset; `.strict()` would instead throw `unrecognized_keys` and break
+// those callers (proposals.db.test.ts fails). The genesis per-kind safeParse dispatch stays safe
+// today WITHOUT strict here because the three entity field sets are disjoint — a wrong-entity row
+// fails on missing required fields (a knowledge row lacks goal's scope_knowledge_ids / a goal row
+// lacks `name`), and the B3 discriminating-column assertion is the real wrong-entity guard. Only
+// add `.strict()` to a knowledge schema if a future higher-overlap sibling makes silent-stripping
+// unsafe AND the live-row callers are first migrated to omit the derived columns.
 export const KnowledgeRowSnapshot = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -60,6 +71,9 @@ export type KnowledgeRowSnapshotT = z.infer<typeof KnowledgeRowSnapshot>;
 // envelope the row already persisted; the reducer treats it as opaque provenance.
 // EXPORTED for the W1 edge reducer (same single-row-contract rationale as above).
 
+// NON-strict, intentionally (A8 REVERT — same rationale as KnowledgeRowSnapshot): a W1-LIVE schema
+// whose live-row `.parse()` callers must STRIP, not reject, columns absent from this structural
+// subset. The disjoint-field-set + B3 discriminating-column dispatch is the wrong-entity guard.
 export const KnowledgeEdgeRowSnapshot = z.object({
   id: z.string().min(1),
   from_knowledge_id: z.string().min(1),
@@ -73,6 +87,38 @@ export const KnowledgeEdgeRowSnapshot = z.object({
 });
 export type KnowledgeEdgeRowSnapshotT = z.infer<typeof KnowledgeEdgeRowSnapshot>;
 
+// ---------- GoalRowSnapshot (YUK-471 Wave 2 — goal entity fold) ----------
+//
+// The projected (fold) shape of a `goal` row (src/db/schema.ts:1177-1206). goal has NO
+// derived maintenance columns (no embed_*), so EVERY column is structural fold truth — the
+// full row IS the snapshot (design §1①). `version` is carried verbatim (mirrors
+// KnowledgeRowSnapshot); the goal reducer's per-event version behavior MIRRORS the historical
+// imperative writes EXACTLY (insertGoal → 0, accept → no bump, retract → no bump, the
+// status/scope updates → +1). See src/core/projections/goal.ts for the per-site rationale.
+//
+// `.strict()` (critic B3): GoalRowSnapshot and the future LearningItemRowSnapshot share many
+// columns (id/title/status/source/source_ref/created_at/updated_at/version). A non-strict Zod
+// object strips unknown keys, so `GoalRowSnapshot.safeParse(learningItemRow)` could FALSE-PASS
+// at the genesis parse barrier. `.strict()` rejects unknown keys so a wrong-entity row can
+// never seed a goal genesis. Dates are z.coerce.date() (jsonb ISO-string roundtrip — same
+// precedent as KnowledgeRowSnapshot).
+export const GoalRowSnapshot = z
+  .object({
+    id: z.string().min(1),
+    title: z.string(),
+    subject_id: z.string().nullable(), // nullable column (cross-subject goals)
+    scope_knowledge_ids: z.array(z.string()), // jsonb string[], default [] at the table
+    sequence_hint: z.number().int(), // AI-internal ordering, NOT progress (ND-4)
+    status: z.enum(['active', 'dormant', 'done']),
+    source: z.string(), // provenance, set-once
+    source_ref: z.string().nullable(), // nullable column (the propose event id)
+    created_at: z.coerce.date(),
+    updated_at: z.coerce.date(),
+    version: z.number().int(),
+  })
+  .strict();
+export type GoalRowSnapshotT = z.infer<typeof GoalRowSnapshot>;
+
 // ---------- GenesisExperimental ----------
 //
 // Field-level parity with the existing reserved experimental schemas
@@ -83,27 +129,60 @@ export type KnowledgeEdgeRowSnapshotT = z.infer<typeof KnowledgeEdgeRowSnapshot>
 // the loose generic.
 //
 // `subject_kind` is the row's table; `subject_id` is the row id. `payload.row`
-// is the snapshot, a PLAIN `z.union` of the two row shapes (NOT a discriminated
-// union — the knowledge and knowledge_edge row shapes share no literal
-// discriminant). The subject_kind ↔ row-shape coherence is enforced POST-PARSE by
-// the superRefine cross-check below (a `knowledge` subject carrying an edge-shaped
-// row is rejected there), so a wrong snapshot shape under a given subject_kind
-// still fails at the schema boundary.
+// is the snapshot, a PLAIN `z.union` of the row shapes (NOT a discriminated
+// union — the row shapes share no literal discriminant). The subject_kind ↔
+// row-shape coherence is enforced POST-PARSE by the superRefine cross-check
+// below, so a wrong snapshot shape under a given subject_kind still fails at the
+// schema boundary.
+//
+// PER-KIND DISPATCH (YUK-471 Wave 2, critic B3 — REFACTOR from field-sniffing):
+// W1 had only two members and distinguished the edge by `'from_knowledge_id' in row`
+// (field-sniffing). Wave 2 grows the union (goal joins, mistake_variant + learning_item
+// follow) with HIGH field overlap (goal + the future learning_item both have
+// id/title/status/source/source_ref/created_at/updated_at/version). Field-sniffing cannot
+// safely tell them apart, so the superRefine now does an EXPLICIT per-subject_kind
+// `SpecificSnapshot.safeParse(row)`. GoalRowSnapshot is `.strict()` (new entity, no live-row
+// `.parse()` caller passing extra columns); KnowledgeRowSnapshot / KnowledgeEdgeRowSnapshot are
+// intentionally NON-strict (W1-LIVE schemas whose live-row callers strip derived embed_* columns —
+// see their docblocks). The dispatch stays safe because the three entity field sets are DISJOINT
+// (a wrong-entity row fails on a missing required field), reinforced by the
+// discriminating-column assertion below (a goal row MUST carry the goal-specific
+// `scope_knowledge_ids` + `sequence_hint` columns) so a sibling-entity row that happens to be
+// shape-compatible can never false-pass. subject_id === row.id is preserved. The
+// `SNAPSHOT_BY_SUBJECT_KIND` map + `DISCRIMINATING_COLUMNS` are the shared extension point:
+// mistake_variant + learning_item lanes add their entry here.
+
+// Per-subject_kind canonical snapshot schema. The superRefine safeParses payload.row against
+// the schema for the declared subject_kind — a mismatch (wrong shape under a subject_kind, or
+// an unknown key a .strict() schema rejects) fails the parse barrier.
+const SNAPSHOT_BY_SUBJECT_KIND = {
+  knowledge: KnowledgeRowSnapshot,
+  knowledge_edge: KnowledgeEdgeRowSnapshot,
+  goal: GoalRowSnapshot,
+} as const;
+
+// Columns that MUST be present on a row to discriminate it as the named entity, even after a
+// shape-compatible safeParse. A sibling row could be GoalRowSnapshot-compatible after
+// `.strict()` only if it carried EXACTLY goal's columns — these are the goal-only columns, so
+// requiring them closes any residual overlap window (critic B3).
+const DISCRIMINATING_COLUMNS: Record<string, readonly string[]> = {
+  goal: ['scope_knowledge_ids', 'sequence_hint'],
+};
 
 export const GenesisExperimental = z
   .object({
     actor_kind: z.literal('system'), // backfill is an internal seed writer
     actor_ref: z.string().min(1), // e.g. 'genesis-backfill'
     action: z.literal('experimental:genesis'),
-    subject_kind: z.enum(['knowledge', 'knowledge_edge']),
+    subject_kind: z.enum(['knowledge', 'knowledge_edge', 'goal']),
     subject_id: z.string().min(1), // = the projected row id
     outcome: z.literal('success').nullable().optional(),
     payload: z.object({
-      // PLAIN union of the two row shapes (NOT discriminated — they share no
-      // literal discriminant). The cross-check (payload.row shape matches
-      // subject_kind, and subject_id === row.id) is enforced post-parse by the
+      // PLAIN union of the row shapes (NOT discriminated — they share no literal
+      // discriminant). The cross-check (payload.row shape matches subject_kind via
+      // per-kind safeParse, and subject_id === row.id) is enforced post-parse by the
       // superRefine below so fold(genesis) == row holds.
-      row: z.union([KnowledgeRowSnapshot, KnowledgeEdgeRowSnapshot]),
+      row: z.union([KnowledgeRowSnapshot, KnowledgeEdgeRowSnapshot, GoalRowSnapshot]),
     }),
     // baseOptionalFields parity (mirror the other reserved schemas):
     caused_by_event_id: z.string().optional(),
@@ -111,26 +190,30 @@ export const GenesisExperimental = z
     cost_micro_usd: z.number().int().optional(),
   })
   .superRefine((data, ctx) => {
-    // subject_kind <-> row-shape coherence + subject_id <-> row.id coherence.
-    // KnowledgeEdgeRowSnapshot is distinguishable by `from_knowledge_id`
-    // (knowledge rows have no such field). This keeps the genesis seed honest:
-    // the subject_kind cannot disagree with the snapshot it carries, and the
-    // event's subject_id must name the same row the snapshot reproduces.
-    const row = data.payload.row;
-    const isEdgeRow = 'from_knowledge_id' in row;
-    if (data.subject_kind === 'knowledge' && isEdgeRow) {
+    // The payload.row was parsed by the union, so `data.payload.row` is one of the snapshot
+    // shapes — but the union does NOT enforce it matches `subject_kind`. Re-validate the row
+    // against the schema for the DECLARED subject_kind (per-kind safeParse, critic B3) so a
+    // subject_kind/row mismatch is rejected at the schema boundary.
+    const row = data.payload.row as Record<string, unknown>;
+    const schema = SNAPSHOT_BY_SUBJECT_KIND[data.subject_kind];
+    const reparsed = schema.safeParse(row);
+    if (!reparsed.success) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "payload.row must be a knowledge row when subject_kind='knowledge'",
+        message: `payload.row must be a ${data.subject_kind} row when subject_kind='${data.subject_kind}'`,
         path: ['payload', 'row'],
       });
     }
-    if (data.subject_kind === 'knowledge_edge' && !isEdgeRow) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "payload.row must be a knowledge_edge row when subject_kind='knowledge_edge'",
-        path: ['payload', 'row'],
-      });
+    // Discriminating-column assertion: even a shape-compatible row must carry the entity's
+    // distinguishing columns so a sibling entity cannot false-pass.
+    for (const col of DISCRIMINATING_COLUMNS[data.subject_kind] ?? []) {
+      if (!(col in row)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `payload.row for subject_kind='${data.subject_kind}' must carry the discriminating column '${col}'`,
+          path: ['payload', 'row', col],
+        });
+      }
     }
     if (data.subject_id !== row.id) {
       ctx.addIssue({

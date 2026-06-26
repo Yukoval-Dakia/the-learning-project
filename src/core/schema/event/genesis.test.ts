@@ -119,6 +119,118 @@ describe('parseEvent — experimental:genesis routing + coherence', () => {
   });
 });
 
+// ====================================================================
+// YUK-471 Wave 2 — goal genesis parse-barrier tests (critic B5 honest-reject).
+//
+// Mirror the W1 keystone reject tests: a malformed genesis payload for
+// subject_kind='goal' must be REJECTED at parseEvent (the writeEvent barrier),
+// NOT fall through to the loose generic ExperimentalEvent. Three honest-reject
+// cases: (i) wrong row shape, (ii) subject_id !== row.id, (iii) the .strict()
+// extra/missing-field case, plus the discriminating-column guard that stops a
+// sibling-entity row from false-passing as a goal.
+// ====================================================================
+
+// A well-formed GoalRowSnapshot (dates as ISO strings — z.coerce.date() accepts them).
+function goalRow(id = 'goal_1') {
+  return {
+    id,
+    title: 'Master derivatives',
+    subject_id: 'subj_math',
+    scope_knowledge_ids: ['k_a', 'k_b'],
+    sequence_hint: 0,
+    status: 'active' as const,
+    source: 'goal_scope_proposal',
+    source_ref: 'evt_propose',
+    created_at: '2026-06-25T00:00:00.000Z',
+    updated_at: '2026-06-25T00:00:00.000Z',
+    version: 0,
+  };
+}
+
+describe('parseEvent — experimental:genesis goal routing + coherence (W2)', () => {
+  it('ACCEPTS a well-formed genesis for a goal row', () => {
+    const parsed = parseEvent(
+      genesisEnvelope({
+        subject_kind: 'goal',
+        subject_id: 'goal_1',
+        payload: { row: goalRow('goal_1') },
+      }),
+    );
+    expect((parsed as { subject_kind: string }).subject_kind).toBe('goal');
+    expect((parsed as { subject_id: string }).subject_id).toBe('goal_1');
+  });
+
+  it('REJECTS a goal genesis whose payload.row is a KNOWLEDGE row (wrong shape, superRefine)', () => {
+    // subject_kind='goal' but the row is a knowledge row → per-kind safeParse fails.
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'goal',
+          subject_id: 'k_1',
+          payload: { row: knowledgeRow('k_1') },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a goal genesis where subject_id !== payload.row.id (superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'goal',
+          subject_id: 'goal_mismatch',
+          payload: { row: goalRow('goal_1') },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a goal genesis with an EXTRA unknown field (.strict(), critic B3)', () => {
+    const badRow = goalRow('goal_1') as Record<string, unknown>;
+    badRow.bogus_extra = 'nope';
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({ subject_kind: 'goal', subject_id: 'goal_1', payload: { row: badRow } }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a goal genesis MISSING a required field (sequence_hint)', () => {
+    const badRow = goalRow('goal_1') as Record<string, unknown>;
+    badRow.sequence_hint = undefined;
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({ subject_kind: 'goal', subject_id: 'goal_1', payload: { row: badRow } }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a goal genesis carrying a sibling-ish row that LACKS the goal discriminating columns', () => {
+    // A row that is shape-similar (id/title/status/source/source_ref/dates/version) but omits the
+    // goal-only scope_knowledge_ids + sequence_hint must NOT false-pass as a goal. Even if it were
+    // parseable, the discriminating-column guard rejects it.
+    const siblingish = {
+      id: 'goal_1',
+      title: 'A note title',
+      status: 'active',
+      source: 'ai_dream',
+      source_ref: 'evt_x',
+      created_at: '2026-06-25T00:00:00.000Z',
+      updated_at: '2026-06-25T00:00:00.000Z',
+      version: 0,
+    };
+    expect(() =>
+      parseEvent(
+        genesisEnvelope({
+          subject_kind: 'goal',
+          subject_id: 'goal_1',
+          payload: { row: siblingish },
+        }),
+      ),
+    ).toThrow();
+  });
+});
+
 describe('parseEvent — RateEvent.materialized_ids optionality', () => {
   function rateEnvelope(over: Record<string, unknown> = {}): Record<string, unknown> {
     return {

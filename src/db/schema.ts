@@ -790,7 +790,8 @@ export const materialized_id_index = pgTable(
     // the propose/split event (post-keystone) OR genesis event (backfill) whose accept/seed
     // materialized `materialized_id`. The fold starts its replay from here.
     anchor_event_id: text('anchor_event_id').notNull(),
-    // 'knowledge' | 'knowledge_edge' — which fold (node vs edge) consumes this anchor.
+    // 'knowledge' | 'knowledge_edge' | 'goal' — which fold consumes this anchor (bare text, no
+    // DB enum, so YUK-471 W2's 'goal' addition needs no migration). Mirrors MaterializedSubjectKind.
     subject_kind: text('subject_kind').notNull(),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
