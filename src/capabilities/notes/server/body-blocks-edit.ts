@@ -3,10 +3,10 @@ import { and, eq } from 'drizzle-orm';
 
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
-import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { emitArtifactBodyBlocksEditEvent } from '@/server/artifacts/mutation-events';
 import { ApiError } from '@/server/http/errors';
 
 // ADR-0033 D1 (YUK-309) — body_blocks block-tree editing is a NOTE-ONLY write path.
@@ -46,6 +46,9 @@ export async function editArtifactBodyBlocks(
       .select({
         id: artifact.id,
         type: artifact.type,
+        // W3-C1γ — the BEFORE body, carried on the body_blocks_edit event as previous_body_blocks
+        // (for revert; the existing optimistic-lock SELECT already reads the row, so this is free).
+        body_blocks: artifact.body_blocks,
         history: artifact.history,
         archived_at: artifact.archived_at,
         version: artifact.version,
@@ -107,24 +110,25 @@ export async function editArtifactBodyBlocks(
     // YUK-95 P5: keep the L2 cross_link backlink index in sync within the same tx.
     await syncBlockRefsForArtifact(tx, params.artifactId, bodyBlocks);
 
-    await writeEvent(tx, {
-      id: eventId,
-      session_id: null,
-      actor_kind: 'user',
-      actor_ref: actorRef,
-      action: 'experimental:artifact_body_blocks_edit',
-      subject_kind: 'artifact',
-      subject_id: params.artifactId,
-      outcome: 'success',
-      payload: {
-        artifact_id: params.artifactId,
-        previous_version: row.version,
-        next_version: nextArtifactVersion,
-      },
-      caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: now,
+    // YUK-471 W3-C1γ — migrate off the body-LESS `experimental:artifact_body_blocks_edit` onto the
+    // A1 self-sufficient `experimental:body_blocks_edit` carrying the full AFTER body_blocks +
+    // previous (for revert) + after-history + version, so foldArtifact reproduces the row VERBATIM
+    // (additive double-write; projection flag OFF). Same tx — a malformed payload rolls back the
+    // paired UPDATE (parseEvent barrier). The event id stays = eventId (the value pinned into the
+    // history entry above). optOutMemoryIngestion:false preserves the OLD edit event's outbox
+    // behaviour (a hand edit IS a user activity — byte-preserve the prior ingest_at=NULL).
+    await emitArtifactBodyBlocksEditEvent(tx, {
+      subjectId: params.artifactId,
+      eventId,
+      previousArtifactVersion: row.version,
+      nextArtifactVersion,
+      bodyBlocks,
+      previousBodyBlocks: (row.body_blocks ?? null) as ArtifactBodyBlocksT | null,
+      historyAfter: history as ArtifactHistoryEntryT[],
+      actorKind: 'user',
+      actorRef,
+      createdAt: now,
+      optOutMemoryIngestion: false,
     });
 
     return {

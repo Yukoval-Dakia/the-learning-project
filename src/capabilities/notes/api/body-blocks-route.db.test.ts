@@ -90,10 +90,13 @@ describe('PATCH /api/artifacts/[id]/body-blocks', () => {
     expect(row.version).toBe(1);
     expect(row.body_blocks).toMatchObject(next);
 
+    // W3-C1γ — the hand edit MIGRATED onto the self-sufficient experimental:body_blocks_edit (carries
+    // the full AFTER body + previous + history + version; the old body-LESS artifact_body_blocks_edit
+    // is no longer emitted).
     const events = await testDb()
       .select()
       .from(event)
-      .where(eq(event.action, 'experimental:artifact_body_blocks_edit'));
+      .where(eq(event.action, 'experimental:body_blocks_edit'));
     expect(events).toHaveLength(1);
   });
 
@@ -155,11 +158,11 @@ describe('PATCH /api/artifacts/[id]/body-blocks', () => {
       .where(eq(artifact_block_ref.from_artifact_id, 'i1'));
     expect(refs).toHaveLength(0);
 
-    // No edit event was emitted.
+    // No edit event was emitted (rejected before the write).
     const events = await testDb()
       .select()
       .from(event)
-      .where(eq(event.action, 'experimental:artifact_body_blocks_edit'));
+      .where(eq(event.action, 'experimental:body_blocks_edit'));
     expect(events).toHaveLength(0);
   });
 

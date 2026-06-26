@@ -13,6 +13,7 @@ import { SuppressArtifactLink } from '@/core/schema/event';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 
@@ -140,6 +141,9 @@ export async function persistHubLinkDismiss(
       type: artifact.type,
       attrs: artifact.attrs,
       body_blocks: artifact.body_blocks,
+      // W3-C1γ — the version at attrs-update time (the attrs UPDATE does NOT bump it; the inner
+      // note_refine_apply owns the bump). The set_attrs fold event carries this unchanged version.
+      version: artifact.version,
     })
     .from(artifact)
     .where(eq(artifact.id, hubId))
@@ -156,11 +160,17 @@ export async function persistHubLinkDismiss(
     suppressedArtifactId,
   );
 
+  // W3-C1γ single clock: the attrs UPDATE + suppress event + set_attrs fold event all stamp `now`;
+  // the inner note_refine_apply is forced to `now + 1ms` so the set_attrs (version unchanged) ALWAYS
+  // folds BEFORE the note_refine_apply (version + 1) — otherwise an id-tiebreak at the same ms could
+  // fold set_attrs LAST and regress the version below the apply's bump (a fold≠row flake).
+  const now = new Date();
+
   // 1. Persist the dedup'd suppressed_block_refs on attrs (no version bump — the
   //    immediate-removal apply below owns the version bump + optimistic guard).
   await tx
     .update(artifact)
-    .set({ attrs: nextAttrs as never, updated_at: new Date() })
+    .set({ attrs: nextAttrs as never, updated_at: now })
     .where(eq(artifact.id, hubId));
 
   // 2. Append-only suppress event (XC-5 traceable).
@@ -174,11 +184,28 @@ export async function persistHubLinkDismiss(
     subject_id: hubId,
     outcome: 'success',
     payload: parsedEvent.data.payload,
-    created_at: new Date(),
+    created_at: now,
+  });
+
+  // 2b. W3-C1γ — fold-source set_attrs event so foldArtifact reproduces the suppressed_block_refs
+  //     attrs write. next_version = the UNCHANGED version (the attrs UPDATE did not bump it; the
+  //     note_refine_apply below does, and — being ordered strictly after — wins as the final version).
+  //     Chained to the suppress event (caused_by). Same tx — a malformed payload rolls back the attrs
+  //     UPDATE (parseEvent barrier).
+  await emitArtifactLifecycleEvent(tx, {
+    subjectId: hubId,
+    op: 'set_attrs',
+    attrs: nextAttrs,
+    nextVersion: hub.version,
+    actorKind: 'user',
+    actorRef: SUPPRESS_ACTOR_REF,
+    causedByEventId: suppressEventId,
+    createdAt: now,
   });
 
   // 3. Immediately remove the dismissed auto crossLinkBlock from the container
-  //    (undoable note_refine_apply). No-op when the child is already gone.
+  //    (undoable note_refine_apply). No-op when the child is already gone. Forced to `now + 1ms` so it
+  //    folds strictly AFTER the set_attrs event (the version-ordering guarantee above).
   const patch = buildRemoveAutoLinkPatch(hub.body_blocks, suppressedArtifactId);
   let removed = false;
   if (patch) {
@@ -188,6 +215,7 @@ export async function persistHubLinkDismiss(
       patch,
       actorRef: SUPPRESS_ACTOR_REF,
       triggerEventId: suppressEventId,
+      now: new Date(now.getTime() + 1),
     });
     removed = applied.status === 'applied';
   }
