@@ -182,6 +182,23 @@ describe('AiProposalPayload', () => {
           node_preview: '修订后的题面',
         },
       },
+      // YUK-440 / YUK-406 (教研团 Phase 0) — conjecture-with-probe about the mind.
+      conjecture: {
+        ...base,
+        kind: 'conjecture',
+        target: { subject_kind: 'mind_model', subject_id: 'k1' },
+        proposed_change: {
+          claim_md: '你把链式法则当成两个导数相乘',
+          knowledge_id: 'k1',
+          cause_category: 'concept_confusion',
+          confidence: 0.6,
+          recurrence_count: 3,
+          probe_md: '求 d/dx[sin(x²)]，并写出每一步。',
+          discriminating: true,
+          predicted_p: 0.3,
+          baseline_p_at_induction: 0.55,
+        },
+      },
     } as const;
 
     expect(Object.keys(samples).sort()).toEqual([...aiProposalKinds].sort());
@@ -503,6 +520,21 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
           edit: { op: 'edit_node_text', node_id: 'n1', prompt_text: 'x' },
         },
       },
+      conjecture: {
+        kind: 'conjecture',
+        target: { subject_kind: 'mind_model', subject_id: 'k1' },
+        proposed_change: {
+          claim_md: 'c',
+          knowledge_id: 'k1',
+          cause_category: 'concept_confusion',
+          confidence: 0.5,
+          recurrence_count: 2,
+          probe_md: 'p',
+          discriminating: true,
+          predicted_p: 0.3,
+          baseline_p_at_induction: 0.5,
+        },
+      },
     };
     // Audit-coverage guard (AC-2): the sample map covers every AiProposalKind, so
     // a future kind addition that forgets the optional-field check is caught.
@@ -584,6 +616,10 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
       // correction proposal (the agent/user refines a pooled question's tree); it
       // is not the SK-3 "structurally corrective" variant lane.
       question_edit: false,
+      // YUK-440 / YUK-406 (教研团 Phase 0) — conjecture is a proactive diagnostic
+      // hypothesis about the learner's mind (surfaced by the research-meeting job),
+      // not a structurally-corrective variant of an observed-failure question.
+      conjecture: false,
     };
     // Every kind classified; exactly one structurally-corrective kind.
     expect(Object.keys(correctivePossibleByKind).sort()).toEqual([...aiProposalKinds].sort());
