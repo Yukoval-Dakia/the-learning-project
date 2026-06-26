@@ -40,6 +40,76 @@ describe('mfiScore', () => {
   });
 });
 
+describe('候选隔离不变量（ADR-0042 2026-06-26 Amendment）— 基值打分层 per-candidate 纯 + batch 无关', () => {
+  // X §4.4.4（docs/research/2026-06-25-x-algorithm-deep-dive.md）独立印证此不变量：
+  // 基值打分层（mfi/klp/diag）对每个候选的分必须是 (θ̂, b, precision) 的纯函数，
+  // 与同批里有哪些其它候选、它们的顺序、批的大小都无关 → 可缓存、replay-safe、
+  // 是 YUK-493 同构核 bit-exact replay 的前提。跨候选耦合只允许在三个命名下游层：
+  // ① 确定性后置乘子（多样性/疲劳/OON，YUK-370）② IPPS-sampler（softmaxProbabilities）
+  // ③ LLM 编排（selection-orchestrator）。θ̂-更新路（θ_global 漂移，YUK-466）显式排除。
+  //
+  // 这是 guard / 可执行文档：今天基值函数已 per-candidate 纯（标量入标量出），本组测试
+  // 把不变量钉死——若日后有人给基值层引入 batch 耦合（如按 batch max 归一化基值分），
+  // 这些断言会 FAIL（正是要防的回归）。X 自己只测 mask 结构、缺这个端到端断言，我们补上。
+  type Cand = { id: string; thetaHat: number; b: number; precision: number };
+  const score = (c: Cand) => ({
+    mfi: mfiScore(c.thetaHat, c.b),
+    klp: klpScore(c.thetaHat, c.b, c.precision),
+    diag: diagnosticScore(c.thetaHat, c.b, c.precision),
+  });
+  // 模拟基值打分层对一批候选逐条打分（candidate-signals 基值层的纯核）。
+  type Scored = ReturnType<typeof score>;
+  const scoreBatch = (cands: Cand[]) => new Map(cands.map((c) => [c.id, score(c)]));
+  // 显式 throw 取值（避开 biome noNonNullAssertion；缺失即测试 setup bug）。
+  const pick = (m: Map<string, Scored>, id: string): Scored => {
+    const v = m.get(id);
+    if (v === undefined) throw new Error(`candidate ${id} missing from batch score`);
+    return v;
+  };
+  const A: Cand = { id: 'A', thetaHat: 0.3, b: -0.5, precision: 2 };
+  const B: Cand = { id: 'B', thetaHat: -1.2, b: 0.8, precision: 0.4 };
+  const C: Cand = { id: 'C', thetaHat: 2.1, b: 2.0, precision: 10 };
+
+  it('membership 无关：同一候选的基值分与同批其它候选无关（bit-identical）', () => {
+    const solo = pick(scoreBatch([A]), 'A');
+    const inPair = pick(scoreBatch([A, B]), 'A');
+    const inTriple = pick(scoreBatch([C, A, B]), 'A');
+    for (const k of ['mfi', 'klp', 'diag'] as const) {
+      expect(Object.is(inPair[k], solo[k])).toBe(true);
+      expect(Object.is(inTriple[k], solo[k])).toBe(true);
+    }
+  });
+
+  it('batch-order 无关：候选在批内的顺序不改任一候选的基值分（bit-identical）', () => {
+    const order1 = scoreBatch([A, B, C]);
+    const order2 = scoreBatch([C, B, A]);
+    for (const id of ['A', 'B', 'C']) {
+      const s1 = pick(order1, id);
+      const s2 = pick(order2, id);
+      for (const k of ['mfi', 'klp', 'diag'] as const) {
+        expect(Object.is(s1[k], s2[k])).toBe(true);
+      }
+    }
+  });
+
+  it('扩容/重复无关：加大批、加重复候选不改任一候选基值分（同构核 replay 前提）', () => {
+    const small = pick(scoreBatch([A, B]), 'B');
+    const large = pick(scoreBatch([A, B, C, A, C, B]), 'B');
+    for (const k of ['mfi', 'klp', 'diag'] as const) {
+      expect(Object.is(small[k], large[k])).toBe(true);
+    }
+  });
+
+  it('边界：sampler 层（softmaxProbabilities）是【故意】batch-耦合的 — 在不变量之外', () => {
+    // ADR-0042：跨候选耦合只允许在三个命名下游层。softmaxProbabilities 是 sampler 层
+    // （减 batch max、除 batch total），故同一首候选的 π_i 必随 batch 组成变——这是预期
+    // 且正确的（IPPS 抽样语义）。本断言把边界钉死：基值层纯、sampler 层耦合，二者分明。
+    const pFirst_pair = softmaxProbabilities([1.0, 2.0])[0];
+    const pFirst_triple = softmaxProbabilities([1.0, 2.0, 5.0])[0];
+    expect(pFirst_pair).not.toBeCloseTo(pFirst_triple, 6);
+  });
+});
+
 describe('uncertaintyPenalty', () => {
   it('precision 越高降权因子越大（趋近 1）', () => {
     expect(uncertaintyPenalty(100)).toBeGreaterThan(uncertaintyPenalty(1));
