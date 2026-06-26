@@ -413,16 +413,27 @@ export async function acceptRecordPromotionProposal(
       if (projectionIsWriter('learning_item')) {
         await projectLearningItem(tx, materializedId);
       } else {
+        // A4 — set ALL snapshot fields explicitly from the genesis `liRow` (not by DB-default
+        // coincidence) so the imperative OFF-path row matches the genesis payload by construction;
+        // a default change can no longer silently diverge the two from the seeded snapshot.
         await tx.insert(learning_item).values({
-          id: materializedId,
-          source: 'ai_dream',
-          source_ref: proposalId,
-          title,
-          content,
-          knowledge_ids: knowledgeIds,
-          status: 'pending',
-          created_at: now,
-          updated_at: now,
+          id: liRow.id,
+          source: liRow.source,
+          source_ref: liRow.source_ref,
+          title: liRow.title,
+          content: liRow.content,
+          knowledge_ids: liRow.knowledge_ids,
+          primary_artifact_id: liRow.primary_artifact_id,
+          parent_learning_item_id: liRow.parent_learning_item_id,
+          status: liRow.status,
+          user_pinned: liRow.user_pinned,
+          completed_at: liRow.completed_at,
+          dismissed_at: liRow.dismissed_at,
+          archived_at: liRow.archived_at,
+          archived_reason: liRow.archived_reason,
+          created_at: liRow.created_at,
+          updated_at: liRow.updated_at,
+          version: liRow.version,
         });
         const [written] = await tx
           .select()

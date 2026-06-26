@@ -98,7 +98,9 @@ export const LearningItemArchiveExperimental = z.object({
   outcome: z.literal('success').nullable().optional(),
   payload: z
     .object({
-      reason: z.string(), // archived_reason (e.g. 'proposal_retracted')
+      // archived_reason (e.g. 'proposal_retracted'). `.min(1)` mirrors the sibling string fields
+      // (actor_ref / subject_id) so a degenerate empty string can't fold into archived_reason=''.
+      reason: z.string().min(1),
     })
     .strict(),
   caused_by_event_id: z.string().optional(),

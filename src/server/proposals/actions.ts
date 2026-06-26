@@ -1197,7 +1197,9 @@ export async function retractAiProposal(
           // live correctionAt (a false parity failure). min(item.updated_at, correctionAt - 1ms)
           // guarantees genesis < archive regardless of id, while staying ≤ the row's own time so the
           // seeded base still reproduces the pre-archive row.
-          const genesisAt = new Date(Math.min(item.updated_at.getTime(), correctionAt.getTime() - 1));
+          const genesisAt = new Date(
+            Math.min(item.updated_at.getTime(), correctionAt.getTime() - 1),
+          );
           await writeEvent(tx, {
             id: genesisEventId,
             actor_kind: 'system',

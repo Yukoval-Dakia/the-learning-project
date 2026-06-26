@@ -533,6 +533,14 @@ async function materializeLearningItem(
       parent_learning_item_id: row.parent_learning_item_id,
       child_learning_item_ids: [],
       status: row.status,
+      // A4 — set ALL snapshot fields explicitly from the genesis `row` (not by DB-default
+      // coincidence) so the imperative OFF-path row matches the genesis payload by construction; a
+      // default change can no longer silently diverge the two from the seeded genesis snapshot.
+      user_pinned: row.user_pinned,
+      completed_at: row.completed_at,
+      dismissed_at: row.dismissed_at,
+      archived_at: row.archived_at,
+      archived_reason: row.archived_reason,
       created_at: row.created_at,
       updated_at: row.updated_at,
       version: row.version,
