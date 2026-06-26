@@ -78,13 +78,20 @@ import { ApiError } from '@/server/http/errors';
 // the shared edge→snapshot mapper (one definition lives with the edge fold in gather.ts so
 // the assert compares the SAME shape the fold produces).
 import { edgeRowToSnapshot } from '@/server/projections/gather';
+// YUK-471 W2 — goal retract write-through (guarded; projection writes the dormant goal when the
+// per-entity flag is ON).
+import { projectGoalGuarded } from '@/server/projections/goal';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 // YUK-471 (retract fold/rollback) — knowledge_node retract mirrors the accept seam's in-tx
 // fold==row gate: after the synthesized archive, re-project the node and assert fold == row
 // (dev/test throws, prod warns) via the same node-snapshot mapper + assert the accept uses.
+// YUK-471 W2 — goal retract OFF-branch parity assert + the A1 anchor gate (hasGoalGenesisAnchor).
 import {
+  assertGoalParity,
   assertKnowledgeEdgeParity,
   assertKnowledgeNodeParity,
+  goalLiveRowToSnapshot,
+  hasGoalGenesisAnchor,
   knowledgeLiveRowToSnapshot,
 } from '@/server/projections/parity';
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the edge row when ON).
@@ -1001,6 +1008,13 @@ export async function retractAiProposal(
   // (variant_question / learning_item / goal_scope) are folded in too — strictly safer,
   // behavior unchanged.
   await db.transaction(async (tx) => {
+    // YUK-471 W2 — capture the correction timestamp ONCE so the goal_scope dormant UPDATE below
+    // reuses the SAME value the `correct` event carries for updated_at. The goal reducer reads
+    // updated_at off the correct event's created_at, so a separate `new Date()` for the imperative
+    // UPDATE (a cross-ms delta across the writeEvent round-trip) would make fold(events) != live
+    // row → non-deterministic audit:projection drift. Anchoring both on correctionAt keeps
+    // fold==row deterministic.
+    const correctionAt = new Date();
     await writeEvent(tx, {
       id: correctionEventId,
       actor_kind: 'user',
@@ -1015,7 +1029,7 @@ export async function retractAiProposal(
         affected_refs: opts.affected_refs ?? activityRefsForProposal(proposal),
       },
       caused_by_event_id: proposalId,
-      created_at: new Date(),
+      created_at: correctionAt,
     });
 
     // YUK-17 / ADR-0018 — retracting a variant_question proposal frees the
@@ -1066,12 +1080,41 @@ export async function retractAiProposal(
     // variant_question / learning_item policy above). We dormant rather than hard
     // delete so the evidence chain (goal.source_ref → proposal) stays intact.
     // Idempotent: a goal already non-active stays put.
+    //
+    // YUK-471 W2 — the `correct` (retract) event was appended at the top of this tx
+    // (subject=the proposal, caused_by=proposalId), so the goal fold reproduces the dormant row
+    // from its proposal+rate+correct chain. ROW writer gated on the per-entity flag (critic A1):
+    // ON → projectGoalGuarded folds (status→dormant, NO version bump) + writes through; OFF → the
+    // imperative bare UPDATE (dormant + updated_at, no version bump). The reducer mirrors the bare
+    // UPDATE exactly, so fold==row holds either way.
     if (proposal.kind === 'goal_scope' && proposal.target.subject_id) {
-      const now = new Date();
-      await tx
-        .update(goal)
-        .set({ status: 'dormant', updated_at: now })
-        .where(and(eq(goal.id, proposal.target.subject_id), eq(goal.status, 'active')));
+      const goalId = proposal.target.subject_id;
+      // A1 (OCR major) — capture the genesis anchor for the OFF-branch parity gate BEFORE asserting.
+      // The `correct` event written above is subject_kind='event' (NOT a goal anchor in
+      // GOAL_ANCHOR_ACTIONS), so it does not flip this read: a goal with no genesis/proposal anchor
+      // still reads false here and is correctly SKIPPED below (its fold is null and would
+      // FALSE-mismatch the live row → assertGoalParity throws in dev/test).
+      const wasGoalEventSourced = await hasGoalGenesisAnchor(tx, goalId);
+      if (projectionIsWriter('goal')) {
+        // ON: projectGoalGuarded's own anchor guard is intact here (the correct event is not a goal
+        // anchor, so a base-less goal still folds null and is NOT deleted) — safe to call directly.
+        await projectGoalGuarded(tx, goalId);
+      } else {
+        // REUSE the correct event's created_at (correctionAt) so the imperative dormant row and the
+        // goal fold stamp the SAME updated_at — fold(events) == live row deterministically. Do NOT
+        // open a new `new Date()`.
+        await tx
+          .update(goal)
+          .set({ status: 'dormant', updated_at: correctionAt })
+          .where(and(eq(goal.id, goalId), eq(goal.status, 'active')));
+        // HIGH-2 + A1 — write-time fold==row guard, ONLY when the goal is event-sourced (a pre-W2
+        // goal with no anchor folds null and would FALSE-mismatch its live row). dev/test throw on
+        // mismatch, prod warn.
+        if (wasGoalEventSourced) {
+          const [written] = await tx.select().from(goal).where(eq(goal.id, goalId)).limit(1);
+          await assertGoalParity(tx, goalId, written ? goalLiveRowToSnapshot(written) : null);
+        }
+      }
     }
 
     // YUK-471 (retract fold/rollback) — completion retract. An ACCEPTED completion

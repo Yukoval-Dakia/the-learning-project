@@ -20,9 +20,14 @@
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import type { FoldEvent } from '@/core/projections/fold-event';
+import { foldGoal } from '@/core/projections/goal';
 import { foldKnowledgeNode } from '@/core/projections/knowledge';
 import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
-import type { KnowledgeEdgeRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
+import type {
+  GoalRowSnapshotT,
+  KnowledgeEdgeRowSnapshotT,
+  KnowledgeRowSnapshotT,
+} from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { getAnchorEventId } from './materialized-id-index';
@@ -130,6 +135,54 @@ export async function gatherAndFoldKnowledgeNode(
 
   const foldEvents = [...byId.values()].map(rowToFoldEvent);
   return foldKnowledgeNode(nodeId, foldEvents);
+}
+
+/**
+ * Gather the superset of events affecting `goalId` and run the PURE goal fold. READ-ONLY.
+ * (YUK-471 Wave 2.)
+ *
+ * The goal gather is SIMPLER than the node gather (design §1④): goal ids are never minted into
+ * a rate's materialized_ids — goalId == the goal_scope proposal's subject_id (target.subject_id
+ * reserved by runGoalScopeAndWrite) — so there is NO Q2 reverse-index indirection and NO Q3
+ * merged-into. Just Q1 (subject_kind='goal' AND subject_id=goalId: genesis + the
+ * experimental:proposal + the W2 status/scope action events) + the caused_by chain (the accept
+ * `rate` and the retract `correct`, both subject_kind='event', caused_by = the propose id).
+ * Returns the projected row or null. Writes NOTHING.
+ */
+export async function gatherAndFoldGoal(
+  db: DbLike,
+  goalId: string,
+): Promise<GoalRowSnapshotT | null> {
+  // ── Q1: events whose subject_id IS goalId (subject_kind='goal') ─────────────────────────
+  // Covers the experimental:proposal (goal_scope), genesis, and the W2 goal_status_update /
+  // goal_scope_update action events.
+  const q1 = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.subject_kind, 'goal'), eq(event.subject_id, goalId)));
+
+  // ── caused_by chain: the accept rate + retract correct ──────────────────────────────────
+  // The accept `rate` and the proposal-level retract `correct` have subject_kind='event'
+  // (subject = the proposal), so Q1 misses them; they are chained to the proposal via
+  // caused_by_event_id. Pull every rate/correct caused_by any of the Q1 (proposal) ids.
+  const gatheredIds = q1.map((r) => r.id);
+  const byId = new Map<string, EventRow>();
+  for (const r of q1) byId.set(r.id, r);
+  if (gatheredIds.length > 0) {
+    const chained = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          inArray(event.action, ['rate', 'correct']),
+          inArray(event.caused_by_event_id, gatheredIds),
+        ),
+      );
+    for (const r of chained) byId.set(r.id, r);
+  }
+
+  const foldEvents = [...byId.values()].map(rowToFoldEvent);
+  return foldGoal(goalId, foldEvents);
 }
 
 /**

@@ -38,11 +38,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
+import type { GoalRowSnapshotT, KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { knowledge, knowledge_edge } from '@/db/schema';
+import { goal, knowledge, knowledge_edge } from '@/db/schema';
 import {
   edgeRowToSnapshot,
+  gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
@@ -114,7 +115,7 @@ export function loadAllowlist(path: string = ALLOWLIST_PATH): ProjectionAllowlis
 // ── Drift representation ──────────────────────────────────────────────────────────────
 export interface DriftRecord {
   id: string;
-  subject_kind: 'knowledge' | 'knowledge_edge';
+  subject_kind: 'knowledge' | 'knowledge_edge' | 'goal';
   // human-readable field-level differences (column: live → expected).
   diffs: string[];
 }
@@ -123,8 +124,27 @@ export interface AuditResult {
   ok: boolean; // true iff zero NON-allowlisted drift
   checkedNodes: number;
   checkedEdges: number;
+  checkedGoals: number;
   drift: DriftRecord[]; // non-allowlisted drift (the failures)
   allowed: DriftRecord[]; // drifted ids covered by the allowlist (reported, not failures)
+}
+
+// Map a live `goal` row to its snapshot so the deep-diff compares like-for-like against the goal
+// fold output. goal has NO derived/embed columns — the full row IS the snapshot.
+function goalRowToSnapshot(row: typeof goal.$inferSelect): GoalRowSnapshotT {
+  return {
+    id: row.id,
+    title: row.title,
+    subject_id: row.subject_id,
+    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
+    sequence_hint: row.sequence_hint,
+    status: row.status,
+    source: row.source,
+    source_ref: row.source_ref,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
 }
 
 // Map a live knowledge row (narrow structural read) to its snapshot so the deep-diff compares
@@ -200,10 +220,24 @@ export async function auditProjection(
     }
   }
 
+  // ── goals (YUK-471 W2) ── full-table fold-diff. goal has no derived columns, so the full row
+  // is read + compared. The per-goal gatherAndFoldGoal issues its own Q1 + caused_by chain (no
+  // mesh / reverse-index needed — goalId == proposal subject_id).
+  const goals = await db.select().from(goal);
+  for (const row of goals) {
+    const expected = await gatherAndFoldGoal(db, row.id);
+    const diffs = diffSnapshots(goalRowToSnapshot(row), expected as Record<string, unknown> | null);
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'goal', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
   return {
     ok: drift.length === 0,
     checkedNodes: nodes.length,
     checkedEdges: edges.length,
+    checkedGoals: goals.length,
     drift,
     allowed,
   };
@@ -218,7 +252,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s).`,
+      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s).`,
     );
     if (result.allowed.length > 0) {
       console.log(`\nALLOWED drift (covered by allowlist):  ${result.allowed.length}`);

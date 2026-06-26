@@ -20,8 +20,9 @@ import { materialized_id_index } from '@/db/schema';
 
 type DbLike = Db | Tx;
 
-/** Which fold (node vs edge) consumes this anchor. */
-export type MaterializedSubjectKind = 'knowledge' | 'knowledge_edge';
+/** Which fold consumes this anchor. (YUK-471 W2: 'goal' joins — DB column is bare `text`,
+ * schema.ts:794, so adding the value needs NO migration.) */
+export type MaterializedSubjectKind = 'knowledge' | 'knowledge_edge' | 'goal';
 
 export interface UpsertMaterializedIdIndexEntry {
   /** the knowledge.id / knowledge_edge.id being anchored (PK; minted exactly once). */

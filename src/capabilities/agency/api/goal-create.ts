@@ -24,8 +24,22 @@ import { z } from 'zod';
 
 import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
+import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
+import { goal } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { writeEvent } from '@/server/events/queries';
+// YUK-471 W2 — goal projection seam. The MANUAL at-entry path has NO proposal chain, so the
+// only originating event is a genesis seed: the tx always writes the genesis event + the
+// materialized_id_index anchor (the event log + anchor is the source of truth), then the
+// per-entity flag projectionIsWriter('goal') gates ONLY who writes the ROW (projection
+// write-through when ON, imperative insertGoal when OFF — defer-flip-not-build).
+import { projectGoal } from '@/server/projections/goal';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+// HIGH-2 — write-time fold==row guard on the OFF branch (genesis written this tx → event-sourced).
+import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/parity';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { eq } from 'drizzle-orm';
 import { insertGoal } from '../server/goals/queries';
 
 const Body = z.object({
@@ -72,7 +86,10 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const id = newId();
-    await insertGoal(db, {
+    const now = new Date();
+    // The full goal snapshot for the genesis seed (manual goals have no proposal — genesis is
+    // the originating event). version 0 mirrors insertGoal's DB default.
+    const snapshot: GoalRowSnapshotT = {
       id,
       title,
       subject_id: subjectId ?? null,
@@ -80,6 +97,54 @@ export async function POST(req: Request): Promise<Response> {
       sequence_hint: 0,
       status: 'active',
       source: 'manual',
+      source_ref: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    };
+    const genesisEventId = newId();
+    await db.transaction(async (tx) => {
+      // 1. ALWAYS write the genesis seed (the manual goal's only originating event) +
+      //    materialized_id_index anchor, regardless of the flag. ingest_at=now → memory outbox
+      //    opt-out (this is a structural seed, not a learning activity).
+      await writeEvent(tx, {
+        id: genesisEventId,
+        actor_kind: 'system',
+        actor_ref: 'goal-create',
+        action: 'experimental:genesis',
+        subject_kind: 'goal',
+        subject_id: id,
+        outcome: 'success',
+        payload: { row: snapshot },
+        // A7 — stamp created_at explicitly (parity with the accept path) so the genesis event's
+        // fold-order timestamp is the same `now` as the row snapshot, not a separate DB default.
+        created_at: now,
+        ingest_at: now,
+      });
+      await upsertMaterializedIdIndex(tx, {
+        materialized_id: id,
+        anchor_event_id: genesisEventId,
+        subject_kind: 'goal',
+      });
+      // 2. ROW writer — gated on the per-entity flag (critic A1).
+      if (projectionIsWriter('goal')) {
+        await projectGoal(tx, id);
+      } else {
+        await insertGoal(tx, {
+          id,
+          title,
+          subject_id: subjectId ?? null,
+          scope_knowledge_ids: scopeKnowledgeIds,
+          sequence_hint: 0,
+          status: 'active',
+          source: 'manual',
+          now,
+        });
+        // HIGH-2 — re-select + assert fold(genesis) == row (the genesis written above makes the
+        // manual goal event-sourced this tx, so the fold reproduces it byte-for-byte).
+        const [written] = await tx.select().from(goal).where(eq(goal.id, id)).limit(1);
+        await assertGoalParity(tx, id, written ? goalLiveRowToSnapshot(written) : null);
+      }
     });
 
     return Response.json({
