@@ -199,25 +199,30 @@ const LEARNING_ITEM_STRUCTURAL_COLUMNS = {
   version: learning_item.version,
 } as const;
 
-type LearningItemStructuralRow = {
-  id: string;
-  source: string;
-  source_ref: string | null;
-  title: string;
-  content: string;
-  knowledge_ids: string[];
-  primary_artifact_id: string | null;
-  parent_learning_item_id: string | null;
-  status: string;
-  user_pinned: boolean;
-  completed_at: Date | null;
-  dismissed_at: Date | null;
-  archived_at: Date | null;
-  archived_reason: string | null;
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-};
+// Derive the structural row from the schema (mirror KnowledgeStructuralRow) so it stays in sync
+// with learning_item.$inferSelect — a hand-redefined type could silently drift from the columns.
+// The excluded columns (child_learning_item_ids / ai_score / due_at / reviewed_at) are simply not
+// picked, matching the LEARNING_ITEM_STRUCTURAL_COLUMNS select above.
+type LearningItemStructuralRow = Pick<
+  typeof learning_item.$inferSelect,
+  | 'id'
+  | 'source'
+  | 'source_ref'
+  | 'title'
+  | 'content'
+  | 'knowledge_ids'
+  | 'primary_artifact_id'
+  | 'parent_learning_item_id'
+  | 'status'
+  | 'user_pinned'
+  | 'completed_at'
+  | 'dismissed_at'
+  | 'archived_at'
+  | 'archived_reason'
+  | 'created_at'
+  | 'updated_at'
+  | 'version'
+>;
 
 // Map a live learning_item row (narrow structural read) to its snapshot so the deep-diff compares
 // like-for-like against the fold output. The excluded columns are dropped from the SELECT too.
