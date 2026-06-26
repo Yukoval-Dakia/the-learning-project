@@ -66,6 +66,13 @@ export async function editArtifactBodyBlocks(
       })
       .from(artifact)
       .where(eq(artifact.id, params.artifactId))
+      // W3-C3 (review) — FOR UPDATE: lock the row for the whole tx (mirror block-structured-edit's
+      // loadBlockForUpdate). When projectionIsWriter('artifact') is ON, the version-guarded imperative
+      // UPDATE is SKIPPED and projectArtifactGuarded's unconditional upsert is the sole writer — without
+      // the lock a concurrent edit could interleave between this read and the upsert (lost update). The
+      // lock serializes both edits on the row, closing that window on the ON path (and is a no-op cost on
+      // the OFF path, which also holds the lock through its version-guarded UPDATE).
+      .for('update')
       .limit(1);
     const row = rows[0];
     if (!row) throw new ApiError('not_found', `artifact ${params.artifactId} not found`, 404);
@@ -135,7 +142,11 @@ export async function editArtifactBodyBlocks(
       // create/genesis base + every edit (incl. the one just emitted) and upserts the row.
       await projectArtifactGuarded(tx, params.artifactId);
     } else {
-      const updated = await tx
+      // OFF (default) — the version-guarded imperative UPDATE stays the SoT. `.returning()` yields the
+      // FULL written row so the parity snapshot is built straight from it — no second full-row SELECT
+      // round-trip (the initial SELECT above already FOR-UPDATE-locked this row, so the returned row is
+      // the authoritative AFTER state).
+      const [written] = await tx
         .update(artifact)
         .set({
           body_blocks: bodyBlocks as never,
@@ -149,28 +160,23 @@ export async function editArtifactBodyBlocks(
             eq(artifact.version, params.expectedArtifactVersion),
           ),
         )
-        .returning({ version: artifact.version });
-      if (updated.length === 0) {
+        .returning();
+      if (!written) {
         throw new ApiError('conflict', `artifact ${params.artifactId} concurrently modified`, 409);
       }
       // OFF — assert fold == the row the imperative UPDATE just wrote (only when the artifact is
       // event-sourced; a pre-W3 row folds to null and would false-mismatch). dev/test THROW, prod warn.
       if (wasEventSourced) {
-        const [written] = await tx
-          .select()
-          .from(artifact)
-          .where(eq(artifact.id, params.artifactId))
-          .limit(1);
-        await assertArtifactParity(
-          tx,
-          params.artifactId,
-          written ? artifactLiveRowToSnapshot(written) : null,
-        );
+        await assertArtifactParity(tx, params.artifactId, artifactLiveRowToSnapshot(written));
       }
     }
 
     // YUK-95 P5: keep the L2 cross_link backlink index in sync within the same tx (both paths wrote
     // the same AFTER body_blocks, so this runs once after the branch).
+    // W3-C3 (review) — syncing the parsed `bodyBlocks` (not a re-read of the row) is correct on BOTH
+    // paths: the ON-path projection re-folds the SAME full-snapshot body_blocks_edit event just emitted,
+    // so the projected row's body_blocks == `bodyBlocks` (the parity tests assert this fold==row), and
+    // the OFF path wrote `bodyBlocks` verbatim. No drift between the row's body_blocks and the synced set.
     await syncBlockRefsForArtifact(tx, params.artifactId, bodyBlocks);
 
     return {

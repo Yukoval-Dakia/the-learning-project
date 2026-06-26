@@ -976,61 +976,11 @@ export async function questionBlocksWithGenesisAnchor(
 // an edit/lifecycle site that touches a pre-W3 (un-backfilled) artifact has no anchor → the caller
 // SKIPS the assert (the imperative write stays the SoT until the C2 genesis backfill anchors it).
 
-/**
- * Pick the ArtifactRowSnapshot fields from a live `artifact` DB row (NO Zod parse — a `.parse()`
- * throw on the hot path could abort a live write in prod, defeating the never-throw contract). artifact
- * has NO derived/embed columns (design §5.1), so the FULL 22-column row IS the snapshot — every column
- * is carried verbatim. Mirrors artifactRowToSnapshot in the C2 backfill + the auditor's mapper.
- */
-export function artifactLiveRowToSnapshot(row: {
-  id: string;
-  type: string;
-  title: string;
-  parent_artifact_id: string | null;
-  knowledge_ids: string[] | null;
-  intent_source: string;
-  source: string;
-  source_ref: string | null;
-  body_blocks: ArtifactRowSnapshotT['body_blocks'];
-  attrs: Record<string, unknown> | null;
-  tool_kind: string | null;
-  tool_state: Record<string, unknown> | null;
-  generation_status: string;
-  verification_status: string;
-  verification_summary: ArtifactRowSnapshotT['verification_summary'];
-  generated_by: ArtifactRowSnapshotT['generated_by'];
-  verified_by: ArtifactRowSnapshotT['verified_by'];
-  history: ArtifactRowSnapshotT['history'] | null;
-  archived_at: Date | null;
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-}): ArtifactRowSnapshotT {
-  return {
-    id: row.id,
-    type: row.type,
-    title: row.title,
-    parent_artifact_id: row.parent_artifact_id,
-    knowledge_ids: row.knowledge_ids ?? [],
-    intent_source: row.intent_source,
-    source: row.source,
-    source_ref: row.source_ref,
-    body_blocks: row.body_blocks,
-    attrs: row.attrs ?? {},
-    tool_kind: row.tool_kind,
-    tool_state: row.tool_state,
-    generation_status: row.generation_status,
-    verification_status: row.verification_status,
-    verification_summary: row.verification_summary,
-    generated_by: row.generated_by,
-    verified_by: row.verified_by,
-    history: row.history ?? [],
-    archived_at: row.archived_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
+// W3-C3 (review) — the artifact row→snapshot field-pick now lives in the ONE shared mapper
+// (./snapshot-mappers) so the audit / backfill / parity snapshot shapes can't drift on a schema change.
+// Re-exported under the `artifactLiveRowToSnapshot` name the accept-time callers (body-blocks-edit,
+// the C3 parity test) already import.
+export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from './snapshot-mappers';
 
 /**
  * Assert the artifact fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test THROW on
@@ -1082,62 +1032,12 @@ export async function assertArtifactParity(
 // its live row. A runtime-created block is anchored by its question_block_create event; an edit site
 // touching a pre-W3 (un-backfilled) block has no anchor → the caller SKIPS the assert.
 
-/**
- * Pick the QuestionBlockRowSnapshot fields from a live `question_block` DB row (NO Zod parse — a
- * `.parse()` throw on the hot path could abort a live write in prod). EXCLUDES the legacy
- * `extracted_prompt_md` column (stripped BEFORE the compare, design §5.2). Mirrors
- * questionBlockRowToSnapshot in the C2 backfill.
- */
-export function questionBlockLiveRowToSnapshot(row: {
-  id: string;
-  ingestion_session_id: string;
-  source_document_id: string | null;
-  source_asset_ids: string[] | null;
-  page_spans: QuestionBlockRowSnapshotT['page_spans'] | null;
-  structured: QuestionBlockRowSnapshotT['structured'];
-  figures: QuestionBlockRowSnapshotT['figures'] | null;
-  layout_quality: string;
-  reference_md: string | null;
-  wrong_answer_md: string | null;
-  image_refs: string[] | null;
-  crop_refs: string[] | null;
-  visual_complexity: string;
-  extraction_confidence: number;
-  status: string;
-  knowledge_hint: string | null;
-  merged_from_block_ids: string[] | null;
-  imported_question_id: string | null;
-  imported_attempt_event_id: string | null;
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-}): QuestionBlockRowSnapshotT {
-  return {
-    id: row.id,
-    ingestion_session_id: row.ingestion_session_id,
-    source_document_id: row.source_document_id,
-    source_asset_ids: row.source_asset_ids ?? [],
-    page_spans: row.page_spans ?? [],
-    structured: row.structured ?? null,
-    figures: row.figures ?? [],
-    layout_quality: row.layout_quality,
-    reference_md: row.reference_md,
-    wrong_answer_md: row.wrong_answer_md,
-    image_refs: row.image_refs ?? [],
-    crop_refs: row.crop_refs ?? [],
-    visual_complexity: row.visual_complexity,
-    extraction_confidence: row.extraction_confidence,
-    status: row.status,
-    knowledge_hint: row.knowledge_hint,
-    merged_from_block_ids: row.merged_from_block_ids ?? [],
-    imported_question_id: row.imported_question_id,
-    imported_attempt_event_id: row.imported_attempt_event_id,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-    // EXCLUDED: extracted_prompt_md (legacy deprecated — stripped before the compare, design §5.2).
-  };
-}
+// W3-C3 (review) — the question_block row→snapshot field-pick (incl. the legacy extracted_prompt_md
+// strip, design §5.2) now lives in the ONE shared mapper (./snapshot-mappers) so the audit / backfill /
+// parity snapshot shapes can't drift on a schema change. Re-exported under the
+// `questionBlockLiveRowToSnapshot` name the accept-time callers (block-structured-edit, the C3 parity
+// test) already import.
+export { questionBlockRowToSnapshot as questionBlockLiveRowToSnapshot } from './snapshot-mappers';
 
 /**
  * Assert the question_block fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test

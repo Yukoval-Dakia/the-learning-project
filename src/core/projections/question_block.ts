@@ -77,6 +77,26 @@ import type { FoldEvent } from './fold-event';
 // events absorbing blockId as a merged_source, where subject_id is the PRIMARY ≠ blockId). The IO
 // shell (src/server/projections/question_block.ts) owns the gather; the reducer is correct on the
 // union superset. NO rate caused_by chain (create/edit are direct, not propose→accept).
+//
+// ⚠️ KNOWN-UNFOLDED WRITERS — W3-D FLIP PREREQUISITE (unlike foldArtifact, whose set is EMPTY after the
+// W3-C1γ cutover made every artifact write fold-visible). The "fold REPRODUCES the row the imperative
+// writers would have written" claim above is NOT yet complete for question_block: FIVE live writers
+// still mutate fold-truth columns with NO corresponding fold event, so foldQuestionBlock would DROP
+// their effect (a post-flip projected row would silently lose these mutations). They MUST be cut over
+// to events (or otherwise reconciled) BEFORE the question_block SoT flip:
+//   1. reassignFigure            — block-structured-edit.ts:~775  → figures, version (+ updated_at)
+//   2. runAutoEnrollForSession   — auto-enroll.ts:~984            → imported_question_id,
+//                                                                    imported_attempt_event_id,
+//                                                                    status='auto_enrolled'
+//   3. import POST (enroll)      — ingestion/api/import.ts:~433   → imported_question_id,
+//                                                                    imported_attempt_event_id,
+//                                                                    status='imported'
+//   4. import POST (ignore)      — ingestion/api/import.ts:~473   → status='ignored'
+//   5. revertAutoEnrolledBlock   — revert-auto-enroll.ts:~136     → status='draft',
+//                                                                    imported_question_id=null
+// (applyRescue's question_block UPDATE in session/ingestion.ts is NOT in this list — it DOES emit a
+// rescue `question_block_create` event, so the fold reproduces it last-write-wins.) Fixing these 5
+// eventless writers is a SEPARATE lane; this note keeps the gap visible in-code until then.
 
 // toParseInput — reconstruct the Zod parse input from the flat FoldEvent columns (mirrors every
 // sibling reducer). Each typed branch feeds this to its dedicated schema so a malformed payload is
