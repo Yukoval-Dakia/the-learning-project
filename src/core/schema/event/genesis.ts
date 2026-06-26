@@ -5,6 +5,7 @@ import {
   ArtifactHistoryEntry,
   NoteVerificationResult,
 } from '../business';
+import { FigureRef, StructuredQuestion } from '../structured_question';
 
 // ====================================================================
 // GenesisExperimental — pre-W1 row backfill seed (YUK-471 Wave 1, Codex #4)
@@ -261,6 +262,71 @@ export const ArtifactRowSnapshot = z
   .strict();
 export type ArtifactRowSnapshotT = z.infer<typeof ArtifactRowSnapshot>;
 
+// ---------- QuestionBlockRowSnapshot (YUK-471 Wave 3 — question_block entity fold) ----------
+//
+// The projected (fold) shape of a `question_block` row (src/db/schema.ts question_block pgTable,
+// design §5.2). question_block's structural truth is the recursive `structured` StructuredQuestion
+// tree + `figures` + `crop_refs` + status/merge/version — every column below mirrors the table.
+//
+// EXCLUDED: `extracted_prompt_md` (the LEGACY deprecated column, schema.ts — DROP deferred to Step
+// 11.5). It is NOT fold truth (markdown views derive from `structured` at render time, ADR-0002),
+// so the snapshot omits it. The `.strict()` + omit协调 (design §5.2): a live `question_block` DB row
+// STILL carries `extracted_prompt_md`, so the W3-C3 parity helper omits that legacy column BEFORE
+// `.parse()` — that way `.strict()` protects the truth at the genesis/create WRITE path (a stray
+// key fails loud) while the parity比对 stays compatible (mirrors the genesis docblock guidance:
+// live-row callers migrate去 the derived/legacy columns first, then `.strict()` is safe).
+//
+// `.strict()` (design §5.2 + critic B3): question_block is well-distinguished from the other fold
+// entities by `ingestion_session_id` + `page_spans` (no sibling carries either column), and
+// `.strict()` rejects a wrong/extra-field payload at the genesis/create parse barrier so a malformed
+// snapshot can never silently seed the projection.
+//
+// jsonb inner shapes: `structured` reuses the canonical recursive StructuredQuestion schema and
+// `figures` reuses FigureRef (they ARE the fold truth the reducer reads). `page_spans` is the
+// extraction-coordinate envelope (page_index + bbox + optional role) — kept structured but tolerant
+// (the inner bbox is the raw 4-number object the OCR persisted, NOT re-validated against the 0-1
+// normalized BBox refinements, so a faithfully-backfilled row never false-rejects). Dates are
+// z.coerce.date() (jsonb ISO-string roundtrip — same precedent as the other snapshots).
+const PageSpan = z.object({
+  page_index: z.number().int().min(0),
+  bbox: z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }),
+  role: z.string().optional(),
+});
+
+export const QuestionBlockRowSnapshot = z
+  .object({
+    id: z.string().min(1),
+    ingestion_session_id: z.string().min(1), // notNull — the question_block-distinguishing column
+    source_document_id: z.string().nullable(), // nullable column
+    source_asset_ids: z.array(z.string()), // jsonb string[], default [] at the table
+    page_spans: z.array(PageSpan), // jsonb array, default [] — the question_block-distinguishing column
+    structured: StructuredQuestion.nullable(), // nullable jsonb — the recursive StructuredQuestion tree
+    figures: z.array(FigureRef), // jsonb FigureRef[], notNull default []
+    layout_quality: z.string(), // free text (notNull default 'structured')
+    reference_md: z.string().nullable(), // nullable column
+    wrong_answer_md: z.string().nullable(), // nullable column
+    image_refs: z.array(z.string()), // jsonb string[], notNull default []
+    crop_refs: z.array(z.string()), // jsonb string[], notNull default [] — A3: own truth column (F5)
+    visual_complexity: z.string(), // free text (notNull default 'low')
+    extraction_confidence: z.number(), // real (notNull default 1; DB CHECK 0..1) — verbatim, no re-validate
+    status: z.string(), // free text (notNull default 'draft') — 'draft' | 'ignored' | …
+    knowledge_hint: z.string().nullable(), // nullable column
+    merged_from_block_ids: z.array(z.string()), // jsonb string[], notNull default []
+    imported_question_id: z.string().nullable(), // nullable column
+    imported_attempt_event_id: z.string().nullable(), // nullable column
+    created_at: z.coerce.date(),
+    updated_at: z.coerce.date(),
+    version: z.number().int(),
+    // EXCLUDED: extracted_prompt_md (legacy deprecated, omitted — see docblock above).
+  })
+  .strict();
+export type QuestionBlockRowSnapshotT = z.infer<typeof QuestionBlockRowSnapshot>;
+
 // ---------- GenesisExperimental ----------
 //
 // Field-level parity with the existing reserved experimental schemas
@@ -304,6 +370,7 @@ const SNAPSHOT_BY_SUBJECT_KIND = {
   mistake_variant: MistakeVariantRowSnapshot,
   learning_item: LearningItemRowSnapshot,
   artifact: ArtifactRowSnapshot,
+  question_block: QuestionBlockRowSnapshot,
 } as const;
 
 // Columns that MUST be present on a row to discriminate it as the named entity, even after a
@@ -322,6 +389,10 @@ const DISCRIMINATING_COLUMNS: Record<string, readonly string[]> = {
   // artifact is uniquely identified by `intent_source` + `body_blocks` (no W2 sibling entity
   // carries either column), so requiring them closes any residual shape-overlap window (design §5.1).
   artifact: ['intent_source', 'body_blocks'],
+  // question_block is uniquely identified by `ingestion_session_id` + `page_spans` (no other fold
+  // entity carries either column), so requiring them closes any residual shape-overlap window
+  // (design §5.2). Both are notNull on the table, so the key is always present on a faithful row.
+  question_block: ['ingestion_session_id', 'page_spans'],
 };
 
 export const GenesisExperimental = z
@@ -336,6 +407,7 @@ export const GenesisExperimental = z
       'mistake_variant',
       'learning_item',
       'artifact',
+      'question_block',
     ]),
     subject_id: z.string().min(1), // = the projected row id
     outcome: z.literal('success').nullable().optional(),
@@ -351,6 +423,7 @@ export const GenesisExperimental = z
         MistakeVariantRowSnapshot,
         LearningItemRowSnapshot,
         ArtifactRowSnapshot,
+        QuestionBlockRowSnapshot,
       ]),
     }),
     // baseOptionalFields parity (mirror the other reserved schemas):
