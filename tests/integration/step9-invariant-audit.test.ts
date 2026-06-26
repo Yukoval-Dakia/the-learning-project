@@ -402,6 +402,11 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       // block-tree mesh, body_blocks=null; the render-side sandbox owns
       // security, the backend stores attrs.html opaquely).
       'src/server/ai/tools/author-artifact.ts',
+      // YUK-471 Wave 3 (W3-B1) — projectArtifact / projectArtifactGuarded: the fold→row
+      // write-back (upsert/delete the materialized artifact row recomputed from the event fold).
+      // INERT until PROJECTION_IS_WRITER_ARTIFACT flips (W3-D); mirrors the W1/W2 projection
+      // writers (src/server/projections/{knowledge,goal,mistake_variant,learning_item}.ts).
+      'src/server/projections/artifact.ts',
     ];
     const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
     expect(
