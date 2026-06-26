@@ -35,6 +35,8 @@ import { describe, expect, it } from 'vitest';
 // exercises the WASM binding — never a stray `.node` (index.js prefers native). The
 // `.wasi.cjs` requires the crate-local @napi-rs/wasm-runtime + @emnapi/* (resolved
 // upward from the crate dir) and a worker_threads-backed shared-memory WASI runtime.
+// `build:native:wasm` removes the .debug.wasm so the loader runs the RELEASE binary —
+// the exact artifact #41's browser badge will ship (prove-what-you-ship, not debug).
 const WASM_PATH = resolve('crates/calibration-native/calibration-native.wasm32-wasi.wasm');
 const WASI_LOADER = resolve('crates/calibration-native/calibration-native.wasi.cjs');
 const present = existsSync(WASM_PATH) && existsSync(WASI_LOADER);
@@ -250,6 +252,24 @@ d('calibration-native WASM ↔ JS oracle execution-parity (YUK-495 S5)', () => {
       );
       for (const seed of [13, 0x5eeda1c0]) runBoth(clusters, 300, seed);
     }
+  });
+
+  it('Layer 3 — tie-saturated corpora (heavy == path)', () => {
+    // Mirrors native-parity: {0,1} scores → many ties → exercises the +0.5 `==` branch
+    // of forwardAuc inside the bootstrap (the integer-exact half-credit accumulation).
+    const clusters = Array.from({ length: 10 }, () => {
+      const n = 6;
+      const labels: (0 | 1)[] = [];
+      const scoresSrt: number[] = [];
+      const scoresBinary: number[] = [];
+      for (let i = 0; i < n; i++) {
+        labels.push(gen() < 0.5 ? 1 : 0);
+        scoresSrt.push(Math.floor(gen() * 2));
+        scoresBinary.push(Math.floor(gen() * 2));
+      }
+      return { scoresSrt, scoresBinary, labels };
+    });
+    for (const seed of [23, 0x5eeda1c0]) runBoth(clusters, 500, seed);
   });
 
   it('Layer 3 — misaligned cluster throws both sides', () => {
