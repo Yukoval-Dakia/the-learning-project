@@ -34,7 +34,7 @@ import { QuestionBlockRowSnapshot } from './genesis';
 // ── AffectedBlockSnapshot (A2 — NO merged_into physical column) ────────────────
 //
 // design §3 #5 / §5.2. ONE entry per block touched by a structured edit. A single-block edit
-// (update_prompt / add_option / set_question_type / split_stem / reassign_figure) carries exactly
+// (update_prompt / add_option / set_question_type / split_stem) carries exactly
 // ONE entry (role='primary'). A merge carries the primary (role='primary', the merged-AFTER full
 // tree) + N absorbed sources (role='merged_source', status flips to 'ignored').
 //
@@ -64,8 +64,8 @@ export type AffectedBlockSnapshotT = z.infer<typeof AffectedBlockSnapshot>;
 
 // ── #5 experimental:edit_question_block_structured (single canonical, multi-row after) ──
 //
-// design §3 #5 [P0]. The 6 structured-rewrite ops (update_prompt / add_option / set_question_type /
-// split_stem / merge_questions / reassign_figure) ALL fold through the full AFTER snapshot carried
+// design §3 #5 [P0]. The 5 structured-rewrite ops (update_prompt / add_option / set_question_type /
+// split_stem / merge_questions) ALL fold through the full AFTER snapshot carried
 // in affected_blocks[] — the fold does LAST-WRITE-WINS, no op-replay. subject_id = the primary
 // block id (the UNIQUE SoT anchor — only the primary changed its structured). A merge that produced
 // 1+N job_events rows collapses to ONE canonical event here (solves C4); the absorbed rows ride in
@@ -93,10 +93,11 @@ export const EditQuestionBlockStructuredExperimental = z
           'set_question_type',
           'split_stem',
           'merge_questions',
-          // reassign_figure re-points figures within the primary block — it carries the AFTER
-          // figures on the primary snapshot, so it folds through the full snapshot like the others
-          // (task §1; design §2.2 routes it through the same structured-edit surface).
-          'reassign_figure',
+          // NOTE: reassign_figure is intentionally NOT an op here. The live writer emits figure
+          // re-pointing as a SEPARATE `figure.reassigned` job event (block-structured-edit.ts:615),
+          // NOT through persistStructured / block.structured_edited — so it is not one of this
+          // canonical action's ops (design §3 #5 lists exactly these 5). Whether figure-reassignment
+          // becomes its own fold-source event is a W3-C1 / follow-up decision (YUK-471), out of A2 scope.
         ]),
         // ONE entry per touched block. min(1): a single-block edit has length 1; a merge has the
         // primary + N merged_sources (design §3 #5).

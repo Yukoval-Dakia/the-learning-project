@@ -113,31 +113,14 @@ describe('parseEvent — experimental:edit_question_block_structured routing + c
     );
   });
 
-  it('ACCEPTS the reassign_figure op (folds through the full snapshot like the others)', () => {
-    const parsed = parseEvent(
-      editEnvelope({
-        payload: {
-          op: 'reassign_figure',
-          affected_blocks: [
-            primaryBlock({
-              figures: [
-                {
-                  asset_id: 'asset_1',
-                  role: 'diagram',
-                  source_page_index: 0,
-                  source_bbox: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
-                  attached_to_index: 'q1',
-                  attach_confidence: 'manual',
-                },
-              ],
-            }),
-          ],
-        },
-      }),
-    );
-    expect((parsed as { action: string }).action).toBe(
-      'experimental:edit_question_block_structured',
-    );
+  it('REJECTS reassign_figure (not a structured-edit op — separate figure.reassigned surface)', () => {
+    expect(() =>
+      parseEvent(
+        editEnvelope({
+          payload: { op: 'reassign_figure', affected_blocks: [primaryBlock()] },
+        }),
+      ),
+    ).toThrow();
   });
 
   it('REJECTS an empty affected_blocks (.min(1))', () => {
