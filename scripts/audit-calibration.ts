@@ -440,13 +440,20 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   // A4 — reuse the SAME loaded.orderedAttempts (do NOT re-load). The grid track replays the
   // whole list once more (gridEnabled), buckets single-KC scorable steps grid-vs-live, and
   // produces an ADVISORY verdict. This NEVER flips THETA_GRID_ENABLED and NEVER writes the DB.
-  const grid = assembleGridForwardClusters(loaded.orderedAttempts);
-  const gridResult = evaluateGridForward(
-    grid.clusters,
-    grid.pooled,
-    {},
-    mulberry32(BOOTSTRAP_SEED),
-  );
+  // The advisory grid track must NEVER suppress the A1 gate verdict. It runs BEFORE the report
+  // is printed, so an exception here (the newly-added v-grid-fwd / theta-grid modules) would
+  // reject runCli() → main() catches → exit 2, and the already-computed A1 PASS/FAIL would never
+  // print — an advisory, read-only track turning a gate verdict (0/1) into an op-error exit (2).
+  // Wrap it so an advisory failure logs a non-fatal warning and the A1 report + exit code emit.
+  let gridResult: ReturnType<typeof evaluateGridForward> | null = null;
+  try {
+    const grid = assembleGridForwardClusters(loaded.orderedAttempts);
+    gridResult = evaluateGridForward(grid.clusters, grid.pooled, {}, mulberry32(BOOTSTRAP_SEED));
+  } catch (err) {
+    console.error(
+      `A4 advisory grid evaluation skipped (non-fatal): ${err instanceof Error ? err.message : err}`,
+    );
+  }
 
   if (args.includes('--json')) {
     console.log(
@@ -477,7 +484,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
     );
     console.log(`  dropped 'partial' outcomes                         = ${loaded.partialDropped}`);
     console.log('');
-    console.log(formatGridReport(gridResult));
+    if (gridResult) console.log(formatGridReport(gridResult));
   }
 
   // EXIT CODE (REPORT-ONLY): PASS → 0; INSUFFICIENT → 0 (A1 stays live PROVISIONALLY —
