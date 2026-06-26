@@ -146,6 +146,18 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:learning_item_complete',
   'experimental:learning_item_relearn',
   'experimental:learning_item_archive',
+  // YUK-471 Wave 3 (artifact fold, design §3 #2/#3/#4) — the three artifact action events
+  // (./artifact-events.ts) make every structural artifact mutation fold-visible + self-sufficient:
+  // body_blocks_edit (full AFTER-snapshot), artifact_create (runtime creation BASE, unifying the 8
+  // INSERT sites — genesis stays backfill-only, critic A4), artifact_lifecycle (archive/unarchive +
+  // generation_status/verification_status transitions, F1). The fold trusts these to reproduce
+  // body_blocks/version/status; a malformed payload must be rejected at the barrier, not fall
+  // through to the loose generic. NOTE: the legacy `experimental:artifact_body_blocks_edit`
+  // (body-blocks-edit.ts) is intentionally NOT reserved — its on-disk events lack body_blocks and
+  // keep parsing via the generic fallback; W3-C1 migrates the writer to `experimental:body_blocks_edit`.
+  'experimental:body_blocks_edit',
+  'experimental:artifact_create',
+  'experimental:artifact_lifecycle',
 ]);
 
 // ====================================================================

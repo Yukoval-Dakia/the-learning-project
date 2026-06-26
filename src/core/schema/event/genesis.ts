@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  AgentRef,
+  ArtifactBodyBlocks,
+  ArtifactHistoryEntry,
+  NoteVerificationResult,
+} from '../business';
 
 // ====================================================================
 // GenesisExperimental — pre-W1 row backfill seed (YUK-471 Wave 1, Codex #4)
@@ -207,6 +213,54 @@ export const LearningItemRowSnapshot = z
   .strict();
 export type LearningItemRowSnapshotT = z.infer<typeof LearningItemRowSnapshot>;
 
+// ---------- ArtifactRowSnapshot (YUK-471 Wave 3 — artifact entity fold) ----------
+//
+// The projected (fold) shape of an `artifact` row (src/db/schema.ts:422-445). artifact has NO
+// derived/embed maintenance columns (unlike `knowledge`), so EVERY one of its 22 columns is
+// structural fold truth — the full row IS the snapshot (design §5.1, no excluded columns).
+// `body_blocks` IS the truth (full-snapshot body fold, fork #1) and `history` is part of the row
+// state (append log, but the create/edit events carry the after-value via `history_after`).
+//
+// `.strict()` (design §5.1 + critic B3): artifact has NO live-row `.parse()` caller passing extra
+// columns (no embed_* derived columns to strip — that was the KnowledgeRowSnapshot NON-strict
+// reason), so .strict() is safe AND rejects a wrong/sibling row at the genesis/create parse
+// barrier. The DISCRIMINATING columns vs the W2 siblings are `intent_source` + `body_blocks`
+// (no goal / mistake_variant / learning_item row carries either).
+//
+// jsonb inner shapes: `body_blocks` / `verification_summary` / `history` / `generated_by` /
+// `verified_by` reuse the canonical business schemas (they ARE the fold truth the reducer reads).
+// `attrs` (open JsonObject) and `tool_state` (validated at every write point — business.ts ToolState
+// barrier) are kept OPAQUE (z.record) so the seed never re-validates a blob the row already
+// persisted — mirrors the KnowledgeEdgeRowSnapshot `created_by` opaque-provenance precedent.
+// Dates are z.coerce.date() (jsonb ISO-string roundtrip — same precedent as the other snapshots).
+export const ArtifactRowSnapshot = z
+  .object({
+    id: z.string().min(1),
+    type: z.string(), // notNull (note / tool_quiz / …)
+    title: z.string(), // notNull
+    parent_artifact_id: z.string().nullable(), // nullable self-ref
+    knowledge_ids: z.array(z.string()), // jsonb string[], default [] at the table
+    intent_source: z.string(), // notNull — the artifact-distinguishing column
+    source: z.string(), // notNull provenance
+    source_ref: z.string().nullable(), // nullable column (the originating proposal/event id)
+    body_blocks: ArtifactBodyBlocks.nullable(), // nullable jsonb — the artifact-distinguishing column
+    attrs: z.record(z.string(), z.unknown()), // open JsonObject (notNull default {}) — opaque
+    tool_kind: z.string().nullable(), // nullable column
+    tool_state: z.record(z.string(), z.unknown()).nullable(), // ToolState jsonb — opaque (write-validated)
+    generation_status: z.string(), // free text (notNull default 'pending') — NOT a pgEnum
+    verification_status: z.string(), // free text (notNull default 'not_required') — NOT a pgEnum
+    verification_summary: NoteVerificationResult.nullable(), // nullable jsonb
+    generated_by: AgentRef.nullable(), // nullable AgentRef jsonb
+    verified_by: AgentRef.nullable(), // nullable AgentRef jsonb
+    history: z.array(ArtifactHistoryEntry), // jsonb log (notNull default [])
+    archived_at: z.coerce.date().nullable(), // nullable timestamp (archive/unarchive)
+    created_at: z.coerce.date(),
+    updated_at: z.coerce.date(),
+    version: z.number().int(),
+  })
+  .strict();
+export type ArtifactRowSnapshotT = z.infer<typeof ArtifactRowSnapshot>;
+
 // ---------- GenesisExperimental ----------
 //
 // Field-level parity with the existing reserved experimental schemas
@@ -249,6 +303,7 @@ const SNAPSHOT_BY_SUBJECT_KIND = {
   goal: GoalRowSnapshot,
   mistake_variant: MistakeVariantRowSnapshot,
   learning_item: LearningItemRowSnapshot,
+  artifact: ArtifactRowSnapshot,
 } as const;
 
 // Columns that MUST be present on a row to discriminate it as the named entity, even after a
@@ -264,6 +319,9 @@ const DISCRIMINATING_COLUMNS: Record<string, readonly string[]> = {
   // columns `content` + `knowledge_ids` discriminate it (goal has scope_knowledge_ids +
   // sequence_hint, NOT content/knowledge_ids). Requiring both closes any residual overlap window.
   learning_item: ['content', 'knowledge_ids'],
+  // artifact is uniquely identified by `intent_source` + `body_blocks` (no W2 sibling entity
+  // carries either column), so requiring them closes any residual shape-overlap window (design §5.1).
+  artifact: ['intent_source', 'body_blocks'],
 };
 
 export const GenesisExperimental = z
@@ -277,6 +335,7 @@ export const GenesisExperimental = z
       'goal',
       'mistake_variant',
       'learning_item',
+      'artifact',
     ]),
     subject_id: z.string().min(1), // = the projected row id
     outcome: z.literal('success').nullable().optional(),
@@ -291,6 +350,7 @@ export const GenesisExperimental = z
         GoalRowSnapshot,
         MistakeVariantRowSnapshot,
         LearningItemRowSnapshot,
+        ArtifactRowSnapshot,
       ]),
     }),
     // baseOptionalFields parity (mirror the other reserved schemas):
