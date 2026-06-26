@@ -25,6 +25,19 @@ describe('flat8ToBBox', () => {
     expect(bbox.height).toBe(1);
   });
 
+  it('caps width/height so x+width and y+height never exceed 1 (overflow at x>0, YUK-471 W3-C1δ)', () => {
+    // A near-edge box overflowing past the right/bottom: x≈0.933, y=0.95, raw w/h overflow the page.
+    // The OLD independent clamp left width≈0.133 → x+width≈1.066, which FAILS the canonical BBox
+    // refine (the create-event strict barrier). The sum-clamp (width ≤ 1-x) caps it.
+    const bbox = flat8ToBBox([1400, 1900, 1600, 1900, 1600, 2100, 1400, 2100], 1500, 2000);
+    expect(bbox.x).toBeCloseTo(1400 / 1500);
+    expect(bbox.y).toBeCloseTo(1900 / 2000);
+    expect(bbox.x + bbox.width).toBeLessThanOrEqual(1);
+    expect(bbox.y + bbox.height).toBeLessThanOrEqual(1);
+    expect(bbox.width).toBeCloseTo(1 - 1400 / 1500);
+    expect(bbox.height).toBeCloseTo(1 - 1900 / 2000);
+  });
+
   it('throws on wrong length', () => {
     expect(() => flat8ToBBox([1, 2, 3], 100, 100)).toThrow();
   });
