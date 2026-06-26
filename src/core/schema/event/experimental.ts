@@ -158,6 +158,17 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:body_blocks_edit',
   'experimental:artifact_create',
   'experimental:artifact_lifecycle',
+  // YUK-471 Wave 3 (question_block fold, design §3 #5/#6) — the two question_block action events
+  // (./question-block-events.ts) move the structured edit off the loose `job_events`
+  // `block.structured_edited` row onto the canonical log: edit_question_block_structured (full AFTER
+  // snapshot per affected block — a merge's 1+N job_events collapse to ONE canonical event, with the
+  // absorbed rows as merged_source, NO merged_into), question_block_create (OCR/rescue/docx/import
+  // creation BASE — genesis stays backfill-only, critic A4). The fold trusts these to reproduce
+  // structured/figures/status/version; a malformed payload must be rejected at the barrier, not fall
+  // through to the loose generic. NOTE: the legacy `job_events` `block.structured_edited` is a
+  // transport row, NOT an `experimental:*` action, so it is unaffected by this reservation.
+  'experimental:edit_question_block_structured',
+  'experimental:question_block_create',
 ]);
 
 // ====================================================================
