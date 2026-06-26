@@ -748,9 +748,11 @@ export const event = pgTable(
     // hand-written migration drizzle/0017_outbox_event_ingest.sql because
     // drizzle-kit doesn't generate partial-index `WHERE …` clauses natively
     // at this version.
-    // GIN index on payload (jsonb_path_ops) — declared in hand-written migration
-    // (drizzle-kit doesn't generate GIN on jsonb_path_ops natively at this version).
-    // See drizzle/0005_phase1c1_event_payload_gin.sql.
+    // GIN index `event_payload_idx` on payload (jsonb_path_ops) — declared in hand-written
+    // migration (drizzle-kit doesn't generate GIN on jsonb_path_ops natively at this version).
+    // See drizzle/0005_phase1c1_event_payload_gin_and_mastery_view.sql. This is the index the
+    // W3 question_block merge gather's top-level `payload @> {affected_blocks:[{block_id}]}`
+    // containment (gather.ts gatherAndFoldQuestionBlock Q2) relies on (YUK-471 W3-C0).
   ],
 );
 

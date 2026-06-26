@@ -19,18 +19,22 @@
 
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
+import { foldArtifact } from '@/core/projections/artifact';
 import type { FoldEvent } from '@/core/projections/fold-event';
 import { foldGoal } from '@/core/projections/goal';
 import { foldKnowledgeNode } from '@/core/projections/knowledge';
 import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
 import { foldLearningItem } from '@/core/projections/learning_item';
 import { foldMistakeVariant } from '@/core/projections/mistake_variant';
+import { foldQuestionBlock } from '@/core/projections/question_block';
 import type {
+  ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
+  QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
@@ -269,6 +273,81 @@ export async function gatherAndFoldLearningItem(
     .where(and(eq(event.subject_kind, 'learning_item'), eq(event.subject_id, itemId)));
   const foldEvents = rows.map(rowToFoldEvent);
   return foldLearningItem(itemId, foldEvents);
+}
+
+/**
+ * Gather the superset of events affecting `artifactId` and run the PURE artifact fold. READ-ONLY.
+ * (YUK-471 Wave 3 — hoisted from the W3-B1 IO shell in C2 so the projection auditor reconstructs
+ * the row IDENTICALLY to the shell.)
+ *
+ * The artifact gather is the SIMPLEST of the epic (design §5.3): EVERY artifact event
+ * (genesis / artifact_create / body_blocks_edit / artifact_lifecycle / note_refine_apply /
+ * note_refine_undo) keys on the artifact's OWN id, so it is Q1 ONLY (subject_kind='artifact' AND
+ * subject_id=artifactId). NO Q2 reverse index (artifactId == the create event's subject_id — no
+ * minting indirection; artifact's materialized_id_index entry is the anchor-CHECK leg, not a gather
+ * path), NO Q3 merged-into, NO rate caused_by chain (create/edit/lifecycle are direct, not
+ * propose→accept). Returns the projected row or null (artifact never created / fully reverted).
+ * Writes NOTHING.
+ */
+export async function gatherAndFoldArtifact(
+  db: DbLike,
+  artifactId: string,
+): Promise<ArtifactRowSnapshotT | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.subject_kind, 'artifact'), eq(event.subject_id, artifactId)));
+  const foldEvents = rows.map(rowToFoldEvent);
+  return foldArtifact(artifactId, foldEvents);
+}
+
+/**
+ * Gather the superset of events affecting `blockId` and run the PURE question_block fold. READ-ONLY.
+ * (YUK-471 Wave 3 — hoisted from the W3-B2 IO shell in C2 so the projection auditor reconstructs the
+ * row IDENTICALLY to the shell.)
+ *
+ * A TWO-QUERY merge gather (design §5.2, mirrors the W1 node merge Q3):
+ *   - Q1: subject_kind='question_block' AND subject_id=blockId → genesis + question_block_create +
+ *     edit-as-primary (every event keyed on blockId's OWN id).
+ *   - Q2: the merge reverse query — an edit event is keyed on the PRIMARY block, so when blockId is
+ *     an absorbed `merged_source` the event's subject_id is a DIFFERENT block and Q1 misses it.
+ *     blockId lives only in payload.affected_blocks[].block_id; the TOP-LEVEL `event.payload @>
+ *     {affected_blocks:[{block_id}]}` jsonb-containment finds it. This top-level `@>` form is the
+ *     shape the W3-C0 `event_payload_idx` GIN (jsonb_path_ops on the whole `payload` column)
+ *     accelerates — the sub-extraction form (`payload->'affected_blocks' @> …`) would NOT hit it
+ *     (C0 finding). Mirrors gatherAndFoldKnowledgeNode's Q3 containment.
+ *
+ * Returns the projected row or null (block never created). Writes NOTHING.
+ */
+export async function gatherAndFoldQuestionBlock(
+  db: DbLike,
+  blockId: string,
+): Promise<QuestionBlockRowSnapshotT | null> {
+  // ── Q1: events whose subject_id IS blockId ──────────────────────────────────────────────────
+  const q1 = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.subject_kind, 'question_block'), eq(event.subject_id, blockId)));
+
+  // ── Q2: edit events that ABSORB blockId as a merged_source (keyed on a DIFFERENT primary) ─────
+  // Top-level `@>` containment (hits the W3-C0 event_payload_idx GIN, jsonb_path_ops).
+  const q2 = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:edit_question_block_structured'),
+        sql`${event.payload} @> ${JSON.stringify({ affected_blocks: [{ block_id: blockId }] })}::jsonb`,
+      ),
+    );
+
+  // Dedup by event id (Q1/Q2 overlap when blockId is the primary of one edit and a merged_source of
+  // another).
+  const byId = new Map<string, EventRow>();
+  for (const r of [...q1, ...q2]) byId.set(r.id, r);
+
+  const foldEvents = [...byId.values()].map(rowToFoldEvent);
+  return foldQuestionBlock(blockId, foldEvents);
 }
 
 /**
