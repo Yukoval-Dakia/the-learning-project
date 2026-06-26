@@ -33,8 +33,25 @@ vi.mock('@/core/theta', async (importOriginal) => {
   };
 });
 
+// A4 (YUK-436) — THETA_GRID_ENABLED is a live const (dark-ship default false). For the grid
+// faithfulness fixture we mock just that one export to TRUE so production WRITES
+// theta_grid_json, and assert the replay grid track reproduces the persisted posterior.
+// Everything else in @/core/theta-grid (gridUpdate / posteriorMean / uniformPrior / …) stays
+// REAL — the same primitives the replay engine consumes, so this is a true oracle.
+const gridFlag = { value: false };
+vi.mock('@/core/theta-grid', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/theta-grid')>();
+  return {
+    ...actual,
+    get THETA_GRID_ENABLED() {
+      return gridFlag.value;
+    },
+  };
+});
+
 import { newId } from '@/core/ids';
 import { difficultyToLogitB } from '@/core/theta';
+import { GRID_POINTS, type ThetaGridPosterior } from '@/core/theta-grid';
 import { db } from '@/db/client';
 import {
   item_calibration,
@@ -351,5 +368,108 @@ describe('replayTheta — byte-identity vs production updateThetaForAttempt', ()
     const { finalState } = replayTheta([replayAttempt], { srtEnabled: false });
     // tol 5 (real-column text precision — see the SRT-on test's tolerance note).
     expect(finalState.thetaKc.get(kc) ?? 0).toBeCloseTo(prodTheta, 5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A4 (YUK-436) GRID FAITHFULNESS FIXTURE — the independent production oracle for the
+// replay grid track. Drives the REAL updateThetaForAttempt with THETA_GRID_ENABLED
+// mocked TRUE over a short SINGLE-KC sequence (resolvable domain → θ_global drifts,
+// exercising the bPrime = b − θ_global path), reads back the persisted
+// mastery_state.theta_grid_json, and asserts replayTheta(..., {gridEnabled:true})'s
+// final per-KC posterior matches it elementwise. This PROVES the replay grid track ==
+// production's persisted shadow posterior (including the PRE-attempt θ_global anchor —
+// production's globalThetaOfDomain is never mutated by the drift, so the grid fold uses
+// the pre-attempt global; the replay mirrors that by capturing preGlobal before its drift).
+// ─────────────────────────────────────────────────────────────────────────────
+async function readGridJson(knowledgeId: string): Promise<ThetaGridPosterior | null> {
+  const rows = await db
+    .select({ grid: mastery_state.theta_grid_json })
+    .from(mastery_state)
+    .where(
+      and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, knowledgeId)),
+    )
+    .limit(1);
+  return (rows[0]?.grid as ThetaGridPosterior | null | undefined) ?? null;
+}
+
+describe('replayTheta — grid-Bayes posterior faithfulness vs production theta_grid_json (A4)', () => {
+  beforeEach(async () => {
+    srtFlag.value = true;
+    gridFlag.value = false;
+    await resetDb();
+  });
+  afterEach(() => {
+    srtFlag.value = true;
+    gridFlag.value = false;
+  });
+
+  it('grid ON: replay final per-KC posterior == persisted theta_grid_json (single-KC seq with θ_global drift)', async () => {
+    gridFlag.value = true; // production WRITES theta_grid_json for single-KC items.
+
+    const kc = createId();
+    const q = createId();
+    await seedKnowledgeWithDomain(kc); // resolvable domain → θ_global drifts each attempt
+    await seedQuestion(q, [kc], 3);
+    await seedItemCalibration(q, 0.5); // calibrated b anchor (bWeight 1)
+
+    // RT-less single-KC attempts: grid likelihood is BINARY only, so SRT does not touch the
+    // posterior; RT-less also keeps the θ_global drift deterministic-binary. The bPrime =
+    // b − θ_global path is exercised because θ_global accumulates across the sequence.
+    const outcomes: (0 | 1)[] = [1, 0, 1, 1, 0];
+
+    // ── Drive production once per attempt, in order. ──
+    for (let i = 0; i < outcomes.length; i++) {
+      await db.transaction(async (tx) => {
+        await updateThetaForAttempt(tx, {
+          knowledgeIds: [kc],
+          questionId: q,
+          outcome: outcomes[i],
+          difficulty: 3,
+          attemptEventId: `g${i}`,
+          now: new Date(),
+          // no responseTimeMs → binary credit (grid is binary regardless)
+          kind: 'short_answer',
+          source: 'manual',
+          familyPrimaryKnowledgeId: kc,
+        });
+      });
+    }
+    const persisted = await readGridJson(kc);
+    expect(persisted).not.toBeNull();
+    expect(persisted?.evidence).toBe(outcomes.length);
+    expect(persisted?.probs).toHaveLength(GRID_POINTS);
+
+    // ── Build matching ReplayAttempt[] (b reconstructed exactly as the loader will). ──
+    const { b, bWeight } = await reconstructBAndWeight(q, 3, null);
+    const replayAttempts: ReplayAttempt[] = outcomes.map((o, i) => ({
+      knowledgeIds: [kc],
+      scoredKnowledgeId: kc,
+      domainByKc: { [kc]: DOMAIN },
+      outcome: o,
+      difficulty: 3,
+      b,
+      bWeight,
+      responseTimeMs: null,
+      createdAt: i,
+      eventId: `g${i}`,
+    }));
+
+    const { finalState } = replayTheta(replayAttempts, {
+      srtEnabled: srtFlag.value,
+      gridEnabled: true,
+    });
+    const replayPosterior = finalState.thetaGridByKc.get(kc);
+    expect(replayPosterior).toBeDefined();
+    const rp = replayPosterior as ThetaGridPosterior;
+    expect(rp.evidence).toBe(outcomes.length);
+
+    // Elementwise probability match to ~1e-6 (real-column / float text precision — the
+    // bPrime depends on the persisted θ_global, a `real` column round-tripped through text).
+    const persistedProbs = (persisted as ThetaGridPosterior).probs;
+    expect(rp.probs).toHaveLength(persistedProbs.length);
+    for (let j = 0; j < persistedProbs.length; j++) {
+      expect(rp.probs[j]).toBeCloseTo(persistedProbs[j], 6);
+    }
   });
 });

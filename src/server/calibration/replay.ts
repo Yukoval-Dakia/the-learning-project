@@ -39,6 +39,44 @@ import {
   resolveSrtTimeLimit,
   srtOutcome,
 } from '@/core/theta';
+import {
+  type ThetaGridPosterior,
+  gridUpdate,
+  posteriorMean,
+  uniformPrior,
+} from '@/core/theta-grid';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A4 (YUK-436) GRID TRACK — pure-additive shadow replay of the discrete grid-Bayes
+// θ_KC OFFSET posterior, ALONGSIDE the Elo θ̂ track above. READ-ONLY harness use:
+// it lets pnpm audit:calibration retro-validate the DARK grid path against the LIVE
+// Elo path WITHOUT ever flipping THETA_GRID_ENABLED or writing the DB.
+//
+// ⚠ FAITHFULNESS to the production shadow write (state.ts:815-828) is the whole point;
+//   the grid faithfulness fixture (replay.fixture.db.test.ts) drives the REAL
+//   updateThetaForAttempt with THETA_GRID_ENABLED mocked TRUE and asserts this track's
+//   final per-KC posterior == the persisted theta_grid_json. Rules, mirrored exactly:
+//
+//   • SINGLE-KC ONLY. Production folds the grid only when states.length === 1; the
+//     forward-scorable replay step (scoredKnowledgeId !== null) is the same single-KC
+//     gate. Multi-KC attempts get NO grid forward step and NO fold (gridPredictedP=null).
+//   • BINARY likelihood only (gridUpdate → binaryLikelihood). The continuous-CB path is
+//     gated off inc-1; we never wire continuousCbLikelihood here.
+//   • COLD START: a KC with no prior posterior folds from uniformPrior().
+//   • θ_global TRANSLATION ANCHOR — the SUBTLE part. Production's grid fold computes
+//     bPrime = b − globalOf(scoredKC), where globalOf reads `globalThetaOfDomain`. That
+//     map is populated ONCE pre-attempt (state.ts:627) and is NEVER mutated by the
+//     θ_global drift block (state.ts:722-776). So production folds with the PRE-attempt
+//     θ_global, identical to the value the forward step uses. We therefore capture
+//     preGlobal for the scored KC BEFORE this engine's drift block mutates thetaGlobal,
+//     and use that SAME preGlobal for BOTH the forward prediction and the fold. (The
+//     task's "postGlobal" phrasing does not match production — globalThetaOfDomain never
+//     sees the drift — and the fixture proves the pre-attempt anchor.)
+//   • FORWARD NO-LEAKAGE: gridPredictedP is emitted from the PRE-fold posterior, BEFORE
+//     the fold advances it — outcome_t never forms the prediction of outcome_t.
+//   • FLAG OFF (opts.gridEnabled false/absent): ZERO grid computation — gridPredictedP
+//     stays null on every step and thetaGridByKc stays empty (byte-identical regression).
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface ReplayAttempt {
   /** the question's FULL KC set (production updates all of them — state.ts:457). */
@@ -76,6 +114,14 @@ export interface ReplayStep {
   outcome: 0 | 1;
   /** responseTimeMs is a finite number (for the N_with_rt split, M4). */
   hasRt: boolean;
+  /**
+   * A4 (YUK-436) — the PRE-attempt GRID forward prediction:
+   * expectedScore(preGlobal + posteriorMean(priorPosterior ?? uniformPrior()), b),
+   * emitted BEFORE the grid fold (no-leakage). null when !opts.gridEnabled OR the
+   * attempt is not single-KC-scorable (scoredKnowledgeId === null). The Elo
+   * `predictedP` above is the LIVE comparison baseline; this is the DARK grid path.
+   */
+  gridPredictedP: number | null;
 }
 
 /**
@@ -92,6 +138,13 @@ export interface ReplayFinalState {
   thetaGlobal: Map<string, number>;
   /** per-KC evidence_count (for completeness; not asserted by the gate). */
   evidence: Map<string, number>;
+  /**
+   * A4 (YUK-436) — final per-KC grid-Bayes posterior over the θ_KC OFFSET (the maps
+   * production persists shadow-only to mastery_state.theta_grid_json). EMPTY when
+   * !opts.gridEnabled. The grid faithfulness fixture compares get(kc).probs to the
+   * persisted theta_grid_json.probs elementwise.
+   */
+  thetaGridByKc: Map<string, ThetaGridPosterior>;
 }
 
 export interface ReplayResult {
@@ -130,15 +183,24 @@ function dedupKcs(ids: string[]): string[] {
  *   present; false → binary credit always. (Maps to the real SRT_ENABLED const — the
  *   fixture proves srtEnabled:true == live SRT_ENABLED:true and srtEnabled:false ==
  *   SRT_ENABLED:false.)
+ * @param opts.gridEnabled A4 (YUK-436) grid track. Default false → ZERO grid computation
+ *   (gridPredictedP null on every step, thetaGridByKc empty — byte-identical regression).
+ *   true → the per-KC grid-Bayes offset posterior is folded shadow-only ALONGSIDE the Elo
+ *   track (single-KC-scorable attempts only), mirroring the production shadow write
+ *   (state.ts:815-828). NEVER flips THETA_GRID_ENABLED, NEVER touches the DB.
  */
 export function replayTheta(
   orderedAttempts: ReplayAttempt[],
-  opts: { srtEnabled: boolean },
+  opts: { srtEnabled: boolean; gridEnabled?: boolean },
 ): ReplayResult {
   // Mutable in-memory state — the DB rows production reads/upserts, held in maps.
   const thetaKc = new Map<string, number>();
   const evidence = new Map<string, number>();
   const thetaGlobal = new Map<string, number>();
+  // A4 (YUK-436) grid track — per-KC running posterior over the θ_KC offset (the map
+  // production persists shadow-only to theta_grid_json). Stays empty when !gridEnabled.
+  const thetaGridByKc = new Map<string, ThetaGridPosterior>();
+  const gridEnabled = opts.gridEnabled ?? false;
 
   const steps: ReplayStep[] = [];
 
@@ -158,9 +220,41 @@ export function replayTheta(
 
     // ── FORWARD STEP (emit BEFORE any write — no-leakage) ──
     const hasRt = isFiniteNum(a.responseTimeMs);
+    // ── A4 grid FOLD capture (gated on production's REAL fold condition) ──
+    // Production folds the grid posterior iff the DEDUPED KC set is single — state.ts:815
+    // `THETA_GRID_ENABLED && states.length === 1`, where states = dedupe(referencedKnowledgeIds)
+    // = `kcs` here. This is the deduped REFERENCED set, NOT the question's KC cardinality
+    // (scoredKnowledgeId, which keys off q.knowledge_ids.length — audit-calibration.ts:347).
+    // They coincide for canonical single-KC items but DIVERGE on the paper path (slot may
+    // reference a secondary KC on a single-KC question, or reference only one KC of a multi-KC
+    // question). Gate the FOLD on kcs.length===1 (production-faithful) and DECOUPLE it from the
+    // forward prediction (gated on scoredKnowledgeId below). Capture the fold KC's PRE-attempt
+    // θ_global + pre-fold posterior NOW (before the drift block mutates thetaGlobal) so the TAIL
+    // fold reuses the same pre-attempt anchor production's globalOf returns (state.ts:627 vs
+    // 722-776 — the drift never mutates globalThetaOfDomain).
+    let gridFoldKc: string | null = null;
+    let gridFoldPrior: ThetaGridPosterior | null = null;
+    let gridFoldPreGlobal = 0;
+    if (gridEnabled && kcs.length === 1) {
+      gridFoldKc = kcs[0];
+      gridFoldPreGlobal = globalOf(kcs[0]);
+      gridFoldPrior = thetaGridByKc.get(kcs[0]) ?? uniformPrior();
+    }
     if (a.scoredKnowledgeId !== null) {
       const sk = a.scoredKnowledgeId;
       const pre = (thetaKc.get(sk) ?? 0) + globalOf(sk);
+      // A4 grid FORWARD prediction (PRE-fold posterior; null when !gridEnabled). Gated on
+      // forward-scorability (scoredKnowledgeId !== null = single-KC QUESTION, where the live
+      // Elo step also predicts), reading the SCORED KC's posterior-so-far + its pre-attempt
+      // θ_global (globalOf, read before the drift). DECOUPLED from the fold gate above: in the
+      // canonical single-KC case sk === kcs[0] (predict + fold same KC, same pre-fold posterior
+      // — no leakage); on the paper path they can differ, each independently matching production.
+      // +preGlobal form for parity with the live step (≡ expectedScore(posteriorMean, b−preGlobal)).
+      let gridPredictedP: number | null = null;
+      if (gridEnabled) {
+        const predPrior = thetaGridByKc.get(sk) ?? uniformPrior();
+        gridPredictedP = expectedScore(globalOf(sk) + posteriorMean(predPrior), a.b);
+      }
       steps.push({
         eventId: a.eventId,
         scoredKnowledgeId: sk,
@@ -169,6 +263,7 @@ export function replayTheta(
         predictedP: expectedScore(pre, a.b), // 1PL: P = σ(θ̂_{t−1} − b_effective)
         outcome: a.outcome,
         hasRt,
+        gridPredictedP,
       });
     } else {
       steps.push({
@@ -179,6 +274,7 @@ export function replayTheta(
         predictedP: null,
         outcome: a.outcome,
         hasRt,
+        gridPredictedP: null,
       });
     }
 
@@ -225,7 +321,20 @@ export function replayTheta(
         thetaGlobal.set(domain, current + ELO_K_GLOBAL * a.bWeight * aggregateCredit);
       }
     }
+
+    // ── A4 (YUK-436) GRID FOLD — at the TAIL, after the θ_global drift (state.ts:815) ──
+    // Gated on kcs.length === 1 (production's `states.length === 1` over the deduped REFERENCED
+    // KC set), INDEPENDENT of forward-scorability — captured above (gridFoldKc). bPrime uses the
+    // PRE-attempt θ_global (gridFoldPreGlobal, captured before the drift block) because
+    // production's globalThetaOfDomain is never mutated by the drift — globalOf at the fold site
+    // still returns the pre-attempt value (state.ts:627 vs 722-776). Advances the same pre-fold
+    // posterior (no-leakage: the forward prediction was already emitted above).
+    if (gridFoldKc !== null) {
+      const prior = gridFoldPrior ?? uniformPrior();
+      const bPrime = a.b - gridFoldPreGlobal; // b' = b − θ_global (pre-attempt anchor)
+      thetaGridByKc.set(gridFoldKc, gridUpdate(prior, bPrime, a.outcome));
+    }
   }
 
-  return { steps, finalState: { thetaKc, thetaGlobal, evidence } };
+  return { steps, finalState: { thetaKc, thetaGlobal, evidence, thetaGridByKc } };
 }
