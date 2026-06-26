@@ -4,6 +4,7 @@ import {
   ArtifactCreateExperimental,
   ArtifactLifecycleExperimental,
   BodyBlocksEditExperimental,
+  NoteRefineUndoExperimental,
 } from '../schema/event/artifact-events';
 import {
   ArtifactRowSnapshot,
@@ -199,12 +200,19 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
       continue;
     }
 
-    // ---------- artifact_lifecycle — archive/unarchive + generation/verification status ----------
-    // Mirrors note_generate (generation_status), note_verify (verification_status + summary) and the
-    // retract archive (archived_at). The op→field coupling is enforced at the parse barrier
-    // (artifact-events.ts superRefine), so each op carries exactly its target field(s). version =
-    // payload.next_version VERBATIM (the writer decides the per-op bump rule; the fold trusts it so a
-    // future writer change can't silently drift). updated_at = event time.
+    // ---------- artifact_lifecycle — archive/unarchive + generation/verification status + attrs ----------
+    // Mirrors note_generate (generation_status + verification_status + generated_by), note_verify
+    // (verification_status + summary + verified_by), the retract archive (archived_at), and the two
+    // attrs mutators (updateArtifactTool / hub-dismiss → attrs, + updateArtifactTool's history push).
+    // PRESENCE-BASED apply (W3-C1γ): the op→required-field coupling is enforced at the parse barrier
+    // (artifact-events.ts superRefine — each op carries its MANDATORY target), but the reducer applies
+    // EVERY carried column so a single lifecycle event can reproduce a writer that touched several
+    // columns at once (note_generate's set_generation_status ALSO carries verification_status +
+    // generated_by). An undefined field = the writer left that column untouched → skip (so a status op
+    // never accidentally clears the verification_summary / attrs / history). version = payload.
+    // next_version VERBATIM (the writer decides the per-op bump rule — archive/status keep version,
+    // set_attrs may bump or not; the fold trusts it so a future writer change can't silently drift).
+    // updated_at = event time.
     if (fe.action === 'experimental:artifact_lifecycle') {
       const l = ArtifactLifecycleExperimental.safeParse(toParseInput(fe));
       if (!l.success) {
@@ -217,30 +225,21 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
         version: p.next_version,
         updated_at: fe.created_at,
       };
-      switch (p.op) {
-        case 'archive':
-          // superRefine guarantees a non-null Date for op='archive'.
-          next.archived_at = p.archived_at ?? null;
-          break;
-        case 'unarchive':
-          // superRefine guarantees archived_at is explicitly null for op='unarchive'.
-          next.archived_at = null;
-          break;
-        case 'set_generation_status':
-          // superRefine guarantees a non-empty string for op='set_generation_status'.
-          if (p.generation_status !== undefined) next.generation_status = p.generation_status;
-          break;
-        case 'set_verification_status':
-          // superRefine guarantees a non-empty string for op='set_verification_status'. The summary
-          // travels alongside (note_verify writes both); set it ONLY when carried (undefined = leave
-          // unchanged, so a non-verify lifecycle op never accidentally clears the summary). A carried
-          // null is an explicit clear and is honored.
-          if (p.verification_status !== undefined) next.verification_status = p.verification_status;
-          if (p.verification_summary !== undefined) {
-            next.verification_summary = p.verification_summary;
-          }
-          break;
-      }
+      // archived_at: archive→non-null Date, unarchive→explicit null (superRefine guarantees the
+      // coupling); a non-archive op omits it (undefined → leave the column unchanged).
+      if (p.archived_at !== undefined) next.archived_at = p.archived_at;
+      if (p.generation_status !== undefined) next.generation_status = p.generation_status;
+      if (p.verification_status !== undefined) next.verification_status = p.verification_status;
+      // verification_summary: a carried null is an explicit clear and is honored; undefined leaves it.
+      if (p.verification_summary !== undefined) next.verification_summary = p.verification_summary;
+      if (p.generated_by !== undefined) next.generated_by = p.generated_by;
+      if (p.verified_by !== undefined) next.verified_by = p.verified_by;
+      // set_attrs replaces the attrs jsonb wholesale (last-write-wins); superRefine guarantees attrs
+      // is carried for op='set_attrs'.
+      if (p.attrs !== undefined) next.attrs = p.attrs;
+      // history_after: carried only when the UPDATE pushed a history entry (updateArtifactTool); a
+      // clone keeps the reducer pure (never aliases the event payload's array).
+      if (p.history_after !== undefined) next.history = [...p.history_after];
       row = next;
       continue;
     }
@@ -276,21 +275,54 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
         // surfaces as drift for the parity harness (C3) to investigate, never a fold crash.
         warnMalformed('experimental:note_refine_apply(replay)', fe.id, err);
       }
+      // Skip to the next event — the note_refine_undo branch below is for a DIFFERENT action.
+      continue;
+    }
+
+    // ---------- note_refine_undo — self-sufficient body RESTORE (full-snapshot, W3-C1γ) ----------
+    // Mirrors undoNoteRefineApplyEvent (note-refine-apply.ts): the live UPDATE restored body_blocks =
+    // the apply event's previous_body_blocks, bumped version, and left `history` UNCHANGED. The
+    // self-sufficient event carries the restored body + next version + after-history so the fold
+    // reproduces it VERBATIM (last-write-wins, NO op-replay — unlike note_refine_apply, an undo is a
+    // straight body replace). A LEGACY loose undo event (no carried body_blocks — pre-C1γ) is on a
+    // pre-W3 artifact with no create/genesis anchor (fold-null), so skip it gracefully.
+    if (fe.action === 'experimental:note_refine_undo') {
+      const u = NoteRefineUndoExperimental.safeParse(toParseInput(fe));
+      if (!u.success) {
+        warnMalformed('experimental:note_refine_undo', fe.id, u.error);
+        continue;
+      }
+      const p = u.data.payload;
+      // Self-sufficient form only (superRefine guarantees next_artifact_version travels with body).
+      // A legacy loose undo (no carried body) is on a pre-W3 artifact (fold-null) — skip it (the
+      // `continue` jumps past the restore below to the next event).
+      if (p.body_blocks === undefined || p.next_artifact_version === undefined) {
+        continue;
+      }
+      row = {
+        ...row,
+        body_blocks: p.body_blocks,
+        version: p.next_artifact_version,
+        // The undo does NOT touch history; the writer carries the row's CURRENT history so the fold
+        // reproduces the column. Absent (legacy) → keep the running value.
+        history: p.history_after !== undefined ? [...p.history_after] : row.history,
+        updated_at: fe.created_at,
+      };
       // biome-ignore lint/correctness/noUnnecessaryContinue: defensive — keeps every reducer branch uniformly terminated so appending a branch can't introduce silent fall-through.
       continue;
     }
 
-    // ⚠️ KNOWN-UNFOLDED LIVE ARTIFACT MUTATORS — FLIP PREREQUISITE (YUK-471 W3-C1/C3).
-    // Any other `subject_kind:'artifact'` action falls through here unfolded. While the projection
-    // is NOT the writer (PROJECTION_IS_WRITER_ARTIFACT OFF) this is harmless. But BEFORE that flag
-    // flips to 1, W3-C1 MUST event-source these live row mutators (or the guarded projection will
-    // overwrite a live row with a stale fold == silent data loss), and W3-C3's parity harness MUST
-    // flag any of them on a real artifact:
-    //   • experimental:artifact_section_edit (sections.ts editArtifactSection — body_blocks/history/version)
-    //   • experimental:note_refine_undo      (note-refine-apply.ts — restores body_blocks/version; also
-    //                                          backs the ADR-0040 §1 "unified undo = fold auto-restores")
-    //   • suppress / hub-dismiss             (hub-dismiss.ts — artifact.attrs)
-    // (legacy experimental:artifact_body_blocks_edit is already covered by the body_blocks_edit migration.)
+    // ✅ ALL LIVE ARTIFACT MUTATORS ARE NOW FOLD-VISIBLE (YUK-471 W3-C1γ — flip prerequisite MET).
+    // Every `subject_kind:'artifact'` write path now appends a self-sufficient event the branches
+    // above reproduce: artifact_create / genesis (base) · body_blocks_edit (hand edit + section edit,
+    // C1γ migrated editArtifactSection onto body_blocks_edit) · artifact_lifecycle (archive/unarchive
+    // + generation/verification status + generated_by/verified_by + set_attrs for updateArtifactTool's
+    // html and hub-dismiss's suppressed_block_refs) · note_refine_apply (AI patch op-replay) ·
+    // note_refine_undo (self-sufficient body restore). NOTHING outstanding for the artifact flip.
+    // (The legacy `experimental:artifact_body_blocks_edit` / `experimental:artifact_section_edit`
+    // actions are no longer emitted — the writers migrated to `experimental:body_blocks_edit`; any
+    // on-disk legacy rows sit on pre-W3 artifacts that fold-null and are kept by the guarded
+    // write-through, then re-seeded by the C2 genesis backfill.)
   }
 
   return row;

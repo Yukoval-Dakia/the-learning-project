@@ -72,6 +72,7 @@ import {
   learning_item,
   mistake_variant,
 } from '@/db/schema';
+import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
@@ -1264,20 +1265,35 @@ export async function retractAiProposal(
           );
         }
       }
-      // ⚠️ W3 COUPLING (B2/C5) — this retract ALSO archives the paired `artifact` rows
-      // (source_ref=proposalId). artifact is a Wave 3 entity (NOT folded in W2), so this imperative
-      // artifact UPDATE is left AS-IS. WHEN W3 FOLDS artifact, this UPDATE must instead write an
-      // artifact action event (so the artifact fold reproduces the archived artifact). Do NOT fold it
-      // into the learning_item seam above — it is a separate entity. Uses its own `now` (the artifact
-      // entity has no fold clock to align with yet).
-      const artifactNow = new Date();
-      await tx
+      // W3-C1γ (resolves the B2/C5 ⚠️ W3 COUPLING) — this retract ALSO archives the paired `artifact`
+      // rows (source_ref=proposalId). Now that artifact is folded, the imperative archive ALSO emits a
+      // fold-source lifecycle(archive) event per row (additive double-write; flag OFF). REUSE
+      // correctionAt as the single fold clock (mirror the learning_item seam above) so the imperative
+      // archived rows + the artifact fold stamp the SAME archived_at/updated_at — fold(events) == live
+      // row deterministically. The UPDATE RETURNS the affected ids + versions (archive does NOT bump
+      // version → next_version = the unchanged returned version). An artifact with no create/genesis
+      // anchor (pre-W3) folds null regardless, so the event is a harmless extra there; once C2
+      // backfills its genesis the archive becomes fold-visible.
+      const archivedArtifacts = await tx
         .update(artifact)
         .set({
-          archived_at: artifactNow,
-          updated_at: artifactNow,
+          archived_at: correctionAt,
+          updated_at: correctionAt,
         })
-        .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)));
+        .where(and(eq(artifact.source_ref, proposalId), isNull(artifact.archived_at)))
+        .returning({ id: artifact.id, version: artifact.version });
+      for (const arch of archivedArtifacts) {
+        await emitArtifactLifecycleEvent(tx, {
+          subjectId: arch.id,
+          op: 'archive',
+          archivedAt: correctionAt,
+          nextVersion: arch.version,
+          actorKind: 'user',
+          actorRef: 'self',
+          causedByEventId: proposalId,
+          createdAt: correctionAt,
+        });
+      }
     }
 
     // YUK-143 / ADR-0024 — retracting a goal_scope proposal tombstones the

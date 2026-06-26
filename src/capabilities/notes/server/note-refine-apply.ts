@@ -326,7 +326,14 @@ export async function undoNoteRefineApplyEvent(
 
   return db.transaction(async (tx) => {
     const targetRows = await tx
-      .select({ id: artifact.id, version: artifact.version, archived_at: artifact.archived_at })
+      .select({
+        id: artifact.id,
+        version: artifact.version,
+        archived_at: artifact.archived_at,
+        // W3-C1γ — the undo does NOT touch `history`; carry the row's CURRENT history on the
+        // self-sufficient undo event so the fold reproduces the column (history_after below).
+        history: artifact.history,
+      })
       .from(artifact)
       .where(eq(artifact.id, artifactId))
       .limit(1);
@@ -373,6 +380,15 @@ export async function undoNoteRefineApplyEvent(
         restored_from_artifact_version: target.version,
         restored_to_artifact_version: nextVersion,
         source_previous_artifact_version: payload.previous_artifact_version ?? null,
+        // W3-C1γ — the SELF-SUFFICIENT fold fields (NoteRefineUndoExperimental). The undo restored
+        // body_blocks = the apply event's previous_body_blocks, bumped version to nextVersion, and left
+        // `history` UNCHANGED — so foldArtifact reproduces the restore VERBATIM from these (no replay).
+        // The action is reserved (parseEvent fail-loud on the envelope); a malformed restored body
+        // rolls back this whole undo tx (rollback-safe). These three fields are OPTIONAL in the schema
+        // for read-path back-compat with pre-C1γ loose undo events, but the writer ALWAYS emits them.
+        body_blocks: payload.previous_body_blocks,
+        next_artifact_version: nextVersion,
+        history_after: target.history,
       },
       caused_by_event_id: params.applyEventId,
       created_at: now,

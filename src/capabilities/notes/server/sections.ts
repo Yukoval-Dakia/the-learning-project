@@ -6,10 +6,15 @@ import {
   bodyBlocksToNoteSections,
   replaceNoteSectionBody,
 } from '@/capabilities/notes/server/body-blocks';
-import { ArtifactBodyBlocks, type NoteSection } from '@/core/schema/business';
+import {
+  ArtifactBodyBlocks,
+  type ArtifactBodyBlocksT,
+  type ArtifactHistoryEntryT,
+  type NoteSection,
+} from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
+import { emitArtifactBodyBlocksEditEvent } from '@/server/artifacts/mutation-events';
 import { ApiError } from '@/server/http/errors';
 
 type NoteSectionT = z.infer<typeof NoteSection>;
@@ -130,14 +135,19 @@ export async function editArtifactSection(
       ...payload,
     });
 
+    // W3-C1γ — the AFTER body, computed ONCE so the UPDATE and the fold event carry the identical
+    // snapshot (design §5.2 routes section edits through body_blocks_edit — there is NO separate
+    // artifact_section_edit reducer branch; a section edit IS a full-body replace from the fold's POV).
+    const afterBody = replaceNoteSectionBody(
+      row.body_blocks,
+      params.sectionId,
+      params.nextBodyMd,
+    ) as ArtifactBodyBlocksT;
+
     const updated = await tx
       .update(artifact)
       .set({
-        body_blocks: replaceNoteSectionBody(
-          row.body_blocks,
-          params.sectionId,
-          params.nextBodyMd,
-        ) as never,
+        body_blocks: afterBody as never,
         history: history as never,
         updated_at: now,
         version: nextArtifactVersion,
@@ -153,20 +163,24 @@ export async function editArtifactSection(
       throw new ApiError('conflict', `artifact ${params.artifactId} concurrently modified`, 409);
     }
 
-    await writeEvent(tx, {
-      id: eventId,
-      session_id: null,
-      actor_kind: 'user',
-      actor_ref: actorRef,
-      action: 'experimental:artifact_section_edit',
-      subject_kind: 'artifact',
-      subject_id: params.artifactId,
-      outcome: 'success',
-      payload,
-      caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: now,
+    // W3-C1γ — MIGRATE the deltas-only `experimental:artifact_section_edit` onto the self-sufficient
+    // `experimental:body_blocks_edit` carrying the full AFTER body (design §5.2). Same tx — a malformed
+    // payload rolls back the paired UPDATE (parseEvent barrier). event id stays = eventId (pinned in
+    // the history entry). optOutMemoryIngestion:false byte-preserves the prior section-edit outbox
+    // behaviour (a section edit IS a user activity). The section delta `payload` survives on the
+    // history entry above (so the timeline still renders the per-section diff).
+    await emitArtifactBodyBlocksEditEvent(tx, {
+      subjectId: params.artifactId,
+      eventId,
+      previousArtifactVersion: row.version,
+      nextArtifactVersion,
+      bodyBlocks: afterBody,
+      previousBodyBlocks: (row.body_blocks ?? null) as ArtifactBodyBlocksT | null,
+      historyAfter: history as ArtifactHistoryEntryT[],
+      actorKind: 'user',
+      actorRef,
+      createdAt: now,
+      optOutMemoryIngestion: false,
     });
 
     return {

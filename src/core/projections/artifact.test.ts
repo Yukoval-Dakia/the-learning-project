@@ -158,6 +158,46 @@ function lifecycle(opts: {
   };
 }
 
+// experimental:note_refine_undo — the W3-C1γ self-sufficient body RESTORE event. Carries the
+// restored body + next version + after-history (the live undo leaves history unchanged). Omit
+// `bodyBlocks` to simulate a LEGACY loose undo (bookkeeping only) — the reducer must skip it.
+function noteUndo(opts: {
+  id?: string;
+  created_at: Date;
+  artifactId: string;
+  undoneEventId?: string;
+  bodyBlocks?: ArtifactBodyBlocksT;
+  nextVersion?: number;
+  fromVersion?: number;
+  historyAfter?: ArtifactRowSnapshotT['history'];
+}): FoldEvent {
+  const fromVersion = opts.fromVersion ?? (opts.nextVersion ?? 1) - 1;
+  const payload: Record<string, unknown> = {
+    artifact_id: opts.artifactId,
+    undone_event_id: opts.undoneEventId ?? 'apply_evt',
+    restored_from_artifact_version: fromVersion,
+    restored_to_artifact_version: opts.nextVersion ?? fromVersion + 1,
+    source_previous_artifact_version: null,
+  };
+  if (opts.bodyBlocks !== undefined) {
+    payload.body_blocks = opts.bodyBlocks;
+    payload.next_artifact_version = opts.nextVersion ?? fromVersion + 1;
+    payload.history_after = opts.historyAfter ?? [];
+  }
+  return {
+    id: opts.id ?? nextId('undo'),
+    created_at: opts.created_at,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:note_refine_undo',
+    subject_kind: 'artifact',
+    subject_id: opts.artifactId,
+    outcome: 'success',
+    caused_by_event_id: opts.undoneEventId ?? 'apply_evt',
+    payload,
+  };
+}
+
 // experimental:note_refine_apply — the pre-existing LOOSE self-sufficient AI patch event.
 function noteRefine(opts: {
   id?: string;
@@ -420,6 +460,145 @@ describe('foldArtifact — note_refine_apply op-replay (FOLD-ONLY, B4 铁律)', 
     // unchanged base — the throw is swallowed (warn+skip), version NOT bumped.
     expect(row?.body_blocks).toEqual(baseBody);
     expect(row?.version).toBe(3);
+  });
+});
+
+describe('foldArtifact — lifecycle set_attrs + provenance/history (W3-C1γ)', () => {
+  it('set_attrs replaces the attrs jsonb wholesale, version unchanged (hub-dismiss style)', () => {
+    const snap = artifactSnapshot({ attrs: { existing: true }, version: 3 });
+    const nextAttrs = { suppressed_block_refs: [{ artifact_id: 'art_x' }] };
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        nextVersion: 3, // hub-dismiss attrs update does NOT bump version
+        payload: { op: 'set_attrs', attrs: nextAttrs },
+      }),
+    ]);
+    expect(row?.attrs).toEqual(nextAttrs);
+    expect(row?.version).toBe(3);
+    expect(row?.updated_at.getTime()).toBe(at(1000).getTime());
+  });
+
+  it('set_attrs carries history_after + bumps version (updateArtifactTool style)', () => {
+    const snap = artifactSnapshot({ attrs: { format: 'html', html: '<p>v0</p>' }, version: 0 });
+    const nextAttrs = { format: 'html', html: '<p>v1</p>' };
+    const historyAfter = [{ version: 1, at: at(2000), summary_md: 'Updated interactive HTML' }];
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(2000),
+        artifactId: 'art_1',
+        nextVersion: 1,
+        payload: { op: 'set_attrs', attrs: nextAttrs, history_after: historyAfter },
+      }),
+    ]);
+    expect(row?.attrs).toEqual(nextAttrs);
+    expect(row?.version).toBe(1);
+    expect(row?.history).toEqual(historyAfter);
+  });
+
+  it('set_generation_status carries verification_status + generated_by alongside (note_generate)', () => {
+    const snap = artifactSnapshot({
+      generation_status: 'pending',
+      verification_status: 'not_required',
+      generated_by: null,
+      version: 0,
+    });
+    const generatedBy = { by: 'ai', task_kind: 'NoteGenerateTask', task_run_id: 'run_1' };
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        nextVersion: 1,
+        payload: {
+          op: 'set_generation_status',
+          generation_status: 'ready',
+          verification_status: 'queued',
+          generated_by: generatedBy,
+        },
+      }),
+    ]);
+    expect(row?.generation_status).toBe('ready');
+    expect(row?.verification_status).toBe('queued');
+    expect(row?.generated_by).toEqual(generatedBy);
+    expect(row?.version).toBe(1);
+  });
+
+  it('set_verification_status carries summary + verified_by, version UNCHANGED (note_verify)', () => {
+    const snap = artifactSnapshot({
+      verification_status: 'queued',
+      verification_summary: null,
+      verified_by: null,
+      version: 1,
+    });
+    const verifiedBy = { by: 'ai', task_kind: 'NoteVerifyTask' };
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        nextVersion: 1, // note_verify does NOT bump version
+        payload: {
+          op: 'set_verification_status',
+          verification_status: 'verified',
+          verification_summary: verifyResult,
+          verified_by: verifiedBy,
+        },
+      }),
+    ]);
+    expect(row?.verification_status).toBe('verified');
+    expect(row?.verification_summary).toEqual(verifyResult);
+    expect(row?.verified_by).toEqual(verifiedBy);
+    expect(row?.version).toBe(1);
+  });
+});
+
+describe('foldArtifact — note_refine_undo (self-sufficient body RESTORE, W3-C1γ)', () => {
+  it('restores prior body_blocks + version + after-history from the carried snapshot', () => {
+    const baseBody = doc(block('a', 'A'));
+    const editedBody = doc(block('a', 'A'), block('b', 'B'));
+    const snap = artifactSnapshot({ body_blocks: baseBody, version: 0, history: [] });
+    const historyAfterEdit = [{ version: 1, at: at(1000), summary_md: 'apply' }];
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      // an apply landed the edited body at v1 (model with note_refine_apply op-replay).
+      noteRefine({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        ops: [{ kind: 'append_block', block: block('b', 'B') }],
+        previousBody: baseBody,
+        nextVersion: 1,
+      }),
+      // the undo RESTORES the prior body at v2, history carried unchanged (the live undo doesn't push).
+      noteUndo({
+        created_at: at(2000),
+        artifactId: 'art_1',
+        bodyBlocks: baseBody,
+        fromVersion: 1,
+        nextVersion: 2,
+        historyAfter: historyAfterEdit,
+      }),
+    ]);
+    expect(row?.body_blocks).toEqual(baseBody);
+    expect(row?.version).toBe(2);
+    expect(row?.history).toEqual(historyAfterEdit);
+    expect(row?.updated_at.getTime()).toBe(at(2000).getTime());
+    // confirm the edited block is gone (restore is a full body replace, not a merge).
+    expect(row?.body_blocks).not.toEqual(editedBody);
+  });
+
+  it('a LEGACY loose undo (no carried body) is skipped — base body/version untouched', () => {
+    const baseBody = doc(block('a', 'A'));
+    const snap = artifactSnapshot({ body_blocks: baseBody, version: 5 });
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      noteUndo({ created_at: at(1000), artifactId: 'art_1' }), // no bodyBlocks → legacy shape
+    ]);
+    expect(row?.body_blocks).toEqual(baseBody);
+    expect(row?.version).toBe(5); // untouched (legacy undo folds to a no-op)
   });
 });
 

@@ -145,10 +145,12 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
       source_tier: 'user_verified',
     });
 
+    // W3-C1γ — section edits MIGRATED onto experimental:body_blocks_edit (design §5.2 routes section
+    // edits through the full-body event; there is no longer a separate artifact_section_edit action).
     const events = await testDb()
       .select()
       .from(event)
-      .where(eq(event.action, 'experimental:artifact_section_edit'));
+      .where(eq(event.action, 'experimental:body_blocks_edit'));
     expect(events).toHaveLength(1);
   });
 

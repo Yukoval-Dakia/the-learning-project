@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { ArtifactBodyBlocks, ArtifactHistoryEntry, NoteVerificationResult } from '../business';
+import {
+  AgentRef,
+  ArtifactBodyBlocks,
+  ArtifactHistoryEntry,
+  NoteVerificationResult,
+} from '../business';
 import { ArtifactRowSnapshot } from './genesis';
 
 // ====================================================================
@@ -138,18 +143,30 @@ export const ArtifactCreateExperimental = z
   });
 export type ArtifactCreateExperimentalT = z.infer<typeof ArtifactCreateExperimental>;
 
-// ── #4 experimental:artifact_lifecycle (archive / unarchive / status transitions) ──
+// ── #4 experimental:artifact_lifecycle (archive / unarchive / status / attrs transitions) ──
 //
 // design §3 #4 [P1]. Drives `archived_at` / `generation_status` / `verification_status` /
-// `verification_summary` / `version`. F1: this is the event that finally makes the currently-
-// UNTRACKED mutations fold-visible — note_generate's generation_status='ready'/'failed'
-// (note_generate.ts:209/241), note_verify's verification_status + verification_summary
-// (note_verify.ts:161/339), and the retract archive (actions.ts:1275, the B2/C5 cross-wave
-// coupling). Mirrors W2's GoalStatusUpdateExperimental + LearningItemArchiveExperimental.
+// `verification_summary` / `attrs` / `generated_by` / `verified_by` / `history` / `version`. F1:
+// this is the event that finally makes the currently-UNTRACKED mutations fold-visible —
+// note_generate's generation_status (+ verification_status='queued' + generated_by), note_verify's
+// verification_status + verification_summary (+ verified_by), the retract archive (actions.ts, the
+// B2/C5 cross-wave coupling), AND the two attrs mutators (W3-C1γ `set_attrs`: updateArtifactTool's
+// interactive html + hub-dismiss's suppressed_block_refs). Mirrors W2's GoalStatusUpdateExperimental
+// + LearningItemArchiveExperimental.
 //
-// `.strict()` payload so a stray key fails loud. The superRefine enforces the op→field coupling so
-// a `set_generation_status` that forgot to carry the new status (which the reducer would otherwise
-// fold as `undefined`, corrupting the column) is rejected at the barrier (honest-reject, §10 B5).
+// W3-C1γ FULL-ROW PARITY (design §2.1 "无排除列"): the artifact snapshot has NO excluded columns, so
+// a lifecycle write that ALSO touches a provenance column (note_generate → generated_by, note_verify
+// → verified_by) or a history-pushing one (updateArtifactTool → history) must carry that column too,
+// else the W3-C3 full-row parity false-fails it. So this payload is a SUPERSET of the design's
+// narrow op fields: `attrs` (set_attrs), `generated_by`/`verified_by` (provenance alongside a status
+// op), `history_after` (an attrs op that also pushes a history entry). All optional/presence-based —
+// a writer carries EXACTLY the columns its UPDATE touched; the reducer applies whatever is carried.
+//
+// `.strict()` payload so a stray key fails loud. The superRefine enforces the op→required-field
+// coupling so a `set_generation_status`/`set_verification_status`/`archive`/`unarchive`/`set_attrs`
+// that forgot its mandatory target value (which the reducer would otherwise fold as `undefined`,
+// corrupting the column) is rejected at the barrier (honest-reject, §10 B5). The optional provenance/
+// history fields have NO required coupling — they ride alongside whichever op the writer chose.
 export const ArtifactLifecycleExperimental = z
   .object({
     actor_kind: z.enum(['user', 'agent', 'system']),
@@ -160,13 +177,30 @@ export const ArtifactLifecycleExperimental = z
     outcome: z.literal('success').nullable().optional(),
     payload: z
       .object({
-        op: z.enum(['archive', 'unarchive', 'set_generation_status', 'set_verification_status']),
+        op: z.enum([
+          'archive',
+          'unarchive',
+          'set_generation_status',
+          'set_verification_status',
+          // W3-C1γ — `artifact.attrs` mutators (updateArtifactTool html / hub-dismiss suppress).
+          // attrs is a fold-truth jsonb column; the reducer replaces it wholesale (last-write-wins).
+          'set_attrs',
+        ]),
         // archive sets a timestamp; unarchive sets null. Optional/nullable so a status-only op omits it.
         archived_at: z.coerce.date().nullable().optional(),
         // free text columns on the table (NOT pgEnums) — generation_status / verification_status.
         generation_status: z.string().optional(),
         verification_status: z.string().optional(),
         verification_summary: NoteVerificationResult.nullable().optional(),
+        // W3-C1γ — the full new `attrs` jsonb (set_attrs op). Required-when-set_attrs via superRefine.
+        attrs: z.record(z.string(), z.unknown()).optional(),
+        // W3-C1γ — provenance columns a status write co-mutates (note_generate→generated_by,
+        // note_verify→verified_by). Carried alongside the status op so full-row parity holds.
+        generated_by: AgentRef.nullable().optional(),
+        verified_by: AgentRef.nullable().optional(),
+        // W3-C1γ — full after-history when the UPDATE pushed a history entry (updateArtifactTool).
+        // Absent ⇒ the writer left `history` untouched (the reducer keeps the running value).
+        history_after: z.array(ArtifactHistoryEntry).optional(),
         next_version: z.number().int().nonnegative(),
       })
       .strict(),
@@ -218,5 +252,86 @@ export const ArtifactLifecycleExperimental = z
         path: ['payload', 'archived_at'],
       });
     }
+    // W3-C1γ — set_attrs MUST carry the new `attrs` object (the fold trusts it as ground truth; a
+    // set_attrs that fold an `undefined` over the notNull jsonb column would corrupt it).
+    if (data.payload.op === 'set_attrs' && data.payload.attrs === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "attrs (the full new attrs object) is required when op='set_attrs'",
+        path: ['payload', 'attrs'],
+      });
+    }
   });
 export type ArtifactLifecycleExperimentalT = z.infer<typeof ArtifactLifecycleExperimental>;
+
+// ── #4b experimental:note_refine_undo (self-sufficient body RESTORE) ───────────────────────────────
+//
+// W3-C1γ. The live undo (undoNoteRefineApplyEvent, note-refine-apply.ts) restores a PRIOR body —
+// it UPDATEs body_blocks = the apply event's `previous_body_blocks`, version = +1, updated_at = now
+// (it does NOT touch `history`). The pre-existing undo event carried only bookkeeping (undone_event_id
+// + version pointers), so the fold could not reproduce the restored body. This self-sufficient form
+// CARRIES the restored body_blocks + next_artifact_version + after-history so foldArtifact reproduces
+// the restore VERBATIM (full-snapshot rule, mirrors body_blocks_edit — NO op-replay, the restore is a
+// last-write-wins body replace). Also backs ADR-0040 §1 "unified undo = the fold auto-restores".
+//
+// BACK-COMPAT (deliberate, ≠ A1's body_blocks_edit rename): the existing writer ALREADY emits
+// `experimental:note_refine_undo`, so — unlike A1 which picked a NEW action name (body_blocks_edit)
+// leaving old `artifact_body_blocks_edit` events on a DIFFERENT, unreserved action — here the action
+// name is REUSED. Reserving it (below) makes the parseEvent barrier fail-loud on the ENVELOPE for
+// every undo event; but `getEvents`/`getEventById` STRICT-parse historical rows on READ (queries.ts:
+// 800) and would THROW on a pre-C1γ loose undo event (which lacks the fold fields) if those fields
+// were required. So the three fold fields are OPTIONAL: an old loose undo event (bookkeeping only)
+// STILL validates here (no read-path throw), while the migrated writer ALWAYS emits them so every NEW
+// undo is self-sufficient. The reducer folds the restore ONLY when body_blocks is carried; a legacy
+// undo (no body) sits on a pre-W3 artifact (no create/genesis anchor → fold-null) so skipping it is
+// harmless. `.strict()` still rejects any UNDECLARED key.
+export const NoteRefineUndoExperimental = z
+  .object({
+    actor_kind: z.enum(['user', 'agent', 'system']),
+    actor_ref: z.string().min(1),
+    action: z.literal('experimental:note_refine_undo'),
+    subject_kind: z.literal('artifact'),
+    subject_id: z.string().min(1), // = artifact.id
+    outcome: z.literal('success').nullable().optional(),
+    payload: z
+      .object({
+        // ── existing bookkeeping (kept verbatim — listNoteRefineChanges + the already-undone guard
+        //    read undone_event_id off the raw payload, NOT via parseEvent). ──
+        artifact_id: z.string().min(1),
+        undone_event_id: z.string().min(1),
+        restored_from_artifact_version: z.number().int().nonnegative(),
+        restored_to_artifact_version: z.number().int().nonnegative(),
+        source_previous_artifact_version: z.number().int().nullable().optional(),
+        // ── W3-C1γ self-sufficient fold fields (optional for read-path back-compat; the migrated
+        //    writer always emits them). ──
+        // The RESTORED body (= the apply event's previous_body_blocks). nullable: an apply over a
+        // null base could restore null — but the undo writer rejects a null previous_body_blocks, so
+        // in practice this is a real doc.
+        body_blocks: ArtifactBodyBlocks.nullable().optional(),
+        // = restored_to_artifact_version (the version the undo UPDATE stamped). Folded VERBATIM.
+        next_artifact_version: z.number().int().nonnegative().optional(),
+        // Full after-history. The undo leaves history UNCHANGED, so this is the row's CURRENT history
+        // (carried so the fold reproduces the `history` column rather than guessing).
+        history_after: z.array(ArtifactHistoryEntry).optional(),
+      })
+      .strict(),
+    caused_by_event_id: z.string().optional(),
+    task_run_id: z.string().optional(),
+    cost_micro_usd: z.number().int().optional(),
+  })
+  .superRefine((data, ctx) => {
+    // If the self-sufficient body is carried, next_artifact_version MUST accompany it (the reducer
+    // needs both to reproduce the restore — a half-carried payload would fold an undefined version).
+    if (
+      data.payload.body_blocks !== undefined &&
+      data.payload.next_artifact_version === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'next_artifact_version is required when body_blocks (the restored body) is carried',
+        path: ['payload', 'next_artifact_version'],
+      });
+    }
+  });
+export type NoteRefineUndoExperimentalT = z.infer<typeof NoteRefineUndoExperimental>;

@@ -108,25 +108,34 @@ describe('editArtifactSection', () => {
       event_id: 'evt_section_edit_1',
     });
 
+    // W3-C1γ — section edits now MIGRATE onto the self-sufficient experimental:body_blocks_edit
+    // (design §5.2: NO separate artifact_section_edit reducer branch — a section edit IS a full-body
+    // replace). The event carries the AFTER body_blocks + previous + history_after + version (NOT the
+    // section deltas — those survive on the artifact.history entry above for the timeline view).
     const events = await testDb().select().from(event).where(eq(event.id, 'evt_section_edit_1'));
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       actor_kind: 'user',
       actor_ref: 'test-user',
-      action: 'experimental:artifact_section_edit',
+      action: 'experimental:body_blocks_edit',
       subject_kind: 'artifact',
       subject_id: 'a1',
       outcome: 'success',
     });
-    expect(events[0].payload).toMatchObject({
-      artifact_id: 'a1',
-      block_id: 's1',
-      block_index: 0,
-      previous_body_md: '旧定义',
-      next_body_md: '新定义 **重点**',
-      previous_version: 1,
-      next_version: 2,
-    });
+    const sectionEditPayload = events[0].payload as {
+      previous_artifact_version: number;
+      next_artifact_version: number;
+      body_blocks: { type?: string };
+      previous_body_blocks: { type?: string } | null;
+      history_after: unknown[];
+    };
+    expect(sectionEditPayload.previous_artifact_version).toBe(0);
+    expect(sectionEditPayload.next_artifact_version).toBe(1);
+    // The AFTER body is the full doc snapshot (last-write-wins), not a delta.
+    expect(sectionEditPayload.body_blocks.type).toBe('doc');
+    expect(sectionEditPayload.previous_body_blocks?.type).toBe('doc');
+    // history_after reproduces the after-history (so the `history` column parity holds).
+    expect(sectionEditPayload.history_after.length).toBeGreaterThanOrEqual(1);
   });
 
   it('rejects stale artifact version without changing sections or writing an event', async () => {
