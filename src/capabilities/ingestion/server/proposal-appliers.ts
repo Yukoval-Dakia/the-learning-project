@@ -105,6 +105,9 @@ export async function acceptBlockMergeProposal(
   // Step 1 — run the merge in its own self-tx (cannot nest in the rate-event tx).
   const merge = await mergeQuestions(db, {
     actorRef: 'proposal:accept',
+    // YUK-471 W3-C1δ — accepting a block-merge proposal is a USER action (mirrors the rate event's
+    // actor_kind:'user' below), so the canonical edit event is attributed to the user, not the agent.
+    actorKind: 'user',
     primaryBlockId,
     mergeBlockIds,
   });
