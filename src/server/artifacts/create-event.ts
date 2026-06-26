@@ -19,11 +19,12 @@
 
 import { newId } from '@/core/ids';
 import type { ArtifactRowSnapshotT } from '@/core/schema/event/genesis';
-import type { Db, Tx } from '@/db/client';
+import type { Tx } from '@/db/client';
 import type { artifact } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 
-type DbLike = Db | Tx;
+// Tx (not Db|Tx): the create event MUST run on the caller's transaction so a parseEvent throw rolls
+// back the paired INSERT. Narrowing to Tx type-enforces the atomic double-write at every call site.
 type ArtifactRow = typeof artifact.$inferSelect;
 
 /**
@@ -87,7 +88,7 @@ export interface EmitArtifactCreateParams {
  * seams which also stamp ingest_at).
  */
 export async function emitArtifactCreateEvent(
-  tx: DbLike,
+  tx: Tx,
   p: EmitArtifactCreateParams,
 ): Promise<string> {
   const id = newId();

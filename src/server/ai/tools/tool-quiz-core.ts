@@ -13,7 +13,7 @@
 // behavior is byte-identical to its pre-extraction INSERT.
 
 import { type AgentRef, ToolState } from '@/core/schema/business';
-import type { Db, Tx } from '@/db/client';
+import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 import {
   artifactRowToCreateSnapshot,
@@ -21,7 +21,6 @@ import {
 } from '@/server/artifacts/create-event';
 import type { z } from 'zod';
 
-type DbLike = Db | Tx;
 type AgentRefT = z.infer<typeof AgentRef>;
 
 export interface ToolQuizArtifactParams {
@@ -60,10 +59,7 @@ export interface ToolQuizArtifactParams {
  * the INSERT + event are atomic; build the snapshot from the RETURNING row so all 22 columns are
  * materialized (rollback-safe — parseEvent throws on a bad snapshot, rolling back the paired INSERT).
  */
-export async function writeToolQuizArtifact(
-  dbOrTx: DbLike,
-  p: ToolQuizArtifactParams,
-): Promise<void> {
+export async function writeToolQuizArtifact(dbOrTx: Tx, p: ToolQuizArtifactParams): Promise<void> {
   const toolState = ToolState.parse(p.toolState);
   const [insertedArtifact] = await dbOrTx
     .insert(artifact)

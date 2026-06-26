@@ -922,7 +922,9 @@ export async function acceptLearningIntent(
       caused_by_event_id: proposalId,
       task_run_id: proposalTaskRunId ?? null,
       cost_micro_usd: proposalCostMicroUsd ?? null,
-      created_at: new Date(),
+      // single-clock: the RATE parent shares `now` with its artifact_create children so the
+      // caused_by chain never inverts under created_at ordering (CodeRabbit).
+      created_at: now,
     });
 
     return {
