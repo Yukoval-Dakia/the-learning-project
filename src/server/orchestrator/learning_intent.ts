@@ -23,6 +23,10 @@ import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import {
+  artifactRowToCreateSnapshot,
+  emitArtifactCreateEvent,
+} from '@/server/artifacts/create-event';
 import { writeEvent } from '@/server/events/queries';
 // YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
 // event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
@@ -588,6 +592,10 @@ export async function acceptLearningIntent(
     longs = [],
   } = proposal.payload;
   const now = new Date();
+  // YUK-471 W3-C1β — mint the RATE event id up-front so the 3 same-tx artifact_create events can
+  // chain caused_by to it (the accept is what materializes these artifacts). caused_by has no FK
+  // (events/queries.ts), so emitting the create events BEFORE the rate row exists in the tx is safe.
+  const rateEventId = newId();
 
   return db.transaction(async (tx) => {
     const createdKnowledgeIds: string[] = [];
@@ -784,91 +792,125 @@ export async function acceptLearningIntent(
     }
 
     // Hub artifact (synchronous summary; no async generation needed)
-    await tx.insert(artifact).values({
-      id: hubArtifactId,
-      type: 'note_hub',
-      title: hub.title,
-      parent_artifact_id: null,
-      knowledge_ids: [rootKnowledgeId],
-      intent_source: 'learning_intent',
-      source: 'ai_generated',
-      source_ref: proposalId,
-      body_blocks: summaryBodyBlocks(`${hubArtifactId}_summary`, hub.summary_md) as never,
-      attrs: {
-        topic,
-        summary_md: hub.summary_md,
-        linked_artifact_ids: [...atomicArtifactIds, ...longArtifactIds],
-        atomic_artifact_ids: atomicArtifactIds,
-        long_artifact_ids: longArtifactIds,
-      } as never,
-      tool_kind: null,
-      tool_state: null,
-      generation_status: 'ready', // hub is outline-only; ready immediately
-      generated_by: {
-        ...aiAgentRef('LearningIntentOutlineTask', {
-          text: '',
-          ...(proposalTaskRunId ? { task_run_id: proposalTaskRunId } : {}),
-        }),
-      } as never,
-      history: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
+    // YUK-471 W3-C1β — INSERT … RETURNING + same-tx artifact_create chained to the RATE (accept).
+    const [insertedHubArtifact] = await tx
+      .insert(artifact)
+      .values({
+        id: hubArtifactId,
+        type: 'note_hub',
+        title: hub.title,
+        parent_artifact_id: null,
+        knowledge_ids: [rootKnowledgeId],
+        intent_source: 'learning_intent',
+        source: 'ai_generated',
+        source_ref: proposalId,
+        body_blocks: summaryBodyBlocks(`${hubArtifactId}_summary`, hub.summary_md) as never,
+        attrs: {
+          topic,
+          summary_md: hub.summary_md,
+          linked_artifact_ids: [...atomicArtifactIds, ...longArtifactIds],
+          atomic_artifact_ids: atomicArtifactIds,
+          long_artifact_ids: longArtifactIds,
+        } as never,
+        tool_kind: null,
+        tool_state: null,
+        generation_status: 'ready', // hub is outline-only; ready immediately
+        generated_by: {
+          ...aiAgentRef('LearningIntentOutlineTask', {
+            text: '',
+            ...(proposalTaskRunId ? { task_run_id: proposalTaskRunId } : {}),
+          }),
+        } as never,
+        history: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })
+      .returning();
+    await emitArtifactCreateEvent(tx, {
+      row: artifactRowToCreateSnapshot(insertedHubArtifact),
+      actorKind: 'agent',
+      actorRef: 'learning_intent',
+      causedByEventId: rateEventId,
+      taskRunId: proposalTaskRunId ?? null,
+      createdAt: now,
     });
 
     // Atomic artifact stubs (pending; worker fills sections)
     for (let i = 0; i < resolvedAtomics.length; i++) {
       const atomicNode = resolvedAtomics[i];
-      await tx.insert(artifact).values({
-        id: atomicArtifactIds[i],
-        type: 'note_atomic',
-        title: atomicNode.title,
-        parent_artifact_id: hubArtifactId,
-        knowledge_ids: [atomicNode.knowledge_id],
-        intent_source: 'learning_intent',
-        source: 'ai_generated',
-        source_ref: proposalId,
-        body_blocks: null,
-        attrs: { one_line_intent: atomicNode.one_line_intent } as never,
-        tool_kind: null,
-        tool_state: null,
-        generation_status: 'pending',
-        generated_by: null,
-        history: [],
-        created_at: now,
-        updated_at: now,
-        version: 0,
+      const [insertedAtomicArtifact] = await tx
+        .insert(artifact)
+        .values({
+          id: atomicArtifactIds[i],
+          type: 'note_atomic',
+          title: atomicNode.title,
+          parent_artifact_id: hubArtifactId,
+          knowledge_ids: [atomicNode.knowledge_id],
+          intent_source: 'learning_intent',
+          source: 'ai_generated',
+          source_ref: proposalId,
+          body_blocks: null,
+          attrs: { one_line_intent: atomicNode.one_line_intent } as never,
+          tool_kind: null,
+          tool_state: null,
+          generation_status: 'pending',
+          generated_by: null,
+          history: [],
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        })
+        .returning();
+      await emitArtifactCreateEvent(tx, {
+        row: artifactRowToCreateSnapshot(insertedAtomicArtifact),
+        actorKind: 'agent',
+        actorRef: 'learning_intent',
+        causedByEventId: rateEventId,
+        taskRunId: proposalTaskRunId ?? null,
+        createdAt: now,
       });
     }
 
     // Long artifact stubs (pending; worker fills body_blocks with free-form rich notes)
     for (let i = 0; i < resolvedLongs.length; i++) {
       const longNode = resolvedLongs[i];
-      await tx.insert(artifact).values({
-        id: longArtifactIds[i],
-        type: 'note_long',
-        title: longNode.title,
-        parent_artifact_id: hubArtifactId,
-        knowledge_ids: longNode.knowledge_ids,
-        intent_source: 'learning_intent',
-        source: 'ai_generated',
-        source_ref: proposalId,
-        body_blocks: null,
-        attrs: { one_line_intent: longNode.one_line_intent } as never,
-        tool_kind: null,
-        tool_state: null,
-        generation_status: 'pending',
-        generated_by: null,
-        history: [],
-        created_at: now,
-        updated_at: now,
-        version: 0,
+      const [insertedLongArtifact] = await tx
+        .insert(artifact)
+        .values({
+          id: longArtifactIds[i],
+          type: 'note_long',
+          title: longNode.title,
+          parent_artifact_id: hubArtifactId,
+          knowledge_ids: longNode.knowledge_ids,
+          intent_source: 'learning_intent',
+          source: 'ai_generated',
+          source_ref: proposalId,
+          body_blocks: null,
+          attrs: { one_line_intent: longNode.one_line_intent } as never,
+          tool_kind: null,
+          tool_state: null,
+          generation_status: 'pending',
+          generated_by: null,
+          history: [],
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        })
+        .returning();
+      await emitArtifactCreateEvent(tx, {
+        row: artifactRowToCreateSnapshot(insertedLongArtifact),
+        actorKind: 'agent',
+        actorRef: 'learning_intent',
+        causedByEventId: rateEventId,
+        taskRunId: proposalTaskRunId ?? null,
+        createdAt: now,
       });
     }
 
     // Rate event: marks proposal accepted, chains via caused_by_event_id
     await writeEvent(tx, {
-      id: newId(),
+      id: rateEventId,
       session_id: null,
       actor_kind: 'user',
       actor_ref: 'self',
@@ -880,7 +922,9 @@ export async function acceptLearningIntent(
       caused_by_event_id: proposalId,
       task_run_id: proposalTaskRunId ?? null,
       cost_micro_usd: proposalCostMicroUsd ?? null,
-      created_at: new Date(),
+      // single-clock: the RATE parent shares `now` with its artifact_create children so the
+      // caused_by chain never inverts under created_at ordering (CodeRabbit).
+      created_at: now,
     });
 
     return {

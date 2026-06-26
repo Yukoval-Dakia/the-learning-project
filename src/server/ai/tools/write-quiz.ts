@@ -139,6 +139,8 @@ async function executeWriteQuiz(
       },
       attrs: { origin: 'copilot_write_quiz' },
       sourceRef: null,
+      // YUK-471 W3-C1β — chain the same-tx artifact_create to the copilot turn's causing event.
+      causedByEventId: ctx.causedByEventId ?? null,
       now,
     });
   });
