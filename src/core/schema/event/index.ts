@@ -19,6 +19,10 @@ import {
   LearningItemRelearnExperimental,
 } from './learning-item-events';
 import { MistakeVariantCreateExperimental } from './mistake-variant-events';
+import {
+  EditQuestionBlockStructuredExperimental,
+  QuestionBlockCreateExperimental,
+} from './question-block-events';
 import { StateSnapshotExperimental } from './state-snapshot';
 
 export * from './blocks';
@@ -30,6 +34,7 @@ export * from './goal-events';
 export * from './learning-item-events';
 export * from './mistake-variant-events';
 export * from './artifact-events';
+export * from './question-block-events';
 
 // ====================================================================
 // Event — 顶层 union
@@ -53,7 +58,10 @@ export * from './artifact-events';
 //      （YUK-471 W2：使 complete/relearn/archive fold-visible via Q1，./learning-item-events.ts）
 //  10. BodyBlocksEdit/ArtifactCreate/ArtifactLifecycleExperimental — artifact 动作事件特化
 //      （YUK-471 W3-A1：使 body 编辑 / 运行时新建 / 生命周期变更 fold-visible，./artifact-events.ts）
-//  11. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
+//  11. EditQuestionBlockStructured/QuestionBlockCreateExperimental — question_block 动作事件特化
+//      （YUK-471 W3-A2：使 structured 编辑（merge 多行 after）/ 运行时新建 fold-visible，
+//       ./question-block-events.ts）
+//  12. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
 // payload (任意 record) 会先 match 走，结构信息丢失。
@@ -74,6 +82,8 @@ export const Event = z.union([
   BodyBlocksEditExperimental,
   ArtifactCreateExperimental,
   ArtifactLifecycleExperimental,
+  EditQuestionBlockStructuredExperimental,
+  QuestionBlockCreateExperimental,
   ExperimentalEvent,
 ]);
 export type EventT = z.infer<typeof Event>;
