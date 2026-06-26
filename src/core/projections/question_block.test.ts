@@ -697,3 +697,191 @@ describe('foldQuestionBlock — W3-C3 interleave convergence + version monotonic
     expect(row?.structured).toEqual(node('qb_i', 'v3'));
   });
 });
+
+// experimental:question_block_lifecycle — the 5 formerly-eventless fold-truth mutators (W3-D).
+// PRESENCE-BASED: only the carried columns apply. subject_id === blockId (no merged_source aggregation).
+function lifecycle(opts: {
+  id?: string;
+  created_at: Date;
+  blockId: string;
+  op: 'reassign_figures' | 'set_status';
+  figures?: FigureRefT[];
+  status?: string;
+  imported_question_id?: string | null;
+  imported_attempt_event_id?: string | null;
+  next_version: number;
+}): FoldEvent {
+  const payload: Record<string, unknown> = { op: opts.op, next_version: opts.next_version };
+  if (opts.figures !== undefined) payload.figures = opts.figures;
+  if (opts.status !== undefined) payload.status = opts.status;
+  if (opts.imported_question_id !== undefined) {
+    payload.imported_question_id = opts.imported_question_id;
+  }
+  if (opts.imported_attempt_event_id !== undefined) {
+    payload.imported_attempt_event_id = opts.imported_attempt_event_id;
+  }
+  return {
+    id: opts.id ?? nextId('lifecycle'),
+    created_at: opts.created_at,
+    actor_kind: 'agent',
+    actor_ref: 'test_lifecycle_writer',
+    action: 'experimental:question_block_lifecycle',
+    subject_kind: 'question_block',
+    subject_id: opts.blockId,
+    outcome: 'success',
+    caused_by_event_id: null,
+    payload,
+  };
+}
+
+describe('foldQuestionBlock — question_block_lifecycle (W3-D eventless-writer cutover)', () => {
+  it('reassign_figures replaces the figures array wholesale + bumps version + stamps updated_at (reassignFigure)', () => {
+    const base = qbSnapshot({ figures: [figure('asset_a', 'qb_1')], version: 0 });
+    const repointed = [figure('asset_a', 'sub_2')];
+    const row = foldQuestionBlock('qb_1', [
+      create({ created_at: at(0), row: base }),
+      lifecycle({
+        created_at: at(1000),
+        blockId: 'qb_1',
+        op: 'reassign_figures',
+        figures: repointed,
+        next_version: 1,
+      }),
+    ]);
+    expect(row?.figures).toEqual(repointed);
+    expect(row?.version).toBe(1);
+    expect(row?.updated_at).toEqual(at(1000));
+    // status / imports untouched by a reassign.
+    expect(row?.status).toBe('draft');
+    expect(row?.imported_question_id).toBeNull();
+  });
+
+  it('set_status auto_enrolled carries status + BOTH imports (runAutoEnrollForSession)', () => {
+    const base = qbSnapshot({ status: 'draft', version: 0 });
+    const row = foldQuestionBlock('qb_1', [
+      create({ created_at: at(0), row: base }),
+      lifecycle({
+        created_at: at(1000),
+        blockId: 'qb_1',
+        op: 'set_status',
+        status: 'auto_enrolled',
+        imported_question_id: 'q_99',
+        imported_attempt_event_id: 'evt_attempt_1',
+        next_version: 1,
+      }),
+    ]);
+    expect(row?.status).toBe('auto_enrolled');
+    expect(row?.imported_question_id).toBe('q_99');
+    expect(row?.imported_attempt_event_id).toBe('evt_attempt_1');
+    expect(row?.version).toBe(1);
+    expect(row?.updated_at).toEqual(at(1000));
+  });
+
+  it('set_status imported with a NULL attempt event (unanswered capture) folds the explicit null', () => {
+    const base = qbSnapshot({ status: 'draft' });
+    const row = foldQuestionBlock('qb_1', [
+      create({ created_at: at(0), row: base }),
+      lifecycle({
+        created_at: at(1000),
+        blockId: 'qb_1',
+        op: 'set_status',
+        status: 'imported',
+        imported_question_id: 'q_5',
+        imported_attempt_event_id: null,
+        next_version: 1,
+      }),
+    ]);
+    expect(row?.status).toBe('imported');
+    expect(row?.imported_question_id).toBe('q_5');
+    expect(row?.imported_attempt_event_id).toBeNull();
+  });
+
+  it('set_status ignored OMITS imports → the fold PRESERVES prior imports (import ignore sweep)', () => {
+    // An already-enrolled block carries imports; the ignore sweep only flips status — it must NOT clear them.
+    const base = qbSnapshot({
+      status: 'auto_enrolled',
+      imported_question_id: 'q_keep',
+      imported_attempt_event_id: 'evt_keep',
+      version: 1,
+    });
+    const row = foldQuestionBlock('qb_1', [
+      create({ created_at: at(0), row: base }),
+      lifecycle({
+        created_at: at(1000),
+        blockId: 'qb_1',
+        op: 'set_status',
+        status: 'ignored',
+        next_version: 2,
+      }),
+    ]);
+    expect(row?.status).toBe('ignored');
+    // OMITTED imports ⇒ unchanged (presence-based).
+    expect(row?.imported_question_id).toBe('q_keep');
+    expect(row?.imported_attempt_event_id).toBe('evt_keep');
+    expect(row?.version).toBe(2);
+  });
+
+  it('set_status draft with EXPLICIT null imports clears them (revertAutoEnrolledBlock)', () => {
+    const base = qbSnapshot({
+      status: 'auto_enrolled',
+      imported_question_id: 'q_revert',
+      imported_attempt_event_id: 'evt_revert',
+      version: 1,
+    });
+    const row = foldQuestionBlock('qb_1', [
+      create({ created_at: at(0), row: base }),
+      lifecycle({
+        created_at: at(1000),
+        blockId: 'qb_1',
+        op: 'set_status',
+        status: 'draft',
+        imported_question_id: null,
+        imported_attempt_event_id: null,
+        next_version: 2,
+      }),
+    ]);
+    expect(row?.status).toBe('draft');
+    expect(row?.imported_question_id).toBeNull();
+    expect(row?.imported_attempt_event_id).toBeNull();
+    expect(row?.version).toBe(2);
+  });
+
+  it('enroll → revert round-trip folds back to a clean draft (last-write-wins by clock)', () => {
+    const base = qbSnapshot({ status: 'draft', version: 0 });
+    const row = foldQuestionBlock('qb_1', [
+      create({ created_at: at(0), row: base }),
+      lifecycle({
+        created_at: at(1000),
+        blockId: 'qb_1',
+        op: 'set_status',
+        status: 'auto_enrolled',
+        imported_question_id: 'q_1',
+        imported_attempt_event_id: 'evt_1',
+        next_version: 1,
+      }),
+      lifecycle({
+        created_at: at(2000),
+        blockId: 'qb_1',
+        op: 'set_status',
+        status: 'draft',
+        imported_question_id: null,
+        imported_attempt_event_id: null,
+        next_version: 2,
+      }),
+    ]);
+    expect(row?.status).toBe('draft');
+    expect(row?.imported_question_id).toBeNull();
+    expect(row?.version).toBe(2);
+  });
+
+  it('a lifecycle event with no base (un-anchored) is a no-op (mirrors the un-anchored edit)', () => {
+    const orphan = lifecycle({
+      created_at: at(1000),
+      blockId: 'qb_1',
+      op: 'set_status',
+      status: 'ignored',
+      next_version: 1,
+    });
+    expect(foldQuestionBlock('qb_1', [orphan])).toBeNull();
+  });
+});

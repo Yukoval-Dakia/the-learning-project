@@ -82,6 +82,7 @@ import {
   recordFamilyObservationForAttempt,
 } from '@/server/mastery/personalized-difficulty';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
+import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
@@ -980,7 +981,7 @@ export async function runAutoEnrollForSession(
         });
       }
 
-      await tx
+      const [{ version: blockVersion }] = await tx
         .update(question_block)
         .set({
           imported_question_id: questionId,
@@ -990,7 +991,23 @@ export async function runAutoEnrollForSession(
           updated_at: now,
           version: sql`${question_block.version} + 1`,
         })
-        .where(eq(question_block.id, block.id));
+        .where(eq(question_block.id, block.id))
+        .returning({ version: question_block.version });
+
+      // YUK-471 W3-D — make the auto-enroll status/imports transition fold-visible (additive
+      // double-write; same `now`/tx). op='set_status' carries status + imported_* + bumped version so
+      // foldQuestionBlock reproduces this row. actor mirrors the chained judge event ('workflow_judge').
+      await writeQuestionBlockLifecycleEvent(tx, {
+        blockId: block.id,
+        op: 'set_status',
+        status: 'auto_enrolled',
+        importedQuestionId: questionId,
+        importedAttemptEventId: enroll.attemptEventId,
+        nextVersion: blockVersion,
+        actorKind: 'agent',
+        actorRef: 'workflow_judge',
+        now,
+      });
 
       return {
         block_id: block.id,

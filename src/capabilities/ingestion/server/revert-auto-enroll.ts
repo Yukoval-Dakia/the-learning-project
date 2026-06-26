@@ -22,6 +22,7 @@ import type { Db } from '@/db/client';
 import { learning_record, question_block } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
+import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { archiveLearningRecord } from '@/server/records/queries';
 
 export interface RevertAutoEnrolledBlockParams {
@@ -132,7 +133,7 @@ export async function revertAutoEnrolledBlock(
 
     await archiveLearningRecord(tx, record.id);
 
-    await tx
+    const [{ version: revertedBlockVersion }] = await tx
       .update(question_block)
       .set({
         status: 'draft',
@@ -141,7 +142,24 @@ export async function revertAutoEnrolledBlock(
         updated_at: now,
         version: sql`${question_block.version} + 1`,
       })
-      .where(eq(question_block.id, params.blockId));
+      .where(eq(question_block.id, params.blockId))
+      .returning({ version: question_block.version });
+
+    // YUK-471 W3-D — make the revert reset fold-visible (additive double-write; same `now`/tx).
+    // op='set_status' carries status='draft' + an EXPLICIT null for both imported_* (an honest clear,
+    // distinct from omit) + bumped version, so foldQuestionBlock reproduces this row. actor mirrors the
+    // retract event above ('user'/'self').
+    await writeQuestionBlockLifecycleEvent(tx, {
+      blockId: params.blockId,
+      op: 'set_status',
+      status: 'draft',
+      importedQuestionId: null,
+      importedAttemptEventId: null,
+      nextVersion: revertedBlockVersion,
+      actorKind: 'user',
+      actorRef: 'self',
+      now,
+    });
 
     return { questionId, recordId: record.id, retractEventId, retractedEventId };
   });

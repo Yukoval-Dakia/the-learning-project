@@ -20,10 +20,13 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { updatePrompt } from '@/capabilities/ingestion/server/block-structured-edit';
+import {
+  reassignFigure,
+  updatePrompt,
+} from '@/capabilities/ingestion/server/block-structured-edit';
 import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { artifact, question_block } from '@/db/schema';
 import {
   backfillArtifactGenesis,
@@ -279,6 +282,94 @@ describe('W3-C3 — question_block parity through updatePrompt (real writer)', (
     expectFoldEqualsRow(
       await gatherAndFoldQuestionBlock(db, 'qb_3'),
       qlive3 ? questionBlockLiveRowToSnapshot(qlive3) : null,
+    );
+  });
+});
+
+// W3-D — the question_block_lifecycle cutover (the 5 formerly-eventless fold-truth mutators). Here we
+// exercise the figure-reassignment writer (reassignFigure → op='reassign_figures') end-to-end: the
+// imperative UPDATE + the additive canonical lifecycle event, then fold==row. (The set_status writers —
+// auto-enroll / import / revert — are exercised by their own DB tests, which validate the lifecycle
+// payload in-tx via writeEvent→parseEvent; the reducer's presence-based set_status branch is covered by
+// the pure foldQuestionBlock unit tests.)
+const FIG_TREE: StructuredQuestionT = {
+  id: 'stem',
+  role: 'stem',
+  prompt_text: '',
+  sub_questions: [
+    { id: 's1', role: 'sub', prompt_text: 'a' },
+    { id: 's2', role: 'sub', prompt_text: 'b' },
+  ],
+};
+const FIG: FigureRefT = {
+  asset_id: 'fig-1',
+  role: 'diagram',
+  source_page_index: 0,
+  source_bbox: { x: 0.1, y: 0.1, width: 0.3, height: 0.3 },
+  attached_to_index: 's1',
+  attach_confidence: 'high',
+};
+
+async function insertBlockWithFigure(id: string): Promise<void> {
+  await testDb()
+    .insert(question_block)
+    .values({
+      id,
+      ingestion_session_id: 'sess_fig',
+      source_document_id: null,
+      source_asset_ids: [],
+      page_spans: [],
+      extracted_prompt_md: 'legacy prompt md',
+      structured: FIG_TREE,
+      figures: [FIG],
+      layout_quality: 'structured',
+      reference_md: null,
+      wrong_answer_md: null,
+      image_refs: [],
+      crop_refs: [],
+      visual_complexity: 'low',
+      extraction_confidence: 1,
+      status: 'draft',
+      knowledge_hint: null,
+      merged_from_block_ids: [],
+      imported_question_id: null,
+      imported_attempt_event_id: null,
+      created_at: T0,
+      updated_at: T0,
+      version: 0,
+    });
+}
+
+describe('W3-D — question_block parity through reassignFigure (real writer, op=reassign_figures)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('a clean figure re-point folds == row (figures re-pointed + version bumped, single-clock)', async () => {
+    const db = testDb();
+    await insertBlockWithFigure('qbf_1');
+    await backfillQuestionBlockGenesis(db, T0); // anchor → the lifecycle event re-projects atop it
+
+    const res = await reassignFigure(db, {
+      blockId: 'qbf_1',
+      assetId: 'fig-1',
+      attachedToIndex: 's2',
+      actorRef: 'tester',
+    });
+    expect(res.status).toBe('written');
+    expect(res.version).toBe(1);
+
+    const row = await liveBlockRow('qbf_1');
+    expect(row?.figures[0].attached_to_index).toBe('s2');
+    expect(row?.figures[0].attach_confidence).toBe('manual');
+    expect(row?.version).toBe(1);
+
+    // The fold reproduces the live row byte-for-byte through the new question_block_lifecycle branch
+    // (incl. the figure's last_reassigned_at, which the single-clock writer set to the event time).
+    const qlive = await liveBlockRow('qbf_1');
+    expectFoldEqualsRow(
+      await gatherAndFoldQuestionBlock(db, 'qbf_1'),
+      qlive ? questionBlockLiveRowToSnapshot(qlive) : null,
     );
   });
 });

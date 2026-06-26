@@ -178,6 +178,14 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // transport row, NOT an `experimental:*` action, so it is unaffected by this reservation.
   'experimental:edit_question_block_structured',
   'experimental:question_block_create',
+  // YUK-471 Wave 3 (W3-D flip prereq, the LAST qb fold-visibility gap) — the lifecycle action event
+  // (./question-block-events.ts QuestionBlockLifecycleExperimental) makes the 5 previously-eventless
+  // fold-truth mutators fold-visible: reassignFigure (figures re-point), runAutoEnrollForSession /
+  // import-enroll / import-ignore / revertAutoEnrolledBlock (status + imported_* transitions). Mirrors
+  // artifact_lifecycle (presence-based payload + op→required-field superRefine). The fold trusts these
+  // to reproduce figures/status/imported_*/version; a malformed payload must be rejected at the
+  // barrier, not fall through to the loose generic.
+  'experimental:question_block_lifecycle',
 ]);
 
 // ====================================================================
