@@ -370,7 +370,7 @@ pub fn delta_auc_cluster_bootstrap(
 // BIT-EXACT port of src/core/poly-exp.ts. Every constant, the Horner order, the
 // floor-based range reduction, the Cody–Waite 2-part ln2, and the exponent-bit 2^k
 // are copied verbatim from the TS oracle so polyExp/polySigmoid are Object.is-equal
-// across V8 and this addon (verified by native-parity.unit.test.ts). NO mul_add:
+// across V8 and this addon (verified by src/core/poly-exp-parity.unit.test.ts). NO mul_add:
 // `p * r + c` must round twice exactly as V8 does — f64::mul_add would round once
 // and break parity.
 // ─────────────────────────────────────────────────────────────────────────────
