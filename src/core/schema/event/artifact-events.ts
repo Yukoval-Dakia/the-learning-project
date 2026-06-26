@@ -192,5 +192,25 @@ export const ArtifactLifecycleExperimental = z
         path: ['payload', 'verification_status'],
       });
     }
+    // archive/unarchive op→field coupling (OCR major): the fold trusts archived_at as ground truth,
+    // so the create barrier must reject a malformed archive (missing/null timestamp) OR an unarchive
+    // that fails to explicitly null it — else the reducer folds `undefined` over the column.
+    if (
+      data.payload.op === 'archive' &&
+      (data.payload.archived_at === undefined || data.payload.archived_at === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "archived_at (non-null Date) is required when op='archive'",
+        path: ['payload', 'archived_at'],
+      });
+    }
+    if (data.payload.op === 'unarchive' && data.payload.archived_at !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "archived_at must be explicitly null when op='unarchive'",
+        path: ['payload', 'archived_at'],
+      });
+    }
   });
 export type ArtifactLifecycleExperimentalT = z.infer<typeof ArtifactLifecycleExperimental>;

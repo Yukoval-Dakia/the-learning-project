@@ -293,6 +293,22 @@ describe('parseEvent — experimental:artifact_lifecycle routing + coherence', (
     ).toThrow();
   });
 
+  it('REJECTS archive with NO archived_at (op→field coupling, superRefine)', () => {
+    expect(() =>
+      parseEvent(lifecycleEnvelope({ payload: { op: 'archive', next_version: 1 } })),
+    ).toThrow();
+  });
+
+  it('REJECTS unarchive carrying a non-null archived_at (op→field coupling, superRefine)', () => {
+    expect(() =>
+      parseEvent(
+        lifecycleEnvelope({
+          payload: { op: 'unarchive', archived_at: '2026-06-26T00:00:00.000Z', next_version: 2 },
+        }),
+      ),
+    ).toThrow();
+  });
+
   it('REJECTS a missing next_version', () => {
     expect(() =>
       parseEvent(lifecycleEnvelope({ payload: { op: 'archive', archived_at: null } })),
