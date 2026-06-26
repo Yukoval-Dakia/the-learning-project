@@ -42,7 +42,9 @@ import { QuestionBlockRowSnapshot } from './genesis';
 //                    (the reducer reads `snap.figures ?? row.figures`, so figures MAY be omitted/null
 //                    and the fold falls back to the current row value — design §5.2 reducer table).
 //   - merged_source → structured = the operation-BEFORE value (optional, for undo); the reducer reads
-//                    only status/version/updated_at from a merged_source (structured stays before).
+//                    status/version from a merged_source and derives updated_at from the EVENT's
+//                    created_at (single-clock, like W2 — updated_at is NOT a snapshot field; the
+//                    merged_source's structured stays at its before-value).
 //
 // `.strict()` (A2 fail-loud): a stray key — most importantly a `merged_into_block_id` — is REJECTED
 // at the barrier. That field has NO physical column (schema.ts question_block lacks it); the reducer
