@@ -31,21 +31,25 @@
 // path did not write is parity-OK).
 
 import type {
+  ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
+  QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import {
+  gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
   gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
+  gatherAndFoldQuestionBlock,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
 
@@ -57,7 +61,9 @@ type ParitySubjectKind =
   | 'knowledge_edge'
   | 'goal'
   | 'mistake_variant'
-  | 'learning_item';
+  | 'learning_item'
+  | 'artifact'
+  | 'question_block';
 
 // onParityMismatch — the dev-throws / prod-logs severity switch (see the file header for the
 // full contract). PROD: structured warn + return (never break a live accept). ELSE: throw.
@@ -953,4 +959,213 @@ export async function questionBlocksWithGenesisAnchor(
     );
   for (const r of evRows) out.add(r.subject_id);
   return out;
+}
+
+// ── artifact parity assert (YUK-471 Wave 3 — C3) ─────────────────────────────────────────────────
+//
+// The write-time fold==row guard for the artifact imperative sites (the body_blocks edit seam + the
+// create/lifecycle/note-refine sites as they wire), mirroring assertGoalParity. After an OFF-path
+// imperative write, the site re-selects the row → maps to ArtifactRowSnapshot → calls this, which
+// gather→folds the SAME id read-only and deep-compares. dev/test THROW on mismatch, prod warn+return
+// (the shared onParityMismatch switch). This is the "real teeth" that catches a reducer/wiring drift
+// the moment it happens during the double-write phase, before the W3-D SoT flip.
+//
+// APPLICABILITY GATE (mirror assertGoalParity): the CALLER must only invoke this for an artifact that
+// is EVENT-SOURCED (hasArtifactGenesisAnchor) — a pre-event-sourced artifact folds to null and would
+// FALSE-mismatch its live row. A runtime-created artifact is anchored by its artifact_create event;
+// an edit/lifecycle site that touches a pre-W3 (un-backfilled) artifact has no anchor → the caller
+// SKIPS the assert (the imperative write stays the SoT until the C2 genesis backfill anchors it).
+
+/**
+ * Pick the ArtifactRowSnapshot fields from a live `artifact` DB row (NO Zod parse — a `.parse()`
+ * throw on the hot path could abort a live write in prod, defeating the never-throw contract). artifact
+ * has NO derived/embed columns (design §5.1), so the FULL 22-column row IS the snapshot — every column
+ * is carried verbatim. Mirrors artifactRowToSnapshot in the C2 backfill + the auditor's mapper.
+ */
+export function artifactLiveRowToSnapshot(row: {
+  id: string;
+  type: string;
+  title: string;
+  parent_artifact_id: string | null;
+  knowledge_ids: string[] | null;
+  intent_source: string;
+  source: string;
+  source_ref: string | null;
+  body_blocks: ArtifactRowSnapshotT['body_blocks'];
+  attrs: Record<string, unknown> | null;
+  tool_kind: string | null;
+  tool_state: Record<string, unknown> | null;
+  generation_status: string;
+  verification_status: string;
+  verification_summary: ArtifactRowSnapshotT['verification_summary'];
+  generated_by: ArtifactRowSnapshotT['generated_by'];
+  verified_by: ArtifactRowSnapshotT['verified_by'];
+  history: ArtifactRowSnapshotT['history'] | null;
+  archived_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+  version: number;
+}): ArtifactRowSnapshotT {
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    parent_artifact_id: row.parent_artifact_id,
+    knowledge_ids: row.knowledge_ids ?? [],
+    intent_source: row.intent_source,
+    source: row.source,
+    source_ref: row.source_ref,
+    body_blocks: row.body_blocks,
+    attrs: row.attrs ?? {},
+    tool_kind: row.tool_kind,
+    tool_state: row.tool_state,
+    generation_status: row.generation_status,
+    verification_status: row.verification_status,
+    verification_summary: row.verification_summary,
+    generated_by: row.generated_by,
+    verified_by: row.verified_by,
+    history: row.history ?? [],
+    archived_at: row.archived_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
+
+/**
+ * Assert the artifact fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test THROW on
+ * mismatch, prod warn+return (file header contract). A null live row that folds to null passes. The
+ * gather is try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated reducer throw
+ * never aborts a live write in prod.
+ *
+ * @param artifactId the artifact id to re-project.
+ * @param liveRow    the structural snapshot of the row the imperative path just wrote (or null), in
+ *                   ArtifactRowSnapshot shape.
+ */
+export async function assertArtifactParity(
+  db: DbLike,
+  artifactId: string,
+  liveRow: ArtifactRowSnapshotT | null,
+): Promise<void> {
+  let folded: ArtifactRowSnapshotT | null;
+  try {
+    folded = await gatherAndFoldArtifact(db, artifactId);
+  } catch (err) {
+    onParityMismatch('artifact', artifactId, [
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+    ]);
+    return;
+  }
+  const diff = diffSnapshots(
+    liveRow as Record<string, unknown> | null,
+    folded as Record<string, unknown> | null,
+  );
+  if (diff.length > 0) onParityMismatch('artifact', artifactId, diff);
+}
+
+// ── question_block parity assert (YUK-471 Wave 3 — C3) ────────────────────────────────────────────
+//
+// The write-time fold==row guard for the question_block imperative sites (the structured-edit seam +
+// the create sites as they wire), mirroring assertGoalParity. After an OFF-path imperative write, the
+// site re-selects the row → maps to QuestionBlockRowSnapshot (STRIPPING the legacy `extracted_prompt_md`
+// column, design §5.2) → calls this, which gather→folds the SAME id read-only and deep-compares.
+// dev/test THROW on mismatch, prod warn+return (the shared onParityMismatch switch).
+//
+// EXTRACTED_PROMPT_MD STRIP (§5.2): the live DB row STILL carries `extracted_prompt_md` (legacy,
+// DROP deferred to Step 11.5), but the snapshot OMITS it (markdown views derive from `structured`,
+// ADR-0002). The row-pick below simply never picks it, so the deep-diff never sees it (a row differing
+// only in that legacy column folds clean) — the same strip the C2 backfill's questionBlockRowToSnapshot
+// does before the strict Artifact/QuestionBlock genesis parse.
+//
+// APPLICABILITY GATE: the CALLER must only invoke this for a block that is EVENT-SOURCED
+// (hasQuestionBlockGenesisAnchor) — a pre-event-sourced block folds to null and would FALSE-mismatch
+// its live row. A runtime-created block is anchored by its question_block_create event; an edit site
+// touching a pre-W3 (un-backfilled) block has no anchor → the caller SKIPS the assert.
+
+/**
+ * Pick the QuestionBlockRowSnapshot fields from a live `question_block` DB row (NO Zod parse — a
+ * `.parse()` throw on the hot path could abort a live write in prod). EXCLUDES the legacy
+ * `extracted_prompt_md` column (stripped BEFORE the compare, design §5.2). Mirrors
+ * questionBlockRowToSnapshot in the C2 backfill.
+ */
+export function questionBlockLiveRowToSnapshot(row: {
+  id: string;
+  ingestion_session_id: string;
+  source_document_id: string | null;
+  source_asset_ids: string[] | null;
+  page_spans: QuestionBlockRowSnapshotT['page_spans'] | null;
+  structured: QuestionBlockRowSnapshotT['structured'];
+  figures: QuestionBlockRowSnapshotT['figures'] | null;
+  layout_quality: string;
+  reference_md: string | null;
+  wrong_answer_md: string | null;
+  image_refs: string[] | null;
+  crop_refs: string[] | null;
+  visual_complexity: string;
+  extraction_confidence: number;
+  status: string;
+  knowledge_hint: string | null;
+  merged_from_block_ids: string[] | null;
+  imported_question_id: string | null;
+  imported_attempt_event_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+  version: number;
+}): QuestionBlockRowSnapshotT {
+  return {
+    id: row.id,
+    ingestion_session_id: row.ingestion_session_id,
+    source_document_id: row.source_document_id,
+    source_asset_ids: row.source_asset_ids ?? [],
+    page_spans: row.page_spans ?? [],
+    structured: row.structured ?? null,
+    figures: row.figures ?? [],
+    layout_quality: row.layout_quality,
+    reference_md: row.reference_md,
+    wrong_answer_md: row.wrong_answer_md,
+    image_refs: row.image_refs ?? [],
+    crop_refs: row.crop_refs ?? [],
+    visual_complexity: row.visual_complexity,
+    extraction_confidence: row.extraction_confidence,
+    status: row.status,
+    knowledge_hint: row.knowledge_hint,
+    merged_from_block_ids: row.merged_from_block_ids ?? [],
+    imported_question_id: row.imported_question_id,
+    imported_attempt_event_id: row.imported_attempt_event_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+    // EXCLUDED: extracted_prompt_md (legacy deprecated — stripped before the compare, design §5.2).
+  };
+}
+
+/**
+ * Assert the question_block fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test
+ * THROW on mismatch, prod warn+return. A null live row that folds to null passes. The gather is
+ * try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated reducer throw never
+ * aborts a live write in prod.
+ *
+ * @param blockId the question_block id to re-project.
+ * @param liveRow the structural snapshot of the row the imperative path just wrote (or null), in
+ *                QuestionBlockRowSnapshot shape (extracted_prompt_md already stripped).
+ */
+export async function assertQuestionBlockParity(
+  db: DbLike,
+  blockId: string,
+  liveRow: QuestionBlockRowSnapshotT | null,
+): Promise<void> {
+  let folded: QuestionBlockRowSnapshotT | null;
+  try {
+    folded = await gatherAndFoldQuestionBlock(db, blockId);
+  } catch (err) {
+    onParityMismatch('question_block', blockId, [
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+    ]);
+    return;
+  }
+  const diff = diffSnapshots(
+    liveRow as Record<string, unknown> | null,
+    folded as Record<string, unknown> | null,
+  );
+  if (diff.length > 0) onParityMismatch('question_block', blockId, diff);
 }

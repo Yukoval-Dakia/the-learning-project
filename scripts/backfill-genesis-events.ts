@@ -572,6 +572,28 @@ function artifactRowToSnapshot(row: ArtifactRow): ArtifactRowSnapshotT {
   };
 }
 
+// W3-C3 FLIP-GATE HARDENING — per-row backfill error accumulation. A malformed row (e.g. an
+// out-of-range structured/figure bbox failing the strict QuestionBlockRowSnapshot / ArtifactRowSnapshot
+// parse at writeEvent) aborts ONLY its OWN per-row tx; the loop CONTINUES and records { id, error }.
+// After the whole scan, if ANY row failed, throw ONCE listing EVERY bad id — so the owner fixes all bad
+// rows in a SINGLE §9.3 data-fix pass instead of re-running the gate N times (fix one → hit the next →
+// rerun → …). Successfully-seeded rows already committed their own txs and are NOT rolled back (the
+// aggregate throw is a post-scan REPORT, not a transaction boundary). This is the form runB3Gate's
+// step-2 backfill inherits (it calls backfillGenesisEvents → these per-entity functions).
+interface BackfillRowFailure {
+  id: string;
+  error: string;
+}
+
+function throwIfBackfillFailures(entity: string, failures: BackfillRowFailure[]): void {
+  if (failures.length === 0) return;
+  const detail = failures.map((f) => `  - ${f.id}: ${f.error}`).join('\n');
+  throw new Error(
+    `[backfill-genesis] ${entity}: ${failures.length} row(s) failed the genesis parse barrier — ` +
+      `fix ALL of them in ONE data-fix pass (§9.3), then re-run:\n${detail}`,
+  );
+}
+
 /**
  * Seed genesis events + index entries for every `artifact` row lacking a base anchor. (YUK-471 W3-C2.)
  * Same shape as backfillGoalGenesis (outbox opt-out, atomic per-row tx, idempotent). Returns
@@ -605,33 +627,40 @@ export async function backfillArtifactGenesis(
   );
   let seeded = 0;
   let skipped = 0;
+  // W3-C3 — accumulate per-row parse failures, throw ONCE after the scan (see throwIfBackfillFailures).
+  const failures: BackfillRowFailure[] = [];
   for (const row of rows) {
     if (eventSourced.has(row.id)) {
       skipped += 1;
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: genesis event + index entry commit together (see header).
-    await db.transaction(async (tx) => {
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: GENESIS_ACTOR_REF,
-        action: GENESIS_ACTION,
-        subject_kind: 'artifact',
-        subject_id: row.id,
-        outcome: 'success',
-        payload: { row: artifactRowToSnapshot(row) },
-        ingest_at: now,
+    try {
+      // ATOMIC per row: genesis event + index entry commit together (see header).
+      await db.transaction(async (tx) => {
+        await writeEvent(tx, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: GENESIS_ACTOR_REF,
+          action: GENESIS_ACTION,
+          subject_kind: 'artifact',
+          subject_id: row.id,
+          outcome: 'success',
+          payload: { row: artifactRowToSnapshot(row) },
+          ingest_at: now,
+        });
+        await upsertMaterializedIdIndex(tx, {
+          materialized_id: row.id,
+          anchor_event_id: genesisEventId,
+          subject_kind: 'artifact',
+        });
       });
-      await upsertMaterializedIdIndex(tx, {
-        materialized_id: row.id,
-        anchor_event_id: genesisEventId,
-        subject_kind: 'artifact',
-      });
-    });
-    seeded += 1;
+      seeded += 1;
+    } catch (err) {
+      failures.push({ id: row.id, error: err instanceof Error ? err.message : String(err) });
+    }
   }
+  throwIfBackfillFailures('artifact', failures);
   return { seeded, skipped };
 }
 
@@ -705,28 +734,36 @@ export async function backfillQuestionBlockGenesis(
   );
   let seeded = 0;
   let skipped = 0;
+  // W3-C3 — accumulate per-row parse failures (the bad-bbox rows the docblock above warns about), throw
+  // ONCE after the scan so the owner fixes EVERY bad block in one §9.3 pass (see throwIfBackfillFailures).
+  const failures: BackfillRowFailure[] = [];
   for (const row of rows) {
     if (eventSourced.has(row.id)) {
       skipped += 1;
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: ONLY the genesis event (no index entry — question_block is not in the index).
-    await db.transaction(async (tx) => {
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: GENESIS_ACTOR_REF,
-        action: GENESIS_ACTION,
-        subject_kind: 'question_block',
-        subject_id: row.id,
-        outcome: 'success',
-        payload: { row: questionBlockRowToSnapshot(row) },
-        ingest_at: now,
+    try {
+      // ATOMIC per row: ONLY the genesis event (no index entry — question_block is not in the index).
+      await db.transaction(async (tx) => {
+        await writeEvent(tx, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: GENESIS_ACTOR_REF,
+          action: GENESIS_ACTION,
+          subject_kind: 'question_block',
+          subject_id: row.id,
+          outcome: 'success',
+          payload: { row: questionBlockRowToSnapshot(row) },
+          ingest_at: now,
+        });
       });
-    });
-    seeded += 1;
+      seeded += 1;
+    } catch (err) {
+      failures.push({ id: row.id, error: err instanceof Error ? err.message : String(err) });
+    }
   }
+  throwIfBackfillFailures('question_block', failures);
   return { seeded, skipped };
 }
 

@@ -39,20 +39,32 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type {
+  ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
+  QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
-import { goal, knowledge, knowledge_edge, learning_item, mistake_variant } from '@/db/schema';
+import {
+  artifact,
+  goal,
+  knowledge,
+  knowledge_edge,
+  learning_item,
+  mistake_variant,
+  question_block,
+} from '@/db/schema';
 import {
   edgeRowToSnapshot,
+  gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldKnowledgeNode,
   gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
+  gatherAndFoldQuestionBlock,
 } from '@/server/projections/gather';
 // SHARED structural deep-diff — the B3 audit MUST use the same equality as the in-tx accept
 // assert (src/server/projections/parity.ts), or it would be blind to the drift it gates. (#580)
@@ -122,7 +134,14 @@ export function loadAllowlist(path: string = ALLOWLIST_PATH): ProjectionAllowlis
 // ── Drift representation ──────────────────────────────────────────────────────────────
 export interface DriftRecord {
   id: string;
-  subject_kind: 'knowledge' | 'knowledge_edge' | 'goal' | 'mistake_variant' | 'learning_item';
+  subject_kind:
+    | 'knowledge'
+    | 'knowledge_edge'
+    | 'goal'
+    | 'mistake_variant'
+    | 'learning_item'
+    | 'artifact'
+    | 'question_block';
   // human-readable field-level differences (column: live → expected).
   diffs: string[];
 }
@@ -134,6 +153,8 @@ export interface AuditResult {
   checkedGoals: number;
   checkedMistakeVariants: number;
   checkedLearningItems: number;
+  checkedArtifacts: number;
+  checkedQuestionBlocks: number;
   drift: DriftRecord[]; // non-allowlisted drift (the failures)
   allowed: DriftRecord[]; // drifted ids covered by the allowlist (reported, not failures)
 }
@@ -266,6 +287,71 @@ function knowledgeRowToSnapshot(row: KnowledgeStructuralRow): KnowledgeRowSnapsh
   };
 }
 
+// Map a live `artifact` row to its snapshot (YUK-471 W3-C3). artifact has NO derived/embed columns
+// (design §5.1), so the FULL 22-column row IS the snapshot. Mirrors artifactRowToSnapshot in the C2
+// backfill + artifactLiveRowToSnapshot in parity.ts.
+function artifactRowToSnapshot(row: typeof artifact.$inferSelect): ArtifactRowSnapshotT {
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    parent_artifact_id: row.parent_artifact_id,
+    knowledge_ids: row.knowledge_ids ?? [],
+    intent_source: row.intent_source,
+    source: row.source,
+    source_ref: row.source_ref,
+    body_blocks: row.body_blocks,
+    attrs: row.attrs ?? {},
+    tool_kind: row.tool_kind,
+    tool_state: row.tool_state,
+    generation_status: row.generation_status,
+    verification_status: row.verification_status,
+    verification_summary: row.verification_summary,
+    generated_by: row.generated_by,
+    verified_by: row.verified_by,
+    history: row.history ?? [],
+    archived_at: row.archived_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+  };
+}
+
+// Map a live `question_block` row to its snapshot (YUK-471 W3-C3), EXCLUDING the legacy
+// `extracted_prompt_md` column (design §5.2 — not fold truth; markdown derives from `structured`). The
+// strip is just "never pick it" so the deep-diff never sees it (a row differing only in that legacy
+// column folds clean). Mirrors questionBlockRowToSnapshot in the C2 backfill +
+// questionBlockLiveRowToSnapshot in parity.ts.
+function questionBlockRowToSnapshot(
+  row: typeof question_block.$inferSelect,
+): QuestionBlockRowSnapshotT {
+  return {
+    id: row.id,
+    ingestion_session_id: row.ingestion_session_id,
+    source_document_id: row.source_document_id,
+    source_asset_ids: row.source_asset_ids ?? [],
+    page_spans: row.page_spans ?? [],
+    structured: row.structured ?? null,
+    figures: row.figures ?? [],
+    layout_quality: row.layout_quality,
+    reference_md: row.reference_md,
+    wrong_answer_md: row.wrong_answer_md,
+    image_refs: row.image_refs ?? [],
+    crop_refs: row.crop_refs ?? [],
+    visual_complexity: row.visual_complexity,
+    extraction_confidence: row.extraction_confidence,
+    status: row.status,
+    knowledge_hint: row.knowledge_hint,
+    merged_from_block_ids: row.merged_from_block_ids ?? [],
+    imported_question_id: row.imported_question_id,
+    imported_attempt_event_id: row.imported_attempt_event_id,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    version: row.version,
+    // EXCLUDED: extracted_prompt_md (legacy deprecated — stripped before the compare, design §5.2).
+  };
+}
+
 // NOTE: the live-edge → snapshot mapper is the one EXPORTED from gather.ts (imported above), so
 // the auditor maps the live edge row + builds the topology mesh through the EXACT same function
 // the per-edge gather uses — a second local copy could drift and make the audit compare a
@@ -370,6 +456,43 @@ export async function auditProjection(
     }
   }
 
+  // ── artifact (YUK-471 W3-C3) ── full-table fold-diff. artifact has NO derived/embed columns
+  // (design §5.1), so the FULL row is read + compared. The per-artifact gatherAndFoldArtifact issues a
+  // single Q1 (subject-keyed: genesis / artifact_create base + body_blocks_edit / artifact_lifecycle /
+  // note_refine_apply|undo mutations — every artifact event keys on the artifact's own id; no mesh /
+  // reverse-index / caused_by, design §5.3). A row that differs from fold(events) is DRIFT.
+  const artifacts = await db.select().from(artifact);
+  for (const row of artifacts) {
+    const expected = await gatherAndFoldArtifact(db, row.id);
+    const diffs = diffSnapshots(
+      artifactRowToSnapshot(row),
+      expected as Record<string, unknown> | null,
+    );
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'artifact', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
+  // ── question_block (YUK-471 W3-C3) ── full-table fold-diff, EXCLUDING the legacy extracted_prompt_md
+  // column (design §5.2 — not fold truth). The per-block gatherAndFoldQuestionBlock issues Q1 (genesis /
+  // question_block_create base + edit-as-primary) + Q2 (the merge reverse query: an edit keyed on the
+  // PRIMARY block absorbs this block as a merged_source via the top-level payload @> containment that
+  // hits the W3-C0 event_payload_idx GIN). A row that differs from fold(events) on a fold-truth column
+  // is DRIFT; a difference only in extracted_prompt_md never enters the diff (absent from the snapshot).
+  const questionBlocks = await db.select().from(question_block);
+  for (const row of questionBlocks) {
+    const expected = await gatherAndFoldQuestionBlock(db, row.id);
+    const diffs = diffSnapshots(
+      questionBlockRowToSnapshot(row),
+      expected as Record<string, unknown> | null,
+    );
+    if (diffs.length > 0) {
+      const rec: DriftRecord = { id: row.id, subject_kind: 'question_block', diffs };
+      (allowlist[row.id] ? allowed : drift).push(rec);
+    }
+  }
+
   return {
     ok: drift.length === 0,
     checkedNodes: nodes.length,
@@ -377,6 +500,8 @@ export async function auditProjection(
     checkedGoals: goals.length,
     checkedMistakeVariants: mistakeVariants.length,
     checkedLearningItems: learningItems.length,
+    checkedArtifacts: artifacts.length,
+    checkedQuestionBlocks: questionBlocks.length,
     drift,
     allowed,
   };
@@ -391,7 +516,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s).`,
+      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s) + ${result.checkedArtifacts} artifact(s) + ${result.checkedQuestionBlocks} question_block(s).`,
     );
     if (result.allowed.length > 0) {
       console.log(`\nALLOWED drift (covered by allowlist):  ${result.allowed.length}`);
