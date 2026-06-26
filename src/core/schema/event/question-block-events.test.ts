@@ -425,3 +425,125 @@ describe('parseEvent — experimental:genesis question_block routing + coherence
     ).toThrow();
   });
 });
+
+// ---------- #7 experimental:question_block_lifecycle (W3-D eventless-writer cutover) ----------
+
+// A well-formed FigureRef (BBox 0-1 normalized: x+width<=1, y+height<=1).
+function figureRef(over: Record<string, unknown> = {}) {
+  return {
+    asset_id: 'fig_1',
+    role: 'diagram',
+    source_page_index: 0,
+    source_bbox: { x: 0.1, y: 0.1, width: 0.3, height: 0.3 },
+    attached_to_index: 'q1',
+    attach_confidence: 'manual',
+    ...over,
+  };
+}
+
+function lifecycleEnvelope(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    actor_kind: 'user',
+    actor_ref: 'block_import',
+    action: 'experimental:question_block_lifecycle',
+    subject_kind: 'question_block',
+    subject_id: 'blk_1',
+    outcome: 'success',
+    payload: { op: 'set_status', status: 'imported', next_version: 1 },
+    ...over,
+  };
+}
+
+describe('parseEvent — experimental:question_block_lifecycle routing + op coupling', () => {
+  it('ACCEPTS a set_status with imports (auto-enroll / import-enroll)', () => {
+    const parsed: EventT = parseEvent(
+      lifecycleEnvelope({
+        payload: {
+          op: 'set_status',
+          status: 'auto_enrolled',
+          imported_question_id: 'q_1',
+          imported_attempt_event_id: 'evt_1',
+          next_version: 2,
+        },
+      }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:question_block_lifecycle');
+  });
+
+  it('ACCEPTS a set_status with EXPLICIT null imports (revert clears them)', () => {
+    const parsed = parseEvent(
+      lifecycleEnvelope({
+        payload: {
+          op: 'set_status',
+          status: 'draft',
+          imported_question_id: null,
+          imported_attempt_event_id: null,
+          next_version: 3,
+        },
+      }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:question_block_lifecycle');
+  });
+
+  it('ACCEPTS a set_status that OMITS imports (the ignore sweep leaves them)', () => {
+    const parsed = parseEvent(
+      lifecycleEnvelope({ payload: { op: 'set_status', status: 'ignored', next_version: 2 } }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:question_block_lifecycle');
+  });
+
+  it('ACCEPTS a reassign_figures carrying the full figures array', () => {
+    const parsed = parseEvent(
+      lifecycleEnvelope({
+        payload: { op: 'reassign_figures', figures: [figureRef()], next_version: 1 },
+      }),
+    );
+    expect((parsed as { action: string }).action).toBe('experimental:question_block_lifecycle');
+  });
+
+  it('REJECTS set_status with a MISSING status (op→field coupling)', () => {
+    expect(() =>
+      parseEvent(lifecycleEnvelope({ payload: { op: 'set_status', next_version: 1 } })),
+    ).toThrow();
+  });
+
+  it('REJECTS set_status with an EMPTY status (non-empty coupling)', () => {
+    expect(() =>
+      parseEvent(lifecycleEnvelope({ payload: { op: 'set_status', status: '', next_version: 1 } })),
+    ).toThrow();
+  });
+
+  it('REJECTS reassign_figures with MISSING figures (op→field coupling)', () => {
+    expect(() =>
+      parseEvent(lifecycleEnvelope({ payload: { op: 'reassign_figures', next_version: 1 } })),
+    ).toThrow();
+  });
+
+  it('REJECTS an unknown op', () => {
+    expect(() =>
+      parseEvent(lifecycleEnvelope({ payload: { op: 'archive', status: 'x', next_version: 1 } })),
+    ).toThrow();
+  });
+
+  it('REJECTS a .strict() stray payload key', () => {
+    expect(() =>
+      parseEvent(
+        lifecycleEnvelope({
+          payload: { op: 'set_status', status: 'imported', next_version: 1, bogus: true },
+        }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a negative next_version', () => {
+    expect(() =>
+      parseEvent(
+        lifecycleEnvelope({ payload: { op: 'set_status', status: 'imported', next_version: -1 } }),
+      ),
+    ).toThrow();
+  });
+
+  it('REJECTS a subject_kind mismatch (not question_block)', () => {
+    expect(() => parseEvent(lifecycleEnvelope({ subject_kind: 'artifact' }))).toThrow();
+  });
+});
