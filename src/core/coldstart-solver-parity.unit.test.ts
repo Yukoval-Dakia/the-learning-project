@@ -71,4 +71,14 @@ d('coldstart-solver ↔ Rust bit-parity (YUK-495 #125 rider)', () => {
       eq(bPrime, answers);
     }
   });
+
+  it('rejects non-binary answers (matches forward_auc label guard — review fix)', () => {
+    // The TS oracle is type-guarded by ReadonlyArray<0|1>; the public napi fn guards at
+    // runtime so a stray 0.5/2.0/-1 from untyped JS throws loudly, not silent θ̂ corruption.
+    for (const bad of [0.5, 2, -1, Number.NaN]) {
+      expect(() => a.solveThetaOneKc(0, [1, bad as unknown as 0 | 1])).toThrow(/must be 0 or 1/);
+    }
+    // valid binary still returns a solution.
+    expect(a.solveThetaOneKc(0, [1, 0, 1] as unknown as number[]).evidence).toBe(3);
+  });
 });

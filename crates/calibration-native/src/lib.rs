@@ -20,6 +20,7 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use std::sync::OnceLock;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // mulberry32 — bit-identical port of rng.ts:14-23.
@@ -487,17 +488,40 @@ fn poly_binary_likelihood(offset: f64, b_prime: f64, outcome: f64) -> f64 {
     }
 }
 
+/// Frozen GRID_THETA, built once (i·step is compile-time-constant-derived but float
+/// arithmetic isn't const-evaluable in Rust). Same construction as theta-grid.ts and the
+/// per-call form it replaces (-4 + i·((8)/(40))) → byte-identical values, no per-call alloc.
+fn grid_theta() -> &'static [f64; GRID_POINTS] {
+    static GRID: OnceLock<[f64; GRID_POINTS]> = OnceLock::new();
+    GRID.get_or_init(|| {
+        let grid_step = (GRID_MAX - GRID_MIN) / ((GRID_POINTS - 1) as f64);
+        let mut g = [0.0_f64; GRID_POINTS];
+        for (i, slot) in g.iter_mut().enumerate() {
+            *slot = GRID_MIN + (i as f64) * grid_step;
+        }
+        g
+    })
+}
+
 /// One-KC cold-start θ̂ from a locked difficulty anchor b' + binary answers, by
 /// sequential-Bayes grid folding on the shared poly σ. Bit-parity target for
 /// src/core/coldstart-solver.ts `solveThetaOneKc` (Object.is). `answers` are f64 (0.0/1.0),
 /// mirroring forwardAuc's labels — avoids N-API ToUint32 coercion of non-binary inputs.
+/// Returns Result and rejects any non-binary answer (matching forward_auc's label guard),
+/// so a stray 0.5/2.0 from untyped JS throws loudly instead of silently corrupting θ̂.
 #[napi]
-pub fn solve_theta_one_kc(b_prime: f64, answers: Vec<f64>) -> OneKcSolution {
-    // GRID_STEP / GRID_THETA[i] built the SAME way as theta-grid.ts: -4 + i·((8)/(40)).
-    let grid_step = (GRID_MAX - GRID_MIN) / ((GRID_POINTS - 1) as f64);
-    let grid_theta: Vec<f64> = (0..GRID_POINTS)
-        .map(|i| GRID_MIN + (i as f64) * grid_step)
-        .collect();
+pub fn solve_theta_one_kc(b_prime: f64, answers: Vec<f64>) -> Result<OneKcSolution> {
+    // Reject non-binary up-front (the TS oracle is type-guarded by ReadonlyArray<0|1>; this
+    // public napi fn is callable from untyped JS, so guard like forward_auc does for labels).
+    for (i, &outcome) in answers.iter().enumerate() {
+        if outcome != 0.0 && outcome != 1.0 {
+            return Err(Error::from_reason(format!(
+                "solveThetaOneKc: answer at index {i} must be 0 or 1 (got {outcome})"
+            )));
+        }
+    }
+
+    let grid_theta = grid_theta();
 
     let mass = 1.0 / (GRID_POINTS as f64);
     let mut probs: Vec<f64> = vec![mass; GRID_POINTS];
@@ -529,9 +553,9 @@ pub fn solve_theta_one_kc(b_prime: f64, answers: Vec<f64>) -> OneKcSolution {
         let d = grid_theta[i] - mean;
         var_acc = var_acc + probs[i] * (d * d);
     }
-    OneKcSolution {
+    Ok(OneKcSolution {
         theta_hat: mean,
         se: var_acc.sqrt(),
         evidence: answers.len() as u32,
-    }
+    })
 }
