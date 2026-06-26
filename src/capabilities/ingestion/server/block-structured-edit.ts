@@ -26,10 +26,12 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
+import { newId } from '@/core/ids';
 import type { QuestionKind } from '@/core/schema/business';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { question_block } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
 import { writeJobEvent } from '@/server/events/writer';
 
 // ---------------------------------------------------------------------------
@@ -103,7 +105,18 @@ export interface EditResult {
 export interface BaseEditParams {
   /** `callerActor.ref` of the tool caller, stamped as `last_modified_by`. */
   actorRef: string;
+  /**
+   * Provenance for the canonical `experimental:edit_question_block_structured` event (YUK-471 W3-C1δ).
+   * These structured-edit primitives are agent-callable DomainTools (default 'agent'); the proposal
+   * accept path (`acceptBlockMergeProposal`) is user-driven and passes 'user'. NOT a fold input — the
+   * question_block fold does not read actor_kind — so this is pure provenance, never parity-affecting.
+   */
+  actorKind?: 'agent' | 'user';
 }
+
+// The 4 single-block structured-rewrite ops (merge_questions is multi-row, handled inline). The
+// canonical edit event's `op` enum (question-block-events.ts) gates fold cardinality.
+type SingleBlockEditOp = 'update_prompt' | 'add_option' | 'set_question_type' | 'split_stem';
 
 // ---------------------------------------------------------------------------
 // Internal: load a draft block FOR UPDATE inside a tx
@@ -120,33 +133,80 @@ async function loadBlockForUpdate(tx: Tx, blockId: string): Promise<BlockRow | u
   return rows[0];
 }
 
-async function persistStructured(
-  tx: Tx,
-  blockId: string,
-  structured: StructuredQuestionT,
-  eventType: 'block.structured_edited',
-  payload: Record<string, unknown>,
-  // Optional figures update — persisted in the SAME tx as `structured` when a
-  // mutation also re-points figures (e.g. splitStem nested-stem reattachment).
-  figures?: FigureRefT[],
-): Promise<number> {
+interface PersistStructuredParams {
+  blockId: string;
+  /** The AFTER full structured tree (non-null — single-block edits always rewrite the tree). */
+  structured: StructuredQuestionT;
+  op: SingleBlockEditOp;
+  /** Legacy `job_events` SSE transport payload ({ op, node_id, … }) — UNCHANGED (orthogonal). */
+  jobPayload: Record<string, unknown>;
+  actorRef: string;
+  actorKind: 'agent' | 'user';
+  /**
+   * The block's CURRENT (unchanged) status. persistStructured writes structured/figures/version/
+   * updated_at but NEVER status, so the canonical edit snapshot MUST carry the existing status or
+   * the fold (which reads status off the primary snapshot) would diverge from the row (B2 review).
+   */
+  currentStatus: string;
+  /** Present ONLY when the op also re-points figures (splitStem nested-stem reattach); else the fold
+   *  falls back to row.figures (design §5.2), so the snapshot omits figures too. */
+  figures?: FigureRefT[];
+}
+
+async function persistStructured(tx: Tx, params: PersistStructuredParams): Promise<number> {
+  // SINGLE clock — the row's updated_at MUST equal the canonical event's created_at so the fold's
+  // `updated_at = event.created_at` reproduces the row byte-for-byte (design §3 single-clock model).
+  const now = new Date();
   const updated = await tx
     .update(question_block)
     .set({
-      structured,
-      ...(figures !== undefined ? { figures } : {}),
-      updated_at: new Date(),
+      structured: params.structured,
+      ...(params.figures !== undefined ? { figures: params.figures } : {}),
+      updated_at: now,
       version: sql`${question_block.version} + 1`,
     })
-    .where(eq(question_block.id, blockId))
+    .where(eq(question_block.id, params.blockId))
     .returning({ version: question_block.version });
+  const version = updated[0].version;
+
+  // Legacy SSE/transport row — UNCHANGED (the `job_events` channel is orthogonal to the canonical log).
   await writeJobEvent(tx, {
     business_table: 'question_block',
-    business_id: blockId,
-    event_type: eventType,
-    payload,
+    business_id: params.blockId,
+    event_type: 'block.structured_edited',
+    payload: params.jobPayload,
   });
-  return updated[0].version;
+
+  // YUK-471 W3-C1δ — canonical edit event (additive double-write; projection flag stays OFF). A
+  // single-block op carries EXACTLY the primary (role='primary') with the AFTER tree + new version +
+  // the block's CURRENT status (B2). figures ride ONLY when re-pointed; else omitted so the fold
+  // falls back to row.figures (§5.2). A malformed payload throws at parseEvent → rolls back this tx.
+  await writeEvent(tx, {
+    id: newId(),
+    actor_kind: params.actorKind,
+    actor_ref: params.actorRef,
+    action: 'experimental:edit_question_block_structured',
+    subject_kind: 'question_block',
+    subject_id: params.blockId,
+    outcome: 'success',
+    payload: {
+      op: params.op,
+      affected_blocks: [
+        {
+          block_id: params.blockId,
+          role: 'primary',
+          structured: params.structured,
+          ...(params.figures !== undefined ? { figures: params.figures } : {}),
+          version,
+          status: params.currentStatus,
+        },
+      ],
+    },
+    created_at: now,
+    ingest_at: now,
+  });
+
+  return version;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,9 +232,14 @@ export async function updatePrompt(db: Db, params: UpdatePromptParams): Promise<
     });
     if (!matched) return { status: 'skipped:node_not_found' };
 
-    const version = await persistStructured(tx, params.blockId, tree, 'block.structured_edited', {
+    const version = await persistStructured(tx, {
+      blockId: params.blockId,
+      structured: tree,
       op: 'update_prompt',
-      node_id: params.nodeId,
+      jobPayload: { op: 'update_prompt', node_id: params.nodeId },
+      actorRef: params.actorRef,
+      actorKind: params.actorKind ?? 'agent',
+      currentStatus: block.status,
     });
     return { status: 'written', version };
   });
@@ -203,9 +268,14 @@ export async function addOption(db: Db, params: AddOptionParams): Promise<EditRe
     });
     if (!matched) return { status: 'skipped:node_not_found' };
 
-    const version = await persistStructured(tx, params.blockId, tree, 'block.structured_edited', {
+    const version = await persistStructured(tx, {
+      blockId: params.blockId,
+      structured: tree,
       op: 'add_option',
-      node_id: params.nodeId,
+      jobPayload: { op: 'add_option', node_id: params.nodeId },
+      actorRef: params.actorRef,
+      actorKind: params.actorKind ?? 'agent',
+      currentStatus: block.status,
     });
     return { status: 'written', version };
   });
@@ -234,10 +304,14 @@ export async function setQuestionType(db: Db, params: SetQuestionTypeParams): Pr
     });
     if (!matched) return { status: 'skipped:node_not_found' };
 
-    const version = await persistStructured(tx, params.blockId, tree, 'block.structured_edited', {
+    const version = await persistStructured(tx, {
+      blockId: params.blockId,
+      structured: tree,
       op: 'set_question_type',
-      node_id: params.nodeId,
-      kind: params.kind,
+      jobPayload: { op: 'set_question_type', node_id: params.nodeId, kind: params.kind },
+      actorRef: params.actorRef,
+      actorKind: params.actorKind ?? 'agent',
+      currentStatus: block.status,
     });
     return { status: 'written', version };
   });
@@ -380,14 +454,16 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
       );
     }
 
-    const version = await persistStructured(
-      tx,
-      params.blockId,
-      result.tree,
-      'block.structured_edited',
-      { op: 'split_stem', node_id: params.nodeId },
-      nextFigures,
-    );
+    const version = await persistStructured(tx, {
+      blockId: params.blockId,
+      structured: result.tree,
+      op: 'split_stem',
+      jobPayload: { op: 'split_stem', node_id: params.nodeId },
+      actorRef: params.actorRef,
+      actorKind: params.actorKind ?? 'agent',
+      currentStatus: block.status,
+      figures: nextFigures,
+    });
     return { status: 'written', version };
   });
 }
@@ -497,20 +573,25 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
       ...mergeIds.flatMap((id) => blocksById.get(id)?.figures ?? []),
     ].filter((f) => !seenAssetIds.has(f.asset_id) && seenAssetIds.add(f.asset_id));
 
-    await tx
+    // F3 (YUK-471 W3 §3) — SINGLE clock for the primary UPDATE, the merged-blocks UPDATE, AND the
+    // canonical event, so the fold's single-clock holds (the absorbed blocks + the primary all stamp
+    // updated_at = event.created_at). Historically this used TWO independent `new Date()` (~:506/:513).
+    const now = new Date();
+    const [{ version: primaryVersion }] = await tx
       .update(question_block)
       .set({
         structured: mergedTree,
         figures: mergedFigures,
         merged_from_block_ids: [...(primary.merged_from_block_ids ?? []), ...mergeIds],
-        updated_at: new Date(),
+        updated_at: now,
         version: sql`${question_block.version} + 1`,
       })
-      .where(eq(question_block.id, params.primaryBlockId));
+      .where(eq(question_block.id, params.primaryBlockId))
+      .returning({ version: question_block.version });
 
     await tx
       .update(question_block)
-      .set({ status: 'ignored', updated_at: new Date() })
+      .set({ status: 'ignored', updated_at: now })
       .where(inArray(question_block.id, mergeIds));
 
     await writeJobEvent(tx, {
@@ -528,11 +609,53 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
       });
     }
 
-    const after = await tx
-      .select({ version: question_block.version })
-      .from(question_block)
-      .where(eq(question_block.id, params.primaryBlockId));
-    return { status: 'written', version: after[0].version };
+    // YUK-471 W3-C1δ — ONE canonical edit event collapses the 1+N `job_events` transport rows (solves
+    // C4). The primary (role='primary') carries the merged AFTER tree + figures + bumped version + its
+    // CURRENT (unchanged) status; each absorbed block rides as role='merged_source' with status
+    // 'ignored' and its UNCHANGED version (the live writer does NOT bump it) + its before-tree (undo).
+    // subject_id = primary (the SoT anchor). The merged_source order = mergeIds order, so the fold
+    // appends EXACTLY the live writer's merged_from_block_ids ([...primary.merged_from, ...mergeIds]).
+    const mergedSourceEntries = mergeIds.map((id) => {
+      const mb = blocksById.get(id);
+      if (!mb) {
+        // unreachable: the mergeBlocks.length === mergeIds.length check above guarantees presence.
+        throw new Error(`mergeQuestions: merge block ${id} vanished before snapshot`);
+      }
+      return {
+        block_id: id,
+        role: 'merged_source' as const,
+        structured: mb.structured,
+        version: mb.version,
+        status: 'ignored',
+      };
+    });
+    await writeEvent(tx, {
+      id: newId(),
+      actor_kind: params.actorKind ?? 'agent',
+      actor_ref: params.actorRef,
+      action: 'experimental:edit_question_block_structured',
+      subject_kind: 'question_block',
+      subject_id: params.primaryBlockId,
+      outcome: 'success',
+      payload: {
+        op: 'merge_questions',
+        affected_blocks: [
+          {
+            block_id: params.primaryBlockId,
+            role: 'primary',
+            structured: mergedTree,
+            figures: mergedFigures,
+            version: primaryVersion,
+            status: primary.status,
+          },
+          ...mergedSourceEntries,
+        ],
+      },
+      created_at: now,
+      ingest_at: now,
+    });
+
+    return { status: 'written', version: primaryVersion };
   });
 }
 

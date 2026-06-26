@@ -7,6 +7,7 @@ import type { Db, Tx } from '@/db/client';
 import { learning_session, question_block } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
 import { ApiError } from '@/server/http/errors';
+import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 
 import { assertFromState } from './guards';
 
@@ -228,32 +229,44 @@ export async function applyExtractionResult(
   for (const blk of params.blocks) {
     const blockId = createId();
     insertedBlockIds.push(blockId);
-    await tx.insert(question_block).values({
-      id: blockId,
-      ingestion_session_id: params.sessionId,
-      source_document_id: params.sourceDocumentId,
-      source_asset_ids: blk.source_asset_ids,
-      page_spans: blk.page_spans,
-      // new schema fields
-      structured: blk.structured,
-      figures: blk.figures,
-      layout_quality: params.layoutQuality,
-      // legacy nullable
-      extracted_prompt_md: null,
-      reference_md: null,
-      wrong_answer_md: null,
-      image_refs: blk.image_refs,
-      crop_refs: blk.figures.map((f) => f.asset_id),
-      visual_complexity: 'medium',
-      extraction_confidence: 1,
-      status: 'draft',
-      knowledge_hint: null,
-      merged_from_block_ids: [],
-      imported_question_id: null,
-      imported_attempt_event_id: null,
-      created_at: now,
-      updated_at: now,
-      version: 0,
+    const [insertedRow] = await tx
+      .insert(question_block)
+      .values({
+        id: blockId,
+        ingestion_session_id: params.sessionId,
+        source_document_id: params.sourceDocumentId,
+        source_asset_ids: blk.source_asset_ids,
+        page_spans: blk.page_spans,
+        // new schema fields
+        structured: blk.structured,
+        figures: blk.figures,
+        layout_quality: params.layoutQuality,
+        // legacy nullable
+        extracted_prompt_md: null,
+        reference_md: null,
+        wrong_answer_md: null,
+        image_refs: blk.image_refs,
+        crop_refs: blk.figures.map((f) => f.asset_id),
+        visual_complexity: 'medium',
+        extraction_confidence: 1,
+        status: 'draft',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        imported_question_id: null,
+        imported_attempt_event_id: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })
+      .returning();
+    // YUK-471 W3-C1δ — canonical create event (additive; flag OFF). Built from the `.returning()`
+    // row so the snapshot is byte-faithful to what landed (incl. crop_refs = figures' asset_ids).
+    await writeQuestionBlockCreateEvent(tx, {
+      row: insertedRow,
+      origin: 'ocr',
+      actorKind: 'agent',
+      actorRef: 'tencent_ocr',
+      now,
     });
   }
 
@@ -405,15 +418,31 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
     );
   }
 
-  await tx
+  const [rescuedRow] = await tx
     .update(question_block)
     .set({
       structured: params.structured,
       figures: params.figures,
+      // F5 (YUK-471 W3 §9 #3) — the rescue overwrites `figures` but historically OMITTED `crop_refs`,
+      // leaving it STALE vs the new figures. Re-derive it the same way applyExtractionResult does
+      // (crop_refs = figures' asset_ids) so the row + the create-event snapshot stay consistent.
+      crop_refs: params.figures.map((f) => f.asset_id),
       updated_at: now,
       version: sql`${question_block.version} + 1` as unknown as SQL<number>,
     })
-    .where(eq(question_block.id, params.blockId));
+    .where(eq(question_block.id, params.blockId))
+    .returning();
+
+  // YUK-471 W3-C1δ — canonical create event (origin='rescue'): a SECOND full-snapshot create for the
+  // SAME blockId that the fold applies last-write-wins (design §5.2). Built from the `.returning()`
+  // after-row so it carries the new structured/figures/crop_refs (F5) + the bumped version.
+  await writeQuestionBlockCreateEvent(tx, {
+    row: rescuedRow,
+    origin: 'rescue',
+    actorKind: 'agent',
+    actorRef: 'vision_rescue',
+    now,
+  });
 
   await writeJobEvent(tx, {
     business_table: SESSION_TABLE,

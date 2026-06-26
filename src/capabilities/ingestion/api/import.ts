@@ -31,6 +31,7 @@ import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Ingestion } from '@/server/session';
@@ -281,27 +282,41 @@ export async function POST(req: Request, params: Record<string, string>): Promis
               ? 'medium'
               : 'low';
 
-          await tx.insert(question_block).values({
-            id: importedBlockId,
-            ingestion_session_id: sessionId,
-            source_document_id: sessionSourceDocumentId,
-            source_asset_ids: block.image_refs,
-            page_spans: block.page_spans,
-            extracted_prompt_md: block.final_prompt_md,
-            reference_md: block.final_reference_md,
-            wrong_answer_md: block.final_wrong_answer_md,
-            image_refs: block.image_refs,
-            crop_refs: [],
-            visual_complexity: visualComplexity,
-            extraction_confidence: 1,
-            status: 'imported',
-            knowledge_hint: null,
-            merged_from_block_ids: block.source_block_ids,
-            imported_question_id: null,
-            imported_attempt_event_id: null,
-            created_at: now,
-            updated_at: now,
-            version: 0,
+          const [insertedRow] = await tx
+            .insert(question_block)
+            .values({
+              id: importedBlockId,
+              ingestion_session_id: sessionId,
+              source_document_id: sessionSourceDocumentId,
+              source_asset_ids: block.image_refs,
+              page_spans: block.page_spans,
+              extracted_prompt_md: block.final_prompt_md,
+              reference_md: block.final_reference_md,
+              wrong_answer_md: block.final_wrong_answer_md,
+              image_refs: block.image_refs,
+              crop_refs: [],
+              visual_complexity: visualComplexity,
+              extraction_confidence: 1,
+              status: 'imported',
+              knowledge_hint: null,
+              merged_from_block_ids: block.source_block_ids,
+              imported_question_id: null,
+              imported_attempt_event_id: null,
+              created_at: now,
+              updated_at: now,
+              version: 0,
+            })
+            .returning();
+          // YUK-471 W3-C1δ — canonical create event (origin='import') for the virtual (merged/split)
+          // card. Built from `.returning()` so the snapshot reflects DB-applied defaults (structured/
+          // figures/layout_quality are NOT set above). The subsequent import-link UPDATE
+          // (imported_question_id / status bump below) is NOT event-sourced in this additive lane.
+          await writeQuestionBlockCreateEvent(tx, {
+            row: insertedRow,
+            origin: 'import',
+            actorKind: 'user',
+            actorRef: 'block_import',
+            now,
           });
 
           for (const sid of block.source_block_ids) {

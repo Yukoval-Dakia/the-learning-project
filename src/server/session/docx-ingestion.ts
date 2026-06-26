@@ -9,6 +9,7 @@ import {
 import type { Db } from '@/db/client';
 import { learning_session, question_block, source_document } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
+import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 
 import { writeSessionEvent } from './events';
 
@@ -136,35 +137,47 @@ export async function initiateDocxTextUpload(
       // VisionTab falls back to source_asset_ids when image_refs is empty, so
       // both must carry the embedded ids to pass the membership check.
       const blockAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...blk.imageRefs]));
-      await tx.insert(question_block).values({
-        id: blockId,
-        ingestion_session_id: sessionId,
-        source_document_id: sourceDocumentId,
-        source_asset_ids: blockAssetIds,
-        page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
-        structured: blk.structured,
-        figures: [],
-        layout_quality: 'structured',
-        // Codex-2 — VisionTab seeds the editable prompt from extracted_prompt_md
-        // (?? ''); a null here opens every DOCX block with an empty prompt that
-        // fails import with '题面不能空'. Persist the derived prompt markdown
-        // (题号 + 题面 + 选项) from the structured node so the review form lands
-        // pre-filled. structured stays the source of truth; this is the rendered view.
-        extracted_prompt_md: structuredToPromptMarkdown(blk.structured),
-        reference_md: null,
-        wrong_answer_md: null,
-        image_refs: blk.imageRefs,
-        crop_refs: [],
-        visual_complexity: 'medium',
-        extraction_confidence: 1,
-        status: 'draft',
-        knowledge_hint: null,
-        merged_from_block_ids: [],
-        imported_question_id: null,
-        imported_attempt_event_id: null,
-        created_at: now,
-        updated_at: now,
-        version: 0,
+      const [insertedRow] = await tx
+        .insert(question_block)
+        .values({
+          id: blockId,
+          ingestion_session_id: sessionId,
+          source_document_id: sourceDocumentId,
+          source_asset_ids: blockAssetIds,
+          page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+          structured: blk.structured,
+          figures: [],
+          layout_quality: 'structured',
+          // Codex-2 — VisionTab seeds the editable prompt from extracted_prompt_md
+          // (?? ''); a null here opens every DOCX block with an empty prompt that
+          // fails import with '题面不能空'. Persist the derived prompt markdown
+          // (题号 + 题面 + 选项) from the structured node so the review form lands
+          // pre-filled. structured stays the source of truth; this is the rendered view.
+          extracted_prompt_md: structuredToPromptMarkdown(blk.structured),
+          reference_md: null,
+          wrong_answer_md: null,
+          image_refs: blk.imageRefs,
+          crop_refs: [],
+          visual_complexity: 'medium',
+          extraction_confidence: 1,
+          status: 'draft',
+          knowledge_hint: null,
+          merged_from_block_ids: [],
+          imported_question_id: null,
+          imported_attempt_event_id: null,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        })
+        .returning();
+      // YUK-471 W3-C1δ — canonical create event (origin='docx'). `extracted_prompt_md` is the legacy
+      // column the snapshot EXCLUDES, so the helper drops it before the strict parse barrier.
+      await writeQuestionBlockCreateEvent(tx, {
+        row: insertedRow,
+        origin: 'docx',
+        actorKind: 'agent',
+        actorRef: 'docx_text',
+        now,
       });
     }
 
