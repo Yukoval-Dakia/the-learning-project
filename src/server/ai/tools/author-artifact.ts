@@ -49,6 +49,10 @@ import { z } from 'zod';
 
 import { INTERACTIVE_HTML_MAX_CHARS, InteractiveArtifactAttrs } from '@/core/schema/business';
 import { artifact } from '@/db/schema';
+import {
+  artifactRowToCreateSnapshot,
+  emitArtifactCreateEvent,
+} from '@/server/artifacts/create-event';
 import type { DomainTool, ToolContext } from './types';
 
 // ---------------------------------------------------------------------------
@@ -105,29 +109,49 @@ async function executeAuthorArtifact(
   // Row shape follows writeToolQuizArtifact (tool-quiz-core.ts) column-for-
   // column, with the interactive deltas: body_blocks null (opaque invariant),
   // tool_state UNSET → null (reference not practice — no FSRS), attrs payload.
-  await ctx.db.insert(artifact).values({
-    id: artifactId,
-    type: 'interactive',
-    title: input.title,
-    parent_artifact_id: null,
-    knowledge_ids: knowledgeIds,
-    intent_source: 'author_artifact',
-    source: 'ai_generated',
-    source_ref: null,
-    body_blocks: null,
-    attrs: attrs as never,
-    tool_kind: 'author_artifact',
-    generation_status: 'ready',
-    verification_status: 'not_required',
-    generated_by: {
-      by: 'ai',
-      task_kind: 'author_artifact',
-      task_run_id: ctx.taskRunId,
-    } as never,
-    history: [],
-    created_at: now,
-    updated_at: now,
-    version: 0,
+  //
+  // YUK-471 W3-C1β — the INSERT now ALSO emits a self-sufficient artifact_create event in the SAME
+  // tx (additive double-write, flag OFF). The bare `ctx.db.insert` is wrapped in a transaction so
+  // the INSERT + the event are atomic (parseEvent throws on a bad payload → both roll back). The
+  // pre-existing mirrorEvent='when_causal' bridge event is LEFT AS-IS (observability/rollback trail,
+  // ADR-0033 — minted AFTER execute returns); artifact_create is the fold-source base, distinct
+  // from the mirror. Build the snapshot from the RETURNING row so all 22 columns are materialized.
+  await ctx.db.transaction(async (tx) => {
+    const [insertedArtifact] = await tx
+      .insert(artifact)
+      .values({
+        id: artifactId,
+        type: 'interactive',
+        title: input.title,
+        parent_artifact_id: null,
+        knowledge_ids: knowledgeIds,
+        intent_source: 'author_artifact',
+        source: 'ai_generated',
+        source_ref: null,
+        body_blocks: null,
+        attrs: attrs as never,
+        tool_kind: 'author_artifact',
+        generation_status: 'ready',
+        verification_status: 'not_required',
+        generated_by: {
+          by: 'ai',
+          task_kind: 'author_artifact',
+          task_run_id: ctx.taskRunId,
+        } as never,
+        history: [],
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })
+      .returning();
+    await emitArtifactCreateEvent(tx, {
+      row: artifactRowToCreateSnapshot(insertedArtifact),
+      actorKind: 'agent',
+      actorRef: ctx.callerActor.ref,
+      causedByEventId: ctx.causedByEventId ?? null,
+      taskRunId: ctx.taskRunId,
+      createdAt: now,
+    });
   });
 
   return {

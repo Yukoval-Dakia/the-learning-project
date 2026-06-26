@@ -108,12 +108,18 @@ export const ArtifactCreateExperimental = z
     subject_kind: z.literal('artifact'),
     subject_id: z.string().min(1), // = artifact.id (== payload.row.id)
     outcome: z.literal('success').nullable().optional(),
-    payload: z.object({
-      // FULL initial row snapshot (body_blocks / type / title / parent / knowledge_ids / tool_* /
-      // status / history / timestamps). The reducer reads it VERBATIM as the row's base state —
-      // same shape genesis carries.
-      row: ArtifactRowSnapshot,
-    }),
+    payload: z
+      .object({
+        // FULL initial row snapshot (body_blocks / type / title / parent / knowledge_ids / tool_* /
+        // status / history / timestamps). The reducer reads it VERBATIM as the row's base state —
+        // same shape genesis carries.
+        row: ArtifactRowSnapshot,
+      })
+      // `.strict()` payload wrapper (W3-C1β / CodeRabbit A1↔A2 consistency): A2's
+      // QuestionBlockCreateExperimental wraps its payload in `.strict()` but A1's create did not, so
+      // a writer that smuggled an extra payload key (besides `row`) would silently pass. Strict so a
+      // stray key fails loud at the parseEvent barrier — the create writers emit EXACTLY `{ row }`.
+      .strict(),
     caused_by_event_id: z.string().optional(),
     task_run_id: z.string().optional(),
     cost_micro_usd: z.number().int().optional(),

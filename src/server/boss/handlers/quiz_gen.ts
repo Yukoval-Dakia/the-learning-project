@@ -48,6 +48,10 @@ import {
   toMcpAllowedToolName,
 } from '@/server/ai/tools/allowlists';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  artifactRowToCreateSnapshot,
+  emitArtifactCreateEvent,
+} from '@/server/artifacts/create-event';
 import { writeEvent } from '@/server/events/queries';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type FewShotExample, renderFewShotBlock } from '@/server/quiz/fewshot-retrieve';
@@ -680,38 +684,51 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         questionIds.push(id);
       }
 
-      await tx.insert(artifact).values({
-        id: toolQuizArtifactId,
-        type: 'tool_quiz',
-        title: resolved.title ? `${resolved.title} 组卷` : '自定义组卷',
-        parent_artifact_id: null,
-        knowledge_ids: [...quizKnowledgeIds],
-        intent_source: 'quiz_gen',
-        source: 'ai_generated',
-        source_ref: resolved.refId,
-        body_blocks: null,
-        attrs: {
-          trigger,
-          generation_method: parsed.generation_method,
-          source_pack: parsed.source_pack,
-        } as never,
-        tool_kind: 'quiz_gen',
-        tool_state: {
-          question_ids: questionIds,
-          session_meta: {
+      // YUK-471 W3-C1β — INSERT … RETURNING + same-tx artifact_create from the materialized row.
+      // No causing event row exists at this point (the experimental:quiz_gen event is written AFTER
+      // the tx), so the create event is unchained; created_at == the row's `now`.
+      const [insertedArtifact] = await tx
+        .insert(artifact)
+        .values({
+          id: toolQuizArtifactId,
+          type: 'tool_quiz',
+          title: resolved.title ? `${resolved.title} 组卷` : '自定义组卷',
+          parent_artifact_id: null,
+          knowledge_ids: [...quizKnowledgeIds],
+          intent_source: 'quiz_gen',
+          source: 'ai_generated',
+          source_ref: resolved.refId,
+          body_blocks: null,
+          attrs: {
             trigger,
-            ref_id: resolved.refId,
             generation_method: parsed.generation_method,
-            tool_context_task_run_id: toolContextTaskRunId,
-          },
-        } as never,
-        generation_status: 'ready',
-        verification_status: 'not_required',
-        generated_by: aiAgentRef('QuizGenTask', result) as never,
-        history: [],
-        created_at: now,
-        updated_at: now,
-        version: 0,
+            source_pack: parsed.source_pack,
+          } as never,
+          tool_kind: 'quiz_gen',
+          tool_state: {
+            question_ids: questionIds,
+            session_meta: {
+              trigger,
+              ref_id: resolved.refId,
+              generation_method: parsed.generation_method,
+              tool_context_task_run_id: toolContextTaskRunId,
+            },
+          } as never,
+          generation_status: 'ready',
+          verification_status: 'not_required',
+          generated_by: aiAgentRef('QuizGenTask', result) as never,
+          history: [],
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        })
+        .returning();
+      await emitArtifactCreateEvent(tx, {
+        row: artifactRowToCreateSnapshot(insertedArtifact),
+        actorKind: 'agent',
+        actorRef: 'quiz_gen',
+        taskRunId: result.task_run_id ?? null,
+        createdAt: now,
       });
     });
 

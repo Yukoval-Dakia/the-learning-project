@@ -7,6 +7,10 @@
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
+import {
+  artifactRowToCreateSnapshot,
+  emitArtifactCreateEvent,
+} from '@/server/artifacts/create-event';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError } from '@/server/http/errors';
 // YUK-471 W2 — learning_item projection seam (ai_dream record_promotion). The INSERT writes a per-id
@@ -447,18 +451,32 @@ export async function acceptRecordPromotionProposal(
         );
       }
     } else {
-      await tx.insert(artifact).values({
-        id: materializedId,
-        type: 'note_long',
-        title,
-        knowledge_ids: knowledgeIds,
-        intent_source: 'from_dream',
-        source: 'ai_dream',
-        source_ref: proposalId,
-        generation_status: 'ready',
-        ...(draft.body_blocks !== undefined ? { body_blocks: draft.body_blocks as never } : {}),
-        created_at: now,
-        updated_at: now,
+      // YUK-471 W3-C1β — INSERT … RETURNING the FULL row (this site relies on table defaults for
+      // parent_artifact_id / attrs / tool_* / verification_* / generated_by / verified_by / history /
+      // archived_at / version), then emit the same-tx artifact_create from the MATERIALIZED row so
+      // every strict snapshot column has a real value (rollback-safe). Chained to the RATE (accept).
+      const [insertedArtifact] = await tx
+        .insert(artifact)
+        .values({
+          id: materializedId,
+          type: 'note_long',
+          title,
+          knowledge_ids: knowledgeIds,
+          intent_source: 'from_dream',
+          source: 'ai_dream',
+          source_ref: proposalId,
+          generation_status: 'ready',
+          ...(draft.body_blocks !== undefined ? { body_blocks: draft.body_blocks as never } : {}),
+          created_at: now,
+          updated_at: now,
+        })
+        .returning();
+      await emitArtifactCreateEvent(tx, {
+        row: artifactRowToCreateSnapshot(insertedArtifact),
+        actorKind: 'agent',
+        actorRef: 'record_promotion',
+        causedByEventId: rateEventId,
+        createdAt: now,
       });
     }
 
