@@ -34,7 +34,13 @@ type ArtifactRow = typeof artifact.$inferSelect;
  * false-rejects at the parseEvent barrier. The DB row already carries materialized values for every
  * column (defaults applied), so the result parses cleanly inside `emitArtifactCreateEvent`.
  */
-export function artifactRowToCreateSnapshot(row: ArtifactRow): ArtifactRowSnapshotT {
+export function artifactRowToCreateSnapshot(row: ArtifactRow | undefined): ArtifactRowSnapshotT {
+  // Defensive null-guard (the 8 INSERT sites all `const [row] = …returning()` — noUncheckedIndexedAccess
+  // is off, so TS infers non-undefined). A clear error beats an opaque "Cannot read 'id' of undefined"
+  // if `.returning()` ever yields []. Guarding here covers every call site at once.
+  if (!row) {
+    throw new Error('artifactRowToCreateSnapshot: INSERT … RETURNING returned no row');
+  }
   return {
     id: row.id,
     type: row.type,

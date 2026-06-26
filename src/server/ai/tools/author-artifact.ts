@@ -146,7 +146,9 @@ async function executeAuthorArtifact(
       .returning();
     await emitArtifactCreateEvent(tx, {
       row: artifactRowToCreateSnapshot(insertedArtifact),
-      actorKind: 'agent',
+      // provenance: attribute to the REAL caller, not a hardcoded 'agent' (cron → system; the
+      // ToolCallerActor kind can be user/agent/cron/system via the MCP bridge).
+      actorKind: ctx.callerActor.kind === 'cron' ? 'system' : ctx.callerActor.kind,
       actorRef: ctx.callerActor.ref,
       causedByEventId: ctx.causedByEventId ?? null,
       taskRunId: ctx.taskRunId,
