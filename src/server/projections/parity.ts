@@ -809,3 +809,148 @@ export async function assertLearningItemParity(
   );
   if (diff.length > 0) onParityMismatch('learning_item', itemId, diff);
 }
+
+// ── artifact genesis-anchor helpers (YUK-471 Wave 3 — C2 hoist from the B1 IO shell) ─────────────
+//
+// An artifact is EVENT-SOURCED (reproducible by foldArtifact, so its fold-null is a genuine "should
+// not exist" rather than a fold-blind miss) iff it has any of:
+//   1. an `experimental:artifact_create` runtime base event (post-W3 creation), OR
+//   2. an `experimental:genesis` backfill seed (pre-W3 row), OR
+//   3. a `materialized_id_index` row keyed by artifactId with subject_kind='artifact' (the backfill
+//      anchor — artifact enters the index in C2, design §5.3).
+// Both base events have subject_id = artifactId (no minting indirection — artifactId == the create
+// event's subject_id), so the event check is a single subject-keyed scan over the two base actions.
+// C2 ADDS leg #3 (the materialized_id_index leg the B1 shell omitted because artifact was not in the
+// index yet) so the anchor check matches hasGoalGenesisAnchor / the knowledge anchor exactly.
+
+const ARTIFACT_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:artifact_create'] as const;
+
+/**
+ * Does this `artifact` have a genesis/create anchor — i.e. is it event-sourced (reproducible by
+ * foldArtifact) at all? READ-ONLY. Used by projectArtifactGuarded (a fold-null on a NON-event-sourced
+ * artifact must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor (event leg + index leg).
+ */
+export async function hasArtifactGenesisAnchor(db: DbLike, artifactId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'artifact'),
+        eq(event.subject_id, artifactId),
+        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  if (ev.length > 0) return true;
+  const indexed = await db
+    .select({ id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        eq(materialized_id_index.materialized_id, artifactId),
+        eq(materialized_id_index.subject_kind, 'artifact'),
+      ),
+    )
+    .limit(1);
+  return indexed.length > 0;
+}
+
+/**
+ * Batch form of hasArtifactGenesisAnchor — the subset of `artifactIds` that ARE event-sourced. One
+ * query per source (events / index). READ-ONLY. Used by the C2 backfill to SKIP artifacts that
+ * already re-fold from their own log (anchoring an already-event-sourced row with a current-state
+ * genesis snapshot would mask reducer drift — same rationale as goalsWithGenesisAnchor). DOUBLES as
+ * the backfill idempotency pre-scan (a previously-backfilled artifact now carries a genesis event,
+ * and a runtime-created artifact carries a create event → both skipped).
+ */
+export async function artifactsWithGenesisAnchor(
+  db: DbLike,
+  artifactIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (artifactIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'artifact'),
+        inArray(event.subject_id, artifactIds),
+        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  const idxRows = await db
+    .select({ materialized_id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        inArray(materialized_id_index.materialized_id, artifactIds),
+        eq(materialized_id_index.subject_kind, 'artifact'),
+      ),
+    );
+  for (const r of idxRows) out.add(r.materialized_id);
+  return out;
+}
+
+// ── question_block genesis-anchor helpers (YUK-471 Wave 3 — C2 hoist from the B2 IO shell) ────────
+//
+// A question_block is EVENT-SOURCED (reproducible by foldQuestionBlock) iff it has either:
+//   1. an `experimental:question_block_create` runtime base event (OCR/rescue/docx/import), OR
+//   2. an `experimental:genesis` backfill seed (pre-W3 row).
+// NO materialized_id_index leg: question_block does NOT enter the index (design §5.3 — the row id is
+// ALWAYS the subject_id, so the anchor is always a subject-keyed event and this event-table check is
+// complete — the ONE intentional asymmetry vs artifact, §9.4). Both base events have subject_id =
+// blockId, so the check is a single subject-keyed scan over the two base actions.
+
+const QUESTION_BLOCK_ANCHOR_ACTIONS = [
+  'experimental:genesis',
+  'experimental:question_block_create',
+] as const;
+
+/**
+ * Does this `question_block` have a genesis/create anchor — i.e. is it event-sourced (reproducible by
+ * foldQuestionBlock) at all? READ-ONLY. Used by projectQuestionBlockGuarded (a fold-null on a NON-
+ * event-sourced block must NOT delete the imperative row). NO index leg (design §5.3).
+ */
+export async function hasQuestionBlockGenesisAnchor(db: DbLike, blockId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'question_block'),
+        eq(event.subject_id, blockId),
+        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  return ev.length > 0;
+}
+
+/**
+ * Batch form of hasQuestionBlockGenesisAnchor — the subset of `blockIds` that ARE event-sourced.
+ * READ-ONLY (event leg ONLY — question_block is not in the index). Used by the C2 backfill to SKIP
+ * blocks that already re-fold from their own log; DOUBLES as the idempotency pre-scan (a previously-
+ * backfilled / runtime-created block carries a genesis / create event → skipped).
+ */
+export async function questionBlocksWithGenesisAnchor(
+  db: DbLike,
+  blockIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (blockIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'question_block'),
+        inArray(event.subject_id, blockIds),
+        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  return out;
+}
