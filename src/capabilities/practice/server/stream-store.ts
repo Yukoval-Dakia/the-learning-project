@@ -34,6 +34,7 @@ import {
   collectCandidateSignals,
 } from './candidate-signals';
 import { handleReviewDue } from './due-list';
+import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { getPracticeList } from './practice-read';
 import {
   DEFAULT_SELECTION_POLICY,
@@ -99,6 +100,11 @@ async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, s
 }
 
 export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
+  // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'。
+  //   谓词与 due-list.ts 的 notDraftQuiz 同形（NULL≡active / 'active' 留池，仅排 'draft'；NULL 需
+  //   显式 isNull，否则 `<> 'draft'` 在三值逻辑下会误丢 NULL 行）。new_check + frontier 共用。
+  const notDraft = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
+
   // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
   const dueRes = await handleReviewDue(
     new Request(`http://internal/api/review/due?limit=${DUE_INPUT_LIMIT}`),
@@ -159,15 +165,10 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     const trackedSet = new Set(tracked.map((r) => r.kid));
     const untracked = candidateKids.filter((k) => !trackedSet.has(k));
     if (untracked.length > 0) {
-      // 每个未检验知识点取一道题（JSONB 包含查询，active 题）。
-      //
-      // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除**
-      // `draft_status='draft'`。new_check 在「KC 还没 material_fsrs_state 行」时触发——
-      // 此时刚生成的 embedded/teaching draft 题（L2 起落 draft_status='draft'，container-only）
-      // 还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露给用户成普通练习项。
-      // 谓词与 due-list.ts 的 notDraftQuiz 同形（NULL≡active / 'active' 留池，仅排 'draft'；
-      // NULL 需显式 isNull，否则 `<> 'draft'` 在三值逻辑下会误丢 NULL 行）。
-      const notDraft = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
+      // 每个未检验知识点取一道题（JSONB 包含查询，非 draft 题——见函数顶 notDraft 注释）。
+      // new_check 在「KC 还没 material_fsrs_state 行」时触发——此时刚生成的 embedded/teaching
+      // draft 题（container-only）还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露
+      // 给用户成普通练习项。
       for (const kid of untracked) {
         const [q] = await db
           .select({ id: question.id })
@@ -195,10 +196,29 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
             : ('paper' as const),
     }));
 
+  // 5. B3 learnable_frontier（YUK-349 #3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
+  //    一道**非 draft** active 题（谓词与 new_check 同形 notDraft——红线 4）。frontier KC 无题 →
+  //    SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
+  //    defer-flip，无 flag——见 learnable-frontier.ts 不变量块）。
+  const frontierKcs = await learnableFrontier(db);
+  const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
+  for (const kc of frontierKcs.slice(0, FRONTIER_MAX_ITEMS)) {
+    const [q] = await db
+      .select({ id: question.id })
+      .from(question)
+      .where(and(sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`, notDraft))
+      // Deterministic pick (reproducible composition) — the new_check sibling omits this;
+      // frontier is net-new so we make it stable from the start.
+      .orderBy(question.id)
+      .limit(1);
+    if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
+  }
+
   // 标签批量解析（reasoning 模板用）。
   const labelMap = await knowledgeLabels(db, [
     ...dueRows.flatMap((r) => r.knowledge_ids ?? []).slice(0, 50),
     ...newCheckPairs.map((p) => p.knowledgeId),
+    ...frontierPairs.map((p) => p.knowledgeId),
   ]);
 
   return {
@@ -218,6 +238,11 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       knowledgeLabel: labelMap.get(p.knowledgeId),
     })),
     pendingPapers,
+    frontierItems: frontierPairs.map((p) => ({
+      questionId: p.questionId,
+      knowledgeId: p.knowledgeId,
+      knowledgeLabel: labelMap.get(p.knowledgeId),
+    })),
   };
 }
 

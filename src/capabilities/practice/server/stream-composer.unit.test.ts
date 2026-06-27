@@ -103,6 +103,59 @@ describe('composeDailyStream — 混排规则', () => {
     for (const it of plan.items) expect(it.reasoning.length).toBeGreaterThan(0);
   });
 
+  // ── B3 frontier（YUK-349 #3）─────────────────────────────────────────────────
+  const frontiers = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      questionId: `q_fr_${i}`,
+      knowledgeId: `k_fr_${i}`,
+    }));
+
+  it('B3 NO-OP：frontierItems 缺省 / [] → 输出与无 frontier 的 7-rule fixture 逐字相同', () => {
+    const base = inputs({
+      dueItems: due(4),
+      variantItems: variants(2),
+      newCheckItems: [{ questionId: 'q_nc', knowledgeId: 'k1' }],
+      pendingPapers: [{ paperId: 'pp_1', title: '小卷', source: 'paper' }],
+    });
+    const baseline = composeDailyStream(base); // frontierItems 缺省（undefined）
+    const withEmpty = composeDailyStream({ ...base, frontierItems: [] });
+    // 缺省与显式 [] 必须产出**逐字相同**的 plan（NO-OP defer-flip）。
+    expect(withEmpty).toEqual(baseline);
+  });
+
+  it('B3：frontier 追加在 new_check 之后；due/variant/new_check 位置不变', () => {
+    const base = inputs({
+      dueItems: due(2),
+      newCheckItems: [{ questionId: 'q_nc', knowledgeId: 'k1' }],
+    });
+    const baseline = composeDailyStream(base);
+    const withFrontier = composeDailyStream({ ...base, frontierItems: frontiers(2) });
+
+    // 非 frontier 前缀逐字等同 baseline（位置/source/ref 全不变）。
+    const prefix = withFrontier.items.slice(0, baseline.items.length);
+    expect(prefix).toEqual(baseline.items);
+    // frontier 在尾部、在 new_check 之后。
+    const sources = withFrontier.items.map((i) => i.source);
+    const lastNewCheck = sources.lastIndexOf('new_check');
+    const firstFrontier = sources.indexOf('frontier');
+    expect(firstFrontier).toBeGreaterThan(lastNewCheck);
+    // 末两项是 frontier，position 连续。
+    expect(sources.slice(-2)).toEqual(['frontier', 'frontier']);
+    expect(withFrontier.items.map((i) => i.position)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('B3 R4 去重：frontier 题与已排 due 题同 id 时不重复排入', () => {
+    const plan = composeDailyStream(
+      inputs({
+        dueItems: [{ questionId: 'q_shared' }],
+        frontierItems: [{ questionId: 'q_shared', knowledgeId: 'k_fr' }],
+      }),
+    );
+    const refs = plan.items.map((i) => i.ref_id);
+    expect(refs.filter((r) => r === 'q_shared')).toHaveLength(1);
+    expect(plan.items.find((i) => i.ref_id === 'q_shared')?.source).toBe('decay');
+  });
+
   it('paper item 携带卷自身的来源（on_demand/import 保留，不统一成 paper）', () => {
     const plan = composeDailyStream(
       inputs({

@@ -21,6 +21,12 @@ export interface ComposerInputs {
   variantItems: Array<{ questionId: string; rootQuestionId: string; knowledgeLabel?: string }>;
   /** 新学待检（learning_item 路径上未检验的知识点自测题） */
   newCheckItems: Array<{ questionId: string; knowledgeId: string; knowledgeLabel?: string }>;
+  /**
+   * B3 learnable_frontier（YUK-349 #3，ADR-0037 #4）——前置全掌握、自身未掌握的「可学前沿」
+   * KC 各取一道题。**OPTIONAL**：现有 caller/测试不传 → undefined → 零新增项（NO-OP，
+   * 输出 byte-identical）。稀疏先决图上 learnableFrontier 返 [] → 此处恒空（defer-flip）。
+   */
+  frontierItems?: Array<{ questionId: string; knowledgeId: string; knowledgeLabel?: string }>;
   /** 当日待做卷（AI 打包 / 点播 / 导入） */
   pendingPapers: Array<{
     paperId: string;
@@ -35,7 +41,7 @@ export interface StreamPlanItem {
   position: number;
   item_kind: 'question' | 'paper';
   ref_id: string;
-  source: 'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import';
+  source: 'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import' | 'frontier';
   reasoning: string;
   // YUK-361 Phase 1（观测先行）— 选题信号快照（SelectionCandidateSignal 形态）。
   // **零行为变更**：本 lane 不计算、不据此排序，materializeStream 落库时缺省 {}；
@@ -67,6 +73,11 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const vars = inputs.variantItems.filter((v) => !seen.has(v.questionId) && seen.add(v.questionId));
   const checks = inputs.newCheckItems.filter(
     (n) => !seen.has(n.questionId) && seen.add(n.questionId),
+  );
+  // B3 frontier（additive 5th source）：dedup 在 new_check 之后——已排过的题不重复。
+  // frontierItems 缺省/[] → fronts=[] → 零新增项（NO-OP，输出 byte-identical）。
+  const fronts = (inputs.frontierItems ?? []).filter(
+    (f) => !seen.has(f.questionId) && seen.add(f.questionId),
   );
 
   type Draft = Omit<StreamPlanItem, 'position'>;
@@ -122,7 +133,15 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
     reasoning: `你刚学了${kpSuffix(n.knowledgeLabel)}，自测一道确认真的进脑子了。`,
   }));
 
-  const all = [...solo, ...papers, ...tail];
+  // B3 frontier 尾（在 new_check 之后追加）。fronts 空 → 零项 → all 与改前逐字相同。
+  const frontierTail: Draft[] = fronts.map((f) => ({
+    item_kind: 'question',
+    ref_id: f.questionId,
+    source: 'frontier',
+    reasoning: `${kpSuffix(f.knowledgeLabel)}的前置你都拿下了，可以开这块新内容了。`,
+  }));
+
+  const all = [...solo, ...papers, ...tail, ...frontierTail];
   const truncated = all.length > max;
   const kept = truncated ? all.slice(0, max) : all;
 
