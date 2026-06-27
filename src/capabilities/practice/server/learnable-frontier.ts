@@ -19,11 +19,18 @@
 //   ② ARCHIVED EXCLUSION. Only `archived_at IS NULL` prerequisite edges count —
 //      an archived (soft-deleted) edge must not gate or surface anything.
 //
-//   ③ CYCLE / DEPTH FAIL-SAFE-TO-EMPTY. The recursive closure carries a path-array
-//      cycle guard, a depth bound, and a node-cap overflow probe (mirroring
-//      src/server/events/cascade.ts). On ANY overflow (depth > FRONTIER_DEPTH_LIMIT
-//      OR rowcount > FRONTIER_NODE_CAP) we return [] — we NEVER surface a
-//      partial/garbage frontier (fail-safe to NO-OP, never to a half-walked graph).
+//   ③ CYCLE / DEPTH FAIL-SAFE-TO-EMPTY. The recursive closure is a SET walk —
+//      `UNION` (not `UNION ALL`) dedupes each (frontier_kc, prereq_kc, depth) tuple, so a
+//      multi-parent DAG (a diamond A→B, A→C, B→D, C→D) COLLAPSES its convergent paths
+//      instead of enumerating every simple path (the path-explosion this module hardens
+//      against — YUK-512: the old per-path ARRAY guard was tree-correct but
+//      diamond-EXPONENTIAL, and the outer LIMIT/node-cap did NOT bound the recursive
+//      materialisation). Cycles are cut by the frontier-anchor guard (`from <> frontier_kc`
+//      — a KC is never its own transitive prerequisite). A depth bound + a node-cap
+//      overflow probe (mirroring src/server/events/cascade.ts) remain. On ANY overflow
+//      (MAX depth > FRONTIER_DEPTH_LIMIT OR distinct-pair rowcount > FRONTIER_NODE_CAP) we
+//      return [] — we NEVER surface a partial/garbage frontier (fail-safe to NO-OP, never
+//      to a half-walked graph).
 //
 //   ④ MASTERY-PREDICATE-IN-TS. Topology (the prereq closure) lives in SQL; the
 //      mastery predicate (p(L) ≥ threshold) lives in TS, reusing the canonical
@@ -40,13 +47,15 @@ type DbLike = Db | Tx;
 /** Hard depth bound on the transitive prereq closure walk (cycle/run-away guard). */
 export const FRONTIER_DEPTH_LIMIT = 16;
 /**
- * Runaway backstop on the closure ROWCOUNT (one row per (frontier_kc, prereq_kc, depth)
- * tuple) — overflow → fail-safe to []. This is NOT a functional frontier-size limit (that
- * is FRONTIER_MAX_ITEMS, applied by the caller): the total closure tuple count grows ≈
- * Σ_dependents(transitive-prereq count), so a low cap would silently blank a legitimate
- * frontier as the graph densifies (breaking defer-flip's "activates cleanly as edges land"
- * story). Set generously (matching the cascade.ts 10k node precedent) so only a genuinely
- * pathological closure (huge fan-out / a cycle escaping the path guard) trips it.
+ * Runaway backstop on the closure ROWCOUNT (one row per distinct (frontier_kc, prereq_kc)
+ * pair after the outer GROUP BY — the UNION set-walk + MAX(depth) collapse multi-path
+ * duplicates, so this counts PAIRS, not paths) — overflow → fail-safe to []. This is NOT a
+ * functional frontier-size limit (that is FRONTIER_MAX_ITEMS, applied by the caller): the
+ * total pair count grows ≈ Σ_dependents(transitive-prereq count), so a low cap would
+ * silently blank a legitimate frontier as the graph densifies (breaking defer-flip's
+ * "activates cleanly as edges land" story). Set generously (matching the cascade.ts 10k node
+ * precedent) so only a genuinely pathological closure (huge fan-out / a cycle escaping the
+ * anchor guard) trips it.
  */
 export const FRONTIER_NODE_CAP = 10_000;
 /** p(L) at/above which a KC counts as MASTERED (self-not-mastered + prereq-mastered gate). */
@@ -71,19 +80,41 @@ interface FrontierClosureRow {
   depth: number | string;
 }
 
+/** The three DISTINCT closure states a bare `[]` used to collapse (YUK-514 Finding 1). */
+export type FrontierKind = 'sparse' | 'dense' | 'overflow';
+
 /**
- * learnableFrontier — the prerequisite-gated learnable frontier (pure READ).
+ * Discriminated frontier result (YUK-514 Finding 1). The historical `learnableFrontier`
+ * returns `[]` for THREE different states, which a downstream cold-start gate cannot tell
+ * apart:
+ *   - `sparse`   — empty closure (no live prerequisite edges yet): the true cold-start a
+ *                  bootstrap job SHOULD act on.
+ *   - `overflow` — the closure tripped the depth / node-cap fail-safe (the graph is actually
+ *                  DENSE / pathological): a bootstrap job must NOT treat this as cold-start.
+ *   - `dense`    — a real closure; `ids` is the computed learnable frontier (possibly `[]`
+ *                  when every dependent is gated out by the mastery predicate).
+ * Consumers that only need the id list use the thin {@link learnableFrontier} wrapper
+ * (byte-identical to the historical contract that composeDailyStream / the stream store
+ * depend on); consumers that must distinguish overflow from cold-start read `kind`.
+ */
+export interface FrontierResolution {
+  kind: FrontierKind;
+  ids: string[];
+}
+
+/**
+ * learnableFrontierResolved — the prerequisite-gated learnable frontier with its closure
+ * state surfaced (pure READ). See {@link FrontierResolution}.
  *
- * Returns the (sorted, deterministic) list of KC ids that are ready to learn now:
- * self p(L) < MASTERED_PL_THRESHOLD AND every transitive prerequisite p(L) ≥
- * MASTERED_PL_THRESHOLD. Returns [] on the sparse graph / on any overflow (see the
- * INVARIANT BLOCK above) — the structural defer-flip.
+ * `ids` (when `kind === 'dense'`) is the (sorted, deterministic) list of KC ids ready to
+ * learn now: self p(L) < MASTERED_PL_THRESHOLD AND every transitive prerequisite p(L) ≥
+ * MASTERED_PL_THRESHOLD. `sparse` / `overflow` carry `ids: []` (see the INVARIANT BLOCK).
  *
  * @param db Db or Tx — read-only (only `.execute`/`.select` reads; no writes).
  */
-export async function learnableFrontier(db: DbLike): Promise<string[]> {
-  // Recurse ONE level past the depth limit so an over-deep chain is detectable (any
-  // returned row with depth > FRONTIER_DEPTH_LIMIT signals truncation), and fetch ONE
+export async function learnableFrontierResolved(db: DbLike): Promise<FrontierResolution> {
+  // Recurse ONE level past the depth limit so an over-deep chain is detectable (the MAX
+  // depth of any returned pair > FRONTIER_DEPTH_LIMIT signals truncation), and fetch ONE
   // row past the node cap so cap-overflow is detectable without a second COUNT query.
   // Both overflow probes are dropped on the JS side (mirror cascade.ts:101-106).
   const depthProbe = FRONTIER_DEPTH_LIMIT + 1;
@@ -94,49 +125,54 @@ export async function learnableFrontier(db: DbLike): Promise<string[]> {
   //   KC's prereqs are the `from_` of edges where IT is the `to_`. The frontier_kc
   //   (the dependent we are gating) is anchored at the base `to_` and carried
   //   UNCHANGED up the chain; prereq_kc is each ancestor prerequisite discovered.
-  //   - base case (depth 1): the direct prereqs of every dependent KC. Seeding
-  //     `path = ARRAY[to, from]` puts the dependent itself in the visited set so a
-  //     cycle can never re-enter it.
-  //   - recursive case: walk UP the prereq chain via `e.to_knowledge_id = c.prereq_kc`,
-  //     with the path-array cycle guard `NOT (e.from_knowledge_id = ANY(c.path))` and
-  //     the depth bound `c.depth < depthProbe`.
-  //   Self-loops (`from = to`) are dropped at every level. archived edges excluded.
+  //   - base case (depth 1): the direct prereqs of every dependent KC.
+  //   - recursive case: walk UP the prereq chain via `e.to_knowledge_id = c.prereq_kc`.
+  //   SET WALK (YUK-512): `UNION` (not `UNION ALL`) dedupes each (frontier_kc, prereq_kc,
+  //   depth) tuple against ALL prior results, so a multi-parent DAG (diamond) collapses
+  //   convergent paths instead of enumerating every simple path → the closure stays
+  //   POLYNOMIAL, not exponential. Cycles are cut by the frontier-anchor guard
+  //   `e.from_knowledge_id <> c.frontier_kc` (a KC is never its own transitive
+  //   prerequisite) — this replaces the old per-path ARRAY guard, which was tree-correct
+  //   but diamond-exponential. The depth bound `c.depth < depthProbe` still terminates any
+  //   prereq-only cycle (it increments depth and trips the overflow probe). Self-loops
+  //   (`from = to`) and archived edges excluded at every level. The outer GROUP BY collapses
+  //   each pair to ONE row (MAX(depth) for the overflow probe), so the depth-duplicated rows
+  //   the old `SELECT DISTINCT … depth` projection emitted no longer inflate the rowcount.
   const rows = (await db.execute(sql`
     WITH RECURSIVE closure AS (
       SELECT
         e.to_knowledge_id   AS frontier_kc,
         e.from_knowledge_id AS prereq_kc,
-        1 AS depth,
-        ARRAY[e.to_knowledge_id, e.from_knowledge_id] AS path
+        1 AS depth
       FROM knowledge_edge e
       WHERE e.relation_type = 'prerequisite'
         AND e.archived_at IS NULL
         AND e.from_knowledge_id <> e.to_knowledge_id
 
-      UNION ALL
+      UNION
 
       SELECT
         c.frontier_kc,
         e.from_knowledge_id AS prereq_kc,
-        c.depth + 1 AS depth,
-        c.path || e.from_knowledge_id AS path
+        c.depth + 1 AS depth
       FROM knowledge_edge e
       JOIN closure c ON e.to_knowledge_id = c.prereq_kc
       WHERE e.relation_type = 'prerequisite'
         AND e.archived_at IS NULL
         AND e.from_knowledge_id <> e.to_knowledge_id
-        AND NOT (e.from_knowledge_id = ANY(c.path))
+        AND e.from_knowledge_id <> c.frontier_kc
         AND c.depth < ${depthProbe}
     )
-    SELECT DISTINCT frontier_kc, prereq_kc, depth
+    SELECT frontier_kc, prereq_kc, MAX(depth) AS depth
     FROM closure
+    GROUP BY frontier_kc, prereq_kc
     LIMIT ${fetchLimit}
   `)) as unknown as FrontierClosureRow[];
 
   // ③ Fail-safe-to-empty on any overflow (mirror cascade.ts:155-164). Depth overflow:
-  //    any row deeper than the cap means the chain exceeded the hard limit → refuse the
-  //    whole set. Node-cap overflow: we asked for nodeCap+1; > nodeCap rows means the
-  //    closure is wider than allowed → refuse. NEVER surface a partial frontier.
+  //    any pair whose MAX depth exceeds the cap means the chain exceeded the hard limit →
+  //    refuse the whole set. Node-cap overflow: we asked for nodeCap+1 distinct pairs;
+  //    > nodeCap rows means the closure is wider than allowed → refuse. NEVER a partial set.
   const normalised = rows.map((r) => ({
     frontier_kc: r.frontier_kc,
     prereq_kc: r.prereq_kc,
@@ -144,10 +180,10 @@ export async function learnableFrontier(db: DbLike): Promise<string[]> {
   }));
   const depthOverflow = normalised.some((r) => r.depth > FRONTIER_DEPTH_LIMIT);
   const nodeOverflow = normalised.length > FRONTIER_NODE_CAP;
-  if (depthOverflow || nodeOverflow) return [];
+  if (depthOverflow || nodeOverflow) return { kind: 'overflow', ids: [] };
 
   // ① Empty CTE (sparse graph) → empty frontier (the NO-OP anchor).
-  if (normalised.length === 0) return [];
+  if (normalised.length === 0) return { kind: 'sparse', ids: [] };
 
   // Group into Map<frontier_kc, prereq_kc[]>.
   const prereqsByFrontier = new Map<string, string[]>();
@@ -178,5 +214,19 @@ export async function learnableFrontier(db: DbLike): Promise<string[]> {
     if (allPrereqsMastered) frontier.push(frontierKc);
   }
   frontier.sort();
-  return frontier;
+  return { kind: 'dense', ids: frontier };
+}
+
+/**
+ * learnableFrontier — thin id-list wrapper over {@link learnableFrontierResolved}.
+ *
+ * Returns [] on the sparse graph / on any overflow (BYTE-IDENTICAL to the historical
+ * contract that composeDailyStream + the stream store depend on — the structural
+ * defer-flip). Consumers that must tell overflow from cold-start (frontier_fill_nightly)
+ * call learnableFrontierResolved directly and branch on `kind`.
+ *
+ * @param db Db or Tx — read-only (only `.execute`/`.select` reads; no writes).
+ */
+export async function learnableFrontier(db: DbLike): Promise<string[]> {
+  return (await learnableFrontierResolved(db)).ids;
 }

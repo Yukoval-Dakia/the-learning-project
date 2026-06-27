@@ -25,6 +25,9 @@ import type {
   ToolState,
 } from '../core/schema/business';
 import type { FigureRefT, StructuredQuestionT } from '../core/schema/structured_question';
+// A1 (YUK-449) — persisted shape for mastery_state.rt_correct_ms (per-KC rolling correct-RT
+// ring buffer; the SRT quantile-d source). Type-only; the buffer math lives in src/core/theta.ts.
+import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 // A4 (YUK-436) — persisted shadow shape for mastery_state.theta_grid_json (type-only,
 // erased at compile; the actual grid math lives in src/core/theta-grid.ts).
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
@@ -902,6 +905,16 @@ export const mastery_state = pgTable(
     // 恒 NULL。校准验证后才在 inc-2（grid→SoT cut-over，必须排在 A3 之后）接读侧。
     // 进 audit-schema allowlist（写路径存在但 inc-1 无 live reader）。
     theta_grid_json: jsonb('theta_grid_json').$type<ThetaGridPosteriorJson>(),
+    // A1 (YUK-449) — per-KC rolling correct-RT ring buffer (last ≤ SRT_RT_BUFFER_K answered-
+    // correct response times, ms). The SRT design constant d's QUANTILE source: once
+    // SRT_D_FROM_QUANTILE flips, d = quantile(this buffer) instead of the population seed
+    // (resolveSrtTimeLimit). COLLECTION is LIVE (written on every SRT-eligible correct attempt
+    // so the data exists to justify the flip); the flag only gates the d READ. SHADOW vs
+    // theta_hat: while SRT_D_FROM_QUANTILE is false the buffer never affects θ̂ (byte-identical).
+    // flag-OFF d-read is byte-identical-anchored in state.db.test.ts. Has a live WRITE path
+    // (updateThetaForAttempt upsert → audit:schema sees it as init-only, NOT a stub, so no
+    // allowlist entry); the only READER (resolveSrtTimeLimitFromQuantile) is dark behind the flag.
+    rt_correct_ms: jsonb('rt_correct_ms').$type<RtCorrectBufferJson>(),
     // 软轨占位（本 wave 不写，进 audit allowlist，kind:'manual' 解除）:
     // fixed-anchor 慢热校准残差——Wave2 复盘/锚校准路径才写。n=1 结构性受锚质量约束。
     calibration_residual: real('calibration_residual'),

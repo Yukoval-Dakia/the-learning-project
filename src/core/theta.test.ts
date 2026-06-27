@@ -4,8 +4,13 @@ import {
   DIFFICULTY_PROXY_WEIGHT,
   ELO_K_GLOBAL,
   HIERARCHICAL_ELO_ENABLED,
+  SRT_D_FROM_QUANTILE,
   SRT_ENABLED,
+  SRT_FISHER_WEIGHT_ENABLED,
   SRT_MIN_SIGNAL,
+  SRT_RT_BUFFER_K,
+  SRT_RT_MIN_N,
+  SRT_RT_QUANTILE,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
   conjunctiveItemProb,
@@ -13,7 +18,10 @@ import {
   eloK,
   expectedScore,
   fisherInformation,
+  pushRtCorrectSample,
+  quantile,
   resolveSrtTimeLimit,
+  resolveSrtTimeLimitFromQuantile,
   srtOutcome,
   thetaSe,
   thetaToMastery,
@@ -620,5 +628,211 @@ describe('two-layer K split ratio (per-KC offset moves faster than domain global
     const globalStep = ELO_K_GLOBAL * bWeight * credit; // 0.048 · 1 · 0.5
     expect(perKcStep).toBeGreaterThan(globalStep);
     expect(globalStep / perKcStep).toBeCloseTo(ELO_K_GLOBAL / eloK(100), 12);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A1 (YUK-450) — Fisher-conditioned TIME WEIGHT on the SRT credit. srtOutcome gains a
+// `timeWeight ∈ [0,1]` param (default 1) that shrinks the TIME component toward the
+// pure-binary endpoint as it → 0, fading the time signal at extreme-p items while
+// preserving the correctness sign. The 4·p(1−p) weight itself is built at the
+// state.ts/replay seam; here we pin srtOutcome's timeWeight semantics + the weight shape.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SRT_FISHER_WEIGHT_ENABLED flag', () => {
+  it('is DARK (false) — ship dark; the seam passes timeWeight=1 (byte-identical) when off', () => {
+    expect(SRT_FISHER_WEIGHT_ENABLED).toBe(false);
+  });
+});
+
+describe('srtOutcome timeWeight (YUK-450 Fisher-conditioned time weight)', () => {
+  it('timeWeight=1 (DEFAULT) is BYTE-IDENTICAL to PRE-YUK-450 main, anchored on golden constants', () => {
+    // The LIVE SRT path runs srtOutcome at the production default timeWeight=1; flipping the
+    // time-weight formula MUST NOT perturb θ̂ by even 1 ULP (SRT_ENABLED is true → this feeds the
+    // live engine). A new-vs-new assertion (`srtOutcome(…,1) === srtOutcome(…)`) is a TAUTOLOGY —
+    // both go through today's code. The only honest byte-identical guard is the literal output of
+    // main's pre-YUK-450 srtOutcome, hard-coded here. These constants were recomputed directly
+    // from main's `0.5 ± 0.5·rEff` form (rEff = 0.15 + 0.85·clamp01((d−t)/d)); they include t in
+    // the float-drift zone (17.67 / 17.9 at d=20 — where the rejected `1 − w·(1 − rEff)` form
+    // diverged ~1 ULP). The endpoint-exact `w·rEff + (1 − w)` form must reproduce them EXACTLY.
+    const GOLDEN: ReadonlyArray<readonly [boolean, number, number, number]> = [
+      // [correct, d, t(seconds), main's srtOutcome]
+      [true, 30, 0, 1], // fast-correct binary anchor
+      [true, 30, 15, 0.7875], // mid
+      [true, 30, 30, 0.575], // floored slow (t == d)
+      [true, 30, 45, 0.575], // floored slow (t > d clamps)
+      [false, 30, 0, 0], // fast-wrong binary anchor
+      [false, 30, 15, 0.21250000000000002], // mid wrong
+      [false, 30, 30, 0.425], // floored slow wrong
+      [true, 0, 5, 0.575], // d ≤ 0 guard → floored
+      // float-drift-zone samples (the rejected 1 − w·(1 − rEff) form drifted ±1 ULP here):
+      [true, 20, 17.67, 0.6245124999999999],
+      [false, 20, 17.67, 0.37548750000000003],
+      [true, 20, 17.9, 0.619625],
+      [false, 20, 17.9, 0.38037499999999996],
+    ];
+    for (const [correct, d, t, expected] of GOLDEN) {
+      expect(srtOutcome(correct, d, t, 1)).toBe(expected); // EXACT — byte-identical to main
+      expect(srtOutcome(correct, d, t)).toBe(expected); // 3-arg default path identical too
+    }
+  });
+
+  it('timeWeight=0 collapses to the PURE BINARY endpoints (time signal fully erased)', () => {
+    // At weight 0 the residual is irrelevant: correct → 1.0, wrong → 0.0, regardless of t.
+    for (const t of [0, 15, 30, 45, 1000]) {
+      expect(srtOutcome(true, 30, t, 0)).toBe(1.0);
+      expect(srtOutcome(false, 30, t, 0)).toBe(0.0);
+    }
+  });
+
+  it('decreasing timeWeight pulls a slow-correct credit toward binary 1.0 (monotone)', () => {
+    // A slow-correct (t≥d) at full weight is the floored 0.575; as weight → 0 it rises to 1.0.
+    const full = srtOutcome(true, 30, 30, 1); // 0.575
+    const half = srtOutcome(true, 30, 30, 0.5);
+    const zero = srtOutcome(true, 30, 30, 0); // 1.0
+    expect(full).toBeLessThan(half);
+    expect(half).toBeLessThan(zero);
+    expect(zero).toBe(1.0);
+    // and a slow-WRONG outcome value falls toward binary 0.0 as the weight drops (the floored
+    // 0.425 mild penalty at full weight → the full 0.0 binary penalty at weight 0).
+    expect(srtOutcome(false, 30, 30, 1)).toBeGreaterThan(srtOutcome(false, 30, 30, 0.5));
+    expect(srtOutcome(false, 30, 30, 0.5)).toBeGreaterThan(srtOutcome(false, 30, 30, 0));
+    expect(srtOutcome(false, 30, 30, 0)).toBe(0.0);
+  });
+
+  it('correctness sign is preserved at any positive weight (correct > wrong)', () => {
+    for (const w of [0.1, 0.5, 0.9, 1]) {
+      for (const t of [0, 15, 30, 1000]) {
+        expect(srtOutcome(true, 30, t, w)).toBeGreaterThan(srtOutcome(false, 30, t, w));
+      }
+    }
+  });
+
+  it('timeWeight applies in the d≤0 guard branch too (weight=1 byte-identical, weight=0 binary)', () => {
+    expect(srtOutcome(true, 0, 5, 1)).toBe(srtOutcome(true, 0, 5));
+    expect(srtOutcome(true, -3, 5, 0)).toBe(1.0);
+    expect(srtOutcome(false, -3, 5, 0)).toBe(0.0);
+  });
+
+  it('the seam weight 4·p(1−p) peaks (=1) at p=0.5 and → 0 at the p extremes', () => {
+    // The state.ts/replay seam builds timeWeight = 4·pItem·(1−pItem). Pin the shape so a
+    // regression in the seam formula is caught: peak 1 at p=0.5, symmetric, → 0 at 0/1.
+    const w = (p: number) => 4 * p * (1 - p);
+    expect(w(0.5)).toBeCloseTo(1, 12);
+    expect(w(0)).toBeCloseTo(0, 12);
+    expect(w(1)).toBeCloseTo(0, 12);
+    expect(w(0.1)).toBeCloseTo(w(0.9), 12); // symmetric
+    expect(w(0.1)).toBeLessThan(w(0.3)); // monotone toward the peak
+    expect(w(0.3)).toBeLessThan(w(0.5));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A1 (YUK-449) — per-KC rolling RT quantile as the SRT design constant d. quantile() +
+// pushRtCorrectSample() (ring buffer) + resolveSrtTimeLimitFromQuantile() (quantile-d
+// with cold-start fallback to the population seed). The flag SRT_D_FROM_QUANTILE is dark.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SRT_D_FROM_QUANTILE flag + RT buffer constants', () => {
+  it('is DARK (false) — d stays the population seed → θ̂ byte-identical to today', () => {
+    expect(SRT_D_FROM_QUANTILE).toBe(false);
+  });
+  it('the buffer/quantile knobs are sane owner-tunable constants', () => {
+    expect(SRT_RT_BUFFER_K).toBeGreaterThan(0);
+    expect(SRT_RT_MIN_N).toBeGreaterThan(0);
+    expect(SRT_RT_MIN_N).toBeLessThanOrEqual(SRT_RT_BUFFER_K);
+    expect(SRT_RT_QUANTILE).toBeGreaterThan(0);
+    expect(SRT_RT_QUANTILE).toBeLessThan(1);
+  });
+});
+
+describe('quantile (exact, type-7 linear interpolation)', () => {
+  it('median of an odd-length sample is the middle order statistic', () => {
+    expect(quantile([30, 10, 20], 0.5)).toBe(20);
+    expect(quantile([5, 1, 3, 2, 4], 0.5)).toBe(3);
+  });
+
+  it('median of an even-length sample interpolates the two central order statistics', () => {
+    expect(quantile([10, 20, 30, 40], 0.5)).toBeCloseTo(25, 12);
+  });
+
+  it('does not mutate the caller array (sorts a copy)', () => {
+    const input = [3, 1, 2];
+    quantile(input, 0.5);
+    expect(input).toEqual([3, 1, 2]);
+  });
+
+  it('p0 / p100 are the min / max; p60 interpolates', () => {
+    expect(quantile([10, 20, 30, 40, 50], 0)).toBe(10);
+    expect(quantile([10, 20, 30, 40, 50], 1)).toBe(50);
+    expect(quantile([10, 20, 30, 40, 50], 0.6)).toBeCloseTo(34, 12); // pos=2.4 → 30 + 0.4·10
+  });
+
+  it('single element returns that element; empty returns NaN', () => {
+    expect(quantile([42], 0.5)).toBe(42);
+    expect(Number.isNaN(quantile([], 0.5))).toBe(true);
+  });
+
+  it('clamps q outside [0,1]', () => {
+    expect(quantile([10, 20, 30], -1)).toBe(10);
+    expect(quantile([10, 20, 30], 5)).toBe(30);
+  });
+});
+
+describe('pushRtCorrectSample (per-KC correct-RT ring buffer)', () => {
+  it('appends to the tail and never mutates the input', () => {
+    const buf = [1000, 2000];
+    const next = pushRtCorrectSample(buf, 3000);
+    expect(next).toEqual([1000, 2000, 3000]);
+    expect(buf).toEqual([1000, 2000]); // input untouched
+  });
+
+  it('null/undefined buffer starts a fresh single-element buffer', () => {
+    expect(pushRtCorrectSample(null, 1500)).toEqual([1500]);
+    expect(pushRtCorrectSample(undefined, 1500)).toEqual([1500]);
+  });
+
+  it('caps at SRT_RT_BUFFER_K, dropping the OLDEST (FIFO)', () => {
+    let buf: number[] = [];
+    for (let i = 1; i <= SRT_RT_BUFFER_K + 5; i++) buf = pushRtCorrectSample(buf, i * 100);
+    expect(buf.length).toBe(SRT_RT_BUFFER_K);
+    // oldest 5 dropped → first element is sample #6 (=600), last is the newest.
+    expect(buf[0]).toBe(600);
+    expect(buf[buf.length - 1]).toBe((SRT_RT_BUFFER_K + 5) * 100);
+  });
+
+  it('drops non-finite / non-positive samples (garbage RT must not pollute the scale)', () => {
+    const buf = [1000];
+    expect(pushRtCorrectSample(buf, Number.NaN)).toEqual([1000]);
+    expect(pushRtCorrectSample(buf, Number.POSITIVE_INFINITY)).toEqual([1000]);
+    expect(pushRtCorrectSample(buf, 0)).toEqual([1000]);
+    expect(pushRtCorrectSample(buf, -500)).toEqual([1000]);
+    // returns a COPY even on a dropped sample (no aliasing).
+    const dropped = pushRtCorrectSample(buf, -1);
+    expect(dropped).not.toBe(buf);
+  });
+});
+
+describe('resolveSrtTimeLimitFromQuantile (quantile-d with cold-start population-seed fallback)', () => {
+  it('falls back to the population seed below SRT_RT_MIN_N samples (cold start)', () => {
+    expect(resolveSrtTimeLimitFromQuantile(null, 3)).toBe(resolveSrtTimeLimit(3));
+    expect(resolveSrtTimeLimitFromQuantile([], 3)).toBe(resolveSrtTimeLimit(3));
+    const few = Array.from({ length: SRT_RT_MIN_N - 1 }, () => 5000);
+    expect(resolveSrtTimeLimitFromQuantile(few, 3)).toBe(resolveSrtTimeLimit(3));
+  });
+
+  it('derives d (seconds) from the quantile once ≥ SRT_RT_MIN_N samples accrue', () => {
+    // SRT_RT_MIN_N copies of 5000ms → median 5000ms → d = 5s.
+    const buf = Array.from({ length: SRT_RT_MIN_N }, () => 5000);
+    expect(resolveSrtTimeLimitFromQuantile(buf, 3)).toBeCloseTo(5, 12);
+    // and it is INDEPENDENT of the difficulty seed once data is present (self-RT drives d).
+    expect(resolveSrtTimeLimitFromQuantile(buf, 1)).toBeCloseTo(5, 12);
+    expect(resolveSrtTimeLimitFromQuantile(buf, 5)).toBeCloseTo(5, 12);
+  });
+
+  it('uses the configured quantile (median by default) of the buffered correct RTs', () => {
+    const buf = [2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000]; // 8 samples
+    const expectedMs = quantile(buf, SRT_RT_QUANTILE);
+    expect(resolveSrtTimeLimitFromQuantile(buf, 3)).toBeCloseTo(expectedMs / 1000, 12);
   });
 });

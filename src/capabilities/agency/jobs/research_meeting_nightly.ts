@@ -47,6 +47,10 @@ import { listProposalInboxRows } from '@/server/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/server/proposals/writer';
 
 import { type InduceConjectureResult, induceConjecture } from '@/server/agency/conjecture/induce';
+import {
+  type ReconcileResult,
+  reconcileConjecturePredictions,
+} from '@/server/conjectures/reconcile';
 
 /** Structural per-run propose cap (top-K salient cells → at most K conjectures). */
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
@@ -64,6 +68,10 @@ export interface ResearchMeetingResult {
   conjectures_created: number;
   /** pending conjectures already open at run start (the dedup base). */
   pending_before: number;
+  /** prior probe outcomes scored + ledger-updated this run (U8 reconcile, A13). */
+  reconciled: number;
+  /** probe outcomes skipped this run (dangling / malformed / unreadable conjecture ref). */
+  reconcile_skipped: number;
   /** total Opus cost across the run's inductions, USD. */
   cost_usd: number;
   /** the run's anchor event id (provenance + scan subject). */
@@ -89,6 +97,8 @@ export interface ResearchMeetingDeps {
   writeAiProposalFn?: WriteAiProposalFn;
   writeEventFn?: WriteEventFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
+  /** U8 (A13): score prior probe outcomes → prediction_score event + typed-ledger. */
+  reconcileFn?: (db: Db) => Promise<ReconcileResult>;
 }
 
 /**
@@ -178,6 +188,19 @@ export async function runResearchMeetingNightly(
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
+  const reconcileFn = deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d));
+
+  // ── A13 reconcile (U8): score PRIOR probe outcomes against their conjecture's
+  // prediction → append LOG-only prediction_score events + advance the typed-ledger
+  // (FLIP-inert). Runs BEFORE the propose half: deterministic DB work, idempotent
+  // (already-scored probes are excluded by the reader), and a throw here is a legit
+  // retryable DB fault that propagates so pg-boss retries the whole job.
+  const reconcileResult = await reconcileFn(db);
+  // Surface the aggregate skip count — a non-zero value flags data-quality drift (dangling /
+  // unreadable conjecture refs) that the per-probe console.warn alone makes easy to miss.
+  if (reconcileResult.skipped > 0) {
+    console.warn('[research_meeting_nightly] reconcile skipped probes', reconcileResult.skipped);
+  }
 
   // ── PRE-LLM reads (OUTSIDE the per-cell swallow — a throw here is retryable) ──
   const since = new Date(now.getTime() - RESEARCH_MEETING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -256,6 +279,8 @@ export async function runResearchMeetingNightly(
     considered: topCells.length,
     conjectures_created: created,
     pending_before: knownConjectureKeys.size,
+    reconciled: reconcileResult.reconciled,
+    reconcile_skipped: reconcileResult.skipped,
     cost_usd: costUsd,
     trigger_event_id: triggerEventId,
   };

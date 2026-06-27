@@ -37,7 +37,9 @@ import {
   conjunctiveItemProb,
   eloK,
   expectedScore,
+  pushRtCorrectSample,
   resolveSrtTimeLimit,
+  resolveSrtTimeLimitFromQuantile,
   srtOutcome,
 } from '@/core/theta';
 import {
@@ -216,10 +218,24 @@ function dedupKcs(ids: string[]): string[] {
  *   Wave-0 single-KC-only baseline). true → each MULTI-KC attempt emits a conjunctive
  *   item-level forward prediction (∏ σ(θ̂_{t−1,j} − b)) so the V-A1-fwd gate can fold
  *   multi-KC attempts into its scored pool. Trajectory / credit / drift math is untouched.
+ * @param opts.fisherWeightEnabled A1 (YUK-450) Fisher-conditioned time weight. Default false →
+ *   timeWeight = 1 → byte-identical regression. true → timeWeight = 4·pItem·(1−pItem) at the
+ *   SRT seam (maps to the real SRT_FISHER_WEIGHT_ENABLED const).
+ * @param opts.dFromQuantile A1 (YUK-449) per-KC rolling RT quantile as d. Default false → d =
+ *   population seed (resolveSrtTimeLimit) → byte-identical regression. true → d = quantile of
+ *   the PRIMARY KC's PRIOR correct RTs (≥ SRT_RT_MIN_N, else seed). Causal by construction (only
+ *   attempts BEFORE the current one inform d) → NO forward-validation in-sample leakage. Maps to
+ *   the real SRT_D_FROM_QUANTILE const.
  */
 export function replayTheta(
   orderedAttempts: ReplayAttempt[],
-  opts: { srtEnabled: boolean; gridEnabled?: boolean; multiKcScoring?: boolean },
+  opts: {
+    srtEnabled: boolean;
+    gridEnabled?: boolean;
+    multiKcScoring?: boolean;
+    fisherWeightEnabled?: boolean;
+    dFromQuantile?: boolean;
+  },
 ): ReplayResult {
   // Mutable in-memory state — the DB rows production reads/upserts, held in maps.
   const thetaKc = new Map<string, number>();
@@ -230,6 +246,12 @@ export function replayTheta(
   const thetaGridByKc = new Map<string, ThetaGridPosterior>();
   const gridEnabled = opts.gridEnabled ?? false;
   const multiKcScoring = opts.multiKcScoring ?? false;
+  const fisherWeightEnabled = opts.fisherWeightEnabled ?? false;
+  const dFromQuantile = opts.dFromQuantile ?? false;
+  // A1 (YUK-449) — causal per-KC correct-RT buffer (mirrors mastery_state.rt_correct_ms). The
+  // d-read below sees only PRIOR attempts' RTs (this attempt's RT is pushed AFTER the update),
+  // so quantile-d carries no forward-validation leakage. Stays unused when !dFromQuantile.
+  const rtBufferByKc = new Map<string, number[]>();
 
   const steps: ReplayStep[] = [];
 
@@ -333,9 +355,16 @@ export function replayTheta(
     const useSrt = opts.srtEnabled && isFiniteNum(a.responseTimeMs);
     let credits: number[];
     if (useSrt) {
-      const d = resolveSrtTimeLimit(a.difficulty); // seconds (module const)
+      // A1 (YUK-449) — d source: PRIOR-only per-KC quantile (causal) vs population seed.
+      const d = dFromQuantile
+        ? resolveSrtTimeLimitFromQuantile(rtBufferByKc.get(kcs[0]) ?? null, a.difficulty)
+        : resolveSrtTimeLimit(a.difficulty); // seconds (module const)
       const tSeconds = (a.responseTimeMs as number) / 1000; // ms → s
-      const srt = srtOutcome(a.outcome === 1, d, tSeconds); // ∈ [0,1]
+      // A1 (YUK-450) — Fisher-conditioned time weight (4·pItem·(1−pItem)); pItem = whole-item
+      // p(correct) from the running effective θ̂ + b anchor. Flag off → w=1 → byte-identical.
+      const pItem = effectiveThetas.reduce((acc, th) => acc * expectedScore(th, a.b), 1);
+      const timeWeight = fisherWeightEnabled ? 4 * pItem * (1 - pItem) : 1;
+      const srt = srtOutcome(a.outcome === 1, d, tSeconds, timeWeight); // ∈ [0,1]
       credits = conjunctiveCreditsContinuous(effectiveThetas, a.b, srt);
     } else {
       credits = conjunctiveCredits(effectiveThetas, a.b, a.outcome);
@@ -349,6 +378,19 @@ export function replayTheta(
       const k = eloK(evidence.get(kc) ?? 0);
       thetaKc.set(kc, (thetaKc.get(kc) ?? 0) + k * a.bWeight * credits[i]);
       evidence.set(kc, (evidence.get(kc) ?? 0) + 1);
+    }
+
+    // A1 (YUK-449) — POST-update causal RT collection (mirrors state.ts: push the item RT into
+    // each touched KC's buffer ONLY on an SRT-eligible correct attempt). Done AFTER the d-read
+    // above, so the next attempt's quantile sees this one but THIS attempt's d did not → no
+    // leakage. Harmless when !dFromQuantile (buffer is never read) → existing fixtures unchanged.
+    if (useSrt && a.outcome === 1) {
+      for (const kc of kcs) {
+        rtBufferByKc.set(
+          kc,
+          pushRtCorrectSample(rtBufferByKc.get(kc) ?? null, a.responseTimeMs as number),
+        );
+      }
     }
 
     // ── per-domain θ_global drift (state.ts:682-735), ONCE per touched domain ──

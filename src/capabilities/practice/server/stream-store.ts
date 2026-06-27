@@ -24,6 +24,8 @@ import {
   question,
 } from '@/db/schema';
 import { ApiError } from '@/server/http/errors';
+// YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
+import { type RefillDeps, refillActiveLearningPools } from '@/server/question-supply/refill';
 import { and, asc, eq, gte, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { QuestionKind } from '@/core/schema/business';
@@ -607,6 +609,9 @@ export async function getStream(
     composeDeps?: ComposeSoftmaxDeps;
     /** 容量注入（DI，仅测试用——收紧 max 测 π_i<1 / capacityGuard slice）。production 省略。 */
     capacity?: ComposerInputs['capacity'];
+    /** YUK-474 — refill DI（测试注 fake dispatch 捕获、不打真 pg-boss）。production 省略 →
+     *  refillActiveLearningPools 走默认 demandToSupplyTarget + dispatchSupplyTarget。 */
+    refillDeps?: RefillDeps;
   } = {},
 ): Promise<StreamView> {
   let rows = await db
@@ -624,6 +629,22 @@ export async function getStream(
       opts.composeDeps ?? {},
       opts.capacity,
     );
+
+    // YUK-474 — 取题瞬间 refill（compose 事务**提交后**、top-level `db`、best-effort）。检查活跃
+    //   学习 KC 的活跃池，见底（< REFILL_POOL_THRESHOLD）则复用既有 dispatcher 补题。**flag-off
+    //   （QUESTION_SUPPLY_REFILL_ENABLED 默认 false）→ refillActiveLearningPools 入口即短路返 []
+    //   （零 DB 零 dispatch）→ getStream 行为 byte-identical 现状**。这是「每用户每天首次打开练习
+    //   流一次」的 on-demand 补充（非 per-question / 非每次读），不在 day-one 关键路径。refill 失败
+    //   绝不破坏取题（try/catch best-effort，mirror writeObservationsBestEffort 纪律）。
+    try {
+      await refillActiveLearningPools(db, opts.refillDeps);
+    } catch (err) {
+      console.error('[stream-store] refillActiveLearningPools failed (post-compose, best-effort)', {
+        date,
+        err,
+      });
+    }
+
     rows = await db
       .select()
       .from(practice_stream_item)

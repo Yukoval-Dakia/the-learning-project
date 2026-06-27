@@ -101,6 +101,9 @@ function baseDeps(overrides: Partial<ResearchMeetingDeps> = {}): ResearchMeeting
     writeAiProposalFn: vi.fn(async () => 'prop_1'),
     writeEventFn: vi.fn(async (_db, input) => input.id),
     writeRetryableAiFailureLedgerFn: vi.fn(async () => {}),
+    // U8: stub the reconcile loop so unit tests never touch the DB (the real default
+    // reads probe_result events). Wiring is asserted in its own test below.
+    reconcileFn: vi.fn(async () => ({ reconciled: 0, skipped: 0 })),
     ...overrides,
   };
 }
@@ -236,5 +239,15 @@ describe('runResearchMeetingNightly', () => {
     expect(result.considered).toBe(0);
     expect(result.conjectures_created).toBe(0);
     expect(writeAiProposalFn).not.toHaveBeenCalled();
+  });
+
+  it('runs the A13 reconcile loop and surfaces the reconciled count (U8)', async () => {
+    const reconcileFn = vi.fn(async () => ({ reconciled: 2, skipped: 1 }));
+    // No failures → empty propose half, isolating the reconcile wiring assertion.
+    const deps = baseDeps({ reconcileFn, getFailureAttemptsFn: vi.fn(async () => []) });
+    const result = await runResearchMeetingNightly({} as never, deps);
+    expect(reconcileFn).toHaveBeenCalledTimes(1);
+    expect(result.reconciled).toBe(2);
+    expect(result.reconcile_skipped).toBe(1);
   });
 });
