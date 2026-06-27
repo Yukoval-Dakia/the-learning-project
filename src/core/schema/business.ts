@@ -363,7 +363,12 @@ export type VariantVerificationResultT = z.infer<typeof VariantVerificationResul
 // rendered as a number (Phase 0 anti-number rule), so it lives on the orchestrator's
 // return type, not the model-facing record.
 export const ConjectureDraft = z.object({
-  claim_md: z.string().min(1).max(500),
+  // max 280 MUST match ConjectureProposalChange.claim_md (proposal.ts) — the draft
+  // feeds straight into the proposal payload (research_meeting_nightly), and it is
+  // the outputFormat handed to Opus, so the model is told the REAL 280 cap. A wider
+  // draft would let a 281–500-char claim pass induction then throw at the proposal
+  // parse-barrier → silently swallowed + mis-logged as a retryable AI failure.
+  claim_md: z.string().min(1).max(280),
   probe_md: z.string().min(1).max(1000),
   cause_category: z.string().min(1).max(120),
   recurrence_count: z.number().int().min(2),

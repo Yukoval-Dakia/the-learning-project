@@ -44,4 +44,14 @@ describe('ConjectureDraft', () => {
     expect(ConjectureDraft.safeParse(rest).success).toBe(false);
     expect(ConjectureDraft.safeParse({ ...valid, discriminating: 'yes' }).success).toBe(false);
   });
+
+  // Regression (PR-1 review): claim_md max MUST match ConjectureProposalChange's
+  // (proposal.ts, max 280). The draft is the model-facing outputFormat AND feeds
+  // straight into the proposal payload — a wider draft would let a 281+ char claim
+  // pass induction then throw at the proposal parse-barrier (silently swallowed +
+  // mis-logged as a retryable AI failure).
+  it('caps claim_md at 280 to match the downstream proposal schema', () => {
+    expect(ConjectureDraft.safeParse({ ...valid, claim_md: 'x'.repeat(280) }).success).toBe(true);
+    expect(ConjectureDraft.safeParse({ ...valid, claim_md: 'x'.repeat(281) }).success).toBe(false);
+  });
 });
