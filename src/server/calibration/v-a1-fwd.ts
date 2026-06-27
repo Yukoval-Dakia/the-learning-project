@@ -31,6 +31,14 @@ export interface VA1Config {
   bootstrapB: number; // default 2000
   /** max tolerated degenerate-replicate fraction before INSUFFICIENT — owner-chosen (M1). */
   maxDegenerateFraction: number; // default 0.05
+  /**
+   * YUK-463 — fold MULTI-KC attempts into the scored forward pool via the conjunctive
+   * item-level prediction (∏ σ(θ_j − b)). Default false → Wave-0 behaviour (single-KC pool
+   * only). This is a REPORTING/traceability flag carried in `result.config`; the actual
+   * bucketing is driven by the matching `multiKcScoring` arg to assembleForwardClusters —
+   * the caller (audit-calibration --multi-kc) MUST set both consistently.
+   */
+  multiKcScoring: boolean; // default false
 }
 
 const DEFAULT_CONFIG: VA1Config = {
@@ -39,6 +47,7 @@ const DEFAULT_CONFIG: VA1Config = {
   deltaThreshold: 0.02,
   bootstrapB: 2000,
   maxDegenerateFraction: 0.05,
+  multiKcScoring: false,
 };
 
 /**
@@ -47,8 +56,14 @@ const DEFAULT_CONFIG: VA1Config = {
  * fabricating a verdict.
  */
 function validateConfig(config: VA1Config): void {
-  const { effectiveNFloor, minKcClusters, deltaThreshold, bootstrapB, maxDegenerateFraction } =
-    config;
+  const {
+    effectiveNFloor,
+    minKcClusters,
+    deltaThreshold,
+    bootstrapB,
+    maxDegenerateFraction,
+    multiKcScoring,
+  } = config;
   if (!Number.isFinite(effectiveNFloor) || effectiveNFloor < 0) {
     throw new Error(
       `v-a1-fwd config: effectiveNFloor must be a finite number >= 0 (got ${effectiveNFloor})`,
@@ -74,6 +89,11 @@ function validateConfig(config: VA1Config): void {
   ) {
     throw new Error(
       `v-a1-fwd config: maxDegenerateFraction must be a finite number in [0,1] (got ${maxDegenerateFraction})`,
+    );
+  }
+  if (typeof multiKcScoring !== 'boolean') {
+    throw new Error(
+      `v-a1-fwd config: multiKcScoring must be a boolean (got ${String(multiKcScoring)})`,
     );
   }
 }
@@ -147,18 +167,32 @@ export interface AssembledClusters {
  *   RT-less context count is genuinely irrelevant (e.g. unit tests that assert on the
  *   gate's pooled decision, not on nTotal).
  */
-export function assembleForwardClusters(orderedAttempts: ReplayAttempt[]): ClusterForwardPreds[] {
-  return assembleForwardClustersDetailed(orderedAttempts).clusters;
+export function assembleForwardClusters(
+  orderedAttempts: ReplayAttempt[],
+  opts: { multiKcScoring?: boolean } = {},
+): ClusterForwardPreds[] {
+  return assembleForwardClustersDetailed(orderedAttempts, opts).clusters;
 }
 
-/** Same as assembleForwardClusters, also returning the total scorable-step count. */
+/**
+ * Same as assembleForwardClusters, also returning the total scorable-step count.
+ *
+ * @param opts.multiKcScoring YUK-463 — when true, MULTI-KC attempts are folded into the
+ *   scored pool via the conjunctive item-level prediction (∏ σ(θ_j − b)). RT-bearing
+ *   multi-KC steps are bucketed by their COMBO key (sorted KC set) into combo clusters that
+ *   are DISJOINT from the single-KC clusters (cluster independence — one attempt joins
+ *   exactly one cluster). Default false → byte-identical to the Wave-0 single-KC-only pool.
+ */
 export function assembleForwardClustersDetailed(
   orderedAttempts: ReplayAttempt[],
+  opts: { multiKcScoring?: boolean } = {},
 ): AssembledClusters {
+  const multiKcScoring = opts.multiKcScoring ?? false;
   // Replay the WHOLE ordered list once per variant — θ_global accumulates across every KC
-  // in a domain (YUK-466). The engine emits one step per attempt, in list order.
-  const srtRun = replayTheta(orderedAttempts, { srtEnabled: true });
-  const binaryRun = replayTheta(orderedAttempts, { srtEnabled: false });
+  // in a domain (YUK-466). The engine emits one step per attempt, in list order. Thread
+  // multiKcScoring to BOTH runs so the multi-KC item prediction exists under each variant.
+  const srtRun = replayTheta(orderedAttempts, { srtEnabled: true, multiKcScoring });
+  const binaryRun = replayTheta(orderedAttempts, { srtEnabled: false, multiKcScoring });
   // OCR finding 7: the index-alignment below assumes both runs produce the SAME number of
   // steps (they replay the SAME attempt list, so they must). Assert it so a future
   // divergence in replayTheta fails LOUD here rather than silently mis-pairing srt/binary
@@ -175,6 +209,14 @@ export function assembleForwardClustersDetailed(
     string,
     { scoresSrt: number[]; scoresBinary: number[]; labels: (0 | 1)[] }
   >();
+  // YUK-463 — multi-KC combo clusters live in a SEPARATE map keyed by the sorted KC set, so
+  // their keys can NEVER collide with a single-KC scoredKnowledgeId → the two cluster
+  // families stay disjoint (cluster independence in the paired whole-KC bootstrap). Stays
+  // empty when !multiKcScoring → the output cluster set is byte-identical to Wave-0.
+  const byCombo = new Map<
+    string,
+    { scoresSrt: number[]; scoresBinary: number[]; labels: (0 | 1)[] }
+  >();
   let nTotalScorable = 0;
 
   for (let i = 0; i < srtRun.steps.length; i++) {
@@ -184,22 +226,46 @@ export function assembleForwardClustersDetailed(
     // scoredKnowledgeId/hasRt are variant-independent (set from the attempt), so reading
     // them off the SRT run is safe.
     const kc = s.scoredKnowledgeId;
-    if (kc === null) continue;
-    nTotalScorable++;
-    if (!s.hasRt) continue; // RT-less → identical under both variants → 0 ΔAUC (M4).
-    if (s.predictedP === null || bnry.predictedP === null) continue;
-    let entry = byKc.get(kc);
+    if (kc !== null) {
+      // ── SINGLE-KC forward-scorable step (Wave-0 path, unchanged) ──
+      nTotalScorable++;
+      if (!s.hasRt) continue; // RT-less → identical under both variants → 0 ΔAUC (M4).
+      if (s.predictedP === null || bnry.predictedP === null) continue;
+      let entry = byKc.get(kc);
+      if (entry === undefined) {
+        entry = { scoresSrt: [], scoresBinary: [], labels: [] };
+        byKc.set(kc, entry);
+      }
+      entry.scoresSrt.push(s.predictedP);
+      entry.scoresBinary.push(bnry.predictedP);
+      entry.labels.push(s.outcome);
+      continue;
+    }
+    // ── MULTI-KC step (YUK-463) ── only folded when multiKcScoring is on; otherwise the
+    // item fields are null (the engine emitted them dark) → this is a pure no-op, preserving
+    // the Wave-0 single-KC-only pool exactly.
+    if (!multiKcScoring || s.itemPredictedP === null || s.itemClusterKey === null) continue;
+    nTotalScorable++; // multi-KC scorable steps join the scorable context count (incl. RT-less).
+    if (!s.hasRt) continue; // RT-less multi-KC → identical under both SRT variants (mirrors M4).
+    if (bnry.itemPredictedP === null) continue;
+    const comboKey = s.itemClusterKey;
+    let entry = byCombo.get(comboKey);
     if (entry === undefined) {
       entry = { scoresSrt: [], scoresBinary: [], labels: [] };
-      byKc.set(kc, entry);
+      byCombo.set(comboKey, entry);
     }
-    entry.scoresSrt.push(s.predictedP);
-    entry.scoresBinary.push(bnry.predictedP);
+    entry.scoresSrt.push(s.itemPredictedP);
+    entry.scoresBinary.push(bnry.itemPredictedP);
     entry.labels.push(s.outcome);
   }
 
   const clusters: ClusterForwardPreds[] = [];
   for (const entry of byKc.values()) {
+    if (entry.labels.length > 0) clusters.push(entry);
+  }
+  // Combo clusters appended after the single-KC clusters. Order is irrelevant to the
+  // index-resampling bootstrap; deterministic by Map insertion (first combo appearance).
+  for (const entry of byCombo.values()) {
     if (entry.labels.length > 0) clusters.push(entry);
   }
 
@@ -394,6 +460,11 @@ export function formatReport(result: VA1Result, opts: { json?: boolean } = {}): 
   const cfg = result.config;
   lines.push(
     `  - effectiveN floor (${cfg.effectiveNFloor}) + minKcClusters (${cfg.minKcClusters}) are OWNER-CHOSEN; ΔAUC threshold ${cfg.deltaThreshold} from the dossier V-A1-fwd cell.`,
+  );
+  lines.push(
+    cfg.multiKcScoring
+      ? '  - YUK-463 MULTI-KC SCORING ON: RT-bearing multi-KC attempts ARE forward-scored via the conjunctive item prediction ∏ σ(θ_j − b) and bucketed into disjoint combo clusters (sorted KC set) alongside the single-KC clusters. N includes them (parameter-free DINA s=g=0 — NO slip/guess).'
+      : '  - YUK-463 multi-KC scoring OFF (default): multi-KC attempts are replayed for trajectory fidelity but EXCLUDED from the scored pool (single-KC pool only). Pass --multi-kc to fold them in.',
   );
   if (result.verdict === 'INSUFFICIENT') {
     lines.push('');

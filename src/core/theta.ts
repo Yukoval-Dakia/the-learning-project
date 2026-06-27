@@ -91,6 +91,27 @@ export function updateTheta(
 }
 
 /**
+ * Conjunctive (DINA-style, PARAMETER-FREE) item-level success probability:
+ *   P_item = ∏_j σ(θ_j − b)
+ *
+ * The probability a learner answers a multi-KC question correctly when the question
+ * requires ALL of its KCs (conjunctive / DINA with slip=guess=0). This is the SINGLE
+ * TRUTH SOURCE for the item product used in BOTH (a) conjunctiveCredits' wrong-branch
+ * odds and (b) the V-A1-fwd multi-KC forward predictor (YUK-463) — so the harness scores
+ * multi-KC attempts with the EXACT same conjunctive probability the live credit path uses.
+ *
+ * ⚠ n=1 RED LINE: this is the PARAMETER-FREE conjunctive (s=g=0). θ_j are the single
+ *   learner's own per-KC effective abilities (sufficient statistics) and b is the
+ *   owner/loader item-difficulty anchor — BOTH already live on the credit path, neither a
+ *   fitted cross-examinee parameter. It NEVER introduces DINA's slip/guess (those are
+ *   cross-examinee parameters → INADMISSIBLE under the n=1 litmus). Zero new estimated
+ *   parameters.
+ */
+export function conjunctiveItemProb(thetas: number[], b: number): number {
+  return thetas.map((t) => expectedScore(t, b)).reduce((acc, p) => acc * p, 1);
+}
+
+/**
  * 多 KC 合取 credit-assignment（owner 拍板 MLE，review SF-1 修复）。
  *
  * 一道挂多 KC 的题产生 ONE outcome，多个 θ_k 要更新 = credit assignment。模型取
@@ -122,7 +143,7 @@ export function conjunctiveCredits(thetas: number[], b: number, outcome: 0 | 1):
     return ps.map((p) => 1 - p);
   }
   // wrong: −(1−p_k) · P_item/(1−P_item)，clamp 量级 ≤ 1。
-  const pItem = ps.reduce((acc, p) => acc * p, 1);
+  const pItem = conjunctiveItemProb(thetas, b); // ∏ σ(θ_j − b), single truth source.
   const odds = pItem / Math.max(1 - pItem, 1e-9);
   return ps.map((p) => Math.max(-(1 - p) * odds, -1));
 }
@@ -366,7 +387,7 @@ export function conjunctiveCreditsContinuous(
   // wrong-direction，magnitude m = 2·(0.5 − outcome) ∈ [0,1]。先按二元算 clamp 后的
   // per-KC blame，再整体乘 m（m=1 时与二元 wrong 分支逐位相同）。
   const m = 2 * (0.5 - outcome);
-  const pItem = ps.reduce((acc, p) => acc * p, 1);
+  const pItem = conjunctiveItemProb(thetas, b); // ∏ σ(θ_j − b), single truth source.
   const odds = pItem / Math.max(1 - pItem, 1e-9);
   return ps.map((p) => Math.max(-(1 - p) * odds, -1) * m);
 }

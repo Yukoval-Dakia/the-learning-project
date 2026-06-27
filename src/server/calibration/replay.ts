@@ -34,6 +34,7 @@ import {
   HIERARCHICAL_ELO_ENABLED,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
+  conjunctiveItemProb,
   eloK,
   expectedScore,
   resolveSrtTimeLimit,
@@ -122,6 +123,24 @@ export interface ReplayStep {
    * `predictedP` above is the LIVE comparison baseline; this is the DARK grid path.
    */
   gridPredictedP: number | null;
+  /**
+   * YUK-463 — the PRE-attempt CONJUNCTIVE MULTI-KC forward prediction:
+   *   itemPredictedP = ∏_j σ(θ̂_{t−1,j} − b) = conjunctiveItemProb(effectiveThetas, b)
+   * over the SAME pre-attempt effectiveThetas the credit path uses. Emitted ONLY for a
+   * MULTI-KC attempt (scoredKnowledgeId === null) AND ONLY when opts.multiKcScoring is on
+   * — single-KC attempts are forward-scored via `predictedP` above, so this stays null for
+   * them. null when !opts.multiKcScoring (byte-identical to the Wave-0 single-KC baseline).
+   * No-leakage: emitted BEFORE any θ̂ write, identical to the single-KC forward step.
+   */
+  itemPredictedP: number | null;
+  /**
+   * YUK-463 — the COMBO-CLUSTER key for a multi-KC forward step: the sorted, '|'-joined
+   * deduped KC set (e.g. "kcA|kcB"). The V-A1-fwd assembler buckets multi-KC attempts by
+   * this key into combo clusters that are DISJOINT from the single-KC clusters (cluster
+   * independence — one attempt joins exactly one cluster, no cross-cluster leakage in the
+   * paired whole-KC bootstrap). null whenever itemPredictedP is null.
+   */
+  itemClusterKey: string | null;
 }
 
 /**
@@ -192,10 +211,15 @@ function dedupKcs(ids: string[]): string[] {
  *   true → the per-KC grid-Bayes offset posterior is folded shadow-only ALONGSIDE the Elo
  *   track (single-KC-scorable attempts only), mirroring the production shadow write
  *   (state.ts:815-828). NEVER flips THETA_GRID_ENABLED, NEVER touches the DB.
+ * @param opts.multiKcScoring YUK-463 multi-KC forward scoring. Default false → ZERO multi-KC
+ *   computation (itemPredictedP / itemClusterKey null on every step — byte-identical to the
+ *   Wave-0 single-KC-only baseline). true → each MULTI-KC attempt emits a conjunctive
+ *   item-level forward prediction (∏ σ(θ̂_{t−1,j} − b)) so the V-A1-fwd gate can fold
+ *   multi-KC attempts into its scored pool. Trajectory / credit / drift math is untouched.
  */
 export function replayTheta(
   orderedAttempts: ReplayAttempt[],
-  opts: { srtEnabled: boolean; gridEnabled?: boolean },
+  opts: { srtEnabled: boolean; gridEnabled?: boolean; multiKcScoring?: boolean },
 ): ReplayResult {
   // Mutable in-memory state — the DB rows production reads/upserts, held in maps.
   const thetaKc = new Map<string, number>();
@@ -205,6 +229,7 @@ export function replayTheta(
   // production persists shadow-only to theta_grid_json). Stays empty when !gridEnabled.
   const thetaGridByKc = new Map<string, ThetaGridPosterior>();
   const gridEnabled = opts.gridEnabled ?? false;
+  const multiKcScoring = opts.multiKcScoring ?? false;
 
   const steps: ReplayStep[] = [];
 
@@ -268,8 +293,28 @@ export function replayTheta(
         outcome: a.outcome,
         hasRt,
         gridPredictedP,
+        // Single-KC attempts are forward-scored via predictedP above — the conjunctive
+        // multi-KC fields stay null even with multiKcScoring on (no double-scoring).
+        itemPredictedP: null,
+        itemClusterKey: null,
       });
     } else {
+      // ── YUK-463: MULTI-KC conjunctive forward prediction (opts.multiKcScoring) ──
+      // A multi-KC question produces ONE item-level outcome; its PRE-attempt forward
+      // prediction is the conjunctive P_item = ∏ σ(θ̂_{t−1,j} − b) over the SAME
+      // pre-attempt effectiveThetas (line ~223) the credit path consumes — same single
+      // truth source as conjunctiveCredits' odds. DARK by default (multiKcScoring false →
+      // both fields null = byte-identical to the Wave-0 single-KC baseline). No-leakage:
+      // emitted here, BEFORE any θ̂ write. NO new parameter (parameter-free DINA s=g=0).
+      let itemPredictedP: number | null = null;
+      let itemClusterKey: string | null = null;
+      if (multiKcScoring) {
+        itemPredictedP = conjunctiveItemProb(effectiveThetas, a.b);
+        // Combo-cluster key = sorted deduped KC set. Keeps clusters disjoint from the
+        // single-KC clusters (an attempt joins exactly one cluster) → no cross-cluster
+        // leakage in the paired whole-KC bootstrap.
+        itemClusterKey = [...kcs].sort().join('|');
+      }
       steps.push({
         eventId: a.eventId,
         scoredKnowledgeId: null,
@@ -279,6 +324,8 @@ export function replayTheta(
         outcome: a.outcome,
         hasRt,
         gridPredictedP: null,
+        itemPredictedP,
+        itemClusterKey,
       });
     }
 

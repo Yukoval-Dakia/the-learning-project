@@ -8,7 +8,12 @@
 // background — both SRT variants share it). It is currently `true`, so the A2-global
 // anchors below assert the flag-on behaviour, matching production.
 
-import { ELO_K_GLOBAL, HIERARCHICAL_ELO_ENABLED, expectedScore } from '@/core/theta';
+import {
+  ELO_K_GLOBAL,
+  HIERARCHICAL_ELO_ENABLED,
+  conjunctiveItemProb,
+  expectedScore,
+} from '@/core/theta';
 import {
   type ThetaGridPosterior,
   gridUpdate,
@@ -359,5 +364,109 @@ describe('replayTheta — A4 grid track (gridEnabled)', () => {
     expect(case2.steps[0].gridPredictedP).toBeNull(); // not forward-scorable (multi-KC question)
     expect(case2.finalState.thetaGridByKc.has('a')).toBe(true); // FOLD happened (deduped set len 1)
     expect((case2.finalState.thetaGridByKc.get('a') as ThetaGridPosterior).evidence).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-463 MULTI-KC FORWARD SCORING (multiKcScoring) — a multi-KC attempt emits a
+// conjunctive item-level forward prediction (∏ σ(θ_j − b)) so the V-A1-fwd gate can fold
+// it into the scored pool. These pin the flag-off byte-identical anchor, the conjunctive
+// value + sorted combo key, the single-KC no-double-scoring rule, and no-leakage.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('replayTheta — YUK-463 multi-KC forward scoring (multiKcScoring)', () => {
+  it('flag OFF (absent/false) → itemPredictedP + itemClusterKey null on every step (byte-identical anchor)', () => {
+    const list = [
+      attempt({
+        knowledgeIds: ['a', 'b'],
+        scoredKnowledgeId: null,
+        outcome: 1,
+        b: 0.2,
+        responseTimeMs: 8000,
+        eventId: 'm1',
+        createdAt: 1,
+      }),
+      attempt({
+        knowledgeIds: ['k'],
+        outcome: 0,
+        b: 0.2,
+        responseTimeMs: 8000,
+        eventId: 's1',
+        createdAt: 2,
+      }),
+    ];
+    const off = replayTheta(list, { srtEnabled: false }); // multiKcScoring absent → false
+    for (const s of off.steps) {
+      expect(s.itemPredictedP).toBeNull();
+      expect(s.itemClusterKey).toBeNull();
+    }
+    const offExplicit = replayTheta(list, { srtEnabled: false, multiKcScoring: false });
+    for (const s of offExplicit.steps) {
+      expect(s.itemPredictedP).toBeNull();
+      expect(s.itemClusterKey).toBeNull();
+    }
+  });
+
+  it('flag ON → MULTI-KC step emits conjunctive itemPredictedP = ∏ σ(θ_j − b) + SORTED combo key', () => {
+    const b = 0.3;
+    const r = replayTheta(
+      [
+        attempt({
+          knowledgeIds: ['b', 'a'], // unsorted input
+          scoredKnowledgeId: null,
+          outcome: 1,
+          b,
+          responseTimeMs: 8000,
+          eventId: 'm1',
+          createdAt: 1,
+        }),
+      ],
+      { srtEnabled: false, multiKcScoring: true },
+    );
+    const s = r.steps[0];
+    // cold θ_KC=0, domain null → effective θ = 0 for both KCs → P_item = σ(0−b)².
+    expect(s.itemPredictedP as number).toBeCloseTo(conjunctiveItemProb([0, 0], b), 12);
+    expect(s.itemPredictedP as number).toBeCloseTo(expectedScore(0, b) ** 2, 12);
+    // combo key is the SORTED deduped KC set ('a' before 'b' despite ['b','a'] input).
+    expect(s.itemClusterKey).toBe('a|b');
+    // still NOT single-KC forward-scorable.
+    expect(s.scoredKnowledgeId).toBeNull();
+    expect(s.predictedP).toBeNull();
+  });
+
+  it('flag ON → SINGLE-KC step keeps item fields null (scored via predictedP, no double-scoring)', () => {
+    const r = replayTheta(
+      [attempt({ knowledgeIds: ['k'], outcome: 1, b: 0.1, responseTimeMs: 8000 })],
+      {
+        srtEnabled: false,
+        multiKcScoring: true,
+      },
+    );
+    const s = r.steps[0];
+    expect(s.scoredKnowledgeId).toBe('k');
+    expect(s.predictedP).not.toBeNull();
+    expect(s.itemPredictedP).toBeNull();
+    expect(s.itemClusterKey).toBeNull();
+  });
+
+  it('flag ON → itemPredictedP uses the PRE-attempt θ (no-leakage): later multi-KC step reflects accumulated θ_KC', () => {
+    const b = 0;
+    const r = replayTheta(
+      [
+        // single-KC 'a' correct, cold → θ_KC(a) = eloK(0)*credit = 0.4*0.5 = 0.2.
+        attempt({ knowledgeIds: ['a'], outcome: 1, b, eventId: 'e1', createdAt: 1 }),
+        // multi-KC [a,c]: itemPredictedP must use the POST-1st θ_KC(a)=0.2 (pre-2nd), c cold=0.
+        attempt({
+          knowledgeIds: ['a', 'c'],
+          scoredKnowledgeId: null,
+          outcome: 1,
+          b,
+          responseTimeMs: 5000,
+          eventId: 'e2',
+          createdAt: 2,
+        }),
+      ],
+      { srtEnabled: false, multiKcScoring: true },
+    );
+    expect(r.steps[1].itemPredictedP as number).toBeCloseTo(conjunctiveItemProb([0.2, 0], b), 12);
   });
 });

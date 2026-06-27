@@ -8,6 +8,7 @@ import {
   SRT_MIN_SIGNAL,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
+  conjunctiveItemProb,
   difficultyToLogitB,
   eloK,
   expectedScore,
@@ -168,6 +169,72 @@ describe('conjunctiveCredits (multi-KC MLE, owner-ratified / SF-1 fix)', () => {
     for (const c of credits) {
       expect(c).toBeGreaterThanOrEqual(-1);
       expect(c).toBeLessThanOrEqual(0);
+    }
+  });
+});
+
+describe('conjunctiveItemProb (YUK-463 — ∏ σ(θ_j − b), parameter-free DINA s=g=0)', () => {
+  it('equals the product of per-KC expectedScore values', () => {
+    const thetas = [0.5, -1, 2];
+    const b = 0.3;
+    const expected = expectedScore(0.5, b) * expectedScore(-1, b) * expectedScore(2, b);
+    expect(conjunctiveItemProb(thetas, b)).toBeCloseTo(expected, 12);
+  });
+
+  it('single KC → just σ(θ − b)', () => {
+    expect(conjunctiveItemProb([1.2], 0.4)).toBeCloseTo(expectedScore(1.2, 0.4), 12);
+  });
+
+  it('empty set → 1 (multiplicative identity)', () => {
+    expect(conjunctiveItemProb([], 0)).toBe(1);
+  });
+
+  it('monotone: adding a weaker KC lowers the conjunctive item probability', () => {
+    const bothStrong = conjunctiveItemProb([2, 2], 0);
+    const oneWeak = conjunctiveItemProb([2, -2], 0);
+    expect(oneWeak).toBeLessThan(bothStrong);
+  });
+
+  it('is strictly in (0,1) for finite θ on a multi-KC set', () => {
+    const p = conjunctiveItemProb([0, 1, -1], 0.2);
+    expect(p).toBeGreaterThan(0);
+    expect(p).toBeLessThan(1);
+  });
+
+  // REGRESSION (YUK-463 refactor): conjunctiveCredits / conjunctiveCreditsContinuous now route
+  // their wrong-branch P_item through conjunctiveItemProb. The bytes must be IDENTICAL to the
+  // old inline `ps.reduce(...)` so the LIVE credit path is untouched (not merely close — toBe).
+  it('REGRESSION: conjunctiveItemProb is bit-identical to the inline ps.reduce product', () => {
+    const cases: number[][] = [
+      [2, -1],
+      [0, -3],
+      [1, 1, 1],
+      [0.5, 0.5, -2],
+      [4, 4],
+    ];
+    for (const thetas of cases) {
+      const b = 0;
+      const ps = thetas.map((t) => expectedScore(t, b));
+      const pItemInline = ps.reduce((acc, p) => acc * p, 1);
+      expect(conjunctiveItemProb(thetas, b)).toBe(pItemInline);
+    }
+  });
+
+  it('REGRESSION: conjunctiveCredits wrong-branch unchanged after the refactor (toBe)', () => {
+    const cases: number[][] = [
+      [2, -1],
+      [0, -3],
+      [4, 4],
+    ];
+    for (const thetas of cases) {
+      const b = 0;
+      const credits = conjunctiveCredits(thetas, b, 0);
+      // Recompute by hand with the inline product the function used pre-refactor.
+      const ps = thetas.map((t) => expectedScore(t, b));
+      const pItemInline = ps.reduce((acc, p) => acc * p, 1);
+      const odds = pItemInline / Math.max(1 - pItemInline, 1e-9);
+      const expected = ps.map((p) => Math.max(-(1 - p) * odds, -1));
+      for (let i = 0; i < credits.length; i++) expect(credits[i]).toBe(expected[i]);
     }
   });
 });

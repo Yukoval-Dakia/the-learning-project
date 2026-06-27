@@ -428,9 +428,17 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
     '@/server/calibration/v-grid-fwd'
   );
 
+  // YUK-463 — opt-in multi-KC forward scoring. Default OFF (single-KC pool, Wave-0 baseline,
+  // byte-identical report). `--multi-kc` folds RT-bearing multi-KC attempts into the scored
+  // pool via the conjunctive item prediction so the gate's effective N is not diluted when the
+  // learner's history is multi-KC-heavy. READ-ONLY / REPORT-ONLY — never flips a flag.
+  const multiKcScoring = args.includes('--multi-kc');
+
   const loaded = await loadAttempts();
-  const { clusters, nTotalScorable } = assembleForwardClustersDetailed(loaded.orderedAttempts);
-  const result = evaluateVA1Forward(clusters, {}, mulberry32(BOOTSTRAP_SEED), {
+  const { clusters, nTotalScorable } = assembleForwardClustersDetailed(loaded.orderedAttempts, {
+    multiKcScoring,
+  });
+  const result = evaluateVA1Forward(clusters, { multiKcScoring }, mulberry32(BOOTSTRAP_SEED), {
     nTotalScorable: Math.max(nTotalScorable, loaded.nTotalScorable),
     familyDeltaAppliedCount: loaded.familyDeltaApplied,
     familyDeltaTotal: loaded.familyDeltaTotal,
