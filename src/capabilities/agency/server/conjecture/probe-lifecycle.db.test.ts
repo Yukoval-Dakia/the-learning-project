@@ -265,6 +265,35 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(await probeResultEvents(served.probe_question_id)).toHaveLength(1);
   });
 
+  it('idempotent re-answer surfaces a corrupt recorded resolution instead of substituting the request value', async () => {
+    const proposalId = await seedConjecture();
+    const served = await serve(proposalId);
+    if (served.status !== 'served') throw new Error('expected served');
+
+    // Simulate a corrupt prior probe_result (e.g. manual DB edit) with no valid
+    // resolution. answerProbe must NOT blend in the caller's resolution — it fails loud.
+    await writeEvent(testDb(), {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: served.probe_question_id,
+      payload: { conjecture_event_id: proposalId, outcome: 0 /* resolution missing */ },
+      caused_by_event_id: proposalId,
+      created_at: new Date(),
+    });
+
+    await expect(
+      answerProbe({
+        db: testDb(),
+        probeQuestionId: served.probe_question_id,
+        outcome: 1,
+        resolution: 'retired',
+      }),
+    ).rejects.toMatchObject({ code: 'probe_result_corrupt', status: 500 });
+  });
+
   it('answer rejects an unknown question id with 404 probe_not_found', async () => {
     await expect(
       answerProbe({ db: testDb(), probeQuestionId: 'q_nope', outcome: 0, resolution: 'confirmed' }),

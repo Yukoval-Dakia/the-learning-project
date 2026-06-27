@@ -249,9 +249,22 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       )
       .limit(1);
     if (existing) {
-      const payload = existing.payload as { resolution?: 'confirmed' | 'retired' };
+      // Idempotent: report the RECORDED resolution faithfully — NEVER substitute the
+      // current request's `resolution` (a re-answer with a different resolution must
+      // not silently rewrite what the record says happened). A probe_result is always
+      // written with a valid resolution; a missing/invalid one means a corrupt event
+      // row (e.g. a manual DB edit), which we surface loudly rather than paper over by
+      // blending in the caller's value.
+      const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
+      if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') {
+        throw new ApiError(
+          'probe_result_corrupt',
+          `probe ${probeQuestionId} has a probe_result event with an invalid resolution`,
+          500,
+        );
+      }
       return {
-        status: payload.resolution ?? resolution,
+        status: recordedResolution,
         probe_result_event_id: existing.id,
         idempotent: true,
       };
