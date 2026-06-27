@@ -31,7 +31,6 @@
 
 import { z } from 'zod';
 
-import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
@@ -46,13 +45,17 @@ export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
 const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 /** actor_ref stamped on each prediction_score event (same job as the propose half). */
 const RECONCILE_ACTOR = 'research_meeting' as const;
+
 /**
- * Max probe outcomes scored per run. Reconcile runs BEFORE the propose half, so a large
- * backlog (prolonged outage / first deploy) must not block conjecture creation. Bounded
- * oldest-first (FIFO by created_at); the remainder drains over subsequent runs because the
- * NOT EXISTS idempotency filter excludes anything already scored. Generous for the n=1 load.
+ * Deterministic id for the prediction_score anchor = `prediction_score:<probe_result_event_id>`.
+ * Bound to the probe (not a fresh newId) so two overlapping reconcile runs that both read the
+ * same unscored probe (the NOT EXISTS filter only guards the LIST stage, not the write) can
+ * never both insert a score event: writeEvent's onConflictDoNothing(event.id) makes the second
+ * a no-op = exactly-once per probe, independent of run concurrency.
  */
-export const RECONCILE_BATCH_SIZE = 500;
+function predictionScoreEventId(probeResultEventId: string): string {
+  return `prediction_score:${probeResultEventId}`;
+}
 
 /** One unanswered-but-now-resolved probe outcome to score (reader output). */
 export interface UnscoredProbeResult {
@@ -133,6 +136,14 @@ function extractConjectureFacts(ev: { payload: unknown } | null): ConjectureFact
  * the idempotency filter — a re-run scores nothing already scored (append-only,
  * never a duplicate). Parse-barrier on the probe_result payload (conjecture ref /
  * outcome / resolution must be sound) drops anomalies silently.
+ *
+ * Deliberately UNBOUNDED (no LIMIT): a batch cap + FIFO order would let a head of
+ * permanently-unscorable probes (dangling / malformed conjecture, which are `continue`d
+ * without writing a terminal marker) starve newer valid probes forever. The unscored set is
+ * naturally tiny for the n=1 nightly load — bounded by the ≤3 concurrent-probe cap +
+ * owner-paced answering + nightly cadence, each probe ≈ 3 cheap DB ops — so processing all of
+ * it keeps the reconcile (which precedes the propose half) from blocking on a starved head. A
+ * terminal skip-marker + LIMIT would be the scale-time answer if this ever outgrows n=1.
  */
 async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeResult[]> {
   const rows = await db
@@ -149,8 +160,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
         )`,
       ),
     )
-    .orderBy(event.created_at)
-    .limit(RECONCILE_BATCH_SIZE);
+    .orderBy(event.created_at);
 
   const out: UnscoredProbeResult[] = [];
   for (const r of rows) {
@@ -262,7 +272,9 @@ export async function reconcileConjecturePredictions(
     // (2) LOG the comparison + SET the idempotency anchor (written LAST) — append-only,
     // keyed on the probe_result id, envelope outcome OMITTED (NOT an attempt; ND-5).
     await writeEventFn(db, {
-      id: newId(),
+      // Deterministic anchor id (NOT newId) — exactly-once per probe even under concurrent
+      // reconcile runs, via writeEvent's onConflictDoNothing(event.id). See helper docblock.
+      id: predictionScoreEventId(pr.probe_result_event_id),
       actor_kind: 'system',
       actor_ref: RECONCILE_ACTOR,
       action: PREDICTION_SCORE_ACTION,
