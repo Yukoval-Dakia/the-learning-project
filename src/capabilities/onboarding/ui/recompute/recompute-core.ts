@@ -17,8 +17,10 @@ import { type DerivedKc, deriveProfileKc } from '@/core/recompute/derive-profile
 import type { ProfileKc } from '../profile-api';
 import type { CalibrationMaturityResponse } from './calibration-maturity-api';
 
-/** UI-only gate for the whole #41 verify layer — dark-ship until visually verified. */
-export const RECOMPUTE_BADGE_ENABLED = false;
+/** UI gate for the whole #41 verify layer — flipped ON (E1) after US-003 visual acceptance.
+ *  The badge runs in the 'libm' preview honesty regime (honest "预览 · 待 σ 对齐") until the
+ *  whole-core σ flip POLY_SIGMOID_ENABLED lands — that high-risk prod op is split out to YUK-508. */
+export const RECOMPUTE_BADGE_ENABLED = true;
 
 export type SigmaMode = 'poly' | 'libm';
 
