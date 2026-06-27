@@ -690,6 +690,19 @@ export const learning_session = pgTable('learning_session', {
   // non-placement sessions (review/ingestion/conversation/tutor never scope by a KC set here).
   // Write path = startPlacementSession({ knowledgeIds }) in the same PR (RL4 → no allowlist).
   scope_knowledge_ids: jsonb('scope_knowledge_ids').$type<string[]>(),
+  // YUK-480 — placement-only onboarding self-report transport. The learner's Welcome-screen
+  // self-report (subject leanings + daily pace) is captured at probe start so it survives the
+  // multi-call probe loop server-side (the /next route reads it under the same row lock as
+  // scope_knowledge_ids, never trusting the client to re-send it). Both feed placement ORDERING
+  // / amount ONLY — NEVER θ̂/p(L)/FSRS (§3 red line 4): `placement_leanings` PREFERS leaning-
+  // subject questions in selection order (capForPace), `placement_pace` maps to the probe count
+  // cap. Owner-supplied fixed inputs (n=1 admissible §0.2 cat 1/2). NULL for non-placement
+  // sessions AND for placement probes started without a self-report (back-compat). Write path =
+  // startPlacementSession({ leanings, pace }) in the same PR (RL4 → no allowlist). Additive
+  // columns on an existing FK_ORDER table → ride whole-row dump/restore, NO SCHEMA_VERSION bump
+  // (constants.ts「表 = bump，列 = 不 bump」).
+  placement_leanings: jsonb('placement_leanings').$type<string[]>(),
+  placement_pace: text('placement_pace'),
   started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   ended_at: timestamp('ended_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

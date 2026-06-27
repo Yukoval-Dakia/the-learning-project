@@ -24,10 +24,26 @@ export interface PlacementStartResult {
   sourcingNeeded: boolean;
 }
 
-export const startPlacement = (goalId: string) =>
+/** YUK-480 — onboarding self-report carried from the Welcome screen into the probe. Both are
+ * ordering/amount-only (leanings → starter-question order, pace → probe count cap) and NEVER
+ * feed θ̂/p(L). Optional — a probe started without a self-report behaves exactly as before. */
+export interface PlacementSelfReport {
+  leanings?: string[];
+  pace?: 'light' | 'medium' | 'dense';
+}
+
+export const startPlacement = (goalId: string, selfReport: PlacementSelfReport = {}) =>
   apiJson<PlacementStartResult>('/api/placement/start', {
     method: 'POST',
-    body: JSON.stringify({ goalId }),
+    body: JSON.stringify({
+      goalId,
+      // Omit empty leanings / absent pace so the body stays minimal (server treats absent as
+      // "no preference / default cap").
+      ...(selfReport.leanings && selfReport.leanings.length > 0
+        ? { leanings: selfReport.leanings }
+        : {}),
+      ...(selfReport.pace ? { pace: selfReport.pace } : {}),
+    }),
   });
 
 export type PlacementNextResult =

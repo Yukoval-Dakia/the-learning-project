@@ -1,7 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { evaluatePlacementTermination } from './placement-termination';
+import {
+  PLACEMENT_DEFAULT_CAP,
+  capForPace,
+  evaluatePlacementTermination,
+} from './placement-termination';
 
 // thetaSe(precision) = 1/√precision. So SE <= 0.5 ⟺ precision >= 4; SE <= 0.4 ⟺ precision >= 6.25.
+
+describe('capForPace — YUK-480 onboarding pace → probe cap', () => {
+  it('light shortens the probe; medium/dense hold at the default UI ceiling', () => {
+    expect(capForPace('light')).toBe(5);
+    expect(capForPace('medium')).toBe(PLACEMENT_DEFAULT_CAP);
+    // dense is held at the UI ceiling (8) this lane — a cap above 8 needs a dynamic-cap UI.
+    expect(capForPace('dense')).toBe(PLACEMENT_DEFAULT_CAP);
+  });
+
+  it('never exceeds the UI progress-track ceiling (8 segments)', () => {
+    for (const p of ['light', 'medium', 'dense']) {
+      expect(capForPace(p)).toBeLessThanOrEqual(PLACEMENT_DEFAULT_CAP);
+    }
+  });
+
+  it('unknown / null / undefined pace falls back to the default cap (back-compat)', () => {
+    expect(capForPace(null)).toBe(PLACEMENT_DEFAULT_CAP);
+    expect(capForPace(undefined)).toBe(PLACEMENT_DEFAULT_CAP);
+    expect(capForPace('')).toBe(PLACEMENT_DEFAULT_CAP);
+    expect(capForPace('turbo')).toBe(PLACEMENT_DEFAULT_CAP);
+    // not fooled by inherited Object props (Object.hasOwn guard, not `in`).
+    expect(capForPace('toString')).toBe(PLACEMENT_DEFAULT_CAP);
+    expect(capForPace('constructor')).toBe(PLACEMENT_DEFAULT_CAP);
+  });
+});
 
 describe('evaluatePlacementTermination — cap ceiling', () => {
   it('stops with reason=cap when answeredCount >= cap', () => {

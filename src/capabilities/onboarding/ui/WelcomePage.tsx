@@ -38,8 +38,10 @@ export interface WelcomePageProps {
 }
 
 export default function WelcomePage({ navigate }: WelcomePageProps) {
-  // 自述（轻 · 不落库，仅引导排序）。OCR #551：这三个 state 目前是**显示态**——
-  // 还没接进 createGoal / 导航（设计 §6 的「排序起始题」接线留待后续 slice）。
+  // 自述（轻 · 仅引导排序）。YUK-480：`leanings` + `pace` 现经 query 透传给 placement
+  // 探针（leanings → 起始题排序偏好、pace → 探针题量），不入 goal/不落库（仅 placement
+  // session 持有）；二者只影响排序/题量，绝不喂 θ̂/p(L)。`stage` 仍是显示态——stage→θ 先验
+  // 是另案（AutoElicit），本轮不接。
   const [stage, setStage] = useState<string | null>(null);
   const [leanings, setLeanings] = useState<string[]>([]);
   const [pace, setPace] = useState<string>('medium');
@@ -69,8 +71,17 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
       // Thread the new goal id through the flow as `?goal=<id>`: the upload screen
       // forwards it and the placement probe (Slice 3) reads it to scope the probe.
       const created = await createGoal({ title: goal.trim(), subjectId: subject });
+      // YUK-480 — also thread the self-report (leanings + pace) as query params. The placement
+      // probe reads them to ORDER starter questions toward leaning subjects + size the probe by
+      // pace (ordering/amount only — never θ̂). leanings appended only when non-empty; pace is
+      // always present (default 'medium'). URLSearchParams handles encoding. NOTE: these are
+      // existing self-report state being transported — no NEW UI element (no design pre-flight).
+      const params = new URLSearchParams();
+      params.set('goal', created.id);
+      if (leanings.length > 0) params.set('leanings', leanings.join(','));
+      params.set('pace', pace);
       const sep = route.includes('?') ? '&' : '?';
-      navigate(`${route}${sep}goal=${encodeURIComponent(created.id)}`);
+      navigate(`${route}${sep}${params.toString()}`);
     } catch {
       // goal-create 不再对空 scope 报 400（冷启允许）→ 任何失败都归 generic（不误导用户改目标）。
       setErr('generic');

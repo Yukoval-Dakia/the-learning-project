@@ -51,14 +51,32 @@ const SESSION_TABLE = 'learning_session' as const;
 export async function loadPlacementSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
-): Promise<{ status: string; scopeKnowledgeIds: string[] | null } | null> {
+): Promise<{
+  status: string;
+  scopeKnowledgeIds: string[] | null;
+  // YUK-480 — the onboarding self-report captured at start (NULL when none was supplied). Read
+  // under the SAME row lock as the scope so /next can apply the leaning ordering preference + the
+  // pace-derived cap without trusting the client to re-send them.
+  leanings: string[] | null;
+  pace: string | null;
+} | null> {
   const rows = await tx.execute(
-    sql`SELECT status, scope_knowledge_ids FROM learning_session WHERE id = ${sessionId} AND type = 'placement' FOR UPDATE`,
+    sql`SELECT status, scope_knowledge_ids, placement_leanings, placement_pace FROM learning_session WHERE id = ${sessionId} AND type = 'placement' FOR UPDATE`,
   );
-  const arr = rows as unknown as Array<{ status: string; scope_knowledge_ids: string[] | null }>;
+  const arr = rows as unknown as Array<{
+    status: string;
+    scope_knowledge_ids: string[] | null;
+    placement_leanings: string[] | null;
+    placement_pace: string | null;
+  }>;
   const row = arr[0];
   if (!row) return null;
-  return { status: row.status, scopeKnowledgeIds: row.scope_knowledge_ids ?? null };
+  return {
+    status: row.status,
+    scopeKnowledgeIds: row.scope_knowledge_ids ?? null,
+    leanings: row.placement_leanings ?? null,
+    pace: row.placement_pace ?? null,
+  };
 }
 
 // ---------- startPlacementSession ----------
@@ -78,6 +96,16 @@ export type StartPlacementSessionParams = {
    * handler always supplies the resolved set.
    */
   knowledgeIds?: readonly string[];
+  /**
+   * YUK-480 — the learner's onboarding self-report, persisted on the probe session so the
+   * multi-call /next loop can read it server-side (mirrors scope_knowledge_ids). `leanings` =
+   * self-reported subject leanings (effective-domain subject ids) used to PREFER leaning-subject
+   * questions in selection ORDER ONLY; `pace` = the daily-budget knob mapped to the probe cap.
+   * BOTH are ordering/amount-only — they NEVER feed θ̂/p(L)/FSRS (§3 red line 4). Optional;
+   * omitted → NULL (back-compat, no preference / default cap).
+   */
+  leanings?: readonly string[];
+  pace?: string | null;
 };
 
 /**
@@ -108,6 +136,11 @@ export async function startPlacementSession(
       // Persist the resolved probe scope server-side (YUK-470). null only when the caller
       // omits it (legacy/test back-compat) — the start handler always passes the resolved set.
       scope_knowledge_ids: params.knowledgeIds ? Array.from(params.knowledgeIds) : null,
+      // YUK-480 — persist the onboarding self-report (NULL when the probe was started without
+      // one). Empty leanings array normalizes to NULL (no preference). Ordering/amount only.
+      placement_leanings:
+        params.leanings && params.leanings.length > 0 ? Array.from(params.leanings) : null,
+      placement_pace: params.pace ?? null,
       started_at: now,
       created_at: now,
       updated_at: now,

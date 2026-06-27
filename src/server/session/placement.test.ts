@@ -52,6 +52,39 @@ describe('Placement.startPlacementSession', () => {
     await cleanup(sessionId);
   });
 
+  it('persists the onboarding self-report (YUK-480 leanings + pace) when supplied', async () => {
+    const { sessionId } = await startPlacementSession(db, {
+      knowledgeIds: ['kc1'],
+      leanings: ['math', 'physics'],
+      pace: 'light',
+    });
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows[0].placement_leanings).toEqual(['math', 'physics']);
+    expect(rows[0].placement_pace).toBe('light');
+    await cleanup(sessionId);
+  });
+
+  it('normalizes empty leanings to null + leaves self-report null when omitted (back-compat)', async () => {
+    const omitted = await startPlacementSession(db);
+    const r1 = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, omitted.sessionId));
+    expect(r1[0].placement_leanings).toBeNull();
+    expect(r1[0].placement_pace).toBeNull();
+    await cleanup(omitted.sessionId);
+
+    // empty leanings array → null (no preference), pace explicitly null stays null.
+    const empty = await startPlacementSession(db, { leanings: [], pace: null });
+    const r2 = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, empty.sessionId));
+    expect(r2[0].placement_leanings).toBeNull();
+    expect(r2[0].placement_pace).toBeNull();
+    await cleanup(empty.sessionId);
+  });
+
   it('writes a job_events placement.started row but NO domain event', async () => {
     const { sessionId } = await startPlacementSession(db);
     const jevents = await db.select().from(job_events).where(eq(job_events.business_id, sessionId));
@@ -63,17 +96,31 @@ describe('Placement.startPlacementSession', () => {
 });
 
 describe('Placement.loadPlacementSessionForUpdate (YUK-470 row lock + server-side scope)', () => {
-  it('returns status + persisted scope_knowledge_ids under FOR UPDATE', async () => {
-    const { sessionId } = await startPlacementSession(db, { knowledgeIds: ['kc1', 'kc2'] });
+  it('returns status + persisted scope_knowledge_ids + self-report under FOR UPDATE', async () => {
+    const { sessionId } = await startPlacementSession(db, {
+      knowledgeIds: ['kc1', 'kc2'],
+      leanings: ['math'],
+      pace: 'dense',
+    });
     const locked = await db.transaction((tx) => loadPlacementSessionForUpdate(tx, sessionId));
-    expect(locked).toEqual({ status: 'started', scopeKnowledgeIds: ['kc1', 'kc2'] });
+    expect(locked).toEqual({
+      status: 'started',
+      scopeKnowledgeIds: ['kc1', 'kc2'],
+      leanings: ['math'],
+      pace: 'dense',
+    });
     await cleanup(sessionId);
   });
 
-  it('returns null scope when none was persisted', async () => {
+  it('returns null scope + null self-report when none was persisted', async () => {
     const { sessionId } = await startPlacementSession(db);
     const locked = await db.transaction((tx) => loadPlacementSessionForUpdate(tx, sessionId));
-    expect(locked).toEqual({ status: 'started', scopeKnowledgeIds: null });
+    expect(locked).toEqual({
+      status: 'started',
+      scopeKnowledgeIds: null,
+      leanings: null,
+      pace: null,
+    });
     await cleanup(sessionId);
   });
 
