@@ -6,6 +6,16 @@
 
 // ECE — Expected Calibration Error + reliability table.
 export { type Binning, type EceOptions, type EceResult, type ReliabilityBin, ece } from './ece';
+// EZ-diffusion — closed-form caution / speed-accuracy axis recovery (A11, YUK-445).
+export {
+  EZ_SCALING_S,
+  type EzInputs,
+  type EzReason,
+  type EzResult,
+  computeEzDiffusion,
+  edgeCorrectPc,
+  ezFromResponses,
+} from './ez-diffusion';
 // forward-AUC — Mann–Whitney U.
 export { type AucResult, forwardAuc } from './auc';
 // design-effect / ICC(1,1) / effective-N.
