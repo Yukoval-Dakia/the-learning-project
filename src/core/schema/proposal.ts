@@ -81,9 +81,10 @@ export type AiProposalKindT = z.infer<typeof AiProposalKind>;
 
 // M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
 // actions.ts）只为这 14 个 kind 实现了 accept applier；defer / archive /
-// judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer
-// /accept 语义归 YUK-44）。UI（ProposalCard）据此门控 Accept CTA；
-// inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现三 kind === aiProposalKinds」，
+// judge_retraction / conjecture 走 default 分支抛 unsupported_proposal_kind 400
+// （producer/accept 语义归 YUK-44；conjecture accept 走备课台 lane YUK-406）。UI
+// （ProposalCard）据此门控 Accept CTA；inbox-meta.unit.test.ts 钉住「本集合 ∪
+// 未实现四 kind === aiProposalKinds」，
 // dispatchAccept 增删 kind 时漂移会被测试拦下。
 export const acceptSupportedProposalKinds = [
   'knowledge_node',
