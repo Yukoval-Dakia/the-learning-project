@@ -46,6 +46,13 @@ export const PREDICTION_SCORE_ACTION = 'experimental:prediction_score' as const;
 const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 /** actor_ref stamped on each prediction_score event (same job as the propose half). */
 const RECONCILE_ACTOR = 'research_meeting' as const;
+/**
+ * Max probe outcomes scored per run. Reconcile runs BEFORE the propose half, so a large
+ * backlog (prolonged outage / first deploy) must not block conjecture creation. Bounded
+ * oldest-first (FIFO by created_at); the remainder drains over subsequent runs because the
+ * NOT EXISTS idempotency filter excludes anything already scored. Generous for the n=1 load.
+ */
+export const RECONCILE_BATCH_SIZE = 500;
 
 /** One unanswered-but-now-resolved probe outcome to score (reader output). */
 export interface UnscoredProbeResult {
@@ -142,7 +149,8 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
         )`,
       ),
     )
-    .orderBy(event.created_at);
+    .orderBy(event.created_at)
+    .limit(RECONCILE_BATCH_SIZE);
 
   const out: UnscoredProbeResult[] = [];
   for (const r of rows) {

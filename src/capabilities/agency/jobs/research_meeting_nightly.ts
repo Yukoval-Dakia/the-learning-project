@@ -70,6 +70,8 @@ export interface ResearchMeetingResult {
   pending_before: number;
   /** prior probe outcomes scored + ledger-updated this run (U8 reconcile, A13). */
   reconciled: number;
+  /** probe outcomes skipped this run (dangling / malformed / unreadable conjecture ref). */
+  reconcile_skipped: number;
   /** total Opus cost across the run's inductions, USD. */
   cost_usd: number;
   /** the run's anchor event id (provenance + scan subject). */
@@ -194,6 +196,11 @@ export async function runResearchMeetingNightly(
   // (already-scored probes are excluded by the reader), and a throw here is a legit
   // retryable DB fault that propagates so pg-boss retries the whole job.
   const reconcileResult = await reconcileFn(db);
+  // Surface the aggregate skip count — a non-zero value flags data-quality drift (dangling /
+  // unreadable conjecture refs) that the per-probe console.warn alone makes easy to miss.
+  if (reconcileResult.skipped > 0) {
+    console.warn('[research_meeting_nightly] reconcile skipped probes', reconcileResult.skipped);
+  }
 
   // ── PRE-LLM reads (OUTSIDE the per-cell swallow — a throw here is retryable) ──
   const since = new Date(now.getTime() - RESEARCH_MEETING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -273,6 +280,7 @@ export async function runResearchMeetingNightly(
     conjectures_created: created,
     pending_before: knownConjectureKeys.size,
     reconciled: reconcileResult.reconciled,
+    reconcile_skipped: reconcileResult.skipped,
     cost_usd: costUsd,
     trigger_event_id: triggerEventId,
   };

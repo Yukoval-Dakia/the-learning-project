@@ -248,5 +248,6 @@ describe('runResearchMeetingNightly', () => {
     const result = await runResearchMeetingNightly({} as never, deps);
     expect(reconcileFn).toHaveBeenCalledTimes(1);
     expect(result.reconciled).toBe(2);
+    expect(result.reconcile_skipped).toBe(1);
   });
 });
