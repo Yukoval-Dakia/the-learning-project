@@ -8,6 +8,7 @@
 //     never throws the whole nightly run.
 
 import type { Db } from '@/db/client';
+import type { UpsertKcTypedStateInput } from '@/server/conjectures/typed-state';
 import type { WriteEventInput } from '@/server/events/queries';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -15,7 +16,6 @@ import {
   PREDICTION_SCORE_ACTION,
   type ReconcileDeps,
   type UnscoredProbeResult,
-  type UpsertKcTypedStateCall,
   reconcileConjecturePredictions,
 } from './reconcile';
 
@@ -63,10 +63,10 @@ function probe(over: Partial<UnscoredProbeResult> = {}): UnscoredProbeResult {
 function baseDeps(over: Partial<ReconcileDeps> = {}): {
   deps: ReconcileDeps;
   events: WriteEventInput[];
-  upserts: UpsertKcTypedStateCall[];
+  upserts: UpsertKcTypedStateInput[];
 } {
   const events: WriteEventInput[] = [];
-  const upserts: UpsertKcTypedStateCall[] = [];
+  const upserts: UpsertKcTypedStateInput[] = [];
   const deps: ReconcileDeps = {
     now: () => new Date('2026-06-27T00:00:00Z'),
     listUnscoredProbeResultsFn: vi.fn(async () => [probe()]),
@@ -75,7 +75,7 @@ function baseDeps(over: Partial<ReconcileDeps> = {}): {
       events.push(input);
       return input.id;
     }),
-    upsertKcTypedStateFn: vi.fn(async (_db: Db, input: UpsertKcTypedStateCall) => {
+    upsertKcTypedStateFn: vi.fn(async (_db: Db, input: UpsertKcTypedStateInput) => {
       upserts.push(input);
     }),
     ...over,

@@ -34,7 +34,7 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { scorePrediction } from '@/server/conjectures/scoring';
-import { upsertKcTypedState } from '@/server/conjectures/typed-state';
+import { type UpsertKcTypedStateInput, upsertKcTypedState } from '@/server/conjectures/typed-state';
 import { getEventById, writeEvent } from '@/server/events/queries';
 import type { WriteEventInput } from '@/server/events/queries';
 import { and, eq, sql } from 'drizzle-orm';
@@ -70,22 +70,11 @@ export interface UnscoredProbeResult {
   created_at: Date;
 }
 
-/**
- * The exact kc_typed_state upsert-call shape the reconcile loop issues. Re-declared
- * (assignable to UpsertKcTypedStateInput) to make the red-line explicit at the call
- * site: subject_kind + confused_with_kc_id are ALWAYS supplied, and there is NO
- * `mastered`/retrievability key — `mastered` stays structurally unreachable.
- */
-export type UpsertKcTypedStateCall = {
-  subject_id: string;
-  subject_kind: string;
-  proposed: 'confused-with-X' | 'no-evidence';
-  confused_with_kc_id: string | null;
-  discriminating: boolean;
-  recurrence_count: number;
-  evidence_event_ids: string[];
-  last_evidence_at: Date;
-};
+// The reconcile loop issues kc_typed_state writes typed DIRECTLY against the real
+// UpsertKcTypedStateInput (imported above) — no local re-declaration — so the call site stays
+// compile-time-linked to the writer's contract as it evolves. The FLIP-inert red-line
+// (`confused_with_kc_id: null` → soft cell, never `mastered`, no R(t) into written state) is
+// enforced by the values reconcile supplies + the runtime test assertions, not by the type shape.
 
 export interface ReconcileResult {
   /** probe outcomes scored + ledger-updated this run. */
@@ -101,7 +90,7 @@ export interface ReconcileDeps {
   /** load the conjecture proposal event (writeAiProposal shape: payload.ai_proposal). */
   getEventByIdFn?: (db: Db, id: string) => Promise<{ payload: unknown } | null>;
   writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
-  upsertKcTypedStateFn?: (db: Db, input: UpsertKcTypedStateCall) => Promise<void>;
+  upsertKcTypedStateFn?: (db: Db, input: UpsertKcTypedStateInput) => Promise<void>;
 }
 
 /**
