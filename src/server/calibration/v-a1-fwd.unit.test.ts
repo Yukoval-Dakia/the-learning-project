@@ -21,6 +21,7 @@ const TEST_CONFIG = {
   deltaThreshold: 0.02,
   bootstrapB: 2000,
   maxDegenerateFraction: 0.05,
+  multiKcScoring: false,
 } as const;
 
 // ── Synthetic single-KC attempt generators ───────────────────────────────────────────
@@ -278,6 +279,7 @@ describe('formatReport', () => {
         deltaThreshold: 0.05,
         bootstrapB: 500,
         maxDegenerateFraction: 0.1,
+        multiKcScoring: false,
       },
     };
     const text = formatReport(result);
@@ -385,5 +387,120 @@ describe('assembleForwardClusters — θ_global cross-KC fidelity (YUK-466)', ()
     // and must NOT equal the per-KC-only value the old partition would have produced.
     expect(aCluster.scoresBinary[0]).toBeCloseTo(aStepFull?.predictedP ?? Number.NaN, 12);
     expect(aCluster.scoresBinary[0]).not.toBeCloseTo(aStepOnly?.predictedP ?? Number.NaN, 6);
+  });
+});
+
+// ── YUK-463: multi-KC forward scoring — multi-KC attempts (replayed for trajectory fidelity
+// but excluded from the Wave-0 scored pool) are folded in via the conjunctive item prediction,
+// bucketed into combo clusters DISJOINT from the single-KC clusters. ──
+describe('assembleForwardClusters — YUK-463 multi-KC combo scoring', () => {
+  // A RT-bearing multi-KC attempt over the given (possibly unsorted) KC set.
+  function multiKc(kcs: string[], outcome: 0 | 1, createdAt: number): ReplayAttempt {
+    return {
+      knowledgeIds: kcs,
+      scoredKnowledgeId: null,
+      domainByKc: Object.fromEntries(kcs.map((k) => [k, null])),
+      outcome,
+      difficulty: 3,
+      b: 0,
+      bWeight: 1,
+      responseTimeMs: 8000,
+      createdAt,
+      eventId: nextEid(),
+    };
+  }
+
+  it('flag OFF (default) excludes multi-KC attempts — byte-identical to the single-KC-only pool', () => {
+    eidCounter = 0;
+    const list: ReplayAttempt[] = [
+      singleKcAttempt('a', 1, 5000, 1),
+      multiKc(['a', 'b'], 1, 2),
+      singleKcAttempt('a', 0, 45000, 3),
+      multiKc(['a', 'b'], 0, 4),
+    ];
+    const off = assembleForwardClustersDetailed(list);
+    const offExplicit = assembleForwardClustersDetailed(list, { multiKcScoring: false });
+    // default arg === explicit-false (byte-identical).
+    expect(off).toEqual(offExplicit);
+    // exactly ONE single-KC cluster ('a' with its 2 single-KC attempts), NO combo clusters.
+    expect(off.clusters).toHaveLength(1);
+    expect(off.clusters[0].labels).toHaveLength(2);
+    // nTotalScorable counts only the 2 single-KC scorable steps (multi-KC excluded when off).
+    expect(off.nTotalScorable).toBe(2);
+  });
+
+  it('flag ON buckets RT-bearing multi-KC attempts into a combo cluster keyed by the SORTED KC set', () => {
+    eidCounter = 0;
+    const list: ReplayAttempt[] = [
+      multiKc(['b', 'a'], 1, 1),
+      multiKc(['a', 'b'], 0, 2), // same sorted set 'a|b' → SAME combo cluster
+      multiKc(['c', 'a'], 1, 3), // sorted 'a|c' → DIFFERENT combo cluster
+    ];
+    const { clusters } = assembleForwardClustersDetailed(list, { multiKcScoring: true });
+    // two combo clusters: {a|b: 2 labels}, {a|c: 1 label}. No single-KC clusters.
+    expect(clusters).toHaveLength(2);
+    expect(clusters.map((c) => c.labels.length).sort()).toEqual([1, 2]);
+  });
+
+  it('cluster INDEPENDENCE: a multi-KC [a,b] attempt never pollutes the single-KC "a" cluster', () => {
+    eidCounter = 0;
+    const list: ReplayAttempt[] = [
+      singleKcAttempt('a', 1, 5000, 1),
+      singleKcAttempt('a', 0, 45000, 2),
+      singleKcAttempt('a', 1, 6000, 3),
+      multiKc(['a', 'b'], 1, 4),
+      multiKc(['a', 'b'], 0, 5),
+    ];
+    const { clusters } = assembleForwardClustersDetailed(list, { multiKcScoring: true });
+    // single-KC 'a' cluster (3 attempts) + combo 'a|b' cluster (2 attempts) = 2 DISJOINT clusters.
+    expect(clusters).toHaveLength(2);
+    // total labels = 5 = 3 single + 2 combo; NO double-counting.
+    expect(clusters.reduce((acc, c) => acc + c.labels.length, 0)).toBe(5);
+    expect(clusters.map((c) => c.labels.length).sort()).toEqual([2, 3]);
+  });
+
+  it('flag ON: RT-less multi-KC attempts are excluded from clusters but counted in nTotalScorable (mirror of single-KC M4)', () => {
+    eidCounter = 0;
+    const list: ReplayAttempt[] = [
+      multiKc(['a', 'b'], 1, 1),
+      { ...multiKc(['a', 'b'], 0, 2), responseTimeMs: null }, // RT-less → excluded from clusters
+    ];
+    const { clusters, nTotalScorable } = assembleForwardClustersDetailed(list, {
+      multiKcScoring: true,
+    });
+    // one combo cluster with only the RT-bearing attempt (1 label).
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].labels).toHaveLength(1);
+    // nTotalScorable counts BOTH multi-KC scorable steps (incl. the RT-less one) = 2.
+    expect(nTotalScorable).toBe(2);
+  });
+
+  it('flag ON: a multi-KC pool flows through evaluateVA1Forward with sane n1/n0/kClusters', () => {
+    eidCounter = 0;
+    // 12 distinct sorted KC pairs × 12 RT-bearing attempts each, mixed outcomes → ample combo pool.
+    const list: ReplayAttempt[] = [];
+    let t = 0;
+    for (let i = 0; i < 12; i++) {
+      for (let j = 0; j < 12; j++) {
+        list.push(multiKc([`x${i}`, `y${i}`], (j % 2) as 0 | 1, ++t));
+      }
+    }
+    const { clusters } = assembleForwardClustersDetailed(list, { multiKcScoring: true });
+    expect(clusters).toHaveLength(12); // 12 distinct sorted KC pairs
+    const r = evaluateVA1Forward(clusters, { multiKcScoring: true }, mulberry32(99));
+    // both classes present + 12 clusters → past the n1/n0 class floor; kClusters reported.
+    expect(r.n1).toBeGreaterThan(0);
+    expect(r.n0).toBeGreaterThan(0);
+    expect(r.kClusters).toBe(12);
+    expect(['PASS', 'FAIL', 'INSUFFICIENT']).toContain(r.verdict);
+    // the report surfaces the multi-KC-on caveat.
+    const onReport = formatReport(r);
+    expect(onReport).toMatch(/MULTI-KC SCORING ON/);
+    // YUK-463 honest-N: flag-ON report must NOT carry the single-KC-only labels/caveat that
+    // would misreport the (now combo-inclusive) N/clusters. The evidence-base + caveat lines
+    // are conditioned on multiKcScoring so the report stays internally consistent.
+    expect(onReport).toMatch(/single-KC \+ multi-KC combo forward-scorable/);
+    expect(onReport).toMatch(/KC \+ combo clusters with RT-bearing forward preds/);
+    expect(onReport).not.toMatch(/N keys on RT-BEARING single-KC attempts only/);
   });
 });
