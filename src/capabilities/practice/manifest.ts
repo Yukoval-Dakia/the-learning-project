@@ -328,6 +328,21 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/kt_estimate_nightly').then((m) => m.buildKtEstimateNightlyHandler),
       },
+      // YUK-445 (A11 — 谨慎 / 速度-精度轴) — EZ-diffusion 描述符夜扫。runAxisStateBatch 折叠
+      // 计分 RT 作答 per 主 KC → 过 usage gate 的 KC upsert (drift_v/boundary_a/ter) 慢变描述符。
+      // 纯描述符，零下游消费者（不喂 p(L)/调度/θ̂；读出只走 placement-profile 显示）——故不触
+      // LIVE 引擎、无 flag。provenance='adaptive'（唯一 live 源）→ 写 boundary_a+ter，drift_v
+      // 留 NULL（自适应选题混淆，A11 硬边界）。cron 40 5 * * * Asia/Shanghai：错在数据预产链
+      // （kt_estimate 05:10 / reference 05:20 / compose 05:30）之后的空槽——A11 只读 durable
+      // attempt event，对选题链无序依赖，晚槽只为避同分钟竞争。queue=llm：与其它慢热 batch 同档
+      // DLQ 重试（本 batch 纯 CPU+DB，无 LLM 调用）。per-KC upsert 独立 try/catch（不加 SAVEPOINT，
+      // 非 attempt tx 内，G1 同 recalibration_nightly）。
+      {
+        name: 'axis_state_nightly',
+        schedule: { cron: '40 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () => import('./jobs/axis_state_nightly').then((m) => m.buildAxisStateNightlyHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft

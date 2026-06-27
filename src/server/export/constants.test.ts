@@ -10,7 +10,7 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.10" (YUK-440 A13 kc_typed_state 入备份)', () => {
+  it('SCHEMA_VERSION is "4.11" (YUK-445 A11 learner_axis_state 入备份)', () => {
     // 4.7 → 4.8 (YUK-454 inc-1 / ADR-0036 身份层): NEW FK_ORDER table misconception
     // (AI-proposed/authored 认知身份实体，DORMANT in L1 但备份覆盖纯声明式)。新表入
     // FK_ORDER 必 bump (per archive.ts assertEveryTableIsBackedUpOrExcluded)，同 peer
@@ -23,7 +23,8 @@ describe('export constants', () => {
     // 4.4 → 4.5 (YUK-361 Phase 6): difficulty_calibration_label 入 FK_ORDER (前一次 bump)。
     // 4.8 → 4.9 (YUK-471 W1 PR-A2a / ADR-0044): materialized_id_index 投影反查表入 FK_ORDER。
     // 4.9 → 4.10 (YUK-440 A13): kc_typed_state typed-ledger projection 入 FK_ORDER。
-    expect(SCHEMA_VERSION).toBe('4.10');
+    // 4.10 → 4.11 (YUK-445 A11): learner_axis_state EZ-diffusion 描述符投影入 FK_ORDER。
+    expect(SCHEMA_VERSION).toBe('4.11');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
@@ -58,9 +59,12 @@ describe('export constants', () => {
     // 32 → 33 (YUK-440 A13): added kc_typed_state — typed KC ledger projection, peer of
     // mastery_state (derived-but-physical → FK_ORDER, not BACKUP_EXCLUDED); placed last.
     // knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(33);
+    // 33 → 34 (YUK-445 A11): added learner_axis_state — EZ-diffusion caution/speed-accuracy
+    // descriptor, peer of mastery_state/kc_typed_state (derived-but-physical → FK_ORDER);
+    // placed last as the newest additive table.
+    expect(FK_ORDER.length).toBe(34);
     expect(FK_ORDER[0]).toBe('knowledge');
-    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('kc_typed_state');
+    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('learner_axis_state');
   });
 
   it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {

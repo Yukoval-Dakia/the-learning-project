@@ -978,6 +978,57 @@ export const kc_typed_state = pgTable(
   ],
 );
 
+// YUK-445 (A11 — 谨慎 / 速度-精度轴) — learner_axis_state: per-KC SLOW-VARYING descriptor
+// recovered by EZ-diffusion (Wagenmakers 2007) from this learner's own RT + accuracy.
+//
+// Single writer = the A11 batch job (axis-writer.ts), nightly per-KC overwrite (peer of
+// mastery_state / kc_typed_state — diagnostic projection keyed by knowledge subject_id, no
+// enforced FK). Pure event-derived: reads attempt events' duration_ms + outcome, never writes
+// θ̂ / FSRS / scheduling state — these columns are a DESCRIPTOR only and have NO live estimation
+// consumer (read-out is display-only via placement-profile). So A11 touches no LIVE engine and
+// needs no dark-ship flag.
+//
+// n=1 admissibility: drift_v / boundary_a / ter are recovered from ONE learner's sufficient
+// statistics (Pc, correct-RT mean/variance). boundary_a is THIS learner's response caution —
+// it is NOT a 2PL item discrimination (the litmus-forbidden between-subject-variance family).
+//
+// drift_v vs boundary_a/ter provenance gate (the A11 hard boundary): in an ADAPTIVE flow item
+// selection pins Pc, confounding the drift interpretation, so `drift_v` is persisted ONLY for
+// provenance='probe' (a non-adaptive fixed-difficulty probe-set). In the adaptive main flow we
+// write boundary_a + ter and leave drift_v NULL. (No non-adaptive probe-set source exists yet;
+// the writer + column + gate are wired now, the probe-set data source is the deferred flip.)
+//
+// n_obs = total scored responses backing the recovery (usage-gate provenance, NOT a θ count).
+// NOTE: A10 (confidence/calibration_curve, YUK-444) is HOLD; when it lands it adds its own
+// `calibration_curve_json` column to THIS table (an additive COLUMN — no SCHEMA_VERSION bump,
+// per the export-constants 表=bump/列=不bump convention), making it the table's second writer.
+export const learner_axis_state = pgTable(
+  'learner_axis_state',
+  {
+    id: text('id').primaryKey(),
+    subject_kind: text('subject_kind').notNull().default('knowledge'),
+    subject_id: text('subject_id').notNull(),
+    // drift rate v (evidence-accumulation speed). NULL unless provenance='probe' (confounded
+    // by adaptive item selection — A11 hard boundary). nullable by design.
+    drift_v: doublePrecision('drift_v'),
+    // boundary separation a — this learner's response caution (NOT item discrimination).
+    // nullable: NULL when the EZ recovery is degenerate (chance Pc) or gate not met.
+    boundary_a: doublePrecision('boundary_a'),
+    // non-decision time Ter (seconds) — motor/encoding baseline. nullable as above.
+    ter: doublePrecision('ter'),
+    // total scored responses the recovery folded (usage-gate evidence). DEFAULT 0.
+    n_obs: integer('n_obs').notNull().default(0),
+    // 'adaptive' | 'probe' — which response source produced this row. Gates drift_v
+    // persistence. DEFAULT 'adaptive' (the only live source today).
+    provenance: text('provenance').notNull().default('adaptive'),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('learner_axis_state_unique').on(t.subject_kind, t.subject_id),
+    index('learner_axis_state_subject_idx').on(t.subject_id),
+  ],
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // B1-W1 (ADR-0035 决定#3) — item_calibration：题目标定锚。
 //
