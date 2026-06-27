@@ -55,6 +55,33 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
   };
 });
 
+// A5 (YUK-441) GRAPH_LAPLACIAN_ENABLED + A6 (YUK-442) PREREQ_PROPAGATION_ENABLED are
+// module-level consts (dark-ship default false), mocked the same way. The flag-OFF
+// byte-identical anchors run against the real consts (false) through these factories;
+// the flag-ON tests opt in via laplFlag.value / prereqFlag.value = true. Everything
+// else in each module (buildLaplacian / gmrfPosteriorMean / prereqAdjustments / …)
+// stays the REAL implementation.
+const laplFlag = { value: false };
+vi.mock('@/core/graph-laplacian', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/graph-laplacian')>();
+  return {
+    ...actual,
+    get GRAPH_LAPLACIAN_ENABLED() {
+      return laplFlag.value;
+    },
+  };
+});
+const prereqFlag = { value: false };
+vi.mock('@/core/prereq-propagation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/core/prereq-propagation')>();
+  return {
+    ...actual,
+    get PREREQ_PROPAGATION_ENABLED() {
+      return prereqFlag.value;
+    },
+  };
+});
+
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearned } from '@/core/pfa';
 import { ELO_K_GLOBAL, SRT_RT_MIN_N, thetaToMastery } from '@/core/theta';
@@ -64,6 +91,7 @@ import {
   item_calibration,
   item_family_calibration,
   knowledge,
+  knowledge_edge,
   mastery_state,
   question,
 } from '@/db/schema';
@@ -477,6 +505,146 @@ describe('getMasteryProjection (B1 FULL — difficulty-aware PFA p(L), YUK-420)'
     expect(row?.mastery).toBeCloseTo(expectedPL, 6);
     expect(row?.mastery).not.toBeCloseTo(0.5, 4);
     expect(row?.mastery).not.toBeCloseTo(thetaToMastery(state?.theta_hat ?? 0), 4);
+  });
+});
+
+describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+  afterEach(() => {
+    // Reset both dark flags so a flag-ON test never leaks into the next.
+    laplFlag.value = false;
+    prereqFlag.value = false;
+  });
+
+  async function seedObserved(kc: string, thetaHat: number, precision = 4) {
+    await seedKnowledge(kc);
+    await upsertMasteryState(db, {
+      subject_id: kc,
+      theta_hat: thetaHat,
+      evidence_count: 3,
+      success_count: 2,
+      fail_count: 1,
+      last_outcome_at: new Date(),
+      theta_precision: precision,
+    });
+  }
+
+  async function seedEdge(from: string, to: string, relation: string, weight = 1) {
+    await db.insert(knowledge_edge).values({
+      id: createId(),
+      from_knowledge_id: from,
+      to_knowledge_id: to,
+      relation_type: relation,
+      weight,
+      created_by: { by: 'user' },
+      reasoning: null,
+      created_at: new Date(),
+      archived_at: null,
+    });
+  }
+
+  it('FLAG OFF (both): edges present but θ̂ + map are BYTE-IDENTICAL to today (regression anchor)', async () => {
+    const kA = createId();
+    const kB = createId();
+    await seedObserved(kA, 1.0, 5);
+    await seedObserved(kB, -1.0, 5);
+    await seedEdge(kA, kB, 'related_to'); // A5-eligible
+    await seedEdge(kA, kB, 'prerequisite'); // A6-eligible
+    // Default flags (false): the soft-layer block is skipped entirely.
+    const proj = await getMasteryProjection(db, [kA, kB]);
+    expect(proj.size).toBe(2); // no borrowed entries
+    expect(proj.get(kA)?.theta_hat).toBe(1.0); // EXACT — no smoothing/propagation
+    expect(proj.get(kB)?.theta_hat).toBe(-1.0);
+  });
+
+  it('A5 ON: an UNOBSERVED requested KC borrows θ̃ from an observed related_to neighbour (low-confidence)', async () => {
+    const kObs = createId();
+    const kUnobs = createId();
+    await seedObserved(kObs, 2.0, 5);
+    await seedKnowledge(kUnobs); // knowledge node, NO mastery_state row
+    await seedEdge(kObs, kUnobs, 'related_to');
+    laplFlag.value = true;
+
+    const proj = await getMasteryProjection(db, [kObs, kUnobs]);
+    // Boundary behaviour change: the previously-absent unobserved KC now appears.
+    expect(proj.has(kUnobs)).toBe(true);
+    const borrowed = proj.get(kUnobs);
+    expect(borrowed?.low_confidence).toBe(true); // borrowed estimate is never confident
+    // Pulled strictly between the prior mean (0) and the observed neighbour (2.0).
+    expect(borrowed?.theta_hat).toBeGreaterThan(0);
+    expect(borrowed?.theta_hat).toBeLessThan(2.0);
+    expect(borrowed?.evidence_count).toBe(0); // synthesized cold-start counts
+    // MEAN-ONLY: the observed KC keeps its OWN precision/SE (variance NOT shrunk).
+    expect(proj.get(kObs)?.theta_precision).toBe(5);
+  });
+
+  it('A5 ON: contrasts_with is EXCLUDED from smoothing (reverse signal never borrows)', async () => {
+    const kObs = createId();
+    const kCon = createId();
+    await seedObserved(kObs, 2.0, 5);
+    await seedKnowledge(kCon);
+    await seedEdge(kObs, kCon, 'contrasts_with'); // NOT admitted into A5
+    laplFlag.value = true;
+
+    const proj = await getMasteryProjection(db, [kObs, kCon]);
+    expect(proj.has(kCon)).toBe(false); // no borrow → stays absent like today
+  });
+
+  it('A5 ON: prerequisite edges are EXCLUDED from the symmetric Laplacian (directed → A6 only)', async () => {
+    const kObs = createId();
+    const kUn = createId();
+    await seedObserved(kObs, 2.0, 5);
+    await seedKnowledge(kUn);
+    await seedEdge(kObs, kUn, 'prerequisite'); // directed — not symmetric A5 smoothing
+    laplFlag.value = true; // A5 on, A6 OFF
+    prereqFlag.value = false;
+
+    const proj = await getMasteryProjection(db, [kObs, kUn]);
+    expect(proj.has(kUn)).toBe(false); // A5 ignores prerequisite → no borrow
+  });
+
+  it('A6 ON: weak prereq presses dependent θ̂ DOWN; mastered dependent retro-credits prereq UP', async () => {
+    const kPre = createId(); // prerequisite, weak
+    const kDep = createId(); // dependent, claims advanced
+    await seedObserved(kPre, 0.0, 4);
+    await seedObserved(kDep, 2.0, 4);
+    await seedEdge(kPre, kDep, 'prerequisite'); // from=prereq, to=dependent
+    prereqFlag.value = true; // A6 on, A5 off
+
+    const proj = await getMasteryProjection(db, [kPre, kDep]);
+    // violation = max(0, θ_dep − θ_pre) = 2. dep pressed −λ_down·2 = −0.6 → 1.4.
+    expect(proj.get(kDep)?.theta_hat).toBeCloseTo(1.4, 6);
+    // prereq retro-credited +λ_up·2 = +0.3 → 0.3.
+    expect(proj.get(kPre)?.theta_hat).toBeCloseTo(0.3, 6);
+    // MEAN-ONLY: precision untouched on both.
+    expect(proj.get(kDep)?.theta_precision).toBe(4);
+    expect(proj.get(kPre)?.theta_precision).toBe(4);
+  });
+
+  it('A6 ON: archived edges (archived_at NOT NULL) are ignored (ADR-0034 soft-archive)', async () => {
+    const kPre = createId();
+    const kDep = createId();
+    await seedObserved(kPre, 0.0, 4);
+    await seedObserved(kDep, 2.0, 4);
+    // Archived prerequisite edge → must NOT drive propagation.
+    await db.insert(knowledge_edge).values({
+      id: createId(),
+      from_knowledge_id: kPre,
+      to_knowledge_id: kDep,
+      relation_type: 'prerequisite',
+      weight: 1,
+      created_by: { by: 'user' },
+      reasoning: null,
+      created_at: new Date(),
+      archived_at: new Date(),
+    });
+    prereqFlag.value = true;
+
+    const proj = await getMasteryProjection(db, [kPre, kDep]);
+    expect(proj.get(kDep)?.theta_hat).toBe(2.0); // unchanged — archived edge ignored
+    expect(proj.get(kPre)?.theta_hat).toBe(0.0);
   });
 });
 

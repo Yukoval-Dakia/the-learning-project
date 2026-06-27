@@ -22,6 +22,8 @@ import {
   event,
   item_calibration,
   item_family_calibration,
+  knowledge,
+  knowledge_edge,
   mastery_state,
   material_fsrs_state,
   practice_stream_item,
@@ -31,7 +33,10 @@ import { runTask } from '@/server/ai/runner';
 // YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
 // threaded through (student_image_refs).
 import * as invokerModule from '@/server/judge/invoker';
+// YUK-455 inc-E — flag-off byte-identical 回归锚：seed prereq 图 + 答错 → 断言零 prereq_risk 事件。
+import { PREREQ_RISK_ACTION } from '@/server/mastery/prereq-propagation';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -257,6 +262,59 @@ describe('POST /api/review/submit', () => {
       .from(event)
       .where(eq(event.action, MASTERY_PROGRESS_ACTION));
     expect(mpEvents).toHaveLength(0);
+  });
+
+  // YUK-455 inc-E — flag-off BYTE-IDENTICAL 回归锚. prereq 诊断「向后传播」producer 默认 dark
+  // (PREREQ_PROPAGATION_ENABLED=false). 即便 seed 了 prereq 图（A 是答错 KC 的前置，翻 flag
+  // 后 WOULD emit）+ 答错（rating again → outcome=failure），submit 仍**零** experimental:
+  // prereq_risk 事件 — 因为 call site `PREREQ_PROPAGATION_ENABLED && outcome==='failure'` 在
+  // flag-off 时短路。这就是 dark-ship 的 byte-identical 保证。
+  it('does NOT emit prereq_risk on a failed review while PREREQ_PROPAGATION_ENABLED is dark', async () => {
+    const now = new Date();
+    // Seed a prereq edge: k_pre is a prerequisite of k_dep (the failed question's KC).
+    for (const id of ['k_pre', 'k_dep']) {
+      await testDb()
+        .insert(knowledge)
+        .values({
+          id,
+          name: id,
+          domain: 'wenyan',
+          parent_id: null,
+          merged_from: [],
+          proposed_by_ai: false,
+          approval_status: 'approved',
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        })
+        .onConflictDoNothing();
+    }
+    await testDb()
+      .insert(knowledge_edge)
+      .values({
+        id: createId(),
+        from_knowledge_id: 'k_pre',
+        to_knowledge_id: 'k_dep',
+        relation_type: 'prerequisite',
+        weight: 1,
+        created_by: 'user' as never,
+        reasoning: null,
+        created_at: now,
+        archived_at: null,
+      });
+    await seedQuestion('q_prereq_fail', { knowledge_ids: ['k_dep'], difficulty: 3 });
+
+    const res = await POST(
+      submitReq({ activity_ref: { kind: 'question', id: 'q_prereq_fail' }, rating: 'again' }),
+    );
+    expect(res.status).toBe(200);
+
+    // Dark: the would-be propagation target (k_pre) gets ZERO prereq_risk events.
+    const prereqEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, PREREQ_RISK_ACTION));
+    expect(prereqEvents).toHaveLength(0);
   });
 
   it('writes FSRS projection per knowledge id, not per reviewed question', async () => {

@@ -5,9 +5,19 @@
 // the deprecated knowledge_mastery view). In-scope KCs with no mastery_state row come back
 // as `tested:false` (untested · 0 题). Read-only; no θ̂/FSRS writes.
 //
-// Scope resolution mirrors placement-start: the goal's scope_knowledge_ids (subject = view,
+// Scope here is the goal's FROZEN scope_knowledge_ids — a single-layer read (subject = view,
 // no root node). The probe's answers populated those KCs' mastery_state; untested in-scope
 // KCs surface as the profile's "未测" rows so the picture is honest about coverage.
+//
+// DIVERGENCE (YUK-481, tracked in YUK-516): this profile does NOT mirror placement-start. Since
+// YUK-482→YUK-481, placement-start resolves scope in three tiers (tier-1 frozen non-empty →
+// tier-2 subject live-resolve → tier-3 full active tree), but this read stayed frozen-only. So a
+// cold-start goal placed via tier-2/3 (empty/no-subject/barren-subject) has its KCs in
+// mastery_state yet returns an EMPTY profile here (frozen scope is still empty). Pre-existing for
+// tier-2 (YUK-482), widened to tier-3 by YUK-481; harmless while PLACEMENT_PROBE_ENABLED=false
+// (no live caller) but must be fixed before flag flip. Note this reads the goal's frozen scope,
+// NOT the session-persisted scope (YUK-470), so a stored tier-3 set does not rescue it either.
+// YUK-516 will reuse the same tier-1/2/3 resolver (or read the session scope) to close the gap.
 
 import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
