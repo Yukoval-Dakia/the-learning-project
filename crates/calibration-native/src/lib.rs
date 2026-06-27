@@ -629,6 +629,11 @@ pub struct GridPosterior {
 /// the cross-domain-safe quantity that crosses a prereq edge (never a grid shape).
 #[inline]
 fn e_mastery_of(probs: &[f64], theta_global: f64, b: f64, grid: &[f64; GRID_POINTS]) -> f64 {
+    debug_assert_eq!(
+        probs.len(),
+        GRID_POINTS,
+        "e_mastery_of expects a GRID_POINTS-length posterior"
+    );
     let mut acc = 0.0_f64;
     for i in 0..GRID_POINTS {
         acc = acc + probs[i] * poly_sigmoid_scalar(theta_global + grid[i] - b);
@@ -682,7 +687,6 @@ fn propagate_priors_inner(
     // Adjacency. prereqs_of[d] kept ascending → frozen ∏ / argmin accumulation order.
     let mut prereqs_of: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut deps_of: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut indegree: Vec<usize> = vec![0; n];
     for &(p_u32, d_u32) in prereq_edges {
         let p = p_u32 as usize;
         let d = d_u32 as usize;
@@ -696,12 +700,11 @@ fn propagate_priors_inner(
         }
         prereqs_of[d].push(p);
         deps_of[p].push(d);
-        indegree[d] += 1;
     }
-    // Sort + DEDUP both adjacencies, then rebuild indegree from the deduped prereq counts. A
-    // duplicate (prereq, dep) edge would otherwise double-count in ∏ E_mastery (prod = m² not m)
-    // and silently over-shrink the posterior. Dedup keeps prereqs_of / deps_of / indegree mutually
-    // consistent so the Kahn decrement still reaches exactly zero.
+    // Sort + DEDUP both adjacencies. A duplicate (prereq, dep) edge would otherwise double-count
+    // in ∏ E_mastery (prod = m² not m) and silently over-shrink the posterior. indegree is then
+    // built from the DEDUPED prereq counts so prereqs_of / deps_of / indegree stay mutually
+    // consistent and the Kahn decrement reaches exactly zero.
     for v in prereqs_of.iter_mut() {
         v.sort_unstable();
         v.dedup();
@@ -710,9 +713,7 @@ fn propagate_priors_inner(
         v.sort_unstable();
         v.dedup();
     }
-    for d in 0..n {
-        indegree[d] = prereqs_of[d].len();
-    }
+    let indegree: Vec<usize> = prereqs_of.iter().map(|p| p.len()).collect();
 
     // Deterministic Kahn topological sort: seed with indegree-0 nodes in ascending index and
     // extend with newly-zeroed nodes in ascending index. (Any valid topo order yields the same
