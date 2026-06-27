@@ -129,9 +129,10 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
   });
 
   it('(c) cycle guard: A↔B prereq cycle terminates and returns sanely', async () => {
-    // A is prereq of B AND B is prereq of A (a 2-cycle). The path-array guard must
-    // terminate the walk. B mastered, A not → A surfaces (its only prereq B is mastered);
-    // B excluded (self-mastered).
+    // A is prereq of B AND B is prereq of A (a 2-cycle). The frontier-anchor guard
+    // (e.from_knowledge_id <> c.frontier_kc) cuts the back-edge to each anchor, terminating
+    // the walk (each node is the anchor of its own closure, so its self-cycle is blocked).
+    // B mastered, A not → A surfaces (its only prereq B is mastered); B excluded (self-mastered).
     await seedPrereq('A', 'B');
     await seedPrereq('B', 'A');
     await setMastered('B');
@@ -276,5 +277,27 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
     const overflow = await learnableFrontierResolved(testDb());
     expect(overflow.kind).toBe('overflow');
     expect(overflow.ids).toEqual([]);
+  });
+
+  it('(k) upstream prereq-only cycle NOT containing the frontier anchor → overflow (fail-safe)', async () => {
+    // YUK-512 residual semantics lock. The frontier-anchor guard (from <> frontier_kc) only
+    // cuts a cycle that returns to the dependent being gated. An upstream prereq-only cycle
+    // among ANCESTORS that never re-touches the anchor (A→B→C→A, all upstream of F) is NOT
+    // cut by the anchor guard — it increments depth each lap until c.depth < depthProbe trips,
+    // so the closure for frontier_kc=F carries a row with depth > FRONTIER_DEPTH_LIMIT. Per
+    // invariant ③ that makes the WHOLE result fail-safe to overflow→[] (never a partial/garbage
+    // frontier), where the old per-path ARRAY guard would have terminated gracefully. This
+    // pins that fail-safe as INTENDED behavior before the graph densifies (NIT-1).
+    await seedPrereq('A', 'F'); // A is a (direct) prereq of F — F is the frontier anchor.
+    await seedPrereq('A', 'B'); // A→B→C→A: a 3-node prereq cycle entirely UPSTREAM of F,
+    await seedPrereq('B', 'C'); //   none of whose nodes is the anchor F, so the anchor guard
+    await seedPrereq('C', 'A'); //   never trips on it → the depth bound is what terminates it.
+    await setNotMastered('F');
+
+    const resolved = await learnableFrontierResolved(testDb());
+    expect(resolved.kind).toBe('overflow');
+    expect(resolved.ids).toEqual([]);
+    // The thin wrapper collapses overflow to the byte-identical [] live-path contract.
+    expect(await learnableFrontier(testDb())).toEqual([]);
   });
 });
