@@ -49,7 +49,7 @@ owner 选**架构纯度（single-source-of-truth）**，明确**不是为速度*
 ### 6. napi/WASM 安全约定（working-name「ability-island」）升格为 prod-safety 契约
 
 napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本 ADR 吸收（不另开 ADR）：
-- `#![forbid(unsafe_code)]`（crate 级）——⚠️ **当前 crate 实测无 unsafe 但尚未加该 lint attribute，待 Rust 线落地**（下列其余约定已在 `lib.rs` 落地）。
+- **`#![deny(unsafe_code)]`（crate 级）** —— 已在 `lib.rs` 落地（YUK-513，2026-06-27）。**字面用 `deny` 而非本 ADR 初稿写的 `forbid`**：napi-derive 的 `#[napi]` 宏在其 FFI 注册 glue 上 emit `#[allow(unsafe_code)]`，而 `forbid` 是唯一不可被局部 `allow` 覆盖的 lint 级 → 实测整 crate `forbid` 触 `error[E0453]: allow(unsafe_code) incompatible with previous forbid`（源自 napi `__ctor_parse_impl`，24 处）。`deny` 拦住任何**不带局部 allow 的手写 `unsafe` 块**（= 本约定的实际意图：数值核零手写 unsafe），同时放行 napi 宏自带 allow 的 FFI glue。**残留 caveat**：开发者刻意写 `#[allow(unsafe_code)] unsafe { … }` 能绕过 `deny`（`forbid` 则不能）——但这种刻意 bypass 在 review 中是显式红旗，可接受。
 - **owned args**（`Vec<f64>` 传值，非 borrow / 非 Buffer）——labels 用 `Vec<f64>`（非 `Vec<u32>`）以**避开** N-API ToUint32 对非二元 label 的静默强转（`1.5→1` / `-1→4294967295`），保持非法-label throw 与 oracle 字节一致（见 `lib.rs:16-19` labels 注释）。
 - **无 FMA**（`f64::mul_add` banned）+ 冻结 Horner 序 + floor-based range reduction + 常量 from_bits——确定性不变量，跨 V8/native/wasm 位等的前提。
 - **迁移期 = diff-test**（vs TS oracle，Object.is）；**单实现后 = Rust-native KAT/property test**（无 oracle 可比时）。

@@ -137,3 +137,76 @@ describe('selectNextPlacementItem', () => {
     expect(pick?.questionId).toBe('q-aaa');
   });
 });
+
+// YUK-480 — leaning preference is an ORDERING-ONLY tier layered above the info pick. It never
+// rewrites the reported score nor touches θ̂/p(L); an empty preferKnowledgeIds is byte-identical
+// to the pre-YUK-480 selection.
+describe('selectNextPlacementItem — leaning preference (YUK-480, ordering only)', () => {
+  it('prefers a leaning-subject candidate over a higher-info non-leaning one', async () => {
+    await seedKnowledge('kc-lean');
+    await seedKnowledge('kc-other');
+    // q-other has the higher info (diff 3 → b≈θ̂=0) and would win with NO preference.
+    await seedQuestion('q-other', ['kc-other'], { difficulty: 3 });
+    // q-lean has lower info (diff 5) but is in the leaning KC set → wins on the preference tier.
+    await seedQuestion('q-lean', ['kc-lean'], { difficulty: 5 });
+
+    const pick = await selectNextPlacementItem(db, {
+      knowledgeIds: ['kc-lean', 'kc-other'],
+      preferKnowledgeIds: ['kc-lean'],
+    });
+    expect(pick?.questionId).toBe('q-lean');
+    // the reported score stays the TRUE info value (the preference reorders WHICH wins, it does
+    // not rewrite the psychometric score).
+    expect(pick?.score).toBeGreaterThan(0);
+  });
+
+  it('empty preferKnowledgeIds → byte-identical to the no-preference pick (max info wins)', async () => {
+    await seedKnowledge('kc-lean');
+    await seedKnowledge('kc-other');
+    await seedQuestion('q-other', ['kc-other'], { difficulty: 3 });
+    await seedQuestion('q-lean', ['kc-lean'], { difficulty: 5 });
+
+    const withEmpty = await selectNextPlacementItem(db, {
+      knowledgeIds: ['kc-lean', 'kc-other'],
+      preferKnowledgeIds: [],
+    });
+    const without = await selectNextPlacementItem(db, {
+      knowledgeIds: ['kc-lean', 'kc-other'],
+    });
+    expect(withEmpty?.questionId).toBe('q-other'); // info wins; preference is a no-op
+    expect(withEmpty).toEqual(without);
+  });
+
+  it('within the leaning tier, max-info then id tie-break still hold', async () => {
+    await seedKnowledge('kc-lean');
+    await seedKnowledge('kc-other');
+    // two leaning candidates with identical info → smaller id wins; a same-info non-leaning
+    // candidate is still outranked by the preference tier.
+    await seedQuestion('q-lean-bbb', ['kc-lean'], { difficulty: 3 });
+    await seedQuestion('q-lean-aaa', ['kc-lean'], { difficulty: 3 });
+    await seedQuestion('q-other', ['kc-other'], { difficulty: 3 });
+
+    const pick = await selectNextPlacementItem(db, {
+      knowledgeIds: ['kc-lean', 'kc-other'],
+      preferKnowledgeIds: ['kc-lean'],
+    });
+    expect(pick?.questionId).toBe('q-lean-aaa');
+  });
+
+  it('is deterministic across repeated calls (replay-safe)', async () => {
+    await seedKnowledge('kc-lean');
+    await seedKnowledge('kc-other');
+    await seedQuestion('q-other', ['kc-other'], { difficulty: 3 });
+    await seedQuestion('q-lean', ['kc-lean'], { difficulty: 5 });
+
+    const a = await selectNextPlacementItem(db, {
+      knowledgeIds: ['kc-lean', 'kc-other'],
+      preferKnowledgeIds: ['kc-lean'],
+    });
+    const b = await selectNextPlacementItem(db, {
+      knowledgeIds: ['kc-lean', 'kc-other'],
+      preferKnowledgeIds: ['kc-lean'],
+    });
+    expect(a).toEqual(b);
+  });
+});

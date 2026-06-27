@@ -170,6 +170,28 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
     evidence:
       'hub-mesh 笔记自动同步按 prerequisite 边（incoming）组装「这是 X 的前置」复习上下文（RELATION_PRIORITY）。',
   },
+  {
+    // YUK-455 inc-E — prereq 诊断「向后传播」producer。答错 KC 沿 prerequisite 边向上闭包，
+    // 按 type 特化 EMIT experimental:prereq_risk 上调前置掌握风险（诊断投影，dark-ship）。
+    relation: 'prerequisite',
+    tier: 'specialized',
+    file: 'src/server/mastery/prereq-propagation.ts',
+    marker: "e.relation_type = 'prerequisite'",
+    surface: 'diagnosis',
+    evidence:
+      'prereq-propagation 沿 prerequisite 边向上闭包失败 KC 的 transitive 前置，按 type 驱动诊断向后传播（EMIT experimental:prereq_risk 上调前置掌握风险，dark-ship）。',
+  },
+  {
+    // YUK-455 grounding — learnable_frontier (B3, PR #635) 的 prerequisite specialized 消费在
+    // 原 PR 遗漏登记；inc-E 顺手补上（否则该 type-specific 消费路径不在反查覆盖内）。
+    relation: 'prerequisite',
+    tier: 'specialized',
+    file: 'src/capabilities/practice/server/learnable-frontier.ts',
+    marker: "e.relation_type = 'prerequisite'",
+    surface: 'recommendation',
+    evidence:
+      'learnable_frontier (B3) 沿 prerequisite 边向上闭包 gate「可学前沿」候选（self 未掌握 ∧ 全 transitive 前置已掌握），按 type 驱动每日流 5th 候选源选题推荐。',
+  },
 
   // ---- specialized: contrasts_with ----
   {
@@ -209,6 +231,40 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
     marker: "edge.relation_type === 'related_to'",
     surface: 'recommendation',
     evidence: 'find_knowledge_paths 对 related_to 加反向邻接（双向语义），影响路径推荐结果。',
+  },
+
+  // ---- specialized: A5/A6 (YUK-441/442) mastery-projection KG soft layer ----
+  // getMasteryProjection (src/server/mastery/state.ts) branches on relation_type to
+  // feed the per-KC ability θ̂ soft layer: related_to → A5 graph-Laplacian symmetric
+  // smoothing; prerequisite / derived_from → A6 directed order prior. dark-ship
+  // (GRAPH_LAPLACIAN_ENABLED / PREREQ_PROPAGATION_ENABLED default false) but the
+  // branch is wired in source, so the type-specific consumption is LIVE-in-code.
+  {
+    relation: 'related_to',
+    tier: 'specialized',
+    file: 'src/server/mastery/state.ts',
+    marker: "r.relation_type === 'related_to'",
+    surface: 'diagnosis',
+    evidence:
+      'A5 (YUK-441) — getMasteryProjection smooths per-KC θ̂ along symmetric related_to edges (graph-Laplacian GMRF prior); unobserved KCs borrow from observed neighbours.',
+  },
+  {
+    relation: 'prerequisite',
+    tier: 'specialized',
+    file: 'src/server/mastery/state.ts',
+    marker: "r.relation_type === 'prerequisite'",
+    surface: 'diagnosis',
+    evidence:
+      'A6 (YUK-442) — getMasteryProjection applies a directed soft order prior along prerequisite edges (press weak-prereq dependents down, retro-credit prereqs of mastered dependents up).',
+  },
+  {
+    relation: 'derived_from',
+    tier: 'specialized',
+    file: 'src/server/mastery/state.ts',
+    marker: "r.relation_type === 'derived_from'",
+    surface: 'diagnosis',
+    evidence:
+      'A6 (YUK-442) — getMasteryProjection treats derived_from as directed inheritance (base `to` is prereq-like of derived `from`) in the same order-prior propagation.',
   },
 
   // ---- creation-validation: 全 5 type 的提议时校验闸（非下游学习消费）----

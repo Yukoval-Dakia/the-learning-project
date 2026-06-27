@@ -13,20 +13,32 @@
 
 import { z } from 'zod';
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
+import {
+  resolveAllActiveKnowledgeIds,
+  resolveSubjectKnowledgeIds,
+} from '@/capabilities/knowledge/server/domain';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
-import { selectNextPlacementItem } from '../server/placement-select';
+import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
 
 const StartBody = z.object({
   /** the goal whose scope_knowledge_ids scope this probe (KC set resolved from the goal row). */
   goalId: z.string().min(1).nullable().optional(),
   /** explicit goal-subgraph KC set (effective-domain derived); overrides goalId resolution. */
   knowledgeIds: z.array(z.string().min(1)).optional(),
+  // YUK-480 — onboarding self-report transport (Welcome screen → placement). Both are ORDERING/
+  // amount-only and NEVER feed θ̂/p(L)/FSRS (§3 red line 4); owner-supplied fixed inputs, n=1
+  // admissible (§0.2 cat 1/2). Optional → a probe started without a self-report behaves exactly
+  // as before (no preference / default cap).
+  /** self-reported subject leanings (effective-domain subject ids) → PREFER leaning-subject
+   * questions in selection order (placement-select preferKnowledgeIds). */
+  leanings: z.array(z.string().min(1)).optional(),
+  /** self-reported daily pace → probe count cap (capForPace), read by /next. */
+  pace: z.enum(['light', 'medium', 'dense']).optional(),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -50,7 +62,7 @@ export async function POST(req: Request): Promise<Response> {
         400,
       );
     }
-    const { goalId, knowledgeIds: explicit } = parsed.data;
+    const { goalId, knowledgeIds: explicit, leanings, pace } = parsed.data;
 
     // Resolve the probe's KC scope: explicit set wins; else the goal's scope_knowledge_ids.
     // subject=view: the caller derives the KC set via the effective-domain axis (or supplies a
@@ -64,38 +76,70 @@ export async function POST(req: Request): Promise<Response> {
         .limit(1);
       const goalRow = rows[0];
       const frozenScope = goalRow?.scope ?? [];
-      // YUK-482 Lane B (decision b-i, live-resolve guarded) — a cold-start goal is declared
-      // on an empty tree (goal-create.ts: empty resolved scope is ALLOWED), so its FROZEN
-      // scope_knowledge_ids stays empty even after uploads bridge new child KCs under the
-      // subject root. A frozen-only read would make placement permanently blind to those KCs
-      // (sourcingNeeded forever). When the frozen scope is empty/null AND the goal carries a
-      // subject, RE-RESOLVE the subject's KC set LIVE (resolveSubjectKnowledgeIds → effective-
-      // domain axis), so newly-bridged KCs enter scope. A NON-empty frozen scope is an
-      // EXPLICIT narrow scope and is respected as-is (no live-resolve override). See
-      // docs/design/2026-06-20-cold-start-day-one-design.md / YUK-481.
-      knowledgeIds =
-        frozenScope.length === 0 && goalRow?.subjectId
-          ? await resolveSubjectKnowledgeIds(db, goalRow.subjectId)
-          : frozenScope;
+      // Three-tier dynamic scope resolution (YUK-481, building on YUK-482 Lane B). A cold-start
+      // goal is declared on an empty tree (goal-create.ts: empty resolved scope is ALLOWED), so
+      // its FROZEN scope_knowledge_ids stays empty even after uploads bridge new child KCs. A
+      // frozen-only read would make placement permanently blind to those KCs (sourcingNeeded /
+      // 400 forever). subject=view: scope is a DERIVED axis recomputed each call — we never write
+      // the resolved set back onto the goal row. See docs/design/2026-06-20-cold-start-day-one-
+      // design.md / YUK-481.
+      if (frozenScope.length > 0) {
+        // Tier 1: a NON-empty frozen scope is an EXPLICIT narrow scope — respected as-is, never
+        // widened by live-resolve.
+        knowledgeIds = frozenScope;
+      } else {
+        // Tier 2 (YUK-482 Lane B): frozen empty AND goal carries a subject → RE-RESOLVE the
+        // subject's KC set LIVE (effective-domain axis, alias-aware), so newly-bridged KCs enter
+        // scope.
+        if (goalRow?.subjectId) {
+          knowledgeIds = await resolveSubjectKnowledgeIds(db, goalRow.subjectId);
+        }
+        // Tier 3 (YUK-481): subject resolution still yielded nothing — no subject_id, an unknown
+        // subject string, or a subject whose root is planted but has no child KC yet. This is the
+        // original YUK-473 live trigger (day-one goals are often cross-subject / pick no subject).
+        // Fall back to the FULL active tree rather than 400, so the cold-start probe is still
+        // reachable. selectNextPlacementItem filters to KCs with ≥1 eligible question, so the
+        // wide scope introduces no phantom KC. Cold-start crutch only: tier-2 takes over once a
+        // subject is selected or uploads grow subject-scoped KCs.
+        if (knowledgeIds.length === 0) {
+          knowledgeIds = await resolveAllActiveKnowledgeIds(db);
+        }
+      }
     }
     if (knowledgeIds.length === 0) {
+      // Post-YUK-481 this fires only in two genuinely-unresolvable cases: (a) neither a goalId nor
+      // an explicit knowledgeIds set was supplied (nothing to resolve from), or (b) a goalId WAS
+      // supplied but the entire active tree is empty (tier-3 full-tree fallback found zero active
+      // KC) — there is truly nothing to place against. A no-subject / unknown-subject goal no
+      // longer 400s as long as ANY active KC exists.
       throw new ApiError(
         'validation_error',
-        'placement requires a goalId (with scope_knowledge_ids) or an explicit knowledgeIds set',
+        'placement requires a goalId (with a resolvable scope) or an explicit knowledgeIds set',
         400,
       );
     }
+
+    // YUK-480 — resolve the self-reported leanings into the preferred KC set (subject=view,
+    // effective-domain axis). Empty/omitted leanings → empty set → first pick is byte-identical
+    // to the pre-YUK-480 selection. This only orders WHICH question is served first; it never
+    // touches the information score / θ̂.
+    const preferKnowledgeIds = await resolveLeaningPreferenceKcs(db, leanings);
 
     // Select the first question BEFORE creating the session: the two ops are independent, and
     // ordering selection first means a selection failure leaves NO orphan 'started' row (nothing
     // is created yet). The only remaining orphan source — a probe started but never answered /
     // ended — is covered by the orphan-sweep follow-up (YUK-470).
-    const first = await selectNextPlacementItem(db, { knowledgeIds });
+    const first = await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds });
     // Persist the resolved scope on the session (YUK-470): /next reads it server-side rather
-    // than trusting the client to re-send knowledgeIds every call.
+    // than trusting the client to re-send knowledgeIds every call. YUK-480 — persist the raw
+    // self-report (leanings + pace) too so /next applies the leaning ordering + pace-derived cap
+    // under the same row lock (raw, not the resolved KC set: re-resolving fresh on /next picks
+    // up newly-bridged KCs, same rationale as the empty-frozen-scope live re-resolve above).
     const { sessionId } = await Placement.startPlacementSession(db, {
       goalId: goalId ?? null,
       knowledgeIds,
+      leanings,
+      pace: pace ?? null,
     });
 
     // first === null → cold subgraph (no eligible question). The probe stays 'started'; the

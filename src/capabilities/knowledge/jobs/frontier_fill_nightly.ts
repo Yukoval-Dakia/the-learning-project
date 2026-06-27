@@ -55,13 +55,16 @@ import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 // signal — the same direction the agency goal_scope cron already crosses into
 // knowledge (loadTreeSnapshot). Mirrors that documented precedent; flip if M5
 // tightens package boundaries.
-import { learnableFrontier } from '@/capabilities/practice/server/learnable-frontier';
+import {
+  type FrontierResolution,
+  learnableFrontierResolved,
+} from '@/capabilities/practice/server/learnable-frontier';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 // Reuse the per-proposal EdgeProposalSchema but WITHOUT the array `.max(5)` cap
@@ -119,6 +122,12 @@ const RELATION_PREREQUISITE = 'prerequisite' as const;
 
 type DepsOverride = {
   runTaskFn?: TaskTextRunFn;
+  /**
+   * DI seam for the frontier discriminant read (YUK-514 Finding 1). Defaults to the
+   * canonical learnableFrontierResolved; tests inject a fake to exercise the overflow
+   * branch without seeding a 10k-tuple closure.
+   */
+  resolveFrontierFn?: (db: Db) => Promise<FrontierResolution>;
 };
 
 export interface FrontierFillResult {
@@ -128,6 +137,13 @@ export interface FrontierFillResult {
   proposed: number;
   /** 1 when the frontier was non-empty/dense → no-op, no LLM call. */
   skipped_dense: number;
+  /**
+   * 1 when learnableFrontierResolved reported `overflow` (YUK-514 Finding 1): the closure
+   * tripped the depth / node-cap fail-safe → the graph is DENSE, NOT cold-start, so we
+   * no-op WITHOUT bootstrapping. Counted separately from skipped_dense so the densification
+   * boundary is observable.
+   */
+  skipped_overflow: number;
   /** 1 when the frontier was empty but no KC lacks prereq coverage → no-op, no LLM call. */
   skipped_no_candidate: number;
   /** Proposals dropped because an identical (from,to,prerequisite) pair is already pending. */
@@ -145,6 +161,7 @@ function emptyResult(): FrontierFillResult {
     considered: 0,
     proposed: 0,
     skipped_dense: 0,
+    skipped_overflow: 0,
     skipped_no_candidate: 0,
     skipped_duplicate_pending: 0,
     skipped_duplicate_edge: 0,
@@ -194,8 +211,20 @@ export async function runFrontierFillAndWrite(
   // ── ② SPARSITY GATE (pre-LLM, OUTSIDE the swallow). A throw here is a legit
   //    retryable DB fault → propagates to the builder's rethrow → pg-boss retries.
   //    Do NOT wrap in a catch-all (would mask a DB fault behind proposed:0).
-  const frontier = await learnableFrontier(db);
-  if (frontier.length > FRONTIER_BOOTSTRAP_FLOOR) {
+  //
+  //    YUK-514 Finding 1: read the DISCRIMINATED frontier, not the flattened id list. The
+  //    bare `[]` collapses THREE states; only true `sparse` (cold-start) should bootstrap.
+  //    - `overflow` → the closure tripped the depth / node-cap fail-safe, i.e. the graph is
+  //      DENSE / pathological → no-op (skipped_overflow), NEVER bootstrap a dense graph.
+  //    - `dense` with ids.length > FLOOR → an active frontier exists → no-op (skipped_dense).
+  //    - `sparse`, OR `dense` with no learnable ids (≤ FLOOR) → fall through to bootstrap
+  //      (byte-identical to the historical `frontier.length <= FLOOR` behaviour).
+  const resolveFrontierFn = deps.resolveFrontierFn ?? learnableFrontierResolved;
+  const frontier = await resolveFrontierFn(db);
+  if (frontier.kind === 'overflow') {
+    return { ...result, skipped_overflow: 1 };
+  }
+  if (frontier.ids.length > FRONTIER_BOOTSTRAP_FLOOR) {
     return { ...result, skipped_dense: 1 };
   }
 
@@ -207,9 +236,14 @@ export async function runFrontierFillAndWrite(
   }
   result.considered = candidateIds.length;
 
-  // Tree snapshot (LLM context) + dedup sets — all pre-LLM reads (faults rethrow).
+  // Tree snapshot (LLM context only) + dedup sets — all pre-LLM reads (faults rethrow).
+  // NOTE (YUK-514 Finding 2): the snapshot is NO LONGER used to validate node existence.
+  // loadTreeSnapshot hard-caps at LOAD_TREE_SNAPSHOT_LIMIT (5000), so on a >5000-KC graph a
+  // proposal's `from` could be a REAL node absent from the truncated snapshot → falsely
+  // dropped as skipped_invalid. `from` existence is checked against the `knowledge` table
+  // directly below (post-parse); the tree here is only the bounded LLM context + the
+  // dominant-domain hint. (loadTreeSnapshot warns internally when it hits the cap.)
   const tree = await loadTreeSnapshot(db);
-  const validNodeIds = new Set(tree.map((n) => n.id));
   const candidateSet = new Set(candidateIds);
 
   // ④ DEDUP — pending proposals (reuse the EXISTING anti-storm reader) + live edges.
@@ -264,6 +298,20 @@ export async function runFrontierFillAndWrite(
 
     const parsed = parseFrontierProposals(taskResult.text);
 
+    // ── YUK-514 Finding 2: `from` existence is the SoT `knowledge` table, NOT the
+    //    truncated tree snapshot. One bounded batch query over the distinct proposed `from`
+    //    ids (≤ parsed proposal count) → a real KC above the snapshot cap is no longer
+    //    falsely dropped. `to` keeps its candidateSet check (real ids from
+    //    loadKcsLackingPrereq), which already implies existence + non-archived.
+    const proposedFromIds = [...new Set(parsed.proposals.map((p) => p.from_knowledge_id))];
+    const existingFromRows = proposedFromIds.length
+      ? await db
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, proposedFromIds), isNull(knowledge.archived_at)))
+      : [];
+    const validFromIds = new Set(existingFromRows.map((r) => r.id));
+
     for (const p of parsed.proposals) {
       // ⑤ COST CAP — clamp to at most FRONTIER_FILL_MAX_PROPOSALS writes per run.
       if (result.proposed >= FRONTIER_FILL_MAX_PROPOSALS) {
@@ -274,15 +322,11 @@ export async function runFrontierFillAndWrite(
       const from = p.from_knowledge_id;
       const to = p.to_knowledge_id;
 
-      // Validity: no self-loop; both endpoints real; `to` must be a candidate
-      // (a KC actually lacking prereq coverage — we never gate an already-covered
-      // KC with another temp edge).
-      if (
-        from === to ||
-        !validNodeIds.has(from) ||
-        !validNodeIds.has(to) ||
-        !candidateSet.has(to)
-      ) {
+      // Validity: no self-loop; `from` a real (non-archived) KC (DB-checked, NOT snapshot —
+      // YUK-514 Finding 2); `to` must be a candidate (a KC actually lacking prereq coverage,
+      // from loadKcsLackingPrereq, so it is real + non-archived — we never gate an
+      // already-covered KC with another temp edge).
+      if (from === to || !validFromIds.has(from) || !candidateSet.has(to)) {
         result.skipped_invalid += 1;
         continue;
       }

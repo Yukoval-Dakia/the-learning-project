@@ -20,6 +20,37 @@ import { thetaSe } from '@/core/theta';
  */
 export const PLACEMENT_DEFAULT_CAP = 8;
 
+// YUK-480 — onboarding self-report `pace` → probe count cap ("每日量"). The learner's daily-
+// budget knob (light/medium/dense) shortens or holds the probe length. Owner-supplied budget
+// constants (same class as PLACEMENT_DEFAULT_CAP, NOT a fitted/cross-examinee parameter →
+// n=1 admissible §0.2 cat 1). The cap only bounds HOW MANY questions are asked; it never feeds
+// θ̂/p(L)/FSRS.
+//
+// CEILING = PLACEMENT_DEFAULT_CAP (8). The placement UI (ScreenPlacement) renders a FIXED
+// 8-segment progress track + a "last question" gate at CAP=8, so a cap ABOVE 8 would desync the
+// UI. This lane therefore caps `dense` at the existing UI ceiling (8 = same as medium/default);
+// raising `dense` above 8 needs a dynamic-cap UI (progress track + last-gate driven by the
+// server cap), which is a UI change gated on a design pre-flight → tracked as a follow-up, NOT
+// done here. `light` shortens the probe (the UI already supports early completion — the
+// "答到 cap 或收敛即止" copy + the done handler land regardless of count).
+export const PLACEMENT_PACE_CAP: Readonly<Record<string, number>> = {
+  light: 5,
+  medium: PLACEMENT_DEFAULT_CAP,
+  dense: PLACEMENT_DEFAULT_CAP,
+};
+
+/**
+ * Resolve the probe count cap from the learner's self-reported pace. Unknown/missing pace →
+ * PLACEMENT_DEFAULT_CAP (back-compat: a probe started without a self-report behaves exactly as
+ * before). Pure + total.
+ */
+export function capForPace(pace: string | null | undefined): number {
+  if (pace != null && Object.hasOwn(PLACEMENT_PACE_CAP, pace)) {
+    return PLACEMENT_PACE_CAP[pace];
+  }
+  return PLACEMENT_DEFAULT_CAP;
+}
+
 export interface PlacementTerminationInput {
   /** number of questions answered so far in this probe. */
   answeredCount: number;

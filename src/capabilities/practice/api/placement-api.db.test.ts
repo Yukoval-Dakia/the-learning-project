@@ -181,15 +181,72 @@ describe('placement API flow', () => {
     expect(body.question?.questionId).toBe('q-a');
   });
 
-  it('start still flags sourcingNeeded when live-resolve yields nothing (YUK-482 Lane B)', async () => {
-    // A cold goal whose subject has NO live KC at all → live-resolve returns [] → the start
-    // handler 400s (no resolvable scope), preserving the pre-YUK-482 "no scope" contract rather
-    // than silently selecting over nothing.
+  it('start TIER-3 falls back to the full active tree for a NULL-subject empty-scope goal (YUK-481)', async () => {
+    // The original YUK-473 live trigger: a day-one goal that is cross-subject / picked no subject
+    // (subject_id null) with a frozen empty scope. Tier-1 (frozen) and tier-2 (subject) both yield
+    // nothing, so placement must fall back to the WHOLE active tree rather than 400. A live KC with
+    // a question exists in the tree → the probe is reachable and returns a real first question.
+    await seedKnowledge('kc-anywhere'); // active KC in the tree (domain 'wenyan')
+    await seedQuestion('q-anywhere', ['kc-anywhere'], 3);
+    const now = new Date();
+    await db.insert(goal).values({
+      id: 'g-no-subject',
+      title: 'Cross-subject day-one goal',
+      // subject_id intentionally OMITTED (null) — the no-subject cold-start case.
+      scope_knowledge_ids: [], // frozen empty (cold-start)
+      status: 'active',
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const res = await startPlacement(jsonReq({ goalId: 'g-no-subject' }));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    // Full active tree entered scope; the eligible question is served.
+    expect(body.knowledgeIds).toEqual(['kc-anywhere']);
+    expect(body.question?.questionId).toBe('q-anywhere');
+    expect(body.sourcingNeeded).toBe(false);
+  });
+
+  it('start TIER-3 falls back to the full tree when the goal subject resolves to no KC (YUK-481)', async () => {
+    // A goal DOES carry a subject ('physics') but that subject has no live KC yet (root planted,
+    // children not grown). Tier-2 resolves empty; tier-3 falls back to the full active tree, which
+    // DOES hold a live KC under a different subject ('wenyan'). This is the deliberate cold-start
+    // looseness (owner decision): a subject-bearing goal whose subject is barren still gets placed
+    // over whatever active KCs exist, rather than 400ing the cold-start probe.
+    await seedKnowledge('kc-wenyan'); // domain 'wenyan' (NOT physics)
+    await seedQuestion('q-wenyan', ['kc-wenyan'], 3);
+    const now = new Date();
+    await db.insert(goal).values({
+      id: 'g-barren-subject',
+      title: 'Goal with barren subject',
+      subject_id: 'physics', // no physics KC exists
+      scope_knowledge_ids: [],
+      status: 'active',
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const res = await startPlacement(jsonReq({ goalId: 'g-barren-subject' }));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    // tier-2 (physics) was empty → tier-3 full-tree picked up the wenyan KC.
+    expect(body.knowledgeIds).toEqual(['kc-wenyan']);
+    expect(body.question?.questionId).toBe('q-wenyan');
+  });
+
+  it('start 400s only when the ENTIRE active tree is empty (tier-3 found nothing) (YUK-481)', async () => {
+    // The degenerate floor: a cold goal whose subject has no KC AND the whole active tree is empty
+    // (zero active KC anywhere) → tier-3 full-tree fallback also yields [] → 400. This is the
+    // semantically-correct "truly nothing to place against" case (no KC exists at all), NOT the
+    // no-subject case (which tier-3 now rescues whenever any active KC exists).
     const now = new Date();
     await db.insert(goal).values({
       id: 'g-empty',
       title: 'Empty subject goal',
-      subject_id: 'physics', // no physics KC seeded
+      subject_id: 'physics', // no physics KC seeded — and nothing else is seeded either
       scope_knowledge_ids: [],
       status: 'active',
       source: 'manual',
@@ -273,6 +330,78 @@ describe('placement API flow', () => {
     expect(body.done).toBe(true);
     expect(body.reason).toBe('cap');
     expect(body.answeredCount).toBe(8);
+  });
+
+  it('start ORDERS the first question toward a self-reported leaning subject (YUK-480)', async () => {
+    const now = new Date();
+    // two KCs in different effective domains (subject=view).
+    await db.insert(knowledge).values([
+      {
+        id: 'kc-wenyan',
+        name: 'KW',
+        domain: 'wenyan',
+        parent_id: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      {
+        id: 'kc-math',
+        name: 'KM',
+        domain: 'math',
+        parent_id: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+    ]);
+    // q-math has the higher info (diff 3 → b≈θ̂=0) and would win with NO leaning; q-wenyan (diff
+    // 5) is lower info but in the leaning subject → the preference tier orders it first.
+    await seedQuestion('q-math', ['kc-math'], 3);
+    await seedQuestion('q-wenyan', ['kc-wenyan'], 5);
+
+    // leaning toward 'wenyan' → resolveSubjectKnowledgeIds('wenyan') = [kc-wenyan] → preferred.
+    const res = await startPlacement(
+      jsonReq({ knowledgeIds: ['kc-wenyan', 'kc-math'], leanings: ['wenyan'] }),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.question?.questionId).toBe('q-wenyan');
+
+    // control: NO leaning → the higher-info q-math wins (byte-identical to pre-YUK-480).
+    const ctrl = await (
+      await startPlacement(jsonReq({ knowledgeIds: ['kc-wenyan', 'kc-math'] }))
+    ).json();
+    expect(ctrl.question?.questionId).toBe('q-math');
+  });
+
+  it('next derives the probe cap from the self-reported pace SERVER-SIDE (YUK-480: light → 5)', async () => {
+    await seedKnowledge('kc1');
+    for (let i = 0; i < 10; i++) await seedQuestion(`q${i}`, ['kc1'], 3);
+    const start = await (
+      await startPlacement(jsonReq({ knowledgeIds: ['kc1'], pace: 'light' }))
+    ).json();
+    // answer 5 — the light-pace cap, fewer than the default 8.
+    for (let i = 0; i < 5; i++) await seedAnswer(start.sessionId, `q${i}`);
+
+    // No cap in the body → the route derives it from the pace persisted at /start ('light' → 5).
+    const res = await nextPlacement(jsonReq({}), { id: start.sessionId });
+    const body = await res.json();
+    expect(body.done).toBe(true);
+    expect(body.reason).toBe('cap');
+    expect(body.answeredCount).toBe(5);
+  });
+
+  it('next holds the default cap (8) when no pace was reported (back-compat)', async () => {
+    await seedKnowledge('kc1');
+    for (let i = 0; i < 10; i++) await seedQuestion(`q${i}`, ['kc1'], 3);
+    const start = await (await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }))).json();
+    for (let i = 0; i < 5; i++) await seedAnswer(start.sessionId, `q${i}`);
+    // 5 < the default cap 8 → NOT done (a light-pace probe would already have stopped here).
+    const res = await nextPlacement(jsonReq({}), { id: start.sessionId });
+    const body = await res.json();
+    expect(body.done).toBe(false);
+    expect(body.answeredCount).toBe(5);
   });
 
   it('next reads scope SERVER-SIDE (no knowledgeIds in body) from the persisted session (YUK-470)', async () => {

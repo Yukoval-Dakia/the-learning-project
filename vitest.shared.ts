@@ -161,6 +161,13 @@ export const fastTestInclude = [
   // NOT this fast allowlist. The P0 partition guard still applies: any calibration
   // *.unit.test.ts that imports DB unmocked fails audit:partition.
   'src/server/calibration/**/*.unit.test.ts',
+  // YUK-446 / YUK-447 (A14/A15 simulator infra) — the synthetic-learner forward-sampler
+  // unit. CONVENTION glob: every *.unit.test.ts under src/server/simulator/ runs no-DB
+  // (it imports ONLY @/core/theta + @/core/pfa primitives + sibling pure @/server/
+  // calibration/rng mulberry32 — no @/db/client / postgres / drizzle / PgBoss). The same
+  // P0 partition guard applies: any simulator *.unit.test.ts that imports DB unmocked
+  // fails audit:partition.
+  'src/server/simulator/**/*.unit.test.ts',
   // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
   // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
   // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`
@@ -176,6 +183,12 @@ export const fastTestInclude = [
   // src/server/question-supply/** 无 unit glob，故必须显式列出，否则 db config 的
   // src/**/*.test.ts glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
   'src/server/question-supply/target-discovery.test.ts',
+  // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
+  // fake，db 是未触碰 stub；imports 仅 ./refill（其 @/db/client 是 type-only/erased、@/db/schema
+  // 是 table objects 不连库、demandToSupplyTarget/dispatchSupplyTarget/poolFetch 全 type-only db）。
+  // 真 fingerprint + 真池计数 + 真 event cooldown 的集成 db 测在 refill.db.test.ts。同 target-discovery
+  // 一样必须显式列出，否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer 分区。
+  'src/server/question-supply/refill.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
@@ -214,6 +227,10 @@ export const fastTestInclude = [
   // falls through to the db partition like every other `.db.test.ts`.
   'src/server/conjectures/evidence.test.ts',
   'src/server/conjectures/scoring.unit.test.ts',
+  // YUK-440 U8 — reconcile loop unit test (fully injected deps, no DB). Enumerated
+  // per-file (not a glob) for the same reason as above: a `**/*.test.ts` glob would
+  // sweep reconcile.db.test.ts into the unit partition (audit:partition P0).
+  'src/server/conjectures/reconcile.unit.test.ts',
   'src/server/agency/conjecture/**/*.test.ts',
   // src/server/export — the no-DB units (constants / csv / readme) run fast. The
   // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain
