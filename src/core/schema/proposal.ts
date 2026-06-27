@@ -67,11 +67,11 @@ export const aiProposalKinds = [
   // The nightly research-meeting job induces a first-class CONJECTURE about the
   // learner's mind: a misconception belief (claim_md) + an unrun discriminating
   // probe + the claim's implied p̂ on that probe (predicted_p) + the quantitative
-  // PFA/θ baseline it must beat (baseline_p_at_induction). Propose-only: there is
-  // NO accept applier in this MVP (see acceptSupportedProposalKinds — conjecture is
-  // intentionally excluded; the 备课台 accept/edit lane is claude-design-gated).
-  // Flows through the existing experimental:proposal event/inbox path
-  // (writeAiProposal default + proposalWhere); no writer/inbox change. See
+  // PFA/θ baseline it must beat (baseline_p_at_induction). HAS a real accept
+  // applier (acceptConjectureProposal, agency package): accept/edit/reject +
+  // idempotency, so it is in acceptSupportedProposalKinds. Flows through the
+  // existing experimental:proposal event/inbox path (writeAiProposal default +
+  // proposalWhere); no writer/inbox change. See
   // docs/design/2026-06-27-a13-ts-half-design.md.
   'conjecture',
 ] as const;
@@ -80,12 +80,12 @@ export const AiProposalKind = z.enum(aiProposalKinds);
 export type AiProposalKindT = z.infer<typeof AiProposalKind>;
 
 // M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
-// actions.ts）只为这 14 个 kind 实现了 accept applier；defer / archive /
-// judge_retraction / conjecture 走 default 分支抛 unsupported_proposal_kind 400
-// （producer/accept 语义归 YUK-44；conjecture accept 走备课台 lane YUK-406）。UI
-// （ProposalCard）据此门控 Accept CTA；inbox-meta.unit.test.ts 钉住「本集合 ∪
-// 未实现四 kind === aiProposalKinds」，
-// dispatchAccept 增删 kind 时漂移会被测试拦下。
+// actions.ts）为这 15 个 kind 实现了 accept applier；只有 defer / archive /
+// judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer/accept
+// 语义归 YUK-44）。Phase 0 关系脑 (YUK-406/YUK-440) 的 conjecture 现有真身 accept
+// applier（acceptConjectureProposal，agency 包），故已纳入本集合。UI（ProposalCard）
+// 据此门控 Accept CTA；inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现三 kind ===
+// aiProposalKinds」，dispatchAccept 增删 kind 时漂移会被测试拦下。
 export const acceptSupportedProposalKinds = [
   'knowledge_node',
   'knowledge_edge',
@@ -103,6 +103,10 @@ export const acceptSupportedProposalKinds = [
   'question_draft',
   // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
   'question_edit',
+  // Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture accept/edit/reject applier
+  // (acceptConjectureProposal). accept = calibration anchor (NOT confirmed);
+  // edit → mem0 CORE; reject → digest. Never writes FSRS (ND-5).
+  'conjecture',
 ] as const satisfies readonly AiProposalKindT[];
 
 export const ProposalEvidenceRef = z.object({
@@ -465,9 +469,10 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
   }),
   // YUK-440 / YUK-406 (教研团 Phase 0) — conjecture about the learner's mind. target
   // subject_kind 'mind_model' with subject_id = the knowledge_id the belief is about
-  // (the conjecture is not an edit to any persisted row — it is a hypothesis-as-event;
-  // accept is unsupported in this MVP). Flows through the existing
-  // experimental:proposal event/inbox path (writeAiProposal default + proposalWhere).
+  // (the conjecture is not an edit to any persisted row — it is a hypothesis-as-event).
+  // accept/edit/reject are handled by acceptConjectureProposal (agency package).
+  // Flows through the existing experimental:proposal event/inbox path
+  // (writeAiProposal default + proposalWhere).
   BaseProposal.extend({
     kind: z.literal('conjecture'),
     target: ProposalTarget.extend({ subject_kind: z.literal('mind_model') }),

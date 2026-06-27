@@ -85,10 +85,9 @@ export const agencyCapability = defineCapability({
       { kind: 'goal_scope' },
       { kind: 'defer' },
       // YUK-406 Phase 0 / YUK-440 A13 — conjecture (subject_kind 'mind_model').
-      // Propose-only in this MVP: no accept applier (备课台 accept/edit/reject lane
-      // is design-gated), so accept goes through the dispatch shell's default throw
-      // (unsupported_proposal_kind) — ownership declared, applier deferred, exactly
-      // like `defer`.
+      // The accept applier 真身在 ./server/conjecture-accept (acceptConjectureProposal:
+      // accept = calibration anchor / edit → mem0 CORE / reject → digest, never FSRS).
+      // This package owns both the proposer (nightly 例会 job) and the applier.
       { kind: 'conjecture' },
     ],
   },
