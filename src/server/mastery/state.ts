@@ -9,11 +9,25 @@
 // 写路径：submit.ts / paper-submit.ts 的 attempt tx 内调 updateThetaForAttempt
 // （同 tx，不新开事务，守 hermetic）。
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
+import {
+  GRAPH_LAPLACIAN_ENABLED,
+  GRAPH_LAPLACIAN_KAPPA,
+  GRAPH_LAPLACIAN_LAMBDA,
+  type SymmetricEdge,
+  smoothTheta,
+} from '@/core/graph-laplacian';
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearnedBand, pfaLogit } from '@/core/pfa';
+import {
+  type DirectedEdge,
+  PREREQ_PROPAGATION_ENABLED,
+  PREREQ_PROP_LAMBDA_DOWN,
+  PREREQ_PROP_LAMBDA_UP,
+  propagatePrereq,
+} from '@/core/prereq-propagation';
 import {
   DIFFICULTY_PROXY_WEIGHT,
   ELO_K_GLOBAL,
@@ -41,7 +55,7 @@ import {
   uniformPrior,
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
-import { item_calibration, mastery_state } from '@/db/schema';
+import { item_calibration, knowledge_edge, mastery_state } from '@/db/schema';
 import { resolveFamilyKeyForQuestion } from './family-key';
 import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
 import { effectiveB } from './recalibration';
@@ -326,7 +340,7 @@ export async function getMasteryProjection(
     db,
     rows.map((r) => r.subject_id),
   );
-  return new Map(
+  const projection = new Map<string, MasteryProjection>(
     rows.map((row) => {
       const beta = betaByKc.get(row.subject_id) ?? 0;
       const se = thetaSe(row.theta_precision);
@@ -355,6 +369,216 @@ export async function getMasteryProjection(
       ];
     }),
   );
+
+  // ── A5/A6 (YUK-441 / YUK-442) — KG-borrowing soft layer over the surfaced θ̂ ─────
+  //
+  // FLAG OFF (DEFAULT, dark-ship): BOTH GRAPH_LAPLACIAN_ENABLED and
+  //   PREREQ_PROPAGATION_ENABLED are false → this block is skipped ENTIRELY → no edge
+  //   fetch, no neighbour read, no borrowed entries. The `projection` map above is
+  //   returned BYTE-IDENTICAL to today (the regression anchor the db tests pin).
+  // SCOPE: only the per-KC 'knowledge' axis carries a knowledge graph. The A2
+  //   'ability_global' subjectKind has no knowledge_edge adjacency → skipped (its
+  //   projection is returned unchanged). Empty id set short-circuits above.
+  // The act flip (set either flag true) is gated on V-A5-LOKO (A5) / the A6 validation
+  //   gate — built + electrified to live now, flip deferred (defer-flip, not -build).
+  if (
+    (GRAPH_LAPLACIAN_ENABLED || PREREQ_PROPAGATION_ENABLED) &&
+    subjectKind === 'knowledge' &&
+    ids.length > 0
+  ) {
+    await applyKgSoftLayer(db, ids, rows, projection);
+  }
+
+  return projection;
+}
+
+/**
+ * The A5/A6 KG-borrowing soft layer (math dossier 2026-06-20). MEAN-ONLY: it rewrites
+ * ONLY the surfaced `theta_hat` (the per-KC ability posterior mean) of the requested
+ * KCs and APPENDS borrowed entries for requested-but-unobserved KCs that borrow a θ̃
+ * from observed neighbours. It NEVER touches `theta_se` / `theta_precision` / the p(L)
+ * `mastery` band of observed KCs (ADR-0035 corollary — the graph-shrunk variance is
+ * not trusted as calibrated until V-A5-LOKO, so it is not surfaced; observed KCs keep
+ * their own count-driven p(L) band). It NEVER writes mastery_state (read-side recompute
+ * → edges stay revisable; the三维正交 calibration axis is not polluted).
+ *
+ * Mutates `projection` in place (the caller's map). Flag-gated by the caller; this fn
+ * runs only when at least one of A5/A6 is enabled.
+ */
+async function applyKgSoftLayer(
+  db: Db,
+  requestedIds: string[],
+  observedRows: Array<typeof mastery_state.$inferSelect>,
+  projection: Map<string, MasteryProjection>,
+): Promise<void> {
+  // 1. Load adjacent typed edges (archived_at IS NULL — ADR-0034 soft-archive).
+  //    A5 admits ONLY symmetric `related_to`; A6 admits directed `prerequisite` /
+  //    `derived_from` (normalised to prereq→dependent). `contrasts_with` enters NEITHER.
+  const { symmetric, directed } = await loadEdgesForProjection(db, requestedIds);
+  if (symmetric.length === 0 && directed.length === 0) return; // no KG adjacency → no-op.
+
+  // 2. Build the node set = requested ∪ edge endpoints. Fetch θ̂ for any neighbour KC
+  //    not already among the requested-observed rows (observed neighbours supply the
+  //    data the unobserved nodes borrow from; unobserved neighbours stay latent dₖ=0).
+  const observedById = new Map(observedRows.map((r) => [r.subject_id, r]));
+  const nodeIdSet = new Set<string>(requestedIds);
+  for (const e of symmetric) {
+    nodeIdSet.add(e.a);
+    nodeIdSet.add(e.b);
+  }
+  for (const e of directed) {
+    nodeIdSet.add(e.from);
+    nodeIdSet.add(e.to);
+  }
+  const extraNeighbourIds = [...nodeIdSet].filter((id) => !observedById.has(id));
+  const neighbourRows =
+    extraNeighbourIds.length > 0
+      ? await db
+          .select()
+          .from(mastery_state)
+          .where(
+            and(
+              eq(mastery_state.subject_kind, 'knowledge'),
+              inArray(mastery_state.subject_id, extraNeighbourIds),
+            ),
+          )
+      : [];
+
+  // θ̂ + observation-precision over the whole node set. A node with a row is OBSERVED
+  // (dₖ = its Fisher precision → strong evidence sticks to θ̂); absent = latent (dₖ=0).
+  const nodeIds = [...nodeIdSet];
+  const thetaHat = new Map<string, number>();
+  const observationPrecision = new Map<string, number>();
+  for (const r of [...observedRows, ...neighbourRows]) {
+    thetaHat.set(r.subject_id, r.theta_hat);
+    observationPrecision.set(r.subject_id, r.theta_precision);
+  }
+
+  // 3. A5 first (symmetric smoothing), then A6 (directed order prior) on the smoothed
+  //    estimates. Each flag is independent; flag-off leg is a structural pass-through.
+  let thetaTilde = thetaHat;
+  if (GRAPH_LAPLACIAN_ENABLED && symmetric.length > 0) {
+    thetaTilde = smoothTheta(
+      nodeIds,
+      symmetric,
+      thetaHat,
+      observationPrecision,
+      GRAPH_LAPLACIAN_LAMBDA,
+      GRAPH_LAPLACIAN_KAPPA,
+    );
+  }
+  if (PREREQ_PROPAGATION_ENABLED && directed.length > 0) {
+    thetaTilde = propagatePrereq(
+      nodeIds,
+      thetaTilde,
+      directed,
+      PREREQ_PROP_LAMBDA_DOWN,
+      PREREQ_PROP_LAMBDA_UP,
+    );
+  }
+
+  // 4. Rewrite the surfaced θ̂ (MEAN ONLY) for requested KCs, and append borrowed
+  //    entries for requested-but-unobserved KCs that borrowed a non-trivial θ̃.
+  const PRIOR_MEAN = 0;
+  const BORROW_EPS = 1e-9;
+  const borrowedIds: string[] = [];
+  for (const id of requestedIds) {
+    const tilde = thetaTilde.get(id);
+    if (tilde === undefined) continue;
+    const existing = projection.get(id);
+    if (existing) {
+      // Observed KC: move the surfaced ability mean; leave se / precision / p(L) band.
+      existing.theta_hat = tilde;
+    } else if (Math.abs(tilde - PRIOR_MEAN) > BORROW_EPS) {
+      // Unobserved requested KC that borrowed from observed neighbours → mark for a
+      // synthesized low-confidence entry (boundary behaviour change: map gains a row).
+      borrowedIds.push(id);
+    }
+  }
+
+  if (borrowedIds.length > 0) {
+    // Resolve β for the borrowed KCs (same representative hard-track median b as the
+    // observed path). Cold-start counts (success=fail=0) → mastery = σ(−β). The borrowed
+    // estimate is LOW CONFIDENCE: precision stays at the cold default (SE=1 → the
+    // low_confidence band) — we move the mean but DO NOT manufacture certainty.
+    const borrowedBeta = await getRepresentativeKcBeta(db, borrowedIds);
+    const borrowedPrecision = 1; // cold-start default precision (SE = thetaSe(1)).
+    const borrowedSe = thetaSe(borrowedPrecision);
+    for (const id of borrowedIds) {
+      const beta = borrowedBeta.get(id) ?? 0;
+      const pointLogit = pfaLogit(beta, PFA_GAMMA, PFA_RHO, 0, 0);
+      const band = pLearnedBand(pointLogit, borrowedSe);
+      projection.set(id, {
+        mastery: band.point,
+        mastery_lo: band.lo,
+        mastery_hi: band.hi,
+        low_confidence: true, // borrowed estimate is never high-confidence.
+        theta_hat: thetaTilde.get(id) as number,
+        theta_precision: borrowedPrecision,
+        theta_se: borrowedSe,
+        evidence_count: 0,
+        success_count: 0,
+        fail_count: 0,
+        last_outcome_at: null,
+        beta,
+      });
+    }
+  }
+}
+
+/**
+ * Load the typed knowledge_edge adjacency feeding the A5/A6 soft layer: any LIVE
+ * (archived_at IS NULL) `related_to` / `prerequisite` / `derived_from` edge incident
+ * to a requested KC. Returns the edges already split + orientation-normalised:
+ *   - `related_to`  → {@link SymmetricEdge} (A5, undirected smoothing).
+ *   - `prerequisite` (from --prereq--> to: from IS the prerequisite of to) →
+ *     {@link DirectedEdge} {from: prereq, to: dependent}.
+ *   - `derived_from` (from 派生自 to, ADR-0010: `to` is the base) → {from: to (base,
+ *     prereq-like), to: from (derived, dependent)} — OPPOSITE orientation to prerequisite.
+ * `contrasts_with` is deliberately NOT selected (reverse signal → poisons firm-up).
+ * Pure SELECT (read-only). Both endpoints filtered against the requested set is NOT
+ * applied — we keep edges with one endpoint outside so unobserved requested KCs can
+ * borrow from observed neighbours; buildLaplacian drops any edge whose endpoint is not
+ * in the final node set.
+ */
+async function loadEdgesForProjection(
+  db: Db,
+  kcIds: string[],
+): Promise<{ symmetric: SymmetricEdge[]; directed: DirectedEdge[] }> {
+  const edgeRows = await db
+    .select({
+      from_id: knowledge_edge.from_knowledge_id,
+      to_id: knowledge_edge.to_knowledge_id,
+      relation_type: knowledge_edge.relation_type,
+      weight: knowledge_edge.weight,
+    })
+    .from(knowledge_edge)
+    .where(
+      and(
+        isNull(knowledge_edge.archived_at),
+        inArray(knowledge_edge.relation_type, ['related_to', 'prerequisite', 'derived_from']),
+        or(
+          inArray(knowledge_edge.from_knowledge_id, kcIds),
+          inArray(knowledge_edge.to_knowledge_id, kcIds),
+        ),
+      ),
+    );
+  const symmetric: SymmetricEdge[] = [];
+  const directed: DirectedEdge[] = [];
+  for (const r of edgeRows) {
+    if (r.relation_type === 'related_to') {
+      // A5 (YUK-441) — symmetric edge into the graph-Laplacian smoothing prior.
+      symmetric.push({ a: r.from_id, b: r.to_id, weight: r.weight });
+    } else if (r.relation_type === 'prerequisite') {
+      // A6 (YUK-442) — directed: from IS the prerequisite of to (prereq→dependent).
+      directed.push({ from: r.from_id, to: r.to_id, weight: r.weight });
+    } else if (r.relation_type === 'derived_from') {
+      // A6 (YUK-442) — directed inheritance: "from 派生自 to" ⇒ base `to` is the
+      // prereq-like node of the derived `from` (orientation flipped vs prerequisite).
+      directed.push({ from: r.to_id, to: r.from_id, weight: r.weight });
+    }
+  }
+  return { symmetric, directed };
 }
 
 /**

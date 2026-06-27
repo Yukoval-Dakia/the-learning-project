@@ -211,6 +211,40 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
     evidence: 'find_knowledge_paths 对 related_to 加反向邻接（双向语义），影响路径推荐结果。',
   },
 
+  // ---- specialized: A5/A6 (YUK-441/442) mastery-projection KG soft layer ----
+  // getMasteryProjection (src/server/mastery/state.ts) branches on relation_type to
+  // feed the per-KC ability θ̂ soft layer: related_to → A5 graph-Laplacian symmetric
+  // smoothing; prerequisite / derived_from → A6 directed order prior. dark-ship
+  // (GRAPH_LAPLACIAN_ENABLED / PREREQ_PROPAGATION_ENABLED default false) but the
+  // branch is wired in source, so the type-specific consumption is LIVE-in-code.
+  {
+    relation: 'related_to',
+    tier: 'specialized',
+    file: 'src/server/mastery/state.ts',
+    marker: "r.relation_type === 'related_to'",
+    surface: 'diagnosis',
+    evidence:
+      'A5 (YUK-441) — getMasteryProjection smooths per-KC θ̂ along symmetric related_to edges (graph-Laplacian GMRF prior); unobserved KCs borrow from observed neighbours.',
+  },
+  {
+    relation: 'prerequisite',
+    tier: 'specialized',
+    file: 'src/server/mastery/state.ts',
+    marker: "r.relation_type === 'prerequisite'",
+    surface: 'diagnosis',
+    evidence:
+      'A6 (YUK-442) — getMasteryProjection applies a directed soft order prior along prerequisite edges (press weak-prereq dependents down, retro-credit prereqs of mastered dependents up).',
+  },
+  {
+    relation: 'derived_from',
+    tier: 'specialized',
+    file: 'src/server/mastery/state.ts',
+    marker: "r.relation_type === 'derived_from'",
+    surface: 'diagnosis',
+    evidence:
+      'A6 (YUK-442) — getMasteryProjection treats derived_from as directed inheritance (base `to` is prereq-like of derived `from`) in the same order-prior propagation.',
+  },
+
   // ---- creation-validation: 全 5 type 的提议时校验闸（非下游学习消费）----
   ...CORE_RELATION_TYPES.map(
     (relation): ConsumerEntry => ({
