@@ -154,6 +154,36 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(scores).toHaveLength(1); // still exactly one — no duplicate score
   });
 
+  it('is retry-safe on partial failure: anchor-last → no lost ledger, no duplicate score (review fix)', async () => {
+    const seed = await seedAnsweredProbe();
+
+    // Simulate a crash AFTER the upsert but BEFORE the score anchor: inject a writeEventFn
+    // that throws. The real default upsert commits the ledger advance; the score event is
+    // never written; the write error propagates (NOT swallowed) so reconcile throws.
+    await expect(
+      reconcileConjecturePredictions(db, {
+        writeEventFn: async () => {
+          throw new Error('crash before anchor');
+        },
+      }),
+    ).rejects.toThrow();
+
+    // Ledger advanced (upsert committed) but NO prediction_score anchor exists yet.
+    const afterCrash = await typedRow('k_a');
+    expect(afterCrash?.evidence_event_ids).toHaveLength(2);
+    expect(await scoreEvents(seed.probeResultEventId)).toHaveLength(0);
+
+    // Retry with the real writer: the reader still returns the probe (no anchor), so the
+    // idempotent upsert re-runs harmlessly and the anchor is finally written — self-healing.
+    const retry = await reconcileConjecturePredictions(db);
+    expect(retry).toEqual({ reconciled: 1, skipped: 0 });
+    expect(await scoreEvents(seed.probeResultEventId)).toHaveLength(1); // exactly one, no dup
+    const final = await typedRow('k_a');
+    expect([...(final?.evidence_event_ids ?? [])].sort()).toEqual(
+      [seed.conjectureProposalId, seed.probeResultEventId].sort(),
+    ); // evidence NOT duplicated by the retried upsert
+  });
+
   it('a retired probe still writes a soft no-evidence cell', async () => {
     await seedAnsweredProbe({ knowledgeId: 'k_ret', outcome: 1, resolution: 'retired' });
     const result = await reconcileConjecturePredictions(db);

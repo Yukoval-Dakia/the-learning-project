@@ -167,6 +167,36 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(upserts).toHaveLength(0);
   });
 
+  it('skips (never throws) when the conjecture READ throws — poison-pill guard (review fix)', async () => {
+    // getEventById parse-throws on a corrupt row; the loop must degrade to a counted skip,
+    // NOT abort the whole nightly run (which also gates the propose half).
+    const { deps, events, upserts } = baseDeps({
+      getEventByIdFn: vi.fn(async () => {
+        throw new Error('parseEvent: corrupt referenced row');
+      }),
+    });
+    const result = await reconcileConjecturePredictions(DB, deps);
+    expect(result).toEqual({ reconciled: 0, skipped: 1 });
+    expect(events).toHaveLength(0);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it('writes the typed-ledger upsert BEFORE the prediction_score anchor (idempotency order, review fix)', async () => {
+    const order: string[] = [];
+    const { deps } = baseDeps({
+      upsertKcTypedStateFn: vi.fn(async () => {
+        order.push('upsert');
+      }),
+      writeEventFn: vi.fn(async (_db: Db, input: WriteEventInput) => {
+        order.push('event');
+        return input.id;
+      }),
+    });
+    await reconcileConjecturePredictions(DB, deps);
+    // Anchor (prediction_score) must land LAST so "score exists ⟹ ledger advanced" holds.
+    expect(order).toEqual(['upsert', 'event']);
+  });
+
   it('skips a malformed conjecture payload (parse-barrier — out-of-range predicted_p)', async () => {
     const { deps, events, upserts } = baseDeps({
       getEventByIdFn: vi.fn(async () => conjectureEvent({ predicted_p: 9 })),

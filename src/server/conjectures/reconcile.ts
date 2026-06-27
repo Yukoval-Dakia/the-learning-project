@@ -10,9 +10,10 @@
 //      "join by KC + window" heuristic — the probe carries the exact proposal id);
 //   2. scorePrediction(predicted_p, baseline_p_at_induction, outcome) — a PROPER-SCORING
 //      comparison (stub; Rust-owned bit-exact later, ADR-0046);
-//   3. append an `experimental:prediction_score` event — LOG ONLY, keyed on the
-//      probe_result id (the idempotency anchor); it NEVER moves a label/number;
-//   4. upsertKcTypedState — probe-resolution write ONLY, FLIP-inert.
+//   3. upsertKcTypedState — advance the typed-ledger cell, probe-resolution write ONLY,
+//      FLIP-inert (written FIRST so the anchor in step 4 implies the ledger advanced);
+//   4. append an `experimental:prediction_score` event LAST — LOG ONLY, keyed on the
+//      probe_result id (the idempotency anchor); it NEVER moves a label/number.
 //
 // THREE FLIP-INERT RED-LINES (the whole point — defer-flip-not-build):
 //   - scorePrediction LOGS; the claim-survival FLIP (score → flip `mastered`/label) is
@@ -171,11 +172,13 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
 }
 
 /**
- * Score each unscored probe outcome against its conjecture's prediction and append a
- * LOG-only prediction_score event + advance the typed-ledger cell. Idempotent (the
- * reader excludes already-scored probes), append-only, FLIP-inert. A dangling /
- * malformed / non-conjecture ref is SKIPPED (counted), never thrown — a single bad
- * row must not abort the nightly run.
+ * Score each unscored probe outcome against its conjecture's prediction, advance the
+ * typed-ledger cell, then append a LOG-only prediction_score event LAST as the idempotency
+ * ANCHOR (so "scored ⟹ ledgered" — a partial failure re-processes next run, never drops
+ * the ledger advance). Idempotent (the reader excludes already-scored probes), append-only,
+ * FLIP-inert. A dangling / malformed / non-conjecture / unreadable conjecture ref is SKIPPED
+ * (counted), never thrown — a single bad row must not abort the nightly run (which also
+ * gates the propose half). Write faults DO propagate so pg-boss retries (self-healing).
  */
 export async function reconcileConjecturePredictions(
   db: Db,
@@ -192,7 +195,26 @@ export async function reconcileConjecturePredictions(
   let skipped = 0;
 
   for (const pr of unscored) {
-    const facts = extractConjectureFacts(await getEventByIdFn(db, pr.conjecture_event_id));
+    // The READ is the only fail-soft step. The default getEventById runs the row through
+    // parseEvent, which THROWS on a corrupt / unparseable conjecture row (schema drift,
+    // manual DB edit). Catch ONLY the read → counted skip, so one bad row can't abort the
+    // nightly run (which also gates the propose half). The WRITES below are intentionally
+    // NOT caught: a write fault must propagate so pg-boss retries, and the
+    // upsert-before-anchor order (see below) makes that retry self-healing.
+    let conjEvent: { payload: unknown } | null;
+    try {
+      conjEvent = await getEventByIdFn(db, pr.conjecture_event_id);
+    } catch (err) {
+      console.warn(
+        '[reconcile] skipping probe_result — conjecture ref unreadable',
+        pr.probe_result_event_id,
+        pr.conjecture_event_id,
+        err,
+      );
+      skipped += 1;
+      continue;
+    }
+    const facts = extractConjectureFacts(conjEvent);
     if (!facts) {
       // Dangling / malformed / non-conjecture ref — a data anomaly, not a job failure.
       console.warn(
@@ -206,8 +228,31 @@ export async function reconcileConjecturePredictions(
 
     const score = scorePrediction(facts.predicted_p, facts.baseline_p_at_induction, pr.outcome);
 
-    // (1) LOG the comparison — append-only, idempotency-anchored on the probe_result
-    // id, envelope outcome OMITTED (this is NOT an attempt; never look like one, ND-5).
+    // ORDER IS LOAD-BEARING (idempotency / no silent ledger loss). Advance the typed-ledger
+    // cell FIRST, then write the prediction_score event LAST as the idempotency ANCHOR. The
+    // reader excludes a probe IFF its prediction_score exists, so the invariant
+    // "score event exists ⟹ ledger already advanced" holds: a crash/throw between the two
+    // writes leaves the probe unscored and it is safely re-processed next run — the upsert is
+    // idempotent (set-union evidence_event_ids + GREATEST last_evidence_at + deterministic
+    // nextTypedState), so the re-run is a no-op. Writing the anchor FIRST would permanently
+    // drop the ledger advance on a partial failure.
+    //
+    // (1) typed-ledger cell — probe-resolution write ONLY, FLIP-inert. Phase 0 names no
+    // confused_with KC → §修正-4 gate keeps it soft (no-evidence/open). `mastered` is
+    // structurally unreachable; no FSRS (ND-5); no R(t) into written state.
+    await upsertFn(db, {
+      subject_id: facts.knowledge_id,
+      subject_kind: 'knowledge',
+      proposed: pr.resolution === 'confirmed' ? 'confused-with-X' : 'no-evidence',
+      confused_with_kc_id: null,
+      discriminating: facts.discriminating,
+      recurrence_count: facts.recurrence_count,
+      evidence_event_ids: [pr.conjecture_event_id, pr.probe_result_event_id],
+      last_evidence_at: pr.created_at,
+    });
+
+    // (2) LOG the comparison + SET the idempotency anchor (written LAST) — append-only,
+    // keyed on the probe_result id, envelope outcome OMITTED (NOT an attempt; ND-5).
     await writeEventFn(db, {
       id: newId(),
       actor_kind: 'system',
@@ -232,20 +277,6 @@ export async function reconcileConjecturePredictions(
       },
       caused_by_event_id: pr.probe_result_event_id,
       created_at: now,
-    });
-
-    // (2) Advance the typed-ledger cell — probe-resolution write ONLY, FLIP-inert.
-    // Phase 0 names no confused_with KC → §修正-4 gate keeps it soft (no-evidence/open).
-    // `mastered` is structurally unreachable; no FSRS; no R(t) into written state.
-    await upsertFn(db, {
-      subject_id: facts.knowledge_id,
-      subject_kind: 'knowledge',
-      proposed: pr.resolution === 'confirmed' ? 'confused-with-X' : 'no-evidence',
-      confused_with_kc_id: null,
-      discriminating: facts.discriminating,
-      recurrence_count: facts.recurrence_count,
-      evidence_event_ids: [pr.conjecture_event_id, pr.probe_result_event_id],
-      last_evidence_at: pr.created_at,
     });
     reconciled += 1;
   }
