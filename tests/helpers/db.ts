@@ -31,6 +31,9 @@ const ALL_TABLES = [
   // explicitly or it leaks across tests (same footgun as mastery_state /
   // materialized_id_index).
   'kc_typed_state',
+  // YUK-445 (A11) — per-KC caution / speed-accuracy axis descriptor. No FK; list
+  // explicitly or it leaks across tests (same footgun as kc_typed_state above).
+  'learner_axis_state',
   'item_calibration',
   // YUK-361 Phase 5 — 家族级 b_delta 慢热校准资产。
   'item_family_calibration',

@@ -22,6 +22,7 @@
 import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
+import { readLearnerAxisStates } from '@/server/calibration/axis-writer';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { eq, inArray } from 'drizzle-orm';
@@ -48,6 +49,18 @@ export interface ProfileKc {
   success_count?: number;
   fail_count?: number;
   beta?: number;
+  // YUK-445 (A11) — the caution / speed-accuracy axis (orthogonal to θ̂), present only when the
+  // learner_axis_state batch has written a descriptor for this KC. boundary_a = response
+  // caution, ter = non-decision baseline (s), drift_v = evidence-accumulation speed (NULL in the
+  // adaptive flow — confounded; only filled on a non-adaptive probe-set). A DESCRIPTOR — these
+  // do NOT feed θ̂/p(L)/scheduling.
+  axis?: {
+    drift_v: number | null;
+    boundary_a: number | null;
+    ter: number | null;
+    n_obs: number;
+    provenance: string;
+  };
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -82,21 +95,36 @@ export async function GET(req: Request): Promise<Response> {
       });
     }
 
-    // Projection (mastery_state SoT) + names, fanned out (independent reads).
-    const [proj, nameRows] = await Promise.all([
+    // Projection (mastery_state SoT) + names + A11 axis descriptor, fanned out (independent reads).
+    const [proj, nameRows, axisByKc] = await Promise.all([
       getMasteryProjection(db, scope),
       db
         .select({ id: knowledge.id, name: knowledge.name })
         .from(knowledge)
         .where(inArray(knowledge.id, scope)),
+      // YUK-445 (A11) — per-KC caution/speed-accuracy descriptor (display-only; absent for KCs
+      // the nightly batch hasn't reached the usage gate on).
+      readLearnerAxisStates(db, scope),
     ]);
     const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
 
     const kcs: ProfileKc[] = scope.map((id) => {
       const m = proj.get(id);
       const name = nameById.get(id) ?? id;
+      // YUK-445 (A11) — axis descriptor is independent of mastery: a KC may have an axis row
+      // even when surfaced as untested here (the read-out attaches it either way).
+      const ax = axisByKc.get(id);
+      const axis = ax
+        ? {
+            drift_v: ax.driftV,
+            boundary_a: ax.boundaryA,
+            ter: ax.ter,
+            n_obs: ax.nObs,
+            provenance: ax.provenance,
+          }
+        : undefined;
       if (!m) {
-        return { id, name, tested: false, evidence_count: 0 };
+        return { id, name, tested: false, evidence_count: 0, ...(axis ? { axis } : {}) };
       }
       return {
         id,
@@ -114,6 +142,7 @@ export async function GET(req: Request): Promise<Response> {
         success_count: m.success_count,
         fail_count: m.fail_count,
         beta: m.beta,
+        ...(axis ? { axis } : {}),
       };
     });
 

@@ -51,7 +51,13 @@
 // archive.ts assertEveryTableIsBackedUpOrExcluded / 92)：30 → 31 tables，4.7 → 4.8。
 // YUK-471 W1 PR-A2a (ADR-0044): additive `materialized_id_index` projection reverse-index
 // → FK_ORDER 备份 (见该数组末尾的 rationale)。31 → 32 tables，4.8 → 4.9 (NEW FK_ORDER table 必 bump)。
-export const SCHEMA_VERSION = '4.10';
+// YUK-440 (A13): additive `kc_typed_state` projection → FK_ORDER。32 → 33 tables，4.9 → 4.10。
+// YUK-445 (A11): additive `learner_axis_state` — per-KC EZ-diffusion caution/speed-accuracy
+// descriptor (single writer = A11 batch). DERIVED-but-physical projection (peer of
+// mastery_state / kc_typed_state — re-derivable from the event log, but a physical table that
+// needs wipe/insert sweep ordering), so it joins FK_ORDER (NOT BACKUP_EXCLUDED). NEW FK_ORDER
+// table 必 bump (per archive.ts assertEveryTableIsBackedUpOrExcluded)：33 → 34 tables，4.10 → 4.11。
+export const SCHEMA_VERSION = '4.11';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -166,6 +172,13 @@ export const FK_ORDER = [
   // refs to knowledge/event ids), position unconstrained; placed last as the newest
   // additive table. NEW FK_ORDER table → bump SCHEMA_VERSION (4.9 → 4.10).
   'kc_typed_state',
+  // YUK-445 (A11): learner_axis_state — per-KC EZ-diffusion caution/speed-accuracy descriptor
+  // (single writer = A11 batch). Derived-but-physical → FK_ORDER (peer of the mastery/typed-state
+  // projections above which ARE backed up; re-derivable from the event log but a physical table
+  // needing sweep ordering). No enforced FK (loose text ref to knowledge id), position
+  // unconstrained; placed by the kc_typed_state/mastery_state identity cluster. NEW FK_ORDER
+  // table → bump SCHEMA_VERSION (4.10 → 4.11).
+  'learner_axis_state',
 ] as const;
 
 export type TableName = (typeof FK_ORDER)[number];

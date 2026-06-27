@@ -6,6 +6,7 @@
 
 import { newId } from '@/core/ids';
 import { goal, knowledge, mastery_state } from '@/db/schema';
+import { upsertLearnerAxisState } from '@/server/calibration/axis-writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -135,5 +136,75 @@ describe('GET /api/placement/profile', () => {
     // testedCount = KCs with a mastery_state row (kc1); totalKcs = full in-scope set (kc1+kc2).
     expect(body.testedCount).toBe(1);
     expect(body.totalKcs).toBe(2);
+  });
+
+  // YUK-445 (A11) — the EZ-diffusion axis descriptor is the read-out surface: when the nightly
+  // batch has written a learner_axis_state row for an in-scope KC, the profile read attaches it
+  // (independent of mastery — present on both tested and untested KCs).
+  it('surfaces the A11 axis descriptor for scope KCs that have a learner_axis_state row', async () => {
+    await seedKnowledge('kc1', '虚词·之'); // will be tested (mastery row)
+    await seedKnowledge('kc2', '使动用法'); // untested, but has an axis row
+    await seedGoal('g1', ['kc1', 'kc2']);
+    await seedMastery('kc1', {
+      evidence_count: 3,
+      success_count: 2,
+      fail_count: 1,
+      theta_precision: 2.1,
+    });
+    // adaptive provenance: boundary_a + ter present, drift_v NULL (A11 hard boundary).
+    await upsertLearnerAxisState(db, {
+      subjectId: 'kc1',
+      driftV: null,
+      boundaryA: 0.13,
+      ter: 0.29,
+      nObs: 42,
+      provenance: 'adaptive',
+    });
+    // an UNTESTED KC can still carry an axis descriptor.
+    await upsertLearnerAxisState(db, {
+      subjectId: 'kc2',
+      driftV: 0.21,
+      boundaryA: 0.1,
+      ter: 0.31,
+      nObs: 55,
+      provenance: 'probe',
+    });
+
+    const res = await GET(req('g1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const byId = Object.fromEntries(body.kcs.map((k: { id: string }) => [k.id, k]));
+
+    expect(byId.kc1.axis).toEqual({
+      drift_v: null,
+      boundary_a: 0.13,
+      ter: 0.29,
+      n_obs: 42,
+      provenance: 'adaptive',
+    });
+    expect(byId.kc1.tested).toBe(true);
+
+    expect(byId.kc2.tested).toBe(false);
+    expect(byId.kc2.axis).toEqual({
+      drift_v: 0.21,
+      boundary_a: 0.1,
+      ter: 0.31,
+      n_obs: 55,
+      provenance: 'probe',
+    });
+  });
+
+  it('omits the axis field for scope KCs with no learner_axis_state row', async () => {
+    await seedKnowledge('kc1', '虚词·之');
+    await seedGoal('g1', ['kc1']);
+    await seedMastery('kc1', {
+      evidence_count: 3,
+      success_count: 2,
+      fail_count: 1,
+      theta_precision: 2.1,
+    });
+    const res = await GET(req('g1'));
+    const body = await res.json();
+    expect(body.kcs[0].axis).toBeUndefined();
   });
 });
