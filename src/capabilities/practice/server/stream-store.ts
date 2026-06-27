@@ -80,7 +80,12 @@ export function streamLocalDate(now: Date = new Date()): string {
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`（single-flight 锁需要事务）。 */
 type DbLike = Db | Tx;
 
-const DUE_INPUT_LIMIT = 10;
+// ADR-0037 H8 (due-must-review) — due is a HARD constraint: the merge engine may reorder
+// / de-emphasize but MUST NOT drop a due item from the queue. So feed it the /api/review/due
+// endpoint's FULL ceiling (200, the clamp in due-list.ts) rather than a small slice. The
+// old `10` silently dropped due #11+ BEFORE the engine (capacityGuard, which protects due
+// from truncation past capacity) ever saw them — an unenforced invariant (YUK-349).
+const DUE_INPUT_LIMIT = 200;
 const VARIANT_WINDOW_DAYS = 7;
 
 async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, string>> {

@@ -225,6 +225,27 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     for (const r of rows) expect(r.added_by).toBe('composer_nightly');
   });
 
+  // YUK-349 / ADR-0037 H8 (due-must-review) — due is a HARD constraint: ALL due items must
+  // reach the stream; the engine may reorder/de-emphasize but never DROP. Regression guard
+  // for the DUE_INPUT_LIMIT 10→200 fix (the old cap dropped due #11+ before the engine).
+  it('due-must-review invariant: ALL due items reach the stream, not capped at 10', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      // distinct positive offsets → 12 distinct overdue items (> the old cap of 10).
+      ids.push(await seedDueQuestion({ dueOffsetMs: (i + 1) * 3600_000 }));
+    }
+
+    await composeNightly(testDb(), TODAY, {
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { rng: RNG_ALWAYS_SELECT },
+    });
+
+    const streamRefs = new Set((await rowsForDate(TODAY)).map((r) => r.ref_id));
+    // Every due item present — none dropped by the input cap (capacityGuard protects due
+    // from truncation, so all 12 survive past any soft capacity too).
+    for (const id of ids) expect(streamRefs.has(id)).toBe(true);
+  });
+
   it('幂等：composeNightly 跑两次不 double-compose（第二次 no-op，added=0、行数不变）', async () => {
     await seedDueQuestion();
 
