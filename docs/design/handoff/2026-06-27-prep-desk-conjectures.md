@@ -36,8 +36,8 @@ conjectures, ranked by salience — a finite, guilt-free feed.
       "probe_md": "d/dx sin(x^2) = ?",   // the UNRUN discriminating probe (team is about to ask)
       "recurrence_count": 3,             // failure-cell recurrence (always ≥ 2)
       "discriminating": true,            // probe only THIS misconception fails
-      "predicted_p": 0.3,                // claim's implied P(owner answers probe correctly)
-      "baseline_p_at_induction": 0.6,    // PFA/θ p(L) baseline the claim must beat
+      // NOTE: predicted_p / baseline_p_at_induction / confidence are intentionally ABSENT —
+      // internal calibration numbers never cross the felt wire (see §2 invariant (a)).
       "corrected_by_owner": false,       // true once owner rewrote the claim (edit path)
       "evidence": [                       // back-link to the events/questions that induced it
         { "kind": "event", "id": "evt_a" },
@@ -79,12 +79,17 @@ then **dropped** — see invariant (a). The UI receives an already-ranked, alrea
 list.
 
 ### Anti-guilt invariants the card MUST honour
-- **(a) NO confidence number is ever rendered.** `confidence` does not cross the wire
-  (it is absent from `PrepDeskConjecture` and from the JSON response — asserted by test).
-  The card must not surface a confidence %, a "73% sure" badge, or any
-  false-precision number. The conjecture is a hypothesis, not a measurement.
-  (Defense-in-depth rationale: the existing `ProposalCard.tsx` renders any `confidence`
-  field as a `%` bar — so the field is structurally withheld at the read model.)
+- **(a) NO internal calibration NUMBER is ever rendered or wired.** `confidence`,
+  `predicted_p`, and `baseline_p_at_induction` are all absent from `PrepDeskConjecture`
+  and from the JSON response (asserted by test — neither the key nor the raw value).
+  The card must not surface a confidence %, a "73% sure" badge, a "we predict you'll get
+  this wrong" probability, or any false-precision number. The conjecture is a hypothesis,
+  not a measurement, and a number on the card is the explicit anti-guilt KILL criterion
+  (the owner starts optimizing the number). Defense-in-depth: these are withheld at the
+  read model, not left to the UI to suppress (the existing `ProposalCard.tsx` renders any
+  `confidence` field as a `%` bar). `predicted_p` / `baseline_p_at_induction` are consumed
+  by the U8 typed-ledger reconcile loop straight from the **event-log payload**, never
+  from this read model — they have no felt-surface consumer.
 - **(b) NO backlog / todo / unread count.** Do not show "12 conjectures waiting" or a
   growing queue. The cap is 3; show 0..3, full stop. Zero conjectures = a calm empty
   state ("教研团暂无新猜想"), not a "you're all caught up!" achievement nag.
@@ -92,10 +97,12 @@ list.
   framing is the team having *prepared something for you*, surfaced when you visit —
   pull, not push.
 
-`predicted_p` and `baseline_p_at_induction` MAY inform copy/visual emphasis (e.g. "the
-team expects this to trip you up" when `predicted_p` is low), but must NOT be rendered as
-bare probabilities/percentages — same false-precision rule as confidence applies in
-spirit.
+If the design lane wants per-card "emphasis," it must request a **non-numeric**
+server-derived signal (e.g. an `emphasis: 'high' | 'normal'` enum) — NOT a raw
+probability. Note `predicted_p` is structurally low for *every* card by the induction
+precondition (a conjecture is only minted when the claim predicts the owner does worse
+than baseline), so it carries no per-card discriminating signal anyway; there is nothing
+to surface and nothing lost by withholding it.
 
 ---
 

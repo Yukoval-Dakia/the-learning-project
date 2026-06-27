@@ -5,11 +5,19 @@
 // + proposalWhere) — ZERO inbox/writer change, same precedent as goal_scope.
 //
 // Two hard invariants this read model enforces (defense in depth):
-//   1. confidence NEVER crosses the wire. `confidence` is read locally ONLY to compute
-//      salience (= confidence × recurrence_count), then DROPPED. It must not appear on
-//      PrepDeskConjecture nor anywhere in the JSON response — the existing
-//      ProposalCard.tsx would render any `confidence` field as a `%` bar
-//      (anti-false-precision; the conjecture is a hypothesis, not a measured number).
+//   1. Internal calibration NUMBERS never cross the wire. `confidence`,
+//      `predicted_p`, and `baseline_p_at_induction` are all internal calibration
+//      probabilities — `confidence` is read locally ONLY to compute salience (=
+//      confidence × recurrence_count) then DROPPED; `predicted_p` / `baseline_p` are
+//      consumed by the U8 typed-ledger reconcile loop straight from the EVENT-log
+//      payload, NOT from this felt read model. None of the three may appear on
+//      PrepDeskConjecture nor anywhere in the JSON response: a raw probability on the
+//      felt card (the existing ProposalCard.tsx renders any `confidence` field as a
+//      `%` bar) lets the owner "optimize the number" — the explicit anti-guilt KILL
+//      criterion. `predicted_p` = P(you answer correctly) is the most guilt-inducing
+//      of the three and is structurally low for EVERY card by the induction
+//      precondition, so it carries no per-card signal anyway. If the design lane wants
+//      emphasis it must derive a NON-numeric server signal, not a bare probability.
 //   2. The PENDING conjecture carries an UNRUN discriminating probe (`probe_md`). At
 //      read time NO probe question has been served yet (serving happens on accept via
 //      serveProbeOnce), so the wire surfaces the probe TEXT — the question the team is
@@ -24,11 +32,13 @@ import type { Db } from '@/db/client';
 import { listProposalInboxPage } from '@/server/proposals/inbox';
 
 // 备课台 surfaces at most 3 conjectures — a guilt-free, finite "为你而备" feed, never a
-// growing backlog. Salience sorts the full pending set before this cap.
+// growing backlog. Salience sorts the fetched pending window before this cap.
 export const PREP_DESK_MAX = 3;
 
-// Generous fetch limit so salience ranks the full pending conjecture set before the
-// ≤3 cap (the inbox page itself is salience-agnostic; we re-sort locally).
+// Fetch limit so salience can rank up to the 50 most-recent pending conjectures before
+// the ≤3 cap (the inbox page is salience-agnostic recency order; we re-sort locally).
+// With nightly induction + the felt cap the pending set stays far below 50; if it ever
+// exceeded that, a high-salience older conjecture could fall outside this window.
 const PREP_DESK_FETCH_LIMIT = 50;
 
 /** Back-link to the evidence that induced the conjecture (failure events / questions). */
@@ -56,10 +66,9 @@ export interface PrepDeskConjecture {
   recurrence_count: number;
   /** Whether the probe is one only THIS misconception fails. */
   discriminating: boolean;
-  /** The claim's implied P(owner answers the probe correctly). */
-  predicted_p: number;
-  /** The PFA/θ p(L) baseline the claim must beat, snapshotted at induction. */
-  baseline_p_at_induction: number;
+  // NOTE: `predicted_p` / `baseline_p_at_induction` are deliberately ABSENT — they are
+  // internal calibration probabilities (consumed by the U8 reconcile loop from the
+  // event-log payload), never wired to the felt card (invariant 1 above).
   /** Whether the owner rewrote the claim (edit path). */
   corrected_by_owner: boolean;
   /** Evidence back-link (failure events / questions that induced the conjecture). */
@@ -100,8 +109,8 @@ export async function loadPrepDeskConjectures(db: Db): Promise<PrepDeskConjectur
         probe_md: change.probe_md,
         recurrence_count: change.recurrence_count,
         discriminating: change.discriminating,
-        predicted_p: change.predicted_p,
-        baseline_p_at_induction: change.baseline_p_at_induction,
+        // predicted_p / baseline_p_at_induction intentionally NOT mapped — internal
+        // calibration numbers stay off the felt wire (invariant 1).
         corrected_by_owner: change.corrected_by_owner,
         evidence: row.payload.evidence_refs.map((ref) => ({ kind: ref.kind, id: ref.id })),
         proposed_at: row.proposed_at.toISOString(),

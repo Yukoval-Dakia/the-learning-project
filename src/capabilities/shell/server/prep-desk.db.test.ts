@@ -60,7 +60,7 @@ describe('loadPrepDeskConjectures', () => {
     expect(out.conjectures.map((c) => c.claim)).toEqual(['hi', 'mid', 'x']);
   });
 
-  it('never leaks confidence; surfaces probe_md, evidence, claim correctly', async () => {
+  it('never leaks calibration numbers (confidence / predicted_p / baseline); surfaces probe_md, evidence, claim', async () => {
     await seed({
       claim: 'you multiply derivatives for the chain rule',
       confidence: 0.73,
@@ -72,18 +72,22 @@ describe('loadPrepDeskConjectures', () => {
     expect(out.conjectures).toHaveLength(1);
     const [c] = out.conjectures;
 
-    // confidence invariant (defense in depth): neither the raw number nor the key.
+    // Anti-guilt invariant (defense in depth): NO internal calibration probability —
+    // confidence, predicted_p, baseline_p_at_induction — crosses the wire, neither the
+    // raw number nor the key. (predicted_p=0.3 / baseline=0.6 are the seed defaults.)
     const json = JSON.stringify(out);
     expect(json).not.toContain('"confidence"');
     expect(json).not.toContain('0.73');
+    expect(json).not.toContain('"predicted_p"');
+    expect(json).not.toContain('0.3');
+    expect(json).not.toContain('"baseline_p_at_induction"');
+    expect(json).not.toContain('0.6');
 
     expect(c.claim).toBe('you multiply derivatives for the chain rule');
     expect(c.knowledge_id).toBe('kn_chain_rule');
     expect(c.probe_md).toBe('probe for you multiply derivatives for the chain rule');
     expect(c.recurrence_count).toBe(3);
     expect(c.discriminating).toBe(true);
-    expect(c.predicted_p).toBe(0.3);
-    expect(c.baseline_p_at_induction).toBe(0.6);
     expect(c.corrected_by_owner).toBe(false);
     expect(c.evidence).toEqual([
       { kind: 'event', id: 'evt_a' },
@@ -91,8 +95,10 @@ describe('loadPrepDeskConjectures', () => {
     ]);
     expect(typeof c.proposed_at).toBe('string');
     expect(Number.isNaN(Date.parse(c.proposed_at))).toBe(false);
-    // hard-assert the field is structurally absent, not just stringly-hidden.
+    // hard-assert the calibration fields are structurally absent, not just stringly-hidden.
     expect('confidence' in c).toBe(false);
+    expect('predicted_p' in c).toBe(false);
+    expect('baseline_p_at_induction' in c).toBe(false);
   });
 
   it('registers GET /api/prep-desk/conjectures on the shell manifest', () => {
