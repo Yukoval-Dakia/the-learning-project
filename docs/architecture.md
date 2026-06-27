@@ -136,6 +136,7 @@ Question (统一题库，single source of truth)
 | `SolutionGenerateTask` | mimo-v2.5-pro | solve orchestrator lazy-gen (YUK-193) | 否 | — | bare question → reference + worked solution |
 | `GoalScopeTask` | mimo-v2.5-pro | `/api/goals` scope 提议 (YUK-143 / ADR-0024) | 否 | — | goal → scope_knowledge_ids + sequence_hint proposal |
 | `MemoryBriefTask` | mimo-v2.5-pro | nightly brief sweep (YUK-185 / ADR-0017) | 否 | — | per-scope 3-window memory brief（带 evidence ids）|
+| `MindModelInductionTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_nightly` (YUK-406 / YUK-440) | 否 | — | 教研例会 conjecture 诱导：EvidenceCells → 1 conjecture（claim + probe + predicted_p + discriminating）；N=3 self-consistency + judge-only cap |
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `ReviewPlanTask` | mimo-v2.5-pro | coach_daily chain (YUK-203 U4/D5) | 是 | — | tactical review_plan（4-tool surface, tool_quiz artifact）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|

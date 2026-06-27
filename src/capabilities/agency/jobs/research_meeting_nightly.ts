@@ -219,16 +219,21 @@ export async function runResearchMeetingNightly(
         samples: RESEARCH_MEETING_SAMPLES,
         runTaskFn,
       });
+      // Count the Opus induction spend immediately — it was incurred regardless of
+      // whether the proposal write below succeeds (OCR: don't lose cost on a write throw).
+      costUsd += induced.cost_usd;
       await writeAiProposalFn(db, buildConjectureProposalInput(cell, induced, triggerEventId));
       created += 1;
-      costUsd += induced.cost_usd;
     } catch (err) {
       console.error('[research_meeting_nightly] conjecture cell failed', cell.key, err);
       await writeRetryableAiFailureLedgerFn(db, 'MindModelInductionTask');
     }
   }
 
-  // Cost-bearing scan event (observability; feeds the cost ribbon).
+  // Observability scan event — NOT cost-bearing: each conjecture proposal event already
+  // carries its own cost_micro_usd via writeAiProposal, so summing the run total here would
+  // DOUBLE-COUNT the AI spend in the cost ribbon (OCR review). The per-run total is still
+  // surfaced via the return value (cost_usd) for the job log.
   await writeEventFn(db, {
     id: `research_meeting_scan_${newId()}`,
     actor_kind: 'agent',
@@ -243,7 +248,7 @@ export async function runResearchMeetingNightly(
       pending_before: knownConjectureKeys.size,
     },
     caused_by_event_id: triggerEventId,
-    cost_micro_usd: Math.round(costUsd * 1_000_000),
+    cost_micro_usd: null,
     created_at: now,
   });
 
