@@ -457,4 +457,62 @@ describe('schema generated from drizzle', () => {
     });
     expect(parsed.action).toBe('experimental:memory_brief_refresh');
   });
+
+  // YUK-407 (Phase 0 red line) — reconstruction_signal is an OPTIONAL attempt/review
+  // payload field; the enum must round-trip, absence must parse, and an off-enum value
+  // must be rejected at the parse barrier.
+  it('parseEvent preserves a valid reconstruction_signal on an attempt', () => {
+    const parsed = parseEvent({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k1'],
+        reconstruction_signal: 'reconstructed_from_parents',
+      },
+    });
+    expect(parsed.action).toBe('attempt');
+    expect((parsed.payload as { reconstruction_signal?: string }).reconstruction_signal).toBe(
+      'reconstructed_from_parents',
+    );
+  });
+
+  it('parseEvent leaves reconstruction_signal undefined when absent (historical events unchanged)', () => {
+    const parsed = parseEvent({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'success',
+      payload: { answer_md: 'ok', answer_image_refs: [], referenced_knowledge_ids: [] },
+    });
+    expect(
+      (parsed.payload as { reconstruction_signal?: string }).reconstruction_signal,
+    ).toBeUndefined();
+  });
+
+  it('parseEvent rejects an off-enum reconstruction_signal', () => {
+    expect(() =>
+      parseEvent({
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        outcome: 'failure',
+        payload: {
+          answer_md: 'wrong',
+          answer_image_refs: [],
+          referenced_knowledge_ids: ['k1'],
+          reconstruction_signal: 'guessed',
+        },
+      }),
+    ).toThrow();
+  });
 });
