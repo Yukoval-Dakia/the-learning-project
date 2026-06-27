@@ -1287,7 +1287,9 @@ export const practice_stream_item = pgTable(
     // question.id 或 paper artifact id（软引用，沿用项目惯例）
     ref_id: text('ref_id').notNull(),
     source: text('source')
-      .$type<'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import'>()
+      // B3 (YUK-349 #3) — 'frontier' added: TYPE-ONLY widen of this free-text column
+      // (no DB enum, no migration). practice_stream_item.source is plain `text`.
+      .$type<'decay' | 'variant' | 'new_check' | 'paper' | 'on_demand' | 'import' | 'frontier'>()
       .notNull(),
     status: text('status')
       .$type<'pending' | 'in_progress' | 'done' | 'skipped'>()

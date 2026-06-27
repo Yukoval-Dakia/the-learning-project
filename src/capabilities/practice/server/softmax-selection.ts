@@ -90,6 +90,10 @@ export interface ComposeSoftmaxResult {
 // ───────────────────────────────────────────────────────────────────────────
 const DEFAULT_WARN = 12;
 const DEFAULT_MAX = 30;
+// B3 (YUK-349 #3) — L3 frontier quota: guarantee a protected FLOOR of frontier candidates
+// survive capacity truncation = floor(effectiveTarget × ratio). NO-OP when no frontier is
+// sampled (floor(0 × ratio)=0 → no extra protection → capacityGuard byte-identical).
+const FRONTIER_QUOTA_RATIO = 0.2;
 
 function kpSuffix(label?: string): string {
   return label ? `「${label}」` : '这一块';
@@ -108,7 +112,26 @@ interface NonDueRaw {
 }
 
 /** 非到期候选在本模块内部的角色（与 CandidateInput.role 同集，去 'due'/'paper'）。 */
-type SelectionOrchestratorCandidateRole = 'variant' | 'new_check';
+type SelectionOrchestratorCandidateRole = 'variant' | 'new_check' | 'frontier';
+
+/** 非到期 slot 角色 → StreamPlanItem.source（frontier/new_check 各自留痕，其余 = variant）。 */
+function sourceForRole(
+  role: SelectionOrchestratorCandidateRole | undefined,
+): StreamPlanItem['source'] {
+  if (role === 'new_check') return 'new_check';
+  if (role === 'frontier') return 'frontier';
+  return 'variant';
+}
+
+/** 非到期 slot 角色 → reasoning 模板。 */
+function reasoningForRole(
+  role: SelectionOrchestratorCandidateRole | undefined,
+  label?: string,
+): string {
+  if (role === 'new_check') return newCheckReasoning(label);
+  if (role === 'frontier') return frontierReasoning(label);
+  return variantReasoning(label);
+}
 
 async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<CandidateInput[]> {
   if (raws.length === 0) return [];
@@ -130,9 +153,15 @@ async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<Candidat
     return {
       refKind: 'question' as const,
       refId: raw.questionId,
-      // CandidateInput.role 用 core role 集（'diagnostic'/'new_check'/...）。变体候选
-      // 走诊断角色（可换变体 → 进 MFI 评分）；new_check 候选保 new_check 角色。
-      role: raw.role === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
+      // CandidateInput.role 用 core role 集（'diagnostic'/'new_check'/'frontier'/...）。变体
+      // 候选走诊断角色（可换变体 → 进 MFI 评分）；new_check / frontier 候选保各自角色，照常
+      // 经 collectCandidateSignals → MFI/diagnostic 权重 → sampleByWeight（与非到期候选同流）。
+      role:
+        raw.role === 'new_check'
+          ? ('new_check' as const)
+          : raw.role === 'frontier'
+            ? ('frontier' as const)
+            : ('diagnostic' as const),
       // FINDING 4（fail-open→fail-closed）：DB question.kind 是 text 列，行里可能存
       //   **不在 QuestionKind 枚举内**的脏值（历史脏数据 / enum 收缩后的遗留 / 手填）。
       //   裸 `as QuestionKindT` 会把脏值原样传给 collectQuestionSignal → rotationClassForKind
@@ -172,6 +201,10 @@ export function variantReasoning(label?: string): string {
 }
 export function newCheckReasoning(label?: string): string {
   return `你刚学了${kpSuffix(label)}，自测一道确认真的进脑子了。`;
+}
+// B3 frontier（与 composeDailyStream 的 frontier 尾文案一致——单一真相）。
+export function frontierReasoning(label?: string): string {
+  return `${kpSuffix(label)}的前置你都拿下了，可以开这块新内容了。`;
 }
 function paperReasoning(
   title: string,
@@ -234,7 +267,16 @@ export async function composeSoftmaxStream(
       role: 'new_check',
       knowledgeLabel: n.knowledgeLabel,
     }));
-  const nonDueRaws = [...variantRaws, ...newCheckRaws];
+  // B3 frontier（additive samplable 非到期候选）——dedup 在 due/variant/new_check 之后。
+  // frontierItems 缺省/[] → frontierRaws=[]（NO-OP：sampler 池不变，plan byte-identical）。
+  const frontierRaws: NonDueRaw[] = (inputs.frontierItems ?? [])
+    .filter((f) => !seen.has(f.questionId) && seen.add(f.questionId))
+    .map((f) => ({
+      questionId: f.questionId,
+      role: 'frontier',
+      knowledgeLabel: f.knowledgeLabel,
+    }));
+  const nonDueRaws = [...variantRaws, ...newCheckRaws, ...frontierRaws];
   const labelByRef = new Map<string, string | undefined>(
     nonDueRaws.map((r) => [r.questionId, r.knowledgeLabel]),
   );
@@ -337,14 +379,12 @@ export async function composeSoftmaxStream(
 
   // recall-locked 透传（确定性 same-question，不排序不换题——按 collect 顺序纳入）。
   for (const s of recallLocked) {
+    const role = roleByRef.get(s.refId);
     nonDueDrafts.push({
       item_kind: 'question',
       ref_id: s.refId,
-      source: roleByRef.get(s.refId) === 'new_check' ? 'new_check' : 'variant',
-      reasoning:
-        roleByRef.get(s.refId) === 'new_check'
-          ? newCheckReasoning(labelByRef.get(s.refId))
-          : variantReasoning(labelByRef.get(s.refId)),
+      source: sourceForRole(role),
+      reasoning: reasoningForRole(role, labelByRef.get(s.refId)),
       signals: s as unknown as Record<string, unknown>,
     });
   }
@@ -363,11 +403,8 @@ export async function composeSoftmaxStream(
     nonDueDrafts.push({
       item_kind: 'question',
       ref_id: s.refId,
-      source: role === 'new_check' ? 'new_check' : 'variant',
-      reasoning:
-        role === 'new_check'
-          ? newCheckReasoning(labelByRef.get(s.refId))
-          : variantReasoning(labelByRef.get(s.refId)),
+      source: sourceForRole(role),
+      reasoning: reasoningForRole(role, labelByRef.get(s.refId)),
       signals: signalByRef.get(s.refId) as unknown as Record<string, unknown>,
     });
   }
@@ -379,7 +416,25 @@ export async function composeSoftmaxStream(
   //    （paper，确定性、不记 π_i）尾部。到期项 presence（铁律②）优先于容量；被抽中非到期项
   //    的 π_i 受 IPW 资产保护（FINDING 2，见 capacityGuard 注释）。
   const sampledRefs = new Set(sampled.map((s) => s.refId));
-  const { kept, truncated } = capacityGuard(assembled, dueRefSet, sampledRefs, max);
+  // ── B3 L3 frontier quota（FRONTIER_QUOTA_RATIO）：保证 floor(effectiveTarget × ratio) 个
+  //    被抽中的 frontier 候选**不被容量截断**。实现为 capacityGuard 的**附加**受保护集——
+  //    union 进 due/sampled 受保护集，**绝不替换/削弱**到期保护（铁律②优先）。
+  //    NO-OP：无 frontier 被抽中 → floor(0 × ratio)=0 → frontierProtectedRefs 空 →
+  //    capacityGuard 逐字等同（plan byte-identical）。注：被抽中的 frontier 本就已在
+  //    sampledRefs 里受保护，故此集当前是 sampledRefs 的子集（受保护输出不变）；显式保留它
+  //    把「frontier 配额」做成一等保证，且对未来 sampled-保护模型变更稳健（defense-in-depth）。
+  const frontierQuota = Math.floor(effectiveTarget * FRONTIER_QUOTA_RATIO);
+  const frontierSampledRefs = sampled
+    .filter((s) => roleByRef.get(s.refId) === 'frontier')
+    .map((s) => s.refId);
+  const frontierProtectedRefs = new Set(frontierSampledRefs.slice(0, frontierQuota));
+  const { kept, truncated } = capacityGuard(
+    assembled,
+    dueRefSet,
+    sampledRefs,
+    frontierProtectedRefs,
+    max,
+  );
 
   const plan: StreamPlan = {
     date: inputs.date,
@@ -515,12 +570,15 @@ function capacityGuard(
   assembled: Omit<StreamPlanItem, 'position'>[],
   dueRefSet: Set<string>,
   sampledRefs: Set<string>,
+  // B3 (YUK-349 #3) — frontier quota floor: ADDITIVE protected set (union with due ∪
+  // sampled, NEVER replaces/weakens them). Empty → byte-identical to pre-B3 behavior.
+  frontierProtectedRefs: Set<string>,
   max: number,
 ): { kept: Omit<StreamPlanItem, 'position'>[]; truncated: boolean } {
   if (assembled.length <= max) return { kept: assembled, truncated: false };
-  // 受保护 = 到期项 ∪ 被抽中非到期项（π_i 资产）。两者永不截断。
+  // 受保护 = 到期项 ∪ 被抽中非到期项（π_i 资产）∪ frontier 配额（B3，附加，不削弱前两者）。永不截断。
   const isProtected = (d: Omit<StreamPlanItem, 'position'>) =>
-    dueRefSet.has(d.ref_id) || sampledRefs.has(d.ref_id);
+    dueRefSet.has(d.ref_id) || sampledRefs.has(d.ref_id) || frontierProtectedRefs.has(d.ref_id);
   // 可截断 = 确定性非到期尾部（recall 透传 + 卷）。按剩余容量从头保留。
   const protectedItems = assembled.filter(isProtected);
   const truncatable = assembled.filter((d) => !isProtected(d));
