@@ -1,6 +1,6 @@
 {
-  "id": "fad8da6a-1c07-468f-b040-347b5d957627",
-  "prevId": "78a83937-0c4e-4591-b82d-821e4defe7b7",
+  "id": "b306d009-ac41-4b3d-bb8d-07dce264ca13",
+  "prevId": "fad8da6a-1c07-468f-b040-347b5d957627",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2498,6 +2498,18 @@
         "scope_knowledge_ids": {
           "name": "scope_knowledge_ids",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "placement_leanings": {
+          "name": "placement_leanings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "placement_pace": {
+          "name": "placement_pace",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

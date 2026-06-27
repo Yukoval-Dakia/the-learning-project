@@ -105,3 +105,31 @@ export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promi
   }
   return matched;
 }
+
+/**
+ * Full active-tree KC set: every non-archived knowledge node id, with no subject
+ * filter. This is the cold-start TIER-3 fallback behind placement scope resolution
+ * (YUK-481, `placement-start.ts`).
+ *
+ * Tier-1 of that resolution uses a goal's frozen `scope_knowledge_ids`; tier-2
+ * live-resolves the goal's `subject_id` via `resolveSubjectKnowledgeIds`
+ * (effective-domain axis). Tier-3 fires when BOTH yield empty — a day-one goal that
+ * is cross-subject / has no `subject_id` / whose subject root is planted but has no
+ * child KC yet. Rather than 400 (which would block the cold-start probe), placement
+ * falls back to the WHOLE active tree so the learner can still be placed. It is a
+ * cold-start crutch: once a subject is selected or uploads grow KCs, tier-2 takes
+ * over. `selectNextPlacementItem` already filters to KCs with ≥1 eligible question,
+ * so an empty subgraph (e.g. a subject seed root) introduces no phantom KC.
+ *
+ * Reuses the same `archived_at IS NULL` scan as `resolveSubjectKnowledgeIds`. n=1
+ * admissible: the result is the single learner's own active-tree id set — a derived
+ * view, never a per-subject parameter (subject 模型终版第 2 条: scope is a derived
+ * axis, not a column).
+ */
+export async function resolveAllActiveKnowledgeIds(db: Db): Promise<string[]> {
+  const rows = await db
+    .select({ id: knowledge.id })
+    .from(knowledge)
+    .where(isNull(knowledge.archived_at));
+  return rows.map((row) => row.id);
+}

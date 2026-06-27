@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ActivityRef } from '../activity';
+import { AttemptPayload } from '../attempt-payload';
 import { JudgeKind, LearningItemStatus } from '../business';
 import { CapabilityRef } from '../capability';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
@@ -89,6 +90,23 @@ export const AttemptOnQuestion = z.object({
     // YUK-407 (Phase 0 red line) — see ReconstructionSignal. Optional; stamped
     // 'unknown' at the live attempt write sites (solve-session / ingestion mistakes).
     reconstruction_signal: ReconstructionSignal.optional(),
+    // YUK-367 (A1) — structured discriminated attempt-payload (objective archetypes
+    // route option/boolean/blank/number+unit; open kinds stay free-text). The
+    // canonical evidence-trail home for the carrier so a deterministic verifier
+    // (A5 / YUK-350) + item calibration (B1 / YUK-348) can read structured evidence
+    // instead of the flat `answer_md` text. OPTIONAL slot: no live writer yet (the
+    // submit write path is wired under A5 once the objective-kind verifier closes),
+    // so this is byte-identical for every historical attempt event — same
+    // capture-the-slot-now pattern as hints_used / reconstruction_signal above.
+    // Non-behavioral: judging today still reads `answer_md`; nothing in θ̂ / FSRS /
+    // mastery reads this field. See src/core/schema/attempt-payload.ts.
+    // NOTE: this slot validates against the FULL AttemptPayload union, so the event
+    // schema alone does NOT enforce archetype↔question-kind consistency (it has no
+    // QuestionKind in scope). That gate lives at the write point: A5 / YUK-350 must
+    // call `parseAttemptPayloadForKind(kind, …)` when wiring the live writer, NOT
+    // rely on this union to reject a mistyped archetype (e.g. a `numeric` payload on
+    // a `choice` question parses fine here).
+    attempt_payload: AttemptPayload.optional(),
   }),
   ...baseOptionalFields,
 });

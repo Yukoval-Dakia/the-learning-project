@@ -13,7 +13,10 @@
 
 import { z } from 'zod';
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
+import {
+  resolveAllActiveKnowledgeIds,
+  resolveSubjectKnowledgeIds,
+} from '@/capabilities/knowledge/server/domain';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -73,24 +76,45 @@ export async function POST(req: Request): Promise<Response> {
         .limit(1);
       const goalRow = rows[0];
       const frozenScope = goalRow?.scope ?? [];
-      // YUK-482 Lane B (decision b-i, live-resolve guarded) — a cold-start goal is declared
-      // on an empty tree (goal-create.ts: empty resolved scope is ALLOWED), so its FROZEN
-      // scope_knowledge_ids stays empty even after uploads bridge new child KCs under the
-      // subject root. A frozen-only read would make placement permanently blind to those KCs
-      // (sourcingNeeded forever). When the frozen scope is empty/null AND the goal carries a
-      // subject, RE-RESOLVE the subject's KC set LIVE (resolveSubjectKnowledgeIds → effective-
-      // domain axis), so newly-bridged KCs enter scope. A NON-empty frozen scope is an
-      // EXPLICIT narrow scope and is respected as-is (no live-resolve override). See
-      // docs/design/2026-06-20-cold-start-day-one-design.md / YUK-481.
-      knowledgeIds =
-        frozenScope.length === 0 && goalRow?.subjectId
-          ? await resolveSubjectKnowledgeIds(db, goalRow.subjectId)
-          : frozenScope;
+      // Three-tier dynamic scope resolution (YUK-481, building on YUK-482 Lane B). A cold-start
+      // goal is declared on an empty tree (goal-create.ts: empty resolved scope is ALLOWED), so
+      // its FROZEN scope_knowledge_ids stays empty even after uploads bridge new child KCs. A
+      // frozen-only read would make placement permanently blind to those KCs (sourcingNeeded /
+      // 400 forever). subject=view: scope is a DERIVED axis recomputed each call — we never write
+      // the resolved set back onto the goal row. See docs/design/2026-06-20-cold-start-day-one-
+      // design.md / YUK-481.
+      if (frozenScope.length > 0) {
+        // Tier 1: a NON-empty frozen scope is an EXPLICIT narrow scope — respected as-is, never
+        // widened by live-resolve.
+        knowledgeIds = frozenScope;
+      } else {
+        // Tier 2 (YUK-482 Lane B): frozen empty AND goal carries a subject → RE-RESOLVE the
+        // subject's KC set LIVE (effective-domain axis, alias-aware), so newly-bridged KCs enter
+        // scope.
+        if (goalRow?.subjectId) {
+          knowledgeIds = await resolveSubjectKnowledgeIds(db, goalRow.subjectId);
+        }
+        // Tier 3 (YUK-481): subject resolution still yielded nothing — no subject_id, an unknown
+        // subject string, or a subject whose root is planted but has no child KC yet. This is the
+        // original YUK-473 live trigger (day-one goals are often cross-subject / pick no subject).
+        // Fall back to the FULL active tree rather than 400, so the cold-start probe is still
+        // reachable. selectNextPlacementItem filters to KCs with ≥1 eligible question, so the
+        // wide scope introduces no phantom KC. Cold-start crutch only: tier-2 takes over once a
+        // subject is selected or uploads grow subject-scoped KCs.
+        if (knowledgeIds.length === 0) {
+          knowledgeIds = await resolveAllActiveKnowledgeIds(db);
+        }
+      }
     }
     if (knowledgeIds.length === 0) {
+      // Post-YUK-481 this fires only in two genuinely-unresolvable cases: (a) neither a goalId nor
+      // an explicit knowledgeIds set was supplied (nothing to resolve from), or (b) a goalId WAS
+      // supplied but the entire active tree is empty (tier-3 full-tree fallback found zero active
+      // KC) — there is truly nothing to place against. A no-subject / unknown-subject goal no
+      // longer 400s as long as ANY active KC exists.
       throw new ApiError(
         'validation_error',
-        'placement requires a goalId (with scope_knowledge_ids) or an explicit knowledgeIds set',
+        'placement requires a goalId (with a resolvable scope) or an explicit knowledgeIds set',
         400,
       );
     }
