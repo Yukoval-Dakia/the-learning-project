@@ -53,6 +53,10 @@ import {
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
+import {
+  PREREQ_PROPAGATION_ENABLED,
+  emitPrereqRiskSignal,
+} from '@/server/mastery/prereq-propagation';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { eq, sql } from 'drizzle-orm';
@@ -821,6 +825,23 @@ async function persistSubmit(
         triggerEventId: eventId,
       });
     }
+  }
+
+  // YUK-455 inc-E — prereq 诊断「向后传播」producer (dark-ship). 答错 B → 沿 KG 的
+  // prerequisite 边向上找 B 的 transitive 前置 A，EMIT `experimental:prereq_risk` 观测事件
+  // 上调 A 的掌握风险（喂画像 / surmise relation 诊断向后半）。
+  // GATE = PREREQ_PROPAGATION_ENABLED（module const, 默认 false）&& outcome==='failure'：
+  // flag-off 时 `&&` 短路、emit 永不调用 → event set BYTE-IDENTICAL（YUK-455 回归锚）。
+  // post-commit / best-effort（helper 内部吞错，绝不连累已落库的 attempt）。红线（ADR-0035）：
+  // 只 EMIT 独立 event 投影，绝不写 mastery_state.theta_hat/fail_count（A 从未被作答）。
+  if (PREREQ_PROPAGATION_ENABLED && outcome === 'failure') {
+    await emitPrereqRiskSignal({
+      db,
+      failedKnowledgeIds: q.knowledge_ids,
+      questionId,
+      attemptEventId: eventId,
+      now,
+    });
   }
 
   return {
