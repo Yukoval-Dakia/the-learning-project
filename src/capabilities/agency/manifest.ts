@@ -57,6 +57,19 @@ export const agencyCapability = defineCapability({
             (m) => m.buildGoalScopeProposeNightlyHandler,
           ),
       },
+      // YUK-406 Phase 0 (关系脑) / YUK-440 (A13) — nightly 教研例会 conjecture
+      // proposer. Single proposer of `conjecture` proposals: deterministic 取证 →
+      // Opus N=3 self-consistency induction → propose ≤3. queue:'llm' (it runs the
+      // anthropic-sub OAuth Opus lane). Staggered after goal_scope (03:50).
+      {
+        name: 'research_meeting_nightly',
+        schedule: { cron: '35 4 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/research_meeting_nightly').then(
+            (m) => m.buildResearchMeetingNightlyHandler,
+          ),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。learning_item / completion /
@@ -71,6 +84,12 @@ export const agencyCapability = defineCapability({
       { kind: 'relearn' },
       { kind: 'goal_scope' },
       { kind: 'defer' },
+      // YUK-406 Phase 0 / YUK-440 A13 — conjecture (subject_kind 'mind_model').
+      // Propose-only in this MVP: no accept applier (备课台 accept/edit/reject lane
+      // is design-gated), so accept goes through the dispatch shell's default throw
+      // (unsupported_proposal_kind) — ownership declared, applier deferred, exactly
+      // like `defer`.
+      { kind: 'conjecture' },
     ],
   },
   ui: { pages: [{ route: '/agent-notes' }], todayBlocks: ['agent-notes-board'] },

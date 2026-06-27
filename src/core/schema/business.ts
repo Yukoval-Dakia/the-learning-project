@@ -335,6 +335,44 @@ export const VariantVerificationResult = z.object({
 });
 export type VariantVerificationResultT = z.infer<typeof VariantVerificationResult>;
 
+// ---------- ConjectureDraft (YUK-406 Phase 0 关系脑 / YUK-440 A13) ----------
+//
+// The small structured record ONE induction run emits (the nightly 教研例会 job's
+// LLM step). Large reasoning stays as the run's markdown text; ONLY this bounded
+// record is schema-constrained (mirrors the VariantVerificationResult precedent).
+//
+// - claim_md: a 2nd-person belief about how the owner THINKS ("你把链式法则当成导数
+//   相乘"), NOT a statement about a single question's right/wrong.
+// - probe_md: exactly ONE untested discriminating probe (one question's worth) that
+//   would confirm or falsify the claim.
+// - cause_category: one of the cause categories present in the input evidence cells
+//   (shared lowercase-id cause vocabulary).
+// - recurrence_count: >= 2 — a conjecture requires >= 2 distinct attempts of evidence
+//   (the deterministic 取证 floor; the model echoes the supporting cell's count).
+// - predicted_p (A13 / YUK-440): the claim's FALSIFIABLE prediction — the probability
+//   the owner answers `probe_md` CORRECTLY if the claim holds. This is the qualitative
+//   track's bet; the loop later scores it against baseline_p_at_induction (scoring +
+//   flip DEFERRED per ADR-0046 — MVP only snapshots the prediction).
+// - discriminating (A13 / YUK-440): true iff the probe isolates THIS misconception
+//   (only this claim would produce the wrong answer). Gate for writing a
+//   confused-with-X typed state later (PR-2); the induction self-reports it.
+// - agreement_count: how many of the N self-consistency samples agreed on this claim.
+//   The LLM fills 1 per single sample; induceConjecture() overwrites it with the tally.
+//
+// confidence itself is NOT in this schema: it is internal calibration only, NEVER
+// rendered as a number (Phase 0 anti-number rule), so it lives on the orchestrator's
+// return type, not the model-facing record.
+export const ConjectureDraft = z.object({
+  claim_md: z.string().min(1).max(500),
+  probe_md: z.string().min(1).max(1000),
+  cause_category: z.string().min(1).max(120),
+  recurrence_count: z.number().int().min(2),
+  predicted_p: z.number().min(0).max(1),
+  discriminating: z.boolean(),
+  agreement_count: z.number().int().min(1).default(1),
+});
+export type ConjectureDraftT = z.infer<typeof ConjectureDraft>;
+
 // ---------- ToolState (tool_quiz artifact.tool_state) ----------
 //
 // U5 (YUK-203) ToolStateT v2 — additive `sections?` variant promoted to a
