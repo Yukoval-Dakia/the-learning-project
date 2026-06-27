@@ -112,6 +112,7 @@ Question (统一题库，single source of truth)
 | `AttributionTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因（10 类 cause）+ analysis |
 | `AttributionRerankTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因 retrieve→rerank stage 2（从 L1 候选 cause 列表重排选 primary + 逐候选理由，YUK-462；小词表时 == AttributionTask） |
 | `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | maintenance / nightly | 否 | — | 0-5 条 knowledge_edge proposal |
+| `FrontierPrerequisiteTask` | mimo-v2.5-pro | maintenance / nightly（frontier bootstrap, YUK-349 PR-2） | 否 | — | 0-5 条 prerequisite knowledge_edge proposal（empty-frontier 时 propose-only 低置信） |
 | `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | ≤120 字 session summary |
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
 | `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |

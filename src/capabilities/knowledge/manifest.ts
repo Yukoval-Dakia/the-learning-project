@@ -83,6 +83,17 @@ export const knowledgeCapability = defineCapability({
           ),
       },
       {
+        // YUK-349 B3 PR-2：empty-frontier prerequisite bootstrap（BJT 05:15，compose
+        // 跑 05:30 之前，错峰）。learnableFrontier 空时 propose-only 低置信 prereq 边，
+        // 破解冷启「没 prereq 边 → 前沿空 → 不知道先教什么」死锁。graph-topology 生产者，
+        // 与 knowledge_edge_propose_nightly 同包同域。
+        name: 'frontier_fill_nightly',
+        schedule: { cron: '15 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
+      },
+      {
         // YUK-48：KnowledgeReviewTask maintenance producer（BJT 03:00，多步 agent 档）。
         name: 'knowledge_maintenance_nightly',
         schedule: { cron: '0 3 * * *', tz: 'Asia/Shanghai' },
