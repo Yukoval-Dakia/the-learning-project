@@ -43,6 +43,35 @@ export const K_SMALL = 15;
 export const K_MAX = 15;
 
 /**
+ * Module-level singleton ICU word segmenter for the large-vocab scorer. Built
+ * once (segmenter construction is non-trivial) and reused across calls.
+ *
+ * DETERMINISM CAVEAT (YUK-465): ICU word boundaries depend on the ICU build
+ * bundled with the running Node, so this scorer is "ICU-version deterministic",
+ * NOT byte-identical across Node upgrades. That is acceptable here because the
+ * path is dormant (only fires when a profile's cause vocab exceeds K_SMALL,
+ * which no shipped profile does today) and its output only orders a candidate
+ * list — it never feeds θ̂ / p(L) / FSRS (ADR-0035 red line).
+ */
+const WORD_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'word' });
+
+/**
+ * Tokenize text into the set of distinct, lowercased, word-like tokens. The ICU
+ * `isWordLike` flag drops punctuation/whitespace segments while KEEPING
+ * single-char CJK units — a lone 汉字 is a valid semantic token (the previous
+ * `split(/\s+/).filter(len > 1)` tokenizer silently dropped every single-char
+ * CJK token, since CJK runs don't split on whitespace). Returns a Set so the
+ * scorer counts each distinct shared token at most once.
+ */
+function tokenize(text: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const segment of WORD_SEGMENTER.segment(text.toLowerCase())) {
+    if (segment.isWordLike) tokens.add(segment.segment);
+  }
+  return tokens;
+}
+
+/**
  * Stage 1 retriever. Deterministic, no LLM, no embedding, no DB.
  *
  * - vocab.length <= K_SMALL → return the profile's `causeCategories` array
@@ -61,24 +90,29 @@ export function retrieveCauseCandidates(
   if (vocab.length <= K_SMALL) return vocab;
 
   // Large-vocab (future): deterministic keyword scorer. No LLM, no pgvector.
-  // Bidirectional substring overlap on whitespace-delimited tokens so it works
-  // for both Latin words and short CJK runs (which don't split on whitespace):
-  // a candidate scores for each attempt token it contains AND each of its own
-  // tokens the attempt contains. Crude but deterministic and dependency-free.
-  const hay =
+  // YUK-465 hardening — was bidirectional substring overlap on whitespace-split,
+  // length>1 tokens. Two precision fixes for the dormant path:
+  //   1. ICU word tokenization (`tokenize`) so CJK runs split into word-like
+  //      units INCLUDING single-char 汉字 — the old `length > 1` filter silently
+  //      dropped every single-char CJK semantic unit.
+  //   2. EXACT token-set intersection instead of substring `includes`: a
+  //      candidate scores once per distinct token it shares with the attempt
+  //      text. Substring matching mis-fired on partial words / cross-boundary
+  //      spans (e.g. '助词' matching inside '帮助词典'); set membership is
+  //      boundary-exact.
+  const hayTokens = tokenize(
     `${input.wrong_answer_md}\n${input.prompt_md}\n${input.reference_md ?? ''}\n${input.knowledge_context
       .map((k) => k.name)
-      .join(' ')}`.toLowerCase();
-  const hayTokens = hay.split(/\s+/).filter((token) => token.length > 1);
+      .join(' ')}`,
+  );
   const scored = vocab.map((candidate) => {
-    const needle = `${candidate.label} ${candidate.description ?? ''}`.toLowerCase();
-    const needleTokens = needle.split(/\s+/).filter((token) => token.length > 1);
+    const needleTokens = tokenize(`${candidate.label} ${candidate.description ?? ''}`);
     let score = 0;
-    for (const token of needleTokens) if (hay.includes(token)) score++;
-    for (const token of hayTokens) if (needle.includes(token)) score++;
+    for (const token of needleTokens) if (hayTokens.has(token)) score++;
     return { candidate, score };
   });
-  // Stable-ish: sort by descending score; ties keep input order (map preserved it).
+  // Stable sort by descending score; ties keep input order (Array.prototype.sort
+  // is stable in V8, and `vocab.map` preserved the profile's declaration order).
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, K_MAX).map((s) => s.candidate);
 }
