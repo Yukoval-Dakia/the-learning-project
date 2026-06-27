@@ -15,6 +15,7 @@
 
 import { type DerivedKc, deriveProfileKc } from '@/core/recompute/derive-profile-kc';
 import type { ProfileKc } from '../profile-api';
+import type { CalibrationMaturityResponse } from './calibration-maturity-api';
 
 /** UI-only gate for the whole #41 verify layer — dark-ship until visually verified. */
 export const RECOMPUTE_BADGE_ENABLED = false;
@@ -148,3 +149,74 @@ export function summarizeRecompute(kcs: ProfileKc[], sigmaMode: SigmaMode): RcSu
 
 /** Two-decimal display formatter (mirrors the design's rcFmt). */
 export const rcFmt = (v: number | undefined) => (v == null ? '—' : v.toFixed(2));
+
+// ── D2: calibration-maturity reconciliation (YUK-495 S5 #41 #45) ──────────────
+//
+// Unlike the per-KC verify above, the two maturity quantities are BOTH σ-independent:
+//   • firm_count      = a pure integer count (cold_start rule: !cold_start), no σ.
+//   • median_theta_se = median of thetaSe(precision), and thetaSe is pure IEEE
+//     (1/√precision), no σ.
+// So the device re-derivation and the server aggregate are expected to be Object.is
+// EQUAL under both the poly and libm σ regimes — there is no "preview" honesty split
+// here. The maturity badge is therefore a two-state reconciliation: 'match' (bit-for-bit)
+// or 'drift' (a real disagreement). The brief 'running' flash is the useRecompute state
+// machine's, not a third summary outcome.
+
+export interface RcMaturitySummary {
+  /** 'match' when device re-derivation === server aggregate bit-for-bit, else 'drift'. */
+  overall: 'match' | 'drift';
+  /** device-side firm count = rows where !cold_start. */
+  dFirm: number;
+  /** server aggregate.firm_count. */
+  sFirm: number;
+  /** device-side median theta_se (mirrors the server median exactly); null when no rows have one. */
+  dMedian: number | null;
+  /** server aggregate.median_theta_se. */
+  sMedian: number | null;
+  /** total KC count (rows.length). */
+  total: number;
+}
+
+/**
+ * Bit-exact mirror of the server's median_theta_se (server/calibration-maturity.ts):
+ * sort ascending, then floor-mid midpoint (even ⇒ average of the two central values,
+ * odd ⇒ the central value). Empty ⇒ null. Identical ordering + arithmetic ⇒ Object.is
+ * with the server aggregate holds.
+ */
+function maturityMedian(sorted: number[]): number | null {
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
+ * Re-derive the maturity overview (firm count + median θ̂ SE) from the raw rows and
+ * reconcile it against the server aggregate — integer compare on firm, Object.is on the
+ * (σ-independent) median. No sigma_mode parameter: neither quantity depends on σ.
+ */
+export function summarizeMaturity(resp: CalibrationMaturityResponse): RcMaturitySummary {
+  // !cold_start mirrors the server's firm_count (= total − coldStartCount, where
+  // coldStart also covers never-attempted KCs). Do NOT add `&& evidence_count > 0`:
+  // it would diverge from the server definition (the design prototype's redundant guard).
+  const dFirm = resp.rows.filter((r) => !r.cold_start).length;
+  const seValues = resp.rows
+    .map((r) => r.theta_se)
+    .filter((se): se is number => se != null)
+    .sort((a, b) => a - b);
+  const dMedian = maturityMedian(seValues);
+
+  const sFirm = resp.aggregate.firm_count;
+  const sMedian = resp.aggregate.median_theta_se;
+  const firmMatch = dFirm === sFirm;
+  // Object.is so null↔null reconciles and any float bit-difference (or NaN) surfaces as drift.
+  const medianMatch = Object.is(dMedian, sMedian);
+
+  return {
+    overall: firmMatch && medianMatch ? 'match' : 'drift',
+    dFirm,
+    sFirm,
+    dMedian,
+    sMedian,
+    total: resp.rows.length,
+  };
+}

@@ -4,8 +4,8 @@
 // per-KC chips, the bit-for-bit ledger, the drift detail, and the honesty footnote.
 
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { type RcKcVerdict, type RcSummary, rcFmt } from './recompute-core';
-import type { RcState } from './useRecompute';
+import { type RcKcVerdict, type RcMaturitySummary, type RcSummary, rcFmt } from './recompute-core';
+import { type RcState, useRecompute } from './useRecompute';
 
 /** Offline chip — emphasise the pure on-device, no-network re-derivation. */
 export function RcOffline() {
@@ -234,6 +234,81 @@ export function RcDetailPanel({ summary }: { summary: RcSummary }) {
         <RcLedgerTable verdicts={summary.verdicts} />
       )}
       <RcBoundaryNote />
+    </div>
+  );
+}
+
+/**
+ * D2 (#45) — calibration-maturity 卡 · profile 级成熟度对账徽章.
+ *
+ * profile 屏是观察面（「这份测量有多可信」），所以 verified ✓ 设成静息态：打开即在本设备
+ * 重导成熟度概览（firm 计数 · 中位 θ̂ SE）并与服务端 aggregate 逐位对账。与 per-KC 的
+ * RcVerify 不同：maturity 两个量都与 σ flag 无关（见 summarizeMaturity），故无 poly/libm
+ * preview 区分——只有 match（逐位）/ drift（不等）/ running 三态，drift 由 summarizeMaturity
+ * 的真实比较得出（非模拟 prop）。
+ */
+export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
+  // Own the verify state machine; settle on the REAL reconciliation outcome.
+  const { state, run } = useRecompute({ auto: true, outcome: summary.overall });
+  const { dFirm, sFirm, dMedian, sMedian, total } = summary;
+  const medianMatch = Object.is(dMedian, sMedian);
+
+  return (
+    <div className={`rc-cal rc-state-${state}`}>
+      <span className="rc-cal-icon">
+        <LoomIcon
+          name={state === 'match' ? 'checkCircle' : state === 'drift' ? 'alert' : 'refresh'}
+          size={18}
+        />
+      </span>
+      <div className="rc-cal-text">
+        {state === 'running' && <div className="rc-cal-title">正在本设备重导成熟度概览…</div>}
+
+        {state === 'match' && (
+          <>
+            <div className="rc-cal-title">
+              成熟度概览已在本设备重导 <span className="rc-tick">✓</span>
+            </div>
+            <div className="rc-cal-sub">
+              <span className="mono">{total}</span> 个知识点的等级与 θ̂ SE 排序 · 与服务端
+              <b>逐位相等</b>
+              <span className="rc-cal-figs">
+                <span className="rc-cal-fig">
+                  <b className="mono">firm {dFirm}</b>
+                  <LoomIcon name="check" size={11} />
+                </span>
+                <span className="rc-cal-fig">
+                  <b className="mono">中位 SE {rcFmt(dMedian ?? undefined)}</b>
+                  <LoomIcon name="check" size={11} />
+                </span>
+              </span>
+              · <RcOffline />
+            </div>
+          </>
+        )}
+
+        {state === 'drift' && (
+          <>
+            <div className="rc-cal-title">
+              概览有 <b className="mono">1</b> 处不同步
+            </div>
+            <div className="rc-cal-sub">
+              firm 计数：服务端显示 <b className="mono rc-drift-server">{sFirm}</b> · 本地重导{' '}
+              <b className="mono rc-drift-device">{dFirm}</b>
+              {medianMatch && (
+                <>
+                  {' '}
+                  · 中位 SE <b className="mono">{rcFmt(dMedian ?? undefined)}</b> 仍逐位相等
+                </>
+              )}
+              。只是显示口径未对齐 —— 等级与相对排序本身没问题，重算只读。 · <RcOffline />
+            </div>
+          </>
+        )}
+      </div>
+      <button type="button" className="rc-rerun" onClick={run} title="再算一次">
+        <LoomIcon name="refresh" size={14} />
+      </button>
     </div>
   );
 }

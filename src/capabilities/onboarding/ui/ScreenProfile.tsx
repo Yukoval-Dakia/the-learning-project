@@ -27,11 +27,18 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import { type PlacementProfile, type ProfileKc, getPlacementProfile } from './profile-api';
-import { RcDetailPanel, RcKcChip, RcVerify } from './recompute/RecomputeComponents';
+import {
+  RcDetailPanel,
+  RcKcChip,
+  RcMaturityBadge,
+  RcVerify,
+} from './recompute/RecomputeComponents';
+import { getCalibrationMaturity } from './recompute/calibration-maturity-api';
 import {
   RECOMPUTE_BADGE_ENABLED,
   type RcKcVerdict,
   type SigmaMode,
+  summarizeMaturity,
   summarizeRecompute,
 } from './recompute/recompute-core';
 import { useRecompute } from './recompute/useRecompute';
@@ -165,6 +172,21 @@ function ProfileBody({
   const [detailOpen, setDetailOpen] = useState(false);
   const showVerify = RECOMPUTE_BADGE_ENABLED && summary !== null;
 
+  // D2 (#45) — profile-level calibration-maturity reconciliation. Independent fetch (NOT in
+  // the placement payload), gated by the same RECOMPUTE_BADGE_ENABLED dark-ship flag, so the
+  // query stays disabled until the layer is visually verified. The query + memo are declared
+  // unconditionally here (after ScreenProfile's data-dependent early returns) to keep hook order
+  // stable; RcMaturityBadge owns its own useRecompute internally.
+  const maturityQ = useQuery({
+    queryKey: ['calibration-maturity'],
+    queryFn: getCalibrationMaturity,
+    enabled: RECOMPUTE_BADGE_ENABLED,
+  });
+  const maturitySummary = useMemo(
+    () => (maturityQ.data ? summarizeMaturity(maturityQ.data) : null),
+    [maturityQ.data],
+  );
+
   const narrative =
     testedCount > 0
       ? `基于你在 ${testedCount} 个知识点上的作答，这是一份初步画像——多数判断证据还少，会随你练习一起收紧。`
@@ -180,6 +202,8 @@ function ProfileBody({
       </div>
 
       <LoomCard pad padLg className="ob-rise" {...(showVerify ? { 'data-rc': rcState } : {})}>
+        {showVerify && maturitySummary && <RcMaturityBadge summary={maturitySummary} />}
+
         {showVerify && summary && (
           <RcVerify
             state={rcState}
