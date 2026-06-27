@@ -195,7 +195,10 @@ export interface AnswerProbeResult {
  *
  * One-shot guard / idempotency (mirrors U2 acceptConjectureProposal): if a
  * probe_result already exists for this question, no second event is written — the
- * recorded result is returned with idempotent:true.
+ * recorded result is returned with idempotent:true. The check-existing + write run
+ * inside a transaction guarded by a per-probe advisory lock (keyed on the question
+ * id) so two concurrent answers on the SAME probe can never both insert — the
+ * one-shot guarantee holds under concurrency, not just sequentially.
  */
 export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProbeResult> {
   const { db, probeQuestionId, outcome, resolution } = params;
@@ -203,70 +206,78 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
   const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
 
-  // Read the probe question back to recover its conjecture provenance.
-  const [probe] = await db
-    .select({ source: question.source, metadata: question.metadata })
-    .from(question)
-    .where(eq(question.id, probeQuestionId))
-    .limit(1);
-  if (!probe) {
-    throw new ApiError('probe_not_found', `no probe question ${probeQuestionId}`, 404);
-  }
-  if (probe.source !== PROBE_QUESTION_SOURCE) {
-    throw new ApiError('not_a_probe', `question ${probeQuestionId} is not a mind_probe`, 409);
-  }
-  const conjectureEventId = (probe.metadata as Record<string, unknown> | null)
-    ?.conjecture_proposal_id;
-  if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
-    throw new ApiError(
-      'probe_missing_conjecture_ref',
-      `probe ${probeQuestionId} has no conjecture_proposal_id`,
-      409,
-    );
-  }
+  return db.transaction(async (tx) => {
+    // Serialize concurrent answers on the SAME probe so the check-existing + write is
+    // atomic (per-probe key via hashtextextended — different probes don't contend).
+    // Mirrors serveProbeOnce's advisory lock; closes the read-then-write idempotency
+    // gap that would otherwise let two racers each insert a probe_result event.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
 
-  // One-shot guard / idempotency: a prior probe_result short-circuits — NO second
-  // event (this is how the probe stays served exactly once).
-  const [existing] = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, PROBE_RESULT_ACTION),
-        eq(event.subject_kind, 'question'),
-        eq(event.subject_id, probeQuestionId),
-      ),
-    )
-    .limit(1);
-  if (existing) {
-    const payload = existing.payload as { resolution?: 'confirmed' | 'retired' };
-    return {
-      status: payload.resolution ?? resolution,
-      probe_result_event_id: existing.id,
-      idempotent: true,
-    };
-  }
+    // Read the probe question back to recover its conjecture provenance.
+    const [probe] = await tx
+      .select({ source: question.source, metadata: question.metadata })
+      .from(question)
+      .where(eq(question.id, probeQuestionId))
+      .limit(1);
+    if (!probe) {
+      throw new ApiError('probe_not_found', `no probe question ${probeQuestionId}`, 404);
+    }
+    if (probe.source !== PROBE_QUESTION_SOURCE) {
+      throw new ApiError('not_a_probe', `question ${probeQuestionId} is not a mind_probe`, 409);
+    }
+    const conjectureEventId = (probe.metadata as Record<string, unknown> | null)
+      ?.conjecture_proposal_id;
+    if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
+      throw new ApiError(
+        'probe_missing_conjecture_ref',
+        `probe ${probeQuestionId} has no conjecture_proposal_id`,
+        409,
+      );
+    }
 
-  const probeResultEventId = newId();
-  await writeEvent(db, {
-    id: probeResultEventId,
-    actor_kind: 'system',
-    actor_ref: 'mind_probe',
-    action: PROBE_RESULT_ACTION,
-    subject_kind: 'question',
-    subject_id: probeQuestionId,
-    // Envelope outcome intentionally left NULL — the canonical 0|1 outcome lives in
-    // the payload; this event is NOT an attempt and must never look like one (ND-5).
-    payload: {
-      conjecture_event_id: conjectureEventId,
-      outcome,
-      resolution,
-      retrievability_at_judge: retrievabilityAtJudge,
-      answer_md: answerMd,
-    },
-    caused_by_event_id: conjectureEventId,
-    created_at: now,
+    // One-shot guard / idempotency: a prior probe_result short-circuits — NO second
+    // event (this is how the probe stays served exactly once).
+    const [existing] = await tx
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, PROBE_RESULT_ACTION),
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, probeQuestionId),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      const payload = existing.payload as { resolution?: 'confirmed' | 'retired' };
+      return {
+        status: payload.resolution ?? resolution,
+        probe_result_event_id: existing.id,
+        idempotent: true,
+      };
+    }
+
+    const probeResultEventId = newId();
+    await writeEvent(tx, {
+      id: probeResultEventId,
+      actor_kind: 'system',
+      actor_ref: 'mind_probe',
+      action: PROBE_RESULT_ACTION,
+      subject_kind: 'question',
+      subject_id: probeQuestionId,
+      // Envelope outcome intentionally left NULL — the canonical 0|1 outcome lives in
+      // the payload; this event is NOT an attempt and must never look like one (ND-5).
+      payload: {
+        conjecture_event_id: conjectureEventId,
+        outcome,
+        resolution,
+        retrievability_at_judge: retrievabilityAtJudge,
+        answer_md: answerMd,
+      },
+      caused_by_event_id: conjectureEventId,
+      created_at: now,
+    });
+
+    return { status: resolution, probe_result_event_id: probeResultEventId };
   });
-
-  return { status: resolution, probe_result_event_id: probeResultEventId };
 }

@@ -265,6 +265,60 @@ describe('probe one-shot lifecycle (U3)', () => {
     expect(await probeResultEvents(served.probe_question_id)).toHaveLength(1);
   });
 
+  it('answer rejects an unknown question id with 404 probe_not_found', async () => {
+    await expect(
+      answerProbe({ db: testDb(), probeQuestionId: 'q_nope', outcome: 0, resolution: 'confirmed' }),
+    ).rejects.toMatchObject({ code: 'probe_not_found', status: 404 });
+  });
+
+  it('answer rejects a non-probe question with 409 not_a_probe', async () => {
+    const now = new Date();
+    const qId = newId();
+    // A regular (non mind_probe) question must not be answerable via this lifecycle.
+    await testDb()
+      .insert(question)
+      .values({
+        id: qId,
+        kind: 'short_answer',
+        prompt_md: 'regular question',
+        reference_md: null,
+        knowledge_ids: [KC_ID],
+        difficulty: 3,
+        source: 'manual',
+        draft_status: 'active',
+        metadata: {},
+        created_at: now,
+        updated_at: now,
+      });
+    await expect(
+      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0, resolution: 'confirmed' }),
+    ).rejects.toMatchObject({ code: 'not_a_probe', status: 409 });
+  });
+
+  it('answer rejects a probe missing its conjecture ref with 409 probe_missing_conjecture_ref', async () => {
+    const now = new Date();
+    const qId = newId();
+    // A mind_probe row whose metadata lacks conjecture_proposal_id (corrupt provenance).
+    await testDb()
+      .insert(question)
+      .values({
+        id: qId,
+        kind: 'short_answer',
+        prompt_md: 'orphan probe',
+        reference_md: null,
+        knowledge_ids: [KC_ID],
+        difficulty: 3,
+        source: PROBE_QUESTION_SOURCE,
+        draft_status: 'draft',
+        metadata: {},
+        created_at: now,
+        updated_at: now,
+      });
+    await expect(
+      answerProbe({ db: testDb(), probeQuestionId: qId, outcome: 0, resolution: 'confirmed' }),
+    ).rejects.toMatchObject({ code: 'probe_missing_conjecture_ref', status: 409 });
+  });
+
   it('≤3 concurrent cap — 4th serve is cap_reached, answering frees a slot', async () => {
     const ids: string[] = [];
     for (let i = 0; i < MAX_CONCURRENT_ACTIVE_PROBES; i += 1) {
