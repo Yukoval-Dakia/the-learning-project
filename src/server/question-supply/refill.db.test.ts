@@ -103,10 +103,12 @@ describe('refillActiveLearningPools (YUK-474)', () => {
     process.env.QUESTION_SUPPLY_REFILL_ENABLED = 'true';
   });
   afterEach(() => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.QUESTION_SUPPLY_REFILL_ENABLED;
   });
 
   it('flag off → byte-identical no-op：返 []、dispatch 不被调（即便池见底）', async () => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.QUESTION_SUPPLY_REFILL_ENABLED;
     const kid = createId();
     await seedKnowledge(kid);
@@ -242,6 +244,7 @@ describe('refillThinPools — explicit KC set (YUK-474)', () => {
     process.env.QUESTION_SUPPLY_REFILL_ENABLED = 'true';
   });
   afterEach(() => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.QUESTION_SUPPLY_REFILL_ENABLED;
   });
 
