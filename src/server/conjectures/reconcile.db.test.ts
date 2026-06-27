@@ -199,6 +199,13 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(scores[0].id).toBe(`prediction_score:${seed.probeResultEventId}`);
   });
 
+  it('coerces an out-of-range R(t) to null in the score event (fail-closed, review fix)', async () => {
+    const seed = await seedAnsweredProbe({ retrievability: 1.5 }); // outside [0,1]
+    await reconcileConjecturePredictions(db);
+    const scores = await scoreEvents(seed.probeResultEventId);
+    expect((scores[0].payload as Record<string, unknown>).retrievability_at_judge).toBeNull();
+  });
+
   it('a retired probe still writes a soft no-evidence cell', async () => {
     await seedAnsweredProbe({ knowledgeId: 'k_ret', outcome: 1, resolution: 'retired' });
     const result = await reconcileConjecturePredictions(db);

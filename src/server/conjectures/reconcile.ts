@@ -182,7 +182,10 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       conjecture_event_id: conjectureEventId,
       outcome,
       resolution,
-      retrievability_at_judge: typeof rt === 'number' ? rt : null,
+      // R(t) is a probability in [0,1]; coerce NaN / ±Infinity / out-of-range to null so a
+      // malformed value can't poison the LOG event (fail-closed, like the fields above).
+      retrievability_at_judge:
+        typeof rt === 'number' && Number.isFinite(rt) && rt >= 0 && rt <= 1 ? rt : null,
       created_at: r.created_at,
     });
   }
