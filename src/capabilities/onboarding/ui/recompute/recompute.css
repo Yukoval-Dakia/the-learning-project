@@ -1,0 +1,511 @@
+/* Loom · #41 Reproducible Diagnostic Profile — verify layer styles.
+   复用 loom 设计系统 primitive(card/pill/band/icon)。新元素只有:
+   重算控件 · verified ✓ / mismatch ✗ 指示 · 离线芯片 · 逐位详情 / 漂移对比。
+   语义色:✓ 用 good(沙绿,信任 payoff) · ✗ 用 hard(赭黄,冷静提示,不报警红)。 */
+
+/* ── 重算 / 核对条 · 4 状态都落这条 ─────────────────────────── */
+.rc-verify {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-3) var(--s-4);
+  margin: calc(-1 * var(--s-2)) 0 var(--s-2);
+  border-bottom: 1px solid var(--line);
+  transition: background var(--dur-base) var(--ease-out);
+}
+.rc-verify-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  color: var(--coral);
+  border: 1px solid var(--line);
+  transition: all var(--dur-base) var(--ease-out);
+}
+.rc-verify-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rc-verify-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rc-verify-sub {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  line-height: var(--lh-snug);
+}
+.rc-verify-sub b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.rc-verify-act {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: none;
+}
+
+.rc-tick {
+  color: var(--good-ink);
+  font-weight: 700;
+}
+
+/* idle (A) — latent invite */
+.rc-verify.rc-state-idle .rc-verify-icon {
+  color: var(--coral);
+}
+
+/* running (B) — near-instant flash, not a spinner-wait */
+.rc-verify.rc-state-running .rc-verify-icon {
+  color: var(--ink-3);
+  animation: rc-spin .54s linear;
+}
+@keyframes rc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* match (C) — trust payoff, gentle sage */
+.rc-verify.rc-state-match {
+  background: color-mix(in oklab, var(--good-soft) 55%, transparent);
+}
+.rc-verify.rc-state-match .rc-verify-icon {
+  background: var(--good-soft);
+  color: var(--good-ink);
+  border-color: var(--good-line);
+}
+
+/* drift (D) — calm ochre, readable & honest, never alarm-red */
+.rc-verify.rc-state-drift {
+  background: color-mix(in oklab, var(--hard-soft) 60%, transparent);
+}
+.rc-verify.rc-state-drift .rc-verify-icon {
+  background: var(--hard-soft);
+  color: var(--hard-ink);
+  border-color: var(--hard-line);
+}
+
+/* offline chip — emphasise pure on-device */
+.rc-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.rc-offline svg {
+  color: var(--coral);
+}
+
+/* detail toggle + re-run */
+.rc-detail-toggle {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: var(--fs-caption);
+  color: var(--coral);
+  padding: 4px 8px;
+  border-radius: var(--r-2);
+  font-family: inherit;
+  white-space: nowrap;
+}
+.rc-detail-toggle:hover {
+  color: var(--coral-hover);
+  background: var(--coral-soft);
+}
+.rc-rerun {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  color: var(--ink-3);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.rc-rerun:hover {
+  color: var(--coral);
+  border-color: var(--coral-line);
+  background: var(--coral-soft);
+}
+
+/* ── per-KC 指示芯片 ─────────────────────────────────────── */
+.rc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--ls-wide);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.rc-chip.rc-ok {
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+}
+.rc-chip.rc-x {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+}
+.rc-chip.rc-na {
+  color: var(--ink-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  font-weight: 500;
+}
+
+/* drifted row highlight (calm, ochre hairline) */
+.ob-kc.rc-kc-drift {
+  background: color-mix(in oklab, var(--hard-soft) 38%, transparent);
+  box-shadow: inset 2px 0 0 var(--hard-line);
+  border-radius: var(--r-2);
+  padding-left: var(--s-2);
+  padding-right: var(--s-2);
+  margin: 0 calc(-1 * var(--s-2));
+}
+
+/* running shimmer over band tracks — "觉得是瞬时" */
+@media (prefers-reduced-motion: no-preference) {
+  [data-rc="running"] .ob-band-track::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in oklab, var(--paper-raised) 75%, transparent),
+      transparent
+    );
+    animation: rc-shimmer .54s var(--ease-out);
+  }
+  @keyframes rc-shimmer {
+    to {
+      transform: translateX(100%);
+    }
+  }
+}
+
+/* ── detail panel · 账本 → 重导值 (C) ───────────────────────── */
+.rc-detail {
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  animation: rc-reveal var(--dur-base) var(--ease-out);
+}
+@keyframes rc-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rc-ledger {
+  display: flex;
+  flex-direction: column;
+}
+.rc-ledger-head,
+.rc-ledger-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 54px minmax(0, 0.9fr) 50px 64px;
+  gap: var(--s-2);
+  align-items: center;
+  padding: 6px 4px;
+}
+.rc-ledger-head {
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  border-bottom: 1px solid var(--line);
+  text-transform: none;
+}
+.rc-ledger-row {
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-caption);
+}
+.rc-ledger-row:last-child {
+  border-bottom: 0;
+}
+.rc-ledger-name {
+  color: var(--ink);
+  font-weight: 500;
+}
+.rc-num {
+  text-align: right;
+  color: var(--ink-2);
+}
+.rc-num.mono,
+.rc-ledger-head .rc-num {
+  font-family: var(--font-mono);
+}
+.rc-eq {
+  text-align: right;
+}
+.rc-eq-ok,
+.rc-eq-x {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.rc-eq-ok {
+  color: var(--good-ink);
+}
+.rc-eq-x {
+  color: var(--hard-ink);
+}
+
+/* ── drift detail (D) · 显示 vs 重导 ──────────────────────── */
+.rc-drift-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.rc-drift-kc {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--ink);
+}
+.rc-drift-tag {
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-pill);
+  padding: 1px 9px;
+}
+.rc-drift-table {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--paper-raised);
+}
+.rc-drift-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+.rc-drift-col + .rc-drift-col {
+  border-left: 1px solid var(--line-soft);
+}
+.rc-drift-col.rc-drift-labels {
+  flex: 0 0 auto;
+  min-width: 84px;
+  background: var(--paper-sunk);
+}
+.rc-drift-col > span {
+  padding: 6px 12px;
+  font-size: var(--fs-caption);
+}
+.rc-drift-h {
+  font-size: 10px;
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  border-bottom: 1px solid var(--line-soft);
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+}
+.rc-drift-labels > span:not(.rc-drift-h) {
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.rc-drift-labels > span:last-child {
+  border-bottom: 0;
+}
+.rc-drift-col > span + span {
+  border-bottom: 1px solid var(--line-soft);
+}
+.rc-drift-col > span:last-child {
+  border-bottom: 0;
+}
+.rc-drift-server {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--hard-line);
+}
+.rc-drift-device {
+  color: var(--good-ink);
+  font-weight: 600;
+}
+.rc-drift-note {
+  margin-top: var(--s-3);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  line-height: var(--lh-prose);
+  text-wrap: pretty;
+}
+.rc-drift-note b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ── honest-boundary footnote ─────────────────────────────── */
+.rc-boundary {
+  display: flex;
+  gap: 8px;
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px dashed var(--line);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  line-height: var(--lh-prose);
+  text-wrap: pretty;
+}
+.rc-boundary svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-4);
+}
+.rc-boundary b {
+  color: var(--ink-3);
+  font-weight: 600;
+}
+
+/* ── calibration-maturity 卡 · profile 级徽章 ───────────────── */
+.rc-cal {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-3) 0 var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1);
+}
+.rc-cal.rc-state-match {
+  background: color-mix(in oklab, var(--good-soft) 45%, var(--paper-raised));
+  border-color: var(--good-line);
+}
+.rc-cal.rc-state-drift {
+  background: color-mix(in oklab, var(--hard-soft) 50%, var(--paper-raised));
+  border-color: var(--hard-line);
+}
+.rc-cal-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+}
+.rc-cal.rc-state-match .rc-cal-icon {
+  background: var(--good-soft);
+  border-color: var(--good-line);
+  color: var(--good-ink);
+}
+.rc-cal.rc-state-drift .rc-cal-icon {
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+  color: var(--hard-ink);
+}
+.rc-cal.rc-state-running .rc-cal-icon {
+  animation: rc-spin .54s linear;
+}
+.rc-cal-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rc-cal-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rc-cal-sub {
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  line-height: var(--lh-snug);
+}
+.rc-cal-sub b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.rc-cal-figs {
+  display: inline-flex;
+  gap: 6px;
+}
+.rc-cal-fig {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  color: var(--good-ink);
+}
+.rc-cal-fig svg {
+  color: var(--good-ink);
+}
+
+/* ── responsive ──────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .rc-verify {
+    flex-wrap: wrap;
+  }
+  .rc-verify-act {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .rc-ledger-head {
+    display: none;
+  }
+  .rc-ledger-row {
+    grid-template-columns: 1fr auto;
+    grid-auto-rows: auto;
+    gap: 4px 10px;
+  }
+  .rc-ledger-name {
+    grid-column: 1 / -1;
+  }
+}

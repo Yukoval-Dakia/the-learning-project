@@ -92,6 +92,8 @@ const ICONS = {
   panelRight:
     '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M17 8h1.5M17 11h1.5"/>',
   minus: '<path d="M5 12h14"/>',
+  // YUK-495 #41 — read-only/locked-ledger glyph for the recompute boundary note.
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 } as const;
 
 export type LoomIconName = keyof typeof ICONS;
