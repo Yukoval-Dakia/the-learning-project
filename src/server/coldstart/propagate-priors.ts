@@ -113,62 +113,82 @@ export async function loadDayOnePriors(
   const ids = Array.from(new Set(scope.map((s) => s.trim()).filter((s) => s.length > 0)));
   if (ids.length === 0) return null;
 
-  // Active `prerequisite` edges with BOTH endpoints in scope. Direction: from = prerequisite,
-  // to = dependent (topology-gate.ts buildPrerequisiteAdjacency builds adj[from] ⊇ {to} as the
-  // learning-order successor map). archived_at IS NULL = live edges only.
-  const edgeRows = await db
-    .select({
-      from: knowledge_edge.from_knowledge_id,
-      to: knowledge_edge.to_knowledge_id,
-    })
-    .from(knowledge_edge)
-    .where(
-      and(
-        eq(knowledge_edge.relation_type, 'prerequisite'),
-        isNull(knowledge_edge.archived_at),
-        inArray(knowledge_edge.from_knowledge_id, ids),
-        inArray(knowledge_edge.to_knowledge_id, ids),
-      ),
+  // DARK-SHIP RESILIENCE: everything below is wrapped so a flag-ON failure — a DB error, a
+  // native panic / cycle rejection / ABI mismatch, or a binding-drift guard tripping — degrades
+  // to NO-OP (null) + a log line instead of throwing into the LIVE placement-profile read. The
+  // native binding must NEVER break the production path; the loud drift guards stay loud (logged)
+  // but caught here, reconciling "fail loudly" with "never break the live read".
+  try {
+    // Active `prerequisite` edges with BOTH endpoints in scope. Direction: from = prerequisite,
+    // to = dependent (topology-gate.ts buildPrerequisiteAdjacency builds adj[from] ⊇ {to} as the
+    // learning-order successor map). archived_at IS NULL = live edges only.
+    const edgeRows = await db
+      .select({
+        from: knowledge_edge.from_knowledge_id,
+        to: knowledge_edge.to_knowledge_id,
+      })
+      .from(knowledge_edge)
+      .where(
+        and(
+          eq(knowledge_edge.relation_type, 'prerequisite'),
+          isNull(knowledge_edge.archived_at),
+          inArray(knowledge_edge.from_knowledge_id, ids),
+          inArray(knowledge_edge.to_knowledge_id, ids),
+        ),
+      );
+
+    const indexOf = new Map(ids.map((id, i) => [id, i]));
+    const prereqEdges: NativePrereqEdge[] = [];
+    for (const e of edgeRows) {
+      const p = indexOf.get(e.from);
+      const d = indexOf.get(e.to);
+      // Defensive: the inArray already scopes both endpoints, so this never drops a row in
+      // practice; it just narrows the types from `number | undefined` to `number`.
+      if (p === undefined || d === undefined) continue;
+      prereqEdges.push({ prereqIdx: p, depIdx: d });
+    }
+
+    // The kernel echoes attribution by the numeric kc_id it was given; pass indices 0..n-1 so a
+    // returned weakestPrereqId maps straight back to ids[]. Day-one inputs: b = 0, θg = 0.
+    const kcIds = ids.map((_, i) => i);
+    const zeros = ids.map(() => 0);
+    const posteriors = addon.propagatePriors(
+      kcIds,
+      prereqEdges,
+      zeros,
+      zeros,
+      DAY_ONE_SHRINK_COEFF,
     );
+    // The kernel returns exactly one GridPosterior per KC in input order. A shorter array means a
+    // stale/drifted binding — throw (caught below → NO-OP + log) rather than silently drop KCs.
+    if (posteriors.length !== ids.length) {
+      throw new Error(
+        `propagatePriors returned ${posteriors.length} posteriors for ${ids.length} KCs (binding drift)`,
+      );
+    }
 
-  const indexOf = new Map(ids.map((id, i) => [id, i]));
-  const prereqEdges: NativePrereqEdge[] = [];
-  for (const e of edgeRows) {
-    const p = indexOf.get(e.from);
-    const d = indexOf.get(e.to);
-    // Defensive: the inArray already scopes both endpoints, so this never drops a row in
-    // practice; it just narrows the types from `number | undefined` to `number`.
-    if (p === undefined || d === undefined) continue;
-    prereqEdges.push({ prereqIdx: p, depIdx: d });
+    const out = new Map<string, DayOnePrior>();
+    for (let i = 0; i < ids.length; i++) {
+      const post = posteriors[i];
+      if (!post) continue;
+      const widx = post.weakestPrereqId;
+      // Bound-check the echoed index: a valid widx is 0 ≤ widx < ids.length. Treat anything
+      // out of range (a binding bug / ABI mismatch) as "no attribution" rather than reading
+      // ids[undefined]. widx may legitimately be 0 → guard on undefined + range, not falsiness.
+      // The condition is inlined so TS narrows widx to `number` for the ids[widx] read.
+      const weakestId =
+        widx !== undefined && widx >= 0 && widx < ids.length ? ids[widx] : undefined;
+      out.set(ids[i], {
+        mean_mastery: meanMastery(post.probs),
+        weakest_prereq_id: weakestId,
+        weakest_prereq_mastery: post.weakestPrereqMastery,
+      });
+    }
+    return out;
+  } catch (err) {
+    console.error('[loadDayOnePriors] native propagation failed; degrading to NO-OP', err);
+    return null;
   }
-
-  // The kernel echoes attribution by the numeric kc_id it was given; pass indices 0..n-1 so a
-  // returned weakestPrereqId maps straight back to ids[]. Day-one inputs: b = 0, θg = 0.
-  const kcIds = ids.map((_, i) => i);
-  const zeros = ids.map(() => 0);
-  const posteriors = addon.propagatePriors(kcIds, prereqEdges, zeros, zeros, DAY_ONE_SHRINK_COEFF);
-  // The kernel returns exactly one GridPosterior per KC in input order. A shorter array means a
-  // stale/drifted binding — fail loudly rather than silently drop KCs from the surface (matches
-  // the crate's loud-input idiom: solve_theta_one_kc / forward_auc reject bad input up front).
-  if (posteriors.length !== ids.length) {
-    throw new Error(
-      `propagatePriors returned ${posteriors.length} posteriors for ${ids.length} KCs (binding drift)`,
-    );
-  }
-
-  const out = new Map<string, DayOnePrior>();
-  for (let i = 0; i < ids.length; i++) {
-    const post = posteriors[i];
-    if (!post) continue;
-    const widx = post.weakestPrereqId;
-    out.set(ids[i], {
-      mean_mastery: meanMastery(post.probs),
-      // widx may be 0 (a valid index) → guard on `undefined`, not falsiness.
-      weakest_prereq_id: widx === undefined ? undefined : ids[widx],
-      weakest_prereq_mastery: post.weakestPrereqMastery,
-    });
-  }
-  return out;
 }
 
 /** Σ probs·σ(GRID_THETA) — the day-one (θg = b = 0) expected mastery probability, via the
