@@ -18,12 +18,18 @@ import {
   DIFFICULTY_PROXY_WEIGHT,
   ELO_K_GLOBAL,
   HIERARCHICAL_ELO_ENABLED,
+  type RtCorrectBuffer,
+  SRT_D_FROM_QUANTILE,
   SRT_ENABLED,
+  SRT_FISHER_WEIGHT_ENABLED,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
   difficultyToLogitB,
   eloK,
+  expectedScore,
+  pushRtCorrectSample,
   resolveSrtTimeLimit,
+  resolveSrtTimeLimitFromQuantile,
   srtOutcome,
   thetaSe,
   updateThetaPrecision,
@@ -85,6 +91,10 @@ export interface UpsertMasteryStateInput {
   // 语义）：只有 caller 显式传值时才写。INSERT 缺省 → DB default NULL；UPDATE 缺省 → 不动此列。
   // inc-1 PURE-ADDITIVE SHADOW：写路径存在但**无 inc-1 下游读者**（不喂 p(L)/effectiveB/选题）。
   theta_grid_json?: ThetaGridPosterior | null;
+  // A1 (YUK-449) — per-KC rolling correct-RT ring buffer (SRT quantile-d source). Same
+  // optional-maintenance semantics: only written when the caller passes it (an SRT-eligible
+  // correct attempt). SHADOW vs theta_hat until SRT_D_FROM_QUANTILE flips.
+  rt_correct_ms?: RtCorrectBuffer | null;
 }
 
 /**
@@ -122,6 +132,11 @@ export async function upsertMasteryState(
   if (input.theta_grid_json !== undefined) {
     updateSet.theta_grid_json = input.theta_grid_json;
   }
+  // A1 (YUK-449) — same optional-maintenance semantics for the per-KC correct-RT buffer:
+  // only written on an SRT-eligible correct attempt; INSERT/UPDATE skip the column otherwise.
+  if (input.rt_correct_ms !== undefined) {
+    updateSet.rt_correct_ms = input.rt_correct_ms;
+  }
   await db
     .insert(mastery_state)
     .values({
@@ -136,6 +151,7 @@ export async function upsertMasteryState(
       ...(input.theta_precision !== undefined ? { theta_precision: input.theta_precision } : {}),
       ...(input.last_theta_delta !== undefined ? { last_theta_delta: input.last_theta_delta } : {}),
       ...(input.theta_grid_json !== undefined ? { theta_grid_json: input.theta_grid_json } : {}),
+      ...(input.rt_correct_ms !== undefined ? { rt_correct_ms: input.rt_correct_ms } : {}),
       updated_at: now,
     })
     .onConflictDoUpdate({
@@ -594,6 +610,10 @@ export async function updateThetaForAttempt(
       // running posterior rather than re-starting it. Shadow-only — never read by any
       // inc-1 decision/display path.
       gridPrior: (row?.theta_grid_json as ThetaGridPosterior | null | undefined) ?? null,
+      // A1 (YUK-449) — PRE-attempt per-KC rolling correct-RT buffer (null → cold start →
+      // quantile-d falls back to the population seed). Read from the SAME pre-attempt row;
+      // the post-attempt push (correct + RT) appends to this and re-writes the column.
+      rtBuffer: (row?.rt_correct_ms as RtCorrectBuffer | null | undefined)?.samples ?? null,
     };
   });
 
@@ -665,9 +685,24 @@ export async function updateThetaForAttempt(
   const useSrt = SRT_ENABLED && typeof rtMs === 'number' && Number.isFinite(rtMs);
   let credits: number[];
   if (useSrt) {
-    const d = resolveSrtTimeLimit(input.difficulty); // seconds (module const)
+    // A1 (YUK-449) — d SOURCE. Flag ON → per-KC rolling RT quantile of the PRIMARY KC
+    //   (states[0] = knowledgeIds[0]); buffer < SRT_RT_MIN_N → population seed. Flag OFF
+    //   (DEFAULT) → population seed exactly as today → byte-identical θ̂. The quantile is a
+    //   sufficient statistic of the LEARNER'S OWN correct RTs (self-state, n=1 admissible —
+    //   not a fitted per-item a/φ).
+    const d = SRT_D_FROM_QUANTILE
+      ? resolveSrtTimeLimitFromQuantile(states[0].rtBuffer, input.difficulty)
+      : resolveSrtTimeLimit(input.difficulty); // seconds (module const)
     const tSeconds = (rtMs as number) / 1000; // ms → s
-    const srt = srtOutcome(input.outcome === 1, d, tSeconds); // ∈ [0,1]
+    // A1 (YUK-450) — Fisher-conditioned TIME WEIGHT. Flag ON → w = 4·pItem·(1−pItem): peak 1
+    //   at pItem=0.5 (RT most informative when difficulty ≈ ability), → 0 at extreme p (RT
+    //   near-uninformative + noisiest; also tames the over-harsh "easy item answered slow"
+    //   negative credit). pItem = whole-item p(correct) = Π expectedScore(effectiveθ_k, b) —
+    //   built from the learner's OWN θ̂ + the locked b anchor (self-state, n=1; NO per-item
+    //   time-discrimination φ). Flag OFF (DEFAULT) → w = 1 → srtOutcome byte-identical to today.
+    const pItem = effectiveThetas.reduce((acc, th) => acc * expectedScore(th, b), 1);
+    const timeWeight = SRT_FISHER_WEIGHT_ENABLED ? 4 * pItem * (1 - pItem) : 1;
+    const srt = srtOutcome(input.outcome === 1, d, tSeconds, timeWeight); // ∈ [0,1]
     credits = conjunctiveCreditsContinuous(effectiveThetas, b, srt);
   } else {
     credits = conjunctiveCredits(effectiveThetas, b, input.outcome);
@@ -696,6 +731,16 @@ export async function updateThetaForAttempt(
     //   bit-identical with the flag off and layer-independent with it on.
     const newPrecision = updateThetaPrecision(s.precision, s.theta, b, bWeight);
     const delta = newTheta - s.theta;
+    // A1 (YUK-449) — LIVE per-KC correct-RT collection. Gated on `useSrt && correct` (an
+    //   SRT-eligible correct attempt, finite RT) — NOT on SRT_D_FROM_QUANTILE, so the buffer
+    //   accrues BEFORE the flag flips (else the data never comes → the flip never justifies
+    //   itself). Push the item RT (ms) into THIS KC's ring buffer. undefined on a wrong /
+    //   no-RT / SRT-off attempt → upsert leaves the column untouched. SHADOW: never affects
+    //   theta_hat while SRT_D_FROM_QUANTILE is off (flag-off d-read is byte-identical-anchored).
+    const rtBuffer =
+      useSrt && input.outcome === 1
+        ? { samples: pushRtCorrectSample(s.rtBuffer, rtMs as number) }
+        : undefined;
     await upsertMasteryState(tx, {
       subject_id: s.id,
       theta_hat: newTheta,
@@ -704,6 +749,7 @@ export async function updateThetaForAttempt(
       fail_count: s.fail + (input.outcome === 0 ? 1 : 0),
       last_outcome_at: input.now,
       theta_precision: newPrecision,
+      rt_correct_ms: rtBuffer,
       last_theta_delta: delta,
     });
     // YUK-471 Wave 0 — bracket THIS KC's transition. before = RAW pre-attempt row

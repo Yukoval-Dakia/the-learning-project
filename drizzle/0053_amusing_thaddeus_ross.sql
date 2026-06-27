@@ -1,0 +1,1 @@
+ALTER TABLE "mastery_state" ADD COLUMN "rt_correct_ms" jsonb;

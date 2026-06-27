@@ -257,6 +257,32 @@ export const SRT_ENABLED = true;
  */
 export const SRT_MIN_SIGNAL = 0.15;
 
+/**
+ * A1 (YUK-450) — master flag for the Fisher-conditioned TIME-WEIGHT on the SRT credit.
+ * **Default false this PR = ship DARK; flip in a follow-up once RT has accumulated and the
+ * time-noise at extreme p has been observed.**
+ *
+ * WHY: the residual-time signal carries the most θ information when the item difficulty ≈
+ *   the learner's current ability (p ≈ 0.5, Rasch Fisher information peak); at p → 0/1 the
+ *   outcome is near-certain so RT carries little θ info AND the wall-clock RT is noisier
+ *   (more mind-wandering on a too-hard item). Both point to: DOWN-WEIGHT the time term at
+ *   extreme p. The weight is w = 4·p(1−p) (peak 1 at p=0.5, → 0 at the extremes), where p is
+ *   the model's OWN p(correct) for the item (a function of θ̂ and the locked b anchor —
+ *   self-state, n=1 admissible). It does NOT estimate a per-item time-discrimination φ
+ *   (a cross-examinee variance component, un-learnable at n=1 — the design red-line).
+ *
+ * true → the state.ts / replay seam passes timeWeight = 4·pItem·(1−pItem) into srtOutcome.
+ * false (DEFAULT) → timeWeight = 1 → srtOutcome is BYTE-IDENTICAL to today (the time term is
+ *   never down-weighted). STILL A VALID BEHAVIOUR (the off path) — exercised by the
+ *   explicit-false regression anchor in state.db.test.ts, NOT deleted.
+ *
+ * Composes orthogonally with SRT_ENABLED (gates whether SRT runs at all), HIERARCHICAL_ELO
+ * (gates the θ INPUT), and SRT_D_FROM_QUANTILE (gates the d SCALE). This flag gates only the
+ * time-term WEIGHT, never the binary correctness sign (a wrong answer always pulls θ below a
+ * correct one — the SRT_MIN_SIGNAL floor still holds at every weight).
+ */
+export const SRT_FISHER_WEIGHT_ENABLED = false;
+
 function clamp01(x: number): number {
   if (x < 0) return 0;
   if (x > 1) return 1;
@@ -281,25 +307,33 @@ function clamp01(x: number): number {
  *   - slow-correct (r=0, r_eff=floor) → 0.5 + 0.5·floor  >  0.5 (small reward, NOT 0.5)
  *   - fast-wrong   (r=1, r_eff=1) → 0.0  == binary wrong (regression anchor)
  *   - slow-wrong   (r=0, r_eff=floor) → 0.5 − 0.5·floor  <  0.5 (small penalty, NOT 0.5)
- * INVARIANT (all t≥0): srtOutcome(true) − srtOutcome(false) ≥ SRT_MIN_SIGNAL, so a wrong
- * answer ALWAYS pulls θ below what a correct answer would at the same response time.
- * fast-correct moves θ MORE than slow-correct, fast-wrong is penalised HARDER than
- * slow-wrong, all inside the binary [0,1] envelope.
+ * INVARIANT (all t≥0): srtOutcome(true) − srtOutcome(false) ≥ SRT_MIN_SIGNAL·timeWeight, so a
+ * wrong answer ALWAYS pulls θ below what a correct answer would at the same response time
+ * (whenever timeWeight > 0). fast-correct moves θ MORE than slow-correct, fast-wrong is
+ * penalised HARDER than slow-wrong, all inside the binary [0,1] envelope.
+ *
+ * A1 (YUK-450) — `timeWeight ∈ [0,1]` (DEFAULT 1) is the Fisher-conditioned weight on the
+ * TIME component (see SRT_FISHER_WEIGHT_ENABLED). It shrinks the effective residual toward
+ * the pure-binary endpoint as it → 0, fading the time term at extreme-p items while keeping
+ * the correctness sign. timeWeight = 1 ⇒ output BYTE-IDENTICAL to the pre-YUK-450 srtOutcome
+ * for every (correct, d, t); timeWeight = 0 ⇒ correct → 1.0 / wrong → 0.0 (pure binary).
  */
-export function srtOutcome(correct: boolean, d: number, t: number): number {
-  // d ≤ 0 is a config bug (resolveSrtTimeLimit always returns > 0); guard so a bad
-  // d degrades to the floored minimum-signal endpoints (NOT a bare 0.5 — that would
-  // re-erase the correctness sign the SRT_MIN_SIGNAL floor exists to protect). A
-  // non-positive limit is treated as "no time signal" → the floored slow value.
-  if (!(d > 0)) {
-    return correct ? 0.5 + 0.5 * SRT_MIN_SIGNAL : 0.5 - 0.5 * SRT_MIN_SIGNAL;
-  }
-  // Effective residual floored at SRT_MIN_SIGNAL so r_eff ∈ [SRT_MIN_SIGNAL, 1]:
-  // even a fully timed-out answer (raw r=0) keeps a minimum correctness signal, so
-  // correct and wrong NEVER collapse to the same value (Bugbot HIGH fix). Fast (raw
-  // r=1) ⇒ r_eff=1 ⇒ binary anchors 1.0 / 0.0 preserved exactly.
-  const rEff = SRT_MIN_SIGNAL + (1 - SRT_MIN_SIGNAL) * clamp01((d - t) / d);
-  return correct ? 0.5 + 0.5 * rEff : 0.5 - 0.5 * rEff;
+export function srtOutcome(correct: boolean, d: number, t: number, timeWeight = 1): number {
+  // d ≤ 0 is a config bug (resolveSrtTimeLimit always returns > 0); treat a bad d as "no
+  // time signal" → the floored minimum-signal residual (NOT a bare 0.5 — that would re-erase
+  // the correctness sign the SRT_MIN_SIGNAL floor exists to protect). Otherwise the effective
+  // residual is floored at SRT_MIN_SIGNAL so r_eff ∈ [SRT_MIN_SIGNAL, 1]: even a fully
+  // timed-out answer (raw r=0) keeps a minimum correctness signal, so correct and wrong NEVER
+  // collapse to the same value (Bugbot HIGH fix). Fast (raw r=1) ⇒ r_eff=1 ⇒ binary anchors
+  // 1.0 / 0.0 preserved exactly.
+  const rEff =
+    d > 0 ? SRT_MIN_SIGNAL + (1 - SRT_MIN_SIGNAL) * clamp01((d - t) / d) : SRT_MIN_SIGNAL;
+  // YUK-450 — the Fisher-conditioned time weight shrinks r_eff toward the pure-binary endpoint
+  // (r_effW = 1) as timeWeight → 0, fading the TIME component while preserving the correctness
+  // sign. timeWeight = 1 (DEFAULT) ⇒ r_effW = r_eff ⇒ BYTE-IDENTICAL to today for all inputs
+  // (incl. the d ≤ 0 guard: r_effW = SRT_MIN_SIGNAL). timeWeight = 0 ⇒ r_effW = 1 ⇒ pure binary.
+  const rEffW = 1 - timeWeight * (1 - rEff);
+  return correct ? 0.5 + 0.5 * rEffW : 0.5 - 0.5 * rEffW;
 }
 
 /**
@@ -323,6 +357,133 @@ export function resolveSrtTimeLimit(difficulty: number): number {
   const map: Record<number, number> = { 1: 20, 2: 25, 3: 30, 4: 40, 5: 50 };
   const d = map[Math.round(difficulty)];
   return d ?? 30;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A1 (YUK-449) — per-KC rolling RT quantile as the SRT design constant d.
+//
+// The population-seeded resolveSrtTimeLimit above is identical across examinees (zero
+// cross-examinee variance — the point of collapsing the un-estimable 2PL a into d), but
+// its d is a COARSE seed. This upgrade derives d from the LEARNER'S OWN answered-correct
+// response times on that KC: a rolling buffer of the last K correct-attempt RTs, with d =
+// the buffer's quantile (median by default). This is n=1 admissible — the quantile is a
+// sufficient statistic of the SINGLE learner's own state (self-RT distribution), NOT a
+// fitted per-item / cross-examinee parameter. Cold start (too few samples) FALLS BACK to
+// the population seed, so the scale anchor never disappears.
+//
+// FLAG: SRT_D_FROM_QUANTILE gates ONLY the d SOURCE (module const, mirrors SRT_ENABLED — NO
+//   config table, NO env). Default false this PR = ship DARK: d stays the population seed,
+//   so the θ̂ math is BYTE-IDENTICAL to today. The buffer COLLECTION is NOT gated by this
+//   flag — it accumulates live whenever SRT runs (so the data exists to justify the flip
+//   later); only the "use the quantile for d" step is deferred behind the flag.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Master flag for deriving the SRT design constant d from the per-KC rolling RT quantile.
+ * **Default false this PR = ship DARK; flip in a follow-up once per-KC RT has accumulated and
+ * the audit:calibration forward-AUC shows the quantile-d beats the population-seed-d.**
+ *
+ * true → resolveSrtTimeLimitFromQuantile(buffer, difficulty) is used at the state.ts / replay
+ *   seam (buffer ≥ SRT_RT_MIN_N → quantile d; else population seed).
+ * false (DEFAULT) → d = resolveSrtTimeLimit(difficulty) exactly as today → θ̂ BYTE-IDENTICAL.
+ *   STILL A VALID BEHAVIOUR (the off path) — exercised by the explicit-false regression anchor
+ *   in state.db.test.ts, NOT deleted.
+ */
+export const SRT_D_FROM_QUANTILE = false;
+
+/**
+ * Ring-buffer capacity: keep the last K answered-correct response times (ms) per KC. Small
+ * (n=1, fast adaptation to the learner's current pace) — owner-tunable.
+ */
+export const SRT_RT_BUFFER_K = 20;
+
+/**
+ * Minimum buffered correct-RT samples before the quantile is trusted as d. Below this the
+ * cold-start population seed is used (the quantile of < ~8 samples is too noisy). Owner-tunable.
+ */
+export const SRT_RT_MIN_N = 8;
+
+/**
+ * Which quantile of the per-KC correct-RT buffer becomes d. 0.5 = median (default). p60
+ * (0.6) would give a slightly more lenient d (more answers count as "fast"); left as a single
+ * owner-tunable knob. In (0,1).
+ */
+export const SRT_RT_QUANTILE = 0.5;
+
+/**
+ * Persisted shape of `mastery_state.rt_correct_ms` — the per-KC rolling correct-RT ring buffer
+ * (the last ≤ SRT_RT_BUFFER_K answered-correct response times, in MILLISECONDS, oldest→newest).
+ * Object-wrapped (not a bare array) so a future per-difficulty bucketing refinement can extend
+ * it without a column reshape. SHADOW persistence — the buffer feeds ONLY the d source when
+ * SRT_D_FROM_QUANTILE flips; it never changes theta_hat (the SoT) while the flag is off.
+ */
+export interface RtCorrectBuffer {
+  /** last ≤ SRT_RT_BUFFER_K answered-correct RTs in ms, oldest→newest. */
+  samples: number[];
+}
+
+/**
+ * Exact quantile of a numeric sample (linear interpolation between order statistics, the
+ * "type-7" / Excel PERCENTILE convention). EXACT (not the P² streaming estimator): the n=1
+ * buffers are tiny (≤ SRT_RT_BUFFER_K), so an honest exact quantile beats a streaming
+ * approximation. Returns NaN for an empty input (caller must guard via SRT_RT_MIN_N).
+ *
+ * @param values unsorted samples (copied + sorted internally; caller's array is not mutated).
+ * @param q in [0,1] (clamped).
+ */
+export function quantile(values: number[], q: number): number {
+  if (values.length === 0) return Number.NaN;
+  const sorted = [...values].sort((a, z) => a - z);
+  if (sorted.length === 1) return sorted[0];
+  const qc = q < 0 ? 0 : q > 1 ? 1 : q;
+  const pos = qc * (sorted.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  const frac = pos - lo;
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * frac;
+}
+
+/**
+ * Append one answered-correct response time (ms) to a per-KC ring buffer, keeping the last
+ * SRT_RT_BUFFER_K samples (FIFO drop of the oldest). Pure — returns a NEW array, never mutates
+ * the input. Non-finite / non-positive samples are dropped (a missing/garbage RT must not
+ * pollute the scale). null/undefined buffer → treated as empty.
+ */
+export function pushRtCorrectSample(
+  buffer: number[] | null | undefined,
+  sampleMs: number,
+): number[] {
+  const base = buffer ?? [];
+  if (!Number.isFinite(sampleMs) || sampleMs <= 0) return [...base];
+  const next = [...base, sampleMs];
+  return next.length > SRT_RT_BUFFER_K ? next.slice(next.length - SRT_RT_BUFFER_K) : next;
+}
+
+/**
+ * Resolve the SRT design constant d (SECONDS) from the per-KC rolling correct-RT buffer,
+ * falling back to the population seed when there is not yet enough data (n=1 cold-start anchor
+ * never disappears).
+ *
+ *   buffer has ≥ SRT_RT_MIN_N samples → d = quantile(buffer, SRT_RT_QUANTILE) / 1000 (ms→s).
+ *   else (null / too few)             → d = resolveSrtTimeLimit(difficulty)  (population seed).
+ *
+ * The quantile is computed from the LEARNER'S OWN correct RTs on the KC (self-state) — zero
+ * cross-examinee variance, d stays a design constant rather than a fitted a/φ. Samples are ms
+ * (the unit responseTimeMs arrives in); d is returned in seconds to match srtOutcome's t.
+ * A degenerate quantile (≤ 0 / non-finite — impossible given pushRtCorrectSample's positivity
+ * filter, but defensive) also falls back to the seed so d is always a sane positive limit.
+ */
+export function resolveSrtTimeLimitFromQuantile(
+  bufferMs: number[] | null | undefined,
+  difficulty: number,
+): number {
+  if (bufferMs && bufferMs.length >= SRT_RT_MIN_N) {
+    const qMs = quantile(bufferMs, SRT_RT_QUANTILE);
+    const dSeconds = qMs / 1000;
+    if (Number.isFinite(dSeconds) && dSeconds > 0) return dSeconds;
+  }
+  return resolveSrtTimeLimit(difficulty);
 }
 
 /**
