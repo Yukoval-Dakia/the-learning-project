@@ -77,11 +77,19 @@ describe('loadPrepDeskConjectures', () => {
     // raw number nor the key. (predicted_p=0.3 / baseline=0.6 are the seed defaults.)
     const json = JSON.stringify(out);
     expect(json).not.toContain('"confidence"');
-    expect(json).not.toContain('0.73');
     expect(json).not.toContain('"predicted_p"');
-    expect(json).not.toContain('0.3');
     expect(json).not.toContain('"baseline_p_at_induction"');
-    expect(json).not.toContain('0.6');
+    // Bare-number leak checks run against the JSON with the dynamic `proposed_at`
+    // timestamp stripped: a millisecond ISO stamp like ...:30.349Z legitimately contains
+    // substrings such as "0.3"/"0.6", which would otherwise flake this assertion. The
+    // calibration numbers never appear on PrepDeskConjecture, so excluding the timestamp
+    // keeps the raw-number leak check meaningful without the false positive.
+    const jsonNoTimestamp = JSON.stringify(out, (key, value) =>
+      key === 'proposed_at' ? undefined : value,
+    );
+    expect(jsonNoTimestamp).not.toContain('0.73');
+    expect(jsonNoTimestamp).not.toContain('0.3');
+    expect(jsonNoTimestamp).not.toContain('0.6');
 
     expect(c.claim).toBe('you multiply derivatives for the chain rule');
     expect(c.knowledge_id).toBe('kn_chain_rule');
