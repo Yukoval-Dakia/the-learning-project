@@ -92,6 +92,23 @@ export const FRONTIER_BOOTSTRAP_FLOOR = 0;
 export const FRONTIER_FILL_MAX_PROPOSALS = 5;
 
 /**
+ * Cap on candidate KCs fed to the LLM. The sparsity gate bounds *frequency* and
+ * FRONTIER_FILL_MAX_PROPOSALS bounds *writes*, but neither bounds INPUT tokens: a
+ * content-heavy graph with no topology yet (the cold-start upload case) keeps an
+ * empty frontier indefinitely → a large candidate list every night. Cap it — we
+ * only write ≤5 proposals, so 50 candidates is ample for the model to choose from.
+ */
+export const FRONTIER_FILL_CANDIDATE_CAP = 50;
+
+/**
+ * Cap on the tree-snapshot nodes sent as LLM context (token safety, same rationale
+ * as FRONTIER_FILL_CANDIDATE_CAP). The candidate KCs are passed explicitly in
+ * `kcs_lacking_prereq`; the tree is supplementary structural context, so a bounded
+ * slice is sufficient.
+ */
+export const FRONTIER_FILL_TREE_CAP = 500;
+
+/**
  * Weight stamped on every bootstrap prerequisite proposal. LOW on purpose: these
  * are TEMPORARY, low-confidence placeholder edges meant to be confirmed (or
  * replaced by a real edge) by the owner in the inbox — never authoritative.
@@ -157,6 +174,7 @@ async function loadKcsLackingPrereq(db: Db): Promise<string[]> {
     WHERE e.id IS NULL
       AND k.archived_at IS NULL
     ORDER BY k.id
+    LIMIT ${FRONTIER_FILL_CANDIDATE_CAP}
   `)) as unknown as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
@@ -195,6 +213,13 @@ export async function runFrontierFillAndWrite(
   const candidateSet = new Set(candidateIds);
 
   // ④ DEDUP — pending proposals (reuse the EXISTING anti-storm reader) + live edges.
+  // NOTE: the live-edge check below is defense-in-depth. Today it is STRUCTURALLY
+  // subsumed by the candidate anti-join (loadKcsLackingPrereq): a proposal's `to`
+  // must be in `candidateSet`, i.e. a KC with NO incoming live prereq edge, so no
+  // (from,to,prerequisite) key can already be a live edge → `skipped_duplicate_edge`
+  // is currently unreachable. We keep it as a cheap belt-and-suspenders (the query
+  // only runs on a sparse graph, where prereq edges are few) so the no-live-dup
+  // invariant survives any future loosening of the candidate picker.
   const pendingEdgeKey = await loadPendingEdgeProposalKeys(db);
   const liveEdges = await db
     .select({
@@ -223,7 +248,9 @@ export async function runFrontierFillAndWrite(
     const taskResult = await runTaskFn(
       'FrontierPrerequisiteTask',
       {
-        tree_snapshot: tree.map((n) => ({
+        // Bounded structural context (token safety — see FRONTIER_FILL_TREE_CAP).
+        // The candidates are passed explicitly below, so a tree slice suffices.
+        tree_snapshot: tree.slice(0, FRONTIER_FILL_TREE_CAP).map((n) => ({
           id: n.id,
           name: n.name,
           parent_id: n.parent_id,
