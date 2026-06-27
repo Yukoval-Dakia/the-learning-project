@@ -124,6 +124,8 @@ describe('reconcileConjecturePredictions (DB)', () => {
     expect(p.retrievability_at_judge).toBe(0.42);
     // Envelope outcome must be null — a score event is NOT an attempt (ND-5).
     expect(scores[0].outcome ?? null).toBeNull();
+    // Opts OUT of the Mem0 ingestion outbox — a system LOG event, not a memory (ADR-0021).
+    expect(scores[0].ingest_at).not.toBeNull();
 
     // (2) typed-ledger cell: soft (confused_with null → §修正-4 gate), never `mastered`.
     const ts = await typedRow('k_a');

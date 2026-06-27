@@ -162,9 +162,20 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     const conjectureEventId = p?.conjecture_event_id;
     const outcome = p?.outcome;
     const resolution = p?.resolution;
-    if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) continue;
-    if (outcome !== 0 && outcome !== 1) continue;
-    if (resolution !== 'confirmed' && resolution !== 'retired') continue;
+    // Reader-level drops are logged (not just silently `continue`d) so a systemic malformed-
+    // payload bug surfaces in the job log, mirroring the loop-body skip warns.
+    if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
+      console.warn('[reconcile] dropping malformed probe_result — bad conjecture_event_id', r.id);
+      continue;
+    }
+    if (outcome !== 0 && outcome !== 1) {
+      console.warn('[reconcile] dropping malformed probe_result — invalid outcome', r.id);
+      continue;
+    }
+    if (resolution !== 'confirmed' && resolution !== 'retired') {
+      console.warn('[reconcile] dropping malformed probe_result — invalid resolution', r.id);
+      continue;
+    }
     const rt = p?.retrievability_at_judge;
     out.push({
       probe_result_event_id: r.id,
@@ -286,6 +297,11 @@ export async function reconcileConjecturePredictions(
       },
       caused_by_event_id: pr.probe_result_event_id,
       created_at: now,
+      // Opt OUT of the memory-ingestion outbox (ADR-0021): a system-derived LOG-only scoring
+      // event is NOT user activity and must not become a Mem0 memory. A non-NULL ingest_at
+      // stamp opts the row out of the `WHERE ingest_at IS NULL` poller — mirrors the
+      // state_snapshot / genesis / artifact-lifecycle system events.
+      ingest_at: now,
     });
     reconciled += 1;
   }
