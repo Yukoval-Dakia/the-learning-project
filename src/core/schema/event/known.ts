@@ -100,6 +100,12 @@ export const AttemptOnQuestion = z.object({
     // capture-the-slot-now pattern as hints_used / reconstruction_signal above.
     // Non-behavioral: judging today still reads `answer_md`; nothing in θ̂ / FSRS /
     // mastery reads this field. See src/core/schema/attempt-payload.ts.
+    // NOTE: this slot validates against the FULL AttemptPayload union, so the event
+    // schema alone does NOT enforce archetype↔question-kind consistency (it has no
+    // QuestionKind in scope). That gate lives at the write point: A5 / YUK-350 must
+    // call `parseAttemptPayloadForKind(kind, …)` when wiring the live writer, NOT
+    // rely on this union to reject a mistyped archetype (e.g. a `numeric` payload on
+    // a `choice` question parses fine here).
     attempt_payload: AttemptPayload.optional(),
   }),
   ...baseOptionalFields,
