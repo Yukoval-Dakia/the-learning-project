@@ -35,11 +35,6 @@ export const practiceCapability = defineCapability({
         load: () => import('./api/appeal').then((m) => m.POST),
       },
       {
-        method: 'GET',
-        path: '/api/review/plan',
-        load: () => import('./api/plan').then((m) => m.GET),
-      },
-      {
         method: 'POST',
         path: '/api/review/sessions',
         load: () => import('./api/sessions').then((m) => m.POST),
@@ -209,18 +204,11 @@ export const practiceCapability = defineCapability({
     ],
   },
   jobs: {
-    // M4-T3 (YUK-319)：practice 域 job 归属声明。review_plan 链式/按需
-    // （coach_daily 跑完 boss.send 链投 + on-demand 重跑），无 cron（D5:29
-    // 「不要另开独立 cron」）；handler 本体随 T3 迁入 ./jobs/review_plan。
-    // rejudge（M2/D15 申诉自动重判）注册留在 handlers.ts 渐缩簿：其注册形态
-    // 是非默认 1s polling + inline 动态 import handleRejudge（非 buildXHandler
-    // 工厂），不走注册器统一配方——此处声明无 load 纯归属元数据。
+    // M4-T3 (YUK-319)：practice 域 job 归属声明。rejudge（M2/D15 申诉自动重判）
+    // 注册留在 handlers.ts 渐缩簿：其注册形态是非默认 1s polling + inline 动态
+    // import handleRejudge（非 buildXHandler 工厂），不走注册器统一配方——此处
+    // 声明无 load 纯归属元数据。（YUK-349：review_plan 链式 job 已随 B3 退役。）
     handlers: [
-      {
-        name: 'review_plan',
-        queue: 'llm',
-        load: () => import('./jobs/review_plan').then((m) => m.buildReviewPlanHandler),
-      },
       { name: 'rejudge', queue: 'llm' },
       // B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill。夜间扫
       // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生

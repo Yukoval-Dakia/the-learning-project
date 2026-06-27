@@ -118,44 +118,6 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       expect(o.retentionSeconds, `updateQueue ${name} retentionSeconds`).toBe(604_800);
     }
   });
-
-  // YUK-203 U4 / D5 — review_plan is chain-triggered (no schedule) and its
-  // queue must be created BEFORE coach_daily so the worker is ready when
-  // buildCoachDailyHandler chains the coach_daily → review_plan send.
-  // M4-T3：两者都由注册器挂载；顺序由「无 schedule 先于 cron」两遍遍历保证，
-  // 不依赖 capabilities 数组顺序（agency 在 practice 前）。
-  it('registers review_plan (no schedule) before coach_daily', async () => {
-    const createQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
-    const updateQueue = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
-    const work = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
-    const schedule = vi.fn((_name: string, ..._rest: unknown[]) => Promise.resolve(undefined));
-    const boss = { createQueue, updateQueue, work, schedule } as unknown as PgBoss;
-
-    await registerAll(boss);
-
-    // YUK-237: review_plan is now created with explicit LLM-tier opts + DLQ.
-    expect(createQueue).toHaveBeenCalledWith('review_plan', {
-      expireInSeconds: 3_600,
-      retentionSeconds: 604_800,
-      deadLetter: 'review_plan_dlq',
-    });
-    expect(work).toHaveBeenCalledWith(
-      'review_plan',
-      { pollingIntervalSeconds: 2, batchSize: 1 },
-      expect.any(Function),
-    );
-    // Chain-triggered, NOT a cron (D5:29) — never scheduled.
-    const scheduledQueues = schedule.mock.calls.map((c) => c[0]);
-    expect(scheduledQueues).not.toContain('review_plan');
-
-    // Ordering: review_plan createQueue must precede coach_daily createQueue.
-    const createdQueues = createQueue.mock.calls.map((c) => c[0]);
-    const reviewPlanIdx = createdQueues.indexOf('review_plan');
-    const coachDailyIdx = createdQueues.indexOf('coach_daily');
-    expect(reviewPlanIdx).toBeGreaterThanOrEqual(0);
-    expect(coachDailyIdx).toBeGreaterThanOrEqual(0);
-    expect(reviewPlanIdx).toBeLessThan(coachDailyIdx);
-  });
 });
 
 // YUK-259 — createOrUpdateQueue concurrency safety. In a cold start the app's
@@ -198,12 +160,10 @@ describe('registerHandlers + registerCapabilityJobs — concurrent create race (
       .map((c) => c[0] as string)
       .filter((n) => !n.startsWith('memory_'));
     expect(reconciled).toContain('knowledge_maintenance_nightly');
-    expect(reconciled).toContain('review_plan');
-    // A representative DLQ is reconciled too (created via createJobQueue).
-    expect(reconciled).toContain('review_plan_dlq');
-    // Work + schedule wiring is unaffected by the create race.
+    // Work + schedule wiring is unaffected by the create race (YUK-349: review_plan
+    // retired — assert a still-registered LLM capability queue instead).
     expect(work).toHaveBeenCalledWith(
-      'review_plan',
+      'knowledge_maintenance_nightly',
       { pollingIntervalSeconds: 2, batchSize: 1 },
       expect.any(Function),
     );
@@ -276,6 +236,6 @@ describe('registerHandlers + registerCapabilityJobs — concurrent create race (
     // updateQueue keeps running on every pass so config stays reconciled even
     // when createQueue is a no-op/raise on the warm table.
     const reconciled = updateQueue.mock.calls.map((c) => c[0] as string);
-    expect(reconciled).toContain('review_plan');
+    expect(reconciled).toContain('knowledge_maintenance_nightly');
   });
 });

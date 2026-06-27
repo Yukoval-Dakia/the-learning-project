@@ -83,8 +83,7 @@ const COACH_SUGGESTION_KIND_GUIDANCE =
 const COACH_AGENT_NOTES_GUIDANCE =
   ' When agent_notes are present, treat each as a soft HINT (not a fact) left by a narrow task — it has a signal_kind, refs, and confidence; use it to direct attention when shaping the plan, never as ground truth, and never let it suppress or replace the FSRS-due review backbone or signal-driven proposals (ND-5). When agent_notes is empty, behave exactly as before.';
 // YUK-203 U4 / D5 + CO §6.1:679-681 — the review_session_proposal is a strategic
-// BRIEF, and it is the ONLY attention prior handed down to ReviewPlanTask (the
-// tactical planner reads it via read_coach_brief and reads NO memory). Coach
+// BRIEF, and it is the attention prior the daily Coach brief carries (historically consumed by the now-retired ReviewPlanTask). Coach
 // must populate the brief fields: knowledge_focus (ranked from due/weak signals
 // PLUS the active_items attention pressure), subject_mix, time_box_minutes,
 // intent_tags. CRITICAL (D11): active_items are attention pressure ONLY — they
@@ -446,47 +445,18 @@ export function parseCoachOutputSafely(rawText: string): TodayPlanT | null {
   return null;
 }
 
-// YUK-203 U4 / D5 — swappable chain-enqueue seam. Defaults to a dynamic
-// getStartedBoss().send('review_plan', ...); factory-level tests inject a stub
-// to assert the chain WITHOUT a live boss. Kept OUT of runCoach (Cross-统合
-// 裁定 #2): runCoach is the DI-pure unit-test target (coach_daily.test.ts runs
-// it with db={}; coach_daily.northstar.test.ts runs a real DB but stubs no
-// boss seam) — injecting boss.send there would break the R9 injection-surface
-// convergence goal. The chain lives here, after runCoach resolves.
-export type EnqueueReviewPlanFn = (payload: {
-  run_kind: CoachRunKind;
-  mode: 'initial_plan';
-}) => Promise<void>;
-
-export interface CoachDailyHandlerDeps extends CoachRunDeps {
-  enqueueReviewPlanFn?: EnqueueReviewPlanFn;
-}
+// YUK-349 — the coach_daily → review_plan chain-enqueue seam was retired with the B3
+// merge engine (the review_plan producer is removed). buildCoachDailyHandler now just
+// runs the daily Coach brief; the daily stream is composed by the B3 engine, not a
+// chained tactical review_plan run.
+export type CoachDailyHandlerDeps = CoachRunDeps;
 
 export function buildCoachDailyHandler(
   db: Db,
   deps: CoachDailyHandlerDeps = {},
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
-  const { enqueueReviewPlanFn, ...runDeps } = deps;
   return async () => {
-    const result = await runCoach(db, 'daily', runDeps);
+    const result = await runCoach(db, 'daily', deps);
     console.log('[coach_daily] result', result);
-    // YUK-203 U4 / D5 — chain coach_daily → review_plan (nightly review-plan
-    // generation off the fresh brief). FIRE-AND-FORGET, best-effort: wrapped in
-    // try/catch + log-and-swallow, NEVER rethrow. A failed enqueue must not undo
-    // the succeeded coach run nor trigger pg-boss redelivery + a duplicate LLM
-    // run (precedent: attribution_followup.ts:156-162; risk table R5). The send
-    // does not extend coach_daily's own job (coach_daily 03:45 / prune 04:00).
-    try {
-      const enqueue =
-        enqueueReviewPlanFn ??
-        (async (payload) => {
-          const { getStartedBoss } = await import('@/server/boss/client');
-          const boss = await getStartedBoss();
-          await boss.send('review_plan', payload);
-        });
-      await enqueue({ run_kind: 'daily', mode: 'initial_plan' });
-    } catch (err) {
-      console.error('[coach_daily] enqueue review_plan failed', err);
-    }
   };
 }

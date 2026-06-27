@@ -258,7 +258,7 @@ export async function effectiveThetaForKc(
  *   see src/core/pfa.ts).
  *
  *   The CI fields are ADDITIVE — the 5 point-estimate consumers (tree / node-page
- *   / review-plan-tools / knowledge-readers / detail) read only `mastery` and are
+ *   / knowledge-readers / detail) read only `mastery` and are
  *   transparent to the swap; the new fields are opt-in for CI-aware surfaces.
  */
 export interface MasteryProjection {
@@ -279,7 +279,7 @@ export interface MasteryProjection {
 
 export async function getMasteryProjection(
   // PR #468 finding E — display/AI read-side projection: every caller passes a
-  // full Db (node-page / tree / detail / knowledge-readers / review-plan-tools all
+  // full Db (node-page / tree / detail / knowledge-readers all
   // hold a Db, never a Tx). Unlike getMasteryState / upsertMasteryState (which run
   // inside updateThetaForAttempt's attempt Tx and so keep DbLike), this never runs
   // in a transaction, so the param is the concrete Db — no Db|Tx ambiguity.
