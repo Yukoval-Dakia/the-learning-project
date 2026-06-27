@@ -43,7 +43,11 @@ import { archiveKnowledgeEdge, createKnowledgeEdge } from './edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 
-const EdgeProposalSchema = z.object({
+// Exported so the YUK-349 frontier-fill job can reuse the per-proposal shape
+// WITHOUT the array `.max(5)` cap (it enforces its own FRONTIER_FILL_MAX_PROPOSALS
+// clamp on the write side, so it must tolerate a longer model output rather than
+// hard-reject the whole batch).
+export const EdgeProposalSchema = z.object({
   from_knowledge_id: z.string().min(1),
   to_knowledge_id: z.string().min(1),
   relation_type: RelationTypeSchema,
@@ -841,7 +845,7 @@ async function applyEdgeSupersede(
  * events for knowledge_edge that have no rate event chained. Used for dedupe so
  * dreaming doesn't re-propose the same edge nightly.
  */
-async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> {
+export async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> {
   const proposeRows = await db
     .select({ id: event.id, payload: event.payload })
     .from(event)
