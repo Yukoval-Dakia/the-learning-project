@@ -297,7 +297,7 @@ describe('Foundation D M2 read tools', () => {
     __resetBootstrapForTests();
   });
 
-  it('registerCoreTools exposes M1 readers plus all 10 M2 readers', () => {
+  it('registerCoreTools exposes the M1 + M2 read tools (review_plan planner readers retired, YUK-349)', () => {
     registerCoreTools();
     expect(getTool('query_mistakes')).toBeTruthy();
     expect(getTool('get_attempt_context')).toBeTruthy();
@@ -315,8 +315,6 @@ describe('Foundation D M2 read tools', () => {
       'get_question_context',
       'get_record_context',
       'get_review_due',
-      // YUK-203 U4 — ReviewPlanTask read tools + Mem0 fact search.
-      'get_review_knowledge_snapshot',
       'get_subject_graph_overview',
       'query_events',
       'query_knowledge',
@@ -325,9 +323,7 @@ describe('Foundation D M2 read tools', () => {
       // ADR-0032 D9 / YUK-304 — questions catalog reader (wraps the YUK-280 list reader).
       'query_questions',
       'query_records',
-      'read_coach_brief',
       'search_memory_facts',
-      'select_review_question_candidates',
     ]);
   });
 
