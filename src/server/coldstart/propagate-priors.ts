@@ -147,6 +147,14 @@ export async function loadDayOnePriors(
   const kcIds = ids.map((_, i) => i);
   const zeros = ids.map(() => 0);
   const posteriors = addon.propagatePriors(kcIds, prereqEdges, zeros, zeros, DAY_ONE_SHRINK_COEFF);
+  // The kernel returns exactly one GridPosterior per KC in input order. A shorter array means a
+  // stale/drifted binding — fail loudly rather than silently drop KCs from the surface (matches
+  // the crate's loud-input idiom: solve_theta_one_kc / forward_auc reject bad input up front).
+  if (posteriors.length !== ids.length) {
+    throw new Error(
+      `propagatePriors returned ${posteriors.length} posteriors for ${ids.length} KCs (binding drift)`,
+    );
+  }
 
   const out = new Map<string, DayOnePrior>();
   for (let i = 0; i < ids.length; i++) {
@@ -166,9 +174,16 @@ export async function loadDayOnePriors(
 /** Σ probs·σ(GRID_THETA) — the day-one (θg = b = 0) expected mastery probability, via the
  *  shared poly σ so it equals the Rust kernel's internal E_mastery for this KC bit-for-bit. */
 function meanMastery(probs: number[]): number {
+  // Reject a non-GRID_POINTS pmf loudly: folding a non-renormalized prefix would yield a
+  // plausible-but-wrong scalar with no signal (the binding-drift class the Rust side guards
+  // with debug_assert_eq! in e_mastery_of). The kernel contract guarantees length GRID_POINTS.
+  if (probs.length !== GRID_THETA.length) {
+    throw new Error(
+      `propagatePriors returned a ${probs.length}-length pmf; expected ${GRID_THETA.length} (binding drift)`,
+    );
+  }
   let acc = 0;
-  const n = Math.min(probs.length, GRID_THETA.length);
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < probs.length; i++) {
     acc += probs[i] * polySigmoid(GRID_THETA[i]);
   }
   return acc;
