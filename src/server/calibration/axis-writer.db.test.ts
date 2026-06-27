@@ -47,12 +47,16 @@ async function seedAttempt(
   outcome: 'success' | 'failure' | 'partial' | null,
   payload: Record<string, unknown>,
   createdAt: Date,
+  // The writer admits BOTH action='attempt' (paper-submit) and action='review'
+  // (solo PfSolo — the primary live RT source for a single-user tool). Default
+  // 'attempt'; the review-path tests below seed 'review' explicitly.
+  action: 'attempt' | 'review' = 'attempt',
 ): Promise<void> {
   await db.insert(event).values({
     id: newId(),
     actor_kind: 'user',
     actor_ref: 'self',
-    action: 'attempt',
+    action,
     subject_kind: 'question',
     subject_id: questionId,
     outcome,
@@ -163,11 +167,18 @@ describe('runAxisStateBatch — end-to-end', () => {
   });
 
   // Seed `total` attempts on a question (primary KC), `correct` of them success with varied RTs.
+  // `action` selects the event action ('attempt' = paper-submit, 'review' = solo PfSolo); both
+  // are admitted by the writer. `actions` (mutually exclusive with `action`) interleaves a
+  // per-index action sequence so a single KC can mix attempt + review responses.
   async function seedKcAttempts(
     kc: string,
     correct: number,
     total: number,
-    opts: { withRt?: boolean } = {},
+    opts: {
+      withRt?: boolean;
+      action?: 'attempt' | 'review';
+      actions?: ('attempt' | 'review')[];
+    } = {},
   ): Promise<string> {
     const withRt = opts.withRt ?? true;
     const qid = `q-${kc}`;
@@ -178,11 +189,15 @@ describe('runAxisStateBatch — end-to-end', () => {
       const durationMs = withRt ? 450 + (i % 7) * 50 : undefined;
       const payload: Record<string, unknown> =
         durationMs === undefined ? {} : { duration_ms: durationMs };
+      const action = opts.actions
+        ? opts.actions[i % opts.actions.length]
+        : (opts.action ?? 'attempt');
       await seedAttempt(
         qid,
         isCorrect ? 'success' : 'failure',
         payload,
         new Date(NOW.getTime() + i * 1000),
+        action,
       );
     }
     return qid;
@@ -234,5 +249,41 @@ describe('runAxisStateBatch — end-to-end', () => {
     expect(res.written).toBe(1);
     expect(await readAxisRow('kc-x')).not.toBeNull();
     expect(await readAxisRow('kc-y')).toBeNull();
+  });
+
+  // The PRIMARY live RT source for a single-user tool is solo PfSolo, which emits
+  // action='review' (submit.ts:539) carrying payload.duration_ms (mapped from the UI's
+  // latency_ms, submit.ts:564) — NOT action='attempt' (that's the paper-submit path,
+  // paper-submit.ts:545). The writer admits BOTH (inArray(action, ['attempt','review'])).
+  // This proves the review path reaches the gate and lands an axis row end-to-end — i.e. the
+  // feature's main live source is genuinely non-dead code, not only the paper attempt path.
+  it('recovers an axis row from solo review-action RTs (primary live source)', async () => {
+    await seedKcAttempts('kc-review', 30, 40, { action: 'review' });
+    const res = await runAxisStateBatch(db);
+    expect(res.written).toBe(1);
+    expect(res.kcsSeen).toBe(1);
+
+    const row = await readAxisRow('kc-review');
+    expect(row).not.toBeNull();
+    expect(row?.n_obs).toBe(40);
+    expect(row?.boundary_a).not.toBeNull();
+    expect(row?.ter).not.toBeNull();
+    // adaptive flow → drift_v stays confounded/NULL regardless of action source.
+    expect(row?.drift_v).toBeNull();
+  });
+
+  it('pools attempt + review responses for the same KC into one axis row', async () => {
+    // Interleave attempt/review across the 40 responses on a single KC; the reducer is
+    // action-agnostic post-query, so all RT-bearing responses fold into one accumulator.
+    await seedKcAttempts('kc-mixed', 30, 40, { actions: ['attempt', 'review'] });
+    const res = await runAxisStateBatch(db);
+    expect(res.written).toBe(1);
+    expect(res.kcsSeen).toBe(1);
+
+    const row = await readAxisRow('kc-mixed');
+    expect(row).not.toBeNull();
+    expect(row?.n_obs).toBe(40); // all 40 (both actions) pooled
+    expect(row?.boundary_a).not.toBeNull();
+    expect(row?.ter).not.toBeNull();
   });
 });
