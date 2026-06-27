@@ -22,7 +22,7 @@ export const READ_TOOLS = [
   'get_learning_item_context',
   'query_memory_brief',
   // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
-  // coach / dreaming / copilot below; NOT to review_plan / evaluator surfaces.
+  // coach / dreaming / copilot below; NOT to evaluator surfaces.
   'search_memory_facts',
   // ADR-0032 D9 / YUK-304 (lane B) — 题池查询 (wraps the YUK-280 listQuestions
   // reader; drafts included by default for duplicate-avoidance). Granted to the
@@ -66,7 +66,7 @@ export const PROPOSE_WRITE_TOOLS = [
   'merge_questions',
   'reassign_figure',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
-  // (draft-allowed — opposite precondition from write_review_plan) + existing
+  // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
   // only. TAIL position mirrors the bootstrap CORE_TOOLS order (after
   // reassignFigureTool) — the listTools() inventory assertion depends on it.
@@ -155,7 +155,7 @@ export const COPILOT_TOOLS = [
   // are done / want to relearn / want to push it back / want it gone. This is an
   // owner-decided surface expansion — NOT related to the U6 "skills add no tool"
   // red line (that locked the teaching/solve skill merge; this is a deliberate
-  // grant). It does NOT touch the question draft-edit tools or write_review_plan.
+  // grant). It does NOT touch the question draft-edit tools.
   'propose_knowledge_mutation',
   'propose_learning_item_completion',
   'propose_learning_item_relearn',

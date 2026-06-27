@@ -41,7 +41,7 @@ export type JobHandlerFactory = (db: any) => (jobs: any) => Promise<void>;
 
 export interface JobDecl {
   name: string; // boss 队列名，形如 'dreaming_nightly'
-  /** cron 调度；无 schedule 的是链式/按需 job（如 review_plan、rejudge） */
+  /** cron 调度；无 schedule 的是链式/按需 job（如 rejudge） */
   schedule?: { cron: string; tz: string };
   /**
    * 队列档位 → 注册器映射建队配方（handlers.ts 三档先例）：
