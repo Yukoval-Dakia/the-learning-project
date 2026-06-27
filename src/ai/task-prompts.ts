@@ -989,6 +989,11 @@ export function getTaskSystemPrompt(
     // instructions are generic across subjects. Joins the pass-through group
     // (registry-inline systemPrompt IS the runtime SoT) — no profile builder.
     case 'ColdStartPlacementBridgeTask':
+    // YUK-406 / YUK-440 — MindModelInductionTask is subject-NEUTRAL: the evidence cells
+    // ride in the input, not the prompt voice, and the 归因研究员 instructions are generic
+    // across subjects. Joins the pass-through group (registry-inline systemPrompt IS the
+    // runtime SoT) — no profile builder.
+    case 'MindModelInductionTask':
       return tasks[task].systemPrompt;
     default:
       return assertNever(task);
