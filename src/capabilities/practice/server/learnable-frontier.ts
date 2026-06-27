@@ -39,8 +39,16 @@ type DbLike = Db | Tx;
 
 /** Hard depth bound on the transitive prereq closure walk (cycle/run-away guard). */
 export const FRONTIER_DEPTH_LIMIT = 16;
-/** Hard node-cap on the closure rowcount — overflow → fail-safe to []. */
-export const FRONTIER_NODE_CAP = 256;
+/**
+ * Runaway backstop on the closure ROWCOUNT (one row per (frontier_kc, prereq_kc, depth)
+ * tuple) — overflow → fail-safe to []. This is NOT a functional frontier-size limit (that
+ * is FRONTIER_MAX_ITEMS, applied by the caller): the total closure tuple count grows ≈
+ * Σ_dependents(transitive-prereq count), so a low cap would silently blank a legitimate
+ * frontier as the graph densifies (breaking defer-flip's "activates cleanly as edges land"
+ * story). Set generously (matching the cascade.ts 10k node precedent) so only a genuinely
+ * pathological closure (huge fan-out / a cycle escaping the path guard) trips it.
+ */
+export const FRONTIER_NODE_CAP = 10_000;
 /** p(L) at/above which a KC counts as MASTERED (self-not-mastered + prereq-mastered gate). */
 export const MASTERED_PL_THRESHOLD = 0.7;
 /** Cap on how many frontier questions the composer pulls in per day (applied by the caller). */

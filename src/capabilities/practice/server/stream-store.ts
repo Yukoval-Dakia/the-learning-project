@@ -207,6 +207,9 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       .select({ id: question.id })
       .from(question)
       .where(and(sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`, notDraft))
+      // Deterministic pick (reproducible composition) — the new_check sibling omits this;
+      // frontier is net-new so we make it stable from the start.
+      .orderBy(question.id)
       .limit(1);
     if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
   }
