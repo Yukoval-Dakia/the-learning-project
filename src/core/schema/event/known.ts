@@ -24,6 +24,17 @@ const baseOptionalFields = {
  */
 export const MAX_HINT_INDEX = 20;
 
+// YUK-407 (Phase 0 red line) — ReconstructionSignal: was this answer DERIVED from the
+// knowledge node's parent derivation path, or RETRIEVED from memory? Logged as an
+// OPTIONAL attempt/review payload field so the future Reconstruction-as-method (教学法
+// 脑 palette entry, YUK-407) can backfill WHICH derivation-paths are reconstructable
+// without re-deriving history — the non-blocking Phase-0 logging red line (roadmap U1).
+// Stamped 'unknown' at the live write sites today: we capture the slot now;
+// classification comes when the method lands. Optional + the non-strict payload object
+// ⇒ every historical attempt/review event still parses byte-for-byte unchanged.
+export const ReconstructionSignal = z.enum(['reconstructed_from_parents', 'retrieved', 'unknown']);
+export type ReconstructionSignalT = z.infer<typeof ReconstructionSignal>;
+
 // ====================================================================
 // ADR-0006 v2 原 7 个 KnownEvent
 // ====================================================================
@@ -75,6 +86,9 @@ export const AttemptOnQuestion = z.object({
     // 将来这两字段进算法消费时再 firm-up（届时是收紧契约的自然时机，见 PR 描述）。
     hints_used: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
     final_hint_level: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
+    // YUK-407 (Phase 0 red line) — see ReconstructionSignal. Optional; stamped
+    // 'unknown' at the live attempt write sites (solve-session / ingestion mistakes).
+    reconstruction_signal: ReconstructionSignal.optional(),
   }),
   ...baseOptionalFields,
 });
@@ -176,6 +190,9 @@ export const ReviewOnQuestion = z
       // user rated. Optional because legacy events (pre-2026-05-17) don't
       // have it and we don't want to break the discriminated union.
       duration_ms: z.number().int().nonnegative().optional(),
+      // YUK-407 (Phase 0 red line) — see ReconstructionSignal. Optional; reserved on
+      // the review payload for symmetry (no live review site stamps it yet).
+      reconstruction_signal: ReconstructionSignal.optional(),
     }),
     ...baseOptionalFields,
   })

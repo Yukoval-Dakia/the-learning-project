@@ -144,6 +144,9 @@ export async function POST(req: Request): Promise<Response> {
           answer_md: body.wrong_answer_md,
           answer_image_refs: body.wrong_answer_image_refs,
           referenced_knowledge_ids: body.knowledge_ids,
+          // YUK-407 (Phase 0 red line) — capture the reconstruction-signal slot now;
+          // 'unknown' until the Reconstruction-as-method classifier lands.
+          reconstruction_signal: 'unknown',
         },
         caused_by_event_id: null,
         task_run_id: null,
