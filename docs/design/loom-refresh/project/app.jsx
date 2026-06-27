@@ -29,6 +29,7 @@ const SCREENS = {
   inbox: ScreenInbox, mistakes: ScreenMistakes, questions: ScreenQuestions, items: ScreenItems, knowledge: ScreenKnowledge,
   coach: ScreenCoach, events: ScreenEvents, copilot: ScreenCopilot,
   "agent-notes": ScreenAgentNotes,
+  welcome: ScreenWelcome, "onboard-cold": ColdToday, "onboard-upload": OnboardRecord, starter: ScreenStarter, placement: ScreenPlacement, profile: ScreenProfile,
   "knowledge/": ScreenKnowledgeDetail, "items/": ScreenItemDetail, "questions/": ScreenQuestionDetail,
   "learning-sessions": ScreenSessions, "learning-sessions/": ScreenSessionDetail,
   "notes/": ScreenNoteReader,

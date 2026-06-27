@@ -1,9 +1,23 @@
 .DS_Store
 node_modules/
-.env
-.env.local
 .idea/
 .vscode/
+
+# Secrets / env — catch EVERY variant incl. backups (.env.local.bak leaked once;
+# the old `.env` / `.env.local` / `.env*.local` rules all missed the .bak suffix).
+# Allowlist the *.example / *.sample templates so onboarding docs stay tracked.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+
+# Backup / scratch junk that must never be committed (editor + manual backups)
+*.bak
+*.orig
+*.swp
+*~
 
 # Build
 dist/
@@ -43,6 +57,11 @@ tsconfig.tsbuildinfo
 
 # Subagent worktrees (created by Agent tool with isolation:"worktree")
 .claude/worktrees/
+.augment/worktrees/
+.codex/worktrees/
+.cursor/worktrees/
+.t3/worktrees/
+.config/superpowers/worktrees/
 .playwright-mcp/
 
 # Scheduled-tasks runtime lock (ScheduleWakeup / loop artifact)
@@ -73,3 +92,13 @@ docs/preflight/*-vision-rejudge.json
 # External sample/tutorial clones dropped into the repo root — not project source
 getting-started-with-browserbase/
 docling-docx-parse-output/
+
+# Root-level visual-QA / layout-experiment scratch (screenshots + standalone html
+# harnesses) — generated locally during UI work, never project source. Real docs
+# imagery lives under docs/**, which is unaffected by these root-anchored rules.
+/kg-*.png
+/kg-*.html
+/d-ui-*.png
+/m4-visual-*.png
+/visual-demo-*.png
+/yuk*.png
