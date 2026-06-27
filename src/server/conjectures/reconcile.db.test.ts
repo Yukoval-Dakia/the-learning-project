@@ -184,6 +184,19 @@ describe('reconcileConjecturePredictions (DB)', () => {
     ); // evidence NOT duplicated by the retried upsert
   });
 
+  it('deterministic anchor id → concurrent reconcile runs write exactly one score event (review fix)', async () => {
+    const seed = await seedAnsweredProbe();
+
+    // Two overlapping runs both pass the list-stage NOT EXISTS (neither has written the
+    // anchor yet); the deterministic prediction_score id + onConflictDoNothing(event.id)
+    // makes the second insert a no-op → exactly-once, no duplicate score from the race.
+    await Promise.all([reconcileConjecturePredictions(db), reconcileConjecturePredictions(db)]);
+
+    const scores = await scoreEvents(seed.probeResultEventId);
+    expect(scores).toHaveLength(1);
+    expect(scores[0].id).toBe(`prediction_score:${seed.probeResultEventId}`);
+  });
+
   it('a retired probe still writes a soft no-evidence cell', async () => {
     await seedAnsweredProbe({ knowledgeId: 'k_ret', outcome: 1, resolution: 'retired' });
     const result = await reconcileConjecturePredictions(db);
