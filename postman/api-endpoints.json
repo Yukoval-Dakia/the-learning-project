@@ -212,6 +212,19 @@
     ]
   },
   {
+    "path": "/api/prep-desk/conjectures",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "备课台读模型：top ≤3 pending conjecture（教研团 Phase 0 / U4，YUK-406/YUK-440）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 { conjectures: [{ id, claim, knowledge_id, cause_category, probe_md, recurrence_count, discriminating, predicted_p, baseline_p_at_induction, corrected_by_owner, evidence:[{kind,id}], proposed_at }] }。salience（confidence × recurrence_count）DESC 排序后 cap 3。confidence 永不过线（本地仅用于排序后丢弃，anti-false-precision）。probe_md = 未跑的判别探针文本（团队「即将问」的题，非 flashcard）。需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/observability/calibration-maturity",
     "methods": [
       {
