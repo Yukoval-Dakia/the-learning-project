@@ -328,11 +328,13 @@ export async function runFrontierFillAndWrite(
       result.proposed += 1;
     }
   } catch (err) {
-    // ③ Swallow-safe: log message only (an LLM-payload-carrying error must not be
-    //    serialized whole into logs), return proposed:0. NEVER rethrow.
+    // ③ Swallow-safe: log the stack (NOT the whole error object — an
+    //    LLM-payload-carrying error must not be serialized whole into logs; `.stack`
+    //    is name+message+frames only, no custom payload props), return proposed:0.
+    //    NEVER rethrow.
     console.error(
       '[frontier_fill_nightly] LLM half failed (no proposals written)',
-      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? (err.stack ?? err.message) : String(err),
     );
   }
 
