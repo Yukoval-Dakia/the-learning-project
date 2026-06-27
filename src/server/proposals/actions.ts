@@ -2,6 +2,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 // YUK-143 / ADR-0024 — North-Star goal_scope accept materializer.
+// Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture accept applier lives in the
+// agency package (the 例会 sleep job is the proposer); this shell only routes.
+import {
+  type ConjectureAcceptResult,
+  acceptConjectureProposal,
+} from '@/capabilities/agency/server/conjecture-accept';
 import {
   type GoalScopeAcceptResult,
   acceptGoalScopeProposal,
@@ -184,7 +190,8 @@ export type AcceptAiProposalResult =
   | BlockMergeAcceptResult
   | ImageCandidateAcceptResult
   | QuestionDraftAcceptResult
-  | QuestionEditAcceptResult;
+  | QuestionEditAcceptResult
+  | ConjectureAcceptResult;
 
 export interface NoteUpdateAcceptResult {
   kind: 'note_update';
@@ -217,6 +224,11 @@ export interface AcceptAiProposalOpts {
   // YUK-227 S3 Slice C — image_candidate accept seams (download/VLM/enqueue/ledger).
   // DB tests inject stubs to drive the accept path without real R2 / model spend.
   imageCandidateDeps?: ImageCandidateAcceptDeps;
+  // Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture EDIT path: the owner-rewritten
+  // claim (canonical field names). Presence routes the conjecture accept through
+  // the corrected_by_owner branch (→ mem0 CORE write). The 备课台 route/UI wiring
+  // that populates this is a neighboring task; this shell only consumes it.
+  corrected_payload?: { claim_md?: string; cause_category?: string; knowledge_id?: string };
 }
 
 export interface DismissAiProposalOpts {
@@ -756,6 +768,14 @@ async function dispatchAccept(
       // the active question behind the mini verify gate (practice package owns the
       // pooled question lifecycle); reversible via the audit event.
       return await acceptQuestionEditProposal(db, proposalId, proposal, opts);
+    case 'conjecture':
+      // Phase 0 关系脑 (YUK-406 / YUK-440) — accept = "agree with the direction",
+      // NOT a confirmed weakness; edit (opts.corrected_payload) sets
+      // corrected_by_owner + writes the owner version to mem0 CORE. Neither mints
+      // an FSRS weakness — only a probe confirmation does (later task). ND-5: this
+      // path never writes FSRS/review state. The applier records its own decision
+      // signal (idempotent + fresh), so the shell just routes.
+      return await acceptConjectureProposal(db, proposalId, proposal, opts);
     default:
       throw new ApiError(
         'unsupported_proposal_kind',
