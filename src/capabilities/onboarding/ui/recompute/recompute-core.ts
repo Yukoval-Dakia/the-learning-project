@@ -198,8 +198,9 @@ function maturityMedian(sorted: number[]): number | null {
  */
 export function summarizeMaturity(resp: CalibrationMaturityResponse): RcMaturitySummary {
   // !cold_start mirrors the server's firm_count (= total − coldStartCount, where
-  // coldStart also covers never-attempted KCs). Do NOT add `&& evidence_count > 0`:
-  // it would diverge from the server definition (the design prototype's redundant guard).
+  // coldStart also covers never-attempted KCs). The prototype's `&& evidence_count > 0` is
+  // dropped: it's redundant (!cold_start ⟹ evidence_count ≥ 4 > 0, so the value is unchanged),
+  // but keeping it would diverge from the server's pure `!cold_start` definition.
   const dFirm = resp.rows.filter((r) => !r.cold_start).length;
   const seValues = resp.rows
     .map((r) => r.theta_se)
@@ -210,7 +211,8 @@ export function summarizeMaturity(resp: CalibrationMaturityResponse): RcMaturity
   const sFirm = resp.aggregate.firm_count;
   const sMedian = resp.aggregate.median_theta_se;
   const firmMatch = dFirm === sFirm;
-  // Object.is so null↔null reconciles and any float bit-difference (or NaN) surfaces as drift.
+  // Object.is so null↔null reconciles as match and any float bit-difference surfaces as drift.
+  // (thetaSe = 1/√precision never yields NaN; were it to, identical rows ⇒ Object.is(NaN,NaN) match.)
   const medianMatch = Object.is(dMedian, sMedian);
 
   return {
