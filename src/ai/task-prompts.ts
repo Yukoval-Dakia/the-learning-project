@@ -482,7 +482,7 @@ function buildFrontierPrerequisitePrompt(profile: SubjectProfile): string {
 背景：系统的「可学前沿」（learnable frontier）现在是空的——还没有任何 prerequisite 边，所以系统不知道该按什么顺序教。你的任务是从课程本身的依赖结构，为 kcs_lacking_prereq 里的 KC 补一批**临时的、低置信**先修边来 bootstrap 这个前沿。
 为缺先修覆盖的 KC 提议至多 5 条 prerequisite 边。每条 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }：
 - relation_type 固定为 "prerequisite"（from 是学 to 的先决）。
-- from / to 必须是 tree_snapshot 里真实存在的 id；优先让 to ∈ kcs_lacking_prereq。
+- from / to 必须是 tree_snapshot 里真实存在的 id；**to 必须 ∈ kcs_lacking_prereq**（写库侧硬校验：to 不在此列表的提议会被直接丢弃、白白浪费 ≤5 条名额，务必只给缺先修覆盖的 KC 补边）。
 - weight 用低值（0.4 左右）：这是临时占位边，等用户在收件箱确认或真实边落库后替换。
 - reasoning 说明课程依赖理由：为什么学 to 之前要先掌握 from（概念前提 / 技能前提 / 公式推导前提）。
 证据要求：${profile.grounding.requirement}
