@@ -170,7 +170,7 @@ export function deriveSourceTier(q: SourceTierInput): {
 // ---------- 合约五：tier + OF-2 selection comparator ----------
 //
 // The single selection-order comparator every "需要知识点 X 的题" consumer reuses
-// (review-plan-tools tier-preference order + sourcing-sequence existing-pool sort).
+// (sourcing-sequence existing-pool sort).
 // Two keys, in order:
 //   1. source tier ascending (1 authentic → 4 generated; missing tier treated as 4).
 //   2. OF-2 within-tier demotion (plan §12): whitelist_match === false sorts BEHIND
