@@ -221,5 +221,14 @@ function meanMastery(probs: number[]): number {
   for (let i = 0; i < probs.length; i++) {
     acc += probs[i] * polySigmoid(GRID_THETA[i]);
   }
+  // Value-level drift guard (sibling of the length guard above): a correct-length pmf carrying
+  // NaN / Infinity / negative mass would yield a non-finite or out-of-[0,1] "mastery". A convex
+  // combination of σ∈(0,1) over a unit-mass pmf is in (0,1), so anything else is binding drift —
+  // throw (caught → NO-OP + log) rather than leak a corrupt scalar to the eventual PR-3 badge.
+  if (!Number.isFinite(acc) || acc < 0 || acc > 1) {
+    throw new Error(
+      `propagatePriors produced an invalid mean_mastery (${acc}); probs may carry NaN/negative mass (binding drift)`,
+    );
+  }
   return acc;
 }
