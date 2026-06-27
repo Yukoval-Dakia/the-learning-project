@@ -64,9 +64,15 @@ interface PropagateAddon {
   ): NativeGridPosterior[];
 }
 
-// ── skip-if-absent loader (mirror native-parity.unit.test.ts:57-73). The .node is an OPT-IN
-//    dev/CI build artifact (`pnpm build:native`); in any runtime without it (incl. prod
-//    today) this resolves null and the whole surface NO-OPs — the live path is unaffected. ──
+// ── skip-if-absent loader (mirror native-parity.unit.test.ts:24,57-73). The .node is an OPT-IN
+//    dev/CI build artifact (`pnpm build:native`); in any runtime without it (incl. prod today)
+//    this resolves null and the whole surface NO-OPs — the live path is unaffected.
+//    PATH is cwd-relative, verbatim from the parity-test loader. Every context where the artifact
+//    actually exists (vitest, local build:native) runs from the repo root, so it resolves. It is
+//    deliberately NOT switched to an import.meta.url-relative path: esbuild bundles this module
+//    into dist/*.cjs, where such a relative path would no longer hold. A deployment-aware loader
+//    is an explicit PREREQUISITE of flipping the flag on in a deployed server (PR-3+ / YUK-513
+//    activation), out of scope for this dark-ship wiring. ──
 const NODE_PATH = resolve('crates/calibration-native/calibration-native.node');
 function loadAddon(): PropagateAddon | null {
   if (!existsSync(NODE_PATH)) return null;
@@ -151,12 +157,16 @@ export async function loadDayOnePriors(
     // The kernel echoes attribution by the numeric kc_id it was given; pass indices 0..n-1 so a
     // returned weakestPrereqId maps straight back to ids[]. Day-one inputs: b = 0, θg = 0.
     const kcIds = ids.map((_, i) => i);
-    const zeros = ids.map(() => 0);
+    // bPerKc and domainThetaGlobal are semantically distinct kernel inputs (difficulty anchor vs
+    // global ability); keep them as separate array instances even though both are all-zeros at
+    // day-one, so neither aliases the other if a future caller ever varies one.
+    const bPerKc = ids.map(() => 0);
+    const domainThetaGlobal = ids.map(() => 0);
     const posteriors = addon.propagatePriors(
       kcIds,
       prereqEdges,
-      zeros,
-      zeros,
+      bPerKc,
+      domainThetaGlobal,
       DAY_ONE_SHRINK_COEFF,
     );
     // The kernel returns exactly one GridPosterior per KC in input order. A shorter array means a
@@ -181,7 +191,9 @@ export async function loadDayOnePriors(
       out.set(ids[i], {
         mean_mastery: meanMastery(post.probs),
         weakest_prereq_id: weakestId,
-        weakest_prereq_mastery: post.weakestPrereqMastery,
+        // Couple the two attribution fields: both present or both absent. A root (no prereq) or
+        // an out-of-range index ⇒ no id ⇒ also no mastery, never a dangling number with no KC.
+        weakest_prereq_mastery: weakestId === undefined ? undefined : post.weakestPrereqMastery,
       });
     }
     return out;
