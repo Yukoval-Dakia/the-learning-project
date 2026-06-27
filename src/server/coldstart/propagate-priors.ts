@@ -188,12 +188,15 @@ export async function loadDayOnePriors(
       // The condition is inlined so TS narrows widx to `number` for the ids[widx] read.
       const weakestId =
         widx !== undefined && widx >= 0 && widx < ids.length ? ids[widx] : undefined;
+      const wm = post.weakestPrereqMastery;
+      // Attribution is a UNIT — id + mastery surface together or not at all. The kernel returns
+      // both Some or both None, but gate on BOTH so the "present-or-absent together" invariant
+      // holds even if a binding bug ever yields a half pair (valid id + missing mastery).
+      const hasAttr = weakestId !== undefined && wm !== undefined;
       out.set(ids[i], {
         mean_mastery: meanMastery(post.probs),
-        weakest_prereq_id: weakestId,
-        // Couple the two attribution fields: both present or both absent. A root (no prereq) or
-        // an out-of-range index ⇒ no id ⇒ also no mastery, never a dangling number with no KC.
-        weakest_prereq_mastery: weakestId === undefined ? undefined : post.weakestPrereqMastery,
+        weakest_prereq_id: hasAttr ? weakestId : undefined,
+        weakest_prereq_mastery: hasAttr ? wm : undefined,
       });
     }
     return out;
