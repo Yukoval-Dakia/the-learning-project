@@ -35,6 +35,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import {
   type PlacementQuestionRef,
+  type PlacementSelfReport,
   placementEnd,
   placementNext,
   startPlacement,
@@ -42,7 +43,24 @@ import {
 } from './placement-api';
 import './onboarding.css';
 
-const CAP = 8; // mirror backend PLACEMENT_DEFAULT_CAP (placement-termination.ts).
+// Upper bound of the placement progress track. Mirrors backend PLACEMENT_DEFAULT_CAP
+// (placement-termination.ts). YUK-480: pace shortens the actual server cap (light → 5) but never
+// raises it above this ceiling — the 8-segment track + last-question gate stay valid (a
+// pace-driven cap ABOVE 8 would need a dynamic-cap UI = separate design pre-flight, deferred).
+const CAP = 8;
+
+const VALID_PACES = ['light', 'medium', 'dense'] as const;
+
+// Parse the self-report query params threaded from Welcome (YUK-480). leanings = comma list;
+// pace validated against the allowed set (anything else → undefined → server default cap).
+function readSelfReport(search: string): PlacementSelfReport {
+  const sp = new URLSearchParams(search);
+  const leaningsParam = sp.get('leanings');
+  const leanings = leaningsParam ? leaningsParam.split(',').filter((s) => s.length > 0) : [];
+  const paceParam = sp.get('pace');
+  const pace = VALID_PACES.find((p) => p === paceParam);
+  return { leanings, pace };
+}
 
 type Phase = 'loading' | 'answer' | 'sourcing' | 'settling' | 'judgefail' | 'nogoal' | 'error';
 
@@ -69,10 +87,12 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       return;
     }
     goalIdRef.current = goal;
+    // YUK-480 — carry the Welcome self-report into the probe (ordering/amount only).
+    const selfReport = readSelfReport(window.location.search);
     let cancelled = false;
     (async () => {
       try {
-        const res = await startPlacement(goal);
+        const res = await startPlacement(goal, selfReport);
         if (cancelled) return;
         setSessionId(res.sessionId);
         if (res.sourcingNeeded || !res.question) {
