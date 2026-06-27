@@ -63,6 +63,7 @@ function projection(mastery: number, thetaHat: number, thetaPrecision: number): 
     theta_hat: thetaHat,
     theta_precision: thetaPrecision,
     theta_se: 1 / Math.sqrt(Math.max(thetaPrecision, 1e-9)),
+    beta: 0, // YUK-495 #41 — KC difficulty anchor (effectiveB); neutral in this conjecture mock
     evidence_count: 3,
     success_count: 1,
     fail_count: 2,

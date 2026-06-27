@@ -55,6 +55,7 @@ function projection(mastery: number): MasteryProjection {
     theta_hat: -0.3,
     theta_precision: 1.0,
     theta_se: 1.0,
+    beta: 0, // YUK-495 #41 — KC difficulty anchor (effectiveB); neutral in this mastery mock
     evidence_count: 3,
     success_count: 1,
     fail_count: 2,
