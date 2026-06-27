@@ -161,6 +161,13 @@ export const fastTestInclude = [
   // NOT this fast allowlist. The P0 partition guard still applies: any calibration
   // *.unit.test.ts that imports DB unmocked fails audit:partition.
   'src/server/calibration/**/*.unit.test.ts',
+  // YUK-446 / YUK-447 (A14/A15 simulator infra) — the synthetic-learner forward-sampler
+  // unit. CONVENTION glob: every *.unit.test.ts under src/server/simulator/ runs no-DB
+  // (it imports ONLY @/core/theta + @/core/pfa primitives + sibling pure @/server/
+  // calibration/rng mulberry32 — no @/db/client / postgres / drizzle / PgBoss). The same
+  // P0 partition guard applies: any simulator *.unit.test.ts that imports DB unmocked
+  // fails audit:partition.
+  'src/server/simulator/**/*.unit.test.ts',
   // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
   // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
   // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`
