@@ -183,6 +183,12 @@ export const fastTestInclude = [
   // src/server/question-supply/** 无 unit glob，故必须显式列出，否则 db config 的
   // src/**/*.test.ts glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
   'src/server/question-supply/target-discovery.test.ts',
+  // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
+  // fake，db 是未触碰 stub；imports 仅 ./refill（其 @/db/client 是 type-only/erased、@/db/schema
+  // 是 table objects 不连库、demandToSupplyTarget/dispatchSupplyTarget/poolFetch 全 type-only db）。
+  // 真 fingerprint + 真池计数 + 真 event cooldown 的集成 db 测在 refill.db.test.ts。同 target-discovery
+  // 一样必须显式列出，否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer 分区。
+  'src/server/question-supply/refill.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
