@@ -65,11 +65,13 @@ describe('refillThinPools (YUK-474)', () => {
     process.env.QUESTION_SUPPLY_REFILL_ENABLED = 'true';
   });
   afterEach(() => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.QUESTION_SUPPLY_REFILL_ENABLED;
     vi.restoreAllMocks();
   });
 
   it('flag off → no-op：零 count、零 dispatch、返 []', async () => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
     delete process.env.QUESTION_SUPPLY_REFILL_ENABLED;
     const { d, count, dispatch } = deps();
     const out = await refillThinPools(db, ['kc-a'], d);
