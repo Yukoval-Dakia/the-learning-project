@@ -272,3 +272,25 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
     expect(p).toMatch(/32000 字符/);
   });
 });
+
+// YUK-406 Phase 0 / YUK-440 A13 — conjecture induction task registry entry.
+describe('MindModelInductionTask registry entry', () => {
+  it('is a text-only single-shot task (Opus lane chosen per-call via override, never default)', () => {
+    const def: TaskDef = tasks.MindModelInductionTask;
+    expect(def.kind).toBe('MindModelInductionTask');
+    // anthropic-sub is opt-in via override only; it is NEVER a task default
+    // (registry.ts:12-16 forbids it as defaultProvider so tests need no OAuth token).
+    expect(def.defaultProvider).not.toBe('anthropic-sub');
+    expect(def.needsToolCall).toBe(false);
+    expect(def.isMultimodal).toBe(false);
+    expect(def.allowedTools).toEqual([]);
+    expect(def.budget.maxIterations).toBe(1);
+  });
+
+  it('prompts for the A13 accountability fields (predicted_p + discriminating) and the 2nd-person framing', () => {
+    const p = tasks.MindModelInductionTask.systemPrompt;
+    expect(p).toContain('predicted_p');
+    expect(p).toContain('discriminating');
+    expect(p).toContain('第二人称');
+  });
+});
