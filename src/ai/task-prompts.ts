@@ -476,6 +476,21 @@ reasoning 必须具体：引用 attempt event id 或指出 cause pattern。
 严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"...","weight":0.6,"reasoning":"..."}]}。0 条也行，不必凑数。`;
 }
 
+function buildFrontierPrerequisitePrompt(profile: SubjectProfile): string {
+  return `你是课程先修关系规划助手。输入 { tree_snapshot, kcs_lacking_prereq, domain } —— tree_snapshot 是知识图谱节点（id / name / parent_id / effective_domain），kcs_lacking_prereq 是当前没有任何入边 prerequisite 覆盖的 KC id 列表，domain 是科目域。
+科目上下文：${profile.displayName}。${profile.languageStyle}
+背景：系统的「可学前沿」（learnable frontier）现在是空的——还没有任何 prerequisite 边，所以系统不知道该按什么顺序教。你的任务是从课程本身的依赖结构，为 kcs_lacking_prereq 里的 KC 补一批**临时的、低置信**先修边来 bootstrap 这个前沿。
+为缺先修覆盖的 KC 提议至多 5 条 prerequisite 边。每条 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }：
+- relation_type 固定为 "prerequisite"（from 是学 to 的先决）。
+- from / to 必须是 tree_snapshot 里真实存在的 id；优先让 to ∈ kcs_lacking_prereq。
+- weight 用低值（0.4 左右）：这是临时占位边，等用户在收件箱确认或真实边落库后替换。
+- reasoning 说明课程依赖理由：为什么学 to 之前要先掌握 from（概念前提 / 技能前提 / 公式推导前提）。
+证据要求：${profile.grounding.requirement}
+不确定性策略：${profile.grounding.uncertaintyPolicy}
+禁止：from === to；编造不在 tree_snapshot 的 id；非课程依赖的牵强关联（宁可少提，不要凑数）。
+严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"prerequisite","weight":0.4,"reasoning":"..."}]}。0 条也行，不必凑数。`;
+}
+
 function buildSessionSummaryPrompt(profile: SubjectProfile): string {
   return `你是学习陪练，会复盘刚结束的复习 session。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -912,6 +927,8 @@ export function getTaskSystemPrompt(
       return buildAttributionRerankPrompt(profile);
     case 'KnowledgeEdgeProposeTask':
       return buildKnowledgeEdgeProposePrompt(profile);
+    case 'FrontierPrerequisiteTask':
+      return buildFrontierPrerequisitePrompt(profile);
     case 'SessionSummaryTask':
       return buildSessionSummaryPrompt(profile);
     case 'KnowledgeReviewTask':
