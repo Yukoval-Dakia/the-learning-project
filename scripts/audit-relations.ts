@@ -170,6 +170,28 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
     evidence:
       'hub-mesh 笔记自动同步按 prerequisite 边（incoming）组装「这是 X 的前置」复习上下文（RELATION_PRIORITY）。',
   },
+  {
+    // YUK-455 inc-E — prereq 诊断「向后传播」producer。答错 KC 沿 prerequisite 边向上闭包，
+    // 按 type 特化 EMIT experimental:prereq_risk 上调前置掌握风险（诊断投影，dark-ship）。
+    relation: 'prerequisite',
+    tier: 'specialized',
+    file: 'src/server/mastery/prereq-propagation.ts',
+    marker: "e.relation_type = 'prerequisite'",
+    surface: 'diagnosis',
+    evidence:
+      'prereq-propagation 沿 prerequisite 边向上闭包失败 KC 的 transitive 前置，按 type 驱动诊断向后传播（EMIT experimental:prereq_risk 上调前置掌握风险，dark-ship）。',
+  },
+  {
+    // YUK-455 grounding — learnable_frontier (B3, PR #635) 的 prerequisite specialized 消费在
+    // 原 PR 遗漏登记；inc-E 顺手补上（否则该 type-specific 消费路径不在反查覆盖内）。
+    relation: 'prerequisite',
+    tier: 'specialized',
+    file: 'src/capabilities/practice/server/learnable-frontier.ts',
+    marker: "e.relation_type = 'prerequisite'",
+    surface: 'recommendation',
+    evidence:
+      'learnable_frontier (B3) 沿 prerequisite 边向上闭包 gate「可学前沿」候选（self 未掌握 ∧ 全 transitive 前置已掌握），按 type 驱动每日流 5th 候选源选题推荐。',
+  },
 
   // ---- specialized: contrasts_with ----
   {
