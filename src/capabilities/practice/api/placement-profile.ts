@@ -12,6 +12,7 @@
 import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
+import { type DayOnePrior, loadDayOnePriors } from '@/server/coldstart/propagate-priors';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { eq, inArray } from 'drizzle-orm';
@@ -38,6 +39,11 @@ export interface ProfileKc {
   success_count?: number;
   fail_count?: number;
   beta?: number;
+  // YUK-513 #123 / inc-E — DARK day-one (n=0) propagated mastery prior over the prereq
+  // sub-DAG (deterministic, user-independent: see loadDayOnePriors). Present only when
+  // PREREQ_PROPAGATION_ENABLED && the native binding is loadable; otherwise the field is
+  // OMITTED and this response is byte-identical to today. No UI consumer until PR-3.
+  day_one_prior?: DayOnePrior;
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -72,23 +78,31 @@ export async function GET(req: Request): Promise<Response> {
       });
     }
 
-    // Projection (mastery_state SoT) + names, fanned out (independent reads).
-    const [proj, nameRows] = await Promise.all([
+    // Projection (mastery_state SoT) + names + day-one priors, fanned out (independent reads).
+    const [proj, nameRows, dayOnePriors] = await Promise.all([
       getMasteryProjection(db, scope),
       db
         .select({ id: knowledge.id, name: knowledge.name })
         .from(knowledge)
         .where(inArray(knowledge.id, scope)),
+      // YUK-513 #123 / inc-E — resolves null (NO-OP, no DB read) unless
+      // PREREQ_PROPAGATION_ENABLED && the native binding is loadable. Null ⇒ no field added
+      // below ⇒ this response stays byte-identical to today (the regression anchor).
+      loadDayOnePriors(db, scope),
     ]);
     const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
 
     const kcs: ProfileKc[] = scope.map((id) => {
       const m = proj.get(id);
       const name = nameById.get(id) ?? id;
+      // undefined whenever dayOnePriors is null (flag off / binding absent) → key never added.
+      const dop = dayOnePriors?.get(id);
       if (!m) {
-        return { id, name, tested: false, evidence_count: 0 };
+        const row: ProfileKc = { id, name, tested: false, evidence_count: 0 };
+        if (dop) row.day_one_prior = dop;
+        return row;
       }
-      return {
+      const row: ProfileKc = {
         id,
         name,
         tested: true,
@@ -105,6 +119,8 @@ export async function GET(req: Request): Promise<Response> {
         fail_count: m.fail_count,
         beta: m.beta,
       };
+      if (dop) row.day_one_prior = dop;
+      return row;
     });
 
     // evidenceCount = evidence summed across tested KCs (a question touching multiple KCs
