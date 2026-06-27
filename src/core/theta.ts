@@ -330,9 +330,14 @@ export function srtOutcome(correct: boolean, d: number, t: number, timeWeight = 
     d > 0 ? SRT_MIN_SIGNAL + (1 - SRT_MIN_SIGNAL) * clamp01((d - t) / d) : SRT_MIN_SIGNAL;
   // YUK-450 — the Fisher-conditioned time weight shrinks r_eff toward the pure-binary endpoint
   // (r_effW = 1) as timeWeight → 0, fading the TIME component while preserving the correctness
-  // sign. timeWeight = 1 (DEFAULT) ⇒ r_effW = r_eff ⇒ BYTE-IDENTICAL to today for all inputs
-  // (incl. the d ≤ 0 guard: r_effW = SRT_MIN_SIGNAL). timeWeight = 0 ⇒ r_effW = 1 ⇒ pure binary.
-  const rEffW = 1 - timeWeight * (1 - rEff);
+  // sign. Written as the ENDPOINT-EXACT linear interpolation `w·r_eff + (1 − w)` (algebraically
+  // `1 − w·(1 − r_eff)`, but the latter is NOT byte-identical to pre-YUK-450: IEEE754
+  // `1 − (1 − x) ≠ x` for ~1/3 of doubles, so the `1 − w·(1 − r_eff)` form drifts ~1 ULP from
+  // main on the LIVE SRT path at w=1). With this form: timeWeight = 1 (DEFAULT) ⇒ `1·r_eff + 0`
+  // = r_eff EXACTLY (×1 and +0 are exact in IEEE754) ⇒ BYTE-IDENTICAL to pre-YUK-450 for every
+  // input (incl. the d ≤ 0 guard: r_effW = SRT_MIN_SIGNAL). timeWeight = 0 ⇒ `0 + 1` = 1 ⇒ pure
+  // binary. The golden-constant anchor in theta.test.ts guards this byte-identity against main.
+  const rEffW = timeWeight * rEff + (1 - timeWeight);
   return correct ? 0.5 + 0.5 * rEffW : 0.5 - 0.5 * rEffW;
 }
 

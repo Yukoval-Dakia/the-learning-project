@@ -579,12 +579,34 @@ describe('SRT_FISHER_WEIGHT_ENABLED flag', () => {
 });
 
 describe('srtOutcome timeWeight (YUK-450 Fisher-conditioned time weight)', () => {
-  it('timeWeight=1 (DEFAULT) is BYTE-IDENTICAL to the 3-arg srtOutcome for every (correct,d,t)', () => {
-    for (const d of [20, 30, 50]) {
-      for (const t of [-5, 0, 1, 15, d, 2 * d, 1000]) {
-        expect(srtOutcome(true, d, t, 1)).toBe(srtOutcome(true, d, t));
-        expect(srtOutcome(false, d, t, 1)).toBe(srtOutcome(false, d, t));
-      }
+  it('timeWeight=1 (DEFAULT) is BYTE-IDENTICAL to PRE-YUK-450 main, anchored on golden constants', () => {
+    // The LIVE SRT path runs srtOutcome at the production default timeWeight=1; flipping the
+    // time-weight formula MUST NOT perturb θ̂ by even 1 ULP (SRT_ENABLED is true → this feeds the
+    // live engine). A new-vs-new assertion (`srtOutcome(…,1) === srtOutcome(…)`) is a TAUTOLOGY —
+    // both go through today's code. The only honest byte-identical guard is the literal output of
+    // main's pre-YUK-450 srtOutcome, hard-coded here. These constants were recomputed directly
+    // from main's `0.5 ± 0.5·rEff` form (rEff = 0.15 + 0.85·clamp01((d−t)/d)); they include t in
+    // the float-drift zone (17.67 / 17.9 at d=20 — where the rejected `1 − w·(1 − rEff)` form
+    // diverged ~1 ULP). The endpoint-exact `w·rEff + (1 − w)` form must reproduce them EXACTLY.
+    const GOLDEN: ReadonlyArray<readonly [boolean, number, number, number]> = [
+      // [correct, d, t(seconds), main's srtOutcome]
+      [true, 30, 0, 1], // fast-correct binary anchor
+      [true, 30, 15, 0.7875], // mid
+      [true, 30, 30, 0.575], // floored slow (t == d)
+      [true, 30, 45, 0.575], // floored slow (t > d clamps)
+      [false, 30, 0, 0], // fast-wrong binary anchor
+      [false, 30, 15, 0.21250000000000002], // mid wrong
+      [false, 30, 30, 0.425], // floored slow wrong
+      [true, 0, 5, 0.575], // d ≤ 0 guard → floored
+      // float-drift-zone samples (the rejected 1 − w·(1 − rEff) form drifted ±1 ULP here):
+      [true, 20, 17.67, 0.6245124999999999],
+      [false, 20, 17.67, 0.37548750000000003],
+      [true, 20, 17.9, 0.619625],
+      [false, 20, 17.9, 0.38037499999999996],
+    ];
+    for (const [correct, d, t, expected] of GOLDEN) {
+      expect(srtOutcome(correct, d, t, 1)).toBe(expected); // EXACT — byte-identical to main
+      expect(srtOutcome(correct, d, t)).toBe(expected); // 3-arg default path identical too
     }
   });
 
