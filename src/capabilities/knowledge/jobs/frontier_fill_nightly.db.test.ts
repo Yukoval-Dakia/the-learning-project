@@ -256,4 +256,66 @@ describe('frontier_fill_nightly — empty-frontier prerequisite bootstrap', () =
     expect(await proposeEvents()).toHaveLength(1);
     expect(await countLiveEdges()).toBe(0);
   });
+
+  // ── 7. OVERFLOW ≢ COLD-START (YUK-514 Finding 1) ──────────────────────────
+  it('no-ops (skipped_overflow) when the frontier closure OVERFLOWS — fake NOT called', async () => {
+    // An `overflow` resolution means the closure tripped the depth / node-cap fail-safe →
+    // the graph is DENSE, not cold-start → the job must NOT bootstrap. Inject the
+    // discriminant via the DI seam (no need to seed a 10k-tuple closure).
+    const [k1, k2] = [createId(), createId()];
+    await seedKnowledge([k1, k2]);
+
+    const runTaskFn = vi.fn(async () => ({ text: '{"proposals":[]}' }));
+    const result = await runFrontierFillAndWrite(db, {
+      runTaskFn,
+      resolveFrontierFn: async () => ({ kind: 'overflow' as const, ids: [] }),
+    });
+
+    expect(result.skipped_overflow).toBe(1);
+    expect(result.skipped_dense).toBe(0);
+    expect(result.proposed).toBe(0);
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(await proposeEvents()).toHaveLength(0);
+    expect(await countLiveEdges()).toBe(0);
+  });
+
+  // ── 8. `from` EXISTENCE = knowledge table, NOT truncated snapshot (Finding 2) ──
+  it('validates `from` against the knowledge table (a real KC is kept; a phantom id is dropped)', async () => {
+    // Empty frontier (no edges) → bootstrap proceeds. The model returns two proposals:
+    // one whose `from` is a REAL seeded KC, one whose `from` is a non-existent id. The
+    // DB-existence check keeps the real one and drops only the phantom (skipped_invalid),
+    // independent of any tree-snapshot truncation.
+    const [src, t1, t2] = [createId(), createId(), createId()];
+    await seedKnowledge([src, t1, t2]);
+
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        proposals: [
+          {
+            from_knowledge_id: src,
+            to_knowledge_id: t1,
+            relation_type: 'prerequisite',
+            weight: 0.9,
+            reasoning: 'real from → kept',
+          },
+          {
+            from_knowledge_id: 'phantom-kc-not-in-db',
+            to_knowledge_id: t2,
+            relation_type: 'prerequisite',
+            weight: 0.9,
+            reasoning: 'phantom from → dropped',
+          },
+        ],
+      }),
+    }));
+
+    const result = await runFrontierFillAndWrite(db, { runTaskFn });
+    expect(result.proposed).toBe(1);
+    expect(result.skipped_invalid).toBe(1);
+
+    const events = await proposeEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ from: src, to: t1 });
+    expect(await countLiveEdges()).toBe(0);
+  });
 });
