@@ -23,6 +23,7 @@ import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
 import { readLearnerAxisStates } from '@/server/calibration/axis-writer';
+import { type DayOnePrior, loadDayOnePriors } from '@/server/coldstart/propagate-priors';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { eq, inArray } from 'drizzle-orm';
@@ -61,6 +62,11 @@ export interface ProfileKc {
     n_obs: number;
     provenance: string;
   };
+  // YUK-513 #123 / inc-E — DARK day-one (n=0) propagated mastery prior over the prereq
+  // sub-DAG (deterministic, user-independent: see loadDayOnePriors). Present only when
+  // PREREQ_PROPAGATION_ENABLED && the native binding is loadable; otherwise the field is
+  // OMITTED and this response is byte-identical to today. No UI consumer until PR-3.
+  day_one_prior?: DayOnePrior;
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -95,8 +101,9 @@ export async function GET(req: Request): Promise<Response> {
       });
     }
 
-    // Projection (mastery_state SoT) + names + A11 axis descriptor, fanned out (independent reads).
-    const [proj, nameRows, axisByKc] = await Promise.all([
+    // Projection (mastery_state SoT) + names + A11 axis descriptor + day-one priors, fanned out
+    // (independent reads).
+    const [proj, nameRows, axisByKc, dayOnePriors] = await Promise.all([
       getMasteryProjection(db, scope),
       db
         .select({ id: knowledge.id, name: knowledge.name })
@@ -105,6 +112,10 @@ export async function GET(req: Request): Promise<Response> {
       // YUK-445 (A11) — per-KC caution/speed-accuracy descriptor (display-only; absent for KCs
       // the nightly batch hasn't reached the usage gate on).
       readLearnerAxisStates(db, scope),
+      // YUK-513 #123 / inc-E — resolves null (NO-OP, no DB read) unless
+      // PREREQ_PROPAGATION_ENABLED && the native binding is loadable. Null ⇒ no field added
+      // below ⇒ this response stays byte-identical to today (the regression anchor).
+      loadDayOnePriors(db, scope),
     ]);
     const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
 
@@ -123,10 +134,16 @@ export async function GET(req: Request): Promise<Response> {
             provenance: ax.provenance,
           }
         : undefined;
+      // YUK-513 #123 — undefined whenever dayOnePriors is null (flag off / binding absent) → key
+      // never added (byte-identical-off).
+      const dop = dayOnePriors?.get(id);
       if (!m) {
-        return { id, name, tested: false, evidence_count: 0, ...(axis ? { axis } : {}) };
+        const row: ProfileKc = { id, name, tested: false, evidence_count: 0 };
+        if (axis) row.axis = axis;
+        if (dop) row.day_one_prior = dop;
+        return row;
       }
-      return {
+      const row: ProfileKc = {
         id,
         name,
         tested: true,
@@ -144,6 +161,8 @@ export async function GET(req: Request): Promise<Response> {
         beta: m.beta,
         ...(axis ? { axis } : {}),
       };
+      if (dop) row.day_one_prior = dop;
+      return row;
     });
 
     // evidenceCount = evidence summed across tested KCs (a question touching multiple KCs
