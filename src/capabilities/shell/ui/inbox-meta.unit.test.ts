@@ -42,6 +42,9 @@ describe('KIND_META vs aiProposalKinds 对账', () => {
 // dispatchAccept（src/server/proposals/actions.ts）新增/移除 case 时，必须同步
 // 更新 core 的 acceptSupportedProposalKinds，否则这里漂移警报。
 describe('acceptSupportedProposalKinds 分区对账', () => {
+  // conjecture (YUK-440/YUK-406 教研团 Phase 0) now HAS a real accept applier
+  // (acceptConjectureProposal: accept/edit/reject + idempotency), so it joins the
+  // SUPPORTED partition. Only defer/archive/judge_retraction remain unsupported.
   const unsupported = ['defer', 'archive', 'judge_retraction'] as const;
 
   it('acceptSupported ∪ {defer, archive, judge_retraction} === aiProposalKinds', () => {

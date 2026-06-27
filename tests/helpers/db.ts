@@ -27,6 +27,10 @@ const ALL_TABLES = [
   'material_fsrs_state',
   // B1-W1 (ADR-0035) — diagnostic projection (θ̂/p(L)) + item difficulty anchor.
   'mastery_state',
+  // YUK-440 (A13) — typed KC ledger projection. No FK, so resetDb must list it
+  // explicitly or it leaks across tests (same footgun as mastery_state /
+  // materialized_id_index).
+  'kc_typed_state',
   'item_calibration',
   // YUK-361 Phase 5 — 家族级 b_delta 慢热校准资产。
   'item_family_calibration',

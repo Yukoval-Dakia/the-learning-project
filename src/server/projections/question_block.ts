@@ -21,128 +21,30 @@
 // null: until backfill (C2) writes a genesis anchor for every block, a fold-null on an un-anchored
 // row is fold-BLINDNESS, not a revert, so the guard keeps the imperative row.
 //
-// ── Gather + anchor kept LOCAL (deliberately, design §7 lane split) ─────────────────────────────
+// ── Gather + anchor HOISTED to the shared modules (W3-C2) ───────────────────────────────────────
 // The W1/W2 IO shells import gatherAndFoldX from the SHARED gather.ts (so the projection auditor
-// reconstructs a row identically) and hasXGenesisAnchor from parity.ts. W3-B2's scope is the
-// reducer + an INERT IO shell ONLY — the gather.ts extension + the backfill leg + the full
-// assertQuestionBlockParity are C2/C3. So the Q1+Q2 gather + the event-table anchor check the shell
-// NEEDS live HERE as private helpers; C2 hoists them into gather.ts/parity.ts (and switches Q2's
-// jsonb-containment to the top-level `@>` form that hits the W3-C0 `event_payload_gin_idx`, design
-// §5.2 F4). Keeping them local keeps this lane self-contained and inert.
+// reconstructs a row identically) and hasXGenesisAnchor from parity.ts. W3-B2 kept a private Q1+Q2
+// merge gather + event-table anchor here while inert; C2 HOISTS them into gather.ts
+// (gatherAndFoldQuestionBlock — Q2 uses the TOP-LEVEL `payload @> {affected_blocks:[{block_id}]}`
+// form that hits the W3-C0 `event_payload_idx` GIN) and parity.ts (hasQuestionBlockGenesisAnchor —
+// event leg only; question_block does NOT enter the index, design §5.3) so the auditor + backfill
+// share ONE gather and ONE anchor definition with this shell. This shell now just imports them.
 //
 // question_block does NOT enter materialized_id_index (design §5.3 — it has no minting indirection;
-// the row id is ALWAYS the subject_id, so the anchor is always a subject-keyed event and the
-// event-table check is complete — the ONE intentional asymmetry vs artifact, §9.4).
+// the row id is ALWAYS the subject_id, so the anchor is always a subject-keyed event — the ONE
+// intentional asymmetry vs artifact, §9.4).
 //
 // Db|Tx polymorphic.
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
-import type { FoldEvent } from '@/core/projections/fold-event';
-import { foldQuestionBlock } from '@/core/projections/question_block';
 import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { event, question_block } from '@/db/schema';
+import { question_block } from '@/db/schema';
+import { gatherAndFoldQuestionBlock } from './gather';
+import { hasQuestionBlockGenesisAnchor } from './parity';
 
 type DbLike = Db | Tx;
-type EventRow = typeof event.$inferSelect;
-
-// The base events that establish a question_block as event-sourced (reproducible by
-// foldQuestionBlock). Both carry the FULL initial QuestionBlockRowSnapshot in payload.row
-// (design §5.2, fork #2).
-const QUESTION_BLOCK_ANCHOR_ACTIONS = [
-  'experimental:genesis',
-  'experimental:question_block_create',
-] as const;
-
-// rowToFoldEvent — map ONE `event` DB row to the flat FoldEvent envelope the reducer consumes.
-// (Local copy of gather.ts's exported mapper; C2 collapses this onto the shared one when the
-// question_block gather is hoisted into gather.ts.)
-function rowToFoldEvent(row: EventRow): FoldEvent {
-  return {
-    id: row.id,
-    created_at: row.created_at,
-    actor_kind: row.actor_kind,
-    actor_ref: row.actor_ref,
-    action: row.action,
-    subject_kind: row.subject_kind,
-    subject_id: row.subject_id,
-    outcome: row.outcome ?? null,
-    payload: (row.payload ?? {}) as Record<string, unknown>,
-    caused_by_event_id: row.caused_by_event_id ?? null,
-  };
-}
-
-/**
- * Gather the superset of events affecting `blockId` and run the PURE question_block fold. READ-ONLY.
- *
- * The question_block gather is a TWO-QUERY merge gather (design §5.2, mirrors the W1 node merge Q3):
- *   - Q1: subject_kind='question_block' AND subject_id=blockId → genesis + question_block_create +
- *     edit-as-primary (every event keyed on blockId's OWN id).
- *   - Q2: the merge reverse query — an edit event is keyed on the PRIMARY block, so when blockId is
- *     an absorbed `merged_source` the event's subject_id is a DIFFERENT block and Q1 misses it.
- *     blockId lives only in payload.affected_blocks[].block_id; the jsonb-containment `@>` finds it.
- *
- * NOTE FOR C2: this Q2 uses the TOP-LEVEL `event.payload @> {affected_blocks:[{block_id}]}` form
- * (recursive containment) — the same shape the design's F4 GIN index `event_payload_gin_idx`
- * (jsonb_path_ops on the whole `payload` column, W3-C0) accelerates. Until that index lands Q2 is a
- * seq scan; INERT here, so harmless. C2 hoists this into the shared gather.ts (next to
- * gatherAndFoldKnowledgeNode's Q3) so the projection auditor reconstructs the row identically.
- *
- * Returns the projected row or null (block never created). Writes NOTHING.
- */
-async function gatherAndFoldQuestionBlock(
-  db: DbLike,
-  blockId: string,
-): Promise<QuestionBlockRowSnapshotT | null> {
-  // ── Q1: events whose subject_id IS blockId ──────────────────────────────────────────────────
-  const q1 = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'question_block'), eq(event.subject_id, blockId)));
-
-  // ── Q2: edit events that ABSORB blockId as a merged_source (keyed on a DIFFERENT primary) ─────
-  const q2 = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:edit_question_block_structured'),
-        sql`${event.payload} @> ${JSON.stringify({ affected_blocks: [{ block_id: blockId }] })}::jsonb`,
-      ),
-    );
-
-  // Dedup by event id (Q1/Q2 overlap when blockId is the primary of one edit and a merged_source of
-  // another).
-  const byId = new Map<string, EventRow>();
-  for (const r of [...q1, ...q2]) byId.set(r.id, r);
-
-  const foldEvents = [...byId.values()].map(rowToFoldEvent);
-  return foldQuestionBlock(blockId, foldEvents);
-}
-
-/**
- * Does this `question_block` have a genesis/create anchor — i.e. is it event-sourced (reproducible
- * by foldQuestionBlock) at all? READ-ONLY. Used by the guarded write-through (a fold-null on a NON-
- * event-sourced block must NOT delete the imperative row) — mirrors hasArtifactGenesisAnchor /
- * hasGoalGenesisAnchor. NO materialized_id_index leg: question_block does not enter the index
- * (design §5.3) — the row id is ALWAYS the subject_id, so the anchor is always a subject-keyed event
- * and this event-table check is complete.
- */
-async function hasQuestionBlockGenesisAnchor(db: DbLike, blockId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'question_block'),
-        eq(event.subject_id, blockId),
-        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  return ev.length > 0;
-}
 
 /**
  * Project the current structural state of a single `question_block` from the event log and write it

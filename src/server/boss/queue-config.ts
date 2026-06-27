@@ -17,7 +17,7 @@
 //   FAST  — sub-second housekeeping (echo / prune_* / promote_idle). Brief floor
 //           of 1h is overkill for these but keeps a single safe minimum.
 //   LLM   — single ~30-90s LLM call handlers (note_*, variant_*, coach_*,
-//           session_summary, attribution_followup, review_plan,
+//           session_summary, attribution_followup,
 //           goal_scope, hub_auto_sync, auto_enroll). 1h ceiling.
 //   AGENT — multi-step tool-calling agents that can legitimately run for many
 //           minutes (quiz_gen / quiz_verify / sourcing / source_verify /

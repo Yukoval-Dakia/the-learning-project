@@ -391,6 +391,9 @@ export async function submitSolveAttempt(
         answer_md: answerMd.length > 0 ? answerMd : null,
         answer_image_refs: submission.student_image_refs ?? [],
         referenced_knowledge_ids: q.knowledge_ids,
+        // YUK-407 (Phase 0 red line) — capture the reconstruction-signal slot now;
+        // 'unknown' until the Reconstruction-as-method classifier lands.
+        reconstruction_signal: 'unknown',
         // YUK-352 — hint 留痕. Conditionally spread so the field is ABSENT (not null/0)
         // when the caller did not report a count → byte-identical payload for the
         // pre-YUK-352 path. hints_used=0 (solved without a hint) is a real measured

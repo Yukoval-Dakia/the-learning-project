@@ -158,6 +158,15 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:body_blocks_edit',
   'experimental:artifact_create',
   'experimental:artifact_lifecycle',
+  // YUK-471 Wave 3 (W3-C1γ artifact edit/lifecycle/mutator cutover) — the self-sufficient undo
+  // event (./artifact-events.ts NoteRefineUndoExperimental) carries the RESTORED body_blocks +
+  // next_artifact_version + after-history so the fold reproduces a note-refine undo. Reserved so the
+  // parseEvent barrier fail-loud on the ENVELOPE. The action name is REUSED (the live writer already
+  // emits it), so the fold fields are OPTIONAL in the typed schema — a pre-C1γ loose undo event still
+  // validates here (and via getEvents' strict read-parse) rather than throwing; the migrated writer
+  // always emits the fold fields so every NEW undo is self-sufficient (see NoteRefineUndoExperimental
+  // docblock). The reducer folds the restore only when body_blocks is carried.
+  'experimental:note_refine_undo',
   // YUK-471 Wave 3 (question_block fold, design §3 #5/#6) — the two question_block action events
   // (./question-block-events.ts) move the structured edit off the loose `job_events`
   // `block.structured_edited` row onto the canonical log: edit_question_block_structured (full AFTER
@@ -169,6 +178,14 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // transport row, NOT an `experimental:*` action, so it is unaffected by this reservation.
   'experimental:edit_question_block_structured',
   'experimental:question_block_create',
+  // YUK-471 Wave 3 (W3-D flip prereq, the LAST qb fold-visibility gap) — the lifecycle action event
+  // (./question-block-events.ts QuestionBlockLifecycleExperimental) makes the 5 previously-eventless
+  // fold-truth mutators fold-visible: reassignFigure (figures re-point), runAutoEnrollForSession /
+  // import-enroll / import-ignore / revertAutoEnrolledBlock (status + imported_* transitions). Mirrors
+  // artifact_lifecycle (presence-based payload + op→required-field superRefine). The fold trusts these
+  // to reproduce figures/status/imported_*/version; a malformed payload must be rejected at the
+  // barrier, not fall through to the loose generic.
+  'experimental:question_block_lifecycle',
 ]);
 
 // ====================================================================

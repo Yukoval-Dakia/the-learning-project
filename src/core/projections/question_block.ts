@@ -6,6 +6,7 @@ import {
 import {
   EditQuestionBlockStructuredExperimental,
   QuestionBlockCreateExperimental,
+  QuestionBlockLifecycleExperimental,
 } from '../schema/event/question-block-events';
 import type { FoldEvent } from './fold-event';
 
@@ -77,6 +78,17 @@ import type { FoldEvent } from './fold-event';
 // events absorbing blockId as a merged_source, where subject_id is the PRIMARY ≠ blockId). The IO
 // shell (src/server/projections/question_block.ts) owns the gather; the reducer is correct on the
 // union superset. NO rate caused_by chain (create/edit are direct, not propose→accept).
+//
+// ✅ ALL LIVE QUESTION_BLOCK MUTATORS ARE NOW FOLD-VISIBLE (YUK-471 W3-D — flip prerequisite MET;
+// like foldArtifact, whose set went EMPTY after the W3-C1γ cutover). Every `subject_kind:'question_block'`
+// write path now appends a self-sufficient event the branches below reproduce: question_block_create /
+// genesis (base; rescue is a second create that last-write-wins) · edit_question_block_structured (the 5
+// structured-rewrite ops, incl. the merge multi-row aggregation) · question_block_lifecycle (the LAST
+// gap — the 5 formerly-eventless fold-truth mutators: reassignFigure → figures; runAutoEnrollForSession /
+// import-enroll / import-ignore / revertAutoEnrolledBlock → status + imported_*). NOTHING outstanding for
+// the question_block flip — its audit:projection can now go clean and W3-D is gate-able.
+// (The legacy `job_events` `block.structured_edited` / `figure.reassigned` SSE transport rows are NOT
+// `experimental:*` canonical actions and stay orthogonal — the fold ignores them.)
 
 // toParseInput — reconstruct the Zod parse input from the flat FoldEvent columns (mirrors every
 // sibling reducer). Each typed branch feeds this to its dedicated schema so a malformed payload is
@@ -245,6 +257,50 @@ export function foldQuestionBlock(
         version: entry.version,
         updated_at: fe.created_at,
       };
+      continue;
+    }
+
+    // ---------- question_block_lifecycle — the 5 (formerly eventless) fold-truth mutators (W3-D) ----------
+    // Mirrors artifact_lifecycle: PRESENCE-BASED apply of the after-values the previously-eventless
+    // writers carry — reassignFigure → figures (op='reassign_figures'); runAutoEnrollForSession /
+    // import-enroll / import-ignore / revertAutoEnrolledBlock → status + imported_* (op='set_status').
+    // KEYED on subject_id === blockId (unlike the structured edit, this never aggregates a
+    // merged_source from a different primary), so the simple envelope filter suffices. A writer carries
+    // EXACTLY the columns its UPDATE touched; an undefined field ⇒ the column was left untouched → the
+    // fold keeps the running value (so the ignore sweep, which omits imports, never clears them). The
+    // imported_* fields honor an explicit carried null as a clear (revert). version = next_version
+    // VERBATIM (the writer's bump rule); updated_at = the event time (single-clock, like every edit).
+    if (
+      fe.action === 'experimental:question_block_lifecycle' &&
+      fe.subject_kind === 'question_block' &&
+      fe.subject_id === blockId
+    ) {
+      // From here a base must exist (the lifecycle mutates an already-seeded row; a pre-W3 block with
+      // no create/genesis anchor folds null and the mutation is skipped, mirroring every edit branch).
+      if (row === null) continue;
+      const l = QuestionBlockLifecycleExperimental.safeParse(toParseInput(fe));
+      if (!l.success) {
+        warnMalformed('experimental:question_block_lifecycle', fe.id, l.error);
+        continue;
+      }
+      const p = l.data.payload;
+      const next: QuestionBlockRowSnapshotT = {
+        ...row,
+        version: p.next_version,
+        updated_at: fe.created_at,
+      };
+      // reassign_figures replaces the figures array wholesale (last-write-wins; the clone keeps the
+      // reducer pure — never aliases the event payload's array). superRefine guarantees it is carried
+      // for op='reassign_figures'.
+      if (p.figures !== undefined) next.figures = [...p.figures];
+      if (p.status !== undefined) next.status = p.status;
+      // imported_*: a carried null is an explicit clear (revert) and is honored; undefined leaves it
+      // (the ignore sweep). superRefine guarantees a non-empty status accompanies a set_status.
+      if (p.imported_question_id !== undefined) next.imported_question_id = p.imported_question_id;
+      if (p.imported_attempt_event_id !== undefined) {
+        next.imported_attempt_event_id = p.imported_attempt_event_id;
+      }
+      row = next;
     }
   }
 

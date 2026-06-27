@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scheduleReview } from './fsrs';
+import { retrievabilityForKc, scheduleReview } from './fsrs';
 
 const NOW = new Date('2026-05-10T12:00:00Z');
 
@@ -56,5 +56,30 @@ describe('scheduleReview', () => {
     expect(Number.isFinite(second.nextState.scheduled_days)).toBe(true);
     expect(Number.isFinite(second.nextState.stability)).toBe(true);
     expect(second.dueAt.getTime()).toBeGreaterThan(ONE_DAY_LATER.getTime());
+  });
+});
+
+// YUK-440 (A13) — public retrievability wrapper (R(t) ∈ [0,1], ts-fsrs ^5.4.1).
+describe('retrievabilityForKc', () => {
+  it('returns 0 for a null state (no FSRS card yet — New-state R = 0)', () => {
+    expect(retrievabilityForKc(null, NOW)).toBe(0);
+  });
+
+  it('returns R in [0,1] for a scheduled card', () => {
+    const after = scheduleReview(null, 'good', NOW);
+    const r = retrievabilityForKc(after.nextState, NOW);
+    expect(r).toBeGreaterThanOrEqual(0);
+    expect(r).toBeLessThanOrEqual(1);
+  });
+
+  it('retrievability is no higher long after review than right after (decay)', () => {
+    const after = scheduleReview(null, 'good', NOW);
+    const rFresh = retrievabilityForKc(after.nextState, NOW);
+    const rStale = retrievabilityForKc(
+      after.nextState,
+      new Date(NOW.getTime() + 100 * 24 * 60 * 60 * 1000),
+    );
+    expect(rStale).toBeLessThanOrEqual(rFresh);
+    expect(rStale).toBeGreaterThanOrEqual(0);
   });
 });

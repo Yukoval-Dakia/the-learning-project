@@ -20,6 +20,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import type { TaskTextResult } from '@/server/ai/provenance';
+import { emitArtifactLifecycleEvent } from '@/server/artifacts/mutation-events';
 import { writeEvent } from '@/server/events/queries';
 import { resolveNoteSkill } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -156,18 +157,24 @@ async function persistNoteVerificationResult(params: {
   });
 
   const verifyEventId = createId();
+  // W3-C1γ — single tx clock so the artifact UPDATE's updated_at == the fold lifecycle event's
+  // created_at (fold updated_at = event time). The verified_by value is computed ONCE and shared
+  // between the UPDATE and the fold event so full-row parity reproduces the provenance column too.
+  const now = new Date();
+  const verifiedByRef = taskResult
+    ? aiAgentRef('NoteVerifyTask', taskResult)
+    : { by: 'system', task_kind: 'NoteVerifyTask', model: 'body-block-contract' };
   await db.transaction(async (tx) => {
-    await tx
+    const updatedRows = await tx
       .update(artifact)
       .set({
         verification_status: status,
         verification_summary: parsed as never,
-        verified_by: taskResult
-          ? (aiAgentRef('NoteVerifyTask', taskResult) as never)
-          : ({ by: 'system', task_kind: 'NoteVerifyTask', model: 'body-block-contract' } as never),
-        updated_at: new Date(),
+        verified_by: verifiedByRef as never,
+        updated_at: now,
       })
-      .where(eq(artifact.id, artifactId));
+      .where(eq(artifact.id, artifactId))
+      .returning({ version: artifact.version });
 
     await writeEvent(tx, {
       id: verifyEventId,
@@ -186,8 +193,31 @@ async function persistNoteVerificationResult(params: {
       caused_by_event_id: null,
       task_run_id: taskResult?.task_run_id ?? null,
       cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
-      created_at: new Date(),
+      created_at: now,
     });
+
+    // W3-C1γ — the fold-source lifecycle event (distinct from the experimental:note_verify
+    // observability event above). note_verify does NOT bump version, so next_version = the row's
+    // CURRENT version (the `.returning()` reported it, unchanged). Carries verification_status +
+    // verification_summary + verified_by so foldArtifact reproduces all three columns. Gated on the
+    // row existing (a missing artifact ⇒ no version ⇒ no fold event). Same tx — a malformed payload
+    // rolls back the paired UPDATE + verify event (parseEvent barrier). Plumbing ⇒ opt out of memory.
+    const updatedVersion = updatedRows[0]?.version;
+    if (updatedVersion !== undefined) {
+      await emitArtifactLifecycleEvent(tx, {
+        subjectId: artifactId,
+        op: 'set_verification_status',
+        verificationStatus: status,
+        verificationSummary: parsed,
+        verifiedBy: verifiedByRef,
+        nextVersion: updatedVersion,
+        actorKind: taskResult ? 'agent' : 'system',
+        actorRef: 'note_verify',
+        taskRunId: taskResult?.task_run_id ?? null,
+        costMicroUsd: costUsdToMicroUsd(taskResult?.cost_usd),
+        createdAt: now,
+      });
+    }
 
     // YUK-358 决定7 (ADR-0040) — the DEAD patch-less note_update proposal is GONE.
     // It was a permanent inbox occupant carrying only a summary + issues (no patch),
@@ -335,32 +365,60 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     // system failure is non-terminal and must remain retriable, distinct from a terminal
     // model verdict (note has none — its non-promote verdict is needs_review/'partial').
     try {
-      await db
-        .update(artifact)
-        .set({ verification_status: 'failed', updated_at: new Date() })
-        .where(eq(artifact.id, artifactId));
-      await writeEvent(db, {
-        id: createId(),
-        session_id: null,
-        actor_kind: 'agent',
-        actor_ref: 'note_verify',
-        action: 'experimental:note_verify',
-        subject_kind: 'artifact',
-        subject_id: artifactId,
-        outcome: 'error',
-        payload: {
-          artifact_id: artifactId,
-          ...toUnifiedVerifyResult({
-            source: 'system_error',
-            summary_md: `note_verify failed: ${String((err as Error).message ?? err)}`,
+      // W3-C1γ — the failed status flip + its error event + the fold lifecycle event are now ONE tx
+      // (was two separate db writes), so the fold reproduces verification_status='failed' and NOTHING
+      // about artifact stays KNOWN-UNFOLDED. Failure does NOT bump version. Best-effort: a throw here
+      // is logged, never masking the original error (rethrown below so pg-boss retries).
+      const failedAt = new Date();
+      await db.transaction(async (tx) => {
+        const beforeRows = await tx
+          .select({ version: artifact.version })
+          .from(artifact)
+          .where(eq(artifact.id, artifactId))
+          .for('update')
+          .limit(1);
+        const before = beforeRows[0];
+        const updatedRows = await tx
+          .update(artifact)
+          .set({ verification_status: 'failed', updated_at: failedAt })
+          .where(eq(artifact.id, artifactId))
+          .returning({ version: artifact.version });
+        await writeEvent(tx, {
+          id: createId(),
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: 'note_verify',
+          action: 'experimental:note_verify',
+          subject_kind: 'artifact',
+          subject_id: artifactId,
+          outcome: 'error',
+          payload: {
+            artifact_id: artifactId,
+            ...toUnifiedVerifyResult({
+              source: 'system_error',
+              summary_md: `note_verify failed: ${String((err as Error).message ?? err)}`,
+              error: String((err as Error).message ?? err),
+            }),
             error: String((err as Error).message ?? err),
-          }),
-          error: String((err as Error).message ?? err),
-        },
-        caused_by_event_id: null,
-        task_run_id: taskResult?.task_run_id ?? null,
-        cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
-        created_at: new Date(),
+          },
+          caused_by_event_id: null,
+          task_run_id: taskResult?.task_run_id ?? null,
+          cost_micro_usd: costUsdToMicroUsd(taskResult?.cost_usd),
+          created_at: failedAt,
+        });
+        if (before && updatedRows.length > 0) {
+          await emitArtifactLifecycleEvent(tx, {
+            subjectId: artifactId,
+            op: 'set_verification_status',
+            verificationStatus: 'failed',
+            nextVersion: before.version,
+            actorKind: 'agent',
+            actorRef: 'note_verify',
+            taskRunId: taskResult?.task_run_id ?? null,
+            costMicroUsd: costUsdToMicroUsd(taskResult?.cost_usd),
+            createdAt: failedAt,
+          });
+        }
       });
     } catch (cleanupErr) {
       console.error('[note_verify] catch-block cleanup failed for', artifactId, cleanupErr);

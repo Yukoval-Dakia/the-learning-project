@@ -62,12 +62,14 @@ import type {
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
 import {
+  artifact,
   event,
   goal,
   knowledge,
   knowledge_edge,
   learning_item,
   mistake_variant,
+  question_block,
 } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
@@ -75,14 +77,30 @@ import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-
 // accept-time parity assert uses (genesis / auto_tag event, or a materialized_id_index anchor), so
 // "event-sourced" means exactly the same thing on both sides. (YUK-471 W2: goalsWithGenesisAnchor
 // is the goal analog; mistakeVariantsWithGenesisAnchor is the mistake_variant analog;
-// learningItemsWithGenesisAnchor is the learning_item analog — a genesis / index anchor.)
+// learningItemsWithGenesisAnchor is the learning_item analog — a genesis / index anchor. YUK-471
+// W3-C2: artifactsWithGenesisAnchor (genesis/create event OR index anchor) is the artifact analog;
+// questionBlocksWithGenesisAnchor (genesis/create event ONLY — question_block is not in the index)
+// is the question_block analog.)
 import {
+  artifactsWithGenesisAnchor,
   goalsWithGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
   learningItemsWithGenesisAnchor,
   mistakeVariantsWithGenesisAnchor,
+  questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
+// SHARED artifact / question_block row→snapshot mappers (W3-C3 review) — the genesis backfill, the
+// audit, and the parity assert all map through the SAME field-pick so the snapshot shape can't drift
+// (esp. the question_block extracted_prompt_md strip, design §5.2).
+import {
+  artifactRowToSnapshot,
+  questionBlockRowToSnapshot,
+} from '@/server/projections/snapshot-mappers';
 import { and, eq, inArray, or } from 'drizzle-orm';
+// ZodError is the genesis parse-barrier failure (writeEvent → parseEvent). Only THAT is a per-row data
+// problem to accumulate; anything else (DB connectivity / deadlock / constraint from db.insert or
+// upsertMaterializedIdIndex) is infra and must abort the whole backfill loud — see the catch blocks.
+import { ZodError } from 'zod';
 
 type DbLike = Db | Tx;
 type KnowledgeRow = typeof knowledge.$inferSelect;
@@ -90,6 +108,8 @@ type EdgeRow = typeof knowledge_edge.$inferSelect;
 type GoalRow = typeof goal.$inferSelect;
 type MistakeVariantRow = typeof mistake_variant.$inferSelect;
 type LearningItemRow = typeof learning_item.$inferSelect;
+// artifact / question_block row types live with the shared mappers (artifactRowToSnapshot /
+// questionBlockRowToSnapshot, ./snapshot-mappers) — imported above (W3-C3 review dedup).
 
 const GENESIS_ACTION = 'experimental:genesis';
 const GENESIS_ACTOR_REF = 'genesis-backfill';
@@ -99,7 +119,9 @@ export interface BackfillCounts {
   knowledge_edge: { seeded: number; skipped: number };
   goal: { seeded: number; skipped: number };
   mistake_variant: { seeded: number; skipped: number };
+  artifact: { seeded: number; skipped: number };
   learning_item: { seeded: number; skipped: number };
+  question_block: { seeded: number; skipped: number };
 }
 
 // knowledgeRowToSnapshot — map a live `knowledge` DB row to KnowledgeRowSnapshotT, EXCLUDING
@@ -525,13 +547,208 @@ export async function backfillLearningItemGenesis(
   return { seeded, skipped };
 }
 
+// artifactRowToSnapshot — map a live `artifact` DB row to ArtifactRowSnapshotT — is imported from the
+// shared ./snapshot-mappers module (W3-C3 review dedup; see import block).
+
+// W3-C3 FLIP-GATE HARDENING — per-row backfill error accumulation. A malformed row (e.g. an
+// out-of-range structured/figure bbox failing the strict QuestionBlockRowSnapshot / ArtifactRowSnapshot
+// parse at writeEvent) aborts ONLY its OWN per-row tx; the loop CONTINUES and records { id, error }.
+// After the whole scan, if ANY row failed, throw ONCE listing EVERY bad id — so the owner fixes all bad
+// rows in a SINGLE §9.3 data-fix pass instead of re-running the gate N times (fix one → hit the next →
+// rerun → …). Successfully-seeded rows already committed their own txs and are NOT rolled back (the
+// aggregate throw is a post-scan REPORT, not a transaction boundary). This is the form runB3Gate's
+// step-2 backfill inherits (it calls backfillGenesisEvents → these per-entity functions).
+interface BackfillRowFailure {
+  id: string;
+  error: string;
+}
+
+// Cap the per-row detail so a wholesale-bad table can't produce an unbounded error string (the message
+// must stay operator-readable in a log/CI line). The remainder is summarised as "... and N more" — the
+// full set re-derives on the next run after the shown batch is fixed.
+const MAX_FAILURE_DETAIL = 50;
+
+function throwIfBackfillFailures(
+  entity: string,
+  failures: BackfillRowFailure[],
+  seeded: number,
+): void {
+  if (failures.length === 0) return;
+  const shown = failures.slice(0, MAX_FAILURE_DETAIL);
+  const detail = shown.map((f) => `  - ${f.id}: ${f.error}`).join('\n');
+  const more =
+    failures.length > MAX_FAILURE_DETAIL
+      ? `\n  ... and ${failures.length - MAX_FAILURE_DETAIL} more`
+      : '';
+  throw new Error(
+    `[backfill-genesis] ${entity}: ${failures.length} row(s) failed the genesis parse barrier ` +
+      `(${seeded} row(s) seeded OK before the throw) — fix ALL of them in ONE data-fix pass (§9.3), ` +
+      `then re-run:\n${detail}${more}`,
+  );
+}
+
 /**
- * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant →
- * learning_item).
+ * Seed genesis events + index entries for every `artifact` row lacking a base anchor. (YUK-471 W3-C2.)
+ * Same shape as backfillGoalGenesis (outbox opt-out, atomic per-row tx, idempotent). Returns
+ * { seeded, skipped }.
+ *
+ * SCOPED (mirror the W1/W2 backfills): skip artifacts already event-sourced — a row with a runtime
+ * `experimental:artifact_create` event, a backfill `experimental:genesis`, or an artifact
+ * materialized_id_index anchor (artifactsWithGenesisAnchor). A runtime-created artifact re-folds from
+ * its OWN create + edit/lifecycle chain, so anchoring it with a current-state genesis snapshot would
+ * MASK reducer drift (the genesis sorts last in the fold and overwrites the reducer output). Only
+ * truly EVENT-LESS artifacts (pre-W3 rows written by the imperative INSERT sites before this wave)
+ * need a genesis base. The pre-scan DOUBLES as the idempotency check.
+ *
+ * artifact ENTERS the materialized_id_index (subject_kind='artifact', design §5.3 — the ONE
+ * intentional asymmetry vs question_block, which does NOT), so each genesis writes an index entry too.
+ *
+ * FAIL-LOUD (NOT skip/clamp): the snapshot is built by faithful field-pick; writeEvent's parseEvent
+ * barrier then validates it against the strict ArtifactRowSnapshot. A row whose body_blocks /
+ * generated_by / verification_summary violate the canonical business schemas throws at writeEvent,
+ * aborting the per-row tx → the whole backfill fails loud (genesis is ground truth; a malformed row
+ * is a real data problem, not a row to silently drop). timestamps verbatim from the row.
+ */
+export async function backfillArtifactGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(artifact);
+  const eventSourced = await artifactsWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  let seeded = 0;
+  let skipped = 0;
+  // W3-C3 — accumulate per-row parse failures, throw ONCE after the scan (see throwIfBackfillFailures).
+  const failures: BackfillRowFailure[] = [];
+  for (const row of rows) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    try {
+      // ATOMIC per row: genesis event + index entry commit together (see header).
+      await db.transaction(async (tx) => {
+        await writeEvent(tx, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: GENESIS_ACTOR_REF,
+          action: GENESIS_ACTION,
+          subject_kind: 'artifact',
+          subject_id: row.id,
+          outcome: 'success',
+          payload: { row: artifactRowToSnapshot(row) },
+          ingest_at: now,
+        });
+        await upsertMaterializedIdIndex(tx, {
+          materialized_id: row.id,
+          anchor_event_id: genesisEventId,
+          subject_kind: 'artifact',
+        });
+      });
+      seeded += 1;
+    } catch (err) {
+      // ACCUMULATE only the genesis parse-barrier failure (a ZodError from writeEvent → parseEvent on a
+      // malformed snapshot — a real per-row §9.3 data problem). RE-THROW everything else IMMEDIATELY:
+      // a db.insert / upsertMaterializedIdIndex infra failure (connectivity / deadlock / constraint) is
+      // NOT a bad row, and silently recording it as one would let a transient/systemic failure pass the
+      // flip gate as "N rows to fix" instead of aborting the whole backfill loud.
+      if (!(err instanceof ZodError)) throw err;
+      failures.push({ id: row.id, error: err.message });
+    }
+  }
+  throwIfBackfillFailures('artifact', failures, seeded);
+  return { seeded, skipped };
+}
+
+// questionBlockRowToSnapshot — map a live `question_block` DB row to QuestionBlockRowSnapshotT
+// (EXCLUDING the legacy extracted_prompt_md column, design §5.2) — is imported from the shared
+// ./snapshot-mappers module (W3-C3 review dedup; see import block).
+
+/**
+ * Seed genesis events for every `question_block` row lacking a base anchor. (YUK-471 W3-C2.) Same
+ * shape as backfillArtifactGenesis (outbox opt-out, atomic per-row tx, idempotent) EXCEPT it writes
+ * NO materialized_id_index entry — question_block does NOT enter the index (design §5.3 — the row id
+ * is always the subject_id, the anchor is always a subject-keyed event). Returns { seeded, skipped }.
+ *
+ * SCOPED (mirror the W1/W2/artifact backfills): skip blocks already event-sourced — a row with a
+ * runtime `experimental:question_block_create` or a backfill `experimental:genesis`
+ * (questionBlocksWithGenesisAnchor, event leg only). The pre-scan DOUBLES as the idempotency check.
+ * Only truly EVENT-LESS blocks (pre-W3 rows written by the imperative OCR/rescue/docx INSERT before
+ * this wave) need a genesis base.
+ *
+ * FAIL-LOUD on the C1-δ legacy-bbox / out-of-range rows (NOT skip/clamp): the snapshot omits the
+ * legacy extracted_prompt_md column then field-picks the rest; writeEvent's parseEvent barrier
+ * validates against the strict QuestionBlockRowSnapshot. `page_spans` is deliberately tolerant (raw
+ * 4-number bbox, not the 0-1 BBox) so a faithful coordinate envelope never false-rejects, and
+ * extraction_confidence is DB-CHECK-guaranteed in [0,1]; but `structured`/`figures` reuse the
+ * canonical schemas (0-1 normalized BBox + sum refinements). A row whose structured/figure bbox is
+ * out of range throws at writeEvent → the per-row tx aborts → the whole backfill fails loud. That is
+ * a genuine data-integrity problem (genesis is ground truth) the design routes to the §9.3 owner
+ * data-fix follow-up, NOT a row this backfill silently clamps or drops.
+ */
+export async function backfillQuestionBlockGenesis(
+  db: DbLike,
+  now: Date = new Date(),
+): Promise<{ seeded: number; skipped: number }> {
+  const rows = await db.select().from(question_block);
+  const eventSourced = await questionBlocksWithGenesisAnchor(
+    db,
+    rows.map((r) => r.id),
+  );
+  let seeded = 0;
+  let skipped = 0;
+  // W3-C3 — accumulate per-row parse failures (the bad-bbox rows the docblock above warns about), throw
+  // ONCE after the scan so the owner fixes EVERY bad block in one §9.3 pass (see throwIfBackfillFailures).
+  const failures: BackfillRowFailure[] = [];
+  for (const row of rows) {
+    if (eventSourced.has(row.id)) {
+      skipped += 1;
+      continue;
+    }
+    const genesisEventId = newId();
+    try {
+      // ATOMIC per row: ONLY the genesis event (no index entry — question_block is not in the index).
+      await db.transaction(async (tx) => {
+        await writeEvent(tx, {
+          id: genesisEventId,
+          actor_kind: 'system',
+          actor_ref: GENESIS_ACTOR_REF,
+          action: GENESIS_ACTION,
+          subject_kind: 'question_block',
+          subject_id: row.id,
+          outcome: 'success',
+          payload: { row: questionBlockRowToSnapshot(row) },
+          ingest_at: now,
+        });
+      });
+      seeded += 1;
+    } catch (err) {
+      // ACCUMULATE only the genesis parse-barrier failure (a ZodError from writeEvent → parseEvent on a
+      // malformed snapshot — a real per-row §9.3 data problem). RE-THROW everything else IMMEDIATELY:
+      // a db.insert / upsertMaterializedIdIndex infra failure (connectivity / deadlock / constraint) is
+      // NOT a bad row, and silently recording it as one would let a transient/systemic failure pass the
+      // flip gate as "N rows to fix" instead of aborting the whole backfill loud.
+      if (!(err instanceof ZodError)) throw err;
+      failures.push({ id: row.id, error: err.message });
+    }
+  }
+  throwIfBackfillFailures('question_block', failures, seeded);
+  return { seeded, skipped };
+}
+
+/**
+ * Run all backfills in FK order (knowledge → knowledge_edge → goal → mistake_variant → artifact →
+ * learning_item → question_block).
  * mistake_variant softly references question (parent_question_id / variant_question_id) + event
  * (proposal_event_id); learning_item softly references artifact (primary_artifact_id) + event
- * (source_ref) — all already event-sourced upstream; the genesis + index writes only ADD
- * event/index rows, but the FK order keeps the convention. Returns counts.
+ * (source_ref), so artifact is backfilled BEFORE learning_item (the order the learning_item docblock
+ * anticipates); question_block is independent (mistake_variant references `question`, NOT
+ * question_block) so it runs last. The genesis + index writes only ADD event/index rows (no entity
+ * FK is enforced here — materialized_id_index has no FK to the entity tables), so the order is a
+ * stable-output convention, not a hard constraint. Returns counts.
  */
 export async function backfillGenesisEvents(
   db: DbLike,
@@ -541,13 +758,17 @@ export async function backfillGenesisEvents(
   const edgeCounts = await backfillKnowledgeEdgeGenesis(db, now);
   const goalCounts = await backfillGoalGenesis(db, now);
   const mistakeVariantCounts = await backfillMistakeVariantGenesis(db, now);
+  const artifactCounts = await backfillArtifactGenesis(db, now);
   const learningItemCounts = await backfillLearningItemGenesis(db, now);
+  const questionBlockCounts = await backfillQuestionBlockGenesis(db, now);
   return {
     knowledge: knowledgeCounts,
     knowledge_edge: edgeCounts,
     goal: goalCounts,
     mistake_variant: mistakeVariantCounts,
+    artifact: artifactCounts,
     learning_item: learningItemCounts,
+    question_block: questionBlockCounts,
   };
 }
 
@@ -557,19 +778,25 @@ async function main(): Promise<void> {
   console.log('[backfill-genesis] knowledge_edge:', JSON.stringify(counts.knowledge_edge));
   console.log('[backfill-genesis] goal:', JSON.stringify(counts.goal));
   console.log('[backfill-genesis] mistake_variant:', JSON.stringify(counts.mistake_variant));
+  console.log('[backfill-genesis] artifact:', JSON.stringify(counts.artifact));
   console.log('[backfill-genesis] learning_item:', JSON.stringify(counts.learning_item));
+  console.log('[backfill-genesis] question_block:', JSON.stringify(counts.question_block));
   const totalSeeded =
     counts.knowledge.seeded +
     counts.knowledge_edge.seeded +
     counts.goal.seeded +
     counts.mistake_variant.seeded +
-    counts.learning_item.seeded;
+    counts.artifact.seeded +
+    counts.learning_item.seeded +
+    counts.question_block.seeded;
   const totalSkipped =
     counts.knowledge.skipped +
     counts.knowledge_edge.skipped +
     counts.goal.skipped +
     counts.mistake_variant.skipped +
-    counts.learning_item.skipped;
+    counts.artifact.skipped +
+    counts.learning_item.skipped +
+    counts.question_block.skipped;
   console.log(
     `[backfill-genesis] done — seeded ${totalSeeded} genesis event(s), skipped ${totalSkipped} already-seeded row(s).`,
   );

@@ -748,9 +748,11 @@ export const event = pgTable(
     // hand-written migration drizzle/0017_outbox_event_ingest.sql because
     // drizzle-kit doesn't generate partial-index `WHERE …` clauses natively
     // at this version.
-    // GIN index on payload (jsonb_path_ops) — declared in hand-written migration
-    // (drizzle-kit doesn't generate GIN on jsonb_path_ops natively at this version).
-    // See drizzle/0005_phase1c1_event_payload_gin.sql.
+    // GIN index `event_payload_idx` on payload (jsonb_path_ops) — declared in hand-written
+    // migration (drizzle-kit doesn't generate GIN on jsonb_path_ops natively at this version).
+    // See drizzle/0005_phase1c1_event_payload_gin_and_mastery_view.sql. This is the index the
+    // W3 question_block merge gather's top-level `payload @> {affected_blocks:[{block_id}]}`
+    // containment (gather.ts gatherAndFoldQuestionBlock Q2) relies on (YUK-471 W3-C0).
   ],
 );
 
@@ -910,6 +912,43 @@ export const mastery_state = pgTable(
   (t) => [
     uniqueIndex('mastery_state_unique').on(t.subject_kind, t.subject_id),
     index('mastery_state_subject_idx').on(t.subject_id),
+  ],
+);
+
+// YUK-440 (A13 typed KC ledger) — kc_typed_state: the single-writer PROJECTION over
+// RESOLVED conjecture/probe evidence, mirroring mastery_state's shape (diagnostic
+// projection keyed by knowledge subject_id, no enforced FK). One row per
+// (subject_kind, subject_id=knowledge_id), single-writer = upsertKcTypedState
+// (advisory-lock namespace `kc_typed:…`, distinct from mastery_state's `fsrs:`/`mastery:`).
+// typed_state is a loose-text tri-state; `confused-with-X` is written ONLY when a
+// discriminating probe + recurrence≥2 confirm it (§修正-4). `mastered` is reserved for
+// the post-Rust-scorer claim-survival FLIP (ADR-0046) and is NOT written in this MVP.
+// Provenance = evidence_event_ids (loose text refs to event.id, no FK). Derived-but-
+// physical → FK_ORDER (rebuildable from the event log via a future foldKcTypedState, but
+// a peer of mastery_state) — NOT BACKUP_EXCLUDED.
+export const kc_typed_state = pgTable(
+  'kc_typed_state',
+  {
+    id: text('id').primaryKey(),
+    subject_kind: text('subject_kind').notNull().default('knowledge'),
+    subject_id: text('subject_id').notNull(),
+    // 'no-evidence' | 'confused-with-X' | 'mastered'. default 'no-evidence'.
+    // 'mastered' is FLIP-only (post-Rust-scorer), unwritten in this MVP.
+    typed_state: text('typed_state').notNull().default('no-evidence'),
+    // when typed_state='confused-with-X', the KC this learner confuses it with
+    // (loose text ref to knowledge.id, no FK). NULL otherwise.
+    confused_with_kc_id: text('confused_with_kc_id'),
+    // 'open' | 'resolved' — the conjecture/probe lifecycle for this cell.
+    lifecycle: text('lifecycle').notNull().default('open'),
+    // provenance: event ids (conjecture / probe_result / prediction_score) backing the
+    // current state. Loose text[] refs, no FK. Append-union on each write.
+    evidence_event_ids: jsonb('evidence_event_ids').$type<string[]>().notNull().default([]),
+    last_evidence_at: timestamp('last_evidence_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('kc_typed_state_unique').on(t.subject_kind, t.subject_id),
+    index('kc_typed_state_subject_idx').on(t.subject_id),
   ],
 );
 

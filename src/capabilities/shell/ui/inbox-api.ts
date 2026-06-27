@@ -35,6 +35,9 @@ export const KIND_META: Record<string, KindMeta> = {
   question_draft: { label: '题目草稿', icon: 'quiz', tone: 'coral' },
   // ADR-0032 D6-B (YUK-203 lane L6) — active 题结构编辑（窄 typed 节点 op）。
   question_edit: { label: '题目修订', icon: 'pencil', tone: 'coral' },
+  // YUK-440 / YUK-406 (教研团 Phase 0) — 心智诊断推测（conjecture-with-probe）。
+  // 现有通用 ProposalCard 渲染（非备课台）；propose-only，无 Accept CTA。
+  conjecture: { label: '诊断推测', icon: 'review', tone: 'coral' },
 };
 
 export function kindMeta(kind: string): KindMeta {

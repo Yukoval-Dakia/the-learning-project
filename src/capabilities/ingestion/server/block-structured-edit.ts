@@ -33,6 +33,18 @@ import type { Db, Tx } from '@/db/client';
 import { question_block } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { writeJobEvent } from '@/server/events/writer';
+// YUK-471 W3-C3 — the per-entity SoT-flip wiring for question_block. ON → the projection write-through
+// is the row writer; OFF (default) → the imperative UPDATE stays the SoT + the parity assert catches
+// fold↔row drift during the double-write phase. Gated on hasQuestionBlockGenesisAnchor (a pre-W3
+// un-backfilled block folds to null → stays imperative; mirrors the W2 goal queries pattern).
+import {
+  assertQuestionBlockParity,
+  hasQuestionBlockGenesisAnchor,
+  questionBlockLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
+import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
+import { projectionIsWriter } from '@/server/projections/sot-flag';
 
 // ---------------------------------------------------------------------------
 // Shared tree helpers
@@ -148,6 +160,13 @@ interface PersistStructuredParams {
    * the fold (which reads status off the primary snapshot) would diverge from the row (B2 review).
    */
   currentStatus: string;
+  /**
+   * The block's CURRENT version (read inside the same FOR-UPDATE-locked tx). The next version is
+   * `currentVersion + 1`; with the row lock held no concurrent tx can bump it, so this equals the
+   * old SQL-side `version + 1`. Threaded in (YUK-471 W3-C3) so the ON-path projection write-through
+   * can stamp the version WITHOUT the imperative UPDATE's `.returning()`.
+   */
+  currentVersion: number;
   /** Present ONLY when the op also re-points figures (splitStem nested-stem reattach); else the fold
    *  falls back to row.figures (design §5.2), so the snapshot omits figures too. */
   figures?: FigureRefT[];
@@ -157,17 +176,9 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
   // SINGLE clock — the row's updated_at MUST equal the canonical event's created_at so the fold's
   // `updated_at = event.created_at` reproduces the row byte-for-byte (design §3 single-clock model).
   const now = new Date();
-  const updated = await tx
-    .update(question_block)
-    .set({
-      structured: params.structured,
-      ...(params.figures !== undefined ? { figures: params.figures } : {}),
-      updated_at: now,
-      version: sql`${question_block.version} + 1`,
-    })
-    .where(eq(question_block.id, params.blockId))
-    .returning({ version: question_block.version });
-  const version = updated[0].version;
+  // FOR-UPDATE-locked (loadBlockForUpdate) → no concurrent bump, so currentVersion + 1 equals the old
+  // SQL-side `version + 1`. Computed here so the canonical event + the ON-path projection share it.
+  const version = params.currentVersion + 1;
 
   // Legacy SSE/transport row — UNCHANGED (the `job_events` channel is orthogonal to the canonical log).
   await writeJobEvent(tx, {
@@ -177,10 +188,11 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
     payload: params.jobPayload,
   });
 
-  // YUK-471 W3-C1δ — canonical edit event (additive double-write; projection flag stays OFF). A
-  // single-block op carries EXACTLY the primary (role='primary') with the AFTER tree + new version +
-  // the block's CURRENT status (B2). figures ride ONLY when re-pointed; else omitted so the fold
-  // falls back to row.figures (§5.2). A malformed payload throws at parseEvent → rolls back this tx.
+  // YUK-471 W3-C1δ — canonical edit event (FIRST, before the row write, so the projection / parity
+  // assert reads it). A single-block op carries EXACTLY the primary (role='primary') with the AFTER
+  // tree + new version + the block's CURRENT status (B2). figures ride ONLY when re-pointed; else
+  // omitted so the fold falls back to row.figures (§5.2). A malformed payload throws at parseEvent →
+  // rolls back this tx.
   await writeEvent(tx, {
     id: newId(),
     actor_kind: params.actorKind,
@@ -205,6 +217,40 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
     created_at: now,
     ingest_at: now,
   });
+
+  // YUK-471 W3-C3 — applicability gate (the edit event is NOT a question_block anchor, so before/after
+  // is equivalent; a pre-W3 un-backfilled block folds null → must stay on the imperative path).
+  const wasEventSourced = await hasQuestionBlockGenesisAnchor(tx, params.blockId);
+  if (projectionIsWriter('question_block') && wasEventSourced) {
+    // ON (W3-D flip) — the projection write-through is the SOLE row writer; the imperative UPDATE is
+    // skipped. The canonical edit event above carries the AFTER tree + version + status, so
+    // projectQuestionBlockGuarded re-folds the create/genesis base + this edit and upserts the row.
+    await projectQuestionBlockGuarded(tx, params.blockId);
+  } else {
+    await tx
+      .update(question_block)
+      .set({
+        structured: params.structured,
+        ...(params.figures !== undefined ? { figures: params.figures } : {}),
+        updated_at: now,
+        version,
+      })
+      .where(eq(question_block.id, params.blockId));
+    // OFF — assert fold == the row the imperative UPDATE just wrote (only when event-sourced; a pre-W3
+    // block folds to null and would false-mismatch). dev/test THROW on drift, prod warn (file header).
+    if (wasEventSourced) {
+      const [written] = await tx
+        .select()
+        .from(question_block)
+        .where(eq(question_block.id, params.blockId))
+        .limit(1);
+      await assertQuestionBlockParity(
+        tx,
+        params.blockId,
+        written ? questionBlockLiveRowToSnapshot(written) : null,
+      );
+    }
+  }
 
   return version;
 }
@@ -240,6 +286,7 @@ export async function updatePrompt(db: Db, params: UpdatePromptParams): Promise<
       actorRef: params.actorRef,
       actorKind: params.actorKind ?? 'agent',
       currentStatus: block.status,
+      currentVersion: block.version,
     });
     return { status: 'written', version };
   });
@@ -276,6 +323,7 @@ export async function addOption(db: Db, params: AddOptionParams): Promise<EditRe
       actorRef: params.actorRef,
       actorKind: params.actorKind ?? 'agent',
       currentStatus: block.status,
+      currentVersion: block.version,
     });
     return { status: 'written', version };
   });
@@ -312,6 +360,7 @@ export async function setQuestionType(db: Db, params: SetQuestionTypeParams): Pr
       actorRef: params.actorRef,
       actorKind: params.actorKind ?? 'agent',
       currentStatus: block.status,
+      currentVersion: block.version,
     });
     return { status: 'written', version };
   });
@@ -462,6 +511,7 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
       actorRef: params.actorRef,
       actorKind: params.actorKind ?? 'agent',
       currentStatus: block.status,
+      currentVersion: block.version,
       figures: nextFigures,
     });
     return { status: 'written', version };
@@ -711,13 +761,18 @@ export async function reassignFigure(
       return { status: 'skipped:target_not_found' };
     }
 
+    // SINGLE clock (YUK-471 W3-D §3): one `now` stamps the figure's last_reassigned_at, the row's
+    // updated_at, AND the canonical lifecycle event's created_at — so the carried figures array (which
+    // embeds last_reassigned_at) matches between row and event, and the fold's updated_at = the event
+    // time equals the row's updated_at (byte-exact parity).
+    const now = new Date();
     const updatedFigures: FigureRefT[] = figures.map((f, i) =>
       i === idx
         ? {
             ...f,
             attached_to_index: params.attachedToIndex,
             attach_confidence: 'manual' as const,
-            last_reassigned_at: new Date(),
+            last_reassigned_at: now,
           }
         : f,
     );
@@ -726,7 +781,7 @@ export async function reassignFigure(
       .update(question_block)
       .set({
         figures: updatedFigures,
-        updated_at: new Date(),
+        updated_at: now,
         version: sql`${question_block.version} + 1`,
       })
       .where(eq(question_block.id, params.blockId))
@@ -737,6 +792,19 @@ export async function reassignFigure(
       business_id: params.blockId,
       event_type: 'figure.reassigned',
       payload: { asset_id: params.assetId, attached_to_index: params.attachedToIndex },
+    });
+
+    // YUK-471 W3-D — make the figure re-point fold-visible: ONE canonical lifecycle event carries the
+    // FULL re-pointed figures array + bumped version (additive double-write; `writeJobEvent` above is
+    // the orthogonal SSE transport, left untouched). subject_id = the block (the SoT anchor).
+    await writeQuestionBlockLifecycleEvent(tx, {
+      blockId: params.blockId,
+      op: 'reassign_figures',
+      figures: updatedFigures,
+      nextVersion: updated[0].version,
+      actorKind: params.actorKind ?? 'agent',
+      actorRef: params.actorRef,
+      now,
     });
 
     return { status: 'written', figures: updatedFigures, version: updated[0].version };

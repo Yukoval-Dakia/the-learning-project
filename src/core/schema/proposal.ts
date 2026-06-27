@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { QuestionKind } from './business';
+import { CauseCategory } from './cause';
 import { RelationTypeSchema } from './event/blocks';
 import { SuggestionKind, type SuggestionKindT } from './event/known';
 
@@ -62,17 +63,29 @@ export const aiProposalKinds = [
   // existing experimental:proposal event/inbox path (writeAiProposal default +
   // proposalWhere); no writer/inbox change.
   'question_edit',
+  // YUK-440 / YUK-406 (教研团 Phase 0 conjecture 引擎) — A13 prediction-grounding.
+  // The nightly research-meeting job induces a first-class CONJECTURE about the
+  // learner's mind: a misconception belief (claim_md) + an unrun discriminating
+  // probe + the claim's implied p̂ on that probe (predicted_p) + the quantitative
+  // PFA/θ baseline it must beat (baseline_p_at_induction). HAS a real accept
+  // applier (acceptConjectureProposal, agency package): accept/edit/reject +
+  // idempotency, so it is in acceptSupportedProposalKinds. Flows through the
+  // existing experimental:proposal event/inbox path (writeAiProposal default +
+  // proposalWhere); no writer/inbox change. See
+  // docs/design/2026-06-27-a13-ts-half-design.md.
+  'conjecture',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
 export type AiProposalKindT = z.infer<typeof AiProposalKind>;
 
 // M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
-// actions.ts）只为这 14 个 kind 实现了 accept applier；defer / archive /
-// judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer
-// /accept 语义归 YUK-44）。UI（ProposalCard）据此门控 Accept CTA；
-// inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现三 kind === aiProposalKinds」，
-// dispatchAccept 增删 kind 时漂移会被测试拦下。
+// actions.ts）为这 16 个 kind 实现了 accept applier；只有 defer / archive /
+// judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer/accept
+// 语义归 YUK-44）。Phase 0 关系脑 (YUK-406/YUK-440) 的 conjecture 现有真身 accept
+// applier（acceptConjectureProposal，agency 包），故已纳入本集合。UI（ProposalCard）
+// 据此门控 Accept CTA；inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现三 kind ===
+// aiProposalKinds」，dispatchAccept 增删 kind 时漂移会被测试拦下。
 export const acceptSupportedProposalKinds = [
   'knowledge_node',
   'knowledge_edge',
@@ -90,6 +103,10 @@ export const acceptSupportedProposalKinds = [
   'question_draft',
   // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
   'question_edit',
+  // Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture accept/edit/reject applier
+  // (acceptConjectureProposal). accept = calibration anchor (NOT confirmed);
+  // edit → mem0 CORE; reject → digest. Never writes FSRS (ND-5).
+  'conjecture',
 ] as const satisfies readonly AiProposalKindT[];
 
 export const ProposalEvidenceRef = z.object({
@@ -328,6 +345,33 @@ export const QuestionEditProposalChange = z.object({
 });
 export type QuestionEditProposalChangeT = z.infer<typeof QuestionEditProposalChange>;
 
+// YUK-440 / YUK-406 (教研团 Phase 0) — conjecture proposed_change. A first-class
+// belief about the learner's mind, induced by the nightly research-meeting job from
+// a recurring (cause_category × KC) failure cell. The conjecture IS the qualitative
+// claim AND its falsifiable prediction: `predicted_p` is the claim's implied P(owner
+// answers the probe correctly), and `baseline_p_at_induction` snapshots the
+// quantitative PFA/θ p(L) the claim must beat (scored later by scorePrediction).
+// `confidence` is internal ranking/calibration only — the read model strips it and it
+// is NEVER rendered as a number (anti-false-precision). `discriminating` asserts the
+// probe is one only THIS misconception produces a wrong answer to — a hard
+// precondition (with recurrence_count ≥ 2) for the typed-ledger writing
+// `confused-with-X`, so a single off-target failure cannot flip the ledger to a
+// misconception state (the consistency-gate role YUK-344 plays in Phase 1+; Phase 0
+// substitutes this in-payload contract). See docs/design/2026-06-27-a13-ts-half-design.md.
+export const ConjectureProposalChange = z.object({
+  claim_md: z.string().min(1).max(280),
+  knowledge_id: z.string().min(1),
+  cause_category: CauseCategory,
+  confidence: z.number().min(0).max(1),
+  recurrence_count: z.number().int().min(2),
+  probe_md: z.string().min(1).max(2000),
+  discriminating: z.boolean(),
+  corrected_by_owner: z.boolean().default(false),
+  predicted_p: z.number().min(0).max(1),
+  baseline_p_at_induction: z.number().min(0).max(1),
+});
+export type ConjectureProposalChangeT = z.infer<typeof ConjectureProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -422,6 +466,17 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     kind: z.literal('question_edit'),
     target: ProposalTarget.extend({ subject_kind: z.literal('question') }),
     proposed_change: QuestionEditProposalChange,
+  }),
+  // YUK-440 / YUK-406 (教研团 Phase 0) — conjecture about the learner's mind. target
+  // subject_kind 'mind_model' with subject_id = the knowledge_id the belief is about
+  // (the conjecture is not an edit to any persisted row — it is a hypothesis-as-event).
+  // accept/edit/reject are handled by acceptConjectureProposal (agency package).
+  // Flows through the existing experimental:proposal event/inbox path
+  // (writeAiProposal default + proposalWhere).
+  BaseProposal.extend({
+    kind: z.literal('conjecture'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('mind_model') }),
+    proposed_change: ConjectureProposalChange,
   }),
 ]);
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;

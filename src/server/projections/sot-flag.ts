@@ -60,6 +60,10 @@ const PER_ENTITY_FLAG_ENV = {
   mistake_variant: 'PROJECTION_IS_WRITER_MISTAKE_VARIANT',
   // YUK-471 W2 — learning_item fold flips independently (default OFF until its own B3 gate).
   learning_item: 'PROJECTION_IS_WRITER_LEARNING_ITEM',
+  // YUK-471 W3-C3 — artifact fold flips independently (default OFF until its own W3-D B3 gate).
+  artifact: 'PROJECTION_IS_WRITER_ARTIFACT',
+  // YUK-471 W3-C3 — question_block fold flips independently (default OFF until its own W3-D B3 gate).
+  question_block: 'PROJECTION_IS_WRITER_QUESTION_BLOCK',
 } as const;
 
 /** Which named entities have a per-entity SoT-flip flag (the overloaded arg domain). */

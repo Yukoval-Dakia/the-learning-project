@@ -20,14 +20,16 @@ import { materialized_id_index } from '@/db/schema';
 
 type DbLike = Db | Tx;
 
-/** Which fold consumes this anchor. (YUK-471 W2: 'goal' + 'mistake_variant' + 'learning_item' join
- * — DB column is bare `text`, schema.ts:794, so adding the values needs NO migration.) */
+/** Which fold consumes this anchor. (YUK-471 W2: 'goal' + 'mistake_variant' + 'learning_item' join;
+ * W3-C2: 'artifact' joins — design §5.3, artifact enters the index, question_block does NOT.
+ * DB column is bare `text`, schema.ts, so adding the values needs NO migration.) */
 export type MaterializedSubjectKind =
   | 'knowledge'
   | 'knowledge_edge'
   | 'goal'
   | 'mistake_variant'
-  | 'learning_item';
+  | 'learning_item'
+  | 'artifact';
 
 export interface UpsertMaterializedIdIndexEntry {
   /** the knowledge.id / knowledge_edge.id being anchored (PK; minted exactly once). */

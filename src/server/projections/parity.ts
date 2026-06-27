@@ -31,21 +31,25 @@
 // path did not write is parity-OK).
 
 import type {
+  ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
+  QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import {
+  gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
   gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
+  gatherAndFoldQuestionBlock,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
 
@@ -57,7 +61,9 @@ type ParitySubjectKind =
   | 'knowledge_edge'
   | 'goal'
   | 'mistake_variant'
-  | 'learning_item';
+  | 'learning_item'
+  | 'artifact'
+  | 'question_block';
 
 // onParityMismatch — the dev-throws / prod-logs severity switch (see the file header for the
 // full contract). PROD: structured warn + return (never break a live accept). ELSE: throw.
@@ -808,4 +814,258 @@ export async function assertLearningItemParity(
     folded as Record<string, unknown> | null,
   );
   if (diff.length > 0) onParityMismatch('learning_item', itemId, diff);
+}
+
+// ── artifact genesis-anchor helpers (YUK-471 Wave 3 — C2 hoist from the B1 IO shell) ─────────────
+//
+// An artifact is EVENT-SOURCED (reproducible by foldArtifact, so its fold-null is a genuine "should
+// not exist" rather than a fold-blind miss) iff it has any of:
+//   1. an `experimental:artifact_create` runtime base event (post-W3 creation), OR
+//   2. an `experimental:genesis` backfill seed (pre-W3 row), OR
+//   3. a `materialized_id_index` row keyed by artifactId with subject_kind='artifact' (the backfill
+//      anchor — artifact enters the index in C2, design §5.3).
+// Both base events have subject_id = artifactId (no minting indirection — artifactId == the create
+// event's subject_id), so the event check is a single subject-keyed scan over the two base actions.
+// C2 ADDS leg #3 (the materialized_id_index leg the B1 shell omitted because artifact was not in the
+// index yet) so the anchor check matches hasGoalGenesisAnchor / the knowledge anchor exactly.
+
+const ARTIFACT_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:artifact_create'] as const;
+
+/**
+ * Does this `artifact` have a genesis/create anchor — i.e. is it event-sourced (reproducible by
+ * foldArtifact) at all? READ-ONLY. Used by projectArtifactGuarded (a fold-null on a NON-event-sourced
+ * artifact must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor (event leg + index leg).
+ */
+export async function hasArtifactGenesisAnchor(db: DbLike, artifactId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'artifact'),
+        eq(event.subject_id, artifactId),
+        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  if (ev.length > 0) return true;
+  const indexed = await db
+    .select({ id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        eq(materialized_id_index.materialized_id, artifactId),
+        eq(materialized_id_index.subject_kind, 'artifact'),
+      ),
+    )
+    .limit(1);
+  return indexed.length > 0;
+}
+
+/**
+ * Batch form of hasArtifactGenesisAnchor — the subset of `artifactIds` that ARE event-sourced. One
+ * query per source (events / index). READ-ONLY. Used by the C2 backfill to SKIP artifacts that
+ * already re-fold from their own log (anchoring an already-event-sourced row with a current-state
+ * genesis snapshot would mask reducer drift — same rationale as goalsWithGenesisAnchor). DOUBLES as
+ * the backfill idempotency pre-scan (a previously-backfilled artifact now carries a genesis event,
+ * and a runtime-created artifact carries a create event → both skipped).
+ */
+export async function artifactsWithGenesisAnchor(
+  db: DbLike,
+  artifactIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (artifactIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'artifact'),
+        inArray(event.subject_id, artifactIds),
+        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  const idxRows = await db
+    .select({ materialized_id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        inArray(materialized_id_index.materialized_id, artifactIds),
+        eq(materialized_id_index.subject_kind, 'artifact'),
+      ),
+    );
+  for (const r of idxRows) out.add(r.materialized_id);
+  return out;
+}
+
+// ── question_block genesis-anchor helpers (YUK-471 Wave 3 — C2 hoist from the B2 IO shell) ────────
+//
+// A question_block is EVENT-SOURCED (reproducible by foldQuestionBlock) iff it has either:
+//   1. an `experimental:question_block_create` runtime base event (OCR/rescue/docx/import), OR
+//   2. an `experimental:genesis` backfill seed (pre-W3 row).
+// NO materialized_id_index leg: question_block does NOT enter the index (design §5.3 — the row id is
+// ALWAYS the subject_id, so the anchor is always a subject-keyed event and this event-table check is
+// complete — the ONE intentional asymmetry vs artifact, §9.4). Both base events have subject_id =
+// blockId, so the check is a single subject-keyed scan over the two base actions.
+
+const QUESTION_BLOCK_ANCHOR_ACTIONS = [
+  'experimental:genesis',
+  'experimental:question_block_create',
+] as const;
+
+/**
+ * Does this `question_block` have a genesis/create anchor — i.e. is it event-sourced (reproducible by
+ * foldQuestionBlock) at all? READ-ONLY. Used by projectQuestionBlockGuarded (a fold-null on a NON-
+ * event-sourced block must NOT delete the imperative row). NO index leg (design §5.3).
+ */
+export async function hasQuestionBlockGenesisAnchor(db: DbLike, blockId: string): Promise<boolean> {
+  const ev = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'question_block'),
+        eq(event.subject_id, blockId),
+        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
+      ),
+    )
+    .limit(1);
+  return ev.length > 0;
+}
+
+/**
+ * Batch form of hasQuestionBlockGenesisAnchor — the subset of `blockIds` that ARE event-sourced.
+ * READ-ONLY (event leg ONLY — question_block is not in the index). Used by the C2 backfill to SKIP
+ * blocks that already re-fold from their own log; DOUBLES as the idempotency pre-scan (a previously-
+ * backfilled / runtime-created block carries a genesis / create event → skipped).
+ */
+export async function questionBlocksWithGenesisAnchor(
+  db: DbLike,
+  blockIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (blockIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.subject_kind, 'question_block'),
+        inArray(event.subject_id, blockIds),
+        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
+      ),
+    );
+  for (const r of evRows) out.add(r.subject_id);
+  return out;
+}
+
+// ── artifact parity assert (YUK-471 Wave 3 — C3) ─────────────────────────────────────────────────
+//
+// The write-time fold==row guard for the artifact imperative sites (the body_blocks edit seam + the
+// create/lifecycle/note-refine sites as they wire), mirroring assertGoalParity. After an OFF-path
+// imperative write, the site re-selects the row → maps to ArtifactRowSnapshot → calls this, which
+// gather→folds the SAME id read-only and deep-compares. dev/test THROW on mismatch, prod warn+return
+// (the shared onParityMismatch switch). This is the "real teeth" that catches a reducer/wiring drift
+// the moment it happens during the double-write phase, before the W3-D SoT flip.
+//
+// APPLICABILITY GATE (mirror assertGoalParity): the CALLER must only invoke this for an artifact that
+// is EVENT-SOURCED (hasArtifactGenesisAnchor) — a pre-event-sourced artifact folds to null and would
+// FALSE-mismatch its live row. A runtime-created artifact is anchored by its artifact_create event;
+// an edit/lifecycle site that touches a pre-W3 (un-backfilled) artifact has no anchor → the caller
+// SKIPS the assert (the imperative write stays the SoT until the C2 genesis backfill anchors it).
+
+// W3-C3 (review) — the artifact row→snapshot field-pick now lives in the ONE shared mapper
+// (./snapshot-mappers) so the audit / backfill / parity snapshot shapes can't drift on a schema change.
+// Re-exported under the `artifactLiveRowToSnapshot` name the accept-time callers (body-blocks-edit,
+// the C3 parity test) already import.
+export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from './snapshot-mappers';
+
+/**
+ * Assert the artifact fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test THROW on
+ * mismatch, prod warn+return (file header contract). A null live row that folds to null passes. The
+ * gather is try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated reducer throw
+ * never aborts a live write in prod.
+ *
+ * @param artifactId the artifact id to re-project.
+ * @param liveRow    the structural snapshot of the row the imperative path just wrote (or null), in
+ *                   ArtifactRowSnapshot shape.
+ */
+export async function assertArtifactParity(
+  db: DbLike,
+  artifactId: string,
+  liveRow: ArtifactRowSnapshotT | null,
+): Promise<void> {
+  let folded: ArtifactRowSnapshotT | null;
+  try {
+    folded = await gatherAndFoldArtifact(db, artifactId);
+  } catch (err) {
+    onParityMismatch('artifact', artifactId, [
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+    ]);
+    return;
+  }
+  const diff = diffSnapshots(
+    liveRow as Record<string, unknown> | null,
+    folded as Record<string, unknown> | null,
+  );
+  if (diff.length > 0) onParityMismatch('artifact', artifactId, diff);
+}
+
+// ── question_block parity assert (YUK-471 Wave 3 — C3) ────────────────────────────────────────────
+//
+// The write-time fold==row guard for the question_block imperative sites (the structured-edit seam +
+// the create sites as they wire), mirroring assertGoalParity. After an OFF-path imperative write, the
+// site re-selects the row → maps to QuestionBlockRowSnapshot (STRIPPING the legacy `extracted_prompt_md`
+// column, design §5.2) → calls this, which gather→folds the SAME id read-only and deep-compares.
+// dev/test THROW on mismatch, prod warn+return (the shared onParityMismatch switch).
+//
+// EXTRACTED_PROMPT_MD STRIP (§5.2): the live DB row STILL carries `extracted_prompt_md` (legacy,
+// DROP deferred to Step 11.5), but the snapshot OMITS it (markdown views derive from `structured`,
+// ADR-0002). The row-pick below simply never picks it, so the deep-diff never sees it (a row differing
+// only in that legacy column folds clean) — the same strip the C2 backfill's questionBlockRowToSnapshot
+// does before the strict Artifact/QuestionBlock genesis parse.
+//
+// APPLICABILITY GATE: the CALLER must only invoke this for a block that is EVENT-SOURCED
+// (hasQuestionBlockGenesisAnchor) — a pre-event-sourced block folds to null and would FALSE-mismatch
+// its live row. A runtime-created block is anchored by its question_block_create event; an edit site
+// touching a pre-W3 (un-backfilled) block has no anchor → the caller SKIPS the assert.
+
+// W3-C3 (review) — the question_block row→snapshot field-pick (incl. the legacy extracted_prompt_md
+// strip, design §5.2) now lives in the ONE shared mapper (./snapshot-mappers) so the audit / backfill /
+// parity snapshot shapes can't drift on a schema change. Re-exported under the
+// `questionBlockLiveRowToSnapshot` name the accept-time callers (block-structured-edit, the C3 parity
+// test) already import.
+export { questionBlockRowToSnapshot as questionBlockLiveRowToSnapshot } from './snapshot-mappers';
+
+/**
+ * Assert the question_block fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test
+ * THROW on mismatch, prod warn+return. A null live row that folds to null passes. The gather is
+ * try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated reducer throw never
+ * aborts a live write in prod.
+ *
+ * @param blockId the question_block id to re-project.
+ * @param liveRow the structural snapshot of the row the imperative path just wrote (or null), in
+ *                QuestionBlockRowSnapshot shape (extracted_prompt_md already stripped).
+ */
+export async function assertQuestionBlockParity(
+  db: DbLike,
+  blockId: string,
+  liveRow: QuestionBlockRowSnapshotT | null,
+): Promise<void> {
+  let folded: QuestionBlockRowSnapshotT | null;
+  try {
+    folded = await gatherAndFoldQuestionBlock(db, blockId);
+  } catch (err) {
+    onParityMismatch('question_block', blockId, [
+      `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
+    ]);
+    return;
+  }
+  const diff = diffSnapshots(
+    liveRow as Record<string, unknown> | null,
+    folded as Record<string, unknown> | null,
+  );
+  if (diff.length > 0) onParityMismatch('question_block', blockId, diff);
 }

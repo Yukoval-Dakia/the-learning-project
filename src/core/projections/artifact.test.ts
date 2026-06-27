@@ -158,6 +158,46 @@ function lifecycle(opts: {
   };
 }
 
+// experimental:note_refine_undo — the W3-C1γ self-sufficient body RESTORE event. Carries the
+// restored body + next version + after-history (the live undo leaves history unchanged). Omit
+// `bodyBlocks` to simulate a LEGACY loose undo (bookkeeping only) — the reducer must skip it.
+function noteUndo(opts: {
+  id?: string;
+  created_at: Date;
+  artifactId: string;
+  undoneEventId?: string;
+  bodyBlocks?: ArtifactBodyBlocksT;
+  nextVersion?: number;
+  fromVersion?: number;
+  historyAfter?: ArtifactRowSnapshotT['history'];
+}): FoldEvent {
+  const fromVersion = opts.fromVersion ?? (opts.nextVersion ?? 1) - 1;
+  const payload: Record<string, unknown> = {
+    artifact_id: opts.artifactId,
+    undone_event_id: opts.undoneEventId ?? 'apply_evt',
+    restored_from_artifact_version: fromVersion,
+    restored_to_artifact_version: opts.nextVersion ?? fromVersion + 1,
+    source_previous_artifact_version: null,
+  };
+  if (opts.bodyBlocks !== undefined) {
+    payload.body_blocks = opts.bodyBlocks;
+    payload.next_artifact_version = opts.nextVersion ?? fromVersion + 1;
+    payload.history_after = opts.historyAfter ?? [];
+  }
+  return {
+    id: opts.id ?? nextId('undo'),
+    created_at: opts.created_at,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:note_refine_undo',
+    subject_kind: 'artifact',
+    subject_id: opts.artifactId,
+    outcome: 'success',
+    caused_by_event_id: opts.undoneEventId ?? 'apply_evt',
+    payload,
+  };
+}
+
 // experimental:note_refine_apply — the pre-existing LOOSE self-sufficient AI patch event.
 function noteRefine(opts: {
   id?: string;
@@ -423,6 +463,145 @@ describe('foldArtifact — note_refine_apply op-replay (FOLD-ONLY, B4 铁律)', 
   });
 });
 
+describe('foldArtifact — lifecycle set_attrs + provenance/history (W3-C1γ)', () => {
+  it('set_attrs replaces the attrs jsonb wholesale, version unchanged (hub-dismiss style)', () => {
+    const snap = artifactSnapshot({ attrs: { existing: true }, version: 3 });
+    const nextAttrs = { suppressed_block_refs: [{ artifact_id: 'art_x' }] };
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        nextVersion: 3, // hub-dismiss attrs update does NOT bump version
+        payload: { op: 'set_attrs', attrs: nextAttrs },
+      }),
+    ]);
+    expect(row?.attrs).toEqual(nextAttrs);
+    expect(row?.version).toBe(3);
+    expect(row?.updated_at.getTime()).toBe(at(1000).getTime());
+  });
+
+  it('set_attrs carries history_after + bumps version (updateArtifactTool style)', () => {
+    const snap = artifactSnapshot({ attrs: { format: 'html', html: '<p>v0</p>' }, version: 0 });
+    const nextAttrs = { format: 'html', html: '<p>v1</p>' };
+    const historyAfter = [{ version: 1, at: at(2000), summary_md: 'Updated interactive HTML' }];
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(2000),
+        artifactId: 'art_1',
+        nextVersion: 1,
+        payload: { op: 'set_attrs', attrs: nextAttrs, history_after: historyAfter },
+      }),
+    ]);
+    expect(row?.attrs).toEqual(nextAttrs);
+    expect(row?.version).toBe(1);
+    expect(row?.history).toEqual(historyAfter);
+  });
+
+  it('set_generation_status carries verification_status + generated_by alongside (note_generate)', () => {
+    const snap = artifactSnapshot({
+      generation_status: 'pending',
+      verification_status: 'not_required',
+      generated_by: null,
+      version: 0,
+    });
+    const generatedBy = { by: 'ai', task_kind: 'NoteGenerateTask', task_run_id: 'run_1' };
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        nextVersion: 1,
+        payload: {
+          op: 'set_generation_status',
+          generation_status: 'ready',
+          verification_status: 'queued',
+          generated_by: generatedBy,
+        },
+      }),
+    ]);
+    expect(row?.generation_status).toBe('ready');
+    expect(row?.verification_status).toBe('queued');
+    expect(row?.generated_by).toEqual(generatedBy);
+    expect(row?.version).toBe(1);
+  });
+
+  it('set_verification_status carries summary + verified_by, version UNCHANGED (note_verify)', () => {
+    const snap = artifactSnapshot({
+      verification_status: 'queued',
+      verification_summary: null,
+      verified_by: null,
+      version: 1,
+    });
+    const verifiedBy = { by: 'ai', task_kind: 'NoteVerifyTask' };
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      lifecycle({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        nextVersion: 1, // note_verify does NOT bump version
+        payload: {
+          op: 'set_verification_status',
+          verification_status: 'verified',
+          verification_summary: verifyResult,
+          verified_by: verifiedBy,
+        },
+      }),
+    ]);
+    expect(row?.verification_status).toBe('verified');
+    expect(row?.verification_summary).toEqual(verifyResult);
+    expect(row?.verified_by).toEqual(verifiedBy);
+    expect(row?.version).toBe(1);
+  });
+});
+
+describe('foldArtifact — note_refine_undo (self-sufficient body RESTORE, W3-C1γ)', () => {
+  it('restores prior body_blocks + version + after-history from the carried snapshot', () => {
+    const baseBody = doc(block('a', 'A'));
+    const editedBody = doc(block('a', 'A'), block('b', 'B'));
+    const snap = artifactSnapshot({ body_blocks: baseBody, version: 0, history: [] });
+    const historyAfterEdit = [{ version: 1, at: at(1000), summary_md: 'apply' }];
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      // an apply landed the edited body at v1 (model with note_refine_apply op-replay).
+      noteRefine({
+        created_at: at(1000),
+        artifactId: 'art_1',
+        ops: [{ kind: 'append_block', block: block('b', 'B') }],
+        previousBody: baseBody,
+        nextVersion: 1,
+      }),
+      // the undo RESTORES the prior body at v2, history carried unchanged (the live undo doesn't push).
+      noteUndo({
+        created_at: at(2000),
+        artifactId: 'art_1',
+        bodyBlocks: baseBody,
+        fromVersion: 1,
+        nextVersion: 2,
+        historyAfter: historyAfterEdit,
+      }),
+    ]);
+    expect(row?.body_blocks).toEqual(baseBody);
+    expect(row?.version).toBe(2);
+    expect(row?.history).toEqual(historyAfterEdit);
+    expect(row?.updated_at.getTime()).toBe(at(2000).getTime());
+    // confirm the edited block is gone (restore is a full body replace, not a merge).
+    expect(row?.body_blocks).not.toEqual(editedBody);
+  });
+
+  it('a LEGACY loose undo (no carried body) is skipped — base body/version untouched', () => {
+    const baseBody = doc(block('a', 'A'));
+    const snap = artifactSnapshot({ body_blocks: baseBody, version: 5 });
+    const row = foldArtifact('art_1', [
+      create({ created_at: at(0), row: snap }),
+      noteUndo({ created_at: at(1000), artifactId: 'art_1' }), // no bodyBlocks → legacy shape
+    ]);
+    expect(row?.body_blocks).toEqual(baseBody);
+    expect(row?.version).toBe(5); // untouched (legacy undo folds to a no-op)
+  });
+});
+
 describe('foldArtifact — interleaving, ordering, dedup, isolation', () => {
   it('interleaves edit → lifecycle → edit in chronological order', () => {
     const snap = artifactSnapshot({ body_blocks: doc(block('a', 'v0')), version: 0 });
@@ -553,5 +732,162 @@ describe('foldArtifact — interleaving, ordering, dedup, isolation', () => {
     expect(row?.id).toBe('art_1');
     expect(row?.title).toBe('One');
     expect(row?.body_blocks).toEqual(doc(block('a', 'A'))); // art_2's edit did not touch art_1
+  });
+});
+
+// Deterministic in-place permutation (no RNG → reproducible). seedShift varies the permutation.
+function permute<T>(arr: T[], seedShift: number): T[] {
+  const out = [...arr];
+  for (let i = 0; i < out.length; i += 1) {
+    const j = (i * 7 + seedShift) % out.length;
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+// ====================================================================
+// W3-C3 (F7) — interleave convergence + version monotonicity + version-gap fail-loud.
+//
+// foldArtifact sorts by (created_at asc, id asc), so a SHUFFLED / out-of-order delivery MUST converge
+// to the SAME row as the in-order fold — the SoT flip rests on this determinism. version is folded
+// VERBATIM, so the final version reflects the created_at-LATEST mutator; a NON-advancing
+// body_blocks_edit (next <= previous) is rejected at the schema barrier (fail-loud) → warn-skipped by
+// the reducer so a bad event can never regress the row version.
+// ====================================================================
+describe('foldArtifact — W3-C3 interleave convergence + version monotonicity (F7)', () => {
+  const base = artifactSnapshot({ id: 'art_i', version: 0, body_blocks: doc(block('a', 'v0')) });
+  const chain: FoldEvent[] = [
+    create({ created_at: at(0), row: base }),
+    bodyEdit({
+      created_at: at(1000),
+      artifactId: 'art_i',
+      bodyBlocks: doc(block('a', 'v1')),
+      previousVersion: 0,
+      nextVersion: 1,
+    }),
+    bodyEdit({
+      created_at: at(2000),
+      artifactId: 'art_i',
+      bodyBlocks: doc(block('a', 'v2')),
+      previousVersion: 1,
+      nextVersion: 2,
+    }),
+    bodyEdit({
+      created_at: at(3000),
+      artifactId: 'art_i',
+      bodyBlocks: doc(block('a', 'v3')),
+      previousVersion: 2,
+      nextVersion: 3,
+    }),
+  ];
+
+  it('fold(shuffled) == fold(ordered) — order-independent convergence', () => {
+    const ordered = foldArtifact('art_i', chain);
+    for (let s = 0; s < 5; s += 1) {
+      expect(foldArtifact('art_i', permute(chain, s))).toEqual(ordered);
+    }
+  });
+
+  it('final version + body reflect the created_at-LATEST edit regardless of input order', () => {
+    const row = foldArtifact('art_i', permute(chain, 3));
+    expect(row?.version).toBe(3);
+    expect(row?.body_blocks).toEqual(doc(block('a', 'v3')));
+  });
+
+  it('version-gap fail-loud: a non-advancing body_blocks_edit (next <= previous) is warn-skipped, never regresses the row', () => {
+    // good edit v0→1, then a MALFORMED edit carrying next(1) <= previous(1): the BodyBlocksEdit
+    // superRefine rejects it → the reducer warn-skips → the row stays at the good edit (version 1).
+    const events: FoldEvent[] = [
+      create({ created_at: at(0), row: base }),
+      bodyEdit({
+        created_at: at(1000),
+        artifactId: 'art_i',
+        bodyBlocks: doc(block('a', 'v1')),
+        previousVersion: 0,
+        nextVersion: 1,
+      }),
+      bodyEdit({
+        created_at: at(2000),
+        artifactId: 'art_i',
+        bodyBlocks: doc(block('a', 'BAD')),
+        previousVersion: 1,
+        nextVersion: 1,
+      }),
+    ];
+    const row = foldArtifact('art_i', events);
+    expect(row?.version).toBe(1);
+    expect(row?.body_blocks).toEqual(doc(block('a', 'v1'))); // the bad (non-advancing) edit did not apply
+  });
+});
+
+// ====================================================================
+// W3-C3 flip-gate hardening — hub-dismiss set_attrs / note_refine_apply ordering (now + 1ms).
+//
+// persistHubLinkDismiss writes a set_attrs lifecycle (version UNCHANGED) at `now` and the inner
+// note_refine_apply (version + 1) at `now + 1ms`, so the set_attrs ALWAYS folds BEFORE the apply.
+// This pins that ordering: an id-tiebreak at the SAME ms could otherwise fold set_attrs LAST and
+// regress the version below the apply's bump — a fold≠row flake the writer's +1ms guard prevents.
+// ====================================================================
+describe('foldArtifact — W3-C3 hub-dismiss set_attrs→note_refine_apply ordering (now+1ms guard)', () => {
+  const base = artifactSnapshot({
+    id: 'art_h',
+    version: 2,
+    attrs: {},
+    body_blocks: doc(block('a', 'before')),
+  });
+  const suppressedAttrs = { suppressed_block_refs: [{ artifact_id: 'art_dismissed' }] };
+  // Adversarial ids: the set_attrs id sorts AFTER the apply id, so at EQUAL timestamps the id-tiebreak
+  // would WRONGLY fold set_attrs last. The +1ms (apply at 1001 > set_attrs at 1000) is what saves it.
+  const setAttrs = lifecycle({
+    id: 'zzz_setattrs',
+    created_at: at(1000),
+    artifactId: 'art_h',
+    nextVersion: 2,
+    payload: { op: 'set_attrs', attrs: suppressedAttrs },
+  });
+  const apply = noteRefine({
+    id: 'aaa_apply',
+    created_at: at(1001),
+    artifactId: 'art_h',
+    ops: [{ kind: 'replace_block', target_block_id: 'a', block: block('a', 'after') }],
+    nextVersion: 3,
+  });
+
+  it('set_attrs (version 2) folds BEFORE note_refine_apply (version 3) regardless of array order', () => {
+    for (const events of [
+      [create({ created_at: at(0), row: base }), setAttrs, apply],
+      [create({ created_at: at(0), row: base }), apply, setAttrs],
+    ]) {
+      const row = foldArtifact('art_h', events);
+      expect(row?.version).toBe(3); // the apply (created_at-later) wins the version
+      expect(row?.attrs).toEqual(suppressedAttrs); // set_attrs applied
+      expect(row?.body_blocks).toEqual(doc(block('a', 'after'))); // the apply's body
+    }
+  });
+
+  it('WITHOUT the +1ms guard (equal timestamps + adversarial ids) the version WOULD regress — proving the guard is load-bearing', () => {
+    const sameMsSetAttrs = lifecycle({
+      id: 'zzz_setattrs',
+      created_at: at(1000),
+      artifactId: 'art_h',
+      nextVersion: 2,
+      payload: { op: 'set_attrs', attrs: suppressedAttrs },
+    });
+    const sameMsApply = noteRefine({
+      id: 'aaa_apply',
+      created_at: at(1000), // SAME ms — the failure mode the +1ms prevents
+      artifactId: 'art_h',
+      ops: [{ kind: 'replace_block', target_block_id: 'a', block: block('a', 'after') }],
+      nextVersion: 3,
+    });
+    const row = foldArtifact('art_h', [
+      create({ created_at: at(0), row: base }),
+      sameMsSetAttrs,
+      sameMsApply,
+    ]);
+    // id-tiebreak folds aaa_apply (v3) BEFORE zzz_setattrs (v2) → set_attrs wins the version → REGRESSION.
+    expect(row?.version).toBe(2);
   });
 });

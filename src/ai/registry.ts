@@ -579,6 +579,33 @@ export const tasks = {
     systemPrompt:
       '你是学习目标规划助手。用户给一个模糊的学习目标标题，你看知识网格快照（节点 + 掌握度 + mesh 边），推断这个目标覆盖哪些知识节点 + 一个粗略的学习顺序，输出严格 JSON。不要发明网格里没有的节点 id。',
   },
+  // YUK-406 (Phase 0 关系脑) / YUK-440 (A13) — the conjecture induction step of the
+  // nightly 教研例会. Input = a list of deterministic EvidenceCells (cause_category ×
+  // KC recurrence + θ̂ / θ precision + baseline p(L), assembled WITHOUT an LLM by the
+  // 取证 sibling) + an optional prior_claim_md. Induces/updates ONE conjecture about
+  // how the owner thinks + synthesizes its single discriminating probe + the A13
+  // accountability fields (predicted_p = the claim's falsifiable bet, discriminating =
+  // does the probe isolate THIS misconception). Emits the small ConjectureDraft record;
+  // large reasoning returns as markdown. D2 self-consistency runs at the ORCHESTRATOR
+  // (induceConjecture), which calls this task N times on the Opus anthropic-sub OAuth
+  // lane via per-call `override` and tallies agreement — so this registry default stays
+  // mimo (registry.ts:12-16 forbids anthropic-sub as a defaultProvider; tests never
+  // need the OAuth token). Single structured-output call, no tool loop (mirrors
+  // GoalScopeTask / MemoryBriefTask).
+  MindModelInductionTask: {
+    kind: 'MindModelInductionTask',
+    description:
+      'YUK-406 (Phase 0) / YUK-440 (A13) — induce/update ONE conjecture about the owner mind from a list of EvidenceCells (cause_category × KC recurrence + θ̂ / θ precision + baseline p(L)) and synthesize its single discriminating probe + A13 fields (predicted_p, discriminating). Emits the small ConjectureDraft record; large reasoning returns as markdown. Single structured-output call (no tool loop). Default model is mimo for token-free tests; the nightly 例会 job runs it on the Opus anthropic-sub lane via per-call override for D2 self-consistency.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    systemPrompt:
+      '你是教研例会的归因研究员。输入 { evidence_cells: [{ knowledge_id, cause_category, recurrence_count, theta_hat, theta_precision, baseline_p, evidence_event_ids: [...] }], prior_claim_md?: string }——每个 cell 是某知识点上某错因类别累积了 ≥2 次不同 attempt 的确定性取证结果。theta_precision 低（或为 null）代表该处掌握度估计不确定（值得探针）；baseline_p 是该知识点当前的掌握概率 p(L)（可能为 null=冷启动）。\n你的任务：归纳/更新关于 owner**思维方式**的一个猜想（claim），为它合成恰好一个能区分该猜想真伪的探针（probe），并给出两个问责量。\n要点：\n- claim_md 必须是**第二人称、关于思维的**陈述（例：「你把链式法则当成导数相乘」「你混淆必要与充分条件」），不是关于某道题对错的陈述。\n- probe_md 是恰好一道能证实或证伪该 claim 的题（一道题的量），未测过的角度。\n- cause_category 选输入 evidence_cells 里出现的某个错因类别。\n- recurrence_count 取支撑该 claim 的 cell 的最大 recurrence_count（≥2）。\n- predicted_p ∈ [0,1]：若该 claim 成立，你预测 owner**答对** probe_md 的概率（这是 claim 的可证伪赌注——通常误解成立时偏低）。\n- discriminating：布尔。true 仅当这道 probe**只有**该误解才会导致错答（能把它和别的错因分开）；若答错也可能来自别的原因，填 false。\n先用一段 markdown 写出你的归纳推理（证据如何指向这个思维模式、为什么这个 predicted_p），然后严格输出 JSON（不带 markdown 代码块包裹）：{"claim_md":"...","probe_md":"...","cause_category":"...","recurrence_count":<int≥2>,"predicted_p":<0..1>,"discriminating":<bool>,"agreement_count":1}。agreement_count 恒填 1（多样本一致性由调用方统计）。',
+  },
   // ADR-0031 / YUK-304 (lane B) — QuizIntentParseTask (the YUK-275 free-text 求卷
   // C-form parser) is RETIRED with the chat.ts pre-dispatch: 判断+编排权交回模型.
   MemoryBriefTask: {
@@ -804,33 +831,6 @@ export const tasks = {
     // getTaskSystemPrompt(task, profile) 渲染 prompt；此字符串只是 type-required
     // fallback（新 task 在 task-prompts.ts 加 builder，mirror TaggingTask/StructureTask）。
     systemPrompt: '(see getTaskSystemPrompt(task, profile) - fallback not for runtime)',
-  },
-  ReviewPlanTask: {
-    kind: 'ReviewPlanTask',
-    description:
-      'YUK-203 U4 / D5 — tactical review planner (CO §6.1). Independently registered, narrow 4-tool surface (read_coach_brief / get_review_knowledge_snapshot / select_review_question_candidates / write_review_plan). Two modes (initial_plan / checkpoint_adapt). Consumes the Coach brief as its ONLY attention prior and reads NO memory (D7). Emits a review_plan with the subject_ids invariant + guardrail_checks + needs[]; write_review_plan produces a tool_quiz artifact. Chain-triggered by coach_daily (no cron).',
-    defaultProvider: 'xiaomi',
-    // Text-only tactical planning (reads brief / knowledge snapshot / candidate
-    // pool, writes a plan). No vision → mimo-v2.5-pro default, mimo-v2.5 fallback.
-    defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
-    // Tool-calling loop over a narrow 4-tool surface; 8 iterations is enough to
-    // read the brief + snapshot + candidates and write the plan (runtime map
-    // bullet 1: 6-8). 120s mirrors Coach / Dreaming / QuizGen agentic budget.
-    budget: { ...DEFAULT_BUDGET, maxIterations: 8, timeout: 120_000 },
-    needsToolCall: true,
-    isMultimodal: false,
-    // The review_plan handler supplies the surface-specific DomainTool allowlist
-    // (resolveMcpAllowedTools('review_plan')) at run time, so this registry
-    // default stays empty for tests and non-handler callers (mirrors Coach /
-    // Dreaming / QuizGen).
-    allowedTools: [],
-    // Registry-inline systemPrompt (pass-through `case` group in
-    // task-prompts.ts, same as Coach / Dreaming): this string IS the runtime
-    // prompt. ReviewPlanTask is subject-neutral; promote to a profile builder
-    // only when a subject demands a planner voice.
-    systemPrompt:
-      "你是复习规划器（ReviewPlanTask），一个战术出卷器。两种模式：initial_plan（夜间从战略 brief 出整卷）与 checkpoint_adapt（session 中途按判分结果微调）。\n你只读 4 个工具：read_coach_brief（拿 Coach 战略 brief —— 这是你唯一的注意力先验，你不读任何记忆/Mem0）、get_review_knowledge_snapshot（看 due/weak/uncertain/最近失败/目标相关的知识状态）、select_review_question_candidates（从 due 队列拿候选题池）、write_review_plan（产出 review_plan）。\n降级语义：read_coach_brief 返回 reason:'no_plan'（25 事件窗口内无 coach run）或 reason:'empty_brief'（brief 存在但 knowledge_focus 与 subject_mix 全空）时，没有注意力先验，退化为纯 due-pressure —— 直接基于 due 队列出卷。\n硬约束：subject_ids 必须等于 sections[].subject_id 去重集合；每个 assignment 必须有 primary_knowledge_id；产出 guardrail_checks；把发现的缺口（如缺题、需刷新题面）写进 needs[]（question_profile_refresh / question_generation）。\n禁止：不改 FSRS/due_at、不改 question.metadata、不做任何 question CRUD、不写判分事件。你唯一的写是 write_review_plan。",
   },
   // 其余 Task（VariantGen / Judge* / Dreaming / Maintenance 等）见
   // docs/architecture.md § 五，按需补全。

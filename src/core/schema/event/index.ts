@@ -3,6 +3,7 @@ import {
   ArtifactCreateExperimental,
   ArtifactLifecycleExperimental,
   BodyBlocksEditExperimental,
+  NoteRefineUndoExperimental,
 } from './artifact-events';
 import {
   ExperimentalEvent,
@@ -22,6 +23,7 @@ import { MistakeVariantCreateExperimental } from './mistake-variant-events';
 import {
   EditQuestionBlockStructuredExperimental,
   QuestionBlockCreateExperimental,
+  QuestionBlockLifecycleExperimental,
 } from './question-block-events';
 import { StateSnapshotExperimental } from './state-snapshot';
 
@@ -56,11 +58,14 @@ export * from './question-block-events';
 //       runtime create 用专属事件，./mistake-variant-events.ts）
 //   9. LearningItemComplete/Relearn/ArchiveExperimental — learning_item 状态转移动作事件特化
 //      （YUK-471 W2：使 complete/relearn/archive fold-visible via Q1，./learning-item-events.ts）
-//  10. BodyBlocksEdit/ArtifactCreate/ArtifactLifecycleExperimental — artifact 动作事件特化
-//      （YUK-471 W3-A1：使 body 编辑 / 运行时新建 / 生命周期变更 fold-visible，./artifact-events.ts）
-//  11. EditQuestionBlockStructured/QuestionBlockCreateExperimental — question_block 动作事件特化
-//      （YUK-471 W3-A2：使 structured 编辑（merge 多行 after）/ 运行时新建 fold-visible，
-//       ./question-block-events.ts）
+//  10. BodyBlocksEdit/ArtifactCreate/ArtifactLifecycle/NoteRefineUndoExperimental — artifact 动作事件特化
+//      （YUK-471 W3-A1：body 编辑 / 运行时新建 / 生命周期变更 fold-visible；W3-C1γ：note-refine undo
+//       自携 restored body fold-visible，./artifact-events.ts。NoteRefineUndo 复用既有 action 名，
+//       fold 字段 optional 保 getEvents 旧 loose 事件读取不 throw）
+//  11. EditQuestionBlockStructured/QuestionBlockCreate/QuestionBlockLifecycleExperimental —
+//      question_block 动作事件特化（YUK-471 W3-A2：structured 编辑（merge 多行 after）/ 运行时新建
+//      fold-visible；W3-D：lifecycle 使 5 个无事件 fold-truth mutator（reassignFigure / auto-enroll /
+//      import-enroll / import-ignore / revert）fold-visible，./question-block-events.ts）
 //  12. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
@@ -82,8 +87,10 @@ export const Event = z.union([
   BodyBlocksEditExperimental,
   ArtifactCreateExperimental,
   ArtifactLifecycleExperimental,
+  NoteRefineUndoExperimental,
   EditQuestionBlockStructuredExperimental,
   QuestionBlockCreateExperimental,
+  QuestionBlockLifecycleExperimental,
   ExperimentalEvent,
 ]);
 export type EventT = z.infer<typeof Event>;

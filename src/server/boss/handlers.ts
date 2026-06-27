@@ -32,7 +32,7 @@ import { buildVariantVerifyHandler } from './handlers/variant_verify';
 // expire/retention/DLQ + YUK-259 race 防护）抽到 queue-config.ts，与 capability
 // jobs 注册器（register-capability-jobs.ts）共用。已迁入 manifest jobs 声明并由
 // 注册器挂载的 job 不再出现在这里：knowledge 夜链三 cron + attribution_followup、
-// notes 的 hub_auto_sync_nightly + note_refine、practice 的 review_plan、agency
+// notes 的 hub_auto_sync_nightly + note_refine、agency
 // 四 cron（dreaming/coach_daily/coach_weekly/goal_scope）。
 //
 // 仍留簿的注册（M5 拆除采石场时清账）：
