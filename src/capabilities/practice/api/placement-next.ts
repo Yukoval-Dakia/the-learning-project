@@ -30,11 +30,8 @@ import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryState } from '@/server/mastery/state';
 import { loadPlacementSessionForUpdate } from '@/server/session/placement';
 import { and, eq, inArray } from 'drizzle-orm';
-import { selectNextPlacementItem } from '../server/placement-select';
-import {
-  PLACEMENT_DEFAULT_CAP,
-  evaluatePlacementTermination,
-} from '../server/placement-termination';
+import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
+import { capForPace, evaluatePlacementTermination } from '../server/placement-termination';
 
 const NextBody = z.object({
   /** OPTIONAL client override of the probe's KC scope (YUK-470). The authoritative scope is
@@ -135,7 +132,10 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
       const termination = evaluatePlacementTermination({
         answeredCount,
-        cap: cap ?? PLACEMENT_DEFAULT_CAP,
+        // YUK-480 — an explicit client `cap` still wins (override), else the cap derives from the
+        // self-reported pace persisted at /start (capForPace; NULL pace → PLACEMENT_DEFAULT_CAP,
+        // byte-identical to the pre-YUK-480 default). Server-authoritative, mirroring scope.
+        cap: cap ?? capForPace(session.pace),
         perKcPrecision,
         seThreshold: seThreshold ?? null,
       });
@@ -144,9 +144,16 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         return { done: true as const, reason: termination.reason, answeredCount };
       }
 
+      // YUK-480 — re-resolve the persisted leanings into the preferred KC set (fresh resolve
+      // picks up newly-bridged KCs). Resolved on the top-level `db`: it's an INDEPENDENT
+      // knowledge-table read (subject effective-domain axis), NOT part of this probe's session-
+      // lock serialization — the locked session row (session.leanings) is already in hand. Empty
+      // → byte-identical to the no-preference selection. Ordering-only; never feeds θ̂/p(L).
+      const preferKnowledgeIds = await resolveLeaningPreferenceKcs(db, session.leanings);
       const next = await selectNextPlacementItem(tx, {
         knowledgeIds,
         excludeQuestionIds: answeredIds,
+        preferKnowledgeIds,
       });
       return {
         done: false as const,

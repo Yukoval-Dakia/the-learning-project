@@ -173,9 +173,19 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
     phase === 'extracting';
 
   // Forward the goal id (threaded via ?goal from Welcome) into placement so the probe
-  // can scope to the goal's KCs (Slice 3 reads it from the query).
-  const goalParam = new URLSearchParams(window.location.search).get('goal');
-  const placementTo = goalParam ? `/placement?goal=${encodeURIComponent(goalParam)}` : '/placement';
+  // can scope to the goal's KCs (Slice 3 reads it from the query). YUK-480 — also forward the
+  // self-report (leanings + pace) so the upload fork reaches placement with the same ordering/
+  // amount hints as the direct fork (carry-through, no transform).
+  const placementTo = (() => {
+    const incoming = new URLSearchParams(window.location.search);
+    const out = new URLSearchParams();
+    for (const key of ['goal', 'leanings', 'pace']) {
+      const v = incoming.get(key);
+      if (v) out.set(key, v);
+    }
+    const qs = out.toString();
+    return qs ? `/placement?${qs}` : '/placement';
+  })();
 
   const onPick = (list: FileList | null) => {
     if (!list || list.length === 0) return;

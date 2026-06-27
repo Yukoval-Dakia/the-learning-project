@@ -332,6 +332,78 @@ describe('placement API flow', () => {
     expect(body.answeredCount).toBe(8);
   });
 
+  it('start ORDERS the first question toward a self-reported leaning subject (YUK-480)', async () => {
+    const now = new Date();
+    // two KCs in different effective domains (subject=view).
+    await db.insert(knowledge).values([
+      {
+        id: 'kc-wenyan',
+        name: 'KW',
+        domain: 'wenyan',
+        parent_id: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      {
+        id: 'kc-math',
+        name: 'KM',
+        domain: 'math',
+        parent_id: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+    ]);
+    // q-math has the higher info (diff 3 → b≈θ̂=0) and would win with NO leaning; q-wenyan (diff
+    // 5) is lower info but in the leaning subject → the preference tier orders it first.
+    await seedQuestion('q-math', ['kc-math'], 3);
+    await seedQuestion('q-wenyan', ['kc-wenyan'], 5);
+
+    // leaning toward 'wenyan' → resolveSubjectKnowledgeIds('wenyan') = [kc-wenyan] → preferred.
+    const res = await startPlacement(
+      jsonReq({ knowledgeIds: ['kc-wenyan', 'kc-math'], leanings: ['wenyan'] }),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.question?.questionId).toBe('q-wenyan');
+
+    // control: NO leaning → the higher-info q-math wins (byte-identical to pre-YUK-480).
+    const ctrl = await (
+      await startPlacement(jsonReq({ knowledgeIds: ['kc-wenyan', 'kc-math'] }))
+    ).json();
+    expect(ctrl.question?.questionId).toBe('q-math');
+  });
+
+  it('next derives the probe cap from the self-reported pace SERVER-SIDE (YUK-480: light → 5)', async () => {
+    await seedKnowledge('kc1');
+    for (let i = 0; i < 10; i++) await seedQuestion(`q${i}`, ['kc1'], 3);
+    const start = await (
+      await startPlacement(jsonReq({ knowledgeIds: ['kc1'], pace: 'light' }))
+    ).json();
+    // answer 5 — the light-pace cap, fewer than the default 8.
+    for (let i = 0; i < 5; i++) await seedAnswer(start.sessionId, `q${i}`);
+
+    // No cap in the body → the route derives it from the pace persisted at /start ('light' → 5).
+    const res = await nextPlacement(jsonReq({}), { id: start.sessionId });
+    const body = await res.json();
+    expect(body.done).toBe(true);
+    expect(body.reason).toBe('cap');
+    expect(body.answeredCount).toBe(5);
+  });
+
+  it('next holds the default cap (8) when no pace was reported (back-compat)', async () => {
+    await seedKnowledge('kc1');
+    for (let i = 0; i < 10; i++) await seedQuestion(`q${i}`, ['kc1'], 3);
+    const start = await (await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }))).json();
+    for (let i = 0; i < 5; i++) await seedAnswer(start.sessionId, `q${i}`);
+    // 5 < the default cap 8 → NOT done (a light-pace probe would already have stopped here).
+    const res = await nextPlacement(jsonReq({}), { id: start.sessionId });
+    const body = await res.json();
+    expect(body.done).toBe(false);
+    expect(body.answeredCount).toBe(5);
+  });
+
   it('next reads scope SERVER-SIDE (no knowledgeIds in body) from the persisted session (YUK-470)', async () => {
     await seedKnowledge('kc1');
     await seedQuestion('q-easy', ['kc1'], 3);
