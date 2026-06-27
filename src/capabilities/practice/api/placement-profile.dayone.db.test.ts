@@ -161,4 +161,22 @@ describe('GET /api/placement/profile — day_one_prior dark field', () => {
       expect(must(b.day_one_prior).weakest_prereq_id).toBe('A');
     },
   );
+
+  (present ? it : it.skip)(
+    'flag ON: a cyclic prereq graph keeps the live read at 200 (resilience — no 500, no field)',
+    async () => {
+      flag.value = true;
+      await seedKc('A');
+      await seedKc('B');
+      await seedEdge('A', 'B');
+      await seedEdge('B', 'A'); // cycle → kernel rejects → loadDayOnePriors NO-OPs
+      await seedGoal('g1', ['A', 'B']);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const body = await getProfile('g1'); // getProfile asserts status 200 — the live read holds
+      for (const kc of body.kcs) {
+        expect(kc).not.toHaveProperty('day_one_prior');
+      }
+      errSpy.mockRestore();
+    },
+  );
 });

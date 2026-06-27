@@ -164,4 +164,18 @@ dWithBinding('loadDayOnePriors — propagated topology (native binding present)'
     expect(b.mean_mastery).toBeCloseTo(0.5, 3);
     expect(b.weakest_prereq_id).toBeUndefined();
   });
+
+  it('flag ON: a cyclic prereq graph degrades to NO-OP — kernel rejection caught + logged, never thrown', async () => {
+    flag.value = true;
+    await seedKc('A');
+    await seedKc('B');
+    await seedEdge('A', 'B');
+    await seedEdge('B', 'A'); // 2-cycle: the kernel rejects (prerequisites must be a DAG)
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Must RESOLVE to null (caught), not reject — the live read must never break. And the
+    // degradation must be LOGGED (observable), not a silent swallow.
+    await expect(loadDayOnePriors(db, ['A', 'B'])).resolves.toBeNull();
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    errSpy.mockRestore();
+  });
 });
