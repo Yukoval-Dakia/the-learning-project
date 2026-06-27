@@ -57,7 +57,7 @@ type DbLike = Db | Tx;
 // 依赖注入（测试可 mock runTask / rng，**绝不命中 live endpoint**）。
 // ───────────────────────────────────────────────────────────────────────────
 
-/** runTask 投影（只取 .text）。与 review-session.ts:RunTaskFn 同形——DI 便于 mock。 */
+/** runTask 投影（只取 .text）——DI 便于 mock（测试不命中 live endpoint）。 */
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
 /** 哪一级 fallback 触发了（观测/测试断言用）。'none' = softmax 主路全程成功。 */
