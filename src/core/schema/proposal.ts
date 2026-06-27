@@ -80,7 +80,7 @@ export const AiProposalKind = z.enum(aiProposalKinds);
 export type AiProposalKindT = z.infer<typeof AiProposalKind>;
 
 // M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
-// actions.ts）为这 15 个 kind 实现了 accept applier；只有 defer / archive /
+// actions.ts）为这 16 个 kind 实现了 accept applier；只有 defer / archive /
 // judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer/accept
 // 语义归 YUK-44）。Phase 0 关系脑 (YUK-406/YUK-440) 的 conjecture 现有真身 accept
 // applier（acceptConjectureProposal，agency 包），故已纳入本集合。UI（ProposalCard）
