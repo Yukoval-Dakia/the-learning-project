@@ -915,6 +915,43 @@ export const mastery_state = pgTable(
   ],
 );
 
+// YUK-440 (A13 typed KC ledger) — kc_typed_state: the single-writer PROJECTION over
+// RESOLVED conjecture/probe evidence, mirroring mastery_state's shape (diagnostic
+// projection keyed by knowledge subject_id, no enforced FK). One row per
+// (subject_kind, subject_id=knowledge_id), single-writer = upsertKcTypedState
+// (advisory-lock namespace `kc_typed:…`, distinct from mastery_state's `fsrs:`/`mastery:`).
+// typed_state is a loose-text tri-state; `confused-with-X` is written ONLY when a
+// discriminating probe + recurrence≥2 confirm it (§修正-4). `mastered` is reserved for
+// the post-Rust-scorer claim-survival FLIP (ADR-0046) and is NOT written in this MVP.
+// Provenance = evidence_event_ids (loose text refs to event.id, no FK). Derived-but-
+// physical → FK_ORDER (rebuildable from the event log via a future foldKcTypedState, but
+// a peer of mastery_state) — NOT BACKUP_EXCLUDED.
+export const kc_typed_state = pgTable(
+  'kc_typed_state',
+  {
+    id: text('id').primaryKey(),
+    subject_kind: text('subject_kind').notNull().default('knowledge'),
+    subject_id: text('subject_id').notNull(),
+    // 'no-evidence' | 'confused-with-X' | 'mastered'. default 'no-evidence'.
+    // 'mastered' is FLIP-only (post-Rust-scorer), unwritten in this MVP.
+    typed_state: text('typed_state').notNull().default('no-evidence'),
+    // when typed_state='confused-with-X', the KC this learner confuses it with
+    // (loose text ref to knowledge.id, no FK). NULL otherwise.
+    confused_with_kc_id: text('confused_with_kc_id'),
+    // 'open' | 'resolved' — the conjecture/probe lifecycle for this cell.
+    lifecycle: text('lifecycle').notNull().default('open'),
+    // provenance: event ids (conjecture / probe_result / prediction_score) backing the
+    // current state. Loose text[] refs, no FK. Append-union on each write.
+    evidence_event_ids: jsonb('evidence_event_ids').$type<string[]>().notNull().default([]),
+    last_evidence_at: timestamp('last_evidence_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('kc_typed_state_unique').on(t.subject_kind, t.subject_id),
+    index('kc_typed_state_subject_idx').on(t.subject_id),
+  ],
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // B1-W1 (ADR-0035 决定#3) — item_calibration：题目标定锚。
 //

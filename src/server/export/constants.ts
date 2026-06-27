@@ -51,7 +51,7 @@
 // archive.ts assertEveryTableIsBackedUpOrExcluded / 92)：30 → 31 tables，4.7 → 4.8。
 // YUK-471 W1 PR-A2a (ADR-0044): additive `materialized_id_index` projection reverse-index
 // → FK_ORDER 备份 (见该数组末尾的 rationale)。31 → 32 tables，4.8 → 4.9 (NEW FK_ORDER table 必 bump)。
-export const SCHEMA_VERSION = '4.9';
+export const SCHEMA_VERSION = '4.10';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -159,6 +159,13 @@ export const FK_ORDER = [
   // unconstrained; placed last as the newest additive table. NEW FK_ORDER table → bump
   // SCHEMA_VERSION (per archive.ts assertEveryTableIsBackedUpOrExcluded).
   'materialized_id_index',
+  // YUK-440 (A13 typed KC ledger): kc_typed_state — single-writer PROJECTION over resolved
+  // conjecture/probe evidence (peer of mastery_state). Derived-but-physical → FK_ORDER
+  // (rebuildable from the event log via a future foldKcTypedState, but a peer of the
+  // mastery/calibration projections above which ARE backed up). No enforced FK (loose text
+  // refs to knowledge/event ids), position unconstrained; placed last as the newest
+  // additive table. NEW FK_ORDER table → bump SCHEMA_VERSION (4.9 → 4.10).
+  'kc_typed_state',
 ] as const;
 
 export type TableName = (typeof FK_ORDER)[number];

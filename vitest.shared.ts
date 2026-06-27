@@ -207,8 +207,13 @@ export const fastTestInclude = [
   // job test is likewise pure — all reads/writes injected). fastTestInclude is an
   // explicit per-file allowlist with no src/server/conjectures|agency glob, so these
   // must be enumerated or the db config's src/**/*.test.ts glob would sweep them into
-  // the testcontainer partition.
-  'src/server/conjectures/**/*.test.ts',
+  // the testcontainer partition. NB: conjectures is enumerated PER-FILE (not a `**`
+  // glob) because the typed-ledger (YUK-440) adds typed-state.db.test.ts — a
+  // `**/*.test.ts` glob would sweep that DB test into the unit partition
+  // (audit:partition P0). Only the pure no-DB units are listed here; *.db.test.ts
+  // falls through to the db partition like every other `.db.test.ts`.
+  'src/server/conjectures/evidence.test.ts',
+  'src/server/conjectures/scoring.unit.test.ts',
   'src/server/agency/conjecture/**/*.test.ts',
   // src/server/export — the no-DB units (constants / csv / readme) run fast. The
   // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain

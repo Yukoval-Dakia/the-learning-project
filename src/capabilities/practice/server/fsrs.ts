@@ -97,3 +97,16 @@ function stateFromCard(c: Card): FsrsStateData {
     last_review: c.last_review ?? null,
   };
 }
+
+// YUK-440 (A13) — public retrievability wrapper. Exposes ts-fsrs get_retrievability
+// (R(t) ∈ [0,1]) WITHOUT leaking the private cardFromState/scheduler (no deep-import of
+// FSRS internals from the conjecture lane). The conjecture reconcile loop uses R(t) for
+// cell salience / display + snapshots it into the probe_result event — it must NOT
+// influence written typed_state (projection purity, §修正-3). A null state (no FSRS card
+// yet) returns 0 (ts-fsrs New-state retrievability = 0). ts-fsrs ^5.4.1:
+// get_retrievability(card, now, format=false) → number — the third arg is REQUIRED false
+// because the default (format=true) returns a percent STRING, not a number.
+export function retrievabilityForKc(state: FsrsStateData | null, now: Date): number {
+  if (state === null) return 0;
+  return scheduler.get_retrievability(cardFromState(state), now, false);
+}
