@@ -55,7 +55,7 @@ export interface ToolQuizArtifactParams {
  * validation — this core never rejects beyond the ToolState parse.
  *
  * YUK-471 W3-C1β — ALSO emits the self-sufficient artifact_create event on the SAME `dbOrTx`
- * (additive double-write, flag OFF). Both live callers (write_review_plan / write_quiz) pass a Tx, so
+ * (additive double-write, flag OFF). The live caller (write_quiz) passes a Tx (YUK-349: write_review_plan retired), so
  * the INSERT + event are atomic; build the snapshot from the RETURNING row so all 22 columns are
  * materialized (rollback-safe — parseEvent throws on a bad snapshot, rolling back the paired INSERT).
  */

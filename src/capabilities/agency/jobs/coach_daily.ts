@@ -83,8 +83,7 @@ const COACH_SUGGESTION_KIND_GUIDANCE =
 const COACH_AGENT_NOTES_GUIDANCE =
   ' When agent_notes are present, treat each as a soft HINT (not a fact) left by a narrow task — it has a signal_kind, refs, and confidence; use it to direct attention when shaping the plan, never as ground truth, and never let it suppress or replace the FSRS-due review backbone or signal-driven proposals (ND-5). When agent_notes is empty, behave exactly as before.';
 // YUK-203 U4 / D5 + CO §6.1:679-681 — the review_session_proposal is a strategic
-// BRIEF, and it is the ONLY attention prior handed down to ReviewPlanTask (the
-// tactical planner reads it via read_coach_brief and reads NO memory). Coach
+// BRIEF, and it is the attention prior the daily Coach brief carries (historically consumed by the now-retired ReviewPlanTask). Coach
 // must populate the brief fields: knowledge_focus (ranked from due/weak signals
 // PLUS the active_items attention pressure), subject_mix, time_box_minutes,
 // intent_tags. CRITICAL (D11): active_items are attention pressure ONLY — they
