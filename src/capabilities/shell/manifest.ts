@@ -33,6 +33,13 @@ export const shellCapability = defineCapability({
         path: '/api/workbench/summary',
         load: () => import('./api/workbench-summary').then((m) => m.GET),
       },
+      // YUK-406 / YUK-440 (教研团 Phase 0 / U4 备课台) — top ≤3 pending conjecture
+      // 读模型（salience 排序，confidence 永不过线）。
+      {
+        method: 'GET',
+        path: '/api/prep-desk/conjectures',
+        load: () => import('./api/prep-desk-conjectures').then((m) => m.GET),
+      },
     ],
   },
   // M4-T6 (YUK-319)：工作台 + 收件箱两 surface；todayBlocks 是工作台自有块
