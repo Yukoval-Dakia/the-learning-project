@@ -8,7 +8,7 @@
 // background — both SRT variants share it). It is currently `true`, so the A2-global
 // anchors below assert the flag-on behaviour, matching production.
 
-import { ELO_K_GLOBAL, HIERARCHICAL_ELO_ENABLED, expectedScore } from '@/core/theta';
+import { ELO_K_GLOBAL, HIERARCHICAL_ELO_ENABLED, SRT_RT_MIN_N, expectedScore } from '@/core/theta';
 import {
   type ThetaGridPosterior,
   gridUpdate,
@@ -359,5 +359,85 @@ describe('replayTheta — A4 grid track (gridEnabled)', () => {
     expect(case2.steps[0].gridPredictedP).toBeNull(); // not forward-scorable (multi-KC question)
     expect(case2.finalState.thetaGridByKc.has('a')).toBe(true); // FOLD happened (deduped set len 1)
     expect((case2.finalState.thetaGridByKc.get('a') as ThetaGridPosterior).evidence).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A1 (YUK-450) — Fisher-conditioned time weight variant (opts.fisherWeightEnabled).
+// Default false → byte-identical. On → timeWeight = 4·pItem·(1−pItem) at the seam, fading
+// the time term at extreme p (and taming the over-harsh "easy item answered slow" credit).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('replayTheta — Fisher time-weight variant (YUK-450)', () => {
+  it('fisherWeightEnabled default (off) is byte-identical to omitting it', () => {
+    const seq = [
+      attempt({ knowledgeIds: ['k'], outcome: 1, b: -1, responseTimeMs: 5000, createdAt: 1 }),
+      attempt({ knowledgeIds: ['k'], outcome: 0, b: -1, responseTimeMs: 40000, createdAt: 2 }),
+    ];
+    const off = replayTheta(seq, { srtEnabled: true });
+    const explicitOff = replayTheta(seq, { srtEnabled: true, fisherWeightEnabled: false });
+    expect(explicitOff.finalState.thetaKc.get('k')).toBe(off.finalState.thetaKc.get('k'));
+  });
+
+  it('on EASY item (p≈1) tames the over-harsh slow-correct negative credit (副作用 treatment)', () => {
+    // b=-4 → cold p=σ(4)≈0.982; slow-correct (40s > d=30s → floored srtOutcome 0.575).
+    // OFF: credit = 0.575 − 0.982 < 0 → answering CORRECTLY drops θ (the over-harsh effect).
+    // ON:  w = 4·0.982·0.018 ≈ 0.07 → srtOutcome → ~0.97 → credit ≈ 0 → θ barely moves.
+    const seq = [attempt({ knowledgeIds: ['k'], outcome: 1, b: -4, responseTimeMs: 40000 })];
+    const off = replayTheta(seq, { srtEnabled: true, fisherWeightEnabled: false });
+    const on = replayTheta(seq, { srtEnabled: true, fisherWeightEnabled: true });
+    const thetaOff = off.finalState.thetaKc.get('k') ?? 0;
+    const thetaOn = on.finalState.thetaKc.get('k') ?? 0;
+    expect(thetaOff).toBeLessThan(0); // over-harsh: correct answer pulled θ down
+    expect(thetaOn).toBeGreaterThan(thetaOff); // weight tames it (less negative)
+    expect(thetaOn).toBeGreaterThan(-0.05); // near-zero movement at extreme p
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A1 (YUK-449) — per-KC rolling RT quantile d variant (opts.dFromQuantile). Default false →
+// population seed → byte-identical. On → d = quantile of the PRIMARY KC's PRIOR correct RTs
+// once ≥ SRT_RT_MIN_N samples accrue; below that the seed (cold-start fallback). CAUSAL: only
+// prior attempts inform d (this attempt's RT is pushed AFTER its own update) → no leakage.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('replayTheta — quantile-d variant (YUK-449)', () => {
+  it('dFromQuantile default (off) is byte-identical to omitting it', () => {
+    const seq = [
+      attempt({ knowledgeIds: ['k'], outcome: 1, b: 0, responseTimeMs: 3000, createdAt: 1 }),
+      attempt({ knowledgeIds: ['k'], outcome: 1, b: 0, responseTimeMs: 4000, createdAt: 2 }),
+    ];
+    const off = replayTheta(seq, { srtEnabled: true });
+    const explicitOff = replayTheta(seq, { srtEnabled: true, dFromQuantile: false });
+    expect(explicitOff.finalState.thetaKc.get('k')).toBe(off.finalState.thetaKc.get('k'));
+  });
+
+  it('below SRT_RT_MIN_N samples, quantile-d is the population seed (cold-start fallback) — true==false', () => {
+    // (MIN_N − 1) correct attempts: the buffer never reaches MIN_N, so every d is the seed,
+    // and dFromQuantile true must equal false (no quantile ever engaged).
+    const seq = Array.from({ length: SRT_RT_MIN_N - 1 }, (_, i) =>
+      attempt({ knowledgeIds: ['k'], outcome: 1, b: 0, responseTimeMs: 1000, createdAt: i + 1 }),
+    );
+    const off = replayTheta(seq, { srtEnabled: true, dFromQuantile: false });
+    const on = replayTheta(seq, { srtEnabled: true, dFromQuantile: true });
+    expect(on.finalState.thetaKc.get('k')).toBe(off.finalState.thetaKc.get('k'));
+  });
+
+  it('once ≥ SRT_RT_MIN_N prior correct RTs accrue, quantile-d engages and the trajectory diverges', () => {
+    // MIN_N fast (1s) correct attempts build a tiny median d (~1s); a later attempt's small d
+    // makes a 2s answer "slow" (vs the 30s seed where 2s is "fast") → different credit → θ diverges.
+    const seq = [
+      ...Array.from({ length: SRT_RT_MIN_N }, (_, i) =>
+        attempt({ knowledgeIds: ['k'], outcome: 1, b: 0, responseTimeMs: 1000, createdAt: i + 1 }),
+      ),
+      attempt({
+        knowledgeIds: ['k'],
+        outcome: 1,
+        b: 0,
+        responseTimeMs: 2000,
+        createdAt: SRT_RT_MIN_N + 1,
+      }),
+    ];
+    const off = replayTheta(seq, { srtEnabled: true, dFromQuantile: false });
+    const on = replayTheta(seq, { srtEnabled: true, dFromQuantile: true });
+    expect(on.finalState.thetaKc.get('k')).not.toBe(off.finalState.thetaKc.get('k'));
   });
 });
