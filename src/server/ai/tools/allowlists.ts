@@ -88,25 +88,9 @@ export const PROPOSE_WRITE_TOOLS = [
   'propose_question_edit',
 ] as const;
 
-// YUK-203 U4 / D5 / CO §6.1 — the 4 tools exclusive to the ReviewPlanTask
-// surface (`review_plan`). These do NOT belong to READ_TOOLS / PROPOSE_WRITE_TOOLS
-// (the Wave-3 shared surfaces): they are a narrow planner-only set. 3 reads +
-// 1 write (write_review_plan emits a tool_quiz artifact). RED LINE: this surface
-// reads NO memory — no search_memory_facts, no query_memory_brief (D7).
-export const REVIEW_PLAN_ONLY_TOOLS = [
-  'read_coach_brief',
-  'get_review_knowledge_snapshot',
-  'select_review_question_candidates',
-  'write_review_plan',
-] as const;
-
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
 export type ProposeWriteDomainToolName = (typeof PROPOSE_WRITE_TOOLS)[number];
-export type ReviewPlanOnlyToolName = (typeof REVIEW_PLAN_ONLY_TOOLS)[number];
-export type DomainToolName =
-  | ReadDomainToolName
-  | ProposeWriteDomainToolName
-  | ReviewPlanOnlyToolName;
+export type DomainToolName = ReadDomainToolName | ProposeWriteDomainToolName;
 
 export type DomainToolSurface =
   | 'knowledge_review'
@@ -118,10 +102,7 @@ export type DomainToolSurface =
   // YUK-195 — question structure-correction surface (agent/user-triggered). Kept
   // separate so copilot / dreaming / coach do NOT get question-mutation tools by
   // default; this is the only surface granting the 6 draft-edit write tools.
-  | 'ingestion_block_edit'
-  // YUK-203 U4 / D5 — the tactical ReviewPlanTask surface. Exactly 4 tools and
-  // NO memory tool (D7). Kept separate from every other surface above.
-  | 'review_plan';
+  | 'ingestion_block_edit';
 
 const KNOWLEDGE_REVIEW_TOOLS = [
   'get_subject_graph_overview',
@@ -317,18 +298,6 @@ const INGESTION_BLOCK_EDIT_TOOLS = [
   'reassign_figure',
 ] as const satisfies readonly DomainToolName[];
 
-// YUK-203 U4 / D5 / CO §6.1:668-675 — the ReviewPlanTask surface. Exactly the 4
-// planner tools. RED LINE: NO search_memory_facts, NO query_memory_brief — the
-// tactical planner reads no memory; the Coach brief (read_coach_brief) is its
-// ONLY attention prior (D7 / CO §6.1:664-666). Enforced by an explicit
-// .not.toContain test in allowlists.test.ts + review_plan.test.ts.
-const REVIEW_PLAN_TOOLS = [
-  'read_coach_brief',
-  'get_review_knowledge_snapshot',
-  'select_review_question_candidates',
-  'write_review_plan',
-] as const satisfies readonly DomainToolName[];
-
 export const DOMAIN_TOOL_ALLOWLISTS = {
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,
@@ -337,7 +306,6 @@ export const DOMAIN_TOOL_ALLOWLISTS = {
   coach: COACH_TOOLS,
   maintenance: MAINTENANCE_TOOLS,
   ingestion_block_edit: INGESTION_BLOCK_EDIT_TOOLS,
-  review_plan: REVIEW_PLAN_TOOLS,
 } as const satisfies Record<DomainToolSurface, readonly DomainToolName[]>;
 
 export function resolveDomainToolNames(surface: DomainToolSurface): readonly DomainToolName[] {
