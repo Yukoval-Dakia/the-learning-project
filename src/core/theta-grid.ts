@@ -54,6 +54,28 @@ import { expectedScore, fisherInformation } from './theta';
 export const THETA_GRID_ENABLED = false;
 
 /**
+ * Sibling dark-ship flag for YUK-513 #123 / inc-E — the deterministic prereq-DAG
+ * day-one (n=0) prior propagation (the Rust `propagatePriors` kernel,
+ * crates/calibration-native). **Default false (dark-ship).**
+ *
+ * Lives here, alongside THETA_GRID_ENABLED, for the SAME reason its consumer
+ * (src/server/coldstart/propagate-priors.ts loadDayOnePriors) reads it across a
+ * module boundary: a getter-mock on '@/core/theta-grid' can then toggle the flag
+ * for both the wrapper's internal read AND the placement-profile route in one place
+ * (mirrors how candidate-signals.ts / state.ts consume THETA_GRID_ENABLED).
+ *
+ * false → loadDayOnePriors returns null (NO-OP); the placement-profile response is
+ *   BYTE-IDENTICAL to today (no day_one_prior field). The regression anchor.
+ * true  → for goals whose scope has prereq edges, each KC gets a day-one mastery
+ *   prior shrunk by the probabilistic-AND of its prerequisites' E_mastery, plus a
+ *   weakest-prereq attribution — surfaced as a DARK field on ProfileKc. Still no UI
+ *   consumer until PR-3 (design-gated). The native binding is dev/CI-only, so even
+ *   with the flag true the surface NO-OPs wherever the .node is absent (incl. prod
+ *   today) — flipping it on is safe, never a hard dependency.
+ */
+export const PREREQ_PROPAGATION_ENABLED = false;
+
+/**
  * Grid endpoints on the θ_KC OFFSET logit scale: [-4, 4]. The offset is the
  * deviation of per-KC ability from the (A2) per-domain anchor θ_global, so a ±4-logit
  * window comfortably brackets any plausible per-KC deviation (σ(±4) ≈ 0.018 / 0.982).
