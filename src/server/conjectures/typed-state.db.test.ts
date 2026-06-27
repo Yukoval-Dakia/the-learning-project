@@ -133,4 +133,21 @@ describe('upsertKcTypedState (single-writer, DB)', () => {
     const r = await row('k_conc');
     expect([...(r?.evidence_event_ids ?? [])].sort()).toEqual(['a', 'b', 'c']);
   });
+
+  it('last_evidence_at is monotonic — an older-timestamp update does not regress it', async () => {
+    const newer = new Date('2026-06-25T00:00:00Z');
+    const older = new Date('2026-06-20T00:00:00Z');
+    const input = (ts: Date): UpsertKcTypedStateInput => ({
+      subject_id: 'k_ts',
+      proposed: 'no-evidence',
+      discriminating: false,
+      recurrence_count: 2,
+      evidence_event_ids: ['e1'],
+      last_evidence_at: ts,
+    });
+    await upsertKcTypedState(db, input(newer));
+    await upsertKcTypedState(db, input(older)); // out-of-order older write
+    const r = await row('k_ts');
+    expect(r?.last_evidence_at?.getTime()).toBe(newer.getTime());
+  });
 });

@@ -36,4 +36,18 @@ describe('scorePrediction (ADR-0046 placeholder stub)', () => {
     expect(s.brierBaseline).toBe(1); // clamped to 0 → (0-1)² = 1
     expect(Number.isNaN(s.skillScorePoint)).toBe(false);
   });
+
+  it('a NaN/Infinity input never poisons the output with NaN (clamp01 guards it)', () => {
+    for (const [p, b] of [
+      [Number.NaN, 0.5],
+      [0.5, Number.NaN],
+      [Number.POSITIVE_INFINITY, 0.5],
+    ] as const) {
+      const s = scorePrediction(p, b, 1);
+      expect(Number.isNaN(s.brierModel)).toBe(false);
+      expect(Number.isNaN(s.brierBaseline)).toBe(false);
+      expect(Number.isNaN(s.logLossModel)).toBe(false);
+      expect(Number.isNaN(s.skillScorePoint)).toBe(false);
+    }
+  });
 });

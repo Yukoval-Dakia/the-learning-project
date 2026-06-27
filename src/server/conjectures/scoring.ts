@@ -19,7 +19,9 @@ export interface PredictionScore {
 const EPS = 1e-9;
 
 function clamp01(x: number): number {
-  return Math.min(1, Math.max(0, x));
+  // Guard NaN/±Infinity → 0 so a degenerate input never poisons every output with NaN
+  // (Math.min/max propagate NaN). Keeps the stub structurally n=1-safe under any input.
+  return Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0;
 }
 
 /**

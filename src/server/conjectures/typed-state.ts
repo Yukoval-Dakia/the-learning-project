@@ -88,7 +88,10 @@ export async function upsertKcTypedState(db: Db, input: UpsertKcTypedStateInput)
       sql`SELECT pg_advisory_xact_lock(hashtext(${`kc_typed:${subjectKind}:${input.subject_id}`}))`,
     );
     const existing = await tx
-      .select({ evidence_event_ids: kc_typed_state.evidence_event_ids })
+      .select({
+        evidence_event_ids: kc_typed_state.evidence_event_ids,
+        last_evidence_at: kc_typed_state.last_evidence_at,
+      })
       .from(kc_typed_state)
       .where(
         and(
@@ -99,6 +102,14 @@ export async function upsertKcTypedState(db: Db, input: UpsertKcTypedStateInput)
       .limit(1);
     const prevEvidence = existing[0]?.evidence_event_ids ?? [];
     const mergedEvidence = [...new Set([...prevEvidence, ...input.evidence_event_ids])];
+    // last_evidence_at is monotonic — never regress it if an out-of-order write carries an
+    // older timestamp. The §修正-3 projection is in-order single-writer, but GREATEST keeps
+    // it correct (and replayable) under any ordering.
+    const prevLastEvidenceAt = existing[0]?.last_evidence_at ?? null;
+    const lastEvidenceAt =
+      prevLastEvidenceAt && prevLastEvidenceAt > input.last_evidence_at
+        ? prevLastEvidenceAt
+        : input.last_evidence_at;
     const next = nextTypedState({
       proposed: input.proposed,
       confused_with_kc_id: input.confused_with_kc_id ?? null,
@@ -116,7 +127,7 @@ export async function upsertKcTypedState(db: Db, input: UpsertKcTypedStateInput)
         confused_with_kc_id: next.confused_with_kc_id,
         lifecycle: next.lifecycle,
         evidence_event_ids: mergedEvidence,
-        last_evidence_at: input.last_evidence_at,
+        last_evidence_at: lastEvidenceAt,
         updated_at: now,
       })
       .onConflictDoUpdate({
@@ -126,7 +137,7 @@ export async function upsertKcTypedState(db: Db, input: UpsertKcTypedStateInput)
           confused_with_kc_id: next.confused_with_kc_id,
           lifecycle: next.lifecycle,
           evidence_event_ids: mergedEvidence,
-          last_evidence_at: input.last_evidence_at,
+          last_evidence_at: lastEvidenceAt,
           updated_at: now,
         },
       });
