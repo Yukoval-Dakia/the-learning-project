@@ -7,6 +7,8 @@
 import {
   event,
   item_calibration,
+  knowledge,
+  knowledge_edge,
   learning_item,
   mastery_state,
   material_fsrs_state,
@@ -1037,5 +1039,178 @@ describe('F1（YUK-350）— new_check 候选排除 draft 题', () => {
     expect(pick).toBeDefined();
     expect(pick?.questionId).not.toBe(draftQ); // 绝不取 draft。
     expect(pick?.questionId).toBe(activeQ); // 取 active 那条。
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// B3 learnable_frontier（YUK-349 #3）— collectComposerInputs 收集 frontier + softmax
+// 路径把 frontier 当 samplable 非到期候选纳入，同时守住到期 presence/order 不变量。
+// ════════════════════════════════════════════════════════════════════════════
+
+// 强制 L1 统计 fallback（runTask 返空文本 → parse [] → null → statisticalWeights）——
+// frontier 候选仍经 sampleByWeight 抽样（rng=0 全选），永不命中 live endpoint。
+const RUNTASK_FORCE_STATISTICAL = async () => ({ text: '' });
+
+async function seedKnowledgeNode(id: string): Promise<void> {
+  const now = new Date();
+  await testDb()
+    .insert(knowledge)
+    .values({
+      id,
+      name: id,
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    })
+    .onConflictDoNothing();
+}
+
+async function seedPrereqEdge(from: string, to: string): Promise<void> {
+  await seedKnowledgeNode(from);
+  await seedKnowledgeNode(to);
+  await testDb()
+    .insert(knowledge_edge)
+    .values({
+      id: createId(),
+      from_knowledge_id: from,
+      to_knowledge_id: to,
+      relation_type: 'prerequisite',
+      weight: 1,
+      created_by: 'user' as never,
+      reasoning: null,
+      created_at: new Date(),
+      archived_at: null,
+    });
+}
+
+async function setKcMastered(kc: string): Promise<void> {
+  await seedKnowledgeNode(kc);
+  await testDb()
+    .insert(mastery_state)
+    .values({
+      id: createId(),
+      subject_kind: 'knowledge',
+      subject_id: kc,
+      theta_hat: 0,
+      // p(L)=σ(0.4·4)=0.83 ≥ 0.7 → mastered.
+      evidence_count: 4,
+      success_count: 4,
+      fail_count: 0,
+      theta_precision: 4,
+      updated_at: new Date(),
+    })
+    .onConflictDoNothing();
+}
+
+/**
+ * Seed a learnable-frontier graph: prereq P (mastered) → frontier KC F (cold, p(L)=0.5,
+ * not mastered), with (by default) ONE non-draft active question tagged [F].
+ */
+async function seedFrontierGraph(
+  opts: { withQuestion?: boolean } = {},
+): Promise<{ frontierKc: string; questionId: string | null }> {
+  const p = createId();
+  const f = createId();
+  await seedPrereqEdge(p, f); // P is prereq of F
+  await setKcMastered(p);
+  await seedKnowledgeNode(f); // F: no mastery row → cold start 0.5 < 0.7 → not mastered.
+  let qid: string | null = null;
+  if (opts.withQuestion !== false) {
+    qid = await insertQuestion({ kind: 'choice', knowledgeIds: [f], difficulty: 3 });
+    await testDb().insert(item_calibration).values({
+      id: createId(),
+      question_id: qid,
+      b: 0,
+      track: 'hard',
+      source: 'llm_prior',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+  }
+  return { frontierKc: f, questionId: qid };
+}
+
+describe('B3 learnable_frontier — store 层（YUK-349 #3）', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('(a) collectComposerInputs 在 frontier 图上填充 frontierItems', async () => {
+    const { frontierKc, questionId } = await seedFrontierGraph();
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    const pick = (inputs.frontierItems ?? []).find((f) => f.knowledgeId === frontierKc);
+    expect(pick).toBeDefined();
+    expect(pick?.questionId).toBe(questionId);
+  });
+
+  it('(c) frontier KC 无题 → SKIP（不进 frontierItems，不触发供给）', async () => {
+    await seedFrontierGraph({ withQuestion: false });
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    expect(inputs.frontierItems ?? []).toEqual([]);
+  });
+
+  it('(b) composeNightly：frontier 题进流（source=frontier）且到期 presence/order 不变量守住', async () => {
+    const dueEarly = await seedDueQuestion({ dueOffsetMs: 7200_000 });
+    const dueLate = await seedDueQuestion({ dueOffsetMs: 3600_000 });
+    const { questionId: frontierQ } = await seedFrontierGraph();
+
+    // assertL3Invariants 在 composeSoftmaxStream 内运行——违例即 throw（composeNightly 失败）。
+    await composeNightly(testDb(), TODAY, {
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { runTaskFn: RUNTASK_FORCE_STATISTICAL, rng: RNG_ALWAYS_SELECT },
+    });
+
+    const rows = await rowsForDate(TODAY);
+    const refs = rows.map((r) => r.ref_id);
+    // 到期 presence（铁律②）：两道 due 都在流里。
+    expect(refs).toContain(dueEarly);
+    expect(refs).toContain(dueLate);
+    // 到期 intra-day 序（due_at ASC）：dueEarly(更早到期) 在 dueLate 之前。
+    expect(refs.indexOf(dueEarly)).toBeLessThan(refs.indexOf(dueLate));
+    // frontier 题进流，source='frontier'。
+    const frontierRow = rows.find((r) => r.ref_id === frontierQ);
+    expect(frontierRow).toBeDefined();
+    expect(frontierRow?.source).toBe('frontier');
+  });
+
+  it('(d.1) NO-OP：稀疏图（无 prereq 边）→ 流里零 frontier-source 行', async () => {
+    await seedDueQuestion();
+    // KC + 题存在但无 prereq 边 → learnableFrontier 返 [] → frontierItems=[]（defer-flip）。
+    const kc = createId();
+    await seedKnowledgeNode(kc);
+    await insertQuestion({ kind: 'choice', knowledgeIds: [kc] });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    expect(inputs.frontierItems ?? []).toEqual([]);
+
+    await composeNightly(testDb(), TODAY, {
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { runTaskFn: RUNTASK_FORCE_STATISTICAL, rng: RNG_ALWAYS_SELECT },
+    });
+    const rows = await rowsForDate(TODAY);
+    expect(rows.every((r) => r.source !== 'frontier')).toBe(true);
+  });
+
+  it('(d.2) L3 quota=0（紧容量）下 frontier 仍存活，且到期 presence 守住', async () => {
+    const dueId = await seedDueQuestion();
+    const { questionId: frontierQ } = await seedFrontierGraph();
+
+    // max=2, 1 due → nonDueBudget=1 → effectiveTarget=1 → frontierQuota=floor(1×0.2)=0。
+    // frontier 仍经 sampledRefs 受保护（quota=0 时配额 inert，不削弱已有保护）。
+    await composeNightly(testDb(), TODAY, {
+      policy: { policy: 'softmax_mfi' },
+      composeDeps: { runTaskFn: RUNTASK_FORCE_STATISTICAL, rng: RNG_ALWAYS_SELECT },
+      capacity: { max: 2 },
+    });
+
+    const rows = await rowsForDate(TODAY);
+    const refs = rows.map((r) => r.ref_id);
+    expect(refs).toContain(dueId); // 到期 presence（铁律②）。
+    expect(refs).toContain(frontierQ); // frontier 抽中并存活（quota=0 path 正确）。
   });
 });
