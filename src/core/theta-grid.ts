@@ -66,10 +66,10 @@ export const THETA_GRID_ENABLED = false;
  *
  * false → loadDayOnePriors returns null (NO-OP); the placement-profile response is
  *   BYTE-IDENTICAL to today (no day_one_prior field). The regression anchor.
- * true  → for goals whose scope has prereq edges, each KC gets a day-one mastery
- *   prior shrunk by the probabilistic-AND of its prerequisites' E_mastery, plus a
- *   weakest-prereq attribution — surfaced as a DARK field on ProfileKc. Still no UI
- *   consumer until PR-3 (design-gated). The native binding is dev/CI-only, so even
+ * true  → every KC in scope gets a day-one prior — roots sit at the uniform ≈0.5,
+ *   dependents are shrunk by the probabilistic-AND of their prerequisites' E_mastery
+ *   (plus a weakest-prereq attribution) — surfaced as a DARK field on ProfileKc. Still
+ *   no UI consumer until PR-3 (design-gated). The native binding is dev/CI-only, so even
  *   with the flag true the surface NO-OPs wherever the .node is absent (incl. prod
  *   today) — flipping it on is safe, never a hard dependency.
  */
