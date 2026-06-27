@@ -214,6 +214,10 @@ export const fastTestInclude = [
   // falls through to the db partition like every other `.db.test.ts`.
   'src/server/conjectures/evidence.test.ts',
   'src/server/conjectures/scoring.unit.test.ts',
+  // YUK-440 U8 — reconcile loop unit test (fully injected deps, no DB). Enumerated
+  // per-file (not a glob) for the same reason as above: a `**/*.test.ts` glob would
+  // sweep reconcile.db.test.ts into the unit partition (audit:partition P0).
+  'src/server/conjectures/reconcile.unit.test.ts',
   'src/server/agency/conjecture/**/*.test.ts',
   // src/server/export — the no-DB units (constants / csv / readme) run fast. The
   // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain
