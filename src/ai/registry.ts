@@ -196,6 +196,31 @@ export const tasks = {
     systemPrompt:
       '你是知识图谱 mesh 编辑助手。输入 { tree_snapshot, existing_edges, recent_failures } —— recent_failures 是过去 24h 的 attempt event (outcome=\'failure\')，每条含 referenced_knowledge_ids + cause（来自 chained judge / user_cause）。\n看 recent_failures 找跨 attempt 的模式：哪些 knowledge 总是同时被引用？哪些是 prerequisite？哪些是易混淆 contrasts_with？哪些是应用关系？基于此提议 0-5 条新 knowledge_edge。每条返回 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }。\nrelation_type 5 选 1：prerequisite（A 是学 B 的先决）/ related_to（弱关联）/ contrasts_with（易混淆对比）/ applied_in（A 应用于 B）/ derived_from（B 由 A 推导）。新型关系用 experimental:* 命名空间。\nweight 0-1：模式有几次 attempt 支持就给多高（1 次→0.3 / 2-3 次→0.6 / 4+ 次→0.9）。\nreasoning 必须具体：引用 attempt event id 或指出 cause pattern。例：「e_xxx 和 e_yyy 都因 concept 类 cause 错且 referenced k_A + k_B，说明 k_A contrasts_with k_B」。\n禁止：from === to；relation_type 不在合法集合；已存在于 existing_edges 的同向同型 (from, to, relation_type) 三元组。\n严格 JSON 输出（不带 markdown 代码块包裹）：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"...","weight":0.6,"reasoning":"..."}]}。0 条也行，不必凑数。',
   },
+  // YUK-349 B3 PR-2 — empty-frontier prerequisite bootstrap. Unlike the
+  // failure-driven KnowledgeEdgeProposeTask above (cross-attempt pattern mining),
+  // this is CURRICULUM-driven: given the tree + the KCs lacking prerequisite
+  // coverage, propose up to 5 TEMPORARY prerequisite edges from genuine
+  // curriculum dependency. PROPOSE-ONLY / low-confidence — the nightly handler
+  // writes a `propose` event (NEVER a live knowledge_edge row), the owner accepts
+  // in the inbox, real edges replace the temps. Fires only when learnableFrontier
+  // is empty (cold-start bootstrap, ADR-0037 #4).
+  FrontierPrerequisiteTask: {
+    kind: 'FrontierPrerequisiteTask',
+    description:
+      '看 tree + 缺先决覆盖的 KC 列表，提议 0-5 条临时 prerequisite knowledge_edge（empty-frontier 冷启 bootstrap，propose-only 低置信）',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    // DEPRECATED fallback only: runtime renders via getTaskSystemPrompt(task,
+    // profile) in src/ai/task-prompts.ts (buildFrontierPrerequisitePrompt). This
+    // string is kept solely as the type-required fallback.
+    systemPrompt:
+      '你是课程先修关系规划助手。输入 { tree_snapshot, kcs_lacking_prereq, domain }。基于课程依赖，为缺先修覆盖的 KC 提议至多 5 条 prerequisite 边（from 是 to 的先决）。低置信/临时。严格 JSON：{"proposals":[{"from_knowledge_id":"...","to_knowledge_id":"...","relation_type":"prerequisite","weight":0.4,"reasoning":"..."}]}。',
+  },
   SessionSummaryTask: {
     kind: 'SessionSummaryTask',
     description: '复习 session 结束后生成 ≤120 字短结：今天哪几题、哪个 cause 多、给 1 句下次建议',
