@@ -76,7 +76,7 @@ async function seedEdge(from: string, to: string): Promise<void> {
     from_knowledge_id: from,
     to_knowledge_id: to,
     relation_type: 'prerequisite',
-    created_by: { actor_kind: 'system', actor_ref: 'seed' },
+    created_by: { by: 'system' },
     created_at: new Date(),
   });
 }
