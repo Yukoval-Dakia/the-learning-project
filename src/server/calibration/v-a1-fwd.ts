@@ -433,11 +433,20 @@ export function formatReport(result: VA1Result, opts: { json?: boolean } = {}): 
     `  bootstrap CI[2.5%,97.5%] = [${fmt(result.ci.lo)}, ${fmt(result.ci.hi)}]  (B=${result.b} non-degenerate replicates, degenerate ${round(result.degenerateFraction * 100)}%)`,
   );
   lines.push('');
+  const cfg = result.config;
   lines.push('Evidence base:');
-  lines.push(`  nTotal (single-KC forward-scorable, incl. RT-less) = ${result.nTotal}`);
+  lines.push(
+    cfg.multiKcScoring
+      ? `  nTotal (single-KC + multi-KC combo forward-scorable, incl. RT-less) = ${result.nTotal}`
+      : `  nTotal (single-KC forward-scorable, incl. RT-less) = ${result.nTotal}`,
+  );
   lines.push(`  nWithRt (the GATE's N — RT-bearing only)           = ${result.nWithRt}`);
   lines.push(`  classes within nWithRt: correct=${result.n1}, wrong=${result.n0}`);
-  lines.push(`  kClusters (KCs with RT-bearing forward preds)      = ${result.kClusters}`);
+  lines.push(
+    cfg.multiKcScoring
+      ? `  kClusters (KC + combo clusters with RT-bearing forward preds) = ${result.kClusters}`
+      : `  kClusters (KCs with RT-bearing forward preds)      = ${result.kClusters}`,
+  );
   lines.push(
     `  deff = ${round(result.deff)}, effectiveN = ${round(result.effectiveN)}  (coarse floor / diagnostic)`,
   );
@@ -450,14 +459,15 @@ export function formatReport(result: VA1Result, opts: { json?: boolean } = {}): 
     `  - Forward predictor b = production's full effectiveFamilyB(columnarB, familyRow); family delta applied to ${result.familyDeltaAppliedCount}/${result.familyDeltaTotal} RT-bearing single-KC attempts.`,
   );
   lines.push(
-    '  - N keys on RT-BEARING single-KC attempts only (RT-less contribute identically to both variants).',
+    cfg.multiKcScoring
+      ? '  - N keys on RT-BEARING attempts (single-KC + multi-KC combo) only (RT-less contribute identically to both variants).'
+      : '  - N keys on RT-BEARING single-KC attempts only (RT-less contribute identically to both variants).',
   );
   lines.push(
     '  - SRT design constant d is fixed (resolveSrtTimeLimit), never re-fit on scored outcomes (no in-sample leakage).',
   );
   lines.push('  - A2 (HIERARCHICAL_ELO_ENABLED) held LIVE for both variants so ΔAUC isolates SRT.');
   lines.push(`  - 'partial' outcomes dropped from forward scoring: ${result.partialDropped}.`);
-  const cfg = result.config;
   lines.push(
     `  - effectiveN floor (${cfg.effectiveNFloor}) + minKcClusters (${cfg.minKcClusters}) are OWNER-CHOSEN; ΔAUC threshold ${cfg.deltaThreshold} from the dossier V-A1-fwd cell.`,
   );

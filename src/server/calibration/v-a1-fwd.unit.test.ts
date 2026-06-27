@@ -494,6 +494,13 @@ describe('assembleForwardClusters — YUK-463 multi-KC combo scoring', () => {
     expect(r.kClusters).toBe(12);
     expect(['PASS', 'FAIL', 'INSUFFICIENT']).toContain(r.verdict);
     // the report surfaces the multi-KC-on caveat.
-    expect(formatReport(r)).toMatch(/MULTI-KC SCORING ON/);
+    const onReport = formatReport(r);
+    expect(onReport).toMatch(/MULTI-KC SCORING ON/);
+    // YUK-463 honest-N: flag-ON report must NOT carry the single-KC-only labels/caveat that
+    // would misreport the (now combo-inclusive) N/clusters. The evidence-base + caveat lines
+    // are conditioned on multiKcScoring so the report stays internally consistent.
+    expect(onReport).toMatch(/single-KC \+ multi-KC combo forward-scorable/);
+    expect(onReport).toMatch(/KC \+ combo clusters with RT-bearing forward preds/);
+    expect(onReport).not.toMatch(/N keys on RT-BEARING single-KC attempts only/);
   });
 });
