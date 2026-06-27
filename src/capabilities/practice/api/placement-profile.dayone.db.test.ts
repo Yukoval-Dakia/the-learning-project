@@ -8,7 +8,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { newId } from '@/core/ids';
-import { goal, knowledge, knowledge_edge } from '@/db/schema';
+import { goal, knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -81,12 +81,30 @@ async function seedEdge(from: string, to: string): Promise<void> {
   });
 }
 
+async function seedMastery(kcId: string): Promise<void> {
+  await db.insert(mastery_state).values({
+    id: newId(),
+    subject_kind: 'knowledge',
+    subject_id: kcId,
+    theta_hat: 0.6,
+    evidence_count: 3,
+    success_count: 2,
+    fail_count: 1,
+    theta_precision: 1.5,
+    updated_at: new Date(),
+  });
+}
+
 function req(goalId: string): Request {
   return new Request(`http://t/api/placement/profile?goal=${encodeURIComponent(goalId)}`);
 }
 
 interface ProfileResp {
-  kcs: Array<{ id: string; day_one_prior?: { mean_mastery: number; weakest_prereq_id?: string } }>;
+  kcs: Array<{
+    id: string;
+    tested?: boolean;
+    day_one_prior?: { mean_mastery: number; weakest_prereq_id?: string };
+  }>;
 }
 
 async function getProfile(goalId: string): Promise<ProfileResp> {
@@ -123,6 +141,24 @@ describe('GET /api/placement/profile — day_one_prior dark field', () => {
       expect(ap.weakest_prereq_id).toBeUndefined();
       expect(bp.weakest_prereq_id).toBe('A');
       expect(bp.mean_mastery).toBeLessThan(ap.mean_mastery);
+    },
+  );
+
+  (present ? it : it.skip)(
+    'flag ON: a TESTED KC also carries its day_one_prior (tested-branch attach)',
+    async () => {
+      flag.value = true;
+      await seedKc('A');
+      await seedKc('B');
+      await seedEdge('A', 'B');
+      await seedMastery('B'); // B now has a mastery_state row → tested:true branch
+      await seedGoal('g1', ['A', 'B']);
+      const body = await getProfile('g1');
+      const b = must(body.kcs.find((k) => k.id === 'B'));
+      // The day_one_prior rides on the SAME object as the live tested fields (the `if (dop)`
+      // attach on the tested branch), not only the untested branch.
+      expect(b.tested).toBe(true);
+      expect(must(b.day_one_prior).weakest_prereq_id).toBe('A');
     },
   );
 });
