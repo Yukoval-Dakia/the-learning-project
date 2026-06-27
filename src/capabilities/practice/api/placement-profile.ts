@@ -9,6 +9,7 @@
 // no root node). The probe's answers populated those KCs' mastery_state; untested in-scope
 // KCs surface as the profile's "未测" rows so the picture is honest about coverage.
 
+import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
@@ -32,6 +33,11 @@ export interface ProfileKc {
   mastery_lo?: number;
   mastery_hi?: number;
   low_confidence?: boolean;
+  // YUK-495 #41 — raw evidence so the client can RE-DERIVE the band bit-for-bit
+  // (deriveProfileKc: pfaLogit(beta,γ,ρ,succ,fail) → σ([logit±se])). Present only when tested.
+  success_count?: number;
+  fail_count?: number;
+  beta?: number;
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -94,6 +100,10 @@ export async function GET(req: Request): Promise<Response> {
         mastery_lo: m.mastery_lo,
         mastery_hi: m.mastery_hi,
         low_confidence: m.low_confidence,
+        // YUK-495 #41 — raw evidence for client-side bit-exact re-derivation.
+        success_count: m.success_count,
+        fail_count: m.fail_count,
+        beta: m.beta,
       };
     });
 
@@ -123,6 +133,10 @@ export async function GET(req: Request): Promise<Response> {
       evidenceCount,
       testedCount,
       totalKcs,
+      // YUK-495 #41 — which σ the server display used: 'poly' (shared bit-exact polynomial,
+      // device re-derivation matches bit-for-bit) vs 'libm' (Math.exp, ≤1-ULP off the device
+      // poly → the badge shows an honest "preview", not "drift"). Flips with POLY_SIGMOID_ENABLED.
+      sigma_mode: POLY_SIGMOID_ENABLED ? 'poly' : 'libm',
     });
   } catch (err) {
     return errorResponse(err);
