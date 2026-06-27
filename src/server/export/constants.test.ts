@@ -10,7 +10,7 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.8" (YUK-454 inc-1 misconception 身份表入备份)', () => {
+  it('SCHEMA_VERSION is "4.10" (YUK-440 A13 kc_typed_state 入备份)', () => {
     // 4.7 → 4.8 (YUK-454 inc-1 / ADR-0036 身份层): NEW FK_ORDER table misconception
     // (AI-proposed/authored 认知身份实体，DORMANT in L1 但备份覆盖纯声明式)。新表入
     // FK_ORDER 必 bump (per archive.ts assertEveryTableIsBackedUpOrExcluded)，同 peer
@@ -22,14 +22,15 @@ describe('export constants', () => {
     // 必 bump (per archive.ts:92)，同 memory_reconciliation_log 的先例 (非 BACKUP_EXCLUDED)。
     // 4.4 → 4.5 (YUK-361 Phase 6): difficulty_calibration_label 入 FK_ORDER (前一次 bump)。
     // 4.8 → 4.9 (YUK-471 W1 PR-A2a / ADR-0044): materialized_id_index 投影反查表入 FK_ORDER。
-    expect(SCHEMA_VERSION).toBe('4.9');
+    // 4.9 → 4.10 (YUK-440 A13): kc_typed_state typed-ledger projection 入 FK_ORDER。
+    expect(SCHEMA_VERSION).toBe('4.10');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 31 tables in topological order', () => {
+  it('FK_ORDER lists all 33 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -54,10 +55,12 @@ describe('export constants', () => {
     // reverse-index (materialized id → anchor event). Derived-but-physical → FK_ORDER
     // (rebuildable from the event log, but knowledge/knowledge_edge are backed up so the
     // index must be too); placed last as the newest additive table.
+    // 32 → 33 (YUK-440 A13): added kc_typed_state — typed KC ledger projection, peer of
+    // mastery_state (derived-but-physical → FK_ORDER, not BACKUP_EXCLUDED); placed last.
     // knowledge_mastery view is read-only and excluded.
-    expect(FK_ORDER.length).toBe(32);
+    expect(FK_ORDER.length).toBe(33);
     expect(FK_ORDER[0]).toBe('knowledge');
-    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('materialized_id_index');
+    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('kc_typed_state');
   });
 
   it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {
