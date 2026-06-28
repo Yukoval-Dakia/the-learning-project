@@ -6,6 +6,11 @@
 
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
+import {
+  RecordLanding,
+  type RecordLandingKnowledge,
+  knowledgeLabelsFor,
+} from '@/ui/components/RecordLanding';
 import { VisionTab, type VisionTabRouting } from '@/ui/components/VisionTab';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
@@ -82,6 +87,10 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
   const [knowledgeFilter, setKnowledgeFilter] = useState('');
   const [causePrimary, setCausePrimary] = useState<CauseCategoryId | ''>('');
   const [causeNotes, setCauseNotes] = useState('');
+  // A8 (YUK-354): 成功着陆态。录入成功后不再硬跳 /mistakes，而是停在着陆视图
+  // （收好了什么 / 去向 / 下一步）。null = 仍在表单态。knowledge 在 onSuccess 当时
+  // 从 selectedKnowledge → label 快照下来（之后 reset 表单不影响着陆显示）。
+  const [landing, setLanding] = useState<{ knowledge: RecordLandingKnowledge[] } | null>(null);
 
   const allNodes = knowledgeQ.data?.rows ?? [];
   const filteredNodes = useMemo(() => {
@@ -127,8 +136,24 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
           wrong_answer_image_refs: [],
         }),
       }),
-    onSuccess: () => navigate('/mistakes'),
+    // A8 (YUK-354): 进着陆态而非硬跳。把当时选的知识点 id → label 快照下来（手填
+    // 有 selectedKnowledge + allNodes 可真实映射），供着陆「挂到哪些知识点」点击跳转。
+    onSuccess: () => setLanding({ knowledge: knowledgeLabelsFor(allNodes, selectedKnowledge) }),
   });
+
+  // A8 (YUK-354):「再录一份」—— 清空表单回到录入态（停留在录入面，不离页）。
+  const resetForm = () => {
+    setLanding(null);
+    setPromptMd('');
+    setReferenceMd('');
+    setWrongAnswerMd('');
+    setSelectedKnowledge([]);
+    setKnowledgeFilter('');
+    setCausePrimary('');
+    setCauseNotes('');
+    setDifficulty(3);
+    submitM.reset();
+  };
 
   const canSubmit =
     promptMd.trim().length > 0 &&
@@ -141,6 +166,21 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   };
+
+  if (landing) {
+    // A8 (YUK-354): 手填恒为 1 道题；knowledge 真实可点（手填有 selectedKnowledge）。
+    return (
+      <Card pad="lg" className="record-card">
+        <RecordLanding
+          count={1}
+          isBatch={false}
+          knowledge={landing.knowledge}
+          navigate={navigate}
+          onRecordAnother={resetForm}
+        />
+      </Card>
+    );
+  }
 
   return (
     <Card pad="lg" className="record-card manual-card">
