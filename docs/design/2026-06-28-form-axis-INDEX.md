@@ -34,4 +34,4 @@
 - **A7 落点 IA 拍定 + handoff 盲点修正**：claude.ai/design 把成效趋势折进现有 Coach 周报、复用同名标题——撞车。根因之一是本批 handoff **漏 ground 既有 Coach 周报（活动报表）+ 校准成熟度面**。owner 拍定 = **Coach 升「复盘中枢」三视图**（活动量 / 校准诊断〔从 admin 迁入〕/ 成效趋势〔A7〕，校准 vs 成效正交不合并）。A7 handoff 已更新落点 IA 段。重构工单见 Linear。
 - **A7 数据前置已 ship**：纵向聚合读模型 = YUK-519 / PR #664（`effectiveness-trend.ts`），handoff 底部「基础设施缺口」已标 resolved。
 - **A1/A4/A8 基础设施**：对抗 workflow 验完全部 confirmed-real 但全部 revise-design（无一可照搬），落 Linear 子单 **YUK-520**（A1 夜窗 digest 读模型）/ **YUK-521**（A4 A/B/C 强度表+裁决熔断）/ **YUK-522**（A8 figure content + PDF abort），verdict 的坑当实现约束写进 body。
-- **A1/A2/A4/A5/A8 增量 brief**：既有屏新视觉维度（非重画整屏），decisions 已锁，串行 workflow 撰写零风格 brief + 对抗审风格泄漏中。
+- **A1/A2/A4/A5/A8 增量 brief ✅ 完成**：既有屏新视觉维度（非重画整屏），decisions 已锁。各 `-handoff.md` 已从 grounding 记录升级为零风格 claude.ai/design 功能 brief（锚真代码行 + 烤入锁定决策 + 对抗审风格泄漏）。verdict：**A1/A5 ship**；**A2/A4/A8 revise → 已外科修**（A2 移「红色」措辞 + independence 三态机制从「owner 已拍」降级为「提议·待确认」；A4 两处风格泄漏 + 批量降级提案 + ledger 行号 -1 校正；A8 补回 owner 锁的「去看知识点」去向 + 标 owner 锁 vs handoff 追加 + 数据前置补 KC id 依赖）。
