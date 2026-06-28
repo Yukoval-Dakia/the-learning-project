@@ -588,3 +588,170 @@ describe('W3-D — question_block set_status parity through revertAutoEnrolledBl
     );
   });
 });
+
+// YUK-471 W3-D flip hardening — ON-path CONCURRENCY invariants (owner pre-flip insurance, P4-class).
+// The runbook (2026-06-27-yuk471-w3d-flip-runbook.md §1 P4) classifies the ON-path lost-update window as
+// NOT a flip blocker because the wired edit writers now take `SELECT … FOR UPDATE` (C3 fix). These tests
+// pin that guarantee end-to-end with the per-entity flag ON, so a future refactor that drops the row lock
+// regresses LOUDLY instead of silently corrupting prod after the flip.
+//
+// The two wired writers have DIFFERENT concurrency contracts (read the code, not the symmetry):
+//   - artifact (editArtifactBodyBlocks): FOR UPDATE + OPTIMISTIC CAS (`row.version !== expectedArtifactVersion`
+//     → 409, thrown BEFORE the fold-source event is emitted, so the loser's whole tx rolls back with no
+//     orphan event). Two same-base edits → exactly ONE commits, the other 409s. Final version == 1.
+//   - question_block (updatePrompt): FOR UPDATE, NO CAS (`version = currentVersion + 1` read under the lock).
+//     Two edits → the lock SERIALIZES them, the 2nd reads the 1st's committed version → BOTH commit, version
+//     0→1→2 (last-write-wins on the tree).
+// In both cases fold==row must hold afterward. TEETH: drop the FOR UPDATE and the artifact case yields TWO
+// winners (both read v0, both pass the CAS) and the question_block case loses one edit (both read v0, both
+// stamp v1) — either breaks the exact-count / exact-version / fold==row assertions below.
+
+describe('W3-D — ON-path concurrency: artifact (FOR UPDATE + optimistic CAS)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+  afterEach(() => {
+    process.env.PROJECTION_IS_WRITER_ARTIFACT = '0';
+  });
+
+  it('ON: two same-base concurrent edits → exactly one wins (loser 409s), version==1, winner body persisted, fold==row', async () => {
+    const db = testDb();
+    await insertNoteArtifact('art_cc', 'Original Title');
+    await backfillArtifactGenesis(db, T0);
+    process.env.PROJECTION_IS_WRITER_ARTIFACT = '1';
+
+    // Both edits race off the SAME base version (0). FOR UPDATE serializes them; the loser then reads the
+    // winner's bumped version and trips the optimistic CAS (409) BEFORE emitting any event.
+    const settled = await Promise.allSettled([
+      editArtifactBodyBlocks({
+        db,
+        artifactId: 'art_cc',
+        expectedArtifactVersion: 0,
+        bodyBlocks: doc('edit-A'),
+      }),
+      editArtifactBodyBlocks({
+        db,
+        artifactId: 'art_cc',
+        expectedArtifactVersion: 0,
+        bodyBlocks: doc('edit-B'),
+      }),
+    ]);
+
+    const fulfilled = settled.filter((r) => r.status === 'fulfilled');
+    const rejected = settled.filter((r) => r.status === 'rejected');
+    // EXACTLY one of each. Two winners would mean the lost-update window is open (FOR UPDATE regressed).
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toMatch(
+      /concurrently modified|conflict/i,
+    );
+
+    const winner = (
+      fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof editArtifactBodyBlocks>>>
+    ).value;
+    expect(winner.artifact_version).toBe(1);
+
+    const row = await liveArtifactRow('art_cc');
+    // Single bump (0→1), not a double-bump: the loser never wrote.
+    expect(row?.version).toBe(1);
+    // The winner's body is persisted; the loser's `doc(...)` is absent (no torn / lost write).
+    expect(row?.body_blocks).toEqual(winner.body_blocks);
+    // fold reproduces the row: genesis(v0) + the SINGLE winning body_blocks_edit event(v1). The loser
+    // threw at the CAS check (which precedes the event emit), so no orphan event pollutes the fold.
+    const live = await liveArtifactRow('art_cc');
+    expectFoldEqualsRow(
+      await gatherAndFoldArtifact(db, 'art_cc'),
+      live ? artifactLiveRowToSnapshot(live) : null,
+    );
+  });
+
+  it('ON: sequential edits bump version monotonically 0→1→2 and the fold accumulates every edit', async () => {
+    const db = testDb();
+    await insertNoteArtifact('art_seq', 'Original Title');
+    await backfillArtifactGenesis(db, T0);
+    process.env.PROJECTION_IS_WRITER_ARTIFACT = '1';
+
+    const first = await editArtifactBodyBlocks({
+      db,
+      artifactId: 'art_seq',
+      expectedArtifactVersion: 0,
+      bodyBlocks: doc('edit-1'),
+    });
+    expect(first.artifact_version).toBe(1);
+    const second = await editArtifactBodyBlocks({
+      db,
+      artifactId: 'art_seq',
+      expectedArtifactVersion: 1, // CAS now demands the post-first version
+      bodyBlocks: doc('edit-2'),
+    });
+    expect(second.artifact_version).toBe(2);
+
+    const row = await liveArtifactRow('art_seq');
+    expect(row?.version).toBe(2);
+    expect(row?.body_blocks).toEqual(doc('edit-2')); // latest edit wins
+    // fold = genesis(v0) + edit-1(v1) + edit-2(v2); the ON-path re-fold replays every event, so the row
+    // the 2nd projection wrote == fold(all three events).
+    const live = await liveArtifactRow('art_seq');
+    expectFoldEqualsRow(
+      await gatherAndFoldArtifact(db, 'art_seq'),
+      live ? artifactLiveRowToSnapshot(live) : null,
+    );
+  });
+});
+
+describe('W3-D — ON-path concurrency: question_block (FOR UPDATE serialize, no CAS)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+  afterEach(() => {
+    process.env.PROJECTION_IS_WRITER_QUESTION_BLOCK = '0';
+  });
+
+  it('ON: two concurrent structured edits serialize on the row lock → both commit, version 0→2, fold==row', async () => {
+    const db = testDb();
+    await insertDraftBlock('qb_cc');
+    await backfillQuestionBlockGenesis(db, T0);
+    process.env.PROJECTION_IS_WRITER_QUESTION_BLOCK = '1';
+
+    // updatePrompt has NO optimistic CAS: FOR UPDATE serializes the two tx, the 2nd reads the 1st's
+    // committed version and bumps again. Both commit (status stays 'draft' across both — persistStructured
+    // never mutates status).
+    const settled = await Promise.allSettled([
+      updatePrompt(db, {
+        blockId: 'qb_cc',
+        nodeId: 'qb_cc',
+        promptText: 'prompt-A',
+        actorRef: 'A',
+      }),
+      updatePrompt(db, {
+        blockId: 'qb_cc',
+        nodeId: 'qb_cc',
+        promptText: 'prompt-B',
+        actorRef: 'B',
+      }),
+    ]);
+
+    // BOTH succeed and BOTH report status:'written' (no 'skipped:not_draft' — the lock serializes, it
+    // does not reject). A dropped lock would let both stamp v1 → one edit lost → version stuck at 1.
+    expect(settled.every((r) => r.status === 'fulfilled')).toBe(true);
+    const statuses = settled.map(
+      (r) => (r as PromiseFulfilledResult<Awaited<ReturnType<typeof updatePrompt>>>).value.status,
+    );
+    expect(statuses).toEqual(['written', 'written']);
+
+    const row = await liveBlockRow('qb_cc');
+    // 0→1→2: both edits landed, version monotonic, no lost bump.
+    expect(row?.version).toBe(2);
+    // Last serialized writer's prompt wins; either order is valid (the race winner is nondeterministic).
+    expect(['prompt-A', 'prompt-B']).toContain(
+      (row?.structured as StructuredQuestionT).prompt_text,
+    );
+    // fold == row: genesis + BOTH edit events folded in created_at order == the row the 2nd writer's
+    // projection re-folded. A lost update (missing lock) would drop one event → fold!=row or version!=2.
+    const qlive = await liveBlockRow('qb_cc');
+    expectFoldEqualsRow(
+      await gatherAndFoldQuestionBlock(db, 'qb_cc'),
+      qlive ? questionBlockLiveRowToSnapshot(qlive) : null,
+    );
+  });
+});
