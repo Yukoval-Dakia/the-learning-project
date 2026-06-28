@@ -414,4 +414,46 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       `Unexpected artifact writers. Expected only ${ALLOWED.join(' + ')}. Found:\n  ${unexpected.join('\n  ')}`,
     ).toEqual([]);
   });
+
+  // YUK-503 (YUK-471 W3-D) — symmetric to the `artifact` writer audit above. Every module that writes
+  // (INSERT or UPDATE) a `question_block` row must ALSO emit the canonical event that lets the W3-B fold
+  // (foldQuestionBlock) reproduce that row from the event log — a `experimental:question_block_create`
+  // BASE for creation/rescue, or a `experimental:question_block_lifecycle` for the set_status /
+  // reassign_figures fold-truth mutators — OR be the projection writer itself. Without this audit, the
+  // 5 formerly-eventless fold-truth mutators stayed invisible until the W3-C3 review; it is the
+  // checkpoint that catches them earlier: a NEW file that mutates question_block but is not in this
+  // allowlist fails here, forcing the author to either wire the event seam or consciously add the file
+  // (and explain its event-sourcing story), exactly the review gate that was missing.
+  it('question_block writes: confined to event-sourcing-aware writer modules (YUK-503)', async () => {
+    const hits = await findWriteHits('question_block', { roots: SCAN_RUNTIME_ROOTS });
+    const ALLOWED = [
+      // OCR ingestion: the creation INSERT + the rescue UPDATE, each paired with a
+      // `experimental:question_block_create` event (writeQuestionBlockCreateEvent) — rescue emits a
+      // create-event overwrite (FIRST-BASE-WINS is bypassed for rescue by design).
+      'src/server/session/ingestion.ts',
+      // docx ingestion: the creation INSERT + its `experimental:question_block_create` event.
+      'src/server/session/docx-ingestion.ts',
+      // import POST: the virtual (merged/split) card INSERT + create event; the enroll/ignore status
+      // UPDATEs each emit `experimental:question_block_lifecycle` (op='set_status').
+      'src/capabilities/ingestion/api/import.ts',
+      // auto-enroll: the status UPDATE → `experimental:question_block_lifecycle` (op='set_status',
+      // status='auto_enrolled' + imported_*).
+      'src/capabilities/ingestion/server/auto-enroll.ts',
+      // structured edits + figure reassignment: each UPDATE emits its matching structured-edit event or
+      // `experimental:question_block_lifecycle` (op='reassign_figures').
+      'src/capabilities/ingestion/server/block-structured-edit.ts',
+      // revert: the reset UPDATE → `experimental:question_block_lifecycle` (op='set_status',
+      // status='draft', imported_* cleared).
+      'src/capabilities/ingestion/server/revert-auto-enroll.ts',
+      // YUK-471 W3-B — projectQuestionBlock / projectQuestionBlockGuarded: the fold→row write-back
+      // (upsert recomputed from the event fold). INERT until PROJECTION_IS_WRITER_QUESTION_BLOCK flips;
+      // mirrors the artifact projection writer (src/server/projections/artifact.ts) above.
+      'src/server/projections/question_block.ts',
+    ];
+    const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
+    expect(
+      unexpected,
+      `Unexpected question_block writers. Every writer must pair its row mutation with the canonical event-source seam (question_block_create / question_block_lifecycle) or be the projection writer — see YUK-471 W3-D. Expected only ${ALLOWED.join(' + ')}. Found:\n  ${unexpected.join('\n  ')}`,
+    ).toEqual([]);
+  });
 });
