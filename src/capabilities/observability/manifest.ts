@@ -48,6 +48,14 @@ export const observabilityCapability = defineCapability({
         path: '/api/observability/calibration-maturity',
         load: () => import('./api/calibration-maturity').then((m) => m.GET),
       },
+      // YUK-519 (A7 成效趋势面) — per-KC / per-subject 纵向成效趋势只读观测面。读模型
+      // server/effectiveness-trend.ts（纯 drizzle，零写路径）。横截面诊断看 calibration-
+      // maturity；本面看纵向 delta（涨/保持/退 + 置信）。/api/* token 校验由组合根中间件统一施加。
+      {
+        method: 'GET',
+        path: '/api/observability/effectiveness-trend',
+        load: () => import('./api/effectiveness-trend').then((m) => m.GET),
+      },
       // M5-T5a (YUK-321) — 内核运维面收编：备份恢复（spec keep 行，路径沿旧
       // /api/_/{export,import}）+ 统一事件流撤回面（correction 内核不变量，
       // 原 app/api/events/[id]/correct）。裸查/rate 面退役见 Task 9。
