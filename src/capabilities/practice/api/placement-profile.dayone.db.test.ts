@@ -17,7 +17,7 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/theta-grid')>();
   return {
     ...actual,
-    get PREREQ_PROPAGATION_ENABLED() {
+    get DAY_ONE_PRIOR_ENABLED() {
       return flag.value;
     },
   };
@@ -172,11 +172,14 @@ describe('GET /api/placement/profile — day_one_prior dark field', () => {
       await seedEdge('B', 'A'); // cycle → kernel rejects → loadDayOnePriors NO-OPs
       await seedGoal('g1', ['A', 'B']);
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const body = await getProfile('g1'); // getProfile asserts status 200 — the live read holds
-      for (const kc of body.kcs) {
-        expect(kc).not.toHaveProperty('day_one_prior');
+      try {
+        const body = await getProfile('g1'); // getProfile asserts status 200 — the live read holds
+        for (const kc of body.kcs) {
+          expect(kc).not.toHaveProperty('day_one_prior');
+        }
+      } finally {
+        errSpy.mockRestore();
       }
-      errSpy.mockRestore();
     },
   );
 });

@@ -58,6 +58,14 @@ export const THETA_GRID_ENABLED = false;
  * day-one (n=0) prior propagation (the Rust `propagatePriors` kernel,
  * crates/calibration-native). **Default false (dark-ship).**
  *
+ * NAME — deliberately `DAY_ONE_PRIOR_ENABLED`, NOT `PREREQ_PROPAGATION_ENABLED`
+ * (which the design doc pre-blessed for inc-E): YUK-455 shipped two flags of that
+ * name first — `src/core/prereq-propagation.ts` (A6 directed θ̂ propagation) and
+ * `src/server/mastery/prereq-propagation.ts` (A13 backward-risk producer). Those are
+ * DIFFERENT inc-E mechanisms with independent flip gates; this one gates ONLY the
+ * day-one prior read surface, so it carries a distinct, specific name to avoid a
+ * three-way same-name collision.
+ *
  * Lives here, alongside THETA_GRID_ENABLED, for the SAME reason its consumer
  * (src/server/coldstart/propagate-priors.ts loadDayOnePriors) reads it across a
  * module boundary: a getter-mock on '@/core/theta-grid' can then toggle the flag
@@ -73,7 +81,7 @@ export const THETA_GRID_ENABLED = false;
  *   with the flag true the surface NO-OPs wherever the .node is absent (incl. prod
  *   today) — flipping it on is safe, never a hard dependency.
  */
-export const PREREQ_PROPAGATION_ENABLED = false;
+export const DAY_ONE_PRIOR_ENABLED = false;
 
 /**
  * Grid endpoints on the θ_KC OFFSET logit scale: [-4, 4]. The offset is the
