@@ -477,6 +477,11 @@
 .aa-link:hover {
   color: var(--coral-ink);
 }
+.aa-link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-1);
+}
 
 /* ── A 档 · auto-applied + undo ── */
 .aa-banner {
@@ -605,6 +610,10 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+.aa-revert:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
 .aa-trace {
   width: 100%;
   margin-top: var(--s-2);
@@ -633,7 +642,8 @@
   padding: var(--s-4);
   border-radius: var(--r-3);
   margin-bottom: var(--s-3);
-  border: 1px solid;
+  /* 默认 border-color（.ok / .tripped 修饰类会各自覆盖；缺省时不回落 currentColor）。 */
+  border: 1px solid var(--line);
 }
 .aa-breaker.ok {
   background: var(--paper-sunk);
@@ -714,6 +724,11 @@
 }
 .co-bar:hover {
   background: var(--paper-sunk);
+}
+.co-bar:focus-visible {
+  outline: none;
+  /* .co-fold overflow:hidden 会裁掉外发光 box-shadow，故用 inset 让 focus ring 落在条内可见。 */
+  box-shadow: inset var(--shadow-focus);
 }
 .co-bar .ec-ic {
   width: 30px;
@@ -796,4 +811,16 @@
   color: var(--ink-4);
   margin-top: 3px;
   text-wrap: pretty;
+}
+
+/* A4 新增的 transition（aa-card 状态过渡 / aa-link / aa-revert / co-bar / co-chev 旋转）
+   尊重减弱动效偏好——开关瞬时切换，不做缓动。 */
+@media (prefers-reduced-motion: reduce) {
+  .aa-card,
+  .aa-link,
+  .aa-revert,
+  .co-bar,
+  .co-chev {
+    transition: none;
+  }
 }
