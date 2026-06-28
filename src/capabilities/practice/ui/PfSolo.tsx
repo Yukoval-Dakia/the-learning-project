@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { HintLadder } from './HintLadder';
 import { PfSrcBadge } from './PfStream';
 import type { PfToast } from './PracticeFacePage';
 import {
@@ -28,8 +29,6 @@ import {
   fileAppeal,
   getAdvice,
   getQuestion,
-  solveHint,
-  solveStart,
   submitReview,
 } from './practice-api';
 
@@ -537,7 +536,9 @@ export function PfSolo({
   );
 }
 
-/* ── 解题会话 — 苏格拉底分级提示（solve 链 API） ── */
+/* ── 解题会话 — 6 阶 hint 强度梯（YUK-354 A2，solve 链 API） ──
+   抽屉壳（触发/scrim/focus-trap/「会话不计入判分」note/关闭）保留；body 由旧的「无级线性、点一次
+   给一条」提示流换成可感知的 6 阶 H0-H5 强度梯（HintLadder）。强度梯本身的状态机 + 形态在 HintLadder。 */
 function PfCoach({
   open,
   onClose,
@@ -547,38 +548,8 @@ function PfCoach({
   onClose: () => void;
   question: QuestionDetail;
 }) {
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [hints, setHints] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [exhausted, setExhausted] = useState(false);
   const panelRef = useRef<HTMLElement | null>(null);
   useFocusTrap(open, onClose, panelRef);
-
-  useEffect(() => {
-    if (!open) {
-      setSessionId(null);
-      setHints([]);
-      setExhausted(false);
-    }
-  }, [open]);
-
-  const nextHint = async () => {
-    setLoading(true);
-    try {
-      let sid = sessionId;
-      if (!sid) {
-        sid = (await solveStart(question.id)).session_id;
-        setSessionId(sid);
-      }
-      const h = await solveHint(question.id, sid, hints.length);
-      if (h.text_md) setHints((arr) => [...arr, h.text_md]);
-      else setExhausted(true);
-    } catch {
-      setExhausted(true);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return createPortal(
     <>
@@ -606,37 +577,15 @@ function PfCoach({
             <LoomIcon name="teach" size={13} />
             解题会话
           </span>
-          <span className="meta mono">socratic · 不给答案</span>
+          <span className="meta mono">H0–H5 · 逐阶加力</span>
           <span className="topbar-spacer" />
           <IconBtn icon="close" size={16} title="关闭" onClick={onClose} />
         </div>
         <div className="pfs-coach-body">
           <p className="pfs-coach-note">
-            我不会直接给答案——一级一级来，每级提示更近一步。会话不计入判分。
+            一级一级加力，每阶更近一步；想直接看完整解也行（记为非独立完成）。会话不计入判分。
           </p>
-          {hints.map((h, i) => (
-            <div key={`${i}-${h.slice(0, 8)}`} className="pfs-hint">
-              <span className="pfs-hint-k">提示 {i + 1}</span>
-              {h}
-            </div>
-          ))}
-          {!exhausted ? (
-            <Btn
-              size="sm"
-              variant="secondary"
-              icon="chevronDown"
-              disabled={loading}
-              onClick={() => void nextHint()}
-            >
-              {loading
-                ? '想想…'
-                : hints.length === 0
-                  ? '给我一点提示'
-                  : `再提示一点 · ${hints.length + 1}`}
-            </Btn>
-          ) : (
-            <p className="pfs-coach-note">提示用完了。回到题面把你的思路写进作答框试试。</p>
-          )}
+          <HintLadder open={open} question={question} />
         </div>
       </aside>
     </>,
