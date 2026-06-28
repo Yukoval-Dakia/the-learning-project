@@ -226,18 +226,26 @@ function meanMastery(probs: number[]): number {
       `propagatePriors returned a ${probs.length}-length pmf; expected ${GRID_THETA.length} (binding drift)`,
     );
   }
+  // Value-level drift guard (sibling of the length guard above). Validate the PMF itself, not
+  // just the final scalar: a non-normalized pmf (Σ ≠ 1) or negative-but-cancelling masses can
+  // otherwise yield a plausible-looking acc ∈ [0,1] and slip through. The kernel returns a
+  // renormalized posterior of non-negative masses summing to 1, so anything else is binding
+  // drift — throw (caught → NO-OP + log) rather than leak a corrupt scalar to the PR-3 badge.
   let acc = 0;
+  let mass = 0;
   for (let i = 0; i < probs.length; i++) {
-    acc += probs[i] * polySigmoid(GRID_THETA[i]);
+    const p = probs[i];
+    if (!Number.isFinite(p) || p < 0) {
+      throw new Error(
+        `propagatePriors pmf[${i}]=${p} is not a finite non-negative mass (binding drift)`,
+      );
+    }
+    mass += p;
+    acc += p * polySigmoid(GRID_THETA[i]);
   }
-  // Value-level drift guard (sibling of the length guard above): a correct-length pmf carrying
-  // NaN / Infinity / negative mass would yield a non-finite or out-of-[0,1] "mastery". A convex
-  // combination of σ∈(0,1) over a unit-mass pmf is in (0,1), so anything else is binding drift —
-  // throw (caught → NO-OP + log) rather than leak a corrupt scalar to the eventual PR-3 badge.
-  if (!Number.isFinite(acc) || acc < 0 || acc > 1) {
-    throw new Error(
-      `propagatePriors produced an invalid mean_mastery (${acc}); probs may carry NaN/negative mass (binding drift)`,
-    );
+  // Normalization: a posterior sums to 1 (allow a few ULP of f64 fold error).
+  if (Math.abs(mass - 1) > 1e-9) {
+    throw new Error(`propagatePriors pmf sums to ${mass}, not 1 (binding drift)`);
   }
   return acc;
 }
