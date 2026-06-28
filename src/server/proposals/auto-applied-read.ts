@@ -72,16 +72,21 @@ export async function getAutoAppliedDigest(
     .filter((id): id is string => id.length > 0);
   const revertedSet = await loadRetractedSet(db, proposalIds);
 
-  const out: AutoAppliedRow[] = rows.map((r) => {
+  const out: AutoAppliedRow[] = rows.flatMap((r) => {
     const proposalId = readProposalId(r.payload);
-    return {
-      proposal_id: proposalId,
-      learning_item_id: r.subjectId,
-      title: r.title ?? r.subjectId,
-      applied_at: r.createdAt.toISOString(),
-      level: readLevel(r.payload),
-      reverted: proposalId.length > 0 && revertedSet.has(proposalId),
-    };
+    // 跳过缺 proposal_id 的坏锚事件——A 档 UI 靠稳定 proposal id 做 key / 撤销入口，
+    // 投影成 proposal_id:'' 的脏卡会破坏 key 且无法撤销（CodeRabbit #6）。
+    if (proposalId.length === 0) return [];
+    return [
+      {
+        proposal_id: proposalId,
+        learning_item_id: r.subjectId,
+        title: r.title ?? r.subjectId,
+        applied_at: r.createdAt.toISOString(),
+        level: readLevel(r.payload),
+        reverted: revertedSet.has(proposalId),
+      },
+    ];
   });
 
   const breaker: VerdictBreakerResult = await checkAutoApplyBreaker(db, now);

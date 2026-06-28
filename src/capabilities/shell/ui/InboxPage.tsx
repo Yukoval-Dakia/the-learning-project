@@ -17,7 +17,7 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { ProposalCard } from './ProposalCard';
 import {
@@ -36,6 +36,9 @@ import './shell.css';
 function tierIcon(name: string): LoomIconName {
   return name as LoomIconName;
 }
+
+// A 档撤销窗口的重渲染节拍：每 15s 刷新 nowMs，让倒计时 + live→consumed 过渡随时间走。
+const UNDO_TICK_MS = 15_000;
 
 function formatWindowLabel(windowMs: number): string {
   const minutes = Math.round(windowMs / 60_000);
@@ -276,9 +279,17 @@ export default function InboxPage({ navigate }: InboxPageProps) {
 
   const autoApplied = aaQ.data?.rows ?? [];
   const breaker = aaQ.data?.breaker;
-  const nowMs = Date.now();
-  // A 块仅在有 auto-applied 卡或熔断 tripped 时露出（否则不堆叠空 meter）。
-  const showTierA = autoApplied.length > 0 || breaker?.tripped === true;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  // 撤销窗口倒计时 + live→consumed 过渡靠定时重渲染刷新（否则 nowMs 仅在偶发重渲时更新，
+  // 窗口过期后仍显示旧剩余时间 + 撤销键启用，与 UNDO_WINDOW_MS 语义不符；CodeRabbit #1）。
+  // 仅在有 auto-applied 卡时挂 interval，无则不跑。
+  useEffect(() => {
+    if (autoApplied.length === 0) return;
+    const id = setInterval(() => setNowMs(Date.now()), UNDO_TICK_MS);
+    return () => clearInterval(id);
+  }, [autoApplied.length]);
+  // A 块在有 auto-applied 卡、熔断 tripped、或读模型出错（surface 错误而非静默空）时露出。
+  const showTierA = autoApplied.length > 0 || breaker?.tripped === true || aaQ.isError;
 
   const onRevert = async (proposalId: string) => {
     setReverting((r) => ({ ...r, [proposalId]: true }));
@@ -330,7 +341,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
 
       <Stateful
         status={status}
-        onRetry={() => void q.refetch()}
+        onRetry={() => {
+          void q.refetch();
+          void aaQ.refetch();
+        }}
         errorText="提议列表暂不可用。"
         skeleton={<SkLines rows={4} />}
         empty={clearedEmpty}
@@ -339,6 +353,19 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         {showTierA && (
           <section>
             <TierHead tier="A" count={autoApplied.length} />
+            {/* aaQ 失败显式 surface（CodeRabbit #2）：否则 A 档卡 + breaker 被当空数据静默
+                吞掉，用户以为没有自动应用项，实则 fetch 失败、撤销入口也丢了。 */}
+            {aaQ.isError && (
+              <LoomCard pad sunk>
+                <div className="meta">
+                  自动应用列表暂不可用。{' '}
+                  <button type="button" className="aa-link" onClick={() => void aaQ.refetch()}>
+                    <LoomIcon name="refresh" size={13} />
+                    重试
+                  </button>
+                </div>
+              </LoomCard>
+            )}
             {breaker && <BreakerMeter breaker={breaker} />}
             {autoApplied.length > 0 && (
               <div className="aa-banner">
