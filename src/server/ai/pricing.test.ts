@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effectiveCostUsd, localCostUsd } from './pricing';
+import { bailianEmbedCostCny, effectiveCostUsd, glmChatCostCny, localCostUsd } from './pricing';
 
 // YUK-359 — mimo local cost fallback. mimo endpoint does not surface
 // total_cost_usd, so runner falls back to token×unit-price. These tests pin the
@@ -87,5 +87,23 @@ describe('effectiveCostUsd', () => {
   it('returns 0 when reported is 0/undefined AND model is unknown', () => {
     expect(effectiveCostUsd('unknown-model', tokens, undefined)).toBe(0);
     expect(effectiveCostUsd('unknown-model', tokens, 0)).toBe(0);
+  });
+});
+
+describe('glmChatCostCny', () => {
+  it('scales linearly with prompt + completion tokens', () => {
+    const one = glmChatCostCny(1_000_000, 0);
+    const two = glmChatCostCny(2_000_000, 0);
+    expect(one).toBeGreaterThan(0);
+    expect(two).toBeCloseTo(one * 2, 10);
+  });
+});
+
+describe('bailianEmbedCostCny', () => {
+  it('scales linearly with prompt tokens (no completion bucket)', () => {
+    const one = bailianEmbedCostCny(1_000_000);
+    const two = bailianEmbedCostCny(2_000_000);
+    expect(one).toBeGreaterThan(0);
+    expect(two).toBeCloseTo(one * 2, 10);
   });
 });
