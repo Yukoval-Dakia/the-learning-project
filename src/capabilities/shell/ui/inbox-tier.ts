@@ -18,7 +18,6 @@ export interface TierMeta {
   label: string;
   sub: string;
   tone: 'good' | 'coral' | 'neutral';
-  icon: string;
 }
 
 export const TIER_META: Record<'A' | 'B' | 'C', TierMeta> = {
@@ -26,19 +25,16 @@ export const TIER_META: Record<'A' | 'B' | 'C', TierMeta> = {
     label: '自动应用',
     sub: '安全可逆 · 已静默应用 · 撤销窗口内一键回退',
     tone: 'good',
-    icon: 'bolt',
   },
   B: {
     label: '待你裁决',
     sub: '真裁决项 · 逐条 accept / dismiss · 每次写一条事件',
     tone: 'coral',
-    icon: 'inbox',
   },
   C: {
     label: '已自动处理',
     sub: '纯状态变更 · 不占裁决队列 · 可在旁观面回看',
     tone: 'neutral',
-    icon: 'archive',
   },
 };
 
