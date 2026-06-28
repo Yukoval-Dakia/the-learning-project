@@ -311,6 +311,11 @@ export const fastTestInclude = [
   // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
   // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).
   'src/server/proposals/adaptive-bias.unit.test.ts',
+  // YUK-521 (A4 强度轴) — pure off-by-one verdict-rate breaker math + dep-injected
+  // composite packing. Imports only ./decide-breaker (its @/db/client is type-only/
+  // erased, @/db/schema is table objects — no live Postgres). The DB-backed
+  // countRecentVerdicts is covered by the auto-apply DB tests (db partition).
+  'src/server/proposals/decide-breaker.unit.test.ts',
   // YUK-471 W1 PR-A2b — parity assert throw-routing (mocks ./gather, no DB). The live
   // gather→fold parity coverage is parity.db.test.ts (DB partition).
   'src/server/projections/parity.unit.test.ts',
