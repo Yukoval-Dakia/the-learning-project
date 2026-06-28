@@ -27,6 +27,7 @@ import { Stateful } from '@/ui/primitives/Stateful';
 import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number };
@@ -88,7 +89,51 @@ function CoachKpi({
   );
 }
 
+// YUK-354 (A7) — Coach 从单一周报升级为「复盘中枢」雏形：顶部分段切两个正交视图
+// （活动量 = 现有 FSRS 报表，不动逻辑；成效趋势 = 新纵向 delta 面）。完整三视图中枢
+// （+ 校准诊断从 admin 迁入 + 容器重命名 + 默认视图决策）= YUK-523 紧邻 follow-up；
+// 读模型规模化（窗口化 / notable 排序）= YUK-524（后端）。本面只做最小 2 视图切换。
+type CoachView = 'activity' | 'effectiveness';
+
 export default function CoachPage({ navigate }: { navigate: (to: string) => void }) {
+  const [view, setView] = useState<CoachView>('activity');
+  return (
+    <main className="page view coach-loom coachhub">
+      <div className="coachhub-switch">
+        <div className="coachhub-tabs" role="tablist" aria-label="Coach 复盘视图">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'activity'}
+            className={view === 'activity' ? 'coachhub-tab on' : 'coachhub-tab'}
+            onClick={() => setView('activity')}
+          >
+            <LoomIcon name="review" size={15} />
+            活动量
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'effectiveness'}
+            className={view === 'effectiveness' ? 'coachhub-tab on' : 'coachhub-tab'}
+            onClick={() => setView('effectiveness')}
+          >
+            <LoomIcon name="target" size={15} />
+            成效趋势
+          </button>
+        </div>
+      </div>
+      {view === 'activity' ? (
+        <CoachActivityView navigate={navigate} />
+      ) : (
+        <EffectivenessTrendPanel navigate={navigate} />
+      )}
+    </main>
+  );
+}
+
+// 活动量视图 = 原 CoachPage 周报，逐字保留（只去掉外层 <main>，由复盘中枢壳统一持有）。
+function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   const [days, setDays] = useState<Window>(7);
   // Count-up animations: useCountUp(start: true) already animates 0→target on
   // mount, and `key={days}` below remounts CoachReport on window change. The
@@ -114,7 +159,7 @@ export default function CoachPage({ navigate }: { navigate: (to: string) => void
   const status = q.isLoading ? 'loading' : q.isError ? 'error' : windowIsEmpty ? 'empty' : 'ok';
 
   return (
-    <main className="page view coach-loom">
+    <>
       <div className="page-head">
         <div className="eyebrow">COACH · 只读分析 · 近 {days} 天</div>
         <div className="page-head-row">
@@ -152,7 +197,7 @@ export default function CoachPage({ navigate }: { navigate: (to: string) => void
           <CoachReport key={days} data={q.data} active={active} navigate={navigate} />
         ) : null}
       </Stateful>
-    </main>
+    </>
   );
 }
 
