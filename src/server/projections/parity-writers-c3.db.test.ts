@@ -17,17 +17,27 @@
 //
 // Hermetic: resetDb() in beforeEach; the per-entity env flags are restored in afterEach.
 
+import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { runAutoEnrollForSession } from '@/capabilities/ingestion/server/auto-enroll';
 import {
   reassignFigure,
   updatePrompt,
 } from '@/capabilities/ingestion/server/block-structured-edit';
+import { revertAutoEnrolledBlock } from '@/capabilities/ingestion/server/revert-auto-enroll';
 import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
-import { artifact, question_block } from '@/db/schema';
+import {
+  artifact,
+  knowledge,
+  learning_record,
+  learning_session,
+  question_block,
+} from '@/db/schema';
 import {
   backfillArtifactGenesis,
   backfillQuestionBlockGenesis,
@@ -288,10 +298,17 @@ describe('W3-C3 — question_block parity through updatePrompt (real writer)', (
 
 // W3-D — the question_block_lifecycle cutover (the 5 formerly-eventless fold-truth mutators). Here we
 // exercise the figure-reassignment writer (reassignFigure → op='reassign_figures') end-to-end: the
-// imperative UPDATE + the additive canonical lifecycle event, then fold==row. (The set_status writers —
-// auto-enroll / import / revert — are exercised by their own DB tests, which validate the lifecycle
-// payload in-tx via writeEvent→parseEvent; the reducer's presence-based set_status branch is covered by
-// the pure foldQuestionBlock unit tests.)
+// imperative UPDATE + the additive canonical lifecycle event, then fold==row. The op='set_status'
+// writers also get end-to-end fold==row parity (YUK-503 W3 test hardening), upgrading the earlier
+// payload-only guard (writeEvent→parseEvent structural validity) to a real divergence check that would
+// catch a ONE-SIDED edit between the imperative UPDATE and the lifecycle-event payload:
+//   - runAutoEnrollForSession (op='set_status' status='auto_enrolled') — describe below;
+//   - revertAutoEnrolledBlock  (op='set_status' status='draft', imported_* cleared) — describe below;
+//   - the import POST (enroll → status='imported'; ignore sweep → status='ignored') — covered by the
+//     sibling parity test in src/capabilities/ingestion/api/import.db.test.ts (kept there because the
+//     import route needs R2/AI module mocks this projection-parity file must stay free of).
+// The reducer's presence-based set_status branch is additionally covered by the pure foldQuestionBlock
+// unit tests.
 const FIG_TREE: StructuredQuestionT = {
   id: 'stem',
   role: 'stem',
@@ -369,6 +386,204 @@ describe('W3-D — question_block parity through reassignFigure (real writer, op
     const qlive = await liveBlockRow('qbf_1');
     expectFoldEqualsRow(
       await gatherAndFoldQuestionBlock(db, 'qbf_1'),
+      qlive ? questionBlockLiveRowToSnapshot(qlive) : null,
+    );
+  });
+});
+
+// W3-D set_status parity (YUK-503) — the two op='set_status' writers that are cleanly drivable without
+// route-level module mocks: runAutoEnrollForSession (judge pipeline via stub fns) and
+// revertAutoEnrolledBlock (pure DB). Each follows the SAME paradigm as the reassignFigure test above:
+// seed the PRE-writer row → backfillQuestionBlockGenesis anchors it as the event-sourced BASE → run the
+// REAL writer → the fold (genesis BASE + the set_status lifecycle event) must equal the live row. This
+// is a divergence check: it would FAIL if a future edit changed the imperative UPDATE's
+// status/imported_*/version without matching the lifecycle-event payload (or vice versa) — a one-sided
+// drift the payload-only writeEvent→parseEvent barrier and the behavioural status assertions cannot see.
+
+const SET_STATUS_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
+
+// MATCH the seeded KC so no real embedding model runs (mirrors revert-auto-enroll.db.test.ts).
+const setStatusTagging = async () => ({
+  suggestions: [{ knowledge_id: 'k1', confidence: 0.95, reasoning: 'ok' }],
+  overall_confidence: 0.95,
+  reasoning: 'high',
+});
+
+const SET_STATUS_FAILURE_DRAFT: MistakeEnrollOutputT = {
+  wrong_answer: 'failure',
+  question_type: 'computation',
+  difficulty: 3,
+  cause: {
+    primary_category: 'other',
+    secondary_categories: [],
+    analysis_md: 'drafted',
+    confidence: 0.7,
+  },
+  overall_confidence: 0.66,
+  reasoning: 'wrong',
+};
+
+describe('W3-D — question_block set_status parity through runAutoEnrollForSession (real writer)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('a clean auto-enroll folds == row (status=auto_enrolled + imported_* + version bumped)', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values({
+      id: 'k1',
+      name: '虚词',
+      domain: 'wenyan',
+      parent_id: null,
+      archived_at: null,
+      created_at: T0,
+      updated_at: T0,
+      version: 0,
+    });
+    const sessionId = 'sess_enroll';
+    await db.insert(learning_session).values({
+      id: sessionId,
+      type: 'ingestion',
+      status: 'extracted',
+      source_document_id: 'doc_enroll',
+      source_asset_ids: ['asset_1'],
+      entrypoint: 'vision_paper',
+      warnings: [],
+      created_at: T0,
+      updated_at: T0,
+      version: 0,
+    });
+    // ONE answered draft block (the PRE-writer state).
+    await testDb()
+      .insert(question_block)
+      .values({
+        id: 'qbe_1',
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: ['asset_1'],
+        page_spans: [],
+        extracted_prompt_md: 'legacy prompt md',
+        structured: {
+          id: 'qbe_1',
+          role: 'standalone',
+          prompt_text: '下列句中「之」的用法',
+          source: 'vlm_structure',
+        },
+        figures: [],
+        layout_quality: 'structured',
+        reference_md: '参考',
+        wrong_answer_md: '学生错答',
+        image_refs: ['asset_1'],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 1,
+        status: 'draft',
+        knowledge_hint: '之',
+        merged_from_block_ids: [],
+        imported_question_id: null,
+        imported_attempt_event_id: null,
+        created_at: T0,
+        updated_at: T0,
+        version: 0,
+      });
+
+    // Anchor the DRAFT (PRE-writer) state as the event-sourced BASE BEFORE auto-enroll runs.
+    await backfillQuestionBlockGenesis(db, T0);
+
+    const result = await runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'wenyan',
+      env: { [SET_STATUS_FLAG]: 'true' },
+      runTaggingFn: setStatusTagging,
+      tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
+      runMistakeEnrollFn: vi.fn(async () => SET_STATUS_FAILURE_DRAFT),
+    });
+    expect(result.enrolled).toBe(1);
+
+    const row = await liveBlockRow('qbe_1');
+    expect(row?.status).toBe('auto_enrolled');
+    expect(row?.imported_question_id).not.toBeNull();
+    expect(row?.version).toBe(1);
+
+    // The fold reproduces the live row byte-for-byte through the set_status lifecycle branch.
+    const qlive = await liveBlockRow('qbe_1');
+    expectFoldEqualsRow(
+      await gatherAndFoldQuestionBlock(db, 'qbe_1'),
+      qlive ? questionBlockLiveRowToSnapshot(qlive) : null,
+    );
+  });
+});
+
+describe('W3-D — question_block set_status parity through revertAutoEnrolledBlock (real writer)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('a clean revert folds == row (status reset to draft + imported_* cleared + version bumped)', async () => {
+    const db = testDb();
+    const sessionId = 'sess_revert';
+    const questionId = 'q_revert';
+    const originEventId = 'evt_origin_revert';
+    // PRE-state: an auto_enrolled block linked to a question + its origin (attempt) event.
+    await testDb()
+      .insert(question_block)
+      .values({
+        id: 'qbr_1',
+        ingestion_session_id: sessionId,
+        source_document_id: null,
+        source_asset_ids: [],
+        page_spans: [],
+        extracted_prompt_md: 'legacy prompt md',
+        structured: node('qbr_1', 'reverted prompt'),
+        figures: [],
+        layout_quality: 'structured',
+        reference_md: null,
+        wrong_answer_md: null,
+        image_refs: [],
+        crop_refs: [],
+        visual_complexity: 'low',
+        extraction_confidence: 1,
+        status: 'auto_enrolled',
+        knowledge_hint: null,
+        merged_from_block_ids: [],
+        imported_question_id: questionId,
+        imported_attempt_event_id: originEventId,
+        created_at: T0,
+        updated_at: T0,
+        version: 0,
+      });
+    // The active learning_record revert looks up (by question_id) + archives; origin_event_id is the
+    // retract target. None of these columns carry an FK, so a minimal row suffices.
+    await db.insert(learning_record).values({
+      id: 'lr_revert',
+      kind: 'mistake',
+      source: 'ingestion',
+      capture_mode: 'image',
+      activity_kind: 'capture',
+      question_id: questionId,
+      origin_event_id: originEventId,
+      created_at: T0,
+      updated_at: T0,
+    });
+
+    // Anchor the auto_enrolled (PRE-revert) state as the event-sourced BASE.
+    await backfillQuestionBlockGenesis(db, T0);
+
+    const res = await revertAutoEnrolledBlock(db, { blockId: 'qbr_1', sessionId });
+    expect(res.questionId).toBe(questionId);
+
+    const row = await liveBlockRow('qbr_1');
+    expect(row?.status).toBe('draft');
+    expect(row?.imported_question_id).toBeNull();
+    expect(row?.imported_attempt_event_id).toBeNull();
+    expect(row?.version).toBe(1);
+
+    // The fold reproduces the live row byte-for-byte: genesis(auto_enrolled, imported_* set) +
+    // set_status(draft, imported_* explicitly cleared).
+    const qlive = await liveBlockRow('qbr_1');
+    expectFoldEqualsRow(
+      await gatherAndFoldQuestionBlock(db, 'qbr_1'),
       qlive ? questionBlockLiveRowToSnapshot(qlive) : null,
     );
   });

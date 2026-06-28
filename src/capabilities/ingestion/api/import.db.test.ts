@@ -55,6 +55,16 @@ vi.mock('@/capabilities/knowledge/server/tree', () => ({
 
 import { POST } from './import';
 
+// YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
+// The import POST emits a canonical `experimental:question_block_lifecycle` (op='set_status') alongside
+// each imperative status UPDATE; these let the test prove the additive double-write keeps the event-log
+// fold byte-identical to the live row (catching a future ONE-SIDED literal drift between the UPDATE and
+// the lifecycle-event payload, which the existing behavioural assertions on `block.status` would miss).
+import { gatherAndFoldQuestionBlock } from '@/server/projections/gather';
+import { questionBlockLiveRowToSnapshot } from '@/server/projections/parity';
+import { diffSnapshots } from '@/server/projections/snapshot-diff';
+import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
+
 // ---- helpers ----
 
 async function setupSession(
@@ -1260,5 +1270,71 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(questions[0].figures).toEqual([]);
     expect(questions[0].structured).toBeNull();
     expect(questions[0].image_refs).toEqual(['asset_1']);
+  });
+});
+
+// YUK-503 (YUK-471 W3-D) — set_status fold==row parity through the REAL import POST writer.
+//
+// HEAD only proved the import status transition via behavioural assertions on `block.status` /
+// `imported_*`. That leaves a gap: a future ONE-SIDED edit (e.g. changing the imperative UPDATE's
+// status while leaving the `writeQuestionBlockLifecycleEvent({ status })` payload stale, or vice versa)
+// would keep the live row's `status` assertion green while silently diverging the event-log fold from
+// the row. This test runs the real import POST end-to-end and asserts the fold reproduces the row
+// byte-for-byte for BOTH set_status branches in one pass:
+//   - enroll  (importedBlockId UPDATE → op='set_status' status='imported' + imported_*),
+//   - ignore  (sweep UPDATE          → op='set_status' status='ignored';   imported_* OMITTED).
+//
+// Paradigm (mirrors the reassignFigure parity test, parity-writers-c3.db.test.ts W3-D): seed the draft
+// rows → backfillQuestionBlockGenesis anchors each as the event-sourced BASE (the source draft blocks
+// carry no create event of their own) → run the real writer → the fold (genesis BASE + the set_status
+// lifecycle event) must equal the live row.
+describe('POST /api/ingestion/[id]/import — set_status fold==row parity (YUK-503)', () => {
+  beforeEach(async () => {
+    r2._store.clear();
+    await resetDb();
+    mockRunAttributionAndWriteJudgeEvent.mockReset();
+    vi.clearAllMocks();
+    mockRunAttributionAndWriteJudgeEvent.mockResolvedValue(undefined);
+  });
+
+  async function expectQbFoldEqualsRow(
+    db: ReturnType<typeof testDb>,
+    blockId: string,
+  ): Promise<void> {
+    const [live] = await db.select().from(question_block).where(eq(question_block.id, blockId));
+    const fold = await gatherAndFoldQuestionBlock(db, blockId);
+    // Same structural equality as the in-tx parity assert + the auditor (diffSnapshots normalizes
+    // jsonb-nested dates / the fold-omitted extracted_prompt_md), NOT vitest toEqual.
+    expect(diffSnapshots(live ? questionBlockLiveRowToSnapshot(live) : null, fold)).toEqual([]);
+  }
+
+  it('enroll + ignore: the fold reproduces both the imported AND the swept block byte-for-byte', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    // block_a → imported (enroll set_status); block_b → swept to ignored (ignore set_status). Both
+    // start as session drafts; only block_a is named in the import body.
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertBlock(db, { id: 'block_b', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+
+    // Anchor BOTH draft rows as the event-sourced BASE BEFORE the writer runs (PRE-state genesis), so
+    // the fold = genesis(draft) + the import set_status lifecycle event — a real parity check rather
+    // than a tautology that would result from anchoring the POST-writer state.
+    await backfillQuestionBlockGenesis(db);
+
+    const res = await post(sessionId, makeImportBody());
+    expect(res.status).toBe(200);
+
+    const [a] = await db.select().from(question_block).where(eq(question_block.id, 'block_a'));
+    const [b] = await db.select().from(question_block).where(eq(question_block.id, 'block_b'));
+    // enroll branch: status + imported_* set.
+    expect(a.status).toBe('imported');
+    expect(a.imported_question_id).not.toBeNull();
+    // ignore branch: status flipped, imports left untouched (NULL, never cleared).
+    expect(b.status).toBe('ignored');
+    expect(b.imported_question_id).toBeNull();
+
+    await expectQbFoldEqualsRow(db, 'block_a');
+    await expectQbFoldEqualsRow(db, 'block_b');
   });
 });

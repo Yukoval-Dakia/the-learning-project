@@ -5,6 +5,7 @@
 // （src/capabilities/composition.unit.test.ts），不要求任何包声明归属。
 
 import { newId } from '@/core/ids';
+import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
 import {
@@ -287,6 +288,29 @@ function draftKnowledgeIds(draft: Record<string, unknown>, fallback: string[]): 
     : fallback;
 }
 
+// YUK-503 (YUK-471 W3 test/audit hardening) — validate the promotion draft's body_blocks at the
+// artifact INSERT seam instead of casting `draft.body_blocks as never`. The proposed_change.draft is a
+// free-form `z.unknown` payload (this dispatch shell predates the artifact_create snapshot barrier), so
+// an untyped pass-through would let a malformed TipTap doc reach the materialized artifact row and only
+// fail later (at the fold's strict artifact-create parse, or never if the flag stays OFF). Fail loud at
+// the write seam instead: a PRESENT body_blocks must satisfy the canonical ArtifactBodyBlocks schema;
+// an ABSENT one (undefined) is left to the table default (NULL). Only consulted on target='artifact'.
+function draftBodyBlocks(
+  draft: Record<string, unknown>,
+  proposalId: string,
+): ArtifactBodyBlocksT | undefined {
+  if (draft.body_blocks === undefined) return undefined;
+  const parsed = ArtifactBodyBlocks.safeParse(draft.body_blocks);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      `record_promotion proposal ${proposalId} has invalid draft.body_blocks: ${parsed.error.message}`,
+      400,
+    );
+  }
+  return parsed.data;
+}
+
 export async function acceptRecordPromotionProposal(
   db: Db,
   proposalId: string,
@@ -455,6 +479,9 @@ export async function acceptRecordPromotionProposal(
       // parent_artifact_id / attrs / tool_* / verification_* / generated_by / verified_by / history /
       // archived_at / version), then emit the same-tx artifact_create from the MATERIALIZED row so
       // every strict snapshot column has a real value (rollback-safe). Chained to the RATE (accept).
+      // Validate the draft body_blocks against the canonical schema (fail loud) instead of an untyped
+      // `as never` pass-through; undefined ⇒ omit (table default NULL).
+      const bodyBlocks = draftBodyBlocks(draft, proposalId);
       const [insertedArtifact] = await tx
         .insert(artifact)
         .values({
@@ -466,7 +493,7 @@ export async function acceptRecordPromotionProposal(
           source: 'ai_dream',
           source_ref: proposalId,
           generation_status: 'ready',
-          ...(draft.body_blocks !== undefined ? { body_blocks: draft.body_blocks as never } : {}),
+          ...(bodyBlocks !== undefined ? { body_blocks: bodyBlocks } : {}),
           created_at: now,
           updated_at: now,
         })
