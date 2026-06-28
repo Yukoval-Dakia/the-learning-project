@@ -28,3 +28,10 @@
 5. **A8** 录入成功着陆形态（着陆页 vs 瞬时 toast；去向集合）。
 
 > 真账全文 + meta 教训（任何「缺口」判断都需 code-ground 当前状态）见 **YUK-354 epic comment（2026-06-28 re-excavation）**。
+
+## 2026-06-28 后续进展
+
+- **A7 落点 IA 拍定 + handoff 盲点修正**：claude.ai/design 把成效趋势折进现有 Coach 周报、复用同名标题——撞车。根因之一是本批 handoff **漏 ground 既有 Coach 周报（活动报表）+ 校准成熟度面**。owner 拍定 = **Coach 升「复盘中枢」三视图**（活动量 / 校准诊断〔从 admin 迁入〕/ 成效趋势〔A7〕，校准 vs 成效正交不合并）。A7 handoff 已更新落点 IA 段。重构工单见 Linear。
+- **A7 数据前置已 ship**：纵向聚合读模型 = YUK-519 / PR #664（`effectiveness-trend.ts`），handoff 底部「基础设施缺口」已标 resolved。
+- **A1/A4/A8 基础设施**：对抗 workflow 验完全部 confirmed-real 但全部 revise-design（无一可照搬），落 Linear 子单 **YUK-520**（A1 夜窗 digest 读模型）/ **YUK-521**（A4 A/B/C 强度表+裁决熔断）/ **YUK-522**（A8 figure content + PDF abort），verdict 的坑当实现约束写进 body。
+- **A1/A2/A4/A5/A8 增量 brief**：既有屏新视觉维度（非重画整屏），decisions 已锁，串行 workflow 撰写零风格 brief + 对抗审风格泄漏中。

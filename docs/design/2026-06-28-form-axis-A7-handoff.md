@@ -3,11 +3,27 @@
 - **date**: 2026-06-28
 - **status**: functional handoff（零风格规定）—— 视觉稿由 claude design (claude.ai/design) 出，回来 slice-by-slice 实现
 - **epic**: 形态轴 YUK-354（gate doc `docs/design/2026-06-15-rethink-implementation-gate.md` §2 第 7 条）
-- **数据未就位**: 本面板的纵向聚合读模型**当前不存在**——只有零散 delta 埋点。见文末「## 基础设施缺口（needs issue）」，是本 handoff 的数据前置。
+- **数据已就位（2026-06-28 更新）**: 本面板的纵向聚合读模型**已建** = `effectiveness-trend.ts` + `GET /api/observability/effectiveness-trend`（PR #664，待 merge）。文末「## 基础设施缺口」记录的「needs issue」已由 YUK-519/PR #664 解决——视觉稿回来即可落到 live 读模型。
+- **落点 IA（owner 拍定 2026-06-28，替代下方旧「observability/admin 侧」落点）**: 本面 = **Coach 复盘中枢**的「成效趋势」视图，详见下节。
 
 > 这是**功能** handoff：只描述面板该让 owner**理解什么、能做什么**，**不规定任何视觉风格/布局/配色/组件选型**——那是 claude design 的活。实现回来后按项目 design tokens/primitives 落地。
->
-> 与姊妹面板的分工：**校准成熟度面**（`2026-06-19-calibration-maturity-panel-handoff.md`，已落 PR #475）答「数据现在**多准**」（横截面快照：哪些 KC firm / 冷启）。**本面（成效趋势）答「相比上次**涨了吗**」（纵向 delta：同一 KC / 同一科目相对自己过去的轨迹）**。两者正交，别合并。
+
+## 落点 IA（owner 拍定 2026-06-28 — 必读，纠正原落点）
+
+**背景（handoff 盲点修正）**：本 handoff 初版漏 ground 两个既有回溯面，导致 claude design 把成效趋势折进现有 Coach 周报、复用同名标题、做成二元「成效/诊断」toggle——撞车。owner 拍定的正确 IA 如下：
+
+**Coach 不再是单一周报，是「我做得怎样」的复盘中枢**，含**三个正交视图**（分段切换，共用现有 Coach nav 入口，不新增顶层 nav）：
+
+1. **活动量**（现有 `CoachPage.tsx`，不动）— FSRS 复习活动报表：reviews / 正确率 / 新增错题 / 成本 + 评分分布 + 归因分布 + 逐日复习量 + 失败排行。答「我**练了多少、对了几道**」。读 `/api/review/weekly`，7/30/90 天窗。
+2. **校准诊断**（现校准成熟度面 PR #475，**从 admin 迁入 Coach**）— 横截面 θ̂/p(L) 点估计 + 置信。答「我现在这个知识点**会不会、多可信**」。带置信、绝不裸数字（⑥）。
+3. **成效趋势**（**本面 = A7**，新）— 纵向 delta：per-KC/per-subject 相对自己的轨迹 + 方向 + 置信。答「**相比上次涨了吗**」。读 PR #664 读模型。
+
+**IA 硬约束（给 claude design）**：
+- 校准诊断（横截面「多准」）vs 成效趋势（纵向「涨没涨」）= **正交两面，同屏并列、绝不合并**——三视图分段是对的，但标签是**三视图**（活动量/校准诊断/成效趋势），不是二元「成效/诊断」。
+- **标题别再叫「Coach 周报」**（与现有单一周报语义撞）；现在是「Coach 复盘中枢」之类，"周报" 降为活动量视图的窗口表达。
+- 校准诊断从 admin 迁入是 IA 决策的一部分（详见 Coach 复盘中枢重构工单），但本 handoff 只负责定义「成效趋势」视图的功能；三视图的容器/迁移由重构工单承载。
+
+> 与姊妹面的正交分工（保留，现升级为同一 Coach 中枢内的并列视图）：**校准成熟度面**（`2026-06-19-calibration-maturity-panel-handoff.md`，PR #475）答「数据现在**多准**」（横截面快照）；**本面（成效趋势）答「相比上次**涨了吗**」（纵向 delta）**。两者正交，别合并。
 
 ## owner 想解决的问题
 
@@ -156,12 +172,14 @@
 
 ## 边界提醒（给实现者，非 claude design）
 
-- 本面是 observability/admin 侧（与校准成熟度面 / logs / cost / jobs 同侧），按既有 admin 面落地方式接入；读模型挂 observability 包，与 `calibration-maturity.ts` 同形态（纯 drizzle 读模型，零写路径）。
+- **落点（2026-06-28 修正）**：用户面落 **Coach 复盘中枢的「成效趋势」视图**（见上节落点 IA），**不是** admin 侧——原「observability/admin 侧」落点已被 owner 拍定推翻。后端**读模型**仍挂 observability 包（`effectiveness-trend.ts`，与 `calibration-maturity.ts` 同形态，纯 drizzle 读、零写）；前后端分离：读模型在 observability，用户面在 Coach。
 - 动 UI 代码前仍走项目 design-doc pre-flight；本 handoff + claude design 视觉稿 = pre-flight 的输入。
 
-## 基础设施缺口（needs issue）
+## 基础设施缺口（✅ 已解决 — YUK-519 / PR #664）
 
-**成效层纵向聚合读模型——当前不存在，是本 handoff 的数据前置。**
+> **2026-06-28 更新**：下述「成效层纵向聚合读模型」已建 = `src/capabilities/observability/server/effectiveness-trend.ts` + `GET /api/observability/effectiveness-trend`（YUK-519，PR #664 待 merge）。纯读零写、沿 `effective_domain` 派生轴 per-subject 卷起、⑥ 置信不裸 delta、用 θ̂（logit 线性）非 p(L)（sigmoid 压缩方向）。**视觉稿回来即可落 live 读模型**。以下为原缺口记录（留作背景）。
+
+**成效层纵向聚合读模型——（原）当前不存在，是本 handoff 的数据前置。**
 
 - **现状**：`experimental:mastery_progress` 事件（per-KC、per-attempt 的 Δθ̂ / p(L) / θ̂ + `created_at`）在持续落库（`mastery-progress-signal.ts:105`，两个 emit 站点 solo `submit.ts` + paper `paper-submit.ts:835`），但**没有任何读路径把它们聚成纵向时间序列**。唯一引用者 `note-refine-triggers.ts:191` 只在注释里提及、不聚合；`weekly.ts:100` 的 daily trend 是活动量 / 正确率趋势，**不是** mastery delta 轨迹。grep 确认零纵向聚合读路径。
 
