@@ -18,6 +18,13 @@ export const shellCapability = defineCapability({
         path: '/api/proposals',
         load: () => import('./api/proposals-list').then((m) => m.GET),
       },
+      // YUK-521 (A4 强度轴) — A 档 auto-applied 卡 + 当前裁决熔断快照只读读模型。
+      // 静态路径，与 /api/proposals/[id]/{decide,retract} 不冲突（不同段深）。
+      {
+        method: 'GET',
+        path: '/api/proposals/auto-applied',
+        load: () => import('./api/proposals-auto-applied').then((m) => m.GET),
+      },
       {
         method: 'POST',
         path: '/api/proposals/[id]/decide',

@@ -1,12 +1,12 @@
-// M4-T6 (YUK-319/YUK-318)：收件箱页（设计稿 screen-mistakes.jsx ScreenInbox
-// L128-203）。偏差（design pre-flight 预批）：
-// ①科目 FilterRow 不渲——科目轴 M5 随 effective_domain 派生收编，eyebrow 同步
-//   去「按科目」；
-// ②空态 CTA「去看错题本」改「去看知识图」——错题本未迁 SPA；
-// ③stagger 容器类是 globals .today-loom scoped，错落改为 per-card
-//   animationDelay（lane 内 index × 50ms）；
-// ④resolved 留痕 map 同设计稿本地 state（裁决后卡片淡化留痕，刷新后消失）。
-// edge-preview 的节点名经 knowledge getTree 建 id→name map 白话化。
+// M4-T6 (YUK-319/YUK-318)：收件箱页。YUK-521 (A4 强度轴) 重构为三档分流：
+//   A 自动应用（completion；后台静默物化 + 撤销窗口，卡来自 /api/proposals/auto-applied，
+//     撤销复用既有 retractProposal —— 无新撤销逻辑）+ 裁决熔断 meter/banner；
+//   B 逐条人审（真裁决项，复用既有 ProposalCard；含 breaker 退回 B 的 completion）；
+//   C 纯状态（无 accept applier 的 defer/archive/judge_retraction；折叠链到 AI 观察面）。
+// tier 映射以 core 强度表为单一真相（inbox-tier.ts），不照抄设计稿 v0 的 INBOX_TIER。
+// 设计基准 docs/design/loom-refresh/project/screen-inbox-a4.jsx + inbox-a4.css（PORT 进
+// shell.css）。偏差（design pre-flight 预批）：①不渲 demo window 全局数据，A 块走真读模型；
+// ②C 块「去向」用 KIND_META label + reason_md（真 wire，非设计 demo 文案）。
 
 import { getTree } from '@/capabilities/knowledge/ui/knowledge-api';
 import { Btn } from '@/ui/primitives/Btn';
@@ -20,33 +20,214 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 
 import { ProposalCard } from './ProposalCard';
-import { KIND_META, kindMeta, listProposals } from './inbox-api';
+import {
+  type AutoAppliedRowWire,
+  KIND_META,
+  type ProposalInboxRow,
+  type VerdictBreakerWire,
+  kindMeta,
+  listAutoApplied,
+  listProposals,
+  retractProposal,
+} from './inbox-api';
+import { TIER_META, autoAppliedState, bucketPendingByTier, undoRemainingMs } from './inbox-tier';
 import './shell.css';
 
-function FilterRow({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  options: [string, string][];
-  value: string;
-  onChange: (v: string) => void;
-}) {
+function tierIcon(name: string): LoomIconName {
+  return name as LoomIconName;
+}
+
+function formatWindowLabel(windowMs: number): string {
+  const minutes = Math.round(windowMs / 60_000);
+  if (minutes % 60 === 0) return `近 ${minutes / 60} 小时`;
+  return `近 ${minutes} 分钟`;
+}
+
+// A 档卡的窗口脚注文案（早返，避免链式三元 — 项目红线）。
+function windowText(state: 'live' | 'consumed' | 'reverted', remainingMinutes: number): string {
+  if (state === 'reverted') return '已撤销 · 恢复到应用前';
+  if (state === 'consumed') return '已无法干净撤销';
+  return `${remainingMinutes} 分钟内可撤销`;
+}
+
+function TierHead({ tier, count }: { tier: 'A' | 'B' | 'C'; count: number }) {
+  const m = TIER_META[tier];
   return (
-    <div className="filter-row">
-      <span className="filter-row-l">{label}</span>
-      {options.map(([v, l]) => (
-        <button
-          type="button"
-          key={v}
-          className={`chip${value === v ? ' is-on' : ''}`}
-          onClick={() => onChange(v)}
-        >
-          {l}
-        </button>
-      ))}
+    <div className="tier-head">
+      <span className={`tier-no tone-${m.tone}`}>{tier}</span>
+      <div className="tier-head-txt">
+        <div className="tier-title">
+          {m.label}
+          <span className="tier-count">· {count} 项</span>
+        </div>
+        <div className="tier-sub">{m.sub}</div>
+      </div>
+    </div>
+  );
+}
+
+function BreakerMeter({ breaker }: { breaker: VerdictBreakerWire }) {
+  const windowLabel = formatWindowLabel(breaker.window);
+  const pct = breaker.cap > 0 ? Math.min(100, (breaker.applied / breaker.cap) * 100) : 0;
+  return (
+    <div className={`aa-breaker ${breaker.tripped ? 'tripped' : 'ok'}`}>
+      <LoomIcon name={breaker.tripped ? 'alert' : 'check'} size={16} className="ico" />
+      <div className="aa-breaker-txt">
+        {breaker.tripped ? (
+          <>
+            <b>自动应用已暂停。</b>
+            {windowLabel}内自动操作触顶（{breaker.applied}/{breaker.cap}），为防失控已退回全人审 ——
+            下面 B 档的项需要你逐条确认。
+          </>
+        ) : (
+          <>
+            <b>自动通道正常。</b>auto-apply 在阈值内，安全可逆的小操作不占你的裁决队列。
+          </>
+        )}
+        <div className="aa-breaker-meter">
+          <span className="aa-breaker-track">
+            <span className="aa-breaker-fill" style={{ width: `${pct}%` }} />
+          </span>
+          {breaker.applied} / {breaker.cap} · {windowLabel}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AutoAppliedCard({
+  row,
+  nowMs,
+  reverting,
+  onRevert,
+}: {
+  row: AutoAppliedRowWire;
+  nowMs: number;
+  reverting: boolean;
+  onRevert: (proposalId: string) => void;
+}) {
+  const [trace, setTrace] = useState(false);
+  const appliedMs = Date.parse(row.applied_at);
+  const state = autoAppliedState(appliedMs, nowMs, row.reverted);
+  const consumed = state === 'consumed';
+  // A 档当前唯一 kind 是 completion；用其 KIND_META 取 label/icon。
+  const meta = kindMeta('completion');
+  const remainingMinutes = Math.max(1, Math.ceil(undoRemainingMs(appliedMs, nowMs) / 60_000));
+  return (
+    <div className={`aa-card ${state}`}>
+      <span className="aa-ic">
+        <LoomIcon name={consumed ? 'lock' : tierIcon(meta.icon)} size={16} />
+      </span>
+      <div className="aa-body">
+        <div className="aa-top">
+          <span className="aa-kind">{meta.label}</span>
+          <span className="aa-title">{row.title}</span>
+        </div>
+        <p className="aa-text">自动判定为完成并已记录 · 安全可逆，不放心的窗口内一键撤回即可。</p>
+        {trace && (
+          <div className="aa-trace">
+            来自 <b>completion</b> · 干净可逆 · proposal：
+            <code className="evt">{row.proposal_id.slice(0, 10)}</code>
+            <br />
+            静态可逆性兜底 · 非 confidence 判定（apply 档位 {row.level}）
+          </div>
+        )}
+        <div className="aa-foot">
+          {state === 'reverted' ? (
+            <span className="aa-window">
+              <LoomIcon name="undo" size={13} />
+              已撤销 · 恢复到应用前
+            </span>
+          ) : (
+            <>
+              <span className={`aa-window ${state}`}>
+                <LoomIcon name={consumed ? 'alert' : 'clock'} size={13} />
+                {windowText(state, remainingMinutes)}
+              </span>
+              <button
+                type="button"
+                className="aa-revert"
+                disabled={consumed || reverting}
+                onClick={() => onRevert(row.proposal_id)}
+              >
+                <LoomIcon name="undo" size={13} />
+                {consumed ? '已无法干净撤销' : reverting ? '撤销中…' : '撤销'}
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="aa-link"
+            onClick={() => setTrace((v) => !v)}
+            style={{ marginLeft: 'auto' }}
+          >
+            <LoomIcon name="history" size={13} />
+            追溯
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TierCBlock({
+  items,
+  navigate,
+}: {
+  items: ProposalInboxRow[];
+  navigate: (to: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`co-fold${open ? ' open' : ''}`}>
+      <button
+        type="button"
+        className="co-bar"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span className="ec-ic">
+          <LoomIcon name="archive" size={16} />
+        </span>
+        <span>
+          <span className="co-t">{items.length} 项纯状态变更已自动处理</span>
+          <span className="co-s">
+            {open
+              ? 'snooze / 软归档 / 移到旁观 —— 都没占你的裁决队列'
+              : '展开看它们去哪了 · 不需要你裁决'}
+          </span>
+        </span>
+        <LoomIcon name="chevronDown" size={18} className="co-chev" />
+      </button>
+      {open && (
+        <div className="co-body">
+          {items.map((it) => {
+            const meta = kindMeta(it.kind);
+            return (
+              <div key={it.id} className="co-row">
+                <span className="co-row-ic">
+                  <LoomIcon name={tierIcon(meta.icon)} size={14} />
+                </span>
+                <div className="co-row-body">
+                  <div className="co-row-top">
+                    <span className="co-row-title">{meta.label}</span>
+                    <span className="co-row-act">已自动处理</span>
+                  </div>
+                  <div className="co-row-text">{it.payload.reason_md}</div>
+                </div>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="aa-link"
+            onClick={() => navigate('/today')}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            <LoomIcon name="eye" size={14} />去 AI 观察面回看
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -56,11 +237,12 @@ export interface InboxPageProps {
 }
 
 export default function InboxPage({ navigate }: InboxPageProps) {
-  const [kindFilter, setKindFilter] = useState('all');
   const [resolved, setResolved] = useState<Record<string, string>>({});
+  const [reverting, setReverting] = useState<Record<string, true>>({});
   const [toast, setToast] = useState<string | null>(null);
 
   const q = useQuery({ queryKey: ['proposals', 'pending'], queryFn: listProposals });
+  const aaQ = useQuery({ queryKey: ['proposals', 'auto-applied'], queryFn: listAutoApplied });
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
 
   const nameOf = useMemo(() => {
@@ -74,36 +256,46 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   };
 
   const rows = q.data?.rows ?? [];
+  // 强度分桶：C-strength → moved（C 块折叠），其余 → decide（B 块逐条人审）。
+  const { decide, moved } = useMemo(() => bucketPendingByTier(rows), [rows]);
 
-  // lane 顺序：按 KIND_META 键序稳定排列，未知 kind 追加在尾（fallback 同
-  // kindMeta：绝不丢卡）。
+  // B 块 lane 顺序：按 KIND_META 键序稳定排列，未知 kind 追加在尾（绝不丢卡）。
   const laneKinds = useMemo(() => {
-    const present = new Set(rows.map((r) => r.kind));
+    const present = new Set(decide.map((r) => r.kind));
     const known = Object.keys(KIND_META).filter((k) => present.has(k));
     const unknown = [...present].filter((k) => !(k in KIND_META));
     return [...known, ...unknown];
-  }, [rows]);
+  }, [decide]);
 
-  const visibleKinds = kindFilter === 'all' ? laneKinds : laneKinds.filter((k) => k === kindFilter);
-  const visible = kindFilter === 'all' ? rows : rows.filter((r) => r.kind === kindFilter);
-  const remaining = visible.filter((r) => !resolved[r.id]).length;
+  const decideRemaining = decide.filter((r) => !resolved[r.id]).length;
 
-  const typeOpts: [string, string][] = [
-    ['all', '全部'],
-    ...laneKinds.map((k): [string, string] => [k, kindMeta(k).label]),
-  ];
+  const autoApplied = aaQ.data?.rows ?? [];
+  const breaker = aaQ.data?.breaker;
+  const nowMs = Date.now();
+  // A 块仅在有 auto-applied 卡或熔断 tripped 时露出（否则不堆叠空 meter）。
+  const showTierA = autoApplied.length > 0 || breaker?.tripped === true;
 
-  const breakdown = laneKinds
-    .map((k) => `${kindMeta(k).label} ${rows.filter((r) => r.kind === k).length}`)
-    .join(' · ');
-
-  const costTotal = rows.reduce((acc, r) => acc + (r.cost_micro_usd ?? 0), 0);
+  const onRevert = async (proposalId: string) => {
+    setReverting((r) => ({ ...r, [proposalId]: true }));
+    try {
+      await retractProposal(proposalId);
+      await Promise.all([aaQ.refetch(), q.refetch()]);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : '撤销失败，请重试。');
+    } finally {
+      setReverting((r) => {
+        const next = { ...r };
+        delete next[proposalId];
+        return next;
+      });
+    }
+  };
 
   const status: StatefulStatus = q.isLoading
     ? 'loading'
     : q.isError
       ? 'error'
-      : rows.length === 0
+      : decide.length === 0 && moved.length === 0 && autoApplied.length === 0
         ? 'empty'
         : 'ok';
 
@@ -111,7 +303,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     <EmptyState
       icon="checkCircle"
       title="收件箱已清空"
-      text="所有提议都已裁决。新提议会在下次 Dreaming session 后出现。"
+      text="所有提议都已裁决或自动处理。新提议会在下次 Dreaming session 后出现。"
       action={
         <Btn variant="secondary" iconEnd="arrow" onClick={() => navigate('/knowledge')}>
           去看知识图
@@ -123,31 +315,13 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   return (
     <main className="page wide inbox-loom">
       <header className="page-head">
-        <div className="eyebrow">INBOX · AI 提议 · 按类型筛选</div>
+        <div className="eyebrow">INBOX · AI 提议 · 按出手强度分流</div>
         <h1 className="page-title serif">收件箱</h1>
         <p className="page-lead">
-          每条 AI 提议都带一句白话来源说明，逐条 accept /
-          dismiss。每次裁决写入一条事件，下次不再露面。
+          AI 提议按「可逆性 × 后果」分三档：A 安全可逆的已替你做了（窗口内可撤）、B 真裁决项逐条
+          accept / dismiss、C 纯状态变更已移出队列。
         </p>
       </header>
-
-      <LoomCard pad sunk style={{ marginBottom: 'var(--s-5)' }}>
-        <div className="inbox-summary-row nowrap-meta">
-          <span className="card-icon accent">
-            <LoomIcon name="sparkle" size={18} />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 500 }}>
-              {remaining} 条待裁决{kindFilter !== 'all' ? ' · 已筛选' : ''}
-            </div>
-            <div className="meta">
-              {breakdown}
-              {costTotal > 0 ? ` · 累计 $${(costTotal / 1e6).toFixed(4)}` : ''}
-            </div>
-          </div>
-        </div>
-        <FilterRow label="类型" options={typeOpts} value={kindFilter} onChange={setKindFilter} />
-      </LoomCard>
 
       <Stateful
         status={status}
@@ -156,53 +330,80 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         skeleton={<SkLines rows={4} />}
         empty={clearedEmpty}
       >
-        {remaining === 0 ? (
-          kindFilter !== 'all' ? (
-            <EmptyState
-              icon="filter"
-              title="没有匹配的提议"
-              text="放宽类型筛选试试。"
-              action={
-                <Btn variant="secondary" onClick={() => setKindFilter('all')}>
-                  清除筛选
-                </Btn>
-              }
-            />
-          ) : (
-            clearedEmpty
-          )
-        ) : (
-          visibleKinds.map((k) => {
-            const laneRows = rows.filter((r) => r.kind === k);
-            const live = laneRows.filter((r) => !resolved[r.id]).length;
-            const meta = kindMeta(k);
-            return (
-              <section key={k}>
-                <SectionLabel count={live || null}>
-                  <span className="inbox-lane-label">
-                    <span className={`lane-ic tone-${meta.tone}`}>
-                      <LoomIcon name={meta.icon as LoomIconName} size={14} />
-                    </span>
-                    {meta.label}
-                  </span>
-                </SectionLabel>
-                <div style={{ display: 'grid', gap: 'var(--s-4)' }}>
-                  {laneRows.map((p, i) => (
-                    <ProposalCard
-                      key={p.id}
-                      p={p}
-                      index={i}
-                      resolved={resolved[p.id] ?? null}
-                      nameOf={nameOf}
-                      navigate={navigate}
-                      onResolve={(id, label) => setResolved((r) => ({ ...r, [id]: label }))}
-                      onError={showError}
-                    />
-                  ))}
+        {/* ── A 档 · 自动应用 + 熔断 ── */}
+        {showTierA && (
+          <section>
+            <TierHead tier="A" count={autoApplied.length} />
+            {breaker && <BreakerMeter breaker={breaker} />}
+            {autoApplied.length > 0 && (
+              <div className="aa-banner">
+                <LoomIcon name="bolt" size={18} className="ico" />
+                <div className="aa-banner-txt">
+                  <b>这些已经替你做了。</b>
+                  都是安全可逆的小操作，没占用你的裁决队列 —— 不放心的，窗口内一键撤回即可。
                 </div>
-              </section>
-            );
-          })
+              </div>
+            )}
+            {autoApplied.map((row) => (
+              <AutoAppliedCard
+                key={row.proposal_id}
+                row={row}
+                nowMs={nowMs}
+                reverting={reverting[row.proposal_id] === true}
+                onRevert={onRevert}
+              />
+            ))}
+          </section>
+        )}
+
+        {/* ── B 档 · 逐条人审 ── */}
+        <section>
+          <TierHead tier="B" count={decideRemaining} />
+          {decide.length === 0 ? (
+            <LoomCard pad sunk>
+              <div className="meta">没有待裁决的提议。</div>
+            </LoomCard>
+          ) : (
+            laneKinds.map((k) => {
+              const laneRows = decide.filter((r) => r.kind === k);
+              const live = laneRows.filter((r) => !resolved[r.id]).length;
+              const meta = kindMeta(k);
+              return (
+                <section key={k}>
+                  <SectionLabel count={live || null}>
+                    <span className="inbox-lane-label">
+                      <span className={`lane-ic tone-${meta.tone}`}>
+                        <LoomIcon name={tierIcon(meta.icon)} size={14} />
+                      </span>
+                      {meta.label}
+                    </span>
+                  </SectionLabel>
+                  <div style={{ display: 'grid', gap: 'var(--s-4)' }}>
+                    {laneRows.map((p, i) => (
+                      <ProposalCard
+                        key={p.id}
+                        p={p}
+                        index={i}
+                        resolved={resolved[p.id] ?? null}
+                        nameOf={nameOf}
+                        navigate={navigate}
+                        onResolve={(id, label) => setResolved((r) => ({ ...r, [id]: label }))}
+                        onError={showError}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })
+          )}
+        </section>
+
+        {/* ── C 档 · 纯状态（折叠） ── */}
+        {moved.length > 0 && (
+          <section>
+            <TierHead tier="C" count={moved.length} />
+            <TierCBlock items={moved} navigate={navigate} />
+          </section>
         )}
       </Stateful>
 

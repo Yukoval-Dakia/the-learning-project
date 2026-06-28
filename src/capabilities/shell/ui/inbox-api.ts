@@ -128,6 +128,35 @@ export const decideProposal = (
 export const retractProposal = (id: string) =>
   apiJson(`/api/proposals/${encodeURIComponent(id)}/retract`, { method: 'POST' });
 
+// ── A4 强度轴 (YUK-521)：A 档 auto-applied 读模型 wire 类型 + caller ──
+// server 契约见 @/server/proposals/auto-applied-read（AutoAppliedDigest，锁步）。
+export interface AutoAppliedRowWire {
+  proposal_id: string;
+  learning_item_id: string;
+  title: string;
+  /** apply 时刻（ISO）。 */
+  applied_at: string;
+  /** apply 时熔断档位（'ok' | 'warned'）。 */
+  level: string;
+  /** 是否已被既有 retract 车道撤销。 */
+  reverted: boolean;
+}
+
+export interface VerdictBreakerWire {
+  tripped: boolean;
+  level: string;
+  applied: number;
+  cap: number;
+  window: number;
+}
+
+export interface AutoAppliedDigestWire {
+  rows: AutoAppliedRowWire[];
+  breaker: VerdictBreakerWire;
+}
+
+export const listAutoApplied = () => apiJson<AutoAppliedDigestWire>('/api/proposals/auto-applied');
+
 // YUK-271 行为恢复（codex 验证轮 P2）：block_merge accept 在目标题块已离开
 // draft 时，applier 软拒——返回 200 { stale: true } 且不写 rate event，提议
 // 保持 pending。UI 不能把它当已接受；旧 inbox 的 isBlockMergeStale 随旧壳
