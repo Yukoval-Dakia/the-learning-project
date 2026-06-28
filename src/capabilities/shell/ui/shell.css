@@ -400,3 +400,397 @@
     justify-self: center;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   YUK-521 (A4 出手强度轴) — 收件箱三档分流。端口自 docs/design/loom-refresh/
+   project/inbox-a4.css（tier-head / aa-* / co-*；inbox-tab* 未端口——本页用堆叠
+   tier 块而非 tab）。复用既有 design tokens。
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* tier section header */
+.tier-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-6) 0 var(--s-3);
+}
+.tier-head:first-child {
+  margin-top: var(--s-2);
+}
+.tier-no {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-2);
+  font: 700 var(--fs-body) / 1 var(--font-mono);
+  flex: none;
+}
+.tier-no.tone-good {
+  background: var(--good-soft);
+  color: var(--good-ink);
+}
+.tier-no.tone-coral {
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+.tier-no.tone-neutral {
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+}
+.tier-head-txt {
+  min-width: 0;
+}
+.tier-title {
+  font: 600 var(--fs-h5) / 1.2 var(--font-serif);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.tier-count {
+  font: 600 var(--fs-meta) / 1 var(--font-mono);
+  color: var(--ink-4);
+}
+.tier-sub {
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-4);
+  margin-top: 2px;
+  text-wrap: pretty;
+}
+
+/* link-style text button (端口替代设计稿的 .ho-linkbtn) */
+.aa-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink-4);
+  font: 500 var(--fs-meta) / 1 var(--font-sans);
+  padding: 4px 2px;
+  transition: color var(--dur-fast);
+}
+.aa-link:hover {
+  color: var(--coral-ink);
+}
+
+/* ── A 档 · auto-applied + undo ── */
+.aa-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  border-radius: var(--r-3);
+  margin-bottom: var(--s-3);
+}
+.aa-banner .ico {
+  color: var(--good-ink);
+  flex: none;
+  margin-top: 1px;
+}
+.aa-banner-txt {
+  font: 400 var(--fs-body) / 1.5 var(--font-sans);
+  color: var(--good-ink);
+}
+.aa-banner-txt b {
+  font-weight: 600;
+}
+.aa-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-1);
+  margin-bottom: var(--s-2);
+  transition: opacity var(--dur-base), background var(--dur-base);
+}
+.aa-card.consumed {
+  background: var(--paper-sunk);
+}
+.aa-card.reverted {
+  opacity: 0.6;
+}
+.aa-ic {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-2);
+  background: var(--good-soft);
+  color: var(--good-ink);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.aa-card.consumed .aa-ic {
+  background: var(--paper-raised);
+  color: var(--ink-4);
+  border: 1px solid var(--line);
+}
+.aa-body {
+  flex: 1;
+  min-width: 0;
+}
+.aa-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.aa-kind {
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+}
+.aa-title {
+  font: 600 var(--fs-body-lg) / 1.3 var(--font-serif);
+  color: var(--ink);
+}
+.aa-text {
+  font: 400 var(--fs-body) / var(--lh-prose) var(--font-sans);
+  color: var(--ink-2);
+  margin: 0;
+  text-wrap: pretty;
+}
+.aa-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  flex-wrap: wrap;
+}
+.aa-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 var(--fs-meta) / 1 var(--font-mono);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+.aa-window.live {
+  color: var(--good-ink);
+}
+.aa-window.consumed {
+  color: var(--hard-ink);
+}
+.aa-revert {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  cursor: pointer;
+  color: var(--ink-2);
+  padding: 5px 11px;
+  border-radius: var(--r-2);
+  font: 500 var(--fs-meta) / 1 var(--font-sans);
+  transition: border-color var(--dur-fast), color var(--dur-fast);
+}
+.aa-revert:hover {
+  border-color: var(--coral-line);
+  color: var(--coral-ink);
+}
+.aa-revert:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.aa-trace {
+  width: 100%;
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-2);
+  font: 400 var(--fs-meta) / 1.5 var(--font-mono);
+  color: var(--ink-3);
+}
+.aa-trace .evt {
+  display: inline-block;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 1px 6px;
+  margin: 0 3px 3px 0;
+  color: var(--info-ink);
+}
+
+/* A 档 circuit breaker */
+.aa-breaker {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border-radius: var(--r-3);
+  margin-bottom: var(--s-3);
+  border: 1px solid;
+}
+.aa-breaker.ok {
+  background: var(--paper-sunk);
+  border-color: var(--line);
+}
+.aa-breaker.tripped {
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+}
+.aa-breaker .ico {
+  flex: none;
+  margin-top: 1px;
+}
+.aa-breaker.ok .ico {
+  color: var(--ink-4);
+}
+.aa-breaker.tripped .ico {
+  color: var(--hard-ink);
+}
+.aa-breaker-txt {
+  font: 400 var(--fs-meta) / 1.5 var(--font-sans);
+}
+.aa-breaker.ok .aa-breaker-txt {
+  color: var(--ink-3);
+}
+.aa-breaker.tripped .aa-breaker-txt {
+  color: var(--hard-ink);
+}
+.aa-breaker-txt b {
+  font-weight: 600;
+}
+.aa-breaker-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font: 500 var(--fs-meta) / 1 var(--font-mono);
+  white-space: nowrap;
+}
+.aa-breaker-track {
+  width: 120px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.aa-breaker-fill {
+  height: 100%;
+  background: var(--good);
+}
+.aa-breaker.tripped .aa-breaker-fill {
+  background: var(--hard-ink);
+}
+
+/* ── C 档 · moved-out (纯状态) ── */
+.co-fold {
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.co-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  border: 0;
+  cursor: pointer;
+  background: transparent;
+  padding: var(--s-4);
+  text-align: left;
+  transition: background var(--dur-fast);
+}
+.co-bar:hover {
+  background: var(--paper-sunk);
+}
+.co-bar .ec-ic {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  flex: none;
+}
+.co-bar .co-t {
+  font: 500 var(--fs-body) / 1.2 var(--font-sans);
+  color: var(--ink);
+  display: block;
+}
+.co-bar .co-s {
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-4);
+  margin-top: 2px;
+  display: block;
+}
+.co-chev {
+  margin-left: auto;
+  color: var(--ink-4);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.co-fold.open .co-chev {
+  transform: rotate(180deg);
+}
+.co-body {
+  border-top: 1px solid var(--line);
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  display: grid;
+  gap: var(--s-2);
+}
+.co-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+}
+.co-row-ic {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--ink-4);
+  flex: none;
+}
+.co-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.co-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.co-row-title {
+  font: 600 var(--fs-body) / 1.3 var(--font-sans);
+  color: var(--ink-2);
+}
+.co-row-act {
+  font: 500 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--ink-4);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.co-row-text {
+  font: 400 var(--fs-meta) / 1.5 var(--font-sans);
+  color: var(--ink-4);
+  margin-top: 3px;
+  text-wrap: pretty;
+}
