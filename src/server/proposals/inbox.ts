@@ -7,7 +7,7 @@ import {
   type ProposalSignalSnapshot,
   loadProposalSignalsForRows,
 } from '@/server/proposals/signals';
-import { and, desc, eq, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNotNull, like, lt, or, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -184,6 +184,33 @@ function proposalWhere() {
     // Surface them in the unified inbox so the rollback / accept UI sees them.
     eq(event.action, 'experimental:propose_learning_intent'),
   );
+}
+
+// YUK-520 (A1 夜窗 digest) — windowed proposal count for the overnight-digest read
+// model. Lives HERE (next to proposalWhere) so the "what counts as a proposal event"
+// predicate has a single source of truth — overnight-digest.ts must NOT re-implement
+// proposalWhere() or it drifts when the predicate changes. Pure count, zero derivation
+// (no rate / correction / signals joins) — far cheaper than listProposalInboxRows for a
+// felt digest count. `conjectures` is the subset whose ai_proposal.kind = 'conjecture'
+// (written via writeAiProposal default branch → action 'experimental:proposal'); the
+// caller subtracts it so the inbox feed (ProposalStrip) and 备课台 feed don't overlap.
+export async function countProposalsInWindow(
+  db: DbLike,
+  window: { from: Date; to: Date },
+): Promise<{ total: number; conjectures: number }> {
+  const [row] = await db
+    .select({
+      total: count(),
+      conjectures: sql<number>`cast(count(*) filter (
+        where ${event.action} = 'experimental:proposal'
+        and (${event.payload}->'ai_proposal'->>'kind') = 'conjecture'
+      ) as int)`,
+    })
+    .from(event)
+    .where(
+      and(proposalWhere(), gte(event.created_at, window.from), lt(event.created_at, window.to)),
+    );
+  return { total: row?.total ?? 0, conjectures: Number(row?.conjectures ?? 0) };
 }
 
 function encodeProposalCursor(row: ProposalCursor): string {

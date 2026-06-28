@@ -1137,6 +1137,25 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "workbench",
+      "item": [
+        {
+          "name": "GET /api/workbench/overnight-digest",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/workbench/overnight-digest",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "workbench", "overnight-digest"]
+            },
+            "description": "昨夜窗 digest 只读读模型（A1 夜窗交班，YUK-520）\n\n**Notes:** 窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。5 夜间事实源任一窗内有事实 → has_overnight_activity=true（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

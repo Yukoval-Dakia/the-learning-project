@@ -13,6 +13,7 @@ import { AgentNotesBoard } from '@/capabilities/agency/ui/AgentNotesBoard';
 import type { AgentNotesResponse } from '@/capabilities/agency/ui/types';
 import ColdStart from '@/capabilities/onboarding/ui/ColdStart';
 import { apiJson } from '@/ui/lib/api';
+import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -28,7 +29,12 @@ import { LoomHero } from './blocks/LoomHero';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
 import { WeekHeat } from './blocks/WeekHeat';
-import { type WorkbenchSummary, getWorkbenchSummary } from './workbench-api';
+import {
+  type OvernightDigest,
+  type WorkbenchSummary,
+  getOvernightDigest,
+  getWorkbenchSummary,
+} from './workbench-api';
 import './shell.css';
 
 export interface TodayPageProps {
@@ -176,6 +182,111 @@ function CostRibbon() {
   );
 }
 
+// YUK-520 (A1 夜窗 digest) — 最小交班缕（富叙事缕本期 DEFER，先把数据 + 空夜态通电）。
+// 设计参考 docs/design/loom-refresh/project/screen-today-handoff.jsx（HandoffThread / 空夜态）
+// + handoff-band.jsx：本期最小化为 LoomCard + 计数 chips + 空夜态，按 Loom primitives 落地
+// （不整文件 PORT）。富叙事缕（MasteryBand / 团队复盘 / 追溯 / narrative_threads）二期补。
+//
+// 红线（YUK-520 ②⑤）：空夜态（has_overnight_activity===false）是一等态，与加载中/失败显式可
+// 区分，**绝不落回 ColdStart**——本带是 workbench 块的子组件（仅在 goal_count>0 渲染），其空夜
+// 分支只渲染 quiet-empty，永不触发冷开屏。additive 叠加，不动既有 hero/今日之线/双列/热力。
+
+// 链式三元会被 OCR flag（项目规则禁嵌套/链式三元）——用 if/else 函数算状态。
+function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
+  if (isLoading) return 'loading';
+  if (isError) return 'error';
+  return 'ok';
+}
+
+interface DigestChip {
+  key: string;
+  icon: LoomIconName;
+  label: string;
+  count: number;
+}
+
+function buildDigestChips(d: OvernightDigest): DigestChip[] {
+  const runsTotal = d.runs.reduce((acc, g) => acc + g.count, 0);
+  const chips: DigestChip[] = [];
+  if (runsTotal > 0)
+    chips.push({ key: 'runs', icon: 'sparkle', label: '夜间任务', count: runsTotal });
+  if (d.note_changes_count > 0)
+    chips.push({ key: 'notes', icon: 'doc', label: '笔记精炼', count: d.note_changes_count });
+  if (d.new_proposals_count > 0)
+    chips.push({
+      key: 'proposals',
+      icon: 'inbox',
+      label: '图谱提议',
+      count: d.new_proposals_count,
+    });
+  if (d.new_conjectures_count > 0)
+    chips.push({
+      key: 'conjectures',
+      icon: 'teach',
+      label: '备课猜想',
+      count: d.new_conjectures_count,
+    });
+  if (d.agent_notes_count > 0)
+    chips.push({ key: 'agent_notes', icon: 'eye', label: '代理观察', count: d.agent_notes_count });
+  return chips;
+}
+
+function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
+  const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
+  const status = statefulStatus(q.isLoading, q.isError);
+  const d = q.data;
+  const chips = d ? buildDigestChips(d) : [];
+  const canDecide = !!d && (d.new_proposals_count > 0 || d.new_conjectures_count > 0);
+  return (
+    <>
+      <SectionLabel>夜链 · 交班</SectionLabel>
+      <LoomCard pad>
+        <div className="card-head">
+          <span className="card-icon accent">
+            <LoomIcon name="moon" size={18} />
+          </span>
+          <div className="card-title">昨夜 AI 替你做了什么</div>
+        </div>
+        <Stateful
+          status={status}
+          onRetry={() => void q.refetch()}
+          errorText="夜链交班暂不可用。"
+          skeleton={<SkLines rows={2} />}
+        >
+          {d && !d.has_overnight_activity && (
+            <div className="quiet-empty">
+              昨夜没有需要交班的活动 —— 团队会在你持续学习后，开始为你做夜间复盘。
+            </div>
+          )}
+          {d?.has_overnight_activity && (
+            <>
+              <div className="digest-chips">
+                {chips.map((c) => (
+                  <span key={c.key} className="chip">
+                    <LoomIcon name={c.icon} size={14} /> {c.label} <b className="mono">{c.count}</b>
+                  </span>
+                ))}
+              </div>
+              {canDecide && (
+                <div className="digest-foot">
+                  <Btn
+                    size="sm"
+                    variant="secondary"
+                    iconEnd="arrow"
+                    onClick={() => navigate('/inbox')}
+                  >
+                    去裁决
+                  </Btn>
+                </div>
+              )}
+            </>
+          )}
+        </Stateful>
+      </LoomCard>
+    </>
+  );
+}
+
 function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => void }) {
   return (
     <LoomCard hover pad className="thread-card" onClick={() => navigate(th.route)}>
@@ -252,6 +363,10 @@ export default function TodayPage({ navigate }: TodayPageProps) {
       >
         {s && (
           <>
+            {/* YUK-520 (A1) — 最小交班缕：workbench 块首位（今日之线 layer ①）。仅在非冷启
+                （goal_count>0，冷启已 early-return ColdStart）渲染，空夜态永不落 ColdStart。 */}
+            <OvernightDigestBand navigate={navigate} />
+
             <KpiRow
               kpi={s.kpi}
               proposalsTotal={s.proposals.total}
