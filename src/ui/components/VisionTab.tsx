@@ -17,6 +17,7 @@
 //     question_no — sits above the editable prompt textarea.
 
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
+import { RecordLanding } from '@/ui/components/RecordLanding';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
@@ -196,6 +197,9 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   // the SSE timeline IS the right affordance.
   const [ingestionLine, setIngestionLine] = useState<'text' | 'visual' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // A8 (YUK-354): 成功着陆态。批量导入成功后不再硬跳 /mistakes，停在着陆视图
+  // （收好了 N 道题 / 去向 / 下一步）。null = 仍在上传/审阅流程。
+  const [landing, setLanding] = useState<{ count: number } | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
   // bucketByBlockId[blockId] = primary block id of the merge bucket. Initially
   // every block points at itself. "合并到上一个块" rewrites this to the
@@ -450,14 +454,20 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           };
         });
       if (importable.length === 0) throw new Error('至少保留一个块导入');
-      return apiJson(`/api/ingestion/${sessionId}/import`, {
-        method: 'POST',
-        body: JSON.stringify({ blocks: importable }),
-      });
+      return apiJson<{ question_ids: string[]; mistake_ids: string[]; record_ids: string[] }>(
+        `/api/ingestion/${sessionId}/import`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ blocks: importable }),
+        },
+      );
     },
-    onSuccess: () => {
+    // A8 (YUK-354): 进着陆态而非硬跳 /mistakes。count = question_ids.length（三数组
+    // 等长=题数）。保留 mistakes 失活，着陆「去看错题本」跳过去时数据已是新的。
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['mistakes'] });
-      routing.navigate('/mistakes');
+      const count = Array.isArray(data?.question_ids) ? data.question_ids.length : 0;
+      setLanding({ count });
     },
     onError: (err) => setErrorMessage(formatError(err)),
   });
@@ -521,6 +531,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
 
   const reset = () => {
     setPhase('idle');
+    setLanding(null);
     setFiles([]);
     setPdfPageCount(null);
     setSessionId(null);
@@ -547,6 +558,24 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   const splitMerge = (blockId: string) => {
     setBucketByBlockId((cur) => ({ ...cur, [blockId]: blockId }));
   };
+
+  if (landing) {
+    // A8 (YUK-354): 批量着陆。knowledge 去向：导入响应不带 knowledge_ids，诚实占位
+    // （knowledgeUnavailable），不编 —— 见 follow-up（wire 扩展 import 响应带回）。
+    // 「继续传」走 reset()（已含 setLanding(null)）回到上传面。
+    return (
+      <Card pad="lg" className="record-card">
+        <RecordLanding
+          count={landing.count}
+          isBatch
+          knowledge={[]}
+          knowledgeUnavailable
+          navigate={routing.navigate}
+          onRecordAnother={reset}
+        />
+      </Card>
+    );
+  }
 
   return (
     <Card pad="lg" className="record-card vision-card">

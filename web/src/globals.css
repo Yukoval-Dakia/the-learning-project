@@ -1633,6 +1633,230 @@ ol {
   color: var(--again-ink);
 }
 
+/* ── A8 (YUK-354): 录入成功着陆视图（IngestExit）。PORT 自
+   docs/design/loom-refresh/project/record-a8.css 的 .ing-exit* / .ing-proposal*
+   类（视觉参考，按本仓库 loom tokens 落地，不整文件拷）。只成功态；失败 / 退化态
+   (.ing-rescue / .ing-degrade / .ing-progress / .ing-figure / .ing-emptyblock /
+   .ing-original) OUT-OF-SCOPE，不在此 port。 ── */
+.ing-exit {
+  display: grid;
+  gap: var(--s-3);
+}
+.ing-exit-hero {
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  border-radius: var(--r-4);
+  padding: var(--s-5);
+}
+.ing-exit-hero-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 6px;
+}
+.ing-exit-hero-ic {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-2);
+  background: var(--good);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.ing-exit-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-h4);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.ing-exit-lede {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  margin: 0;
+  text-wrap: pretty;
+}
+.ing-exit-lede b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ing-exit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+.ing-exit-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-1);
+  padding: var(--s-4);
+}
+.ing-exit-card-l {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-bottom: var(--s-3);
+}
+.ing-exit-card-l .ico {
+  color: var(--coral);
+}
+
+/* 通道回执：题库 / 错题本（诚实：错题本是标记非独立通道）。 */
+.ing-exit-channels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.ing-exit-channels li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.ing-exit-channels li .ico {
+  color: var(--good-ink);
+  flex: none;
+}
+.ing-exit-channels b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.ing-channel-note {
+  color: var(--ink-4);
+  font-size: var(--fs-meta);
+}
+
+/* 知识点去向：手填真实可点列表；批量诚实占位（.ing-exit-empty）。 */
+.ing-node-list {
+  display: grid;
+  gap: 6px;
+}
+.ing-node {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: border-color var(--dur-fast);
+}
+.ing-node:hover {
+  border-color: var(--coral-line);
+}
+.ing-node .nm {
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: 1.2;
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+}
+.ing-node .ico {
+  color: var(--ink-4);
+  flex: none;
+}
+.ing-exit-empty {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+
+/* 编排者主动提议出题（呼应 A3 主动开口）。 */
+.ing-proposal {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-3);
+}
+.ing-proposal .ico {
+  color: var(--coral);
+  flex: none;
+  margin-top: 2px;
+}
+.ing-proposal-body {
+  flex: 1;
+  min-width: 0;
+}
+.ing-proposal-trigger {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: var(--ls-wide);
+  color: var(--coral-ink);
+  text-transform: uppercase;
+}
+.ing-proposal-text {
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin-top: 3px;
+  text-wrap: pretty;
+}
+.ing-proposal-acts {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  flex-wrap: wrap;
+}
+
+/* 提议收起后的克制确认行（mirrors record-a8.css .ing-original 形态）。 */
+.ing-exit-dismissed {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  line-height: 1.3;
+  color: var(--ink-3);
+}
+.ing-exit-dismissed .ico {
+  color: var(--good-ink);
+  flex: none;
+}
+
+.ing-exit-foot {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .ing-exit-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 759.98px) {
   .page {
     padding: 20px 14px 40px;
