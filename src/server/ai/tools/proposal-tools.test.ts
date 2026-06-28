@@ -700,10 +700,15 @@ describe('Wave 3 proposal/action DomainTools', () => {
     expect(second.status).toBe('skipped:already_has_variant');
   });
 
-  it('LearningItem tools write completion/relearn proposals without changing item status', async () => {
+  // YUK-521 (A4 强度轴) — completion 是唯一 A 档 kind：默认（裁决熔断未 tripped）write
+  // 后立即经 acceptAiProposal 自动落地，item → 'done'（auto_applied:true）。relearn 仍是
+  // B 档（propose-only，不改 item 状态）。A 档的熔断退回 B / 失败留 pending / 二次幂等的
+  // 全谱在 proposal-tools.completion-autoapply.db.test.ts。
+  it('completion auto-applies (A-tier) while relearn stays propose-only (B-tier)', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
     await seedLearningItem('li_active', 'in_progress');
+    await seedLearningItem('li_inprog', 'in_progress');
     await seedLearningItem('li_done', 'done', new Date(BASE.getTime() - 3 * 86_400_000));
 
     const completion = await proposeLearningItemCompletionTool.execute(ctx(), {
@@ -712,22 +717,28 @@ describe('Wave 3 proposal/action DomainTools', () => {
       evidence_event_ids: ['ev_check'],
       reasoning: 'All embedded checks passed.',
     });
+    // A-tier: the proposal is written ('proposed') AND auto-applied (item → done).
     expect(completion.status).toBe('proposed');
+    expect(completion.auto_applied).toBe(true);
     const active = (
       await db
         .select({ status: learning_item.status })
         .from(learning_item)
         .where(eq(learning_item.id, 'li_active'))
     )[0];
-    expect(active.status).toBe('in_progress');
+    expect(active.status).toBe('done');
 
+    // A second completion on the now-done item is skipped:invalid_state — the
+    // auto-apply moved it out of pending/in_progress before any cooldown check.
     const duplicate = await proposeLearningItemCompletionTool.execute(ctx(), {
       learning_item_id: 'li_active',
       triggering_signals: ['check_all_passed'],
       reasoning: 'repeat',
     });
-    expect(duplicate.status).toBe('skipped:duplicate_pending');
+    expect(duplicate.status).toBe('skipped:invalid_state');
 
+    // relearn is B-tier (propose-only): a done item yields a pending proposal,
+    // item status untouched.
     const relearn = await proposeLearningItemRelearnTool.execute(ctx(), {
       learning_item_id: 'li_done',
       current_mastery: 0.35,
@@ -736,8 +747,9 @@ describe('Wave 3 proposal/action DomainTools', () => {
     });
     expect(relearn.status).toBe('proposed');
 
+    // relearn on a still-in-progress item (never auto-completed) is invalid.
     const invalid = await proposeLearningItemRelearnTool.execute(ctx(), {
-      learning_item_id: 'li_active',
+      learning_item_id: 'li_inprog',
       current_mastery: 0.5,
       reasoning: 'not done yet',
     });
