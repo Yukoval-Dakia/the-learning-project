@@ -122,6 +122,30 @@
 
 4. **不确定性诚实地织进趋势本身**。趋势 delta 的呈现必须遵守 ⑥硬约束（下一节单列）——这是**功能约束**，不是视觉偏好：n=1 慢热下趋势本身常常低置信，面板不能把一条嫩数据画成笃定的上升箭头。
 
+## 多科目（合成根）+ 规模（owner 2026-06-28 提问 → 设计补充）
+
+> 本节是 owner 2026-06-28 追问「多科目（合成根）+ KC 多到一定程度怎么做」后补的设计约束，code-ground 自读模型 `effectiveness-trend.ts`（PR #664）+ seed 模型 `seed.ts`。
+
+### 多科目 = 派生科目轴卷起（data 层已处理）
+
+读模型沿 `knowledge.domain → parent 链` 派生 `effective_domain`（seed root `seed:<subjectId>:root` 带 `domain=subjectId`，上传子 KC `domain=null` 经父链继承），`by_subject` 按它卷起。多科目天然分桶，无需在事件/KC 上加 subject 列（项目铁律）。三个**合成根毛刺**，面板须处理：
+
+1. **冷启 tag-to-root 自指**：冷启期题挂在 seed root 上（子 KC 未抽出，bridge 仅 `knowledge_ids` 全空才触发）→ mastery_progress 事件 `subject_id = seed:<subj>:root` → root 既是一条 KC series 行、又是该科目桶。面板须把 **seed-root 系列行识别为「科目整体」**（id 前缀 `seed:…:root`），不当作科目下的某个 KC 渲染。
+2. **跨科目 KC 单继承**：一个 KC 仅一条父链 → 仅一个 effective_domain → 跨科目概念只归一科，成效趋势不表达跨科 KC。这是 subject=view 单继承的固有限制，**面板不强求跨科，本期接受**。
+3. **孤儿 / 未归类桶**：无 domain 祖先的 KC → `effective_domain=null` → 「未归类」桶（读模型 key `' '`）。面板**必须诚实渲染此桶**（显式「未归类 · N KC」），不藏、不误并入某科。
+
+### 规模：rollup-first + 「动了的」优先（owner 2026-06-28 拍定）
+
+KC 上百后不能平铺 series（一墙 sparkline）。**默认视图 = 科目卷起优先 + 每科「动了的」高亮**：
+
+- **科目级首屏**：默认落 `by_subject` 卷起（几行，各一个方向 + 置信 + kc_count）。`by_subject` 读模型已产出——面板 **lead with it**，不平铺 `series`。
+- **每科「动了的」**：科目行下置一个「本期涨/退的 KC」高亮区（只显 `trend.direction ∈ {rising, falling}` 的少数），holding/insufficient 多数**默认折叠**。「什么变了」而非「每个 KC」。
+- **下钻**：点科目 → 展该科全部 KC 轨迹（此处才虚拟化 / 分页托长尾）。
+- **未归类桶**与各科同级呈现（毛刺 3）。
+- 这套科目级进入也正是 **Coach 复盘中枢成效视图**的天然入口（见落点 IA 节）。
+
+> ⚠️ **读模型规模 follow-up（数据前置，已立 issue YUK-524）**：当前读模型是 **load-all 全量、零 cap/窗口**，`series` 返回每个有活动 KC，`by_subject` 主导方向把整科压成一个方向。规模下需：① server 窗口化（近 N 天 / 每 KC 近 K 事件，治无界增长）；② server 端 **notable 排序 / 标记**（按 |trend| + recency 选「动了的」，免前端拉全量再筛）；③（可选）中层 cluster 卷起（按 domain 子树）。**面板视觉稿可先按本节 rollup-first 形态出**——它对「读模型是否已窗口化」通用，不阻塞设计。
+
 ## ⑥硬约束 —— 趋势 delta 绝不裸数字 + 置信标记（功能级红线，非像素）
 
 来源：gate doc §1.5.2 ⑥（owner 选最强档）+ ADR-0035 §决定1。原文：「mastery / 难度**绝对值一律带置信区间 / 低置信标记呈现，绝不给干净数字**」。**本面板的趋势 delta 是这条约束的最尖锐适用场景**，因为：
