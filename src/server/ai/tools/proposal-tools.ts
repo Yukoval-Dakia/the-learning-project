@@ -1269,6 +1269,11 @@ async function proposeLearningItemCompletionExecute(
     };
   }
 
+  // 已知 TOCTOU（CodeRabbit #5，记录非阻塞）：先读窗口计数、后写本次 rate，故并发的多条
+  // completion 可同时看到同一未超限计数、一起放行 → 一个并发 burst 可 marginal 越过 MAX 硬顶。
+  // 接受此弱化：① 单用户工具真实并发极低（worker 串行处理 AI 任务，单 run 内 tool 调用串行）；
+  // ② MAX 是 ~3-5× 正常速率的**软**安全顶（防失控，非硬不变量），越顶后下一条即看到抬高的计数
+  // 而 trip，burst 是有界的。race-safe 计数器（FOR UPDATE / advisory lock）= follow-up，非本 PR。
   const breaker = await checkAutoApplyBreaker(ctx.db, new Date());
   // tripped → 退回 B 档留 pending 让人审（NOT block；用户仍能在 inbox accept）。
   if (breaker.tripped) {

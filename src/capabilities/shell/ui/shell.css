@@ -674,6 +674,8 @@
   white-space: nowrap;
 }
 .aa-breaker-track {
+  /* span 需块级显示，width/height 才生效；fill 也需 block 才能撑 height:100%（CodeRabbit #3）。 */
+  display: block;
   width: 120px;
   height: 6px;
   border-radius: var(--r-pill);
@@ -682,6 +684,7 @@
   overflow: hidden;
 }
 .aa-breaker-fill {
+  display: block;
   height: 100%;
   background: var(--good);
 }
