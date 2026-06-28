@@ -1,0 +1,78 @@
+/* Loom · A7 成效趋势面 — 纵向 delta. warm-paper / coral. */
+
+.trend-intro { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-4) var(--s-5); background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--shadow-1); margin-bottom: var(--s-4); }
+.trend-intro .ico { color: var(--coral); flex: none; margin-top: 2px; }
+.trend-intro-t { font: 600 var(--fs-body-lg)/1.3 var(--font-serif); color: var(--ink); margin: 0 0 4px; }
+.trend-intro-s { font: 400 var(--fs-body)/var(--lh-prose) var(--font-sans); color: var(--ink-2); margin: 0; text-wrap: pretty; }
+.trend-intro-s b { color: var(--ink); font-weight: 600; }
+
+/* delta row card */
+.trend-row { display: flex; align-items: stretch; gap: var(--s-4); padding: var(--s-4) var(--s-5); background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow-1); margin-bottom: var(--s-3); flex-wrap: wrap; }
+.trend-main { flex: 1; min-width: 220px; }
+.trend-top { display: flex; align-items: center; gap: var(--s-2); margin-bottom: 6px; flex-wrap: wrap; }
+.trend-area { font: 600 var(--fs-h5)/1.2 var(--font-serif); color: var(--ink); }
+.trend-dir { display: inline-flex; align-items: center; gap: 5px; font: 600 var(--fs-meta)/1 var(--font-sans); padding: 3px 9px; border-radius: var(--r-pill); white-space: nowrap; }
+.trend-dir.up { color: var(--good-ink); background: var(--good-soft); border: 1px solid var(--good-line); }
+.trend-dir.hold { color: var(--ink-3); background: var(--paper-sunk); border: 1px solid var(--line); }
+.trend-dir.down { color: var(--again-ink); background: var(--again-soft); border: 1px solid var(--again-line); }
+.trend-conf { font: 500 var(--fs-meta)/1 var(--font-mono); color: var(--ink-4); margin-left: auto; white-space: nowrap; }
+.trend-lowtag { font: 600 var(--fs-meta)/1 var(--font-sans); color: var(--hard-ink); background: var(--hard-soft); border: 1px solid var(--hard-line); padding: 2px 8px; border-radius: var(--r-pill); }
+.trend-delta { font: 600 var(--fs-body)/1.4 var(--font-sans); color: var(--ink); margin-bottom: 4px; }
+.trend-note { font: 400 var(--fs-meta)/var(--lh-prose) var(--font-sans); color: var(--ink-3); margin: 0; text-wrap: pretty; }
+.trend-foot { display: flex; align-items: center; gap: var(--s-2); margin-top: var(--s-3); flex-wrap: wrap; }
+
+/* sparkline (relative-position over weeks; band scale) */
+.trend-spark { flex: none; width: 168px; display: flex; flex-direction: column; gap: 6px; }
+.trend-spark svg { width: 100%; height: 56px; overflow: visible; }
+.trend-spark .axis { stroke: var(--line); stroke-width: 1; }
+.trend-spark .ln { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.trend-spark.up .ln { stroke: var(--good); }
+.trend-spark.hold .ln { stroke: var(--ink-4); }
+.trend-spark.down .ln { stroke: var(--again); }
+.trend-spark .dot { fill: var(--paper-raised); stroke-width: 2; }
+.trend-spark.up .dot { stroke: var(--good); }
+.trend-spark.hold .dot { stroke: var(--ink-4); }
+.trend-spark.down .dot { stroke: var(--again); }
+.trend-spark .dot.last { fill: currentColor; }
+.trend-spark-cap { display: flex; justify-content: space-between; font: 500 10px/1 var(--font-sans); color: var(--ink-5); }
+.trend-spark-bands { font: 400 10px/1.3 var(--font-mono); color: var(--ink-5); text-align: center; }
+
+/* self-assess (open-ended) */
+.trend-self { border-color: var(--coral-line); background: color-mix(in oklch, var(--coral-soft) 45%, var(--paper-raised)); }
+.trend-self-tag { display: inline-flex; align-items: center; gap: 5px; font: 600 var(--fs-meta)/1 var(--font-sans); color: var(--coral-ink); background: var(--paper-raised); border: 1px solid var(--coral-line); padding: 3px 9px; border-radius: var(--r-pill); }
+.trend-self-reason { font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-3); margin: 6px 0 0; text-wrap: pretty; }
+.trend-selfseries { display: flex; align-items: flex-end; gap: 5px; margin-top: var(--s-2); }
+.trend-selftick { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.trend-selfmark { width: 100%; height: 26px; border-radius: var(--r-1); display: grid; place-items: center; font: 600 10px/1 var(--font-sans); }
+.trend-selfmark.进步 { background: var(--good-soft); color: var(--good-ink); border: 1px solid var(--good-line); }
+.trend-selfmark.持平 { background: var(--paper-sunk); color: var(--ink-3); border: 1px solid var(--line); }
+.trend-selfmark.退步 { background: var(--again-soft); color: var(--again-ink); border: 1px solid var(--again-line); }
+.trend-selfmark.none { background: transparent; border: 1px dashed var(--line); color: var(--ink-5); }
+.trend-selftick-x { font: 400 9px/1 var(--font-mono); color: var(--ink-5); }
+/* active check-in control */
+.selfcheck { display: flex; align-items: center; gap: var(--s-2); margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--coral-line); flex-wrap: wrap; }
+.selfcheck-l { font: 500 var(--fs-meta)/1 var(--font-sans); color: var(--ink-3); margin-right: auto; }
+.selfcheck-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--paper-raised); cursor: pointer; color: var(--ink-2); padding: 6px 12px; border-radius: var(--r-pill); font: 500 var(--fs-meta)/1 var(--font-sans); transition: all var(--dur-fast); }
+.selfcheck-btn:hover { border-color: var(--coral-line); color: var(--coral-ink); }
+.selfcheck-btn.on.进步 { background: var(--good-soft); color: var(--good-ink); border-color: var(--good-line); }
+.selfcheck-btn.on.持平 { background: var(--paper-sunk); color: var(--ink); border-color: var(--line-strong); }
+.selfcheck-btn.on.退步 { background: var(--again-soft); color: var(--again-ink); border-color: var(--again-line); }
+.selfcheck-done { display: flex; align-items: center; gap: 6px; font: 500 var(--fs-meta)/1.4 var(--font-sans); color: var(--coral-ink); margin-top: var(--s-3); }
+
+/* 数据不足 (early) */
+.trend-sparse { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-5); background: var(--paper-sunk); border: 1px dashed var(--line-strong); border-radius: var(--r-3); }
+.trend-sparse .ico { color: var(--ink-4); flex: none; margin-top: 1px; }
+.trend-sparse-t { font: 600 var(--fs-body)/1.3 var(--font-sans); color: var(--ink-2); margin-bottom: 4px; }
+.trend-sparse-s { font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-4); text-wrap: pretty; }
+.trend-sparse-flat { margin-top: var(--s-3); display: flex; align-items: center; gap: var(--s-2); }
+.trend-sparse-flat svg { width: 120px; height: 32px; }
+.trend-sparse-flat .fl { stroke: var(--ink-5); stroke-width: 1.5; stroke-dasharray: 3 3; fill: none; }
+.trend-sparse-flat-l { font: 400 var(--fs-meta)/1.3 var(--font-sans); color: var(--ink-5); }
+
+.coach-mode { display: inline-flex; background: var(--paper-sunk); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 2px; }
+.coach-mode button { border: 0; background: transparent; cursor: pointer; font: 500 var(--fs-caption)/1 var(--font-sans); color: var(--ink-3); padding: 6px 14px; border-radius: var(--r-pill); display: inline-flex; align-items: center; gap: 5px; }
+.coach-mode button.on { background: var(--paper-raised); color: var(--coral-ink); box-shadow: var(--shadow-1); }
+
+@media (max-width: 640px) {
+  .trend-spark { width: 100%; }
+}

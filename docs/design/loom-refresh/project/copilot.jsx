@@ -28,18 +28,21 @@ function ToolCard({ tool, animate }) {
   );
 }
 
-function Message({ m, animate }) {
+function Message({ m, animate, go }) {
   return (
     <div className={"msg msg-" + m.role}>
       <div className="msg-avatar">{m.role === "ai" ? <Icon name="sparkle" size={14} /> : DATA.user.initial}</div>
       <div className="msg-body">
-        <div className="msg-name">{m.role === "ai" ? "Loom Copilot" : DATA.user.name}</div>
+        <div className="msg-name">{m.role === "ai" ? "编排者" : DATA.user.name}</div>
         {m.tool && <ToolCard tool={m.tool} animate={animate} />}
         {m.text && <div className="msg-text">{m.text}</div>}
-        {m.role === "ai" && m.text && (
+        {m.pr && <PrCard pr={m.pr} />}
+        {m.run && <RunCard run={m.run} />}
+        {m.fail && <CopFail kind={m.fail} onRetry={() => {}} />}
+        {m.role === "ai" && m.text && !m.pr && !m.fail && !m.run && (
           <div style={{ display: "flex", gap: "var(--s-2)", marginTop: "var(--s-3)", flexWrap: "wrap" }}>
             <Btn size="sm" variant="good" icon="plus">生成 2 张卡片</Btn>
-            <Btn size="sm" variant="ghost" icon="knowledge">查看节点</Btn>
+            <Btn size="sm" variant="ghost" icon="knowledge" onClick={() => go && go("knowledge")}>查看节点</Btn>
           </div>
         )}
       </div>
@@ -47,13 +50,27 @@ function Message({ m, animate }) {
   );
 }
 
-function CopilotDrawer({ open, onClose, onExpand }) {
-  const [msgs, setMsgs] = React.useState(DATA.chat);
+function CopilotDrawer({ open, onClose, onExpand, copilotState = "normal", go }) {
+  // demo-state seeds the thread so reviewers can feel each A3 state via Tweaks
+  const seedMsgs = React.useCallback(() => {
+    if (copilotState === "blank") return [];
+    if (copilotState === "run") return [...DATA.chat, { role: "user", text: "帮我把这周薄弱点重建一套练习。" }, { role: "ai", text: "这事有点长，我搬到后台慢慢跑 —— 你可以关掉这里，回来能看到进度。", run: COPILOT_A3.run }];
+    if (copilotState === "partial") return [...DATA.chat, { role: "user", text: "再讲讲「之」取消独立性。" }, { role: "ai", fail: "partial" }];
+    if (copilotState === "toolfail") return [...DATA.chat, { role: "user", text: "给我出 2 张主谓取独的卡。" }, { role: "ai", fail: "toolfail" }];
+    if (copilotState === "empty-reply") return [...DATA.chat, { role: "user", text: "我开放题的水平到底怎么样？" }, { role: "ai", fail: "empty-reply" }];
+    if (copilotState === "pr") return [...DATA.chat, { role: "user", text: "把「之」这块给我补强一轮。" }, { role: "ai", text: "好 —— 顺着昨夜 dreaming 的复盘，我动了几处。下面是这一句话引出的全部改动，你逐条留或撤都行：", pr: COPILOT_A3.pr }];
+    return DATA.chat;
+  }, [copilotState]);
+
+  const [msgs, setMsgs] = React.useState(seedMsgs);
   const [typing, setTyping] = React.useState(false);
   const [val, setVal] = React.useState("");
+  const [nudge, setNudge] = React.useState(copilotState === "proactive");
   const bodyRef = React.useRef(null);
   const panelRef = React.useRef(null);
   const restoreRef = React.useRef(null);
+
+  React.useEffect(() => { setMsgs(seedMsgs()); setNudge(copilotState === "proactive"); }, [copilotState]);
 
   React.useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
@@ -87,15 +104,16 @@ function CopilotDrawer({ open, onClose, onExpand }) {
     const t = (text || val).trim();
     if (!t) return;
     setMsgs((m) => [...m, { role: "user", text: t }]);
-    setVal(""); setTyping(true);
+    setVal(""); setTyping(true); setNudge(false);
     setTimeout(() => {
       setTyping(false);
+      // per-utterance checkpoint: orchestrator returns a reviewable PR
       setMsgs((m) => [...m, {
         role: "ai",
-        tool: { name: "search_knowledge", status: "done", rows: [["query", t.slice(0, 12)], ["matched", "k_xuci · 3 nodes"], ["confidence", "0.86"]] },
-        text: "已为你检索相关知识节点并整理要点。需要我把它排进今天的复习队列吗？",
+        text: "好 —— 顺着昨夜 dreaming 的复盘，我动了几处。下面是这一句话引出的全部改动，你逐条留或撤都行：",
+        pr: COPILOT_A3.pr,
       }]);
-    }, 1600);
+    }, 1400);
   };
 
   return (
@@ -104,7 +122,7 @@ function CopilotDrawer({ open, onClose, onExpand }) {
       <aside className={"drawer" + (open ? " open" : "")} aria-hidden={!open} aria-label="Copilot" role="dialog" aria-modal={open} ref={panelRef}>
         <div className="drawer-head">
           <span className="card-icon accent"><Icon name="copilot" size={18} /></span>
-          <div className="drawer-title serif">Copilot</div>
+          <div className="drawer-title serif">编排者</div>
           <Badge tone="good" dot pulse>在线</Badge>
           <div style={{ marginLeft: "auto", display: "flex", gap: "var(--s-2)" }}>
             {onExpand && <IconBtn icon="maximize" size={16} title="全屏 Copilot" aria-label="全屏" onClick={onExpand} />}
@@ -114,7 +132,19 @@ function CopilotDrawer({ open, onClose, onExpand }) {
         </div>
 
         <div className="drawer-body" ref={bodyRef}>
-          {msgs.map((m, i) => <Message key={i} m={m} animate={i === 1} />)}
+          {msgs.length === 0 && (
+            <div className="cop-blank" style={{ padding: "var(--s-10) var(--s-4)" }}>
+              <span className="cop-blank-mark"><Icon name="copilot" size={34} /></span>
+              <div className="cop-blank-t serif" style={{ fontSize: "var(--fs-h4)" }}>我是你的编排者</div>
+              <div className="cop-blank-s">前台和昨夜后台的我是同一个 —— 我能引用它为你备的东西。问我今天该学什么、为什么这么排，或让我改动；每一句话我都给你一份可留可撤的改动。</div>
+            </div>
+          )}
+          {msgs.map((m, i) => <Message key={i} m={m} animate={i === 1} go={go} />)}
+          {nudge && (
+            <ProactiveNudge data={COPILOT_A3.proactive.afterIngest}
+              onAct={() => { setNudge(false); send("好，出 3 道针对性的题。"); }}
+              onDismiss={() => setNudge(false)} />
+          )}
           {typing && (
             <div className="msg msg-ai fade-key">
               <div className="msg-avatar"><Icon name="sparkle" size={14} /></div>

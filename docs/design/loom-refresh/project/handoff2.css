@@ -1,0 +1,430 @@
+/* Loom · 晨间交班叙事缕 (refresh) — 段2「后叙事」视觉形态.
+   暖纸 · 单珊瑚 · 无渐变。发散在「构成与嗓音」，不在配色。
+   prefix: .hx- (handoff band) · .mv- (mastery viz). 不与既有 .ho-/.handoff 冲突。
+   两种缕卡: .hx-ribbon(缕带) · .hx-cards(交班帖) — 由 [data-card] 切换。
+   三种 mastery: .mv-band(档条) · .mv-dir(方向) · .mv-weave(织线) — 由 [data-mv] 切换。
+   状态各有面貌: ok · firstNight · quietNight · loading · degrade。 */
+
+/* ───────────────────────── 段落节奏 (先轻 / 后叙事) ───────────────────────── */
+.seg-eyebrow {
+  display: flex; align-items: center; gap: var(--s-2); flex-wrap: nowrap;
+  font: 500 var(--fs-meta)/1 var(--font-mono);
+  letter-spacing: var(--ls-wide); text-transform: uppercase; color: var(--ink-4);
+  margin: 0 0 var(--s-2);
+}
+.seg-eyebrow .seg-txt { white-space: nowrap; }
+.seg-eyebrow .seg-no {
+  display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-pill); background: var(--paper-sunk); color: var(--ink-3);
+  font: 600 10px/1 var(--font-mono); letter-spacing: 0;
+}
+.seg-eyebrow.is-after .seg-no { background: var(--coral-soft); color: var(--coral-ink); }
+.seg-eyebrow .seg-rule { flex: 1; min-width: 16px; height: 1px; background: var(--line); }
+
+/* 段1 容器：轻、紧、可动作 —— 不重造，仅复用既有 KpiRow + 今日之线 */
+.seg-light { margin-top: var(--s-5); }
+
+/* ───────────────────────── 交班缕 band — 段2 外壳 ───────────────────────── */
+.hx-band { margin-top: var(--s-10); }
+
+/* header：mono 来源 eyebrow · serif 大标题(自信) · lede · 织纹分隔 */
+.hx-head { margin-bottom: var(--s-5); }
+.hx-eyebrow {
+  display: block; margin-bottom: 6px;
+  font: 500 var(--fs-meta)/1.9 var(--font-mono); letter-spacing: var(--ls-wide); color: var(--ink-4);
+}
+.hx-eyebrow .hx-moon {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; vertical-align: -5px; margin-right: 6px;
+  border-radius: var(--r-pill); background: var(--coral-soft); color: var(--coral-ink);
+}
+.hx-eyebrow-txt { color: var(--ink-4); }
+.hx-eyebrow-txt b, .hx-eyebrow b { color: var(--ink-2); font-weight: 600; }
+.hx-eyebrow-txt .hx-cost, .hx-eyebrow .hx-cost { color: var(--ink-3); }
+.hx-since-line {
+  font: 400 var(--fs-meta)/1.55 var(--font-sans); color: var(--ink-5);
+  margin: 0 0 var(--s-3); text-wrap: pretty; max-width: 60ch;
+}
+
+.hx-title {
+  font: 600 var(--fs-h2)/1.15 var(--font-serif); letter-spacing: var(--ls-tight);
+  color: var(--ink); margin: 2px 0 var(--s-3); text-wrap: balance; max-width: 22ch;
+}
+.hx-title .hx-name { color: var(--coral-ink); }
+.hx-lede {
+  font: 400 var(--fs-body-lg)/var(--lh-prose) var(--font-sans);
+  color: var(--ink-3); margin: 0; max-width: 58ch; text-wrap: pretty;
+}
+
+/* woven divider — 品牌三缕，平涂描边，无渐变 */
+.hx-woven { display: block; width: 100%; height: 26px; margin-top: var(--s-4); overflow: visible; }
+.hx-woven path { fill: none; stroke: var(--coral); stroke-width: 1.5; stroke-linecap: round; }
+.hx-woven .wv1 { opacity: .85; }
+.hx-woven .wv2 { opacity: .5; }
+.hx-woven .wv3 { opacity: .26; }
+@media (prefers-reduced-motion: no-preference) {
+  .hx-woven path { stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: hx-draw 1.8s var(--ease-out) forwards; }
+  .hx-woven .wv2 { animation-delay: .12s; }
+  .hx-woven .wv3 { animation-delay: .24s; }
+}
+@keyframes hx-draw { to { stroke-dashoffset: 0; } }
+
+/* 顶部「轻 / 叙事」总开关(可选浓度切换) */
+.hx-density {
+  display: inline-flex; background: var(--paper-sunk); border: 1px solid var(--line);
+  border-radius: var(--r-pill); padding: 2px; gap: 2px; margin-top: var(--s-4);
+}
+.hx-density button {
+  border: 0; background: transparent; cursor: pointer; color: var(--ink-3);
+  font: 500 var(--fs-meta)/1 var(--font-sans); padding: 6px 14px; border-radius: var(--r-pill);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.hx-density button.on { background: var(--paper-raised); color: var(--coral-ink); box-shadow: var(--shadow-1); }
+
+/* ───────────────────────── shared entry inner ───────────────────────── */
+.hx-cat {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px;
+  border-radius: var(--r-pill); font: 600 var(--fs-meta)/1 var(--font-sans);
+  background: var(--paper-sunk); color: var(--ink-3); border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.hx-cat.tone-coral { background: var(--coral-soft); color: var(--coral-ink); border-color: var(--coral-line); }
+.hx-cat.tone-info  { background: var(--info-soft);  color: var(--info-ink); border-color: var(--info-line); }
+.hx-cat.tone-good  { background: var(--good-soft);  color: var(--good-ink); border-color: var(--good-line); }
+.hx-attr { display: inline-flex; align-items: center; gap: 4px; font: 500 var(--fs-meta)/1 var(--font-mono); color: var(--ink-4); }
+.hx-flag { display: inline-flex; align-items: center; gap: 4px; font: 500 var(--fs-meta)/1 var(--font-sans); color: var(--coral-ink); }
+.hx-flag.is-pending { color: var(--info-ink); }
+
+.hx-metarow { display: flex; align-items: center; gap: var(--s-2); margin-bottom: 7px; flex-wrap: wrap; }
+.hx-metarow .hx-time { margin-left: auto; font: 500 var(--fs-meta)/1 var(--font-mono); color: var(--ink-5); }
+
+.hx-gist { font: 600 var(--fs-body-lg)/1.42 var(--font-serif); color: var(--ink); margin: 0 0 5px; text-wrap: pretty; }
+.hx-reason { font: 400 var(--fs-body)/var(--lh-prose) var(--font-sans); color: var(--ink-2); margin: 0; text-wrap: pretty; }
+
+/* narrative — 第一人称复盘, 渐进披露, 书引式珊瑚边 */
+.hx-narr-toggle {
+  display: inline-flex; align-items: center; gap: 5px; border: 0; cursor: pointer;
+  background: transparent; color: var(--coral-ink); padding: 7px 0 2px; margin-top: 2px;
+  font: 500 var(--fs-meta)/1 var(--font-sans);
+}
+.hx-narr-toggle .ico { transition: transform var(--dur-base) var(--ease-out); }
+.hx-narr-toggle.open .ico { transform: rotate(90deg); }
+.hx-narr {
+  margin-top: var(--s-3); padding: var(--s-3) var(--s-4);
+  border-left: 2px solid var(--coral-line); background: var(--paper-sunk);
+  border-radius: 0 var(--r-2) var(--r-2) 0;
+  font: 400 var(--fs-body)/var(--lh-loose) var(--font-serif); color: var(--ink-2);
+  text-wrap: pretty;
+}
+.hx-narr .hx-sig { display: block; margin-top: var(--s-2); font: 500 var(--fs-meta)/1 var(--font-sans); color: var(--ink-4); }
+
+/* foot — 下钻入口 · 追溯 · 忽略 */
+.hx-foot { display: flex; align-items: center; gap: var(--s-2); margin-top: var(--s-3); flex-wrap: wrap; }
+.hx-foot-end { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.hx-link {
+  display: inline-flex; align-items: center; gap: 5px; border: 0; cursor: pointer;
+  background: transparent; color: var(--ink-4); padding: 5px 9px; border-radius: var(--r-2);
+  font: 500 var(--fs-meta)/1 var(--font-sans);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.hx-link:hover { background: var(--paper-sunk); color: var(--ink-2); }
+.hx-trace {
+  margin-top: var(--s-3); padding: var(--s-3); background: var(--paper-sunk);
+  border: 1px dashed var(--line-strong); border-radius: var(--r-2);
+  font: 400 var(--fs-meta)/1.6 var(--font-mono); color: var(--ink-3); text-wrap: pretty;
+}
+.hx-trace b { color: var(--ink-2); }
+.hx-trace .evt { display: inline-block; background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-1); padding: 1px 6px; margin: 0 3px 3px 0; color: var(--info-ink); }
+
+/* 忽略后的 undo strip */
+.hx-undo {
+  display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4);
+  background: var(--paper-sunk); border: 1px dashed var(--line-strong);
+  border-radius: var(--r-3); font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-3);
+}
+.hx-undo .ico { color: var(--ink-4); }
+
+/* ═══════════════════ 缕卡形态 A · 缕带 (woven ribbon) ═══════════════════ */
+.hx-ribbon { position: relative; padding-left: 46px; }
+.hx-spine { position: absolute; left: 17px; top: 8px; bottom: 30px; width: 14px; pointer-events: none; }
+.hx-spine svg { width: 14px; height: 100%; overflow: visible; }
+.hx-spine path { fill: none; stroke: var(--coral); stroke-width: 1.5; stroke-linecap: round; }
+.hx-spine .s1 { opacity: .85; }
+.hx-spine .s2 { opacity: .4; }
+@media (prefers-reduced-motion: no-preference) {
+  .hx-spine path { stroke-dasharray: 900; stroke-dashoffset: 900; animation: hx-draw 2s var(--ease-out) .2s forwards; }
+}
+
+.hx-open { margin-bottom: var(--s-5); }
+.hx-open .hx-open-line { font: 500 var(--fs-body-lg)/1.5 var(--font-serif); color: var(--ink); margin: 0; text-wrap: pretty; max-width: 50ch; }
+
+.hx-node { position: relative; margin-bottom: var(--s-5); }
+.hx-node-dot {
+  position: absolute; left: -37px; top: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--paper-raised); border: 2px solid var(--coral); display: grid; place-items: center;
+  z-index: 2; box-shadow: var(--shadow-1);
+}
+.hx-node-dot::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--coral); }
+.hx-node.is-prep .hx-node-dot, .hx-node.is-drill .hx-node-dot { border-color: var(--coral); }
+.hx-node.is-recap .hx-node-dot { border-color: var(--good); }
+.hx-node.is-recap .hx-node-dot::after { background: var(--good); }
+.hx-node.is-recalibrate .hx-node-dot { border-color: var(--info); }
+.hx-node.is-recalibrate .hx-node-dot::after { background: var(--info); }
+.hx-node.is-propose .hx-node-dot { border-color: var(--info); background: var(--info-soft); }
+
+.hx-node-body {
+  background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3);
+  box-shadow: var(--shadow-1); padding: var(--s-4) var(--s-5);
+  transition: box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base), transform var(--dur-base);
+}
+.hx-node-body:hover { box-shadow: var(--shadow-2); }
+.hx-node.is-proposal .hx-node-body { background: var(--info-soft); border-color: var(--info-line); border-style: dashed; }
+.hx-node.is-change .hx-node-body { background: var(--coral-soft); border-color: var(--coral-line); }
+.hx-node.is-dismissed .hx-node-body { opacity: .5; }
+
+.hx-close { margin-top: var(--s-2); }
+.hx-close .hx-close-line {
+  display: flex; align-items: center; gap: var(--s-3);
+  font: 500 var(--fs-body)/1.45 var(--font-serif); color: var(--ink-2); text-wrap: pretty;
+}
+.hx-close .hx-seal {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--coral-soft);
+  border: 2px solid var(--coral); display: grid; place-items: center; color: var(--coral-ink);
+}
+
+/* ═══════════════════ 缕卡形态 B · 交班帖 (deriveThreads-family cards) ═══════════════════ */
+.hx-cards { display: flex; flex-direction: column; gap: var(--s-3); }
+.hx-card {
+  display: flex; gap: var(--s-3); align-items: flex-start;
+  background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3);
+  box-shadow: var(--shadow-1); padding: var(--s-4) var(--s-5);
+  transition: box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base), transform var(--dur-base);
+}
+.hx-card:hover { box-shadow: var(--shadow-2); }
+.hx-card.is-proposal { background: var(--info-soft); border-color: var(--info-line); border-style: dashed; }
+.hx-card.is-change { background: var(--coral-soft); border-color: var(--coral-line); }
+.hx-card.is-dismissed { opacity: .5; }
+.hx-ic {
+  flex: none; width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: var(--r-2); background: var(--paper-sunk); color: var(--ink-2);
+}
+.hx-ic.tone-coral { background: var(--coral-soft); color: var(--coral-ink); }
+.hx-ic.tone-info  { background: var(--info-soft);  color: var(--info-ink); }
+.hx-ic.tone-good  { background: var(--good-soft);  color: var(--good-ink); }
+.hx-card-body { flex: 1; min-width: 0; }
+
+/* ═══════════════════ mastery viz — 三态共用契约：无裸数字 · 区间 · 来源二态 ═══════════════════ */
+.mv { margin-top: var(--s-3); }
+.mv-top { display: flex; align-items: baseline; gap: var(--s-2); margin-bottom: 8px; flex-wrap: wrap; }
+.mv-node { font: 500 var(--fs-meta)/1 var(--font-sans); color: var(--ink-4); }
+.mv-src {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+  font: 500 var(--fs-meta)/1 var(--font-sans); padding: 2px 8px; border-radius: var(--r-pill);
+  border: 1px solid var(--line); color: var(--ink-3);
+}
+.mv-src-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.mv.is-hard .mv-src { color: var(--good-ink); border-color: var(--good-line); background: var(--good-soft); }
+.mv.is-hard .mv-src-dot { background: var(--good); }
+.mv.is-soft .mv-src { color: var(--ink-3); border-style: dashed; }
+.mv.is-soft .mv-src-dot { background: transparent; border: 1.5px dashed var(--ink-4); }
+.mv-low {
+  font: 600 var(--fs-meta)/1 var(--font-sans); color: var(--hard-ink);
+  background: var(--hard-soft); border: 1px solid var(--hard-line);
+  padding: 2px 8px; border-radius: var(--r-pill);
+}
+
+/* ── 档条 (discrete band track) ── */
+.mv-band .mv-track {
+  position: relative; height: 12px; border-radius: var(--r-pill);
+  background: var(--paper-sunk); display: flex; overflow: visible; border: 1px solid var(--line);
+}
+.mv-band .mv-seg { flex: 1; height: 100%; border-right: 1px solid var(--line); }
+.mv-band .mv-seg:last-child { border-right: 0; }
+.mv-band .mv-interval {
+  position: absolute; top: -1px; bottom: -1px; border-radius: var(--r-pill);
+  background: color-mix(in oklch, var(--coral) 18%, transparent);
+  border: 1px solid color-mix(in oklch, var(--coral) 34%, transparent);
+}
+.mv-band.is-soft .mv-interval {
+  background: color-mix(in oklch, var(--ink-4) 14%, transparent);
+  border-color: color-mix(in oklch, var(--ink-4) 30%, transparent);
+}
+.mv-band .mv-point {
+  position: absolute; top: 50%; width: 13px; height: 13px; border-radius: 50%;
+  transform: translate(-50%, -50%); background: var(--coral);
+  border: 2.5px solid var(--paper-raised); box-shadow: var(--shadow-1); z-index: 2;
+}
+.mv-band.is-soft .mv-point { background: var(--paper-raised); border-color: var(--ink-3); }
+.mv-band .mv-scale { display: flex; margin-top: 6px; }
+.mv-band .mv-tick { flex: 1; text-align: center; font: 500 10px/1 var(--font-sans); color: var(--ink-5); }
+.mv-band .mv-tick.on { color: var(--ink-2); font-weight: 600; }
+
+/* ── 方向 (words-first, no axis) ── */
+.mv-dir .mv-dirrow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.mv-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: var(--r-pill);
+  font: 600 var(--fs-body)/1 var(--font-sans); background: var(--paper-sunk);
+  border: 1px solid var(--line); color: var(--ink);
+}
+.mv-dir-glyph {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: var(--r-pill);
+  font: 600 var(--fs-meta)/1 var(--font-sans); border: 1px solid transparent;
+}
+.mv-dir-glyph .arr { font-size: 14px; line-height: 1; }
+.mv-dir-glyph.up   { color: var(--good-ink); background: var(--good-soft); border-color: var(--good-line); }
+.mv-dir-glyph.flat { color: var(--ink-3); background: var(--paper-sunk); border-color: var(--line); }
+.mv-dir-glyph.down { color: var(--again-ink); background: var(--again-soft); border-color: var(--again-line); }
+.mv-range { font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-4); }
+.mv-range b { color: var(--ink-2); font-weight: 600; }
+
+/* ── 织线 (woven strand density) ── */
+.mv-weave .mv-weave-row { display: flex; align-items: center; gap: var(--s-3); }
+.mv-weave .mv-loom { flex: none; }
+.mv-weave .mv-loom svg { display: block; overflow: visible; }
+.mv-weave .strand { fill: none; stroke-linecap: round; }
+.mv-weave .strand.on { stroke: var(--coral); }
+.mv-weave .strand.off { stroke: var(--line-strong); opacity: .6; }
+.mv-weave.is-soft .strand.on { stroke: var(--ink-4); stroke-dasharray: 3 3; }
+.mv-weave .band-fill { fill: color-mix(in oklch, var(--coral) 13%, transparent); }
+.mv-weave.is-soft .band-fill { fill: color-mix(in oklch, var(--ink-4) 12%, transparent); }
+.mv-weave .mv-weave-meta { display: flex; flex-direction: column; gap: 4px; }
+.mv-weave .mv-weave-band { font: 600 var(--fs-body)/1 var(--font-sans); color: var(--ink); }
+.mv-weave .mv-weave-sub { font: 400 var(--fs-meta)/1.4 var(--font-sans); color: var(--ink-4); }
+
+/* ═══════════════════ 轻改动折叠 (AI 观察 · refine) — 克制, 避免 backlog ═══════════════════ */
+.hx-minor { margin-top: var(--s-4); }
+.hx-minor-bar {
+  display: flex; align-items: center; gap: var(--s-3); width: 100%; border: 0; cursor: pointer;
+  background: transparent; padding: var(--s-3) var(--s-2); text-align: left; border-top: 1px solid var(--line);
+  font: 500 var(--fs-caption)/1.3 var(--font-sans); color: var(--ink-3);
+}
+.hx-minor-bar:hover { color: var(--ink); }
+.hx-minor-bar .ec-chev { margin-left: auto; color: var(--ink-4); transition: transform var(--dur-base) var(--ease-out); }
+.hx-minor.open .ec-chev { transform: rotate(180deg); }
+.hx-minor-list { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-2) 0 0; }
+.hx-minor-item {
+  display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line); border-radius: var(--r-3); background: var(--paper-raised);
+}
+.hx-minor-item.is-change { background: var(--coral-soft); border-color: var(--coral-line); }
+.hx-mi-ic { flex: none; width: 28px; height: 28px; border-radius: var(--r-2); background: var(--paper-sunk); display: grid; place-items: center; color: var(--ink-3); }
+.hx-mi-body { flex: 1; min-width: 0; }
+.hx-mi-gist { font: 600 var(--fs-caption)/1.4 var(--font-sans); color: var(--ink); margin-bottom: 2px; }
+.hx-mi-note { font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-3); text-wrap: pretty; }
+.hx-mi-go { flex: none; }
+
+/* ═══════════════════ 状态 · 首日空夜 (预告基调) ═══════════════════ */
+.hx-first {
+  position: relative; overflow: hidden; background: var(--paper-raised);
+  border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--shadow-1);
+  padding: var(--s-8) var(--s-8) var(--s-6);
+}
+.hx-first-weave { position: absolute; inset: 0; pointer-events: none; opacity: .5; }
+.hx-first-weave svg { width: 100%; height: 100%; }
+.hx-first-weave path { fill: none; stroke: var(--coral); stroke-width: 1.4; opacity: .14; }
+.hx-first-inner { position: relative; max-width: 60ch; }
+.hx-first-title { font: 600 var(--fs-h3)/1.3 var(--font-serif); color: var(--ink); margin: var(--s-3) 0; text-wrap: pretty; }
+.hx-first-body { font: 400 var(--fs-body-lg)/var(--lh-prose) var(--font-sans); color: var(--ink-2); margin: 0 0 var(--s-5); text-wrap: pretty; }
+.hx-first-cta { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-bottom: var(--s-6); }
+.hx-first-foretell { border-top: 1px dashed var(--line-strong); padding-top: var(--s-4); }
+.hx-foretell-lbl { display: flex; align-items: center; gap: var(--s-2); font: 500 var(--fs-meta)/1 var(--font-sans); letter-spacing: var(--ls-wide); text-transform: uppercase; color: var(--ink-4); margin-bottom: var(--s-3); }
+.hx-ghosts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); }
+.hx-ghost {
+  display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-3) var(--s-4);
+  border: 1px dashed var(--line); border-radius: var(--r-3); background: var(--paper); opacity: .82;
+}
+.hx-ghost-ic { flex: none; width: 28px; height: 28px; border-radius: var(--r-2); background: var(--paper-sunk); display: grid; place-items: center; color: var(--ink-5); }
+.hx-ghost-title { font: 600 var(--fs-caption)/1.35 var(--font-sans); color: var(--ink-3); }
+.hx-ghost-sub { font: 400 var(--fs-meta)/1.45 var(--font-sans); color: var(--ink-4); margin-top: 2px; text-wrap: pretty; }
+
+/* ═══════════════════ 状态 · 稳态安静夜 (极简, 合法日常 ≠ 错误) ═══════════════════ */
+.hx-quiet {
+  display: flex; align-items: center; gap: var(--s-4);
+  padding: var(--s-5) var(--s-6); background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--r-4); box-shadow: var(--shadow-inset);
+}
+.hx-quiet-moon {
+  flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--paper-sunk); color: var(--ink-3); border: 1px solid var(--line);
+}
+.hx-quiet-main { flex: 1; min-width: 0; }
+.hx-quiet-title { font: 600 var(--fs-h5)/1.3 var(--font-serif); color: var(--ink-2); margin: 0 0 3px; }
+.hx-quiet-body { font: 400 var(--fs-body)/var(--lh-prose) var(--font-sans); color: var(--ink-3); margin: 0; text-wrap: pretty; }
+.hx-quiet-foot { flex: none; font: 400 var(--fs-meta)/1.4 var(--font-sans); color: var(--ink-5); max-width: 16ch; text-align: right; }
+
+/* ═══════════════════ 状态 · 加载 (正在准备 — 有进度, ≠ 安静) ═══════════════════ */
+.hx-loadbar {
+  display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4);
+  background: var(--info-soft); border: 1px solid var(--info-line); border-radius: var(--r-3);
+  margin-bottom: var(--s-3); font: 500 var(--fs-body)/1.4 var(--font-sans); color: var(--info-ink);
+}
+.hx-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--info); border-top-color: transparent; animation: hx-spin .8s linear infinite; flex: none; }
+@keyframes hx-spin { to { transform: rotate(360deg); } }
+.hx-loadbar .hx-prog { margin-left: auto; font: 500 var(--fs-meta)/1 var(--font-mono); opacity: .85; }
+.hx-skel { display: flex; flex-direction: column; gap: var(--s-3); }
+.hx-skel-card { display: flex; gap: var(--s-3); background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3); padding: var(--s-4) var(--s-5); }
+
+/* ═══════════════════ 状态 · 部分降级 + job 失败诚实交代 ═══════════════════ */
+.hx-degrade-banner {
+  display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-3) var(--s-4);
+  background: var(--hard-soft); border: 1px solid var(--hard-line); border-radius: var(--r-3); margin-bottom: var(--s-3);
+}
+.hx-degrade-banner .ico { color: var(--hard-ink); flex: none; margin-top: 1px; }
+.hx-degrade-txt { font: 400 var(--fs-body)/1.5 var(--font-sans); color: var(--hard-ink); }
+.hx-degrade-txt b { font-weight: 600; }
+.hx-jobfail {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 6px;
+  font: 500 var(--fs-meta)/1 var(--font-mono); color: var(--hard-ink);
+}
+.hx-jobfail .evt { background: var(--paper-raised); border: 1px solid var(--hard-line); border-radius: var(--r-1); padding: 1px 6px; }
+.hx-miss {
+  display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4);
+  border: 1px dashed var(--line-strong); border-radius: var(--r-3); background: var(--paper-sunk);
+  font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-4); margin-top: var(--s-1);
+}
+
+/* ═══════════════════ 落点 · 并入 (merged into 今日之线 grid) ═══════════════════ */
+/* 同一视觉家族的紧凑缕卡, 嵌进 .threads-grid 作为第三类。 */
+.hx-merge-card {
+  display: flex; flex-direction: column; gap: var(--s-2); position: relative;
+  background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3);
+  box-shadow: var(--shadow-1); padding: var(--s-5);
+  transition: box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+  cursor: pointer;
+}
+.hx-merge-card:hover { box-shadow: var(--shadow-2); transform: translateY(-2px); }
+.hx-merge-card.is-proposal { background: var(--info-soft); border-color: var(--info-line); border-style: dashed; }
+.hx-merge-top { display: flex; align-items: center; gap: var(--s-2); }
+.hx-merge-moon { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: var(--r-2); background: var(--coral-soft); color: var(--coral-ink); }
+.hx-merge-arrow { margin-left: auto; color: var(--ink-4); }
+.hx-merge-label { font: 500 var(--fs-meta)/1 var(--font-mono); letter-spacing: var(--ls-wide); color: var(--ink-4); }
+.hx-merge-gist { font: 600 var(--fs-body)/1.4 var(--font-serif); color: var(--ink); text-wrap: pretty; }
+.hx-merge-reason { font: 400 var(--fs-caption)/var(--lh-snug) var(--font-sans); color: var(--ink-3); text-wrap: pretty; }
+.hx-merge-cta { display: inline-flex; align-items: center; gap: 5px; font: 500 var(--fs-meta)/1 var(--font-sans); color: var(--coral-ink); margin-top: 2px; }
+/* 并入时给整组一个安静的「夜链」前导，避免与自排缕混为一谈 */
+.hx-merge-note {
+  display: flex; align-items: center; gap: var(--s-2); margin: var(--s-2) 0 var(--s-3);
+  font: 500 var(--fs-meta)/1.4 var(--font-mono); letter-spacing: var(--ls-wide); color: var(--ink-4);
+}
+.hx-merge-note .hx-moon { width: 20px; height: 20px; }
+
+/* ═══════════════════ 续在下方 (coexistence stub — 既有区块原样保留) ═══════════════════ */
+.hx-rest {
+  display: flex; align-items: center; gap: var(--s-3); margin-top: var(--s-8);
+  padding: var(--s-4) var(--s-5); border: 1px dashed var(--line); border-radius: var(--r-3);
+  background: var(--paper-sunk); color: var(--ink-4);
+}
+.hx-rest .ico { flex: none; color: var(--ink-5); }
+.hx-rest-txt { font: 400 var(--fs-caption)/1.5 var(--font-sans); }
+.hx-rest-txt b { color: var(--ink-3); font-weight: 600; }
+
+/* ───────────────────────── responsive ───────────────────────── */
+@media (max-width: 760px) {
+  .hx-ribbon { padding-left: 34px; }
+  .hx-spine { left: 11px; }
+  .hx-node-dot { left: -31px; }
+  .hx-ghosts { grid-template-columns: 1fr; }
+  .hx-quiet { flex-wrap: wrap; }
+  .hx-quiet-foot { text-align: left; max-width: none; }
+  .hx-first { padding: var(--s-6) var(--s-5) var(--s-5); }
+  .hx-title { font-size: var(--fs-h3); }
+}

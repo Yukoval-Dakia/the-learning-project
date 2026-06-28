@@ -206,6 +206,35 @@ Object.assign(DATA, {
       { id: "job_5famous", job: "dreaming", error: "RateLimitError: 429 from model gateway", retries: 1, when: "05-29 03:00" },
       { id: "job_5510", job: "judge", error: "ValidationError: empty attribution payload", retries: 0, when: "05-28 08:40" },
     ],
+
+    // ── CALIBRATION MATURITY — GET /api/observability/calibration-maturity (adr-0035) ──
+    // n=1 慢热期:每个知识点从冷启开始,随作答逐个 firm up。纯读视图。
+    // 语义约束:冷启/低置信点绝不显示成精确分数 — 只给 可信/不可信 + 相对排序(θ̂ SE)。
+    calibration: {
+      total_kcs: 14,
+      firm_count: 4,
+      cold_start_count: 10,   // 非 firm 的总数(含从未作答)
+      pct_firm: 0.286,        // firm 占比 = firm_count / total_kcs(是计数比,非掌握度)
+      median_theta_se: 0.74,
+      // firm ⟺ 有作答 且 evidence≥4 且 precision>1。se=1.0 ⟺ 冷启先验,θ̂ 不可信。
+      // tier(UI 派生):firm=可信 / warming=渐稳(有证据未 firm) / blind=冷启盲区(evidence=0,从没练过)
+      kcs: [
+        { id: "k_xuci_zhi", name: "之 · 用法",   track: "虚词", evidence: 41, se: 0.21, confidence: 0.86, cold_start: false },
+        { id: "k_judge",    name: "判断句",       track: "句式", evidence: 28, se: 0.29, confidence: 0.81, cold_start: false },
+        { id: "k_gujin",    name: "古今异义",     track: "词义", evidence: 22, se: 0.34, confidence: 0.78, cold_start: false },
+        { id: "k_tongjia",  name: "通假字",       track: "字词", evidence: 17, se: 0.43, confidence: 0.74, cold_start: false },
+        { id: "k_huoyong",  name: "词类活用",     track: "语法", evidence: 3,  se: 0.58, confidence: 0.66, cold_start: true },
+        { id: "k_xuci_er",  name: "而 · 用法",     track: "虚词", evidence: 3,  se: 0.62, confidence: 0.69, cold_start: true },
+        { id: "k_binyu",    name: "宾语前置",     track: "句式", evidence: 2,  se: 0.71, confidence: null, cold_start: true },
+        { id: "k_xuci_yi",  name: "以 · 用法",     track: "虚词", evidence: 2,  se: 0.77, confidence: null, cold_start: true },
+        { id: "k_beidong",  name: "被动句",       track: "句式", evidence: 1,  se: 0.83, confidence: null, cold_start: true },
+        { id: "k_shenglue", name: "省略句",       track: "句式", evidence: 0,  se: 1.0,  confidence: null, cold_start: true },
+        { id: "k_shidong",  name: "使动用法",     track: "语法", evidence: 0,  se: 1.0,  confidence: null, cold_start: true },
+        { id: "k_huwen",    name: "互文",         track: "修辞", evidence: 0,  se: 1.0,  confidence: null, cold_start: true },
+        { id: "k_zhuangyu", name: "状语后置",     track: null,   evidence: 0,  se: 1.0,  confidence: null, cold_start: true },
+        { id: "k_pianyi",   name: "偏义复词",     track: null,   evidence: 0,  se: 1.0,  confidence: null, cold_start: true },
+      ],
+    },
   },
 });
 

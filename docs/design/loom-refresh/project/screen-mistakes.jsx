@@ -127,6 +127,7 @@ const TYPE_OPTS = [["all", "全部"], ["knowledge_edge", "知识关系"], ["bloc
 
 function ScreenInbox({ go, ui = {} }) {
   const ds = ui.dataState || "ok";
+  const [lane, setLane] = React.useState("B");
   const [resolved, setResolved] = React.useState({});
   const [subject, setSubject] = React.useState("all");
   const [type, setType] = React.useState("all");
@@ -137,6 +138,7 @@ function ScreenInbox({ go, ui = {} }) {
     (subject === "all" || propSubject(p) === subject) &&
     (type === "all" || p.kind === type));
   const remaining = shown.filter((p) => !resolved[p.id]).length;
+  const bTotal = all.filter((p) => !resolved[p.id]).length;
   const activeFilters = (subject !== "all") + (type !== "all");
 
   // readable breakdown by type
@@ -149,54 +151,95 @@ function ScreenInbox({ go, ui = {} }) {
   const lanes = {};
   shown.forEach((p) => { (lanes[p.kind] = lanes[p.kind] || []).push(p); });
 
+  const TABS = [
+    { id: "B", label: "待裁决", icon: "inbox", count: bTotal, tone: "coral" },
+    { id: "A", label: "自动应用", icon: "bolt", count: INBOX_A4.autoApplied.length, tone: "good" },
+    { id: "C", label: "已处理", icon: "archive", count: INBOX_A4.movedOut.length, tone: "neutral" },
+  ];
+  const curTab = TABS.find((x) => x.id === lane);
+
   return (
     <div className="page view">
       <div className="page-head">
-        <div className="eyebrow">INBOX · AI 提议 · 按科目 / 类型筛选</div>
+        <div className="eyebrow">INBOX · AI 提议 · 按「可逆性 × 后果」分三档</div>
         <div className="page-head-row">
           <h1 className="page-title serif">收件箱</h1>
         </div>
-        <p className="page-lead">每条 AI 提议都带一句白话来源说明，逐条 accept / dismiss。每次裁决写入一条事件，下次不再露面。</p>
+        <p className="page-lead">{TIER_META[lane].sub}。三档各自成面，互不淹没 —— 切到你要处理的那一档。</p>
       </div>
 
-      {/* summary + filters */}
-      <Card pad sunk style={{ marginBottom: "var(--s-5)" }}>
-        <div className="inbox-summary-row nowrap-meta">
-          <span className="card-icon accent"><Icon name="sparkle" size={18} /></span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 500 }}>{remaining} 条待裁决{activeFilters ? " · 已筛选" : ""}</div>
-            <div className="meta">{breakdown || "无匹配"}{cost ? ` · 累计 $${cost.toFixed(4)}` : ""}</div>
-          </div>
-        </div>
-        <FilterRow label="科目" value={subject} options={SUBJECT_OPTS} onChange={setSubject} />
-        <FilterRow label="类型" value={type} options={TYPE_OPTS} onChange={setType} />
-      </Card>
+      {/* tier tab bar — each tier is its own view */}
+      <div className="inbox-tabs" role="tablist" aria-label="收件箱分档">
+        {TABS.map((tb) => (
+          <button key={tb.id} role="tab" aria-selected={lane === tb.id}
+            className={"inbox-tab" + (lane === tb.id ? " on" : "")} onClick={() => setLane(tb.id)}>
+            <span className={"inbox-tab-no tone-" + tb.tone}>{tb.id}</span>
+            <span className="inbox-tab-l"><Icon name={tb.icon} size={14} />{tb.label}</span>
+            <span className="inbox-tab-n">{tb.count}</span>
+          </button>
+        ))}
+      </div>
 
       <Stateful state={ds} onRetry={() => {}} errorText="提议加载失败。"
         skeleton={<><SectionLabel>加载中</SectionLabel><Card pad><SkLines rows={3} /></Card></>}
         empty={<EmptyState icon="checkCircle" title="收件箱已清空" text="所有提议都已裁决。新提议会在下次 Dreaming session 后出现。" />}>
-        {remaining === 0 ? (
-          <EmptyState icon={activeFilters ? "filter" : "checkCircle"} title={activeFilters ? "没有匹配的提议" : "收件箱已清空"}
-            text={activeFilters ? "放宽科目或类型筛选试试。" : "所有提议都已裁决。新提议会在下次 Dreaming session 后出现。"}
-            action={activeFilters
-              ? <Btn variant="secondary" size="sm" icon="close" onClick={() => { setSubject("all"); setType("all"); }}>清除筛选</Btn>
-              : <Btn variant="secondary" size="sm" icon="mistakes" onClick={() => go("mistakes")}>去看错题本</Btn>} />
-        ) : (
-          Object.keys(lanes).map((kind) => {
-            const meta = KIND_META[kind] || { label: kind, icon: "inbox", tone: "neutral" };
-            const live = lanes[kind].filter((p) => !resolved[p.id]).length;
-            return (
-              <div key={kind}>
-                <SectionLabel count={live || null}>
-                  <span className="inbox-lane-label"><span className={"lane-ic tone-" + meta.tone}><Icon name={meta.icon} size={14} /></span>{meta.label}</span>
-                </SectionLabel>
-                <div className="grid stagger" style={{ gap: "var(--s-4)" }}>
-                  {lanes[kind].map((p) => <ProposalCard key={p.id} p={p} go={go} onResolve={resolveOne} />)}
+
+        <div className="fade-key" key={lane}>
+          {/* ── B 档 · 逐条人审 ── */}
+          {lane === "B" && (
+            <React.Fragment>
+              <Card pad sunk style={{ marginBottom: "var(--s-5)" }}>
+                <div className="inbox-summary-row nowrap-meta">
+                  <span className="card-icon accent"><Icon name="sparkle" size={18} /></span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 500 }}>{remaining} 条待你裁决{activeFilters ? " · 已筛选" : ""}</div>
+                    <div className="meta">{breakdown || "无匹配"}{cost ? ` · 累计 $${cost.toFixed(4)}` : ""}</div>
+                  </div>
                 </div>
-              </div>
-            );
-          })
-        )}
+                <FilterRow label="科目" value={subject} options={SUBJECT_OPTS} onChange={setSubject} />
+                <FilterRow label="类型" value={type} options={TYPE_OPTS} onChange={setType} />
+              </Card>
+              {remaining === 0 ? (
+                <EmptyState icon={activeFilters ? "filter" : "checkCircle"} title={activeFilters ? "没有匹配的提议" : "都裁决完了"}
+                  text={activeFilters ? "放宽科目或类型筛选试试。" : "新提议会在下次 dreaming 后出现。"}
+                  action={activeFilters
+                    ? <Btn variant="secondary" size="sm" icon="close" onClick={() => { setSubject("all"); setType("all"); }}>清除筛选</Btn>
+                    : <Btn variant="secondary" size="sm" icon="mistakes" onClick={() => go("mistakes")}>去看错题本</Btn>} />
+              ) : (
+                Object.keys(lanes).map((kind) => {
+                  const meta = KIND_META[kind] || { label: kind, icon: "inbox", tone: "neutral" };
+                  const live = lanes[kind].filter((p) => !resolved[p.id]).length;
+                  return (
+                    <div key={kind}>
+                      <SectionLabel count={live || null}>
+                        <span className="inbox-lane-label"><span className={"lane-ic tone-" + meta.tone}><Icon name={meta.icon} size={14} /></span>{meta.label}</span>
+                      </SectionLabel>
+                      <div className="grid stagger" style={{ gap: "var(--s-4)" }}>
+                        {lanes[kind].map((p) => <ProposalCard key={p.id} p={p} go={go} onResolve={resolveOne} />)}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </React.Fragment>
+          )}
+
+          {/* ── A 档 · 自动应用 + 撤销窗口 ── */}
+          {lane === "A" && (
+            <React.Fragment>
+              <div className="tier-sub" style={{ marginBottom: "var(--s-4)" }}>{TIER_META.A.sub} · 绕过了人审闸，所以「可撤销」始终可达。</div>
+              <TierABlock items={INBOX_A4.autoApplied} />
+            </React.Fragment>
+          )}
+
+          {/* ── C 档 · 纯状态,移出裁决面 ── */}
+          {lane === "C" && (
+            <React.Fragment>
+              <div className="tier-sub" style={{ marginBottom: "var(--s-4)" }}>{TIER_META.C.sub} —— 它们不需要你裁决，列在这里只是「让你知道去哪了」。</div>
+              <TierCBlock items={INBOX_A4.movedOut} go={go} defaultOpen={true} />
+            </React.Fragment>
+          )}
+        </div>
       </Stateful>
     </div>
   );

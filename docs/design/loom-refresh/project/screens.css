@@ -17,6 +17,9 @@
 /* ---------- KPI spark ---------- */
 .kpi { transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out); }
 .kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); border-color: var(--line-strong); }
+/* the first KPI (复习到期) is today's primary action — the one coral thread */
+.kpi-row .kpi:first-child .kpi-val { color: var(--coral); }
+.kpi-row .kpi:first-child:hover { border-color: var(--coral-line); }
 
 /* ---------- Threads ---------- */
 .threads-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-4); }
@@ -96,7 +99,7 @@
 .extract-note { font-size: var(--fs-meta); color: var(--ink-4); }
 
 /* ---------- Inbox / proposals ---------- */
-.proposal { animation: rise var(--dur-slow) var(--ease-out) both; }
+.proposal { animation: rise var(--dur-slow) var(--ease-out) both; transition: opacity var(--dur-base) var(--ease-out); }
 .proposal-head { display: flex; align-items: center; gap: var(--s-2); margin-bottom: var(--s-3); flex-wrap: wrap; }
 .proposal-title { font-weight: 500; font-size: var(--fs-body-lg); flex: 1; min-width: 0; }
 .ai-tag { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--coral-ink); background: var(--coral-soft); border: 1px solid var(--coral-line); border-radius: var(--r-pill); padding: 3px 9px; }
