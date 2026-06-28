@@ -574,6 +574,20 @@
             "description": "per-KC mastery-calibration firm-up 只读观测面（YUK-348）\n\n**Notes:** 返回 { rows: per-KC[{knowledge_id,name,evidence_count,theta_se,confidence,track,cold_start}], aggregate:{total_kcs,cold_start_count,firm_count,pct_firm,median_theta_se} }。cold_start = 无 mastery_state 行 OR evidence_count<4 OR theta_precision<=1.0。需 x-internal-token"
           },
           "response": []
+        },
+        {
+          "name": "GET /api/observability/effectiveness-trend",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/observability/effectiveness-trend",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "observability", "effectiveness-trend"]
+            },
+            "description": "per-KC / per-subject 纵向成效趋势只读观测面（YUK-519 A7）\n\n**Notes:** 聚合 experimental:mastery_progress 事件成纵向轨迹。返回 { series: per-KC[{knowledge_id,name,effective_domain,points:[{at,p_learned,theta_hat,theta_delta}],trend:{direction,confidence,span_evidence,has_mastery_signal},activity_count}], aggregate:{total_kcs_with_activity,total_events,by_subject:[{effective_domain,direction,confidence,kc_count,kc_with_mastery_signal,activity_count}]} }。direction=rising|holding|falling|insufficient（早窗 vs 近窗 θ̂ 均值比较，<4 事件=insufficient）。⑥硬约束：绝不裸 delta，只定性方向+置信档。has_mastery_signal=false → UI 走 activity_count 活动量代理。需 x-internal-token"
+          },
+          "response": []
         }
       ]
     },
