@@ -63,7 +63,11 @@ interface MistakeRow {
   created_at: number;
 }
 
-const listMistakes = () => apiJson<{ rows: MistakeRow[] }>('/api/mistakes?limit=100');
+// 投影 limit-based（后端 listMistakeProjectionRows 只有 limit，无 total/cursor）。limit 取
+// 200 给余量；rows 触顶时 eyebrow 显「N+」诚实标记可能截断，不把截断计数当真 total 呈现。
+// 真分页 / 无限滚 + 后端 total 是 YUK-456 follow-up（错题本长大后；owner day-one 不触及）。
+const MISTAKES_LIMIT = 200;
+const listMistakes = () => apiJson<{ rows: MistakeRow[] }>(`/api/mistakes?limit=${MISTAKES_LIMIT}`);
 
 // ── 科目派生（effective_domain → label/tone）；同 QuestionsPage QSUBJECT 先例。 ──
 type Tone = 'neutral' | 'coral' | 'info' | 'good' | 'hard' | 'again';
@@ -147,6 +151,15 @@ function toCauseBadgeInput(cause: MistakeCause | null): {
 // 触发重渲，让阈值跨越被如实反映。因为没有「看起来在走的冻结数字」，所以不误导。
 function pendingSinceSec(m: MistakeRow): number {
   return Math.max(0, Math.floor(Date.now() / 1000) - m.created_at);
+}
+
+// 列表态派生：loading > error > empty > ok 优先级。早返回 lookup 替原嵌套三元
+// （biome 不报，code-quality 偏好早返回/查表，#508 OCR 重审 nit / YUK-456）。
+function statusOf(p: { isLoading: boolean; isError: boolean; isEmpty: boolean }): StatefulStatus {
+  if (p.isLoading) return 'loading';
+  if (p.isError) return 'error';
+  if (p.isEmpty) return 'empty';
+  return 'ok';
 }
 
 // ── 筛选 chip 行（与 InboxPage / loom FilterRow 同形：.filter-row + .chip.is-on） ──
@@ -321,6 +334,10 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
   const toRelearn = derived.filter((d) => d.ui === '待重学').length;
   const corrected = derived.filter((d) => d.ui === '已纠正').length;
 
+  // rows 可能在 MISTAKES_LIMIT 处被截断（投影 limit-based）。eyebrow「共 N 条」据此显「N+」
+  // 诚实标记，避免把截断计数当真 total 呈现（真 total 待后端 count，见 listMistakes 注释）。
+  const totalLabel = rows.length >= MISTAKES_LIMIT ? `${rows.length}+` : String(rows.length);
+
   // pending 行的 CauseBadge 文案随 Date.now() 派生（<30s「归因中...」/ ≥30s「待归因」）。
   // render 期一次性取的 Date.now() 不会自己走——补一个低频 tick 触发重渲，让阈值跨越如实
   // 反映；只在 pending>0 时跑（无 pending 行时零开销，不挂常驻 interval）。15s 间距保证 30s
@@ -350,19 +367,17 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
     setAttr('all');
   };
 
-  const status: StatefulStatus = q.isLoading
-    ? 'loading'
-    : q.isError
-      ? 'error'
-      : rows.length === 0
-        ? 'empty'
-        : 'ok';
+  const status = statusOf({
+    isLoading: q.isLoading,
+    isError: q.isError,
+    isEmpty: rows.length === 0,
+  });
 
   return (
     <main className="page wide mistakes-loom">
       <header className="page-head">
         <div className="eyebrow">
-          MISTAKES · 错题归因 · 共 {rows.length} 条 · 归因中 {pending}
+          MISTAKES · 错题归因 · 共 {totalLabel} 条 · 归因中 {pending}
         </div>
         <div className="page-head-row">
           <h1 className="page-title serif">错题本</h1>
