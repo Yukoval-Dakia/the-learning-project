@@ -52,7 +52,7 @@ import './load-env';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { type Db, type Tx, db } from '@/db/client';
 import { question_block } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { asc, eq, gt } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 
@@ -70,6 +70,12 @@ export interface SweepCounts {
   bboxesClamped: number; // total individual bboxes clamped across all rows
   applied: boolean; // true = persisted; false = dry run
 }
+
+// Keyset page size. Each question_block row carries a potentially deep recursive `structured` tree
+// (every node has prompt_text/options/answers/analysis + nested sub_questions) plus a `figures[]`
+// array, so the per-row footprint is large; loading the whole table at once can exhaust memory on a
+// prod-scale block count. Page by the text primary key to bound peak memory.
+const SWEEP_BATCH_SIZE = 500;
 
 // clamp01 — mirror tencent_mark_parser.ts:72 EXACTLY (non-finite -> 0). KEEP IN SYNC with flat8ToBBox.
 function clamp01(v: number): number {
@@ -167,31 +173,54 @@ export async function sweepQuestionBlockBBox(
   opts: { apply?: boolean } = {},
 ): Promise<SweepCounts> {
   const apply = opts.apply ?? false;
-  const rows = await db.select().from(question_block);
+  // Keyset-paginate by the text primary key instead of loading every block at once (see
+  // SWEEP_BATCH_SIZE). The clamp only ever rewrites `structured` / `figures` (never `id`), so the id
+  // ordering is stable across an --apply pass: already-swept rows have id <= cursor and never
+  // reappear, so the sweep stays single-scan, idempotent, and crash-safe (partial progress is fine
+  // on re-run). Narrow the select to the columns the clamp reads/writes to further bound the
+  // per-row footprint.
+  let scanned = 0;
   let rowsWithOverflow = 0;
   let bboxesClamped = 0;
-  for (const row of rows) {
-    // Deep-clone so a dry run never mutates anything observable and an apply writes a fresh object.
-    const structured = row.structured
-      ? (structuredClone(row.structured) as StructuredQuestionT)
-      : null;
-    const figures = structuredClone(row.figures ?? []) as FigureRefT[];
-    const structuredCount = structured ? sweepStructuredNode(structured) : 0;
-    const figuresCount = sweepFigures(figures);
-    const rowCount = structuredCount + figuresCount;
-    if (rowCount === 0) continue; // legal row — left untouched
-    rowsWithOverflow += 1;
-    bboxesClamped += rowCount;
-    if (apply) {
-      // Set ONLY the column(s) that actually changed (mirror normalize-edge-created-by: never
-      // rewrite a column whose value is unchanged).
-      const set: { structured?: StructuredQuestionT | null; figures?: FigureRefT[] } = {};
-      if (structuredCount > 0) set.structured = structured;
-      if (figuresCount > 0) set.figures = figures;
-      await db.update(question_block).set(set).where(eq(question_block.id, row.id));
+  let cursor: string | null = null;
+  for (;;) {
+    const batch = await db
+      .select({
+        id: question_block.id,
+        structured: question_block.structured,
+        figures: question_block.figures,
+      })
+      .from(question_block)
+      .where(cursor === null ? undefined : gt(question_block.id, cursor))
+      .orderBy(asc(question_block.id))
+      .limit(SWEEP_BATCH_SIZE);
+    if (batch.length === 0) break;
+    scanned += batch.length;
+    for (const row of batch) {
+      // Deep-clone so a dry run never mutates anything observable and an apply writes a fresh object.
+      const structured = row.structured
+        ? (structuredClone(row.structured) as StructuredQuestionT)
+        : null;
+      const figures = structuredClone(row.figures ?? []) as FigureRefT[];
+      const structuredCount = structured ? sweepStructuredNode(structured) : 0;
+      const figuresCount = sweepFigures(figures);
+      const rowCount = structuredCount + figuresCount;
+      if (rowCount === 0) continue; // legal row — left untouched
+      rowsWithOverflow += 1;
+      bboxesClamped += rowCount;
+      if (apply) {
+        // Set ONLY the column(s) that actually changed (mirror normalize-edge-created-by: never
+        // rewrite a column whose value is unchanged).
+        const set: { structured?: StructuredQuestionT | null; figures?: FigureRefT[] } = {};
+        if (structuredCount > 0) set.structured = structured;
+        if (figuresCount > 0) set.figures = figures;
+        await db.update(question_block).set(set).where(eq(question_block.id, row.id));
+      }
     }
+    cursor = batch[batch.length - 1].id;
+    if (batch.length < SWEEP_BATCH_SIZE) break;
   }
-  return { scanned: rows.length, rowsWithOverflow, bboxesClamped, applied: apply };
+  return { scanned, rowsWithOverflow, bboxesClamped, applied: apply };
 }
 
 async function main(): Promise<void> {
