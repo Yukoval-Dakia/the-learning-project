@@ -15,13 +15,13 @@ import { knowledge, knowledge_edge } from '@/db/schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
-// Toggle PREREQ_PROPAGATION_ENABLED at call time; ...actual keeps GRID_THETA etc. real.
+// Toggle DAY_ONE_PRIOR_ENABLED at call time; ...actual keeps GRID_THETA etc. real.
 const flag = { value: false };
 vi.mock('@/core/theta-grid', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/theta-grid')>();
   return {
     ...actual,
-    get PREREQ_PROPAGATION_ENABLED() {
+    get DAY_ONE_PRIOR_ENABLED() {
       return flag.value;
     },
   };
@@ -172,10 +172,13 @@ dWithBinding('loadDayOnePriors — propagated topology (native binding present)'
     await seedEdge('A', 'B');
     await seedEdge('B', 'A'); // 2-cycle: the kernel rejects (prerequisites must be a DAG)
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    // Must RESOLVE to null (caught), not reject — the live read must never break. And the
-    // degradation must be LOGGED (observable), not a silent swallow.
-    await expect(loadDayOnePriors(db, ['A', 'B'])).resolves.toBeNull();
-    expect(errSpy).toHaveBeenCalledTimes(1);
-    errSpy.mockRestore();
+    try {
+      // Must RESOLVE to null (caught), not reject — the live read must never break. And the
+      // degradation must be LOGGED (observable), not a silent swallow.
+      await expect(loadDayOnePriors(db, ['A', 'B'])).resolves.toBeNull();
+      expect(errSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
