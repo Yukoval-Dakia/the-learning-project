@@ -44,7 +44,7 @@ export interface AutoAppliedDigest {
   /** 当前熔断快照（A 块 meter/banner）。 */
   breaker: {
     tripped: boolean;
-    level: string;
+    level: VerdictBreakerStatus;
     applied: number;
     cap: number;
     window: number;

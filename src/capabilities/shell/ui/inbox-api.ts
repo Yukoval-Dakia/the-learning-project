@@ -136,7 +136,7 @@ export interface AutoAppliedRowWire {
   title: string;
   /** apply 时刻（ISO）。 */
   applied_at: string;
-  /** apply 时熔断档位（'ok' | 'warned'）。 */
+  /** apply 时熔断档位（'ok' | 'warned' | 'tripped'）。 */
   level: string;
   /** 是否已被既有 retract 车道撤销。 */
   reverted: boolean;
