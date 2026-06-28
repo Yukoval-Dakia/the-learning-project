@@ -1,0 +1,53 @@
+name: CodeQL
+
+# CodeQL 静态安全分析（advanced setup，committed workflow）。
+# 扫描 JS/TS 源码找安全漏洞，结果上报到 repo 的 Security → Code scanning alerts。
+#
+# build-mode: none —— JS/TS 是解释型语言，CodeQL 直接分析源码，无需 pnpm install / build，
+# 所以这条 workflow 不装 node / pnpm，比 ci-gate.yml 轻得多。
+#
+# 触发：push 到 main + PR 到 main（覆盖 wave→main 集成线）+ 每周一 cron（用更新后的
+# CodeQL 规则重扫存量代码，发现新披露的存量漏洞，即便没有新提交）。
+#
+# Query suite：当前用 default（省略 queries: 即默认安全套件，误报少、扫得快）。要更深覆盖，
+# 把下面 Initialize 步骤的 `queries:` 注释打开，设为 security-extended 或 security-and-quality。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1' # 每周一 04:27 UTC（错开整点，降低 runner 拥塞）
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write # 上传 SARIF 结果到 code scanning（必需）
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          # 默认套件（省略即默认）。更深覆盖时改为下面之一：
+          # queries: security-extended
+          # queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
