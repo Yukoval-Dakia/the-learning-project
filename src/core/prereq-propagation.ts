@@ -51,7 +51,10 @@
  * fetch, no Δθ). The "act flip" is gated on the A6 validation gate; the wiring is
  * built + electrified to live now (defer-flip, not defer-build).
  */
-export const PREREQ_PROPAGATION_ENABLED = false;
+// Renamed from PREREQ_PROPAGATION_ENABLED to disambiguate from the A13 risk-emit producer
+// (server/mastery/prereq-propagation.ts PREREQ_RISK_EMIT_ENABLED) — a different inc-E mechanism
+// that shared the same name. This flag gates ONLY the read-side θ̂ propagation.
+export const PREREQ_THETA_PROPAGATION_ENABLED = false;
 
 /**
  * PHASE-DEFERRED — downstream-press strength λ_down (owner-supplied fixed prior).

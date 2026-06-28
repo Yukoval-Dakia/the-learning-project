@@ -42,7 +42,7 @@ import {
 } from '@/server/judge/route-resolve';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import {
-  PREREQ_PROPAGATION_ENABLED,
+  PREREQ_RISK_EMIT_ENABLED,
   emitPrereqRiskSignal,
 } from '@/server/mastery/prereq-propagation';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
@@ -859,11 +859,11 @@ export async function submitPaperSlot(
 
   // YUK-455 inc-E — prereq 诊断「向后传播」producer (dark-ship), 与 solo submit (submit.ts) 对齐。
   // 答错 B（paper/exam 路径）→ 沿 prerequisite 边向上找 B 的 transitive 前置 A，EMIT
-  // `experimental:prereq_risk` 上调 A 的掌握风险。GATE = PREREQ_PROPAGATION_ENABLED && failure：
+  // `experimental:prereq_risk` 上调 A 的掌握风险。GATE = PREREQ_RISK_EMIT_ENABLED && failure：
   // flag-off 短路 → BYTE-IDENTICAL（YUK-455 回归锚）。partial 不触发（非干净答错）。
   // `&& wroteNewAttempt`：仅在真持久化了新 attempt 时发——挡 in-tx 竞态-loser 回放双发（同上块）。
   // post-commit / best-effort；红线（ADR-0035）：只 EMIT 独立 event 投影，绝不写 mastery_state。
-  if (PREREQ_PROPAGATION_ENABLED && attemptOutcome === 'failure' && wroteNewAttempt) {
+  if (PREREQ_RISK_EMIT_ENABLED && attemptOutcome === 'failure' && wroteNewAttempt) {
     await emitPrereqRiskSignal({
       db,
       failedKnowledgeIds: q.knowledge_ids,

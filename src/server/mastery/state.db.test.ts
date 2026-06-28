@@ -55,7 +55,7 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
   };
 });
 
-// A5 (YUK-441) GRAPH_LAPLACIAN_ENABLED + A6 (YUK-442) PREREQ_PROPAGATION_ENABLED are
+// A5 (YUK-441) GRAPH_LAPLACIAN_ENABLED + A6 (YUK-442) PREREQ_THETA_PROPAGATION_ENABLED are
 // module-level consts (dark-ship default false), mocked the same way. The flag-OFF
 // byte-identical anchors run against the real consts (false) through these factories;
 // the flag-ON tests opt in via laplFlag.value / prereqFlag.value = true. Everything
@@ -76,7 +76,7 @@ vi.mock('@/core/prereq-propagation', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/prereq-propagation')>();
   return {
     ...actual,
-    get PREREQ_PROPAGATION_ENABLED() {
+    get PREREQ_THETA_PROPAGATION_ENABLED() {
       return prereqFlag.value;
     },
   };
