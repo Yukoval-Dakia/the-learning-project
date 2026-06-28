@@ -13,14 +13,18 @@ import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event, learning_item } from '@/db/schema';
-import { type VerdictBreakerResult, checkAutoApplyBreaker } from './decide-breaker';
+import { COMPLETION_AUTOAPPLY_ACTION } from './completion-autoapply-actions';
+import { type VerdictBreakerStatus, checkAutoApplyBreaker } from './decide-breaker';
 
 type DbLike = Db | Tx;
 
-const COMPLETION_AUTOAPPLY_ACTION = 'experimental:completion_autoapply';
 // 列表窗口：默认回看 24h（远长于撤销窗口——前端 autoAppliedState 用更短的 UNDO_WINDOW_MS
 // 区分 live/consumed；这里只决定哪些卡进列表）。
 export const AUTO_APPLIED_LIST_WINDOW_MS = 24 * 3_600_000;
+// 读查询行数上界（退化防御）：裁决熔断器（checkAutoApplyBreaker）正常已把 auto-apply 速率
+// 压在 VERDICT_AUTOAPPLY_MAX 量级，24h 窗口内的 auto-applied 锚远不及此数；limit 仅防异常
+// 风暴（bug / 回填）下一次性拉爆列表，非业务上限。
+export const AUTO_APPLIED_MAX_ROWS = 200;
 
 export interface AutoAppliedRow {
   proposal_id: string;
@@ -29,8 +33,8 @@ export interface AutoAppliedRow {
   title: string;
   /** apply 时刻（ISO）；前端据此 + now 判 live/consumed。 */
   applied_at: string;
-  /** apply 时的熔断档位（'ok' | 'warned'）。 */
-  level: string;
+  /** apply 时的熔断档位（'ok' | 'warned' | 'tripped'）。 */
+  level: VerdictBreakerStatus;
   /** 是否已被既有 retract 车道撤销（有对应 correct 事件）。 */
   reverted: boolean;
 }
@@ -55,22 +59,12 @@ export async function getAutoAppliedDigest(
   const windowMs = opts.windowMs ?? AUTO_APPLIED_LIST_WINDOW_MS;
   const windowStart = new Date(now.getTime() - windowMs);
 
-  const rows = await db
-    .select({
-      subjectId: event.subject_id,
-      payload: event.payload,
-      createdAt: event.created_at,
-      title: learning_item.title,
-    })
-    .from(event)
-    .leftJoin(learning_item, eq(learning_item.id, event.subject_id))
-    .where(and(eq(event.action, COMPLETION_AUTOAPPLY_ACTION), gte(event.created_at, windowStart)))
-    .orderBy(desc(event.created_at), desc(event.id));
-
-  const proposalIds = rows
-    .map((r) => readProposalId(r.payload))
-    .filter((id): id is string => id.length > 0);
-  const revertedSet = await loadRetractedSet(db, proposalIds);
+  // breaker 快照与「rows + retracted」整体无依赖，并行取（rows→retracted 内部仍串行，
+  // 因 loadRetractedSet 依赖 rows 的 proposalIds）。
+  const [{ rows, revertedSet }, breaker] = await Promise.all([
+    loadAutoAppliedRows(db, windowStart),
+    checkAutoApplyBreaker(db, now),
+  ]);
 
   const out: AutoAppliedRow[] = rows.flatMap((r) => {
     const proposalId = readProposalId(r.payload);
@@ -89,7 +83,6 @@ export async function getAutoAppliedDigest(
     ];
   });
 
-  const breaker: VerdictBreakerResult = await checkAutoApplyBreaker(db, now);
   return {
     rows: out,
     breaker: {
@@ -102,14 +95,49 @@ export async function getAutoAppliedDigest(
   };
 }
 
+/**
+ * A 档列表行 + 其 retracted 集合。rows → retracted 内部串行（loadRetractedSet 依赖 rows 抽出
+ * 的 proposalIds）；整体与 breaker 查询无依赖，故由调用方与 checkAutoApplyBreaker 并行取。
+ */
+async function loadAutoAppliedRows(db: DbLike, windowStart: Date) {
+  const rows = await db
+    .select({
+      subjectId: event.subject_id,
+      payload: event.payload,
+      createdAt: event.created_at,
+      title: learning_item.title,
+    })
+    .from(event)
+    .leftJoin(learning_item, eq(learning_item.id, event.subject_id))
+    .where(and(eq(event.action, COMPLETION_AUTOAPPLY_ACTION), gte(event.created_at, windowStart)))
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(AUTO_APPLIED_MAX_ROWS);
+
+  const proposalIds = rows
+    .map((r) => readProposalId(r.payload))
+    .filter((id): id is string => id.length > 0);
+  const revertedSet = await loadRetractedSet(db, proposalIds);
+  return { rows, revertedSet };
+}
+
 function readProposalId(payload: unknown): string {
   const value = (payload as { proposal_id?: unknown } | null)?.proposal_id;
   return typeof value === 'string' ? value : '';
 }
 
-function readLevel(payload: unknown): string {
+// 合法熔断档位集合——解析 payload.level 后 narrow（非法/缺失值落 'ok'，与读模型契约一致）。
+const VALID_BREAKER_STATUSES: ReadonlySet<VerdictBreakerStatus> = new Set([
+  'ok',
+  'warned',
+  'tripped',
+]);
+
+function readLevel(payload: unknown): VerdictBreakerStatus {
   const value = (payload as { level?: unknown } | null)?.level;
-  return typeof value === 'string' ? value : 'ok';
+  if (typeof value === 'string' && VALID_BREAKER_STATUSES.has(value as VerdictBreakerStatus)) {
+    return value as VerdictBreakerStatus;
+  }
+  return 'ok';
 }
 
 /** proposalIds 中已被 retract（correct + correction_kind='retract'）的集合。 */

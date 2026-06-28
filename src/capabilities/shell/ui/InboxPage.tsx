@@ -46,9 +46,9 @@ function formatWindowLabel(windowMs: number): string {
   return `近 ${minutes} 分钟`;
 }
 
-// A 档卡的窗口脚注文案（早返，避免链式三元 — 项目红线）。
-function windowText(state: 'live' | 'consumed' | 'reverted', remainingMinutes: number): string {
-  if (state === 'reverted') return '已撤销 · 恢复到应用前';
+// A 档卡的窗口脚注文案（早返，避免链式三元 — 项目红线）。reverted 态在 JSX 里单独硬渲，
+// 不经此函数——故 state 只收 'live' | 'consumed'（删原 'reverted' 死分支）。
+function windowText(state: 'live' | 'consumed', remainingMinutes: number): string {
   if (state === 'consumed') return '已无法干净撤销';
   return `${remainingMinutes} 分钟内可撤销`;
 }
@@ -307,13 +307,14 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     }
   };
 
-  const status: StatefulStatus = q.isLoading
-    ? 'loading'
-    : q.isError
-      ? 'error'
-      : decide.length === 0 && moved.length === 0 && autoApplied.length === 0
-        ? 'empty'
-        : 'ok';
+  // 页态综合 q（pending 裁决）+ aaQ（A 档自动应用）两路读模型（if/else 替链式三元，守 OCR
+  // 红线）：A 档 loading 也算整页 loading——否则 aaQ 未就绪时三 count 暂为 0 会过早判 empty 盖掉
+  // A 段；empty 仅当三 count 全 0 且 aaQ 已成功 settle（aaQ.isError 落 'ok' 让 A 段错误卡显示）。
+  let status: StatefulStatus = 'ok';
+  if (q.isLoading || aaQ.isLoading) status = 'loading';
+  else if (q.isError) status = 'error';
+  else if (decide.length === 0 && moved.length === 0 && autoApplied.length === 0 && !aaQ.isError)
+    status = 'empty';
 
   const clearedEmpty = (
     <EmptyState
