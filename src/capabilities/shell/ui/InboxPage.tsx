@@ -113,6 +113,11 @@ function AutoAppliedCard({
   // A 档当前唯一 kind 是 completion；用其 KIND_META 取 label/icon。
   const meta = kindMeta('completion');
   const remainingMinutes = Math.max(1, Math.ceil(undoRemainingMs(appliedMs, nowMs) / 60_000));
+  // 撤销按钮 label（if/else 替链式三元，守项目「禁链式三元」OCR 红线）。
+  let revertLabel: string;
+  if (consumed) revertLabel = '已无法干净撤销';
+  else if (reverting) revertLabel = '撤销中…';
+  else revertLabel = '撤销';
   return (
     <div className={`aa-card ${state}`}>
       <span className="aa-ic">
@@ -151,7 +156,7 @@ function AutoAppliedCard({
                 onClick={() => onRevert(row.proposal_id)}
               >
                 <LoomIcon name="undo" size={13} />
-                {consumed ? '已无法干净撤销' : reverting ? '撤销中…' : '撤销'}
+                {revertLabel}
               </button>
             </>
           )}
