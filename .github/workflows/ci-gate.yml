@@ -57,7 +57,7 @@ jobs:
         if: steps.filter.outputs.code_changed != 'true'
         run: echo "✅ Docs-only PR — install/typecheck/lint/audit/test/build skipped. Gate green."
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.filter.outputs.code_changed == 'true'
         with:
           version: 9.12.0
