@@ -352,6 +352,19 @@ export async function acceptCompletionProposal(
   };
 
   await db.transaction(async (tx) => {
+    // YUK-499 — lock the item row FOR UPDATE as the FIRST statement of the tx, BEFORE the
+    // genesis-anchor + action event + ROW write. This closes BOTH concurrency windows the prior A2
+    // follow-up flagged: (1) the genesis check-then-insert race in ensureLearningItemGenesisAnchor
+    // (two concurrent accepts both read "no anchor" → two genesis events for one item, both gathered
+    // by Q1 → corrupt fold); and (2) the ON-path project TOCTOU (projectLearningItemGuarded has no
+    // version-CAS, so a later gather could miss an earlier uncommitted event → stale fold → row
+    // drift). Serializing on the row makes the read→fold→write-through atomic per item id. No-op cost
+    // on the OFF path (already version-CAS guarded). Mirrors the artifact lock in body-blocks-edit.ts.
+    await tx
+      .select({ id: learning_item.id })
+      .from(learning_item)
+      .where(eq(learning_item.id, learningItemId))
+      .for('update');
     // A1 — genesis-IF-MISSING for a pre-W2 / un-backfilled item, written BEFORE the complete action
     // event (clamped strictly earlier) so the action has a base to fold from. Fixes both the OFF
     // later-backfill-drift case AND the ON silent-row-no-op case (see the helper doc). No-op for an
@@ -416,15 +429,11 @@ export async function acceptCompletionProposal(
     // imperative UPDATE (current behavior — status→done, completed_at=now, version+1; the SAME `now`
     // the complete event carries) + a write-time fold==row parity assert.
     //
-    // A2 (DEFERRED follow-up — concurrency-semantics gap behind an OFF-by-default flag, NOT
-    // data-loss): the ON branch upserts via onConflictDoUpdate with NO version/FOR-UPDATE check,
-    // whereas the OFF branch uses eq(version, item.version) optimistic locking + 409, and the status
-    // precondition runs OUTSIDE the tx. So under the flag two concurrent accepts both project (no
-    // 409 for the loser, duplicate complete/evidence/rate events). The fold's terminal-status guard
-    // keeps the FINAL row deterministic (status→done is idempotent), so this never loses data — it
-    // only diverges the concurrency semantics from the OFF path. Adding an in-tx FOR-UPDATE re-check
-    // + version guard to the ON path broadens this lane meaningfully (new locking semantics + a
-    // dedicated concurrency test), so it is left for a follow-up rather than over-engineered here.
+    // A2 (RESOLVED, YUK-499) — the ON branch upserts via onConflictDoUpdate with no version-CAS, so
+    // the FOR-UPDATE row lock taken at the TOP of this tx is what serializes concurrent accepts (the
+    // status precondition is still read out-of-tx as a fast-fail, but the lock makes the fold-source
+    // events + project atomic per item id so the final row never drifts from fold(all events)). The
+    // fold's terminal-status guard additionally keeps status→done idempotent.
     if (projectionIsWriter('learning_item')) {
       await projectLearningItemGuarded(tx, learningItemId);
     } else {
@@ -505,6 +514,14 @@ export async function acceptRelearnProposal(
   const now = new Date();
   const rateEventId = newId();
   await db.transaction(async (tx) => {
+    // YUK-499 — lock the item row FOR UPDATE first (same rationale as acceptCompletionProposal):
+    // serializes concurrent learning_item writers, closing the genesis check-then-insert race AND
+    // the ON-path project TOCTOU. No-op cost on the OFF path (already version-CAS guarded).
+    await tx
+      .select({ id: learning_item.id })
+      .from(learning_item)
+      .where(eq(learning_item.id, learningItemId))
+      .for('update');
     // A1 — genesis-IF-MISSING for a pre-W2 / un-backfilled item, written BEFORE the relearn action
     // event (clamped strictly earlier) so the action has a base to fold from. Fixes both the OFF
     // later-backfill-drift case AND the ON silent-row-no-op case (see the helper doc). No-op for an
@@ -557,10 +574,9 @@ export async function acceptRelearnProposal(
     // imperative UPDATE (current behavior — status→in_progress, completed_at=null, version+1; the
     // SAME `now` the relearn event carries) + a write-time fold==row parity assert.
     //
-    // A2 (DEFERRED follow-up — same OFF-by-default concurrency-semantics gap as the completion path:
-    // the ON branch has no version/FOR-UPDATE check vs the OFF optimistic lock + out-of-tx status
-    // precondition; the terminal-status guard keeps the final row deterministic so this is not
-    // data-loss). Left for a follow-up rather than bolting OFF-path locking onto the ON path here.
+    // A2 (RESOLVED, YUK-499) — same as the completion path: the FOR-UPDATE row lock at the top of
+    // this tx serializes concurrent relearn/complete accepts, so the ON-path project (no version-CAS)
+    // stays atomic per item id and the final row never drifts from fold(all events).
     if (projectionIsWriter('learning_item')) {
       await projectLearningItemGuarded(tx, learningItemId);
     } else {

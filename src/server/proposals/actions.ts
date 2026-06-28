@@ -974,51 +974,61 @@ export async function dismissAiProposal(
         // + writes through; OFF → the imperative dismiss UPDATE (current behavior) + the write-time
         // fold==row parity assert. The dismiss only acts on a DRAFT row (the WHERE guard), so an
         // already-accepted variant is untouched on both paths.
-        const [draftMv] = await db
-          .select({ id: mistake_variant.id })
-          .from(mistake_variant)
-          .where(
-            and(
-              eq(mistake_variant.proposal_event_id, proposalId),
-              eq(mistake_variant.status, 'draft'),
-            ),
-          )
-          .limit(1);
-        if (draftMv) {
-          if (projectionIsWriter('mistake_variant')) {
-            await projectMistakeVariantGuarded(db, draftMv.id);
-          } else {
-            // REUSE the rate(dismiss) event's created_at (result.rate_at) for updated_at so the
-            // imperative row and the fold stamp the SAME value — fold(events) == live row
-            // deterministically (HIGH-1 double-clock guard). Do NOT open a new `new Date()`.
-            // rate_at is a non-optional return (both writeGenericRateEvent branches always set it),
-            // so no `?? new Date()` fallback is needed — a fallback would silently reintroduce the
-            // HIGH-1 double-clock drift if a future branch ever omitted it. (review NIT.)
-            await db
-              .update(mistake_variant)
-              .set({ status: 'dismissed', updated_at: result.rate_at })
-              .where(
-                and(
-                  eq(mistake_variant.proposal_event_id, proposalId),
-                  eq(mistake_variant.status, 'draft'),
-                ),
-              );
-            // APPLICABILITY GATE — only assert for an EVENT-SOURCED variant (create-base/genesis/
-            // index anchor); a pre-W2 / fixture row folds to null and would FALSE-mismatch.
-            if (await hasMistakeVariantGenesisAnchor(db, draftMv.id)) {
-              const [written] = await db
-                .select()
-                .from(mistake_variant)
-                .where(eq(mistake_variant.id, draftMv.id))
-                .limit(1);
-              await assertMistakeVariantParity(
-                db,
-                draftMv.id,
-                written ? mistakeVariantLiveRowToSnapshot(written) : null,
-              );
+        // YUK-499 — wrap the draft-row flip + project in ONE tx and lock the draft row FOR UPDATE
+        // (this dismiss path previously ran the row read + write-through on `db` in autocommit, with
+        // no serialization). The rate(dismiss) event was already written above (visible to the
+        // gather below). The lock serializes against a concurrent accept/verify/retract of the same
+        // mv — projectMistakeVariantGuarded has no version-CAS, so without it a later gather could
+        // miss an uncommitted event → stale fold → row drift. Wrapping also makes the OFF-path
+        // UPDATE + parity assert atomic (a parity mismatch now rolls back the dismiss flip).
+        await db.transaction(async (tx) => {
+          const [draftMv] = await tx
+            .select({ id: mistake_variant.id })
+            .from(mistake_variant)
+            .where(
+              and(
+                eq(mistake_variant.proposal_event_id, proposalId),
+                eq(mistake_variant.status, 'draft'),
+              ),
+            )
+            .for('update')
+            .limit(1);
+          if (draftMv) {
+            if (projectionIsWriter('mistake_variant')) {
+              await projectMistakeVariantGuarded(tx, draftMv.id);
+            } else {
+              // REUSE the rate(dismiss) event's created_at (result.rate_at) for updated_at so the
+              // imperative row and the fold stamp the SAME value — fold(events) == live row
+              // deterministically (HIGH-1 double-clock guard). Do NOT open a new `new Date()`.
+              // rate_at is a non-optional return (both writeGenericRateEvent branches always set it),
+              // so no `?? new Date()` fallback is needed — a fallback would silently reintroduce the
+              // HIGH-1 double-clock drift if a future branch ever omitted it. (review NIT.)
+              await tx
+                .update(mistake_variant)
+                .set({ status: 'dismissed', updated_at: result.rate_at })
+                .where(
+                  and(
+                    eq(mistake_variant.proposal_event_id, proposalId),
+                    eq(mistake_variant.status, 'draft'),
+                  ),
+                );
+              // APPLICABILITY GATE — only assert for an EVENT-SOURCED variant (create-base/genesis/
+              // index anchor); a pre-W2 / fixture row folds to null and would FALSE-mismatch.
+              if (await hasMistakeVariantGenesisAnchor(tx, draftMv.id)) {
+                const [written] = await tx
+                  .select()
+                  .from(mistake_variant)
+                  .where(eq(mistake_variant.id, draftMv.id))
+                  .limit(1);
+                await assertMistakeVariantParity(
+                  tx,
+                  draftMv.id,
+                  written ? mistakeVariantLiveRowToSnapshot(written) : null,
+                );
+              }
             }
           }
-        }
+        });
         await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
       }
       // STRIP the internal rate_at timestamp at the HTTP boundary — it threads the OFF-path
@@ -1145,7 +1155,11 @@ export async function retractAiProposal(
             eq(mistake_variant.proposal_event_id, proposalId),
             inArray(mistake_variant.status, ['draft', 'active']),
           ),
-        );
+        )
+        // YUK-499 — lock the retracted rows FOR UPDATE so the project loop (ON, no version-CAS) /
+        // imperative UPDATE serializes against a concurrent accept/verify/dismiss of the same mv.
+        // Held for the whole retract tx, so the read→fold→write stays atomic per mv id.
+        .for('update');
       if (projectionIsWriter('mistake_variant')) {
         for (const mv of retractedMvs) {
           await projectMistakeVariantGuarded(tx, mv.id);
@@ -1203,7 +1217,13 @@ export async function retractAiProposal(
       const affectedItems = await tx
         .select()
         .from(learning_item)
-        .where(and(eq(learning_item.source_ref, proposalId), isNull(learning_item.archived_at)));
+        .where(and(eq(learning_item.source_ref, proposalId), isNull(learning_item.archived_at)))
+        // YUK-499 — lock the affected rows FOR UPDATE so the per-item genesis-if-missing +
+        // archive event + project step serialize against concurrent learning_item writers. This
+        // closes both the genesis check-then-insert race (a concurrent complete/relearn could create
+        // a genesis between this scan and the inline hasLearningItemGenesisAnchor check below) and
+        // the ON-path project TOCTOU. The lock is held for the whole retract tx.
+        .for('update');
       const flip = projectionIsWriter('learning_item');
       for (const item of affectedItems) {
         // genesis-IF-MISSING — anchor a pre-W2 / un-backfilled item with a snapshot of its CURRENT
@@ -1336,6 +1356,11 @@ export async function retractAiProposal(
       // GOAL_ANCHOR_ACTIONS), so it does not flip this read: a goal with no genesis/proposal anchor
       // still reads false here and is correctly SKIPPED below (its fold is null and would
       // FALSE-mismatch the live row → assertGoalParity throws in dev/test).
+      // YUK-499 — lock the goal row FOR UPDATE before the ROW write so this retract's project/UPDATE
+      // serializes against a concurrent goal status/scope update (which also takes this lock). The
+      // ON-path projectGoalGuarded has no version-CAS, so the lock is what keeps the read→fold→write
+      // atomic per goal id. No-op cost on the OFF path. (A 0-row lock if the goal was already deleted.)
+      await tx.select({ id: goal.id }).from(goal).where(eq(goal.id, goalId)).for('update');
       const wasGoalEventSourced = await hasGoalGenesisAnchor(tx, goalId);
       if (projectionIsWriter('goal')) {
         // ON: projectGoalGuarded's own anchor guard is intact here (the correct event is not a goal
