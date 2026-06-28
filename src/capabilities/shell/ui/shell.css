@@ -376,6 +376,16 @@
   display: none;
 }
 
+/* ---- YUK-520 (A1 夜窗 digest) — 最小交班缕（计数 chips + 下钻 CTA） ---- */
+.digest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.digest-foot {
+  margin-top: var(--s-3);
+}
+
 /* ---- responsive (screens.css L352-363 相关行) ---- */
 @media (max-width: 720px) {
   .inbox-loom .proposal-foot .meta-row {
