@@ -22,7 +22,7 @@ function MasteryRing({ pct, size = 34 }) {
 }
 
 // ── interactive pan/zoom mesh ───────────────────────────────────────────
-function MeshGraph({ onPick, active }) {
+function MeshGraph({ onPick, active, frontierIds = [], misc = [], mode }) {
   const nodes = DATA.knowledge;
   const edges = DATA.knowledgeEdges;
   // deterministic radial-ish layout by depth
@@ -36,13 +36,37 @@ function MeshGraph({ onPick, active }) {
     return P;
   }, [nodes]);
 
+  const miscPos = React.useMemo(() => {
+    const M = {};
+    misc.forEach((m, i) => { const t = pos[m.targets[0]]; if (t) M[m.id] = { x: t.x + 72, y: t.y - 58 - i * 6 }; });
+    return M;
+  }, [misc, pos]);
+
   const [view, setView] = React.useState({ x: 0, y: 0, k: 1 });
   const drag = React.useRef(null);
+  const pinch = React.useRef(null);
   const onDown = (e) => { drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y }; };
   const onMove = (e) => { if (!drag.current) return; setView((v) => ({ ...v, x: drag.current.x + (e.clientX - drag.current.px), y: drag.current.y + (e.clientY - drag.current.py) })); };
   const onUp = () => { drag.current = null; };
   const zoom = (d) => setView((v) => ({ ...v, k: Math.min(2, Math.max(0.5, +(v.k + d).toFixed(2))) }));
-  const onWheel = (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? -0.1 : 0.1); };
+
+  // 手势：单指拖拽平移 · 双指捆合缩放（代替滚轮缩放）
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const onTouchStart = (e) => {
+    if (e.touches.length === 2) { drag.current = null; pinch.current = { d: dist(e.touches), k: view.k }; }
+    else if (e.touches.length === 1) { const t = e.touches[0]; drag.current = { px: t.clientX, py: t.clientY, x: view.x, y: view.y }; }
+  };
+  const onTouchMove = (e) => {
+    if (e.touches.length === 2 && pinch.current) {
+      e.preventDefault();
+      const ratio = dist(e.touches) / pinch.current.d;
+      setView((v) => ({ ...v, k: Math.min(2, Math.max(0.5, +(pinch.current.k * ratio).toFixed(2))) }));
+    } else if (e.touches.length === 1 && drag.current) {
+      const t = e.touches[0];
+      setView((v) => ({ ...v, x: drag.current.x + (t.clientX - drag.current.px), y: drag.current.y + (t.clientY - drag.current.py) }));
+    }
+  };
+  const onTouchEnd = (e) => { if (e.touches.length < 2) pinch.current = null; if (e.touches.length === 0) drag.current = null; };
 
   const edge = (ed, i) => {
     const A = pos[ed.a], B = pos[ed.b]; if (!A || !B) return null;
@@ -59,6 +83,9 @@ function MeshGraph({ onPick, active }) {
 
   return (
     <div className="mesh-wrap">
+      {mode === "focus" && (
+        <div className="kg-focus-bar"><Icon name="target" size={13} />聚焦子图 · 从 frontier 或所选点的一跳邻居展开 · 双指捆合缩放、拖拽平移逐步铺开，绝不一次性灌全量</div>
+      )}
       <div className="mesh-controls">
         <button className="mesh-zoom-btn" title="缩小" onClick={() => zoom(-0.1)}><Icon name="minus" size={15} /></button>
         <span className="mono mesh-zoom">{Math.round(view.k * 100)}%</span>
@@ -66,7 +93,7 @@ function MeshGraph({ onPick, active }) {
         <span className="mesh-ctrl-div" />
         <button className="mesh-zoom-btn" title="复位" onClick={() => setView({ x: 0, y: 0, k: 1 })}><Icon name="refresh" size={15} /></button>
       </div>
-      <div className="mesh-stage2" onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp} onWheel={onWheel}>
+      <div className="mesh-stage2" onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
         <svg width="100%" height="100%" viewBox="0 0 1000 560" className="mesh-svg">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -78,6 +105,13 @@ function MeshGraph({ onPick, active }) {
           </defs>
           <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
             {edges.map(edge)}
+            {nodes.filter((n) => frontierIds.includes(n.id)).map((n) => {
+              const p = pos[n.id]; if (!p) return null;
+              const fr = (window.KA5 && KA5.frontier.find((f) => f.kid === n.id));
+              const r = (n.kind === "hub" ? 24 : 18) + 7;
+              return <circle key={"halo" + n.id} cx={p.x} cy={p.y} r={r} className={"mesh-frontier-halo" + (fr && fr.propose ? " propose" : "")} />;
+            })}
+            {misc.map((m) => (m.targets || []).map((tid) => { const mp = miscPos[m.id], tp = pos[tid]; if (!mp || !tp) return null; return <line key={m.id + tid} x1={mp.x} y1={mp.y} x2={tp.x} y2={tp.y} className="mesh-edge-misc" />; }))}
             {nodes.map((n, i) => {
               const p = pos[n.id]; if (!p) return null;
               const tone = n.mastery >= 67 ? "good" : n.mastery >= 45 ? "hard" : "again";
@@ -102,6 +136,18 @@ function MeshGraph({ onPick, active }) {
                 </g>
               );
             })}
+            {misc.map((m) => {
+              const mp = miscPos[m.id]; if (!mp) return null;
+              return (
+                <g key={"misc" + m.id} transform={`translate(${mp.x} ${mp.y})`} className={"mesh-misc " + m.status}
+                  tabIndex={0} role="button" aria-label={"误区：" + m.label}
+                  onClick={() => onPick(nodes.find((n) => n.id === m.targets[0]))}>
+                  <rect x="-12" y="-12" width="24" height="24" rx="4" transform="rotate(45)" className="mesh-misc-shape" />
+                  <text y="3.5" textAnchor="middle" className="mesh-misc-label">误</text>
+                  <text y="26" textAnchor="middle" className="mesh-misc-label">{m.label.length > 7 ? m.label.slice(0, 7) + "…" : m.label}</text>
+                </g>
+              );
+            })}
           </g>
         </svg>
       </div>
@@ -112,6 +158,11 @@ function MeshGraph({ onPick, active }) {
             <span className="mono">{REL_CUE[r].glyph} {REL_CUE[r].label}</span>
           </span>
         ))}
+      </div>
+      <div className="kg-legend2">
+        <span className="lg"><span className="lg-dot" />知识点 · 弧长 = 掉握档</span>
+        <span className="lg"><span className="lg-diamond" />误区节点 · 关于你大脑的信念</span>
+        <span className="lg"><span className="lg-halo" />frontier · 下一步学得动</span>
       </div>
     </div>
   );
@@ -169,7 +220,7 @@ function NodeDrawer({ node, open, onClose, go }) {
       <div className={"scrim" + (open ? " open" : "")} onClick={onClose} />
       <aside ref={panelRef} className={"drawer" + (open ? " open" : "")} role="dialog" aria-modal={open} aria-label={node.title} aria-hidden={!open}>
         <div className="drawer-head">
-          <MasteryRing pct={node.mastery} size={40} />
+          <span className="card-icon"><Icon name="knowledge" size={18} /></span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="drawer-title serif">{node.title}</div>
             <div className="meta mono">{node.tag} · {node.kind}</div>
@@ -178,10 +229,12 @@ function NodeDrawer({ node, open, onClose, go }) {
         </div>
 
         <div className="drawer-body">
-          <div className="node-metrics">
-            <div className="nm"><div className="nm-n serif">{node.mastery}%</div><div className="nm-l meta">掌握度</div></div>
-            <div className="nm"><div className="nm-n serif">{node.evidence}</div><div className="nm-l meta">evidence</div></div>
-            <div className="nm"><div className="nm-n"><Badge tone={node.decay === "decaying" ? "again" : node.decay === "slow" ? "hard" : "good"}><Icon name={DECAY_META[node.decay].icon} size={12} />{DECAY_META[node.decay].label}</Badge></div><div className="nm-l meta">decay</div></div>
+          <div style={{ marginBottom: "var(--s-4)" }}>
+            <MasteryBand m={masteryBand(node, "综合掌握")} />
+            <div className="node-metrics" style={{ marginTop: "var(--s-3)" }}>
+              <div className="nm"><div className="nm-n serif">{node.evidence}</div><div className="nm-l meta">evidence</div></div>
+              <div className="nm"><div className="nm-n"><Badge tone={node.decay === "decaying" ? "again" : node.decay === "slow" ? "hard" : "good"}><Icon name={DECAY_META[node.decay].icon} size={12} />{DECAY_META[node.decay].label}</Badge></div><div className="nm-l meta">decay</div></div>
+            </div>
           </div>
 
           {/* hierarchy block — visually separate from typed relations */}
@@ -194,7 +247,7 @@ function NodeDrawer({ node, open, onClose, go }) {
             ) : <div className="quiet-empty">根节点（无父）</div>}
             {children.map((c) => (
               <button key={c.id} className="rel-row indent" onClick={() => go("knowledge/" + c.id)}>
-                <span className="rel-kind mono">child</span><span className="wenyan">{c.title}</span><MasteryRing pct={c.mastery} size={24} />
+                <span className="rel-kind mono">child</span><span className="wenyan">{c.title}</span><BandChip node={c} />
               </button>
             ))}
           </div>
@@ -257,8 +310,9 @@ function EdgeProposalRow({ e, node, other }) {
 
 function ScreenKnowledge({ go, ui = {} }) {
   const ds = ui.dataState || "ok";
-  const [view, setView] = React.useState("tree");
+  const [view, setView] = React.useState("graph");
   const [picked, setPicked] = React.useState(null);
+  const [gmode, setGmode] = React.useState(ui.graphMode || "frontier");
 
   return (
     <div className="page view">
@@ -277,6 +331,8 @@ function ScreenKnowledge({ go, ui = {} }) {
         <p className="page-lead">树是骨架（parent/child），mesh 是 5 类 typed 关系。点节点看详情抽屉；图可平移缩放。</p>
       </div>
 
+      <FrontierRail go={go} />
+
       <Card pad sunk style={{ marginBottom: "var(--s-5)", display: "flex", alignItems: "center", gap: "var(--s-4)", flexWrap: "wrap", borderColor: "var(--coral-line)" }}>
         <span className="card-icon accent"><Icon name="link" size={18} /></span>
         <div style={{ flex: 1, minWidth: 180 }}>
@@ -294,11 +350,11 @@ function ScreenKnowledge({ go, ui = {} }) {
             {DATA.knowledge.map((n) => (
               <button key={n.id} className={"know-node" + (n.decay === "decaying" ? " hot" : "")} style={{ paddingLeft: `calc(var(--s-5) + ${n.depth * 22}px)`, width: "100%", textAlign: "left", border: 0, background: "transparent" }} onClick={() => setPicked(n)}>
                 {n.depth > 0 && <span className="know-twig">└</span>}
-                <MasteryRing pct={n.mastery} size={30} />
                 <span className="know-title wenyan">{n.title}</span>
                 <span className="chip chip-k mono">{n.tag}</span>
                 <Badge tone={n.decay === "decaying" ? "again" : n.decay === "slow" ? "hard" : "good"}><Icon name={DECAY_META[n.decay].icon} size={11} />{DECAY_META[n.decay].label}</Badge>
                 <div className="know-end">
+                  <BandChip node={n} />
                   <span className="meta mono">{n.evidence} ev</span>
                   {n.mistakes > 0 && <Badge tone="again">{n.mistakes} 错</Badge>}
                   {n.mesh > 0 && <Badge tone="info"><Icon name="link" size={11} />{n.mesh}</Badge>}
@@ -308,7 +364,14 @@ function ScreenKnowledge({ go, ui = {} }) {
             ))}
           </Card>
         ) : (
-          <MeshGraph onPick={setPicked} />
+          <div>
+            <div className="kg-mode" style={{ marginBottom: "var(--s-3)" }} role="group" aria-label="图导航模式">
+              <button className={gmode === "frontier" ? "on" : ""} onClick={() => setGmode("frontier")}><Icon name="target" size={14} />frontier 优先</button>
+              <button className={gmode === "focus" ? "on" : ""} onClick={() => setGmode("focus")}><Icon name="eye" size={14} />聚焦 + 展开</button>
+            </div>
+            {gmode === "frontier" && <div className="kg-focus-bar"><Icon name="target" size={13} />frontier 优先 · 上面「下一步学得动」是入口，图谱是从它下钻的全貌 · 误区节点以菱形挂在其所属知识点旁</div>}
+            <MeshGraph onPick={setPicked} frontierIds={KA5.frontier.map((f) => f.kid)} misc={KA5.misconceptions} mode={gmode} />
+          </div>
         )}
       </Stateful>
 

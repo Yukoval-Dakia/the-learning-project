@@ -1,0 +1,97 @@
+/* Loom · A8 录入出口叙事 + rescue 失败 + 边缘退化态. warm-paper / coral. */
+
+/* ── 进度 / 进行中(全程可见 · 可重连重放) ───────────────── */
+.ing-progress { border: 1px solid var(--line); border-radius: var(--r-3); background: var(--paper-raised); box-shadow: var(--shadow-1); overflow: hidden; }
+.ing-prog-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); background: var(--paper-sunk); border-bottom: 1px solid var(--line); }
+.ing-prog-head .ico { color: var(--coral); flex: none; }
+.ing-prog-title { font: 600 var(--fs-caption)/1.3 var(--font-sans); color: var(--ink); flex: 1; min-width: 0; }
+.ing-prog-cancel { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--paper-raised); cursor: pointer; color: var(--ink-3); padding: 5px 11px; border-radius: var(--r-2); font: 500 var(--fs-meta)/1 var(--font-sans); transition: all var(--dur-fast); white-space: nowrap; }
+.ing-prog-cancel:hover { border-color: var(--again-line); color: var(--again-ink); }
+.ing-steps { padding: var(--s-3) var(--s-4); display: grid; gap: 0; }
+.ing-step { display: flex; align-items: center; gap: var(--s-3); padding: 7px 0; position: relative; }
+.ing-step-dot { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; border: 1.5px solid var(--line-strong); background: var(--paper-raised); color: var(--ink-4); z-index: 2; }
+.ing-step.done .ing-step-dot { background: var(--good-soft); border-color: var(--good-line); color: var(--good-ink); }
+.ing-step.running .ing-step-dot { border-color: var(--coral); color: var(--coral); }
+.ing-step:not(:last-child)::before { content: ""; position: absolute; left: 9.5px; top: 24px; bottom: -3px; width: 1.5px; background: var(--line); }
+.ing-step.done:not(:last-child)::before { background: var(--good-line); }
+.ing-step-l { font: 500 var(--fs-caption)/1.3 var(--font-sans); color: var(--ink-2); }
+.ing-step.pending .ing-step-l { color: var(--ink-4); }
+.ing-step-meta { margin-left: auto; font: 400 11px/1 var(--font-mono); color: var(--ink-4); white-space: nowrap; }
+.ing-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--coral); border-top-color: transparent; animation: ho-spin .8s linear infinite; }
+.ing-reconnect { padding: var(--s-2) var(--s-4); border-top: 1px solid var(--line-soft); background: var(--paper); font: 400 var(--fs-meta)/1.4 var(--font-sans); color: var(--ink-4); display: flex; align-items: center; gap: 6px; }
+.ing-cancelled { padding: var(--s-4); display: flex; align-items: flex-start; gap: var(--s-2); }
+
+/* original-material retention chip (always visible) */
+.ing-original { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3); background: var(--paper-sunk); border: 1px solid var(--line); border-radius: var(--r-2); font: 400 var(--fs-meta)/1.3 var(--font-sans); color: var(--ink-3); margin-bottom: var(--s-3); }
+.ing-original .ico { color: var(--good-ink); flex: none; }
+.ing-original b { color: var(--ink-2); font-weight: 600; }
+.ing-original .keep { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--good-ink); white-space: nowrap; }
+
+/* ── 成功出口叙事 ──────────────────────────────────────── */
+.ing-exit { display: grid; gap: var(--s-3); }
+.ing-exit-hero { background: var(--good-soft); border: 1px solid var(--good-line); border-radius: var(--r-4); padding: var(--s-5); }
+.ing-exit-hero-top { display: flex; align-items: center; gap: var(--s-2); margin-bottom: 6px; }
+.ing-exit-hero-ic { width: 32px; height: 32px; border-radius: var(--r-2); background: var(--good); color: #fff; display: grid; place-items: center; flex: none; }
+.ing-exit-title { font: 600 var(--fs-h4)/1.2 var(--font-serif); color: var(--ink); }
+.ing-exit-lede { font: 400 var(--fs-body)/var(--lh-prose) var(--font-sans); color: var(--ink-2); margin: 0; text-wrap: pretty; }
+.ing-exit-lede b { color: var(--ink); font-weight: 600; }
+
+.ing-exit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+.ing-exit-card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow-1); padding: var(--s-4); }
+.ing-exit-card-l { display: flex; align-items: center; gap: 6px; font: 600 var(--fs-meta)/1 var(--font-sans); letter-spacing: var(--ls-wide); text-transform: uppercase; color: var(--ink-4); margin-bottom: var(--s-3); }
+.ing-exit-card-l .ico { color: var(--coral); }
+.ing-tree-path { font: 500 var(--fs-caption)/1.5 var(--font-sans); color: var(--ink-2); }
+.ing-tree-path .seg-cur { color: var(--ink); font-weight: 600; }
+.ing-tree-go { margin-top: var(--s-3); }
+.ing-node-list { display: grid; gap: 6px; }
+.ing-node { display: flex; align-items: center; gap: var(--s-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--paper); cursor: pointer; width: 100%; text-align: left; transition: border-color var(--dur-fast); }
+.ing-node:hover { border-color: var(--coral-line); }
+.ing-node .nm { font: 500 var(--fs-caption)/1.2 var(--font-sans); color: var(--ink); flex: 1; min-width: 0; }
+.ing-node .nm.wenyan { font-family: var(--font-wenyan, var(--font-serif)); }
+.ing-node-new { font: 600 10px/1 var(--font-sans); color: #fff; background: var(--coral); padding: 2px 6px; border-radius: var(--r-pill); }
+.ing-node-tag { font: 400 10px/1 var(--font-mono); color: var(--ink-4); }
+
+/* orchestrator proactive proposal (echoes A3) */
+.ing-proposal { display: flex; align-items: flex-start; gap: var(--s-2); padding: var(--s-4); background: var(--coral-soft); border: 1px solid var(--coral-line); border-radius: var(--r-3); }
+.ing-proposal .ico { color: var(--coral); flex: none; margin-top: 2px; }
+.ing-proposal-body { flex: 1; min-width: 0; }
+.ing-proposal-trigger { font: 600 10px/1 var(--font-mono); letter-spacing: var(--ls-wide); color: var(--coral-ink); text-transform: uppercase; }
+.ing-proposal-text { font: 400 var(--fs-caption)/1.5 var(--font-sans); color: var(--ink-2); margin-top: 3px; text-wrap: pretty; }
+.ing-proposal-acts { display: flex; gap: var(--s-2); margin-top: var(--s-3); flex-wrap: wrap; }
+
+.ing-exit-foot { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+
+/* ── rescue 失败态 (兜底救援也失败) ────────────────────── */
+.ing-rescue { border: 1px solid var(--again-line); background: var(--again-soft); border-radius: var(--r-3); padding: var(--s-4) var(--s-5); }
+.ing-rescue-top { display: flex; align-items: center; gap: var(--s-2); margin-bottom: 6px; }
+.ing-rescue-top .ico { color: var(--again-ink); flex: none; }
+.ing-rescue-title { font: 600 var(--fs-body-lg)/1.3 var(--font-serif); color: var(--again-ink); }
+.ing-rescue-why { font: 400 var(--fs-caption)/var(--lh-prose) var(--font-sans); color: var(--again-ink); margin: 0 0 var(--s-2); text-wrap: pretty; }
+.ing-rescue-why b { font-weight: 600; }
+.ing-rescue-acts { display: flex; gap: var(--s-2); margin-top: var(--s-3); flex-wrap: wrap; align-items: center; }
+
+/* ── 边缘退化态 (诚实标记,不静默吞) ────────────────────── */
+.ing-degrade { display: flex; align-items: flex-start; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-radius: var(--r-2); margin-bottom: var(--s-2); border: 1px solid; }
+.ing-degrade.warn { background: var(--hard-soft); border-color: var(--hard-line); }
+.ing-degrade.warn .ico { color: var(--hard-ink); flex: none; margin-top: 1px; }
+.ing-degrade-txt { font: 400 var(--fs-meta)/1.5 var(--font-sans); }
+.ing-degrade.warn .ing-degrade-txt { color: var(--hard-ink); }
+.ing-degrade-txt b { font-weight: 600; }
+.ing-degrade-act { margin-left: auto; flex: none; }
+
+/* figure-crop 回显 — show extracted figure for confirm */
+.ing-figure { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--paper-raised); margin-bottom: var(--s-2); }
+.ing-figure-thumb { width: 92px; height: 72px; border-radius: var(--r-2); border: 1px solid var(--line); background: var(--paper-sunk); display: grid; place-items: center; color: var(--ink-4); flex: none; overflow: hidden; }
+.ing-figure-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.ing-figure-body { flex: 1; min-width: 0; }
+.ing-figure-l { font: 600 var(--fs-meta)/1 var(--font-sans); color: var(--ink-3); margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
+.ing-figure-q { font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-2); margin-bottom: var(--s-2); }
+.ing-figure-acts { display: flex; gap: var(--s-2); }
+
+/* empty block — honestly flagged, fillable */
+.ing-emptyblock { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); border: 1px dashed var(--line-strong); border-radius: var(--r-2); background: var(--paper-sunk); margin-bottom: var(--s-2); }
+.ing-emptyblock .ico { color: var(--ink-4); flex: none; }
+.ing-emptyblock-txt { font: 400 var(--fs-meta)/1.4 var(--font-sans); color: var(--ink-4); flex: 1; }
+.ing-emptyblock-txt b { color: var(--ink-3); font-weight: 600; }
+
+@media (max-width: 640px) { .ing-exit-grid { grid-template-columns: 1fr; } }

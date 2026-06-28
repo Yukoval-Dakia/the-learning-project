@@ -53,6 +53,7 @@ const ICONS = {
   camera:   '<path d="M4 8a2 2 0 0 1 2-2h1l1.2-2h5.6L17 6h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z"/><circle cx="12" cy="13" r="3.2"/>',
   alert:    '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
   archive:  '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>',
+  lock:     '<rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
   grip:     '<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>',
   slash:    '<path d="M9 20 15 4"/>',
   fx:       '<path d="M5 19c2 0 3-1 3.5-4L11 4M7 9h6M14 12l6 7M20 12l-6 7"/>',

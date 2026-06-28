@@ -115,12 +115,22 @@ function ManualMode() {
   );
 }
 
-// vision_single / vision_paper — capture → extract → confirm
-function VisionMode({ paper }) {
+// vision_single / vision_paper — capture → extract → confirm → exit (A8)
+function VisionMode({ paper, recordState = "ok", go }) {
   const d = DATA.ingestDraft;
-  const [stage, setStage] = React.useState("capture"); // capture | extracting | confirm | error
+  const [stage, setStage] = React.useState("capture"); // capture | extracting | confirm | error | rescuefail | progress | cancelled | exit
   const [extracted, setExtracted] = React.useState([]);
+  const [cancelled, setCancelled] = React.useState(false);
+  const pdfSteps = [
+    { label: "上传原件 · PDF 2 页", state: "done", meta: "642 KB" },
+    { label: "OCR 逐页识别", state: "done", meta: "2/2" },
+    { label: "VLM 兜底校正 + 切分题块", state: "running", meta: "…" },
+    { label: "挂知识点 · 生成出口", state: "pending" },
+  ];
   const run = () => {
+    setCancelled(false);
+    if (recordState === "rescuefail") { setStage("rescuefail"); return; }
+    if (recordState === "pdftimeout") { setStage("progress"); return; }
     setStage("extracting"); setExtracted([]);
     d.extracted.forEach((e, i) => setTimeout(() => {
       setExtracted((p) => [...p, e]);
@@ -137,8 +147,15 @@ function VisionMode({ paper }) {
           <Btn variant="primary" icon="sparkle">{paper ? "上传并抽取" : "拍照并抽取"}</Btn>
         </div>
       )}
+      {stage === "progress" && (
+        <IngestProgress steps={pdfSteps} cancelled={cancelled}
+          onCancel={() => setCancelled(true)}
+          note="超时也能真取消 —— 点取消即停后台任务，不是假装。关页/刷新可重连重放。" />
+      )}
+      {stage === "rescuefail" && <RescueFail onRetry={() => setStage("capture")} go={go} />}
       {stage === "extracting" && (
         <div>
+          <OriginalChip />
           <div className="vision-status nowrap-meta"><Icon name="refresh" size={14} className="spin" />抽取中… · vision_extract</div>
           <SkLines rows={3} />
           <div className="hero-cta" style={{ marginTop: "var(--s-3)" }}>
@@ -147,10 +164,11 @@ function VisionMode({ paper }) {
         </div>
       )}
       {stage === "error" && (
-        <ErrorState text="抽取失败 · vision_extract 超时。" onRetry={run} />
+        <div><OriginalChip /><ErrorState text="抽取失败 · vision_extract 超时。" onRetry={run} /></div>
       )}
       {stage === "confirm" && (
         <div>
+          <OriginalChip />
           <div className="vision-status nowrap-meta"><Icon name="check" size={14} style={{ color: "var(--good)" }} />抽取完成 · 确认 {extracted.length} 个 block</div>
           <div className="extracted-list">
             {extracted.map((e, i) => (
@@ -166,11 +184,12 @@ function VisionMode({ paper }) {
             ))}
           </div>
           <div className="hero-cta" style={{ marginTop: "var(--s-4)" }}>
-            <Btn variant="primary" icon="check">确认并纳入</Btn>
+            <Btn variant="primary" icon="check" onClick={() => setStage("exit")}>确认并纳入</Btn>
             <Btn variant="ghost" icon="undo" onClick={() => setStage("capture")}>重新抽取</Btn>
           </div>
         </div>
       )}
+      {stage === "exit" && <IngestExit go={go || (() => {})} degrade={["docx", "emptyblock", "figurecrop"].includes(recordState) ? recordState : null} />}
     </Card>
   );
 }
@@ -236,8 +255,8 @@ function ScreenRecord({ go, ui = {} }) {
       <div className="mode-body fade-key" key={mode}>
         {mode === "context" && <ContextMode />}
         {mode === "manual" && <ManualMode />}
-        {mode === "vision_single" && <VisionMode paper={false} />}
-        {mode === "vision_paper" && <VisionMode paper={true} />}
+        {mode === "vision_single" && <VisionMode paper={false} recordState={ui.recordState || "ok"} go={go} />}
+        {mode === "vision_paper" && <VisionMode paper={true} recordState={ui.recordState || "ok"} go={go} />}
       </div>
 
       <AutoEnrollPanel ui={ui} />

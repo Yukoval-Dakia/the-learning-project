@@ -3,7 +3,7 @@ function AdminShell({ go, route, ui = {} }) {
   const ds = ui.dataState || "ok";
   const sub = route.split("/")[1] || "runs";
   const a = DATA.admin;
-  const nav = [["runs", "Runs", "history"], ["cost", "Cost", "bolt"], ["failures", "Failures", "alert"]];
+  const nav = [["runs", "Runs", "history"], ["cost", "Cost", "bolt"], ["failures", "Failures", "alert"], ["calibration", "校准", "target"]];
   const maxDay = Math.max(...a.costByDay.map((d) => d[1]));
   const maxTask = Math.max(...a.costByTask.map((t) => t[1]));
 
@@ -74,6 +74,8 @@ function AdminShell({ go, route, ui = {} }) {
               </div>
             </div>
           )}
+
+          {sub === "calibration" && <CalibrationView a={a.calibration} go={go} ui={ui} />}
 
           {sub === "failures" && (
             <div>
