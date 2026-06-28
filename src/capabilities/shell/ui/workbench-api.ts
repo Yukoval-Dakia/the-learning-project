@@ -31,6 +31,26 @@ export interface WorkbenchSummary {
 
 export const getWorkbenchSummary = () => apiJson<WorkbenchSummary>('/api/workbench/summary');
 
+// ── /api/workbench/overnight-digest wire（YUK-520 A1 夜窗 digest，overnight-digest.db.test.ts
+// 同形态；与 server overnight-digest-summary.ts 的 OvernightDigest 镜像） ──
+export interface OvernightRunGroup {
+  task_kind: string;
+  count: number;
+  status_breakdown: Record<string, number>;
+}
+export interface OvernightDigest {
+  window: { from: string; to: string };
+  // 空夜显式信号：false → 空夜态（与加载中/失败可区分，永不落 ColdStart）。
+  has_overnight_activity: boolean;
+  runs: OvernightRunGroup[];
+  note_changes_count: number;
+  new_proposals_count: number;
+  new_conjectures_count: number;
+  agent_notes_count: number;
+}
+
+export const getOvernightDigest = () => apiJson<OvernightDigest>('/api/workbench/overnight-digest');
+
 export const getRecentAiChanges = () =>
   apiJson<{ window_hours: number; rows: AiChangeRow[] }>('/api/artifacts/ai-changes/recent');
 

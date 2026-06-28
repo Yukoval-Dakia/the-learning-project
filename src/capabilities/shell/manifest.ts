@@ -33,6 +33,13 @@ export const shellCapability = defineCapability({
         path: '/api/workbench/summary',
         load: () => import('./api/workbench-summary').then((m) => m.GET),
       },
+      // YUK-520 (A1 夜窗 digest) — 昨夜窗 digest 只读读模型（5 夜间事实源聚合 +
+      // has_overnight_activity 空夜显式信号）。供 /today 最小交班缕消费。
+      {
+        method: 'GET',
+        path: '/api/workbench/overnight-digest',
+        load: () => import('./api/overnight-digest').then((m) => m.GET),
+      },
       // YUK-406 / YUK-440 (教研团 Phase 0 / U4 备课台) — top ≤3 pending conjecture
       // 读模型（salience 排序，confidence 永不过线）。
       {
