@@ -238,6 +238,19 @@
     ]
   },
   {
+    "path": "/api/observability/effectiveness-trend",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "per-KC / per-subject 纵向成效趋势只读观测面（YUK-519 A7）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "聚合 experimental:mastery_progress 事件成纵向轨迹。返回 { series: per-KC[{knowledge_id,name,effective_domain,points:[{at,p_learned,theta_hat,theta_delta}],trend:{direction,confidence,span_evidence,has_mastery_signal},activity_count}], aggregate:{total_kcs_with_activity,total_events,by_subject:[{effective_domain,direction,confidence,kc_count,kc_with_mastery_signal,activity_count}]} }。direction=rising|holding|falling|insufficient（早窗 vs 近窗 θ̂ 均值比较，<4 事件=insufficient）。⑥硬约束：绝不裸 delta，只定性方向+置信档。has_mastery_signal=false → UI 走 activity_count 活动量代理。需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/editing-session/blur",
     "methods": [
       {
