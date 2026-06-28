@@ -11,7 +11,8 @@
 //
 // FRONTIER (MVP): candidates = active, non-draft questions whose knowledge_ids intersect the
 // goal subgraph KC set. Walking the KG frontier ALONG prereq edges is inc-E
-// (PREREQ_PROPAGATION_ENABLED); until then the goal-subgraph ∩ KLP-information frontier is
+// (the prereq-propagation family — PREREQ_THETA_PROPAGATION_ENABLED / PREREQ_RISK_EMIT_ENABLED);
+// until then the goal-subgraph ∩ KLP-information frontier is
 // the bound. Subject scoping is a DERIVED axis (caller passes the effective-domain KC set via
 // resolveSubjectKnowledgeIds) — NO subject root node (subject = view, not structure).
 //

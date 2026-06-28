@@ -8,16 +8,16 @@
 // ════════════════════════════════════════════════════════════════════════════
 // DARK-SHIP CONTRACT（YUK-455 验收：flag-off byte-identical）
 //
-//   PREREQ_PROPAGATION_ENABLED（module const, 默认 false）是唯一开关。dark 保证**完全
+//   PREREQ_RISK_EMIT_ENABLED（module const, 默认 false）是唯一开关。dark 保证**完全
 //   住在两个 call site**（submit.ts / paper-submit.ts），它们 gate 在
-//   `PREREQ_PROPAGATION_ENABLED && outcome==='failure'`——flag-off 时 `&&` 短路，
+//   `PREREQ_RISK_EMIT_ENABLED && outcome==='failure'`——flag-off 时 `&&` 短路，
 //   emitPrereqRiskSignal 永不被调，**零** `experimental:prereq_risk` 行写出 → event set
 //   与 inc-E 之前 BYTE-IDENTICAL（回归锚）。这与 THETA_GRID_ENABLED 的「use-site gate」范式
 //   一致（grid 函数永远算，candidate-signals.ts:385 在用点 gate）。
 //
 //   ⚠️ emitPrereqRiskSignal / loadPrereqClosure **故意不**在函数内查 flag——这样 producer
 //   机制可被 unit/db 测独立验证（defer-flip readiness：dark-ship 必须已接线 + 可证，不能
-//   dark-AND-broken）。**新增 call site 必须同样 gate 在 PREREQ_PROPAGATION_ENABLED**，
+//   dark-AND-broken）。**新增 call site 必须同样 gate 在 PREREQ_RISK_EMIT_ENABLED**，
 //   否则会在 dark 期漏 emit、破坏 byte-identical 保证。
 // ════════════════════════════════════════════════════════════════════════════
 //
@@ -45,7 +45,10 @@ type WriteEventFn = typeof writeEvent;
 // module-level const（镜像 SRT_ENABLED / HIERARCHICAL_ELO_ENABLED / THETA_GRID_ENABLED）。
 // false = 诊断向后传播 producer 全程 dark（见上 DARK-SHIP CONTRACT）。翻 true 是 owner
 // 决策（独立审计后），届时两个 call site 的 gate 自动放行 emit。
-export const PREREQ_PROPAGATION_ENABLED = false;
+// Renamed from PREREQ_PROPAGATION_ENABLED to disambiguate from the A6 directed θ̂ propagation
+// (core/prereq-propagation.ts PREREQ_THETA_PROPAGATION_ENABLED) — a different inc-E mechanism
+// that shared the same name. This flag gates ONLY the backward risk-emit producer.
+export const PREREQ_RISK_EMIT_ENABLED = false;
 
 export const PREREQ_RISK_ACTION = 'experimental:prereq_risk';
 

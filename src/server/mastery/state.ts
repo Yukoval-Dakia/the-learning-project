@@ -23,9 +23,9 @@ import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearnedBand, pfaLogit } from '@/core/pfa';
 import {
   type DirectedEdge,
-  PREREQ_PROPAGATION_ENABLED,
   PREREQ_PROP_LAMBDA_DOWN,
   PREREQ_PROP_LAMBDA_UP,
+  PREREQ_THETA_PROPAGATION_ENABLED,
   propagatePrereq,
 } from '@/core/prereq-propagation';
 import {
@@ -373,7 +373,7 @@ export async function getMasteryProjection(
   // ── A5/A6 (YUK-441 / YUK-442) — KG-borrowing soft layer over the surfaced θ̂ ─────
   //
   // FLAG OFF (DEFAULT, dark-ship): BOTH GRAPH_LAPLACIAN_ENABLED and
-  //   PREREQ_PROPAGATION_ENABLED are false → this block is skipped ENTIRELY → no edge
+  //   PREREQ_THETA_PROPAGATION_ENABLED are false → this block is skipped ENTIRELY → no edge
   //   fetch, no neighbour read, no borrowed entries. The `projection` map above is
   //   returned BYTE-IDENTICAL to today (the regression anchor the db tests pin).
   // SCOPE: only the per-KC 'knowledge' axis carries a knowledge graph. The A2
@@ -382,7 +382,7 @@ export async function getMasteryProjection(
   // The act flip (set either flag true) is gated on V-A5-LOKO (A5) / the A6 validation
   //   gate — built + electrified to live now, flip deferred (defer-flip, not -build).
   if (
-    (GRAPH_LAPLACIAN_ENABLED || PREREQ_PROPAGATION_ENABLED) &&
+    (GRAPH_LAPLACIAN_ENABLED || PREREQ_THETA_PROPAGATION_ENABLED) &&
     subjectKind === 'knowledge' &&
     ids.length > 0
   ) {
@@ -467,7 +467,7 @@ async function applyKgSoftLayer(
       GRAPH_LAPLACIAN_KAPPA,
     );
   }
-  if (PREREQ_PROPAGATION_ENABLED && directed.length > 0) {
+  if (PREREQ_THETA_PROPAGATION_ENABLED && directed.length > 0) {
     thetaTilde = propagatePrereq(
       nodeIds,
       thetaTilde,
