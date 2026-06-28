@@ -217,6 +217,17 @@ export async function acceptVariantQuestionProposal(
   const flip = projectionIsWriter('mistake_variant');
 
   await db.transaction(async (tx) => {
+    // YUK-499 — lock the draft mistake_variant row FOR UPDATE as the FIRST statement, before the new
+    // question + rate event + ROW write. projectMistakeVariantGuarded has no version-CAS (the table
+    // has no version column), so the lock is the sole serializer: it stops a concurrent
+    // dismiss/verify/retract of the same mv from interleaving between this accept's rate event and
+    // its project step (a later gather would otherwise miss an uncommitted event → stale fold → row
+    // drift). Makes the read→fold→write-through atomic per mv id. No-op cost on the OFF path.
+    await tx
+      .select({ id: mistake_variant.id })
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, mv.id))
+      .for('update');
     await tx.insert(question).values(
       withAnswerClass({
         id: newQuestionId,

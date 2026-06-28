@@ -305,6 +305,16 @@ export async function runVariantVerify(
   const flip = projectionIsWriter('mistake_variant');
 
   await db.transaction(async (tx) => {
+    // YUK-499 — lock the mistake_variant row FOR UPDATE as the FIRST statement, before the verify
+    // event + ROW write. The table has no version column, so projectMistakeVariantGuarded relies on
+    // this lock to serialize against a concurrent accept/dismiss/retract of the same mv: without it a
+    // later gather could miss an uncommitted event → stale fold → row drift. The lock is taken HERE,
+    // after the (slow) AI verify call above, so it is held only for the short write tx. No-op on OFF.
+    await tx
+      .select({ id: mistake_variant.id })
+      .from(mistake_variant)
+      .where(eq(mistake_variant.id, mistakeVariantId))
+      .for('update');
     // The verify event — written BEFORE the row write-through so the fold (when the flag is ON)
     // sees the chained verify in the same tx and projects broken+failure_reasons (fail) / touch
     // updated_at (pass). caused_by = the proposal (the chain key the fold routes on, E3).

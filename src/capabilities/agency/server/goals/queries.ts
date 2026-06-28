@@ -99,6 +99,14 @@ export async function updateGoalStatus(
   // and then, if the UPDATE / parity throws, be left with the event but no matching row → a
   // permanent fold!=row divergence. db.transaction() opens a savepoint when `db` is already a Tx.
   await db.transaction(async (tx) => {
+    // YUK-499 — lock the goal row FOR UPDATE before the action event + ROW write so concurrent goal
+    // writers serialize on this row. On the ON path projectGoalGuarded has no version-CAS, so without
+    // the lock two ON-path projects could interleave between the event write and the upsert: the
+    // later gather would miss the earlier (uncommitted) event → stale fold → live row drifts from
+    // fold(all events). The lock makes the read→fold→write-through atomic per goal id. No-op cost on
+    // the OFF path, which already holds the row through its version-CAS UPDATE below. Mirrors the
+    // artifact ON-path lock in body-blocks-edit.ts.
+    await tx.select({ id: goal.id }).from(goal).where(eq(goal.id, goalId)).for('update');
     // YUK-471 W2 — append the fold-visible status event FIRST so the goal fold reproduces the
     // transition (status→new, version+1). The reducer mirrors the imperative +1 below.
     await writeEvent(tx, {
@@ -156,6 +164,11 @@ export async function updateGoalScope(
   // A3 (OCR major) — wrap the event write + ROW write in ONE tx (atomic), mirroring
   // updateGoalStatus. db.transaction() is a savepoint when `db` is already a Tx.
   await db.transaction(async (tx) => {
+    // YUK-499 — lock the goal row FOR UPDATE before the action event + ROW write (same rationale as
+    // updateGoalStatus): the ON-path projectGoalGuarded has no version-CAS, so the lock serializes
+    // concurrent goal writers and keeps the read→fold→write-through atomic per goal id. No-op cost on
+    // the OFF path (already version-CAS guarded).
+    await tx.select({ id: goal.id }).from(goal).where(eq(goal.id, goalId)).for('update');
     // YUK-471 W2 — append the fold-visible scope event FIRST. The payload carries ONLY the patch
     // fields (the .strict() schema rejects mutating set-once provenance like subject_id). The
     // reducer applies the same patch + version+1 the imperative UPDATE does below.
