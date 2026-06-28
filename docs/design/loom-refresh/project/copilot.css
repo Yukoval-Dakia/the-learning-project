@@ -78,7 +78,9 @@
 .cop-ava { width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: var(--fs-meta); }
 .cop-ava.ai { background: var(--coral-soft); color: var(--coral); border: 1px solid var(--coral-line); }
 .cop-ava.user { background: var(--ink); color: var(--paper); font-weight: 600; }
-.cop-bubble { max-width: 76%; background: var(--coral); color: #fff; border-radius: var(--r-4) var(--r-4) 4px var(--r-4); padding: var(--s-3) var(--s-4); font-size: var(--fs-body); line-height: var(--lh-prose); }
+/* user bubble: coral-soft (selection tint), not solid coral — long sessions
+   stay quiet and the solid coral stays reserved for primary CTAs */
+.cop-bubble { max-width: 76%; background: var(--coral-soft); color: var(--coral-ink); border: 1px solid var(--coral-line); border-radius: var(--r-4) var(--r-4) 4px var(--r-4); padding: var(--s-3) var(--s-4); font-size: var(--fs-body); line-height: var(--lh-prose); }
 .cop-msg-body { min-width: 0; flex: 1; max-width: 84%; }
 .cop-msg-name { font-size: var(--fs-meta); color: var(--ink-4); font-weight: 500; margin-bottom: 6px; }
 .cop-text { font-size: var(--fs-body); color: var(--ink-2); line-height: var(--lh-prose); margin-top: var(--s-3); }

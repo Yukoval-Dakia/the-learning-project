@@ -36,6 +36,7 @@ function NoteRefCard({ note, here, go }) {
 function ScreenKnowledgeDetail({ go, param, ui = {} }) {
   const ds = ui.dataState || "ok";
   const node = DATA.knowledge.find((n) => n.id === param) || DATA.knowledge.find((n) => n.id === "k_xuci_zhi");
+  const extra = (window.KA5 && KA5.nodeExtra[node.id]) || null;
   const parent = DATA.knowledge.find((n) => n.id === node.parent);
   const children = DATA.knowledge.filter((n) => n.parent === node.id);
   const rels = DATA.knowledgeEdges.filter((e) => e.a === node.id || e.b === node.id);
@@ -51,16 +52,15 @@ function ScreenKnowledgeDetail({ go, param, ui = {} }) {
       <div className="page-head">
         <div className="eyebrow">KNOWLEDGE · {node.tag} · {node.kind}</div>
         <div className="kd-head">
-          <MasteryRing pct={node.mastery} size={64} />
           <div style={{ minWidth: 0 }}>
             <h1 className="page-title serif">{node.title}</h1>
             <div className="kd-metrics nowrap-meta">
+              <BandChip node={node} />
               <span className="meta mono">{node.evidence} evidence</span><span className="dot-sep">·</span>
               {(() => { const db = DECAY_BUCKET[node.decay] || DECAY_BUCKET.slow; return (
                 <span className={"decay-bucket tone-" + db.tone} title={db.hint}>
                   <Icon name={DECAY_META[node.decay].icon} size={12} />
                   <span>衰减 · {db.label}</span>
-                  <span className="decay-retr mono">R {Math.round(db.retr * 100)}%</span>
                 </span>
               ); })()}
               {node.mistakes > 0 && <Badge tone="again">{node.mistakes} 错题</Badge>}
@@ -72,8 +72,19 @@ function ScreenKnowledgeDetail({ go, param, ui = {} }) {
         </div>
       </div>
 
+      <NodeComposite node={node} extra={extra} />
+
       <div className="kd-grid">
         <div className="kd-main">
+          <SectionLabel count={KA5.misconceptions.filter((m) => m.targets.includes(node.id)).length || null}>指向此点的误区 · misconception</SectionLabel>
+          <MisconceptionList node={node} go={go} />
+
+          <SectionLabel>迁移而来的掉握 · transfer credit</SectionLabel>
+          <TransferList extra={extra} />
+
+          <SectionLabel>诊断下钻 · CDM / IRT</SectionLabel>
+          <DiagnosticDrill extra={extra} />
+
           {/* notes for this knowledge id — split by kind, NOT flattened */}
           {(() => {
             const nbk = notesByKindForKnowledge(node.id);
@@ -153,7 +164,7 @@ function ScreenKnowledgeDetail({ go, param, ui = {} }) {
             <div className="kd-rel-block">
               <div className="kd-rel-h"><Icon name="tree" size={13} />层级</div>
               {parent && <button className="rel-row" onClick={() => go("knowledge/" + parent.id)}><span className="rel-kind mono">parent</span><span className="wenyan">{parent.title}</span><Icon name="arrow" size={13} /></button>}
-              {children.map((c) => <button key={c.id} className="rel-row" onClick={() => go("knowledge/" + c.id)}><span className="rel-kind mono">child</span><span className="wenyan">{c.title}</span><MasteryRing pct={c.mastery} size={22} /></button>)}
+              {children.map((c) => <button key={c.id} className="rel-row" onClick={() => go("knowledge/" + c.id)}><span className="rel-kind mono">child</span><span className="wenyan">{c.title}</span><BandChip node={c} /></button>)}
               {!parent && children.length === 0 && <div className="quiet-empty">无层级邻居</div>}
             </div>
             {Object.keys(byRel).map((rel) => (

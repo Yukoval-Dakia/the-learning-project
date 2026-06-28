@@ -15,7 +15,7 @@ const PF_VERDICT = {
   again: { label: "错", tone: "again" },
 };
 
-function ScreenPracticeFace({ go, param }) {
+function ScreenPracticeFace({ go, param, ui = {} }) {
   const saved = React.useRef(pfLoad()).current;
   const [itemStatus, setItemStatus] = React.useState(saved.itemStatus || {});
   const [extra, setExtra] = React.useState(saved.extra || false);
@@ -186,6 +186,7 @@ function ScreenPracticeFace({ go, param }) {
       <PfaceSolo
         key={soloItem.id}
         item={soloItem} q={PFACE.questions[soloItem.ref]} pos={pos} total={items.length}
+        hintLadder={ui.hintLadder || "h0h5"} ladderState={ui.ladderState || "ok"}
         appeal={appeals[soloItem.ref]}
         onAppeal={() => startAppeal(soloItem.ref, soloItem.id)}
         onDone={(verdict) => completeItem(soloItem.id, verdict)}

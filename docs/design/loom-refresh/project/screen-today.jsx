@@ -197,6 +197,7 @@ function ScreenToday({ go, ui = {} }) {
   const [active, setActive] = React.useState(false);
   const [nonce, setNonce] = React.useState(0);
   const ds = ui.dataState || "ok";
+  const merged = (ui.handoffPlace === "并入") && (ui.handoffState || "ok") === "ok";
   React.useEffect(() => { const id = requestAnimationFrame(() => setActive(true)); return () => cancelAnimationFrame(id); }, []);
   const refresh = () => { setActive(false); setNonce((n) => n + 1); requestAnimationFrame(() => requestAnimationFrame(() => setActive(true))); };
 
@@ -208,34 +209,54 @@ function ScreenToday({ go, ui = {} }) {
         {DATA.kpis.map((k) => <KpiCard key={k.key} kpi={k} active={active} go={go} />)}
       </div>
 
-      <SectionLabel count="3 缕">今日之线</SectionLabel>
+      {/* 段1 先轻 — 今日之线(你自己排的: 复习/裁决/coach 缕), 即时可动作 */}
+      <SectionLabel count={merged ? "你排的 + 昨夜的" : "你自己排的"}>今日之线</SectionLabel>
       <div className="threads-grid stagger">
         {DATA.threads.map((th) => <ThreadCard key={th.id} th={th} go={go} />)}
       </div>
 
-      <SectionLabel>进行中 · 待裁决</SectionLabel>
-      <div className="dash-grid">
-        <div className="dash-col">
-          <SessionsStrip go={go} state={ds} onRetry={refresh} />
-          <AiChangesStrip state={ds} onRetry={refresh} />
-        </div>
-        <div className="dash-col">
-          <ProposalStrip go={go} state={ds} onRetry={refresh} />
-          <CostRibbon state={ds} onRetry={refresh} />
-        </div>
-      </div>
+      {/* 段2 后叙事 — 晨间交班缕 (增量叠加, 既有区块不重排) */}
+      {merged ? (
+        <React.Fragment>
+          <div className="hx-merge-note"><span className="hx-moon" style={{ display: "inline-grid", placeItems: "center", borderRadius: "var(--r-pill)", background: "var(--coral-soft)", color: "var(--coral-ink)" }}><Icon name="moon" size={12} /></span>夜链 · 昨夜替你做的 {HANDOFF2.items.length} 缕 —— 并入今日之线</div>
+          <div className="threads-grid">
+            {HANDOFF2.items.map((it) => <MergeCard key={it.id} it={it} go={go} />)}
+          </div>
+          <MinorFold items={HANDOFF2.minor} go={go} />
+        </React.Fragment>
+      ) : (
+        <HandoffBand cardStyle={ui.handoffCard || "缕带"} masteryStyle={ui.handoffMastery || "档条"} density={ui.handoffDensity || "里程碑"} state={ui.handoffState || "ok"} jobFailHonest={ui.handoffJobFail !== false} go={go} />
+      )}
 
-      <AgentNotesBoard go={go} state={ds} onRetry={refresh} />
-
-      <SectionLabel>本周编织</SectionLabel>
-      <Card pad>
-        <div className="card-head">
-          <span className="card-icon accent"><Icon name="target" size={18} /></span>
-          <div className="card-title">7 天活动热力</div>
-          <span className="badge tone-good" style={{ marginLeft: "auto" }}><span className="dot" />+12% 较上周</span>
+      {/* 既有区块 —— 进行中·待裁决·AI观察·本周热力, 原样保留(不重排) */}
+      <EncoreFold>
+        <SectionLabel>进行中 · 待裁决</SectionLabel>
+        <div className="dash-grid">
+          <div className="dash-col">
+            <SessionsStrip go={go} state={ds} onRetry={refresh} />
+            <AiChangesStrip state={ds} onRetry={refresh} />
+          </div>
+          <div className="dash-col">
+            <ProposalStrip go={go} state={ds} onRetry={refresh} />
+            <CostRibbon state={ds} onRetry={refresh} />
+          </div>
         </div>
-        <WeekHeat />
-      </Card>
+
+        <AgentNotesBoard go={go} state={ds} onRetry={refresh} />
+
+        <SectionLabel>本周编织</SectionLabel>
+        <Card pad>
+          <div className="card-head">
+            <span className="card-icon accent"><Icon name="target" size={18} /></span>
+            <div className="card-title">7 天活动热力</div>
+            <span className="badge tone-good" style={{ marginLeft: "auto" }}><span className="dot" />+12% 较上周</span>
+          </div>
+          <WeekHeat />
+        </Card>
+      </EncoreFold>
+
+      {/* ── Layer ④ 完成度收尾锚 ── */}
+      <ClosingAnchor go={go} />
     </div>
   );
 }

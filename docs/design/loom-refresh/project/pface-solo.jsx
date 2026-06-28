@@ -2,7 +2,7 @@
 // 即时反馈（§6.4 着色即判定）· 评级建议可改 · 不服判（异步重判，不阻塞流）·
 // 解题会话（苏格拉底分级提示，永不直接给答案，可提交手写图）.
 
-function PfaceSolo({ item, q, pos, total, appeal, onAppeal, onDone, onBack, addToast }) {
+function PfaceSolo({ item, q, pos, total, appeal, onAppeal, onDone, onBack, addToast, hintLadder = "h0h5", ladderState = "ok" }) {
   const [phase, setPhase] = React.useState("answering");
   const [sel, setSel] = React.useState(null);
   const [text, setText] = React.useState("");
@@ -167,23 +167,21 @@ function PfaceSolo({ item, q, pos, total, appeal, onAppeal, onDone, onBack, addT
         )}
       </Card>
 
-      <PfaceCoach open={coach} onClose={() => setCoach(false)} q={q} />
+      <PfaceCoach open={coach} onClose={() => setCoach(false)} q={q} hintLadder={hintLadder} ladderState={ladderState} />
     </div>
   );
 }
 
 /* ── 解题会话 — 苏格拉底分级提示 ── */
-function PfaceCoach({ open, onClose, q }) {
-  const [shown, setShown] = React.useState(1);
+function PfaceCoach({ open, onClose, q, hintLadder = "h0h5", ladderState = "ok" }) {
   const [msgs, setMsgs] = React.useState([]); // {who:'user'|'ai', text, img}
   const [draft, setDraft] = React.useState("");
   const [replied, setReplied] = React.useState(false);
   const panelRef = React.useRef(null);
   useFocusTrap(open, onClose, panelRef);
 
-  React.useEffect(() => { if (!open) { setShown(1); setMsgs([]); setDraft(""); setReplied(false); } }, [open, q]);
+  React.useEffect(() => { if (!open) { setMsgs([]); setDraft(""); setReplied(false); } }, [open, q]);
 
-  const hints = q.hints || [];
   const send = (img) => {
     const t = draft.trim();
     if (!t && !img) return;
@@ -203,26 +201,13 @@ function PfaceCoach({ open, onClose, q }) {
       <aside className={"pfs-coach" + (open ? " open" : "")} ref={panelRef} role="dialog" aria-label="解题会话" aria-hidden={!open}>
         <div className="pfs-coach-head">
           <span className="ai-tag"><Icon name="teach" size={13} />解题会话</span>
-          <span className="meta mono">socratic · 不给答案</span>
+          <span className="meta mono">hint-first · 自主滑块</span>
           <span className="topbar-spacer" />
           <IconBtn icon="close" size={16} title="关闭" onClick={onClose} />
         </div>
         <div className="pfs-coach-body">
-          <p className="pfs-coach-note">我不会直接给答案——一级一级来，每级提示更近一步。会话不计入判分。</p>
-          {hints.slice(0, shown).map((h, i) => (
-            <div key={i} className="pfs-hint">
-              <span className="pfs-hint-k">提示 {i + 1} / {hints.length}</span>
-              {h}
-            </div>
-          ))}
-          {shown < hints.length && (
-            <Btn size="sm" variant="secondary" icon="chevronDown" onClick={() => setShown((s) => s + 1)}>
-              再提示一点 · {shown + 1}/{hints.length}
-            </Btn>
-          )}
-          {shown >= hints.length && msgs.length === 0 && (
-            <p className="pfs-coach-note">提示用完了。再卡的话，把你的演算写下来或拍给我——我看了再说。</p>
-          )}
+          <p className="pfs-coach-note">你控制提示的分寸 —— 从最轻的方向，一路滑到完整解。任意一阶都能交还控制。会话不计入判分。</p>
+          <HintLadder q={q} mode={hintLadder} demo={ladderState} />
           {msgs.map((m, i) => m.who === "user" ? (
             <div key={i} className="pfs-user-msg">{m.text}{m.img && <img src={m.img} alt="手写演算" />}</div>
           ) : (
@@ -232,7 +217,7 @@ function PfaceCoach({ open, onClose, q }) {
         <div className="pfs-coach-foot">
           <div className="composer">
             <textarea rows={1} value={draft} disabled={replied}
-              placeholder={replied ? "原型演示到这一级。" : "说说你卡在哪…"}
+              placeholder={replied ? "原型演示到这一级。" : "或者直接说说你卡在哪…"}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               aria-label="解题会话输入" />

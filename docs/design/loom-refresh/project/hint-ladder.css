@@ -1,0 +1,92 @@
+/* Loom · A2 自主滑块 — 从 hint 滑到完整解. warm-paper / coral.
+   Lives in the 解题会话 drawer (.pfs-coach). */
+
+.ladder { margin-top: var(--s-2); }
+
+/* trace anchor — p(L) 难度档 + 错因 */
+.ladder-trace {
+  display: flex; align-items: flex-start; gap: 8px; padding: var(--s-2) var(--s-3);
+  background: var(--paper-sunk); border: 1px dashed var(--line-strong); border-radius: var(--r-2);
+  font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-3); margin-bottom: var(--s-3);
+}
+.ladder-trace .ico { color: var(--ink-4); flex: none; margin-top: 1px; }
+.ladder-trace b { color: var(--ink-2); font-weight: 600; }
+
+/* the autonomy track — discrete stops H0..H5 */
+.ladder-rail { margin-bottom: var(--s-4); }
+.ladder-rail-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.ladder-rail-l { font: 600 var(--fs-meta)/1 var(--font-sans); color: var(--ink-3); display: flex; align-items: center; gap: 6px; }
+.ladder-rail-r { font: 500 var(--fs-meta)/1 var(--font-mono); color: var(--ink-4); }
+.ladder-stops { display: flex; align-items: center; gap: 0; position: relative; }
+.ladder-stop { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; cursor: pointer; border: 0; background: transparent; padding: 0; }
+.ladder-stop::before { content: ""; position: absolute; top: 7px; left: -50%; width: 100%; height: 2px; background: var(--line); z-index: 0; }
+.ladder-stop:first-child::before { display: none; }
+.ladder-stop.reached::before { background: var(--coral-line); }
+.ladder-dot { position: relative; z-index: 1; width: 16px; height: 16px; border-radius: 50%; background: var(--paper-raised); border: 2px solid var(--line-strong); transition: all var(--dur-fast) var(--ease-out); }
+.ladder-stop.reached .ladder-dot { border-color: var(--coral); }
+.ladder-stop.current .ladder-dot { background: var(--coral); border-color: var(--coral); box-shadow: 0 0 0 4px var(--coral-soft); }
+.ladder-stop.is-full .ladder-dot { border-radius: 3px; }
+.ladder-stop.current.is-full .ladder-dot { background: var(--hard-ink); border-color: var(--hard-ink); box-shadow: 0 0 0 4px var(--hard-soft); }
+.ladder-stop-l { font: 500 10px/1.2 var(--font-sans); color: var(--ink-4); text-align: center; white-space: nowrap; }
+.ladder-stop.current .ladder-stop-l { color: var(--coral-ink); font-weight: 600; }
+.ladder-stop.is-full .ladder-stop-l { color: var(--ink-4); }
+.ladder-stop.current.is-full .ladder-stop-l { color: var(--hard-ink); }
+
+/* revealed stage cards (only up to current) */
+.ladder-card {
+  border: 1px solid var(--line); border-radius: var(--r-3); background: var(--paper-raised);
+  padding: var(--s-3) var(--s-4); margin-bottom: var(--s-2); box-shadow: var(--shadow-1);
+  animation: ladder-in var(--dur-base) var(--ease-out);
+}
+@keyframes ladder-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.ladder-card.full { border-color: var(--hard-line); background: var(--hard-soft); }
+.ladder-card-top { display: flex; align-items: center; gap: var(--s-2); margin-bottom: 6px; flex-wrap: wrap; }
+.ladder-badge { font: 600 var(--fs-meta)/1 var(--font-mono); color: var(--coral-ink); background: var(--coral-soft); border: 1px solid var(--coral-line); padding: 2px 8px; border-radius: var(--r-pill); }
+.ladder-card.full .ladder-badge { color: var(--hard-ink); background: var(--paper-raised); border-color: var(--hard-line); }
+.ladder-gives { font: 400 var(--fs-meta)/1.3 var(--font-sans); color: var(--ink-4); }
+.ladder-noindep { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font: 600 var(--fs-meta)/1 var(--font-sans); color: var(--hard-ink); }
+.ladder-body { font: 400 var(--fs-body)/var(--lh-prose) var(--font-sans); color: var(--ink); text-wrap: pretty; }
+.ladder-body .wenyan { font-family: var(--font-wenyan, var(--font-serif)); }
+.ladder-explain { margin-top: var(--s-2); padding-top: var(--s-2); border-top: 1px dashed var(--hard-line); font: 400 var(--fs-meta)/var(--lh-prose) var(--font-sans); color: var(--ink-2); }
+
+/* loading a stage */
+.ladder-loading { display: flex; align-items: center; gap: 8px; padding: var(--s-3) var(--s-4); border: 1px dashed var(--line-strong); border-radius: var(--r-3); background: var(--paper-sunk); font: 400 var(--fs-meta)/1.4 var(--font-sans); color: var(--ink-3); margin-bottom: var(--s-2); }
+.ladder-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--coral); border-top-color: transparent; animation: ho-spin .8s linear infinite; flex: none; }
+
+/* failure */
+.ladder-fail { padding: var(--s-3) var(--s-4); border: 1px solid var(--again-line); background: var(--again-soft); border-radius: var(--r-3); margin-bottom: var(--s-2); }
+.ladder-fail-msg { font: 400 var(--fs-caption)/1.5 var(--font-sans); color: var(--again-ink); display: flex; align-items: flex-start; gap: 6px; }
+.ladder-fail-msg .ico { flex: none; margin-top: 1px; }
+.ladder-fail-acts { display: flex; gap: var(--s-2); margin-top: var(--s-3); flex-wrap: wrap; }
+
+/* action row — advance · jump-to-full · escape hatch */
+.ladder-acts { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-3); }
+.ladder-escape {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+  border: 1px solid var(--line); background: var(--paper-raised); cursor: pointer;
+  color: var(--ink-2); padding: 7px 13px; border-radius: var(--r-2);
+  font: 500 var(--fs-meta)/1 var(--font-sans); transition: all var(--dur-fast);
+}
+.ladder-escape:hover { border-color: var(--good-line); color: var(--good-ink); background: var(--good-soft); }
+.ladder-jump {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hard-line);
+  background: var(--paper-raised); cursor: pointer; color: var(--hard-ink);
+  padding: 7px 13px; border-radius: var(--r-2); font: 500 var(--fs-meta)/1 var(--font-sans);
+  transition: all var(--dur-fast);
+}
+.ladder-jump:hover { background: var(--hard-soft); }
+.ladder-advance {
+  display: inline-flex; align-items: center; gap: 6px; border: 0; cursor: pointer;
+  background: var(--coral); color: #fff; padding: 8px 15px; border-radius: var(--r-2);
+  font: 600 var(--fs-caption)/1 var(--font-sans); transition: background var(--dur-fast);
+}
+.ladder-advance:hover { background: var(--coral-hover); }
+
+/* escape confirmation / returned-to-solo */
+.ladder-returned { display: flex; align-items: center; gap: 8px; padding: var(--s-3) var(--s-4); background: var(--good-soft); border: 1px solid var(--good-line); border-radius: var(--r-3); font: 500 var(--fs-caption)/1.4 var(--font-sans); color: var(--good-ink); }
+
+/* empty / unsupported — fall back to 直接作答 + 看完整解 */
+.ladder-empty { padding: var(--s-4); border: 1px dashed var(--line-strong); border-radius: var(--r-3); background: var(--paper-sunk); }
+.ladder-empty-t { font: 600 var(--fs-caption)/1.3 var(--font-sans); color: var(--ink-2); margin-bottom: 4px; }
+.ladder-empty-s { font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-4); margin-bottom: var(--s-3); }
+.ladder-empty-acts { display: flex; gap: var(--s-2); flex-wrap: wrap; }

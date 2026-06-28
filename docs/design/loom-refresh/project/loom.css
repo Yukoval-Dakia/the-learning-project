@@ -10,6 +10,9 @@
    This file adds only: dark-theme mirror, app-shell layout vars, and the
    handful of tokens the canonical layer does not define. */
 :root {
+  /* declare scheme explicitly — stops UA forced-dark repainting and fixes
+     native control rendering; the app's own dark mirror handles dark. */
+  color-scheme: light;
   /* not in the canonical token layer */
   --info-line: #BACBDC;
   --rail-w: 240px; --rail-w-collapsed: 76px;
@@ -19,6 +22,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --paper:        #1B1A17;
   --paper-sunk:   #161512;
   --paper-raised: #232120;
@@ -27,7 +31,7 @@
   --ink:   #F6F3EC;
   --ink-2: #E4DFD3;
   --ink-3: #B5B0A3;
-  --ink-4: #88847A;
+  --ink-4: #98948A;
   --ink-5: #5E5B52;
 
   --line:        #34302A;
@@ -84,6 +88,13 @@ a { color: inherit; }
 .wenyan { font-family: var(--font-wenyan); line-height: var(--lh-loose); letter-spacing: .01em; }
 .tnum { font-variant-numeric: tabular-nums; }
 
+/* ── typography hardening ──────────────────────────────────
+   Short CJK labels must never break mid-word; numerals in
+   meta/mono contexts align in columns; headings avoid orphans. */
+h1, h2, h3, h4, h5, h6, .page-title, .card-title, .thread-title, .item-title { text-wrap: pretty; }
+.meta, .nav-count, .crumbs, .fsrs-pill, .kpi-foot { font-variant-numeric: tabular-nums; }
+.seg button, .section-label .count, .crumbs b, .badge, .kind-tag, .ai-tag, .rel-pill { white-space: nowrap; }
+
 /* ============================================================
    App shell
    ============================================================ */
@@ -133,7 +144,7 @@ a { color: inherit; }
 .sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: var(--s-3); padding-top: var(--s-4); }
 .sidebar-foot-row { display: flex; align-items: center; gap: var(--s-2); }
 .rail-collapsed .sidebar-foot-row { flex-direction: column; }
-.profile-mini { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2); border-radius: var(--r-2); min-width: 0; flex: 1; }
+.profile-mini { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2); border-radius: var(--r-2); min-width: 0; flex: 1; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .profile-mini:hover { background: var(--paper-tint); }
 .avatar { width: 30px; height: 30px; border-radius: var(--r-pill); background: linear-gradient(140deg, var(--coral), var(--coral-press)); color: #fff; display: grid; place-items: center; font-family: var(--font-serif); font-size: 14px; flex: none; }
 .profile-mini .pm-name { font-size: var(--fs-caption); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -216,7 +227,7 @@ a { color: inherit; }
 .badge .dot.pulse { animation: pulse-dot 1.4s var(--ease-soft) infinite; }
 @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 
-.chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-meta); color: var(--ink-3); background: var(--paper-sunk); border: 1px solid var(--line); padding: 4px var(--s-2); border-radius: var(--r-1); transition: all var(--dur-fast) var(--ease-out); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-meta); color: var(--ink-3); background: var(--paper-sunk); border: 1px solid var(--line); padding: 4px var(--s-2); border-radius: var(--r-1); white-space: nowrap; transition: all var(--dur-fast) var(--ease-out); }
 .chip-k { color: var(--coral-ink); background: var(--coral-soft); border-color: var(--coral-line); }
 button.chip { cursor: pointer; }
 button.chip:hover { border-color: var(--ink-5); color: var(--ink); }
