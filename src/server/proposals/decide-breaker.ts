@@ -17,7 +17,7 @@
 // 红线：熔断只数 rate 事件速率——**绝不触 θ̂ / p(L) / FSRS**（ADR-0035 soft-track
 // 隔离）。强度轴 ≠ accept-applier 轴 ≠ tone 视觉轴，三轴勿耦合。
 
-import { and, eq, gte, sql } from 'drizzle-orm';
+import { and, eq, gte, lte, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -82,10 +82,18 @@ export async function countRecentVerdicts(
 ): Promise<number> {
   const windowMs = input.windowMs ?? VERDICT_RATE_WINDOW_MS;
   const windowStart = new Date(input.now.getTime() - windowMs);
+  // 上界 created_at <= now：未来时间的 rate 事件（时钟漂移 / 回填 / 手写）不应被算进
+  // 「最近 1h」而提前触发 breaker / 虚高 meter（CodeRabbit #7）。
   const rows = await db
     .select({ value: sql<number>`count(*)::int` })
     .from(event)
-    .where(and(eq(event.action, 'rate'), gte(event.created_at, windowStart)));
+    .where(
+      and(
+        eq(event.action, 'rate'),
+        gte(event.created_at, windowStart),
+        lte(event.created_at, input.now),
+      ),
+    );
   return rows[0]?.value ?? 0;
 }
 
