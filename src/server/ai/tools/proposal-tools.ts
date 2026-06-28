@@ -59,6 +59,10 @@ import { acceptAiProposal } from '@/server/proposals/actions';
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
 import { resolveEdgeGateBump } from '@/server/proposals/adaptive-bias';
 import {
+  COMPLETION_AUTOAPPLY_ACTION,
+  COMPLETION_AUTOAPPLY_SKIPPED_ACTION,
+} from '@/server/proposals/completion-autoapply-actions';
+import {
   type VerdictBreakerResult,
   checkAutoApplyBreaker,
 } from '@/server/proposals/decide-breaker';
@@ -1161,8 +1165,8 @@ type LearningItemProposalOutput = z.infer<typeof LearningItemProposalOutputSchem
 //     仍显示 done。即 affordance 退化（少一张 inbox 卡），非正确性丢失 —— 故仍不反噬工具，
 //     但下方 catch 用 error 级日志让这次承重锚失败更醒目。未来硬化：把成功锚写进 apply 同一
 //     tx（原子 either-both）。
-const COMPLETION_AUTOAPPLY_ACTION = 'experimental:completion_autoapply';
-const COMPLETION_AUTOAPPLY_SKIPPED_ACTION = 'experimental:completion_autoapply_skipped';
+// action 常量已抽到 @/server/proposals/completion-autoapply-actions（读侧 auto-applied-read.ts
+// 复用同一真相，防写/读两侧字符串漂移致 A 档读模型静默返空）。
 
 type CompletionAutoApplySkipReason = 'breaker_tripped' | 'apply_error';
 
