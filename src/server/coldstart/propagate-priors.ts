@@ -1,6 +1,6 @@
 // YUK-513 Phase 2 (#123 / inc-E) — dark-ship TS wiring for the Rust `propagatePriors`
 // kernel (crates/calibration-native). Joins the THETA_GRID_ENABLED / POLY_SIGMOID_ENABLED
-// dark-ship family: gated by a module-const flag (PREREQ_PROPAGATION_ENABLED, defined in
+// dark-ship family: gated by a module-const flag (DAY_ONE_PRIOR_ENABLED, defined in
 // @/core/theta-grid), default FALSE — so flag-off is BYTE-IDENTICAL to today. The JS path
 // stays the always-on live path; this new Rust kernel ships dark with no UI consumer (PR-3).
 //
@@ -29,7 +29,7 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { polySigmoid } from '@/core/poly-exp';
-import { GRID_THETA, PREREQ_PROPAGATION_ENABLED } from '@/core/theta-grid';
+import { DAY_ONE_PRIOR_ENABLED, GRID_THETA } from '@/core/theta-grid';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
@@ -78,9 +78,14 @@ function loadAddon(): PropagateAddon | null {
   if (!existsSync(NODE_PATH)) return null;
   try {
     return createRequire(import.meta.url)(NODE_PATH) as PropagateAddon;
-  } catch {
+  } catch (err) {
     // exists but fails to dlopen (Node-ABI / platform mismatch / stale artifact) → treat as
-    // absent. A load failure must never break the live read; the JS path is production.
+    // absent. A load failure must never break the live read; the JS path is production. Log
+    // once at module load so a present-but-broken artifact is diagnosable, not silently dark.
+    console.error(
+      '[loadDayOnePriors] native binding present but failed to load; treating as absent',
+      err,
+    );
     return null;
   }
 }
@@ -114,7 +119,7 @@ export async function loadDayOnePriors(
 ): Promise<Map<string, DayOnePrior> | null> {
   // Flag/binding checked FIRST so flag-off short-circuits before ANY DB read (the dark-ship
   // contract: a present binding must not change behaviour while the flag is off).
-  if (!PREREQ_PROPAGATION_ENABLED || !addon) return null;
+  if (!DAY_ONE_PRIOR_ENABLED || !addon) return null;
 
   const ids = Array.from(new Set(scope.map((s) => s.trim()).filter((s) => s.length > 0)));
   if (ids.length === 0) return null;
@@ -180,7 +185,11 @@ export async function loadDayOnePriors(
     const out = new Map<string, DayOnePrior>();
     for (let i = 0; i < ids.length; i++) {
       const post = posteriors[i];
-      if (!post) continue;
+      // Unreachable given the length guard above (the array has exactly ids.length entries); a
+      // hole would be binding drift — throw (caught → NO-OP + log) rather than silently skip a KC.
+      if (!post) {
+        throw new Error(`propagatePriors posterior[${i}] is missing (binding drift)`);
+      }
       const widx = post.weakestPrereqId;
       // Bound-check the echoed index: a valid widx is 0 ≤ widx < ids.length. Treat anything
       // out of range (a binding bug / ABI mismatch) as "no attribution" rather than reading
