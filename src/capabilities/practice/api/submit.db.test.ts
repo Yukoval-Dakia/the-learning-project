@@ -265,11 +265,11 @@ describe('POST /api/review/submit', () => {
   });
 
   // YUK-455 inc-E — flag-off BYTE-IDENTICAL 回归锚. prereq 诊断「向后传播」producer 默认 dark
-  // (PREREQ_PROPAGATION_ENABLED=false). 即便 seed 了 prereq 图（A 是答错 KC 的前置，翻 flag
+  // (PREREQ_RISK_EMIT_ENABLED=false). 即便 seed 了 prereq 图（A 是答错 KC 的前置，翻 flag
   // 后 WOULD emit）+ 答错（rating again → outcome=failure），submit 仍**零** experimental:
-  // prereq_risk 事件 — 因为 call site `PREREQ_PROPAGATION_ENABLED && outcome==='failure'` 在
+  // prereq_risk 事件 — 因为 call site `PREREQ_RISK_EMIT_ENABLED && outcome==='failure'` 在
   // flag-off 时短路。这就是 dark-ship 的 byte-identical 保证。
-  it('does NOT emit prereq_risk on a failed review while PREREQ_PROPAGATION_ENABLED is dark', async () => {
+  it('does NOT emit prereq_risk on a failed review while PREREQ_RISK_EMIT_ENABLED is dark', async () => {
     const now = new Date();
     // Seed a prereq edge: k_pre is a prerequisite of k_dep (the failed question's KC).
     for (const id of ['k_pre', 'k_dep']) {

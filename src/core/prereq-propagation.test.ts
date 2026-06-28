@@ -4,16 +4,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   type DirectedEdge,
-  PREREQ_PROPAGATION_ENABLED,
   PREREQ_PROP_LAMBDA_DOWN,
   PREREQ_PROP_LAMBDA_UP,
+  PREREQ_THETA_PROPAGATION_ENABLED,
   prereqAdjustments,
   propagatePrereq,
 } from './prereq-propagation';
 
 describe('A6 dark-ship flag + conservative priors', () => {
-  it('PREREQ_PROPAGATION_ENABLED defaults to false (byte-identical regression anchor)', () => {
-    expect(PREREQ_PROPAGATION_ENABLED).toBe(false);
+  it('PREREQ_THETA_PROPAGATION_ENABLED defaults to false (byte-identical regression anchor)', () => {
+    expect(PREREQ_THETA_PROPAGATION_ENABLED).toBe(false);
   });
   it('retro-credit (up) is weaker than downstream press (down)', () => {
     expect(PREREQ_PROP_LAMBDA_UP).toBeGreaterThan(0);
