@@ -183,19 +183,32 @@ export function pointsToValues(points: EffectivenessTrendPoint[]): number[] {
 
 export type BandTier = 'firm' | 'mid' | 'low';
 
+// 从 confidenceClass 派生 bandTier（单一真相，防漂移）：两者本是同一「置信 → 视觉档」
+// 映射，分开手写会在 API 加新置信档时各自漏更新 → 视觉不一致。is-insf/is-low 都落 low 带。
+const CONF_CLASS_TO_TIER: Record<ConfidenceClass, BandTier> = {
+  'is-firm': 'firm',
+  'is-mid': 'mid',
+  'is-low': 'low',
+  'is-insf': 'low',
+};
+
 export function bandTier(direction: TrendDirection, confidence: TrendConfidence): BandTier {
-  if (direction === 'insufficient') return 'low';
-  if (confidence === 'high') return 'firm';
-  if (confidence === 'medium') return 'mid';
-  return 'low';
+  return CONF_CLASS_TO_TIER[confidenceClass(direction, confidence)];
 }
+
+// ⑥ 不确定带半宽常量（p 单位）。低置信 → 更宽；带宽绝不画成笃定细线。命名而非散落 magic
+// number，便于审计这条安全关键视觉规则（查表替链式三元，守项目「禁嵌套三元」）。
+const BAND_HALF_BY_TIER: Record<BandTier, number> = { firm: 0.045, mid: 0.085, low: 0.155 };
+const TWO_POINT_BAND_HALF = 0.22; // ≤2 点：连方向都不该断，带宽极大盖过线
+const MAX_BAND_HALF = 0.26; // 不确定带半宽上限
+const EARLY_WIDEN_FACTOR = 0.55; // 早期点（轨迹左端）带宽放大系数
 
 // 不确定带半宽（p 单位）。低置信 / 早点 → 更宽；≤2 点带宽极大（连方向都不该断）。
 function bandHalf(tier: BandTier, i: number, n: number): number {
-  if (n <= 2) return 0.22;
-  const base = tier === 'firm' ? 0.045 : tier === 'mid' ? 0.085 : 0.155;
-  const early = 1 + 0.55 * (1 - i / (n - 1));
-  return Math.min(0.26, base * early);
+  if (n <= 2) return TWO_POINT_BAND_HALF;
+  const base = BAND_HALF_BY_TIER[tier];
+  const early = 1 + EARLY_WIDEN_FACTOR * (1 - i / (n - 1));
+  return Math.min(MAX_BAND_HALF, base * early);
 }
 
 export interface TrajPoint {
