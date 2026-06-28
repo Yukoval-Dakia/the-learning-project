@@ -1150,9 +1150,17 @@ type LearningItemProposalOutput = z.infer<typeof LearningItemProposalOutputSchem
 //   - experimental:completion_autoapply          成功落地（A 档读模型锚 + 撤销追溯）
 //   - experimental:completion_autoapply_skipped   退回 B（熔断 tripped 或 apply 失败）
 // caused_by_event_id=proposalId + payload.proposal_id 双锚，给 A 档读模型 join `correct`
-// (retract) 事件判 reverted 用。F1（OCR note-refine 同款）：可观测写失败绝不能反过来
-// 让工具失败——apply 已发生（成功路径）或已决定退回（skipped 路径），故 try/catch 吞 +
-// console.warn，丢一条 telemetry 面包屑远好于因埋点抖动而误报工具失败。
+// (retract) 事件判 reverted 用。
+//
+// 吞错语义（非对称，刻意；F1 OCR note-refine 同款）：两个 event 都不让工具失败——apply 已
+// 发生（成功路径）或已决定退回（skipped 路径），故 try/catch 吞。但二者承重不同：
+//   - skipped event = 纯 telemetry，丢了无害（proposal 仍 pending，在 B 档照常 surface）。
+//   - 成功锚 (COMPLETION_AUTOAPPLY_ACTION) = A 档读模型的**唯一**数据源，非 telemetry。若它
+//     写失败（罕见，event 写极少失败）：item 已是 done（apply 是真相源、已落地），但不会作为
+//     A 档撤销卡 surface；撤销仍可经 proposal id 调既有 retract 路由、item 在正常 item 视图
+//     仍显示 done。即 affordance 退化（少一张 inbox 卡），非正确性丢失 —— 故仍不反噬工具，
+//     但下方 catch 用 error 级日志让这次承重锚失败更醒目。未来硬化：把成功锚写进 apply 同一
+//     tx（原子 either-both）。
 const COMPLETION_AUTOAPPLY_ACTION = 'experimental:completion_autoapply';
 const COMPLETION_AUTOAPPLY_SKIPPED_ACTION = 'experimental:completion_autoapply_skipped';
 
@@ -1197,8 +1205,14 @@ async function writeCompletionAutoApplyEvent(
       ingest_at: now,
     });
   } catch (err) {
-    console.warn(
-      `[completion-autoapply] failed to write ${opts.action} for proposal ${opts.proposalId}:`,
+    // 成功锚是 A 档读模型唯一源（见上注释）→ error 级更醒目；skipped 是纯 telemetry → warn。
+    const loadBearing = opts.action === COMPLETION_AUTOAPPLY_ACTION;
+    const log = loadBearing ? console.error : console.warn;
+    const detail = loadBearing
+      ? ' (A 档撤销卡不会 surface；撤销仍可经 proposal id 调 retract)'
+      : '';
+    log(
+      `[completion-autoapply] failed to write ${opts.action} for proposal ${opts.proposalId}${detail}:`,
       err,
     );
   }
