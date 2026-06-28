@@ -64,7 +64,7 @@ export interface ProfileKc {
   };
   // YUK-513 #123 / inc-E — DARK day-one (n=0) propagated mastery prior over the prereq
   // sub-DAG (deterministic, user-independent: see loadDayOnePriors). Present only when
-  // PREREQ_PROPAGATION_ENABLED && the native binding is loadable; otherwise the field is
+  // DAY_ONE_PRIOR_ENABLED && the native binding is loadable; otherwise the field is
   // OMITTED and this response is byte-identical to today. No UI consumer until PR-3.
   day_one_prior?: DayOnePrior;
 }
@@ -113,7 +113,7 @@ export async function GET(req: Request): Promise<Response> {
       // the nightly batch hasn't reached the usage gate on).
       readLearnerAxisStates(db, scope),
       // YUK-513 #123 / inc-E — resolves null (NO-OP, no DB read) unless
-      // PREREQ_PROPAGATION_ENABLED && the native binding is loadable. Null ⇒ no field added
+      // DAY_ONE_PRIOR_ENABLED && the native binding is loadable. Null ⇒ no field added
       // below ⇒ this response stays byte-identical to today (the regression anchor).
       loadDayOnePriors(db, scope),
     ]);
