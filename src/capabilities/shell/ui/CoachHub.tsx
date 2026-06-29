@@ -202,6 +202,8 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
             <button
               key={opt.days}
               type="button"
+              role="tab"
+              aria-selected={days === opt.days}
               className={days === opt.days ? 'on' : ''}
               onClick={() => setDays(opt.days)}
             >
