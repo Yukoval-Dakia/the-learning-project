@@ -319,6 +319,22 @@
   box-shadow: var(--shadow-2);
   transform: translateY(-1px);
 }
+/* 全局 :focus-visible（globals.css）已给 button focus ring；这里只对齐 r-3 圆角（默认 r-2）。 */
+.frontier-card:focus-visible {
+  border-radius: var(--r-3);
+}
+/* 错误态重试按钮（OCR：frontier-retry 此前用了 class 却无样式）——inline link 风格。 */
+.frontier-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--coral-ink);
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  cursor: pointer;
+}
 .frontier-card-top {
   display: flex;
   align-items: baseline;
