@@ -94,4 +94,28 @@ describe('FrontierRail', () => {
     expect(html).toContain('暂无明确下一步');
     expect(html).not.toContain('frontier-card');
   });
+
+  it('shows an error state with retry on load failure (NOT folded into empty — CodeRabbit)', () => {
+    const onRetry = vi.fn();
+    const html = renderToString(
+      <FrontierRail items={[]} isError onRetry={onRetry} navigate={vi.fn()} />,
+    );
+    expect(html).toContain('下一步建议暂不可用');
+    expect(html).not.toContain('暂无明确下一步'); // 不被误折叠成业务空态
+    expect(html).not.toContain('frontier-card');
+    // retry is wired to onRetry
+    const clicks = findOnClicks(
+      FrontierRail({ items: [], isError: true, onRetry, navigate: vi.fn() }),
+    );
+    expect(clicks).toHaveLength(1);
+    clicks[0]();
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it('shows a loading state while the read model is in flight (NOT empty)', () => {
+    const html = renderToString(<FrontierRail items={[]} isLoading navigate={vi.fn()} />);
+    expect(html).toContain('正在看你学得动什么');
+    expect(html).not.toContain('暂无明确下一步');
+    expect(html).not.toContain('frontier-card');
+  });
 });
