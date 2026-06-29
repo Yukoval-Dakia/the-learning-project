@@ -209,6 +209,12 @@ describe('loadKnowledgeNodePage', () => {
     expect(page?.effective_domain).toBe('wenyan');
     expect(page?.evidence_count).toBe(0);
     expect(page?.mastery).toBeNull();
+    // A5 S1 (YUK-354) — cold-start band fields default to null/null/false so the
+    // client renders the unknown band (not 0). Populated band mapping is covered by
+    // mastery-band.unit.test.ts.
+    expect(page?.mastery_lo).toBeNull();
+    expect(page?.mastery_hi).toBeNull();
+    expect(page?.low_confidence).toBe(false);
     expect(page?.primary_atomic).toBeNull();
     expect(page?.notes).toHaveLength(0);
     expect(page?.mesh_neighbors).toHaveLength(0);
