@@ -265,8 +265,10 @@ export function NodeDrawer({
               >
                 <span className="rel-kind mono">child</span>
                 <span {...subjectContentPropsForDomain(c.effective_domain)}>{c.name}</span>
-                {/* ⑥治理：子节点环去裸 pct（保 glance 环弧）。BandChip 升级需扩 child band 字段，follow-up。 */}
-                <MasteryRing mastery={c.mastery} size={24} showNumber={false} />
+                {/* ⑥治理：抽屉子节点是 KnowledgeTreeNode（已带 band 字段）→ 直接 BandChip 给离散档
+                    （设计源 screen-knowledge.jsx:250 子行即 BandChip）。详情页子行是 NodePageChild
+                    仅 {id,name,mastery}，那里才需扩字段 follow-up（reviewer minor #2）。 */}
+                <BandChip input={c} />
               </button>
             ))}
           </div>
