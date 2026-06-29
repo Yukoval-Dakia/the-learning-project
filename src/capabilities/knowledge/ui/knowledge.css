@@ -263,3 +263,109 @@
   font-weight: 600;
   color: var(--hard-ink);
 }
+
+/* A5 S2 (YUK-354) — FrontierRail:「下一步，你学得动这些」learnable_frontier 横幅.
+   PORT 自 docs/design/loom-refresh/project/knowledge-a5.css L17-39（只搬 .frontier*
+   一组，不整文件拷）。.frontier-card-name 不带 .wenyan serif（rail 跨科目）。 */
+.frontier {
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-4);
+  padding: var(--s-5);
+  margin-bottom: var(--s-5);
+}
+.frontier-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.frontier-ic {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-3);
+  display: grid;
+  place-items: center;
+  background: var(--coral);
+  color: #fff;
+  flex: none;
+}
+.frontier-title {
+  font: 600 var(--fs-h5) / 1.2 var(--font-serif);
+  color: var(--ink);
+  margin: 0;
+}
+.frontier-sub {
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+.frontier-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s-3);
+}
+.frontier-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-3);
+  padding: var(--s-3) var(--s-4);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+}
+.frontier-card:hover {
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+}
+.frontier-card-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+.frontier-card-name {
+  flex: 1;
+  min-width: 0;
+  font: 600 var(--fs-body-lg) / 1.3 var(--font-serif);
+  color: var(--ink);
+}
+.frontier-tag-next {
+  margin-left: auto;
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border: 1px solid var(--coral-line);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.frontier-tag-propose {
+  margin-left: auto;
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px dashed var(--line-strong);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.frontier-reason {
+  font: 400 var(--fs-meta) / 1.5 var(--font-sans);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.frontier-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--s-3);
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-4);
+}
+@media (max-width: 720px) {
+  .frontier-list {
+    grid-template-columns: 1fr;
+  }
+}
