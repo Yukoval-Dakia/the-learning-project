@@ -36,7 +36,7 @@ jobs:
       - name: PR-Agent
         # Canonical repo (Codium-ai → qodo-ai → The-PR-Agent; old slugs redirect).
         # Pinned to the latest release as of 2026-06-16 for reproducibility.
-        uses: The-PR-Agent/pr-agent@v0.36.1
+        uses: The-PR-Agent/pr-agent@v0.38.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
