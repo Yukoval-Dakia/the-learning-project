@@ -106,6 +106,12 @@ export interface KnowledgeNodePage {
   parent_name: string | null;
   effective_domain: string | null;
   mastery: number | null;
+  // A5 S1 (YUK-354) — ADR-0035 p(L) confidence-interval band + low-confidence flag,
+  // surfaced for the focal-node BandChip (discrete band + interval + source). Cold start
+  // (no mastery_state row) → null/null/false; the client renders the unknown band.
+  mastery_lo: number | null;
+  mastery_hi: number | null;
+  low_confidence: boolean;
   evidence_count: number;
   last_evidence_at: string | null;
   mastery_decay_bucket: MasteryDecayBucket;
@@ -392,6 +398,11 @@ export async function loadKnowledgeNodePage(
     parent_name: parentName,
     effective_domain: effectiveDomain,
     mastery: nodeMastery?.mastery ?? null,
+    // A5 S1 (YUK-354) — band fields from the same getMasteryProjection read above.
+    // Absent (cold start) → null/false; the client maps mastery=null to the unknown band.
+    mastery_lo: nodeMastery?.mastery_lo ?? null,
+    mastery_hi: nodeMastery?.mastery_hi ?? null,
+    low_confidence: nodeMastery?.low_confidence ?? false,
     evidence_count: nodeEvidenceCount,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
     mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),

@@ -36,6 +36,13 @@ describe('loadTreeSnapshot', () => {
     expect(tree.find((r) => r.id === 'k1')?.effective_domain).toBe('wenyan');
     expect(tree.find((r) => r.id === 'k2')?.effective_domain).toBe('wenyan');
     expect(tree.find((r) => r.id === 'k3')?.effective_domain).toBe('wenyan');
+    // A5 S1 (YUK-354) — never-attempted nodes expose the BandChip read shape with
+    // cold-start defaults (null/null/false) so the client renders the unknown band.
+    const k1 = tree.find((r) => r.id === 'k1');
+    expect(k1?.mastery).toBeNull();
+    expect(k1?.mastery_lo).toBeNull();
+    expect(k1?.mastery_hi).toBeNull();
+    expect(k1?.low_confidence).toBe(false);
   });
 
   it('caps walk depth at 32 (cycle protection)', async () => {

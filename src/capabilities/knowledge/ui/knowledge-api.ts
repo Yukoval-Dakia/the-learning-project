@@ -12,6 +12,11 @@ export interface KnowledgeTreeNode {
   parent_id: string | null;
   effective_domain: string | null;
   mastery: number | null; // 0..1
+  // A5 S1 (YUK-354) — p(L) CI band (0..1) + low-confidence flag for the BandChip
+  // (discrete band + interval + source). null/null/false = cold start → unknown band.
+  mastery_lo: number | null;
+  mastery_hi: number | null;
+  low_confidence: boolean;
   evidence_count: number;
 }
 
@@ -90,6 +95,11 @@ export interface KnowledgeNodePage {
   parent_name: string | null;
   effective_domain: string | null;
   mastery: number | null;
+  // A5 S1 (YUK-354) — p(L) CI band (0..1) + low-confidence flag for the focal-node
+  // BandChip. null/null/false = cold start → unknown band.
+  mastery_lo: number | null;
+  mastery_hi: number | null;
+  low_confidence: boolean;
   evidence_count: number;
   last_evidence_at: string | null;
   mastery_decay_bucket: 'untrained' | 'fresh' | 'mild' | 'stale' | 'unknown';

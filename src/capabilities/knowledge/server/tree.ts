@@ -10,6 +10,12 @@ interface KnowledgeRow {
   parent_id: string | null;
   archived_at: Date | null;
   mastery: number | null;
+  // A5 S1 (YUK-354) — ADR-0035 p(L) confidence-interval band + low-confidence flag,
+  // surfaced for the tree/drawer BandChip (discrete band + interval + source). Absent
+  // (never-attempted) → null/null/false; the client renders the cold-start unknown band.
+  mastery_lo: number | null;
+  mastery_hi: number | null;
+  low_confidence: boolean;
   evidence_count: number;
   last_evidence_at: Date | null;
   last_active_at: Date;
@@ -103,6 +109,11 @@ export async function loadTreeSnapshot(db: Db): Promise<KnowledgeNode[]> {
       parent_id: r.parent_id,
       archived_at: r.archived_at,
       mastery: proj ? proj.mastery : null,
+      // A5 S1 (YUK-354) — band fields from the same SoT projection. Absent → null/false
+      // (cold start); the client's masteryBandView maps mastery=null to the unknown band.
+      mastery_lo: proj?.mastery_lo ?? null,
+      mastery_hi: proj?.mastery_hi ?? null,
+      low_confidence: proj?.low_confidence ?? false,
       evidence_count: proj?.evidence_count ?? 0,
       last_evidence_at: proj?.last_outcome_at ?? null,
       last_active_at: r.last_active_at,
