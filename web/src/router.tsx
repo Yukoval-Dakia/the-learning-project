@@ -21,7 +21,7 @@ import DraftReviewPage from '@/capabilities/practice/ui/DraftReviewPage';
 import PracticeFacePage from '@/capabilities/practice/ui/PracticeFacePage';
 import QuestionDetailPage from '@/capabilities/practice/ui/QuestionDetailPage';
 import QuestionsPage from '@/capabilities/practice/ui/QuestionsPage';
-import CoachPage from '@/capabilities/shell/ui/CoachPage';
+import CoachHub from '@/capabilities/shell/ui/CoachHub';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
 import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import { getWorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
@@ -442,7 +442,7 @@ const noteReaderRoute = createRoute({
 //（见 docs/audit/2026-06-13-visual-gap.md §5 决策点③，owner 已拍板收编）。
 function CoachRoute() {
   const router = useRouter();
-  return <CoachPage navigate={(to) => router.history.push(to)} />;
+  return <CoachHub navigate={(to) => router.history.push(to)} />;
 }
 
 const coachRoute = createRoute({
