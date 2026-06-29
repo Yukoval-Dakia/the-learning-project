@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 import {
   COLD_START_SE,
   type CalSort,
+  MAX_DOT_LANES,
   SE_LO,
+  ariaSortFor,
   calCounts,
   calDots,
   calSorted,
@@ -120,6 +122,15 @@ describe('sortCaret', () => {
   });
 });
 
+describe('ariaSortFor', () => {
+  it('非活动列 none；活动列按方向 ascending/descending', () => {
+    expect(ariaSortFor({ key: 'se', dir: 1 }, 'name')).toBe('none');
+    expect(ariaSortFor({ key: 'se', dir: 1 }, 'se')).toBe('ascending');
+    expect(ariaSortFor({ key: 'se', dir: -1 }, 'se')).toBe('descending');
+    expect(ariaSortFor({ key: 'tier', dir: -1 }, 'tier')).toBe('descending');
+  });
+});
+
 describe('seToX / seFillPct', () => {
   it('se=COLD_START_SE → 最左/0%（最不可信）', () => {
     expect(seToX(COLD_START_SE)).toBe(2); // clamp 下界
@@ -151,5 +162,18 @@ describe('calDots', () => {
     expect(byId.c.lane).toBe(0);
     expect(byId.a.x).toBe(byId.b.x); // 同 SE 同 x
     expect(byId.c.x).not.toBe(byId.a.x);
+  });
+
+  it('lane 在 MAX_DOT_LANES 处封顶，冷启大量同 SE 点不溢出轨道', () => {
+    // 12 个 evidence=0（se=1.00 同桶）KC：lane 该 0..4 后全压最高层 4，绝不线性增长到 11。
+    const rows = toCalRows(
+      Array.from({ length: 12 }, (_, i) =>
+        row({ knowledge_id: `k${i}`, evidence_count: 0, theta_se: null }),
+      ),
+    );
+    const lanes = calDots(rows).map((d) => d.lane);
+    expect(Math.max(...lanes)).toBe(MAX_DOT_LANES - 1);
+    expect(lanes.slice(0, MAX_DOT_LANES)).toEqual([0, 1, 2, 3, 4]);
+    expect(lanes.slice(MAX_DOT_LANES).every((l) => l === MAX_DOT_LANES - 1)).toBe(true);
   });
 });

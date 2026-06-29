@@ -35,6 +35,7 @@ import {
   type CalRow,
   type CalSort,
   type CalTier,
+  ariaSortFor,
   calCounts,
   calDots,
   calSorted,
@@ -93,6 +94,11 @@ function CalibrationBody({
 }) {
   const [sort, setSort] = useState<CalSort>({ key: 'se', dir: 1 }); // 默认按 θ̂ SE 升序 → 最可信在上
   const rows = toCalRows(data.rows);
+  // 双源但同定义（OCR）：meter 大数字 + firm_count 用 server `agg`（权威横截面聚合）；firmbar
+  // 的 firm/warming/blind 三段用 client `calCounts(rows)`（agg 不带 warming/blind 细分，必须
+  // client recount 才能分段）。两者的 firm 定义 provably 一致——server 保证 evidence=0 ⟹
+  // cold_start(=blind)，client `calTier` 同逻辑（evidence=0 优先判 blind 早于 firm），故
+  // `counts.firm` ≡ `agg.firm_count`，firm 段宽与 meter 数不会自相矛盾。
   const counts = calCounts(rows);
   const blind = rows.filter((r) => r.tier === 'blind');
   const sorted = calSorted(rows, sort);
@@ -261,23 +267,23 @@ function CalibrationBody({
         <table className="cal-table">
           <thead>
             <tr>
-              <th>
+              <th aria-sort={ariaSortFor(sort, 'name')}>
                 <button type="button" className="cal-th-btn" onClick={() => onSort('name')}>
                   知识点{sortCaret(sort, 'name')}
                 </button>
               </th>
               <th>track</th>
-              <th className="num">
+              <th className="num" aria-sort={ariaSortFor(sort, 'evidence')}>
                 <button type="button" className="cal-th-btn" onClick={() => onSort('evidence')}>
                   证据{sortCaret(sort, 'evidence')}
                 </button>
               </th>
-              <th>
+              <th aria-sort={ariaSortFor(sort, 'se')}>
                 <button type="button" className="cal-th-btn" onClick={() => onSort('se')}>
                   θ̂ SE · 可信度{sortCaret(sort, 'se')}
                 </button>
               </th>
-              <th>
+              <th aria-sort={ariaSortFor(sort, 'tier')}>
                 <button type="button" className="cal-th-btn" onClick={() => onSort('tier')}>
                   成熟度{sortCaret(sort, 'tier')}
                 </button>
