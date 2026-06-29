@@ -15,6 +15,7 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
+import { BandChip } from './BandChip';
 import { REL_CUE } from './MeshGraph';
 import { humanizeActivity } from './humanize-activity';
 import { type KnowledgeNodePage, type NoteSummary, getNodePage } from './knowledge-api';
@@ -156,7 +157,6 @@ export default function KnowledgeDetailPage({
     );
 
   const db = DECAY_BUCKET_META[node.mastery_decay_bucket];
-  const pct = node.mastery == null ? null : Math.round(node.mastery * 100);
   const primary = node.primary_atomic;
   const otherNotes = node.notes.filter((n) => n.id !== primary?.id);
   const byKind = new Map<string, NoteSummary[]>();
@@ -190,8 +190,10 @@ export default function KnowledgeDetailPage({
                 <span className={`decay-bucket tone-${db.tone}`}>
                   <LoomIcon name={db.icon as never} size={12} />
                   <span>衰减 · {db.label}</span>
-                  {pct != null && <span className="decay-retr mono">M {pct}%</span>}
                 </span>
+                <span className="dot-sep">·</span>
+                {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 M{pct}%（⑥治理：绝不裸概率）。 */}
+                <BandChip input={node} />
                 <span className="dot-sep">·</span>
                 <span className="meta mono">{node.evidence_count} evidence</span>
               </div>
