@@ -54,6 +54,13 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./api/review-due-summary').then((m) => m.GET),
       },
       {
+        // A5 S2 (YUK-354)：FrontierRail 读模型（learnable_frontier 横幅）。静态段，
+        // 须在 :id catch-all 之前匹配（同 proposals/edges/review*）。
+        method: 'GET',
+        path: '/api/knowledge/frontier',
+        load: () => import('./api/frontier').then((m) => m.GET),
+      },
+      {
         method: 'GET',
         path: '/api/knowledge/[id]',
         load: () => import('./api/node-page-route').then((m) => m.GET),
