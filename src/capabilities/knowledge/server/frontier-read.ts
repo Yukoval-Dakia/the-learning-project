@@ -34,6 +34,14 @@ const RELATION_PREREQUISITE = 'prerequisite' as const;
 /** Cap on rail items (dense first, then propose). A UI banner, not the full set. */
 export const FRONTIER_RAIL_MAX_ITEMS = 8;
 
+/**
+ * Scan cap on the pending-propose-edge query (OCR). This feeds a ≤8-item UI banner — unlike
+ * loadPendingEdgeProposalKeys it does NOT need the full cross-batch dedup set. frontier_fill
+ * caps proposals/run and dedups pending pairs, so a mature graph stays well under this; the
+ * LIMIT is degenerate-defense against unbounded accumulation, not a business cap.
+ */
+const FRONTIER_PROPOSE_SCAN_CAP = 100;
+
 /** Proposed-prereq NAMES shown verbatim in a propose reason before collapsing to "等 N 项". */
 const PROPOSE_REASON_NAME_CAP = 2;
 
@@ -125,7 +133,8 @@ async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal
     // 次级 tiebreaker desc(event.id)：frontier_fill 紧循环多个 writeAiProposal 可撞 ms
     // （本仓库刚为 ms-collision flake 加固过 qb 测），无 tiebreaker 则 >8-cap 时「哪 8 个显示」
     // 非确定（reviewer nit）。
-    .orderBy(desc(event.created_at), desc(event.id));
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(FRONTIER_PROPOSE_SCAN_CAP);
 
   if (proposeRows.length === 0) return [];
 
