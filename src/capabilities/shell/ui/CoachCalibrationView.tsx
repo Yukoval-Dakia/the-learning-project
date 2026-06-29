@@ -323,7 +323,9 @@ function CalLedgerRow({ k, navigate }: { k: CalRow; navigate: (to: string) => vo
       <td>
         <div className="cal-se">
           <span className="cal-se-num mono">
-            {k.evidence_count === 0 ? '≈1.00' : k.display_se.toFixed(2)}
+            {/* 数字一律 derive display_se（cold-start 冠 ≈ 标先验）——不硬编码 '1.00'，
+                免 server prior 改了文本撒谎而 bar(seFillPct) 仍对（reviewer NIT）。 */}
+            {k.evidence_count === 0 ? `≈${k.display_se.toFixed(2)}` : k.display_se.toFixed(2)}
           </span>
           <span className="cal-se-bar">
             <span
