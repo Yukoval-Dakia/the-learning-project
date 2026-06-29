@@ -178,7 +178,8 @@ export default function KnowledgeDetailPage({
         </Btn>
         <div className="page-head-row" style={{ marginTop: 'var(--s-3)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-4)' }}>
-            <MasteryRing mastery={node.mastery} size={56} />
+            {/* ⑥治理：hero 环去裸 pct，档由下方 meta 行的 BandChip 给。 */}
+            <MasteryRing mastery={node.mastery} size={56} showNumber={false} />
             <div>
               <h1 className="page-title serif">{node.name}</h1>
               <div className="nowrap-meta" style={{ marginTop: 4 }}>
@@ -369,7 +370,10 @@ export default function KnowledgeDetailPage({
                   <span className="rel-kind mono">child</span>
                   {/* de-wenyan: NodePageChild carries no domain (see parent note). */}
                   <span>{c.name}</span>
-                  <MasteryRing mastery={c.mastery} size={22} />
+                  {/* ⑥治理：子节点环去裸 pct（保 glance 环弧）。子节点行 BandChip 升级需扩
+                      NodePageChild 的 band 字段（mastery_lo/hi/low_confidence/evidence_count），
+                      属 follow-up。 */}
+                  <MasteryRing mastery={c.mastery} size={22} showNumber={false} />
                 </button>
               ))}
               {!node.parent_name && node.children.length === 0 && (

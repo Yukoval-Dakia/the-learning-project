@@ -16,15 +16,24 @@ interface MasteryRingProps {
   mastery: number | null | undefined;
   /** outer px size of the square ring (design default 30 in the tree row). */
   size?: number;
+  /**
+   * A5 S1 (YUK-354 ⑥治理) — 是否渲环内裸 pct 数字。knowledge 面传 false → 只留 tone 环弧
+   * （定性程度 glance），离散档 / 区间 / 来源由旁侧 BandChip 承载，绝不裸概率。默认 true
+   * 保基元通用 + 向后兼容。showNumber=false 时环为装饰性（aria-hidden），语义交给 BandChip，
+   * 避免与 chip 重复读屏。
+   */
+  showNumber?: boolean;
 }
 
-export function MasteryRing({ mastery, size = 30 }: MasteryRingProps) {
+export function MasteryRing({ mastery, size = 30, showNumber = true }: MasteryRingProps) {
   const m = Math.max(0, Math.min(1, mastery ?? 0));
   const pct = Math.round(m * 100);
   const tone = masteryTone(m);
   const r = (size - 6) / 2;
   const c = 2 * Math.PI * r;
   const mid = size / 2;
+  // showNumber=false（knowledge 面）：aria-label 定性化（不暴露裸 pct%），语义档由旁侧
+  // BandChip 承载。单三元非嵌套，守红线。
   return (
     <svg
       width={size}
@@ -32,7 +41,7 @@ export function MasteryRing({ mastery, size = 30 }: MasteryRingProps) {
       viewBox={`0 0 ${size} ${size}`}
       className="mastery-ring"
       role="img"
-      aria-label={`掌握度 ${pct}%`}
+      aria-label={showNumber ? `掌握度 ${pct}%` : '掌握度程度'}
     >
       {/* track */}
       <circle cx={mid} cy={mid} r={r} fill="none" stroke="var(--line)" strokeWidth={3} />
@@ -49,15 +58,18 @@ export function MasteryRing({ mastery, size = 30 }: MasteryRingProps) {
         strokeDashoffset={c * (1 - m)}
         transform={`rotate(-90 ${mid} ${mid})`}
       />
-      <text
-        x="50%"
-        y="52%"
-        dominantBaseline="middle"
-        textAnchor="middle"
-        className="mastery-ring-t mono"
-      >
-        {pct}
-      </text>
+      {/* ⑥治理：showNumber=false（knowledge 面）不渲裸 pct，档由旁侧 BandChip 给。 */}
+      {showNumber && (
+        <text
+          x="50%"
+          y="52%"
+          dominantBaseline="middle"
+          textAnchor="middle"
+          className="mastery-ring-t mono"
+        >
+          {pct}
+        </text>
+      )}
     </svg>
   );
 }
