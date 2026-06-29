@@ -226,3 +226,40 @@
   color: var(--ink-2);
   margin-top: 2px;
 }
+
+/* A5 S1 (YUK-354) — BandChip: 档 + 来源(hard 实心点/soft 虚线点) + 低置信(虚线边).
+   PORT 自 docs/design/loom-refresh/project/knowledge-a5.css L4-15（只搬 .band-chip*
+   一组，不整文件拷）。⑥治理：替代树/图行 + 焦点详情/抽屉上的裸 mastery%。 */
+.band-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--paper-sunk);
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.band-chip .bc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.band-chip.src-hard .bc-dot {
+  background: var(--good);
+}
+.band-chip.src-soft .bc-dot {
+  background: transparent;
+  border: 1.5px dashed var(--ink-4);
+}
+.band-chip.is-low {
+  border-style: dashed;
+  color: var(--ink-3);
+}
+.band-chip .bc-low {
+  font-weight: 600;
+  color: var(--hard-ink);
+}
