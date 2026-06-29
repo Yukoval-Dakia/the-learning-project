@@ -13,6 +13,7 @@ import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 
+import { BandChip } from './BandChip';
 import { InteractiveArtifactDiscovery } from './KnowledgeDetailPage';
 import { REL_CUE } from './MeshGraph';
 import {
@@ -179,7 +180,6 @@ export function NodeDrawer({
       p.payload.proposed_change.to_knowledge_id === node.id,
   );
   const cue = decayCue(node.mastery);
-  const pct = node.mastery == null ? 0 : Math.round(node.mastery * 100);
 
   return (
     <>
@@ -212,7 +212,10 @@ export function NodeDrawer({
         <div className="drawer-body">
           <div className="node-metrics">
             <div className="nm">
-              <div className="nm-n serif">{node.mastery == null ? '—' : `${pct}%`}</div>
+              {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 {pct}%（⑥治理：绝不裸概率）。 */}
+              <div className="nm-n">
+                <BandChip input={node} />
+              </div>
               <div className="nm-l meta">掌握度</div>
             </div>
             <div className="nm">

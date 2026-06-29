@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import './knowledge.css';
 
+import { BandChip } from './BandChip';
 import { MeshGraph } from './MeshGraph';
 import { NodeDrawer, decayCue } from './NodeDrawer';
 import { type KnowledgeTreeNode, getEdgeProposals, getEdges, getTree } from './knowledge-api';
@@ -195,6 +196,10 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                   {cue.label}
                 </span>
                 <div className="know-end">
+                  {/* A5 S1 (YUK-354) — 离散档 BandChip（设计源 screen-knowledge.jsx:357
+                      在 know-end 内）：档 + 区间 + 来源 + 低置信，定性表达 p(L) 轴。前置
+                      MasteryRing(tone 色环)保留——tone 颜色与 band 档正交（⑥ + 阶段4 红线）。 */}
+                  <BandChip input={n} />
                   <span className="meta mono">{n.evidence_count} ev</span>
                   {meshCount > 0 && (
                     <span className="badge tone-info">
