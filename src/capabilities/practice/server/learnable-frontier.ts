@@ -100,6 +100,15 @@ export type FrontierKind = 'sparse' | 'dense' | 'overflow';
 export interface FrontierResolution {
   kind: FrontierKind;
   ids: string[];
+  /**
+   * A5 S2 (YUK-354) — the transitive prereq closure that produced `ids`, surfaced so
+   * the FrontierRail read model can assemble each frontier KC's "前置已掌握" reason
+   * WITHOUT recomputing the closure. Map<frontier_kc, prereq_kc[]>. Populated ONLY on
+   * the `dense` branch (sparse/overflow carry no closure → omitted). Additive +
+   * optional: the thin {@link learnableFrontier} wrapper and frontier_fill_nightly read
+   * only `.ids`/`.kind`, so they are byte-identical to before.
+   */
+  prereqsByFrontier?: Map<string, string[]>;
 }
 
 /**
@@ -214,7 +223,7 @@ export async function learnableFrontierResolved(db: DbLike): Promise<FrontierRes
     if (allPrereqsMastered) frontier.push(frontierKc);
   }
   frontier.sort();
-  return { kind: 'dense', ids: frontier };
+  return { kind: 'dense', ids: frontier, prereqsByFrontier };
 }
 
 /**
