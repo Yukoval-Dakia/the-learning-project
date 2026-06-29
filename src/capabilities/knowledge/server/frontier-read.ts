@@ -37,6 +37,9 @@ export const FRONTIER_RAIL_MAX_ITEMS = 8;
 /** Proposed-prereq NAMES shown verbatim in a propose reason before collapsing to "等 N 项". */
 const PROPOSE_REASON_NAME_CAP = 2;
 
+/** Char cap for the LLM-`reasoning` fallback shown when no prereq names survive. */
+const PROPOSE_LLM_REASON_CAP = 40;
+
 /**
  * One FrontierRail card. The mastery-band fields ({@link MasteryBandInput} shape:
  * `mastery` / `mastery_lo` / `mastery_hi` / `low_confidence` / `evidence_count`) are
@@ -73,8 +76,17 @@ function denseReason(prereqCount: number): string {
 }
 
 /** Propose-half reason: the proposed (unconfirmed) prerequisite NAMES that suggest this KC. */
-function proposeReason(prereqNames: string[]): string {
-  if (prereqNames.length === 0) return 'AI 提议的下一步 · 待确认';
+function proposeReason(prereqNames: string[], llmReason: string | null): string {
+  if (prereqNames.length === 0) {
+    // 前置名全缺席（归档/未知）→ 回落 frontier_fill 写的 LLM reasoning（更有信息量，消死字段，
+    // reviewer minor），它也缺才用泛化串。clamp 防过长撑卡。
+    if (!llmReason) return 'AI 提议的下一步 · 待确认';
+    const clamped =
+      llmReason.length > PROPOSE_LLM_REASON_CAP
+        ? `${llmReason.slice(0, PROPOSE_LLM_REASON_CAP)}…`
+        : llmReason;
+    return `AI 提议：${clamped} · 待确认`;
+  }
   const shown = prereqNames.slice(0, PROPOSE_REASON_NAME_CAP).join('、');
   const extra = prereqNames.length > PROPOSE_REASON_NAME_CAP ? ` 等 ${prereqNames.length} 项` : '';
   return `AI 提议前置：${shown}${extra} · 待确认`;
@@ -105,7 +117,10 @@ async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal
         sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
       ),
     )
-    .orderBy(desc(event.created_at));
+    // 次级 tiebreaker desc(event.id)：frontier_fill 紧循环多个 writeAiProposal 可撞 ms
+    // （本仓库刚为 ms-collision flake 加固过 qb 测），无 tiebreaker 则 >8-cap 时「哪 8 个显示」
+    // 非确定（reviewer nit）。
+    .orderBy(desc(event.created_at), desc(event.id));
 
   if (proposeRows.length === 0) return [];
 
@@ -253,7 +268,7 @@ export async function loadFrontierRail(db: Db): Promise<FrontierRailItem[]> {
     items.push({
       kid,
       name,
-      reason: proposeReason(fromNames),
+      reason: proposeReason(fromNames, proposeByTo.get(kid)?.reason ?? null),
       propose: true,
       lowConf: true,
       ...bandFields(kid),
