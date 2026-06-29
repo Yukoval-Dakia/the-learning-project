@@ -201,7 +201,8 @@ export function NodeDrawer({
         aria-hidden={!open}
       >
         <div className="drawer-head">
-          <MasteryRing mastery={node.mastery} size={40} />
+          {/* ⑥治理：头环去裸 pct，档由下方 node-metrics 的 BandChip 给。 */}
+          <MasteryRing mastery={node.mastery} size={40} showNumber={false} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="drawer-title serif">{node.name}</div>
             <div className="meta mono">{node.effective_domain ?? node.domain ?? '—'}</div>
@@ -264,7 +265,8 @@ export function NodeDrawer({
               >
                 <span className="rel-kind mono">child</span>
                 <span {...subjectContentPropsForDomain(c.effective_domain)}>{c.name}</span>
-                <MasteryRing mastery={c.mastery} size={24} />
+                {/* ⑥治理：子节点环去裸 pct（保 glance 环弧）。BandChip 升级需扩 child band 字段，follow-up。 */}
+                <MasteryRing mastery={c.mastery} size={24} showNumber={false} />
               </button>
             ))}
           </div>
