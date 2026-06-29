@@ -22,6 +22,26 @@ export interface KnowledgeTreeNode {
 
 export const getTree = () => apiJson<{ rows: KnowledgeTreeNode[] }>('/api/knowledge');
 
+// ── A5 S2 (YUK-354) FrontierRail wire（learnable_frontier 横幅）─────────────
+// 后端 server/frontier-read.ts loadFrontierRail。band 字段（mastery_lo/hi/
+// low_confidence/evidence_count）平铺，直接喂 <BandChip input={item} />。
+export interface FrontierRailItem {
+  kid: string;
+  name: string;
+  reason: string;
+  // true → 冷启提议（非 live）前置建议（「建议·低置信」）；false → live 边确定解锁（「下一步」）。
+  propose: boolean;
+  lowConf: boolean;
+  // BandChip 所需的 MasteryBandInput 形状（0..1；null = 冷启未知态）。
+  mastery: number | null;
+  mastery_lo: number | null;
+  mastery_hi: number | null;
+  low_confidence: boolean;
+  evidence_count: number;
+}
+
+export const getFrontier = () => apiJson<{ rows: FrontierRailItem[] }>('/api/knowledge/frontier');
+
 // ── 边 ──────────────────────────────────────────────────────────
 export interface KnowledgeEdgeRow {
   id: string;
