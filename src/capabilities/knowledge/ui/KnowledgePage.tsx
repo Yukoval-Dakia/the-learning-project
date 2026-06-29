@@ -128,8 +128,17 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
       </div>
 
       {/* A5 S2 (YUK-354)：「下一步学什么」learnable_frontier 横幅（建议非必经路）。
-          知识网为空时不显（大 EmptyState 已覆盖该态，避免双空态）。 */}
-      {nodes.length > 0 && <FrontierRail items={frontierItems} navigate={navigate} />}
+          知识网为空时不显（大 EmptyState 已覆盖该态，避免双空态）。frontierQ 的 loading/error
+          传进去显式分态，不被折叠成「暂无下一步」业务空态（CodeRabbit）。 */}
+      {nodes.length > 0 && (
+        <FrontierRail
+          items={frontierItems}
+          isLoading={frontierQ.isLoading}
+          isError={frontierQ.isError}
+          onRetry={() => void frontierQ.refetch()}
+          navigate={navigate}
+        />
+      )}
 
       {edgeProposals.length > 0 && (
         <div
