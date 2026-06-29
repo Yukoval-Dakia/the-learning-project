@@ -13752,6 +13752,490 @@ button.seg-sm {
   }
 }
 
+/* ── YUK-523 Coach 复盘中枢壳：head 内 tab + 视图 subhead（设计 efficacy.css）── */
+.coachhub-head .page-head-row {
+  align-items: center;
+}
+.coachhub-subhead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-5);
+  flex-wrap: wrap;
+}
+.coachhub .coach-kpi-l {
+  letter-spacing: var(--ls-wide);
+}
+@media (max-width: 720px) {
+  .coachhub-head .page-head-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+/* ── YUK-523 校准诊断视图（PORT 自设计 calibration.css；admin-h/cal-lede 由复盘中枢壳统一持有故略）── */
+.cal {
+  display: flex;
+  flex-direction: column;
+}
+/* A · firm-up 概览 */
+.cal-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: var(--s-4);
+  margin-bottom: var(--s-4);
+}
+.cal-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--s-6);
+}
+.cal-meter-fig {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  padding-right: var(--s-5);
+  border-right: 1px solid var(--line);
+}
+.cal-meter-num {
+  font-size: 64px;
+  line-height: 1;
+  color: var(--coral);
+  font-weight: 600;
+  letter-spacing: var(--ls-tight);
+}
+.cal-meter-pct {
+  font-size: 26px;
+  margin-left: 2px;
+  color: var(--coral);
+}
+.cal-meter-cap {
+  margin-top: var(--s-2);
+}
+.cal-meter-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.cal-meter-line {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.cal-meter-line b {
+  color: var(--ink);
+}
+.cal-firmbar {
+  display: flex;
+  height: 12px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--paper-sunk);
+  margin-top: var(--s-1);
+}
+.cal-firmbar-seg {
+  display: block;
+  height: 100%;
+}
+.cal-firmbar-seg.t-firm {
+  background: var(--good);
+}
+.cal-firmbar-seg.t-warm {
+  background: var(--hard);
+}
+.cal-firmbar-seg.t-blind {
+  background: var(--ink-5);
+}
+.cal-legend {
+  display: flex;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  font-size: var(--fs-caption);
+  color: var(--ink-3);
+}
+.cal-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cal-legend b {
+  color: var(--ink-2);
+}
+.cal-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+.cal-legend i.t-firm {
+  background: var(--good);
+}
+.cal-legend i.t-warm {
+  background: var(--hard);
+}
+.cal-legend i.t-blind {
+  background: var(--ink-5);
+}
+.cal-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+.cal-stat {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: var(--s-3) var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: var(--shadow-1);
+}
+.cal-stat-num {
+  font-size: 30px;
+  line-height: 1.05;
+  color: var(--ink);
+  font-weight: 500;
+}
+.cal-stat.is-firm .cal-stat-num {
+  color: var(--good-ink);
+}
+.cal-stat.is-blind .cal-stat-num {
+  color: var(--coral);
+}
+.cal-stat-lbl {
+  font-size: var(--fs-meta);
+}
+/* B · 冷启盲区 */
+.cal-blind {
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+  margin-bottom: var(--s-4);
+}
+.cal-blind-head {
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+  margin-bottom: var(--s-3);
+}
+.cal-blind-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-2);
+  display: grid;
+  place-items: center;
+  background: var(--paper-raised);
+  color: var(--coral);
+  border: 1px solid var(--coral-line);
+}
+.cal-blind-title {
+  font-size: var(--fs-body-lg);
+  color: var(--ink);
+  font-weight: 600;
+}
+.cal-blind-title b {
+  color: var(--coral-ink);
+}
+.cal-blind-sub {
+  margin-top: 2px;
+  line-height: var(--lh-snug);
+}
+.cal-blind-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.cal-blind-chip {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  background: var(--paper-raised);
+  border: 1px solid var(--coral-line);
+  border-radius: var(--r-pill);
+  padding: 5px 6px 5px 14px;
+}
+.cal-blind-name {
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  font-weight: 500;
+}
+.cal-blind-track {
+  font-size: var(--fs-meta);
+}
+.cal-blind-unknown {
+  font-size: 11px;
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  white-space: nowrap;
+}
+.cal-blind-chip .btn {
+  margin-left: 2px;
+}
+/* C · θ̂ SE 分布带 */
+.cal-strip-card {
+  margin-bottom: var(--s-4);
+}
+.cal-card-h {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--s-4);
+}
+.cal-card-h .meta {
+  max-width: var(--cap-prose);
+  line-height: var(--lh-snug);
+}
+.cal-strip {
+  padding: var(--s-2) var(--s-1) 0;
+}
+.cal-strip-track {
+  position: relative;
+  height: 120px;
+  border-radius: var(--r-3);
+  background: linear-gradient(
+    90deg,
+    var(--paper-sunk) 0%,
+    var(--paper-sunk) 30%,
+    var(--good-soft) 100%
+  );
+  border: 1px solid var(--line);
+}
+.cal-strip-median {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--ink-4);
+}
+.cal-strip-median-lbl {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 10px;
+  color: var(--ink-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.cal-dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transform: translate(-50%, 50%);
+  border: 1.5px solid var(--paper-raised);
+  cursor: default;
+}
+.cal-dot.is-firm {
+  background: var(--good);
+}
+.cal-dot.is-warming {
+  background: var(--hard);
+}
+.cal-dot.is-blind {
+  background: var(--ink-4);
+  box-shadow: 0 0 0 3px var(--paper-sunk);
+}
+.cal-dot-lbl {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  opacity: 0;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 1px 5px;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.cal-dot:hover {
+  z-index: 5;
+}
+.cal-dot:hover .cal-dot-lbl {
+  opacity: 1;
+}
+.cal-strip-axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--s-2);
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.cal-strip-axis-mid {
+  letter-spacing: var(--ls-wide);
+}
+/* D · 逐知识点成熟度 ledger（base 表格自包含——本仓库无 adm-table base） */
+.cal-table-h {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+.cal-table-h .card-title {
+  font-size: var(--fs-h5);
+}
+.cal-table-card {
+  overflow-x: auto;
+}
+.cal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-caption);
+}
+.cal-table th,
+.cal-table td {
+  padding: var(--s-2) var(--s-3);
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.cal-table th {
+  font-weight: 600;
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+.cal-table th.num,
+.cal-table td.num {
+  text-align: right;
+}
+.cal-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* 可排序表头：用真实 <button> 而非可点击 <th>（键盘可达 a11y）；按钮重置成裸表头外观。 */
+.cal-th-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.cal-th-btn:hover {
+  color: var(--coral);
+}
+.cal-name {
+  color: var(--ink);
+  font-weight: 500;
+}
+.cal-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-5);
+  margin-left: 6px;
+}
+.cal-track {
+  font-size: 11px;
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border-radius: var(--r-1);
+  padding: 1px 7px;
+}
+.cal-row.is-blind {
+  background: color-mix(in oklab, var(--paper-sunk) 55%, transparent);
+}
+.cal-row.is-blind td {
+  color: var(--ink-3);
+}
+.cal-ev0 {
+  color: var(--ink-4);
+}
+.cal-ev0 .meta {
+  font-size: 10px;
+  margin-left: 2px;
+}
+.cal-se {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 120px;
+}
+.cal-se-num {
+  font-size: 12px;
+  color: var(--ink-2);
+  width: 38px;
+  flex: none;
+}
+.cal-se-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+  overflow: hidden;
+  min-width: 54px;
+}
+.cal-se-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+}
+.cal-se-fill.is-firm {
+  background: var(--good);
+}
+.cal-se-fill.is-warming {
+  background: var(--hard);
+}
+.cal-se-fill.is-blind {
+  background: var(--ink-5);
+}
+.cal-blind-tag {
+  font-size: 10px;
+  margin-left: 6px;
+  letter-spacing: var(--ls-wide);
+}
+.cal-conf {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.cal-conf-na {
+  font-size: 11px;
+  font-style: normal;
+}
+.cal-foot {
+  max-width: var(--cap-prose);
+  margin-top: var(--s-4);
+  line-height: var(--lh-snug);
+}
+.cal-foot b {
+  color: var(--ink-2);
+}
+@media (max-width: 880px) {
+  .cal-overview {
+    grid-template-columns: 1fr;
+  }
+  .cal-meter {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-3);
+  }
+  .cal-meter-fig {
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--s-3);
+    padding-right: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: var(--s-3);
+  }
+}
+
 /* ── 概览条 ────────────────────────────────────────────────────────────────── */
 .eff-overview-card {
   margin-bottom: var(--s-5);

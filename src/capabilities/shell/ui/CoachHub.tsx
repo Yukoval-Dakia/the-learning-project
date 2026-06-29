@@ -1,11 +1,19 @@
-// Phase 1d — Coach 周度 review 报表 (loom redraw, wave 2 / YUK-169)
+// Phase 1d — Coach 复盘中枢 (loom redraw, wave 2 / YUK-169 → A7 YUK-354 → IA 重构 YUK-523)
 // M5-T4b (YUK-321) — 迁 shell 包（spec §3.6「Coach 周报 keep · 归工作台/复盘面」
 // → shell），SPA 路由 /coach。等价平移：useRouter → navigate prop，其余 wiring
 // 逐字保留；旧 app/(app)/coach/page.tsx 改薄壳（Task 9 整体删）。
 //
-// Aggregates FSRS review activity over a 7d / 30d / 90d window. Computed from
-// the event stream at request time (single-shot fetch per page load; client
-// re-fetches on window change). Read-only: this surface never mutates.
+// YUK-523 — Coach 从「周报 / 2 视图」升级为「复盘中枢」三正交视图段切容器（IA 重构，非新读模型）：
+//   ① 活动量(activity)     — FSRS 复习活动报表（逐字保留，逻辑零改；GET /api/review/weekly）。
+//   ② 校准诊断(calibration) — 横截面 θ̂/p(L) 点估计 + 置信（复用 calibration-maturity 读模型）。
+//   ③ 成效趋势(efficacy)    — 纵向 delta、相对自己的轨迹（embed EffectivenessTrendPanel）。
+// 三视图同屏段切、绝不合并；校准（横截面「多准」）⟂ 成效（纵向「涨没涨」）正交。默认视图 = 成效趋势。
+// 复盘中枢壳统一持 page-head（per-view eyebrow / 标题 / lede + 三 tab）；各视图主体在壳内切换。
+// 形态 PORT 自设计 docs/design/loom-refresh/project/screen-coach-hub.jsx（CoachHub + CoachActivity）。
+//
+// 活动量视图说明（沿用既有，未改）：Aggregates FSRS review activity over a 7d / 30d / 90d window.
+// Computed from the event stream at request time (single-shot fetch per page load; client re-fetches
+// on window change). Read-only: this surface never mutates.
 //
 // Redraw note (see docs/design/2026-06-04-redraw-coach-preflight.md):
 //   - Visual layer ported from loom-prototype screen-coach.jsx; all wiring
@@ -26,8 +34,10 @@ import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
 import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
+import { CoachCalibrationView } from './CoachCalibrationView';
 import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
+import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number };
@@ -89,50 +99,76 @@ function CoachKpi({
   );
 }
 
-// YUK-354 (A7) — Coach 从单一周报升级为「复盘中枢」雏形：顶部分段切两个正交视图
-// （活动量 = 现有 FSRS 报表，不动逻辑；成效趋势 = 新纵向 delta 面）。完整三视图中枢
-// （+ 校准诊断从 admin 迁入 + 容器重命名 + 默认视图决策）= YUK-523 紧邻 follow-up；
-// 读模型规模化（窗口化 / notable 排序）= YUK-524（后端）。本面只做最小 2 视图切换。
-type CoachView = 'activity' | 'effectiveness';
+// 三视图 lede（含 JSX，故不入 coach-hub-view.ts）。逐字 PORT 自设计 VIEW_LEDE：校准（横截面「多准」）
+// 与成效（纵向「涨没涨」）互文「正交」；活动量把「周报」收编为时间窗、不再当整个 Coach 的名字。
+const VIEW_LEDE: Record<CoachView, ReactNode> = {
+  activity: (
+    <span>
+      活动量答「我练了多少、对了几道」—— FSRS 复习的<b>活动报表</b>。「周报」就是这里的时间窗，
+      不再是整个 Coach 的名字。
+    </span>
+  ),
+  calibration: (
+    <span>
+      校准诊断答「我现在这块<b>会不会、多可信</b>」—— 横截面 θ̂/p(L) 点估计 + 置信。 和右边的成效趋势
+      <b>正交</b>：这一面看「准不准」。
+    </span>
+  ),
+  efficacy: (
+    <span>
+      成效趋势答「相比上次，<b>我涨了吗</b>」—— 纵向 delta、相对你自己的轨迹。 和左边的校准诊断
+      <b>正交</b>：这一面看「涨没涨」。
+    </span>
+  ),
+};
 
-export default function CoachPage({ navigate }: { navigate: (to: string) => void }) {
-  const [view, setView] = useState<CoachView>('activity');
+// 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
+export default function CoachHub({ navigate }: { navigate: (to: string) => void }) {
+  const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
+  // hubGo：把姊妹面跳转改写成切 tab（calibration / efficacy / coach → setView，不离场），其余真实路由
+  // 透传 navigate。设计 screen-coach-hub.jsx hubGo 的等价物（同屏切换、校准 ⟂ 成效不离场）。
+  const hubGo = (to: string) => {
+    if (to === 'calibration') setView('calibration');
+    else if (to === 'efficacy' || to === 'coach') setView('efficacy');
+    else navigate(to);
+  };
+
   return (
     <main className="page view coach-loom coachhub">
-      <div className="coachhub-switch">
-        <div className="coachhub-tabs" role="tablist" aria-label="Coach 复盘视图">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'activity'}
-            className={view === 'activity' ? 'coachhub-tab on' : 'coachhub-tab'}
-            onClick={() => setView('activity')}
-          >
-            <LoomIcon name="review" size={15} />
-            活动量
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'effectiveness'}
-            className={view === 'effectiveness' ? 'coachhub-tab on' : 'coachhub-tab'}
-            onClick={() => setView('effectiveness')}
-          >
-            <LoomIcon name="target" size={15} />
-            成效趋势
-          </button>
+      <div className="page-head coachhub-head">
+        <div className="eyebrow">
+          COACH · 复盘中枢 · <span className="mono">{VIEW_QUERY[view]}</span>
         </div>
+        <div className="page-head-row">
+          <h1 className="page-title serif">Coach 复盘中枢</h1>
+          <div className="coachhub-tabs" role="tablist" aria-label="三个正交视图">
+            {COACH_VIEWS.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                role="tab"
+                aria-selected={view === v.id}
+                className={view === v.id ? 'coachhub-tab on' : 'coachhub-tab'}
+                onClick={() => setView(v.id)}
+              >
+                <LoomIcon name={v.icon} size={15} />
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="page-lead">{VIEW_LEDE[view]}</p>
       </div>
-      {view === 'activity' ? (
-        <CoachActivityView navigate={navigate} />
-      ) : (
-        <EffectivenessTrendPanel navigate={navigate} />
-      )}
+
+      {view === 'activity' && <CoachActivityView navigate={hubGo} />}
+      {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
+      {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
     </main>
   );
 }
 
-// 活动量视图 = 原 CoachPage 周报，逐字保留（只去掉外层 <main>，由复盘中枢壳统一持有）。
+// 活动量视图 = 原 CoachPage 周报，逻辑零改（query / Stateful / CoachReport 逐字保留）。只把自己的
+// page-head 让给复盘中枢壳；时间窗 seg 下沉到 coachhub-subhead（设计 CoachActivity 形态）。
 function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   const [days, setDays] = useState<Window>(7);
   // Count-up animations: useCountUp(start: true) already animates 0→target on
@@ -160,26 +196,20 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
 
   return (
     <>
-      <div className="page-head">
-        <div className="eyebrow">COACH · 只读分析 · 近 {days} 天</div>
-        <div className="page-head-row">
-          <h1 className="page-title serif">Coach 周报</h1>
-          <div className="seg">
-            {WINDOW_OPTIONS.map((opt) => (
-              <button
-                key={opt.days}
-                type="button"
-                className={days === opt.days ? 'on' : ''}
-                onClick={() => setDays(opt.days)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+      <div className="coachhub-subhead">
+        <div className="seg" role="tablist" aria-label="时间窗 · 周报">
+          {WINDOW_OPTIONS.map((opt) => (
+            <button
+              key={opt.days}
+              type="button"
+              className={days === opt.days ? 'on' : ''}
+              onClick={() => setDays(opt.days)}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
-        <p className="page-lead">
-          复盘最近的复习与错题：评分构成、逐日节奏、薄弱知识点与归因分布。只读，不改数据。
-        </p>
+        <span className="meta">「周报」= 近 {days} 天的活动量，不是整个 Coach。</span>
       </div>
 
       <Stateful
