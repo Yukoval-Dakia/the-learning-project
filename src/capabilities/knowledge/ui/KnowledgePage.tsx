@@ -181,7 +181,8 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                 onClick={() => setPicked(n)}
               >
                 {n.depth > 0 && <span className="know-twig">└</span>}
-                <MasteryRing mastery={n.mastery} size={30} />
+                {/* ⑥治理：树行环去裸 pct（showNumber=false），档由 know-end 的 BandChip 给。 */}
+                <MasteryRing mastery={n.mastery} size={30} showNumber={false} />
                 {/* subject-driven: serif-CJK only for genuine wenyan nodes */}
                 <span
                   {...subjectContentPropsForDomain(n.effective_domain, { className: 'know-title' })}
