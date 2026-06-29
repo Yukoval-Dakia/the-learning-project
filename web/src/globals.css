@@ -13949,7 +13949,9 @@ button.seg-sm {
   gap: var(--s-2);
 }
 .cal-blind-chip {
-  white-space: nowrap;
+  /* 窄屏 / 长知识点名兜底（CodeRabbit）：去掉整 chip 的 nowrap + min-width:0，让 flex 子项
+     可缩、名称可截断，整颗 chip 不再横向溢出容器。「— 未知」标签仍各自 nowrap 不拆字。 */
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
@@ -13962,6 +13964,10 @@ button.seg-sm {
   font-size: var(--fs-caption);
   color: var(--ink);
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cal-blind-track {
   font-size: var(--fs-meta);
