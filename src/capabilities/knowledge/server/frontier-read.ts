@@ -111,8 +111,13 @@ async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal
       and(
         eq(event.action, 'propose'),
         eq(event.subject_kind, 'knowledge_edge'),
-        // Exclude rubric-rejected / topology-rejected FOLDS (terminal, not live-pending) —
-        // identical predicates to loadPendingEdgeProposalKeys (RB-7 / ADR-0034 §2).
+        // SQL-filter to prerequisite up front (relation_type is flattened to the top-level
+        // event payload by eventShapeForProposal's knowledge_edge case) → load ONLY prereq
+        // proposals, not ALL knowledge_edge proposals then JS-filter (OCR perf).
+        sql`(${event.payload}->>'relation_type') = ${RELATION_PREREQUISITE}`,
+        // Exclude rubric-rejected / topology-rejected FOLDS (terminal, not live-pending).
+        // These mirror loadPendingEdgeProposalKeys (propose_edge.ts, RB-7 / ADR-0034 §2) —
+        // KEEP IN SYNC. follow-up (OCR): extract a shared predicate helper to prevent drift.
         sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
         sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
       ),
@@ -150,7 +155,7 @@ async function loadPendingPrereqProposals(db: Db): Promise<PendingPrereqProposal
       relation_type?: unknown;
       reasoning?: unknown;
     };
-    if (p.relation_type !== RELATION_PREREQUISITE) continue;
+    // relation_type already SQL-filtered to prerequisite above; just guard from/to presence.
     if (typeof p.from_knowledge_id !== 'string' || typeof p.to_knowledge_id !== 'string') continue;
     out.push({
       from: p.from_knowledge_id,
