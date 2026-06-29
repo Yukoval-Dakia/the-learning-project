@@ -32,16 +32,18 @@ export function MasteryRing({ mastery, size = 30, showNumber = true }: MasteryRi
   const r = (size - 6) / 2;
   const c = 2 * Math.PI * r;
   const mid = size / 2;
-  // showNumber=false（knowledge 面）：aria-label 定性化（不暴露裸 pct%），语义档由旁侧
-  // BandChip 承载。单三元非嵌套，守红线。
+  // showNumber=false（knowledge 面）：环真装饰化——撤 role/aria-label、加 aria-hidden，让屏读
+  // 跳过这个无信息的程度环，语义档交给旁侧 BandChip（真正消除重复读屏）。noSvgWithoutTitle
+  // 对 aria-hidden 豁免。showNumber=true（默认）保 role=img + pct aria-label。
   return (
     <svg
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
       className="mastery-ring"
-      role="img"
-      aria-label={showNumber ? `掌握度 ${pct}%` : '掌握度程度'}
+      role={showNumber ? 'img' : undefined}
+      aria-label={showNumber ? `掌握度 ${pct}%` : undefined}
+      aria-hidden={showNumber ? undefined : true}
     >
       {/* track */}
       <circle cx={mid} cy={mid} r={r} fill="none" stroke="var(--line)" strokeWidth={3} />
