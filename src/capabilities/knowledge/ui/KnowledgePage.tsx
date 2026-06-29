@@ -17,9 +17,16 @@ import { useMemo, useState } from 'react';
 import './knowledge.css';
 
 import { BandChip } from './BandChip';
+import { FrontierRail } from './FrontierRail';
 import { MeshGraph } from './MeshGraph';
 import { NodeDrawer, decayCue } from './NodeDrawer';
-import { type KnowledgeTreeNode, getEdgeProposals, getEdges, getTree } from './knowledge-api';
+import {
+  type KnowledgeTreeNode,
+  getEdgeProposals,
+  getEdges,
+  getFrontier,
+  getTree,
+} from './knowledge-api';
 
 export interface KnowledgePageProps {
   navigate: (to: string) => void;
@@ -58,12 +65,15 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
     queryKey: ['knowledge-edge-proposals'],
     queryFn: getEdgeProposals,
   });
+  // A5 S2 (YUK-354)：learnable_frontier 横幅读模型。
+  const frontierQ = useQuery({ queryKey: ['knowledge-frontier'], queryFn: getFrontier });
 
   const nodes = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
   const edges = useMemo(() => edgesQ.data?.rows ?? [], [edgesQ.data]);
   // M4-T5 (YUK-318)：服务端已按 kind=knowledge_edge&status=pending 过滤——
   // 已决提议不复返，旧的客户端 decided 集合 + outcome 过滤随换源删除。
   const edgeProposals = edgePropsQ.data?.rows ?? [];
+  const frontierItems = frontierQ.data?.rows ?? [];
   const ordered = useMemo(() => dfsOrder(nodes), [nodes]);
 
   const placeholder = (text: string) => {
@@ -116,6 +126,10 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
           树是骨架（parent/child），mesh 是 5 类 typed 关系。点节点看详情抽屉；图可平移缩放。
         </p>
       </div>
+
+      {/* A5 S2 (YUK-354)：「下一步学什么」learnable_frontier 横幅（建议非必经路）。
+          知识网为空时不显（大 EmptyState 已覆盖该态，避免双空态）。 */}
+      {nodes.length > 0 && <FrontierRail items={frontierItems} navigate={navigate} />}
 
       {edgeProposals.length > 0 && (
         <div
