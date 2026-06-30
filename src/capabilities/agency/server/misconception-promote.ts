@@ -39,6 +39,31 @@ import { misconception } from '@/db/schema';
 export const K_PROMOTE = 2;
 
 /**
+ * Neutral fallback salience weight used when an accepted conjecture carries no usable
+ * `confidence` (a legacy / hand-crafted proposal predating the confidence field, or one
+ * whose value coerces to NaN). 0.5 = "we agree with the DIRECTION but have no calibrated
+ * salience", so we mint at mid-confidence rather than letting the weight Zod throw.
+ *
+ * WHY this guard exists: `MisconceptionInsert.weight` is `z.number()` (rejects NaN) and the
+ * misconception_edge weight is `z.number().min(0).max(1)`. A flag-ON accept of a conjecture
+ * with a missing/NaN confidence would otherwise throw a ZodError that rolls back the owner's
+ * WHOLE accept transaction → a 500. Fail-loud is wrong here (flag-ON, owner-initiated): clamp
+ * to the valid band with this default instead. Flag-OFF is unaffected (the hop never runs).
+ */
+export const DEFAULT_MISCONCEPTION_WEIGHT = 0.5;
+
+/**
+ * Normalize a raw confidence into the [0,1] salience band the soft-track Zod requires:
+ * finite values are clamped, NaN / ±Infinity fall back to DEFAULT_MISCONCEPTION_WEIGHT.
+ * Both the misconception node weight and its caused_by edge weight consume the result, so
+ * neither can ever feed a NaN/out-of-range value into the `.strict()` parse barrier.
+ */
+function normalizeConfidenceWeight(raw: number): number {
+  if (!Number.isFinite(raw)) return DEFAULT_MISCONCEPTION_WEIGHT;
+  return Math.max(0, Math.min(1, raw));
+}
+
+/**
  * Dark-ship flag. Default OFF — when OFF the accept path is effect-identical to today
  * (no misconception, no edge). env-getter (read per-call) so tests can parameterize
  * OFF/ON and the three processes (API / worker / Vite) each see it via their own env;
@@ -102,6 +127,12 @@ export async function promoteConjectureToMisconception(
 ): Promise<PromoteConjectureResult> {
   const misconceptionId = misconceptionIdForConjecture(input.causeCategory, input.knowledgeId);
 
+  // Normalize confidence into the [0,1] salience band BEFORE the Zod hop. A legacy /
+  // hand-crafted conjecture missing `confidence` arrives here as NaN (Number(undefined));
+  // feeding that straight into the weight Zod throws and rolls back the owner's whole
+  // accept (a 500). Clamp-with-default keeps the soft-track weight valid on a flag-ON accept.
+  const weight = normalizeConfidenceWeight(input.confidence);
+
   // 1) Validate via the soft-track `.strict()` Zod, then UPSERT. status='active': the
   //    owner accepted the direction, so the node is live/shown; source='soft' encodes
   //    "AI prior the owner agreed with", NOT a confirmed weakness (the read model renders
@@ -112,7 +143,7 @@ export async function promoteConjectureToMisconception(
     id: misconceptionId,
     title: input.claimMd,
     reasoning: null,
-    weight: input.confidence,
+    weight,
     status: 'active',
     source: 'soft',
     seen: input.recurrenceCount,
@@ -163,7 +194,7 @@ export async function promoteConjectureToMisconception(
     to_kind: 'knowledge',
     to_id: input.knowledgeId,
     relation_type: 'caused_by',
-    weight: input.confidence,
+    weight,
     created_by: { by: 'ai' },
     proposed_by_ai: true,
     now: input.now,
