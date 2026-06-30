@@ -100,6 +100,12 @@ export interface NodeThreeDimInput {
   evidenceCount: number;
 }
 
+// hard-source 点 band 视图（R / difficulty 共用）：无 CI 数据 → loBand=hiBand=band（点 band，
+// 不伪造区间精度），source=hard，非低置信。两 builder 逐字重复过（OCR），抽出单一真相。
+function hardPointBand(band: MasteryBandIdx): MasteryBandView {
+  return { unknown: false, band, loBand: band, hiBand: band, source: 'hard', lowConf: false };
+}
+
 // R 维：有 fsrs_state（retrievability 非 null）→ band=masteryBandIdx(R)，source=hard，
 // 无区间（点 band，不伪造精度）；无行 → 未知 + soft + 低置信（非 band 0）。
 function buildRetentionDim(retrievability: number | null): NodeDimView {
@@ -116,16 +122,11 @@ function buildRetentionDim(retrievability: number | null): NodeDimView {
       note: '还没有复习记录 —— 记忆留存要练过才能估。',
     };
   }
-  const band = masteryBandIdx(retrievability);
-  const view: MasteryBandView = {
-    unknown: false,
-    band,
-    loBand: band,
-    hiBand: band,
-    source: 'hard',
-    lowConf: false,
+  return {
+    ...base,
+    view: hardPointBand(masteryBandIdx(retrievability)),
+    note: 'FSRS 可提取性 · 会随时间衰减，到期该复习。',
   };
-  return { ...base, view, note: 'FSRS 可提取性 · 会随时间衰减，到期该复习。' };
 }
 
 // p(L) 维：直接复用 S1 masteryBandView（真 σ 区间 + low_confidence）。
@@ -163,16 +164,11 @@ function buildDifficultyDim(beta: number | null): NodeDimView {
       note: '难度锚落在中性区或还没标定 —— 暂用先验，练几道会 firm up。',
     };
   }
-  const band = difficultyBandIdx(beta);
-  const view: MasteryBandView = {
-    unknown: false,
-    band,
-    loBand: band,
-    hiBand: band,
-    source: 'hard',
-    lowConf: false,
+  return {
+    ...base,
+    view: hardPointBand(difficultyBandIdx(beta)),
+    note: '题目锚难度（hard 轨校准中位数 · 绝对尺度，无区间）。',
   };
-  return { ...base, view, note: '题目锚难度（hard 轨校准中位数 · 绝对尺度，无区间）。' };
 }
 
 function buildColdNote(evidenceCount: number): string | null {
