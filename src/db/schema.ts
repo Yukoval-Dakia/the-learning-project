@@ -190,6 +190,11 @@ export const misconception_edge = pgTable(
     ),
     index('misconception_edge_from_idx').on(t.from_kind, t.from_id, t.relation_type),
     index('misconception_edge_to_idx').on(t.to_kind, t.to_id, t.relation_type),
+    // YUK-531 (A5 S4 / PR-3) — DB-layer guard that the CONFIDENCE-only edge salience
+    // stays in [0,1] (mirrors the Zod weight.min(0).max(1) on MisconceptionEdgeInsert
+    // + the question_difficulty / learning_item_ai_score 0-1 CHECK precedents). Only
+    // the EDGE weight is bounded; misconception.weight is UNBOUNDED salience (no CHECK).
+    check('misconception_edge_weight_range', sql`${t.weight} BETWEEN 0 AND 1`),
   ],
 );
 
@@ -1567,6 +1572,57 @@ export const edge_reconciliation_log = pgTable(
     // KEEP_BOTH → null) so the DB can never persist a contradictory audit row.
     check(
       'edge_recon_action_superseded_ck',
+      sql`(${t.action} = 'SUPERSEDE' AND ${t.superseded_edge_id} IS NOT NULL) OR (${t.action} = 'KEEP_BOTH' AND ${t.superseded_edge_id} IS NULL)`,
+    ),
+  ],
+);
+
+// YUK-531 (A5 S4 / ADR-0036 RT1) — write-time reconciliation AUDIT log for the
+// HETEROGENEOUS misconception_edge ring. The misconception-side parallel to
+// edge_reconciliation_log (structural knowledge-edge ring), kept SEPARATE because
+// the misconception ring is IMPERATIVE (archived_at soft-archive + upsert), NOT
+// event-sourced/fold-replayed — misconception has no fold/projection (see
+// misconception-reconcile.ts). This table is decision AUDIT / provenance only:
+// the actual SUPERSEDE removal is archiveMisconceptionEdge (archived_at). Candidate
+// is recorded by its 5-tuple key (the candidate edge has no UUID before it lands).
+// action ∈ KEEP_BOTH | SUPERSEDE (the 2-action structural space, mirrors the edge
+// ring); the action ↔ superseded_edge_id consistency CHECK is enforced at the DB
+// layer (a SUPERSEDE row MUST name the archived loser; KEEP_BOTH MUST NOT).
+export const misconception_reconciliation_log = pgTable(
+  'misconception_reconciliation_log',
+  {
+    id: text('id').primaryKey(),
+    // 候选误区边 5 元组键（候选边落库前无自身 UUID，故用元组而非 edge id）。
+    candidate_from_kind: text('candidate_from_kind').notNull(),
+    candidate_from_id: text('candidate_from_id').notNull(),
+    candidate_to_kind: text('candidate_to_kind').notNull(),
+    candidate_to_id: text('candidate_to_id').notNull(),
+    candidate_relation_type: text('candidate_relation_type').notNull(),
+    // 调和判定结果。SUPERSEDE 时 superseded_edge_id 指向被归档的旧 live 误区边。
+    action: text('action').$type<'KEEP_BOTH' | 'SUPERSEDE'>().notNull(),
+    // 被取代的旧 misconception_edge.id（仅 SUPERSEDE 非空）。
+    superseded_edge_id: text('superseded_edge_id'),
+    // 判定置信度（applyConfidenceThreshold 后；低置信已降级为 KEEP_BOTH）。
+    confidence: real('confidence').notNull(),
+    reason: text('reason').notNull(),
+    // GLM 原始决策（审计；KEEP_BOTH 短路无 GLM 调用 / 降级时可为 null）。
+    llm_raw: jsonb('llm_raw'),
+    // 审计时间戳：planned_at = 决策落本表时；applied_at = 同一 apply tx 末尾盖戳。
+    planned_at: timestamp('planned_at', { withTimezone: true }).notNull(),
+    applied_at: timestamp('applied_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('misconception_recon_candidate_idx').on(
+      t.candidate_from_id,
+      t.candidate_to_id,
+      t.candidate_relation_type,
+    ),
+    index('misconception_recon_unapplied_idx').on(t.applied_at),
+    // action ↔ superseded_edge_id consistency invariant, enforced at the DB layer
+    // (mirrors edge_recon_action_superseded_ck): a SUPERSEDE row MUST name the
+    // archived old edge (non-null), a KEEP_BOTH row MUST NOT (null).
+    check(
+      'misconception_recon_action_superseded_ck',
       sql`(${t.action} = 'SUPERSEDE' AND ${t.superseded_edge_id} IS NOT NULL) OR (${t.action} = 'KEEP_BOTH' AND ${t.superseded_edge_id} IS NULL)`,
     ),
   ],

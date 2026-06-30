@@ -434,4 +434,62 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     const fks = rows.filter((r) => r.foreign_table_name === 'knowledge').map((r) => r.column_name);
     expect(fks).toEqual(expect.arrayContaining(['from_knowledge_id', 'to_knowledge_id']));
   });
+
+  it('YUK-531 PR-3 (0057) — misconception_reconciliation_log table with expected columns + indexes', async () => {
+    const tableRows = await db.execute<{ table_name: string }>(sql`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'misconception_reconciliation_log'
+    `);
+    expect(tableRows.length).toBe(1);
+
+    const cols = await db.execute<{ column_name: string }>(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'misconception_reconciliation_log'
+    `);
+    const names = new Set(cols.map((r) => r.column_name));
+    for (const expected of [
+      'id',
+      'candidate_from_kind',
+      'candidate_from_id',
+      'candidate_to_kind',
+      'candidate_to_id',
+      'candidate_relation_type',
+      'action',
+      'superseded_edge_id',
+      'confidence',
+      'reason',
+      'llm_raw',
+      'planned_at',
+      'applied_at',
+    ]) {
+      expect(names.has(expected)).toBe(true);
+    }
+
+    const indexes = await db.execute<{ indexname: string }>(sql`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'misconception_reconciliation_log'
+    `);
+    const idxNames = new Set(indexes.map((r) => r.indexname));
+    expect(idxNames.has('misconception_recon_candidate_idx')).toBe(true);
+    expect(idxNames.has('misconception_recon_unapplied_idx')).toBe(true);
+  });
+
+  it('YUK-531 PR-3 (0057) — misconception_edge weight CHECK rejects out-of-range, accepts 0-1', async () => {
+    const ins = (id: string, weight: number) =>
+      db.execute(sql`
+        INSERT INTO misconception_edge
+          (id, from_kind, from_id, to_kind, to_id, relation_type, weight, created_by,
+           proposed_by_ai, created_at, updated_at)
+        VALUES (${id}, 'misconception', 'misc_1', 'knowledge', 'kn_1', 'caused_by',
+           ${weight}, '{"by":"ai"}'::jsonb, true, now(), now())
+      `);
+
+    // weight 1.5 violates misconception_edge_weight_range (PG check_violation 23514).
+    await expect(ins('mce_bad', 1.5)).rejects.toMatchObject({ cause: { code: '23514' } });
+    // A legitimate 0-1 weight inserts cleanly.
+    await expect(ins('mce_ok', 0.5)).resolves.toBeDefined();
+
+    // Cleanup so the row doesn't leak into other smoke assertions.
+    await db.execute(sql`DELETE FROM misconception_edge WHERE id = 'mce_ok'`);
+  });
 });
