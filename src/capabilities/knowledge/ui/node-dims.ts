@@ -24,7 +24,6 @@ import {
   type MasteryBandIdx,
   type MasteryBandInput,
   type MasteryBandView,
-  type MasterySource,
   UNKNOWN_BAND_LABEL,
   masteryBandIdx,
   masteryBandUnknown,
