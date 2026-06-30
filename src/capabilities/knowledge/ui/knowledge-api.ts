@@ -70,6 +70,13 @@ export interface MisconceptionRow {
 export const getMisconceptions = (id: string) =>
   apiJson<{ rows: MisconceptionRow[] }>(`/api/knowledge/${encodeURIComponent(id)}/misconceptions`);
 
+// A5 S4 (YUK-531 PR-5) — candidate(猜想/候选) 误区 veto = dismiss 对应 pending conjecture 提议。
+// id = candidate 段行 id = pending conjecture 提议 event id（两段 id 空间不相交，故 PR-5 仅对
+// segment==='candidate' 调它）。Option A：confirmed(RT1 误区) archive 是延后 soft-track 后端
+// slice —— UI 对 confirmed 行只渲乐观「已纠偏」本地态、绝不打此端点。
+export const vetoMisconception = (id: string) =>
+  apiJson(`/api/knowledge/misconceptions/${encodeURIComponent(id)}/veto`, { method: 'POST' });
+
 // ── 边 ──────────────────────────────────────────────────────────
 export interface KnowledgeEdgeRow {
   id: string;
