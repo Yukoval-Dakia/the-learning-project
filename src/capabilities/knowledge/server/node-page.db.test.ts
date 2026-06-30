@@ -788,7 +788,7 @@ describe('loadRetrievabilityMap', () => {
     await resetDb();
   });
 
-  it('returns retrievability + hasState only for ids with a knowledge FSRS row', async () => {
+  it('returns retrievability only for ids with a knowledge FSRS row (presence ⇔ has row)', async () => {
     const db = testDb();
     await seedKnowledge('k-has', { name: '有' });
     await seedKnowledge('k-none', { name: '无' });
@@ -797,10 +797,10 @@ describe('loadRetrievabilityMap', () => {
     // inject now for deterministic retrievability (time-relative).
     const now = new Date('2026-06-02T00:00:00Z');
     const map = await loadRetrievabilityMap(db, ['k-has', 'k-none'], now);
-    expect(map.get('k-has')?.hasState).toBe(true);
-    const r = map.get('k-has')?.retrievability as number;
+    // map value is R directly (no hasState flag — presence already signals it).
+    const r = map.get('k-has');
     expect(r).toBeGreaterThan(0);
-    expect(r).toBeLessThanOrEqual(1);
+    expect(r as number).toBeLessThanOrEqual(1);
     // absent row → not in the map (caller treats as unknown, not R=0).
     expect(map.has('k-none')).toBe(false);
   });
