@@ -151,10 +151,14 @@ function buildDifficultyDim(beta: number | null): NodeDimView {
     unknownLabel: UNKNOWN_BAND_LABEL,
   };
   if (beta == null || Math.abs(beta) < BETA_NEUTRAL_EPSILON) {
+    // β=0 是「无锚 default sentinel」与「真 medium 锚（b_anchor=0）」的混叠点（projection.beta
+    // 用 `?? 0` 抹掉了 has-anchor 位，reviewer MINOR）——故 note 不能断言「还没标定锚」（对真
+    // medium 锚 KC 是事实错误，违 ⑥）。措辞对两种情况都诚实：难度锚落中性区/暂未标定。
+    // 彻底区分（独立读 getRepresentativeKcBeta 的 map presence + 露 pre-attempt 难度）= follow-up。
     return {
       ...base,
       view: { unknown: true, source: 'soft' as MasterySource, lowConf: true },
-      note: '这点的题还没有标定难度锚 —— 难度暂用先验，练几道会 firm up。',
+      note: '难度锚落在中性区或还没标定 —— 暂用先验，练几道会 firm up。',
     };
   }
   const band = difficultyBandIdx(beta);
