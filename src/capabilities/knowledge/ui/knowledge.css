@@ -387,9 +387,10 @@
 }
 
 /* A5 S3 (YUK-354) — NodeComposite 三维折叠 + TransferList / DiagnosticDrill 诚实空态.
-   PORT 自 docs/design/loom-refresh/project/knowledge-a5.css L76-149（只搬 .kd-composite* /
-   .kd-dim* / .kd-cold-note / .kd-transfer* / .kd-diag* / .kd-cdm* / .kd-irt* 几组，不整文件
-   拷；.kd-misc*（S4 误区）不搬）。⑥治理：三维各档/区间/来源/低置信定性，绝不裸数字。 */
+   PORT 自 docs/design/loom-refresh/project/knowledge-a5.css L76-149：.kd-composite* / .kd-dim* /
+   .kd-cold-note + .kd-diag（折叠条 + 诚实空态 body）。rich 渲染样式（.kd-transfer-* / .kd-cdm-* /
+   .kd-irt-* / .kd-diag-sub）零 component 渲染（owner 拍 B 诚实空态）→ 不搬，待 borrowed-θ / CDM-IRT
+   后端落地时连同组件再加。.kd-misc*（S4 误区）不搬。⑥治理：三维各档/区间/来源/低置信定性，绝不裸数字。 */
 
 /* ── node-detail · 三维折叠 ── */
 .kd-composite {
@@ -561,9 +562,4 @@
   padding: var(--s-4);
   font: 400 var(--fs-body) / 1.5 var(--font-sans);
   color: var(--ink-4);
-}
-@media (max-width: 720px) {
-  .kd-cdm-attr {
-    width: 90px;
-  }
 }
