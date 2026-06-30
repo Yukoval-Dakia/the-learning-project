@@ -56,15 +56,18 @@ const ENDPOINT_RULES: Record<string, readonly string[]> = {
 // matching ENDPOINT_RULES entry, this throws at module load rather than silently
 // accepting an unconstrained relation.
 for (const rel of CANONICAL_MISCONCEPTION_RELATIONS) {
-  if (!ENDPOINT_RULES[rel]) {
+  if (!Object.hasOwn(ENDPOINT_RULES, rel)) {
     throw new Error(
       `misconception-topology-gate: ENDPOINT_RULES missing canonical relation "${rel}"`,
     );
   }
 }
 
+// Mirrors the Zod regex (misconception-edge.ts /^experimental:.+/): an experimental
+// relation requires a non-empty tag — a bare `experimental:` is NOT experimental and
+// falls through to the unknown-relation reject (keeps the gate ≥ as strict as Zod).
 function isExperimental(relationType: string): boolean {
-  return relationType.startsWith('experimental:');
+  return /^experimental:.+/.test(relationType);
 }
 
 /**
@@ -95,16 +98,19 @@ export function checkMisconceptionEdgeTopology(
   // ① (cont.) target kind must match the relation. experimental:* pins from_kind
   // (checked above) but leaves to_kind unconstrained (ADR-0036 escape valve).
   if (!isExperimental(relation_type)) {
-    const allowedTo = ENDPOINT_RULES[relation_type];
-    if (!allowedTo) {
-      // Vocabulary is Zod-validated upstream; reaching here means an unknown,
-      // non-experimental relation slipped through — reject defensively.
+    // Object.hasOwn (NOT bracket truthiness) so a prototype-chain key like
+    // 'constructor' / 'toString' / '__proto__' hits this defensive reject instead of
+    // resolving to an inherited member and throwing on `.includes` below. Vocabulary
+    // is Zod-validated upstream; reaching here means an unknown relation slipped
+    // through — reject defensively (a defense layer must reject, never crash).
+    if (!Object.hasOwn(ENDPOINT_RULES, relation_type)) {
       return {
         status: 'reject',
         gate: 'endpoint_kind',
         reason: `unknown misconception relation_type "${relation_type}" has no endpoint rule`,
       };
     }
+    const allowedTo = ENDPOINT_RULES[relation_type];
     if (!allowedTo.includes(to_kind)) {
       return {
         status: 'reject',
@@ -127,6 +133,11 @@ export function checkMisconceptionEdgeTopology(
   // ③ symmetric redundancy — `confusable_with` is symmetric, so an inverse edge
   // (to → from, same relation) already in the live graph makes the candidate
   // redundant. Warn (caller decides to fold/downweight), do not reject.
+  // NOTE: this is reachable ONLY for misc↔misc confusable_with. The inverse match
+  // needs e.from_kind === to_kind, and the RT1 invariant pins every live edge's
+  // from_kind to 'misconception' — so a misc→knowledge confusable_with candidate can
+  // never have a legal inverse in `existing` (returns ok, no false warn). misc↔misc
+  // exact-forward dups + canonical ordering are the PR-3 writer's job (DB unique idx).
   if (relation_type === 'confusable_with') {
     const inverseExists = existing.some(
       (e) =>
