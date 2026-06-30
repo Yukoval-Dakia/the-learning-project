@@ -491,7 +491,7 @@
       "expected_by": "2026-09-30"
     }
   },
-  "_comment_yuk531_s4_rt1": "YUK-531 (A5 S4 / RT1) — PR-1 dark schema: misconception lifecycle/provenance columns (status/source/seen/evidence) + the new heterogeneous misconception_edge table. No INSERT/UPDATE write path until YUK-531 PR-3 lands the promotion writer (insert misconception + caused_by edge via the accept route, gated behind MISCONCEPTION_PROMOTE_ENABLED). PR-3 DELETES this whole misconception/misconception_edge allowlist block once the write path resolves the gating rationale. Trivial columns (id/created_at/updated_at/archived_at) need no entry.",
+  "_comment_yuk531_s4_rt1": "YUK-531 (A5 S4 / RT1) — PR-1 dark schema: misconception lifecycle/provenance columns (status/source/seen/evidence) + the new heterogeneous misconception_edge table. No INSERT/UPDATE write path until YUK-531 PR-3 lands the promotion writer (insert misconception + caused_by edge via the accept route, gated behind MISCONCEPTION_PROMOTE_ENABLED). PR-3 must DELETE BOTH this YUK-531 block AND the pre-existing _comment_yuk454_inc1_misconception block above (misconception.title/reasoning/weight/created_by/proposed_by_ai): the same promotion-writer insert resolves ALL misconception columns' write paths at once, and leaving the YUK-454 entries would hard-fail audit:schema after their expected_by 2026-09-30 (validateAllowlistHygiene flags expired_expected_by regardless of write-path status). Trivial columns (id/created_at/updated_at/archived_at) need no entry.",
   "misconception.status": {
     "reason": "misconception RT1 promotion lifecycle column (draft|active); YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
     "resolves_when": {
