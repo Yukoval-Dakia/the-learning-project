@@ -8,6 +8,10 @@ import {
   type ConjectureCoreWriter,
   setConjectureCoreWriter,
 } from '@/capabilities/agency/server/conjecture-accept';
+import {
+  DEFAULT_MISCONCEPTION_WEIGHT,
+  promoteConjectureToMisconception,
+} from '@/capabilities/agency/server/misconception-promote';
 import { event, material_fsrs_state, misconception, misconception_edge } from '@/db/schema';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
@@ -285,6 +289,87 @@ describe('acceptConjectureProposal lifecycle', () => {
       // Edit still does NOT confirm a weakness — soft track, no FSRS.
       expect(miscs[0].source).toBe('soft');
       expect(await fsrsRowCount()).toBe(0);
+    });
+
+    it('flag ON — two DISTINCT proposals sharing cause×KC collapse to ONE misconception (cross-proposal UPSERT refreshes seen/evidence)', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+
+      // Proposal A: the baseConjecture default — recurrence 2, evidence evt_a/evt_b.
+      const proposalA = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+      await acceptAiProposal(db, proposalA);
+
+      // Proposal B: a DIFFERENT proposal (fresh id) for the SAME cause×KC, with a higher
+      // recurrence_count + fresh evidence — the cross-proposal re-induction case (NOT a
+      // re-accept of the same proposal, which short-circuits at the rate guard BEFORE the
+      // promote hop, so the onConflictDoUpdate SET branch only fires on this path).
+      const second = baseConjecture();
+      second.evidence_refs = [
+        { kind: 'event' as const, id: 'evt_c' },
+        { kind: 'event' as const, id: 'evt_d' },
+        { kind: 'event' as const, id: 'evt_e' },
+      ];
+      second.proposed_change.recurrence_count = 3;
+      const proposalB = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: second,
+      });
+      expect(proposalB).not.toBe(proposalA);
+      await acceptAiProposal(db, proposalB);
+
+      // Deterministic id keyed on cause×KC ⇒ both accepts UPSERT the SAME row: exactly
+      // ONE misconception survives, refreshed to the SECOND accept's salience snapshot.
+      const miscs = await misconceptionRows();
+      expect(miscs).toHaveLength(1);
+      const m = miscs[0];
+      expect(m.seen).toBe(3);
+      expect(m.evidence).toEqual(['evt_c', 'evt_d', 'evt_e']);
+      expect(m.status).toBe('active');
+      expect(m.source).toBe('soft');
+      expect(m.archived_at).toBeNull();
+
+      // And exactly ONE caused_by edge to the shared KC (idempotent / un-archived).
+      const edges = await misconceptionEdgeRows();
+      expect(edges).toHaveLength(1);
+      expect(edges[0].relation_type).toBe('caused_by');
+      expect(edges[0].to_id).toBe('kn_chain_rule');
+      expect(edges[0].archived_at).toBeNull();
+    });
+
+    it('flag ON — promoting a conjecture with NaN/missing confidence does NOT throw; mints at the default weight', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+
+      // A legacy / hand-crafted conjecture missing `confidence` reaches the promote hop as
+      // NaN (Number(undefined)). Pre-guard this threw a ZodError (the weight Zod rejects
+      // NaN) that rolled back the owner's WHOLE accept — a 500. Drive the writer directly
+      // with NaN (writeAiProposal's Zod would reject a missing-confidence payload, so a raw
+      // legacy row is the only way it occurs) to prove the clamp-with-default guard: no
+      // throw, a sane weight on BOTH the node and its caused_by edge.
+      const result = await db.transaction((tx) =>
+        promoteConjectureToMisconception(tx, {
+          conjectureId: 'cj_legacy',
+          knowledgeId: 'kn_chain_rule',
+          claimMd: 'legacy conjecture lacking a confidence field',
+          causeCategory: 'concept_misunderstanding',
+          confidence: Number.NaN,
+          recurrenceCount: 2,
+          evidenceEventIds: ['evt_a'],
+          now: new Date(),
+        }),
+      );
+
+      const miscs = await misconceptionRows();
+      expect(miscs).toHaveLength(1);
+      expect(miscs[0].id).toBe(result.misconceptionId);
+      expect(miscs[0].weight).toBe(DEFAULT_MISCONCEPTION_WEIGHT);
+
+      const edges = await misconceptionEdgeRows();
+      expect(edges).toHaveLength(1);
+      expect(edges[0].weight).toBe(DEFAULT_MISCONCEPTION_WEIGHT);
     });
   });
 });
