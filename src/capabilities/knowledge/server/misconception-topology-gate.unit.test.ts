@@ -177,3 +177,53 @@ describe('checkMisconceptionEdgeTopology — ③ symmetric redundancy (confusabl
     if (v.status === 'reject') expect(v.gate).toBe('self_loop');
   });
 });
+
+describe('checkMisconceptionEdgeTopology — ④ defensive unknown-relation path', () => {
+  it('rejects an unknown non-experimental relation (no endpoint rule)', () => {
+    const v = checkMisconceptionEdgeTopology(
+      edge('misconception', 'm1', 'knowledge', 'k1', 'bogus_relation'),
+      [],
+    );
+    expect(v.status).toBe('reject');
+    if (v.status === 'reject') expect(v.gate).toBe('endpoint_kind');
+  });
+
+  // Prototype-chain keys must REJECT (Object.hasOwn lookup), never throw — a defense
+  // layer that crashes on adversarial input is weaker than one that rejects it.
+  for (const protoKey of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+    it(`rejects (does not throw on) prototype-key relation \`${protoKey}\``, () => {
+      const v = checkMisconceptionEdgeTopology(
+        edge('misconception', 'm1', 'knowledge', 'k1', protoKey),
+        [],
+      );
+      expect(v.status).toBe('reject');
+      if (v.status === 'reject') expect(v.gate).toBe('endpoint_kind');
+    });
+  }
+
+  it('rejects a bare `experimental:` (gate ≥ Zod strictness; empty tag has no rule)', () => {
+    const v = checkMisconceptionEdgeTopology(
+      edge('misconception', 'm1', 'knowledge', 'k1', 'experimental:'),
+      [],
+    );
+    expect(v.status).toBe('reject');
+  });
+
+  it('confusable_with misc→knowledge never warns in a legal graph (inverse is illegal)', () => {
+    // The symmetric check assumes `existing` is legal (every edge from_kind=misconception,
+    // per the RT1 invariant + write boundary). The would-be inverse of misc→knowledge is
+    // knowledge→misconception, which can NEVER pass the write boundary, so it cannot appear
+    // in a legal `existing` — misc↔KC confusable_with is effectively directional in storage.
+    // (The gate trusts `existing`; it does not re-validate it, same as the archived-filter
+    // precondition.) With a legal existing set, a misc→knowledge candidate returns ok.
+    const existing = [
+      edge('misconception', 'm9', 'knowledge', 'k1', 'confusable_with'), // legal, unrelated
+      edge('misconception', 'm1', 'knowledge', 'k2', 'confusable_with'), // legal, unrelated
+    ];
+    const v = checkMisconceptionEdgeTopology(
+      edge('misconception', 'm1', 'knowledge', 'k1', 'confusable_with'),
+      existing,
+    );
+    expect(v.status).toBe('ok');
+  });
+});
