@@ -157,7 +157,9 @@ function buildDifficultyDim(beta: number | null): NodeDimView {
     // 彻底区分（独立读 getRepresentativeKcBeta 的 map presence + 露 pre-attempt 难度）= follow-up。
     return {
       ...base,
-      view: { unknown: true, source: 'soft' as MasterySource, lowConf: true },
+      // 复用 masteryBandUnknown()（同 buildRetentionDim/buildMasteryDim，OCR 一致性）——
+      // 它正是 { unknown:true, source:'soft', lowConf:true }。
+      view: masteryBandUnknown(),
       note: '难度锚落在中性区或还没标定 —— 暂用先验，练几道会 firm up。',
     };
   }
