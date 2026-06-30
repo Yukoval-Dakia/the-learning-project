@@ -26,6 +26,11 @@
 // import 环 gate：本文件不得 import producers/writer/actions；共享 helper 走
 // @/server/proposals/applier-helpers（与 sibling proposal-appliers 同约束）。
 
+import {
+  K_PROMOTE,
+  misconceptionPromoteEnabled,
+  promoteConjectureToMisconception,
+} from '@/capabilities/agency/server/misconception-promote';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/server/events/queries';
@@ -119,29 +124,62 @@ export async function acceptConjectureProposal(
   const now = new Date();
   const rateEventId = newId();
 
-  await writeEvent(db, {
-    id: rateEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'rate',
-    subject_kind: 'event',
-    subject_id: proposalId,
-    outcome: 'success',
-    // RateEvent.payload (known.ts:268) is non-strict — these extra keys are
-    // stripped by parse but PERSISTED raw on the event row (verified queries.ts;
-    // mirrors goal_scope's materialized_goal_id). The read model + calibration
-    // retro read them off the row.
-    payload: {
-      rating: 'accept',
-      conjecture_id: conjectureId,
-      // accept = agree with direction (NOT confirmed); edit = corrected_by_owner.
-      corrected_by_owner: isEdit,
-      calibration_anchor: isEdit ? 'edit' : 'accept',
-      ...(correctedClaim ? { corrected_claim_md: correctedClaim } : {}),
-      ...(opts.user_note ? { user_note: opts.user_note } : {}),
-    },
-    caused_by_event_id: proposalId,
-    created_at: now,
+  // YUK-531 PR-3 — the rate write + the (dark, flag-gated) misconception promotion
+  // are ATOMIC in ONE db.transaction. When the flag is OFF this is effect-identical to
+  // today (a single rate-event INSERT, same payload — wrapping one write in BEGIN/COMMIT
+  // changes no observable row). When ON, atomicity is load-bearing: a crash AFTER the
+  // rate write but BEFORE the misconception upsert would otherwise strand a
+  // misconception-less accept that the idempotency guard above then permanently skips.
+  //
+  // ND-5 RED LINE preserved: this path still NEVER writes FSRS / review / learning-item
+  // state. A minted misconception is SOFT-track (source='soft', dark flag) — an AI prior
+  // the owner agreed with, NOT a confirmed weakness (only the probe one-shot mints that).
+  await db.transaction(async (tx) => {
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      // RateEvent.payload (known.ts:268) is non-strict — these extra keys are
+      // stripped by parse but PERSISTED raw on the event row (verified queries.ts;
+      // mirrors goal_scope's materialized_goal_id). The read model + calibration
+      // retro read them off the row.
+      payload: {
+        rating: 'accept',
+        conjecture_id: conjectureId,
+        // accept = agree with direction (NOT confirmed); edit = corrected_by_owner.
+        corrected_by_owner: isEdit,
+        calibration_anchor: isEdit ? 'edit' : 'accept',
+        ...(correctedClaim ? { corrected_claim_md: correctedClaim } : {}),
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+
+    // DARK promotion hop. Reads recurrence_count off the persisted proposal change
+    // (NOT a fresh gatherConjectureEvidence). K_PROMOTE=2 is redundant with the
+    // induction floor (every conjecture already recurred ≥2) — the real gate is the
+    // flag + the human accept (see misconception-promote.ts). On an EDIT accept the
+    // owner's rewritten claim becomes the misconception title.
+    if (misconceptionPromoteEnabled() && Number(change.recurrence_count) >= K_PROMOTE) {
+      const evidenceEventIds = proposal.payload.evidence_refs
+        .filter((ref) => ref.kind === 'event')
+        .map((ref) => ref.id);
+      await promoteConjectureToMisconception(tx, {
+        conjectureId,
+        knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
+        claimMd: correctedClaim ?? requiredString(change.claim_md, 'claim_md', proposalId),
+        causeCategory: requiredString(change.cause_category, 'cause_category', proposalId),
+        confidence: Number(change.confidence),
+        recurrenceCount: Number(change.recurrence_count),
+        evidenceEventIds,
+        now,
+      });
+    }
   });
 
   // EDIT only: the owner's rewritten claim goes to mem0 CORE (single-writer
