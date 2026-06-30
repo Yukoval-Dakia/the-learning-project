@@ -32,15 +32,18 @@ export const CANONICAL_MISCONCEPTION_RELATIONS = [
   'confusable_with',
   'observed_in',
 ] as const;
+// `experimental:*` requires a non-empty tag (≥1 char after the colon) — a bare
+// `experimental:` is semantically meaningless and rejected.
+const EXPERIMENTAL_RELATION = /^experimental:.+/;
 export const MisconceptionRelationType = z
   .string()
   .refine(
     (s) =>
       (CANONICAL_MISCONCEPTION_RELATIONS as readonly string[]).includes(s) ||
-      s.startsWith('experimental:'),
+      EXPERIMENTAL_RELATION.test(s),
     {
       message:
-        'unknown misconception relation_type (expected caused_by | confusable_with | observed_in | experimental:*)',
+        'unknown misconception relation_type (expected caused_by | confusable_with | observed_in | experimental:<tag>)',
     },
   );
 
