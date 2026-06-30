@@ -47,6 +47,8 @@ export const getFrontier = () => apiJson<{ rows: FrontierRailItem[] }>('/api/kno
 // (RT1 误区) + candidate (猜想/候选)。conf 是定性档（高/中/低），裸 weight/
 // confidence 绝不过 wire（⑥）。UI 组件是 PR-5；此处只供 fetch + 类型。
 export interface MisconceptionRow {
+  // segment-scoped id：confirmed = misconception.id；candidate = proposal event id。两段
+  // id 空间不相交 —— PR-5 必须按 `segment` 路由 action（绝不单凭 id），否则会打到错的后端。
   id: string;
   // 'confirmed' = 确认误区(RT1)；'candidate' = 猜想/候选（pending conjecture）。
   segment: 'confirmed' | 'candidate';
@@ -60,7 +62,8 @@ export interface MisconceptionRow {
   conf: '高' | '中' | '低';
   // 复现次数（int，计数允许）。
   seen: number;
-  // 证据 event-id 回链。
+  // 证据 event-id 回链 —— 仅 event-id（candidate 段已在后端把非 event 的 ref 过滤掉，
+  // 故每个 id 都可安全渲染成 event 回链，不会出现死链）。
   evidence: string[];
 }
 
