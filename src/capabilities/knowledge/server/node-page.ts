@@ -142,20 +142,14 @@ export interface KnowledgeNodePage {
   timeline: NodePageTimelineEntry[];
 }
 
-/** A5 S3 (YUK-354) — per-KC R(t) read result: retrievability + whether a row exists. */
-export interface KnowledgeRetrievability {
-  /** FSRS retrievability R(t) ∈ [0,1] for the now passed in. */
-  retrievability: number;
-  /** true ⇔ a material_fsrs_state row exists (R is real, source=hard); false = absent. */
-  hasState: boolean;
-}
-
 /**
  * A5 S3 (YUK-354) — batched R(t) read for the 'knowledge' axis. One DB round-trip
  * (getFsrsStatesByIds) over `material_fsrs_state WHERE subject_kind='knowledge' AND
  * subject_id IN (ids)`, each row through retrievabilityForKc(state, now) → R ∈ [0,1].
  * KCs with no row are ABSENT from the map (the caller renders "no retention data yet",
- * NOT R=0 — a missing card is unknown, not fully-forgotten).
+ * NOT R=0 — a missing card is unknown, not fully-forgotten). Map presence ⇔ a real
+ * fsrs_state row (hard source); absence ⇔ unknown — no separate `hasState` flag needed,
+ * it was always true (OCR).
  *
  * `now` is injectable for deterministic tests (retrievability is time-relative).
  * READ-ONLY — three-axis orthogonality: never writes any axis.
@@ -164,11 +158,11 @@ export async function loadRetrievabilityMap(
   db: Db,
   knowledgeIds: string[],
   now: Date = new Date(),
-): Promise<Map<string, KnowledgeRetrievability>> {
+): Promise<Map<string, number>> {
   const states = await getFsrsStatesByIds(db, 'knowledge', knowledgeIds);
-  const out = new Map<string, KnowledgeRetrievability>();
+  const out = new Map<string, number>();
   for (const [id, row] of states) {
-    out.set(id, { retrievability: retrievabilityForKc(row.state, now), hasState: true });
+    out.set(id, retrievabilityForKc(row.state, now));
   }
   return out;
 }
@@ -249,16 +243,16 @@ export async function loadKnowledgeNodePage(
     mastery: masteryProjection.get(row.id)?.mastery ?? null,
   }));
 
-  // A5 S3 (YUK-354) — focal-node R(t) for the NodeComposite 三维 R axis. Only the
-  // focal node carries the three-dim fold (children rows stay mastery-only), so we
-  // read R just for node.id. Absent row → retrievability null (unknown, not R=0).
-  const focalRetrievability = (await loadRetrievabilityMap(db, [node.id])).get(node.id);
-
-  // 2. mesh neighbors — both directions (ADR-0010 edges). Resolve neighbor names.
-  const [outEdges, inEdges] = await Promise.all([
+  // 2. mesh neighbors + focal-node R(t). The R read (NodeComposite 三维 R axis; only the
+  // focal node carries the three-dim fold, children stay mastery-only) is independent of
+  // the edge queries → parallelize in one Promise.all (OCR). Absent row → R null (unknown,
+  // not R=0).
+  const [focalRetrievabilityMap, outEdges, inEdges] = await Promise.all([
+    loadRetrievabilityMap(db, [node.id]),
     listKnowledgeEdges(db, { from: knowledgeId }),
     listKnowledgeEdges(db, { to: knowledgeId }),
   ]);
+  const focalRetrievability = focalRetrievabilityMap.get(node.id);
   const neighborIds = Array.from(
     new Set([
       ...outEdges.map((e) => e.to_knowledge_id),
@@ -452,7 +446,7 @@ export async function loadKnowledgeNodePage(
     // A5 S3 (YUK-354) — three-dim RAW: R(t) (null = no fsrs_state row) + representative
     // β (null = no mastery_state projection / cold start). Client bands them via
     // buildNodeThreeDim. β=0 (no difficulty anchor) is honestly degraded to 难度未知.
-    retrievability: focalRetrievability?.hasState ? focalRetrievability.retrievability : null,
+    retrievability: focalRetrievability ?? null,
     beta: nodeMastery?.beta ?? null,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
     mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),
