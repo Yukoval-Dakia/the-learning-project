@@ -8,11 +8,11 @@ import {
   type ConjectureCoreWriter,
   setConjectureCoreWriter,
 } from '@/capabilities/agency/server/conjecture-accept';
-import { event, material_fsrs_state } from '@/db/schema';
+import { event, material_fsrs_state, misconception, misconception_edge } from '@/db/schema';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 function baseConjecture() {
@@ -53,13 +53,29 @@ async function fsrsRowCount(): Promise<number> {
   return rows.length;
 }
 
+async function misconceptionRows() {
+  return testDb().select().from(misconception);
+}
+
+async function misconceptionEdgeRows() {
+  return testDb().select().from(misconception_edge);
+}
+
 describe('acceptConjectureProposal lifecycle', () => {
   let coreWriter: ReturnType<typeof vi.fn<ConjectureCoreWriter>>;
 
   beforeEach(async () => {
     await resetDb();
+    // YUK-531 PR-3 — every test starts with the promotion flag OFF (dark default).
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+    delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
     coreWriter = vi.fn<ConjectureCoreWriter>(async () => {});
     setConjectureCoreWriter(coreWriter);
+  });
+
+  afterEach(() => {
+    // biome-ignore lint/performance/noDelete: 测试隔离——真正 unset env（非赋字符串 "undefined"）。
+    delete process.env.MISCONCEPTION_PROMOTE_ENABLED;
   });
 
   it('plain accept writes corrected_by_owner=false, no CORE write, no FSRS row', async () => {
@@ -177,5 +193,98 @@ describe('acceptConjectureProposal lifecycle', () => {
     const rates = await rateEvents(proposalId);
     expect(rates).toHaveLength(1);
     expect(await fsrsRowCount()).toBe(0);
+  });
+
+  // YUK-531 PR-3 — the dark, flag-gated misconception promotion hop.
+  describe('misconception promotion (YUK-531 PR-3)', () => {
+    it('flag OFF (default) — accept mints NO misconception and NO edge (dark regression)', async () => {
+      const db = testDb();
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+
+      await acceptAiProposal(db, proposalId);
+
+      // Flag OFF ⇒ byte-identical to pre-PR-3: rate event written, zero promotion side-effects.
+      const rates = await rateEvents(proposalId);
+      expect(rates).toHaveLength(1);
+      expect(await misconceptionRows()).toHaveLength(0);
+      expect(await misconceptionEdgeRows()).toHaveLength(0);
+      expect(await fsrsRowCount()).toBe(0);
+    });
+
+    it('flag ON — plain accept mints a soft/active misconception + caused_by edge, still no FSRS', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+
+      await acceptAiProposal(db, proposalId);
+
+      const miscs = await misconceptionRows();
+      expect(miscs).toHaveLength(1);
+      const m = miscs[0];
+      expect(m.title).toBe('you treat the chain rule as multiplying derivatives');
+      // SOFT track, owner-accepted live node, recurrence salience, conjecture evidence ptrs.
+      expect(m.source).toBe('soft');
+      expect(m.status).toBe('active');
+      expect(m.seen).toBe(2);
+      expect(m.evidence).toEqual(['evt_a', 'evt_b']);
+      expect(m.proposed_by_ai).toBe(true);
+
+      const edges = await misconceptionEdgeRows();
+      expect(edges).toHaveLength(1);
+      const e = edges[0];
+      expect(e.from_kind).toBe('misconception');
+      expect(e.from_id).toBe(m.id);
+      expect(e.to_kind).toBe('knowledge');
+      expect(e.to_id).toBe('kn_chain_rule');
+      expect(e.relation_type).toBe('caused_by');
+      expect(e.archived_at).toBeNull();
+
+      // ND-5 red line holds even on the promotion path — no FSRS/review row.
+      expect(await fsrsRowCount()).toBe(0);
+    });
+
+    it('flag ON — re-accept is idempotent: one misconception, one edge, one rate', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+
+      await acceptAiProposal(db, proposalId);
+      await acceptAiProposal(db, proposalId);
+
+      // The rate-event idempotency guard short-circuits the 2nd accept BEFORE the
+      // promotion hop, so nothing double-writes.
+      expect(await rateEvents(proposalId)).toHaveLength(1);
+      expect(await misconceptionRows()).toHaveLength(1);
+      expect(await misconceptionEdgeRows()).toHaveLength(1);
+    });
+
+    it('flag ON — edit accept uses the owner-corrected claim as the misconception title', async () => {
+      process.env.MISCONCEPTION_PROMOTE_ENABLED = '1';
+      const db = testDb();
+      const proposalId = await writeAiProposal(db, {
+        actor_ref: 'research_meeting',
+        payload: baseConjecture(),
+      });
+
+      await acceptAiProposal(db, proposalId, {
+        corrected_payload: { claim_md: 'you apply the chain rule but drop the inner factor' },
+      });
+
+      const miscs = await misconceptionRows();
+      expect(miscs).toHaveLength(1);
+      expect(miscs[0].title).toBe('you apply the chain rule but drop the inner factor');
+      // Edit still does NOT confirm a weakness — soft track, no FSRS.
+      expect(miscs[0].source).toBe('soft');
+      expect(await fsrsRowCount()).toBe(0);
+    });
   });
 });
