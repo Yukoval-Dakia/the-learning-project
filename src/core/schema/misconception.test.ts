@@ -80,3 +80,50 @@ describe('MisconceptionSchema (YUK-454 inc-1, ADR-0036 身份层)', () => {
     expect(result.success).toBe(false);
   });
 });
+
+// YUK-531 (A5 S4 / RT1) — promotion lifecycle/provenance columns. Value-level
+// constraints, not just default-presence: status/source are bounded enums (NOT
+// free text), seen is a non-negative int, evidence is a string array.
+describe('MisconceptionSchema — YUK-531 RT1 lifecycle/provenance columns', () => {
+  it('accepts draft|active status and hard|soft source', () => {
+    for (const status of ['draft', 'active'] as const) {
+      for (const source of ['hard', 'soft'] as const) {
+        const result = MisconceptionSchema.safeParse({ ...VALID_ROW, status, source, seen: 3 });
+        expect(result.success).toBe(true);
+      }
+    }
+  });
+
+  it('REJECTS status `fading` (read-model display projection, NOT a stored enum)', () => {
+    expect(MisconceptionSchema.safeParse({ ...VALID_ROW, status: 'fading' }).success).toBe(false);
+    expect(MisconceptionSchema.safeParse({ ...VALID_ROW, status: 'retracted' }).success).toBe(
+      false,
+    );
+  });
+
+  it('REJECTS a third source track (only 硬轨 hard | 软轨 soft)', () => {
+    expect(MisconceptionSchema.safeParse({ ...VALID_ROW, source: 'medium' }).success).toBe(false);
+  });
+
+  it('REJECTS a negative or non-integer seen count', () => {
+    expect(MisconceptionSchema.safeParse({ ...VALID_ROW, seen: -1 }).success).toBe(false);
+    expect(MisconceptionSchema.safeParse({ ...VALID_ROW, seen: 1.5 }).success).toBe(false);
+  });
+
+  it('defaults status→draft, source→soft, seen→0, evidence→[] on insert', () => {
+    const result = MisconceptionInsert.safeParse({
+      id: 'misc_rt1',
+      title: 'x',
+      created_by: { by: 'user' },
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe('draft');
+      expect(result.data.source).toBe('soft');
+      expect(result.data.seen).toBe(0);
+      expect(result.data.evidence).toEqual([]);
+    }
+  });
+});

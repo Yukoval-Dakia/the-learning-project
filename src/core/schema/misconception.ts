@@ -19,8 +19,9 @@
 //      diagnostic engines.
 //
 // Time dimension: `archived_at` is the ONLY time field besides created/updated.
-// Explicitly NO valid_at/invalid_at — bi-temporal edges are a DEFERRED slice
-// (misconception_edge + promotion flow), not part of the identity skeleton.
+// Explicitly NO valid_at/invalid_at. The heterogeneous misconception_edge
+// (see misconception-edge.ts, YUK-531) is STRUCTURAL, not bi-temporal — it shares
+// this archived_at-only convention; bi-temporal edges remain rejected by design.
 import { z } from 'zod';
 import { AgentRef } from './business';
 

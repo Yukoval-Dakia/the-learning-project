@@ -158,8 +158,10 @@ export const misconception = pgTable('misconception', {
 // do not map onto these relation types (see misconception-topology-gate.ts).
 //   RED LINES (mirror misconception): weight is CONFIDENCE-only (never mastery);
 //   archived_at is the ONLY time dimension (no valid_at/invalid_at); created_at/
-//   updated_at caller-supplied (no defaultNow, house convention). DORMANT until the
-//   PR-3 promotion writer / accept route lands.
+//   updated_at are caller-supplied with NO defaultNow — this follows the identity-
+//   cluster (knowledge / misconception) timestamp convention, NOT knowledge_edge's
+//   (which uses defaultNow + no updated_at). DORMANT until the PR-3 promotion
+//   writer / accept route lands.
 export const misconception_edge = pgTable(
   'misconception_edge',
   {
