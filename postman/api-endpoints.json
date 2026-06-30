@@ -359,6 +359,19 @@
     ]
   },
   {
+    "path": "/api/knowledge/misconceptions/:id/veto",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "否决一条 candidate（猜想/候选）误区 = dismiss 对应 pending conjecture 提议",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "id = candidate 段行 id = pending conjecture 提议 event id。经 dismissAiProposal（conjecture 走 default 分支）写 rate(dismiss) 事件 + decision signal；幂等（非 pending 复返 { idempotent:true }）。Option A：仅 candidate 段 live；confirmed（RT1 误区）archive 是延后 soft-track 后端 slice，UI 对 confirmed 行只渲乐观「已纠偏」本地态、不打此端点。→ 400 缺 id；→ 404 未知提议 id；→ 409 已 accept 决断冲突。需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/mistakes",
     "methods": [
       {
