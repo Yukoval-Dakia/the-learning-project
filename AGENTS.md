@@ -110,3 +110,43 @@ PR 前还需：`pnpm audit:schema` / `audit:partition` / `audit:profile`。
 - bug fix 不顺手 refactor。
 - 加新表/字段必须有 write path，否则进 `scripts/audit-schema-allowlist.json` 标注可检查解除条件。
 <!-- init-deep:END -->
+
+## Cursor Cloud specific instructions
+
+环境形态：`loom` 三进程（Hono API :8787 + Vite SPA :5173 + pg-boss worker），Postgres+pgvector
+跑在 docker-compose 里。标准命令见 `README.md` / `CLAUDE.md`，下面只记云环境里**非显然**的坑。
+
+**依赖刷新**：update script 只跑 `pnpm install`（幂等）。Docker engine 已随 VM 快照安装，不进
+update script。原生模块（esbuild / sharp / better-sqlite3）的 build 脚本在本仓 `pnpm install`
+默认会跑，无需 `pnpm approve-builds`。
+
+**每会话启动顺序**（systemd 不在容器里跑，dockerd 不会自启）：
+1. 起 dockerd（后台，需要时）：`sudo dockerd &`（已配 `/etc/docker/daemon.json` 用
+   `fuse-overlayfs` 存储驱动 + 关 `containerd-snapshotter`，并切 iptables-legacy；Docker 29 下
+   这套是 fuse-overlayfs 能用的前提）。若 `docker ps` 报权限，`sudo chmod 666 /var/run/docker.sock`。
+2. 起 Postgres（host :5433）：`docker compose -f docker-compose.yml -f docker-compose.local.yml up postgres -d`，
+   等 `healthy`。
+3. 跑迁移：`pnpm db:migrate:local`。
+4. 起三进程：`pnpm dev:local`（API :8787 / SPA :5173 / worker）。
+
+**`.env`（gitignored，缺了就建）**：本地 keyless dev 至少要
+`INTERNAL_TOKEN=local-dev-token`（SPA 的 TokenGate 登录用同一个值）、`POSTGRES_USER/PASSWORD/DB=loom`、
+`SKIP_BOSS_INGEST=1`（否则每个 `writeEvent` 入队的 `memory_event_ingest` job 会因缺
+`DASHSCOPE_API_KEY`/`ZHIPU_API_KEY` 在 worker 里抛错）。AI / OCR / R2 key 留空即可，只在用到对应
+功能时才需要。`dev:local` 从 `POSTGRES_*` 派生 `DATABASE_URL=...@127.0.0.1:5433/loom`，不要手填
+remote `DATABASE_URL`。
+
+**DB 测试必须设 `TESTCONTAINERS_HOST_OVERRIDE=localhost`**（坑点）：
+`pnpm test:db` / `pnpm test:migration` / 全量 `pnpm test` 用 testcontainers 起 Postgres。本云环境
+（Docker-in-Docker）下 testcontainers 把 host 解析成 bridge 网关 IP（如 `172.18.0.1`），而
+`src/db/client.ts` 对非 `localhost`/`127.0.0.1` 的连接默认 `ssl:'require'` → postgres-js 对不说 TLS
+的 Postgres 握手 → 大面积 `ECONNRESET` / "secure TLS connection" 失败（`drizzle-kit migrate` 用 `pg`
+驱动不受影响，所以 globalSetup 能过但用例全挂）。设 `TESTCONTAINERS_HOST_OVERRIDE=localhost` 让
+连接串走 localhost → `ssl` 关 → 通过。例：`TESTCONTAINERS_HOST_OVERRIDE=localhost pnpm test`。
+
+**Vite dev server 只绑 IPv6 localhost**：访问用 `http://localhost:5173`，不要用 `http://127.0.0.1:5173`
+（后者连不上）。API :8787 两个都行。
+
+**手动 hello-world 验证**：可跑 `SEED_SYNTHETIC_OK=1 DATABASE_URL='postgres://loom:loom@127.0.0.1:5433/loom?sslmode=disable' pnpm seed:synthetic`
+灌一批文言文知识节点/题目（DB-only，loopback 守卫），再在 UI（题库 → 题详情）改难度/prompt 点「保存修改」
+走 `PATCH /api/questions/[id]` 验证全链路。
