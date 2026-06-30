@@ -88,6 +88,23 @@ export const CORE_RELATION_TYPES = [
 ] as const;
 export type CoreRelationType = (typeof CORE_RELATION_TYPES)[number];
 
+// YUK-533 — the HETEROGENEOUS misconception_edge relation universe (ADR-0036, distinct
+// from the homogeneous knowledge_edge CORE set above; vocabulary =
+// src/core/schema/misconception-edge.ts CANONICAL_MISCONCEPTION_RELATIONS). Added so the
+// dead-edge reverse-audit covers misconception_edge too (it was previously OUT of the
+// audit universe — confusable_with was NOT being flagged either way). Run as a SEPARATE
+// verdict pass (computeDeadEdges accepts the universe), so the knowledge_edge audit shape
+// is unchanged.
+export const MISCONCEPTION_RELATION_TYPES = [
+  'caused_by',
+  'confusable_with',
+  'observed_in',
+] as const;
+export type MisconceptionRelationType = (typeof MISCONCEPTION_RELATION_TYPES)[number];
+
+/** Any relation_type the dead-edge audit reasons over (knowledge_edge ∪ misconception_edge). */
+export type AuditRelationType = CoreRelationType | MisconceptionRelationType;
+
 // ---------- consumption tiers ----------
 
 export type ConsumerTier = 'creation-validation' | 'generic-read' | 'specialized';
@@ -108,7 +125,7 @@ export const TIER_RANK: Record<ConsumerTier, number> = {
  * 属于哪个消费层、归到诊断/推荐/复习哪个产品维度（surface），以及一句话证据。
  */
 export type ConsumerEntry = {
-  relation: CoreRelationType;
+  relation: AuditRelationType;
   tier: ConsumerTier;
   /** repo-relative source file that consumes this edge type. */
   file: string;
@@ -286,6 +303,49 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   //   applied_in 只被 generic-read 一把捞 + creation-validation 校验，零特化学习消费。
 ];
 
+// ── MISCONCEPTION_CONSUMER_REGISTRY (YUK-533) — misconception_edge consumers ──────────
+//
+// Same declarative-registry + file:marker reverse-check shape as CONSUMER_REGISTRY, for the
+// HETEROGENEOUS misconception_edge universe (caused_by / confusable_with / observed_in).
+// Run through computeDeadEdges with MISCONCEPTION_RELATION_TYPES as the universe.
+//
+// grounding (cite file:marker):
+//   - caused_by → SPECIALIZED. misconception-read.ts:loadConfirmed joins active
+//     misconceptions to a KC by the `caused_by` edge (relation_type-specific), driving the
+//     per-KC「指向此点的误区」funnel (A5 knowledge explorer). LIVE today.
+//   - confusable_with → SPECIALIZED. misconception-confusable-read.ts:loadConfusablePairs
+//     reads `confusable_with` edges by type → confusable-contrast-discovery.ts emits
+//     contrast-item supply targets. DARK-SHIP (CONFUSABLE_CONTRAST_ENABLED default OFF) but
+//     the type-specific read is WIRED-IN-SOURCE, so it is LIVE-in-code — exactly the
+//     precedent the A5/A6 mastery-projection entries (state.ts, dark behind GRAPH_LAPLACIAN_
+//     ENABLED / PREREQ_PROPAGATION_ENABLED) set in CONSUMER_REGISTRY above.
+//   - observed_in → NO specialized consumer. It is a provenance evidence-pointer
+//     (misconception → event); nothing reads it by type to differentiate learning. So it is
+//     the misconception-universe's INTENTIONAL dead-edge candidate — analogous to applied_in
+//     in the knowledge universe. (No entry ⇒ verdict DEAD/maxTier=none, report-only.)
+const MISCONCEPTION_CONSUMER_REGISTRY: ConsumerEntry[] = [
+  {
+    relation: 'caused_by',
+    tier: 'specialized',
+    file: 'src/capabilities/knowledge/server/misconception-read.ts',
+    marker: "eq(misconception_edge.relation_type, 'caused_by')",
+    surface: 'review',
+    evidence:
+      'misconception-read loadConfirmed joins active misconceptions to a KC via the caused_by edge (relation_type-specific) → 驱动 per-KC「指向此点的误区」funnel (A5 知识浏览器)。',
+  },
+  {
+    relation: 'confusable_with',
+    tier: 'specialized',
+    file: 'src/capabilities/knowledge/server/misconception-confusable-read.ts',
+    marker: "eq(misconception_edge.relation_type, 'confusable_with')",
+    surface: 'recommendation',
+    evidence:
+      'misconception-confusable-read loadConfusablePairs reads confusable_with 边 by type → confusable-contrast-discovery 发对比题供给目标（dark-ship CONFUSABLE_CONTRAST_ENABLED 默认 OFF，但 type-specific 读 wired-in-source = LIVE-in-code，同 A5/A6 mastery-projection dark-ship 先例）。',
+  },
+  // observed_in：故意无 specialized 条目（provenance evidence-ptr，零 type-differentiated
+  // 学习消费）→ misconception 宇宙的预期死边候选（类比 applied_in）。
+];
+
 // ---------- source walk + reverse-check ----------
 
 export function walkSource(root: string, out: string[] = []): string[] {
@@ -348,7 +408,7 @@ export function reverseCheckConsumers(
 // ---------- dead-edge verdict ----------
 
 export type RelationVerdict = {
-  relation: CoreRelationType;
+  relation: AuditRelationType;
   /** highest LIVE consumer tier (stale entries excluded). */
   maxTier: ConsumerTier | 'none';
   /** true when no LIVE specialized consumer exists ⇒ graph spins without learning impact. */
@@ -361,7 +421,7 @@ export type DeadEdgeResult = {
   /** true when there are no dead edges AND no stale consumer declarations. */
   ok: boolean;
   verdicts: RelationVerdict[];
-  dead: CoreRelationType[];
+  dead: AuditRelationType[];
   stale: StaleConsumer[];
 };
 
@@ -370,17 +430,22 @@ export type DeadEdgeResult = {
  * entries are dropped — a declared-but-vanished consumer does NOT keep an edge
  * alive). A type is "dead" when it has no live `specialized` consumer. Exported
  * pure for unit testing.
+ *
+ * `relationTypes` is the universe to render verdicts over — defaults to the
+ * knowledge_edge CORE set (back-compat); pass MISCONCEPTION_RELATION_TYPES (YUK-533) to
+ * audit the heterogeneous misconception_edge universe with the SAME logic.
  */
 export function computeDeadEdges(
   registry: ConsumerEntry[],
   stale: StaleConsumer[],
+  relationTypes: readonly AuditRelationType[] = CORE_RELATION_TYPES,
 ): DeadEdgeResult {
   const staleKeys = new Set(stale.map((s) => `${s.relation}|${s.tier}|${s.file}|${s.marker}`));
   const live = registry.filter(
     (e) => !staleKeys.has(`${e.relation}|${e.tier}|${e.file}|${e.marker}`),
   );
 
-  const verdicts: RelationVerdict[] = CORE_RELATION_TYPES.map((relation) => {
+  const verdicts: RelationVerdict[] = relationTypes.map((relation) => {
     const consumers = live.filter((e) => e.relation === relation);
     const maxTier =
       consumers.length === 0
@@ -447,9 +512,44 @@ function readFileOrNull(relPath: string): string | null {
   }
 }
 
+/** Print the per-relation verdict table + dead-edge section for one universe (non-JSON). */
+function printUniverse(label: string, result: DeadEdgeResult): void {
+  console.log(`  ${label} — consumption tier per relation_type (highest LIVE tier):\n`);
+  for (const v of result.verdicts) {
+    const tag = v.dead ? 'DEAD' : 'live';
+    const surfaces = [...new Set(v.consumers.map((c) => c.surface))].join(', ') || '—';
+    console.log(
+      `  [${tag}] ${v.relation.padEnd(15)} maxTier=${v.maxTier.padEnd(20)} surfaces=${surfaces}`,
+    );
+    for (const c of v.consumers) {
+      console.log(`           · ${c.tier.padEnd(20)} ${c.file}  (${c.surface})`);
+    }
+  }
+  console.log('');
+
+  if (result.dead.length === 0) {
+    console.log(`  ${label} DEAD edges (no specialized downstream consumer):  (none)`);
+  } else {
+    console.log(
+      `  ${label} DEAD edges (no specialized downstream consumer):  ${result.dead.length}`,
+    );
+    for (const r of result.dead) {
+      console.log(
+        `    - ${r}: created/proposed/persisted but no diagnosis/recommendation/review path reads it by type → graph spins without affecting learning.`,
+      );
+    }
+  }
+  console.log('');
+}
+
 function main(): void {
-  const stale = reverseCheckConsumers(CONSUMER_REGISTRY, readFileOrNull);
-  const result = computeDeadEdges(CONSUMER_REGISTRY, stale);
+  // YUK-533 — reverse-check + dead-edge over BOTH universes (knowledge_edge + the
+  // heterogeneous misconception_edge). Stale is computed once over the combined registry;
+  // each universe gets its own verdict pass via computeDeadEdges(relationTypes).
+  const allRegistry = [...CONSUMER_REGISTRY, ...MISCONCEPTION_CONSUMER_REGISTRY];
+  const stale = reverseCheckConsumers(allRegistry, readFileOrNull);
+  const knowledgeResult = computeDeadEdges(allRegistry, stale, CORE_RELATION_TYPES);
+  const misconceptionResult = computeDeadEdges(allRegistry, stale, MISCONCEPTION_RELATION_TYPES);
 
   const files = walkSource(SRC_ROOT).sort();
   const experimental = findExperimentalRelations(files, (f) => readFileOrNull(f) ?? '');
@@ -458,21 +558,17 @@ function main(): void {
   const isStrict = process.argv.includes('--strict');
 
   if (isJson) {
-    console.log(JSON.stringify({ ...result, experimental }, null, 2));
+    console.log(
+      JSON.stringify(
+        { knowledge: knowledgeResult, misconception: misconceptionResult, experimental },
+        null,
+        2,
+      ),
+    );
   } else {
-    console.log('audit:relations — KG 死边反向审计 (YUK-357)\n');
-    console.log('  consumption tier per core relation_type (highest LIVE tier):\n');
-    for (const v of result.verdicts) {
-      const tag = v.dead ? 'DEAD' : 'live';
-      const surfaces = [...new Set(v.consumers.map((c) => c.surface))].join(', ') || '—';
-      console.log(
-        `  [${tag}] ${v.relation.padEnd(15)} maxTier=${v.maxTier.padEnd(20)} surfaces=${surfaces}`,
-      );
-      for (const c of v.consumers) {
-        console.log(`           · ${c.tier.padEnd(20)} ${c.file}  (${c.surface})`);
-      }
-    }
-    console.log('');
+    console.log('audit:relations — KG 死边反向审计 (YUK-357 / YUK-533)\n');
+    printUniverse('knowledge_edge', knowledgeResult);
+    printUniverse('misconception_edge', misconceptionResult);
 
     if (experimental.length > 0) {
       console.log(
@@ -480,9 +576,9 @@ function main(): void {
       );
     }
 
-    if (result.stale.length > 0) {
-      console.log(`STALE consumer declarations (registry ↔ code drift):  ${result.stale.length}`);
-      for (const s of result.stale) {
+    if (stale.length > 0) {
+      console.log(`STALE consumer declarations (registry ↔ code drift):  ${stale.length}`);
+      for (const s of stale) {
         console.log(
           `  - ${s.relation} / ${s.tier}: ${s.file} — ${s.problem} (marker: ${JSON.stringify(s.marker)})`,
         );
@@ -495,25 +591,15 @@ function main(): void {
       console.log('');
     }
 
-    if (result.dead.length === 0) {
-      console.log('DEAD edges (no specialized downstream consumer):  (none)');
-    } else {
-      console.log(`DEAD edges (no specialized downstream consumer):  ${result.dead.length}`);
-      for (const r of result.dead) {
-        console.log(
-          `  - ${r}: created/proposed/persisted but no diagnosis/recommendation/review path reads it by type → graph spins without affecting learning.`,
-        );
-      }
-      console.log(
-        '\nGPT §10.1「只保留能影响诊断/推荐/复习的关系」. A dead edge type is a governance ' +
-          'signal: either wire a specialized consumer (make it affect learning), stop ' +
-          'proposing it, or accept it as intentionally generic-only and record the rationale.',
-      );
-    }
+    console.log(
+      'GPT §10.1「只保留能影响诊断/推荐/复习的关系」. A dead edge type is a governance ' +
+        'signal: either wire a specialized consumer (make it affect learning), stop ' +
+        'proposing it, or accept it as intentionally generic-only and record the rationale.',
+    );
   }
 
   // OWNER-DECISION-PENDING (1): default report-only; --strict opts into a CI gate.
-  if (isStrict && !result.ok) process.exit(1);
+  if (isStrict && !(knowledgeResult.ok && misconceptionResult.ok)) process.exit(1);
 }
 
 // CLI-gate (mirrors audit-test-partition.ts / audit-draft-status.ts): only run +

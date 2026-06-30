@@ -84,6 +84,14 @@ export interface QuizGenJobData {
   // YUK-226 S2-5b F4 — the 题型 hint the次序 selected this line for (additive). Threaded
   // into the QuizGenTask input so the agent can target the题型.
   kind?: string;
+  // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
+  // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
+  // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
+  // phase-deferred: contrast-aware generation (consuming this field to write a discrimination
+  // question) is a flag-flip increment — the dispatcher forwards it now (dark behind
+  // CONFUSABLE_CONTRAST_ENABLED) so the seam is data-complete; the handler does not yet read
+  // it. Context: src/server/question-supply/confusable-contrast-discovery.ts.
+  knowledge_ids?: string[];
 }
 
 // §4 — default question count when the trigger doesn't specify one.
