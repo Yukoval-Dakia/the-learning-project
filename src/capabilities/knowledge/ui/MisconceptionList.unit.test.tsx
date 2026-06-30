@@ -8,7 +8,7 @@
 
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { MisconceptionCardView, MisconceptionList } from './MisconceptionList';
+import { MisconceptionCardView, MisconceptionList, applyVeto } from './MisconceptionList';
 import type { MisconceptionRow } from './knowledge-api';
 
 /** Recursively collect every onClick handler in a React element tree (renderToString drops
@@ -200,13 +200,14 @@ describe('MisconceptionList', () => {
     expect(html).not.toContain('kd-misc-acts'); // no action buttons on the resolved card
   });
 
-  it('wires the three card actions: navigate「针对性练习」/ trace toggle / 判错了 veto', () => {
+  it('wires a CANDIDATE card actions: navigate「针对性练习」/ trace toggle / active 判错了 veto', () => {
     const navigate = vi.fn();
     const onToggleTrace = vi.fn();
     const onVerdictWrong = vi.fn();
     const clicks = findOnClicks(
       MisconceptionCardView({
-        mc: confirmed(),
+        // candidate has an ACTIVE 判错了 (live dismiss). Confirmed disables it (see below).
+        mc: candidate(),
         trace: false,
         verdict: null,
         navigate,
@@ -220,6 +221,88 @@ describe('MisconceptionList', () => {
     expect(navigate).toHaveBeenCalledWith('/practice');
     expect(onToggleTrace).toHaveBeenCalled();
     expect(onVerdictWrong).toHaveBeenCalled();
+  });
+
+  it('C / #609: disables 判错了 on a CONFIRMED card (no live confirmed-archive writer) — only 2 actions', () => {
+    const onVerdictWrong = vi.fn();
+    const clicks = findOnClicks(
+      MisconceptionCardView({
+        mc: confirmed(),
+        trace: false,
+        verdict: null,
+        navigate: vi.fn(),
+        onToggleTrace: vi.fn(),
+        onVerdictWrong,
+      }),
+    );
+    // navigate + trace toggle only — 判错了 is DISABLED (no onClick) on a confirmed card, so a
+    // confirmed misconception can NEVER reach onVeto / a server write (Option A honesty, ⑥).
+    expect(clicks).toHaveLength(2);
+    for (const click of clicks) click();
+    expect(onVerdictWrong).not.toHaveBeenCalled();
+
+    const html = renderToString(
+      <MisconceptionList items={[confirmed()]} navigate={vi.fn()} onVeto={vi.fn()} />,
+    );
+    expect(html).toContain('暂不可否决'); // honest 旁注 instead of a clickable veto
+    // the candidate card carries no such deferred note — its veto is live.
+    const candidateHtml = renderToString(
+      <MisconceptionList items={[candidate()]} navigate={vi.fn()} onVeto={vi.fn()} />,
+    );
+    expect(candidateHtml).not.toContain('暂不可否决');
+  });
+
+  it('#609: applyVeto forwards (id, "candidate") to onVeto + optimistically sets the verdict', async () => {
+    const onVeto = vi.fn().mockResolvedValue(undefined);
+    const setVerdict = vi.fn();
+    const setError = vi.fn();
+    await applyVeto(candidate({ id: 'prop_42' }), onVeto, setVerdict, setError);
+    // candidate segment routes to the server dismiss with its OWN id (segment, never id alone).
+    expect(onVeto).toHaveBeenCalledWith('prop_42', 'candidate');
+    expect(setVerdict).toHaveBeenCalledWith('wrong'); // optimistic「已纠偏」
+    expect(setError).toHaveBeenCalledWith(null);
+    expect(setVerdict).not.toHaveBeenCalledWith(null); // no rollback on success
+  });
+
+  it('B / ⑥: applyVeto rolls back the optimistic verdict + surfaces an inline error when the veto rejects', async () => {
+    const onVeto = vi.fn().mockRejectedValue(new Error('409 already decided as accept'));
+    const setVerdict = vi.fn();
+    const setError = vi.fn();
+    await applyVeto(candidate(), onVeto, setVerdict, setError);
+    expect(setVerdict).toHaveBeenNthCalledWith(1, 'wrong'); // optimistic first
+    expect(setVerdict).toHaveBeenLastCalledWith(null); // rolled back (no stuck false「已纠偏」)
+    expect(setError).toHaveBeenLastCalledWith('撤销失败，请重试');
+  });
+
+  it('B: the card view renders an inline error when a veto rollback set one', () => {
+    const html = renderToString(
+      <MisconceptionCardView
+        mc={candidate()}
+        trace={false}
+        verdict={null}
+        error="撤销失败，请重试"
+        navigate={vi.fn()}
+        onToggleTrace={vi.fn()}
+        onVerdictWrong={vi.fn()}
+      />,
+    );
+    expect(html).toContain('撤销失败，请重试');
+    expect(html).toContain('kd-misc-error');
+  });
+
+  it('E: dedupes duplicate evidence event ids in the trace (stable keys + no dup chip)', () => {
+    const open = renderToString(
+      <MisconceptionCardView
+        mc={confirmed({ evidence: ['evt_dup', 'evt_dup', 'evt_other'] })}
+        trace
+        verdict={null}
+        navigate={vi.fn()}
+        onToggleTrace={vi.fn()}
+        onVerdictWrong={vi.fn()}
+      />,
+    );
+    expect((open.match(/evt_dup/g) ?? []).length).toBe(1); // duplicate collapsed
+    expect(open).toContain('evt_other');
   });
 
   it('⑥ red line: no bare probability / % leaks through confirmed or candidate cards', () => {
