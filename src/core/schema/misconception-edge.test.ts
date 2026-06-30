@@ -126,13 +126,38 @@ describe('MisconceptionEdgeSchema (YUK-531, ADR-0036 RT1)', () => {
       });
     }
 
-    it('REJECTS an unknown endpoint kind (vocabulary is enum-bounded)', () => {
+    it('REJECTS an unknown to_kind (vocabulary is enum-bounded)', () => {
       expect(MisconceptionEdgeSchema.safeParse({ ...VALID_EDGE, to_kind: 'widget' }).success).toBe(
         false,
       );
-      expect(
-        MisconceptionEdgeSchema.safeParse({ ...VALID_EDGE, from_kind: 'widget' }).success,
-      ).toBe(false);
     });
+  });
+
+  // RT1 invariant — from_kind is pinned to z.literal('misconception'), so even a
+  // VALID endpoint-kind value (knowledge/event) is rejected as an ORIGIN. This is
+  // the write-boundary defense-in-depth (the topology gate also enforces it).
+  describe('from_kind invariant (always misconception)', () => {
+    for (const badFrom of ['knowledge', 'event', 'widget']) {
+      it(`REJECTS from_kind \`${badFrom}\``, () => {
+        expect(
+          MisconceptionEdgeSchema.safeParse({ ...VALID_EDGE, from_kind: badFrom }).success,
+        ).toBe(false);
+      });
+    }
+  });
+
+  // weight is CONFIDENCE-only edge salience bounded to [0, 1] (DB comment "0-1
+  // confidence"); out-of-range values must not pass the write boundary.
+  describe('weight bound [0, 1]', () => {
+    for (const w of [0, 0.5, 1]) {
+      it(`accepts in-range weight ${w}`, () => {
+        expect(MisconceptionEdgeSchema.safeParse({ ...VALID_EDGE, weight: w }).success).toBe(true);
+      });
+    }
+    for (const w of [-0.1, 1.5]) {
+      it(`REJECTS out-of-range weight ${w}`, () => {
+        expect(MisconceptionEdgeSchema.safeParse({ ...VALID_EDGE, weight: w }).success).toBe(false);
+      });
+    }
   });
 });
