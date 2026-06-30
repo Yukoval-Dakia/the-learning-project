@@ -35,8 +35,10 @@ export const CANONICAL_MISCONCEPTION_RELATIONS = [
   'observed_in',
 ] as const;
 // `experimental:*` requires a non-empty tag (≥1 char after the colon) — a bare
-// `experimental:` is semantically meaningless and rejected.
-const EXPERIMENTAL_RELATION = /^experimental:.+/;
+// `experimental:` is semantically meaningless and rejected. EXPORTED as the SINGLE
+// SOURCE OF TRUTH: the parallel topology gate (misconception-topology-gate.ts)
+// imports this same regex so the two layers can never silently drift.
+export const EXPERIMENTAL_RELATION = /^experimental:.+/;
 export const MisconceptionRelationType = z
   .string()
   .refine(

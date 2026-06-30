@@ -22,7 +22,10 @@
 // `existing` to the live (archived_at IS NULL) edge set and stacks this with the Zod
 // vocabulary check (core/schema/misconception-edge.ts) and the soft-track red line.
 
-import { CANONICAL_MISCONCEPTION_RELATIONS } from '@/core/schema/misconception-edge';
+import {
+  CANONICAL_MISCONCEPTION_RELATIONS,
+  EXPERIMENTAL_RELATION,
+} from '@/core/schema/misconception-edge';
 
 export interface MisconceptionTopologyEdge {
   from_kind: string;
@@ -63,11 +66,12 @@ for (const rel of CANONICAL_MISCONCEPTION_RELATIONS) {
   }
 }
 
-// Mirrors the Zod regex (misconception-edge.ts /^experimental:.+/): an experimental
-// relation requires a non-empty tag — a bare `experimental:` is NOT experimental and
-// falls through to the unknown-relation reject (keeps the gate ≥ as strict as Zod).
+// Single source of truth = EXPERIMENTAL_RELATION, imported from misconception-edge.ts
+// (the SAME regex Zod uses). An experimental relation requires a non-empty tag — a bare
+// `experimental:` is NOT experimental and falls through to the unknown-relation reject
+// (keeps the gate ≥ as strict as Zod, and the two layers cannot silently drift).
 function isExperimental(relationType: string): boolean {
-  return /^experimental:.+/.test(relationType);
+  return EXPERIMENTAL_RELATION.test(relationType);
 }
 
 /**
