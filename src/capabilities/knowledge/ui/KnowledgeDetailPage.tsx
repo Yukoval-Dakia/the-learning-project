@@ -12,14 +12,21 @@ import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryRing } from '@/ui/primitives/MasteryRing';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { BandChip } from './BandChip';
 import { REL_CUE } from './MeshGraph';
+import { MisconceptionList } from './MisconceptionList';
 import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
 import { humanizeActivity } from './humanize-activity';
-import { type KnowledgeNodePage, type NoteSummary, getNodePage } from './knowledge-api';
+import {
+  type KnowledgeNodePage,
+  type NoteSummary,
+  getMisconceptions,
+  getNodePage,
+  vetoMisconception,
+} from './knowledge-api';
 import './knowledge.css';
 
 // S8 (YUK-335 audit §3.9)：活动时间线默认只渲前 N 条，其余折叠 —— 防 kd-side
@@ -128,7 +135,20 @@ export default function KnowledgeDetailPage({
 }) {
   const [toast, setToast] = useState<string | null>(null);
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const queryClient = useQueryClient();
   const pageQ = useQuery({ queryKey: ['knowledge-node', id], queryFn: () => getNodePage(id) });
+
+  // A5 S4 (YUK-531 PR-5) — 「指向此点的误区」per-KC funnel（confirmed RT1 误区 + candidate 猜想/候选）。
+  const miscQ = useQuery({
+    queryKey: ['knowledge-misconceptions', id],
+    queryFn: () => getMisconceptions(id),
+  });
+  // candidate veto = dismiss pending conjecture（live）。invalidate 后被否决的候选退出 pending 列表。
+  const vetoMut = useMutation({
+    mutationFn: (mcId: string) => vetoMisconception(mcId),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ['knowledge-misconceptions', id] }),
+  });
 
   const placeholder = (text: string) => {
     setToast(text);
@@ -170,6 +190,7 @@ export default function KnowledgeDetailPage({
     if (!byRel.has(nb.relation_type)) byRel.set(nb.relation_type, []);
     byRel.get(nb.relation_type)?.push(nb);
   }
+  const miscRows = miscQ.data?.rows ?? [];
 
   return (
     <main className="page wide knowledge-loom">
@@ -230,8 +251,29 @@ export default function KnowledgeDetailPage({
 
       <div className="kd-grid">
         <div className="kd-main">
+          {/* A5 S4 (YUK-531 PR-5) — 「指向此点的误区」funnel 置于 .kd-main 首子（误区是一等异构，
+              先于迁移/诊断/笔记）。confirmed(RT1 误区) + candidate(猜想/候选) 两段；conf 定性、
+              seen 计数，绝不裸概率（⑥）。veto = Option A：candidate「判错了」→ live dismiss pending
+              conjecture；confirmed「判错了」→ 仅乐观「已纠偏」本地态（confirmed-archive 延后 + PR-3
+              promote flag OFF → confirmed 段 day-one 空）。 */}
+          <SectionLabel count={miscRows.length || null}>
+            指向此点的误区 · misconception
+          </SectionLabel>
+          <MisconceptionList
+            items={miscRows}
+            isLoading={miscQ.isLoading}
+            isError={miscQ.isError}
+            onRetry={() => void miscQ.refetch()}
+            navigate={navigate}
+            onVeto={(mcId, segment) => {
+              // Option A：仅 candidate 段打服务端 dismiss；confirmed 段是 no-op（card 已渲乐观
+              // 「已纠偏」本地态，confirmed-archive 是延后 soft-track 后端 slice）。
+              if (segment === 'candidate') vetoMut.mutate(mcId);
+            }}
+          />
+
           {/* A5 S3 (YUK-354) — 迁移 + 诊断下钻：忠于冷启设计的诚实空态（borrowed-θ 软层
-              dark-ship / CDM·IRT 无后端），不假造数字。S4 误区（MisconceptionList）本片不碰。 */}
+              dark-ship / CDM·IRT 无后端），不假造数字。 */}
           <SectionLabel>迁移而来的掉握 · transfer credit</SectionLabel>
           <TransferList />
 
