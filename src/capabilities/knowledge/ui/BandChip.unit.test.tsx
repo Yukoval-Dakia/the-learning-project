@@ -5,8 +5,8 @@
 
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { BandChip } from './BandChip';
-import type { MasteryBandInput } from './mastery-band';
+import { BandChip, BandChipView } from './BandChip';
+import type { MasteryBandInput, MasteryBandView } from './mastery-band';
 
 function input(overrides: Partial<MasteryBandInput> = {}): MasteryBandInput {
   return {
@@ -61,5 +61,37 @@ describe('BandChip', () => {
     expect(html).not.toContain('%');
     expect(html).not.toContain('0.7');
     expect(html).not.toContain('70');
+  });
+});
+
+// A5 S3 (YUK-354) — BandChipView reuses the same chrome with axis-specific labels
+// (the NodeComposite difficulty axis renders 难度档名 instead of mastery 档名).
+describe('BandChipView (custom labels)', () => {
+  const diffBands = ['容易', '适中', '偏难', '很难'] as const;
+
+  it('renders the difficulty-axis label for a populated band, not the mastery label', () => {
+    const view: MasteryBandView = {
+      unknown: false,
+      band: 2,
+      loBand: 2,
+      hiBand: 2,
+      source: 'hard',
+      lowConf: false,
+    };
+    const html = renderToString(<BandChipView view={view} labels={diffBands} />);
+    expect(html).toContain('偏难'); // difficulty band 2
+    expect(html).not.toContain('稳固'); // never the mastery label for the difficulty axis
+    expect(html).toContain('硬轨校准');
+  });
+
+  it('renders the explicit unknown label + soft/low-conf for a neutral-β difficulty axis', () => {
+    const view: MasteryBandView = { unknown: true, source: 'soft', lowConf: true };
+    const html = renderToString(
+      <BandChipView view={view} labels={diffBands} unknownLabel="未知" />,
+    );
+    expect(html).toContain('未知');
+    expect(html).toContain('src-soft');
+    expect(html).toContain('低置信');
+    expect(html).not.toContain('%');
   });
 });
