@@ -65,6 +65,13 @@ export const knowledgeCapability = defineCapability({
         path: '/api/knowledge/[id]',
         load: () => import('./api/node-page-route').then((m) => m.GET),
       },
+      {
+        // A5 S4 (YUK-531)：per-KC 误区 funnel 读模型（「指向此点的误区」）。4 段路径
+        // （:id/misconceptions），与 frontier(3 段)/[id](3 段) 无段数碰撞，顺序无关。
+        method: 'GET',
+        path: '/api/knowledge/[id]/misconceptions',
+        load: () => import('./api/misconceptions').then((m) => m.GET),
+      },
     ],
   },
   jobs: {
