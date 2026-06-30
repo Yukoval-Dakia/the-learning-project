@@ -20,8 +20,10 @@
 import { z } from 'zod';
 import { AgentRef } from './business';
 
-// Polymorphic endpoint kinds. A misconception edge originates at a misconception
-// and targets a KC / another misconception / an event (provenance).
+// Polymorphic TARGET kinds. A misconception edge ALWAYS originates at a misconception
+// (from_kind is pinned to z.literal('misconception') below — the RT1 invariant); the
+// TARGET carries the polymorphism: a KC (caused_by), another misconception/KC
+// (confusable_with), or an event (observed_in). This enum is the to_kind vocabulary.
 export const MisconceptionEdgeKind = z.enum(['misconception', 'knowledge', 'event']);
 export type MisconceptionEdgeKind = z.infer<typeof MisconceptionEdgeKind>;
 
@@ -51,13 +53,16 @@ export const MisconceptionRelationType = z
 export const MisconceptionEdgeSchema = z
   .object({
     id: z.string(),
-    from_kind: MisconceptionEdgeKind,
+    // RT1 invariant — a misconception edge ALWAYS originates at a misconception.
+    // Pinned at the write boundary (defense-in-depth); per-relation endpoint
+    // validity (caused_by→knowledge, etc.) lives in misconception-topology-gate.ts.
+    from_kind: z.literal('misconception'),
     from_id: z.string(),
     to_kind: MisconceptionEdgeKind,
     to_id: z.string(),
     relation_type: MisconceptionRelationType,
     // CONFIDENCE-only edge salience (NOT mastery). Defaults to 1.
-    weight: z.number().default(1),
+    weight: z.number().min(0).max(1).default(1),
     created_by: AgentRef,
     proposed_by_ai: z.boolean().default(false),
     created_at: z.coerce.date(),
@@ -73,12 +78,15 @@ export type MisconceptionEdge = z.infer<typeof MisconceptionEdgeSchema>;
 export const MisconceptionEdgeInsert = z
   .object({
     id: z.string(),
-    from_kind: MisconceptionEdgeKind,
+    // RT1 invariant — a misconception edge ALWAYS originates at a misconception.
+    // Pinned at the write boundary (defense-in-depth); per-relation endpoint
+    // validity (caused_by→knowledge, etc.) lives in misconception-topology-gate.ts.
+    from_kind: z.literal('misconception'),
     from_id: z.string(),
     to_kind: MisconceptionEdgeKind,
     to_id: z.string(),
     relation_type: MisconceptionRelationType,
-    weight: z.number().default(1),
+    weight: z.number().min(0).max(1).default(1),
     created_by: AgentRef,
     proposed_by_ai: z.boolean().default(false),
     created_at: z.coerce.date(),
