@@ -490,46 +490,10 @@
   margin-top: 6px;
 }
 
-/* ── transfer (RT2) ── */
-.kd-transfer-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
-  margin-bottom: var(--s-2);
-  background: var(--paper-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--r-3);
-}
-.kd-transfer-arrow {
-  color: var(--good-ink);
-  flex: none;
-}
-.kd-transfer-body {
-  flex: 1;
-  min-width: 0;
-}
-.kd-transfer-from {
-  font: 600 var(--fs-body) / 1.3 var(--font-serif);
-  color: var(--ink);
-}
-.kd-transfer-note {
-  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
-  color: var(--ink-3);
-  margin-top: 2px;
-}
-.kd-transfer-amt {
-  font: 600 var(--fs-meta) / 1 var(--font-sans);
-  color: var(--good-ink);
-  background: var(--good-soft);
-  border: 1px solid var(--good-line);
-  padding: 3px 9px;
-  border-radius: var(--r-pill);
-  white-space: nowrap;
-  flex: none;
-}
-
-/* ── diagnostic drill (CDM + IRT) ── */
+/* ── diagnostic drill (折叠 header + 诚实空态 body) ──
+   仅渲折叠条 + 诚实空态（NodeComposite DiagnosticDrill 走 honest-empty，CDM/IRT 软轨无后端）。
+   rich 渲染样式（.kd-transfer-* / .kd-diag-sub / .kd-cdm-* / .kd-irt-*，~107 行）已删——它们
+   零 component 渲染（OCR #7），待 borrowed-θ flag 翻转 / CDM-IRT 后端落地时连同组件一起再加。 */
 .kd-diag {
   border: 1px solid var(--line);
   border-radius: var(--r-3);
@@ -551,6 +515,11 @@
 .kd-diag-bar:hover {
   background: var(--paper-sunk);
 }
+/* .kd-diag 的 overflow:hidden 会裁掉全局向外 focus 环 → bar 用 inset 环（OCR #6）。 */
+.kd-diag-bar:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--info-ink);
+  border-radius: 0;
+}
 .kd-diag-ic {
   width: 32px;
   height: 32px;
@@ -561,11 +530,14 @@
   place-items: center;
   flex: none;
 }
+/* 主/副标题分行：内联 span 里 margin-top 不生效 → display:block 让它们竖排（CodeRabbit #1）。 */
 .kd-diag-bar .kd-diag-t {
+  display: block;
   font: 600 var(--fs-body) / 1.2 var(--font-sans);
   color: var(--ink);
 }
 .kd-diag-bar .kd-diag-s {
+  display: block;
   font: 400 var(--fs-meta) / 1.4 var(--font-sans);
   color: var(--ink-4);
   margin-top: 2px;
@@ -581,79 +553,6 @@
 .kd-diag-body {
   padding: 0 var(--s-4) var(--s-4);
   border-top: 1px solid var(--line);
-}
-.kd-diag-sub {
-  font: 600 var(--fs-meta) / 1 var(--font-sans);
-  letter-spacing: var(--ls-wide);
-  text-transform: uppercase;
-  color: var(--ink-4);
-  margin: var(--s-4) 0 var(--s-3);
-}
-.kd-cdm-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-2) 0;
-}
-.kd-cdm-attr {
-  flex: none;
-  width: 120px;
-  font: 500 var(--fs-body) / 1.3 var(--font-sans);
-  color: var(--ink);
-}
-.kd-cdm-track {
-  flex: 1;
-  position: relative;
-  height: 10px;
-  border-radius: var(--r-pill);
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
-  display: flex;
-}
-.kd-cdm-seg {
-  flex: 1;
-  border-right: 1px solid var(--line);
-}
-.kd-cdm-seg:last-child {
-  border-right: 0;
-}
-.kd-cdm-fill {
-  position: absolute;
-  top: -1px;
-  bottom: -1px;
-  left: 0;
-  border-radius: var(--r-pill);
-  background: color-mix(in oklch, var(--coral) 26%, transparent);
-  border: 1px solid color-mix(in oklch, var(--coral) 40%, transparent);
-}
-.kd-cdm-row.soft .kd-cdm-fill {
-  background: color-mix(in oklch, var(--ink-4) 16%, transparent);
-  border-color: color-mix(in oklch, var(--ink-4) 30%, transparent);
-}
-.kd-cdm-src {
-  flex: none;
-}
-.kd-irt {
-  display: flex;
-  gap: var(--s-3);
-  flex-wrap: wrap;
-}
-.kd-irt-stat {
-  flex: 1;
-  min-width: 130px;
-  padding: var(--s-3);
-  background: var(--paper-sunk);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-}
-.kd-irt-lbl {
-  font: 600 var(--fs-body) / 1.2 var(--font-sans);
-  color: var(--ink);
-}
-.kd-irt-cap {
-  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
-  color: var(--ink-4);
-  margin-top: 3px;
 }
 .kd-diag-empty {
   display: flex;
