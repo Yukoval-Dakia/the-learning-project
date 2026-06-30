@@ -66,7 +66,11 @@
 // (per archive.ts assertEveryTableIsBackedUpOrExcluded)：34 → 35 tables，4.11 → 4.12。
 // （misconception 加 status/source/seen/evidence 列是既有 FK_ORDER 表的 additive 列，随整行
 // dump/restore，不单独 bump——表=bump，列=不 bump 的先例同 item_calibration b_anchor 等。）
-export const SCHEMA_VERSION = '4.12';
+// YUK-531 (A5 S4 / PR-3): additive `misconception_reconciliation_log` table — the
+// misconception-edge ring's AUDIT / PROVENANCE log (peer of edge_reconciliation_log).
+// NEW FK_ORDER table 必 bump：35 → 36 tables，4.12 → 4.13。（misconception_edge 加
+// weight CHECK 是既有表的约束，不是新表/新列，不 bump。）
+export const SCHEMA_VERSION = '4.13';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -169,6 +173,13 @@ export const FK_ORDER = [
   // 是 text ref，无 hard FK)，位置不受 PG FK 约束；置于 memory_reconciliation_log 后保持
   // 两条 reconciliation 日志相邻可读。
   'edge_reconciliation_log',
+  // YUK-531 (A5 S4 / ADR-0036 RT1): misconception_reconciliation_log — 异构误区边写入期
+  // 调和的 AUDIT / PROVENANCE 日志 (SUPERSEDE 决策来由)，peer of edge_reconciliation_log。
+  // provenance 值得保留 (丢了即灭失 epistemic 来由)，故同入 FK_ORDER 备份 (非
+  // BACKUP_EXCLUDED)。软引用 misconception_edge.id (superseded_edge_id 是 text ref，无 hard
+  // FK)，位置不受 PG FK 约束；紧邻 edge_reconciliation_log 保持三条 reconciliation 日志相邻
+  // 可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.12 → 4.13)。
+  'misconception_reconciliation_log',
   // YUK-471 W1 PR-A2a (ADR-0044): materialized_id_index — the projection reverse-index
   // (materialized knowledge/knowledge_edge id → anchor event). Cheaply rebuildable from
   // the event log (db:backfill:genesis), but knowledge/knowledge_edge ARE backed up, so
