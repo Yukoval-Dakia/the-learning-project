@@ -249,6 +249,22 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
       },
+      // YUK-533 (ADR-0036 RT1 consumer) — confusable-contrast supply discovery + dispatch.
+      // Scans the confusable_with misconception mesh → one supply target per confusable KC
+      // pair → quiz_gen propose-only drafts. DARK behind CONFUSABLE_CONTRAST_ENABLED (discovery
+      // NO-OPs flag-off). cron 06:20 Asia/Shanghai: the last supply lane, right after
+      // question_supply_nightly (06:00), in a clear slot. queue=llm: the dispatched quiz_gen
+      // jobs are LLM-heavy, same DLQ/retry bucket. **成本护栏**：依赖 dispatcher 的 7d
+      // fingerprint cooldown + 本 job 的 per-run cap，绝不绕 dispatcher 直发付费队列。
+      {
+        name: 'confusable_contrast_nightly',
+        schedule: { cron: '20 6 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/confusable_contrast_nightly').then(
+            (m) => m.buildConfusableContrastNightlyHandler,
+          ),
+      },
       // YUK-372 L1 (YUK-361 Phase 6 wire-up, ADR-0043 §4) — active-PPI 难度重标定触发器。
       // recalibrateQuestion（建好但 Phase 6 无生产 caller 的离线 b 去偏引擎）的夜间触发：每夜扫
       // 「攒够标签 + 昨日起窗内有新标签」的非 draft 题，逐题 firm-up b_calib（track='hard'）。
