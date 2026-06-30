@@ -206,19 +206,34 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     ).toEqual([]);
   });
 
-  // YUK-454 inc-1 (ADR-0036 身份层) — misconception is the DORMANT identity-table
-  // skeleton. FORWARD invariant: it has ZERO writers anywhere (no route/job/
-  // copilotTool wiring in L1; the promotion-flow writer is gated behind the
-  // ADR-0034 consistency gate). Mirrors the mastery_state single-owner block
-  // above, with allowed-prefixes = [] (nothing may write it yet).
-  it('db.{insert,update}(misconception) has ZERO writers (DORMANT in L1)', async () => {
-    const ALLOWED_MISCONCEPTION_WRITERS: ReadonlyArray<string> = [];
+  // YUK-531 PR-3 (A5 S4 / ADR-0036 RT1) — misconception's L1 DORMANCY HAS ENDED. The
+  // conjecture→misconception promotion flow is now the FIRST (and single) writer of the
+  // `misconception` table: promoteConjectureToMisconception
+  // (src/capabilities/agency/server/misconception-promote.ts) upserts the soft-track
+  // node when the owner accepts a conjecture. It is GATED behind the dark flag
+  // MISCONCEPTION_PROMOTE_ENABLED (default OFF), so production stays byte-identical to
+  // the dormant era until the ADR-0034 consistency gate flips it on — but the writer now
+  // EXISTS in source, so the old ZERO-writer invariant (YUK-454 inc-1) is obsolete. This
+  // flips it to a single-owner invariant, mirroring the mastery_state / item_calibration
+  // blocks above: the promote module is the SOLE allowed writer (any other is a violation),
+  // AND the writer must be present (a silent revert that re-dormants the table also fails).
+  it('db.{insert,update}(misconception) has exactly ONE writer — the dark-gated YUK-531 PR-3 promotion flow', async () => {
+    const ALLOWED_MISCONCEPTION_WRITERS = [
+      'src/capabilities/agency/server/misconception-promote.ts',
+    ] as const;
     const hits = await findWriteHits('misconception');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_MISCONCEPTION_WRITERS));
     expect(
       violations,
-      `\`misconception\` is dormant in L1 (YUK-454 inc-1) — it must have ZERO writers until the ADR-0034-gated promotion flow lands. Found:\n  ${violations.join('\n  ')}`,
+      `\`misconception\` is single-owner (YUK-531 PR-3): only the dark-gated promotion flow (misconception-promote.ts) may write it. Found extra writers:\n  ${violations.join('\n  ')}`,
     ).toEqual([]);
+    // Positive lock — the promotion writer MUST be present. This is the inverse of the
+    // retired ZERO-writer guard: it catches a silent revert that drops the writer and
+    // re-dormants the table (which the violations-only check above would pass).
+    expect(
+      hits.some((h) => isAllowed(h, ALLOWED_MISCONCEPTION_WRITERS)),
+      'expected the YUK-531 PR-3 promotion writer (misconception-promote.ts) to write `misconception` — has the promotion flow been reverted?',
+    ).toBe(true);
   });
 
   // YUK-454 inc-1 — REVERSE red line (ADR-0035 SOFT track). The misconception
