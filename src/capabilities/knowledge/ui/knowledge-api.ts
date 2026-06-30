@@ -75,7 +75,9 @@ export const getMisconceptions = (id: string) =>
 // segment==='candidate' 调它）。Option A：confirmed(RT1 误区) archive 是延后 soft-track 后端
 // slice —— UI 对 confirmed 行只渲乐观「已纠偏」本地态、绝不打此端点。
 export const vetoMisconception = (id: string) =>
-  apiJson(`/api/knowledge/misconceptions/${encodeURIComponent(id)}/veto`, { method: 'POST' });
+  apiJson<{ kind: string }>(`/api/knowledge/misconceptions/${encodeURIComponent(id)}/veto`, {
+    method: 'POST',
+  });
 
 // ── 边 ──────────────────────────────────────────────────────────
 export interface KnowledgeEdgeRow {

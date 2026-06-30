@@ -234,7 +234,9 @@ export function MisconceptionCard({
       error={error}
       navigate={navigate}
       onToggleTrace={() => setTrace((v) => !v)}
-      onVerdictWrong={() => void applyVeto(mc, onVeto, setVerdict, setError)}
+      onVerdictWrong={() => {
+        if (verdict === null) void applyVeto(mc, onVeto, setVerdict, setError);
+      }}
     />
   );
 }
