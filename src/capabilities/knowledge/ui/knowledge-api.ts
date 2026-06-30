@@ -121,6 +121,10 @@ export interface KnowledgeNodePage {
   mastery_hi: number | null;
   low_confidence: boolean;
   evidence_count: number;
+  // A5 S3 (YUK-354) — NodeComposite 三维折叠 RAW（R + β；p(L) 上方已铺）。
+  // 喂 buildNodeThreeDim(node-dims.ts) 客户端组装三条正交维度的离散 band 视图。
+  retrievability: number | null;
+  beta: number | null;
   last_evidence_at: string | null;
   mastery_decay_bucket: 'untrained' | 'fresh' | 'mild' | 'stale' | 'unknown';
   children: NodePageChild[];

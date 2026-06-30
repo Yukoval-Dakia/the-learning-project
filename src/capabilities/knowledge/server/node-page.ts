@@ -30,10 +30,12 @@ import {
   interactiveForKnowledge,
   notesForKnowledge,
 } from '@/capabilities/notes/server/notes-read';
+import { retrievabilityForKc } from '@/capabilities/practice/server/fsrs';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import { getArtifactCorrectionStates } from '@/server/events/artifact-corrections';
+import { getFsrsStatesByIds } from '@/server/fsrs/state';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
@@ -113,6 +115,13 @@ export interface KnowledgeNodePage {
   mastery_hi: number | null;
   low_confidence: boolean;
   evidence_count: number;
+  // A5 S3 (YUK-354) — NodeComposite 三维折叠 RAW 读模型（p(L) 上方已铺；这里补 R + β）。
+  // 同 S1 raw-over-wire 先例：node-page 出 RAW，前端 buildNodeThreeDim 客户端 band 化。
+  // 三轴正交：纯 READ，绝不写回。
+  //   retrievability = FSRS R(t)∈[0,1]（null = 无 fsrs_state 行，无留存数据，非 R=0）；
+  //   beta           = 代表性 β（IRT logit；null = 无投影/冷启，0 = 无难度锚 sentinel）。
+  retrievability: number | null;
+  beta: number | null;
   last_evidence_at: string | null;
   mastery_decay_bucket: MasteryDecayBucket;
   subject_profile: SlimSubjectProfile;
@@ -131,6 +140,37 @@ export interface KnowledgeNodePage {
   backlinks: NodePageBacklink[];
   backlinks_by_type: BacklinksByArtifactType<NodePageBacklink>;
   timeline: NodePageTimelineEntry[];
+}
+
+/** A5 S3 (YUK-354) — per-KC R(t) read result: retrievability + whether a row exists. */
+export interface KnowledgeRetrievability {
+  /** FSRS retrievability R(t) ∈ [0,1] for the now passed in. */
+  retrievability: number;
+  /** true ⇔ a material_fsrs_state row exists (R is real, source=hard); false = absent. */
+  hasState: boolean;
+}
+
+/**
+ * A5 S3 (YUK-354) — batched R(t) read for the 'knowledge' axis. One DB round-trip
+ * (getFsrsStatesByIds) over `material_fsrs_state WHERE subject_kind='knowledge' AND
+ * subject_id IN (ids)`, each row through retrievabilityForKc(state, now) → R ∈ [0,1].
+ * KCs with no row are ABSENT from the map (the caller renders "no retention data yet",
+ * NOT R=0 — a missing card is unknown, not fully-forgotten).
+ *
+ * `now` is injectable for deterministic tests (retrievability is time-relative).
+ * READ-ONLY — three-axis orthogonality: never writes any axis.
+ */
+export async function loadRetrievabilityMap(
+  db: Db,
+  knowledgeIds: string[],
+  now: Date = new Date(),
+): Promise<Map<string, KnowledgeRetrievability>> {
+  const states = await getFsrsStatesByIds(db, 'knowledge', knowledgeIds);
+  const out = new Map<string, KnowledgeRetrievability>();
+  for (const [id, row] of states) {
+    out.set(id, { retrievability: retrievabilityForKc(row.state, now), hasState: true });
+  }
+  return out;
 }
 
 /**
@@ -208,6 +248,11 @@ export async function loadKnowledgeNodePage(
     name: row.name,
     mastery: masteryProjection.get(row.id)?.mastery ?? null,
   }));
+
+  // A5 S3 (YUK-354) — focal-node R(t) for the NodeComposite 三维 R axis. Only the
+  // focal node carries the three-dim fold (children rows stay mastery-only), so we
+  // read R just for node.id. Absent row → retrievability null (unknown, not R=0).
+  const focalRetrievability = (await loadRetrievabilityMap(db, [node.id])).get(node.id);
 
   // 2. mesh neighbors — both directions (ADR-0010 edges). Resolve neighbor names.
   const [outEdges, inEdges] = await Promise.all([
@@ -404,6 +449,11 @@ export async function loadKnowledgeNodePage(
     mastery_hi: nodeMastery?.mastery_hi ?? null,
     low_confidence: nodeMastery?.low_confidence ?? false,
     evidence_count: nodeEvidenceCount,
+    // A5 S3 (YUK-354) — three-dim RAW: R(t) (null = no fsrs_state row) + representative
+    // β (null = no mastery_state projection / cold start). Client bands them via
+    // buildNodeThreeDim. β=0 (no difficulty anchor) is honestly degraded to 难度未知.
+    retrievability: focalRetrievability?.hasState ? focalRetrievability.retrievability : null,
+    beta: nodeMastery?.beta ?? null,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
     mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),
     subject_profile: toSlimSubjectProfile(profile),

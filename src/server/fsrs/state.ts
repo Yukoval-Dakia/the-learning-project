@@ -8,7 +8,7 @@
 // table outside the Step 3 migration script. The Step 9.L invariant audit
 // enforces this.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -97,4 +97,46 @@ export async function getFsrsState(
     due_at: row.due_at,
     last_review_event_id: row.last_review_event_id ?? null,
   };
+}
+
+/**
+ * A5 S3 (YUK-354) — batched read of the FSRS state projection for many
+ * (subject_kind, subject_id) pairs in one round-trip. Mirrors {@link getFsrsState}
+ * but for a set of ids; absent ids are simply missing from the returned Map (the
+ * caller treats "no row" as "no retrievability data yet", NOT R=0).
+ *
+ * SoT read only — this stays the single-owner module for `material_fsrs_state`.
+ * It never computes retrievability (no ts-fsrs dependency here); the per-KC
+ * R(t) ∈ [0,1] mapping lives in the knowledge-capability read that consumes this
+ * (retrievabilityForKc is a practice-capability pure function — keeping it out of
+ * src/server avoids a server→capability layering inversion).
+ */
+export async function getFsrsStatesByIds(
+  db: DbLike,
+  subject_kind: FsrsSubjectKind,
+  subject_ids: string[],
+): Promise<Map<string, FsrsStateRow>> {
+  const ids = Array.from(new Set(subject_ids.map((id) => id.trim()).filter((id) => id.length > 0)));
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select()
+    .from(material_fsrs_state)
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, subject_kind),
+        inArray(material_fsrs_state.subject_id, ids),
+      ),
+    );
+  return new Map(
+    rows.map((row) => [
+      row.subject_id,
+      {
+        subject_kind: row.subject_kind,
+        subject_id: row.subject_id,
+        state: row.state as FsrsStateSchemaT,
+        due_at: row.due_at,
+        last_review_event_id: row.last_review_event_id ?? null,
+      },
+    ]),
+  );
 }
