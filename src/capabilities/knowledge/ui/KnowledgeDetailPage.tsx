@@ -235,7 +235,7 @@ export default function KnowledgeDetailPage({
           <SectionLabel>迁移而来的掉握 · transfer credit</SectionLabel>
           <TransferList />
 
-          <SectionLabel>诊断下钻 · CDM / IRT</SectionLabel>
+          {/* DiagnosticDrill 自带折叠 header（「诊断下钻 · CDM/IRT」），不再叠 SectionLabel（OCR 双 header）。 */}
           <DiagnosticDrill />
 
           <SectionLabel>笔记</SectionLabel>
