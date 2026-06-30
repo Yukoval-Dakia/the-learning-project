@@ -74,5 +74,20 @@ A5「知识探索面」是形态轴依赖跨度最大的屏。6-map code-ground 
 
 ## 后续片备注
 - S2/S3/S4 各自 worktree + PR，开工前重读本 doc 对应 map 段 ground。
-- S4 误区是真 backend 工程，开工前 owner 决策：建 `misconception` 表 writer+edge vs 新派生读（关系到是否动 schema + 反内疚 conf 表达）。
+- S4 误区是真 backend 工程，开工前 owner 决策：建 `misconception` 表 writer+edge vs 新派生读（关系到是否动 schema + 反内疚 conf 表达）。owner 拍 **B：建 backend**（`misconception` 表接 writer + 异构 edge）。
 - Linear 断连期间本 doc 是 repo-side single source；恢复后同步成挂 YUK-354 的 Linear Document。
+
+## S4 backend 分片（YUK-531，owner 拍 B）
+
+误区 backend 拆三 PR，逐片独立可 merge：
+- **PR-1**：dark schema —— `misconception` 补 status/source/seen/evidence 列 + 新建异构 `misconception_edge` 表（polymorphic from/to）。零 writer，allowlist 占位。
+- **PR-2**：异构 topology gate（`misconception-topology-gate.ts`）—— endpoint-kind 校验 / self-loop / symmetric redundancy。纯函数，与同构 `knowledge_edge` DAG gate 正交。
+- **PR-3**：promotion writer + reconcile 环（dark, flag OFF）。
+
+### PR-3 实施注记（修订一处 map 假设）
+
+- **promotion hop**：accept conjecture 时，若 `MISCONCEPTION_PROMOTE_ENABLED='1'` 且 `recurrence_count ≥ K_PROMOTE`，在**同一 `db.transaction`**（rate 事件 + misconception upsert + caused_by edge 原子）里 upsert 一个软轨 misconception（`source='soft'` / `status='active'` / `seen=recurrence_count` / `evidence=conjecture 证据事件 ids`）+ `caused_by` 边（misc→KC）。flag OFF → 与今天 effect-identical（回归测试守）。
+- **⚠️ k=2 与归纳 floor 冗余**：归纳已 `CONJECTURE_RECURRENCE_FLOOR=2`，故每个现存 conjecture 都 `recurrence_count ≥ 2`，`K_PROMOTE=2` 的 re-check **永真、gate 不到任何东西**。真 gate = **flag + human-accept**。`K_PROMOTE` 是占位常量（仅 k>2 才咬），别当真 runtime gate 叙述。
+- **reconcile 环是命令式（imperative archive+upsert + 审计表），不是 fold-apply 重放**：早期设想「misconception-side reconcile 环 fold-apply 只重放」**不可行**——misconception **无 fold/projection/version 列**（不像 event-sourced 的 `knowledge_edge`）。故 misconception 环：GLM judge（`misconception-reconcile.ts`，纯决策层，action {KEEP_BOTH, SUPERSEDE}）→ SUPERSEDE = `archiveMisconceptionEdge` 软归档（`archived_at` 置位，idempotent）+ 平行 `misconception_reconciliation_log` 审计表 + 重跑 `checkMisconceptionEdgeTopology`——**无 fold 重放、无 event-schema 改、不扩 `known.ts`**。provenance 存行内（evidence event-ptr 数组 + seen + source）+ 审计表。
+- **ND-5 软轨红线**：misconception / 其边喂 θ̂ / p(L) / FSRS / difficulty / mastery **零**（`.strict()` Zod machine-check）。accept = 认同方向，**非确证弱点**——只有 probe 一锤（later task）才铸硬轨确证。minted misconception 是 owner 认同的 AI 先验（`source='soft'`），dark flag。
+- **身份键**：确定性 miscId = `misc_` + sha256(`cause_category::knowledge_id`)，故同 cause×KC 的再归纳 upsert 同一 misconception（非随机 id 防 dup）。re-accept 同一 proposal 由 rate-event 幂等门短路，根本不到 promote hop。
