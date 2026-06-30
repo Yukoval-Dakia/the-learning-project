@@ -280,6 +280,16 @@ export async function dispatchSupplyTarget(
         // 题型 hint（'any' → 不 pin）；扫描器的 kind 字段（forwarded：sourcing→kinds, quiz_gen→kind）。
         ...(target.kind && target.kind !== 'any' ? { kind: target.kind } : {}),
         ...(queue === 'quiz_gen' ? { generation_method: generationMethodFor(target) } : {}),
+        // YUK-533 — confusable_contrast targets carry BOTH KCs (the A↔B pair). anchorKid
+        // (knowledgeIds[0]) is the primary attribution anchor as usual; forward the full
+        // pair so the quiz_gen handler can probe the A-vs-B boundary. Only confusable
+        // targets are multi-KC, so single-KC targets are byte-identical to before.
+        // phase-deferred: the quiz_gen handler's contrast-aware generation (reading
+        // knowledge_ids to write a discrimination item) is a flag-flip increment — until
+        // then this rides the EXISTING dispatch path (cooldown + per-run cap intact, no
+        // G-COST bypass) so the seam is data-complete. Context: QuizGenJobData.knowledge_ids
+        // in src/server/boss/handlers/quiz_gen.ts.
+        ...(target.knowledgeIds.length > 1 ? { knowledge_ids: target.knowledgeIds } : {}),
       };
       try {
         const jobId = await enqueue(queue, data);

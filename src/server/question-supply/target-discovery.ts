@@ -93,7 +93,16 @@ export interface QuestionSupplyTarget {
   };
 }
 
-export type SupplyGapKind = 'frontier_zero' | 'source_quality' | 'diagnostic' | 'format_diversity';
+export type SupplyGapKind =
+  | 'frontier_zero'
+  | 'source_quality'
+  | 'diagnostic'
+  | 'format_diversity'
+  // YUK-533 — a confusable KC pair (A↔B, from the confusable_with misconception mesh)
+  // lacks a contrast/discrimination item. Emitted by the parallel discovery source
+  // confusable-contrast-discovery.ts (NOT scanCoverageGaps — it scans the misconception
+  // mesh, not the single-KC coverage pool). Routes to quiz_gen (propose-only draft).
+  | 'confusable_contrast';
 
 // ── 纯扫描器输入（IO 加载器加载好后喂进来）─────────────────────────────────────
 
@@ -223,6 +232,11 @@ export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
 const GAP_BASE_PRIORITY: Record<SupplyGapKind, number> = {
   frontier_zero: 1.0,
   diagnostic: 0.7,
+  // YUK-533 — confusable contrast sits between diagnostic and source_quality: a real
+  // misconfusion signal worth a targeted item, but a content-quality enhancement rather
+  // than a hard coverage gap. evidenceCount is fixed 0 at the call site (the demand comes
+  // from the confusable edge, not per-KC mastery evidence), so base priority IS the priority.
+  confusable_contrast: 0.6,
   source_quality: 0.5,
   format_diversity: 0.4,
 };
@@ -230,8 +244,11 @@ const GAP_BASE_PRIORITY: Record<SupplyGapKind, number> = {
 /**
  * 优先级 = 基础 demand × 不确定性放大。低 evidence（新知）+ 高不确定 θ̂ 的缺口更紧急
  * （供给侧的「先建脚手架」语义，架构 doc §5/§6）。归一到 (0,1]。
+ *
+ * EXPORTED (YUK-533): the parallel confusable-contrast discovery source reuses this same
+ * gap→priority derivation so the two discovery sources rank on one scale.
  */
-function computePriority(gapKind: SupplyGapKind, evidenceCount: number): number {
+export function computePriority(gapKind: SupplyGapKind, evidenceCount: number): number {
   const base = GAP_BASE_PRIORITY[gapKind];
   // evidence 越少越紧急（新 KC 先补题）；evidence 多了缺口仍在则降一档（已有些题，没那么急）。
   const noveltyBoost = evidenceCount === 0 ? 1.0 : 1 / (1 + Math.log1p(evidenceCount));
