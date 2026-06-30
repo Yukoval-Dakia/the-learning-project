@@ -4,7 +4,9 @@
 // a single rate(dismiss) event + leaves the per-KC funnel); the dismiss is idempotent (a second
 // veto returns idempotent with no duplicate rate event); an unknown id → 404.
 
+import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -34,6 +36,37 @@ async function seedConjecture(kcId: string, claim: string): Promise<string> {
         baseline_p_at_induction: 0.6,
       },
     },
+  });
+}
+
+/** Seed ONE pending NON-conjecture proposal (knowledge_node); returns its proposal event id.
+ *  Used to prove the endpoint's kind guard rejects non-candidate ids (A). */
+async function seedKnowledgeNodeProposal(): Promise<string> {
+  return writeAiProposal(testDb(), {
+    actor_ref: 'research_meeting',
+    payload: {
+      kind: 'knowledge_node' as const,
+      target: { subject_kind: 'knowledge' as const, subject_id: 'k_seed' },
+      reason_md: 'seed a non-conjecture proposal for the kind-guard test',
+      evidence_refs: [],
+      proposed_change: { mutation: 'propose_new' as const, name: 'X', parent_id: 'root' },
+    },
+  });
+}
+
+/** Decide `proposalId` as ACCEPT by writing the rate(accept) event directly (mirrors the
+ *  production rate-event shape) so the veto path hits the already-accepted 409 branch (G). */
+async function seedAcceptRate(proposalId: string): Promise<void> {
+  await writeEvent(testDb(), {
+    id: newId(),
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposalId,
+    outcome: 'success',
+    payload: { rating: 'accept' },
+    caused_by_event_id: proposalId,
   });
 }
 
@@ -97,5 +130,29 @@ describe('POST /api/knowledge/misconceptions/[id]/veto', () => {
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('not_found');
+  });
+
+  it('A: rejects a NON-conjecture proposal id with 422 and does NOT dismiss it (endpoint boundary)', async () => {
+    const id = await seedKnowledgeNodeProposal();
+    const res = await veto(id);
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('unprocessable_entity');
+    // the non-conjecture proposal was NOT silently dismissed — no rate event written.
+    const rows = await rateEvents(id);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('G: returns 409 when the candidate conjecture was already decided as accept (conflict)', async () => {
+    const id = await seedConjecture('kc_veto3', '把面积当周长');
+    await seedAcceptRate(id); // decide it as accept first
+    const res = await veto(id);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('conflict');
+    // still exactly ONE rate event (the seeded accept) — veto did not add a dismiss.
+    const rows = await rateEvents(id);
+    expect(rows).toHaveLength(1);
+    expect((rows[0].payload as Record<string, unknown>).rating).toBe('accept');
   });
 });

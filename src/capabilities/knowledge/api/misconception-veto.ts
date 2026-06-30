@@ -15,6 +15,7 @@
 //   → 400 missing / blank id
 //   → 404 unknown proposal id
 //   → 409 already decided as accept (conflict)
+//   → 422 the id resolves to a NON-conjecture proposal (endpoint semantic boundary, see below)
 //
 // Mirrors api/proposal-decide.ts (ParamsSchema + ApiError + errorResponse). No body needed:
 // the path id + the implicit dismiss verb fully specify the action (the user's「判错了」).
@@ -24,6 +25,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { dismissAiProposal } from '@/server/proposals/actions';
+import { getProposalInboxRow } from '@/server/proposals/inbox';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
@@ -33,7 +35,27 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
     if (!parsed.success) {
       throw new ApiError('validation_error', 'misconception candidate id is required', 400);
     }
-    const result = await dismissAiProposal(db, parsed.data.id);
+    const id = parsed.data.id;
+
+    // A (PR-5 review) — ENDPOINT SEMANTIC BOUNDARY. dismissAiProposal dispatches by
+    // proposal.kind, so a non-conjecture id (knowledge_edge / variant_question / learning_item
+    // / knowledge_node …) would be SILENTLY dismissed AND return a different result shape (e.g.
+    // knowledge_edge → { kind:'knowledge_edge', edge_id, … }), violating this endpoint's
+    // 「candidate conjecture only」contract. Load the proposal first and reject any other kind
+    // with 422; an unknown id stays 404 (mirrors dismissAiProposal's own requireProposal).
+    const proposal = await getProposalInboxRow(db, id);
+    if (!proposal) {
+      throw new ApiError('not_found', `proposal ${id} not found`, 404);
+    }
+    if (proposal.kind !== 'conjecture') {
+      throw new ApiError(
+        'unprocessable_entity',
+        `proposal ${id} is not a candidate conjecture (kind=${proposal.kind}); this endpoint only vetoes candidate misconceptions`,
+        422,
+      );
+    }
+
+    const result = await dismissAiProposal(db, id);
     return Response.json(result);
   } catch (err) {
     return errorResponse(err);
