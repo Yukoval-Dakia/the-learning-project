@@ -492,6 +492,31 @@
       ]
     },
     {
+      "name": "knowledge",
+      "item": [
+        {
+          "name": "GET /api/knowledge/:id/misconceptions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/:id/misconceptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", ":id", "misconceptions"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "单 KC 的「指向此点的误区」funnel（confirmed RT1 误区 + candidate 猜想/候选）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 { rows: [{ id, segment:'confirmed'|'candidate', label, belief, status:'active'|'fading', source:'hard'|'soft', conf:'高'|'中'|'低', seen, evidence:[event_id] }] }。confirmed 段 = 经 caused_by misconception_edge join 的 live active misconception（status=active 且 edge/行均未归档）；candidate 段 = 该 KC 的 pending conjecture（conf 固定 '低'）。⑥硬约束：裸 weight/confidence/predicted_p/baseline_p 绝不过 wire，conf 仅定性档；seen 是复现计数（int 允许）。空 KC → { rows: [] }（诚实空态，绝不 zero-fill）。需 x-internal-token"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "mistakes",
       "item": [
         {
