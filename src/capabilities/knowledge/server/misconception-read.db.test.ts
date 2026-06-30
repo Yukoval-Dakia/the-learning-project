@@ -26,6 +26,7 @@ async function seedMisconception(opts: {
   evidence?: string[];
   miscArchived?: boolean;
   edgeArchived?: boolean;
+  edgeRelationType?: string;
 }): Promise<void> {
   const now = new Date();
   await testDb()
@@ -53,7 +54,7 @@ async function seedMisconception(opts: {
       from_id: opts.id,
       to_kind: 'knowledge',
       to_id: opts.kcId,
-      relation_type: 'caused_by',
+      relation_type: opts.edgeRelationType ?? 'caused_by',
       weight: 1,
       created_by: { by: 'system' },
       proposed_by_ai: true,
@@ -151,6 +152,35 @@ describe('loadMisconceptionsForKc (A5 S4, YUK-531)', () => {
     expect(rows).toEqual([]);
   });
 
+  it('discretizes confBand at the band boundaries (weight 0.34 → 中, weight 0.67 → 高)', async () => {
+    // Pins the off-by-one: the cut points are exclusive lower bounds (weight < 0.34 → 低),
+    // so weight exactly at a cut belongs to the HIGHER band.
+    await seedMisconception({ id: 'mc_b_mid', kcId: 'kc_b_mid', title: '边界·中', weight: 0.34 });
+    await seedMisconception({ id: 'mc_b_hi', kcId: 'kc_b_hi', title: '边界·高', weight: 0.67 });
+
+    const mid = await loadMisconceptionsForKc(testDb(), 'kc_b_mid');
+    expect(mid).toHaveLength(1);
+    expect(mid[0].conf).toBe('中'); // 0.34 is NOT < 0.34 → not 低; 0.34 < 0.67 → 中
+
+    const hi = await loadMisconceptionsForKc(testDb(), 'kc_b_hi');
+    expect(hi).toHaveLength(1);
+    expect(hi[0].conf).toBe('高'); // 0.67 is NOT < 0.67 → 高
+  });
+
+  it('excludes a non-caused_by misconception_edge (confusable_with) from the confirmed segment', async () => {
+    // Same KC, live misconception, but the edge is confusable_with — the relation_type
+    // filter must drop it (only caused_by drives the "指向此点的误区" funnel).
+    await seedMisconception({
+      id: 'mc_confusable',
+      kcId: 'kc_rel',
+      title: '混淆边误区',
+      edgeRelationType: 'confusable_with',
+    });
+
+    const rows = await loadMisconceptionsForKc(testDb(), 'kc_rel');
+    expect(rows).toEqual([]);
+  });
+
   it('surfaces a per-KC pending conjecture as a candidate (conf 低) and excludes other-KC conjectures', async () => {
     await seedConjecture({
       claim: '以为平方和等于和的平方',
@@ -173,7 +203,9 @@ describe('loadMisconceptionsForKc (A5 S4, YUK-531)', () => {
     expect(r.source).toBe('soft');
     expect(r.conf).toBe('低'); // FIXED — never derived from confidence
     expect(r.seen).toBe(5);
-    expect(r.evidence).toEqual(['evt_seed', 'q_seed']);
+    // Event-回链 contract: only kind==='event' refs cross the wire — the seeded question
+    // ref (q_seed) is intentionally dropped, leaving just the event id.
+    expect(r.evidence).toEqual(['evt_seed']);
   });
 
   it('returns confirmed rows before candidate rows when both exist for the KC', async () => {

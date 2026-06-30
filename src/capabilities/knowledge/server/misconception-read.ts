@@ -55,13 +55,29 @@ const CANDIDATE_LABEL_CAP = 40;
 // Scan cap on the pending-conjecture window. listProposalInboxPage is recency-ordered;
 // 50 comfortably covers a single KC's pending conjectures (nightly induction keeps the
 // pending set small). Degenerate-defense, NOT a business cap — mirrors PREP_DESK_FETCH_LIMIT.
+// SILENT-DROP TRADEOFF: the cap is applied to the GLOBAL recency window BEFORE the per-KC
+// filter, so a KC's conjecture ranked beyond the global top-50 window is silently DROPPED
+// (not just deprioritized). Acceptable while the single-user pending set stays small; if
+// pending volume ever grows, this must become a SQL-level knowledge_id predicate pushed
+// into listProposalInboxPage — bumping the scan cap would not fix the drop.
 const CANDIDATE_SCAN_CAP = 50;
+
+// Defensive row cap on the confirmed `caused_by` join. Single-KC scoped + dormant day-one
+// (PR-3 writer is flag-gated), so this is degenerate-defense not a business cap — kept
+// symmetric with CANDIDATE_SCAN_CAP. Owner-tunable; raise if a single KC ever legitimately
+// accrues >50 live misconceptions.
+const CONFIRMED_CAP = 50;
 
 /**
  * One row in the per-KC misconception funnel. ALL confidence is qualitative — raw
  * weight / confidence / predicted_p / baseline_p are deliberately ABSENT from this type.
  */
 export interface MisconceptionRow {
+  /**
+   * SEGMENT-SCOPED id — confirmed = misconception.id; candidate = proposal event id. The
+   * two id spaces are disjoint substrates, so PR-5 MUST key actions on `segment` (never id
+   * alone) to route to the right backend (live misconception vs pending-conjecture proposal).
+   */
   id: string;
   /** 'confirmed' = RT1 误区 (live promoted); 'candidate' = 猜想/候选 (pending conjecture). */
   segment: 'confirmed' | 'candidate';
@@ -77,7 +93,11 @@ export interface MisconceptionRow {
   conf: MisconceptionConfBand;
   /** Recurrence COUNT (int) — allowed on the wire; only probabilities are banned. */
   seen: number;
-  /** Evidence event-id back-links. */
+  /**
+   * Evidence event-id back-links — event-ids ONLY. The candidate segment filters its
+   * evidence_refs to kind==='event' (see loadCandidates), so non-event refs never reach
+   * the wire and PR-5 can render every id as an event 回链 without dead links.
+   */
   evidence: string[];
 }
 
@@ -112,7 +132,8 @@ async function loadConfirmed(db: Db, kcId: string): Promise<MisconceptionRow[]> 
       ),
     )
     // Most-recurrent first; id tiebreaker keeps any >cap ordering deterministic.
-    .orderBy(desc(misconception.seen), desc(misconception.id));
+    .orderBy(desc(misconception.seen), desc(misconception.id))
+    .limit(CONFIRMED_CAP);
 
   return rows.map((r) => {
     const band = confBand(r.weight ?? 1);
@@ -162,13 +183,23 @@ async function loadCandidates(db: Db, kcId: string): Promise<MisconceptionRow[]>
         source: 'soft',
         conf: '低',
         seen: change.recurrence_count,
-        evidence: row.payload.evidence_refs.map((ref) => ref.id),
+        // EVENT-回链 contract: ONLY kind==='event' refs cross the wire — uniform with the
+        // confirmed segment (whose evidence is genuine event-ptrs) and the UI's event-回链
+        // design. A conjecture's evidence_refs can also carry question/knowledge/artifact/
+        // record kinds (e.g. the question whose recurrence induced it); those are
+        // INTENTIONALLY DROPPED here — a non-event id rendered by PR-5 as an event backlink
+        // would be a dead link.
+        evidence: row.payload.evidence_refs
+          .filter((ref) => ref.kind === 'event')
+          .map((ref) => ref.id),
       },
     ];
   });
 
   // Most-recurrent first (recurrence_count is the only ordering signal; NOT confidence).
-  return candidates.sort((a, b) => b.seen - a.seen);
+  // id.localeCompare is the deterministic tiebreaker for equal `seen` — Array.sort is not
+  // guaranteed stable across equal keys, mirroring the confirmed segment's SQL desc(id).
+  return candidates.sort((a, b) => b.seen - a.seen || a.id.localeCompare(b.id));
 }
 
 /**
@@ -181,5 +212,9 @@ export async function loadMisconceptionsForKc(db: Db, kcId: string): Promise<Mis
     loadConfirmed(db, kcId),
     loadCandidates(db, kcId),
   ]);
+  // NO double-surfacing across segments: PR-3's promotion writer rides
+  // acceptConjectureProposal, which writes a rate(accept) event so the source conjecture
+  // leaves `pending` — a promoted belief therefore surfaces ONCE (as confirmed only), never
+  // simultaneously as its originating candidate.
   return [...confirmed, ...candidates];
 }
