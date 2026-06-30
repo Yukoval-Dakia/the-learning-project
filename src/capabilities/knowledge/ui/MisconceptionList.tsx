@@ -35,11 +35,36 @@ export interface MisconceptionListProps {
   navigate: (to: string) => void;
   /**
    * 「判错了」否决回调。segment 决定语义（PR-5 Option A）：
-   *   - 'candidate' → live dismiss（页面打 veto 端点）。
-   *   - 'confirmed' → 页面侧 no-op（仅 card 本地乐观「已纠偏」，无服务端写）。
-   * card 永远两段都调它 + 本地置 verdict，路由由页面按 segment 判别。
+   *   - 'candidate' → live dismiss（页面打 veto 端点）。返回的 Promise 让 card await + 失败回滚
+   *     乐观 verdict（B）。
+   *   - 'confirmed' → 页面侧 no-op（confirmed-archive 是延后 soft-track 后端 slice）；card 的
+   *     confirmed「判错了」钮已 disabled（C），故此分支实际不会被触发，仅作兜底。
+   * 返回值：candidate 走 mutateAsync（Promise，让 card await + 回滚）；confirmed no-op（undefined）。
    */
-  onVeto: (id: string, segment: MisconceptionRow['segment']) => void;
+  onVeto: (id: string, segment: MisconceptionRow['segment']) => Promise<unknown> | undefined;
+}
+
+/**
+ * applyVeto — 乐观「判错了」否决：先本地置「已纠偏」verdict + 上抛 (id, segment) 给页面 onVeto，
+ * 若服务端写**失败**（409 并发 accept / 404 / 网络）则回滚 verdict + 内联诚实 error。⑥ 红线：
+ * 失败的否决绝不能滞留一张假「已纠偏」卡。导出（setter 注入）以便 candidate 段路由 + onError 回滚
+ * 在无 DOM renderer 下可单测（#609 / B）。confirmed 永不到这——其「判错了」钮 disabled（无 live
+ * confirmed-archive 写路径）。
+ */
+export async function applyVeto(
+  mc: MisconceptionRow,
+  onVeto: MisconceptionListProps['onVeto'],
+  setVerdict: (v: 'wrong' | null) => void,
+  setError: (e: string | null) => void,
+): Promise<void> {
+  setVerdict('wrong');
+  setError(null);
+  try {
+    await onVeto(mc.id, mc.segment);
+  } catch {
+    setVerdict(null);
+    setError('撤销失败，请重试');
+  }
 }
 
 const STATUS_LABEL: Record<MisconceptionRow['status'], string> = {
@@ -60,6 +85,7 @@ export function MisconceptionCardView({
   mc,
   trace,
   verdict,
+  error,
   navigate,
   onToggleTrace,
   onVerdictWrong,
@@ -67,6 +93,8 @@ export function MisconceptionCardView({
   mc: MisconceptionRow;
   trace: boolean;
   verdict: 'wrong' | null;
+  /** B (PR-5): 乐观 verdict 回滚后的内联诚实错误（null = 无错误）。 */
+  error?: string | null;
   navigate: (to: string) => void;
   onToggleTrace: () => void;
   onVerdictWrong: () => void;
@@ -88,6 +116,10 @@ export function MisconceptionCardView({
 
   const isConfirmed = mc.segment === 'confirmed';
   const cardClass = `kd-misc-card ${isConfirmed ? mc.status : 'candidate'}`;
+  // D (PR-5): `?? []` 防御（schema 上 evidence 是 notNull default []，纯防御冗余但 cheap，
+  // 防 API 漂移传 null 时崩）。E (PR-5): Set 去重——读模型不去重 evidence ids，重复 event ref
+  // 会同时产生重复 React key（警告 + 不稳定 reconciliation）与重复显示 chip；去重一并消除两者。
+  const evidence = [...new Set(mc.evidence ?? [])];
 
   return (
     <div className={cardClass}>
@@ -117,10 +149,10 @@ export function MisconceptionCardView({
       </div>
       {trace && (
         <div className="kd-misc-trace">
-          {mc.evidence.length > 0 ? (
+          {evidence.length > 0 ? (
             <>
               依据 event：
-              {mc.evidence.map((e) => (
+              {evidence.map((e) => (
                 <code key={e} className="evt">
                   {e}
                 </code>
@@ -140,22 +172,49 @@ export function MisconceptionCardView({
           <LoomIcon name="history" size={14} />
           追溯
         </button>
-        <button
-          type="button"
-          className="kd-misc-link"
-          title="若 AI 判错了这个误区，纠正它"
-          onClick={onVerdictWrong}
-        >
-          <LoomIcon name="close" size={14} />
-          判错了
-        </button>
+        {isConfirmed ? (
+          // C (PR-5 review) — 诚实化：confirmed(RT1 误区) 的否决无 live 写路径（confirmed-archive
+          // 是延后 soft-track 后端 slice，YUK 待建，flag 翻前补）。没有服务端写就别给会假「已纠偏」的
+          // 可点钮（⑥）——disabled 钮 + 旁注；candidate 段才有 live 否决。
+          <span className="kd-misc-veto-deferred">
+            <button
+              type="button"
+              className="kd-misc-link"
+              disabled
+              title="确认误区的否决需编排者复核——暂不能在此直接否决"
+            >
+              <LoomIcon name="close" size={14} />
+              判错了
+            </button>
+            <span className="meta">暂不可否决 · 待编排者复核</span>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="kd-misc-link"
+            title="若 AI 判错了这个候选误区，纠正它"
+            onClick={onVerdictWrong}
+          >
+            <LoomIcon name="close" size={14} />
+            判错了
+          </button>
+        )}
       </div>
+      {error && (
+        // B (PR-5 review) — 乐观 verdict 回滚后的内联诚实错误（mirror FrontierRail 的 error
+        // body-state .quiet-empty 风格；不引第三方 toast）。⑥：失败绝不滞留假「已纠偏」。
+        <p className="kd-misc-error quiet-empty">{error}</p>
+      )}
     </div>
   );
 }
 
-/** 有态壳：管 trace / verdict 本地态；「判错了」乐观置 verdict + 上抛 onVeto（按 segment 路由）。 */
-function MisconceptionCard({
+/**
+ * 有态壳：管 trace / verdict / error 本地态。「判错了」(仅 candidate 卡可点——confirmed 钮 disabled)
+ * 走 applyVeto：乐观置「已纠偏」+ 上抛 onVeto，失败回滚 verdict + 内联 error（B / ⑥）。导出供
+ * KnowledgeDetailPage 复用（page-owns-query 渲染壳）。
+ */
+export function MisconceptionCard({
   mc,
   navigate,
   onVeto,
@@ -166,19 +225,16 @@ function MisconceptionCard({
 }) {
   const [trace, setTrace] = useState(false);
   const [verdict, setVerdict] = useState<'wrong' | null>(null);
+  const [error, setError] = useState<string | null>(null);
   return (
     <MisconceptionCardView
       mc={mc}
       trace={trace}
       verdict={verdict}
+      error={error}
       navigate={navigate}
       onToggleTrace={() => setTrace((v) => !v)}
-      onVerdictWrong={() => {
-        // 乐观本地「已纠偏」卡（两段都渲）；服务端写与否由页面 onVeto 按 segment 判别
-        // （candidate live dismiss / confirmed no-op，Option A）。
-        setVerdict('wrong');
-        onVeto(mc.id, mc.segment);
-      }}
+      onVerdictWrong={() => void applyVeto(mc, onVeto, setVerdict, setError)}
     />
   );
 }

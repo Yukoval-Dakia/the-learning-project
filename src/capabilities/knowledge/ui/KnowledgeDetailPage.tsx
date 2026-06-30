@@ -266,9 +266,11 @@ export default function KnowledgeDetailPage({
             onRetry={() => void miscQ.refetch()}
             navigate={navigate}
             onVeto={(mcId, segment) => {
-              // Option A：仅 candidate 段打服务端 dismiss；confirmed 段是 no-op（card 已渲乐观
-              // 「已纠偏」本地态，confirmed-archive 是延后 soft-track 后端 slice）。
-              if (segment === 'candidate') vetoMut.mutate(mcId);
+              // Option A：仅 candidate 段打服务端 dismiss。返回 mutateAsync 的 Promise 让 card
+              // await + 失败回滚乐观 verdict（B / ⑥：失败绝不滞留假「已纠偏」）。confirmed 段 card
+              // 的否决钮已 disabled（C，confirmed-archive 是延后 soft-track 后端 slice），此 guard
+              // 仍兜底——confirmed 永不打服务端写。
+              if (segment === 'candidate') return vetoMut.mutateAsync(mcId);
             }}
           />
 
