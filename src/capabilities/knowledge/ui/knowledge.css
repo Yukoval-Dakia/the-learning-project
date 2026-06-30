@@ -563,3 +563,164 @@
   font: 400 var(--fs-body) / 1.5 var(--font-sans);
   color: var(--ink-4);
 }
+
+/* ── misconception cards (A5 S4, YUK-531 PR-5) — 可否决 + 追溯 ──
+   PORT 自 docs/design/loom-refresh/project/knowledge-a5.css L109-124。设计源那 .kd-misc-card 的
+   base bg/border 与 .kd-transfer-row 共享在 L101——但 S3 显式没搬该 base 规则（TransferList 走诚实
+   空态、无 transfer 行渲染），故这里把 base 结构属性直接写进 .kd-misc-card（无重复风险）。
+   两段区分（PR-5 INFERRED，mock 无 segment）：设计源默认 card = 硬轨警报态（confirmed 误区一等
+   异构）；候选只是「猜想」，套警报会过度宣称（⑥）→ 把 hard 警报态收进 .active（confirmed 活跃），
+   .candidate / .fading 走 provisional 中性态。 */
+.kd-misc-card {
+  padding: var(--s-4);
+  margin-bottom: var(--s-3);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+/* confirmed · active = 设计源默认的硬轨警报态。 */
+.kd-misc-card.active {
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+}
+/* confirmed · fading（消退中）+ candidate（猜想/候选）= provisional 中性态（虚线、收敛）。 */
+.kd-misc-card.fading,
+.kd-misc-card.candidate {
+  background: var(--paper-sunk);
+  border-color: var(--line);
+  border-style: dashed;
+}
+.kd-misc-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.kd-misc-ic {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--ink-4);
+  flex: none;
+}
+/* 警报红只挂 confirmed·active 的图标（candidate/fading 保持中性，不拉警报）。 */
+.kd-misc-card.active .kd-misc-ic {
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+  color: var(--hard-ink);
+}
+.kd-misc-label {
+  font: 600 var(--fs-body) / 1.3 var(--font-serif);
+  color: var(--ink);
+}
+.kd-misc-status {
+  margin-left: auto;
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.kd-misc-status.active {
+  color: var(--hard-ink);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+}
+.kd-misc-status.fading {
+  color: var(--ink-4);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+}
+/* 候选 tag — mirror .frontier-tag-propose（虚线、muted），诚实标「猜想」绝不暗示已证。 */
+.kd-misc-tag-candidate {
+  margin-left: auto;
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px dashed var(--line-strong);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+}
+.kd-misc-belief {
+  font: 400 var(--fs-body) / var(--lh-prose) var(--font-sans);
+  color: var(--ink-2);
+  margin: 0 0 var(--s-2);
+  text-wrap: pretty;
+}
+.kd-misc-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  font: 400 var(--fs-meta) / 1.4 var(--font-mono);
+  color: var(--ink-4);
+}
+.kd-misc-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.kd-misc-card.active .kd-misc-acts {
+  border-top-color: var(--hard-line);
+}
+.kd-misc-trace {
+  width: 100%;
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--paper-raised);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-2);
+  font: 400 var(--fs-meta) / 1.5 var(--font-mono);
+  color: var(--ink-3);
+}
+.kd-misc-trace .evt {
+  display: inline-block;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: 1px 6px;
+  margin: 0 3px 3px 0;
+  color: var(--info-ink);
+}
+/* link-style text button —— 端口替代设计稿的 .ho-linkbtn（追溯 / 判错了），mirror shell .aa-link。 */
+.kd-misc-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink-4);
+  font: 500 var(--fs-meta) / 1 var(--font-sans);
+  padding: 4px 2px;
+  transition: color var(--dur-fast);
+}
+.kd-misc-link:hover {
+  color: var(--coral-ink);
+}
+.kd-misc-link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-1);
+}
+/* 误区读模型错误态重试 —— inline link 风格（mirror .frontier-retry）。 */
+.kd-misc-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--coral-ink);
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  cursor: pointer;
+}
