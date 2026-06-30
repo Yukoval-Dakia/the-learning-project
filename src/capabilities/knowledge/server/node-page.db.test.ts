@@ -5,12 +5,23 @@
 // backlinks read-time filter (XC-5), timeline, and not-found path.
 
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
-import { artifact, artifact_block_ref, event, knowledge, learning_item } from '@/db/schema';
+import { newId } from '@/core/ids';
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import {
+  artifact,
+  artifact_block_ref,
+  event,
+  item_calibration,
+  knowledge,
+  learning_item,
+  question,
+} from '@/db/schema';
+import { upsertFsrsState } from '@/server/fsrs/state';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { loadKnowledgeNodePage } from './node-page';
+import { loadKnowledgeNodePage, loadRetrievabilityMap } from './node-page';
 
 const K_BASE = {
   domain: 'wenyan' as const,
@@ -170,6 +181,66 @@ async function seedEvent(id: string, knowledgeId: string, createdAt = new Date()
     task_run_id: null,
     cost_micro_usd: null,
     created_at: createdAt,
+  });
+}
+
+// A5 S3 (YUK-354) — seed a 'knowledge' FSRS state row so retrievabilityForKc has a
+// real card to read. A review-state card with a recent last_review → R close to 1.
+async function seedKnowledgeFsrsState(
+  knowledgeId: string,
+  lastReview: Date,
+  stability = 10,
+): Promise<void> {
+  const db = testDb();
+  const state: FsrsStateSchemaT = {
+    due: new Date(lastReview.getTime() + stability * 86_400_000),
+    stability,
+    difficulty: 5,
+    elapsed_days: 0,
+    scheduled_days: stability,
+    learning_steps: 0,
+    reps: 3,
+    lapses: 0,
+    state: 'review',
+    last_review: lastReview,
+  };
+  await upsertFsrsState(db, {
+    subject_kind: 'knowledge',
+    subject_id: knowledgeId,
+    state,
+    due_at: state.due,
+    last_review_event_id: null,
+  });
+}
+
+// A5 S3 (YUK-354) — seed a question carrying `knowledgeId` + a hard-track item_calibration
+// b anchor, so getRepresentativeKcBeta resolves a non-zero representative β for the KC.
+async function seedKcDifficultyAnchor(
+  questionId: string,
+  knowledgeId: string,
+  b: number,
+): Promise<void> {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(question).values({
+    id: questionId,
+    kind: 'short_answer',
+    prompt_md: `prompt-${questionId}`,
+    knowledge_ids: [knowledgeId],
+    difficulty: 3,
+    source: 'manual',
+    draft_status: 'active',
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  await db.insert(item_calibration).values({
+    id: newId(),
+    question_id: questionId,
+    b,
+    confidence: 0.5,
+    track: 'hard',
+    source: 'llm_prior',
   });
 }
 
@@ -649,5 +720,94 @@ describe('loadKnowledgeNodePage', () => {
     const page = await loadKnowledgeNodePage(db, 'kc2');
     expect(page?.domain).toBeNull();
     expect(page?.effective_domain).toBe('math');
+  });
+
+  // ── A5 S3 (YUK-354) — NodeComposite 三维折叠 RAW 读模型 (R + β) ──────────────
+  // node-page ships RAW (retrievability + beta); the client bands them via
+  // buildNodeThreeDim. Band-mapping math is covered by node-dims.unit.test.ts.
+
+  it('cold start: retrievability and beta are null (focal node never attempted)', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    // no fsrs_state row → no retention data (null, NOT R=0); no mastery_state row → no β.
+    expect(page?.retrievability).toBeNull();
+    expect(page?.beta).toBeNull();
+  });
+
+  it('surfaces a real retrievability when the focal node has an FSRS state row', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    // reviewed yesterday with stability 10 → R(now) is high but < 1.
+    await seedKnowledgeFsrsState('k1', new Date(Date.now() - 86_400_000), 10);
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    expect(page?.retrievability).not.toBeNull();
+    const r = page?.retrievability as number;
+    expect(r).toBeGreaterThan(0);
+    expect(r).toBeLessThanOrEqual(1);
+  });
+
+  it('surfaces beta=0 (no difficulty anchor) when the node has a mastery_state but no calibrated item', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await upsertMasteryState(db, {
+      subject_id: 'k1',
+      theta_hat: 0.2,
+      evidence_count: 5,
+      success_count: 3,
+      fail_count: 2,
+      last_outcome_at: new Date(),
+    });
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    // mastery_state row exists → β resolves, defaulting to the neutral 0 (no anchor).
+    // The client honestly degrades β=0 → 难度未知 (buildNodeThreeDim).
+    expect(page?.beta).toBe(0);
+    expect(page?.mastery).not.toBeNull();
+  });
+
+  it('surfaces a non-zero beta from a hard-track item_calibration anchor', async () => {
+    const db = testDb();
+    await seedKnowledge('k1', { name: '虚词' });
+    await upsertMasteryState(db, {
+      subject_id: 'k1',
+      theta_hat: 0.2,
+      evidence_count: 5,
+      success_count: 3,
+      fail_count: 2,
+      last_outcome_at: new Date(),
+    });
+    await seedKcDifficultyAnchor('q1', 'k1', 1);
+    const page = await loadKnowledgeNodePage(db, 'k1');
+    // representative β = median hard-track effective b = 1 → difficulty band 偏难 (client).
+    expect(page?.beta).toBe(1);
+  });
+});
+
+describe('loadRetrievabilityMap', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('returns retrievability + hasState only for ids with a knowledge FSRS row', async () => {
+    const db = testDb();
+    await seedKnowledge('k-has', { name: '有' });
+    await seedKnowledge('k-none', { name: '无' });
+    const lastReview = new Date('2026-06-01T00:00:00Z');
+    await seedKnowledgeFsrsState('k-has', lastReview, 10);
+    // inject now for deterministic retrievability (time-relative).
+    const now = new Date('2026-06-02T00:00:00Z');
+    const map = await loadRetrievabilityMap(db, ['k-has', 'k-none'], now);
+    expect(map.get('k-has')?.hasState).toBe(true);
+    const r = map.get('k-has')?.retrievability as number;
+    expect(r).toBeGreaterThan(0);
+    expect(r).toBeLessThanOrEqual(1);
+    // absent row → not in the map (caller treats as unknown, not R=0).
+    expect(map.has('k-none')).toBe(false);
+  });
+
+  it('returns an empty map for an empty id set', async () => {
+    const db = testDb();
+    const map = await loadRetrievabilityMap(db, [], new Date());
+    expect(map.size).toBe(0);
   });
 });
