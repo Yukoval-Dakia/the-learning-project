@@ -42,6 +42,31 @@ export interface FrontierRailItem {
 
 export const getFrontier = () => apiJson<{ rows: FrontierRailItem[] }>('/api/knowledge/frontier');
 
+// ── A5 S4 (YUK-531) per-KC 误区 funnel wire（「指向此点的误区」）─────────────
+// 后端 server/misconception-read.ts loadMisconceptionsForKc。两段：confirmed
+// (RT1 误区) + candidate (猜想/候选)。conf 是定性档（高/中/低），裸 weight/
+// confidence 绝不过 wire（⑥）。UI 组件是 PR-5；此处只供 fetch + 类型。
+export interface MisconceptionRow {
+  id: string;
+  // 'confirmed' = 确认误区(RT1)；'candidate' = 猜想/候选（pending conjecture）。
+  segment: 'confirmed' | 'candidate';
+  label: string;
+  belief: string;
+  // 显示投影（非裸 draft|active）；active→「复发中」/fading→「消退中」。
+  status: 'active' | 'fading';
+  // 轨道来源 chip：hard→「硬轨校准」/soft→「软轨先验」。
+  source: 'hard' | 'soft';
+  // 定性置信档（高/中/低）——绝无裸概率。
+  conf: '高' | '中' | '低';
+  // 复现次数（int，计数允许）。
+  seen: number;
+  // 证据 event-id 回链。
+  evidence: string[];
+}
+
+export const getMisconceptions = (id: string) =>
+  apiJson<{ rows: MisconceptionRow[] }>(`/api/knowledge/${encodeURIComponent(id)}/misconceptions`);
+
 // ── 边 ──────────────────────────────────────────────────────────
 export interface KnowledgeEdgeRow {
   id: string;
