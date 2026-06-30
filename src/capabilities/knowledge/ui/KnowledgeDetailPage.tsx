@@ -17,6 +17,7 @@ import { useState } from 'react';
 
 import { BandChip } from './BandChip';
 import { REL_CUE } from './MeshGraph';
+import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
 import { humanizeActivity } from './humanize-activity';
 import { type KnowledgeNodePage, type NoteSummary, getNodePage } from './knowledge-api';
 import './knowledge.css';
@@ -214,8 +215,29 @@ export default function KnowledgeDetailPage({
         </div>
       </div>
 
+      {/* A5 S3 (YUK-354) — NodeComposite 三维折叠（R · p(L) · difficulty）插在 hero 下方,
+          对齐设计源 screen-knowledge-detail.jsx:75 的 <NodeComposite> 位置。三维 RAW 由
+          node-page wire 平铺（node.retrievability / node.beta / node.mastery* ），客户端
+          buildNodeThreeDim band 化。三轴正交：纯 READ 展示。 */}
+      <NodeComposite
+        input={{
+          mastery: node,
+          beta: node.beta,
+          retrievability: node.retrievability,
+          evidenceCount: node.evidence_count,
+        }}
+      />
+
       <div className="kd-grid">
         <div className="kd-main">
+          {/* A5 S3 (YUK-354) — 迁移 + 诊断下钻：忠于冷启设计的诚实空态（borrowed-θ 软层
+              dark-ship / CDM·IRT 无后端），不假造数字。S4 误区（MisconceptionList）本片不碰。 */}
+          <SectionLabel>迁移而来的掉握 · transfer credit</SectionLabel>
+          <TransferList />
+
+          <SectionLabel>诊断下钻 · CDM / IRT</SectionLabel>
+          <DiagnosticDrill />
+
           <SectionLabel>笔记</SectionLabel>
           <div className="kd-note-hint meta">
             <LoomIcon name="link" size={12} />

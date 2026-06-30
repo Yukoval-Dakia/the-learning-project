@@ -385,3 +385,286 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* A5 S3 (YUK-354) — NodeComposite 三维折叠 + TransferList / DiagnosticDrill 诚实空态.
+   PORT 自 docs/design/loom-refresh/project/knowledge-a5.css L76-149（只搬 .kd-composite* /
+   .kd-dim* / .kd-cold-note / .kd-transfer* / .kd-diag* / .kd-cdm* / .kd-irt* 几组，不整文件
+   拷；.kd-misc*（S4 误区）不搬）。⑥治理：三维各档/区间/来源/低置信定性，绝不裸数字。 */
+
+/* ── node-detail · 三维折叠 ── */
+.kd-composite {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-4);
+  padding: var(--s-5);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  box-shadow: var(--shadow-1);
+  margin-bottom: var(--s-4);
+  flex-wrap: wrap;
+}
+.kd-composite-main {
+  flex: 1;
+  min-width: 260px;
+}
+.kd-composite-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+  flex-wrap: wrap;
+}
+.kd-composite-band {
+  font: 600 var(--fs-h4) / 1 var(--font-serif);
+  color: var(--ink);
+}
+.kd-composite-cap {
+  font: 500 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--ink-4);
+}
+.kd-cold-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-2);
+  font: 400 var(--fs-meta) / 1.55 var(--font-sans);
+  color: var(--hard-ink);
+  text-wrap: pretty;
+}
+.kd-cold-note .ico {
+  flex: none;
+  margin-top: 1px;
+}
+.kd-dim-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  cursor: pointer;
+  background: transparent;
+  color: var(--coral-ink);
+  padding: var(--s-2) 0;
+  font: 500 var(--fs-meta) / 1 var(--font-sans);
+}
+/* 设计源用 chevronRight（收起指右、展开转 90° 指下）；LoomIcon 无 chevronRight，
+   故用 chevronDown：收起 rotate(-90deg) 指右、展开 rotate(0) 指下（行为等价）。 */
+.kd-dim-toggle .ico {
+  transform: rotate(-90deg);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.kd-dim-toggle.open .ico {
+  transform: rotate(0deg);
+}
+.kd-dims {
+  display: grid;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+}
+.kd-dim {
+  padding: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+/* 三维卡行：维度名 + 该轴 BandChip（设计源用 MasteryBand 自带 label；src 用 chip,
+   故补一行 label↔chip 布局）。 */
+.kd-dim-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.kd-dim-label {
+  font: 600 var(--fs-meta) / 1.2 var(--font-sans);
+  color: var(--ink-2);
+}
+.kd-dim-note {
+  font: 400 var(--fs-meta) / 1.5 var(--font-sans);
+  color: var(--ink-3);
+  margin-top: 6px;
+}
+
+/* ── transfer (RT2) ── */
+.kd-transfer-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-2);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+.kd-transfer-arrow {
+  color: var(--good-ink);
+  flex: none;
+}
+.kd-transfer-body {
+  flex: 1;
+  min-width: 0;
+}
+.kd-transfer-from {
+  font: 600 var(--fs-body) / 1.3 var(--font-serif);
+  color: var(--ink);
+}
+.kd-transfer-note {
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+.kd-transfer-amt {
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  color: var(--good-ink);
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ── diagnostic drill (CDM + IRT) ── */
+.kd-diag {
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.kd-diag-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  border: 0;
+  cursor: pointer;
+  background: transparent;
+  padding: var(--s-4);
+  text-align: left;
+}
+.kd-diag-bar:hover {
+  background: var(--paper-sunk);
+}
+.kd-diag-ic {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-2);
+  background: var(--info-soft);
+  color: var(--info-ink);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.kd-diag-bar .kd-diag-t {
+  font: 600 var(--fs-body) / 1.2 var(--font-sans);
+  color: var(--ink);
+}
+.kd-diag-bar .kd-diag-s {
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-4);
+  margin-top: 2px;
+}
+.kd-diag-bar .kd-diag-chev {
+  margin-left: auto;
+  color: var(--ink-4);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.kd-diag.open .kd-diag-chev {
+  transform: rotate(180deg);
+}
+.kd-diag-body {
+  padding: 0 var(--s-4) var(--s-4);
+  border-top: 1px solid var(--line);
+}
+.kd-diag-sub {
+  font: 600 var(--fs-meta) / 1 var(--font-sans);
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin: var(--s-4) 0 var(--s-3);
+}
+.kd-cdm-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+}
+.kd-cdm-attr {
+  flex: none;
+  width: 120px;
+  font: 500 var(--fs-body) / 1.3 var(--font-sans);
+  color: var(--ink);
+}
+.kd-cdm-track {
+  flex: 1;
+  position: relative;
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  display: flex;
+}
+.kd-cdm-seg {
+  flex: 1;
+  border-right: 1px solid var(--line);
+}
+.kd-cdm-seg:last-child {
+  border-right: 0;
+}
+.kd-cdm-fill {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklch, var(--coral) 26%, transparent);
+  border: 1px solid color-mix(in oklch, var(--coral) 40%, transparent);
+}
+.kd-cdm-row.soft .kd-cdm-fill {
+  background: color-mix(in oklch, var(--ink-4) 16%, transparent);
+  border-color: color-mix(in oklch, var(--ink-4) 30%, transparent);
+}
+.kd-cdm-src {
+  flex: none;
+}
+.kd-irt {
+  display: flex;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.kd-irt-stat {
+  flex: 1;
+  min-width: 130px;
+  padding: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+.kd-irt-lbl {
+  font: 600 var(--fs-body) / 1.2 var(--font-sans);
+  color: var(--ink);
+}
+.kd-irt-cap {
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-4);
+  margin-top: 3px;
+}
+.kd-diag-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  font: 400 var(--fs-body) / 1.5 var(--font-sans);
+  color: var(--ink-4);
+}
+@media (max-width: 720px) {
+  .kd-cdm-attr {
+    width: 90px;
+  }
+}
