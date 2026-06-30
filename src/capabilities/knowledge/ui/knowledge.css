@@ -704,8 +704,12 @@
   padding: 4px 2px;
   transition: color var(--dur-fast);
 }
-.kd-misc-link:hover {
+.kd-misc-link:not(:disabled):hover {
   color: var(--coral-ink);
+}
+.kd-misc-link:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 .kd-misc-link:focus-visible {
   outline: none;
