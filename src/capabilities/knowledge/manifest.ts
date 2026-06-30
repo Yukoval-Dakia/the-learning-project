@@ -72,6 +72,14 @@ export const knowledgeCapability = defineCapability({
         path: '/api/knowledge/[id]/misconceptions',
         load: () => import('./api/misconceptions').then((m) => m.GET),
       },
+      {
+        // A5 S4 (YUK-531 PR-5)：candidate(猜想/候选) 误区 veto = dismiss pending conjecture。
+        // 静态段 misconceptions 在前（5 段 POST），与 [id]/misconceptions(GET) 方法+段序均不碰，
+        // 与 proposals/edges 同样静态优先。Option A：仅 candidate 段 live，confirmed archive 延后。
+        method: 'POST',
+        path: '/api/knowledge/misconceptions/[id]/veto',
+        load: () => import('./api/misconception-veto').then((m) => m.POST),
+      },
     ],
   },
   jobs: {
