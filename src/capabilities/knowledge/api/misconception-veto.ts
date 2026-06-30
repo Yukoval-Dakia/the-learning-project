@@ -50,7 +50,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
     if (proposal.kind !== 'conjecture') {
       throw new ApiError(
         'unprocessable_entity',
-        `proposal ${id} is not a candidate conjecture (kind=${proposal.kind}); this endpoint only vetoes candidate misconceptions`,
+        `proposal ${id} is not a candidate conjecture; this endpoint only vetoes candidate misconceptions`,
         422,
       );
     }
