@@ -115,21 +115,81 @@ export const knowledge = pgTable('knowledge', {
 //     ever live here. `weight` is a CONFIDENCE-only salience signal, NOT mastery.
 //   - subject=view: NO subject/domain column (subject is derived, never stored).
 //   - archived_at is the ONLY time dimension — explicitly NO valid_at/invalid_at
-//     (bi-temporal edges are the DEFERRED misconception_edge slice).
+//     (the heterogeneous misconception_edge below is structural, not bi-temporal).
 //   - created_at/updated_at are caller-supplied (NO defaultNow, house convention).
 //   - the embedding triplet is OMITTED in L1 — it lands with the promotion-flow
 //     dedup (semantic near-dup detection) when that slice ships.
+// YUK-531 (A5 S4 / RT1): the promotion-flow lifecycle/provenance columns
+// (status/source/seen/evidence) land here; the writer (insert via accept route)
+// is gated behind MISCONCEPTION_PROMOTE_ENABLED — DORMANT until that flag flips.
 export const misconception = pgTable('misconception', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   reasoning: text('reasoning'),
+  // CONFIDENCE-only salience weight (NOT mastery). `belief` reuses title/reasoning.
   weight: real('weight').default(1),
+  // Promotion lifecycle: 'draft' | 'active'. `fading`/`retracted` from the A5 mock
+  // are READ-MODEL display projections (weight decay / archived_at), NOT stored enum
+  // values — archived_at stays the ONLY retraction dimension.
+  status: text('status').notNull().default('draft'),
+  // Provenance二态: 'hard' (硬轨 — confirmed via repeated objective evidence) |
+  // 'soft' (软轨 — AI prior / conjecture-promoted). NOT item_calibration.track (撞名).
+  source: text('source').notNull().default('soft'),
+  // Recurrence count that drove promotion (from gatherConjectureEvidence, the
+  // identity-preserving conjecture substrate). A salience count, NOT mastery/p(L).
+  seen: integer('seen').notNull().default(0),
+  // Provenance event-ptr array (event ids = 回链证据), mirrors kc_typed_state
+  // evidence_event_ids. SOFT-track only — never feeds the diagnostic engines.
+  evidence: jsonb('evidence').$type<string[]>().notNull().default([]),
   created_by: jsonb('created_by').$type<AgentRefT>().notNull(),
   proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   archived_at: timestamp('archived_at', { withTimezone: true }),
 });
+
+// YUK-531 (A5 S4 / ADR-0036 RT1): heterogeneous misconception edge. Polymorphic
+// from/to (from_kind/to_kind discriminator) so a misconception can point at a KC
+// (`caused_by` → the "指向此点的误区" join that drives MisconceptionList), at another
+// misconception or KC (`confusable_with`), or at an event (`observed_in` provenance).
+// relation_type ∈ caused_by | confusable_with | observed_in | experimental:* (Zod-
+// validated in core/schema/misconception-edge.ts). This is a SEPARATE gate from the
+// homogeneous knowledge_edge prerequisite-DAG topology gate — cycle/direction checks
+// do not map onto these relation types (see misconception-topology-gate.ts).
+//   RED LINES (mirror misconception): weight is CONFIDENCE-only (never mastery);
+//   archived_at is the ONLY time dimension (no valid_at/invalid_at); created_at/
+//   updated_at caller-supplied (no defaultNow, house convention). DORMANT until the
+//   PR-3 promotion writer / accept route lands.
+export const misconception_edge = pgTable(
+  'misconception_edge',
+  {
+    id: text('id').primaryKey(),
+    from_kind: text('from_kind').notNull(), // 'misconception'
+    from_id: text('from_id').notNull(),
+    to_kind: text('to_kind').notNull(), // 'knowledge' | 'misconception' | 'event'
+    to_id: text('to_id').notNull(),
+    // 'caused_by' | 'confusable_with' | 'observed_in' | 'experimental:*'
+    relation_type: text('relation_type').notNull(),
+    // 0-1 confidence; AI proposals fill with confidence, user-authored defaults 1.
+    weight: real('weight').notNull().default(1),
+    created_by: jsonb('created_by').$type<AgentRefT>().notNull(),
+    proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('misconception_edge_unique').on(
+      t.from_kind,
+      t.from_id,
+      t.to_kind,
+      t.to_id,
+      t.relation_type,
+    ),
+    index('misconception_edge_from_idx').on(t.from_kind, t.from_id, t.relation_type),
+    index('misconception_edge_to_idx').on(t.to_kind, t.to_id, t.relation_type),
+  ],
+);
 
 export const source_asset = pgTable('source_asset', {
   id: text('id').primaryKey(),

@@ -37,6 +37,16 @@ export const MisconceptionSchema = z
     reasoning: z.string().nullable(),
     // CONFIDENCE-only salience weight (NOT mastery). Defaults to 1.
     weight: z.number().default(1),
+    // YUK-531 (A5 S4 / RT1 promotion) — lifecycle + provenance. ALL soft-track:
+    // `.strict()` still rejects any θ/pL/mastery/FSRS/difficulty key. status is the
+    // promotion lifecycle ('draft'→'active'); `fading`/`retracted` are read-model
+    // DISPLAY projections (weight decay / archived_at), never stored enum values.
+    // source = 硬轨 confirmed | 软轨 prior. seen = recurrence count (salience, NOT
+    // mastery). evidence = provenance event-id array.
+    status: z.enum(['draft', 'active']).default('draft'),
+    source: z.enum(['hard', 'soft']).default('soft'),
+    seen: z.number().int().nonnegative().default(0),
+    evidence: z.array(z.string()).default([]),
     created_by: AgentRef,
     proposed_by_ai: z.boolean().default(false),
     created_at: z.coerce.date(),
@@ -57,6 +67,11 @@ export const MisconceptionInsert = z
     title: z.string(),
     reasoning: z.string().nullish(),
     weight: z.number().default(1),
+    // YUK-531 — defaulted, so optional on insert (mirrors weight/proposed_by_ai).
+    status: z.enum(['draft', 'active']).default('draft'),
+    source: z.enum(['hard', 'soft']).default('soft'),
+    seen: z.number().int().nonnegative().default(0),
+    evidence: z.array(z.string()).default([]),
     created_by: AgentRef,
     proposed_by_ai: z.boolean().default(false),
     created_at: z.coerce.date(),

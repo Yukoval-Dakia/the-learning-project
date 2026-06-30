@@ -10,7 +10,7 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.11" (YUK-445 A11 learner_axis_state 入备份)', () => {
+  it('SCHEMA_VERSION is "4.12" (YUK-531 misconception_edge 入备份)', () => {
     // 4.7 → 4.8 (YUK-454 inc-1 / ADR-0036 身份层): NEW FK_ORDER table misconception
     // (AI-proposed/authored 认知身份实体，DORMANT in L1 但备份覆盖纯声明式)。新表入
     // FK_ORDER 必 bump (per archive.ts assertEveryTableIsBackedUpOrExcluded)，同 peer
@@ -24,14 +24,18 @@ describe('export constants', () => {
     // 4.8 → 4.9 (YUK-471 W1 PR-A2a / ADR-0044): materialized_id_index 投影反查表入 FK_ORDER。
     // 4.9 → 4.10 (YUK-440 A13): kc_typed_state typed-ledger projection 入 FK_ORDER。
     // 4.10 → 4.11 (YUK-445 A11): learner_axis_state EZ-diffusion 描述符投影入 FK_ORDER。
-    expect(SCHEMA_VERSION).toBe('4.11');
+    // 4.11 → 4.12 (YUK-531 A5 S4 / ADR-0036 RT1): NEW FK_ORDER table misconception_edge
+    // (异构认知关系边，peer of knowledge_edge)。新表入 FK_ORDER 必 bump (per archive.ts
+    // assertEveryTableIsBackedUpOrExcluded)。misconception 加 status/source/seen/evidence
+    // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
+    expect(SCHEMA_VERSION).toBe('4.12');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 33 tables in topological order', () => {
+  it('FK_ORDER lists all 34 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -62,7 +66,10 @@ describe('export constants', () => {
     // 33 → 34 (YUK-445 A11): added learner_axis_state — EZ-diffusion caution/speed-accuracy
     // descriptor, peer of mastery_state/kc_typed_state (derived-but-physical → FK_ORDER);
     // placed last as the newest additive table.
-    expect(FK_ORDER.length).toBe(34);
+    // 34 → 35 (YUK-531 A5 S4 / ADR-0036 RT1): added misconception_edge — heterogeneous
+    // 认知关系边 (peer of knowledge_edge); placed adjacent to misconception (RT1 cluster),
+    // NOT at the end (so the last element stays learner_axis_state).
+    expect(FK_ORDER.length).toBe(35);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('learner_axis_state');
   });
@@ -104,6 +111,18 @@ describe('export constants', () => {
     const idx = (t: string) => FK_ORDER.indexOf(t as never);
     expect(idx('mastery_state')).toBeLessThan(idx('misconception'));
     expect(idx('misconception')).toBeLessThan(idx('knowledge_edge'));
+  });
+
+  it('FK_ORDER includes YUK-531 misconception_edge (异构认知关系边，承重非排除)', () => {
+    // ADR-0036 RT1 heterogeneous edge (caused_by / confusable_with / observed_in).
+    // DORMANT until the promotion writer lands, but backed up from day one (peer of
+    // knowledge_edge, AI-proposed/authored cognitive data — never BACKUP_EXCLUDED).
+    expect(FK_ORDER).toContain('misconception_edge');
+    expect(BACKUP_EXCLUDED_TABLES.has('misconception_edge')).toBe(false);
+    // RT1 关系簇：misconception → misconception_edge → knowledge_edge (loose text-ref, no FK).
+    const idx = (t: string) => FK_ORDER.indexOf(t as never);
+    expect(idx('misconception')).toBeLessThan(idx('misconception_edge'));
+    expect(idx('misconception_edge')).toBeLessThan(idx('knowledge_edge'));
   });
 
   it('FK_ORDER includes YUK-361 Phase 5 item_family_calibration (家族级 b 慢热资产，承重非排除)', () => {

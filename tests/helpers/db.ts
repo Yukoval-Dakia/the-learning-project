@@ -45,6 +45,12 @@ const ALL_TABLES = [
   // footgun as difficulty_calibration_label above).
   'materialized_id_index',
   'knowledge_edge',
+  // YUK-531 (A5 S4 / RT1) — misconception identity + heterogeneous edge. No FK, so
+  // resetDb must list them explicitly or they leak across tests (same footgun as
+  // mastery_state / kc_typed_state). `misconception` was missing here while dormant;
+  // it MUST be listed now that the promotion writer gives it a write path.
+  'misconception',
+  'misconception_edge',
   'learning_session',
   'answer',
   'completion_evidence',
