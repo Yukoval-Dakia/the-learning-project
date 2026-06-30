@@ -490,5 +490,102 @@
       "ref": "ADR-0034 consistency gate + promotion flow (YUK-454 axis-2/gated lane)",
       "expected_by": "2026-09-30"
     }
+  },
+  "_comment_yuk531_s4_rt1": "YUK-531 (A5 S4 / RT1) — PR-1 dark schema: misconception lifecycle/provenance columns (status/source/seen/evidence) + the new heterogeneous misconception_edge table. No INSERT/UPDATE write path until YUK-531 PR-3 lands the promotion writer (insert misconception + caused_by edge via the accept route, gated behind MISCONCEPTION_PROMOTE_ENABLED). PR-3 DELETES this whole misconception/misconception_edge allowlist block once the write path resolves the gating rationale. Trivial columns (id/created_at/updated_at/archived_at) need no entry.",
+  "misconception.status": {
+    "reason": "misconception RT1 promotion lifecycle column (draft|active); YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert misconception via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception.source": {
+    "reason": "misconception RT1 provenance二态 column (hard|soft); YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert misconception via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception.seen": {
+    "reason": "misconception RT1 recurrence-count column (salience, NOT mastery); YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert misconception via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception.evidence": {
+    "reason": "misconception RT1 provenance event-ptr array column; YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert misconception via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.from_kind": {
+    "reason": "misconception_edge heterogeneous edge polymorphic from-kind; YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer (caused_by edge)",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.from_id": {
+    "reason": "misconception_edge heterogeneous edge from-id; YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer (caused_by edge)",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.to_kind": {
+    "reason": "misconception_edge heterogeneous edge polymorphic to-kind; YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer (caused_by edge)",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.to_id": {
+    "reason": "misconception_edge heterogeneous edge to-id; YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer (caused_by edge)",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.relation_type": {
+    "reason": "misconception_edge relation_type (caused_by|confusable_with|observed_in|experimental:*); YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.weight": {
+    "reason": "misconception_edge CONFIDENCE-only edge salience (NOT mastery); YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.created_by": {
+    "reason": "misconception_edge provenance actor ref; YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
+  },
+  "misconception_edge.proposed_by_ai": {
+    "reason": "misconception_edge AI-proposal flag; YUK-531 PR-1 dark schema, write path lands in PR-3 promotion writer",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-531 PR-3 promotion writer (insert caused_by edge via accept route, MISCONCEPTION_PROMOTE_ENABLED)",
+      "expected_by": "2026-08-31"
+    }
   }
 }

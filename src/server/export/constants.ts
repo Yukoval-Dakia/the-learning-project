@@ -57,7 +57,16 @@
 // mastery_state / kc_typed_state — re-derivable from the event log, but a physical table that
 // needs wipe/insert sweep ordering), so it joins FK_ORDER (NOT BACKUP_EXCLUDED). NEW FK_ORDER
 // table 必 bump (per archive.ts assertEveryTableIsBackedUpOrExcluded)：33 → 34 tables，4.10 → 4.11。
-export const SCHEMA_VERSION = '4.11';
+// YUK-531 (A5 S4 / ADR-0036 RT1): additive `misconception_edge` heterogeneous edge
+// table — AI-proposed/authored 认知关系 (误区→KC caused_by / 误区↔误区 confusable_with /
+// 误区→event observed_in)，peer of knowledge_edge。DORMANT until the promotion writer
+// lands，但备份覆盖是纯声明式 (整行 dump/restore)，故按 knowledge_edge 惯例从第一天进
+// FK_ORDER 备份 (非 BACKUP_EXCLUDED——它非瞬态/派生态)。无 enforced FK (loose text-ref to
+// misconception/knowledge/event ids)，位置不受 PG FK 约束。NEW FK_ORDER table 必 bump
+// (per archive.ts assertEveryTableIsBackedUpOrExcluded)：34 → 35 tables，4.11 → 4.12。
+// （misconception 加 status/source/seen/evidence 列是既有 FK_ORDER 表的 additive 列，随整行
+// dump/restore，不单独 bump——表=bump，列=不 bump 的先例同 item_calibration b_anchor 等。）
+export const SCHEMA_VERSION = '4.12';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -111,6 +120,11 @@ export const FK_ORDER = [
   // FK_ORDER (非 BACKUP_EXCLUDED——它非瞬态/派生态)。无 enforced FK (loose-coupling
   // text-ref)，位置不受 PG FK 约束；紧邻 knowledge/mastery_state 身份簇可读。
   'misconception',
+  // YUK-531 (A5 S4 / ADR-0036 RT1): misconception_edge — heterogeneous 认知关系边
+  // (peer of knowledge_edge). DORMANT until promotion writer。无 enforced FK (loose
+  // text-ref to misconception/knowledge/event)，位置不受 PG FK 约束；紧邻 misconception
+  // 的 RT1 身份/关系簇可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.11 → 4.12)。
+  'misconception_edge',
   'knowledge_edge',
   'source_asset',
   'source_document',
