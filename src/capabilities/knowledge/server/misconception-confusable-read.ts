@@ -125,6 +125,14 @@ export async function loadConfusablePairs(db: Db): Promise<ConfusablePair[]> {
       ),
     )
     .limit(CONFUSABLE_EDGE_CAP);
+  // [no silent caps] — the degenerate-defense cap silently truncates the mesh once hit;
+  // surface it (day-one EMPTY keeps this cold, but a legitimately-grown mesh must not drop
+  // confusable pairs unnoticed). Raise CONFUSABLE_EDGE_CAP if this ever fires in practice.
+  if (edges.length === CONFUSABLE_EDGE_CAP) {
+    console.warn(
+      `[confusable-read] loadConfusablePairs hit CONFUSABLE_EDGE_CAP=${CONFUSABLE_EDGE_CAP}; confusable_with edges beyond the cap were truncated (pairs may be incomplete).`,
+    );
+  }
   if (edges.length === 0) return [];
 
   // Misconception ids needing KC resolution: every from_id (always a misconception) plus
@@ -141,12 +149,15 @@ export async function loadConfusablePairs(db: Db): Promise<ConfusablePair[]> {
   const bestWeightByPair = new Map<string, { a: string; b: string; weight: number }>();
   for (const e of edges) {
     const leftKcs = kcsByMisc.get(e.from_id) ?? [];
-    const rightKcs =
-      e.to_kind === 'knowledge'
-        ? [e.to_id]
-        : e.to_kind === 'misconception'
-          ? (kcsByMisc.get(e.to_id) ?? [])
-          : []; // event endpoint (invalid topology for confusable_with) → no pair.
+    // Resolve the RIGHT endpoint to its underlying KC(s) by to_kind (no nested ternary):
+    let rightKcs: string[];
+    if (e.to_kind === 'knowledge') {
+      rightKcs = [e.to_id]; // knowledge endpoint is already a KC.
+    } else if (e.to_kind === 'misconception') {
+      rightKcs = kcsByMisc.get(e.to_id) ?? []; // resolve the misconception → its KC(s).
+    } else {
+      rightKcs = []; // event endpoint (invalid topology for confusable_with) → no pair.
+    }
     const w = e.weight ?? 1;
     for (const a of leftKcs) {
       for (const b of rightKcs) {
