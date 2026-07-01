@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  type AuditRelationType,
   CORE_RELATION_TYPES,
   type ConsumerEntry,
+  MISCONCEPTION_RELATION_TYPES,
   type StaleConsumer,
+  auditBothUniverses,
   computeDeadEdges,
   findExperimentalRelations,
   reverseCheckConsumers,
@@ -119,6 +122,76 @@ describe('computeDeadEdges — STALE consumers do NOT keep an edge alive', () =>
     );
     expect(result.dead).toHaveLength(0); // every relation still has a live specialized consumer
     expect(result.ok).toBe(false); // but stale drift ⇒ not ok
+  });
+});
+
+describe('auditBothUniverses — per-universe stale isolation (YUK-533)', () => {
+  // OCR Finding 1 regression: stale is reverse-checked PER registry, so a stale marker in
+  // ONE universe must NOT drag the OTHER universe's `ok` to false (before the fix the two
+  // computeDeadEdges calls shared one combined stale list ⇒ cross-universe contamination).
+
+  // readFile shim: content maps file → its exact content; unknown files return null.
+  const shimFrom =
+    (content: Record<string, string>) =>
+    (f: string): string | null =>
+      f in content ? content[f] : null;
+
+  const specialized = (relation: AuditRelationType, file: string, marker: string): ConsumerEntry =>
+    entry({ relation, tier: 'specialized', file, marker });
+
+  // knowledge universe: every CORE relation gets one live specialized consumer.
+  const knowledgeReg: ConsumerEntry[] = CORE_RELATION_TYPES.map((r) =>
+    specialized(r, `src/k-${r}.ts`, `K_${r}`),
+  );
+  const knowledgeContent: Record<string, string> = Object.fromEntries(
+    CORE_RELATION_TYPES.map((r) => [`src/k-${r}.ts`, `K_${r}`]),
+  );
+
+  // misconception universe: every MISCONCEPTION relation gets one live specialized consumer.
+  const miscReg: ConsumerEntry[] = MISCONCEPTION_RELATION_TYPES.map((r) =>
+    specialized(r, `src/m-${r}.ts`, `M_${r}`),
+  );
+  const miscContent: Record<string, string> = Object.fromEntries(
+    MISCONCEPTION_RELATION_TYPES.map((r) => [`src/m-${r}.ts`, `M_${r}`]),
+  );
+
+  it('a stale MISCONCEPTION consumer does NOT drag the knowledge universe ok to false', () => {
+    // Blank the confusable_with consumer file ⇒ its marker vanishes ⇒ misconception stale.
+    const content = {
+      ...knowledgeContent,
+      ...miscContent,
+      'src/m-confusable_with.ts': 'no marker here',
+    };
+    const audit = auditBothUniverses(knowledgeReg, miscReg, shimFrom(content));
+    // knowledge universe is untouched by misconception-side drift.
+    expect(audit.knowledge.ok).toBe(true);
+    expect(audit.knowledge.stale).toHaveLength(0);
+    expect(audit.knowledge.dead).toHaveLength(0);
+    // misconception universe carries its OWN stale (and only that).
+    expect(audit.misconception.ok).toBe(false);
+    expect(audit.misconception.stale).toHaveLength(1);
+    expect(audit.misconception.stale[0].relation).toBe('confusable_with');
+    // combined stale surfaces once, from the misconception side only.
+    expect(audit.stale).toHaveLength(1);
+  });
+
+  it('a stale KNOWLEDGE consumer does NOT drag the misconception universe ok to false', () => {
+    // Blank the prerequisite consumer file ⇒ knowledge stale; misconception content intact.
+    const content = {
+      ...knowledgeContent,
+      ...miscContent,
+      'src/k-prerequisite.ts': 'no marker here',
+    };
+    const audit = auditBothUniverses(knowledgeReg, miscReg, shimFrom(content));
+    // misconception universe is untouched by knowledge-side drift (all live, no stale).
+    expect(audit.misconception.ok).toBe(true);
+    expect(audit.misconception.stale).toHaveLength(0);
+    expect(audit.misconception.dead).toHaveLength(0);
+    // knowledge universe carries its OWN stale.
+    expect(audit.knowledge.ok).toBe(false);
+    expect(audit.knowledge.stale).toHaveLength(1);
+    expect(audit.knowledge.stale[0].relation).toBe('prerequisite');
+    expect(audit.stale).toHaveLength(1);
   });
 });
 

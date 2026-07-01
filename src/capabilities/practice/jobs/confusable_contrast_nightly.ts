@@ -101,15 +101,9 @@ export async function runConfusableContrastNightly(
   const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
   const targets = await discoverConfusableContrastTargets(db);
   if (targets.length === 0) {
-    return {
-      discovered: 0,
-      considered: 0,
-      deferred: 0,
-      dispatched: 0,
-      manual: 0,
-      skipped: 0,
-      failed: 0,
-    };
+    // Zero-target early return — reuse tallyByStatus so the all-zero shape can never drift
+    // from the tally path if a field is added to ConfusableContrastNightlyResult (DRY).
+    return tallyByStatus([], 0);
   }
   // per-run 硬顶：targets 已按 priority 降序（discoverConfusableContrastTargets），slice top-N
   // 即派最高优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
