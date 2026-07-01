@@ -103,6 +103,15 @@ export function glmChatCostCny(promptTokens: number, completionTokens: number): 
   );
 }
 
+// YUK-360 — 百炼 text-embedding-v4 (mem0 search/add embed) cost in CNY 元/M tokens.
+// PLACEHOLDER rate pending owner confirmation (same warning as GLM above).
+const BAILIAN_EMBED_PER_M_CNY = 0.5; // PLACEHOLDER — confirm text-embedding-v4 price
+
+/** Bailian embedding cost in CNY 元 from prompt tokens (no completion bucket). */
+export function bailianEmbedCostCny(promptTokens: number): number {
+  return (promptTokens * BAILIAN_EMBED_PER_M_CNY) / 1_000_000;
+}
+
 /**
  * The cost to record in cost_ledger (USD): trust the endpoint's reported cost
  * when it surfaces one (> 0), else fall back to local token×price. This is the

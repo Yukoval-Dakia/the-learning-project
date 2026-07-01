@@ -81,10 +81,14 @@ export function buildSearchMemoryFactsTool(
   const memoryFactory = opts.memoryFactory ?? defaultMemoryClientFactory;
 
   async function execute(
-    _ctx: ToolContext,
+    ctx: ToolContext,
     input: SearchMemoryFactsInput,
   ): Promise<SearchMemoryFactsOutput> {
-    const client = memoryFactory();
+    const client = memoryFactory
+      ? memoryFactory()
+      : createMemoryClient({
+          costTracking: { db: ctx.db, taskRunId: ctx.taskRunId },
+        });
     // P3 (YUK-351): read through the searchMemories wrapper so soft-superseded
     // facts (P2 reconcile markers) are filtered out and survivors are recency-
     // reranked. `user_id` is still forced to 'self' inside the client wrapper

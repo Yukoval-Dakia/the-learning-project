@@ -4,6 +4,11 @@
 // minor, PR #491: the literal was duplicated in both files).
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import { Memory, type MemoryConfig, type SearchResult } from 'mem0ai/oss';
+import {
+  type MemoryCostTracking,
+  ensureMemoryUsageFetchInstalled,
+  runWithMemoryCostTracking,
+} from './usage-fetch';
 
 // P1 (YUK-341)：mem0 个性化半边换血到 GLM 5.2 + 百炼 v4，LLM/embedder 全走
 // openai-compat provider——mem0ai 3.0.6 的 openai provider 转发 config.baseURL
@@ -67,6 +72,8 @@ export type MemoryClient = {
     opts?: { topK?: number; filters?: Record<string, unknown> },
   ): Promise<SearchResult>;
 };
+
+export type { MemoryCostTracking };
 
 function requireEnv(env: Env, name: string): string {
   const value = env[name]?.trim();
@@ -171,6 +178,8 @@ export function createMemoryClient(
   opts: {
     env?: Env;
     memoryFactory?: (config: MemoryConfig) => Mem0Like;
+    /** YUK-360: when set, fetch shim records memory_extract / memory_embed usage. */
+    costTracking?: MemoryCostTracking;
   } = {},
 ): MemoryClient {
   const env = opts.env ?? process.env;
@@ -178,41 +187,51 @@ export function createMemoryClient(
   // 凭据全经 config.{llm,embedder}.config.apiKey + baseURL，无需任何 process.env
   // 改写——构造纯同步、无全局副作用（旧 withXiaomiBaseUrl env-dance + YUK-232 mutex 已删）。
   const config = createMem0Config(env);
+  if (opts.costTracking) {
+    ensureMemoryUsageFetchInstalled();
+    opts.costTracking.llmModel ??= config.llm.config.model as string;
+    opts.costTracking.embedModel ??= config.embedder.config.model as string;
+  }
   const factory = opts.memoryFactory ?? ((c: MemoryConfig) => new Memory(c));
   const memory = factory(config);
+  const costTracking = opts.costTracking;
 
   return {
     async addEventMemory(input) {
-      return memory.add(eventToText(input), {
-        userId: 'self',
-        metadata: {
-          source: 'event',
-          event_id: input.id,
-          // P3 (YUK-351): provenance of the originating event. Only 'user' reaches
-          // here (the extraction gate rejects 'agent' upstream in triggers.ts), but
-          // persist it so the source actor is auditable on the extracted fact.
-          actor_kind: input.actor_kind,
-          action: input.action,
-          subject_kind: input.subject_kind,
-          subject_id: input.subject_id,
-          affected_scopes: input.affected_scopes,
-          created_at: input.created_at.toISOString(),
-          // P2 (YUK-342): created_ms (epoch milliseconds) for recency filtering;
-          // kind for per-kind reconcile rules. Both flat-spread into mem0 payload
-          // top-level by mem0's metadata handling.
-          created_ms: input.created_at.getTime(),
-          kind: input.kind,
-        },
-        infer: true,
-      });
+      return runWithMemoryCostTracking(costTracking, () =>
+        memory.add(eventToText(input), {
+          userId: 'self',
+          metadata: {
+            source: 'event',
+            event_id: input.id,
+            // P3 (YUK-351): provenance of the originating event. Only 'user' reaches
+            // here (the extraction gate rejects 'agent' upstream in triggers.ts), but
+            // persist it so the source actor is auditable on the extracted fact.
+            actor_kind: input.actor_kind,
+            action: input.action,
+            subject_kind: input.subject_kind,
+            subject_id: input.subject_id,
+            affected_scopes: input.affected_scopes,
+            created_at: input.created_at.toISOString(),
+            // P2 (YUK-342): created_ms (epoch milliseconds) for recency filtering;
+            // kind for per-kind reconcile rules. Both flat-spread into mem0 payload
+            // top-level by mem0's metadata handling.
+            created_ms: input.created_at.getTime(),
+            kind: input.kind,
+          },
+          infer: true,
+        }),
+      );
     },
     async search(query, searchOpts = {}) {
-      const { scope_key: scopeKey, ...filters } = searchOpts.filters ?? {};
-      if (typeof scopeKey === 'string') {
-        filters.affected_scopes ??= { contains: scopeKey };
-      }
-      filters.user_id = 'self';
-      return memory.search(query, { topK: searchOpts.topK, filters });
+      return runWithMemoryCostTracking(costTracking, () => {
+        const { scope_key: scopeKey, ...filters } = searchOpts.filters ?? {};
+        if (typeof scopeKey === 'string') {
+          filters.affected_scopes ??= { contains: scopeKey };
+        }
+        filters.user_id = 'self';
+        return memory.search(query, { topK: searchOpts.topK, filters });
+      });
     },
   };
 }
