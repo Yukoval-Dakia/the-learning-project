@@ -231,6 +231,11 @@ export const fastTestInclude = [
   // per-file (not a glob) for the same reason as above: a `**/*.test.ts` glob would
   // sweep reconcile.db.test.ts into the unit partition (audit:partition P0).
   'src/server/conjectures/reconcile.unit.test.ts',
+  // YUK-531 Tier-1 — misconception HARD-confirm decision layer unit test (pure, no DB).
+  // Enumerated per-file for the same reason: a `**/*.test.ts` glob would sweep
+  // hard-confirm.db.test.ts (the gatherDissociationEvidence reader) into the unit
+  // partition (audit:partition P0). The .db.test.ts falls through to the db partition.
+  'src/server/conjectures/hard-confirm.unit.test.ts',
   'src/server/agency/conjecture/**/*.test.ts',
   // src/server/export — the no-DB units (constants / csv / readme) run fast. The
   // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain
