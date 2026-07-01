@@ -76,15 +76,23 @@ export async function discoverConfusableContrastTargets(
   if (pairs.length === 0) return [];
 
   const targets: QuestionSupplyTarget[] = [];
+  // Memoize subject resolution by first-KC: getEffectiveDomain walks the KC tree (up to
+  // MAX_DEPTH=32 serial SELECTs per call), and confusable pairs frequently share a first KC,
+  // so cache the resolved subject id to avoid the redundant per-pair tree-walk.
+  const subjectByFirstKc = new Map<string, string>();
   for (const pair of pairs) {
     const knowledgeIds = [...pair.knowledgeIds];
     // subject is a DERIVED view (never stored) — resolve from the first KC's effective
     // domain (confusable KCs are typically same-subject). Unresolved → default profile.
-    let subjectId: string;
-    try {
-      subjectId = resolveSubjectProfile(await getEffectiveDomain(db, knowledgeIds[0])).id;
-    } catch {
-      subjectId = resolveSubjectProfile(null).id;
+    const firstKc = knowledgeIds[0];
+    let subjectId = subjectByFirstKc.get(firstKc);
+    if (subjectId === undefined) {
+      try {
+        subjectId = resolveSubjectProfile(await getEffectiveDomain(db, firstKc)).id;
+      } catch {
+        subjectId = resolveSubjectProfile(null).id;
+      }
+      subjectByFirstKc.set(firstKc, subjectId);
     }
     const fingerprint = targetFingerprint({
       subjectId,

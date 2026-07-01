@@ -65,6 +65,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CANONICAL_MISCONCEPTION_RELATIONS } from '@/core/schema/misconception-edge';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -89,17 +90,14 @@ export const CORE_RELATION_TYPES = [
 export type CoreRelationType = (typeof CORE_RELATION_TYPES)[number];
 
 // YUK-533 — the HETEROGENEOUS misconception_edge relation universe (ADR-0036, distinct
-// from the homogeneous knowledge_edge CORE set above; vocabulary =
-// src/core/schema/misconception-edge.ts CANONICAL_MISCONCEPTION_RELATIONS). Added so the
-// dead-edge reverse-audit covers misconception_edge too (it was previously OUT of the
-// audit universe — confusable_with was NOT being flagged either way). Run as a SEPARATE
-// verdict pass (computeDeadEdges accepts the universe), so the knowledge_edge audit shape
-// is unchanged.
-export const MISCONCEPTION_RELATION_TYPES = [
-  'caused_by',
-  'confusable_with',
-  'observed_in',
-] as const;
+// from the homogeneous knowledge_edge CORE set above). The vocabulary is IMPORTED from
+// src/core/schema/misconception-edge.ts (CANONICAL_MISCONCEPTION_RELATIONS) as the SINGLE
+// SOURCE OF TRUTH — no hand-copy here, so the audit universe can never silently drift from
+// the schema's canonical relation set. Added so the dead-edge reverse-audit covers
+// misconception_edge too (it was previously OUT of the audit universe — confusable_with was
+// NOT being flagged either way). Run as a SEPARATE verdict pass (computeDeadEdges accepts
+// the universe), so the knowledge_edge audit shape is unchanged.
+export const MISCONCEPTION_RELATION_TYPES = CANONICAL_MISCONCEPTION_RELATIONS;
 export type MisconceptionRelationType = (typeof MISCONCEPTION_RELATION_TYPES)[number];
 
 /** Any relation_type the dead-edge audit reasons over (knowledge_edge ∪ misconception_edge). */
@@ -466,6 +464,43 @@ export function computeDeadEdges(
   };
 }
 
+/** Per-universe audit result + the combined stale list (for the shared drift report). */
+export type UniverseAudit = {
+  knowledge: DeadEdgeResult;
+  misconception: DeadEdgeResult;
+  /** knowledge ∪ misconception stale (for the single drift section in the report). */
+  stale: StaleConsumer[];
+};
+
+/**
+ * Run the dead-edge reverse-audit over BOTH universes (knowledge_edge + misconception_edge)
+ * with PER-UNIVERSE stale scoping.
+ *
+ * YUK-533 fix — stale MUST be reverse-checked per registry, NOT once over the combined
+ * registry: `DeadEdgeResult.ok = dead.length === 0 && stale.length === 0`, so feeding a
+ * COMBINED stale list into both universes lets a stale marker in ONE universe drag the
+ * OTHER universe's `ok` to false (cross-universe contamination). Each universe now gets
+ * ONLY its own registry's stale, so `knowledge.ok` / `misconception.ok` each reflect solely
+ * their own universe. Exported pure for unit testing.
+ */
+export function auditBothUniverses(
+  knowledgeRegistry: ConsumerEntry[],
+  misconceptionRegistry: ConsumerEntry[],
+  readFile: (relPath: string) => string | null,
+): UniverseAudit {
+  const knowledgeStale = reverseCheckConsumers(knowledgeRegistry, readFile);
+  const misconceptionStale = reverseCheckConsumers(misconceptionRegistry, readFile);
+  return {
+    knowledge: computeDeadEdges(knowledgeRegistry, knowledgeStale, CORE_RELATION_TYPES),
+    misconception: computeDeadEdges(
+      misconceptionRegistry,
+      misconceptionStale,
+      MISCONCEPTION_RELATION_TYPES,
+    ),
+    stale: [...knowledgeStale, ...misconceptionStale],
+  };
+}
+
 /**
  * Scan source for `experimental:*` relation_type literals actually wired in
  * (observability only — experimental edges are exempt from the dead-edge gate by
@@ -544,12 +579,14 @@ function printUniverse(label: string, result: DeadEdgeResult): void {
 
 function main(): void {
   // YUK-533 — reverse-check + dead-edge over BOTH universes (knowledge_edge + the
-  // heterogeneous misconception_edge). Stale is computed once over the combined registry;
-  // each universe gets its own verdict pass via computeDeadEdges(relationTypes).
-  const allRegistry = [...CONSUMER_REGISTRY, ...MISCONCEPTION_CONSUMER_REGISTRY];
-  const stale = reverseCheckConsumers(allRegistry, readFileOrNull);
-  const knowledgeResult = computeDeadEdges(allRegistry, stale, CORE_RELATION_TYPES);
-  const misconceptionResult = computeDeadEdges(allRegistry, stale, MISCONCEPTION_RELATION_TYPES);
+  // heterogeneous misconception_edge). Stale is reverse-checked PER registry so a stale
+  // marker in one universe never drags the other universe's `ok` to false; `stale` here is
+  // the combined list purely for the single shared drift-report section below.
+  const {
+    knowledge: knowledgeResult,
+    misconception: misconceptionResult,
+    stale,
+  } = auditBothUniverses(CONSUMER_REGISTRY, MISCONCEPTION_CONSUMER_REGISTRY, readFileOrNull);
 
   const files = walkSource(SRC_ROOT).sort();
   const experimental = findExperimentalRelations(files, (f) => readFileOrNull(f) ?? '');
