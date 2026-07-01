@@ -181,7 +181,9 @@ export async function promoteConjectureToMisconception(
   //    "AI prior the owner agreed with", NOT a confirmed weakness (the read model renders
   //    source, not status, as the hard/soft badge). On re-induction (a 2nd conjecture for
   //    the same cause×KC) the deterministic id upserts: refresh seen / evidence (latest
-  //    salience snapshot wins), un-archive.
+  //    salience snapshot wins); archived_at is PRESERVED unless the caller passes
+  //    reactivate:true (F1 — a plain re-accept must NOT silently un-archive a retired /
+  //    soft-archived node).
   const parsed = MisconceptionInsert.parse({
     id: misconceptionId,
     title: input.claimMd,
