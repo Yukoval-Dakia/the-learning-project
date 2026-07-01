@@ -22,7 +22,7 @@
 //   - proper-scoring reuse is the SINGLE-POINT skillScorePoint (scoring.ts); the honest
 //     "beats baseline" WINDOW MEAN is Rust-owned + DEFERRED (ADR-0046). Not used here.
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -345,15 +345,61 @@ function predictionScoreToRecord(
 }
 
 /**
- * Gather dissociation evidence for one KC (PURE-READ, no writes). Reads the KC's
- * `experimental:prediction_score` events, maps each to a DissociationRecord (fail-closed),
- * and distils the count summary. Never touches mastery/θ̂/FSRS (ND-5); only reads baseline_p
- * off the LOG events. Structurally cannot confirm hard from today's un-tagged data (see
- * predictionScoreToRecord).
+ * Recover the misconception CAUSE for each backing conjecture (dark-only JOIN, ZERO live writes).
+ * A `prediction_score` payload carries `conjecture_event_id` (reconcile.ts) but NOT
+ * `cause_category`; the cause lives in the conjecture proposal's
+ * `ai_proposal.proposed_change.cause_category` (research_meeting_nightly.ts). Batch-load the
+ * referenced proposals by id and map conjecture_event_id → cause_category. Fail-closed: a
+ * missing / non-conjecture / malformed proposal yields NO entry, so its scores are
+ * UN-attributable and drop out of every cause-scoped gather — a score we cannot attribute to a
+ * specific misconception must never pool into one.
+ */
+async function loadCauseByConjectureId(
+  db: Db,
+  conjectureEventIds: Set<string>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (conjectureEventIds.size === 0) return out;
+  const rows = await db
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(inArray(event.id, [...conjectureEventIds]));
+  for (const r of rows) {
+    const cause = extractConjectureCause(r.payload as Record<string, unknown> | null);
+    if (cause !== null) out.set(r.id, cause);
+  }
+  return out;
+}
+
+/** Read `ai_proposal.proposed_change.cause_category` off a conjecture proposal (fail-closed). */
+function extractConjectureCause(payload: Record<string, unknown> | null): string | null {
+  const aiProposal = (
+    payload as { ai_proposal?: { kind?: unknown; proposed_change?: unknown } } | null
+  )?.ai_proposal;
+  if (!aiProposal || aiProposal.kind !== 'conjecture') return null;
+  const change = aiProposal.proposed_change as { cause_category?: unknown } | null;
+  const cause = change?.cause_category;
+  return typeof cause === 'string' && cause.length > 0 ? cause : null;
+}
+
+/**
+ * Gather dissociation evidence for ONE misconception identity = (cause_category × knowledge_id)
+ * (PURE-READ, no writes). A misconception is keyed on cause×KC (misconception-promote.ts:100), so
+ * this reads the KC's `experimental:prediction_score` events, JOINS each back to its conjecture
+ * proposal (via `conjecture_event_id`) to recover the cause, and keeps ONLY the scores whose cause
+ * matches. Scores from a DIFFERENT cause on the SAME KC belong to a DIFFERENT misconception and
+ * must NEVER pool into this one — pooling would let two single-context rival misconceptions fake a
+ * 2-context spread and forge held-M from rival-M′ evidence (violates doc C1-O1 rival-M′ separation
+ * + ③ VanLehn bug-migration guard). Grouping is by cause×KC, NOT by raw conjecture_event_id: a
+ * later RE-INDUCTION of the same cause×KC is a fresh proposal but the SAME misconception, so its
+ * scores must accrue together. Never touches mastery/θ̂/FSRS (ND-5); only reads baseline_p off the
+ * LOG events. Structurally cannot confirm hard from today's un-tagged data (see
+ * predictionScoreToRecord). The join is a query — counts/enumerates only, ZERO fitted parameter
+ * (n=1 red line held).
  */
 export async function gatherDissociationEvidence(
   db: Db,
-  params: { knowledgeId: string },
+  params: { knowledgeId: string; causeCategory: string },
 ): Promise<DissociationEvidence> {
   const rows = await db
     .select({ id: event.id, payload: event.payload, created_at: event.created_at })
@@ -366,13 +412,24 @@ export async function gatherDissociationEvidence(
     )
     .orderBy(event.created_at);
 
+  // Recover each score's cause by joining back to its conjecture proposal, then keep only the
+  // rows whose (cause × kc) equals the requested misconception identity (never pool causes).
+  const conjectureEventIds = new Set<string>();
+  for (const r of rows) {
+    const cid = (r.payload as { conjecture_event_id?: unknown } | null)?.conjecture_event_id;
+    if (typeof cid === 'string' && cid.length > 0) conjectureEventIds.add(cid);
+  }
+  const causeByConjectureId = await loadCauseByConjectureId(db, conjectureEventIds);
+
   const records: DissociationRecord[] = [];
   for (const r of rows) {
-    const rec = predictionScoreToRecord(
-      r.id,
-      r.created_at,
-      r.payload as Record<string, unknown> | null,
-    );
+    const payload = r.payload as Record<string, unknown> | null;
+    const cid = payload?.conjecture_event_id;
+    const cause = typeof cid === 'string' ? (causeByConjectureId.get(cid) ?? null) : null;
+    // Identity-scoped: an un-attributable score (no resolvable cause) or a mismatched cause is
+    // NOT this misconception's evidence — drop it so rival causes never pool (the FAIL-2 fix).
+    if (cause !== params.causeCategory) continue;
+    const rec = predictionScoreToRecord(r.id, r.created_at, payload);
     if (rec) records.push(rec);
   }
   return summarizeDissociation(records);
