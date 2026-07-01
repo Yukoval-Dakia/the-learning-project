@@ -283,6 +283,71 @@ describe('gatherDissociationEvidence', () => {
     expect(decideDissociation(method, permissive)).toBe('INSUFFICIENT');
   });
 
+  it('drops a mis-stamped score whose payload kc disagrees with its proposal kc (Finding-3)', async () => {
+    const db = testDb();
+    // Two SAME-cause conjectures on DIFFERENT KCs.
+    await writeConjecture('cj_a', 'concept', 'kn_a');
+    await writeConjecture('cj_b', 'concept', 'kn_b');
+    // One legit, fully-crucial discriminating score for (concept × kn_a).
+    await writeScore(
+      {
+        knowledge_id: 'kn_a',
+        conjecture_event_id: 'cj_a',
+        predicted_p: 0.2,
+        baseline_p: 0.8,
+        outcome: 0,
+        resolution: 'confirmed',
+        probe_result_event_id: 'pr_a',
+        discriminating: true,
+        m_diagnostic: true,
+        context: 'symbolic',
+        session_window: '2026-07-01',
+        judge_run_id: 'ra',
+      },
+      new Date('2026-07-01T00:00:00Z'),
+    );
+    // A MIS-STAMPED score: payload.knowledge_id says kn_a (matches the SQL kc pre-filter AND the
+    // OLD cause-only match, since cj_b's cause is ALSO 'concept'), but its conjecture_event_id
+    // points at cj_b — a conjecture actually about kn_b. Under the old cause-only filter this would
+    // pool into (concept × kn_a) as a fake SECOND discriminating context and forge the spread. The
+    // proposal-identity cross-check drops it: cj_b's proposal kc (kn_b) ≠ requested kc (kn_a).
+    await writeScore(
+      {
+        knowledge_id: 'kn_a',
+        conjecture_event_id: 'cj_b',
+        predicted_p: 0.25,
+        baseline_p: 0.75,
+        outcome: 0,
+        resolution: 'confirmed',
+        probe_result_event_id: 'pr_mis',
+        discriminating: true,
+        m_diagnostic: true,
+        context: 'real_world',
+        session_window: '2026-07-02',
+        judge_run_id: 'rmis',
+      },
+      new Date('2026-07-02T00:00:00Z'),
+    );
+
+    const ev = await gatherDissociationEvidence(db, {
+      knowledgeId: 'kn_a',
+      causeCategory: 'concept',
+    });
+    // Only the correctly-stamped pr_a survives; pr_mis is dropped, so the fake 2nd context (and
+    // thus the fake nDedup=2 / contextSpread=2) never forms.
+    expect(ev.nDedup).toBe(1);
+    expect(ev.contextSpread).toBe(1);
+    expect(ev.crucialConfirmedCount).toBe(1);
+    // With a single context the identity is INSUFFICIENT even under the most permissive opts.
+    expect(
+      decideDissociation(ev, {
+        hardConfirmEnabled: true,
+        hasRivalProbe: true,
+        ownerFreshlyConfirmed: true,
+      }),
+    ).toBe('INSUFFICIENT');
+  });
+
   it('skips malformed prediction_score rows (fail-closed) without throwing', async () => {
     const db = testDb();
     // Backing conjecture so the malformed row PASSES the cause filter and is dropped by the

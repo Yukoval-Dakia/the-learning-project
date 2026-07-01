@@ -308,6 +308,15 @@ function predictionScoreToRecord(
   const outcome = payload.outcome;
   const resolution = payload.resolution;
   if (typeof predictedP !== 'number' || !Number.isFinite(predictedP)) return null;
+  // baseline_p is a LOAD-BEARING scoring fact — DROPPED fail-closed (whole record) on any
+  // null/NaN/±Infinity/non-number, NOT passed through as the three-value null. The live producer
+  // (reconcile.ts) always writes it from baseline_p_at_induction = z.number().min(0).max(1), so a
+  // null here is ONLY an anomaly (manual edit / drift), never a legitimate cold start. The
+  // `baselineP: number | null` record type is defense-in-depth INSIDE the gates
+  // (isDiscriminatingContext/isCrucial read null as non-discriminating and never crash), NOT a
+  // signal to synthesize null records: a null baseline can never be crucial/discriminating, so
+  // KEEPing it would only let an anomaly inflate the n_dedup independence AND-gate for zero real
+  // signal. DROP = strictly safer; KEEP = weaken-fail-closed-for-nothing (Finding-2, kept as-is).
   if (typeof baselineP !== 'number' || !Number.isFinite(baselineP)) return null;
   if (outcome !== 0 && outcome !== 1) return null;
   if (resolution !== 'confirmed' && resolution !== 'retired') return null;
@@ -344,58 +353,84 @@ function predictionScoreToRecord(
   };
 }
 
+/** The (cause_category × knowledge_id) IDENTITY a conjecture proposal asserts. */
+interface ConjectureIdentity {
+  cause_category: string;
+  knowledge_id: string;
+}
+
 /**
- * Recover the misconception CAUSE for each backing conjecture (dark-only JOIN, ZERO live writes).
- * A `prediction_score` payload carries `conjecture_event_id` (reconcile.ts) but NOT
- * `cause_category`; the cause lives in the conjecture proposal's
- * `ai_proposal.proposed_change.cause_category` (research_meeting_nightly.ts). Batch-load the
- * referenced proposals by id and map conjecture_event_id → cause_category. Fail-closed: a
- * missing / non-conjecture / malformed proposal yields NO entry, so its scores are
- * UN-attributable and drop out of every cause-scoped gather — a score we cannot attribute to a
- * specific misconception must never pool into one.
+ * Recover the misconception IDENTITY (cause_category × knowledge_id) for each backing conjecture
+ * (dark-only JOIN, ZERO live writes). A `prediction_score` payload carries `conjecture_event_id`
+ * (reconcile.ts) plus its OWN `knowledge_id`, but that copy is NOT the identity source of truth;
+ * the authoritative identity lives in the conjecture proposal's
+ * `ai_proposal.proposed_change.{cause_category,knowledge_id}` (research_meeting_nightly.ts).
+ * Batch-load the referenced proposals by id and map conjecture_event_id → identity. Fail-closed: a
+ * missing / non-conjecture / malformed proposal (EITHER axis absent) yields NO entry, so its scores
+ * are UN-attributable and drop out of every gather — a score we cannot attribute to a specific
+ * (cause×KC) misconception must never pool into one.
  */
-async function loadCauseByConjectureId(
+async function loadIdentityByConjectureId(
   db: Db,
   conjectureEventIds: Set<string>,
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+): Promise<Map<string, ConjectureIdentity>> {
+  const out = new Map<string, ConjectureIdentity>();
   if (conjectureEventIds.size === 0) return out;
   const rows = await db
     .select({ id: event.id, payload: event.payload })
     .from(event)
     .where(inArray(event.id, [...conjectureEventIds]));
   for (const r of rows) {
-    const cause = extractConjectureCause(r.payload as Record<string, unknown> | null);
-    if (cause !== null) out.set(r.id, cause);
+    const identity = extractConjectureIdentity(r.payload as Record<string, unknown> | null);
+    if (identity !== null) out.set(r.id, identity);
   }
   return out;
 }
 
-/** Read `ai_proposal.proposed_change.cause_category` off a conjecture proposal (fail-closed). */
-function extractConjectureCause(payload: Record<string, unknown> | null): string | null {
+/**
+ * Read the (cause_category, knowledge_id) IDENTITY off a conjecture proposal
+ * (`ai_proposal.proposed_change`), fail-closed. BOTH axes must be present non-empty strings, else
+ * null (⇒ the score is un-attributable and drops out of every gather). The knowledge_id read here
+ * is the identity SOURCE OF TRUTH — the score payload's own knowledge_id is cross-checked against
+ * it, never trusted alone (Finding-3 fix).
+ */
+function extractConjectureIdentity(
+  payload: Record<string, unknown> | null,
+): ConjectureIdentity | null {
   const aiProposal = (
     payload as { ai_proposal?: { kind?: unknown; proposed_change?: unknown } } | null
   )?.ai_proposal;
   if (!aiProposal || aiProposal.kind !== 'conjecture') return null;
-  const change = aiProposal.proposed_change as { cause_category?: unknown } | null;
+  const change = aiProposal.proposed_change as {
+    cause_category?: unknown;
+    knowledge_id?: unknown;
+  } | null;
   const cause = change?.cause_category;
-  return typeof cause === 'string' && cause.length > 0 ? cause : null;
+  const kc = change?.knowledge_id;
+  if (typeof cause !== 'string' || cause.length === 0) return null;
+  if (typeof kc !== 'string' || kc.length === 0) return null;
+  return { cause_category: cause, knowledge_id: kc };
 }
 
 /**
  * Gather dissociation evidence for ONE misconception identity = (cause_category × knowledge_id)
  * (PURE-READ, no writes). A misconception is keyed on cause×KC (misconception-promote.ts:100), so
  * this reads the KC's `experimental:prediction_score` events, JOINS each back to its conjecture
- * proposal (via `conjecture_event_id`) to recover the cause, and keeps ONLY the scores whose cause
- * matches. Scores from a DIFFERENT cause on the SAME KC belong to a DIFFERENT misconception and
- * must NEVER pool into this one — pooling would let two single-context rival misconceptions fake a
- * 2-context spread and forge held-M from rival-M′ evidence (violates doc C1-O1 rival-M′ separation
- * + ③ VanLehn bug-migration guard). Grouping is by cause×KC, NOT by raw conjecture_event_id: a
- * later RE-INDUCTION of the same cause×KC is a fresh proposal but the SAME misconception, so its
- * scores must accrue together. Never touches mastery/θ̂/FSRS (ND-5); only reads baseline_p off the
- * LOG events. Structurally cannot confirm hard from today's un-tagged data (see
- * predictionScoreToRecord). The join is a query — counts/enumerates only, ZERO fitted parameter
- * (n=1 red line held).
+ * proposal (via `conjecture_event_id`) to recover the proposal's AUTHORITATIVE (cause × kc)
+ * identity, and keeps ONLY the scores whose proposal identity equals the requested (cause×KC). The
+ * proposal — not the score payload — is the identity source of truth on BOTH axes: because the SQL
+ * pre-filter already pins score.payload.knowledge_id == params.knowledgeId, re-checking the
+ * proposal's knowledge_id here CROSS-VALIDATES the two kc copies, so a mis-stamped score whose
+ * conjecture points at another KC's same-cause conjecture can never sneak into this (cause×KC)
+ * (Finding-3). Scores from a DIFFERENT cause OR a different kc belong to a DIFFERENT misconception
+ * and must NEVER pool into this one — pooling would let two single-context rival misconceptions
+ * fake a 2-context spread and forge held-M from rival-M′ evidence (violates doc C1-O1 rival-M′
+ * separation + ③ VanLehn bug-migration guard). Grouping is by cause×KC, NOT by raw
+ * conjecture_event_id: a later RE-INDUCTION of the same cause×KC is a fresh proposal but the SAME
+ * misconception, so its scores must accrue together. Never touches mastery/θ̂/FSRS (ND-5); only
+ * reads baseline_p off the LOG events. Structurally cannot confirm hard from today's un-tagged data
+ * (see predictionScoreToRecord). The join is a query — counts/enumerates only, ZERO fitted
+ * parameter (n=1 red line held).
  */
 export async function gatherDissociationEvidence(
   db: Db,
@@ -412,23 +447,28 @@ export async function gatherDissociationEvidence(
     )
     .orderBy(event.created_at);
 
-  // Recover each score's cause by joining back to its conjecture proposal, then keep only the
-  // rows whose (cause × kc) equals the requested misconception identity (never pool causes).
+  // Recover each score's AUTHORITATIVE identity by joining back to its conjecture proposal, then
+  // keep only the rows whose proposal (cause × kc) equals the requested misconception identity.
   const conjectureEventIds = new Set<string>();
   for (const r of rows) {
     const cid = (r.payload as { conjecture_event_id?: unknown } | null)?.conjecture_event_id;
     if (typeof cid === 'string' && cid.length > 0) conjectureEventIds.add(cid);
   }
-  const causeByConjectureId = await loadCauseByConjectureId(db, conjectureEventIds);
+  const identityByConjectureId = await loadIdentityByConjectureId(db, conjectureEventIds);
 
   const records: DissociationRecord[] = [];
   for (const r of rows) {
     const payload = r.payload as Record<string, unknown> | null;
     const cid = payload?.conjecture_event_id;
-    const cause = typeof cid === 'string' ? (causeByConjectureId.get(cid) ?? null) : null;
-    // Identity-scoped: an un-attributable score (no resolvable cause) or a mismatched cause is
-    // NOT this misconception's evidence — drop it so rival causes never pool (the FAIL-2 fix).
-    if (cause !== params.causeCategory) continue;
+    const identity = typeof cid === 'string' ? (identityByConjectureId.get(cid) ?? null) : null;
+    // Identity-scoped on the PROPOSAL (source of truth, both axes). Drop the score when it is
+    // un-attributable (no resolvable proposal) OR its proposal (cause × kc) differs from the
+    // requested identity — so rival causes never pool (FAIL-2) AND a mis-stamped score whose
+    // payload kc disagrees with its proposal kc satisfies NEITHER pool (cross-validation against
+    // the SQL kc pre-filter, Finding-3). Never trust the score payload's own knowledge_id here.
+    if (identity === null) continue;
+    if (identity.cause_category !== params.causeCategory) continue;
+    if (identity.knowledge_id !== params.knowledgeId) continue;
     const rec = predictionScoreToRecord(r.id, r.created_at, payload);
     if (rec) records.push(rec);
   }
