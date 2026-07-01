@@ -385,6 +385,7 @@ const GAP_KIND_BASE_PRIORITY: Record<SupplyGapKind, number> = {
   diagnostic: 0.7,
   source_quality: 0.5,
   format_diversity: 0.4,
+  confusable_contrast: 0.6, // YUK-533 — 对齐 target-discovery GAP_BASE_PRIORITY（单一真相在那边）
 };
 
 function residualReason(demand: Demand, gap: number): string {
