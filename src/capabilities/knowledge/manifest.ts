@@ -152,15 +152,21 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./jobs/kc_dedup_nightly').then((m) => m.buildKcDedupNightlyHandler),
       },
       {
-        // YUK-543: report-only merge-attribution sweep. Low-frequency safety net for the residual
-        // async-grading race that applyMerge's in-tx locking narrows but cannot fully close (a stale
-        // pre-merge grading upsert can re-orphan a mastery/fsrs row keyed to a merged-away KC). It is
-        // REPORT-ONLY — writes NOTHING, only logs any dangling surface for the owner to repair via
-        // scripts/backfill-merge-attribution.ts. Weekly (Mon 04:00 Asia/Shanghai — off the nightly
-        // cluster). queue 'fast' (pure read census, no LLM, no write to DLQ-protect). Auto-mounted.
+        // YUK-543/YUK-544: merge-attribution sweep — census report + BOUNDED AUTO-REPAIR. Low-frequency
+        // safety net for the residual async-grading race that applyMerge's in-tx locking narrows but
+        // cannot fully close (a stale pre-merge grading upsert can re-orphan a mastery/fsrs row keyed
+        // to a merged-away KC). Phase 1 censuses + reports the counts (YUK-543 shape preserved);
+        // phase 2 (YUK-544, spec Appendix C D-C) auto-invokes the SAME idempotent
+        // repairMergeAttributionForFromId the accept path uses on the drifted subset — never raw table
+        // writes, never merges/archives a KC itself — bounded by a per-run hard cap (leftover defers to
+        // next run), with a forensic `experimental:merge_attribution_repaired` event per repaired
+        // from_id and a post-repair zero re-census. Weekly (Mon 04:00 Asia/Shanghai — off the nightly
+        // cluster). queue 'llm': now that the sweep WRITES (repairs + audit events), it joins the
+        // backfill family's shared DLQ/retry bucket like kc_dedup_nightly above ('fast' would skip the
+        // DLQ, and a repair write deserves DLQ retry coverage like its siblings). Auto-mounted.
         name: 'merge_attribution_sweep',
         schedule: { cron: '0 4 * * 1', tz: 'Asia/Shanghai' },
-        queue: 'fast',
+        queue: 'llm',
         load: () =>
           import('./jobs/merge_attribution_sweep').then((m) => m.buildMergeAttributionSweepHandler),
       },

@@ -11,8 +11,12 @@
 //   2. ASYNC-GRADING RACE RESIDUAL — a background grading worker whose knowledgeIds arg was resolved
 //      from a stale pre-merge read can, AFTER the merge commits, upsert a fresh mastery/fsrs row keyed
 //      to the archived from_id (the in-tx advisory lock narrows but cannot fully close this without
-//      touching the grading path itself). A low-frequency report-only sweep (registered as a knowledge
-//      capability job) surfaces any such residual for the owner — zero writes.
+//      touching the grading path itself). A low-frequency recurring sweep (registered as a knowledge
+//      capability job, jobs/merge_attribution_sweep.ts) DETECTS any such residual AND — per YUK-544
+//      (spec §4 decision 4, Appendix C D-C) — AUTO-INVOKES this same idempotent repair on the drifted
+//      subset (bounded by a per-run hard cap; the rest continues next run). The sweep does NOT re-run
+//      raw table writes: it reuses `repairMergeAttributionForFromId` verbatim, so the recurring
+//      auto-repair and the live accept path can never diverge in HOW they repair.
 //
 // Idempotent by construction: every repair helper queries "rows still referencing fromId" and no-ops
 // when none exist, so a second run finds nothing (the backfill test asserts this).
@@ -110,7 +114,7 @@ export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolut
   return resolutions;
 }
 
-// ── read-only orphan-surface census (report-only sweep) ──────────────────────────────────────────
+// ── read-only orphan-surface census (shared by the census report + the bounded auto-repair sweep) ──
 
 export interface OrphanSurfaceCounts {
   questions: number;
@@ -124,7 +128,11 @@ export interface OrphanSurfaceCounts {
   misconceptionEdges: number;
 }
 
-function surfaceTotal(c: OrphanSurfaceCounts): number {
+// Exported so the auto-repair sweep (jobs/merge_attribution_sweep.ts) shares the SAME
+// per-surface tally used by the dry-run census here — the sweep's drift-detection predicate
+// (`surfaceTotal(census) > 0`) and its post-repair zero-assertion must count identically to
+// this module, never a re-derived copy that could drift (YUK-544).
+export function surfaceTotal(c: OrphanSurfaceCounts): number {
   return (
     c.questions +
     c.learningItems +
@@ -262,7 +270,12 @@ export interface MergeAttributionResult {
 }
 
 export interface RunMergeAttributionOpts {
-  /** true = READ-ONLY census (the recurring sweep); false = repair (the one-time backfill). */
+  /**
+   * true = READ-ONLY census (the CLI `--dry-run` mode); false = repair (the one-time backfill).
+   * The recurring sweep (jobs/merge_attribution_sweep.ts) no longer routes through this flag —
+   * since YUK-544 it composes resolveMergeChains / countOrphanSurfaces /
+   * repairMergeAttributionForFromId directly for its census + bounded auto-repair phases.
+   */
   dryRun: boolean;
   now?: Date;
 }
@@ -270,7 +283,7 @@ export interface RunMergeAttributionOpts {
 /**
  * Resolve every absorbed KC to its terminal live winner, then either REPAIR each surface (write mode,
  * via repairMergeAttributionForFromId — the SAME function applyMerge uses) or COUNT the still-dangling
- * surfaces (dry-run / sweep — zero writes). Idempotent in write mode: a second run repairs nothing.
+ * surfaces (dry-run — zero writes). Idempotent in write mode: a second run repairs nothing.
  */
 export async function runMergeAttributionBackfill(
   db: Db,
