@@ -175,6 +175,59 @@ export async function upsertMasteryState(
 }
 
 /**
+ * YUK-543 — repair `mastery_state` when a KC (`fromId`) is merged into another (`intoId`).
+ *
+ * NEVER merges θ̂ / recomputes any statistic (the n=0/n=1 "no invented merge math" red line,
+ * spec §6 check 2). 3-case identity-rename/freeze-and-log:
+ *   - neither row exists → 'noop';
+ *   - only `fromId`'s row exists → RENAME (`UPDATE subject_id = intoId`) → 'renamed';
+ *   - both rows exist → FREEZE (leave both untouched; the `fromId` row goes INERT because every
+ *     live reader keys off the rewritten question tags / `into_id`) + log → 'frozen'.
+ *
+ * Serializes against the ONLY live concurrent writer (`updateThetaForAttempt`, background grading)
+ * by taking the SHARED `fsrs:knowledge:<id>` advisory lock for BOTH ids in sorted string order
+ * (mirrors state.ts's own deadlock-safe acquisition) — so a grading upsert of either id blocks
+ * until the merge tx commits, then resolves against the post-rename state. Released at tx commit.
+ */
+export async function retireMasteryStateOnMerge(
+  tx: Tx,
+  fromId: string,
+  intoId: string,
+): Promise<'noop' | 'renamed' | 'frozen'> {
+  // Sorted acquire of BOTH ids' locks (SAME namespace as updateThetaForAttempt) → no deadlock.
+  for (const id of [fromId, intoId].sort()) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
+  }
+  const rows = await tx
+    .select({ subject_id: mastery_state.subject_id })
+    .from(mastery_state)
+    .where(
+      and(
+        eq(mastery_state.subject_kind, 'knowledge'),
+        inArray(mastery_state.subject_id, [fromId, intoId]),
+      ),
+    );
+  const present = new Set(rows.map((r) => r.subject_id));
+  if (!present.has(fromId)) return 'noop';
+  if (!present.has(intoId)) {
+    await tx
+      .update(mastery_state)
+      .set({ subject_id: intoId, updated_at: new Date() })
+      .where(
+        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, fromId)),
+      );
+    return 'renamed';
+  }
+  // Both sides carry evidence — FREEZE: no blind θ̂ combine (would fabricate a statistic). The
+  // from-row is retained for forensics but is inert (no reader scans an unrewritten subject_id).
+  console.warn(
+    '[retireMasteryStateOnMerge] both from+into have mastery_state — freezing from-row (no θ̂ merge)',
+    { fromId, intoId },
+  );
+  return 'frozen';
+}
+
+/**
  * Read the current p(L) state row for a knowledge node, or null (cold start).
  */
 export async function getMasteryState(

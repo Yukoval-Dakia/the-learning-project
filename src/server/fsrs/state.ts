@@ -8,7 +8,7 @@
 // table outside the Step 3 migration script. The Step 9.L invariant audit
 // enforces this.
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -60,6 +60,56 @@ export async function upsertFsrsState(db: DbLike, input: UpsertFsrsStateInput): 
         updated_at: now,
       },
     });
+}
+
+/**
+ * YUK-543 — repair `material_fsrs_state` (R-axis scheduling projection) when a KC (`fromId`) is
+ * merged into another (`intoId`). NEVER merges FSRS Card state / recomputes stability or due dates
+ * (no invented merge math; spec §6). 3-case identity-rename/freeze-and-log, mirroring
+ * `retireMasteryStateOnMerge`:
+ *   - neither row → 'noop'; only from → RENAME `subject_id` → 'renamed'; both → FREEZE + log →
+ *     'frozen' (the from-row is inert — the R-axis reader keys off the rewritten `into_id`).
+ * Takes the SAME `fsrs:knowledge:<id>` advisory-lock namespace (shared with mastery_state's live
+ * writer + submit.ts / paper-submit.ts) for BOTH ids, sorted, so a concurrent review-submit upsert
+ * serializes against the merge. Only `subject_kind='knowledge'` rows are per-KC (legacy
+ * `subject_kind='question'` rows are keyed by question id, never a KC id, so they never match).
+ */
+export async function retireFsrsStateOnMerge(
+  tx: Tx,
+  fromId: string,
+  intoId: string,
+): Promise<'noop' | 'renamed' | 'frozen'> {
+  for (const id of [fromId, intoId].sort()) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
+  }
+  const rows = await tx
+    .select({ subject_id: material_fsrs_state.subject_id })
+    .from(material_fsrs_state)
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, 'knowledge'),
+        inArray(material_fsrs_state.subject_id, [fromId, intoId]),
+      ),
+    );
+  const present = new Set(rows.map((r) => r.subject_id));
+  if (!present.has(fromId)) return 'noop';
+  if (!present.has(intoId)) {
+    await tx
+      .update(material_fsrs_state)
+      .set({ subject_id: intoId, updated_at: new Date() })
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          eq(material_fsrs_state.subject_id, fromId),
+        ),
+      );
+    return 'renamed';
+  }
+  console.warn(
+    '[retireFsrsStateOnMerge] both from+into have material_fsrs_state — freezing from-row (no FSRS merge)',
+    { fromId, intoId },
+  );
+  return 'frozen';
 }
 
 export interface FsrsStateRow {
