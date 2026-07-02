@@ -243,11 +243,21 @@ export async function runMergeAttributionSweep(
     surfaces: number;
   }[] = [];
   for (const [winnerId, fromIds] of repairByWinner) {
-    // FULL absorbed set for this winner (not just the capped subset) so loser→loser edges collapse
-    // identically to the accept path / one-time backfill.
-    const mergeFromIds = new Set(allFromIdsByWinner.get(winnerId) ?? fromIds);
     let outcome: WinnerTxOutcome;
     try {
+      // FULL absorbed set for this winner (not just the capped subset) so loser→loser edges collapse
+      // identically to the accept path / one-time backfill. No silent fallback (PR #695 O3, same
+      // doctrine as the chain lookup below): repairing with only the capped subset would break that
+      // contract (loser→loser edges dangle), so a missing map entry — unreachable today, since
+      // repairByWinner's winners come from the same resolvedFromIds that built the map — fails LOUD
+      // and degrades to a skipped winner via the per-winner catch below.
+      const allFromIds = allFromIdsByWinner.get(winnerId);
+      if (!allFromIds) {
+        throw new Error(
+          `winner ${winnerId} missing from the full absorbed-set map — refusing to repair with the capped subset (loser→loser edge collapse requires the FULL loser set)`,
+        );
+      }
+      const mergeFromIds = new Set(allFromIds);
       outcome = await db.transaction(async (tx): Promise<WinnerTxOutcome> => {
         // TOCTOU re-verify — the census resolved winnerId WITHOUT any lock; a concurrent
         // accept-merge can archive this winner (absorbing it into a further node) in the window.
@@ -349,6 +359,10 @@ export async function runMergeAttributionSweep(
           caused_by_event_id: null,
           task_run_id: null,
           cost_micro_usd: null,
+          // ADR-0021 opt-OUT of memory ingestion: this is an internal forensic breadcrumb, NOT user
+          // activity — without the stamp the outbox poller (memory/triggers.ts, WHERE ingest_at IS
+          // NULL) would feed it to Mem0 (mirrors reconcile.ts / variant_gen.ts / auto-enroll.ts).
+          ingest_at: now,
         });
         eventsWritten += 1;
       } catch (err) {
@@ -378,19 +392,37 @@ export async function runMergeAttributionSweep(
   // async-grading write racing in AFTER the repair committed — the exact residual this sweep exists
   // for. A non-zero residual is a loud signal, NOT a throw — report semantics hold, next run retries.
   let residualAfterRepair = 0;
-  for (const { fromId } of repaired) {
-    const census = await countOrphanSurfaces(db, fromId);
-    residualAfterRepair += surfaceTotal(census);
-  }
-  if (residualAfterRepair > 0) {
+  try {
+    for (const { fromId } of repaired) {
+      const census = await countOrphanSurfaces(db, fromId);
+      residualAfterRepair += surfaceTotal(census);
+    }
+    if (residualAfterRepair > 0) {
+      console.error(
+        `[merge_attribution_sweep] POST-REPAIR RESIDUAL — ${residualAfterRepair} surfaces STILL dangling on ${repaired.length} repaired from_ids (expected 0); next run will retry`,
+        { residualAfterRepair, repairedFromIds: repaired.length, runId },
+      );
+    } else {
+      console.log(
+        `[merge_attribution_sweep] auto-repair clean — ${repaired.length} from_ids repaired, ${surfacesRepaired} surfaces, post-repair census 0`,
+        {
+          repairedFromIds: repaired.length,
+          surfacesRepaired,
+          deferredFromIds,
+          failedWinners,
+          runId,
+        },
+      );
+    }
+  } catch (err) {
+    // The verification read must not break the "repair phase never rethrows" contract (PR #695 CR1):
+    // the repairs + events above are already committed, so a transient read failure here would bubble
+    // to the handler → pg-boss retry/DLQ for work that is DONE. Log loudly instead — the next weekly
+    // run re-censuses everything anyway. (residualAfterRepair stays at its partial tally.)
     console.error(
-      `[merge_attribution_sweep] POST-REPAIR RESIDUAL — ${residualAfterRepair} surfaces STILL dangling on ${repaired.length} repaired from_ids (expected 0); next run will retry`,
-      { residualAfterRepair, repairedFromIds: repaired.length, runId },
-    );
-  } else {
-    console.log(
-      `[merge_attribution_sweep] auto-repair clean — ${repaired.length} from_ids repaired, ${surfacesRepaired} surfaces, post-repair census 0`,
-      { repairedFromIds: repaired.length, surfacesRepaired, deferredFromIds, failedWinners, runId },
+      '[merge_attribution_sweep] POST-REPAIR RE-CENSUS FAILED — repairs committed; verification unavailable this run; next weekly run re-censuses',
+      { repairedFromIds: repaired.length, runId },
+      err,
     );
   }
 
