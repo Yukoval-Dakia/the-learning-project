@@ -285,9 +285,26 @@ export const MergeRepairEntry = z.object({
   question_ids_rewritten: z.array(z.string()),
   learning_item_ids_rewritten: z.array(z.string()),
   goal_ids_rewritten: z.array(z.string()),
-  // new_edge_id === null ⇒ the old edge was archived-as-duplicate (a live edge with
-  // the rewritten (from,to,relation_type) already existed), so no new edge was created.
-  edges_rewired: z.array(z.object({ old_edge_id: z.string(), new_edge_id: z.string().nullable() })),
+  // Per-edge forensic outcome (YUK-543 review R4 — a bare `new_edge_id: null` overloaded three
+  // distinct causes). `new_edge_id` is non-null for 'rewired' (fresh edge created) and
+  // 'reactivated' (an archived tombstone already holding the rewritten UNIQUE key was un-archived
+  // instead — R2); null for the three archive-only outcomes: 'collapsed_self_loop' (both endpoints
+  // map to into_id), 'archived_duplicate' (a LIVE edge already holds the rewritten key),
+  // 'archived_dangling' (the non-into endpoint is archived/missing — degenerate edge, dropped
+  // with a warn).
+  edges_rewired: z.array(
+    z.object({
+      old_edge_id: z.string(),
+      new_edge_id: z.string().nullable(),
+      outcome: z.enum([
+        'rewired',
+        'reactivated',
+        'collapsed_self_loop',
+        'archived_duplicate',
+        'archived_dangling',
+      ]),
+    }),
+  ),
   mastery_state: z.enum(['noop', 'renamed', 'frozen']),
   fsrs_state: z.enum(['noop', 'renamed', 'frozen']),
   axis_state: z.enum(['noop', 'renamed', 'frozen']),
