@@ -8,12 +8,13 @@
 // table outside the Step 3 migration script. The Step 9.L invariant audit
 // enforces this.
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { material_fsrs_state } from '@/db/schema';
+import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
@@ -79,9 +80,7 @@ export async function retireFsrsStateOnMerge(
   fromId: string,
   intoId: string,
 ): Promise<'noop' | 'renamed' | 'frozen'> {
-  for (const id of [fromId, intoId].sort()) {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
-  }
+  await acquireSortedAdvisoryLocks(tx, 'fsrs:knowledge', [fromId, intoId]);
   const rows = await tx
     .select({ subject_id: material_fsrs_state.subject_id })
     .from(material_fsrs_state)
