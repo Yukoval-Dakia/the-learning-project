@@ -4,9 +4,20 @@
 // table is gone. Seed propose events directly + assert event-driven flow.
 
 import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
-import { event, knowledge, materialized_id_index } from '@/db/schema';
+import {
+  event,
+  goal,
+  kc_typed_state,
+  knowledge,
+  knowledge_edge,
+  learning_item,
+  mastery_state,
+  materialized_id_index,
+  misconception_edge,
+  question,
+} from '@/db/schema';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -527,6 +538,312 @@ describe('applyMerge', () => {
         expected_versions: { k_from1: 2 },
       }),
     ).rejects.toThrow(/stale.*into_id.*k_into_missing/i);
+  });
+});
+
+// YUK-543 — merge attribution repair across the 9 surfaces.
+describe('applyMerge — YUK-543 attribution repair', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const CREATED_BY = { actor_kind: 'user', actor_ref: 'self' } as never;
+  async function insertQ(id: string, kids: string[]) {
+    const now = new Date();
+    await testDb().insert(question).values({
+      id,
+      kind: 'short_answer',
+      prompt_md: 'p',
+      knowledge_ids: kids,
+      source: 'test',
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  async function insertLI(id: string, kids: string[]) {
+    const now = new Date();
+    await testDb().insert(learning_item).values({
+      id,
+      source: 'test',
+      title: 't',
+      knowledge_ids: kids,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  async function insertG(id: string, scope: string[]) {
+    const now = new Date();
+    await testDb().insert(goal).values({
+      id,
+      title: 'g',
+      source: 'test',
+      scope_knowledge_ids: scope,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  async function insertEdge(id: string, from: string, to: string, relation: string) {
+    await testDb().insert(knowledge_edge).values({
+      id,
+      from_knowledge_id: from,
+      to_knowledge_id: to,
+      relation_type: relation,
+      created_by: CREATED_BY,
+    });
+  }
+  async function insertMisc(id: string, toId: string) {
+    const now = new Date();
+    await testDb().insert(misconception_edge).values({
+      id,
+      from_kind: 'misconception',
+      from_id: 'm1',
+      to_kind: 'knowledge',
+      to_id: toId,
+      relation_type: 'confusable_with',
+      created_by: CREATED_BY,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  async function mergeFromInto(from: string, into: string) {
+    return applyMerge(testDb(), {
+      mutation: 'merge',
+      from_ids: [from],
+      into_id: into,
+      expected_versions: { [from]: 0 },
+    });
+  }
+
+  it('rewrites question.knowledge_ids (replace + dedupe)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertQ('q1', ['k_from', 'k_x']);
+    await insertQ('q2', ['k_into', 'k_from']); // dedupe: from→into collapses onto existing into
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].question_ids_rewritten.sort()).toEqual(['q1', 'q2']);
+    const q1 = await testDb().select().from(question).where(eq(question.id, 'q1'));
+    const q2 = await testDb().select().from(question).where(eq(question.id, 'q2'));
+    expect(q1[0].knowledge_ids).toEqual(['k_into', 'k_x']);
+    expect(q2[0].knowledge_ids).toEqual(['k_into']);
+  });
+
+  it('rewrites learning_item.knowledge_ids and goal.scope_knowledge_ids', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertLI('li1', ['k_from']);
+    await insertG('g1', ['k_from', 'k_y']);
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].learning_item_ids_rewritten).toEqual(['li1']);
+    expect(log[0].goal_ids_rewritten).toEqual(['g1']);
+    const li = await testDb().select().from(learning_item).where(eq(learning_item.id, 'li1'));
+    const g = await testDb().select().from(goal).where(eq(goal.id, 'g1'));
+    expect(li[0].knowledge_ids).toEqual(['k_into']);
+    expect(g[0].scope_knowledge_ids).toEqual(['k_into', 'k_y']);
+    // goal rewrite reuses updateGoalScope → version bump (fold-visible event written).
+    expect(g[0].version).toBe(1);
+  });
+
+  it('rewires a knowledge_edge endpoint (archive old + create rewritten + fold events)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertKnowledge({ id: 'k_x', version: 0 });
+    await insertEdge('e1', 'k_from', 'k_x', 'related_to');
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].edges_rewired).toHaveLength(1);
+    expect(log[0].edges_rewired[0].old_edge_id).toBe('e1');
+    expect(log[0].edges_rewired[0].new_edge_id).not.toBeNull();
+    // old archived, new live edge k_into --related_to--> k_x.
+    const e1 = await testDb().select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e1'));
+    expect(e1[0].archived_at).not.toBeNull();
+    const live = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(
+        and(
+          eq(knowledge_edge.from_knowledge_id, 'k_into'),
+          eq(knowledge_edge.to_knowledge_id, 'k_x'),
+        ),
+      );
+    expect(live).toHaveLength(1);
+    // a fold-visible generate(create) event was written for the new edge.
+    const genEvents = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'generate'), eq(event.subject_kind, 'knowledge_edge')));
+    expect(genEvents.length).toBeGreaterThanOrEqual(2); // one archive + one create
+  });
+
+  it('edge collision post-rewrite → archive-as-duplicate (new_edge_id null, no new edge)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertKnowledge({ id: 'k_x', version: 0 });
+    await insertEdge('e_from', 'k_from', 'k_x', 'related_to');
+    await insertEdge('e_into', 'k_into', 'k_x', 'related_to'); // the rewritten key already exists
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].edges_rewired).toEqual([{ old_edge_id: 'e_from', new_edge_id: null }]);
+    const eFrom = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_from'));
+    expect(eFrom[0].archived_at).not.toBeNull(); // archived, not re-created
+    const eInto = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_into'));
+    expect(eInto[0].archived_at).toBeNull(); // the surviving edge is untouched
+  });
+
+  it('prerequisite topology reject on the rewritten edge ABORTS the whole merge tx', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertKnowledge({ id: 'k_x', version: 0 });
+    // existing: k_into --prereq--> k_x. Rewriting (k_x --prereq--> k_from) → (k_x --prereq--> k_into)
+    // reverses the existing edge = direction contradiction → reject → abort.
+    await insertEdge('e_keep', 'k_into', 'k_x', 'prerequisite');
+    await insertEdge('e_bad', 'k_x', 'k_from', 'prerequisite');
+    await expect(mergeFromInto('k_from', 'k_into')).rejects.toThrow(/topology|aborting merge/i);
+    // whole tx rolled back: k_from still LIVE, edges unchanged.
+    const kf = await testDb().select().from(knowledge).where(eq(knowledge.id, 'k_from'));
+    expect(kf[0].archived_at).toBeNull();
+    const eBad = await testDb().select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_bad'));
+    expect(eBad[0].archived_at).toBeNull();
+  });
+
+  it('rewrites misconception_edge.to_id (to_kind=knowledge)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertMisc('mc1', 'k_from');
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].misconception_edges_rewritten).toEqual(['mc1']);
+    const mc = await testDb()
+      .select()
+      .from(misconception_edge)
+      .where(eq(misconception_edge.id, 'mc1'));
+    expect(mc[0].to_id).toBe('k_into');
+  });
+
+  it('multi-from_id ordering: first from renames mastery, second freezes (deterministic)', async () => {
+    await insertKnowledge({ id: 'k_from1', version: 0 });
+    await insertKnowledge({ id: 'k_from2', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await testDb().insert(mastery_state).values({ id: 'ms1', subject_id: 'k_from1' });
+    await testDb().insert(mastery_state).values({ id: 'ms2', subject_id: 'k_from2' });
+    // into is cold (no mastery row).
+    const log = await applyMerge(testDb(), {
+      mutation: 'merge',
+      from_ids: ['k_from1', 'k_from2'],
+      into_id: 'k_into',
+      expected_versions: { k_from1: 0, k_from2: 0 },
+    });
+    // from1 renames its row onto the cold into; from2 then sees into occupied → freeze.
+    expect(log[0].from_id).toBe('k_from1');
+    expect(log[0].mastery_state).toBe('renamed');
+    expect(log[1].from_id).toBe('k_from2');
+    expect(log[1].mastery_state).toBe('frozen');
+    const rows = await testDb().select().from(mastery_state);
+    expect(rows.map((r) => r.subject_id).sort()).toEqual(['k_from2', 'k_into']);
+  });
+
+  it('kc_typed_state pointer rewrite via applyMerge', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await testDb()
+      .insert(kc_typed_state)
+      .values({ id: 'kt_other', subject_id: 'k_other', confused_with_kc_id: 'k_from' });
+    await mergeFromInto('k_from', 'k_into');
+    const kt = await testDb()
+      .select()
+      .from(kc_typed_state)
+      .where(eq(kc_typed_state.subject_id, 'k_other'));
+    expect(kt[0].confused_with_kc_id).toBe('k_into');
+  });
+
+  it('accept path: event-sourced learning_item folds == the merge-rewritten row (parity holds)', async () => {
+    const now0 = new Date('2026-07-02T00:00:00.000Z');
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    // learning_item seeded WITH a genesis anchor (event-sourced) so the parity assert actually runs.
+    const liRow = {
+      id: 'li1',
+      source: 'learning_intent',
+      source_ref: null,
+      title: 't',
+      content: '',
+      knowledge_ids: ['k_from', 'k_y'],
+      primary_artifact_id: null,
+      parent_learning_item_id: null,
+      status: 'pending',
+      user_pinned: false,
+      completed_at: null,
+      dismissed_at: null,
+      archived_at: null,
+      archived_reason: null,
+      created_at: now0,
+      updated_at: now0,
+      version: 0,
+    };
+    await testDb().insert(learning_item).values(liRow);
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'gen_li1',
+        session_id: null,
+        actor_kind: 'system',
+        actor_ref: 'genesis-backfill',
+        action: 'experimental:genesis',
+        subject_kind: 'learning_item',
+        subject_id: 'li1',
+        outcome: 'success',
+        payload: { row: liRow },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: now0,
+      });
+    await insertProposeEvent({
+      id: 'merge_li',
+      payload: {
+        mutation: 'merge',
+        from_ids: ['k_from'],
+        into_id: 'k_into',
+        expected_versions: { k_from: 0 },
+      },
+    });
+    // If the fold did NOT reproduce the rewritten row, assertLearningItemParity throws here (test env).
+    await acceptProposal(testDb(), 'merge_li');
+    const li = await testDb().select().from(learning_item).where(eq(learning_item.id, 'li1'));
+    expect(li[0].knowledge_ids).toEqual(['k_into', 'k_y']);
+    expect(li[0].updated_at).toEqual(now0); // merge rewrite touches ONLY knowledge_ids
+  });
+
+  it('acceptProposal on a merge pins merge_repair on the rate=accept event', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertQ('q1', ['k_from']);
+    await insertProposeEvent({
+      id: 'merge_prop',
+      payload: {
+        mutation: 'merge',
+        from_ids: ['k_from'],
+        into_id: 'k_into',
+        expected_versions: { k_from: 0 },
+      },
+    });
+    await acceptProposal(testDb(), 'merge_prop');
+    const rate = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'merge_prop')));
+    const payload = rate[0].payload as {
+      rating: string;
+      merge_repair?: Array<{ from_id: string }>;
+    };
+    expect(payload.rating).toBe('accept');
+    expect(payload.merge_repair).toBeDefined();
+    expect(payload.merge_repair?.[0].from_id).toBe('k_from');
+    // the question was rewritten as part of the accept.
+    const q1 = await testDb().select().from(question).where(eq(question.id, 'q1'));
+    expect(q1[0].knowledge_ids).toEqual(['k_into']);
   });
 });
 
