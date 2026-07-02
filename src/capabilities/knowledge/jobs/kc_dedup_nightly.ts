@@ -7,11 +7,12 @@
 // the standard propose writer.
 //
 // IRON RULE — PROPOSE-ONLY, NEVER auto-merge. A merge is DESTRUCTIVE: applyMerge
-// archives the `from` KCs, sets `into.merged_from[]`, and the accept flow rewrites
-// knowledge_ids attribution. That stays behind the human accept gate. The
-// enforcement here is STRUCTURAL: this file MUST NOT import or call `applyMerge`.
-// It only writes propose events via `writeKnowledgeProposeEvent`. (A reviewer
-// greps this file for `applyMerge` → zero hits.)
+// archives the `from` KCs, sets `into.merged_from[]`, and (YUK-543) repairs 9 downstream
+// attribution surfaces per absorbed id (question/learning_item/goal knowledge_ids,
+// knowledge_edge endpoints, mastery/fsrs/axis/kc_typed per-KC state, misconception edge
+// targets). That stays behind the human accept gate. The enforcement here is STRUCTURAL:
+// this file MUST NOT import or call `applyMerge`. It only writes propose events via
+// `writeKnowledgeProposeEvent`. (A reviewer greps this file for `applyMerge` → zero hits.)
 //
 // Why a dedicated job (not feeding a candidate table to KnowledgeReviewTask):
 // observability (its own audit event), zero-LLM deterministic detection, and
