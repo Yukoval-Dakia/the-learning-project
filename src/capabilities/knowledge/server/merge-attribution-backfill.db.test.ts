@@ -42,11 +42,11 @@ describe('merge-attribution backfill (YUK-543)', () => {
     await resetDb();
   });
 
-  it('resolveMergeChains: single hop resolves to the live winner', async () => {
+  it('resolveMergeChains: single hop resolves to the live winner (with the forensic hop chain)', async () => {
     await insertK('k_into', { mergedFrom: ['k_from'] });
     await insertK('k_from', { archived: true });
     const res = await resolveMergeChains(db);
-    expect(res).toEqual([{ fromId: 'k_from', winnerId: 'k_into' }]);
+    expect(res).toEqual([{ fromId: 'k_from', winnerId: 'k_into', chain: ['k_from', 'k_into'] }]);
   });
 
   it('repairs a pre-fix orphan (question + mastery) and is idempotent', async () => {
@@ -72,11 +72,17 @@ describe('merge-attribution backfill (YUK-543)', () => {
     expect(second.orphanSurfacesFound).toBe(0);
   });
 
-  it('resolves a 2-hop chain to the terminal live winner (A→B→C ⇒ C)', async () => {
+  it('resolves a 2-hop chain to the terminal live winner (A→B→C ⇒ C), full hop chain preserved', async () => {
     await insertK('k_c', { mergedFrom: ['k_b'] }); // live winner
     await insertK('k_b', { archived: true, mergedFrom: ['k_a'] });
     await insertK('k_a', { archived: true });
     await insertQ('q1', ['k_a']);
+
+    // L3 — the forensic hop sequence survives, not a flattened first→last mapping.
+    const chains = await resolveMergeChains(db);
+    const byFrom = new Map(chains.map((r) => [r.fromId, r]));
+    expect(byFrom.get('k_a')?.chain).toEqual(['k_a', 'k_b', 'k_c']);
+    expect(byFrom.get('k_b')?.chain).toEqual(['k_b', 'k_c']);
 
     const res = await runMergeAttributionBackfill(db, { dryRun: false });
     expect(res.resolved).toBe(2); // both k_a and k_b resolve to k_c
