@@ -58,7 +58,10 @@ export const FRONTIER_DEPTH_LIMIT = 16;
  * anchor guard) trips it.
  */
 export const FRONTIER_NODE_CAP = 10_000;
-/** p(L) at/above which a KC counts as MASTERED (self-not-mastered + prereq-mastered gate). */
+/** p(L) at/above which a KC counts as MASTERED (self-not-mastered + prereq-mastered gate).
+ *  ⚠️ Never compare raw p(L) against this alone for a mastered/frontier decision — use
+ *  `isMasteredForFrontier` below, which ANDs the FRONTIER_MASTERY_MIN_EVIDENCE floor
+ *  (YUK-539: p(L)-only comparison re-opens the "3 lucky corrects = mastered" defect). */
 export const MASTERED_PL_THRESHOLD = 0.7;
 
 /**
