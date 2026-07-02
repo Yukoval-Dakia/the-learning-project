@@ -147,8 +147,9 @@ export interface FrontierResolution {
  * state surfaced (pure READ). See {@link FrontierResolution}.
  *
  * `ids` (when `kind === 'dense'`) is the (sorted, deterministic) list of KC ids ready to
- * learn now: self p(L) < MASTERED_PL_THRESHOLD AND every transitive prerequisite p(L) ≥
- * MASTERED_PL_THRESHOLD. `sparse` / `overflow` carry `ids: []` (see the INVARIANT BLOCK).
+ * learn now: self NOT masteredEnough (p(L) < MASTERED_PL_THRESHOLD OR evidence_count <
+ * FRONTIER_MASTERY_MIN_EVIDENCE) AND every transitive prerequisite IS masteredEnough
+ * (YUK-539). `sparse` / `overflow` carry `ids: []` (see the INVARIANT BLOCK).
  *
  * @param db Db or Tx — read-only (only `.execute`/`.select` reads; no writes).
  */
