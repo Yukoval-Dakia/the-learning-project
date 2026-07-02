@@ -139,14 +139,16 @@ async function seedVariantCandidate(opts: { kind?: string; kc?: string }): Promi
     created_at: now,
   });
   // mastery_state（KC θ̂） + item_calibration.b（真锚）→ MFI 可算。
+  // YUK-539: fail_count 2→3（evidence 5→6）以保「未掌握」语义 —— retune 后（γ=0.5/ρ=−0.25）
+  // s=3/f=2 的 p(L)=σ(1.0)=0.731 会翻过 0.7，改 f=3 后 p(L)=σ(0.75)=0.679 仍 < 0.7。
   await testDb().insert(mastery_state).values({
     id: createId(),
     subject_kind: 'knowledge',
     subject_id: kc,
     theta_hat: 0,
-    evidence_count: 5,
+    evidence_count: 6,
     success_count: 3,
-    fail_count: 2,
+    fail_count: 3,
     theta_precision: 4,
     updated_at: now,
   });

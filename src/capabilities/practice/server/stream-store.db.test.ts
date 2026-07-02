@@ -139,6 +139,9 @@ async function seedVariantCandidate(
     created_at: now,
   });
   // mastery_state 行（per-KC）幂等 upsert：多个候选共享 KC 时只一行。
+  // YUK-539: fail_count 2→3（evidence 5→6）以保「未掌握」语义 —— retune 后（γ=0.5/ρ=−0.25）
+  // s=3/f=2 的 p(L)=σ(1.0)=0.731 会翻过 0.7（旧 γ=0.4 时 σ(0.8)=0.690 恰在下方），改 f=3 后
+  // p(L)=σ(0.75)=0.679 仍 < 0.7，保持该候选是未掌握的复习候选。
   await testDb()
     .insert(mastery_state)
     .values({
@@ -146,9 +149,9 @@ async function seedVariantCandidate(
       subject_kind: 'knowledge',
       subject_id: kc,
       theta_hat: 0,
-      evidence_count: 5,
+      evidence_count: 6,
       success_count: 3,
-      fail_count: 2,
+      fail_count: 3,
       theta_precision: 4,
       updated_at: now,
     })

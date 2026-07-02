@@ -1,8 +1,10 @@
 // B3 frontier (YUK-349 #3) — learnableFrontier prereq-gated read + the NO-OP-safety
 // invariants. The mastery predicate is the canonical PFA p(L) (β=0 here, no
-// item_calibration): point = σ(γ·success + ρ·fail), γ=0.4, ρ=−0.2. So:
-//   - success=4, fail=0 → σ(1.6)=0.83 ≥ 0.7  → MASTERED
+// item_calibration): point = σ(γ·success + ρ·fail), γ=0.5, ρ=−0.25 (YUK-539 retune),
+// AND (YUK-539) an evidence_count ≥ FRONTIER_MASTERY_MIN_EVIDENCE (4) floor. So:
+//   - success=4, fail=0, evidence=4 → σ(2.0)=0.88 ≥ 0.7 AND evidence 4 ≥ 4 → MASTERED
 //   - no row / success=0, fail=0 → σ(0)=0.5 < 0.7 → NOT MASTERED (cold start)
+//   - success=3, fail=0, evidence=3 → σ(1.5)=0.82 ≥ 0.7 but evidence 3 < 4 → NOT mastered-enough
 
 import { knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
@@ -56,7 +58,7 @@ async function seedPrereq(
     });
 }
 
-/** Mark a KC mastered (p(L)=σ(0.4·4)=0.83 ≥ 0.7). */
+/** Mark a KC mastered (p(L)=σ(0.5·4)=0.88 ≥ 0.7 AND evidence_count 4 ≥ floor 4). */
 async function setMastered(kc: string): Promise<void> {
   await seedKc(kc);
   await testDb()
@@ -89,6 +91,26 @@ async function setNotMastered(kc: string): Promise<void> {
       success_count: 0,
       fail_count: 0,
       theta_precision: 1,
+      updated_at: new Date(),
+    })
+    .onConflictDoNothing();
+}
+
+/** Mark a KC "near-mastered" (YUK-539): raw p(L)=σ(0.5·3)=0.82 ≥ 0.7 BUT evidence_count 3 <
+ *  the FRONTIER_MASTERY_MIN_EVIDENCE floor (4) → NOT mastered-enough (three lucky corrects). */
+async function setNearMastered(kc: string): Promise<void> {
+  await seedKc(kc);
+  await testDb()
+    .insert(mastery_state)
+    .values({
+      id: createId(),
+      subject_kind: 'knowledge',
+      subject_id: kc,
+      theta_hat: 0,
+      evidence_count: 3,
+      success_count: 3,
+      fail_count: 0,
+      theta_precision: 4,
       updated_at: new Date(),
     })
     .onConflictDoNothing();
@@ -299,5 +321,39 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
     expect(resolved.ids).toEqual([]);
     // The thin wrapper collapses overflow to the byte-identical [] live-path contract.
     expect(await learnableFrontier(testDb())).toEqual([]);
+  });
+
+  it('(l) evidence-count floor — prereq role: 3 clean corrects (raw p(L)≥0.7, evidence<4) do NOT satisfy a prereq → dependent gated OUT', async () => {
+    // p1 has success=3/fail=0/evidence=3: raw p(L)=σ(1.5)=0.82 ≥ 0.7, but evidence 3 < the
+    // FRONTIER_MASTERY_MIN_EVIDENCE floor (4) → NOT mastered-enough → F's only prereq is
+    // unproven → F gated OUT, despite p1 clearing the p(L) threshold (YUK-539 defect-b fix).
+    await seedPrereq('p1', 'F');
+    await setNearMastered('p1');
+    await setNotMastered('F');
+    const frontier = await learnableFrontier(testDb());
+    expect(frontier).toEqual([]);
+  });
+
+  it('(m) evidence-count floor — self role: F with 3 clean corrects (evidence<4) still surfaces (NOT skipped as self-mastered)', async () => {
+    // F itself has success=3/fail=0/evidence=3 (raw p(L)≥0.7 but evidence<4) and a
+    // fully-mastered prereq. The self-skip is gated on masteredEnough (p(L) AND evidence), so
+    // F is NOT dropped as "self already mastered" on three lucky answers → it surfaces.
+    await seedPrereq('p1', 'F');
+    await setMastered('p1');
+    await setNearMastered('F');
+    const frontier = await learnableFrontier(testDb());
+    expect(frontier).toEqual(['F']);
+  });
+
+  it('(n) evidence-count floor boundary: at evidence_count=4 the same streak now counts as mastered-enough → F self-mastered, excluded', async () => {
+    // Companion boundary pin to (m): with the existing setMastered helper (success=4/
+    // evidence=4), F clears BOTH the p(L) threshold AND the evidence floor → masteredEnough →
+    // F is skipped as self-mastered (excluded) even though its prereq is mastered. Pins the
+    // floor boundary at exactly 4.
+    await seedPrereq('p1', 'F');
+    await setMastered('p1');
+    await setMastered('F');
+    const frontier = await learnableFrontier(testDb());
+    expect(frontier).toEqual([]);
   });
 });
