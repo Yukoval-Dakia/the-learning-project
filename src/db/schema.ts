@@ -759,6 +759,10 @@ export const learning_session = pgTable('learning_session', {
   // instead of trusting a client-supplied knowledgeIds body (pre-go-live hardening). NULL for
   // non-placement sessions (review/ingestion/conversation/tutor never scope by a KC set here).
   // Write path = startPlacementSession({ knowledgeIds }) in the same PR (RL4 → no allowlist).
+  // YUK-543 — DELIBERATELY LEFT STALE on a KC merge: applyMerge does NOT rewrite this column. It is
+  // session-ephemeral — an in-flight placement probe holding a since-merged KC just returns an empty
+  // pool for that id and silently skips it for the session's remaining duration. A declared, accepted
+  // staleness (spec §2 table), not a silent gap; a new session resolves the survivor KC afresh.
   scope_knowledge_ids: jsonb('scope_knowledge_ids').$type<string[]>(),
   // YUK-480 — placement-only onboarding self-report transport. The learner's Welcome-screen
   // self-report (subject leanings + daily pace) is captured at probe start so it survives the

@@ -6,9 +6,11 @@
 //
 // These govern the nightly `kc_dedup_nightly` job: it detects near-duplicate
 // auto-created KC pairs by pgvector cosine distance and emits MERGE PROPOSALS
-// (pending inbox items) — PROPOSE-ONLY, never auto-merge (a merge rewrites
-// knowledge_ids attribution + sets merged_from[], so it stays behind the human
-// accept gate).
+// (pending inbox items) — PROPOSE-ONLY, never auto-merge. Accepting a merge runs
+// applyMerge, which archives the `from` KC, appends `into.merged_from[]`, AND (YUK-543)
+// repairs 9 downstream attribution surfaces per absorbed id (question/learning_item/goal
+// knowledge_ids, knowledge_edge endpoints, mastery/fsrs/axis/kc_typed per-KC state,
+// misconception edge targets) — so it stays behind the human accept gate.
 
 /**
  * Cosine-DISTANCE ceiling for "near-duplicate" KC pairs, expressed in pgvector
@@ -17,8 +19,9 @@
  *
  * Default **0.10** — deliberately MUCH tighter than the tagging MATCH_THRESHOLD
  * (0.55). A merge is DESTRUCTIVE (archives the `from` KC, rewrites knowledge_ids
- * attribution into `into`, sets merged_from[]), so only VERY-close pairs should
- * even propose. The human accept gate is the real false-positive filter; the
+ * attribution into `into`, sets merged_from[], and repairs the other attribution
+ * surfaces — YUK-543), so only VERY-close pairs should even propose. The human accept
+ * gate is the real false-positive filter; the
  * tight distance keeps the inbox signal-dense rather than flooding it with
  * loosely-related pairs the owner would just dismiss.
  *
