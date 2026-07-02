@@ -10,7 +10,13 @@
 import type { AutoEnrollObservation } from '@/ui/lib/auto-enroll';
 import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BlockEditor, type BlockRow, TextLineCompletePanel, buildBlockForm } from './VisionTab';
+import {
+  BlockEditor,
+  type BlockRow,
+  SSETimeline,
+  TextLineCompletePanel,
+  buildBlockForm,
+} from './VisionTab';
 
 function obs(overrides: Partial<AutoEnrollObservation> = {}): AutoEnrollObservation {
   return {
@@ -208,5 +214,65 @@ describe('VisionTab TextLineCompletePanel — text-line UX', () => {
     );
     expect(html).toContain('>5<');
     expect(html).toContain(' 块');
+  });
+});
+
+// YUK-541 (ocr-vlm-fallback-ladder) — the fallback ladder persists a non-fatal
+// degrade warning (e.g. "fell back to GLM structure") on
+// ingestion.extraction_completed, but the SSE timeline never rendered
+// payload.warnings. This pins the new render arm.
+describe('VisionTab SSETimeline — fallback warning render', () => {
+  it('renders payload.warnings on an extraction_completed row', () => {
+    const html = renderToString(
+      <SSETimeline
+        events={[
+          {
+            event_id: 1,
+            event_type: 'ingestion.extraction_completed',
+            payload: {
+              block_count: 2,
+              layout_quality: 'structured',
+              warnings: [
+                'StructureTask unavailable (timeout); fell back to GLM structure',
+                'GLM fallback: page-level standalone, no sub-question split',
+              ],
+            },
+          },
+        ]}
+        status="closed"
+      />,
+    );
+    expect(html).toContain('fell back to GLM structure');
+    expect(html).toContain('no sub-question split');
+  });
+
+  it('omits the warning line when payload.warnings is absent/empty', () => {
+    const emptyHtml = renderToString(
+      <SSETimeline
+        events={[
+          {
+            event_id: 1,
+            event_type: 'ingestion.extraction_completed',
+            payload: { block_count: 2, layout_quality: 'structured', warnings: [] },
+          },
+        ]}
+        status="closed"
+      />,
+    );
+    expect(emptyHtml).not.toContain('sse-warn');
+
+    const absentHtml = renderToString(
+      <SSETimeline
+        events={[
+          {
+            event_id: 1,
+            event_type: 'ingestion.extraction_completed',
+            payload: { block_count: 2, layout_quality: 'structured' },
+          },
+        ]}
+        status="closed"
+      />,
+    );
+    expect(absentHtml).not.toContain('sse-warn');
   });
 });

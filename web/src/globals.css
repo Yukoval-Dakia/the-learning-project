@@ -1633,6 +1633,14 @@ ol {
   color: var(--again-ink);
 }
 
+/* YUK-541 (ocr-vlm-fallback-ladder): non-fatal degrade warning inside an
+   otherwise-successful SSE row (e.g. VLM-outage fallback). Amber ("hard"/
+   degraded), not red ("again"/failed) — the session still lands as
+   extracted/partial. */
+.sse-warn {
+  color: var(--hard-ink);
+}
+
 /* ── A8 (YUK-354): 录入成功着陆视图（IngestExit）。PORT 自
    docs/design/loom-refresh/project/record-a8.css 的 .ing-exit* / .ing-proposal*
    类（视觉参考，按本仓库 loom tokens 落地，不整文件拷）。只成功态；失败 / 退化态

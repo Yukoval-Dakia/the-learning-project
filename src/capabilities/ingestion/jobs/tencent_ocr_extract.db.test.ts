@@ -387,6 +387,11 @@ describe('tencent_ocr_extract handler (GLM default engine)', () => {
       .where(eq(learning_session.id, sessionId));
     expect(session[0].status).toBe('extracted');
     expect(session[0].warnings.some((w) => w.includes('fell back to GLM'))).toBe(true);
+    // YUK-541 (ocr-vlm-fallback-ladder): buildGlmFallbackQuestions().warnings is no
+    // longer discarded — this caveat now persists alongside the generic "fell back"
+    // message so the SSE timeline can explain why the fallback blocks are
+    // undifferentiated page blobs.
+    expect(session[0].warnings.some((w) => w.includes('no sub-question split'))).toBe(true);
 
     const blocks = await db
       .select()
