@@ -111,6 +111,76 @@ export async function listLiveEdgesTouchingNode(
   }));
 }
 
+/** The minimal endpoint triple the ADR-0034 topology gate consumes. */
+export interface LivePrerequisiteEdge {
+  from_knowledge_id: string;
+  to_knowledge_id: string;
+  relation_type: string;
+}
+
+/**
+ * YUK-543 (review R1) — the FULL live prerequisite mesh, UNBOUNDED. READ-ONLY.
+ *
+ * MUST have no LIST_LIMIT: cycle / direction-contradiction detection (checkEdgeTopology) is only
+ * sound against the COMPLETE live prerequisite edge set. `listKnowledgeEdges` truncates at
+ * LIST_LIMIT=500 ordered created_at DESC — beyond 500 live prerequisite edges the OLDEST (backbone)
+ * edges silently fall out of the mesh, and a rewrite that closes a cycle through a truncated edge
+ * gets a false 'ok' verdict instead of the reject-abort it must produce. Same doctrine as
+ * `listLiveEdgesTouchingNode` above and the bare unbounded scan `runEdgeProposeAndWrite` uses for
+ * its own topology mesh (propose_edge.ts).
+ */
+export async function listAllLivePrerequisiteEdges(db: DbLike): Promise<LivePrerequisiteEdge[]> {
+  return await db
+    .select({
+      from_knowledge_id: knowledge_edge.from_knowledge_id,
+      to_knowledge_id: knowledge_edge.to_knowledge_id,
+      relation_type: knowledge_edge.relation_type,
+    })
+    .from(knowledge_edge)
+    .where(
+      and(isNull(knowledge_edge.archived_at), eq(knowledge_edge.relation_type, 'prerequisite')),
+    );
+}
+
+export interface ReactivateKnowledgeEdgeInput {
+  weight: number;
+  reasoning: string | null;
+  actor_kind: string;
+  actor_ref: string;
+  /** MUST equal the paired generate(create) event's created_at (the fold stamps the row from it). */
+  created_at: Date;
+}
+
+/**
+ * YUK-543 (review R2) — un-archive a tombstone edge whose UNIQUE(from,to,relation_type) slot a
+ * merge rewrite needs. `knowledge_edge_unique` is GLOBAL (no partial WHERE archived_at IS NULL), so
+ * an archived tombstone blocks a fresh INSERT with 23505 even though no LIVE duplicate exists —
+ * blind archive-as-duplicate there would silently evaporate a live relationship. Instead the
+ * tombstone is revived in place.
+ *
+ * FOLD CONTRACT: the caller MUST write a paired `generate`(create) event anchored to THIS edge id
+ * with the SAME actor/weight/reasoning/created_at. The edge fold replays create events in order —
+ * the new (last) create re-projects this row as live with created_at/created_by/weight/reasoning
+ * taken from that event — so this UPDATE refreshes those columns to byte-match the fold output
+ * (row == fold, the B3 audit invariant). Single-owner: all knowledge_edge writes stay in this module.
+ */
+export async function reactivateKnowledgeEdge(
+  db: DbLike,
+  id: string,
+  input: ReactivateKnowledgeEdgeInput,
+): Promise<void> {
+  await db
+    .update(knowledge_edge)
+    .set({
+      archived_at: null,
+      weight: input.weight,
+      reasoning: input.reasoning,
+      created_by: { actor_kind: input.actor_kind, actor_ref: input.actor_ref } as never,
+      created_at: input.created_at,
+    })
+    .where(eq(knowledge_edge.id, id));
+}
+
 export async function getKnowledgeEdgeById(
   db: DbLike,
   id: string,
