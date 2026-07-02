@@ -13,7 +13,7 @@
 // named fns; raw `db.insert(knowledge_edge)` outside this module is forbidden.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
@@ -63,6 +63,41 @@ export async function listKnowledgeEdges(
   const filtered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
   const rows = await filtered.orderBy(desc(knowledge_edge.created_at)).limit(LIST_LIMIT);
 
+  return rows.map((r) => ({
+    id: r.id,
+    from_knowledge_id: r.from_knowledge_id,
+    to_knowledge_id: r.to_knowledge_id,
+    relation_type: r.relation_type as RelationTypeSchemaT,
+    weight: r.weight,
+    created_by: r.created_by,
+    reasoning: r.reasoning,
+    created_at: r.created_at,
+    archived_at: r.archived_at,
+  }));
+}
+
+/**
+ * YUK-543 — list the LIVE (archived_at IS NULL) edges that touch `nodeId` on EITHER endpoint
+ * (from_knowledge_id = nodeId OR to_knowledge_id = nodeId). Used by the merge-driven edge rewire
+ * (rewireKnowledgeEdges) to find every edge whose endpoint must be re-pointed at the merge survivor.
+ * READ-ONLY. No LIST_LIMIT — a merge must rewire ALL of a KC's edges, never a truncated subset.
+ */
+export async function listLiveEdgesTouchingNode(
+  db: DbLike,
+  nodeId: string,
+): Promise<KnowledgeEdgeRow[]> {
+  const rows = await db
+    .select()
+    .from(knowledge_edge)
+    .where(
+      and(
+        isNull(knowledge_edge.archived_at),
+        or(
+          eq(knowledge_edge.from_knowledge_id, nodeId),
+          eq(knowledge_edge.to_knowledge_id, nodeId),
+        ),
+      ),
+    );
   return rows.map((r) => ({
     id: r.id,
     from_knowledge_id: r.from_knowledge_id,
