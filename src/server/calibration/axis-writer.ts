@@ -21,7 +21,7 @@
 // KC is simply skipped — the descriptor stays absent rather than fabricated.
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, learner_axis_state, question } from '@/db/schema';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { type EzResult, ezFromResponses } from './ez-diffusion';
@@ -145,6 +145,60 @@ export async function upsertLearnerAxisState(db: Db, input: AxisStateUpsert): Pr
         },
       });
   });
+}
+
+/**
+ * YUK-543 — repair `learner_axis_state` (EZ-diffusion descriptor) when a KC (`fromId`) is merged
+ * into another (`intoId`). NEVER combines drift_v / boundary_a / ter (they are per-KC EZ recoveries
+ * — averaging two is invented merge math; the batch re-recovers the survivor from its own responses
+ * on the next nightly run anyway). 3-case identity-rename/freeze-and-log, mirroring the mastery/fsrs
+ * retires:
+ *   - neither row → 'noop'; only from → RENAME `subject_id` → 'renamed'; both → FREEZE + log →
+ *     'frozen'.
+ * Takes the module's OWN `axis_state:<kind>:<id>` advisory-lock namespace (distinct from
+ * `fsrs:knowledge:` / `kc_typed:`) for BOTH ids, sorted, so a concurrent nightly `runAxisStateBatch`
+ * upsert serializes against the merge. Runs on the merge Tx (NOT its own transaction — this is a
+ * savepoint-free in-line write, unlike upsertLearnerAxisState which opens its own tx).
+ */
+export async function retireLearnerAxisStateOnMerge(
+  tx: Tx,
+  fromId: string,
+  intoId: string,
+  subjectKind = 'knowledge',
+): Promise<'noop' | 'renamed' | 'frozen'> {
+  for (const id of [fromId, intoId].sort()) {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`axis_state:${subjectKind}:${id}`}))`,
+    );
+  }
+  const rows = await tx
+    .select({ subject_id: learner_axis_state.subject_id })
+    .from(learner_axis_state)
+    .where(
+      and(
+        eq(learner_axis_state.subject_kind, subjectKind),
+        inArray(learner_axis_state.subject_id, [fromId, intoId]),
+      ),
+    );
+  const present = new Set(rows.map((r) => r.subject_id));
+  if (!present.has(fromId)) return 'noop';
+  if (!present.has(intoId)) {
+    await tx
+      .update(learner_axis_state)
+      .set({ subject_id: intoId, updated_at: new Date() })
+      .where(
+        and(
+          eq(learner_axis_state.subject_kind, subjectKind),
+          eq(learner_axis_state.subject_id, fromId),
+        ),
+      );
+    return 'renamed';
+  }
+  console.warn(
+    '[retireLearnerAxisStateOnMerge] both from+into have learner_axis_state — freezing from-row (no descriptor merge)',
+    { fromId, intoId },
+  );
+  return 'frozen';
 }
 
 export interface AxisStateRow {

@@ -11,9 +11,9 @@
 // post-Rust-scorer claim-survival FLIP (ADR-0046), deferred.
 
 import { newId } from '@/core/ids';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { kc_typed_state } from '@/db/schema';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 export type TypedState = 'no-evidence' | 'confused-with-X' | 'mastered';
 export type Lifecycle = 'open' | 'resolved';
@@ -59,6 +59,63 @@ export function nextTypedState(input: NextTypedStateInput): NextTypedStateResult
     };
   }
   return { typed_state: 'no-evidence', confused_with_kc_id: null, lifecycle: 'open' };
+}
+
+/**
+ * YUK-543 — repair `kc_typed_state` when a KC (`fromId`) is merged into another (`intoId`). Two
+ * independent repairs, both on the merge Tx:
+ *   1. KEYED ROW (subject_id) — 3-case identity-rename/freeze-and-log (mirrors the mastery/fsrs/axis
+ *      retires; NEVER unions evidence or recomputes typed_state — no invented merge math):
+ *      neither → 'noop'; only from → RENAME → 'renamed'; both → FREEZE + log → 'frozen'.
+ *   2. POINTER (confused_with_kc_id) — ANY row (keyed by any other KC) that says "confused with
+ *      fromId" must now say "confused with intoId". A bulk `UPDATE … SET confused_with_kc_id=intoId
+ *      WHERE confused_with_kc_id=fromId` applied in ALL 3 cases (the pointer is a soft display ref,
+ *      no FK / no unique on it → no 23505). Returned outcome describes the KEYED row only.
+ * Takes the module's OWN `kc_typed:<kind>:<id>` advisory-lock namespace for BOTH ids, sorted, so a
+ * concurrent probe-resolve upsert serializes against the merge.
+ */
+export async function retireKcTypedStateOnMerge(
+  tx: Tx,
+  fromId: string,
+  intoId: string,
+  subjectKind = 'knowledge',
+): Promise<'noop' | 'renamed' | 'frozen'> {
+  for (const id of [fromId, intoId].sort()) {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`kc_typed:${subjectKind}:${id}`}))`,
+    );
+  }
+  // Pointer rewrite (independent of the keyed-row case) — soft display ref, always repaired.
+  await tx
+    .update(kc_typed_state)
+    .set({ confused_with_kc_id: intoId, updated_at: new Date() })
+    .where(eq(kc_typed_state.confused_with_kc_id, fromId));
+
+  const rows = await tx
+    .select({ subject_id: kc_typed_state.subject_id })
+    .from(kc_typed_state)
+    .where(
+      and(
+        eq(kc_typed_state.subject_kind, subjectKind),
+        inArray(kc_typed_state.subject_id, [fromId, intoId]),
+      ),
+    );
+  const present = new Set(rows.map((r) => r.subject_id));
+  if (!present.has(fromId)) return 'noop';
+  if (!present.has(intoId)) {
+    await tx
+      .update(kc_typed_state)
+      .set({ subject_id: intoId, updated_at: new Date() })
+      .where(
+        and(eq(kc_typed_state.subject_kind, subjectKind), eq(kc_typed_state.subject_id, fromId)),
+      );
+    return 'renamed';
+  }
+  console.warn(
+    '[retireKcTypedStateOnMerge] both from+into have kc_typed_state — freezing from-row (no evidence merge)',
+    { fromId, intoId },
+  );
+  return 'frozen';
 }
 
 export interface UpsertKcTypedStateInput {
