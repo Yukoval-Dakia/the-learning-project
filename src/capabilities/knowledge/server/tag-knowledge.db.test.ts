@@ -5,6 +5,7 @@
 // <=>(unit(i),unit(j≠i))=1 (well past MATCH_THRESHOLD=0.55 → PROPOSE). NO real model /
 // embedder is called — embedFn + nameKcFn are stubbed.
 import { event, knowledge } from '@/db/schema';
+import { projectKnowledgeNode } from '@/server/projections/knowledge';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -100,12 +101,33 @@ describe('tagKnowledge', () => {
     // No KC created (count unchanged).
     const after = (await db.select({ id: knowledge.id }).from(knowledge)).length;
     expect(after).toBe(before);
-    // No audit event written.
+    // No audit event written under the PROPOSE action — this is the collision-safety
+    // regression anchor (YUK-540 must never reuse `_created` for MATCH).
     const events = await db
       .select({ id: event.id })
       .from(event)
       .where(eq(event.action, 'experimental:auto_tag_kc_created'));
     expect(events).toHaveLength(0);
+
+    // YUK-540: MATCH now DOES write its own, distinctly-named audit event.
+    const matchEvents = await db
+      .select({ subject_id: event.subject_id, payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_matched'));
+    expect(matchEvents).toHaveLength(1);
+    expect(matchEvents[0].subject_id).toBe('kc-near');
+    const payload = matchEvents[0].payload as Record<string, unknown> & {
+      matches: Array<{ knowledge_id: string; name: string; cosine_distance: number }>;
+    };
+    expect(payload.threshold).toBe(MATCH_THRESHOLD);
+    expect(payload.primary_knowledge_id).toBe('kc-near');
+    expect(payload.matches).toHaveLength(1);
+    expect(payload.matches[0].knowledge_id).toBe('kc-near');
+    expect(payload.matches[0].name).toBe('Quadratics');
+    // Identical-direction vectors → cosine distance ~0 (codebase convention for this fixture
+    // shape — see match-similarity.db.test.ts, which also tolerates float noise rather than
+    // asserting exact 0).
+    expect(payload.matches[0].cosine_distance).toBeLessThan(0.01);
   });
 
   it('MATCH multi: every candidate within threshold is returned nearest-first; outside one excluded', async () => {
@@ -136,6 +158,18 @@ describe('tagKnowledge', () => {
     // Both inner ids, nearest-first (near1 closer than near2); the outer one excluded.
     expect(out.knowledge_ids).toEqual(['kc-near1', 'kc-near2']);
     expect(namer.calls).toBe(0);
+
+    // YUK-540: the match event's payload.matches fidelity — exactly the 2 in-threshold ids
+    // (nearest-first), the 3rd (out-of-threshold) excluded.
+    const matchEvents = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_matched'));
+    expect(matchEvents).toHaveLength(1);
+    const payload = matchEvents[0].payload as Record<string, unknown> & {
+      matches: Array<{ knowledge_id: string }>;
+    };
+    expect(payload.matches.map((m) => m.knowledge_id)).toEqual(['kc-near1', 'kc-near2']);
   });
 
   it('PROPOSE: no candidate within threshold → kind:propose, new approved KC + audit event', async () => {
@@ -213,6 +247,16 @@ describe('tagKnowledge', () => {
     expect(inside.kind).toBe('match');
     expect(inside.knowledge_ids).toContain('kc-inside');
     expect(insideNamer.calls).toBe(0);
+    // YUK-540: the inside branch wrote exactly 1 match event, cosine_distance ≈ threshold - eps.
+    const insideMatchEvents = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_matched'));
+    expect(insideMatchEvents).toHaveLength(1);
+    const insidePayload = insideMatchEvents[0].payload as Record<string, unknown> & {
+      matches: Array<{ cosine_distance: number }>;
+    };
+    expect(insidePayload.matches[0].cosine_distance).toBeCloseTo(MATCH_THRESHOLD - eps, 2);
 
     // --- just outside → PROPOSE (fresh DB, only the outside candidate present) ---
     await resetDb();
@@ -342,5 +386,118 @@ describe('tagKnowledge', () => {
       .from(event)
       .where(eq(event.action, 'experimental:auto_tag_kc_created'));
     expect(events).toHaveLength(0);
+  });
+
+  // YUK-540 — sourceRef threading: the caller-supplied provenance anchor lands verbatim on
+  // the MATCH audit event's payload.source_ref, and defaults to null when omitted.
+  it('sourceRef threading: MATCH with a sourceRef → payload.source_ref carries it verbatim', async () => {
+    const db = testDb();
+    await seedRoot(db);
+    await seedKc(db, 'kc-near', unitVec(0), { name: 'Quadratics', parent_id: SUBJECT_ROOT });
+
+    const out = await tagKnowledge(
+      { db, embedFn: stubEmbed(unitVec(0)), nameKcFn: stubName('SHOULD-NOT-BE-CALLED').fn },
+      {
+        questionText: 'solve x^2 - 5x + 6 = 0',
+        subjectRootId: SUBJECT_ROOT,
+        sourceRef: { kind: 'question_block', id: 'block-123' },
+      },
+    );
+    expect(out.kind).toBe('match');
+
+    const matchEvents = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_matched'));
+    expect(matchEvents).toHaveLength(1);
+    const payload = matchEvents[0].payload as Record<string, unknown>;
+    expect(payload.source_ref).toEqual({ kind: 'question_block', id: 'block-123' });
+  });
+
+  it('sourceRef threading: MATCH with sourceRef omitted → payload.source_ref is null', async () => {
+    const db = testDb();
+    await seedRoot(db);
+    await seedKc(db, 'kc-near', unitVec(0), { name: 'Quadratics', parent_id: SUBJECT_ROOT });
+
+    const out = await tagKnowledge(
+      { db, embedFn: stubEmbed(unitVec(0)), nameKcFn: stubName('SHOULD-NOT-BE-CALLED').fn },
+      { questionText: 'solve x^2 - 5x + 6 = 0', subjectRootId: SUBJECT_ROOT },
+    );
+    expect(out.kind).toBe('match');
+
+    const matchEvents = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_matched'));
+    expect(matchEvents).toHaveLength(1);
+    const payload = matchEvents[0].payload as Record<string, unknown>;
+    expect(payload.source_ref).toBeNull();
+  });
+
+  // YUK-540 (adversarial-review addition) — fold-parity: the MATCH audit event's action
+  // (`experimental:auto_tag_kc_matched`) is UNKNOWN to foldKnowledgeNode (core/projections/
+  // knowledge.ts) — no branch matches it, so the reducer must fall through and leave the
+  // node's projected row untouched. This pins that "reducer ignores unknown actions" invariant
+  // now that a MATCH writes a second, differently-shaped event against an EXISTING (already
+  // event-sourced) node — the fold's gather (Q1, subject-keyed) WILL pick up this new event
+  // (same subject_kind/subject_id as the node's genesis), so this is a real regression anchor,
+  // not a vacuous one. YUK-471 W1 PR-B (projection-SoT flip) is in flight; a fold that
+  // mis-handles this new action is exactly the kind of drift that flip would surface live.
+  it('fold-parity: a MATCH event against an existing (event-sourced) KC does not perturb its projected row', async () => {
+    const db = testDb();
+    await seedRoot(db);
+    // No matchable candidate yet → the first tag PROPOSEs, giving the KC a real genesis
+    // anchor (experimental:auto_tag_kc_created) so gatherAndFoldKnowledgeNode can reproduce it
+    // (a directly-seeded, non-event-sourced fixture would fold to null — not what we want to
+    // test here).
+    const proposeNamer = stubName('Ratios');
+    const proposed = await tagKnowledge(
+      { db, embedFn: stubEmbed(unitVec(0)), nameKcFn: proposeNamer.fn },
+      { questionText: 'q-genesis', subjectRootId: SUBJECT_ROOT },
+    );
+    expect(proposed.kind).toBe('propose');
+    const kcId = proposed.knowledge_ids[0];
+
+    // applyProposeNew does not embed the new KC (that is the nightly embed_backfill's job) —
+    // matchKnowledgeBySimilarity only returns EMBEDDED rows, so without this the second call
+    // below would find no candidate and PROPOSE again instead of MATCH-ing kcId. Backfill it
+    // directly (mirrors the nightly job) so this KC becomes the matchable target.
+    await db
+      .update(knowledge)
+      .set({ embedding: unitVec(0) })
+      .where(eq(knowledge.id, kcId));
+
+    const rowBefore = (await db.select().from(knowledge).where(eq(knowledge.id, kcId)))[0];
+    expect(rowBefore).toBeDefined();
+
+    // Now MATCH against this exact KC (same query embedding → distance ~0).
+    const matchNamer = stubName('SHOULD-NOT-BE-CALLED');
+    const matched = await tagKnowledge(
+      { db, embedFn: stubEmbed(unitVec(0)), nameKcFn: matchNamer.fn },
+      {
+        questionText: 'q-match',
+        subjectRootId: SUBJECT_ROOT,
+        sourceRef: { kind: 'question_block', id: 'block-xyz' },
+      },
+    );
+    expect(matched.kind).toBe('match');
+    expect(matched.knowledge_ids).toContain(kcId);
+    expect(matchNamer.calls).toBe(0);
+
+    const matchEvents = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.action, 'experimental:auto_tag_kc_matched'));
+    expect(matchEvents).toHaveLength(1);
+
+    // The live row is untouched by MATCH itself (no `knowledge` table write in that branch).
+    const rowAfterMatch = (await db.select().from(knowledge).where(eq(knowledge.id, kcId)))[0];
+    expect(rowAfterMatch).toEqual(rowBefore);
+
+    // Re-derive the row from the event log (gather→fold→write-through) and assert it is
+    // byte-identical to before — the reducer must silently skip the unknown MATCH action.
+    await projectKnowledgeNode(db, kcId);
+    const rowAfterProject = (await db.select().from(knowledge).where(eq(knowledge.id, kcId)))[0];
+    expect(rowAfterProject).toEqual(rowBefore);
   });
 });

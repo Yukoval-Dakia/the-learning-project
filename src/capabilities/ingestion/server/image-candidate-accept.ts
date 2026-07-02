@@ -659,6 +659,7 @@ export async function acceptImageCandidateProposal(
             questionText: promptMd,
             knowledgeHint: block.knowledge_hint,
             subjectRootId,
+            sourceRef: { kind: 'image_candidate_proposal', id: proposalId },
           },
         );
         // tagKnowledge already created any PROPOSE KC (live + approved) in its own tx + audit
