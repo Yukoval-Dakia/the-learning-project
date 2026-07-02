@@ -3,11 +3,13 @@
 // still keyed to it), then asserts: repair completes via the shared repair path, the forensic
 // `experimental:merge_attribution_repaired` event lands, the post-repair census is zero, a second
 // run is a no-op (idempotent), and the hard cap defers the overflow to the next (converging) run.
+// Review-round coverage (YUK-544): per-winner throw isolation (A1), the census→repair TOCTOU
+// winner-liveness re-verify (C1, via the onBeforeRepairPhase test seam), and the WARN water level (S1).
 
 import { db } from '@/db/client';
-import { event, knowledge, mastery_state, question } from '@/db/schema';
+import { event, knowledge, mastery_state, misconception_edge, question } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runMergeAttributionSweep } from './merge_attribution_sweep';
 
@@ -183,5 +185,111 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     const third = await runMergeAttributionSweep(db);
     expect(third.driftedFromIds).toBe(0);
     expect(third.repairedFromIds).toBe(0);
+  });
+
+  it('A1 winner isolation: a throwing winner rolls back alone — other winners repair + emit events', async () => {
+    // Winner A — repairs cleanly.
+    await insertK('k_into_a', { mergedFrom: ['k_a'] });
+    await insertK('k_a', { archived: true });
+    await insertQ('q_a', ['k_a']);
+    // Winner B — repair throws DETERMINISTICALLY: the misconception-edge rewrite routes created_by
+    // through the AgentRef.parse barrier (proposals.ts, YUK-543 O4); junk jsonb (`by` missing) fails
+    // the parse → winner-B tx rolls back whole. The census still counts the edge as drift
+    // (countOrphanSurfaces does row counts, no parse), so winner B genuinely enters the repair phase.
+    await insertK('k_into_b', { mergedFrom: ['k_b'] });
+    await insertK('k_b', { archived: true });
+    const now = new Date();
+    await db.insert(misconception_edge).values({
+      id: 'me_bad',
+      from_kind: 'misconception',
+      from_id: 'm1',
+      to_kind: 'knowledge',
+      to_id: 'k_b',
+      relation_type: 'caused_by',
+      weight: 1,
+      created_by: {
+        bogus: true,
+      } as unknown as (typeof misconception_edge.$inferInsert)['created_by'],
+      proposed_by_ai: false,
+      created_at: now,
+      updated_at: now,
+    });
+
+    const res = await runMergeAttributionSweep(db);
+    expect(res.driftedFromIds).toBe(2);
+    expect(res.failedWinners).toBe(1); // winner B threw + rolled back
+    expect(res.repairedFromIds).toBe(1); // winner A unaffected — no starvation
+    expect(res.eventsWritten).toBe(1);
+    expect(res.residualAfterRepair).toBe(0); // zero-assert runs over the REPAIRED set only
+
+    // Winner A repaired + evidenced; winner B's surfaces untouched (rollback, not partial write).
+    const qa = await db.select().from(question).where(eq(question.id, 'q_a'));
+    expect(qa[0].knowledge_ids).toEqual(['k_into_a']);
+    const events = await repairEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0].subject_id).toBe('k_a');
+    const me = await db
+      .select()
+      .from(misconception_edge)
+      .where(eq(misconception_edge.id, 'me_bad'));
+    expect(me[0].to_id).toBe('k_b');
+    expect(me[0].archived_at).toBeNull();
+
+    // Next run: only the failed winner is still drifted; it retries (and fails again on the same
+    // poisoned fixture) without touching the already-repaired winner — isolation is run-stable.
+    const second = await runMergeAttributionSweep(db);
+    expect(second.driftedFromIds).toBe(1);
+    expect(second.failedWinners).toBe(1);
+    expect(second.repairedFromIds).toBe(0);
+    expect(second.eventsWritten).toBe(0);
+    expect(await repairEvents()).toHaveLength(1);
+  });
+
+  it('C1 TOCTOU: winner archived between census and repair → deferred, zero writes toward the archived winner', async () => {
+    await insertK('k_into', { mergedFrom: ['k_from'] });
+    await insertK('k_from', { archived: true });
+    await insertQ('q1', ['k_from']);
+    await db.insert(mastery_state).values({ id: 'ms1', subject_id: 'k_from' });
+
+    const res = await runMergeAttributionSweep(db, {
+      // Simulate a concurrent accept-merge absorbing the winner in the exact census→repair window
+      // the in-tx liveness re-verify defends (the seam exists for precisely this test).
+      onBeforeRepairPhase: async () => {
+        await db
+          .update(knowledge)
+          .set({ archived_at: new Date() })
+          .where(eq(knowledge.id, 'k_into'));
+      },
+    });
+    expect(res.driftedFromIds).toBe(1);
+    expect(res.repairedFromIds).toBe(0);
+    expect(res.deferredFromIds).toBe(1); // 复用幂等续跑语义 — next run re-resolves the extended chain
+    expect(res.failedWinners).toBe(0); // an archived winner is a defer, not a failure
+    expect(res.eventsWritten).toBe(0);
+
+    // No partial writes: every surface still references k_from; nothing re-keyed onto the archived winner.
+    const q1 = await db.select().from(question).where(eq(question.id, 'q1'));
+    expect(q1[0].knowledge_ids).toEqual(['k_from']);
+    const ms = await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k_from'));
+    expect(ms).toHaveLength(1);
+    expect(await repairEvents()).toHaveLength(0);
+  });
+
+  it('S1 WARN water level: crossing warnDrift logs ELEVATED DRIFT but still repairs (告知-only)', async () => {
+    await insertK('k_into', { mergedFrom: ['k_from'] });
+    await insertK('k_from', { archived: true });
+    await insertQ('q1', ['k_from']);
+
+    const warnSpy = vi.spyOn(console, 'warn');
+    try {
+      const res = await runMergeAttributionSweep(db, { warnDrift: 0 });
+      expect(res.driftedFromIds).toBe(1);
+      expect(res.repairedFromIds).toBe(1); // the warning never blocks the self-heal
+      expect(
+        warnSpy.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('ELEVATED DRIFT')),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
