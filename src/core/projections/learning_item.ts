@@ -1,14 +1,44 @@
+import { z } from 'zod';
 import {
   GenesisExperimental,
   LearningItemRowSnapshot,
   type LearningItemRowSnapshotT,
 } from '../schema/event/genesis';
+import { RateEvent } from '../schema/event/known';
 import {
   LearningItemArchiveExperimental,
   LearningItemCompleteExperimental,
   LearningItemRelearnExperimental,
 } from '../schema/event/learning-item-events';
 import type { FoldEvent } from './fold-event';
+
+// YUK-543 — the minimal shape the learning_item fold needs off a
+// `experimental:knowledge_merge` propose event (proposals.ts MergePayload). from_ids
+// are the absorbed KCs, into_id the survivor. expected_versions/reasoning are ignored.
+const KnowledgeMergePayloadForFold = z.object({
+  from_ids: z.array(z.string()),
+  into_id: z.string().min(1),
+});
+
+/**
+ * YUK-543 — PURE. Replace every id in `ids` that appears in `fromIds` with `intoId`,
+ * then dedupe (first-occurrence order preserved). Returns a fresh array unchanged
+ * (copied) when no id matches. The SINGLE source of merge-rewrite semantics shared by
+ * (a) the imperative applyMerge writers for question/learning_item knowledge_ids and
+ * (b) this reducer's merge branch — so fold(events) == the imperative row byte-for-byte.
+ * Order agreement holds because .map preserves positions and Set-dedupe keeps the first
+ * occurrence, so per-fromId imperative application and all-fromIds reducer application
+ * yield the identical array (verified in the spec §2 order analysis).
+ */
+export function applyKnowledgeMergeToIds(
+  ids: readonly string[],
+  fromIds: ReadonlySet<string>,
+  intoId: string,
+): string[] {
+  if (!ids.some((id) => fromIds.has(id))) return [...ids];
+  const replaced = ids.map((id) => (fromIds.has(id) ? intoId : id));
+  return [...new Set(replaced)];
+}
 
 // ====================================================================
 // foldLearningItem — the W2 structural fold for a single `learning_item` row (YUK-471 Wave 2).
@@ -101,6 +131,21 @@ export function foldLearningItem(
   events: FoldEvent[],
 ): LearningItemRowSnapshotT | null {
   const ordered = [...events].sort(byCreatedThenId);
+
+  // ---------- pass 1: accepted-merge resolution (YUK-543; mirrors foldKnowledgeNode) ----------
+  // A `knowledge_merge` rewrites this item's knowledge_ids ONLY when the merge proposal was
+  // ACCEPTED — a pending / dismissed / rolled-back merge must not touch attribution. The accept
+  // is a `rate` event (subject_kind='event') whose caused_by_event_id names the merge propose
+  // event. Collect the accepted merge propose ids here so the merge branch below can gate on them.
+  const acceptedProposeIds = new Set<string>();
+  for (const fe of ordered) {
+    if (fe.action !== 'rate') continue;
+    const rate = RateEvent.safeParse(toParseInput(fe));
+    if (!rate.success) continue;
+    if (rate.data.payload.rating !== 'accept') continue;
+    const proposeId = fe.caused_by_event_id;
+    if (proposeId) acceptedProposeIds.add(proposeId);
+  }
 
   let row: LearningItemRowSnapshotT | null = null;
 
@@ -216,6 +261,37 @@ export function foldLearningItem(
         archived_reason: a.data.payload.reason,
         updated_at: fe.created_at,
       };
+      continue;
+    }
+
+    // ---------- knowledge_ids merge rewrite (YUK-543) ----------
+    // A `knowledge_merge` propose event's subject is the SURVIVOR knowledge node (subject_kind=
+    // 'knowledge'), NOT this learning_item — so the gather's Q3 pulls it in and it falls through to
+    // here. When ACCEPTED, replace every absorbed from_id in this row's knowledge_ids with into_id
+    // and dedupe (applyKnowledgeMergeToIds — the SAME pure helper applyMerge's imperative UPDATE
+    // uses, so fold == row). ONLY knowledge_ids changes: no version bump, no updated_at touch
+    // (attribution repair mirrors the archive branch's no-bump; the imperative UPDATE writes only
+    // knowledge_ids too — spec §2 / decision ledger). Non-intersecting merges are a no-op (the
+    // helper returns the array unchanged), so a merge of unrelated KCs never perturbs this row.
+    if (fe.action === 'experimental:knowledge_merge' && fe.subject_kind === 'knowledge') {
+      if (!acceptedProposeIds.has(fe.id)) continue; // pending / dismissed / rolled-back → no rewrite
+      const m = KnowledgeMergePayloadForFold.safeParse(fe.payload);
+      if (!m.success) {
+        warnMalformed('experimental:knowledge_merge', fe.id, m.error);
+        continue;
+      }
+      const nextIds = applyKnowledgeMergeToIds(
+        row.knowledge_ids,
+        new Set(m.data.from_ids),
+        m.data.into_id,
+      );
+      if (
+        nextIds.length === row.knowledge_ids.length &&
+        nextIds.every((id, i) => id === row?.knowledge_ids[i])
+      ) {
+        continue; // no change — leave the row (and its updated_at/version) untouched
+      }
+      row = { ...row, knowledge_ids: nextIds };
     }
   }
 

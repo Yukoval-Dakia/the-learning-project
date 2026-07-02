@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LearningItemRowSnapshotT } from '../schema/event/genesis';
 import type { FoldEvent } from './fold-event';
-import { foldLearningItem } from './learning_item';
+import { applyKnowledgeMergeToIds, foldLearningItem } from './learning_item';
 
 // ====================================================================
 // foldLearningItem — pure learning_item reducer unit tests (YUK-471 Wave 2).
@@ -377,5 +377,162 @@ describe('foldLearningItem — B5 honest reject (malformed payloads at the barri
     // the malformed complete is skipped → the row stays pending (not done).
     expect(folded?.status).toBe('pending');
     expect(folded?.version).toBe(0);
+  });
+});
+
+// YUK-543 — the shared pure merge-rewrite helper (used by BOTH the imperative applyMerge writers
+// and this reducer's merge branch, so fold == row).
+describe('applyKnowledgeMergeToIds (YUK-543)', () => {
+  it('replaces every from id with into, preserving position + deduping', () => {
+    expect(applyKnowledgeMergeToIds(['a', 'x', 'b'], new Set(['a', 'b']), 'c')).toEqual(['c', 'x']);
+  });
+  it('returns a fresh copy unchanged when no id matches (no-op)', () => {
+    const ids = ['x', 'y'];
+    const out = applyKnowledgeMergeToIds(ids, new Set(['a']), 'c');
+    expect(out).toEqual(['x', 'y']);
+    expect(out).not.toBe(ids);
+  });
+  it('dedupes when into is already present', () => {
+    expect(applyKnowledgeMergeToIds(['c', 'a', 'x'], new Set(['a']), 'c')).toEqual(['c', 'x']);
+  });
+  it('per-from single-application agrees with all-from application (order invariance)', () => {
+    const ids = ['a', 'x', 'b'];
+    const stepwise = applyKnowledgeMergeToIds(
+      applyKnowledgeMergeToIds(ids, new Set(['a']), 'c'),
+      new Set(['b']),
+      'c',
+    );
+    const oneShot = applyKnowledgeMergeToIds(ids, new Set(['a', 'b']), 'c');
+    expect(stepwise).toEqual(oneShot);
+  });
+});
+
+// YUK-543 — the merge Q3 reducer branch: an ACCEPTED experimental:knowledge_merge rewrites the
+// item's knowledge_ids from the absorbed from_id to the survivor into_id.
+function mergeProposeEvent(opts: {
+  id: string;
+  created_at: Date;
+  from_ids: string[];
+  into_id: string;
+}): FoldEvent {
+  return {
+    id: opts.id,
+    created_at: opts.created_at,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'experimental:knowledge_merge',
+    subject_kind: 'knowledge',
+    subject_id: opts.into_id,
+    outcome: 'partial',
+    caused_by_event_id: null,
+    payload: { from_ids: opts.from_ids, into_id: opts.into_id },
+  };
+}
+function rate(opts: {
+  created_at: Date;
+  proposeId: string;
+  rating: 'accept' | 'dismiss' | 'rollback';
+}): FoldEvent {
+  return {
+    id: nextId('rate'),
+    created_at: opts.created_at,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: opts.proposeId,
+    outcome: 'success',
+    caused_by_event_id: opts.proposeId,
+    payload: { rating: opts.rating },
+  };
+}
+
+describe('foldLearningItem — knowledge_ids merge rewrite (YUK-543)', () => {
+  it('an accepted merge rewrites the absorbed KC to the survivor (dedupe), other columns untouched', () => {
+    const row = liSnapshot({ knowledge_ids: ['k_a', 'k_b'], version: 3 });
+    const merge = mergeProposeEvent({
+      id: 'merge_1',
+      created_at: at(1000),
+      from_ids: ['k_a'],
+      into_id: 'k_c',
+    });
+    const folded = foldLearningItem('li_1', [
+      genesis({ created_at: T0, row }),
+      merge,
+      rate({ created_at: at(1001), proposeId: 'merge_1', rating: 'accept' }),
+    ]);
+    expect(folded?.knowledge_ids).toEqual(['k_c', 'k_b']);
+    // knowledge_ids-only change — no version/updated_at bump.
+    expect(folded?.version).toBe(3);
+    expect(folded?.updated_at).toEqual(T0);
+  });
+
+  it('a PENDING (unrated) merge does NOT rewrite', () => {
+    const row = liSnapshot({ knowledge_ids: ['k_a'] });
+    const merge = mergeProposeEvent({
+      id: 'merge_2',
+      created_at: at(1000),
+      from_ids: ['k_a'],
+      into_id: 'k_c',
+    });
+    const folded = foldLearningItem('li_1', [genesis({ created_at: T0, row }), merge]);
+    expect(folded?.knowledge_ids).toEqual(['k_a']);
+  });
+
+  it('a DISMISSED merge does NOT rewrite', () => {
+    const row = liSnapshot({ knowledge_ids: ['k_a'] });
+    const merge = mergeProposeEvent({
+      id: 'merge_3',
+      created_at: at(1000),
+      from_ids: ['k_a'],
+      into_id: 'k_c',
+    });
+    const folded = foldLearningItem('li_1', [
+      genesis({ created_at: T0, row }),
+      merge,
+      rate({ created_at: at(1001), proposeId: 'merge_3', rating: 'dismiss' }),
+    ]);
+    expect(folded?.knowledge_ids).toEqual(['k_a']);
+  });
+
+  it('a non-intersecting accepted merge is a no-op (row untouched)', () => {
+    const row = liSnapshot({ knowledge_ids: ['k_a'], version: 2 });
+    const merge = mergeProposeEvent({
+      id: 'merge_4',
+      created_at: at(1000),
+      from_ids: ['k_zzz'],
+      into_id: 'k_c',
+    });
+    const folded = foldLearningItem('li_1', [
+      genesis({ created_at: T0, row }),
+      merge,
+      rate({ created_at: at(1001), proposeId: 'merge_4', rating: 'accept' }),
+    ]);
+    expect(folded?.knowledge_ids).toEqual(['k_a']);
+    expect(folded?.version).toBe(2);
+  });
+
+  it('CHAINED merges resolve to the terminal survivor (A→B then B→C ⇒ C)', () => {
+    const row = liSnapshot({ knowledge_ids: ['k_a', 'k_x'] });
+    const mergeAB = mergeProposeEvent({
+      id: 'merge_ab',
+      created_at: at(1000),
+      from_ids: ['k_a'],
+      into_id: 'k_b',
+    });
+    const mergeBC = mergeProposeEvent({
+      id: 'merge_bc',
+      created_at: at(2000),
+      from_ids: ['k_b'],
+      into_id: 'k_c',
+    });
+    const folded = foldLearningItem('li_1', [
+      genesis({ created_at: T0, row }),
+      mergeAB,
+      rate({ created_at: at(1001), proposeId: 'merge_ab', rating: 'accept' }),
+      mergeBC,
+      rate({ created_at: at(2001), proposeId: 'merge_bc', rating: 'accept' }),
+    ]);
+    expect(folded?.knowledge_ids).toEqual(['k_c', 'k_x']);
   });
 });
