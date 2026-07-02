@@ -48,7 +48,7 @@ async function seedLivePrereq(from: string, to: string): Promise<void> {
     });
 }
 
-/** Mark a KC mastered (p(L)=σ(0.4·4)=0.83 ≥ 0.7). */
+/** Mark a KC mastered (p(L)=σ(0.5·4)=0.88 ≥ 0.7 AND evidence_count 4 ≥ floor 4). */
 async function setMastered(kc: string): Promise<void> {
   await seedKc(kc);
   await testDb()
@@ -60,6 +60,26 @@ async function setMastered(kc: string): Promise<void> {
       theta_hat: 0,
       evidence_count: 4,
       success_count: 4,
+      fail_count: 0,
+      theta_precision: 4,
+      updated_at: new Date(),
+    })
+    .onConflictDoNothing();
+}
+
+/** Mark a KC "near-mastered" (YUK-539): raw p(L)=σ(0.5·3)=0.82 ≥ 0.7 BUT evidence_count 3 <
+ *  the FRONTIER_MASTERY_MIN_EVIDENCE floor (4) → NOT mastered-enough (three lucky corrects). */
+async function setNearMastered(kc: string): Promise<void> {
+  await seedKc(kc);
+  await testDb()
+    .insert(mastery_state)
+    .values({
+      id: createId(),
+      subject_kind: 'knowledge',
+      subject_id: kc,
+      theta_hat: 0,
+      evidence_count: 3,
+      success_count: 3,
       fail_count: 0,
       theta_precision: 4,
       updated_at: new Date(),
@@ -164,5 +184,21 @@ describe('loadFrontierRail (A5 S2, YUK-354)', () => {
 
     const rail = await loadFrontierRail(testDb());
     expect(rail).toEqual([]);
+  });
+
+  it('PROPOSE: a candidate with 3 clean corrects (raw p(L)≥0.7 but evidence<4) is STILL suggested (evidence floor not met)', async () => {
+    // Sibling to the self-mastered case (YUK-539): `almost` has success=3/fail=0/evidence=3 →
+    // raw p(L)=σ(1.5)=0.82 ≥ 0.7 but evidence 3 < the FRONTIER_MASTERY_MIN_EVIDENCE floor (4),
+    // so isMastered (now p(L) AND evidence) returns false → it is NOT dropped as self-mastered
+    // and remains a low-confidence propose suggestion. Pins the frontier-read isMastered swap.
+    await seedKc('foundation', '基础');
+    await seedKc('almost', '差一点');
+    await proposePrereq('foundation', 'almost', '提议前置');
+    await setNearMastered('almost'); // raw p(L) clears 0.7 but evidence below floor → still suggested
+
+    const rail = await loadFrontierRail(testDb());
+    expect(rail).toHaveLength(1);
+    expect(rail[0].kid).toBe('almost');
+    expect(rail[0].propose).toBe(true);
   });
 });

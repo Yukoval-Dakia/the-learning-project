@@ -60,6 +60,34 @@ export const FRONTIER_DEPTH_LIMIT = 16;
 export const FRONTIER_NODE_CAP = 10_000;
 /** p(L) at/above which a KC counts as MASTERED (self-not-mastered + prereq-mastered gate). */
 export const MASTERED_PL_THRESHOLD = 0.7;
+
+/**
+ * Minimum evidence_count required, ALONGSIDE p(L) ≥ MASTERED_PL_THRESHOLD, before a KC
+ * counts as "mastered enough" to leave the frontier pool / satisfy a downstream prereq.
+ *
+ * p(L) alone crosses 0.7 after very few consecutive corrects at β=0 (with γ=0.5,
+ * σ(0.5·3)=0.8176 on THREE corrects) — a real bug: a KC could be declared mastered on
+ * three lucky answers. Gating on evidence_count (NOT the existing low_confidence/theta_se
+ * flag, which is already false after just ONE answer at β=0 — see pfa.ts
+ * LOW_CONFIDENCE_SE_THRESHOLD) directly closes the gap without touching γ/ρ. 4 matches the
+ * codebase's existing cold-start-window convention (theta.ts coldStartN).
+ *
+ * BORROW-BRANCH INTERACTION (kg-borrowing register unit): getMasteryProjection's borrow
+ * branch (src/server/mastery/state.ts:519) synthesizes entries with evidence_count:0. That
+ * branch is DARK today (both GRAPH_LAPLACIAN_ENABLED and PREREQ_THETA_PROPAGATION_ENABLED
+ * default false), so it never reaches this gate now. Once either flag flips, a borrowed
+ * prereq (evidence_count:0) can NEVER pass this floor — it would previously have satisfied
+ * an easy-anchor prereq gate on p(L) alone. That is conservative by intent (a borrowed
+ * estimate is explicitly low-confidence and should not vacuously unlock a dependent), but
+ * is a deliberate coupling to flag when the borrow branch is activated.
+ */
+export const FRONTIER_MASTERY_MIN_EVIDENCE = 4;
+
+/** A KC counts as "mastered enough" for frontier purposes iff BOTH the p(L) point
+ *  estimate clears the threshold AND enough evidence has accumulated to trust it. */
+export function isMasteredForFrontier(mastery: number, evidenceCount: number): boolean {
+  return mastery >= MASTERED_PL_THRESHOLD && evidenceCount >= FRONTIER_MASTERY_MIN_EVIDENCE;
+}
 /** Cap on how many frontier questions the composer pulls in per day (applied by the caller). */
 export const FRONTIER_MAX_ITEMS = 5;
 
@@ -213,13 +241,20 @@ export async function learnableFrontierResolved(db: DbLike): Promise<FrontierRes
   }
   const projection = await getMasteryProjection(db as Db, [...allKcs]);
   const pL = (kc: string): number => projection.get(kc)?.mastery ?? COLD_START_PL;
+  const evidenceOf = (kc: string): number => projection.get(kc)?.evidence_count ?? 0;
+  // "Mastered enough" = p(L) clears threshold AND evidence_count clears the floor (YUK-539):
+  // a KC on 3 lucky corrects (raw p(L) ≥ 0.7 but evidence_count < 4) must NOT drop from the
+  // pool nor vacuously satisfy a dependent's prereq. Applied UNIFORMLY to both self + prereq
+  // sides — a prereq "mastered" on 3 lucky answers is exactly as unreliable a gate-satisfier
+  // as a self-KC dropped on 3 lucky answers.
+  const masteredEnough = (kc: string): boolean => isMasteredForFrontier(pL(kc), evidenceOf(kc));
 
-  // Frontier = { kc : pL(kc) < threshold AND every prereq pL ≥ threshold }. Sorted for
+  // Frontier = { kc : NOT masteredEnough(self) AND every prereq masteredEnough }. Sorted for
   // a deterministic order (the caller caps to FRONTIER_MAX_ITEMS).
   const frontier: string[] = [];
   for (const [frontierKc, prereqKcs] of prereqsByFrontier) {
-    if (pL(frontierKc) >= MASTERED_PL_THRESHOLD) continue; // self already mastered → skip.
-    const allPrereqsMastered = prereqKcs.every((p) => pL(p) >= MASTERED_PL_THRESHOLD);
+    if (masteredEnough(frontierKc)) continue; // self already mastered → skip.
+    const allPrereqsMastered = prereqKcs.every((p) => masteredEnough(p));
     if (allPrereqsMastered) frontier.push(frontierKc);
   }
   frontier.sort();

@@ -283,9 +283,11 @@ export async function effectiveThetaForKc(
  *     - `low_confidence` = true when θ̂ is still too uncertain to trust the point
  *       (theta_se ≥ the precision threshold) — presentation should show the band.
  *   `theta_hat` / `theta_precision` / `theta_se` are surfaced raw so callers keep
- *   the underlying ability state. The PFA γ/ρ coefficients are PHASE-DEFERRED
- *   hardcoded defaults pending nightly-refit statistical verification (YUK-361,
- *   see src/core/pfa.ts).
+ *   the underlying ability state. The PFA γ/ρ coefficients are owner-fixed,
+ *   code-reviewed module consts (cross-learner structural coefficients, same footing
+ *   as ELO_K_GLOBAL / DIFFICULTY_PROXY_WEIGHT) — no PFA refit job exists or runs for
+ *   them; recalibration_nightly refits only item difficulty b. See src/core/pfa.ts
+ *   for the full rationale + retune IOU.
  *
  *   The CI fields are ADDITIVE — the 5 point-estimate consumers (tree / node-page
  *   / knowledge-readers / detail) read only `mastery` and are

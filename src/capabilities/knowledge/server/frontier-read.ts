@@ -21,7 +21,7 @@
 //     NAMES + the discrete BandChip), never bare mastery probabilities.
 
 import {
-  MASTERED_PL_THRESHOLD,
+  isMasteredForFrontier,
   learnableFrontierResolved,
 } from '@/capabilities/practice/server/learnable-frontier';
 import type { Db } from '@/db/client';
@@ -100,9 +100,15 @@ function proposeReason(prereqNames: string[], llmReason: string | null): string 
   return `AI 提议前置：${shown}${extra} · 待确认`;
 }
 
-/** A KC counts as mastered iff it has a projection row at/above the frontier threshold. */
-function isMastered(mastery: number | null | undefined): boolean {
-  return typeof mastery === 'number' && mastery >= MASTERED_PL_THRESHOLD;
+/** A KC counts as mastered iff it has a projection row clearing BOTH the p(L) threshold AND
+ *  the evidence-count floor (YUK-539) — a KC on 3 lucky corrects (raw p(L) ≥ 0.7 but
+ *  evidence_count < 4) is NOT mastered and stays a suggestible next step. */
+function isMastered(
+  entry: { mastery: number | null; evidence_count: number } | undefined,
+): boolean {
+  return (
+    typeof entry?.mastery === 'number' && isMasteredForFrontier(entry.mastery, entry.evidence_count)
+  );
 }
 
 /**
@@ -244,7 +250,7 @@ export async function loadFrontierRail(db: Db): Promise<FrontierRailItem[]> {
   ]);
 
   // self-not-mastered gate for propose candidates (never suggest an already-mastered KC).
-  const proposeFinal = proposeIds.filter((id) => !isMastered(projection.get(id)?.mastery));
+  const proposeFinal = proposeIds.filter((id) => !isMastered(projection.get(id)));
 
   const bandFields = (
     kid: string,
