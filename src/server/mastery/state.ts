@@ -56,6 +56,7 @@ import {
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge_edge, mastery_state } from '@/db/schema';
+import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { resolveFamilyKeyForQuestion } from './family-key';
 import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
 import { effectiveB } from './recalibration';
@@ -195,9 +196,7 @@ export async function retireMasteryStateOnMerge(
   intoId: string,
 ): Promise<'noop' | 'renamed' | 'frozen'> {
   // Sorted acquire of BOTH ids' locks (SAME namespace as updateThetaForAttempt) → no deadlock.
-  for (const id of [fromId, intoId].sort()) {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
-  }
+  await acquireSortedAdvisoryLocks(tx, 'fsrs:knowledge', [fromId, intoId]);
   const rows = await tx
     .select({ subject_id: mastery_state.subject_id })
     .from(mastery_state)
