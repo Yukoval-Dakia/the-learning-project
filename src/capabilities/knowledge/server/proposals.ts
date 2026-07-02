@@ -16,6 +16,7 @@
 import { updateGoalScope } from '@/capabilities/agency/server/goals/queries';
 import { newId } from '@/core/ids';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
+import { AgentRef } from '@/core/schema/business';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
@@ -64,11 +65,7 @@ import {
   listLiveEdgesTouchingNode,
   reactivateKnowledgeEdge,
 } from './edges';
-import {
-  type CreateMisconceptionEdgeInput,
-  archiveMisconceptionEdge,
-  createMisconceptionEdge,
-} from './misconception-edges';
+import { archiveMisconceptionEdge, createMisconceptionEdge } from './misconception-edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 
 type DbLike = Db | Tx;
@@ -608,7 +605,9 @@ async function rewireMisconceptionEdgeTargets(
       to_id: intoId,
       relation_type: r.relation_type,
       weight: r.weight,
-      created_by: r.created_by as CreateMisconceptionEdgeInput['created_by'],
+      // Parse barrier, not a bare cast (OCR O4): the jsonb read is untyped; a drifted created_by
+      // shape fails loudly HERE rather than propagating a mis-shaped value into the throat.
+      created_by: AgentRef.parse(r.created_by),
       proposed_by_ai: r.proposed_by_ai,
       now,
     });
@@ -663,6 +662,10 @@ async function writeEdgeCreateEvent(
     subject_id: newEdgeId,
     outcome: 'success',
     payload: {
+      // Explicit edge_op (OCR O3): the fold treats an ABSENT edge_op as create, but every other
+      // writer (api/edges.ts, proposal-tools.ts, frontier_fill_nightly.ts) sets it explicitly —
+      // matching them keeps this event robust if the fold schema ever tightens.
+      edge_op: 'create',
       from_knowledge_id: from,
       to_knowledge_id: to,
       relation_type: relationType,

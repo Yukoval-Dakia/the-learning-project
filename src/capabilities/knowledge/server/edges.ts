@@ -13,7 +13,7 @@
 // named fns; raw `db.insert(knowledge_edge)` outside this module is forbidden.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
@@ -163,13 +163,21 @@ export interface ReactivateKnowledgeEdgeInput {
  * the new (last) create re-projects this row as live with created_at/created_by/weight/reasoning
  * taken from that event — so this UPDATE refreshes those columns to byte-match the fold output
  * (row == fold, the B3 audit invariant). Single-owner: all knowledge_edge writes stay in this module.
+ *
+ * TOMBSTONE-ONLY GUARD (OCR O1): the WHERE requires `archived_at IS NOT NULL` — reactivation's
+ * precondition is "currently a tombstone". Calling this on a LIVE edge (or a missing id) would
+ * otherwise silently overwrite weight/reasoning/created_by/created_at of a live row; instead it
+ * matches 0 rows and THROWS. The merge-rewire caller pre-checks the holder is archived, so this is
+ * a contract guard for future callers, not a behavior change there.
+ *
+ * @throws ApiError('conflict', 409) when `id` does not exist or is not currently archived.
  */
 export async function reactivateKnowledgeEdge(
   db: DbLike,
   id: string,
   input: ReactivateKnowledgeEdgeInput,
 ): Promise<void> {
-  await db
+  const result = await db
     .update(knowledge_edge)
     .set({
       archived_at: null,
@@ -178,7 +186,15 @@ export async function reactivateKnowledgeEdge(
       created_by: { actor_kind: input.actor_kind, actor_ref: input.actor_ref } as never,
       created_at: input.created_at,
     })
-    .where(eq(knowledge_edge.id, id));
+    .where(and(eq(knowledge_edge.id, id), isNotNull(knowledge_edge.archived_at)));
+  const changed = (result as { count?: number }).count ?? 0;
+  if (changed !== 1) {
+    throw new ApiError(
+      'conflict',
+      `reactivateKnowledgeEdge: edge ${id} is not an archived tombstone (live or missing) — refusing to overwrite`,
+      409,
+    );
+  }
 }
 
 export async function getKnowledgeEdgeById(

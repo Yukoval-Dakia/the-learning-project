@@ -11,6 +11,11 @@
 // IDEMPOTENT: every repair helper queries "rows still referencing fromId" and no-ops when none exist,
 // so a second run repairs nothing (the DB test asserts a clean second pass).
 //
+// OPERATIONAL NOTE (CodeRabbit C1): resolveMergeChains resolves the whole chain set OUTSIDE any
+// transaction, then writes back per winner group — a merge ACCEPTED while this script runs can make
+// a resolved terminal winner stale by write-back time. Avoid running it concurrently with merge
+// accepts; under the idempotent design a simple re-run afterwards converges.
+//
 // CLI:
 //   pnpm tsx scripts/backfill-merge-attribution.ts            # repair
 //   pnpm tsx scripts/backfill-merge-attribution.ts --dry-run  # census only (zero writes)

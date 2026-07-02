@@ -74,6 +74,15 @@ export function nextTypedState(input: NextTypedStateInput): NextTypedStateResult
  *      no FK / no unique on it → no 23505). Returned outcome describes the KEYED row only.
  * Takes the module's OWN `kc_typed:<kind>:<id>` advisory-lock namespace for BOTH ids, sorted, so a
  * concurrent probe-resolve upsert serializes against the merge.
+ *
+ * KNOWN RESIDUAL RACE (OCR O8, accepted): the pointer rewrite touches rows keyed by OTHER
+ * subject_ids (e.g. k_other), whose locks are NOT in the held set — locking them would mean an
+ * unbounded lock set over every possible pointer holder, which is a non-starter. A concurrent
+ * upsertKcTypedState(k_other) that resolved `confused_with_kc_id` from a stale pre-merge read can
+ * therefore re-point at the archived fromId after this repair. Same class as the spec §3 row 5
+ * stale-read residual, and bounded the same way: countOrphanSurfaces' kc_typed predicate already
+ * includes the `confused_with_kc_id` column (OR branch), so the weekly sweep detects it and the
+ * YUK-544 auto-invoke path heals it.
  */
 export async function retireKcTypedStateOnMerge(
   tx: Tx,
