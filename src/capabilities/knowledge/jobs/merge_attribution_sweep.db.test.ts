@@ -107,7 +107,10 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     expect(payload.terminal_winner_id).toBe('k_into');
     expect(payload.chain).toEqual(['k_from', 'k_into']);
     expect(payload.repair_summary.questions).toBe(1);
-    expect(payload.repair_summary.mastery_state).not.toBe('noop');
+    // 'renamed' exactly: the from-row exists and the winner has NO mastery row, so the retire
+    // re-keys subject_id onto the winner (retireMasteryStateOnMerge; 'frozen' is the both-rows
+    // case, 'noop' the no-from-row case — pin the enum so a semantics change fails here).
+    expect(payload.repair_summary.mastery_state).toBe('renamed');
     expect(payload.surfaces_repaired).toBe(first.surfacesRepaired);
     expect(payload.sweep_run_id).toBe('run_test_1');
 
@@ -215,34 +218,42 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
       updated_at: now,
     });
 
-    const res = await runMergeAttributionSweep(db);
-    expect(res.driftedFromIds).toBe(2);
-    expect(res.failedWinners).toBe(1); // winner B threw + rolled back
-    expect(res.repairedFromIds).toBe(1); // winner A unaffected — no starvation
-    expect(res.eventsWritten).toBe(1);
-    expect(res.residualAfterRepair).toBe(0); // zero-assert runs over the REPAIRED set only
+    // Silence the two intentional winner-B failure logs (this test TRIGGERS them; unsilenced they
+    // spray a full stack into CI output and read as a real failure). The sweep's behaviour is
+    // asserted via result counts + rows, not log output.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await runMergeAttributionSweep(db);
+      expect(res.driftedFromIds).toBe(2);
+      expect(res.failedWinners).toBe(1); // winner B threw + rolled back
+      expect(res.repairedFromIds).toBe(1); // winner A unaffected — no starvation
+      expect(res.eventsWritten).toBe(1);
+      expect(res.residualAfterRepair).toBe(0); // zero-assert runs over the REPAIRED set only
 
-    // Winner A repaired + evidenced; winner B's surfaces untouched (rollback, not partial write).
-    const qa = await db.select().from(question).where(eq(question.id, 'q_a'));
-    expect(qa[0].knowledge_ids).toEqual(['k_into_a']);
-    const events = await repairEvents();
-    expect(events).toHaveLength(1);
-    expect(events[0].subject_id).toBe('k_a');
-    const me = await db
-      .select()
-      .from(misconception_edge)
-      .where(eq(misconception_edge.id, 'me_bad'));
-    expect(me[0].to_id).toBe('k_b');
-    expect(me[0].archived_at).toBeNull();
+      // Winner A repaired + evidenced; winner B's surfaces untouched (rollback, not partial write).
+      const qa = await db.select().from(question).where(eq(question.id, 'q_a'));
+      expect(qa[0].knowledge_ids).toEqual(['k_into_a']);
+      const events = await repairEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0].subject_id).toBe('k_a');
+      const me = await db
+        .select()
+        .from(misconception_edge)
+        .where(eq(misconception_edge.id, 'me_bad'));
+      expect(me[0].to_id).toBe('k_b');
+      expect(me[0].archived_at).toBeNull();
 
-    // Next run: only the failed winner is still drifted; it retries (and fails again on the same
-    // poisoned fixture) without touching the already-repaired winner — isolation is run-stable.
-    const second = await runMergeAttributionSweep(db);
-    expect(second.driftedFromIds).toBe(1);
-    expect(second.failedWinners).toBe(1);
-    expect(second.repairedFromIds).toBe(0);
-    expect(second.eventsWritten).toBe(0);
-    expect(await repairEvents()).toHaveLength(1);
+      // Next run: only the failed winner is still drifted; it retries (and fails again on the same
+      // poisoned fixture) without touching the already-repaired winner — isolation is run-stable.
+      const second = await runMergeAttributionSweep(db);
+      expect(second.driftedFromIds).toBe(1);
+      expect(second.failedWinners).toBe(1);
+      expect(second.repairedFromIds).toBe(0);
+      expect(second.eventsWritten).toBe(0);
+      expect(await repairEvents()).toHaveLength(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('C1 TOCTOU: winner archived between census and repair → deferred, zero writes toward the archived winner', async () => {
