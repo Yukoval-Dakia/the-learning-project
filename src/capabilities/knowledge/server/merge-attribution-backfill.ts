@@ -39,6 +39,13 @@ export interface MergeChainResolution {
   fromId: string;
   /** the terminal LIVE winner this from_id ultimately merged into, or null when unresolvable. */
   winnerId: string | null;
+  /**
+   * YUK-543 review L3 — the FULL hop sequence walked, [fromId, mid…, terminal] (forensic
+   * granularity: which hop of a multi-merge chain went wrong must survive in the repair log, not
+   * be flattened to first→last). On a skip it is the partial chain walked up to the failure point.
+   * The accept-time MergeRepairEntry is inherently single-hop and needs no analog.
+   */
+  chain: string[];
   /** why the chain was NOT resolved to a live winner (skip, do not guess). */
   skipReason?: 'archived_terminal' | 'cycle';
 }
@@ -50,13 +57,19 @@ export interface MergeChainResolution {
  * from_id is returned with winnerId=null + a skipReason — logged and skipped, never guessed.
  */
 export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolution[]> {
+  // YUK-543 review R5 — scoped scan, not a full unbounded-table pull: only ABSORBER rows (non-empty
+  // merged_from) participate in chain resolution. Behaviorally equivalent to the full scan:
+  // absorbedInto is only ever populated from non-empty rows, and every intermediate hop / reachable
+  // terminal is itself an absorber (its merged_from contains the previous hop), so the isLive check
+  // never needs a row this WHERE excludes.
   const rows = await db
     .select({
       id: knowledge.id,
       archived_at: knowledge.archived_at,
       merged_from: knowledge.merged_from,
     })
-    .from(knowledge);
+    .from(knowledge)
+    .where(sql`jsonb_array_length(${knowledge.merged_from}) > 0`);
 
   // absorbedInto[fromId] = the node id that absorbed it (its merged_from contains fromId).
   const absorbedInto = new Map<string, string>();
@@ -72,10 +85,11 @@ export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolut
   for (const fromId of absorbedInto.keys()) {
     let cur = fromId;
     const seen = new Set<string>();
+    const chain: string[] = [fromId];
     let resolution: MergeChainResolution | null = null;
     while (resolution === null) {
       if (seen.has(cur)) {
-        resolution = { fromId, winnerId: null, skipReason: 'cycle' };
+        resolution = { fromId, winnerId: null, chain, skipReason: 'cycle' };
         break;
       }
       seen.add(cur);
@@ -83,10 +97,11 @@ export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolut
       if (next === undefined) {
         // cur is not absorbed into anything: it is the terminal. It must be LIVE to be a winner.
         resolution = isLive.has(cur)
-          ? { fromId, winnerId: cur }
-          : { fromId, winnerId: null, skipReason: 'archived_terminal' };
+          ? { fromId, winnerId: cur, chain }
+          : { fromId, winnerId: null, chain, skipReason: 'archived_terminal' };
         break;
       }
+      chain.push(next);
       cur = next;
     }
     resolutions.push(resolution);
@@ -255,12 +270,16 @@ export async function runMergeAttributionBackfill(
   // Group resolved from_ids by their winner so edge rewires see the FULL loser set (loser→loser edges
   // collapse rather than dangling), mirroring a multi-from_id applyMerge.
   const byWinner = new Map<string, string[]>();
+  // YUK-543 review L3 — full hop sequence per fromId, kept for the forensic repair log below.
+  const chainByFromId = new Map<string, string[]>();
   for (const r of resolutions) {
+    chainByFromId.set(r.fromId, r.chain);
     if (r.winnerId === null) {
       result.skipped += 1;
       console.warn('[merge-attribution] skipping unresolved chain', {
         fromId: r.fromId,
         reason: r.skipReason,
+        chain: r.chain,
       });
       continue;
     }
@@ -286,6 +305,13 @@ export async function runMergeAttributionBackfill(
         // Census BEFORE repair so the write-mode result reports what it actually fixed.
         result.orphanSurfacesFound += surfaceTotal(await countOrphanSurfaces(tx, fromId));
         await repairMergeAttributionForFromId(tx, fromId, winnerId, now, mergeFromIds);
+        // L3 — forensic repair log carries the FULL chain (which hop went wrong must be
+        // reconstructable from the log alone, not flattened to fromId→winner).
+        console.log('[merge-attribution] repaired', {
+          fromId,
+          winnerId,
+          chain: chainByFromId.get(fromId),
+        });
       }
     });
   }

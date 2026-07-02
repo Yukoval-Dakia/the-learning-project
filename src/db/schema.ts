@@ -426,6 +426,12 @@ export const learning_record = pgTable(
     processing_status: text('processing_status').notNull().default('raw'),
     origin_event_id: text('origin_event_id'),
     subject_id: text('subject_id'),
+    // YUK-543 — CONTRACT: never rewritten on a KC merge (applyMerge deliberately excludes this
+    // column). learning_record is the append-only ATOMIC evidence layer — the un-aggregated
+    // observation unit a future unmergeKnowledge() must re-fit new per-KC parameters FROM (the
+    // Sentry-fingerprint analogy: unmerge is only possible because the atomic keys were never
+    // rewritten by the merge). Any "顺手清理" that pulls this column into a rewrite pass destroys
+    // that feasibility precondition. See the YUK-543 spec D-D verdict (Appendix C).
     knowledge_ids: jsonb('knowledge_ids').$type<string[]>().notNull().default([]),
     question_id: text('question_id'),
     attempt_event_id: text('attempt_event_id'),
