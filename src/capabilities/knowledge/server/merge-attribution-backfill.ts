@@ -150,7 +150,9 @@ export function surfaceTotal(c: OrphanSurfaceCounts): number {
 // (same-tx snapshot; a separate pre-repair census would double the query count for zero
 // information). Per-KC state counts 1 when the retire outcome touched/detected a from-row
 // ('renamed' | 'frozen' — the same "from-row present" predicate the census booleans encode).
-function repairedSurfaceTotal(entry: MergeRepairEntryT): number {
+// Exported (YUK-544 review R1): the auto-repair sweep tallies its repaired surfaces with THIS
+// function too — a re-derived copy in the sweep could silently drift from the backfill's count.
+export function repairedSurfaceTotal(entry: MergeRepairEntryT): number {
   return (
     entry.question_ids_rewritten.length +
     entry.learning_item_ids_rewritten.length +
@@ -280,6 +282,53 @@ export interface RunMergeAttributionOpts {
   now?: Date;
 }
 
+// ── shared chain grouping (YUK-544 review R3) ────────────────────────────────────────────────────
+// One implementation for the "resolutions → winner groups + forensic chains" pass, consumed by BOTH
+// the backfill runner below and the auto-repair sweep (jobs/merge_attribution_sweep.ts) — the two
+// loops were near-verbatim duplicates differing only in log tag and count collection.
+
+export interface GroupedResolutions {
+  /** winner → ALL absorbed from_ids mapping to it — the FULL loser set an edge rewire's
+   *  `mergeFromIds` needs (loser→loser edges collapse rather than dangle), mirroring a
+   *  multi-from_id applyMerge. */
+  byWinner: Map<string, string[]>;
+  /** YUK-543 review L3 — full forensic hop sequence per from_id (built over ALL resolutions,
+   *  including skipped ones), kept for repair logs + the sweep's forensic event payload. */
+  chainByFromId: Map<string, string[]>;
+  /** resolved (fromId, winnerId) pairs in resolution order. */
+  resolvedFromIds: { fromId: string; winnerId: string }[];
+  /** unresolved chains (archived-not-merged terminal or a cycle) — logged, never guessed. */
+  skipped: number;
+}
+
+/** Group resolved chains by terminal winner; warn-log (under `[<logTag>]`) + count the skips. */
+export function groupResolvedChains(
+  resolutions: MergeChainResolution[],
+  logTag: string,
+): GroupedResolutions {
+  const byWinner = new Map<string, string[]>();
+  const chainByFromId = new Map<string, string[]>();
+  const resolvedFromIds: { fromId: string; winnerId: string }[] = [];
+  let skipped = 0;
+  for (const r of resolutions) {
+    chainByFromId.set(r.fromId, r.chain);
+    if (r.winnerId === null) {
+      skipped += 1;
+      console.warn(`[${logTag}] skipping unresolved chain`, {
+        fromId: r.fromId,
+        reason: r.skipReason,
+        chain: r.chain,
+      });
+      continue;
+    }
+    resolvedFromIds.push({ fromId: r.fromId, winnerId: r.winnerId });
+    const group = byWinner.get(r.winnerId);
+    if (group) group.push(r.fromId);
+    else byWinner.set(r.winnerId, [r.fromId]);
+  }
+  return { byWinner, chainByFromId, resolvedFromIds, skipped };
+}
+
 /**
  * Resolve every absorbed KC to its terminal live winner, then either REPAIR each surface (write mode,
  * via repairMergeAttributionForFromId — the SAME function applyMerge uses) or COUNT the still-dangling
@@ -291,36 +340,17 @@ export async function runMergeAttributionBackfill(
 ): Promise<MergeAttributionResult> {
   const now = opts.now ?? new Date();
   const resolutions = await resolveMergeChains(db);
+  const { byWinner, chainByFromId, resolvedFromIds, skipped } = groupResolvedChains(
+    resolutions,
+    'merge-attribution',
+  );
   const result: MergeAttributionResult = {
     scannedFromIds: resolutions.length,
-    winners: 0,
-    resolved: 0,
-    skipped: 0,
+    winners: byWinner.size,
+    resolved: resolvedFromIds.length,
+    skipped,
     orphanSurfacesFound: 0,
   };
-
-  // Group resolved from_ids by their winner so edge rewires see the FULL loser set (loser→loser edges
-  // collapse rather than dangling), mirroring a multi-from_id applyMerge.
-  const byWinner = new Map<string, string[]>();
-  // YUK-543 review L3 — full hop sequence per fromId, kept for the forensic repair log below.
-  const chainByFromId = new Map<string, string[]>();
-  for (const r of resolutions) {
-    chainByFromId.set(r.fromId, r.chain);
-    if (r.winnerId === null) {
-      result.skipped += 1;
-      console.warn('[merge-attribution] skipping unresolved chain', {
-        fromId: r.fromId,
-        reason: r.skipReason,
-        chain: r.chain,
-      });
-      continue;
-    }
-    result.resolved += 1;
-    const group = byWinner.get(r.winnerId);
-    if (group) group.push(r.fromId);
-    else byWinner.set(r.winnerId, [r.fromId]);
-  }
-  result.winners = byWinner.size;
 
   for (const [winnerId, fromIds] of byWinner) {
     if (opts.dryRun) {

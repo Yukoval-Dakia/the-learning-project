@@ -394,7 +394,7 @@ pre-fix 合并链：loser A 的 winner B 可能后来又被 merge 进 C 或被 `
 
 8. **抽出 `repairMergeAttributionForFromId` 为 applyMerge 与 backfill 共用的单一 per-fromId 修复函数**。原因：§2/§4「backfill 调同一批函数」落到字面——applyMerge 的 per-fromId 循环体与 backfill 走同一实现，不可能漂移。影响：`proposals.ts` 新 export。
 
-9. **report-only 常驻巡 = `merge_attribution_sweep` job（queue `fast`，周一 04:00 Asia/Shanghai，dryRun census 零写）**；backfill 与 sweep 共用 `merge-attribution-backfill.ts` core（`resolveMergeChains` + `countOrphanSurfaces` + `runMergeAttributionBackfill`）。影响：新 `jobs/merge_attribution_sweep.ts` + manifest 登记 + 新 `server/merge-attribution-backfill.ts` + 新 `scripts/backfill-merge-attribution.ts`。
+9. **report-only 常驻巡 = `merge_attribution_sweep` job（queue `fast`，周一 04:00 Asia/Shanghai，dryRun census 零写）**；backfill 与 sweep 共用 `merge-attribution-backfill.ts` core（`resolveMergeChains` + `countOrphanSurfaces` + `runMergeAttributionBackfill`）。影响：新 `jobs/merge_attribution_sweep.ts` + manifest 登记 + 新 `server/merge-attribution-backfill.ts` + 新 `scripts/backfill-merge-attribution.ts`。→ superseded by 条目 23（YUK-544：sweep 升级 census + bounded auto-repair，queue `fast`→`llm`，不再走 dryRun flag）。
 
 10. **retire fns**：mastery/fsrs 硬编 subject_kind='knowledge' + `fsrs:knowledge:<id>` 锁命名空间（对齐 `updateThetaForAttempt`）；axis/typed 带 `subjectKind='knowledge'` 默认参 + 各自 `axis_state:` / `kc_typed:` 命名空间。三态 noop/renamed/frozen，**绝不合并数值**。mastery lock 互斥性有确定性专测（第二连接 `pg_try_advisory_xact_lock` 命中 false）。影响：`state.ts`(mastery/fsrs) / `axis-writer.ts` / `typed-state.ts`。
 
@@ -429,6 +429,20 @@ pre-fix 合并链：loser A 的 winner B 可能后来又被 merge 进 C 或被 `
 ### 第四轮（YUK-544 sweep 升级 auto-invoke，2026-07-02）
 
 23. **sweep 从 report-only 升级为 census + bounded auto-repair（YUK-544，owner 拍决策 a）**：落实 Appendix C D-C 的 AMEND-FOLLOW-UP（三源收敛「report-only-forever 是未完成态」；增量成本≈0 因幂等修复函数已在）。`jobs/merge_attribution_sweep.ts` 改两相：phase 1 census 照报 YUK-543 同款计数（零写）；phase 2 对漂移 from_id 子集直接调共享 `repairMergeAttributionForFromId`（绝不裸写表、绝不自行 merge/archive KC；按 winner 分组每 winner 一 tx，`mergeFromIds` 用该 winner 的**全量**吸收集而非 capped 子集，保 loser→loser 边收拢与 accept 路径/一次性 backfill 一致）。护栏两层（仓库惯例）：`SWEEP_WARN_DRIFT_COUNT=10` warning 水位只告知照修；`SWEEP_MAX_REPAIR_PER_RUN=50` 硬顶（≈正常 0-个位数的 5×+），超出「剩 N 个下轮」幂等续跑。每个实修 from_id 写 best-effort 取证事件 `experimental:merge_attribution_repaired`（payload：from_id / terminal_winner_id / 全链 hop / MergeRepairEntry 摘要 / surfaces_repaired / sweep_run_id；generic ExperimentalEvent 放行，不进 RESERVED；已核 proposalWhere / knowledge fold / parity / recent_auto 四谓词全不误吞——同 YUK-540 auto_tag_kc_matched 形状）。修复后对已修集重跑 census 断言归零（非零响亮 log 不 throw，report 语义保留）。manifest queue `fast`→`llm`（sweep 现在写库，进 backfill 家族共享 DLQ/retry 桶，对齐 kc_dedup_nightly 注释成文的惯例；原 `fast` 理由「no write to DLQ-protect」已失效）。backfill 模块 `dryRun` 语义注释同步（sweep 不再走该 flag，改直接组合三原语）。db 测：修复+事件+归零+二跑幂等 no-op、多跳链全链入 payload、unresolvable skip 不修不猜、硬顶 cap 注入（3 漂移 cap 2 → 修 2 defer 1，次轮收敛）。
+
+### 第五轮（YUK-544 独立 review 环折入，2026-07-02：8 finder → 5 Opus verifier，9 CONFIRMED 修 + 3 REFUTED 留档）
+
+24. **CONFIRMED 修复**：
+    - **A1 winner 隔离**：per-winner repair tx 补 try/catch——`repairMergeAttributionForFromId` 有可达 throw 路径（ADR-0034 topology gate reject / AgentRef.parse parse barrier），原实现一个 winner throw 会中止整轮、Map 迭代序后面的无关 winner 全跳过（确定性 throw = 永久饿死）。现在 throw → rollback + `failedWinners` 计数 + log（winnerId/fromIds/runId）+ continue；docblock 与 handler 注释改真（「repair 阶段绝不 throw；census 阶段 throw 才进 DLQ」）。
+    - **A2 取证事件就地写**：事件写从「全部修完后环尾统一写」移进 winner 循环——每个 winner tx commit 后立即逐 from_id best-effort 写，后续 winner 失败或进程崩溃不再吞掉已 commit 修复的事件（evidence-first；census 下轮见 clean 不会补写）。
+    - **C1 winner 活性重验（TOCTOU）**：phase-1 census 无锁解析 winnerId；phase-2 每个 winner tx 入口对 winner 行 `SELECT … FOR UPDATE` 后查 `archived_at IS NULL`——选 FOR UPDATE 而非 advisory lock，因它恰是「能观测到已提交并发 archive」的机制（阻塞在 applyMerge 的 in-flight 行 UPDATE 上、解锁后重读最新已提交版本）；锁序常态与 accept 路径同向（knowledge 行锁先于 per-KC advisory 锁），窄窗口交叉死锁由 Postgres 检测 abort 一侧、A1 的 try/catch 将其降级为 skip+下轮重试。winner 已 archive → 该组全部 fromIds 计入 `deferredFromIds`（复用幂等续跑语义，下轮 resolveMergeChains 顺延长链重解析到新终端）。
+    - **R1/R3 共享化**：`repairedSurfaceTotal` 从 backfill export（sweep 删本地逐字节重复的 `repairedSurfaceCount`）；「resolutions → winner 分组 + 取证链」环抽为 backfill export `groupResolvedChains(resolutions, logTag)`（返回 byWinner/chainByFromId/resolvedFromIds/skipped），backfill 与 sweep 两处消费。
+    - **nits**：Alt3 事件环后补 AUDIT GAP warn（`eventsWritten < repaired.length` → 响亮标注永久证据缺口）；B1 条目 9 尾补 superseded 指针（不改写原文）；S1 warnDrift 注入补 WARN 分支测试（注释「Injectable for tests」变真）；S3 payload chain 的 `?? [fromId, winnerId]` fallback 不可达（chainByFromId 建于全量 resolutions、repaired ⊆ resolutions）→ 删除并与修复 log 的同款无 fallback 调用对齐（注释说明不可达性）。
+    - 新增 db 测：A1 双 winner 一毒（misconception_edge 垃圾 created_by 触 parse barrier）断言隔离+另一 winner 照修照发事件+二跑隔离稳定；C1 经 `onBeforeRepairPhase` test-only seam（对齐 proposeFn/embedFn seam 惯例）在 census→repair 窗口 archive winner，断言 defer+零部分写；S1 WARN 分支 spy 断言。
+25. **REFUTED 留档（三条 doctrine，不改代码）**：
+    - **E1（post-repair 复扫必须保留）**：repair 自报计数来自 pre-UPDATE SELECT（同 tx 快照），复扫是唯一 post-commit 读——恰能抓「修复 commit 后又有 stale async-grading 写进来」的竞态（本 sweep 存在的原因本身）；O2 先例删的是 pre-repair census，与 post-repair 复扫不同构，不适用。复扫处已加注释钉死这条理由。
+    - **R2（sweep 事件 payload 用 summary 而非 verbatim MergeRepairEntry）**：与 accept 路径的 `merge_repair`（RateEvent payload，verbatim entry 数组）是不同 action、不同粒度的合理分化；当前零程序性消费者，取证够用，不必字节对齐。
+    - **S2（baseResult 先建后 spread）**：早退分支（clean）复用 6 个 census 字段，双字面量写法反而每字段要动两处；现状正确。
 
 ---
 

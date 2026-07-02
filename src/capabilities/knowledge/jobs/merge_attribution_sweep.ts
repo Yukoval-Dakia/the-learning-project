@@ -18,18 +18,25 @@
 //      the report-only sweep logged (scanned / resolved / skipped / orphanSurfacesFound). Zero writes.
 //   2. AUTO-REPAIR — for the DRIFTED subset (from_ids whose census surfaceTotal > 0), invoke the shared
 //      repairMergeAttributionForFromId (NEVER raw table writes — single-writer guard) grouped by winner
-//      in one tx per winner, bounded by a per-run hard cap. Each repaired from_id gets a best-effort
-//      forensic event; the repaired set is re-censused and asserted back to zero.
+//      in one tx per winner, bounded by a per-run hard cap. Each winner tx re-verifies the winner is
+//      still live (TOCTOU vs a concurrent accept-merge) and is individually try/caught, so one failing
+//      winner group rolls back alone and never starves the rest. Immediately after each winner tx
+//      commits, a best-effort forensic event is written per repaired from_id; the repaired set is then
+//      re-censused and asserted back to zero.
 //
 // STILL a safety-net, NOT a merge path: it only repairs the residual DRIFT the accept-time repair could
 // not close, using the accept path's own repair mechanics. It never merges/archives a KC itself.
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
   countOrphanSurfaces,
+  groupResolvedChains,
+  repairedSurfaceTotal,
   resolveMergeChains,
   surfaceTotal,
 } from '../server/merge-attribution-backfill';
@@ -70,8 +77,19 @@ export interface MergeAttributionSweepResult {
   driftedFromIds: number;
   /** from_ids actually repaired this run (≤ hard cap). */
   repairedFromIds: number;
-  /** drifted from_ids left unrepaired this run because the hard cap was hit (idempotent next-run continuation). */
+  /**
+   * drifted from_ids left unrepaired this run — hard-cap overflow PLUS the from_ids of winner groups
+   * whose winner turned out archived at repair time (a concurrent accept-merge absorbed it mid-run —
+   * the liveness re-verify below). Both defer to the next run's idempotent continuation, where the
+   * chain re-resolves through the newly archived winner to the new terminal.
+   */
   deferredFromIds: number;
+  /**
+   * winner groups whose repair tx THREW and rolled back (per-winner isolation: logged, skipped, the
+   * loop continues — one deterministically-failing winner can never starve the others). Next run
+   * retries them idempotently.
+   */
+  failedWinners: number;
   /** sum of per-surface repairs performed this run (from each MergeRepairEntry). */
   surfacesRepaired: number;
   /** post-repair re-census over the repaired from_ids — MUST be 0 (idempotent repair). Non-zero → loud log, no throw. */
@@ -84,10 +102,17 @@ export interface RunMergeAttributionSweepOpts {
   now?: Date;
   /** per-run repair cap; default SWEEP_MAX_REPAIR_PER_RUN. Injectable so tests can drive the cap cheaply. */
   maxRepair?: number;
-  /** drift-warn water level; default SWEEP_WARN_DRIFT_COUNT. Injectable for tests. */
+  /** drift-warn water level; default SWEEP_WARN_DRIFT_COUNT. Injectable so tests can drive the WARN branch. */
   warnDrift?: number;
   /** sweep run identifier stamped on every repair event; default a fresh id. */
   runId?: string;
+  /**
+   * TEST-ONLY seam: awaited between the census/cap phase and the repair phase, so the TOCTOU test can
+   * archive a winner in exactly the window the liveness re-verify defends (there is no way to inject
+   * a concurrent accept-merge mid-run from outside otherwise). Mirrors the repo's injectable-seam
+   * convention (kc_dedup_nightly's proposeFn, tag-knowledge's embedFn/nameKcFn). Never set in prod.
+   */
+  onBeforeRepairPhase?: () => Promise<void>;
 }
 
 /** Per-surface counts derived from a repair entry — the event payload's MergeRepairEntry summary. */
@@ -105,27 +130,25 @@ function summarizeRepair(entry: Awaited<ReturnType<typeof repairMergeAttribution
   } as const;
 }
 
-/** Total surfaces a single repair touched (state fields count 1 when not 'noop'). */
-function repairedSurfaceCount(s: ReturnType<typeof summarizeRepair>): number {
-  return (
-    s.questions +
-    s.learning_items +
-    s.goals +
-    s.edges +
-    (s.mastery_state !== 'noop' ? 1 : 0) +
-    (s.fsrs_state !== 'noop' ? 1 : 0) +
-    (s.axis_state !== 'noop' ? 1 : 0) +
-    (s.kc_typed_state !== 'noop' ? 1 : 0) +
-    s.misconception_edges
-  );
-}
+/** Discriminated per-winner tx outcome: repaired entries, or "winner archived mid-run → defer". */
+type WinnerTxOutcome =
+  | {
+      kind: 'ok';
+      entries: { fromId: string; summary: ReturnType<typeof summarizeRepair>; surfaces: number }[];
+    }
+  | { kind: 'winner_archived' };
 
 /**
  * Census the merge-attribution surfaces, then AUTO-REPAIR the drifted subset (bounded). Reuses the
- * shared primitives (resolveMergeChains / countOrphanSurfaces / surfaceTotal / repairMergeAttributionForFromId)
- * so it can never diverge from the live accept path or the one-time backfill. Never throws on a repair
- * or event miss — report semantics are preserved (a failing run logs loudly, the next weekly run retries
- * idempotently). See the file header for the two-phase contract.
+ * shared primitives (resolveMergeChains / groupResolvedChains / countOrphanSurfaces / surfaceTotal /
+ * repairedSurfaceTotal / repairMergeAttributionForFromId) so it can never diverge from the live accept
+ * path or the one-time backfill.
+ *
+ * Failure containment: the REPAIR phase never throws. Each winner group runs in its own tx behind a
+ * try/catch — a throwing winner (e.g. the ADR-0034 topology gate rejecting a rewritten prerequisite
+ * edge, or a parse barrier on drifted jsonb) rolls back alone, is counted in `failedWinners`, and the
+ * loop continues; forensic event writes are best-effort per from_id. Census-phase errors DO propagate
+ * (nothing has been written yet) and reach pg-boss for DLQ retry.
  */
 export async function runMergeAttributionSweep(
   db: Db,
@@ -138,29 +161,15 @@ export async function runMergeAttributionSweep(
 
   // ── Phase 1: census ──────────────────────────────────────────────────────────────────────────
   const resolutions = await resolveMergeChains(db);
-  // Full winner→[from_id] map over ALL resolved from_ids: the repair's `mergeFromIds` set must be the
-  // COMPLETE absorbed set for a winner (so loser→loser edges collapse rather than dangle) even when we
-  // only repair a capped drifted subset — mirrors runMergeAttributionBackfill's byWinner grouping.
-  const allFromIdsByWinner = new Map<string, string[]>();
-  const chainByFromId = new Map<string, string[]>();
-  let skipped = 0;
-  const resolvedFromIds: { fromId: string; winnerId: string }[] = [];
-  for (const r of resolutions) {
-    chainByFromId.set(r.fromId, r.chain);
-    if (r.winnerId === null) {
-      skipped += 1;
-      console.warn('[merge_attribution_sweep] skipping unresolved chain', {
-        fromId: r.fromId,
-        reason: r.skipReason,
-        chain: r.chain,
-      });
-      continue;
-    }
-    resolvedFromIds.push({ fromId: r.fromId, winnerId: r.winnerId });
-    const group = allFromIdsByWinner.get(r.winnerId);
-    if (group) group.push(r.fromId);
-    else allFromIdsByWinner.set(r.winnerId, [r.fromId]);
-  }
+  // Shared grouping (R3): winner → FULL absorbed set (the repair's `mergeFromIds` must be the
+  // complete loser set for a winner even when we only repair a capped drifted subset, so
+  // loser→loser edges collapse rather than dangle) + forensic chains + skip accounting.
+  const {
+    byWinner: allFromIdsByWinner,
+    chainByFromId,
+    resolvedFromIds,
+    skipped,
+  } = groupResolvedChains(resolutions, 'merge_attribution_sweep');
 
   // Census every resolved from_id; the drifted subset is those with a non-zero surface total.
   let orphanSurfacesFound = 0;
@@ -181,6 +190,7 @@ export async function runMergeAttributionSweep(
     driftedFromIds: drifted.length,
     repairedFromIds: 0,
     deferredFromIds: 0,
+    failedWinners: 0,
     surfacesRepaired: 0,
     residualAfterRepair: 0,
     eventsWritten: 0,
@@ -205,13 +215,16 @@ export async function runMergeAttributionSweep(
 
   // Guardrail — HARD CAP. Repair the first `maxRepair` drifted from_ids; defer the rest to next run.
   const toRepair = drifted.slice(0, maxRepair);
-  const deferredFromIds = drifted.length - toRepair.length;
+  let deferredFromIds = drifted.length - toRepair.length;
   if (deferredFromIds > 0) {
     console.warn(
       `[merge_attribution_sweep] HARD CAP hit — repairing ${toRepair.length}/${drifted.length} drifted from_ids this run, ${deferredFromIds} deferred to next run (idempotent continuation)`,
       { cap: maxRepair, deferredFromIds, runId },
     );
   }
+
+  // TEST-ONLY seam — see RunMergeAttributionSweepOpts.onBeforeRepairPhase.
+  await opts.onBeforeRepairPhase?.();
 
   // ── Phase 2: bounded auto-repair (grouped by winner, one tx per winner) ────────────────────────
   const repairByWinner = new Map<string, string[]>();
@@ -221,87 +234,149 @@ export async function runMergeAttributionSweep(
     else repairByWinner.set(d.winnerId, [d.fromId]);
   }
 
+  let failedWinners = 0;
+  let eventsWritten = 0;
   const repaired: {
     fromId: string;
     winnerId: string;
     summary: ReturnType<typeof summarizeRepair>;
+    surfaces: number;
   }[] = [];
   for (const [winnerId, fromIds] of repairByWinner) {
     // FULL absorbed set for this winner (not just the capped subset) so loser→loser edges collapse
     // identically to the accept path / one-time backfill.
     const mergeFromIds = new Set(allFromIdsByWinner.get(winnerId) ?? fromIds);
-    const entries = await db.transaction(async (tx) => {
-      const out: { fromId: string; summary: ReturnType<typeof summarizeRepair> }[] = [];
-      for (const fromId of fromIds) {
-        const entry = await repairMergeAttributionForFromId(
-          tx,
-          fromId,
-          winnerId,
-          now,
-          mergeFromIds,
-        );
-        out.push({ fromId, summary: summarizeRepair(entry) });
-      }
-      return out;
-    });
-    for (const { fromId, summary } of entries) {
-      repaired.push({ fromId, winnerId, summary });
+    let outcome: WinnerTxOutcome;
+    try {
+      outcome = await db.transaction(async (tx): Promise<WinnerTxOutcome> => {
+        // TOCTOU re-verify — the census resolved winnerId WITHOUT any lock; a concurrent
+        // accept-merge can archive this winner (absorbing it into a further node) in the window.
+        // Of the 9 surface writers only createKnowledgeEdge self-protects (not_found on archived
+        // endpoints); the other 8 would silently re-key rows onto an archived node. A locking read
+        // (FOR UPDATE) is chosen over an advisory lock because it is the mechanism that OBSERVES a
+        // committed concurrent archive: it blocks on applyMerge's in-flight row UPDATE (the archive
+        // takes the row lock) and then re-reads the LATEST committed row version. Lock order matches
+        // the accept path in the common case (knowledge row locks BEFORE per-KC advisory locks);
+        // the narrow cross-order window (an accept holding advisory locks while appending
+        // merged_from on OUR winner row) can deadlock, which Postgres detects and aborts one side —
+        // the per-winner try/catch below degrades that to skip + next-run retry, never a stuck job.
+        const winnerRow = await tx
+          .select({ archived_at: knowledge.archived_at })
+          .from(knowledge)
+          .where(eq(knowledge.id, winnerId))
+          .for('update');
+        if (!winnerRow[0] || winnerRow[0].archived_at !== null) {
+          return { kind: 'winner_archived' };
+        }
+        const entries: Extract<WinnerTxOutcome, { kind: 'ok' }>['entries'] = [];
+        for (const fromId of fromIds) {
+          const entry = await repairMergeAttributionForFromId(
+            tx,
+            fromId,
+            winnerId,
+            now,
+            mergeFromIds,
+          );
+          // R1 — the SAME tally the backfill uses (repairedSurfaceTotal), never a local re-derivation.
+          entries.push({
+            fromId,
+            summary: summarizeRepair(entry),
+            surfaces: repairedSurfaceTotal(entry),
+          });
+        }
+        return { kind: 'ok', entries };
+      });
+    } catch (err) {
+      // Per-winner isolation — the throwing group rolled back alone; log loudly (with enough to
+      // reproduce: winner, its capped from_ids, run id) and CONTINUE so Map-iteration-later winners
+      // are never starved by one deterministically-failing group. Next run retries idempotently.
+      failedWinners += 1;
+      console.error(
+        '[merge_attribution_sweep] winner repair FAILED — tx rolled back, skipping this winner (next run retries idempotently)',
+        { winnerId, fromIds, runId },
+        err,
+      );
+      continue;
+    }
+
+    if (outcome.kind === 'winner_archived') {
+      deferredFromIds += fromIds.length;
+      console.warn(
+        '[merge_attribution_sweep] winner archived by a concurrent merge accept — deferring its from_ids; next run re-resolves the chain to the new terminal',
+        { winnerId, fromIds, runId },
+      );
+      continue;
+    }
+
+    // Committed — log + write the forensic event PER from_id IMMEDIATELY (evidence-first: a later
+    // winner's failure or a process crash must not cost the already-committed repairs their events;
+    // the next census sees them clean and would never backfill the breadcrumb). Best-effort per
+    // event: action `experimental:merge_attribution_repaired` is a GENERIC experimental event — NOT
+    // in RESERVED_EXPERIMENTAL_ACTIONS, so parseEvent accepts it via the generic ExperimentalEvent
+    // escape hatch, and it matches NO proposalWhere() / knowledge-fold / parity / recent_auto
+    // predicate (verified YUK-544; same folds-fall-through shape as YUK-540's auto_tag_kc_matched).
+    // subject_id is the repaired from_id (subject_kind 'knowledge'); the fold ignores it.
+    for (const { fromId, summary, surfaces } of outcome.entries) {
+      repaired.push({ fromId, winnerId, summary, surfaces });
       console.log('[merge_attribution_sweep] auto-repaired', {
         fromId,
         winnerId,
         chain: chainByFromId.get(fromId),
-        surfaces: repairedSurfaceCount(summary),
+        surfaces,
         runId,
       });
+      try {
+        await writeEvent(db, {
+          id: newId(),
+          session_id: null,
+          actor_kind: 'agent',
+          actor_ref: 'merge_attribution_sweep',
+          action: 'experimental:merge_attribution_repaired',
+          subject_kind: 'knowledge',
+          subject_id: fromId,
+          outcome: 'success',
+          payload: {
+            source: 'merge_attribution_sweep',
+            from_id: fromId,
+            terminal_winner_id: winnerId,
+            // No fallback: chainByFromId is built over ALL resolutions and repaired ⊆ resolutions,
+            // so the lookup cannot miss (same unguarded call as the repair log above).
+            chain: chainByFromId.get(fromId),
+            repair_summary: summary,
+            surfaces_repaired: surfaces,
+            sweep_run_id: runId,
+          },
+          caused_by_event_id: null,
+          task_run_id: null,
+          cost_micro_usd: null,
+        });
+        eventsWritten += 1;
+      } catch (err) {
+        console.error(
+          '[merge_attribution_sweep] repair audit event write failed (repair already committed)',
+          fromId,
+          err,
+        );
+      }
     }
   }
 
-  const surfacesRepaired = repaired.reduce((n, r) => n + repairedSurfaceCount(r.summary), 0);
+  const surfacesRepaired = repaired.reduce((n, r) => n + r.surfaces, 0);
 
-  // Forensic event per repaired from_id — BEST-EFFORT (never poison the repair, which already committed
-  // above). action `experimental:merge_attribution_repaired` is a GENERIC experimental event: it is NOT
-  // in RESERVED_EXPERIMENTAL_ACTIONS, so parseEvent accepts it via the generic ExperimentalEvent escape
-  // hatch, and it matches NO proposalWhere() / knowledge-fold / parity / recent_auto predicate (verified
-  // YUK-544; same folds-fall-through shape as YUK-540's experimental:auto_tag_kc_matched). subject_id is
-  // the repaired from_id (subject_kind 'knowledge'); the fold ignores it (no matching action branch).
-  let eventsWritten = 0;
-  for (const { fromId, winnerId, summary } of repaired) {
-    try {
-      await writeEvent(db, {
-        id: newId(),
-        session_id: null,
-        actor_kind: 'agent',
-        actor_ref: 'merge_attribution_sweep',
-        action: 'experimental:merge_attribution_repaired',
-        subject_kind: 'knowledge',
-        subject_id: fromId,
-        outcome: 'success',
-        payload: {
-          source: 'merge_attribution_sweep',
-          from_id: fromId,
-          terminal_winner_id: winnerId,
-          chain: chainByFromId.get(fromId) ?? [fromId, winnerId],
-          repair_summary: summary,
-          surfaces_repaired: repairedSurfaceCount(summary),
-          sweep_run_id: runId,
-        },
-        caused_by_event_id: null,
-        task_run_id: null,
-        cost_micro_usd: null,
-      });
-      eventsWritten += 1;
-    } catch (err) {
-      console.error(
-        '[merge_attribution_sweep] repair audit event write failed (repair already committed)',
-        fromId,
-        err,
-      );
-    }
+  // Audit-gap watermark: repairs committed whose forensic event never landed are PERMANENT evidence
+  // loss (the next census sees them clean and cannot backfill the breadcrumb) — say so loudly.
+  if (eventsWritten < repaired.length) {
+    console.warn(
+      `[merge_attribution_sweep] AUDIT GAP — ${repaired.length - eventsWritten}/${repaired.length} forensic events failed to write (repairs committed; the gap will not self-heal)`,
+      { eventsWritten, repairedFromIds: repaired.length, runId },
+    );
   }
 
   // Zero-assertion — re-census the repaired from_ids; the idempotent repair must have driven them to 0.
-  // A non-zero residual is a loud signal (a repair helper missed a surface, or a new stale write raced in
-  // mid-run), NOT a throw — report semantics hold, the next weekly run retries idempotently.
+  // Deliberately KEPT as a separate post-commit read (review E1): the repair's own counts come from
+  // pre-UPDATE SELECTs inside the tx, so this re-census is the only read that can catch a stale
+  // async-grading write racing in AFTER the repair committed — the exact residual this sweep exists
+  // for. A non-zero residual is a loud signal, NOT a throw — report semantics hold, next run retries.
   let residualAfterRepair = 0;
   for (const { fromId } of repaired) {
     const census = await countOrphanSurfaces(db, fromId);
@@ -315,7 +390,7 @@ export async function runMergeAttributionSweep(
   } else {
     console.log(
       `[merge_attribution_sweep] auto-repair clean — ${repaired.length} from_ids repaired, ${surfacesRepaired} surfaces, post-repair census 0`,
-      { repairedFromIds: repaired.length, surfacesRepaired, deferredFromIds, runId },
+      { repairedFromIds: repaired.length, surfacesRepaired, deferredFromIds, failedWinners, runId },
     );
   }
 
@@ -323,6 +398,7 @@ export async function runMergeAttributionSweep(
     ...baseResult,
     repairedFromIds: repaired.length,
     deferredFromIds,
+    failedWinners,
     surfacesRepaired,
     residualAfterRepair,
     eventsWritten,
@@ -331,9 +407,11 @@ export async function runMergeAttributionSweep(
 
 /**
  * pg-boss handler builder. Runs the census + bounded auto-repair sweep and logs the outcome. A throw
- * here is a genuine infra fault (DB down) → propagates to pg-boss for DLQ retry; per-repair / per-event
- * failures are already absorbed inside runMergeAttributionSweep (logged, never rethrown), so the next
- * weekly run re-censuses and idempotently retries any residual.
+ * here comes from the CENSUS phase (resolveMergeChains / countOrphanSurfaces — e.g. DB unreachable,
+ * nothing written yet) and propagates to pg-boss for DLQ retry. Repair-phase failures never rethrow:
+ * a throwing winner tx rolls back alone and is counted in `failedWinners` (per-winner isolation), a
+ * failed forensic event write is logged + counted (best-effort) — the next weekly run re-censuses
+ * and idempotently retries anything left.
  */
 export function buildMergeAttributionSweepHandler(
   db: Db,
@@ -346,6 +424,7 @@ export function buildMergeAttributionSweepHandler(
         driftedFromIds: r.driftedFromIds,
         repairedFromIds: r.repairedFromIds,
         deferredFromIds: r.deferredFromIds,
+        failedWinners: r.failedWinners,
         surfacesRepaired: r.surfacesRepaired,
         residualAfterRepair: r.residualAfterRepair,
         eventsWritten: r.eventsWritten,
