@@ -21,9 +21,17 @@
 //   答对历史，在更难的题上证明的掌握度更低）。这要求 β 在 logit 里以**负号**进入：
 //   logit(p) = γ·success + ρ·fail − β。见 `pfaLogit` 实现注释。
 //
-// PHASE-DEFERRED — gamma/rho 系数当前是 hardcode 的合理默认值，**待 PFA nightly
-//   refit 的统计验证**（YUK-361）。owner 裁定：现在就建、hardcode 系数 + flag。
-//   refit 落地前，调本模块的 caller 不该假设这些值是标定真值。
+// OWNER-FIXED PRIORS — gamma/rho 是 owner 拍板、经 code review 的模块常量，不是等某个
+//   refit job 回填的占位。核实（穷尽 grep）：本仓库不存在任何 refit gamma/rho 的
+//   job/script/call site——recalibration_nightly.ts（YUK-361 已 ship 部分）只用
+//   active-PPI/AIPW refit item 难度 b/b_calib，从不碰 gamma/rho。它们与 ELO_K_GLOBAL /
+//   DIFFICULTY_PROXY_WEIGHT（theta.ts）同档：跨学习者作用域的结构系数，非 θ̂ 那样的
+//   per-user 潜变量。按 ADR-0035 的 n=1 doctrine 外推：经典 PFA 对 gamma/rho 的跨学生
+//   logistic 回归拟合（Pavlik/Cen/Koedinger 2009）在 n=1 无 cohort 可回归，故不可能
+//   runtime 在线拟合这两个系数。IOU（forward-looking，未撤销）：若将来接通标定，这些
+//   常量应被替换为 per-KC / 全局标定值——在 owner 另行裁决前，一律按 owner-fixed const
+//   对待；retune 只经带明确理由的 reviewed PR（见下方 gamma/rho docblock），绝不走自动
+//   nightly job。
 
 import { POLY_SIGMOID_ENABLED, polySigmoid } from './poly-exp';
 
@@ -35,19 +43,26 @@ function sigmoid(x: number): number {
 }
 
 /**
- * PHASE-DEFERRED — PFA 系数 hardcode 默认值。
+ * OWNER-FIXED PFA 系数（跨学习者结构常量，非占位）。见文件头：本仓库无任何 refit γ/ρ 的
+ * job，recalibration_nightly.ts 只 refit item 难度 b。这些值经 reviewed PR 设定，
+ * IOU 保留——若将来接通标定，应被替换为 per-KC / 全局标定值：
+ *   - γ (success) = 0.5 — 每次答对的 logit 增益（正，单调升 p(L)）。
+ *   - ρ (fail)    = −0.25 — 每次答错的 logit 增益（负，单调降 p(L)）。
+ *     |ρ| < γ（保持 2:1 比），反映「答错的诊断信息量通常弱于答对」的常见 PFA 形态。
  *
- * 待 PFA nightly refit 的统计验证（YUK-361）。owner 裁定：现在就建、hardcode +
- * flag。refit 接通后这些常量应被替换为 per-KC / 全局标定值（届时本投影应从标定表
- * 读 γ/ρ，而非 hardcode）。当前值是「合理默认」，**非实测真值**：
- *   - γ (success) = 0.4 — 每次答对的 logit 增益（正，单调升 p(L)）。
- *   - ρ (fail)    = −0.2 — 每次答错的 logit 增益（负，单调降 p(L)）。
- *     绝对值 < γ，反映「答错的诊断信息量通常弱于答对」的常见 PFA 形态，但这是占位
- *     直觉、非标定结论。
+ * RETUNE（YUK-539，was γ=0.4 / ρ=−0.2）：把硬锚 prereq（β≈3）解锁所需的干净连对从 10 降到
+ *   8（K(β)=ceil((0.8473+β)/γ)），缓解 starvation；同比降 ρ 保 2:1。冷启假掌握（β=0
+ *   三连对即翻过 0.7）不靠 γ 修——它由 learnable-frontier 的 evidence-count floor 独立挡住
+ *   （见 FRONTIER_MASTERY_MIN_EVIDENCE），故此处可安全抬 γ。文献（Pavlik/Cen/Koedinger
+ *   2009 per-skill 跨学生回归）不给可移植的绝对量级，只支持 γ>0>ρ、|ρ|<γ 的定性结构——
+ *   本 retune 是同比有界微调，非「文献推导的绝对值」。
+ * 触发未来再调的条件：真实作答数据显示 β 分布 / 阈值跨越行为系统性异于本分析假设，或
+ *   difficulty-anchor-cluster 改变 β 的推导方式——而非「某个用户想感觉更/更少掌握」（那是
+ *   MASTERED_PL_THRESHOLD / evidence floor 的旋钮，不是 γ/ρ 的）。
  * 默认 β=0（KC 无 item_calibration.b 锚时的中性难度）。
  */
-export const PFA_GAMMA = 0.4;
-export const PFA_RHO = -0.2;
+export const PFA_GAMMA = 0.5; // was 0.4 (YUK-539 retune, Candidate B)
+export const PFA_RHO = -0.25; // was -0.2 (YUK-539 retune, Candidate B)
 
 /**
  * Flag — p(L) 是否启用难度感知 β（KC 代表性 hard-track b）。
@@ -120,8 +135,11 @@ export interface PLearnedBand {
  * Low-confidence 阈值（ADR-0035 confidence-interval / low-confidence 呈现）:
  * θ̂ 的标准误 ≥ 此值时，点估计不可信，呈现应展示 CI 带而非裸点。
  *
- * PHASE-DEFERRED — 阈值 1.0 是合理默认（SE=1 即 default precision 的弱先验态，
- * 「几乎没证据」）；精确阈值待 refit/呈现调优（YUK-361）。
+ * Owner-fixed 呈现常量（无 refit job 回填——见 pfa.ts 文件头）。1.0 = default cold-start
+ * precision（precision=1，「几乎没证据」）下的 SE。仅在 CI 带呈现本身需要重标定时才调它；
+ * 与 γ/ρ 无关，也与 frontier-pool gating 无关（那是 learnable-frontier.ts 的
+ * FRONTIER_MASTERY_MIN_EVIDENCE 管的另一件事——本 SE 阈值在 β=0 下仅 ~1 次作答即跨到
+ * 「confident」，故 NOT 能当证据门用）。
  */
 export const LOW_CONFIDENCE_SE_THRESHOLD = 1.0;
 
