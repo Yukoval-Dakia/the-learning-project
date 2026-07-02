@@ -23,6 +23,7 @@
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, learner_axis_state, question } from '@/db/schema';
+import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { type EzResult, ezFromResponses } from './ez-diffusion';
 
@@ -166,11 +167,7 @@ export async function retireLearnerAxisStateOnMerge(
   intoId: string,
   subjectKind = 'knowledge',
 ): Promise<'noop' | 'renamed' | 'frozen'> {
-  for (const id of [fromId, intoId].sort()) {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`axis_state:${subjectKind}:${id}`}))`,
-    );
-  }
+  await acquireSortedAdvisoryLocks(tx, `axis_state:${subjectKind}`, [fromId, intoId]);
   const rows = await tx
     .select({ subject_id: learner_axis_state.subject_id })
     .from(learner_axis_state)

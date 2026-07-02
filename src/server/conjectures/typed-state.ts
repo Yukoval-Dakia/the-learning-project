@@ -13,6 +13,7 @@
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { kc_typed_state } from '@/db/schema';
+import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 export type TypedState = 'no-evidence' | 'confused-with-X' | 'mastered';
@@ -80,11 +81,7 @@ export async function retireKcTypedStateOnMerge(
   intoId: string,
   subjectKind = 'knowledge',
 ): Promise<'noop' | 'renamed' | 'frozen'> {
-  for (const id of [fromId, intoId].sort()) {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`kc_typed:${subjectKind}:${id}`}))`,
-    );
-  }
+  await acquireSortedAdvisoryLocks(tx, `kc_typed:${subjectKind}`, [fromId, intoId]);
   // Pointer rewrite (independent of the keyed-row case) — soft display ref, always repaired.
   await tx
     .update(kc_typed_state)
