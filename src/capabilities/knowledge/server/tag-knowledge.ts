@@ -16,6 +16,12 @@
 // proposal (proposalWhere() in inbox.ts does not fold generic experimental:* actions),
 // mirroring the live cold-start primitive in auto-enroll.ts.
 //
+// MATCH also writes an AUDIT-ONLY event (`experimental:auto_tag_kc_matched`, YUK-540) —
+// a silent MATCH was previously untraceable even though its knowledge_ids feed
+// mastery/FSRS one hop downstream via question.knowledge_ids. Best-effort (never throws);
+// see the MATCH branch below for the full rationale and the collision-safety note on the
+// action name (it must NOT reuse `_created` — see that branch's comment).
+//
 // ADDITIVE-ONLY: no entry point calls this yet (that is P3). Reference-answer generation
 // is intentionally OUT of scope (that is P4a) — this is the pure CONTENT/KC axis (design §6),
 // orthogonal to grading (YUK-488).
@@ -108,6 +114,14 @@ export interface TagKnowledgeInput {
   subjectRootId: string;
   /** Closed subject-id vocabulary (anti-hallucination for the naming invoker). */
   knownSubjectIds?: readonly string[];
+  /**
+   * Optional caller-supplied provenance anchor for audit traceability (YUK-540) — e.g. the
+   * ingestion `question_block.id` (auto-enroll) or the accepted `image_candidate` proposal id
+   * (image-candidate-accept). PURELY OBSERVATIONAL: never read by the match/propose decision
+   * itself, only threaded into the MATCH audit event's payload. Omit when no natural anchor
+   * exists at call time (e.g. the question row doesn't exist yet).
+   */
+  sourceRef?: { kind: string; id: string } | null;
 }
 
 /**
@@ -115,7 +129,8 @@ export interface TagKnowledgeInput {
  * the dead `knowledge_ids:[]` zero-match gate is gone (design §2/§3).
  *
  * - `match`: ≥1 existing KC within threshold. `knowledge_ids` are the matching ids,
- *   nearest-first. NO new KC created, NO event written.
+ *   nearest-first. NO new KC created; DOES write an audit-only event (YUK-540,
+ *   `experimental:auto_tag_kc_matched`) — no row mutation, best-effort (never throws).
  * - `propose`: minted a new child KC under `subjectRootId`. `knowledge_ids=[newId]`,
  *   `kc_name` is the minted name. A batch-cache reuse (a sibling already proposed this
  *   name this run) ALSO returns `kind:'propose'` with the cached id but creates nothing.
@@ -188,9 +203,53 @@ export async function tagKnowledge(
   // MATCH when it is within the (distance) threshold.
   const nearest = subjectScoped[0];
   if (nearest && nearest.cosine_distance <= threshold) {
-    const matchingIds = subjectScoped
-      .filter((c: KnowledgeSimilarityCandidate) => c.cosine_distance <= threshold)
-      .map((c) => c.knowledge_id);
+    const matchingCandidates = subjectScoped.filter(
+      (c: KnowledgeSimilarityCandidate) => c.cosine_distance <= threshold,
+    );
+    const matchingIds = matchingCandidates.map((c) => c.knowledge_id);
+
+    // Audit-only MATCH event (YUK-540) — this branch previously wrote ZERO event ("NO new KC
+    // created, NO event written" per the docstring above), making a wrong silent match
+    // completely untraceable even though knowledge_ids feed mastery/FSRS one hop downstream via
+    // question.knowledge_ids. Mirrors the PROPOSE branch's audit shape (same actor_ref,
+    // subject_kind:'knowledge', outcome:'success') with a DISTINCT action name — reusing
+    // `experimental:auto_tag_kc_created` would corrupt the fold reducer
+    // (core/projections/knowledge.ts:180, which treats that exact action as a node CREATE) and
+    // kc_dedup_nightly's `recent_auto` CTE (which would then treat an old, established KC as
+    // "recently auto-created"). Best-effort (never throws): unlike PROPOSE's event (paired with
+    // a real mutation inside one tx), this event has NOTHING to roll back, so a transient write
+    // failure must not turn a successful MATCH decision into a routed-to-review failure —
+    // mirrors kc_dedup_nightly's own audit-event catch (kc_dedup_nightly.ts:244-275).
+    try {
+      await writeEvent(db, {
+        id: newId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'tag_knowledge',
+        action: 'experimental:auto_tag_kc_matched',
+        subject_kind: 'knowledge',
+        subject_id: nearest.knowledge_id,
+        outcome: 'success',
+        payload: {
+          source: 'tag_knowledge',
+          subject_root_id: input.subjectRootId,
+          source_ref: input.sourceRef ?? null,
+          threshold,
+          primary_knowledge_id: nearest.knowledge_id,
+          matches: matchingCandidates.map((c) => ({
+            knowledge_id: c.knowledge_id,
+            name: c.name,
+            cosine_distance: c.cosine_distance,
+          })),
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+      });
+    } catch (err) {
+      console.error('[tag_knowledge] MATCH audit event write failed (match unaffected)', err);
+    }
+
     return { kind: 'match', knowledge_ids: matchingIds };
   }
 

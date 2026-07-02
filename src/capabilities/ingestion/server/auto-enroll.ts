@@ -527,6 +527,7 @@ export async function runAutoEnrollForSession(
             questionText: questionMd,
             knowledgeHint: block.knowledge_hint,
             subjectRootId,
+            sourceRef: { kind: 'question_block', id: block.id },
           },
         );
         tagging = synthesizeTaggingOutput(tag.knowledge_ids);
