@@ -159,7 +159,9 @@ describe('frontier_fill_nightly — empty-frontier prerequisite bootstrap', () =
     await seedKnowledge([prereq, dependent]);
 
     // A live prerequisite edge prereq → dependent makes `dependent` a frontier
-    // candidate; mastering `prereq` (success_count 3 → p(L) ≈ 0.77 ≥ 0.7) while
+    // candidate; mastering `prereq` (success=4/evidence=4 → p(L)=σ(0.5·4)=0.88 ≥ 0.7 AND
+    // evidence 4 ≥ FRONTIER_MASTERY_MIN_EVIDENCE — YUK-539: the old success=3/evidence=3
+    // fixture is exactly the "3 lucky corrects" shape the evidence floor now rejects) while
     // `dependent` stays cold-start (0.5) puts `dependent` ON the frontier.
     await createKnowledgeEdge(db, {
       from_knowledge_id: prereq,
@@ -173,9 +175,9 @@ describe('frontier_fill_nightly — empty-frontier prerequisite bootstrap', () =
     await db.insert(mastery_state).values({
       id: createId(),
       subject_id: prereq,
-      success_count: 3,
+      success_count: 4,
       fail_count: 0,
-      evidence_count: 3,
+      evidence_count: 4,
     });
 
     const runTaskFn = vi.fn(async () => ({ text: '{"proposals":[]}' }));
