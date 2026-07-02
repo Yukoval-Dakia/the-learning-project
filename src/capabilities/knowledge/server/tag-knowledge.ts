@@ -22,9 +22,11 @@
 // see the MATCH branch below for the full rationale and the collision-safety note on the
 // action name (it must NOT reuse `_created` — see that branch's comment).
 //
-// ADDITIVE-ONLY: no entry point calls this yet (that is P3). Reference-answer generation
-// is intentionally OUT of scope (that is P4a) — this is the pure CONTENT/KC axis (design §6),
-// orthogonal to grading (YUK-488).
+// LIVE-WIRED (stale "ADDITIVE-ONLY / no entry point calls this yet" claim removed, YUK-540
+// review): two production entry points call this — auto-enroll.ts (ENROLL mode, per
+// question_block) and image-candidate-accept.ts (thin-seed accept path). Reference-answer
+// generation is intentionally OUT of scope (that is P4a) — this is the pure CONTENT/KC axis
+// (design §6), orthogonal to grading (YUK-488).
 //
 // The LLM naming call (PROPOSE path) runs OUTSIDE any DB transaction (design §3 — never a
 // model call inside a DB tx). The only DB writes are applyProposeNew + the audit event.
