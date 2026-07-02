@@ -271,6 +271,31 @@ export const GenerateArtifact = z.object({
 });
 export type GenerateArtifactT = z.infer<typeof GenerateArtifact>;
 
+// YUK-543 — merge-repair breadcrumb. When a `rate=accept` event accepts a
+// `knowledge_merge` proposal, applyMerge now repairs 9 downstream attribution
+// surfaces per absorbed `from_id` (question/learning_item/goal knowledge_ids,
+// knowledge_edge endpoints, mastery/fsrs/axis/kc_typed per-KC state, misconception
+// edge targets). This array is a FORENSIC AUDIT TRAIL of what was touched — NOT a
+// reversibility guarantee (sequential θ̂/FSRS fits are not decomposable; see the
+// spec §6 red-line check 3). One entry per absorbed from_id, in payload.from_ids
+// array order. Widened EXPLICITLY here (not left to RateEvent.payload's non-strict
+// passthrough) matching the materialized_ids / prior-state-capture precedent style.
+export const MergeRepairEntry = z.object({
+  from_id: z.string(),
+  question_ids_rewritten: z.array(z.string()),
+  learning_item_ids_rewritten: z.array(z.string()),
+  goal_ids_rewritten: z.array(z.string()),
+  // new_edge_id === null ⇒ the old edge was archived-as-duplicate (a live edge with
+  // the rewritten (from,to,relation_type) already existed), so no new edge was created.
+  edges_rewired: z.array(z.object({ old_edge_id: z.string(), new_edge_id: z.string().nullable() })),
+  mastery_state: z.enum(['noop', 'renamed', 'frozen']),
+  fsrs_state: z.enum(['noop', 'renamed', 'frozen']),
+  axis_state: z.enum(['noop', 'renamed', 'frozen']),
+  kc_typed_state: z.enum(['noop', 'renamed', 'frozen']),
+  misconception_edges_rewritten: z.array(z.string()),
+});
+export type MergeRepairEntryT = z.infer<typeof MergeRepairEntry>;
+
 // 6. RateEvent — actor=user / action='rate' / subject='event'
 //
 // 用户对一个 prior event（通常 agent 提议 / 生成）投票 accept / dismiss / rollback。
@@ -321,6 +346,9 @@ export const RateEvent = z.object({
       // mint nothing for those rows). YUK-471 W1 PR-A1 (CodeRabbit MAJOR).
       .strict()
       .optional(),
+    // YUK-543 — the merge-repair forensic breadcrumb (see MergeRepairEntry above).
+    // Optional: only merge accepts set it; every other accept/dismiss/rollback omits it.
+    merge_repair: z.array(MergeRepairEntry).optional(),
   }),
   ...baseOptionalFields,
 });
