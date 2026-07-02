@@ -253,25 +253,49 @@ export async function gatherAndFoldMistakeVariant(
  * Gather the superset of events affecting `itemId` and run the PURE learning_item fold. READ-ONLY.
  * (YUK-471 Wave 2.)
  *
- * The learning_item gather is the SIMPLEST of the W2 trio (design §3④): the recommended route
- * writes dedicated subject-keyed action events (experimental:learning_item_complete / _relearn /
- * _archive), so EVERY mutation — and the genesis base — keys on the item id. So it is Q1 ONLY
- * (subject_kind='learning_item' AND subject_id=itemId): genesis + the W2 complete/relearn/archive
- * events. NO caused_by chain (the status transitions are fold-visible via Q1, NOT a rate-payload
- * `materialized_learning_item_id` side-channel reverse-lookup), NO Q2 reverse index (itemId ==
- * genesis subject_id) and NO Q3 merge-into (each item folds independently — child_learning_item_ids
- * is excluded, so the hub never depends on child state). Returns the projected row or null. Writes
- * NOTHING.
+ * The learning_item gather is Q1 (subject-keyed status/genesis events) PLUS a merge Q3 (YUK-543):
+ *   - Q1 (subject_kind='learning_item' AND subject_id=itemId): genesis + the W2
+ *     complete/relearn/archive events. Each keys on the item's OWN id (the recommended route writes
+ *     dedicated subject-keyed action events). NO Q2 reverse index (itemId == genesis subject_id).
+ *   - Q3 (YUK-543): an accepted `experimental:knowledge_merge` rewrites this item's knowledge_ids
+ *     from the absorbed from_id to the survivor into_id. That merge propose event's subject is the
+ *     SURVIVOR knowledge node, NOT this item, so Q1 misses it. Unlike the node fold's Q3
+ *     (containment-scoped on `payload->'from_ids' @> [nodeId]`), we gather EVERY knowledge_merge
+ *     event: merges CHAIN (A→B then B→C), so scoping by the item's seed KCs alone would miss a
+ *     second-hop merge whose from_ids no longer contain the seed id — breaking fold==row for
+ *     chains. The PURE reducer applies only the intersecting merges (in created_at order — a no-op
+ *     for non-touching merges), so the unscoped fetch is correct + chain-safe; merges are rare in a
+ *     single-user tool so the fetch is cheap (spec §2 / decision ledger).
+ *   - accept-rate chain: the reducer only rewrites on an ACCEPTED merge, so pull the `rate` events
+ *     chained (caused_by_event_id) to the gathered merge propose events.
+ * Returns the projected row or null. Writes NOTHING.
  */
 export async function gatherAndFoldLearningItem(
   db: DbLike,
   itemId: string,
 ): Promise<LearningItemRowSnapshotT | null> {
-  const rows = await db
+  const q1 = await db
     .select()
     .from(event)
     .where(and(eq(event.subject_kind, 'learning_item'), eq(event.subject_id, itemId)));
-  const foldEvents = rows.map(rowToFoldEvent);
+
+  // Q3 (YUK-543): every knowledge_merge propose event (chain-safe; see the doc above).
+  const q3 = await db.select().from(event).where(eq(event.action, 'experimental:knowledge_merge'));
+
+  const byId = new Map<string, EventRow>();
+  for (const r of [...q1, ...q3]) byId.set(r.id, r);
+
+  // accept rates chained to the merge propose events (the reducer gates the rewrite on acceptance).
+  const mergeIds = q3.map((r) => r.id);
+  if (mergeIds.length > 0) {
+    const rates = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, mergeIds)));
+    for (const r of rates) byId.set(r.id, r);
+  }
+
+  const foldEvents = [...byId.values()].map(rowToFoldEvent);
   return foldLearningItem(itemId, foldEvents);
 }
 
