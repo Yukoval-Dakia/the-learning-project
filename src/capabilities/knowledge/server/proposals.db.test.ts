@@ -17,7 +17,7 @@ import {
   question,
 } from '@/db/schema';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
@@ -582,28 +582,43 @@ describe('applyMerge — YUK-543 attribution repair', () => {
       updated_at: now,
     });
   }
-  async function insertEdge(id: string, from: string, to: string, relation: string) {
-    await testDb().insert(knowledge_edge).values({
-      id,
-      from_knowledge_id: from,
-      to_knowledge_id: to,
-      relation_type: relation,
-      created_by: CREATED_BY,
-    });
+  async function insertEdge(
+    id: string,
+    from: string,
+    to: string,
+    relation: string,
+    opts: { archived?: boolean; created_at?: Date } = {},
+  ) {
+    await testDb()
+      .insert(knowledge_edge)
+      .values({
+        id,
+        from_knowledge_id: from,
+        to_knowledge_id: to,
+        relation_type: relation,
+        created_by: CREATED_BY,
+        ...(opts.created_at ? { created_at: opts.created_at } : {}),
+        ...(opts.archived ? { archived_at: new Date() } : {}),
+      });
   }
-  async function insertMisc(id: string, toId: string) {
+  async function insertMisc(id: string, toId: string, opts: { archived?: boolean } = {}) {
     const now = new Date();
-    await testDb().insert(misconception_edge).values({
-      id,
-      from_kind: 'misconception',
-      from_id: 'm1',
-      to_kind: 'knowledge',
-      to_id: toId,
-      relation_type: 'confusable_with',
-      created_by: CREATED_BY,
-      created_at: now,
-      updated_at: now,
-    });
+    await testDb()
+      .insert(misconception_edge)
+      .values({
+        id,
+        from_kind: 'misconception',
+        from_id: 'm1',
+        to_kind: 'knowledge',
+        to_id: toId,
+        relation_type: 'confusable_with',
+        // misconception_edge.created_by is AgentRef-shaped ({ by }), unlike knowledge_edge's
+        // { actor_kind, actor_ref } — the throat re-validates it on the rewrite path.
+        created_by: { by: 'ai' } as never,
+        created_at: now,
+        updated_at: now,
+        ...(opts.archived ? { archived_at: now } : {}),
+      });
   }
   async function mergeFromInto(from: string, into: string) {
     return applyMerge(testDb(), {
@@ -652,6 +667,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(log[0].edges_rewired).toHaveLength(1);
     expect(log[0].edges_rewired[0].old_edge_id).toBe('e1');
     expect(log[0].edges_rewired[0].new_edge_id).not.toBeNull();
+    expect(log[0].edges_rewired[0].outcome).toBe('rewired');
     // old archived, new live edge k_into --related_to--> k_x.
     const e1 = await testDb().select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e1'));
     expect(e1[0].archived_at).not.toBeNull();
@@ -673,14 +689,16 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(genEvents.length).toBeGreaterThanOrEqual(2); // one archive + one create
   });
 
-  it('edge collision post-rewrite → archive-as-duplicate (new_edge_id null, no new edge)', async () => {
+  it('edge collision with a LIVE duplicate → archive-as-duplicate (new_edge_id null)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
     await insertKnowledge({ id: 'k_x', version: 0 });
     await insertEdge('e_from', 'k_from', 'k_x', 'related_to');
-    await insertEdge('e_into', 'k_into', 'k_x', 'related_to'); // the rewritten key already exists
+    await insertEdge('e_into', 'k_into', 'k_x', 'related_to'); // a LIVE edge holds the rewritten key
     const log = await mergeFromInto('k_from', 'k_into');
-    expect(log[0].edges_rewired).toEqual([{ old_edge_id: 'e_from', new_edge_id: null }]);
+    expect(log[0].edges_rewired).toEqual([
+      { old_edge_id: 'e_from', new_edge_id: null, outcome: 'archived_duplicate' },
+    ]);
     const eFrom = await testDb()
       .select()
       .from(knowledge_edge)
@@ -691,6 +709,130 @@ describe('applyMerge — YUK-543 attribution repair', () => {
       .from(knowledge_edge)
       .where(eq(knowledge_edge.id, 'e_into'));
     expect(eInto[0].archived_at).toBeNull(); // the surviving edge is untouched
+  });
+
+  it('edge collision with an ARCHIVED tombstone → REACTIVATE it (review R2; no evaporated relationship)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertKnowledge({ id: 'k_x', version: 0 });
+    await insertEdge('e_from', 'k_from', 'k_x', 'related_to');
+    // an archived tombstone holds the rewritten UNIQUE key — knowledge_edge_unique is GLOBAL, so a
+    // fresh INSERT would 23505 even though no LIVE duplicate exists.
+    await insertEdge('e_tomb', 'k_into', 'k_x', 'related_to', { archived: true });
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].edges_rewired).toEqual([
+      { old_edge_id: 'e_from', new_edge_id: 'e_tomb', outcome: 'reactivated' },
+    ]);
+    // the tombstone is LIVE again — the relationship k_into→k_x survives the merge.
+    const eTomb = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_tomb'));
+    expect(eTomb[0].archived_at).toBeNull();
+    const live = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(
+        and(
+          eq(knowledge_edge.from_knowledge_id, 'k_into'),
+          eq(knowledge_edge.to_knowledge_id, 'k_x'),
+          isNull(knowledge_edge.archived_at),
+        ),
+      );
+    expect(live).toHaveLength(1);
+    expect(live[0].id).toBe('e_tomb');
+    // a fold-legible generate(create) event is anchored to the REVIVED edge id (the fold's last
+    // create re-projects the row as live → row == fold).
+    const createEvts = await testDb()
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'generate'), eq(event.subject_id, 'e_tomb')));
+    expect(createEvts.length).toBeGreaterThanOrEqual(1);
+    const payload = createEvts[createEvts.length - 1].payload as { edge_op?: string };
+    expect(payload.edge_op).toBeUndefined(); // absent edge_op = create
+    // the old edge is archived.
+    const eFrom = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_from'));
+    expect(eFrom[0].archived_at).not.toBeNull();
+  });
+
+  it('dangling non-into endpoint (archived KC) → archive-only (outcome archived_dangling)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertKnowledge({ id: 'k_dangle', version: 0, archived: true });
+    await insertEdge('e_dangle', 'k_from', 'k_dangle', 'related_to');
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].edges_rewired).toEqual([
+      { old_edge_id: 'e_dangle', new_edge_id: null, outcome: 'archived_dangling' },
+    ]);
+    const eDangle = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_dangle'));
+    expect(eDangle[0].archived_at).not.toBeNull();
+  });
+
+  it('edge between the two merge endpoints collapses (outcome collapsed_self_loop)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertEdge('e_self', 'k_from', 'k_into', 'related_to');
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].edges_rewired).toEqual([
+      { old_edge_id: 'e_self', new_edge_id: null, outcome: 'collapsed_self_loop' },
+    ]);
+    const eSelf = await testDb()
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, 'e_self'));
+    expect(eSelf[0].archived_at).not.toBeNull();
+  });
+
+  it('topology mesh is UNBOUNDED (review R1): a backbone edge beyond LIST_LIMIT=500 still triggers reject', async () => {
+    const db = testDb();
+    const old = new Date('2020-01-01T00:00:00.000Z');
+    const now = new Date();
+    // 501 filler nodes + the 3 merge nodes, batch-inserted.
+    const fillerIds = Array.from({ length: 501 }, (_, i) => `f${i}`);
+    const kRow = (id: string) => ({
+      id,
+      name: id,
+      domain: 'wenyan',
+      parent_id: null,
+      merged_from: [],
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await db.insert(knowledge).values(['k_from', 'k_into', 'k_x', ...fillerIds].map(kRow));
+    // 500 NEWER filler prerequisite edges (chain f0→f1→…→f500 — acyclic) fill the old
+    // created_at-DESC LIST_LIMIT=500 window entirely…
+    await db.insert(knowledge_edge).values(
+      Array.from({ length: 500 }, (_, i) => ({
+        id: `fe${i}`,
+        from_knowledge_id: `f${i}`,
+        to_knowledge_id: `f${i + 1}`,
+        relation_type: 'prerequisite',
+        created_by: CREATED_BY,
+        created_at: now,
+      })),
+    );
+    // …so the OLD backbone edge (k_into→k_x) would be truncated out of a LIMIT-bounded mesh, and
+    // rewiring e_bad (k_x→k_from → k_x→k_into) would get a false 'ok' instead of the
+    // direction-contradiction reject.
+    await insertEdge('e_backbone', 'k_into', 'k_x', 'prerequisite', { created_at: old });
+    await insertEdge('e_bad', 'k_x', 'k_from', 'prerequisite', {
+      created_at: new Date('2020-01-02T00:00:00.000Z'),
+    });
+    await expect(mergeFromInto('k_from', 'k_into')).rejects.toThrow(/topology|aborting merge/i);
+    // whole tx rolled back.
+    const kf = await db.select().from(knowledge).where(eq(knowledge.id, 'k_from'));
+    expect(kf[0].archived_at).toBeNull();
+    const eBad = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_bad'));
+    expect(eBad[0].archived_at).toBeNull();
   });
 
   it('prerequisite topology reject on the rewritten edge ABORTS the whole merge tx', async () => {
@@ -709,17 +851,62 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(eBad[0].archived_at).toBeNull();
   });
 
-  it('rewrites misconception_edge.to_id (to_kind=knowledge)', async () => {
+  it('rewrites misconception_edge targets via the throat (archive old + create rewritten)', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
     await insertMisc('mc1', 'k_from');
     const log = await mergeFromInto('k_from', 'k_into');
     expect(log[0].misconception_edges_rewritten).toEqual(['mc1']);
-    const mc = await testDb()
+    // R3 — routed through the misconception-edges.ts throat: the OLD edge is archived and a NEW
+    // live edge carries the rewritten target (identity = the unique index, not the row id).
+    const mc1 = await testDb()
       .select()
       .from(misconception_edge)
       .where(eq(misconception_edge.id, 'mc1'));
-    expect(mc[0].to_id).toBe('k_into');
+    expect(mc1[0].archived_at).not.toBeNull();
+    const live = await testDb()
+      .select()
+      .from(misconception_edge)
+      .where(
+        and(
+          eq(misconception_edge.to_kind, 'knowledge'),
+          eq(misconception_edge.to_id, 'k_into'),
+          isNull(misconception_edge.archived_at),
+        ),
+      );
+    expect(live).toHaveLength(1);
+    expect(live[0].from_id).toBe('m1');
+    expect(live[0].relation_type).toBe('confusable_with');
+  });
+
+  it('misconception collision with an ARCHIVED tombstone → throat upsert REVIVES it (review R3)', async () => {
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertMisc('mc_live', 'k_from');
+    // an archived tombstone already holds the rewritten key (m1 →confusable_with→ k_into); the
+    // GLOBAL unique index would 23505 a fresh INSERT — the throat's onConflictDoUpdate un-archives
+    // it instead, so the live relationship survives the merge (the old raw-UPDATE + blind-archive
+    // path evaporated it).
+    await insertMisc('mc_tomb', 'k_into', { archived: true });
+    const log = await mergeFromInto('k_from', 'k_into');
+    expect(log[0].misconception_edges_rewritten).toEqual(['mc_live']);
+    const live = await testDb()
+      .select()
+      .from(misconception_edge)
+      .where(
+        and(
+          eq(misconception_edge.to_kind, 'knowledge'),
+          eq(misconception_edge.to_id, 'k_into'),
+          isNull(misconception_edge.archived_at),
+        ),
+      );
+    expect(live).toHaveLength(1);
+    expect(live[0].id).toBe('mc_tomb'); // the tombstone row, revived in place
+    const mcLive = await testDb()
+      .select()
+      .from(misconception_edge)
+      .where(eq(misconception_edge.id, 'mc_live'));
+    expect(mcLive[0].archived_at).not.toBeNull(); // the source edge is archived
   });
 
   it('multi-from_id ordering: first from renames mastery, second freezes (deterministic)', async () => {

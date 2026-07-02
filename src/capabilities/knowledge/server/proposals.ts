@@ -19,7 +19,16 @@ import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event, goal, knowledge, learning_item, misconception_edge, question } from '@/db/schema';
+import {
+  event,
+  goal,
+  knowledge,
+  knowledge_edge,
+  learning_item,
+  misconception_edge,
+  question,
+} from '@/db/schema';
+import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
@@ -51,9 +60,15 @@ import { getEffectiveDomain } from './domain';
 import {
   archiveKnowledgeEdge,
   createKnowledgeEdge,
-  listKnowledgeEdges,
+  listAllLivePrerequisiteEdges,
   listLiveEdgesTouchingNode,
+  reactivateKnowledgeEdge,
 } from './edges';
+import {
+  type CreateMisconceptionEdgeInput,
+  archiveMisconceptionEdge,
+  createMisconceptionEdge,
+} from './misconception-edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 
 type DbLike = Db | Tx;
@@ -472,6 +487,11 @@ export async function applySplit(
 // DELIBERATELY LEFT STALE (documented, not silent): learning_session.scope_knowledge_ids
 // (schema.ts:757-762) — an in-flight placement probe holding an absorbed KC just skips it
 // for that session's remaining duration (session-ephemeral, spec §2 table).
+//
+// DELIBERATELY NEVER REWRITTEN: learning_record.knowledge_ids — the append-only ATOMIC evidence
+// layer. It is the feasibility precondition for a future unmergeKnowledge() (re-fit new per-KC
+// parameters from un-aggregated observations, Sentry-fingerprint style) and MUST stay outside
+// every rewrite pass, including this one (YUK-543 review L2; see the schema.ts contract comment).
 // =============================================================================
 
 // question.knowledge_ids — imperative (no fold). Rewrite every question tagged with fromId.
@@ -542,8 +562,18 @@ async function rewriteGoalScopeOnMerge(
 
 // misconception_edge.to_id (to_kind='knowledge') — imperative, no fold, dark
 // (MISCONCEPTION_PROMOTE_ENABLED OFF). Re-point every live edge whose knowledge TARGET is fromId.
-// The UNIQUE(from_kind,from_id,to_kind,to_id,relation_type) index is honored: if re-pointing would
-// collide with an existing edge (23505), archive the source edge instead (archive-as-duplicate).
+//
+// YUK-543 review R3 — routed through the misconception-edges.ts single-owner THROAT
+// (archiveMisconceptionEdge + createMisconceptionEdge) instead of a raw UPDATE:
+//   - the throat's create is an idempotent UPSERT keyed on the GLOBAL unique index
+//     (un-archives + refreshes weight on conflict), so a collision with an ARCHIVED tombstone on
+//     the rewritten key REVIVES it rather than dropping the live relationship (the raw
+//     UPDATE + blind-23505-archive path evaporated it), and a collision with a LIVE duplicate
+//     degrades to a weight refresh — never a lost edge, never a 23505;
+//   - the throat also owns canonical ordering + Zod + the heterogeneous topology gate. For our
+//     rewrites (from_kind='misconception', to_kind='knowledge') the gate cannot reject: caused_by /
+//     confusable_with / experimental:* all admit to_kind='knowledge', and the self-loop check
+//     requires from_kind == to_kind ('misconception' ≠ 'knowledge').
 async function rewireMisconceptionEdgeTargets(
   tx: Tx,
   fromId: string,
@@ -551,7 +581,14 @@ async function rewireMisconceptionEdgeTargets(
   now: Date,
 ): Promise<string[]> {
   const rows = await tx
-    .select({ id: misconception_edge.id })
+    .select({
+      id: misconception_edge.id,
+      from_id: misconception_edge.from_id,
+      relation_type: misconception_edge.relation_type,
+      weight: misconception_edge.weight,
+      created_by: misconception_edge.created_by,
+      proposed_by_ai: misconception_edge.proposed_by_ai,
+    })
     .from(misconception_edge)
     .where(
       and(
@@ -562,29 +599,19 @@ async function rewireMisconceptionEdgeTargets(
     );
   const handled: string[] = [];
   for (const r of rows) {
-    try {
-      // SAVEPOINT: a UNIQUE(from,from_id,to_kind,to_id,relation_type) violation on the rewrite would
-      // abort the WHOLE merge tx (Postgres aborts on any error). Wrapping in a nested tx (savepoint)
-      // rolls back ONLY the failed UPDATE, keeping the outer merge tx usable for the archive fallback.
-      await tx.transaction(async (sp) => {
-        await sp
-          .update(misconception_edge)
-          .set({ to_id: intoId, updated_at: now })
-          .where(eq(misconception_edge.id, r.id));
-      });
-    } catch (err) {
-      const pgCode =
-        (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
-      if (pgCode === '23505') {
-        // A misconception edge with the rewritten target already exists → archive-as-duplicate.
-        await tx
-          .update(misconception_edge)
-          .set({ archived_at: now, updated_at: now })
-          .where(eq(misconception_edge.id, r.id));
-      } else {
-        throw err;
-      }
-    }
+    // Archive the old edge first (its key differs from the rewritten one — to_id fromId vs intoId —
+    // so no index interaction), then upsert the rewritten edge through the throat.
+    await archiveMisconceptionEdge(tx, r.id, now);
+    await createMisconceptionEdge(tx, {
+      from_id: r.from_id,
+      to_kind: 'knowledge',
+      to_id: intoId,
+      relation_type: r.relation_type,
+      weight: r.weight,
+      created_by: r.created_by as CreateMisconceptionEdgeInput['created_by'],
+      proposed_by_ai: r.proposed_by_ai,
+      now,
+    });
     handled.push(r.id);
   }
   return handled;
@@ -646,27 +673,35 @@ async function writeEdgeCreateEvent(
   });
 }
 
+type EdgeRewired = MergeRepairEntryT['edges_rewired'][number];
+
 export async function rewireKnowledgeEdges(
   tx: Tx,
   fromId: string,
   intoId: string,
   now: Date,
   mergeFromIds: ReadonlySet<string>,
-): Promise<Array<{ old_edge_id: string; new_edge_id: string | null }>> {
-  const result: Array<{ old_edge_id: string; new_edge_id: string | null }> = [];
+): Promise<EdgeRewired[]> {
+  // YUK-543 review L1 — sorted advisory locks on both merge endpoints ('knowledge_edge:<id>'
+  // namespace, mirroring the four retire fns' pattern). No async edge writer exists today (edge
+  // writes are propose/accept human-gated; the grading worker never writes edges), so this is
+  // doctrine consistency + future-proofing, not a live race fix. The symmetric propose-side lock is
+  // a Linear follow-up; if any background edge writer is ever introduced, that follow-up upgrades
+  // to REQUIRED (two READ COMMITTED txs each passing the topology gate then merging = silent cycle).
+  await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, intoId]);
+
+  const result: EdgeRewired[] = [];
   const touching = await listLiveEdgesTouchingNode(tx, fromId);
   if (touching.length === 0) return result;
 
-  // Running live-prerequisite mesh for the ADR-0034 topology gate. Freshly read (reflects prior
-  // from_ids' rewrites in this tx) and mutated in-memory as we archive/create within THIS call, so
-  // two edges that TOGETHER form a cycle are caught (mirrors propose_edge's liveTopologyEdges).
-  const livePrereq: TopologyEdge[] = (
-    await listKnowledgeEdges(tx, { relation_type: 'prerequisite' })
-  ).map((e) => ({
-    from_knowledge_id: e.from_knowledge_id,
-    to_knowledge_id: e.to_knowledge_id,
-    relation_type: e.relation_type,
-  }));
+  // Running live-prerequisite mesh for the ADR-0034 topology gate. UNBOUNDED read (review R1):
+  // cycle detection is only sound against the COMPLETE live prerequisite set — the general-purpose
+  // listKnowledgeEdges truncates at LIST_LIMIT=500 (created_at DESC), which beyond 500 edges drops
+  // the OLDEST backbone edges and turns a must-reject rewire into a false 'ok'. Same unbounded-scan
+  // shape propose_edge.ts uses for its own topology mesh. Freshly read (reflects prior from_ids'
+  // rewrites in this tx) and mutated in-memory as we archive/create within THIS call, so two edges
+  // that TOGETHER form a cycle are caught.
+  const livePrereq: TopologyEdge[] = await listAllLivePrerequisiteEdges(tx);
   const dropFromMesh = (from: string, to: string) => {
     const i = livePrereq.findIndex(
       (e) =>
@@ -697,7 +732,7 @@ export async function rewireKnowledgeEdges(
       await archiveKnowledgeEdge(tx, edge.id, now);
       await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
       if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
-      result.push({ old_edge_id: edge.id, new_edge_id: null });
+      result.push({ old_edge_id: edge.id, new_edge_id: null, outcome: 'collapsed_self_loop' });
       continue;
     }
 
@@ -726,11 +761,12 @@ export async function rewireKnowledgeEdges(
     if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
 
     let newEdgeId: string | null = null;
+    let outcome: EdgeRewired['outcome'];
     try {
       // SAVEPOINT: a 23505 from createKnowledgeEdge (the rewritten key already holds the UNIQUE slot)
       // aborts the WHOLE merge tx in Postgres. Wrapping the create + its fold event in a nested tx
       // (savepoint) rolls back ONLY the failed create, keeping the outer merge tx usable — the old
-      // edge's archive (written above, outside this savepoint) survives (archive-as-duplicate).
+      // edge's archive (written above, outside this savepoint) survives.
       newEdgeId = await tx.transaction(async (sp) => {
         const id = await createKnowledgeEdge(sp, {
           from_knowledge_id: newFrom,
@@ -754,6 +790,7 @@ export async function rewireKnowledgeEdges(
         );
         return id;
       });
+      outcome = 'rewired';
       if (edge.relation_type === 'prerequisite') {
         livePrereq.push({
           from_knowledge_id: newFrom,
@@ -762,24 +799,77 @@ export async function rewireKnowledgeEdges(
         });
       }
     } catch (err) {
-      // A live/archived edge with the rewritten (from,to,relation_type) already holds the UNIQUE
-      // slot (409 conflict), OR the non-into endpoint is archived/missing (404) — either way the
-      // relationship is already represented (or degenerate), so the archive alone is the correct,
-      // fold-legible outcome (archive-as-duplicate; no create event for the discarded create).
-      if (err instanceof ApiError && (err.code === 'conflict' || err.code === 'not_found')) {
-        if (err.code === 'not_found') {
-          console.warn('[rewireKnowledgeEdges] skipped create (endpoint archived/missing)', {
-            edgeId: edge.id,
+      if (err instanceof ApiError && err.code === 'conflict') {
+        // YUK-543 review R2 — `knowledge_edge_unique` is GLOBAL (no partial WHERE), so a 23505 has
+        // TWO distinct causes that must not be conflated: a LIVE duplicate (the relationship is
+        // already represented → archive-as-duplicate is correct) vs an ARCHIVED TOMBSTONE merely
+        // holding the UNIQUE slot (no live duplicate exists — and the source edge is already
+        // archived above, so treating it as a duplicate would silently evaporate a live
+        // relationship). Disambiguate with a keyed SELECT and REVIVE the tombstone in that case.
+        const holder = (
+          await tx
+            .select({ id: knowledge_edge.id, archived_at: knowledge_edge.archived_at })
+            .from(knowledge_edge)
+            .where(
+              and(
+                eq(knowledge_edge.from_knowledge_id, newFrom),
+                eq(knowledge_edge.to_knowledge_id, newTo),
+                eq(knowledge_edge.relation_type, edge.relation_type),
+              ),
+            )
+            .limit(1)
+        )[0];
+        if (holder && holder.archived_at !== null) {
+          // Tombstone → reactivate through the edges.ts throat + anchor a fold-legible
+          // generate(create) event to the revived edge id. The fold's create branch re-projects the
+          // row as live from that event (created_at/created_by/weight/reasoning refreshed in the
+          // row to byte-match the fold output — row == fold holds; see reactivateKnowledgeEdge).
+          await reactivateKnowledgeEdge(tx, holder.id, {
+            weight: edge.weight,
+            reasoning: edge.reasoning,
+            actor_kind: 'user',
+            actor_ref: 'self',
+            created_at: now,
+          });
+          await writeEdgeCreateEvent(
+            tx,
+            holder.id,
             newFrom,
             newTo,
-          });
+            edge.relation_type,
+            edge.weight,
+            edge.reasoning,
+            now,
+          );
+          newEdgeId = holder.id;
+          outcome = 'reactivated';
+          if (edge.relation_type === 'prerequisite') {
+            livePrereq.push({
+              from_knowledge_id: newFrom,
+              to_knowledge_id: newTo,
+              relation_type: 'prerequisite',
+            });
+          }
+        } else {
+          // LIVE duplicate — the relationship survives on the existing edge; the old edge's archive
+          // alone is the correct, fold-legible outcome (no create event for the discarded create).
+          newEdgeId = null;
+          outcome = 'archived_duplicate';
         }
+      } else if (err instanceof ApiError && err.code === 'not_found') {
+        // The non-into endpoint is archived/missing — a degenerate edge; the archive alone drops it.
+        console.warn('[rewireKnowledgeEdges] skipped create (endpoint archived/missing)', {
+          edgeId: edge.id,
+          newFrom,
+          newTo,
+        });
         newEdgeId = null;
+        outcome = 'archived_dangling';
       } else {
         throw err;
       }
     }
-    result.push({ old_edge_id: edge.id, new_edge_id: newEdgeId });
+    result.push({ old_edge_id: edge.id, new_edge_id: newEdgeId, outcome });
   }
   return result;
 }
