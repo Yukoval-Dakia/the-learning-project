@@ -1223,7 +1223,8 @@ export function TextLineCompletePanel({
   );
 }
 
-function SSETimeline({
+// Exported for VisionTab.test.tsx — asserts the payload.warnings render arm.
+export function SSETimeline({
   events,
   status,
 }: {
@@ -1264,6 +1265,21 @@ function SSETimeline({
               )}
               {typeof e.payload.error_message === 'string' && (
                 <span className="record-error"> · {e.payload.error_message}</span>
+              )}
+              {/* YUK-541 (ocr-vlm-fallback-ladder): the fallback ladder persists a
+                  non-fatal degrade warning (e.g. "fell back to GLM structure") on
+                  ingestion.extraction_completed even when the session still lands as
+                  'extracted' — this is the only surface that renders it. Intentionally
+                  event-type agnostic: any event whose payload carries a non-empty
+                  `warnings` array renders here, not just extraction_completed. */}
+              {Array.isArray(e.payload.warnings) && e.payload.warnings.length > 0 && (
+                <span className="sse-warn">
+                  {' · '}
+                  <Icon name="alert" size={12} />{' '}
+                  {(e.payload.warnings as unknown[])
+                    .filter((w): w is string => typeof w === 'string')
+                    .join('；')}
+                </span>
               )}
             </span>
             <code>{eventShortId(e.event_type)}</code>
