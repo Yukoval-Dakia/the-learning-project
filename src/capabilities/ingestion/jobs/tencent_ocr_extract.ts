@@ -335,6 +335,13 @@ async function processOneOcrJob(
     //     call below is engine-agnostic (runStructure only sees a string hint).
     let ocrHintMd: string;
     let ocrFallbackQuestions: ReturnType<typeof parseMarkAgentResponse>['questions'];
+    // YUK-541 (ocr-vlm-fallback-ladder): buildGlmFallbackQuestions() always returns an
+    // informative warning ('GLM fallback: page-level standalone, no sub-question split')
+    // that was previously discarded here. Capture it now and thread it into the fallback
+    // `structure` literal below (only reached if StructureTask actually throws) so the
+    // existing `warnings.push(...structure.warnings)` merge point folds it in for free —
+    // stays `[]` (no-op) on the VLM-success happy path and on the Tencent engine path.
+    let glmFallbackWarnings: string[] = [];
     if (engine === 'glm') {
       ocrHintMd = renderGlmHint(glmPages);
       const fb = buildGlmFallbackQuestions({
@@ -343,6 +350,7 @@ async function processOneOcrJob(
         warnings: [],
       });
       ocrFallbackQuestions = fb.questions;
+      glmFallbackWarnings = fb.warnings;
     } else {
       ocrHintMd = renderTencentHint(tencentPages);
       ocrFallbackQuestions = tencentPages.flatMap((p) => p.questions);
@@ -389,7 +397,9 @@ async function processOneOcrJob(
       structure = {
         questions: ocrFallbackQuestions,
         layout_quality: ocrLayout,
-        warnings: [],
+        // YUK-541: glmFallbackWarnings is [] for the Tencent engine, so this stays a
+        // no-op there — folded into `warnings` below via the existing merge point.
+        warnings: glmFallbackWarnings,
       };
       usedVlmPath = false;
     }
