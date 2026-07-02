@@ -383,9 +383,11 @@ export async function auditProjection(
   }
 
   // ── learning_item (YUK-471 W2) ── narrow-column read (excludes child_learning_item_ids / ai_score
-  // / due_at / reviewed_at — design §3①). The per-item gatherAndFoldLearningItem issues a single Q1
-  // (subject-keyed: genesis + the complete/relearn/archive action events; no mesh/reverse-index/
-  // caused_by — itemId == subject_id and each item folds independently). A row that differs from
+  // / due_at / reviewed_at — design §3①). The per-item gatherAndFoldLearningItem issues Q1
+  // (subject-keyed: genesis + the complete/relearn/archive action events) PLUS the YUK-543 merge
+  // legs: Q3 (every `experimental:knowledge_merge` propose event — unscoped for chain safety) and
+  // the accept `rate` events chained to those merges, so an accepted KC merge's knowledge_ids
+  // rewrite folds. Still no mesh / reverse-index (itemId == subject_id). A row that differs from
   // fold(events) on a snapshot column is DRIFT; a difference only in an excluded column never enters
   // the diff (those columns are absent from both the SELECT and the snapshot).
   const learningItems = await db.select(LEARNING_ITEM_STRUCTURAL_COLUMNS).from(learning_item);
