@@ -178,6 +178,7 @@ Each: acquire the module's advisory lock for **both** `fromId` and `intoId` in s
 | 8 | **Attack B "经验证成立" list** | Mid-tx crash safety, kc_dedup_nightly re-propose-of-archived-node handling, chained-merge propagation (sync path), event immutability, `merge_repair` additive-safety, backup/FK_ORDER, `audit:schema` non-impact, single-writer routing — all HOLD | **CONFIRMED**, independently re-verified rather than trusted (`applyMerge`'s single tx, `writeEvent`'s raw-payload storage, guard allowlist contents, single-caller grep) | No change — these parts of the design ship as originally written |
 | 9 | **Beyond both attacks** (this pass) | Neither attack traced `applyEdgeSupersede` as the concrete in-repo precedent for edge rewrite, nor confirmed `checkEdgeTopology` runs synchronously at write time (both only argued abstractly for "route through events") | New finding this pass | `rewireKnowledgeEdges` now has a concrete, cite-able shape to implement against instead of an open design question |
 | 10 | **Register's own target shape (§1)** | `master-register.md:454` item (4) already required "routed through the projection/event layer" — the design as originally written violated its own grounding document | **CONFIRMED** | This is the meta-lesson: both attacks essentially rediscovered a requirement the design's own source document already stated. Register item (2) ("additive merge... reconcile theta_hat" for mastery_state) was **knowingly NOT adopted** — freeze-and-log stays the recommendation, because both attacks independently re-confirmed the "no invented merge math at n=0/n=1" reasoning holds; this is a deliberate, attack-surviving deviation from the register's own suggested shape, flagged here for transparency |
+| 11 | **7-lane lit verdict, psychometrics lane (D-E)** | A SECOND, independent justification for the `frozen` label beyond "no invented merge math": **Q-matrix misspecification** — a frozen `mastery_state` row answers "mastery under the OLD attribute definition"; post-merge the system displays the NEW (merged) attribute definition, so the two are not answers about the same measurement object (parameter meaning is relative to the Q-matrix in force when fitted; misspecification biases classification) | **CONFIRMED** (Appendix C, D-E) | Strengthens freeze-and-log from "cautious default" to **conceptually necessary**: the frozen row is not merely un-merged数值, it is the answer to a different question — it must stay a separate record until re-fit under the new definition (the unfreeze gate, §4 decision 2) |
 
 ---
 
@@ -186,11 +187,11 @@ Each: acquire the module's advisory lock for **both** `fromId` and `intoId` in s
 | # | Decision | Recommended default | Severity |
 |---|---|---|---|
 | 1 | Scope width | **Full**, mechanism now mixed (imperative for question/mastery/fsrs/axis/kc_typed/misconception_edge; event-native for goal/learning_item/edge) — unchanged conclusion from design, corrected mechanism | MAJOR |
-| 2 | `mastery_state`/`fsrs`/`axis`, both-sides-have-evidence case | **Freeze-and-log**, now with advisory locks. Register's own suggested "additive/reconcile theta_hat" shape explicitly rejected — both attacks independently reconfirm no-invented-math holds at n=0/n=1 | MAJOR |
+| 2 | `mastery_state`/`fsrs`/`axis`, both-sides-have-evidence case | **Freeze-and-log**, now with advisory locks. Register's own suggested "additive/reconcile theta_hat" shape explicitly rejected — both attacks independently reconfirm no-invented-math holds at n=0/n=1. **Unfreeze criteria (concretized per the 7-lane lit verdict D-E, replacing the earlier vague "held-out 门 potential follow-up"):** unfreeze = only after reaching the minimum sample size for held-out validation, then run an LFA-style model comparison / CDM attribute-distinguishability check (the Nájera et al. 2021 family — three-method agreement; two attributes correlating >0.90 = "hardly distinguishable" over-splitting signal) to decide whether the merged KC re-fits as ONE attribute; **never an automatic fallback to pooled refit at an arbitrary time point** (edm lane explicitly warns against it). Flagged honestly: this gate is un-runnable at n=1 today (needs a real multi-item × multi-response matrix) and has NO production precedent as a live merge-time gate (only as an offline academic workflow) — it is the SPEC for a future unfreeze mechanism, and does not block this PR's freeze | MAJOR |
 | 3 | `artifact.knowledge_ids` | **Defer.** Reasoning strengthened: it's genuinely event-owned (LIVE since 2026-06-28), so a future pickup must follow the `knowledge_edge` event-native pattern, not treat it as a simple allowlist edit | Mechanical-leaning |
 | 4 | Retroactive repair delivery | **One-time manual script** (`scripts/backfill-merge-attribution.ts`) for pre-fix history **PLUS a low-frequency recurring report-only sweep** (embed_backfill-shaped, same predicate) as a safety net for the residual async-grading race (§3 row 5) that in-tx locking cannot fully close without touching the grading path itself, which is out of this fix's blast radius | **Revised to MAJOR** — this is a real, load-bearing addition, not mechanical |
 | 4b | Backfill chain resolution | Must walk `merged_from[]` to the **terminal live winner** (loser→winner→further-merged-winner chains), and define behavior when the terminal node is itself archived-not-merged (treat as an already-inconsistent state, log and skip, do not guess) | Mechanical, but must be in scope (Attack B machine-6) |
-| 5 | `knowledge_edge` rewrite failure modes | (a) Duplicate `(from,to,relation_type)` post-rewrite: delegate to `createKnowledgeEdge`'s existing `23505` handling → archive the old edge without creating the new one (no information loss, matches design's original intent, now event-legible). (b) ADR-0034 topology reject (cycle/direction contradiction) on the rewritten edge: **abort the whole merge tx** (recommended — safest, surfaces the conflict to the human at accept time, consistent with "no invented math / no silent corruption"). Alternative (archive-and-drop the conflicting edge silently) is available if the owner finds aborts too disruptive in practice | MAJOR (a reasonable engineer might expect the richer "combine weights" behavior instead — explicitly rejected, matches "don't invent merge math") |
+| 5 | `knowledge_edge` rewrite failure modes | (a) Duplicate `(from,to,relation_type)` post-rewrite: delegate to `createKnowledgeEdge`'s existing `23505` handling — **refined in implementation (review R2)**: the GLOBAL unique index means a 23505 can also come from an ARCHIVED tombstone; a LIVE duplicate → archive the old edge without creating the new one (event-legible); an archived tombstone → REACTIVATE it (un-archive + paired create event), never evaporate a live relationship. (b) ADR-0034 topology reject (cycle/direction contradiction) on the rewritten edge: **abort the whole merge tx** (recommended — matches the strongest first-party precedent for identity-conflict-in-one-tx: Datomic's `:db.error/datoms-conflict` whole-tx abort and Wikidata's manual-resolution-first doctrine; the counter-pattern, Odoo's per-table savepoint + silent drop, targets batch-wizard UX — a materially different failure class from a single-user human-gated accept). Alternative (archive-and-drop the conflicting edge silently) is available if the owner finds aborts too disruptive in practice | MAJOR (a reasonable engineer might expect the richer "combine weights" behavior instead — explicitly rejected, matches "don't invent merge math") |
 | 6 | `merge_repair` payload shape | As specified in §2 (`MergeRepairEntry[]`), plus explicit `RateEvent.payload` schema widening (not implicit passthrough) — matches the existing `materialized_learning_item_id` precedent style | Mechanical |
 | 7 | Compensating `unmergeKnowledge()` | **Defer the function; capture the log now** (data cannot be added retroactively if missed). Label as "forensic audit trail enabling manual repair," not "reversibility" (Attack A Finding 4) | MAJOR only in that it commits future work |
 | 8 | `learning_item`/`goal` parity-assert invocation at merge time | **Yes, invoke it** (dev/test throw) for every touched id, matching the existing accept-time A2b philosophy — catches a gather/reducer bug immediately rather than waiting for the eventual B3-flip audit | MAJOR — this is what actually satisfies the register's requirement (4) rather than just gesturing at it |
@@ -398,3 +399,155 @@ pre-fix 合并链：loser A 的 winner B 可能后来又被 merge 进 C 或被 `
 10. **retire fns**：mastery/fsrs 硬编 subject_kind='knowledge' + `fsrs:knowledge:<id>` 锁命名空间（对齐 `updateThetaForAttempt`）；axis/typed 带 `subjectKind='knowledge'` 默认参 + 各自 `axis_state:` / `kc_typed:` 命名空间。三态 noop/renamed/frozen，**绝不合并数值**。mastery lock 互斥性有确定性专测（第二连接 `pg_try_advisory_xact_lock` 命中 false）。影响：`state.ts`(mastery/fsrs) / `axis-writer.ts` / `typed-state.ts`。
 
 11. **master register（`2026-07-02-project-logic-master-register.md`）本 worktree 未改**（未提交，留主 session 处理）——按任务指示 skip。
+
+### 第二轮（review 环 4-CONFIRMED + 七路文献验证 fold-in，2026-07-02）
+
+12. **R1 mesh 截断修复**：`rewireKnowledgeEdges` 的拓扑 mesh 原用 `listKnowledgeEdges`（LIST_LIMIT=500 + created_at DESC）——超 500 条 live prerequisite 边后最老的骨干边被截出 mesh，环/反向检测拿假 'ok'。改用新的无上限 `listAllLivePrerequisiteEdges`（edges.ts，docblock 写明为何必须无上限），同时改掉「mirrors propose_edge's liveTopologyEdges」这句与事实相反的注释（propose_edge 本就是无 limit 裸查）。有 501-边 DB 回归测试（批量 insert，老代码下必假绿、新代码下 reject-abort）。
+
+13. **R2 knowledge_edge 墓碑假阳性修复**：`knowledge_edge_unique` 是 GLOBAL 唯一索引（无 partial WHERE），23505 有两种成因不可混：LIVE 重复（archive-as-duplicate 正确）vs ARCHIVED 墓碑仅占槽（源边已 archive、再吞 = 活关系静默蒸发）。conflict 臂现在 keyed SELECT 判别；墓碑 → 经 edges.ts 新 throat 函数 `reactivateKnowledgeEdge` 原地复活（archived_at=NULL + created_at/created_by/weight/reasoning 刷新为与配对 create 事件 byte-match，row==fold 保持）+ 锚定该边 id 发 fold-legible generate(create) 事件，new_edge_id=复活行 id。回归测试断言复活行 live + create 事件锚定。
+
+14. **R3 misconception 同款假阳性硬化（dark，借 PR 窗口）**：`rewireMisconceptionEdgeTargets` 弃 raw UPDATE+SAVEPOINT，改走 `misconception-edges.ts` 单写 throat（archiveMisconceptionEdge + createMisconceptionEdge）——throat 的 onConflictDoUpdate upsert 天然 un-archive 墓碑 + 刷新 weight，免费继承正确行为；也修复了原 raw .update 弯折 throat「禁裸写」自述的问题。gate 对 to_kind='knowledge' 的改写不可能 reject（endpoint 规则允许 + self-loop 需 from_kind==to_kind）。含 archived-collider 复活测试。**语义变化**：old edge 归档 + 新/复活行承载关系（identity=唯一索引非 row id）。
+
+15. **R4 edges_rewired 取证枚举**：`new_edge_id: null` 原重载三种成因。`MergeRepairEntry.edges_rewired` 条目加 `outcome: 'rewired' | 'reactivated' | 'collapsed_self_loop' | 'archived_duplicate' | 'archived_dangling'`；conflict 与 not_found 拆成独立 catch 臂各记各的（not_found 保留 warn）。全部 5 种 outcome 各有 DB 测试。
+
+16. **R5 backfill 全表扫收窄**：`resolveMergeChains` 加 `WHERE jsonb_array_length(merged_from) > 0`。行为等价论证：absorbedInto 只从非空行填充；每个中间跳/可达 terminal 自身必是 absorber（其 merged_from 含上一跳）→ isLive 检查永不需要被 WHERE 排除的行。
+
+17. **R6 stale doc**：`audit-projection.ts` learning_item 段「issues a single Q1」已过时——改写为 Q1 + YUK-543 merge 双腿（unscoped Q3 + accept rate chain）。
+
+18. **L1 edge rewire advisory lock**：`rewireKnowledgeEdges` 进入 archive/create 对之前对 sorted [fromId, intoId] 取 `pg_advisory_xact_lock`（新命名空间 `knowledge_edge:<id>`）。docblock 注明：今日无异步 edge 写者（判分 worker 不写边、edge 写路径全人工门控），此锁是 doctrine 一致性 + 未来防护；propose 侧对称取锁 = Linear follow-up，若引入后台 edge 写者升级为必修。同时抽出 table-free util `acquireSortedAdvisoryLocks(tx, namespace, ids)`（`src/server/advisory-locks.ts`）供 4 个 retire fn + 此处共用——验证轮确认无表引用的 util 不削弱 step9 fs-walk guard；4 个 retire fn 的**表操作保持四份显式拷贝**（裁定过：动态传表会让 guard 正则失明）。
+
+19. **L2 learning_record 契约注释**：`schema.ts` learning_record.knowledge_ids 显式注明「never rewritten on KC merge——未来 unmergeKnowledge() 从原子证据重拟合的可行性前提（Sentry fingerprint 类比），任何『顺手清理』不得纳入重写范围」；applyMerge doc header 呼应（DELIBERATELY NEVER REWRITTEN 段）。
+
+20. **L3 backfill 面包屑存全链**：`MergeChainResolution` 加 `chain: string[]`（完整 hop 序列 [from → mid → terminal]，skip 时为走到失败点的部分链）；skip warn 与 write-mode 修复日志都带 chain（哪跳出错必须可从日志独立重建，不许压平成首尾）。accept 时的 MergeRepairEntry 天然单跳不改。含 2-hop 链 chain 断言测试。
+
+---
+
+## Appendix C — 七路文献/产品源码验证（2026-07-02）
+
+> 七条独立 lane（edm / psychometrics / eventsourcing / db-engineering / kg-identity / products-edtech / products-merge-engines）对本 spec 五个核心决策 D-A..D-E 做文献 + 产品源码对抗验证，Opus 终审。**五决策全 UPHELD、零 AMEND-BLOCKING**；全部 fold-in（unfreeze 判据具体化 / advisory lock / learning_record 契约注释 / 面包屑全链 / 措辞软化）已在 Implementation decision ledger 第二轮（条目 12-20）+ §3 ledger 行 11 + §4 决策 2/5 落地。
+
+**每决策一句裁定要点**：
+
+- **D-A（freeze-and-log）**：min() 保守覆写的 2025 新证据适用范围错配（单技能阈值判定 ≠ 跨技能已拟合 θ̂ 调和）；pooled refit 在 n=0/1 字面不可执行 + CDM 文献零「合并已估计 attribute 参数」算子 + 零 production pooled-refit 案例 → freeze 严格比全部真实系统先例更谨慎。
+- **D-B（edge 事件化 + abort 整 tx）**：Datomic 单原子 tx 冲突 whole-abort + Wikidata 人工先解决 = 最强一手先例；Odoo 静默丢弃面向批量向导、优化目标相反；高优先 fold-in = rewireKnowledgeEdges 补 advisory lock（已落地，ledger 18）。
+- **D-C（backfill + report-only 巡检）**：dual-mechanism 形状匹配 gh-ost/K8s 先例；「必须 auto-heal」的伤害前提在本系统不成立（orphan 行经验证 inert）；fold-in = 巡检检出后的有界动作已定义（log + 指向既有幂等脚本的人工触发）。
+- **D-D（merge_repair = 取证非可逆）**：Sentry unmerge 解剖后反而 CONFIRMS——可逆前提 = 从未被改写的原子观测键（本系统 = learning_record.knowledge_ids，契约注释已落地，ledger 19）；聚合统计层（序贯 θ̂/FSRS）真不可恢复；fold-in = 面包屑存全链（ledger 20）。
+- **D-E（身份层现在并、统计层冻结）**：身份/统计分离是多域文献标准形状（Q-matrix 精化 / DataShop 只离线全重导）；「原子做」零 lane 支持；psychometrics 新增 Q-matrix misspecification 作 frozen 第二层依据（§3 ledger 行 11）；unfreeze 判据已具体化进 §4 决策 2。
+
+以下为 verdict 全文（原文并入，仅标题降级）：
+
+### 对抗验证裁定：kc-dedup attribution rewrite spec 的 D-A..D-E
+
+### 裁定总表
+
+| 决策 | 内容 | 裁定 |
+|---|---|---|
+| **D-A** | freeze-and-log（拒 pooled refit / 拒 conservative-bound override） | **UPHELD** |
+| **D-B** | knowledge_edge 事件层 archive+create + 同步拓扑门 + reject 时 abort 整 tx | **UPHELD**（+ 一条高优先 follow-up：`rewireKnowledgeEdges` 补 advisory lock） |
+| **D-C** | 一次性幂等 backfill + 低频 report-only 巡检，不碰判分路径 | **UPHELD**（+ follow-up：定义巡检检出后的有界动作） |
+| **D-D** | merge_repair = 取证审计线索非可逆性；推迟 `unmergeKnowledge()` | **UPHELD**（+ 两条 follow-up：learning_record 契约注释、面包屑存全链） |
+| **D-E** | 身份/内容层现在并、统计层冻结候后续 held-out 门 | **UPHELD**（+ follow-up：把「解冻判据」具体化，别留白/别自动回落 pooled refit） |
+
+无 AMEND-BLOCKING。理由汇总：五个决策已经过双对抗轮 + reconcile 硬化，六条 lane 证据压倒性 SUPPORT/REFINES、零 CONTRADICTS；在 n=1 + 人工 accept 门 + orphan 行经验证 inert + 事件化机制 + fail-safe 失效模式的系统前提下，没有一处构成「合并前的真实伤害」。最接近 blocking 的是 D-B 的漏锁，降级理由见 D-B 节。
+
+---
+
+### D-A — freeze-and-log
+
+**最强反对论证。** 检察官能举的最硬一击是 spec 自己拒掉的**「保守下界覆写」（min()）有 2025 年 peer-reviewed 新证据撑腰**：edm lane 的 Zhang, Vanacore, Baker et al.（EDM 2025，官方 proceedings，通讯作者 Ryan Baker 高知名度）用真实教学系统 Rori 数据实证 false-mastery 的代价系统性高于 over-practice，0.98 阈值优于 0.95。据此，「两个 KC 合并时取较低 mastery 值」不是拍脑袋的保守，而是有不对称代价证据支撑的选择——spec 拒它、改用 freeze，等于把一个「有 live 读数」的合并 KC 变成「无读数」的冻结态，牺牲了可用性。register 自己也建议过 additive/reconcile theta_hat，spec 明知故拒。
+
+**裁定：UPHELD。** 反对论证虽引真证据，但**适用范围错配**，两条独立文献 lane 收敛拆解：
+
+1. Zhang 2025 的证据对象是**单技能、单次 mastered/not-mastered 阈值判定**下的不对称代价，不是**跨技能把两套已独立拟合的 θ̂ 调和成一个值**。min() 隐含假设「两套 mastery 分数可直接比大小」——psychometrics lane 指出这正是 equating 理论的全部前提要**先验证、不能默认成立**的那个假设（比大小=隐式线性变换，等价于假设两把尺子零点/斜率一致）。所以 min() 不是「更安全的中间选项」，是换一种方式偷做同一类未经验证的跨量表比较。
+2. pooled refit 在 n=0/1 下**字面不可执行**：edm lane 指出连 logistic 参数点估计本身都不可识别（不只是缺 held-out 验证数据）。psychometrics lane 补：2015–2025 CDM 文献检索**没有任何论文定义过「合并两个已估计 attribute 的参数」算子**——空集本身是证据，选 pooled refit = 在无先例下发明数学。
+3. 产品存在性证明（products-edtech）：**零 production 案例做 merge 时 pooled refit**。最接近的两个真实系统都在 D-A 保守度**之下**——Moodle 静默孤儿化 `user_competency`（MDL-53719/60126），Anki+FSRS 单向拷贝一张卡的调度、丢弃另一张，从不 pool 参数。freeze-and-log（双行保留 + 显式 log）严格比这两者更谨慎。psychometrics 还指出 freeze 甚至超过 equating 领域自己的小样本默认 identity equating（后者仍产出单一 scale、隐含可比假设，freeze 连这假设都不做）。
+
+系统前提下 bar = 「真实伤害或明显更优且改动便宜」。反对方拿不出伤害（inert 冻结行，Attack A Finding 3 已验证所有 live reader 都按 rewritten source keyed），也拿不出更优的可执行替代。UPHELD。
+
+（可选微调、非 follow-up：spec 若愿意可把 D-A 红线写精确成「conservative override 在阈值语境有强证据、跨技能调和语境无——不要混用」，比现表述「没人验证过这套数学」更准。纯文字，非必要。）
+
+---
+
+### D-B — knowledge_edge 事件化 + 拓扑门 + abort 整 tx
+
+**最强反对论证。** 两路攻击 abort-whole-tx 不是共识：eventsourcing lane 举 Neo4j APOC `mergeNodes` 用户**主动提 bug**（issue #13555）要 graceful consolidation 而非 hard-abort（从业者情绪反对硬中止）；products-merge-engines lane 的 Odoo `base_partner_merge.py`（一手全文读取）在冲突点选的是 **per-table savepoint + 静默 DELETE + 继续**，整个 merge 不因单表冲突 abort——一个 shipped 生产 ERP 就是 archive-and-drop 那条 spec 列为「退路」的路径，证明它工程可行且被大规模部署验证。
+
+**裁定：UPHELD。** 反对论证被同批 lane 反证：
+
+1. **abort 是最权威一手先例。** eventsourcing lane：Datomic（结构完全同构——单原子 tx、唯一/身份违例）throw `:db.error/datoms-conflict`、**整个 tx abort、无 partial commit**，first-party、无歧义。kg-identity lane：Wikidata sitelink 唯一性冲突在 undo merge 时**强制人工先解决才能继续**，同一处理哲学（宁卡住不静默落库矛盾）。
+2. **Odoo 的静默丢弃优化目标相反。** products-merge-engines 明确：Odoo 面向批量向导（成百上千 contact、人工不可能逐条介入），本系统单用户人工 accept 门（介入成本≈0、静默腐败由同一人承担）——两者优化目标相反，abort 仍是本系统正确默认；Odoo 连自己 commit 边界都注释 `# TODO JEM : explain why`，非可抄的严谨先例。
+3. **DLQ/quarantine 反例属另一失效类。** eventsourcing + db-engineering 一致：poison-message/DLQ 模式服务于 unbounded 异步高 fanout 管道（阻塞整管道不可接受），本 merge 路径同步、单记录、人工门控——「不能阻塞」的前提不成立。
+4. 事件化机制本身（archive+create over raw UPDATE）**无异议全支持**：Fowler complete-rebuild、Young never-mutate-events、Wikidata redirect-not-delete、Odoo 动态 FK 反射证明「系统性发现引用面」可行。且 spec 已把 archive-and-drop 保留为 owner 可选退路（Decision Point 5）。
+
+**AMEND-FOLLOW-UP（高优先）：** db-engineering lane（code-grounded，实读文件）发现一处 spec 自身 doctrine 的不一致——四个 typed-state retire 函数都按 PostgreSQL 官方 consistent-lock-ordering 取了 sorted 双 id advisory lock，唯独 `rewireKnowledgeEdges` **不取任何锁**，而 knowledge_edge 是唯一 `PROJECTION_IS_WRITER=1` LIVE、被 spec §7 自称「最高紧急度」的面。PostgreSQL 官方文档明说该 doctrine 适用于**触碰该对象的每一条代码路径**，不只新增的四个。
+
+- **为何降级到 follow-up 而非 blocking：** lane 论证基于 doctrine（「applies to every path」），但**未识别出与 merge-accept 并发的异步 edge 写者**。判分 worker 写的是 mastery/fsrs/axis/kc_typed，**不写 edge**；edge 写入路径（propose/accept、现在的 merge/accept）都人工 accept 门控，n=1 单用户下两者无法真并发 → 今日该竞态放不出来，漏锁是 robustness/未来防护缺口而非 live race。
+- **修正文本（落 Linear，near-zero 成本）：** 在 `rewireKnowledgeEdges(tx, fromId, intoId, now)` 进入 archive/create 对之前，对 `[fromId, intoId]`（或涉及的 node id）sorted 取 `pg_advisory_xact_lock`，镜像本 PR 已在四个 retire 函数用的同一模式。**升级条件：** 若将来引入任何异步/后台 edge 写者，此条立即升为 BLOCKING（READ COMMITTED 下两 tx 各自过拓扑门、合并后成环 = 静默腐败，advisory lock 是唯一闭合）。
+- 次要文字（同一 follow-up 内）：eventsourcing lane 建议把 spec「safest, most consistent with domain norms」（暗示已 settled consensus）软化为「matches the strongest first-party precedent for identity-conflict-in-one-tx; the counter-pattern targets a materially different failure class」——更诚实。
+
+---
+
+### D-C — 一次性 backfill + report-only 巡检，不碰判分路径
+
+**最强反对论证。** 这是全 review 里文献分歧最集中的一处：**三条独立 first-party 权威源都说 report-only-forever 是文档化的「未完成态」而非终态**——Google SRE ch.26（Drive team 把 validator 从 detect-only 升级成 auto-fix，「把潜在紧急事件变成 business as usual」，隐含判断 detect-only 是**起点成熟度非目标**）；Shopify reconciliation job **写回**（re-pull 覆盖，非 report-only）；Kubernetes controller doctrine 明说 level-based reconcile **auto-heal**、「绝不把已知漂移资源留给人去注意」；gh-ost/pt-osc 也 auto-correct。Oskar Dudycz（Postgres 专项）：修复侧必须是**保证性 drain**、不能是开放式 report。且关键——spec 的 backfill 函数**已经幂等、已经调同一批 retire/rewrite 函数**，所以「report-only → auto-invoke 幂等修复」增量成本≈0（eventsourcing lane：「不是过度工程，是闭合一个已幂等的环」）。
+
+**裁定：UPHELD。** 反对论证在本系统被一条 spec 内既有事实削弱到「可选优化」级：
+
+1. **精确类比先例（dual-mechanism）本身 UPHELD：** 一次性 backfill + 常驻巡检的**形状**匹配 gh-ost/pt-osc（bulk backfill + binlog-tail catch-up）和 K8s（edge-triggered notify + level-triggered reconcile），两条 canonical 高权威先例。
+2. **「auto-heal 而非 report-only」的伤害前提在本系统不成立。** K8s/Shopify/SRE 要 auto-heal 是因为漂移**对 live 行为有害**。而本系统 Attack A Finding 3 已验证：orphan/frozen 的 mastery_state/fsrs 行是 **inert**——每个 live reader 都按 rewritten question tag `inArray` keyed，不存在无 key 的聚合扫描，`ability_global` 是独立 subject_kind。异步判分竞态（§3 row 5）复活的 loser 键行同样 inert，不腐 live 读数，只是「不整洁」。这使 report-only 比 lane 所给信用更站得住：巡检记录它、人工在方便时用已存在的幂等脚本清，无 live 损害窗口。
+3. **auto-write 触碰 accept-gate 哲学**：让巡检自动写回 = 在无显式人工 accept 的情况下产生 attribution 改写（虽然原 merge 已被 accept，可辩称只是「补完已 accept 的 merge」）——这是 owner 该拍板的产品哲学取舍，不是文献能单方裁定的。
+
+**AMEND-FOLLOW-UP：** spec 应**明确承诺巡检检出漂移行后发生什么**——即使答案仍是「人工、accept-门控修复」，也要是一个**有界、已定义**的动作（例：巡检直接 auto-invoke 那个已存在的幂等 retire/rewrite 函数于检出的小集合；或有界 SLA 的人工触发），而非无界 report sink（db-engineering + eventsourcing + SRE 三源收敛）。因增量成本≈0（幂等函数已在）且闭合 spec 自己承认的唯一残留竞态，值得落 Linear；不 blocking 因失效行 inert、一次性 backfill 已兜全部 pre-fix 历史、且涉及 accept-gate owner 决策。
+
+---
+
+### D-D — merge_repair = 取证审计线索；推迟 unmergeKnowledge
+
+**最强反对论证（任务点名 Sentry unmerge）。** Sentry **shipped 了选择性 unmerge**——一个「unmerge 工程可行」的生产存在性证明。既然资源远不如的可观测性平台能 unmerge，为何 spec 把 breadcrumb 标成「非可逆」并推迟 `unmergeKnowledge()`？这看起来像 under-build。
+
+**裁定：UPHELD。** 任务要求显式论证 Sentry 的可行前提是否在本系统成立——products-merge-engines lane（一手读 Sentry 官方文档 + 二手读 `unmerge.py`/`merge.py`）做了这个检查，结论是 **Sentry 案例经正确解剖后反而 CONFIRMS D-D**：
+
+1. Sentry unmerge **不恢复被删的旧 group**。merge 时 `group.delete()` 立即执行，标题/指派/状态/TSDB 统计**永久丢失**。它的机制是把**从未被聚合改写的原子观测键**（fingerprint/GroupHash）重新分流进一个**新** group。可逆的前提 = **保留原子级、从未被改写的观测单元**。
+2. 该前提在本系统**部分成立但只在正确的层**：`learning_record.knowledge_ids` 声明「never rewritten」（spec §2），与 fingerprint 同类不变量。所以未来 `unmergeKnowledge()` 的**正确形状 = 从 learning_record 原始证据重新拟合出新参数**——恰是 spec Decision Point 2/7 已预留的空间（freeze 的行不销毁 = 保留重拟合原料）。而**聚合统计层（序贯 θ̂/FSRS）真的不可恢复**：eventsourcing lane 的 Helland observed-fact/derived-fact 区分（CIDR 2015，peer-reviewed）——derived fact 的逆运算需要从「从未单独保留的分解证据」重新推导；Sentry 自己也永久丢 TSDB 聚合统计。这精确等于 spec 拒绝的 `cascade-revert.ts` 式快照恢复 theater（Attack A Finding 4）。
+
+即：Sentry 挑战力度经前提核查后归零——它证明的是「unmerge 只能靠原子证据重拟合、聚合层不可逆」，正是 D-D 的立场。
+
+kg-identity lane 独立三重加固（权威等级最高的一条）：Wikidata 在拥有完整页面历史 + 显式 redirect + 大编辑者社区的条件下，unmerge **仍是纯人工三步流程**（T237262 长期未关）；undo merge 的**代码本身**是多年 bug 源（T175984，2017 才修）——实证「先留数据、不急建反转机制」是更安全顺序；W3C PROV-DM 标准正文把 provenance 定位为 **audit/accountability 非 operational reversibility**，与 D-D「forensic audit trail」措辞字面对齐。
+
+**两条 AMEND-FOLLOW-UP：**
+1. **learning_record 契约注释**（products-merge-engines）：给 `learning_record.knowledge_ids` 的「never rewritten」补一句显式注释，点名它是未来 `unmergeKnowledge()` 的可行性前提，防后人把它纳入某次「顺手清理」的重写范围。cheap，落 Linear。
+2. **面包屑存全链**（kg-identity machine-6 + transitive-closure chaining 文献，J. Intelligent Information Systems 2021）：`MergeRepairEntry`/backfill 目前只记 from_id→into_id 单跳；若终端 winner 经过 2+ 跳合并链，把链压平成单一终态映射会让「哪一跳出错」无声丢失——而这正是 forensic-trail 承诺要保住的信息。建议 breadcrumb 保留完整跳序列而非首尾两端。（注：Decision Point 4b 已处理终端 winner **解析**，但此处是 breadcrumb **记录颗粒度**，正交。）
+
+（reversibility 非对称性——edge 因走事件层天然可逆、统计层不可逆——eventsourcing + kg-identity 都建议显式写出；spec 红线 check 3 + §8 已部分捕获，微调即可，并入上述 follow-up。）
+
+---
+
+### D-E — 身份层现在并、统计层冻结候后续门
+
+**最强反对论证。** 检察官能提的是「别切分、原子做」：合并 KC 时同步把身份和统计一起处理，避免一个「Q-matrix 已换、参数还冻」的语义窗口。psychometrics lane 甚至指出一个 spec 没写的**真实新风险**：冻结的 mastery_state 行回答的是「旧属性定义下的掌握度」，系统此后展示的是新（已合并）属性定义——两者不是同一测量对象的答案（Q-matrix misspecification 会偏置分类，参数含义相对于当时 Q-matrix）。
+
+**裁定：UPHELD。** 但注意：那个「新风险」是 REFINES（加固 freeze 的理由），不是反对——它恰恰说明为何 frozen 不只是权宜，而是**概念上必要**（「这本来就是两个不同问题的答案，不该当同一个量看，直到新证据下重拟合」）。而「原子做」无任何 lane 支持：
+
+1. **身份/统计分离是文献标准形状，多域独立收敛。** edm/psychometrics：Q-matrix 精化（de la Torre 2008/Chiu 2013）把「item-attribute 映射」与「attribute mastery 估计」当两个独立可修订对象；purification 反复调 Q-matrix 而不要求每次重收敛估计。products-edtech（一手读 DataShop 文档）：CMU DataShop——LFA 文献自己的基础设施——只把「merge+refit」实现为**从完整 raw transaction log 离线全模型重导**、**从不 in-place 手术两行已拟合参数**；它据此从 replayability（非仅 n=0/1 稀疏）独立重画 D-E 的线，且这与本仓库 fold-owned 层（走事件重放）vs 序贯拟合层（不可重放）的架构分界完全同构。db-engineering 补 MDM golden-record/survivorship 独立收敛同一分界。
+
+2. **「held-out 预测拟合作第二道门」的定位需修正——升级但加限。** edm/psychometrics 都指出：spec 把它标「潜在 follow-up」低估了地位，它是这套文献框架里判断「D-A 的 freeze 何时可解冻」的**唯一有文献根据的判据**（LFA 的 AIC/BIC/cross-validated correctness），psychometrics 还给出更贴题的现成工具箱——CDM「属性数目判定」文献族（Nájera et al. 2021，三法一致时 97% 正确判定；两属性相关 >0.90 视为「hardly distinguishable」= 过度拆分信号）。**但 products-edtech 关键降权**：held-out fit 作为 **live accept-time 第二道门 在生产中 UNVERIFIED**——只作为离线学术 workflow 存在，从未在任何地方被 operationalize 成 merge-time gate。
+
+**AMEND-FOLLOW-UP：** 决策 D-E 本体（现在并身份、冻结统计）UPHELD 直接实施。但 spec §4/§7 应把**「解冻判据」具体化**而非留「潜在 follow-up」白条：解冻 = 达到可做 held-out 验证的最小样本量后，跑 **LFA 式模型比较 / CDM 属性可区分度**，而非「任意时间点自动切回 pooled refit」（edm 明确警告后者）。同时标注该门在 n=1 现在**跑不了**（需真实多题×多学生响应矩阵）且作为 live gate 无生产先例——所以是**未来解冻机制的规格**，不阻塞本 PR 的 freeze。可一并把 psychometrics 的 Q-matrix-mismatch 理由补进 reconciliation ledger 作为 frozen 标签的第二层依据。
+
+---
+
+### 引用可信度问题
+
+以下问题**均不推翻任何 load-bearing 论点**（要么自 flag、要么仅用于 REFINES 旁证），但按规则点名并对其支撑论点降权：
+
+1. **HERITRACE arXiv:2605.01941 / 2501.16197（kg-identity, D-D）** — arXiv 编号 scheme 内部不一致：`2605` = 2026 年 5 月，却声称「早期版本」在 `2501.16197`（2025 年 1 月）这个**不同 base 号**下（arXiv 版本迭代保留同一 base 号，不会换号）。lane 已标「预印本、未确认同行评审、降权」，且仅作 D-D 的 REFINES 反例（「完整快照可让 provenance restore 可行」）——非核心支撑，影响低。仍应视其结论为未确证。
+
+2. **thetaminusb.com 博客作为 K&B「n<30 identity equating」阈值的唯一来源（psychometrics, D-A）** — 独立 practitioner 博客，非同行评审，lane 自标 medium confidence 且明说「未与教科书原文交叉验证」。具体数字阈值（30/100/200）不应当硬事实用。影响低——D-A 不依赖精确数字，只依赖「小样本退回更保守默认」的定性。
+
+3. **Hogan et al. 2012 的「2.8% 错误 sameAs」（kg-identity, D-B）** — lane 显式标 UNVERIFIED、经综述转引未核原文。仅作 owl:sameAs 滥用的量级旁证，非 D-B 决策支柱。
+
+4. **Zhang, Vanacore, Baker, "Ch", Mills & Henkel (2025)（edm, D-A）** — 作者列表中「Ch」疑似 initial 截断/转录 artifact（非正常姓氏）。lane 称内容经 WebFetch 独立核实、Ryan Baker 为真实 EDM 高知名度学者，故文献存在性可信，仅作者串可能有转录瑕疵。影响低。
+
+5. **products-edtech / products-merge-engines 的二手 WebFetch 转述**（Moodle `api.php`、Frappe/Wikibase/Discourse/Salesforce/Sentry 源码）——两 lane 均诚实自标「小模型转述、未逐行核实、降权」，仅 Odoo `base_partner_merge.py`（products-merge-engines 一手全文）与 Sentry 官方文档（一手逐字）为高置信。存在性证明用途下可接受，但 D-B/D-D 的产品「形状可行」结论主要应挂在那两个一手源上，二手转述仅作模式交叉印证。
+
+无编造引用（fabrication）迹象；所有薄弱处 lane 均已主动标注不确定性，引用卫生总体良好。
