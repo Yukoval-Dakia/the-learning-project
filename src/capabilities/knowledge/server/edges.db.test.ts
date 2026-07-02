@@ -4,7 +4,12 @@ import { knowledge, knowledge_edge } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { createKnowledgeEdge, getKnowledgeEdgeById, listKnowledgeEdges } from './edges';
+import {
+  createKnowledgeEdge,
+  getKnowledgeEdgeById,
+  listKnowledgeEdges,
+  reactivateKnowledgeEdge,
+} from './edges';
 
 const KNOWLEDGE_BASE = {
   domain: 'wenyan',
@@ -242,5 +247,67 @@ describe('listKnowledgeEdges', () => {
     expect(active).toEqual([]);
     const withArchived = await listKnowledgeEdges(db, { includeArchived: true });
     expect(withArchived).toHaveLength(1);
+  });
+});
+
+// YUK-543 (OCR O1) — reactivateKnowledgeEdge tombstone-only contract guard.
+describe('reactivateKnowledgeEdge', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const REACTIVATE_INPUT = {
+    weight: 0.5,
+    reasoning: 'revived',
+    actor_kind: 'user',
+    actor_ref: 'self',
+    created_at: new Date('2026-07-02T00:00:00.000Z'),
+  };
+
+  it('revives an archived tombstone (archived_at cleared, columns refreshed)', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    const id = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+    });
+    await db
+      .update(knowledge_edge)
+      .set({ archived_at: new Date() })
+      .where(eq(knowledge_edge.id, id));
+    await reactivateKnowledgeEdge(db, id, REACTIVATE_INPUT);
+    const row = (await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, id)))[0];
+    expect(row.archived_at).toBeNull();
+    expect(row.weight).toBe(0.5);
+    expect(row.reasoning).toBe('revived');
+    expect(row.created_at).toEqual(REACTIVATE_INPUT.created_at);
+  });
+
+  it('THROWS on a LIVE edge (refuses to overwrite a live row) — contract guard', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    const id = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: 'original',
+    });
+    await expect(reactivateKnowledgeEdge(db, id, REACTIVATE_INPUT)).rejects.toThrow(
+      /not an archived tombstone/i,
+    );
+    // the live row is untouched.
+    const row = (await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, id)))[0];
+    expect(row.archived_at).toBeNull();
+    expect(row.weight).toBe(1);
+    expect(row.reasoning).toBe('original');
+  });
+
+  it('THROWS on a missing id', async () => {
+    const db = testDb();
+    await expect(reactivateKnowledgeEdge(db, 'nope', REACTIVATE_INPUT)).rejects.toThrow(
+      /not an archived tombstone/i,
+    );
   });
 });

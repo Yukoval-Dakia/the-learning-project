@@ -420,6 +420,12 @@ pre-fix 合并链：loser A 的 winner B 可能后来又被 merge 进 C 或被 `
 
 20. **L3 backfill 面包屑存全链**：`MergeChainResolution` 加 `chain: string[]`（完整 hop 序列 [from → mid → terminal]，skip 时为走到失败点的部分链）；skip warn 与 write-mode 修复日志都带 chain（哪跳出错必须可从日志独立重建，不许压平成首尾）。accept 时的 MergeRepairEntry 天然单跳不改。含 2-hop 链 chain 断言测试。
 
+### 第三轮（PR #693 OCR 9 条 + CodeRabbit 1 条折入，2026-07-02）
+
+21. **O8 kc_typed 指针残留竞态（accepted，注释非修锁）**：pointer rewrite 改的是**其它** subject_id（k_other）的行，其锁不在持有集——并发 `upsertKcTypedState(k_other)` 若 merge 前陈旧解析 `confused_with_kc_id`、merge 后写入，onConflictDoUpdate 会把指针改回 stale fromId。**不修锁**：锁任意多指针持有者 = 无界锁集，不成立。与 spec §3 row 5 陈旧读残留同类且有界：`countOrphanSurfaces` 的 kc_typed 谓词已含 `confused_with_kc_id` 列（OR 分支）→ 周巡检出 + YUK-544 auto-invoke 自愈。docblock 已注明。
+
+22. **O1-O7/C1 机械修复**：O1 `reactivateKnowledgeEdge` 补 tombstone-only WHERE（`isNotNull(archived_at)`）+ 0 行 throw ApiError conflict（对 LIVE 边/缺失 id 调用响亮失败，caller 已 pre-check 行为不变；含 3 条 db 测）；O2 backfill 写模式删 pre-repair census（orphanSurfacesFound 改从 repair 返回的 MergeRepairEntry 导出——同 tx 快照，查询数减半、持锁事务缩短；dry-run 保留 census）；O3 `writeEdgeCreateEvent` 补显式 `edge_op:'create'`（对齐全库其它 writer，fold 只 `=== 'archive'` 判别已核）；O4 misconception created_by 裸 cast 改 `AgentRef.parse` parse barrier；O5 `MergeRepairEntry` 外层 + edges_rewired 元素补 `.strict()`（对齐 materialized_ids 先例）；O6 outcome↔new_edge_id 耦合 superRefine enforce + 畸形条目拒绝单测（merge-repair.unit.test.ts）；O7 learning_item merge 分支 const 捕获去 `row?.`（闭包内 let 不保 narrowing）+ 尾部显式 `continue`；C1 backfill 脚本 docblock 补「勿与 merge accept 并发；幂等设计下重跑即收敛」运维注意。
+
 ---
 
 ## Appendix C — 七路文献/产品源码验证（2026-07-02）

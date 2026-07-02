@@ -749,7 +749,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
       .where(and(eq(event.action, 'generate'), eq(event.subject_id, 'e_tomb')));
     expect(createEvts.length).toBeGreaterThanOrEqual(1);
     const payload = createEvts[createEvts.length - 1].payload as { edge_op?: string };
-    expect(payload.edge_op).toBeUndefined(); // absent edge_op = create
+    expect(payload.edge_op).toBe('create'); // explicit edge_op (OCR O3) — matches every other writer
     // the old edge is archived.
     const eFrom = await testDb()
       .select()
