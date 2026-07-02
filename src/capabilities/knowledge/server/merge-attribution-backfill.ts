@@ -17,6 +17,7 @@
 // Idempotent by construction: every repair helper queries "rows still referencing fromId" and no-ops
 // when none exist, so a second run finds nothing (the backfill test asserts this).
 
+import type { MergeRepairEntryT } from '@/core/schema/event/known';
 import type { Db, Tx } from '@/db/client';
 import {
   goal,
@@ -134,6 +135,24 @@ function surfaceTotal(c: OrphanSurfaceCounts): number {
     (c.axisState ? 1 : 0) +
     (c.kcTypedState ? 1 : 0) +
     c.misconceptionEdges
+  );
+}
+
+// OCR O2 — write-mode counterpart of surfaceTotal, derived from the repair's OWN MergeRepairEntry
+// (same-tx snapshot; a separate pre-repair census would double the query count for zero
+// information). Per-KC state counts 1 when the retire outcome touched/detected a from-row
+// ('renamed' | 'frozen' — the same "from-row present" predicate the census booleans encode).
+function repairedSurfaceTotal(entry: MergeRepairEntryT): number {
+  return (
+    entry.question_ids_rewritten.length +
+    entry.learning_item_ids_rewritten.length +
+    entry.goal_ids_rewritten.length +
+    entry.edges_rewired.length +
+    (entry.mastery_state !== 'noop' ? 1 : 0) +
+    (entry.fsrs_state !== 'noop' ? 1 : 0) +
+    (entry.axis_state !== 'noop' ? 1 : 0) +
+    (entry.kc_typed_state !== 'noop' ? 1 : 0) +
+    entry.misconception_edges_rewritten.length
   );
 }
 
@@ -302,9 +321,18 @@ export async function runMergeAttributionBackfill(
     const mergeFromIds = new Set(fromIds);
     await db.transaction(async (tx) => {
       for (const fromId of fromIds) {
-        // Census BEFORE repair so the write-mode result reports what it actually fixed.
-        result.orphanSurfacesFound += surfaceTotal(await countOrphanSurfaces(tx, fromId));
-        await repairMergeAttributionForFromId(tx, fromId, winnerId, now, mergeFromIds);
+        // OCR O2 — NO pre-repair census here: the repair's own MergeRepairEntry return carries the
+        // exact per-surface counts from the SAME tx snapshot, so a countOrphanSurfaces call before
+        // it would double the query count (9+ queries per fromId) and stretch the lock-holding tx
+        // for zero information. The dry-run branch above keeps the census (it repairs nothing).
+        const entry = await repairMergeAttributionForFromId(
+          tx,
+          fromId,
+          winnerId,
+          now,
+          mergeFromIds,
+        );
+        result.orphanSurfacesFound += repairedSurfaceTotal(entry);
         // L3 — forensic repair log carries the FULL chain (which hop went wrong must be
         // reconstructable from the log alone, not flattened to fromId→winner).
         console.log('[merge-attribution] repaired', {

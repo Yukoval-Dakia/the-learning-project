@@ -280,18 +280,18 @@ export function foldLearningItem(
         warnMalformed('experimental:knowledge_merge', fe.id, m.error);
         continue;
       }
-      const nextIds = applyKnowledgeMergeToIds(
-        row.knowledge_ids,
-        new Set(m.data.from_ids),
-        m.data.into_id,
-      );
-      if (
-        nextIds.length === row.knowledge_ids.length &&
-        nextIds.every((id, i) => id === row?.knowledge_ids[i])
-      ) {
+      // Const capture (OCR O7): `row` is a mutable `let`, so TS cannot keep its non-null narrowing
+      // inside the .every() closure — a const snapshot avoids the misleading `row?.` while staying
+      // consistent with the direct `row.knowledge_ids` read above. Explicit annotation breaks the
+      // loop-carried narrowing circularity (TS7022: prevIds → nextIds → row → prevIds).
+      const prevIds: string[] = row.knowledge_ids;
+      const nextIds = applyKnowledgeMergeToIds(prevIds, new Set(m.data.from_ids), m.data.into_id);
+      if (nextIds.length === prevIds.length && nextIds.every((id, i) => id === prevIds[i])) {
         continue; // no change — leave the row (and its updated_at/version) untouched
       }
       row = { ...row, knowledge_ids: nextIds };
+      // biome-ignore lint/correctness/noUnnecessaryContinue: OCR O7 — explicit branch terminator so a branch added below later cannot fall through (every sibling branch above ends with continue).
+      continue;
     }
   }
 

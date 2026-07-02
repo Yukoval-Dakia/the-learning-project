@@ -280,37 +280,57 @@ export type GenerateArtifactT = z.infer<typeof GenerateArtifact>;
 // spec §6 red-line check 3). One entry per absorbed from_id, in payload.from_ids
 // array order. Widened EXPLICITLY here (not left to RateEvent.payload's non-strict
 // passthrough) matching the materialized_ids / prior-state-capture precedent style.
-export const MergeRepairEntry = z.object({
-  from_id: z.string(),
-  question_ids_rewritten: z.array(z.string()),
-  learning_item_ids_rewritten: z.array(z.string()),
-  goal_ids_rewritten: z.array(z.string()),
-  // Per-edge forensic outcome (YUK-543 review R4 — a bare `new_edge_id: null` overloaded three
-  // distinct causes). `new_edge_id` is non-null for 'rewired' (fresh edge created) and
-  // 'reactivated' (an archived tombstone already holding the rewritten UNIQUE key was un-archived
-  // instead — R2); null for the three archive-only outcomes: 'collapsed_self_loop' (both endpoints
-  // map to into_id), 'archived_duplicate' (a LIVE edge already holds the rewritten key),
-  // 'archived_dangling' (the non-into endpoint is archived/missing — degenerate edge, dropped
-  // with a warn).
-  edges_rewired: z.array(
-    z.object({
-      old_edge_id: z.string(),
-      new_edge_id: z.string().nullable(),
-      outcome: z.enum([
-        'rewired',
-        'reactivated',
-        'collapsed_self_loop',
-        'archived_duplicate',
-        'archived_dangling',
-      ]),
-    }),
-  ),
-  mastery_state: z.enum(['noop', 'renamed', 'frozen']),
-  fsrs_state: z.enum(['noop', 'renamed', 'frozen']),
-  axis_state: z.enum(['noop', 'renamed', 'frozen']),
-  kc_typed_state: z.enum(['noop', 'renamed', 'frozen']),
-  misconception_edges_rewritten: z.array(z.string()),
-});
+export const MergeRepairEntry = z
+  .object({
+    from_id: z.string(),
+    question_ids_rewritten: z.array(z.string()),
+    learning_item_ids_rewritten: z.array(z.string()),
+    goal_ids_rewritten: z.array(z.string()),
+    // Per-edge forensic outcome (YUK-543 review R4 — a bare `new_edge_id: null` overloaded three
+    // distinct causes). `new_edge_id` is non-null for 'rewired' (fresh edge created) and
+    // 'reactivated' (an archived tombstone already holding the rewritten UNIQUE key was un-archived
+    // instead — R2); null for the three archive-only outcomes: 'collapsed_self_loop' (both endpoints
+    // map to into_id), 'archived_duplicate' (a LIVE edge already holds the rewritten key),
+    // 'archived_dangling' (the non-into endpoint is archived/missing — degenerate edge, dropped
+    // with a warn). The outcome↔new_edge_id coupling is ENFORCED by the superRefine below (OCR O6),
+    // not just documented.
+    edges_rewired: z.array(
+      z
+        .object({
+          old_edge_id: z.string(),
+          new_edge_id: z.string().nullable(),
+          outcome: z.enum([
+            'rewired',
+            'reactivated',
+            'collapsed_self_loop',
+            'archived_duplicate',
+            'archived_dangling',
+          ]),
+        })
+        // .strict() — forensic data: a typo'd key must fail loudly, never be silently stripped
+        // (matches the materialized_ids precedent below). OCR O5.
+        .strict()
+        .superRefine((entry, ctx) => {
+          const wantsEdge = entry.outcome === 'rewired' || entry.outcome === 'reactivated';
+          if (wantsEdge !== (entry.new_edge_id !== null)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `edges_rewired: outcome '${entry.outcome}' requires new_edge_id ${
+                wantsEdge ? 'non-null' : 'null'
+              }`,
+              path: ['new_edge_id'],
+            });
+          }
+        }),
+    ),
+    mastery_state: z.enum(['noop', 'renamed', 'frozen']),
+    fsrs_state: z.enum(['noop', 'renamed', 'frozen']),
+    axis_state: z.enum(['noop', 'renamed', 'frozen']),
+    kc_typed_state: z.enum(['noop', 'renamed', 'frozen']),
+    misconception_edges_rewritten: z.array(z.string()),
+  })
+  // .strict() — same rationale as the element object + materialized_ids (OCR O5).
+  .strict();
 export type MergeRepairEntryT = z.infer<typeof MergeRepairEntry>;
 
 // 6. RateEvent — actor=user / action='rate' / subject='event'
