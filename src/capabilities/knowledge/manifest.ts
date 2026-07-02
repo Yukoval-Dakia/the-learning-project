@@ -136,9 +136,9 @@ export const knowledgeCapability = defineCapability({
         // P5 (YUK-489): dedup-on-maintenance. Deterministic (zero-LLM) nightly scan
         // for near-duplicate auto-created KC pairs by pgvector cosine distance →
         // emits MERGE PROPOSALS (pending inbox items). PROPOSE-ONLY: it NEVER calls
-        // applyMerge (a merge is destructive — archives the from-KC, rewrites
-        // knowledge_ids attribution + merged_from[]; stays behind the human accept
-        // gate). cron 02:00 Asia/Shanghai — BEFORE knowledge_edge_propose 02:30 +
+        // applyMerge (a merge is destructive — archives the from-KC, sets merged_from[],
+        // and repairs the downstream attribution surfaces — YUK-543; stays behind the
+        // human accept gate). cron 02:00 Asia/Shanghai — BEFORE knowledge_edge_propose 02:30 +
         // knowledge_maintenance 03:00, so the night's merge proposals are already in
         // the inbox when those run. queue 'llm': matches the pure-derivation sibling
         // answer_class_backfill (also declared 'llm') and every other nightly
@@ -150,6 +150,19 @@ export const knowledgeCapability = defineCapability({
         schedule: { cron: '0 2 * * *', tz: 'Asia/Shanghai' },
         queue: 'llm',
         load: () => import('./jobs/kc_dedup_nightly').then((m) => m.buildKcDedupNightlyHandler),
+      },
+      {
+        // YUK-543: report-only merge-attribution sweep. Low-frequency safety net for the residual
+        // async-grading race that applyMerge's in-tx locking narrows but cannot fully close (a stale
+        // pre-merge grading upsert can re-orphan a mastery/fsrs row keyed to a merged-away KC). It is
+        // REPORT-ONLY — writes NOTHING, only logs any dangling surface for the owner to repair via
+        // scripts/backfill-merge-attribution.ts. Weekly (Mon 04:00 Asia/Shanghai — off the nightly
+        // cluster). queue 'fast' (pure read census, no LLM, no write to DLQ-protect). Auto-mounted.
+        name: 'merge_attribution_sweep',
+        schedule: { cron: '0 4 * * 1', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/merge_attribution_sweep').then((m) => m.buildMergeAttributionSweepHandler),
       },
     ],
   },
