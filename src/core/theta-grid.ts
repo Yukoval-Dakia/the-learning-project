@@ -146,6 +146,12 @@ export function uniformPrior(): ThetaGridPosterior {
  * i.e. `expectedScore(offset, bPrime)`. This is exactly the Elo path's likelihood with
  * the offset as the free coordinate and θ_global folded into the anchor — orthogonal
  * to A2, building ON its θ_global. correct ⇒ p, wrong ⇒ 1 − p.
+ *
+ * **c 定义域（CR-1/CR-3）：c ∈ [0, 1)**。唯一 producer 是 `choicesToGuess`，结构性只
+ *   返回 {0} ∪ (0, 1/2]（k≥2 → 1/k ≤ 1/2；k≤1 → 0），永不产 c≥1/2 以上、更不产 c=1。
+ *   c=1 是域外的退化点（correct 恒 1 / wrong 恒 0），仅靠 gridUpdate 的 total>0 守卫优雅
+ *   降级、非受支持输入。**inc-2 接线绝不可把 c 回落到 ADR-0035 的软轨 `irt_c` 列**——本桥
+ *   的 c 是 choices_md.length 派生的设计常量（n=1 红线合规），不是拟合出的 guess 参数。
  */
 export function binaryLikelihood(offset: number, bPrime: number, outcome: 0 | 1, c = 0): number {
   // BKT graft 1 (YUK-436): 3PL lower-asymptote. c=0 ⇒ 1PL 退化（显式 delegate 保
@@ -313,13 +319,24 @@ export function klpScoreFromGrid(
 //   p_mastery = 后验落在 θ* 以上的质量
 //   width     = 后验标准差（posteriorSe）
 //   毕业触发  = p_mastery > 0.8 连续 N=3 次 且 width < ε 且 evidence_count >= M≈8
-//   掌握线 θ* = 该 KC 的 item_calibration.b
+//   掌握线 θ* = 该 KC 的一个 **KC 级代表难度 b**（见下「θ* 歧义」）
+//
+// **θ* 歧义澄清（inc-2 接线契约，切勿混同两个 b）**：
+//   ① item_calibration 表按 **question_id 键**，逐题一个 b——**没有逐 KC 的 b 列**。
+//   ② 掌握线 θ* 需要一个 **KC 级代表 b**（inc-2 定义：如该 KC 名下 item b 的中位/均值，
+//      或指定代表题）。它与「当次 attempt 的 bPrime」**不是同一个数值**——只是同一
+//      构造式（都 = 某个 b 减 θ_global，见下 offset 轴表达）。当次 bPrime 逐题跳动；
+//      KC 级 θ* 在一个毕业窗口内必须稳定。
+//   ③ **inc-2 接线者绝不可把当次 attempt 的 bPrime 直接传给 masterySnapshot 当阈值**：
+//      那样掌握线会随每题难度跳动，「连续 N 次 p_mastery>0.8」的连续性判定失去意义
+//      （每次比的是不同的线）。masterySnapshot 的 bPrime 参数必须喂 KC 级代表阈值。
 //
 // **θ* 的 offset 轴表达**：grid posterior 是 over θ_KC OFFSET，effective ability 在
 //   grid 点 i = θ_global + GRID_THETA_i。「后验落在 θ* 以上」= 后验 mass 落在
 //   θ_global + GRID_THETA_i ≥ θ* 的点 = GRID_THETA_i ≥ θ* − θ_global = b − θ_global
-//   = bPrime（嫁接 1 用的同一个 A2 锚！）。所以掌握线在 offset 轴上恰好是 bPrime，
-//   无需 θ_global 作参数——caller 传 bPrime 即可。
+//   = bPrime（与嫁接 1 用的 **同一构造**——减 θ_global——但此处 b 是 KC 级代表难度，
+//   非当次 attempt 的 b）。所以掌握线在 offset 轴上恰好是 bPrime，无需 θ_global 作
+//   参数——caller 传 KC 级 bPrime 即可。
 //
 // DARK-SHIP / DEFER：本节全是纯函数、零 IO、无 caller（inc-1 shadow）。轨迹持久化
 //   （recent 滚动窗口的 jsonb 字段，参 RtCorrectBuffer 的环形缓冲模式）+ KcGraduated
@@ -369,6 +386,10 @@ export function posteriorMassAbove(posterior: ThetaGridPosterior, thresholdOffse
 /**
  * 从一次后验现算 MasterySnapshot（p_mastery + width）。纯函数无 IO。
  * caller（inc-2 接线）每次 gridUpdate 后调它，把 snapshot 推进 recent 滚动窗口。
+ *
+ * @param bPrime 掌握线 θ* 在 offset 轴上的表达（= KC 级代表难度 − θ_global）。**必须
+ *   是 KC 级稳定阈值，不是当次 attempt 的 bPrime**（见本文件「θ* 歧义澄清」注）——否则
+ *   掌握线逐题跳动，连续 N 次判定失义。
  */
 export function masterySnapshot(posterior: ThetaGridPosterior, bPrime: number): MasterySnapshot {
   return {
@@ -384,6 +405,10 @@ export function masterySnapshot(posterior: ThetaGridPosterior, bPrime: number): 
  * - recent 不足 N 个 → false（轨迹太短，连续性无法判定）。
  * - 否则取 recent 最后 N 个，逐个验 pMastery>p_min && width<ε。
  *
+ * @param recent 掌握 snapshot 滚动窗口，约定 **oldest→newest**（最后一个是最近一次
+ *   作答的 snapshot）——尾部 N 个即「最近连续 N 次」。与 RtCorrectBuffer 的环形缓冲
+ *   同序约定（push-newest-to-tail），inc-2 接线者按此顺序推进窗口。
+ *
  * 纯函数：不读不写任何状态。recent 滚动窗口的持久化是 caller 的 inc-2 责任。
  */
 export function isGraduationCandidate(
@@ -392,6 +417,12 @@ export function isGraduationCandidate(
   cfg: GraduationConfig = {},
 ): boolean {
   const { pMasteryMin = 0.8, widthMax = 1.0, consecutiveN = 3, evidenceMin = 8 } = cfg;
+  // FAIL-CLOSED（CR-2）：毕业 gate 遇坏 config 绝不放行。consecutiveN <= 0 会让
+  //   slice(length) = [] → every([]) ≡ true（vacuous truth）→ 空窗口静默毕业。这是
+  //   毕业闸，坏配置必须保守拒绝（镜像 srtOutcome 对畸形输入的保守降级惯例），故显式
+  //   短路。放在窗口判定之前：recent.length < consecutiveN 对 consecutiveN<=0 恒 false，
+  //   兜不住这个洞。
+  if (consecutiveN <= 0) return false;
   if (posterior.evidence < evidenceMin) return false;
   if (recent.length < consecutiveN) return false;
   const tail = recent.slice(recent.length - consecutiveN);
