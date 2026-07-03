@@ -62,6 +62,10 @@ describe('golden capture + reaudit (Q4b)', () => {
     // exactly what capture-golden.ts writes to disk + golden-reaudit.ts reads back.
     const roundTripped = parseGolden(JSON.stringify(golden));
 
+    // CR4 — the full-tree date reviver must NOT leak into top-level metadata: capturedAt is typed
+    // string (GoldenSnapshot contract; capture-golden's main() calls .slice(0, 10) on it).
+    expect(typeof roundTripped.capturedAt).toBe('string');
+    expect(roundTripped.capturedAt).toBe(golden.capturedAt);
     expect(reauditGolden(roundTripped).drifted).toEqual([]);
   });
 

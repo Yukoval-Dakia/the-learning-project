@@ -133,6 +133,12 @@ function classify(
  * (genesis-anchor) gate: on a prod-CLONE that has been fully backfilled + rebuilt (the B3 gate flow)
  * every live row is anchored, so a fold-null is genuine drift. The LIVE-prod continuous oracle uses
  * a DIFFERENT, anchor-gated path (auditProjectionKindSymmetric, component 4) — see M3.
+ *
+ * THROW SEMANTICS (review O9, deliberate): a fold throw (the edge fold's ADR-0034 topology reject)
+ * PROPAGATES out of this function — the b3-gate depends on catching it to model its
+ * audit.topologyReject NO-GO verdict; swallowing it here would silently downgrade a hard NO-GO
+ * signal to a drift count. The report-only sweep path uses the symmetric audit below, which
+ * isolates per-id throws instead.
  */
 export async function auditProjectionKind(
   db: DbLike,
@@ -232,6 +238,13 @@ export async function auditProjectionKind(
         classify(row.id, 'question_block', diffs, allowlist, drift, allowed);
       }
       return { checked: rows.length, drift, allowed };
+    }
+    default: {
+      // Exhaustiveness backstop (review O10): tsconfig has neither noImplicitReturns nor
+      // noUnusedLocals, so a missing case would silently return undefined — this makes a new
+      // ProjectionKind a COMPILE error here and a loud runtime error if compiled around.
+      const _exhaustive: never = kind;
+      throw new Error(`auditProjectionKind: unhandled kind ${String(_exhaustive)}`);
     }
   }
 }
@@ -343,6 +356,11 @@ async function buildKindScanData(db: DbLike, kind: ProjectionKind): Promise<Kind
           (await gatherAndFoldQuestionBlock(db, id)) as Record<string, unknown> | null,
       };
     }
+    default: {
+      // Exhaustiveness backstop (review O10) — see auditProjectionKind's default.
+      const _exhaustive: never = kind;
+      throw new Error(`buildKindScanData: unhandled kind ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -350,6 +368,14 @@ async function buildKindScanData(db: DbLike, kind: ProjectionKind): Promise<Kind
  * Symmetric (rowset + value) audit of ONE kind over the FULL id universe. Returns the NON-CLEAN
  * records (allowlisted ids excluded). READ-ONLY — writes nothing. MUST be called inside a single
  * REPEATABLE READ tx (M4). Un-anchored ids are skipped (M3).
+ *
+ * THROW ISOLATION (review O9): a per-id fold throw (foldKnowledgeEdge's ADR-0034 topology reject, or
+ * any unanticipated reducer throw) is caught PER ID and recorded as FIELD_DRIFT with a
+ * `<fold-threw>` sentinel diff (the parity.ts convention) — one bad row must never crash the whole
+ * report-only sweep (a throw would propagate to the pg-boss handler → DLQ → a silent week-long
+ * evidence blind spot). CONTRAST with auditProjectionKind above, which deliberately KEEPS throwing:
+ * the b3-gate models the topology throw as its audit.topologyReject NO-GO verdict and must not have
+ * that signal silently downgraded to a drift count.
  */
 export async function auditProjectionKindSymmetric(
   db: DbLike,
@@ -371,7 +397,20 @@ export async function auditProjectionKindSymmetric(
   for (const id of universe) {
     if (allowlist[id]) continue; // known-acceptable divergence
     if (!anchored.has(id)) continue; // M3 — un-anchored (fold-blind) row: skip, never false-positive
-    const fold = await foldOne(id);
+    let fold: Record<string, unknown> | null;
+    try {
+      fold = await foldOne(id);
+    } catch (err) {
+      // O9 — report, don't crash (see docblock). A DB error inside the caller's tx poisons the tx
+      // and fails the run regardless; this rescue is for pure fold/reducer throws.
+      out.push({
+        id,
+        kind,
+        verdict: 'FIELD_DRIFT',
+        diffs: [`<fold-threw>: ${err instanceof Error ? err.message : String(err)}`],
+      });
+      continue;
+    }
     const liveSnap = liveSnapshots.get(id) ?? null;
     if (liveSnap !== null) {
       if (fold === null) {

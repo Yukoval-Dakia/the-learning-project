@@ -14,7 +14,7 @@ import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Tx } from '@/db/client';
-import { event, goal } from '@/db/schema';
+import { event, goal, knowledge, knowledge_edge } from '@/db/schema';
 import { backfillGoalGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runProjectionOracleSweep } from './projection_oracle_sweep';
@@ -215,5 +215,78 @@ describe('runProjectionOracleSweep', () => {
     // and the concurrent write DID land (a fresh sweep, new snapshot, would now see the tamper).
     const [live] = await db.select({ title: goal.title }).from(goal).where(eq(goal.id, 'g1'));
     expect(live?.title).toBe('CONCURRENT');
+  });
+  it('O9: a topology-rejecting edge is REPORTED per id, never crashes the sweep (fold-throw isolation)', async () => {
+    const db = testDb();
+    process.env.PROJECTION_IS_WRITER = '1'; // knowledge + knowledge_edge ON (the bare global)
+    // Endpoint nodes WITHOUT any event/anchor → the knowledge kind skips them (M3), zero noise.
+    for (const id of ['kn_x', 'kn_y']) {
+      await db.insert(knowledge).values({
+        id,
+        name: id,
+        domain: null,
+        parent_id: null,
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved',
+        archived_at: null,
+        created_at: T0,
+        updated_at: T0,
+        version: 0,
+      });
+    }
+    // A LIVE cyclic prerequisite pair, each anchored by its generate-create event (the imperative
+    // edge path never ran the ADR-0034 gate, so this CAN exist live). Folding EITHER edge against
+    // the live mesh throws a topology reject.
+    for (const [edgeId, from, to] of [
+      ['ke_xy', 'kn_x', 'kn_y'],
+      ['ke_yx', 'kn_y', 'kn_x'],
+    ] as const) {
+      await db.insert(knowledge_edge).values({
+        id: edgeId,
+        from_knowledge_id: from,
+        to_knowledge_id: to,
+        relation_type: 'prerequisite',
+        weight: 1,
+        created_by: { by: 'user' },
+        reasoning: null,
+        created_at: T0,
+        archived_at: null,
+      });
+      await db.insert(event).values({
+        id: `ev_gen_${edgeId}`,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'dreaming',
+        action: 'generate',
+        subject_kind: 'knowledge_edge',
+        subject_id: edgeId,
+        outcome: 'partial',
+        payload: {
+          edge_op: 'create',
+          from_knowledge_id: from,
+          to_knowledge_id: to,
+          relation_type: 'prerequisite',
+          weight: 1,
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: T0,
+      });
+    }
+
+    // Before O9 this THREW out of the sweep (→ pg-boss DLQ, a silent week-long blind spot). Now each
+    // throwing edge is recorded as FIELD_DRIFT with a <fold-threw> sentinel and the run completes.
+    const report = await runProjectionOracleSweep(db, { now: NOW });
+
+    expect(report.fieldDrift).toBe(2); // both cyclic edges, exactly (hermetic fixture)
+    expect(report.anomalies).toBe(2);
+    expect(report.forensicWritten).toBe(2);
+    const forensic = await forensicEvents();
+    expect(forensic.map((f) => f.subject_id).sort()).toEqual([
+      'knowledge_edge:ke_xy',
+      'knowledge_edge:ke_yx',
+    ]);
   });
 });

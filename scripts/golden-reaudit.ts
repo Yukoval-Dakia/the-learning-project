@@ -40,7 +40,16 @@ function dateReviver(_key: string, value: unknown): unknown {
 }
 
 export function parseGolden(text: string): GoldenSnapshot {
-  return JSON.parse(text, dateReviver) as GoldenSnapshot;
+  const parsed = JSON.parse(text, dateReviver) as Omit<GoldenSnapshot, 'capturedAt'> & {
+    capturedAt: string | Date;
+  };
+  // capturedAt contract repair (review CR4): the FULL-TREE reviver is load-bearing for rows/events
+  // (K3 doctrine — a per-key allowlist risks missing a nested date key and breaking the fold's
+  // .getTime() calls), but it also revives this ONE top-level metadata field, which GoldenSnapshot
+  // types as `string`. Restore it so string consumers (e.g. capture-golden's `.slice(0, 10)`) hold.
+  const capturedAt =
+    typeof parsed.capturedAt === 'string' ? parsed.capturedAt : parsed.capturedAt.toISOString();
+  return { ...parsed, capturedAt };
 }
 
 // Re-fold one golden id with the CURRENT reducer. edge folds against the golden live-edge mesh.
@@ -65,6 +74,13 @@ function foldGoldenRow(
       return foldArtifact(id, events) as Record<string, unknown> | null;
     case 'question_block':
       return foldQuestionBlock(id, events) as Record<string, unknown> | null;
+    default: {
+      // Exhaustiveness backstop (review O4): tsconfig lacks noImplicitReturns, so a missing case
+      // would silently return undefined — which diffSnapshots does NOT guard (only null) and would
+      // TypeError on Object.keys(undefined). Make a new ProjectionKind a compile error here.
+      const _exhaustive: never = kind;
+      throw new Error(`foldGoldenRow: unhandled ProjectionKind ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -121,7 +137,18 @@ function main(): void {
     );
     process.exit(2);
   }
-  const golden = parseGolden(readFileSync(path, 'utf8'));
+  // Friendly failure (review O6): a corrupt/unreadable golden should print a clear pointer for this
+  // pre-PR checklist CLI, not a raw stack trace.
+  let golden: GoldenSnapshot;
+  try {
+    golden = parseGolden(readFileSync(path, 'utf8'));
+  } catch (err) {
+    console.error(
+      `[golden-reaudit] failed to read/parse ${path} — re-capture it (pnpm capture:golden --kind=${kind}):`,
+      err,
+    );
+    process.exit(2);
+  }
   const result = reauditGolden(golden);
 
   console.log(`golden-reaudit — ${kind}: re-folded ${result.checked} row(s) from ${path}`);
@@ -142,7 +169,8 @@ function main(): void {
   process.exit(1);
 }
 
-// CLI-gate: only run as the CLI entry point so the DB test can import reauditGolden.
-if (typeof process.argv[1] === 'string' && process.argv[1].endsWith('golden-reaudit.ts')) {
+// CLI-gate: only run as the CLI entry point so the DB test can import reauditGolden. Path-resolved
+// form (review O5 — matches audit-projection.ts): robust to a transpiled .js filename too.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }
