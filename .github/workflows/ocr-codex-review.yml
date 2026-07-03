@@ -254,73 +254,32 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const crypto = require('crypto');
 
-            // Per-run marker (run id embedded) — each review round posts a NEW
-            // comment so rounds stay traceable on the PR timeline (owner decision
-            // 2026-06-06; the old stable marker caused in-place upserts that erased
-            // earlier rounds). The artifact remains the per-run machine record.
-            const marker = `<!-- ocr-codex-review run=${context.runId} -->`;
+            const runId = Number.isFinite(context.runId) ? context.runId : 0;
+            const runAttempt = Number.isFinite(context.runAttempt) ? context.runAttempt : 1;
+            const RUN_TAG = `${runId}-${runAttempt}`;
+            const REVIEW_TAG = `<!-- ocr-codex-review run=${RUN_TAG} -->`;
+            const SUMMARY_TAG = `<!-- ocr-codex-review-summary:${RUN_TAG} -->`;
+
             const raw = fs.readFileSync('ocr-review.json', 'utf8');
             const result = JSON.parse(raw);
             const summary = result.summary || {};
             const comments = Array.isArray(result.comments) ? result.comments : [];
+            const warnings = result.warnings || [];
 
             const fenced = (value) => {
               const text = String(value || '').trim();
               if (!text) return '';
-              return `\n\`\`\`\n${text.replaceAll('```', '`\\`\\`')}\n\`\`\``;
+              return `\n\`\`\`\n${text.replaceAll('\`\`\`', '\`\\\`\\\`')}\n\`\`\``;
             };
 
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
             const commit_id = context.payload.pull_request.head.sha;
 
-            // Retry transient GitHub API failures (5xx / 429 / network). A 4xx
-            // (e.g. 422 "line not in diff") is a real client error — fail fast so
-            // the caller can fall back. Returns the API response.
-            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-            const withRetry = async (label, fn) => {
-              for (let attempt = 1; ; attempt++) {
-                try {
-                  return await fn();
-                } catch (err) {
-                  const status = err && err.status;
-                  const transient = !status || status >= 500 || status === 429;
-                  if (!transient || attempt >= 4) throw err;
-                  const delay = 2000 * attempt;
-                  core.warning(`${label} attempt ${attempt} failed (status ${status ?? 'network'}): ${err.message}; retrying in ${delay}ms`);
-                  await sleep(delay);
-                }
-              }
-            };
-
-            // Body for a single finding (used both inline and in the fallback summary).
-            const commentBody = (comment) => {
-              const sev = comment.severity ? ` \`${comment.severity}\`` : '';
-              const conf = (typeof comment.confidence === 'number') ? ` (confidence ${comment.confidence.toFixed(2)})` : '';
-              const out = [`**OCR**${sev}${conf}`, '', String(comment.content || '').trim()];
-              if (comment.suggestion_code) {
-                out.push('', 'Suggested replacement:', fenced(comment.suggestion_code));
-              }
-              return out.join('\n');
-            };
-
-            // An inline review comment anchors on a line that must fall inside the
-            // PR diff. Use end_line as the anchor; for a multi-line span, set
-            // start_line too (GitHub requires start_line < line).
-            const inlineComment = (comment) => {
-              const line = comment.end_line || comment.start_line;
-              if (!comment.path || !line) return null; // not anchorable
-              const c = { path: comment.path, line, side: 'RIGHT', body: commentBody(comment) };
-              if (comment.start_line && comment.start_line < line) {
-                c.start_line = comment.start_line;
-                c.start_side = 'RIGHT';
-              }
-              return c;
-            };
-
             const headerLines = [
-              marker,
+              REVIEW_TAG,
               '## OCR review',
               '',
               `Reviewed commit: \`${(commit_id || '').slice(0, 8)}\``,
@@ -330,17 +289,32 @@ jobs:
               `Elapsed: \`${summary.elapsed || 'n/a'}\``,
             ];
 
-            if (comments.length === 0) {
-              await withRetry('createReview(summary)', () => github.rest.pulls.createReview({
-                owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT',
-                body: [...headerLines, '', 'No actionable comments found.'].join('\n'),
-              }));
-              return;
+            function commentBody(comment) {
+              const sev = comment.severity ? ` \`${comment.severity}\`` : '';
+              const conf = (typeof comment.confidence === 'number') ? ` (confidence ${comment.confidence.toFixed(2)})` : '';
+              const out = [`**OCR**${sev}${conf}`, '', String(comment.content || '').trim()];
+              if (comment.suggestion_code) {
+                out.push('', 'Suggested replacement:', fenced(comment.suggestion_code));
+              }
+              return out.join('\n');
             }
 
-            // Render a finding into the fallback summary (for comments whose line
-            // GitHub rejects as outside the diff).
-            const summaryEntry = (comment, idx) => {
+            function inlineItem(comment) {
+              const line = comment.end_line || comment.start_line;
+              if (!comment.path || !line) return null;
+              const start = comment.start_line;
+              const end = comment.end_line;
+              if (start >= 1 && end >= 1 && start !== end) {
+                return { comment, id: newCommentId(), lines: { start_line: start, line: end, start_side: 'RIGHT', side: 'RIGHT' } };
+              } else if (end >= 1) {
+                return { comment, id: newCommentId(), lines: { line: end, side: 'RIGHT' } };
+              } else if (start >= 1) {
+                return { comment, id: newCommentId(), lines: { line: start, side: 'RIGHT' } };
+              }
+              return null;
+            }
+
+            function summaryEntry(comment, idx) {
               const location = [
                 comment.path || 'unknown',
                 comment.start_line ? `:${comment.start_line}` : '',
@@ -351,67 +325,403 @@ jobs:
                 parts.push('', 'Existing code:', fenced(comment.existing_code));
               }
               return parts.join('\n');
-            };
+            }
 
-            const anchored = [];
-            const unanchored = [];
-            comments.forEach((c, i) => {
-              const ic = inlineComment(c);
-              if (ic) anchored.push(ic); else unanchored.push(summaryEntry(c, i + 1));
-            });
+            function formatSummaryComments(summaryComments) {
+              let body = '';
+              for (let i = 0; i < summaryComments.length; i++) {
+                body += '\n\n---\n\n';
+                body += summaryEntry(summaryComments[i].comment, i + 1);
+              }
+              return body;
+            }
 
-            // Attempt one review with all inline comments. GitHub rejects the
-            // WHOLE review (422) if any one line is outside the diff, so on 422
-            // fall back to posting each inline comment individually and collect
-            // the ones that still fail into the summary body.
-            let posted = 0;
-            let inlineFailed = [];
-            if (anchored.length > 0) {
-              try {
-                await withRetry('createReview(inline)', () => github.rest.pulls.createReview({
-                  owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT',
-                  body: headerLines.join('\n'),
-                  comments: anchored,
-                }));
-                posted = anchored.length;
-              } catch (err) {
-                if (err && err.status === 422) {
-                  core.warning(`Batch inline review rejected (422); retrying comments individually: ${err.message}`);
-                  for (const ic of anchored) {
-                    try {
-                      await withRetry('createReviewComment', () => github.rest.pulls.createReviewComment({
-                        owner, repo, pull_number: issue_number, commit_id,
-                        path: ic.path, line: ic.line, side: ic.side,
-                        ...(ic.start_line ? { start_line: ic.start_line, start_side: ic.start_side } : {}),
-                        body: ic.body,
-                      }));
-                      posted++;
-                    } catch (e2) {
-                      if (e2 && e2.status === 422) {
-                        inlineFailed.push(`### \`${ic.path}:${ic.line}\` (could not anchor to diff)\n\n${ic.body}`);
-                      } else { throw e2; }
-                    }
+            // Retry / pacing configuration.
+            function parseNonNegInt(val, defaultVal) {
+              const n = parseInt(val, 10);
+              return Number.isFinite(n) && n >= 0 ? n : defaultVal;
+            }
+            const MAX_RETRIES = parseNonNegInt(process.env.OCR_MAX_RETRIES, 3);
+            const SUCCESS_DELAY = parseNonNegInt(process.env.OCR_SUCCESS_DELAY, 2000);
+            const FAILURE_DELAY = parseNonNegInt(process.env.OCR_FAILURE_DELAY, 1000);
+            const LOW_REMAINING_THRESHOLD = parseNonNegInt(process.env.OCR_LOW_REMAINING_THRESHOLD, 3);
+            const LOW_REMAINING_SPACING = parseNonNegInt(process.env.OCR_LOW_REMAINING_SPACING, 10000);
+            const READ_SUCCESS_DELAY = parseNonNegInt(process.env.OCR_READ_SUCCESS_DELAY, 500);
+            const READ_LOW_REMAINING_SPACING = parseNonNegInt(process.env.OCR_READ_LOW_REMAINING_SPACING, 5000);
+
+            function sleep(ms) {
+              return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            async function withRetry(tag, fn) {
+              for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                  return await fn();
+                } catch (e) {
+                  const retryInfo = computeRetryDelayMs(e, attempt);
+                  const willRetry = retryInfo != null && attempt < MAX_RETRIES;
+                  if (willRetry) {
+                    const secs = (retryInfo.delayMs / 1000).toFixed(1);
+                    console.log(`[${tag}] transient/rate-limited (HTTP ${e.status}, attempt ${attempt + 1}/${MAX_RETRIES}). Waiting ${secs}s via '${retryInfo.source}' (${retryInfo.detail}). ${e.message}`);
+                    await sleep(retryInfo.delayMs);
+                  } else {
+                    console.log(`[${tag}] failed after ${attempt + 1} attempts: ${e.message}`);
+                    throw e;
                   }
-                } else { throw err; }
+                }
               }
             }
 
-            // Post a summary comment if there is anything that could not be inlined,
-            // or if there were zero anchorable comments to begin with.
-            const overflow = [...unanchored, ...inlineFailed];
-            if (overflow.length > 0 || anchored.length === 0) {
-              const summaryBody = [
-                ...headerLines,
-                '',
-                anchored.length > 0 ? `${posted} comment(s) posted inline. The following could not be anchored to the diff:` : 'Comments (could not be anchored to the diff):',
-                '',
-                ...overflow,
-              ].join('\n');
-              await withRetry('createComment(summary)', () => github.rest.issues.createComment({
-                owner, repo, issue_number, body: summaryBody,
-              }));
+            async function readWithPacing(tag, fn) {
+              const res = await withRetry(tag, fn);
+              const remaining = logRateLimitQuota(res, tag);
+              const lowQuota = remaining != null && remaining <= LOW_REMAINING_THRESHOLD;
+              if (lowQuota) {
+                console.log(`[rate-limit] quota low after read (${remaining} <= ${LOW_REMAINING_THRESHOLD}); spacing ${READ_LOW_REMAINING_SPACING}ms.`);
+                await sleep(READ_LOW_REMAINING_SPACING);
+              } else {
+                await sleep(READ_SUCCESS_DELAY);
+              }
+              return res;
             }
 
+            async function readAllPages(tag, pageFn, maxPages = 50) {
+              if (!Number.isFinite(maxPages) || maxPages < 1) {
+                throw new Error(`readAllPages: maxPages must be a positive integer, got ${maxPages}`);
+              }
+              const all = [];
+              let page = 1;
+              const PER_PAGE = 100;
+              while (page <= maxPages) {
+                const res = await readWithPacing(`${tag} (page ${page})`, () => pageFn(page, PER_PAGE));
+                const items = res.data || [];
+                all.push(...items);
+                if (items.length < PER_PAGE) break;
+                page++;
+              }
+              if (page > maxPages) {
+                console.log(`[${tag}] reached max page limit (${maxPages}); results may be incomplete.`);
+              }
+              return all;
+            }
+
+            async function findExistingBatchReview({ owner, repo, prNumber, tag }) {
+              const reviews = await readAllPages('listReviews', (page, per_page) =>
+                github.rest.pulls.listReviews({ owner, repo, pull_number: prNumber, per_page, page })
+              );
+              for (const r of reviews) {
+                if ((r.body || '').includes(tag)) {
+                  return { found: true, review: r };
+                }
+              }
+              return { found: false };
+            }
+
+            async function getPostedCommentIds({ owner, repo, prNumber }) {
+              const cs = await readAllPages('listReviewComments', (page, per_page) =>
+                github.rest.pulls.listReviewComments({ owner, repo, pull_number: prNumber, per_page, page })
+              );
+              const ids = new Set();
+              const ID_RE = /<!--\\s*(ocr-\\d+-\\d+-[a-f0-9]+)\\s*-->/g;
+              for (const c of cs) {
+                const body = c.body || '';
+                let m;
+                while ((m = ID_RE.exec(body)) !== null) {
+                  ids.add(m[1]);
+                }
+              }
+              return ids;
+            }
+
+            async function isCommentAlreadyPosted({ owner, repo, prNumber, id }) {
+              try {
+                const posted = await getPostedCommentIds({ owner, repo, prNumber });
+                return posted.has(id);
+              } catch (e) {
+                console.log(`[isCommentAlreadyPosted] check failed for ${id} (${e.message}); treating as unknown to avoid duplicates.`);
+                return null;
+              }
+            }
+
+            async function hasIssueCommentWithId({ owner, repo, issueNumber, id }) {
+              try {
+                const comments = await readAllPages('listIssueComments', (page, per_page) =>
+                  github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page, page })
+                );
+                const escaped = id.replace(/[.*+?^${}()|[\]\\\\]/g, '\\\\$&');
+                const tagRe = new RegExp('<!--\\s*' + escaped + '\\s*-->');
+                return comments.some(c => tagRe.test(c.body || ''));
+              } catch (e) {
+                console.log(`[listIssueComments] check failed (${e.message}); treating as unknown to avoid duplicates.`);
+                return null;
+              }
+            }
+
+            function getHeader(headers, name) {
+              const v = headers[name] != null ? headers[name] : headers[name.toLowerCase()];
+              return v != null ? String(v).trim() : undefined;
+            }
+
+            function computeRetryDelayMs(error, attempt) {
+              if (!error) return null;
+              const status = error.status;
+              const message = String(error.message || '');
+              const isRateLimit = status === 429 || (status === 403 && /rate limit|abuse|secondary/i.test(message));
+              const isTransient = (status >= 500 && status < 600) || status === 408;
+              if (!isRateLimit && !isTransient) return null;
+
+              const headers = ((error.response || {}).headers) || {};
+              const header = (name) => getHeader(headers, name);
+              const nowSec = Math.floor(Date.now() / 1000);
+
+              const cap = parseInt(process.env.OCR_RETRY_MAX_DELAY, 10) || 300000;
+              const base = parseInt(process.env.OCR_RETRY_BASE_DELAY, 10) || 60000;
+
+              let info = null;
+              if (isRateLimit) {
+                const retryAfter = header('retry-after');
+                if (retryAfter) {
+                  const secs = Number(retryAfter);
+                  if (!isNaN(secs) && secs >= 0) {
+                    info = { rawMs: secs * 1000, source: 'retry-after', detail: `${secs}s (from header)` };
+                  } else {
+                    const dateMs = Date.parse(retryAfter);
+                    if (!isNaN(dateMs)) {
+                      info = { rawMs: Math.max(0, dateMs - Date.now()), source: 'retry-after (HTTP-date)', detail: retryAfter };
+                    }
+                  }
+                }
+                if (!info) {
+                  const remaining = header('x-ratelimit-remaining');
+                  const reset = header('x-ratelimit-reset');
+                  if (reset != null && Number(remaining) === 0) {
+                    const rawMs = Math.max(0, Number(reset) - nowSec) * 1000;
+                    info = { rawMs, source: 'x-ratelimit-reset', detail: `remaining=0, reset epoch=${reset} (in ${Math.ceil(rawMs / 1000)}s)` };
+                  }
+                }
+                if (!info) {
+                  const backoff = Math.min(base * Math.pow(2, attempt), cap);
+                  const jitter = Math.floor(Math.random() * 1000);
+                  info = { rawMs: backoff + jitter, source: 'exponential-backoff', detail: `base=${base}ms*2^${attempt} (cap ${cap}ms) +${jitter}ms jitter` };
+                }
+              } else {
+                const transientBase = 2000;
+                const backoff = Math.min(transientBase * Math.pow(2, attempt), cap);
+                const jitter = Math.floor(Math.random() * 1000);
+                info = { rawMs: backoff + jitter, source: 'transient-backoff', detail: `base=${transientBase}ms*2^${attempt} (cap ${cap}ms) +${jitter}ms jitter (HTTP ${status})` };
+              }
+
+              const delayMs = Math.min(info.rawMs, cap);
+              if (delayMs < info.rawMs) {
+                info.detail += ` [CAPPED to ${cap}ms; GitHub recommended ${Math.ceil(info.rawMs / 1000)}s]`;
+              }
+              return { delayMs, source: info.source, detail: info.detail };
+            }
+
+            function logRateLimitQuota(response, tag) {
+              try {
+                const h = (response && response.headers) || {};
+                const header = (name) => getHeader(h, name);
+                const remaining = header('x-ratelimit-remaining');
+                const limit = header('x-ratelimit-limit');
+                const reset = header('x-ratelimit-reset');
+                if (remaining != null) {
+                  console.log(`[rate-limit] ${tag}: remaining=${remaining}/${limit != null ? limit : '?'}` + (reset != null ? `, reset epoch=${reset}` : ''));
+                }
+                return remaining != null ? Number(remaining) : null;
+              } catch (_) { return null; }
+            }
+
+            function newCommentId() {
+              return `ocr-${RUN_TAG}-${crypto.randomBytes(8).toString('hex')}`;
+            }
+
+            function toReviewPayload(item) {
+              return {
+                path: item.comment.path,
+                body: `<!-- ${item.id} -->\\n` + commentBody(item.comment),
+                ...item.lines
+              };
+            }
+
+            // Main posting logic.
+            const reviewComments = [];
+            const commentsWithoutLine = [];
+            for (const comment of comments) {
+              const item = inlineItem(comment);
+              if (!item) {
+                commentsWithoutLine.push({ comment });
+              } else {
+                reviewComments.push(item);
+              }
+            }
+
+            const totalCount = comments.length;
+            const inlineCount = reviewComments.length;
+            const summaryCount = commentsWithoutLine.length;
+            let summaryBody = headerLines.join('\\n');
+            summaryBody += formatSummaryComments(commentsWithoutLine);
+
+            if (comments.length === 0) {
+              summaryBody += '\\n\\nNo actionable comments found.';
+              await github.rest.pulls.createReview({
+                owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT', body: summaryBody
+              });
+              return;
+            }
+
+            let successCount = 0;
+            let failedCount = 0;
+            const failedComments = [];
+
+            try {
+              const batchRes = await github.rest.pulls.createReview({
+                owner, repo, pull_number: issue_number, commit_id,
+                body: summaryBody,
+                event: 'COMMENT',
+                comments: reviewComments.map(toReviewPayload)
+              });
+              successCount = reviewComments.length;
+              console.log(`Successfully posted review with ${successCount} inline comments (${commentsWithoutLine.length} in summary)`);
+              logRateLimitQuota(batchRes, 'after batch createReview');
+            } catch (e) {
+              console.log('Failed to post review with inline comments:', e.message);
+              console.log('Checking whether the batch review actually landed on the server before retrying...');
+
+              let existingReview = null;
+              try {
+                existingReview = await findExistingBatchReview({ owner, repo, prNumber: issue_number, tag: REVIEW_TAG });
+              } catch (checkErr) {
+                console.log(`Idempotency check failed (${checkErr.message}). Degrading to original fallback (accepting duplicate risk).`);
+              }
+
+              let toRetry = reviewComments;
+              if (existingReview && existingReview.found) {
+                const postedIds = await getPostedCommentIds({ owner, repo, prNumber: issue_number });
+                toRetry = reviewComments.filter((item) => !postedIds.has(item.id));
+                successCount = reviewComments.length - toRetry.length;
+                console.log(`Batch review already exists (review_id=${existingReview.review.id}). ${successCount}/${reviewComments.length} inline comments already posted. ${toRetry.length} missing, will retry only those.`);
+              } else {
+                console.log('Batch review not found on server. Falling back to per-comment posting...');
+              }
+
+              const batchRetry = computeRetryDelayMs(e, 0);
+              if (batchRetry != null) {
+                const secs = (batchRetry.delayMs / 1000).toFixed(1);
+                console.log(`Batch createReview was rate-limited (HTTP ${e.status}). Cooling down ${secs}s via '${batchRetry.source}' (${batchRetry.detail}) before per-comment retry.`);
+                await sleep(batchRetry.delayMs);
+              }
+
+              for (const item of toRetry) {
+                const { comment, id } = item;
+                let posted = false;
+                for (let attempt = 0; attempt <= MAX_RETRIES && !posted; attempt++) {
+                  try {
+                    const res = await github.rest.pulls.createReview({
+                      owner, repo, pull_number: issue_number, commit_id,
+                      body: '', event: 'COMMENT', comments: [toReviewPayload(item)]
+                    });
+                    successCount++;
+                    posted = true;
+                    console.log(`Successfully posted comment for ${comment.path}`);
+                    const remaining = logRateLimitQuota(res, `after ${comment.path}`);
+                    const lowQuota = remaining != null && remaining <= LOW_REMAINING_THRESHOLD;
+                    if (lowQuota) {
+                      console.log(`[rate-limit] quota low (remaining=${remaining} <= ${LOW_REMAINING_THRESHOLD}); increasing spacing to ${LOW_REMAINING_SPACING}ms.`);
+                      await sleep(LOW_REMAINING_SPACING);
+                    } else {
+                      await sleep(SUCCESS_DELAY);
+                    }
+                  } catch (innerE) {
+                    const retryInfo = computeRetryDelayMs(innerE, attempt);
+                    const willRetry = retryInfo != null && attempt < MAX_RETRIES;
+                    const status = innerE.status;
+                    const maybeReachedServer = (typeof status === 'number' && (status >= 500 || status === 408)) || status == null;
+                    if (maybeReachedServer) {
+                      const coolDownMs = retryInfo != null ? retryInfo.delayMs : FAILURE_DELAY;
+                      if (coolDownMs > 0) {
+                        const secs = (coolDownMs / 1000).toFixed(1);
+                        console.log(`Cooling down ${secs}s before idempotency check for ${comment.path} (HTTP ${innerE.status || 'n/a'}, attempt ${attempt + 1}/${MAX_RETRIES + 1}).`);
+                        await sleep(coolDownMs);
+                      }
+                      const alreadyPosted = await isCommentAlreadyPosted({ owner, repo, prNumber: issue_number, id });
+                      if (alreadyPosted === true) {
+                        successCount++;
+                        posted = true;
+                        console.log(`Comment for ${comment.path} already posted (id=${id}); treating as success.`);
+                        await sleep(SUCCESS_DELAY);
+                        continue;
+                      }
+                      if (alreadyPosted === null) {
+                        failedCount++;
+                        const reason = 'idempotency check unavailable (read API failed)';
+                        failedComments.push({ comment, error: `${innerE.message} [${reason}]` });
+                        console.log(`Cannot verify whether comment for ${comment.path} was posted (${reason}, HTTP ${innerE.status || 'n/a'}); skipping retry to avoid duplicate.`);
+                        await sleep(SUCCESS_DELAY);
+                        break;
+                      }
+                      if (!willRetry) {
+                        failedCount++;
+                        failedComments.push({ comment, error: innerE.message });
+                        const reason = retryInfo == null ? 'non-retryable error' : 'rate-limit retries exhausted';
+                        console.log(`Failed to post comment for ${comment.path} (${reason}, HTTP ${innerE.status || 'n/a'}): ${innerE.message}`);
+                        await sleep(SUCCESS_DELAY);
+                        break;
+                      }
+                    } else if (willRetry) {
+                      const secs = (retryInfo.delayMs / 1000).toFixed(1);
+                      console.log(`Rate-limited on ${comment.path} (HTTP ${innerE.status}, attempt ${attempt + 1}/${MAX_RETRIES}). Waiting ${secs}s via '${retryInfo.source}' (${retryInfo.detail}). Error: ${innerE.message}`);
+                      await sleep(retryInfo.delayMs);
+                    } else if (innerE.status === 422) {
+                      failedCount++;
+                      failedComments.push({ comment, error: innerE.message });
+                      console.log(`Failed to post comment for ${comment.path} (422 line not in diff): ${innerE.message}`);
+                      await sleep(FAILURE_DELAY);
+                      break;
+                    } else {
+                      failedCount++;
+                      failedComments.push({ comment, error: innerE.message });
+                      console.log(`Failed to post comment for ${comment.path} (non-retryable error, HTTP ${innerE.status || 'n/a'}): ${innerE.message}`);
+                      await sleep(FAILURE_DELAY);
+                      break;
+                    }
+                  }
+                }
+              }
+
+              let finalBody = headerLines.join('\\n');
+              finalBody += formatSummaryComments(commentsWithoutLine);
+              finalBody += `\\n\\n---\\n\\n📊 **Posting Statistics:**`;
+              finalBody += `\\n- ✅ Successfully posted: ${successCount} comment(s)`;
+              if (failedCount > 0) {
+                finalBody += `\\n- ❌ Failed to post: ${failedCount} comment(s)`;
+              }
+              if (failedComments.length > 0) {
+                finalBody += '\\n\\n---\\n\\n### ⚠️ Inline comments shown in summary';
+                for (const { comment, error } of failedComments) {
+                  finalBody += '\\n\\n---\\n\\n';
+                  finalBody += `### 📄 \`${comment.path}\``;
+                  if (comment.start_line && comment.end_line) {
+                    finalBody += ` (L${comment.start_line}-L${comment.end_line})`;
+                  }
+                  finalBody += `\\n\\n⚠️ GitHub could not post this as an inline comment: ${error}\\n\\n`;
+                  finalBody += commentBody(comment);
+                  if (comment.existing_code) {
+                    finalBody += '\\n\\nExisting code:' + fenced(comment.existing_code);
+                  }
+                }
+              }
+
+              finalBody = SUMMARY_TAG + '\\n' + finalBody;
+              const summaryAlreadyPosted = await hasIssueCommentWithId({ owner, repo, issueNumber: issue_number, id: SUMMARY_TAG });
+              if (summaryAlreadyPosted === true) {
+                console.log('Summary comment with this run tag already exists; skipping.');
+              } else if (summaryAlreadyPosted === null) {
+                console.log('Cannot verify whether summary comment already exists (read API failed); skipping to avoid duplicate.');
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body: finalBody });
+              }
+            }
   # When a PR is MERGED, capture the final verdict of OCR's inline comments and
   # ingest them into the learnings store — WITHOUT running an LLM review. This is
   # the reliable capture point: the review-time collector misses verdicts that
