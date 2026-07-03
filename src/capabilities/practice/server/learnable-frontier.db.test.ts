@@ -103,6 +103,63 @@ async function seedChain(prefix: string, edges: number): Promise<void> {
 }
 
 /**
+ * CR1 (PR #697) — depth-1 COMPLETE BIPARTITE prereq graph: `prereqs` roots (bp*) each a
+ * prerequisite of ALL `dependents` (bd*) → prereqs·dependents distinct
+ * (frontier_kc, prereq_kc) closure pairs, every one at depth 1. This trips the NODE-CAP arm
+ * of the overflow probe with depthOverflow FALSE — the chain shapes ((d)/(j)/(p)) can only
+ * trip the depth arm. Real-data trigger by design: FRONTIER_NODE_CAP is closed over inside
+ * learnableFrontierResolved, so "mocking the constant" would mean mocking the module under
+ * test itself (a self-certifying test). Edge rows bulk-insert in chunks (9 bind params/row;
+ * postgres wire protocol caps a statement at 65,534 params).
+ */
+async function seedBipartite(prereqs: number, dependents: number): Promise<void> {
+  const now = new Date();
+  const kcIds = [
+    ...Array.from({ length: prereqs }, (_, i) => `bp${i}`),
+    ...Array.from({ length: dependents }, (_, i) => `bd${i}`),
+  ];
+  await testDb()
+    .insert(knowledge)
+    .values(
+      kcIds.map((id) => ({
+        id,
+        name: id,
+        domain: 'wenyan',
+        parent_id: null,
+        merged_from: [],
+        proposed_by_ai: false,
+        approval_status: 'approved' as const,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })),
+    )
+    .onConflictDoNothing();
+  const edgeRows = [];
+  for (let p = 0; p < prereqs; p++) {
+    for (let d = 0; d < dependents; d++) {
+      edgeRows.push({
+        id: createId(),
+        from_knowledge_id: `bp${p}`,
+        to_knowledge_id: `bd${d}`,
+        relation_type: 'prerequisite',
+        weight: 1,
+        created_by: 'user' as never,
+        reasoning: null,
+        created_at: now,
+        archived_at: null,
+      });
+    }
+  }
+  const CHUNK = 5_000; // 5,000 rows × 9 params = 45,000 < 65,534.
+  for (let i = 0; i < edgeRows.length; i += CHUNK) {
+    await testDb()
+      .insert(knowledge_edge)
+      .values(edgeRows.slice(i, i + CHUNK));
+  }
+}
+
+/**
  * Shared mastery_state seeding core (review S3) — the named wrappers below document the four
  * gate-relevant shapes; tests keep using the wrappers for readability.
  */
@@ -438,6 +495,31 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
         depthLimit: FRONTIER_DEPTH_LIMIT,
         nodeCap: FRONTIER_NODE_CAP,
         rows: expect.any(Number),
+      }),
+    );
+  });
+
+  it('(s) node-cap overflow → console.warn payload flags nodeOverflow, NOT depthOverflow (CR1, PR #697)', async () => {
+    // (p) only exercises the DEPTH arm (a deep chain trips depthOverflow before the node cap
+    // can ever fill). Isolate the NODE-CAP arm with a depth-1 complete bipartite graph whose
+    // pair count exceeds FRONTIER_NODE_CAP while every depth stays 1 < FRONTIER_DEPTH_LIMIT.
+    // Sizes derived from the constant so the test tracks a retuned cap.
+    const dependents = 100;
+    const prereqs = Math.floor(FRONTIER_NODE_CAP / dependents) + 1; // 101 → 10,100 pairs > cap
+    await seedBipartite(prereqs, dependents);
+    const res = await learnableFrontierResolved(testDb());
+    expect(res.kind).toBe('overflow');
+    expect(res.ids).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[frontier] closure overflow'),
+      expect.objectContaining({
+        nodeOverflow: true,
+        depthOverflow: false, // 区分度:确证走的是 node-cap 臂,不是 depth 臂。
+        nodeCap: FRONTIER_NODE_CAP,
+        // The SQL fetch is LIMIT nodeCap+1 (the one-past-cap probe), so the reported rowcount
+        // is exactly nodeCap+1 — pinning the probe design, not just "some big number".
+        rows: FRONTIER_NODE_CAP + 1,
       }),
     );
   });
