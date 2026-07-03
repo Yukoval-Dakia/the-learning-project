@@ -76,6 +76,20 @@ export const GRAPH_LAPLACIAN_LAMBDA = 0.5;
  */
 export const GRAPH_LAPLACIAN_KAPPA = 0.01;
 
+/**
+ * YUK-559 (S4 / RP8) — the per-connected-component node-count cap for the A5 dense GMRF
+ * solve. `solveDense` is O(n³) time / O(n²) memory over the requested-induced `related_to`
+ * connected component; a batch tree read (`tree.ts`, up to LOAD_TREE_SNAPSHOT_LIMIT nodes)
+ * can induce a whole-tree component and hit a scalability cliff. A component LARGER than
+ * this cap is left UN-smoothed (fail-safe-to-no-smoothing) so the cliff never runs.
+ *
+ * OWNER-FIXED, **未经数据校准的保守初值（非拟合结果）**: 256 caps a single dense solve at
+ * ~1.7e7 flops. n=1 admissible (a fixed structural guard, not a cross-learner fit). The
+ * true value is an owner decision (spec §7 open question 2, alongside a future sparse
+ * CG solver / per-request localisation). Flag dark ⇒ this guard never fires today.
+ */
+export const GRAPH_SMOOTH_COMPONENT_CAP = 256;
+
 /** A symmetric (undirected) graph edge — A5 admits ONLY these (related_to). */
 export interface SymmetricEdge {
   a: string;
@@ -158,8 +172,15 @@ export interface GmrfInput {
  *   - λ>0  ⇒ unobserved nodes (dₖ=0) borrow from observed neighbours through L.
  *   - dₖ → ∞ ⇒ θ̃ₖ → θ̂ₖ (direct evidence overrides the smoothing prior).
  *
- * SPD ⇒ a single dense Gaussian-elimination solve is exact and stable for the small
- * neighbourhoods this runs on (a few KCs + their direct related_to neighbours).
+ * SPD ⇒ a single dense Gaussian-elimination solve is exact and stable. COST NOTE
+ * (YUK-559 / RP8 — corrects the earlier "small neighbourhoods … a few KCs" claim, which
+ * was STALE for batch-read callers): the solve is O(n³) time / O(n²) memory over the
+ * ENTIRE node set passed in, and the node set is REQUEST-SHAPED, not bounded — a single
+ * KC page induces a ~1-hop star, but a whole-tree read (mastery/state.ts loadEdgesFor
+ * Projection over up to LOAD_TREE_SNAPSHOT_LIMIT requested KCs) can pass the whole
+ * related_to connected component. Callers running on request-shaped node sets MUST
+ * partition by connected component and cap component size — see {@link smoothThetaBy
+ * Component} + {@link GRAPH_SMOOTH_COMPONENT_CAP}.
  */
 export function gmrfPosteriorMean(input: GmrfInput): Map<string, number> {
   const { nodeIds, thetaHat, observationPrecision, L, lambda, kappa } = input;
@@ -207,6 +228,111 @@ export function smoothTheta(
     kappa,
     priorMean,
   });
+}
+
+/**
+ * YUK-559 (S4) — partition `nodeIds` into connected components over the SYMMETRIC edge
+ * graph. Every node appears in EXACTLY one component; a node touched by no admitted edge
+ * is its own singleton component. Only edges with BOTH endpoints in `nodeIds`, a≠b, and
+ * weight>0 connect nodes — matching {@link buildLaplacian}'s edge admission, so the
+ * component structure equals the block structure of the graph Laplacian. Pure.
+ */
+export function connectedComponents(nodeIds: string[], edges: SymmetricEdge[]): string[][] {
+  const parent = new Map<string, string>();
+  for (const id of nodeIds) parent.set(id, id);
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root) as string;
+    // Path-compress.
+    let cur = x;
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur) as string;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  const union = (a: string, b: string): void => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const e of edges) {
+    if (e.a === e.b) continue;
+    if (!parent.has(e.a) || !parent.has(e.b)) continue; // endpoint outside node set
+    const w = e.weight ?? 1;
+    if (!(w > 0)) continue;
+    union(e.a, e.b);
+  }
+  const groups = new Map<string, string[]>();
+  for (const id of nodeIds) {
+    const root = find(id);
+    const g = groups.get(root);
+    if (g) g.push(id);
+    else groups.set(root, [id]);
+  }
+  return [...groups.values()];
+}
+
+/** The result of a component-partitioned smooth (YUK-559 / S4). */
+export interface ComponentSmoothResult {
+  /** posterior mean θ̃ per node (identical to a whole-set solve for under-cap components). */
+  theta: Map<string, number>;
+  /** sizes of components that EXCEEDED the cap and were left UN-smoothed (fail-safe). */
+  skippedComponentSizes: number[];
+  /** sizes of ALL components (observability — the RP8 scale histogram source). */
+  componentSizes: number[];
+}
+
+/**
+ * YUK-559 (S4 / RP8) — component-partitioned {@link smoothTheta}. Solves each connected
+ * component (over the symmetric graph) INDEPENDENTLY. This is MATHEMATICALLY IDENTICAL to
+ * a single whole-set solve for all under-cap components: the GMRF precision (D + λL + κI)
+ * is block-diagonal across components (no edge crosses a component; D and κI are diagonal),
+ * so a per-component solve equals the whole solve restricted to that component. It is a
+ * PURE equivalent rearrangement that also turns O(n³) into ΣO(nᵢ³).
+ *
+ * A component whose node count EXCEEDS `componentCap` is left UN-smoothed
+ * (fail-safe-to-no-smoothing: those nodes keep their raw θ̂, or `priorMean` when absent)
+ * and its size recorded in `skippedComponentSizes` — the request-shaped O(n³) dense-solve
+ * cliff (spec RP8) never runs on a pathological component. Pure.
+ */
+export function smoothThetaByComponent(
+  nodeIds: string[],
+  edges: SymmetricEdge[],
+  thetaHat: Map<string, number>,
+  observationPrecision: Map<string, number>,
+  lambda: number,
+  kappa: number,
+  componentCap: number,
+  priorMean = 0,
+): ComponentSmoothResult {
+  const components = connectedComponents(nodeIds, edges);
+  const theta = new Map<string, number>();
+  const skippedComponentSizes: number[] = [];
+  const componentSizes: number[] = [];
+  for (const component of components) {
+    componentSizes.push(component.length);
+    if (component.length > componentCap) {
+      // Fail-safe: skip the dense solve for an oversized component — passthrough raw θ̂.
+      for (const id of component) theta.set(id, thetaHat.get(id) ?? priorMean);
+      skippedComponentSizes.push(component.length);
+      continue;
+    }
+    const memberSet = new Set(component);
+    const subEdges = edges.filter((e) => memberSet.has(e.a) && memberSet.has(e.b));
+    const solved = smoothTheta(
+      component,
+      subEdges,
+      thetaHat,
+      observationPrecision,
+      lambda,
+      kappa,
+      priorMean,
+    );
+    for (const [id, v] of solved) theta.set(id, v);
+  }
+  return { theta, skippedComponentSizes, componentSizes };
 }
 
 /**

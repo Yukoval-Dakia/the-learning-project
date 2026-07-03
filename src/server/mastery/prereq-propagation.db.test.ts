@@ -159,6 +159,9 @@ describe('emitPrereqRiskSignal (YUK-455 inc-E — producer wired + provable)', (
     // RED LINE: diagnostic observation only — no judging outcome.
     expect(b?.outcome).toBeNull();
     expect(b?.caused_by_event_id).toBe('att_1');
+    // YUK-559 (S4 / RP9): ADR-0021 memory-ingestion opt-out — ingest_at is stamped
+    // (= now), so this experimental diagnostic event never feeds Mem0 / brief-regen.
+    expect(b?.ingest_at).toEqual(new Date('2026-06-27T00:00:00Z'));
     const bp = b?.payload as Record<string, unknown>;
     expect(bp.knowledge_id).toBe('B');
     expect(bp.risk_delta).toBeCloseTo(1, 10); // depth 1 → base

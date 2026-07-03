@@ -16,8 +16,9 @@ import {
   GRAPH_LAPLACIAN_ENABLED,
   GRAPH_LAPLACIAN_KAPPA,
   GRAPH_LAPLACIAN_LAMBDA,
+  GRAPH_SMOOTH_COMPONENT_CAP,
   type SymmetricEdge,
-  smoothTheta,
+  smoothThetaByComponent,
 } from '@/core/graph-laplacian';
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearnedBand, pfaLogit } from '@/core/pfa';
@@ -488,6 +489,13 @@ export async function getMasteryProjection(
  * their own count-driven p(L) band). It NEVER writes mastery_state (read-side recompute
  * → edges stay revisable; the三维正交 calibration axis is not polluted).
  *
+ * INFLUENCE RADIUS (YUK-559 / RP8): A5 is NOT 1-hop. `loadEdgesForProjection` bounds the
+ * LOADED edge set (incident-to-requested), NOT the influence radius — the GMRF joint solve
+ * couples the whole requested-induced `related_to` connected component (a whole-tree read
+ * couples the whole tree). To bound the dense-solve cost, A5 solves per connected component
+ * and skips any component over GRAPH_SMOOTH_COMPONENT_CAP (see smoothThetaByComponent). A6
+ * (directed) IS a true single-pass 1-hop Δθ. All flag-dark today.
+ *
  * Mutates `projection` in place (the caller's map). Flag-gated by the caller; this fn
  * runs only when at least one of A5/A6 is enabled.
  */
@@ -544,14 +552,34 @@ async function applyKgSoftLayer(
   //    estimates. Each flag is independent; flag-off leg is a structural pass-through.
   let thetaTilde = thetaHat;
   if (GRAPH_LAPLACIAN_ENABLED && symmetric.length > 0) {
-    thetaTilde = smoothTheta(
+    // YUK-559 (S4 / RP8) — component-chunked solve. The GMRF precision is block-diagonal
+    // across related_to connected components, so solving each independently is EXACT
+    // (ΣO(nᵢ³) ≤ O(n³), a pure equivalent rearrangement). A component larger than
+    // GRAPH_SMOOTH_COMPONENT_CAP is left UN-smoothed (fail-safe-to-no-smoothing) so the
+    // request-shaped O(n³) dense-solve cliff never runs on a whole-tree component.
+    const smoothed = smoothThetaByComponent(
       nodeIds,
       symmetric,
       thetaHat,
       observationPrecision,
       GRAPH_LAPLACIAN_LAMBDA,
       GRAPH_LAPLACIAN_KAPPA,
+      GRAPH_SMOOTH_COMPONENT_CAP,
     );
+    thetaTilde = smoothed.theta;
+    if (smoothed.skippedComponentSizes.length > 0) {
+      // Single structured warn (mirror learnable-frontier overflow warn form): a related_to
+      // component exceeded the conservative cap → smoothing skipped for it (raw θ̂ passthrough).
+      console.warn(
+        '[kg-borrow] A5 component cap tripped — smoothing skipped for oversized related_to component(s)',
+        {
+          cap: GRAPH_SMOOTH_COMPONENT_CAP,
+          skippedComponentSizes: smoothed.skippedComponentSizes,
+          totalComponents: smoothed.componentSizes.length,
+          hint: 'a requested set induced a related_to component larger than the cap; those KCs keep raw θ̂ (no smoothing). See docs/design/2026-07-04-kg-borrowing-spec.md RP8.',
+        },
+      );
+    }
   }
   if (PREREQ_THETA_PROPAGATION_ENABLED && directed.length > 0) {
     thetaTilde = propagatePrereq(
