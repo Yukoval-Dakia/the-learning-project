@@ -50,6 +50,13 @@ export type CandidateEntry = {
   text: string;
   memory_id: string;
   created_ms?: number;
+  /**
+   * YUK-557 (Q1): mem0 Memory.search() fused score (pgvector cosine ⊕ BM25 ⊕
+   * entity-boost, [0,1]) for this candidate — previously discarded. Consumed by
+   * the second structural corroboration gate (passesStructuralCorroboration).
+   * undefined = no score available (defensive) → that gate abstains (returns true).
+   */
+  score?: number;
 };
 
 /** Per-new-memory candidates: new_index → candidates found by search. */
@@ -145,6 +152,13 @@ export function buildReconcilePrompt(
   lines.push('');
 
   // CONFIDENCE
+  // YUK-557 (Q6): this line is the ONLY threshold disclosed to the LLM. The
+  // execution side ALSO runs two deterministic post-processing gates the LLM is
+  // NOT told about — passesStructuralCorroboration (mem0-score floor) +
+  // kindForbidsMerge (per-kind), applied in triggers.ts action synthesis. Chosen
+  // to hide the floor: it consumes mem0's fused score, a value the LLM cannot see
+  // or reason over numerically, so disclosing "there is another gate" without the
+  // number would not improve calibration (spec Q6 / Lens A A5-3).
   lines.push(
     'Each decision carries a confidence score from 0 to 1. Below 0.6 the system downgrades to KEEP_BOTH.',
   );
@@ -267,9 +281,52 @@ export function parseReconcileResponse(raw: string): ReconcileDecision[] {
   return decisions;
 }
 
+// YUK-557 (Q1): 0.5 未经数据验证的保守地板值，非拟合结果（n=1 红线，spec Q1 论证 #4）。
+// 明显高于 mem0 预过滤 0.1、明显低于"高置信度重复"直觉上限（0.8+）；本闸是加固层、
+// 非主拦截层（主拦截仍是 0.6 confidence）。将来可用 llm_raw.referenced_score 真实分布回顾校准。
+export const MERGE_RETRACT_SCORE_FLOOR = 0.5;
+
+/**
+ * YUK-557 (Q1) — second, non-LLM structural gate. MERGE/RETRACT_NEW must clear
+ * BOTH the 0.6 confidence threshold (applyConfidenceThreshold) AND this floor on
+ * the referenced candidate's mem0 fused score. SUPERSEDE/KEEP_BOTH are exempt
+ * (softSupersede is reversible; the scarce structural signal is spent on the
+ * irreversible destructive actions). score===undefined (no candidate to key on,
+ * e.g. RETRACT_NEW noise with no neighbor) → this gate ABSTAINS (returns true);
+ * the caller MUST then emit a "floor skipped (no score)" structured log (m8) so
+ * that fail-open path stays visible/countable.
+ */
+export function passesStructuralCorroboration(
+  action: ReconcileAction,
+  referencedCandidateScore: number | undefined,
+): boolean {
+  if (action !== 'MERGE' && action !== 'RETRACT_NEW') return true;
+  if (referencedCandidateScore === undefined) return true;
+  return referencedCandidateScore >= MERGE_RETRACT_SCORE_FLOOR;
+}
+
+/**
+ * YUK-557 (Q1b) — deterministic per-kind execution gate. weakness/event MERGE is
+ * always forbidden: those are mistake/error trajectories whose history has value
+ * (prompt per-kind rule leans KEEP_BOTH; this hard-enforces it). High-similarity
+ * wrong MERGE is exactly the hole passesStructuralCorroboration structurally
+ * CANNOT plug (score is high precisely when the LLM is most overconfident), so a
+ * kind-based guard is the only cheap close. Returns true = this kind forbids MERGE.
+ */
+export function kindForbidsMerge(kind: string): boolean {
+  return kind === 'weakness' || kind === 'event';
+}
+
 /**
  * Apply confidence threshold: any decision below the threshold is downgraded
  * to KEEP_BOTH (no destructive action on low-confidence judgments).
+ *
+ * NOTE (YUK-557 Q6): this is only the LLM-facing threshold the prompt discloses.
+ * The execution side has TWO more deterministic post-processing gates layered on
+ * top — passesStructuralCorroboration (Q1 mem0-score floor) and kindForbidsMerge
+ * (Q1b per-kind), applied in the reconcile handler's action synthesis
+ * (triggers.ts). Both downgrade to KEEP_BOTH and rewrite `reason` symmetrically,
+ * same as this function, so action↔reason stays consistent in the WAL.
  */
 export function applyConfidenceThreshold(
   decisions: ReconcileDecision[],
