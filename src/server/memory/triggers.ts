@@ -29,10 +29,15 @@ import {
 import {
   type CandidateEntry,
   type NewMemoryEntry,
+  type ReconcileAction,
   ReconcileParseError,
   judgeReconciliation,
+  kindForbidsMerge,
+  passesStructuralCorroboration,
 } from './reconcile-llm';
 import {
+  type PlannedRow,
+  capturePrevState,
   hardDeleteMemory,
   insertPlannedRows,
   loadUnappliedLog,
@@ -461,6 +466,19 @@ export function buildMemoryBriefRegenHandler(
 }
 
 /**
+ * YUK-557 (Q1) — max candidate score for the RETRACT_NEW null-old_index fallback.
+ * outlier-permissive approximation: `max` is the statistic MOST sensitive to a
+ * single entity-boosted candidate spiking to ~0.99, so it biases toward PASSING
+ * the floor. Acceptable because the null-old_index path is the noise∪duplicate
+ * fallback where floor-skip (undefined → gate abstains + log) is the safe
+ * alternative. No scored candidates → undefined (caller logs "floor skipped").
+ */
+function topCandidateScore(cands: CandidateEntry[]): number | undefined {
+  const scores = cands.map((c) => c.score).filter((s): s is number => typeof s === 'number');
+  return scores.length > 0 ? Math.max(...scores) : undefined;
+}
+
+/**
  * P2 (YUK-342): memory reconcile handler.
  *
  * Consumes a batch of new memory ids, searches for existing candidates per new
@@ -550,6 +568,8 @@ export function buildMemoryReconcileHandler(
                 text: r.memory,
                 memory_id: r.id,
                 created_ms: typeof cms === 'number' ? cms : undefined,
+                // YUK-557 (Q1): carry mem0's fused score for the structural gate.
+                score: typeof r.score === 'number' ? r.score : undefined,
               });
             }
           }
@@ -619,30 +639,105 @@ export function buildMemoryReconcileHandler(
         });
 
         // Write-ahead: insert planned rows BEFORE applying (crash safety).
-        // Map decisions to log rows, resolving old_index → memory_id. Out-of-range
-        // indices (LLM hallucination) degrade that decision to a safe KEEP_BOTH
-        // rather than a null-id no-op or a wrong-target supersede.
-        const plannedRows = uniqueDecisions.map((d) => {
+        // Single UNIFIED action synthesis per decision, in fixed order:
+        //   badTarget → per-kind (Q1b) → score-floor (Q1) → final.
+        // reason / old_memory_id / prev_text ALL read the SAME final action, and
+        // every downgrade rewrites `reason` symmetrically so action↔reason never
+        // diverges in the WAL (spec M1 / Lens A A5-1/A5-2). Out-of-range indices
+        // (LLM hallucination) degrade to KEEP_BOTH (existing semantics).
+        // capturePrevState is async → for...of so the write-ahead snapshot is
+        // captured (before apply mutates anything) prior to insert; NEVER capture
+        // at apply-time (a crash-replay would read the already-rewritten payload).
+        const resolvedCollectionName =
+          collectionName ??
+          createMem0Config().vectorStore.config.collectionName ??
+          'learning_project_memories';
+        const plannedRows: PlannedRow[] = [];
+        for (const d of uniqueDecisions) {
           const newMem = newMems[d.new_index];
           const cands = candidatesByNew.get(d.new_index) ?? [];
           const oldMem = d.old_index != null ? cands[d.old_index] : undefined;
           const destructive = d.action === 'SUPERSEDE' || d.action === 'MERGE';
           const badTarget =
             !newMem || (destructive && !oldMem) || (d.action === 'RETRACT_NEW' && !newMem);
-          const action = badTarget ? 'KEEP_BOTH' : d.action;
-          return makePlannedRow({
-            user_id: userId,
-            new_memory_id: newMem?.memory_id ?? null,
-            old_memory_id: action === 'KEEP_BOTH' ? null : (oldMem?.memory_id ?? null),
-            action,
-            reason: badTarget
-              ? `out-of-range index degraded from ${d.action}; ${d.reason}`
-              : d.reason,
-            // Persist the new memory's created_ms (recency) + the LLM decision
-            // (incl. merged_text for MERGE) for the apply step + audit.
-            llm_raw: { ...d, new_created_ms: newMem?.created_ms ?? null },
-          });
-        });
+
+          // 1) bad-target degrade (existing semantics)
+          let action: ReconcileAction = badTarget ? 'KEEP_BOTH' : d.action;
+          let reason = badTarget
+            ? `out-of-range index degraded from ${d.action}; ${d.reason}`
+            : d.reason;
+
+          // 2) per-kind gate (Q1b): weakness/event forbid MERGE
+          if (action === 'MERGE' && newMem && kindForbidsMerge(newMem.kind)) {
+            reason = `Per-kind guard (kind=${newMem.kind} forbids MERGE); downgraded from MERGE. ${reason}`;
+            action = 'KEEP_BOTH';
+            console.warn(
+              `[memory_reconcile] per-kind MERGE suppressed (kind=${newMem.kind}) new_index=${d.new_index}`,
+            ); // Q3 detection
+          }
+
+          // 3) score floor (Q1): MERGE keys on the referenced candidate's score;
+          // RETRACT_NEW on the referenced candidate else topCandidateScore fallback.
+          const referencedScore =
+            action === 'MERGE'
+              ? oldMem?.score
+              : action === 'RETRACT_NEW'
+                ? (oldMem?.score ?? topCandidateScore(cands))
+                : undefined;
+          const corroborated = passesStructuralCorroboration(action, referencedScore);
+          if (!corroborated && (action === 'MERGE' || action === 'RETRACT_NEW')) {
+            reason = `Low structural corroboration (score=${referencedScore}); downgraded from ${action}. ${reason}`;
+            action = 'KEEP_BOTH';
+            console.warn(
+              `[memory_reconcile] score-floor downgrade (score=${referencedScore}) new_index=${d.new_index}`,
+            ); // Q3 detection
+          } else if (
+            (action === 'MERGE' || action === 'RETRACT_NEW') &&
+            referencedScore === undefined
+          ) {
+            console.warn(
+              `[memory_reconcile] score-floor skipped (no candidate score) action=${action} new_index=${d.new_index}`,
+            ); // m8
+          }
+
+          // 4) write-ahead prev snapshot (Q2b). SUPERSEDE/MERGE → old row's
+          // text/full payload; RETRACT_NEW → new row's text (payload=NULL, its
+          // metadata is event-sourced); KEEP_BOTH → NULL. Captured NOW so a
+          // crash-replay can't overwrite it with post-merge state (spec M1).
+          const prevText =
+            action === 'KEEP_BOTH'
+              ? null
+              : action === 'RETRACT_NEW'
+                ? (newMem?.text ?? null)
+                : (oldMem?.text ?? null);
+          let prevMetadata: Record<string, unknown> | null = null;
+          if (action === 'SUPERSEDE' || action === 'MERGE') {
+            const snap = oldMem
+              ? await capturePrevState(db, resolvedCollectionName, oldMem.memory_id)
+              : null;
+            prevMetadata = snap?.metadata ?? null; // missing/absent → NULL; prev_text is the floor
+          }
+
+          plannedRows.push(
+            makePlannedRow({
+              user_id: userId,
+              new_memory_id: newMem?.memory_id ?? null,
+              old_memory_id: action === 'KEEP_BOTH' ? null : (oldMem?.memory_id ?? null),
+              action,
+              reason,
+              // Persist recency + the LLM decision (incl. merged_text for MERGE) +
+              // Q1 gate observability (for future data-driven floor calibration).
+              llm_raw: {
+                ...d,
+                new_created_ms: newMem?.created_ms ?? null,
+                referenced_score: referencedScore ?? null,
+                structurally_corroborated: corroborated,
+              },
+              prev_text: prevText,
+              prev_metadata: prevMetadata,
+            }),
+          );
+        }
         await insertPlannedRows(db, plannedRows);
 
         // Apply phase: execute actions, then mark applied.
