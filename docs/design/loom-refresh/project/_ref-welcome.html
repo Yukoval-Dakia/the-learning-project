@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- READ-ONLY visual reference harness for the cold-start Welcome ① + ColdToday screens.
+     Renders the prototype JSX (components.jsx → q-markdown.jsx → data-onboarding.jsx →
+     screen-onboarding.jsx) on the prototype's OWN base css (loom/screens/practice) so the
+     screenshot is the TARGET look to align the real-app impl against. Not shipped. -->
+<html lang="zh" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ref · welcome</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="loom.css" />
+  <link rel="stylesheet" href="screens.css" />
+  <link rel="stylesheet" href="practice.css" />
+  <link rel="stylesheet" href="onboarding.css" />
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { margin: 0; }
+    /* mimic the app .main content padding so spacing reads true */
+    .ref-main { padding: 32px 40px; max-width: 1100px; margin: 0 auto; }
+  </style>
+</head>
+<body data-anim="on">
+  <div id="root"></div>
+  <script type="text/babel" src="components.jsx"></script>
+  <script type="text/babel" src="q-markdown.jsx"></script>
+  <script type="text/babel" src="data-onboarding.jsx"></script>
+  <script type="text/babel" src="screen-onboarding.jsx"></script>
+  <script type="text/babel">
+    const { useState } = React;
+    function Ref() {
+      const [r, setR] = useState('welcome');
+      const go = (x) => setR(x);
+      const Screen = r === 'cold' ? ColdToday : ScreenWelcome;
+      return (
+        <div className="app">
+          <div className="main">
+            <div className="ref-main">
+              <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+                <button className={'btn btn-' + (r === 'welcome' ? 'primary' : 'secondary') + ' btn-sm'} onClick={() => go('welcome')}>Welcome ①</button>
+                <button className={'btn btn-' + (r === 'cold' ? 'primary' : 'secondary') + ' btn-sm'} onClick={() => go('cold')}>ColdToday</button>
+              </div>
+              <Screen go={go} ui={{}} />
+            </div>
+          </div>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(<Ref />);
+  </script>
+</body>
+</html>
