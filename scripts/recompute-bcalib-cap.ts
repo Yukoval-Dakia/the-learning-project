@@ -44,10 +44,21 @@ export interface RecomputeBCalibCapResult {
   recalibrated: number;
   /** 单题 recalibrateQuestion 抛错被跳过的题数（不阻断其余）。 */
   skipped_failed: number;
+  /**
+   * recalibrateQuestion 返回 updated=false 但**未抛错**（no_anchor / below_threshold）的题数
+   * （YUK-558 bot 轮补——先前这类题既不进 recalibrated 也不进 skipped_failed，operator 无视野）。
+   * 恒等式在 docblock 声明：considered === recalibrated + skipped_failed + skipped_not_updated
+   * （每题恰落一桶）。reason 细分见 skipped_by_reason。
+   */
+  skipped_not_updated: number;
+  /** skipped_not_updated 的 reason 细分（'no_anchor' / 'below_threshold' / …）——operator 诊断。 */
+  skipped_by_reason: Record<string, number>;
   /** 本轮重算题上 median-相对 IPW 截权的总激活条数（YUK-558 M1 clip 可观测）。 */
   clip_activations: number;
   /** 本轮重算批里见过的最小 inclusion probability（fat-tail 深度极值）；无 → null。 */
   min_pi_seen: number | null;
+  /** 本轮重算批里见过的最大 inclusion probability（min-max π 观测面，spec M1）；无 → null。 */
+  max_pi_seen: number | null;
 }
 
 /**
@@ -70,8 +81,11 @@ export async function runRecomputeBCalibCap(db: Db): Promise<RecomputeBCalibCapR
     considered: rows.length,
     recalibrated: 0,
     skipped_failed: 0,
+    skipped_not_updated: 0,
+    skipped_by_reason: {},
     clip_activations: 0,
     min_pi_seen: null,
+    max_pi_seen: null,
   };
 
   if (rows.length === 0) return result;
@@ -83,12 +97,23 @@ export async function runRecomputeBCalibCap(db: Db): Promise<RecomputeBCalibCapR
       const res = await recalibrateQuestion(db, r.question_id);
       if (res.updated) {
         result.recalibrated++;
-        // Clip 可观测聚合（YUK-558 M1）：累加截权激活数 + 追踪最小 π。
+        // Clip 可观测聚合（YUK-558 M1）：累加截权激活数 + 追踪最小/最大 π（fat-tail 深度极值 + min-max π 面）。
         result.clip_activations += res.clipActivations;
         if (res.minPi !== null) {
           result.min_pi_seen =
             result.min_pi_seen === null ? res.minPi : Math.min(result.min_pi_seen, res.minPi);
         }
+        if (res.maxPi !== null) {
+          result.max_pi_seen =
+            result.max_pi_seen === null ? res.maxPi : Math.max(result.max_pi_seen, res.maxPi);
+        }
+      } else {
+        // updated=false 无异常（no_anchor / below_threshold，如 b_calib 存量非空但锚缺失/标签跌破阈值）——
+        // 单计数 + reason 分桶（YUK-558 bot 轮补 operator 视野，闭合
+        // considered === recalibrated + skipped_failed + skipped_not_updated 恒等）。
+        result.skipped_not_updated++;
+        const reason = res.reason ?? 'unknown';
+        result.skipped_by_reason[reason] = (result.skipped_by_reason[reason] ?? 0) + 1;
       }
     } catch (err) {
       // 单题失败不阻断其余（per-question 隔离，同 recalibration_nightly job）。
