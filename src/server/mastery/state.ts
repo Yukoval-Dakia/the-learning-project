@@ -345,6 +345,17 @@ export async function effectiveThetaForKc(
  *   / knowledge-readers / detail) read only `mastery` and are
  *   transparent to the swap; the new fields are opt-in for CI-aware surfaces.
  */
+/**
+ * YUK-559 (S1) — read-model provenance discriminant for a {@link MasteryProjection}
+ * entry. `'observed'` = derived from the KC's own `mastery_state` row (count-driven
+ * p(L) band). `'inferred'` = a KG-borrowed entry synthesised for a requested-but-
+ * unobserved KC by the A5/A6 soft layer (dark). It is a READ-MODEL field only — it is
+ * NEVER persisted into `mastery_state` (adding a column would pollute the three-axis
+ * calibration orthogonality, ADR-0035). Consumers gate borrow-aware behaviour on this
+ * plus `evidence_count`; see {@link isObserved}.
+ */
+export type MasteryProvenance = 'observed' | 'inferred';
+
 export interface MasteryProjection {
   mastery: number;
   // B1 FULL (YUK-420) — ADR-0035 confidence-interval band around the p(L) point.
@@ -362,6 +373,25 @@ export interface MasteryProjection {
   /** YUK-495 #41 — the representative β anchor fed to pfaLogit, exposed so the client can
    *  re-derive the band bit-for-bit from raw evidence (success/fail/β/precision). */
   beta: number;
+  /** YUK-559 (S1) — provenance discriminant (read model). 'observed' for a KC's own
+   *  mastery_state row; 'inferred' for a KG-borrowed synthesized entry. Never persisted. */
+  provenance: MasteryProvenance;
+  /** YUK-559 (S1) — the pre-smoothing RAW θ̂ of an OBSERVED KC whose surfaced `theta_hat`
+   *  was moved in place by the A5/A6 soft layer (applyKgSoftLayer). Present ONLY when the
+   *  layer actually moved this observed KC's mean (flag ON AND θ̃ ≠ θ̂) — ABSENT on the
+   *  flag-off path and for KCs the layer left untouched, so a neighbour-dominated weak
+   *  observation (low precision, mean pulled by neighbours) stays inspectable behind the
+   *  binary provenance flag. Read model only — never persisted. */
+  theta_hat_raw?: number;
+}
+
+/**
+ * YUK-559 (S1) — the provenance discriminant helper. True iff the projection entry is
+ * derived from the KC's own `mastery_state` evidence (NOT a KG-borrowed inferred entry).
+ * Consumers that must not treat a borrowed θ̃ as measured mastery gate on this.
+ */
+export function isObserved(p: Pick<MasteryProjection, 'provenance'>): boolean {
+  return p.provenance === 'observed';
 }
 
 export async function getMasteryProjection(
@@ -419,6 +449,8 @@ export async function getMasteryProjection(
           fail_count: row.fail_count,
           last_outcome_at: row.last_outcome_at ?? null,
           beta,
+          // YUK-559 (S1) — this entry IS the KC's own mastery_state evidence.
+          provenance: 'observed',
         },
       ];
     }),
@@ -542,6 +574,11 @@ async function applyKgSoftLayer(
     const existing = projection.get(id);
     if (existing) {
       // Observed KC: move the surfaced ability mean; leave se / precision / p(L) band.
+      // YUK-559 (S1) — preserve the pre-move raw θ̂ so a neighbour-dominated weak
+      // observation stays inspectable. Only stamp theta_hat_raw when the mean actually
+      // moved (θ̃ ≠ θ̂) — an unmoved observed KC keeps the field absent (flag-off never
+      // reaches here, so the field is absent on the byte-identical path).
+      if (tilde !== existing.theta_hat) existing.theta_hat_raw = existing.theta_hat;
       existing.theta_hat = tilde;
     } else if (Math.abs(tilde - PRIOR_MEAN) > BORROW_EPS) {
       // Unobserved requested KC that borrowed from observed neighbours → mark for a
@@ -575,6 +612,8 @@ async function applyKgSoftLayer(
         fail_count: 0,
         last_outcome_at: null,
         beta,
+        // YUK-559 (S1) — synthesized KG-borrowed entry, NOT this KC's own evidence.
+        provenance: 'inferred',
       });
     }
   }

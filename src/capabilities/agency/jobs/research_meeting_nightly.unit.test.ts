@@ -60,6 +60,7 @@ function projection(mastery: number): MasteryProjection {
     success_count: 1,
     fail_count: 2,
     last_outcome_at: new Date('2026-06-25T00:00:00Z'),
+    provenance: 'observed', // YUK-559 (S1) — mock is an observed KC row
   };
 }
 

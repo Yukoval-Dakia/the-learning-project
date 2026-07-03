@@ -68,6 +68,7 @@ function projection(mastery: number, thetaHat: number, thetaPrecision: number): 
     success_count: 1,
     fail_count: 2,
     last_outcome_at: new Date('2026-06-18T00:00:00Z'),
+    provenance: 'observed', // YUK-559 (S1) — mock is an observed KC row
   };
 }
 
