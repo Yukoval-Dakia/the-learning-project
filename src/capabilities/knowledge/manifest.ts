@@ -170,6 +170,20 @@ export const knowledgeCapability = defineCapability({
         load: () =>
           import('./jobs/merge_attribution_sweep').then((m) => m.buildMergeAttributionSweepHandler),
       },
+      {
+        // YUK-548 (worklist #5, Q4a): projection-drift oracle — weekly REPORT-ONLY sweep over the ON
+        // projection entities (symmetric anchor-gated audit: FIELD_DRIFT + GHOST/MISSING). Detects
+        // out-of-band writes + rowset existence anomalies; NEVER writes an entity table, NEVER
+        // auto-repairs (a projection auto-fix = a silent local SoT flip — red line). Weekly (Mon 04:30
+        // Asia/Shanghai — 30min after merge_attribution_sweep). queue 'llm': it WRITES a fold-inert
+        // forensic breadcrumb, so it joins the DLQ/retry bucket like its siblings ('fast' skips the
+        // DLQ → a dropped run = a silent week-long evidence blind spot). Auto-mounted.
+        name: 'projection_oracle_sweep',
+        schedule: { cron: '30 4 * * 1', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/projection_oracle_sweep').then((m) => m.buildProjectionOracleSweepHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。knowledge_node / knowledge_mutation 的

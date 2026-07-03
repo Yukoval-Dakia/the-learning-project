@@ -24,7 +24,7 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
-import type { ProjectionKind } from './entity-registry';
+import { PROJECTION_ENTITIES, type ProjectionKind } from './entity-registry';
 import {
   edgeRowToSnapshot,
   gatherAndFoldArtifact,
@@ -347,4 +347,164 @@ export async function auditProjectionKind(
       return { checked: rows.length, drift, allowed };
     }
   }
+}
+
+// ── Component 4 (Q4a): symmetric rowset + value audit ─────────────────────────────────────────
+//
+// The CONTINUOUS oracle's read side (§0 table): over the FULL id universe (live rows ∪ event subjects
+// ∪ index anchors), detect (a) out-of-band value changes on anchored rows (FIELD_DRIFT), (b) rows the
+// log implies but that are not live (GHOST — would resurrect on a flip), and (c) anchored live rows
+// the log folds to null (MISSING — out-of-band insert, or the log implies deletion). It does NOT prove
+// reducer correctness (that is structurally tautological on an ON entity — see §0).
+//
+// M3 APPLICABILITY GATE: un-anchored ids are SKIPPED (a pre-event-sourced / §9.3 data-fix row folds to
+// null and would FALSE-positive as GHOST/MISSING). The gate reuses the registry's withGenesisAnchor.
+// The CALLER must run this inside a single REPEATABLE READ tx (M4) so the row read + the event read
+// see one snapshot — otherwise a concurrent write between them fabricates drift.
+
+export type SymmetricVerdict = 'CLEAN' | 'GHOST' | 'MISSING' | 'FIELD_DRIFT';
+
+export interface SymmetricRecord {
+  id: string;
+  kind: ProjectionKind;
+  verdict: Exclude<SymmetricVerdict, 'CLEAN'>;
+  diffs: string[];
+}
+
+interface KindScanData {
+  // id → live-row snapshot (only ids with a live row).
+  liveSnapshots: Map<string, Record<string, unknown>>;
+  // fold(events) for one id — the SAME gather the value audit + write-through shell use.
+  foldOne: (id: string) => Promise<Record<string, unknown> | null>;
+}
+
+// Build the per-kind live-snapshot map + fold closure (mirrors the value-audit per-kind reads/mappers,
+// but keyed by id so the symmetric scan can look a live row up by any universe id).
+async function buildKindScanData(db: DbLike, kind: ProjectionKind): Promise<KindScanData> {
+  const map = new Map<string, Record<string, unknown>>();
+  switch (kind) {
+    case 'knowledge': {
+      const rows = await db.select(KNOWLEDGE_STRUCTURAL_COLUMNS).from(knowledge);
+      for (const row of rows)
+        map.set(row.id, knowledgeRowToSnapshot(row) as Record<string, unknown>);
+      return {
+        liveSnapshots: map,
+        foldOne: async (id) =>
+          (await gatherAndFoldKnowledgeNode(db, id)) as Record<string, unknown> | null,
+      };
+    }
+    case 'knowledge_edge': {
+      const rows = await db.select().from(knowledge_edge);
+      const mesh = rows.filter((e) => e.archived_at === null).map(edgeRowToSnapshot);
+      for (const row of rows) map.set(row.id, edgeRowToSnapshot(row) as Record<string, unknown>);
+      return {
+        liveSnapshots: map,
+        foldOne: async (id) =>
+          (await gatherAndFoldKnowledgeEdgeWithMesh(db, id, mesh)) as Record<
+            string,
+            unknown
+          > | null,
+      };
+    }
+    case 'goal': {
+      const rows = await db.select().from(goal);
+      for (const row of rows) map.set(row.id, goalRowToSnapshot(row) as Record<string, unknown>);
+      return {
+        liveSnapshots: map,
+        foldOne: async (id) => (await gatherAndFoldGoal(db, id)) as Record<string, unknown> | null,
+      };
+    }
+    case 'mistake_variant': {
+      const rows = await db.select().from(mistake_variant);
+      for (const row of rows)
+        map.set(row.id, mistakeVariantRowToSnapshot(row) as Record<string, unknown>);
+      return {
+        liveSnapshots: map,
+        foldOne: async (id) =>
+          (await gatherAndFoldMistakeVariant(db, id)) as Record<string, unknown> | null,
+      };
+    }
+    case 'learning_item': {
+      const rows = await db.select(LEARNING_ITEM_STRUCTURAL_COLUMNS).from(learning_item);
+      const prefetched = await prefetchLearningItemMergeEvents(db);
+      for (const row of rows)
+        map.set(row.id, learningItemRowToSnapshot(row) as Record<string, unknown>);
+      return {
+        liveSnapshots: map,
+        foldOne: async (id) =>
+          (await gatherAndFoldLearningItem(db, id, prefetched)) as Record<string, unknown> | null,
+      };
+    }
+    case 'artifact': {
+      const rows = await db.select().from(artifact);
+      for (const row of rows)
+        map.set(row.id, artifactRowToSnapshot(row) as Record<string, unknown>);
+      return {
+        liveSnapshots: map,
+        foldOne: async (id) =>
+          (await gatherAndFoldArtifact(db, id)) as Record<string, unknown> | null,
+      };
+    }
+    case 'question_block': {
+      const rows = await db.select().from(question_block);
+      for (const row of rows)
+        map.set(row.id, questionBlockRowToSnapshot(row) as Record<string, unknown>);
+      return {
+        liveSnapshots: map,
+        foldOne: async (id) =>
+          (await gatherAndFoldQuestionBlock(db, id)) as Record<string, unknown> | null,
+      };
+    }
+  }
+}
+
+/**
+ * Symmetric (rowset + value) audit of ONE kind over the FULL id universe. Returns the NON-CLEAN
+ * records (allowlisted ids excluded). READ-ONLY — writes nothing. MUST be called inside a single
+ * REPEATABLE READ tx (M4). Un-anchored ids are skipped (M3).
+ */
+export async function auditProjectionKindSymmetric(
+  db: DbLike,
+  kind: ProjectionKind,
+  allowlist: ProjectionAllowlist = {},
+): Promise<SymmetricRecord[]> {
+  const adapter = PROJECTION_ENTITIES[kind];
+  const live = await adapter.liveIds(db);
+  const subjects = await adapter.eventSubjectIds(db);
+  const universe = [...new Set([...live, ...subjects])];
+  const anchored = await adapter.withGenesisAnchor(db, universe);
+  const { liveSnapshots, foldOne } = await buildKindScanData(db, kind);
+
+  const out: SymmetricRecord[] = [];
+  for (const id of universe) {
+    if (allowlist[id]) continue; // known-acceptable divergence
+    if (!anchored.has(id)) continue; // M3 — un-anchored (fold-blind) row: skip, never false-positive
+    const fold = await foldOne(id);
+    const liveSnap = liveSnapshots.get(id) ?? null;
+    if (liveSnap !== null) {
+      if (fold === null) {
+        out.push({
+          id,
+          kind,
+          verdict: 'MISSING',
+          diffs: [
+            '<fold-null>: an anchored live row folds to null (out-of-band insert / log implies deletion)',
+          ],
+        });
+      } else {
+        const diffs = diffSnapshots(liveSnap, fold);
+        if (diffs.length > 0) out.push({ id, kind, verdict: 'FIELD_DRIFT', diffs });
+      }
+    } else if (fold !== null) {
+      out.push({
+        id,
+        kind,
+        verdict: 'GHOST',
+        diffs: [
+          '<ghost>: fold(events) yields a row with no live counterpart (out-of-band delete; would resurrect on flip)',
+        ],
+      });
+    }
+  }
+  return out;
 }
