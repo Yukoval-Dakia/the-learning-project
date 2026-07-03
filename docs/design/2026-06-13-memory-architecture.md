@@ -121,9 +121,19 @@ UPDATE <collection> SET payload = payload || jsonb_build_object(
 
 延迟分布证实调和**必须走后台 job**，不做 add 后同步内联（add 本身已含抽取 LLM 2-5s+，交互路径不可叠加）。查询端 superseded 过滤兜底，调和延迟几秒到几十秒可接受——过渡窗口最坏只是「短暂看到两条相近记忆」。
 
+**YUK-557（可回滚化 + 双闸，2026-07-03）**——破坏性动作（MERGE/RETRACT_NEW/SUPERSEDE）从「单一 0.6 自报置信度独家授权」收紧为可回滚 + 双闸后处理层（与 `applyConfidenceThreshold` 同架构层次，**不改 prompt 结构/四态动作空间**）：
+
+- **第二道非 LLM 结构闸（Q1）**：`passesStructuralCorroboration`（`reconcile-llm.ts`）——MERGE/RETRACT_NEW 除 0.6 置信度外，还要求被引用候选的 mem0 融合 `score ≥ MERGE_RETRACT_SCORE_FLOOR`（0.5，**未经数据校准的保守初值，非拟合**；n=1 红线）。MERGE 挂具体候选分；RETRACT_NEW 挂具体候选或 `topCandidateScore`（max，outlier-permissive 近似）；候选集空 → 闸 abstain + `floor skipped (no score)` 结构化日志。SUPERSEDE/KEEP_BOTH 免闸（软取代可逆）。
+- **确定性 per-kind 执行闸（Q1b）**：`kindForbidsMerge`——`weakness`/`event` 的 MERGE 一律降级 KEEP_BOTH（错题/事件轨迹历史，高相似误 MERGE 是 score-floor 结构上补不了的洞）。
+- **统一 action 合成 + 对称 reason 重写**：`triggers.ts` 的 plannedRows 合成按 `badTarget → per-kind → score-floor → final` 单一顺序，`reason`/`old_memory_id`/`prev_text` 全读同一 final action，每次降级对称重写 `reason`（保 action↔reason 一致，不回归「可追溯」）。
+- **写路径不告知 LLM 该双闸（Q6 决策，非断言）**：score floor 消费 LLM 拿不到、无法数值推理的 mem0 融合分，披露不改善校准；仅同步 `applyConfidenceThreshold` docstring + prompt CONFIDENCE 行注释。
+
 ### 3.5 审计与拓扑
 
 - **自建 `memory_reconciliation_log`（Postgres）是唯一完整证据链**：`id, user_id, new_memory_id, old_memory_id, action, reason, llm_raw, planned_at, applied_at`。mem0 自身 history 缺 actor/reason、无 user_id 索引，且 jsonb 直写本就绕过它——只作辅助，不作依赖。
+- **YUK-557 可回滚快照列（Q2b）**：`memory_reconciliation_log` 加 `prev_text`(text)/`prev_metadata`(jsonb) 两 nullable 列——ARIES 级 undo（记决策元数据不够，必须记足以重建旧状态的原文）。**write-ahead 阶段捕获**（`insertPlannedRows` 前，非 apply-time——job 起手重放会读到已改写值污染快照，correctness 非 taste）。语义因 action 而异：SUPERSEDE/MERGE 存 old 行原文/完整 payload（`capturePrevState` 只读 SELECT）；RETRACT_NEW 的 `prev_text` 存 new 行原文、`prev_metadata` NULL（其 metadata 由 addEventMemory 刚写、可从 `event` 表溯源）；KEEP_BOTH 恒 NULL。`llm_raw` 另记 `referenced_score`/`structurally_corroborated`（双闸可观测，供将来真实分布回顾校准）。
+- **硬删恢复源分层（Q2a，主次经 Lens B m6 修正）**：MERGE/RETRACT_NEW 硬删从「无墓碑 raw DELETE」切 mem0 官方 `delete()`（`client.hardDelete` 委托）——真删前把 `payload.data` 写 SQLite `memory_history` 墓碑（`is_deleted=1`，`previous_value=原文`）。**主恢复源 = WAL `prev_text`**（在 `archive.ts` 逻辑备份边界内）；**mem0 墓碑 = 免费副保底**（在 `mem0data` 卷、**不在备份边界**，耐久性弱于 WAL）。逐字恢复用 `client.restoreVerbatim(text, metadata)`（`memory.add(text,{infer:false})` 直存，跳抽取 LLM，产新 UUID——**绝不经 `addEventMemory`**，后者 infer:true + eventToText 信封会重跑抽取、非逐字）。运维 runbook：`docs/runbooks/memory-reconcile-undo.md`。
+- **最小检测面（Q3，可回滚依赖可检测）**：每次破坏性 apply / per-kind 降级 / score-floor 降级 / floor 因缺 score 跳过，各打一行可 grep 结构化日志（`[memory_reconcile] ...`）+ runbook 场景 C 批量核查 SQL。完整 admin dashboard/只读端点留 follow-up（本波不建）。
 - **写拓扑**：add（抽取 LLM 2-5s+，同样不适合交互路径）与 reconcile 都经 pg-boss 进 worker 进程执行 → SQLite 单写者约束自然满足；API 进程只做 search/getAll 读（不写 SQLite）。
 - **密钥**：mem0 相关 key（GLM / 百炼）走 compose env 注入，与现有 AI key 管理同轨；不落仓库。
 
