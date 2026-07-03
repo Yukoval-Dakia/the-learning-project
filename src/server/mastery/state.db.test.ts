@@ -557,6 +557,12 @@ describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () 
     expect(proj.size).toBe(2); // no borrowed entries
     expect(proj.get(kA)?.theta_hat).toBe(1.0); // EXACT — no smoothing/propagation
     expect(proj.get(kB)?.theta_hat).toBe(-1.0);
+    // YUK-559 (S1) — flag-off shape anchor: observed provenance + NO theta_hat_raw
+    // (the soft-layer block never runs, so no mean is moved and the raw field is absent).
+    expect(proj.get(kA)?.provenance).toBe('observed');
+    expect(proj.get(kB)?.provenance).toBe('observed');
+    expect(proj.get(kA)?.theta_hat_raw).toBeUndefined();
+    expect(proj.get(kB)?.theta_hat_raw).toBeUndefined();
   });
 
   it('A5 ON: an UNOBSERVED requested KC borrows θ̃ from an observed related_to neighbour (low-confidence)', async () => {
@@ -576,8 +582,15 @@ describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () 
     expect(borrowed?.theta_hat).toBeGreaterThan(0);
     expect(borrowed?.theta_hat).toBeLessThan(2.0);
     expect(borrowed?.evidence_count).toBe(0); // synthesized cold-start counts
+    // YUK-559 (S1) — the borrowed entry is provenance 'inferred'; its band stays the
+    // cold σ(−β) (double-axis by design — M1 撤回 pin: the numeric semantics are unchanged).
+    expect(borrowed?.provenance).toBe('inferred');
     // MEAN-ONLY: the observed KC keeps its OWN precision/SE (variance NOT shrunk).
     expect(proj.get(kObs)?.theta_precision).toBe(5);
+    // The observed neighbour stays provenance 'observed'. It got smoothed toward the
+    // unobserved node (κ ridge + neighbour coupling), so its raw θ̂ IS preserved.
+    expect(proj.get(kObs)?.provenance).toBe('observed');
+    expect(proj.get(kObs)?.theta_hat_raw).toBeCloseTo(2.0, 12);
   });
 
   it('A5 ON: contrasts_with is EXCLUDED from smoothing (reverse signal never borrows)', async () => {
@@ -621,6 +634,12 @@ describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () 
     // MEAN-ONLY: precision untouched on both.
     expect(proj.get(kDep)?.theta_precision).toBe(4);
     expect(proj.get(kPre)?.theta_precision).toBe(4);
+    // YUK-559 (S1) — both observed KCs had their mean moved by A6, so theta_hat_raw
+    // preserves the pre-move θ̂ (dependent 2.0, prereq 0.0); provenance stays 'observed'.
+    expect(proj.get(kDep)?.provenance).toBe('observed');
+    expect(proj.get(kPre)?.provenance).toBe('observed');
+    expect(proj.get(kDep)?.theta_hat_raw).toBe(2.0);
+    expect(proj.get(kPre)?.theta_hat_raw).toBe(0.0);
   });
 
   it('A6 ON: archived edges (archived_at NOT NULL) are ignored (ADR-0034 soft-archive)', async () => {
@@ -645,6 +664,11 @@ describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () 
     const proj = await getMasteryProjection(db, [kPre, kDep]);
     expect(proj.get(kDep)?.theta_hat).toBe(2.0); // unchanged — archived edge ignored
     expect(proj.get(kPre)?.theta_hat).toBe(0.0);
+    // YUK-559 (S1) — nothing moved (soft layer short-circuits on empty edges) → no
+    // theta_hat_raw stamped, provenance 'observed'.
+    expect(proj.get(kDep)?.theta_hat_raw).toBeUndefined();
+    expect(proj.get(kPre)?.theta_hat_raw).toBeUndefined();
+    expect(proj.get(kDep)?.provenance).toBe('observed');
   });
 });
 
