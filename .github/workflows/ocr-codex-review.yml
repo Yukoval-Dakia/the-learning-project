@@ -748,9 +748,20 @@ jobs:
                 }
               }
 
-              const shouldPostSummary = failedCount > 0 || unverifiableCount > 0 || failedComments.length > 0;
+              // Unanchored findings only lived on the failed batch request body; per-comment
+              // fallback posts inline items with an empty review body.
+              const batchReviewLanded = !!(existingReview && existingReview.found);
+              const shouldPostSummary =
+                failedCount > 0 ||
+                unverifiableCount > 0 ||
+                failedComments.length > 0 ||
+                (commentsWithoutLine.length > 0 && !batchReviewLanded);
               if (!shouldPostSummary) {
-                console.log('All inline comments posted successfully; skipping separate summary issue comment.');
+                if (commentsWithoutLine.length > 0 && batchReviewLanded) {
+                  console.log('Unanchored findings are in the landed batch review body; skipping issue summary.');
+                } else {
+                  console.log('All inline comments posted successfully; skipping separate summary issue comment.');
+                }
               } else {
               let finalBody = headerLines.join('\n');
               finalBody += formatSummaryComments(commentsWithoutLine);
