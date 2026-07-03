@@ -14,7 +14,7 @@
 // request-path double-write. Run it against a PROD-CLONE that has cleared the entity's B3 gate.
 //
 // CLI:
-//   pnpm capture-golden --kind=goal    # writes scripts/golden/goal-<YYYY-MM-DD>.json
+//   pnpm capture:golden --kind=goal    # writes scripts/golden/goal-<YYYY-MM-DD>.json
 
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { eq, inArray, or } from 'drizzle-orm';
 
 import type { FoldEvent } from '@/core/projections/fold-event';
-import { type Db, type Tx, db } from '@/db/client';
+import { type Db, db } from '@/db/client';
 import {
   artifact,
   event,
@@ -37,7 +37,7 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
-import { ALL_PROJECTION_KINDS, type ProjectionKind } from '@/server/projections/entity-registry';
+import type { ProjectionKind } from '@/server/projections/entity-registry';
 import { edgeRowToSnapshot, rowToFoldEvent } from '@/server/projections/gather';
 import {
   artifactLiveRowToSnapshot,
@@ -47,8 +47,11 @@ import {
   mistakeVariantLiveRowToSnapshot,
   questionBlockLiveRowToSnapshot,
 } from '@/server/projections/parity';
-
-type DbLike = Db | Tx;
+// PURE re-fold + diff (no side effects; golden-reaudit's CLI is import-gated so importing it here
+// never runs it, and its import of THIS module is type-only — no runtime cycle). Used by main() for
+// the birth self-verification (review K4).
+import { reauditGolden } from './golden-reaudit';
+import { parseKindArg } from './projection-kind-arg';
 
 export interface GoldenSnapshot {
   kind: ProjectionKind;
@@ -112,27 +115,37 @@ const KIND_TABLE = {
  * Capture the golden snapshot for `kind`: every live row → its imperative snapshot, plus the
  * gather-input event superset. READ-ONLY. Pure data (the CLI writes it to disk; the test drives it
  * against the testcontainer without a file).
+ *
+ * Both reads run inside ONE REPEATABLE READ tx (review K4 — birth-snapshot consistency): a concurrent
+ * write landing between the row read and the event read would otherwise freeze a golden whose rows
+ * and events disagree (a dirty baseline that false-DRIFTs forever). Takes a `Db` (not Tx) because it
+ * OWNS the snapshot transaction.
  */
-export async function captureGolden(db: DbLike, kind: ProjectionKind): Promise<GoldenSnapshot> {
-  const liveRows = (await db.select().from(KIND_TABLE[kind])) as Record<string, unknown>[];
-  const rows: Record<string, Record<string, unknown>> = {};
-  for (const row of liveRows) {
-    rows[row.id as string] = rowToSnapshot(kind, row);
-  }
+export async function captureGolden(db: Db, kind: ProjectionKind): Promise<GoldenSnapshot> {
+  return db.transaction(
+    async (tx) => {
+      const liveRows = (await tx.select().from(KIND_TABLE[kind])) as Record<string, unknown>[];
+      const rows: Record<string, Record<string, unknown>> = {};
+      for (const row of liveRows) {
+        rows[row.id as string] = rowToSnapshot(kind, row);
+      }
 
-  const eventRows = await db
-    .select()
-    .from(event)
-    .where(or(eq(event.subject_kind, kind), inArray(event.action, [...CROSS_REF_ACTIONS])));
-  const events = eventRows.map(rowToFoldEvent);
+      const eventRows = await tx
+        .select()
+        .from(event)
+        .where(or(eq(event.subject_kind, kind), inArray(event.action, [...CROSS_REF_ACTIONS])));
+      const events = eventRows.map(rowToFoldEvent);
 
-  return {
-    kind,
-    capturedAt: new Date().toISOString(),
-    rowCount: liveRows.length,
-    rows,
-    events,
-  };
+      return {
+        kind,
+        capturedAt: new Date().toISOString(),
+        rowCount: liveRows.length,
+        rows,
+        events,
+      };
+    },
+    { isolationLevel: 'repeatable read' },
+  );
 }
 
 const GOLDEN_DIR = resolve(fileURLToPath(new URL('./golden', import.meta.url)));
@@ -141,28 +154,35 @@ export function goldenPath(kind: ProjectionKind, date: string): string {
   return resolve(GOLDEN_DIR, `${kind}-${date}.json`);
 }
 
-function parseKindArg(): ProjectionKind {
-  const arg = process.argv.find((a) => a.startsWith('--kind='));
-  const kind = arg?.slice('--kind='.length);
-  if (!kind || !(ALL_PROJECTION_KINDS as readonly string[]).includes(kind)) {
-    console.error(
-      `[capture-golden] --kind=<X> required, one of: ${ALL_PROJECTION_KINDS.join(', ')}`,
-    );
-    process.exit(2);
-  }
-  return kind as ProjectionKind;
-}
-
 async function main(): Promise<void> {
-  const kind = parseKindArg();
+  const kind = parseKindArg('capture-golden');
   const golden = await captureGolden(db, kind);
+
+  // Birth self-verification (review K4): a golden is only a valid baseline if the CURRENT fold
+  // reproduces every imperative row (the fold==imperative certification this capture rides on).
+  // Re-fold the in-memory golden BEFORE writing (reauditGolden is pure — no DB, no side effects);
+  // a drifted capture is REFUSED — never commit a golden that fails its own reaudit at birth.
+  const birth = reauditGolden(golden);
+  if (birth.drifted.length > 0) {
+    console.error(
+      `[capture-golden] REFUSING to write: ${birth.drifted.length}/${birth.checked} ${kind} row(s) do not re-fold to their imperative snapshot — this clone has NOT cleared the B3 gate (fold == imperative row) for this entity. Run B3_GATE_CONFIRM_CLONE=1 pnpm b3:gate, resolve the drift, then re-run pnpm capture:golden --kind=${kind}.`,
+    );
+    for (const d of birth.drifted.slice(0, 10)) {
+      console.error(`  - ${d.id}: ${d.diffs.join('; ')}`);
+    }
+    if (birth.drifted.length > 10) {
+      console.error(`  … and ${birth.drifted.length - 10} more`);
+    }
+    process.exit(1);
+  }
+
   const date = golden.capturedAt.slice(0, 10); // YYYY-MM-DD
   const path = goldenPath(kind, date);
   mkdirSync(dirname(path), { recursive: true });
   // biome-formatted 2-space JSON (never python json.dump) — committed evidence artifact.
   writeFileSync(path, `${JSON.stringify(golden, null, 2)}\n`);
   console.log(
-    `[capture-golden] wrote ${golden.rowCount} ${kind} row(s) + ${golden.events.length} event(s) → ${path}`,
+    `[capture-golden] wrote ${golden.rowCount} ${kind} row(s) + ${golden.events.length} event(s) → ${path} (birth reaudit CLEAN)`,
   );
 }
 

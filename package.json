@@ -43,7 +43,7 @@
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
     "rebuild:projection": "tsx scripts/rebuild-projection.ts",
     "b3:gate": "tsx scripts/b3-gate.ts",
-    "capture-golden": "tsx scripts/capture-golden.ts",
+    "capture:golden": "tsx scripts/capture-golden.ts",
     "audit:golden": "tsx scripts/golden-reaudit.ts",
     "normalize:edge-created-by": "tsx scripts/normalize-edge-created-by.ts",
     "normalize:qb-bbox": "tsx scripts/sweep-question-block-bbox.ts",
