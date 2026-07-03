@@ -21,7 +21,12 @@
 import { isNull } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
+import { newId } from '@/core/ids';
+import type {
+  KnowledgeEdgeRowSnapshotT,
+  LearningItemRowSnapshotT,
+} from '@/core/schema/event/genesis';
+import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import {
   backfillKnowledgeEdgeGenesis,
@@ -32,6 +37,8 @@ import {
   edgeRowToSnapshot,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeEdgeWithMesh,
+  gatherAndFoldLearningItem,
+  prefetchLearningItemMergeEvents,
 } from './gather';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
@@ -224,5 +231,171 @@ describe('gatherAndFoldKnowledgeEdgeWithMesh', () => {
     const projected = await gatherAndFoldKnowledgeEdgeWithMesh(db, 'ke_rp', []);
     expect(projected?.from_knowledge_id).toBe('kn_r');
     expect(projected?.to_knowledge_id).toBe('kn_p');
+  });
+});
+
+// ── YUK-547: learning_item merge-event prefetch threading ─────────────────────────────────────
+//
+// gatherAndFoldLearningItem's Q3 leg (every knowledge_merge propose event + the accept rates
+// chained to them) is item-INDEPENDENT, so a full-table audit re-ran the two full-table SELECTs
+// per item (O(N × full table)). prefetchLearningItemMergeEvents fetches them ONCE and threads them
+// into each fold. These tests prove the threading is (1) EQUIVALENT to the self-fetching path and
+// (2) actually eliminates the per-item full-table SELECTs (the named perf hotspot).
+
+const LI_T0 = new Date('2026-06-01T00:00:00.000Z');
+
+function liGenesisSnapshot(id: string, knowledgeIds: string[]): LearningItemRowSnapshotT {
+  return {
+    id,
+    source: 'learning_intent',
+    source_ref: null,
+    title: `Item ${id}`,
+    content: 'content',
+    knowledge_ids: knowledgeIds,
+    primary_artifact_id: null,
+    parent_learning_item_id: null,
+    status: 'pending',
+    user_pinned: false,
+    completed_at: null,
+    dismissed_at: null,
+    archived_at: null,
+    archived_reason: null,
+    created_at: LI_T0,
+    updated_at: LI_T0,
+    version: 0,
+  };
+}
+
+async function seedLearningItemGenesis(id: string, knowledgeIds: string[]): Promise<void> {
+  await testDb()
+    .insert(event)
+    .values({
+      id: newId(),
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: 'genesis-backfill',
+      action: 'experimental:genesis',
+      subject_kind: 'learning_item',
+      subject_id: id,
+      outcome: 'success',
+      payload: { row: liGenesisSnapshot(id, knowledgeIds) },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: LI_T0,
+    });
+}
+
+// Seed an ACCEPTED knowledge_merge (propose event on the survivor + accept rate chained to it).
+async function seedAcceptedMerge(fromIds: string[], intoId: string): Promise<void> {
+  const db = testDb();
+  const proposeId = newId();
+  await db.insert(event).values({
+    id: proposeId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: 'experimental:knowledge_merge',
+    subject_kind: 'knowledge',
+    subject_id: intoId,
+    outcome: 'partial',
+    payload: { from_ids: fromIds, into_id: intoId },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(LI_T0.getTime() + 1000),
+  });
+  await db.insert(event).values({
+    id: newId(),
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: proposeId,
+    outcome: 'success',
+    payload: { rating: 'accept' },
+    caused_by_event_id: proposeId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(LI_T0.getTime() + 2000),
+  });
+}
+
+// Count-instrumenting Proxy over a drizzle db: increments `counter.n` per `.select()` call. Only
+// `.select()` is intercepted; `.from()/.where()` run on the real (un-proxied) builder the real
+// select returns, so query behavior is unchanged — the counter just distinguishes prefetched
+// (N q1 SELECTs) from self-fetching (N × [q1 + merges + rates]).
+function countingDb(base: Db, counter: { n: number }): Db {
+  return new Proxy(base as object, {
+    get(target, prop, receiver) {
+      if (prop === 'select') {
+        return (...args: unknown[]) => {
+          counter.n += 1;
+          return (target as { select: (...a: unknown[]) => unknown }).select(...args);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  }) as Db;
+}
+
+describe('gatherAndFoldLearningItem — YUK-547 merge-event prefetch threading', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('threading a prefetched merge set folds IDENTICALLY to the self-fetching path (across items + a rewrite)', async () => {
+    const db = testDb();
+    // li_a's KC k_a is absorbed by an accepted merge into k_c → its fold rewrites knowledge_ids.
+    // li_b's KC k_x is untouched → its fold is a no-op merge. Both must agree self-fetch vs prefetch.
+    await seedLearningItemGenesis('li_a', ['k_a']);
+    await seedLearningItemGenesis('li_b', ['k_x']);
+    await seedAcceptedMerge(['k_a'], 'k_c');
+
+    const prefetched = await prefetchLearningItemMergeEvents(db);
+    // the prefetch carries the merge propose event + its accept rate (2 rows).
+    expect(prefetched).toHaveLength(2);
+
+    for (const id of ['li_a', 'li_b']) {
+      const selfFetch = await gatherAndFoldLearningItem(db, id);
+      const threaded = await gatherAndFoldLearningItem(db, id, prefetched);
+      expect(threaded).toEqual(selfFetch);
+    }
+    // sanity: the merge actually rewrote li_a's knowledge_ids (non-trivial fold).
+    expect((await gatherAndFoldLearningItem(db, 'li_a', prefetched))?.knowledge_ids).toEqual([
+      'k_c',
+    ]);
+    expect((await gatherAndFoldLearningItem(db, 'li_b', prefetched))?.knowledge_ids).toEqual([
+      'k_x',
+    ]);
+  });
+
+  it('perf smoke: threading eliminates the per-item full-table merge SELECTs (1 prefetch, not N)', async () => {
+    const db = testDb();
+    const itemIds = ['li_1', 'li_2', 'li_3'];
+    for (const id of itemIds) await seedLearningItemGenesis(id, ['k_a']);
+    await seedAcceptedMerge(['k_a'], 'k_c');
+
+    const counter = { n: 0 };
+    const cdb = countingDb(db, counter);
+
+    // Prefetch ONCE: the full-table merge SELECT + the chained-rate SELECT = exactly 2 selects.
+    counter.n = 0;
+    const prefetched = await prefetchLearningItemMergeEvents(cdb);
+    expect(counter.n).toBe(2);
+
+    // Folding N items WITH the prefetched set issues exactly ONE SELECT per item (the subject-keyed
+    // q1) — zero per-item merge/rate re-fetches.
+    counter.n = 0;
+    for (const id of itemIds) await gatherAndFoldLearningItem(cdb, id, prefetched);
+    expect(counter.n).toBe(itemIds.length);
+
+    // Folding N items self-fetching re-runs q1 + merges + rates per item (3 × N) — the O(N × full
+    // table) hotspot the prefetch removes.
+    counter.n = 0;
+    for (const id of itemIds) await gatherAndFoldLearningItem(cdb, id);
+    expect(counter.n).toBe(itemIds.length * 3);
   });
 });

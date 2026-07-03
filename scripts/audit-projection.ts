@@ -63,6 +63,7 @@ import {
   gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
+  prefetchLearningItemMergeEvents,
 } from '@/server/projections/gather';
 // SHARED structural deep-diff — the B3 audit MUST use the same equality as the in-tx accept
 // assert (src/server/projections/parity.ts), or it would be blind to the drift it gates. (#580)
@@ -391,8 +392,12 @@ export async function auditProjection(
   // fold(events) on a snapshot column is DRIFT; a difference only in an excluded column never enters
   // the diff (those columns are absent from both the SELECT and the snapshot).
   const learningItems = await db.select(LEARNING_ITEM_STRUCTURAL_COLUMNS).from(learning_item);
+  // YUK-547 — the merge legs (every knowledge_merge propose event + the accept rates chained to them)
+  // are item-INDEPENDENT, so prefetch them ONCE for the whole scan instead of re-running the two
+  // full-table SELECTs per item (O(N × full table) → O(full table + N)); thread into each fold.
+  const prefetchedMergeEvents = await prefetchLearningItemMergeEvents(db);
   for (const row of learningItems) {
-    const expected = await gatherAndFoldLearningItem(db, row.id);
+    const expected = await gatherAndFoldLearningItem(db, row.id, prefetchedMergeEvents);
     const diffs = diffSnapshots(
       learningItemRowToSnapshot(row),
       expected as Record<string, unknown> | null,

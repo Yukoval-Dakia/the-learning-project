@@ -270,30 +270,51 @@ export async function gatherAndFoldMistakeVariant(
  *     chained (caused_by_event_id) to the gathered merge propose events.
  * Returns the projected row or null. Writes NOTHING.
  */
+/**
+ * Prefetch the item-INDEPENDENT merge-event superset the learning_item fold's Q3 leg (YUK-543)
+ * consumes: EVERY `experimental:knowledge_merge` propose event PLUS the accept `rate` events chained
+ * to them. READ-ONLY.
+ *
+ * YUK-547 — this pair of full-table SELECTs does NOT depend on itemId (the same merges + rates apply
+ * to every item), so a full-table audit that folds N items would re-run them N times (O(N × full
+ * table)). Fetch it ONCE and thread the result into each `gatherAndFoldLearningItem` call via
+ * `prefetchedMergeEvents` (O(full table + N)). Returns the union of merge propose events + their
+ * accept rates — the exact rows the un-prefetched path adds to `byId` beyond Q1, so the two paths
+ * fold identically (equivalence tested in gather.db.test.ts).
+ */
+export async function prefetchLearningItemMergeEvents(db: DbLike): Promise<EventRow[]> {
+  // Q3 (YUK-543): every knowledge_merge propose event (chain-safe; see the doc on the fold below).
+  const merges = await db
+    .select()
+    .from(event)
+    .where(eq(event.action, 'experimental:knowledge_merge'));
+  if (merges.length === 0) return [];
+  // accept rates chained to the merge propose events (the reducer gates the rewrite on acceptance).
+  const mergeIds = merges.map((r) => r.id);
+  const rates = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, mergeIds)));
+  return [...merges, ...rates];
+}
+
 export async function gatherAndFoldLearningItem(
   db: DbLike,
   itemId: string,
+  prefetchedMergeEvents?: EventRow[],
 ): Promise<LearningItemRowSnapshotT | null> {
   const q1 = await db
     .select()
     .from(event)
     .where(and(eq(event.subject_kind, 'learning_item'), eq(event.subject_id, itemId)));
 
-  // Q3 (YUK-543): every knowledge_merge propose event (chain-safe; see the doc above).
-  const q3 = await db.select().from(event).where(eq(event.action, 'experimental:knowledge_merge'));
+  // Q3 (YUK-543) + accept-rate chain: item-INDEPENDENT merge events. A full-table caller (the
+  // auditor) prefetches them ONCE (YUK-547) and threads them in; a single-item caller passes nothing
+  // and this fetches the same superset here. Either way `byId` ends up with the identical row set.
+  const mergeEvents = prefetchedMergeEvents ?? (await prefetchLearningItemMergeEvents(db));
 
   const byId = new Map<string, EventRow>();
-  for (const r of [...q1, ...q3]) byId.set(r.id, r);
-
-  // accept rates chained to the merge propose events (the reducer gates the rewrite on acceptance).
-  const mergeIds = q3.map((r) => r.id);
-  if (mergeIds.length > 0) {
-    const rates = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, mergeIds)));
-    for (const r of rates) byId.set(r.id, r);
-  }
+  for (const r of [...q1, ...mergeEvents]) byId.set(r.id, r);
 
   const foldEvents = [...byId.values()].map(rowToFoldEvent);
   return foldLearningItem(itemId, foldEvents);
