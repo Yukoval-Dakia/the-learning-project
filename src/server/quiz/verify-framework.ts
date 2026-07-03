@@ -23,6 +23,11 @@
 //     confidence PASS.
 //   - solver model: same as the generator for now (task/prompt already differ);
 //     model 异源 is left as a per-tier `override` knob (zero structural change).
+//
+// TIER3/4 WIRING (YUK-538 / YUK-554, docs/design/2026-07-03-verify-check-spec.md): runSolveCheck
+// + CHECK_SETS_BY_TIER are DECLARED here; the tier3/4 CONSUMER is quiz_verify.ts (tier2 is
+// source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
+// solve_check" as a bug in THIS file; the consumer lives in the handler.
 import type { SourceTier } from '@/core/schema/provenance';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 
@@ -55,9 +60,10 @@ export type VerifyCheck =
 //   tier 4 generated — purely generated; the existing grounding/copy_safety/
 //                      knowledge_hit checks (quiz_verify.ts §5) + solve-check.
 //
-// NOTE: this slice DECLARES the config + ships solve-check. It does NOT rewrite the
-// already-green tier-4 quiz_verify flow (plan §2.4 — keep that handler physically
-// unchanged); slice 3/4 add kind_conformance + solve-check into the live handlers.
+// NOTE: this slice DECLARED the config + shipped solve-check. kind_conformance (YUK-225) and
+// solve_check (YUK-538 / YUK-554) are now BOTH consumed by the live tier3/4 handler
+// (quiz_verify.ts); tier2's set is consumed by source_verify.ts. Every check named in a tier's
+// set now has a live consumer — CHECK_SETS_BY_TIER is the single source of truth the handlers read.
 export const CHECK_SETS_BY_TIER: Record<SourceTier, readonly VerifyCheck[]> = {
   1: ['structure_completeness', 'knowledge_hit'],
   2: ['structure_completeness', 'source_consistency', 'solve_check', 'dedup'],
