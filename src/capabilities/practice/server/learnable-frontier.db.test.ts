@@ -117,6 +117,33 @@ async function setNearMastered(kc: string): Promise<void> {
     .onConflictDoNothing();
 }
 
+/**
+ * YUK-551 (spec Q4/M4) — the kg-borrowing borrow-branch SHAPE: high p(L) point estimate BUT
+ * evidence_count=0. getMasteryProjection computes `mastery` = σ(pfaLogit(β, γ, ρ, success,
+ * fail)) purely from success/fail (β=0 for an unanchored KC) and reads `evidence_count`
+ * straight from the column — so success=4/fail=0/evidence_count=0 → point=σ(2.0)=0.88 ≥ 0.7
+ * with evidence 0. That is exactly the态 the borrow branch synthesizes (state.ts: mastery=
+ * band.point可≥0.7, evidence_count:0, low_confidence:true) — distinct from setNearMastered's
+ * 3-corrects shape (evidence 3). Directly inserts the row per the M4 note ("直插一行
+ * mastery_state 令 point≥0.7、evidence_count=0"). */
+async function setHighPlZeroEvidence(kc: string): Promise<void> {
+  await seedKc(kc);
+  await testDb()
+    .insert(mastery_state)
+    .values({
+      id: createId(),
+      subject_kind: 'knowledge',
+      subject_id: kc,
+      theta_hat: 0,
+      evidence_count: 0,
+      success_count: 4,
+      fail_count: 0,
+      theta_precision: 4,
+      updated_at: new Date(),
+    })
+    .onConflictDoNothing();
+}
+
 describe('learnableFrontier (B3, YUK-349 #3)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -356,6 +383,23 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
     await setMastered('F');
     const frontier = await learnableFrontier(testDb());
     expect(frontier).toEqual([]);
+  });
+
+  it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-branch shape) does NOT satisfy a dependent, even at high p(L) → dependent gated OUT through the real gate', async () => {
+    // 前瞻锚定（YUK-551 spec Q4；register 单元 kg-borrowing-prereq-propagation-sprawl,
+    // state.ts 借值分支硬编码 evidence_count:0）。两 flag（GRAPH_LAPLACIAN_ENABLED /
+    // PREREQ_THETA_PROPAGATION_ENABLED）今 dark。本测经完整 gate（learnableFrontierResolved /
+    // learnableFrontier）钉:evidence_count=0 的 prereq 即便 p(L) 很高（σ(2.0)=0.88）也永不过
+    // floor（4）→ 其 dependent 被 gate out。与既有 (l)（3 corrects, evidence 3, prereq 角色）、
+    // (m)（self 角色）、(n)（边界=4）互补,专钉「借来的 0-evidence prereq」这一 flag-翻转后的路径。
+    // 归属:test 归本单元(gate 防御性质属 gate 测试面);借值分支自身正确性 = kg-borrowing 单元
+    // remediation（tracked trigger 归 register #6,本测只钉交叉引用)。
+    await seedPrereq('p1', 'F'); // p1 is F's only prerequisite.
+    await setHighPlZeroEvidence('p1'); // borrow-branch shape: p(L)=0.88 but evidence_count=0.
+    await setNotMastered('F');
+    // F's only prereq p1 clears p(L) 0.7 but NOT the evidence floor → NOT mastered-enough →
+    // F gated OUT (distinct from (l)'s 3-corrects shape; this is the evidence_count=0 shape).
+    expect(await learnableFrontier(testDb())).toEqual([]);
   });
 
   // ── YUK-551 (spec Q1) — overflow single-point emit observability ────────────────
