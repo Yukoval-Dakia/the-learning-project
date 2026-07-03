@@ -4,6 +4,11 @@
 // PORT 自设计源 docs/design/loom-refresh/project/screen-knowledge-a5.jsx 的 FrontierRail。
 // 偏离 mock：① 复用 S1 的 BandChip（真 mastery_lo/hi/low_confidence，非 mock 估算）；
 // ② 不强制 .wenyan serif（rail 跨科目，古文不当主角）；③ 空 frontier 显式诚实空态。
+//
+// 措辞红线（YUK-551 spec §Q6；Cosyn et al. 2021 JMP 实证 outer-fringe 首答正确率仅 ~27%）:
+// 「下一步/学得动」是**结构可达性**信号（前置已掌握）,不是「容易/该会/正确率高」信号——rail
+// 文案（标题「下一步,你学得动这些」/ frontier-sub / reason）不得引入难度或正确率承诺措辞。
+// 详见 docs/design/2026-07-03-frontier-gate-spec.md §Q6。
 
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { BandChip } from './BandChip';

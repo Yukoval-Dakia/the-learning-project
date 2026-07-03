@@ -78,6 +78,9 @@ interface PendingPrereqProposal {
   reason: string | null;
 }
 
+// 措辞红线（YUK-551 spec §Q6；Cosyn et al. 2021 JMP 实证 outer-fringe 首答正确率仅 ~27%）:
+// frontier 是「结构可达」信号,不是「容易/该会/正确率高」信号——不要在这段 reason 文案引入
+// 后者措辞。详见 docs/design/2026-07-03-frontier-gate-spec.md §Q6。
 /** Dense-half reason: every prereq is mastered by the gate, so it is a deterministic count. */
 function denseReason(prereqCount: number): string {
   return prereqCount > 0 ? `已掌握全部 ${prereqCount} 个前置` : '前置已满足';
