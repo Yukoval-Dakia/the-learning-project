@@ -16,6 +16,10 @@ function stubClient(search: MemoryClient['search'] = vi.fn(async () => ({ result
   const client: MemoryClient = {
     addEventMemory: vi.fn(async () => ({ results: [] })),
     search,
+    // YUK-557: this read-only tool never mutates memory — unused no-op stubs.
+    hardDelete: vi.fn(),
+    history: vi.fn(async () => []),
+    restoreVerbatim: vi.fn(async () => ({ results: [] })),
   };
   return { client, search };
 }
