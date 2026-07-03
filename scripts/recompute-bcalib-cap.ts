@@ -8,9 +8,14 @@
 // 对存量 `b_calib IS NOT NULL` 的题跑一遍全量重算（recalibrateQuestion 同输入 ⇒ 纯 re-run ⇒
 // 幂等），把 cap 的 bias-for-variance 收益追溯到已污染的存量值。
 //
-// IDEMPOTENT (single-run). recalibrateQuestion 是确定性的全量重算（每次跑都从该题的全部
-// difficulty_calibration_label 重新算 b_calib）——同标签集 ⇒ 同输出。重跑此脚本对已 cap 过的
-// 题是 no-op（b_calib 不变）。每题独立 try/catch（per-question 失败不阻断其余，同夜跑 job）。
+// IDEMPOTENT — 值幂等 vs 写幂等分开陈述（C5，诚实化）：
+//   - **值幂等**：recalibrateQuestion 是确定性的全量重算（每次跑都从该题的全部
+//     difficulty_calibration_label 重新算 b_calib）——**同标签集 ⇒ 同 b_calib**。重跑此脚本对
+//     已 cap 过的题 b_calib 不变（值层面 no-op）。
+//   - **写非幂等**：即便 b_calib 值不变，recalibrateQuestion 每跑仍**无条件刷新**
+//     last_calibrated_at / updated_at（`new Date()`）——重跑会推进这两个时间戳。故「幂等」限于
+//     **值**，不含审计时间戳；重跑不是零副作用（对下游按 updated_at 的观测/缓存有影响）。
+//   每题独立 try/catch（per-question 失败不阻断其余，同夜跑 job）。
 //
 // SCOPE. 仅 `item_calibration WHERE track='hard' AND b_calib IS NOT NULL`——只重算**已 firm-up**
 // 的存量；未 firm-up（b_calib NULL）的题由夜跑 job 按常规窗/stale 准入处理（不在本脚本 scope）。
@@ -29,8 +34,8 @@ import './load-env';
 import { db } from '@/db/client';
 import type { Db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
+import { recalibrateQuestion } from '@/server/mastery/recalibration';
 import { and, eq, isNotNull } from 'drizzle-orm';
-import { recalibrateQuestion } from '../src/server/mastery/recalibration';
 
 export interface RecomputeBCalibCapResult {
   /** 候选题数（b_calib IS NOT NULL 的 hard 轨行）。 */

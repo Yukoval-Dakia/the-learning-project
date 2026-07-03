@@ -116,20 +116,22 @@ describe('runRecalibrationNightly', () => {
     expect(cal?.calibration_n).toBe(RECALIBRATION_MIN_LABELS);
   });
 
-  // (a2) YUK-558 M1 — clip 可观测聚合：截权激活数跨 firm-up 题累加，min_pi_seen 追踪最小 π。
-  it('aggregates clip_activations + min_pi_seen across firmed-up questions (YUK-558)', async () => {
-    // Q1: fluke batch (11 honest @π=0.5 + 1 fluke @π=4e-4) → 1 clip activation, minPi=4e-4.
-    const qFluke = createId();
-    await seedQuestion(qFluke);
-    await seedItemCalibration(qFluke, 0.0);
-    await seedLabels(qFluke, RECALIBRATION_MIN_LABELS - 1, {
+  // (a2) YUK-558 M1 — clip 可观测聚合：截权激活数**跨 firm-up 题累加**（不是单赋值），min_pi_seen
+  // 追踪最小 π。Q1=1 fluke（clip 1）+ Q2=2 fluke（clip 2）⇒ 断 clip_activations === 3（1+2）——单赋值
+  // 给 1 或 2 会被确定性击杀（C8③：证累加而非覆盖）。
+  it('aggregates clip_activations (accumulates, not overwrites) + min_pi_seen across firmed-up questions (YUK-558)', async () => {
+    // Q1: 1-fluke batch (11 honest @π=0.5 + 1 fluke @π=4e-4) → 1 clip activation, minPi=4e-4.
+    const qFluke1 = createId();
+    await seedQuestion(qFluke1);
+    await seedItemCalibration(qFluke1, 0.0);
+    await seedLabels(qFluke1, RECALIBRATION_MIN_LABELS - 1, {
       bLabel: 0.0,
       pi: 0.5,
       createdAt: IN_WINDOW,
     });
     await db.insert(difficulty_calibration_label).values({
       id: newId(),
-      question_id: qFluke,
+      question_id: qFluke1,
       attempt_event_id: createId(),
       theta_snapshot: 0,
       outcome: 0,
@@ -137,20 +139,33 @@ describe('runRecalibrationNightly', () => {
       inclusion_probability: 4e-4,
       created_at: IN_WINDOW,
     });
-    // Q2: homogeneous batch (12 @π=0.5) → 0 clip activations, minPi=0.5.
-    const qClean = createId();
-    await seedQuestion(qClean);
-    await seedItemCalibration(qClean, 0.5);
-    await seedLabels(qClean, RECALIBRATION_MIN_LABELS, {
-      bLabel: 1.5,
+    // Q2: 2-fluke batch (10 honest @π=0.5 + 2 flukes @π=4e-4) → median=2, cap=8 → BOTH clipped
+    //     → 2 clip activations. (C8③：单赋值 bug 会给 1 或 2，累加才给 3。)
+    const qFluke2 = createId();
+    await seedQuestion(qFluke2);
+    await seedItemCalibration(qFluke2, 0.0);
+    await seedLabels(qFluke2, RECALIBRATION_MIN_LABELS - 2, {
+      bLabel: 0.0,
       pi: 0.5,
       createdAt: IN_WINDOW,
     });
+    for (let i = 0; i < 2; i++) {
+      await db.insert(difficulty_calibration_label).values({
+        id: newId(),
+        question_id: qFluke2,
+        attempt_event_id: createId(),
+        theta_snapshot: 0,
+        outcome: 0,
+        b_label: 2.0,
+        inclusion_probability: 4e-4,
+        created_at: IN_WINDOW,
+      });
+    }
 
     const result = await runRecalibrationNightly(db, { now: JOB_NOW });
 
     expect(result.recalibrated).toBe(2);
-    expect(result.clip_activations).toBe(1); // only the fluke question clipped.
+    expect(result.clip_activations).toBe(3); // 1 (Q1) + 2 (Q2) — accumulation, not single-assign.
     expect(result.min_pi_seen).toBeCloseTo(4e-4, 12); // smallest π across both firm-up batches.
   });
 
