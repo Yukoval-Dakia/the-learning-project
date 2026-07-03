@@ -102,6 +102,10 @@ describe('createMemoryClient', () => {
     const memory = {
       add: vi.fn(async () => ({ results: [] })),
       search: vi.fn(async () => ({ results: [{ id: 'm1', memory: 'prefers terse feedback' }] })),
+      // YUK-557: Mem0Like now also surfaces delete/history (used by hardDelete /
+      // history / restoreVerbatim). Unused here — no-op stubs to satisfy the type.
+      delete: vi.fn(async () => ({ message: 'ok' })),
+      history: vi.fn(async () => []),
     };
     const client = createMemoryClient({ env, memoryFactory: () => memory });
 
@@ -151,7 +155,12 @@ describe('createMemoryClient', () => {
       env,
       memoryFactory: (config) => {
         seenConfig = config;
-        return { add: vi.fn(), search: vi.fn() };
+        return {
+          add: vi.fn(),
+          search: vi.fn(),
+          delete: vi.fn(async () => ({ message: 'ok' })),
+          history: vi.fn(async () => []),
+        };
       },
     });
     expect(seenConfig?.llm.config.apiKey).toBe('zhipu-key');
@@ -162,7 +171,12 @@ describe('createMemoryClient', () => {
   it('不暴露 mem0 公开 update()（红线：update 替换式清 payload + textLemmatized）', () => {
     const client = createMemoryClient({
       env,
-      memoryFactory: () => ({ add: vi.fn(), search: vi.fn() }),
+      memoryFactory: () => ({
+        add: vi.fn(),
+        search: vi.fn(),
+        delete: vi.fn(async () => ({ message: 'ok' })),
+        history: vi.fn(async () => []),
+      }),
     });
     expect('update' in client).toBe(false);
   });

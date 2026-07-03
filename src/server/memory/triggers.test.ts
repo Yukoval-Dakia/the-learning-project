@@ -85,7 +85,15 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: { addEventMemory, search: vi.fn() },
+      memoryClient: {
+        addEventMemory,
+        search: vi.fn(),
+        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
+        // these MemoryClient methods are unused no-op stubs (satisfy the type).
+        hardDelete: vi.fn(),
+        history: vi.fn(async () => []),
+        restoreVerbatim: vi.fn(async () => ({ results: [] })),
+      },
     });
 
     await handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>] as Job<{
@@ -132,7 +140,15 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: { addEventMemory, search: vi.fn() },
+      memoryClient: {
+        addEventMemory,
+        search: vi.fn(),
+        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
+        // these MemoryClient methods are unused no-op stubs (satisfy the type).
+        hardDelete: vi.fn(),
+        history: vi.fn(async () => []),
+        restoreVerbatim: vi.fn(async () => ({ results: [] })),
+      },
     });
 
     await handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>] as Job<{
@@ -170,7 +186,15 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: { addEventMemory, search: vi.fn() },
+      memoryClient: {
+        addEventMemory,
+        search: vi.fn(),
+        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
+        // these MemoryClient methods are unused no-op stubs (satisfy the type).
+        hardDelete: vi.fn(),
+        history: vi.fn(async () => []),
+        restoreVerbatim: vi.fn(async () => ({ results: [] })),
+      },
     });
 
     await handler([{ data: { event_id: 'evt_agent' } } as Job<{ event_id: string }>]);
@@ -204,7 +228,15 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: { addEventMemory, search: vi.fn() },
+      memoryClient: {
+        addEventMemory,
+        search: vi.fn(),
+        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
+        // these MemoryClient methods are unused no-op stubs (satisfy the type).
+        hardDelete: vi.fn(),
+        history: vi.fn(async () => []),
+        restoreVerbatim: vi.fn(async () => ({ results: [] })),
+      },
     });
 
     await handler([{ data: { event_id: 'evt_user' } } as Job<{ event_id: string }>]);
@@ -260,7 +292,13 @@ describe('registerMemoryHandlers', () => {
     };
 
     await registerMemoryHandlers(boss, {} as never, {
-      memoryClient: { addEventMemory: vi.fn(), search: vi.fn() },
+      memoryClient: {
+        addEventMemory: vi.fn(),
+        search: vi.fn(),
+        hardDelete: vi.fn(),
+        history: vi.fn(async () => []),
+        restoreVerbatim: vi.fn(async () => ({ results: [] })),
+      },
       generateBrief: vi.fn(),
     });
 
