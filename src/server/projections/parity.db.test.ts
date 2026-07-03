@@ -14,15 +14,34 @@
 
 import { acceptProposal } from '@/capabilities/knowledge/server/proposals';
 import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
-import { event, knowledge, knowledge_edge, materialized_id_index } from '@/db/schema';
+import {
+  event,
+  goal,
+  knowledge,
+  knowledge_edge,
+  learning_item,
+  materialized_id_index,
+  mistake_variant,
+} from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  backfillGoalGenesis,
+  backfillLearningItemGenesis,
+  backfillMistakeVariantGenesis,
+} from '../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
+  assertGoalParity,
   assertKnowledgeEdgeParity,
   assertKnowledgeNodeParity,
+  assertLearningItemParity,
+  assertMistakeVariantParity,
+  goalLiveRowToSnapshot,
   hasKnowledgeNodeGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
+  learningItemLiveRowToSnapshot,
+  mistakeVariantLiveRowToSnapshot,
 } from './parity';
 
 async function insertKnowledge(opts: {
@@ -438,5 +457,108 @@ describe('decideKnowledgeEdgeProposal — accept-time edge parity (via acceptAiP
       created_at: now,
     });
     await expect(assertKnowledgeEdgeParity(db, 'edge_xy', null)).rejects.toThrow(/fold-threw/i);
+  });
+});
+
+// ── YUK-548 (slice 5): OFF-entity prod-warn contract ─────────────────────────────────────────────
+//
+// onParityMismatch's PROD path (NODE_ENV==='production' → console.warn + return, NEVER throw —
+// parity.ts:70-90) was covered for knowledge/edge but not the W2 trio. These three mirror it: seed an
+// event-sourced row, feed a DIVERGENT live snapshot, and assert exactly one console.warn + no throw in
+// production (a live accept must never be broken over a fold/parity divergence).
+describe('assertXParity — OFF-entity prod-warn contract (goal / mistake_variant / learning_item)', () => {
+  const PW_T0 = new Date('2026-06-01T00:00:00.000Z');
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    await resetDb();
+    vi.stubEnv('NODE_ENV', 'production');
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('assertGoalParity: prod warns ONCE + does NOT throw when the live goal diverges from fold(events)', async () => {
+    const db = testDb();
+    await db.insert(goal).values({
+      id: 'g1',
+      title: 'Original',
+      subject_id: null,
+      scope_knowledge_ids: ['k_a'],
+      sequence_hint: 0,
+      status: 'active',
+      source: 'manual',
+      source_ref: null,
+      created_at: PW_T0,
+      updated_at: PW_T0,
+      version: 0,
+    });
+    await backfillGoalGenesis(db, PW_T0); // event-sourced → fold != the divergent snapshot below
+    const [live] = await db.select().from(goal).where(eq(goal.id, 'g1'));
+    if (!live) throw new Error('seed missing');
+    const divergent = { ...goalLiveRowToSnapshot(live), title: 'DIVERGED' };
+
+    await expect(assertGoalParity(db, 'g1', divergent)).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('[projection-parity]');
+  });
+
+  it('assertMistakeVariantParity: prod warns ONCE + does NOT throw on divergence', async () => {
+    const db = testDb();
+    await db.insert(mistake_variant).values({
+      id: 'mv1',
+      parent_question_id: 'q_parent',
+      variant_question_id: null,
+      proposal_event_id: null,
+      status: 'draft',
+      failure_reasons: [],
+      cause_category: 'concept_confusion',
+      created_at: PW_T0,
+      updated_at: PW_T0,
+    });
+    await backfillMistakeVariantGenesis(db, PW_T0);
+    const [live] = await db.select().from(mistake_variant).where(eq(mistake_variant.id, 'mv1'));
+    if (!live) throw new Error('seed missing');
+    const divergent = {
+      ...mistakeVariantLiveRowToSnapshot(live),
+      cause_category: 'careless_error',
+    };
+
+    await expect(assertMistakeVariantParity(db, 'mv1', divergent)).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('[projection-parity]');
+  });
+
+  it('assertLearningItemParity: prod warns ONCE + does NOT throw on divergence', async () => {
+    const db = testDb();
+    await db.insert(learning_item).values({
+      id: 'li1',
+      source: 'learning_intent',
+      source_ref: null,
+      title: 'Original',
+      content: 'content',
+      knowledge_ids: ['k_a'],
+      primary_artifact_id: null,
+      parent_learning_item_id: null,
+      status: 'pending',
+      user_pinned: false,
+      completed_at: null,
+      dismissed_at: null,
+      archived_at: null,
+      archived_reason: null,
+      created_at: PW_T0,
+      updated_at: PW_T0,
+      version: 0,
+    });
+    await backfillLearningItemGenesis(db, PW_T0);
+    const [live] = await db.select().from(learning_item).where(eq(learning_item.id, 'li1'));
+    if (!live) throw new Error('seed missing');
+    const divergent = { ...learningItemLiveRowToSnapshot(live), title: 'DIVERGED' };
+
+    await expect(assertLearningItemParity(db, 'li1', divergent)).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('[projection-parity]');
   });
 });
