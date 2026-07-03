@@ -42,7 +42,7 @@ import {
   attemptLocalDate,
   recalibrateQuestion,
 } from '@/server/mastery/recalibration';
-import { and, count, eq, gte, isNotNull, sql } from 'drizzle-orm';
+import { and, count, eq, gte, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 type DepsOverride = {

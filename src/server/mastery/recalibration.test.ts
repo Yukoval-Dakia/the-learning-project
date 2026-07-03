@@ -91,6 +91,13 @@ describe('aipwMean (ADR-0043 §7 + Hájek self-normalization, FINDING #1)', () =
     expect(() => aipwMean([1, 2], [{ residual: 0.1, pi: -0.3 }])).toThrow(/positivity/i);
   });
 
+  it('throws on π = Infinity (positivity finiteness, C7)', () => {
+    // 非有限 π（Infinity）→ throw。1/∞=0 会静默给该样本零权重（污染 Hájek 分母），必须 fail-fast。
+    expect(() => aipwMean([1, 2], [{ residual: 0.1, pi: Number.POSITIVE_INFINITY }])).toThrow(
+      /finite/i,
+    );
+  });
+
   it('throws on empty pool (N=0 → undefined mean)', () => {
     expect(() => aipwMean([], [])).toThrow(/non-empty/i);
   });
@@ -217,6 +224,39 @@ describe('cappedIpwWeights (median-relative IPW cap, YUK-558 M1)', () => {
     expect(weights[11]).toBeCloseTo(IPW_WEIGHT_CAP_C * 2, 12); // C·median = 8
     for (let i = 0; i < 11; i++) expect(weights[i]).toBe(2); // honest 不动
   });
+
+  it('even-length heterogeneous batch: median = mean of two middle order stats (kills sorted[mid] regression, C8②)', () => {
+    // pis=[0.5,0.25,0.2,0.02] → raw=[2,4,5,50]。median=quantile(0.5)=avg(sorted[1],sorted[2])=avg(4,5)
+    // =4.5（type-7 偶数取中两点均值），**非** sorted[mid=2]=5。cap=C·4.5=18 → 50 截到 18。
+    // 若误用 sorted[mid] 给 median=5 → cap=20 → weights[3]=20≠18 → 本测击杀该回归。
+    const pis = [0.5, 0.25, 0.2, 0.02];
+    const { weights, clipped } = cappedIpwWeights(pis);
+    expect(clipped).toBe(1);
+    expect(weights[3]).toBe(18); // C·median = 4·4.5 = 18（sorted[mid] 会误给 20）
+    expect(weights[0]).toBe(2);
+    expect(weights[1]).toBe(4);
+    expect(weights[2]).toBe(5); // 未截
+  });
+
+  it('k≥2 concurrent flukes erode aggregate mass; k≥n/2 median jump defeats the cap (C6 honest failure mode)', () => {
+    // k=2 flukes（10 honest @π=0.5 w=2 + 2 flukes @π=4e-4）：median=2、cap=8 → 两 fluke 皆截。
+    // 聚合质量 = 2·8 / (10·2 + 2·8) = 16/36 ≈ 44.4% = kC/(kC+n−k)（k=2,C=4,n=12 → 8/18）。
+    const k2 = [...Array(10).fill(0.5), 4e-4, 4e-4];
+    const r2 = cappedIpwWeights(k2);
+    expect(r2.clipped).toBe(2);
+    const cap2 = IPW_WEIGHT_CAP_C * 2;
+    const total2 = r2.weights.reduce((a, w) => a + w, 0);
+    const flukeMass2 = (r2.weights[10] + r2.weights[11]) / total2;
+    expect(flukeMass2).toBeCloseTo((2 * IPW_WEIGHT_CAP_C) / (2 * IPW_WEIGHT_CAP_C + 10), 12); // 8/18
+    expect(flukeMass2).toBeCloseTo(0.4444, 4);
+    expect(cap2).toBe(8);
+
+    // k=6 flukes（≥ n/2）：6 honest w=2 + 6 flukes w=2500。median=avg(sorted[5],sorted[6])=avg(2,2500)
+    // =1251 → cap=4·1251=5004 > 2500 ⇒ **一条也不截**。median 被 fluke 抬跳 ⇒ cap 彻底失效（诚实钉）。
+    const k6 = [...Array(6).fill(0.5), ...Array(6).fill(4e-4)];
+    const r6 = cappedIpwWeights(k6);
+    expect(r6.clipped).toBe(0);
+  });
 });
 
 describe('ppiPlusMean median-relative cap (YUK-558 M1, quantitative leverage)', () => {
@@ -235,15 +275,56 @@ describe('ppiPlusMean median-relative cap (YUK-558 M1, quantitative leverage)', 
     const bCalib = ppiPlusMean(pool, samples, 1);
     expect(bCalib).toBeCloseTo(16 / 30, 12);
     expect(bCalib).toBeLessThan(0.6);
-    // 杠杆闭式上界：capped fluke 质量 ≤ C/(C+n−1)（n=12）。
-    const flukeMass = (IPW_WEIGHT_CAP_C * 2) / (11 * 2 + IPW_WEIGHT_CAP_C * 2);
-    expect(flukeMass).toBeLessThanOrEqual(IPW_WEIGHT_CAP_C / (IPW_WEIGHT_CAP_C + 12 - 1) + 1e-12);
+    // 杠杆闭式上界从**实际 estimator 输出反导**（非硬编码代数恒等式重言，C8⑤）：honest 标签全 0
+    // ⇒ b_calib = flukeMass·2.0（唯一非零贡献是 fluke）⇒ impliedMass = bCalib/2.0 是 estimator
+    // 实测的 fluke 自归一化质量。断它 ≤ C/(C+n−1)（n=12 → C/(C+11)）。
+    const impliedMass = bCalib / 2.0;
+    expect(impliedMass).toBeLessThanOrEqual(IPW_WEIGHT_CAP_C / (IPW_WEIGHT_CAP_C + 11) + 1e-12);
   });
 
   it('uncapped (C=Infinity) fluke dominates ⇒ b_calib ≈ 1.98 > 1.9 (rollback contrast)', () => {
     const bCalibUncapped = ppiPlusMean(pool, samples, 1, Number.POSITIVE_INFINITY);
     expect(bCalibUncapped).toBeCloseTo(5000 / 2522, 9); // (2.0·2500)/(22+2500)
     expect(bCalibUncapped).toBeGreaterThan(1.9);
+  });
+
+  it('estimator-level rollback identity: ppiPlusMean(…, C=∞) === pre-YUK-558 division-form bit-for-bit (C4)', () => {
+    // C4：未截项走 xi/π **单舍入**（与旧实现逐位一致）。内联旧公式复刻（pre-YUK-558 除法形），随机
+    // π/label/λ 批断 ppiPlusMean(pool, samples, λ, ∞) === old（toBe 逐位）。C=∞ ⇒ 无一截 ⇒ 全走除法分支。
+    const oldDivisionForm = (
+      poolPredictions: number[],
+      labeled: LabeledSample[],
+      lambda: number,
+    ): number => {
+      const predictionMean = poolPredictions.reduce((a, b) => a + b, 0) / poolPredictions.length;
+      let correction = 0;
+      let weightSum = 0;
+      for (const s of labeled) {
+        correction += (s.label - lambda * s.prediction) / s.pi; // 除法形（单舍入）
+        weightSum += 1 / s.pi;
+      }
+      return lambda * predictionMean + (weightSum > 0 ? correction / weightSum : 0);
+    };
+    for (let trial = 0; trial < 50; trial++) {
+      const n = 3 + Math.floor(Math.random() * 10);
+      const poolN = 1 + Math.floor(Math.random() * 5);
+      const rndPool = Array.from({ length: poolN }, () => Math.random() * 2 - 1);
+      const rndSamples: LabeledSample[] = Array.from({ length: n }, () => ({
+        label: Math.random() * 4 - 2,
+        prediction: Math.random() * 2 - 1,
+        pi: Math.max(1e-4, Math.random()), // ∈ (0,1]
+      }));
+      const lambda = Math.random();
+      expect(ppiPlusMean(rndPool, rndSamples, lambda, Number.POSITIVE_INFINITY)).toBe(
+        oldDivisionForm(rndPool, rndSamples, lambda),
+      );
+    }
+  });
+
+  it('throws on π = Infinity (positivity finiteness, C7)', () => {
+    expect(() =>
+      ppiPlusMean([1], [{ label: 1, prediction: 0.5, pi: Number.POSITIVE_INFINITY }], 1),
+    ).toThrow(/finite/i);
   });
 
   it('convex combination preserved: capped b_calib ∈ [min label, max label] (λ=1 constant anchor)', () => {
@@ -271,6 +352,32 @@ describe('estimateLambdaStar cap is inert in constant-anchor phase (YUK-558 M1)'
     ];
     expect(estimateLambdaStar(samples)).toBe(1);
     expect(estimateLambdaStar(samples, Number.POSITIVE_INFINITY)).toBe(1);
+  });
+
+  it('constant anchor ∈ {0.1, 0.7, -0.3} × C ∈ {4, ∞} → λ* === 1 (short-circuit precedes moments, C1)', () => {
+    // C1 独立 bug 修复：常数锚短路**真正先于**加权矩（旧 `!(varM>0)` 守卫在矩后、可被 FP 噪声
+    // 逃逸——mBar 求和舍入 ≈1e-17 ⇒ varM≈1e-31>0 ⇒ 吐垃圾 λ*）。fixture = 11 honest @π=0.5 +
+    // 1 fluke @π=4e-4，prediction 全 = anchor（同一变量，严格相等）⇒ 每锚 × 每 C 都短路返回 1。
+    for (const anchor of [0.1, 0.7, -0.3]) {
+      const samples: LabeledSample[] = [
+        ...Array(11)
+          .fill(null)
+          .map(() => ({ label: 0.0, prediction: anchor, pi: 0.5 })),
+        { label: 2.0, prediction: anchor, pi: 4e-4 },
+      ];
+      expect(estimateLambdaStar(samples)).toBe(1);
+      expect(estimateLambdaStar(samples, Number.POSITIVE_INFINITY)).toBe(1);
+    }
+  });
+
+  it('throws on π = Infinity (positivity finiteness, C7)', () => {
+    // n≥2 才过 n<2 早返、进 positivity 循环。非有限 π（Infinity）→ throw（1/π=0 会静默污染 IPW）。
+    expect(() =>
+      estimateLambdaStar([
+        { label: 0.5, prediction: 0.4, pi: 0.5 },
+        { label: 0.6, prediction: 0.5, pi: Number.POSITIVE_INFINITY },
+      ]),
+    ).toThrow(/finite/i);
   });
 });
 

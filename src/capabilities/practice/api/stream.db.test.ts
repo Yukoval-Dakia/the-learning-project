@@ -318,4 +318,40 @@ describe('practice stream API', () => {
     // 到期项始终 present（无论候选抽中与否）。
     expect(body.items.length).toBeGreaterThan(0);
   });
+
+  // YUK-558 C8① — route 级 e2e determinism：GET compose → 快照选集 → 删物化流(+观测行) → 再 GET
+  // → 断选集逐位相同。seed = buildSeededSelectionRng(TODAY, 'compose', TODAY) 两次 GET 同三元组 ⇒
+  // 同 rng ⇒ 同 seeded 抽样序列。含 samplable 非到期候选（走 softmax_mfi seeded 抽样，非仅确定性
+  // decay），runTask mock 出确定性权重（绝不命中 live endpoint）。route 的 3 行 seed 接线（GET
+  // composeDeps.rng）由本测端到端覆盖。
+  it('YUK-558 C8① — route-level GET compose is reproducible bit-for-bit (seeded sampler)', async () => {
+    await seedDueQuestion();
+    const variantId = await seedVariantCandidate();
+    runTaskMock.mockImplementation(async (kind: string) => {
+      expect(kind).toBe('SelectionOrchestratorTask');
+      return {
+        text: JSON.stringify({
+          candidates: [{ refId: variantId, weight: 2, role: 'diagnostic', reason: 'x' }],
+        }),
+      };
+    });
+
+    // 第一次 GET：lazy compose + 持久化选集。
+    const res1 = await GET(getReq('today'));
+    expect(res1.status).toBe(200);
+    const body1 = (await res1.json()) as { items: Array<{ ref_id: string }> };
+    const selection1 = body1.items.map((i) => i.ref_id);
+    expect(selection1.length).toBeGreaterThan(0);
+
+    // 删物化流 + 观测行 → 强制第二次 GET 从头重 compose（否则只读既存流，不重抽）。
+    await testDb().delete(practice_stream_item).where(eq(practice_stream_item.date, TODAY));
+    await testDb().delete(selection_observation).where(eq(selection_observation.date, TODAY));
+
+    // 第二次 GET：同 date ⇒ 同 seed ⇒ 逐位相同选集（seeded 抽样可重构）。
+    const res2 = await GET(getReq('today'));
+    expect(res2.status).toBe(200);
+    const body2 = (await res2.json()) as { items: Array<{ ref_id: string }> };
+    const selection2 = body2.items.map((i) => i.ref_id);
+    expect(selection2).toEqual(selection1);
+  });
 });
