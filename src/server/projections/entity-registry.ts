@@ -129,12 +129,30 @@ async function eventSubjectIdSet(
   return out;
 }
 
+// The 7 projection tables all share a text `id` PK — ONE factory replaces seven identical liveIds
+// closures (review K12). The Record literal below stays fully explicit per kind, so the tsc
+// exhaustiveness guarantee is unaffected.
+type ProjectionTable =
+  | typeof knowledge
+  | typeof knowledge_edge
+  | typeof goal
+  | typeof mistake_variant
+  | typeof learning_item
+  | typeof artifact
+  | typeof question_block;
+
+function liveIdsFrom(table: ProjectionTable): (db: DbLike) => Promise<Set<string>> {
+  return async (db) => {
+    const rows = (await db.select({ id: table.id }).from(table)) as { id: string }[];
+    return new Set(rows.map((r) => r.id));
+  };
+}
+
 export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   knowledge: {
     kind: 'knowledge',
     flagEntity: undefined, // bare global PROJECTION_IS_WRITER (W1)
-    liveIds: async (db) =>
-      new Set((await db.select({ id: knowledge.id }).from(knowledge)).map((r) => r.id)),
+    liveIds: liveIdsFrom(knowledge),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'knowledge', true),
     project: projectKnowledgeNode,
     withGenesisAnchor: knowledgeNodesWithGenesisAnchor,
@@ -142,8 +160,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   knowledge_edge: {
     kind: 'knowledge_edge',
     flagEntity: undefined, // bare global PROJECTION_IS_WRITER (W1)
-    liveIds: async (db) =>
-      new Set((await db.select({ id: knowledge_edge.id }).from(knowledge_edge)).map((r) => r.id)),
+    liveIds: liveIdsFrom(knowledge_edge),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'knowledge_edge', true),
     project: projectKnowledgeEdge,
     withGenesisAnchor: knowledgeEdgesWithGenesisAnchor,
@@ -151,7 +168,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   goal: {
     kind: 'goal',
     flagEntity: 'goal',
-    liveIds: async (db) => new Set((await db.select({ id: goal.id }).from(goal)).map((r) => r.id)),
+    liveIds: liveIdsFrom(goal),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'goal', true),
     project: projectGoalGuarded,
     withGenesisAnchor: goalsWithGenesisAnchor,
@@ -159,8 +176,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   mistake_variant: {
     kind: 'mistake_variant',
     flagEntity: 'mistake_variant',
-    liveIds: async (db) =>
-      new Set((await db.select({ id: mistake_variant.id }).from(mistake_variant)).map((r) => r.id)),
+    liveIds: liveIdsFrom(mistake_variant),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'mistake_variant', true),
     project: projectMistakeVariantGuarded,
     withGenesisAnchor: mistakeVariantsWithGenesisAnchor,
@@ -168,8 +184,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   learning_item: {
     kind: 'learning_item',
     flagEntity: 'learning_item',
-    liveIds: async (db) =>
-      new Set((await db.select({ id: learning_item.id }).from(learning_item)).map((r) => r.id)),
+    liveIds: liveIdsFrom(learning_item),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'learning_item', true),
     project: projectLearningItemGuarded,
     withGenesisAnchor: learningItemsWithGenesisAnchor,
@@ -177,8 +192,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   artifact: {
     kind: 'artifact',
     flagEntity: 'artifact',
-    liveIds: async (db) =>
-      new Set((await db.select({ id: artifact.id }).from(artifact)).map((r) => r.id)),
+    liveIds: liveIdsFrom(artifact),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'artifact', true),
     project: projectArtifactGuarded,
     withGenesisAnchor: artifactsWithGenesisAnchor,
@@ -186,8 +200,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   question_block: {
     kind: 'question_block',
     flagEntity: 'question_block',
-    liveIds: async (db) =>
-      new Set((await db.select({ id: question_block.id }).from(question_block)).map((r) => r.id)),
+    liveIds: liveIdsFrom(question_block),
     // question_block does NOT enter materialized_id_index (design §5.3) → event-subject-only.
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'question_block', false),
     project: projectQuestionBlockGuarded,

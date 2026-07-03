@@ -63,14 +63,36 @@ export async function rebuildProjectionForKinds(
 
 async function main(): Promise<void> {
   // ONE tx per FK-cluster: a topology reject mid-cluster aborts only that cluster, not every kind.
+  // Per-cluster isolation (review K2): the clusters are INDEPENDENT (that is the point of the
+  // FK-cluster split), so one failing cluster must not abort the remaining ones — its tx rolled back
+  // alone; log it, continue, and report the failure set at the end with a non-zero exit. The rebuild
+  // is idempotent, so re-running after fixing a failed cluster converges.
   const total: RebuildCounts = {};
+  const failed: { cluster: readonly ProjectionKind[]; error: string }[] = [];
   for (const cluster of PROJECTION_FK_CLUSTERS) {
-    const counts = await db.transaction((tx) => rebuildProjectionForKinds(tx, cluster));
-    Object.assign(total, counts);
+    try {
+      const counts = await db.transaction((tx) => rebuildProjectionForKinds(tx, cluster));
+      Object.assign(total, counts);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failed.push({ cluster, error: msg });
+      console.error(
+        `[rebuild-projection] cluster [${cluster.join(', ')}] FAILED — tx rolled back, continuing with the remaining clusters:`,
+        msg,
+      );
+    }
   }
   const summary = Object.entries(total)
     .map(([kind, n]) => `${kind}: ${n}`)
     .join(', ');
+  if (failed.length > 0) {
+    console.error(
+      `[rebuild-projection] ${failed.length} cluster(s) FAILED (${failed
+        .map((f) => `[${f.cluster.join(', ')}]`)
+        .join(', ')}); succeeded: ${summary || '(none)'}. Fix and re-run (idempotent).`,
+    );
+    process.exit(1);
+  }
   console.log(`[rebuild-projection] done — re-folded in place (${summary}).`);
 }
 

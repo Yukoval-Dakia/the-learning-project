@@ -23,7 +23,7 @@ On a PROD-CLONE that has **cleared the entity's B3 gate** (`pnpm b3:gate` GO for
 fold == imperative row is certified at capture time):
 
 ```
-pnpm capture-golden --kind=<X>     # writes scripts/golden/<X>-YYYY-MM-DD.json  (COMMIT it)
+pnpm capture:golden --kind=<X>     # writes scripts/golden/<X>-YYYY-MM-DD.json  (COMMIT it)
 ```
 
 Commit the JSON — it is an evidence artifact.
@@ -41,7 +41,7 @@ pnpm audit:golden --kind=<that entity>
 - **DRIFT (exit 1)** → the change no longer reproduces the golden imperative row. Either:
   - it is a **regression** → revert/fix; or
   - it is an **intentional model change** → re-verify the new imperative rows are correct, then
-    `pnpm capture-golden --kind=<X>` to re-baseline and commit the new golden in the same PR.
+    `pnpm capture:golden --kind=<X>` to re-baseline and commit the new golden in the same PR.
 
 This is a **manual path-triggered gate**, not CI-enforced. The register's "reducer-code-hash-triggered"
 form is landed as this checklist item (n=1 sufficient); hash automation is an optional future upgrade

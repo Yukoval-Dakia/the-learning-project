@@ -324,3 +324,16 @@ Slice 6 明确**非本次交付**——本 spec 交付「翻转的 oracle 机制
 | **m10** RebuildCounts shape 变更 vs「behavior-preserving」 | **ACCEPT** | `rebuild-projection.ts:45-48` + `b3-gate.ts:206-209,266` 确认。Q2 扩形同步 printReport/JSON/测试，「behavior-preserving」收窄为 verdict。 |
 
 **Ledger 一句话**：两轴 MAJOR 全部修入（Lens A 8/8、Lens B 5/5），其中 2 条 PARTIAL 校正（A-M8 severity：非 live bug 而是对称化防御；B-M1：ACCEPT 停机翻转、REJECT 重型共享表 guard）；A-M6 精化为「测确定性≠测因果，同毫秒因果本歧义」。全部 minor 修入。草稿方向（泛化 b3-gate、report-only、绝不自动修）正确并保留；核心修入 = 交付 register line 673 点名的 **Q4b retained-golden 独立 oracle**（草稿用重言 cron 顶替了它），并补齐运维包络（停机翻转、回滚≠修复、WARN 非 boot-throw、queue 'llm'、快照隔离）。
+
+---
+
+## 独立 review 轮裁决（2026-07-03，实现后 8 finder → 4 Opus verifier）
+
+> 实现落地（slices 0-5）后的独立 review 环收敛：9 CONFIRMED 已修入实现（K1 edge 锚 action 过滤 MAJOR + K2/K4/K7/K9/K11/K12/K14/K15 minor），3 归 follow-up（K6 knowledge gather prefetch / K8 propose+generate 安全砍除 / K10+K13 registry dispatch 字段化，Linear 另立）。以下 4 条 **REFUTED** 留档为 doctrine——后续迭代别再翻案：
+
+| # | 主张 | 裁决 | 理由 |
+|---|---|---|---|
+| **K3** golden-reaudit 的 dateReviver 全树 revive 太宽，应按键收窄 | **REFUTED** | 对称 revive（rows + events 同一 reviver）+ snapshot-diff 的 normalize（Date→getTime、严格 ISO→epoch）已闭合 Date/string 缝。按键收窄反而是回归风险：漏掉一个嵌套日期键会破 fold 的 `.getTime()` 调用。全树 + 严格 ISO 正则是正确取舍。 |
+| **K5** oracle sweep 单 REPEATABLE READ tx 包全 kind 太重，应 per-kind tx | **REFUTED** | spec M4 的语义要求是 per-kind 的行读/事件读同快照——单 tx 是其超集，天然满足。拆分不减少任何 fold 工作量；n=1 周跑一次的 tx 时长对 autovacuum 的影响可忽略。保留单 tx（实现更简、跨 kind 时点一致还是免费加成）。 |
+| **K16** warnFlipOrder 只硬编码 learning_item→artifact 单对，应泛化成依赖表 | **REFUTED** | Ledger m3 逐字裁决就是「已知顺序依赖的**最小代理**」，且该对已 code-ground 到唯一真实耦合（actions.ts:1308-1325 retract 归档配对 artifact）。当前代码库不存在第二条跨实体 flip 依赖；预建泛化依赖表是给不存在的耦合造基建——as-designed。 |
+| **K8**（方向部分）capture-golden 的 CROSS_REF_ACTIONS 应按实体收窄 | **REFUTED（方向）** | 按实体收窄 rate/correct 是危险的 under-scope：rate 的 subject 是 proposal（subject_kind='event'），链在 caused_by_event_id 上——收窄等于在 capture 侧重造各 gather 的谓词，恰是 CROSS_REF_ACTIONS 注释刻意避免的脆弱面。纯 reducer 按 id+action 过滤，宽超集只是字节成本。（**安全**的 propose/generate 砍除作为 follow-up 单独评估，不在本 PR。） |
