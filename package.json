@@ -41,6 +41,7 @@
     "audit:calibration": "tsx scripts/audit-calibration.ts",
     "audit:projection": "tsx scripts/audit-projection.ts",
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
+    "db:recompute:bcalib": "tsx scripts/recompute-bcalib-cap.ts",
     "rebuild:projection": "tsx scripts/rebuild-projection.ts",
     "b3:gate": "tsx scripts/b3-gate.ts",
     "capture:golden": "tsx scripts/capture-golden.ts",

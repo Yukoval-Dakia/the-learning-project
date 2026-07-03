@@ -6,9 +6,12 @@ import { describe, expect, it } from 'vitest';
 
 import { expectedScore } from '@/core/theta';
 import {
+  IPW_WEIGHT_CAP_C,
   type LabeledResidual,
   type LabeledSample,
+  RECALIBRATION_MIN_LABELS,
   aipwMean,
+  cappedIpwWeights,
   effectiveB,
   estimateLambdaStar,
   impliedBLabel,
@@ -180,6 +183,104 @@ describe('estimateLambdaStar (PPI++ anchor-quality auto-degrade)', () => {
         { label: 0.6, prediction: 0.5, pi: -0.1 },
       ]),
     ).toThrow(/positivity/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-558 — median-相对 IPW 截权（spec Q1-C / M1）。数值杠杆断言（非散文），回滚恒等，
+// 凸组合保持，no-op-on-同质，λ*==1 inert-in-phase。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('cappedIpwWeights (median-relative IPW cap, YUK-558 M1)', () => {
+  it('no-op on homogeneous input: capped == uncapped bit-for-bit + clipped=0', () => {
+    // 全-moderate-π（无权重 > C·median）→ 截权不 bind。
+    const pis = [0.5, 0.4, 0.6, 0.5, 0.45];
+    const { weights, clipped } = cappedIpwWeights(pis);
+    const raw = pis.map((p) => 1 / p);
+    expect(clipped).toBe(0);
+    for (let i = 0; i < pis.length; i++) expect(weights[i]).toBe(raw[i]);
+  });
+
+  it('rollback identity: C = Infinity ⇒ weights === raw 1/π bit-for-bit, clipped=0', () => {
+    // 回滚旋钮 = Number.POSITIVE_INFINITY：cap 永不 bind ⇒ 精确还原旧行为。
+    const pis = [0.5, 0.5, 0.5, 4e-4]; // 含一条极端 fluke——正常 C=4 会截，∞ 不截。
+    const { weights, clipped } = cappedIpwWeights(pis, Number.POSITIVE_INFINITY);
+    const raw = pis.map((p) => 1 / p);
+    expect(clipped).toBe(0);
+    for (let i = 0; i < pis.length; i++) expect(weights[i]).toBe(raw[i]);
+  });
+
+  it('caps a single fluke to C·median(w) and counts the activation', () => {
+    // 11 honest @π=0.5（w=2）+ 1 fluke @π=4e-4（w=2500）。median=2、cap=C·2=8。fluke 截 2500→8。
+    const pis = [...Array(11).fill(0.5), 4e-4];
+    const { weights, clipped } = cappedIpwWeights(pis);
+    expect(clipped).toBe(1);
+    expect(weights[11]).toBeCloseTo(IPW_WEIGHT_CAP_C * 2, 12); // C·median = 8
+    for (let i = 0; i < 11; i++) expect(weights[i]).toBe(2); // honest 不动
+  });
+});
+
+describe('ppiPlusMean median-relative cap (YUK-558 M1, quantitative leverage)', () => {
+  // 11 honest labels @π=0.5 (w=2, label=0.0) + 1 fluke @π=4e-4 (label=+2.0)。b_anchor=0 ⇒
+  // predictionMean=0 ⇒ b_calib = Σ(label·w)/Σw = 标签的 Hájek 加权均值。
+  const samples: LabeledSample[] = [
+    ...Array(11)
+      .fill(null)
+      .map(() => ({ label: 0.0, prediction: 0.0, pi: 0.5 })),
+    { label: 2.0, prediction: 0.0, pi: 4e-4 },
+  ];
+  const pool = [0.0];
+
+  it('capped fluke self-normalized mass ≤ C/(C+n−1) ⇒ b_calib ≈ 0.53 < 0.6', () => {
+    // cap=8 → Σw=11·2+8=30 → b_calib=(2.0·8)/30=16/30≈0.5333。fluke 质量 8/30≈26.7% = 4/15。
+    const bCalib = ppiPlusMean(pool, samples, 1);
+    expect(bCalib).toBeCloseTo(16 / 30, 12);
+    expect(bCalib).toBeLessThan(0.6);
+    // 杠杆闭式上界：capped fluke 质量 ≤ C/(C+n−1)（n=12）。
+    const flukeMass = (IPW_WEIGHT_CAP_C * 2) / (11 * 2 + IPW_WEIGHT_CAP_C * 2);
+    expect(flukeMass).toBeLessThanOrEqual(IPW_WEIGHT_CAP_C / (IPW_WEIGHT_CAP_C + 12 - 1) + 1e-12);
+  });
+
+  it('uncapped (C=Infinity) fluke dominates ⇒ b_calib ≈ 1.98 > 1.9 (rollback contrast)', () => {
+    const bCalibUncapped = ppiPlusMean(pool, samples, 1, Number.POSITIVE_INFINITY);
+    expect(bCalibUncapped).toBeCloseTo(5000 / 2522, 9); // (2.0·2500)/(22+2500)
+    expect(bCalibUncapped).toBeGreaterThan(1.9);
+  });
+
+  it('convex combination preserved: capped b_calib ∈ [min label, max label] (λ=1 constant anchor)', () => {
+    const mixed: LabeledSample[] = [
+      { label: -1.2, prediction: 0.0, pi: 0.3 },
+      { label: 0.4, prediction: 0.0, pi: 0.7 },
+      { label: 1.8, prediction: 0.0, pi: 0.05 }, // low-π outlier
+      { label: 0.1, prediction: 0.0, pi: 0.5 },
+      { label: -0.6, prediction: 0.0, pi: 0.6 },
+    ];
+    const bCalib = ppiPlusMean([0.0], mixed, 1);
+    const labels = mixed.map((s) => s.label);
+    expect(bCalib).toBeGreaterThanOrEqual(Math.min(...labels));
+    expect(bCalib).toBeLessThanOrEqual(Math.max(...labels));
+  });
+});
+
+describe('estimateLambdaStar cap is inert in constant-anchor phase (YUK-558 M1)', () => {
+  it('constant anchor + heterogeneous π (incl. fluke) → still returns 1 (Var(m̂)=0 early-return before capped moments)', () => {
+    // 单题常数锚模式：所有 prediction=b_anchor（常数）⇒ Var(m̂)=0 ⇒ return 1 先于加权矩，截权 no-op。
+    const samples: LabeledSample[] = [
+      { label: 0.2, prediction: 0.5, pi: 0.5 },
+      { label: 0.9, prediction: 0.5, pi: 0.5 },
+      { label: 2.0, prediction: 0.5, pi: 4e-4 }, // fluke π——即便截权也不改 Var(m̂)=0。
+    ];
+    expect(estimateLambdaStar(samples)).toBe(1);
+    expect(estimateLambdaStar(samples, Number.POSITIVE_INFINITY)).toBe(1);
+  });
+});
+
+describe('IPW_WEIGHT_CAP_C domain pin (YUK-558 M3)', () => {
+  it('IPW_WEIGHT_CAP_C > 1 (cap must bind above the batch median, not below)', () => {
+    expect(IPW_WEIGHT_CAP_C).toBeGreaterThan(1);
+  });
+  it('RECALIBRATION_MIN_LABELS ≥ 1 and integer', () => {
+    expect(RECALIBRATION_MIN_LABELS).toBeGreaterThanOrEqual(1);
+    expect(Number.isInteger(RECALIBRATION_MIN_LABELS)).toBe(true);
   });
 });
 

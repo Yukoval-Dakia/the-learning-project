@@ -42,7 +42,7 @@ import {
   attemptLocalDate,
   recalibrateQuestion,
 } from '@/server/mastery/recalibration';
-import { and, count, eq, gte, sql } from 'drizzle-orm';
+import { and, count, eq, gte, isNotNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 type DepsOverride = {
@@ -63,6 +63,13 @@ export interface RecalibrationNightlyResult {
   skipped_no_anchor: number;
   /** 单题 recalibrateQuestion 抛错被跳过的题数（不阻断其余题）。 */
   skipped_failed: number;
+  /**
+   * median-相对 IPW 截权在本轮 firm-up 题上的**总激活条数**（YUK-558 M1，clip 可观测——
+   * 注偏改动与其可检测性同 wave）。随 `[recalibration_nightly] result` 日志出口。
+   */
+  clip_activations: number;
+  /** 本轮所有 firm-up 批里见过的**最小** inclusion probability（fat-tail 深度极值）；无 → null。 */
+  min_pi_seen: number | null;
 }
 
 const DEFAULT_MAX_PER_RUN = 200;
@@ -97,6 +104,8 @@ export async function runRecalibrationNightly(
     skipped_below: 0,
     skipped_no_anchor: 0,
     skipped_failed: 0,
+    clip_activations: 0,
+    min_pi_seen: null,
   };
 
   const windowStart = candidateWindowStart(now);
@@ -155,6 +164,12 @@ export async function runRecalibrationNightly(
       const r = await recalibrateQuestion(db, c.questionId);
       if (r.updated) {
         result.recalibrated++;
+        // Clip 可观测聚合（YUK-558 M1）：累加截权激活数 + 追踪本轮最小 π（fat-tail 深度极值）。
+        result.clip_activations += r.clipActivations;
+        if (r.minPi !== null) {
+          result.min_pi_seen =
+            result.min_pi_seen === null ? r.minPi : Math.min(result.min_pi_seen, r.minPi);
+        }
       } else if (r.reason === 'no_anchor') {
         result.skipped_no_anchor++;
       } else {
