@@ -304,7 +304,7 @@ jobs:
               if (!comment.path || !line) return null;
               const start = comment.start_line;
               const end = comment.end_line;
-              if (start >= 1 && end >= 1 && start !== end) {
+              if (start >= 1 && end >= 1 && start < end) {
                 return { comment, id: newCommentId(), lines: { start_line: start, line: end, start_side: 'RIGHT', side: 'RIGHT' } };
               } else if (end >= 1) {
                 return { comment, id: newCommentId(), lines: { line: end, side: 'RIGHT' } };
@@ -370,6 +370,7 @@ jobs:
                   }
                 }
               }
+              throw new Error(`[${tag}] exhausted retries without result`);
             }
 
             async function readWithPacing(tag, fn) {
@@ -422,10 +423,11 @@ jobs:
                 github.rest.pulls.listReviewComments({ owner, repo, pull_number: prNumber, per_page, page })
               );
               const ids = new Set();
-              const ID_RE = /<!--\\s*(ocr-\\d+-\\d+-[a-f0-9]+)\\s*-->/g;
+              const ID_RE = /<!--\s*(ocr-\d+-\d+-[a-f0-9]+)\s*-->/g;
               for (const c of cs) {
                 const body = c.body || '';
                 let m;
+                ID_RE.lastIndex = 0;
                 while ((m = ID_RE.exec(body)) !== null) {
                   ids.add(m[1]);
                 }
@@ -448,8 +450,9 @@ jobs:
                 const comments = await readAllPages('listIssueComments', (page, per_page) =>
                   github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page, page })
                 );
-                const escaped = id.replace(/[.*+?^${}()|[\]\\\\]/g, '\\\\$&');
-                const tagRe = new RegExp('<!--\\s*' + escaped + '\\s*-->');
+                // id (SUMMARY_TAG) is already a complete HTML comment, e.g. <!-- ocr-codex-review-summary:123-1 -->
+                const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const tagRe = new RegExp(escaped);
                 return comments.some(c => tagRe.test(c.body || ''));
               } catch (e) {
                 console.log(`[listIssueComments] check failed (${e.message}); treating as unknown to avoid duplicates.`);
@@ -539,7 +542,7 @@ jobs:
             function toReviewPayload(item) {
               return {
                 path: item.comment.path,
-                body: `<!-- ${item.id} -->\\n` + commentBody(item.comment),
+                body: `<!-- ${item.id} -->\n` + commentBody(item.comment),
                 ...item.lines
               };
             }
@@ -559,11 +562,11 @@ jobs:
             const totalCount = comments.length;
             const inlineCount = reviewComments.length;
             const summaryCount = commentsWithoutLine.length;
-            let summaryBody = headerLines.join('\\n');
+            let summaryBody = headerLines.join('\n');
             summaryBody += formatSummaryComments(commentsWithoutLine);
 
             if (comments.length === 0) {
-              summaryBody += '\\n\\nNo actionable comments found.';
+              summaryBody += '\n\nNo actionable comments found.';
               await github.rest.pulls.createReview({
                 owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT', body: summaryBody
               });
@@ -572,15 +575,16 @@ jobs:
 
             let successCount = 0;
             let failedCount = 0;
+            let unverifiableCount = 0;
             const failedComments = [];
 
             try {
-              const batchRes = await github.rest.pulls.createReview({
+              const batchRes = await withRetry('createReview(batch)', () => github.rest.pulls.createReview({
                 owner, repo, pull_number: issue_number, commit_id,
                 body: summaryBody,
                 event: 'COMMENT',
                 comments: reviewComments.map(toReviewPayload)
-              });
+              }));
               successCount = reviewComments.length;
               console.log(`Successfully posted review with ${successCount} inline comments (${commentsWithoutLine.length} in summary)`);
               logRateLimitQuota(batchRes, 'after batch createReview');
@@ -653,7 +657,7 @@ jobs:
                         continue;
                       }
                       if (alreadyPosted === null) {
-                        failedCount++;
+                        unverifiableCount++;
                         const reason = 'idempotency check unavailable (read API failed)';
                         failedComments.push({ comment, error: `${innerE.message} [${reason}]` });
                         console.log(`Cannot verify whether comment for ${comment.path} was posted (${reason}, HTTP ${innerE.status || 'n/a'}); skipping retry to avoid duplicate.`);
@@ -689,30 +693,33 @@ jobs:
                 }
               }
 
-              let finalBody = headerLines.join('\\n');
+              let finalBody = headerLines.join('\n');
               finalBody += formatSummaryComments(commentsWithoutLine);
-              finalBody += `\\n\\n---\\n\\n📊 **Posting Statistics:**`;
-              finalBody += `\\n- ✅ Successfully posted: ${successCount} comment(s)`;
+              finalBody += `\n\n---\n\n📊 **Posting Statistics:**`;
+              finalBody += `\n- ✅ Successfully posted: ${successCount} comment(s)`;
               if (failedCount > 0) {
-                finalBody += `\\n- ❌ Failed to post: ${failedCount} comment(s)`;
+                finalBody += `\n- ❌ Failed to post: ${failedCount} comment(s)`;
+              }
+              if (unverifiableCount > 0) {
+                finalBody += `\n- ⚠️ Unverifiable (skipped to avoid duplicates): ${unverifiableCount} comment(s)`;
               }
               if (failedComments.length > 0) {
-                finalBody += '\\n\\n---\\n\\n### ⚠️ Inline comments shown in summary';
+                finalBody += '\n\n---\n\n### ⚠️ Inline comments shown in summary';
                 for (const { comment, error } of failedComments) {
-                  finalBody += '\\n\\n---\\n\\n';
+                  finalBody += '\n\n---\n\n';
                   finalBody += `### 📄 \`${comment.path}\``;
                   if (comment.start_line && comment.end_line) {
                     finalBody += ` (L${comment.start_line}-L${comment.end_line})`;
                   }
-                  finalBody += `\\n\\n⚠️ GitHub could not post this as an inline comment: ${error}\\n\\n`;
+                  finalBody += `\n\n⚠️ GitHub could not post this as an inline comment: ${error}\n\n`;
                   finalBody += commentBody(comment);
                   if (comment.existing_code) {
-                    finalBody += '\\n\\nExisting code:' + fenced(comment.existing_code);
+                    finalBody += '\n\nExisting code:' + fenced(comment.existing_code);
                   }
                 }
               }
 
-              finalBody = SUMMARY_TAG + '\\n' + finalBody;
+              finalBody = SUMMARY_TAG + '\n' + finalBody;
               const summaryAlreadyPosted = await hasIssueCommentWithId({ owner, repo, issueNumber: issue_number, id: SUMMARY_TAG });
               if (summaryAlreadyPosted === true) {
                 console.log('Summary comment with this run tag already exists; skipping.');
