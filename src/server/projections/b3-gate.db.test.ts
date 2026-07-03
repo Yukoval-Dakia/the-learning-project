@@ -171,7 +171,7 @@ describe('runB3Gate', () => {
     await insertEdge({ id: 'ke_ac_pre', from: 'kn_a', to: 'kn_c', relation_type: 'prerequisite' });
     await insertEdge({ id: 'ke_bc_arch', from: 'kn_b', to: 'kn_c', archived_at: T0 });
 
-    const report = await runB3Gate(db, {}, TGEN);
+    const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
 
     expect(report.go).toBe(true);
     expect(report.rebuild.ok).toBe(true);
@@ -180,11 +180,11 @@ describe('runB3Gate', () => {
     expect(report.audit.driftCount).toBe(0);
     expect(report.audit.topologyReject).toBeNull();
     expect(report.survival.ok).toBe(true);
-    expect(report.survival.deletedKnowledge).toEqual([]);
-    expect(report.survival.deletedEdges).toEqual([]);
+    expect(report.survival.deleted).toEqual({});
+    expect(report.survival.created).toEqual({});
     // The rebuild actually re-folded the world (not a silent no-op that would make survival pass trivially).
-    expect(report.rebuild.counts?.nodes).toBeGreaterThan(0);
-    expect(report.rebuild.counts?.edges).toBeGreaterThan(0);
+    expect(report.rebuild.counts?.knowledge).toBeGreaterThan(0);
+    expect(report.rebuild.counts?.knowledge_edge).toBeGreaterThan(0);
     // Backfill anchored the pre-event-sourcing rows (4 nodes + 3 edges).
     expect(report.backfill.knowledge.seeded).toBe(4);
     expect(report.backfill.knowledge_edge.seeded).toBe(3);
@@ -205,7 +205,7 @@ describe('runB3Gate', () => {
     await seedGenerateCreatePrereq({ edgeId: 'ke_xy', from: 'kn_x', to: 'kn_y' });
     await seedGenerateCreatePrereq({ edgeId: 'ke_yx', from: 'kn_y', to: 'kn_x' });
 
-    const report = await runB3Gate(db, {}, TGEN);
+    const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
 
     expect(report.go).toBe(false);
     // The PRE-rebuild audit folds the cyclic edge and throws first → caught as a topology NO-GO.
@@ -229,7 +229,7 @@ describe('runB3Gate', () => {
     // mutation-reducer value bug the imperative write would have produced but the fold would not.
     await db.update(knowledge_edge).set({ weight: 5 }).where(eq(knowledge_edge.id, 'ke_rel'));
 
-    const report = await runB3Gate(db, {}, TGEN);
+    const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
 
     // The PRE-rebuild audit compares fold(weight=1) vs the imperative row (weight=5) → DRIFT.
     // (A post-rebuild audit would miss this — the rebuild overwrites the row with the fold.)
@@ -248,11 +248,11 @@ describe('runB3Gate', () => {
     await insertEdge({ id: 'ke_archonly', from: 'kn_a', to: 'kn_b' });
     await seedGenerateArchiveOnly('ke_archonly');
 
-    const report = await runB3Gate(db, {}, TGEN);
+    const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
 
     expect(report.go).toBe(false);
     expect(report.survival.ok).toBe(false);
-    expect(report.survival.deletedEdges).toContain('ke_archonly');
+    expect(report.survival.deleted.knowledge_edge).toContain('ke_archonly');
   });
 
   it('NO-GO (resurrection): the rebuild MATERIALIZES an event-only row with no live counterpart — caught by the rowset creation check', async () => {
@@ -270,11 +270,11 @@ describe('runB3Gate', () => {
       weight: 1,
     });
 
-    const report = await runB3Gate(db, {}, TGEN);
+    const report = await runB3Gate(db, ['knowledge', 'knowledge_edge'], {}, TGEN);
 
     expect(report.go).toBe(false);
     expect(report.survival.ok).toBe(false);
-    expect(report.survival.createdEdges).toContain('ke_resurrect');
+    expect(report.survival.created.knowledge_edge).toContain('ke_resurrect');
     // the audit (live-only scan) does NOT see the event-only row — the creation check is what catches it.
     expect(report.audit.clean).toBe(true);
   });

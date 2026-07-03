@@ -1,104 +1,80 @@
-// YUK-471 W1 PR-A2a — full projection rebuild: re-fold EVERY knowledge / knowledge_edge id
-// from the event log via the IO shells.
+// YUK-471 W1 PR-A2a / YUK-548 (worklist #5) — full projection rebuild: re-fold ids of the given
+// kinds from the event log via the registry write-through shells.
 //
-// WHY. The IO shells (projectKnowledgeNode / projectKnowledgeEdge) are the SoT-write
-// primitive PR-B's accept path flips to. This script reuses them 1:1 to do a FULL rebuild:
-// for every node id (then every edge id) it calls the shell, which re-derives the row from
-// the event log and writes it through (upsert) — or DELETEs it if the fold resolves to null.
-// Reusing the per-id shell keeps the rebuild path BYTE-IDENTICAL to the live SoT path (a
-// deliberate single-implementation invariant: PR-B's accept calls the same shell, so the
-// audit (audit:projection) verifying the live path also verifies the rebuild path).
+// WHY. The write-through shells (projectKnowledgeNode / projectGoalGuarded / …) are the SoT-write
+// primitive the accept path flips to. This script reuses them 1:1 to do a FULL rebuild: for every id
+// of a kind it calls the shell, which re-derives the row from the event log and writes it through
+// (upsert) — or DELETEs it if the fold resolves to null (guarded shells only delete an ANCHORED row).
+// Reusing the per-id shell keeps the rebuild path BYTE-IDENTICAL to the live SoT path.
 //
-// "TRUNCATE-and-refold" semantics WITHOUT a literal TRUNCATE: the shell already does
-// upsert-or-DELETE per id, so re-projecting every id rebuilds the table in place — a row
-// whose events resolve to null is DELETEd, every other row is overwritten with the folded
-// state. We REBUILD IN PLACE (no shadow table). The owner runs this against a PROD-CLONE for
-// PR-B's B3 gate (rebuild, then audit:projection must report CLEAN), not against live prod.
+// YUK-548: generalized from the hard-coded knowledge/knowledge_edge pair to ALL 7 registry kinds.
+// The id universe per kind = live ids ∪ event-subject ids ∪ index anchors (allProjectionIds) — a
+// dropped-out-of-band row still anchored/event-sourced re-materializes so the survival check sees it.
 //
-// ID UNIVERSE. We project the UNION of (a) live `knowledge` / `knowledge_edge` ids and (b)
-// ids anchored in materialized_id_index (a propose_new/split-born node whose live row was
-// dropped still has an anchor — projecting it lets the shell DELETE/re-create it correctly).
-// Edges are keyed only on subject_id (no reverse index), so their universe is the live edge
-// ids plus any edge subject_ids in the event log.
+// TX / FK. Kinds are rebuilt PER FK-CLUSTER (PROJECTION_FK_CLUSTERS): the only real inter-projection
+// FK is knowledge_edge → knowledge, so that pair shares one tx (knowledge first); every other kind is
+// its own tx. A topology/FK reject rolls back only its cluster, not all 7 (Lens B m7).
 //
-// ORDER. knowledge BEFORE knowledge_edge (FK: edges reference knowledge.id). The whole
-// rebuild runs in ONE transaction so a topology reject (foldKnowledgeEdge throws) rolls the
-// entire rebuild back rather than leaving a half-rebuilt mesh.
-//
-// BEHAVIOR-PRESERVING (PR-A2a): a standalone operational script; NOT wired into any request
-// path. It is the engine audit:projection's future full-rebuild mode can reuse.
+// The owner runs this against a PROD-CLONE for the B3 gate (rebuild, then audit:projection CLEAN),
+// not against live prod. BEHAVIOR-PRESERVING: a standalone operational script; NOT wired into any
+// request path.
 //
 // CLI:
-//   pnpm rebuild:projection   # re-fold every node then every edge, in one tx, in place
+//   pnpm rebuild:projection   # re-fold every kind, per FK-cluster tx, in place
 
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
 
 import { type Db, type Tx, db } from '@/db/client';
-import { event, knowledge, knowledge_edge, materialized_id_index } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { projectKnowledgeNode } from '../src/server/projections/knowledge';
-import { projectKnowledgeEdge } from '../src/server/projections/knowledge_edge';
+import {
+  PROJECTION_ENTITIES,
+  PROJECTION_FK_CLUSTERS,
+  type ProjectionKind,
+  allProjectionIds,
+} from '../src/server/projections/entity-registry';
 
 type DbLike = Db | Tx;
 
-export interface RebuildCounts {
-  nodes: number;
-  edges: number;
-}
-
-// Collect the full id universe to re-project for nodes: live knowledge ids ∪ index-anchored
-// 'knowledge' ids. (Edges are gathered separately — they have no reverse index.)
-async function allNodeIds(db: DbLike): Promise<string[]> {
-  const live = await db.select({ id: knowledge.id }).from(knowledge);
-  const anchored = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(eq(materialized_id_index.subject_kind, 'knowledge'));
-  return [...new Set([...live.map((r) => r.id), ...anchored.map((r) => r.id)])];
-}
-
-// Edge id universe: live knowledge_edge ids ∪ every edge subject_id seen in the event log
-// (an edge whose live row was archived/dropped still has events keyed on its id).
-async function allEdgeIds(db: DbLike): Promise<string[]> {
-  const live = await db.select({ id: knowledge_edge.id }).from(knowledge_edge);
-  const fromEvents = await db
-    .select({ id: event.subject_id })
-    .from(event)
-    .where(eq(event.subject_kind, 'knowledge_edge'));
-  return [...new Set([...live.map((r) => r.id), ...fromEvents.map((r) => r.id)])];
-}
+// Per-kind count of ids re-projected. Partial — a call rebuilds only the kinds it was asked for
+// (m10: this REPLACES the old `{ nodes, edges }` shape; printReport / --json / tests updated in sync).
+export type RebuildCounts = Partial<Record<ProjectionKind, number>>;
 
 /**
- * Re-fold every node then every edge through the IO shells, in one transaction (knowledge
- * first — FK). Returns the count of ids projected. Throws (rolling the whole tx back) if any
- * edge projection hits an ADR-0034 topology reject.
- *
- * Takes a DbLike so the DB test can drive it inside the testcontainer; the CLI passes the
- * process `db` and wraps the whole rebuild in a transaction.
+ * Re-fold every id of each `kind` through its registry write-through shell, IN THE CALLER'S tx (so
+ * the B3 gate / CLI can wrap a whole FK-cluster in one tx). Kinds are processed IN ARRAY ORDER so a
+ * cluster's FK parent (knowledge) rebuilds before its child (knowledge_edge). Returns the per-kind
+ * count. Throws (rolling the caller's tx back) if a projection hits an ADR-0034 topology reject.
  */
-export async function rebuildProjection(db: DbLike): Promise<RebuildCounts> {
-  const nodeIds = await allNodeIds(db);
-  for (const id of nodeIds) {
-    await projectKnowledgeNode(db, id);
+export async function rebuildProjectionForKinds(
+  db: DbLike,
+  kinds: readonly ProjectionKind[],
+): Promise<RebuildCounts> {
+  const counts: RebuildCounts = {};
+  for (const kind of kinds) {
+    const adapter = PROJECTION_ENTITIES[kind];
+    const ids = await allProjectionIds(db, kind);
+    for (const id of ids) {
+      await adapter.project(db, id);
+    }
+    counts[kind] = ids.length;
   }
-  const edgeIds = await allEdgeIds(db);
-  for (const id of edgeIds) {
-    await projectKnowledgeEdge(db, id);
-  }
-  return { nodes: nodeIds.length, edges: edgeIds.length };
+  return counts;
 }
 
 async function main(): Promise<void> {
-  // ONE transaction: a topology reject mid-rebuild aborts the whole thing rather than leaving
-  // a half-rebuilt mesh.
-  const counts = await db.transaction((tx) => rebuildProjection(tx));
-  console.log(
-    `[rebuild-projection] done — re-folded ${counts.nodes} node(s) + ${counts.edges} edge(s) in place.`,
-  );
+  // ONE tx per FK-cluster: a topology reject mid-cluster aborts only that cluster, not every kind.
+  const total: RebuildCounts = {};
+  for (const cluster of PROJECTION_FK_CLUSTERS) {
+    const counts = await db.transaction((tx) => rebuildProjectionForKinds(tx, cluster));
+    Object.assign(total, counts);
+  }
+  const summary = Object.entries(total)
+    .map(([kind, n]) => `${kind}: ${n}`)
+    .join(', ');
+  console.log(`[rebuild-projection] done — re-folded in place (${summary}).`);
 }
 
-// CLI-gate: only run + exit as the CLI entry point so the DB test can import rebuildProjection
+// CLI-gate: only run + exit as the CLI entry point so the DB test can import rebuildProjectionForKinds
 // without the top-level run firing.
 if (typeof process.argv[1] === 'string' && process.argv[1].endsWith('rebuild-projection.ts')) {
   main()
