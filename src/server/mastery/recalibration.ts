@@ -136,23 +136,35 @@ export interface LabeledResidual {
   pi: number;
 }
 
-export function aipwMean(poolPredictions: number[], labeledResiduals: LabeledResidual[]): number {
+export function aipwMean(
+  poolPredictions: number[],
+  labeledResiduals: LabeledResidual[],
+  capFactor: number = IPW_WEIGHT_CAP_C,
+): number {
   const N = poolPredictions.length;
   if (N === 0) {
     throw new Error('aipwMean: poolPredictions must be non-empty (N=0 → undefined mean)');
   }
   const predictionMean = poolPredictions.reduce((a, b) => a + b, 0) / N;
-  let residualCorrection = 0;
-  let weightSum = 0; // Σ(1/π) — Hájek 自归一化分母（精确权重和，FINDING #1）。
+  // positivity 先于 cap（YUK-558 M1）——IPW 权重分母 ≤0 是上游 bug（伪 π / 确定性选题），
+  // fail-fast，且必须先于截权（cap 不救 ≤0 的 π）。
   for (const r of labeledResiduals) {
     if (!(r.pi > 0)) {
-      // positivity 违反——IPW 权重分母 ≤0 是上游 bug（伪 π / 确定性选题），fail-fast。
       throw new Error(`aipwMean: inclusion probability must be > 0 (positivity), got ${r.pi}`);
     }
-    residualCorrection += r.residual / r.pi;
-    weightSum += 1 / r.pi;
   }
-  // Hájek 自归一化：校正项 ÷ Σ(1/π)（精确），不是 ÷round(Σ1/π) / ÷N（FINDING #1）。
+  // median-相对截权（与 ppiPlusMean(λ=1) 文档恒等式保持一致；aipwMean orphaned-but-exported）。
+  const { weights } = cappedIpwWeights(
+    labeledResiduals.map((r) => r.pi),
+    capFactor,
+  );
+  let residualCorrection = 0;
+  let weightSum = 0; // Σ(capped 1/π) — Hájek 自归一化分母（精确权重和，FINDING #1）。
+  for (let i = 0; i < labeledResiduals.length; i++) {
+    residualCorrection += labeledResiduals[i].residual * weights[i];
+    weightSum += weights[i];
+  }
+  // Hájek 自归一化：校正项 ÷ Σ(capped 1/π)（精确），不是 ÷round(Σ1/π) / ÷N（FINDING #1）。
   // labeled 为空 → weightSum=0 → 校正项 0（退回 predictionMean）。
   return predictionMean + (weightSum > 0 ? residualCorrection / weightSum : 0);
 }
@@ -188,7 +200,10 @@ export interface LabeledSample {
  * 估计 λ*（PPI++ power-tuning）。labeled 样本不足 2 条或锚方差≈0 → 返回 1（退化为标准
  * AIPW，无害默认：单样本无法估方差比，信任锚）。clamp [0,1]。
  */
-export function estimateLambdaStar(labeled: LabeledSample[]): number {
+export function estimateLambdaStar(
+  labeled: LabeledSample[],
+  capFactor: number = IPW_WEIGHT_CAP_C,
+): number {
   const n = labeled.length;
   if (n < 2) return 1;
   for (const s of labeled) {
@@ -198,19 +213,27 @@ export function estimateLambdaStar(labeled: LabeledSample[]): number {
       );
     }
   }
-  // IPW 加权一阶矩（每样本权重 1/π，Horvitz-Thompson 风格）。
-  const wSum = labeled.reduce((a, s) => a + 1 / s.pi, 0);
+  // median-相对截权（YUK-558 M1）进 IPW 加权一阶矩（每样本权重 = capped 1/π，Horvitz-Thompson
+  // 风格）。**当前对输出是死路（no-op）**：单题常数锚模式下 poolPredictions 全 = b_anchor ⇒ 样本间
+  // 锚预测无方差 ⇒ 下面 varM=0 → early-return 1 **先于**加权矩生效，截权改的矩算完即弃。Phase 7+
+  // 引入非常数 m̂（recalibrateQuestion doc :456-460）激活后，capped-λ* 是**启发式**（λ* 闭式在
+  // uncapped 估计器下由 Angelopoulos PPI++ 2023 preprint 推导，capped 矩下不再是证明过的方差最优）。
+  const { weights } = cappedIpwWeights(
+    labeled.map((s) => s.pi),
+    capFactor,
+  );
+  const wSum = weights.reduce((a, w) => a + w, 0);
   if (!(wSum > 0)) return 1;
   const wMean = (sel: (s: LabeledSample) => number): number =>
-    labeled.reduce((a, s) => a + (1 / s.pi) * sel(s), 0) / wSum;
+    labeled.reduce((a, s, i) => a + weights[i] * sel(s), 0) / wSum;
   const mBar = wMean((s) => s.prediction);
   const yBar = wMean((s) => s.label);
   let cov = 0;
   let varM = 0;
-  for (const s of labeled) {
-    const w = 1 / s.pi;
-    const dm = s.prediction - mBar;
-    cov += w * dm * (s.label - yBar);
+  for (let i = 0; i < labeled.length; i++) {
+    const w = weights[i];
+    const dm = labeled[i].prediction - mBar;
+    cov += w * dm * (labeled[i].label - yBar);
     varM += w * dm * dm;
   }
   if (!(varM > 0)) return 1; // 锚预测无方差（同质池）→ 信任锚（λ=1）。
@@ -228,22 +251,33 @@ export function ppiPlusMean(
   poolPredictions: number[],
   labeled: LabeledSample[],
   lambda: number,
+  capFactor: number = IPW_WEIGHT_CAP_C,
 ): number {
   const N = poolPredictions.length;
   if (N === 0) {
     throw new Error('ppiPlusMean: poolPredictions must be non-empty');
   }
   const predictionMean = poolPredictions.reduce((a, b) => a + b, 0) / N;
-  let correction = 0;
-  let weightSum = 0; // Σ(1/π) — Hájek 自归一化分母（FINDING #1）。
+  // positivity 先于 cap（YUK-558 M1，必须先于截权——cap 绝不救 ≤0 的 π）。
   for (const s of labeled) {
     if (!(s.pi > 0)) {
       throw new Error(`ppiPlusMean: inclusion probability must be > 0 (positivity), got ${s.pi}`);
     }
-    correction += (s.label - lambda * s.prediction) / s.pi;
-    weightSum += 1 / s.pi;
   }
-  // Hájek 自归一化：÷ Σ(1/π)（精确），不是 ÷N / ÷round(Σ1/π)（FINDING #1）。
+  // median-相对截权（YUK-558 M1，**live estimator** 的修点）：单条低-π fluke 的自归一化质量
+  // ≤ ~C/(C+n−1)。bound 分层见文件上方「Bound 陈述纪律」块——此处不重复无条件保证。
+  const { weights } = cappedIpwWeights(
+    labeled.map((s) => s.pi),
+    capFactor,
+  );
+  let correction = 0;
+  let weightSum = 0; // Σ(capped 1/π) — Hájek 自归一化分母（FINDING #1）。
+  for (let i = 0; i < labeled.length; i++) {
+    const s = labeled[i];
+    correction += (s.label - lambda * s.prediction) * weights[i];
+    weightSum += weights[i];
+  }
+  // Hájek 自归一化：÷ Σ(capped 1/π)（精确），不是 ÷N / ÷round(Σ1/π)（FINDING #1）。
   return lambda * predictionMean + (weightSum > 0 ? correction / weightSum : 0);
 }
 
@@ -255,6 +289,81 @@ export function ppiPlusMean(
 // （owner 可调）——与 §4「数十题级」对齐取 12（保守起步；单题维度标签稀疏，家族级才稠）。
 // ─────────────────────────────────────────────────────────────────────────────
 export const RECALIBRATION_MIN_LABELS = 12;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPW_WEIGHT_CAP_C — median-相对 IPW 截权常数（YUK-558，spec docs/design/2026-07-03-softmax-spec.md
+// Q1-C / M1）。
+//
+// **未经数据校准的保守初值，非拟合结果**（n=1 红线：不从数据拟合；median-相对形是
+// within-question 鲁棒统计——批内中位数——非跨学习者 item 参数拟合）。owner 域 3-5，拍 C=4。
+//
+// 语义：单条标签 IPW 权重 w=1/π 封顶于 C·median(该题标签批内未截权重)。杠杆闭式：honest 权重
+// 近同质时单条 capped fluke 的自归一化质量 ≈ C/(C+n−1)（C=4, n=12 → ~26.7%；uncapped ~99%）——
+// 对候选池规模 N 尺度不变。
+//
+// 为什么 median-相对而非绝对 floor：honest 权重尺度 ≈ N/n 随候选池 N 增长，固定绝对 floor 在大 N
+// 时把全部权重压平成无权均值（IPW 死）；median 对 outlier 鲁棒（不被 fluke 抬高）。
+//
+// **偏置方向（如实，Lens A-C）**：λ=1 时锚代数上消掉（b_calib = Σ(label/π)/Σ(1/π)），截权**不可能**
+// 拉向 b_anchor；它拉向**高-π（高频被选=能力匹配）标签的自归一化均值**——即**部分重引入 IPW 存在
+// 意义上要去除的 selection bias**。这是 deliberate bias-for-variance 交易（Ionides 2008 / Bottou
+// 2013），非免费正确性。default-ON（对比 obp 默认 ∞/off）只立足于「首写不可逆 + 在线 θ̂ 消费不可
+// 回放 ⇒ 有界方差严格优于无偏」，不立足于「保守拉锚」。
+//
+// **回滚旋钮 = C = Number.POSITIVE_INFINITY**：cap 永不 bind ⇒ 数学上精确还原旧行为（positivity
+// throw 保证 π>0），无需删代码——恰是 obp 的 default-∞ 语义。
+// ─────────────────────────────────────────────────────────────────────────────
+export const IPW_WEIGHT_CAP_C = 4;
+
+/** 未截权重批的中位数（偶数取中间两点均值）。空数组 → 0（caller 保证非空后消费）。 */
+function medianOfWeights(weights: number[]): number {
+  if (weights.length === 0) return 0;
+  const sorted = [...weights].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
+ * 批内 median-相对截权：w_j = min(1/π_j, C·median(1/π))（YUK-558 M1）。
+ *
+ * **positivity throw 由 caller 先行**（π ≤ 0 抛错必须先于本 helper——cap 绝不救 ≤0 的 π，
+ * 否则 1/π 会产 Infinity/负值污染 median）。本 helper 假定所有 π > 0。
+ *
+ * capFactor 默认 IPW_WEIGHT_CAP_C；测试 / 运行时回滚可传 Number.POSITIVE_INFINITY ⇒ cap 永不
+ * bind ⇒ weights === 原始 1/π 逐位相等、clipped=0（精确还原旧行为）。
+ *
+ * @returns weights = 截权后的 IPW 权重（与 pis 等长同序）；clipped = 被截权的条数（w > cap）。
+ */
+export function cappedIpwWeights(
+  pis: number[],
+  capFactor: number = IPW_WEIGHT_CAP_C,
+): { weights: number[]; clipped: number } {
+  if (pis.length === 0) return { weights: [], clipped: 0 };
+  const raw = pis.map((pi) => 1 / pi);
+  const cap = capFactor * medianOfWeights(raw);
+  let clipped = 0;
+  const weights = raw.map((w) => {
+    if (w > cap) {
+      clipped++;
+      return cap;
+    }
+    return w;
+  });
+  return { weights, clipped };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bound 陈述纪律（Lens A-A，M1）——这些是 **regime-conditional** 保证，禁止写成无条件 estimator
+// 保证：
+//   - λ=1 常数 m̂ 下：b_calib = 标签的 Hájek 自归一化加权均值 ⇒ ∈ [min label, max label]
+//     （凸组合性质对任意权重含 capped 成立）。
+//   - 首次 firm-up：此前 b_calib NULL ⇒ 全部标签写入锚 = effectiveB = b_anchor ?? b ⇒ 标签
+//     ∈ [b_anchor±MAX_RESIDUAL_LOGIT(=2)] ⇒ 首个 b_calib ⊆ [b_anchor±2]。
+//   - 首写之后：标签写入锚 = effectiveB（**含 b_calib**）⇒ ±2 是相对当前 effectiveB 的**逐夜棘轮**，
+//     `[b_anchor±2]` **不是**稳态不变量。
+//   - Phase 7+ 非常数 m̂：ppiPlusMean 不再是标签凸组合，`[min,max label]` 也不成立。
+// ⇒ **禁止**把 `⊆ [b_anchor±2]` 写进 estimator docblock 当无条件保证。
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 标签记录 hook — recordDifficultyCalibrationLabel（Task 11 step 3）。
@@ -474,6 +583,14 @@ export interface RecalibrateResult {
   /** PPI++ λ*（updated=true 时）。 */
   lambdaStar?: number;
   reason?: 'below_threshold' | 'no_anchor' | 'ok';
+  /**
+   * median-相对 IPW 截权激活条数（YUK-558 M1，clip 可观测——注偏改动与其可检测性同 wave）。
+   * firm-up 未发生（no_anchor / below_threshold）→ 0（cap 未运行）。
+   */
+  clipActivations: number;
+  /** firm-up 批的 min/max inclusion probability（观测 fat-tail 深度）；未 firm-up → null。 */
+  minPi: number | null;
+  maxPi: number | null;
 }
 
 export async function recalibrateQuestion(
@@ -494,7 +611,15 @@ export async function recalibrateQuestion(
   // 锚 = b_anchor ?? b（重标定需要一个锚作 m̂；冷启无锚 → 不重标定）。
   const bAnchor = calRow?.b_anchor ?? calRow?.b ?? null;
   if (bAnchor === null) {
-    return { updated: false, labelCount: 0, bCalib: null, reason: 'no_anchor' };
+    return {
+      updated: false,
+      labelCount: 0,
+      bCalib: null,
+      reason: 'no_anchor',
+      clipActivations: 0,
+      minPi: null,
+      maxPi: null,
+    };
   }
 
   // 2. 读该题全部标签（b_label + π_i）。
@@ -509,7 +634,15 @@ export async function recalibrateQuestion(
   const labelCount = labels.length;
   // 3. 数据闸：标签未攒够 → no-op（b_calib 保持 NULL）。
   if (labelCount < RECALIBRATION_MIN_LABELS) {
-    return { updated: false, labelCount, bCalib: null, reason: 'below_threshold' };
+    return {
+      updated: false,
+      labelCount,
+      bCalib: null,
+      reason: 'below_threshold',
+      clipActivations: 0,
+      minPi: null,
+      maxPi: null,
+    };
   }
 
   // 4. PPI++ AIPW（Hájek 自归一化，FINDING #1）。样本 = (label, m̂=b_anchor, π)。
@@ -525,6 +658,13 @@ export async function recalibrateQuestion(
   const poolPredictions = [bAnchor];
   const lambdaStar = estimateLambdaStar(samples);
   const bCalib = ppiPlusMean(poolPredictions, samples, lambdaStar);
+  // Clip 可观测（YUK-558 M1，Lens B-F1——注偏改动与其可检测性同 wave）：截权激活条数 + fat-tail
+  // 深度（min/max π）。cappedIpwWeights 对相同 π 批确定性同结果，与 estimator 内部截权一致。
+  const pis = samples.map((s) => s.pi);
+  const { clipped: clipActivations } = cappedIpwWeights(pis);
+  // reduce（非 Math.min(...spread)）——避免超大标签批 spread 爆栈，同 selection-signals.ts 哲学。
+  const minPi = pis.reduce((m, p) => (p < m ? p : m), pis[0]);
+  const maxPi = pis.reduce((m, p) => (p > m ? p : m), pis[0]);
 
   // 5. firm-up b_calib（**只此函数写**，不变量①）。calibration_weight = 有效样本量 proxy
   //    Σ π_i（Horvitz-Thompson 期望子集大小，标签越多/π 越接近 1 → 权重越高）。
@@ -540,5 +680,14 @@ export async function recalibrateQuestion(
     })
     .where(and(eq(item_calibration.question_id, questionId), eq(item_calibration.track, 'hard')));
 
-  return { updated: true, labelCount, bCalib, lambdaStar, reason: 'ok' };
+  return {
+    updated: true,
+    labelCount,
+    bCalib,
+    lambdaStar,
+    reason: 'ok',
+    clipActivations,
+    minPi,
+    maxPi,
+  };
 }
