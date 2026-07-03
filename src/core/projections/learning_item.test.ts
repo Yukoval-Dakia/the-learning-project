@@ -536,3 +536,159 @@ describe('foldLearningItem — knowledge_ids merge rewrite (YUK-543)', () => {
     expect(folded?.knowledge_ids).toEqual(['k_c', 'k_x']);
   });
 });
+
+// ====================================================================
+// YUK-548 Q7 — learning_item fold ordering. Two layers (spec §Q7, Lens A M6):
+//   (a) DETERMINISM (permutation invariance): the reducer sorts its input, so distinct-created_at
+//       events fold identically regardless of ARRAY order. Proves the sort is live — NOT that the
+//       tiebreak is causally correct (a permutation test cannot: distinct times have one order).
+//   (b) CAUSAL ADVERSARIAL (same-millisecond complete/relearn): learning_item is order-sensitive at
+//       equal created_at (complete needs status∈{pending,in_progress}; relearn needs {done,resting}),
+//       so the (created_at, id) tiebreak DECIDES the terminal state. Pin fold == an INDEPENDENT
+//       arrival-order (id-ascending) sequential apply. HONEST BOUNDARY: two truly same-ms same-subject
+//       events have an ambiguous causal order; (created_at, id) is a defensible DETERMINISTIC choice —
+//       the test asserts fold == arrival-order, it does NOT claim a "truer" causal order exists.
+// ====================================================================
+
+describe('foldLearningItem — Q7(a) permutation invariance (determinism, not causal ordering)', () => {
+  function mulberry32(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function shuffled<T>(arr: readonly T[], rand: () => number): T[] {
+    return arr
+      .map((v) => ({ v, k: rand() }))
+      .sort((a, b) => a.k - b.k)
+      .map((x) => x.v);
+  }
+
+  it('genesis → complete → relearn folds identically under 50 random input permutations', () => {
+    const row = liSnapshot({ status: 'pending', version: 0 });
+    // Distinct created_at (0 / 1000 / 2000) ⇒ one unambiguous canonical order.
+    const events: FoldEvent[] = [
+      genesis({ created_at: T0, row }),
+      complete({ created_at: at(1000), itemId: 'li_1' }),
+      relearn({ created_at: at(2000), itemId: 'li_1' }),
+    ];
+    const canonical = foldLearningItem('li_1', events);
+    // sanity: the chain actually ran (pending → done → in_progress, two version bumps).
+    expect(canonical?.status).toBe('in_progress');
+    expect(canonical?.completed_at).toBeNull();
+    expect(canonical?.version).toBe(2);
+
+    const rand = mulberry32(0x548b);
+    for (let i = 0; i < 50; i++) {
+      expect(foldLearningItem('li_1', shuffled(events, rand))).toEqual(canonical);
+    }
+  });
+});
+
+describe('foldLearningItem — Q7(b) same-millisecond complete/relearn (fold == arrival order)', () => {
+  // INDEPENDENT arrival-order oracle — applies ops in the GIVEN order, mirroring the imperative
+  // writer's WHERE guards, with NO internal re-sort. A separate implementation from foldLearningItem
+  // (not a re-derivation), so fold == oracle is a genuine cross-check, not a tautology.
+  function applyInArrivalOrder(
+    seed: LearningItemRowSnapshotT,
+    ops: FoldEvent[],
+  ): LearningItemRowSnapshotT {
+    let row: LearningItemRowSnapshotT = { ...seed };
+    for (const fe of ops) {
+      if (fe.action === 'experimental:learning_item_complete') {
+        if (
+          (row.status === 'pending' || row.status === 'in_progress') &&
+          row.archived_at === null
+        ) {
+          row = {
+            ...row,
+            status: 'done',
+            completed_at: fe.created_at,
+            updated_at: fe.created_at,
+            version: row.version + 1,
+          };
+        }
+      } else if (fe.action === 'experimental:learning_item_relearn') {
+        if ((row.status === 'done' || row.status === 'resting') && row.archived_at === null) {
+          row = {
+            ...row,
+            status: 'in_progress',
+            completed_at: null,
+            updated_at: fe.created_at,
+            version: row.version + 1,
+          };
+        }
+      }
+    }
+    return row;
+  }
+
+  const sameMs = new Date(T0.getTime() + 5000);
+  const seedRow = liSnapshot({ status: 'pending', version: 0 });
+
+  // genesis STRICTLY earlier than the same-ms pair (mirrors the actions.ts genesis-if-missing clamp),
+  // so it always seeds the base before either action regardless of id.
+  function genesisBase(): FoldEvent {
+    return {
+      ...genesis({ created_at: new Date(sameMs.getTime() - 1), row: seedRow }),
+      id: 'aaa_base',
+    };
+  }
+  function completeAt(id: string): FoldEvent {
+    return {
+      id,
+      created_at: sameMs,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_complete',
+      subject_kind: 'learning_item',
+      subject_id: 'li_1',
+      outcome: 'success',
+      caused_by_event_id: null,
+      payload: {},
+    };
+  }
+  function relearnAt(id: string): FoldEvent {
+    return {
+      id,
+      created_at: sameMs,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_relearn',
+      subject_kind: 'learning_item',
+      subject_id: 'li_1',
+      outcome: 'success',
+      caused_by_event_id: null,
+      payload: {},
+    };
+  }
+
+  it('complete id < relearn id ⇒ arrival [complete, relearn] ⇒ in_progress (fold == arrival oracle)', () => {
+    const completeEvent = completeAt('bbb_complete');
+    const relearnEvent = relearnAt('ccc_relearn'); // bbb < ccc ⇒ fold tiebreak applies complete first
+    // Scrambled INPUT order — the fold must re-sort to (created_at, id) internally.
+    const folded = foldLearningItem('li_1', [relearnEvent, genesisBase(), completeEvent]);
+    // arrival order (id-ascending) the fold's same-ms tiebreak produces: complete THEN relearn.
+    const oracle = applyInArrivalOrder(seedRow, [completeEvent, relearnEvent]);
+    expect(folded?.status).toBe('in_progress');
+    expect(folded?.completed_at).toBeNull();
+    expect(folded?.version).toBe(2);
+    expect(folded).toEqual(oracle);
+  });
+
+  it('relearn id < complete id ⇒ arrival [relearn, complete] ⇒ done (order-sensitive terminal, fold == arrival oracle)', () => {
+    const relearnEvent = relearnAt('bbb_relearn');
+    const completeEvent = completeAt('ccc_complete'); // bbb < ccc ⇒ fold tiebreak applies relearn first
+    const folded = foldLearningItem('li_1', [completeEvent, genesisBase(), relearnEvent]);
+    // arrival order (id-ascending): relearn (no-op on pending) THEN complete (pending → done).
+    const oracle = applyInArrivalOrder(seedRow, [relearnEvent, completeEvent]);
+    // DIFFERENT terminal than the sibling test above — proves the same-ms order genuinely decides it.
+    expect(folded?.status).toBe('done');
+    expect(folded?.completed_at?.getTime()).toBe(sameMs.getTime());
+    expect(folded?.version).toBe(1);
+    expect(folded).toEqual(oracle);
+  });
+});
