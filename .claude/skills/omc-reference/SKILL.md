@@ -12,21 +12,21 @@ Use this built-in reference when you need detailed OMC catalog information that 
 
 Prefix: `oh-my-claudecode:`. See `agents/*.md` for full prompts.
 
-- `explore` (haiku) — fast codebase search and mapping
+- `explore` (sonnet) — fast codebase search and mapping
 - `analyst` (opus) — requirements clarity and hidden constraints
 - `planner` (opus) — sequencing and execution plans
 - `architect` (opus) — system design, boundaries, and long-horizon tradeoffs
-- `debugger` (sonnet) — root-cause analysis and failure diagnosis
-- `executor` (sonnet) — implementation and refactoring
-- `verifier` (sonnet) — completion evidence and validation
+- `debugger` (opus) — root-cause analysis and failure diagnosis
+- `executor` (opus) — implementation and refactoring
+- `verifier` (opus) — completion evidence and validation
 - `tracer` (sonnet) — trace gathering and evidence capture
-- `security-reviewer` (sonnet) — trust boundaries and vulnerabilities
+- `security-reviewer` (opus) — trust boundaries and vulnerabilities
 - `code-reviewer` (opus) — comprehensive code review
-- `test-engineer` (sonnet) — testing strategy and regression coverage
-- `designer` (sonnet) — UX and interaction design
-- `writer` (haiku) — documentation and concise content work
+- `test-engineer` (opus) — testing strategy and regression coverage
+- `designer` (opus) — UX and interaction design
+- `writer` (sonnet) — documentation and concise content work
 - `qa-tester` (sonnet) — runtime/manual validation
-- `scientist` (sonnet) — data analysis and statistical reasoning
+- `scientist` (opus) — data analysis and statistical reasoning
 - `document-specialist` (sonnet) — SDK/API/framework documentation lookup
 - `git-master` (sonnet) — commit strategy and history hygiene
 - `code-simplifier` (opus) — behavior-preserving simplification
