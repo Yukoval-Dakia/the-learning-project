@@ -90,13 +90,15 @@ export function checksForTier(tier: SourceTier): readonly VerifyCheck[] {
 
 // ---------- solve-check ----------
 
-// Loose run seam (mirrors quiz_verify / variant_verify): the check only consumes
-// { text } from the runner. DB tests inject a vi.fn() returning a JSON string.
+// Loose run seam (mirrors quiz_verify / variant_verify): the check consumes { text } from
+// the runner, plus — EFF-1 (YUK-554 review) — OPTIONAL task_run_id / cost_usd when the
+// runner reports them (production TaskTextResult does; { text }-only test mocks still
+// satisfy the type), so solve-check cost is answerable from the verify event.
 export type SolveCheckRunTaskFn = (
   kind: string,
   input: unknown,
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<{ text: string; task_run_id?: string; cost_usd?: number }>;
 
 // The minimal subject-profile shape solve-check threads to the solver / judge. We
 // keep this loose (not the full SubjectProfile import) so the check stays a leaf —
@@ -132,6 +134,11 @@ export interface SolveCheckResult {
   reason: string;
   // 'normalize' (exact) vs 'semantic' (open) — which comparison axis ran.
   compared_by: 'normalize' | 'semantic' | 'none';
+  // EFF-1 (YUK-554 review) — provenance/cost of the 1 (exact) or 2 (semantic: solver +
+  // judge) LLM calls this check spent, in call order, when the runner reported them.
+  // cost_usd is the SUM across legs; absent when no leg reported a number.
+  task_run_ids?: string[];
+  cost_usd?: number;
 }
 
 // Per-tier override knob (OF-4 (ii)): future model 异源 / threshold tuning. Zero
@@ -183,6 +190,13 @@ export const SOLVE_CHECK_TIER34_VETO = {
 // answer "does this block promotion?". Only a 'fail' verdict can block; the axis
 // (compared_by) picks which flag applies. 'unsupported'/'pass' NEVER block (R2 conservative
 // — a solver that couldn't independently solve, or that agreed, must not kill a question).
+//
+// R4 (YUK-554 review) — DELIBERATE tier asymmetry: tier2 (source_verify.ts) vetoes EVERY
+// solve fail including normalize, because its reference answers are anchored on real web
+// extracts (source_consistency forces overlap) — a normalize mismatch there is a strong
+// signal. tier3/4 references are same-model self-authored (quiz_verify.ts), where normalize
+// mismatch is format-jitter-rich → per-axis split here. Do NOT "unify" the two handlers'
+// veto semantics without revisiting that provenance difference.
 export function solveCheckBlocks(
   result: SolveCheckResult,
   flags: { semantic: boolean; normalize: boolean } = SOLVE_CHECK_TIER34_VETO,
@@ -219,6 +233,22 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 // Comparing an exact solver answer against an entire worked solution would falsely
 // fail, so prefer the structured final answer and only fall back to reference_md when
 // no structured answer is present.
+//
+// A1 (YUK-554 独立 review) — the reference_md fallback is the COMMON case for quiz_gen rows:
+// quiz_gen writes reference_md + rubric_json{keywords,required_points} but NO
+// reference_solution, and both backfill paths gate on reference_md IS NULL (quiz_gen rows
+// are always non-null → never backfilled). An exact-kind quiz_gen reference_md is typically
+// 「答案+解析」 prose, so the whole-text candidate alone made normalize-compare a
+// near-guaranteed false FAIL. Mitigation: ALSO derive (a) the first LINE and (b) the first
+// SENTENCE of that line (split on full-width enders 。！？ only — ASCII '.' excluded so
+// decimals like "3.14" never truncate) as candidates; the quiz_gen prompt contract puts the
+// bare answer first (choice/true_false: correct option text). Reverse (false-pass) risk: a
+// solver final_answer would have to normalize-equal a NON-answer prose line — implausible
+// for exact-shaped rows (the exact path is already gated to EXACT_KINDS / persisted choices
+// / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
+// vs. the certain false FAIL today. Whole-text candidate kept (multi-candidate `.includes`
+// = any hit passes); candidate[0] stays the whole text so the semantic path's reference is
+// unchanged. No kind gate — spec 附录 B (review A1 裁决).
 function referenceAnswerCandidates(q: SolveCheckQuestion): string[] {
   const rubric = q.rubric_json;
   if (rubric !== null && typeof rubric === 'object' && !Array.isArray(rubric)) {
@@ -238,7 +268,15 @@ function referenceAnswerCandidates(q: SolveCheckQuestion): string[] {
     }
   }
   const fallback = (q.reference_md ?? '').trim();
-  return fallback.length > 0 ? [fallback] : [];
+  if (fallback.length === 0) return [];
+  const out = [fallback];
+  // A1 — first line of the worked answer (quiz_gen contract: bare answer first).
+  const firstLine = (fallback.split(/\r?\n/, 1)[0] ?? '').trim();
+  if (firstLine.length > 0 && firstLine !== fallback) out.push(firstLine);
+  // A1 — first sentence of that line (full-width enders only; '.' excluded for decimals).
+  const firstSentence = (firstLine.split(/[。！？]/u, 1)[0] ?? '').trim();
+  if (firstSentence.length > 0 && !out.includes(firstSentence)) out.push(firstSentence);
+  return out;
 }
 
 export function normalizeAnswer(text: string): string {
@@ -257,9 +295,22 @@ function choiceLabelIndex(value: string): number | null {
 
 function stripLeadingChoiceLabel(value: string): string | null {
   const normalized = value.normalize('NFKC').trim();
+  // low-pri (YUK-554 review A2, skip 裁决): `.` here is not dotAll — a multi-line labelled
+  // answer won't strip. Post-A1 the fallback candidates are first-line/first-sentence
+  // (single-line) so this is moot in practice; not worth a behavior-bearing regex change.
   const match = /^([A-F])[\s.、:：)\]）-]+(.+)$/iu.exec(normalized);
   const stripped = match?.[2]?.trim();
   return stripped && stripped.length > 0 ? stripped : null;
+}
+
+// A1 (YUK-554 独立 review) — trailing sentence-punctuation variant for exact compare, applied
+// symmetrically to BOTH reference and solver candidates via answerCandidates. normalizeAnswer
+// deliberately strips whitespace only (mathematical symbols are load-bearing), so 『长安。』 vs
+// 『长安』 was a stable false fail. Conservative trailing set: full-width 。．！？ + ASCII .!?
+// — trailing-only, so interior punctuation ("3.14", "x=-1") is untouched.
+function stripTrailingPunct(value: string): string | null {
+  const stripped = value.replace(/[。．.!！?？]+$/u, '').trim();
+  return stripped.length > 0 && stripped !== value ? stripped : null;
 }
 
 function addChoiceExpansion(out: string[], choice: string | undefined): void {
@@ -277,6 +328,13 @@ function answerCandidates(text: string, choices: readonly string[]): string[] {
   const labelIndex = choiceLabelIndex(text);
   if (labelIndex !== null) {
     addChoiceExpansion(out, choices[labelIndex]);
+  }
+
+  // A1 — trailing-punct variant of every candidate gathered so far (both sides of the
+  // compare flow through here, so 『长安』↔『长安。』 matches in either direction).
+  for (const candidate of [...out]) {
+    const trimmed = stripTrailingPunct(candidate);
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
   }
 
   return out;
@@ -315,6 +373,35 @@ export async function runSolveCheck(
   const referenceCandidates = referenceAnswerCandidates(question);
   const referenceAnswer = referenceCandidates[0] ?? '';
 
+  if (referenceAnswer.length === 0) {
+    // No declared answer to compare against → nothing solve-check can assert.
+    // EFF-3 (YUK-554 review) — hoisted BEFORE the solver call: with no reference the verdict
+    // is 'unsupported' regardless of what the solver says, so don't spend the LLM call.
+    // (Verdict/reason unchanged; this return no longer carries solver_final_answer since no
+    // solve ran.)
+    return {
+      verdict: 'unsupported',
+      reason: 'question has no reference answer to compare against',
+      compared_by: 'none',
+    };
+  }
+
+  // EFF-1 (YUK-554 review) — provenance/cost capture across the 1-2 LLM calls below.
+  const taskRunIds: string[] = [];
+  let costUsd: number | undefined;
+  const recordRun = (r: { task_run_id?: string; cost_usd?: number }): void => {
+    if (typeof r.task_run_id === 'string' && r.task_run_id.length > 0) {
+      taskRunIds.push(r.task_run_id);
+    }
+    if (typeof r.cost_usd === 'number' && Number.isFinite(r.cost_usd)) {
+      costUsd = (costUsd ?? 0) + r.cost_usd;
+    }
+  };
+  const runProvenance = (): Pick<SolveCheckResult, 'task_run_ids' | 'cost_usd'> => ({
+    ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
+    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+  });
+
   // Solve the question independently. Input shape mirrors solution-generate.ts:103.
   let solverFinalAnswer: string;
   let solverEquivalents: string[];
@@ -340,7 +427,9 @@ export async function runSolveCheck(
     // `ctx.override.model`（resolveTaskProvider(kind, ctx.override)），裸 `ctx.model`
     // 不会被读取——那是个死旋钮。
     if (opts.solverModelOverride) ctx.override = { model: opts.solverModelOverride };
-    const { text } = await opts.runTaskFn('SolutionGenerateTask', input, ctx);
+    const solverRun = await opts.runTaskFn('SolutionGenerateTask', input, ctx);
+    recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
+    const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
     const parsed = extractJsonObject(text) as {
       reference_solution?: { final_answer?: unknown; answer_equivalents?: unknown };
@@ -357,6 +446,7 @@ export async function runSolveCheck(
       verdict: 'unsupported',
       reason: `solver did not produce a usable answer: ${err instanceof Error ? err.message : String(err)}`,
       compared_by: 'none',
+      ...runProvenance(),
     };
   }
 
@@ -365,16 +455,7 @@ export async function runSolveCheck(
       verdict: 'unsupported',
       reason: 'solver returned an empty final_answer',
       compared_by: 'none',
-    };
-  }
-
-  if (referenceAnswer.length === 0) {
-    // No declared answer to compare against → nothing solve-check can assert.
-    return {
-      verdict: 'unsupported',
-      solver_final_answer: solverFinalAnswer,
-      reason: 'question has no reference answer to compare against',
-      compared_by: 'none',
+      ...runProvenance(),
     };
   }
 
@@ -397,6 +478,7 @@ export async function runSolveCheck(
         ? 'solver answer matches the question reference (normalized)'
         : `solver answer "${solverFinalAnswer}" disagrees with reference "${referenceAnswer}" (normalized)`,
       compared_by: 'normalize',
+      ...runProvenance(),
     };
   }
 
@@ -408,8 +490,16 @@ export async function runSolveCheck(
       solver_final_answer: solverFinalAnswer,
       reason: 'open-question solve-check needs a Db handle for SemanticJudge; skipped',
       compared_by: 'none',
+      ...runProvenance(),
     };
   }
+  // EFF-1 — the SemanticJudge leg's spend is only visible at the runTaskFn seam
+  // (runSemanticJudge returns a JudgeResultV2T with no cost/run-id), so record it there.
+  const recordingRunTaskFn: SolveCheckRunTaskFn = async (kind, input, ctx) => {
+    const r = await opts.runTaskFn(kind, input, ctx);
+    recordRun(r);
+    return r;
+  };
   // Treat the question's reference answer as the rubric/reference and the solver's
   // independent answer as the "submission". If the semantic judge CONFIDENTLY says
   // the solver answer is incorrect vs the reference, the persisted answer is suspect
@@ -432,7 +522,7 @@ export async function runSolveCheck(
     },
     answer_md: solverFinalAnswer,
     subjectProfile: opts.profile.full,
-    runTaskFn: opts.runTaskFn,
+    runTaskFn: recordingRunTaskFn,
   };
   const judged = await runSemanticJudge(semParams);
   const confidentlyDisagrees =
@@ -444,5 +534,6 @@ export async function runSolveCheck(
       ? `SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`
       : `SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`,
     compared_by: 'semantic',
+    ...runProvenance(),
   };
 }

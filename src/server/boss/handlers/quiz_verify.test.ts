@@ -17,6 +17,7 @@ import { readAgentNotes } from '@/capabilities/agency/server/notes';
 import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import {
   COPY_SAFETY_TOO_CLOSE_THRESHOLD,
   buildQuizVerifyHandler,
@@ -46,64 +47,27 @@ function verifyOutput(opts: {
   });
 }
 
-function runTaskMock(output: string, taskRunId = 'tr_v') {
-  return vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
-    text: output,
-    task_run_id: taskRunId,
-  }));
-}
-
-// YUK-538 / YUK-554 — solve-check wiring makes tier3/4 verify fire a SECOND task
-// (SolutionGenerateTask) whenever all free checks pass, so tests that want to control the
-// solve outcome must dispatch by task kind. Solver output shape consumed by runSolveCheck
-// (reads only reference_solution.final_answer + answer_equivalents).
-function solverOutput(finalAnswer: string, equivalents: string[] = []): string {
-  return JSON.stringify({
-    reference_solution: { final_answer: finalAnswer, answer_equivalents: equivalents },
-  });
-}
-
-// SemanticJudgeTask output shape (SemanticJudgeOutput schema) for the open-question solve
-// path — only a confident 'incorrect' (confidence>=0.8) makes solve_check fail.
-function semanticJudgeOutput(
-  outcome: 'correct' | 'partial' | 'incorrect',
-  confidence: number,
-): string {
-  return JSON.stringify({
-    score: outcome === 'incorrect' ? 0 : outcome === 'partial' ? 0.5 : 0.9,
-    coarse_outcome: outcome,
-    confidence,
-    feedback_md: 'fb',
-    evidence_json: { matched_points: [], missing_points: [] },
-  });
-}
-
-// QuizVerifyTask → verifyText; SolutionGenerateTask → solverText; everything else →
-// verifyText. Covers the exact (normalize) solve path (no SemanticJudge call).
-function dualTaskMock(verifyText: string, solverText: string, taskRunId = 'tr_v') {
-  return vi.fn(async (kind: string, _input: unknown, _ctx: unknown) => ({
-    text: kind === 'SolutionGenerateTask' ? solverText : verifyText,
-    task_run_id: taskRunId,
-  }));
-}
-
-// Three-way dispatch for the open-question (semantic) solve path: QuizVerifyTask →
-// verifyText, SolutionGenerateTask → solverText, SemanticJudgeTask → semanticText.
-function tripleTaskMock(
-  verifyText: string,
-  solverText: string,
-  semanticText: string,
+// YUK-538 / YUK-554 (review SIMP-2/R3) — SINGLE per-kind mock dispatcher. Solve-check wiring
+// makes tier3/4 verify fire additional tasks (SolutionGenerateTask, and SemanticJudgeTask on
+// the open path), so tests that control the solve outcome pass per-kind overrides; every
+// unmatched kind gets `defaultText` (for the plain single-output tests, the solver leg then
+// parses the verify JSON → empty final_answer → solve 'unsupported' → non-blocking).
+// solverOutput / semanticJudgeOutput come from tests/helpers/solve-check-fixtures (R1/R2 —
+// shared with verify-framework.test.ts).
+function taskMock(
+  defaultText: string,
+  overrides: Partial<Record<string, string>> = {},
   taskRunId = 'tr_v',
 ) {
   return vi.fn(async (kind: string, _input: unknown, _ctx: unknown) => ({
-    text:
-      kind === 'SolutionGenerateTask'
-        ? solverText
-        : kind === 'SemanticJudgeTask'
-          ? semanticText
-          : verifyText,
+    text: overrides[kind] ?? defaultText,
     task_run_id: taskRunId,
   }));
+}
+
+// Back-compat single-output wrapper (pre-review call sites keep their minimal shape).
+function runTaskMock(output: string, taskRunId = 'tr_v') {
+  return taskMock(output, {}, taskRunId);
 }
 
 async function seedKnowledge(id: string) {
@@ -481,10 +445,15 @@ describe('runQuizVerify', () => {
     // First invocation throws (transient LLM/parse/DB error → catch-bottom writes a
     // failure event with outcome='error'); second invocation succeeds. The second
     // run MUST re-invoke the task and verify, NOT skip as already_verified.
+    // B-obs-1 (review) — every call explicitly mocked: 1st run rejects at QuizVerifyTask
+    // (never reaches solve); 2nd run fires verify (2nd mock) + solve (3rd mock, EXPLICIT
+    // empty final_answer → the documented 'solver returned an empty final_answer'
+    // unsupported path → non-blocking). No reliance on vi.fn's undefined default.
     const runTaskFn = vi
       .fn()
       .mockRejectedValueOnce(new Error('transient boom'))
-      .mockResolvedValueOnce({ text: verifyOutput({ overall: 'pass' }), task_run_id: 'tr_retry' });
+      .mockResolvedValueOnce({ text: verifyOutput({ overall: 'pass' }), task_run_id: 'tr_retry' })
+      .mockResolvedValueOnce({ text: solverOutput(''), task_run_id: 'tr_retry_solve' });
 
     await expect(runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn })).rejects.toThrow(
       /transient boom/,
@@ -492,11 +461,9 @@ describe('runQuizVerify', () => {
 
     const second = await runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn });
     expect(second.status).toBe('verified');
-    // YUK-538 / YUK-554 — 1st run rejects at QuizVerifyTask (never reaches solve); 2nd run
-    // fires verify + solve = 2. The 3rd call (solve) hits the unqueued vi.fn default
-    // (undefined) → runSolveCheck destructures undefined.text → throws → swallowed to
-    // 'unsupported' → non-blocking, status stays verified. Total = 3.
+    // 1st run = 1 call (rejected verify); 2nd run = verify + solve. Total = 3.
     expect(runTaskFn).toHaveBeenCalledTimes(3);
+    expect(runTaskFn.mock.calls[2][0]).toBe('SolutionGenerateTask');
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'q5b'));
     expect(rows[0].draft_status).toBe('active');
@@ -519,6 +486,12 @@ describe('runQuizVerify', () => {
     const successEv = evs.find((e) => e.outcome === 'success');
     expect(successEv?.payload?.overall).toBe('pass');
     expect(successEv?.payload?.failure_class).toBeUndefined();
+    // B-obs-1 — the explicit empty-answer solve leg lands as a recorded (non-blocking)
+    // unsupported verdict on the success event.
+    expect(successEv?.payload?.solve_check).toMatchObject({
+      verdict: 'unsupported',
+      compared_by: 'none',
+    });
   });
 
   // YUK-350 (RL1) — system-error class: a task/parse blowup BEFORE a verdict must
@@ -713,9 +686,9 @@ describe('runQuizVerify', () => {
       rubricJson: { required_points: [] },
     });
     // solver AGREES with the reference (代词) → normalize match → solve_check pass.
-    const runTaskFn = dualTaskMock(
+    const runTaskFn = taskMock(
       verifyOutput({ overall: 'pass' }),
-      solverOutput('代词'),
+      { SolutionGenerateTask: solverOutput('代词') },
       'tr_sp',
     );
 
@@ -729,7 +702,13 @@ describe('runQuizVerify', () => {
     const evs = await verifyEventsFor('qsolve_pass');
     expect(evs).toHaveLength(1);
     const payload = evs[0].payload as Record<string, unknown>;
-    expect(payload.solve_check).toMatchObject({ verdict: 'pass', compared_by: 'normalize' });
+    // ALT-3 (review) — pass-case payload completeness, symmetric with the fail-case below.
+    expect(payload.solve_check).toMatchObject({
+      verdict: 'pass',
+      compared_by: 'normalize',
+      solver_final_answer: '代词',
+    });
+    expect(typeof (payload.solve_check as Record<string, unknown>).reason).toBe('string');
     const axes = payload.axes as { axis_name: string; verdict: string }[];
     expect(axes.find((a) => a.axis_name === 'solve_check')).toMatchObject({ verdict: 'pass' });
   });
@@ -746,9 +725,9 @@ describe('runQuizVerify', () => {
       rubricJson: { required_points: [] },
     });
     // solver DISAGREES (助词 vs reference 代词) → normalize mismatch → solve_check fail.
-    const runTaskFn = dualTaskMock(
+    const runTaskFn = taskMock(
       verifyOutput({ overall: 'pass' }),
-      solverOutput('助词'),
+      { SolutionGenerateTask: solverOutput('助词') },
       'tr_sf',
     );
 
@@ -783,10 +762,12 @@ describe('runQuizVerify', () => {
     // default seed = short_answer + judge_kind_override 'semantic' → open (semantic) solve path.
     await seedDraftQuestion({ id: 'qsem_fail', knowledgeId: 'k1' });
     // solver produces an answer; SemanticJudge confidently scores it incorrect (>=0.8).
-    const runTaskFn = tripleTaskMock(
+    const runTaskFn = taskMock(
       verifyOutput({ overall: 'pass' }),
-      solverOutput('独立求解得到的一个答案'),
-      semanticJudgeOutput('incorrect', 0.95),
+      {
+        SolutionGenerateTask: solverOutput('独立求解得到的一个答案'),
+        SemanticJudgeTask: semanticJudgeOutput('incorrect', 0.95),
+      },
       'tr_semf',
     );
 
@@ -806,7 +787,11 @@ describe('runQuizVerify', () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({ id: 'qsolve_unsup', knowledgeId: 'k1' });
     // empty solver final_answer → runSolveCheck 'unsupported' (short-circuits before Semantic).
-    const runTaskFn = dualTaskMock(verifyOutput({ overall: 'pass' }), solverOutput(''), 'tr_unsup');
+    const runTaskFn = taskMock(
+      verifyOutput({ overall: 'pass' }),
+      { SolutionGenerateTask: solverOutput('') },
+      'tr_unsup',
+    );
 
     const result = await runQuizVerify({ db: testDb(), questionId: 'qsolve_unsup', runTaskFn });
     // unsupported carries no signal → never blocks (R2 conservative) → promote stands.
@@ -823,9 +808,9 @@ describe('runQuizVerify', () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({ id: 'qshort', knowledgeId: 'k1' });
     // overall=pass but grounding=fail → checksPass false → freeChecksPass false → no solve.
-    const runTaskFn = dualTaskMock(
+    const runTaskFn = taskMock(
       verifyOutput({ overall: 'pass', groundingVerdict: 'fail' }),
-      solverOutput('代词'),
+      { SolutionGenerateTask: solverOutput('代词') },
       'tr_short',
     );
 

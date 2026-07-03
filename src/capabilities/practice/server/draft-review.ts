@@ -140,10 +140,37 @@ function deriveVerifyVerdict(
     status = outcome === 'partial' ? 'needs_review' : 'failed';
   }
   const summary = payload?.summary_md;
-  return {
-    status,
-    reason: typeof summary === 'string' && summary.length > 0 ? summary : null,
-  };
+  let reason: string | null = typeof summary === 'string' && summary.length > 0 ? summary : null;
+
+  // YUK-554 (review ALT-1) — solve_check veto diagnosis. When the independent solve-check
+  // vetoed promotion (tier3/4 hold-for-review), `summary_md` is the verifier model's OWN
+  // self-review — which by construction said "pass" on these rows (solve_check only runs
+  // after every free check passed), so showing it alone as the驳回理由 tells the owner
+  // nothing actionable. Surface the actual disagreement (comparison axis + the independent
+  // solver's answer + the check's reason) first, and keep the model self-review appended
+  // for context. Both /drafts consumers (listDraftReview + getDraftReviewDetail) derive
+  // through this function, so the list chip tooltip and the detail diagnosis pane both get
+  // the synthesized reason.
+  const rawSolveCheck = payload?.solve_check;
+  if (rawSolveCheck && typeof rawSolveCheck === 'object' && !Array.isArray(rawSolveCheck)) {
+    const sc = rawSolveCheck as Record<string, unknown>;
+    if (sc.verdict === 'fail') {
+      const axis = typeof sc.compared_by === 'string' ? sc.compared_by : 'unknown';
+      const solverAnswer =
+        typeof sc.solver_final_answer === 'string' && sc.solver_final_answer.trim().length > 0
+          ? `独立求解答案「${sc.solver_final_answer}」；`
+          : '';
+      const scReason =
+        typeof sc.reason === 'string' && sc.reason.length > 0
+          ? sc.reason
+          : '独立求解与参考答案不一致';
+      reason = `solve_check(${axis}) 否决：${solverAnswer}${scReason}${
+        reason ? `（模型自评：${reason}）` : ''
+      }`;
+    }
+  }
+
+  return { status, reason };
 }
 
 // Resolve a set of knowledge ids → {id,label} in one round-trip (avoid N+1).
