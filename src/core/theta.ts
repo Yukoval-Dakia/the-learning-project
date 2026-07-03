@@ -582,6 +582,34 @@ export function fisherInformation(theta: number, b: number): number {
 }
 
 /**
+ * 3PL Fisher information for θ at item difficulty b 带 lower-asymptote（guess）c：
+ *
+ *   P(θ) = c + (1−c)·σ(θ − b)        （a=1，与 expectedScore 同 locked-b 锚）
+ *   dP/dθ = (1−c)·p̂·(1−p̂)            其中 p̂ = σ(θ − b) = expectedScore(θ, b)
+ *   I(θ) = (dP/dθ)² / [P·(1−P)] = (1−c)²·p̂²·(1−p̂)² / [P·(1−P)]
+ *
+ * **n=1 红线合规**：c 是设计常量 1/k（k=选择题选项数，来自 choices_md.length），
+ * 非跨考生拟合参数（参 theta.ts:103-108 DINA slip/guess 的明确禁令）。
+ *
+ * **c=0 显式 delegate 到 fisherInformation**：c=0 时 P=p̂，I = p̂²(1−p̂)²/[p̂(1−p̂)] = p̂(1−p̂)
+ * == 1PL，故 c===0 直接走原函数保 byte-identical 回归锚（镜像 conjunctiveCreditsContinuous
+ * 在 binary 端点 delegate 的 endpoint-exact 模式）。只有 c>0（选择题）走 3PL 分支。
+ *
+ * DARK-SHIP：本函数是 theta-grid 3PL 嫁接（YUK-436 BKT graft 1）的算法层供件，
+ * 仅在 THETA_GRID_ENABLED（默认 false，inc-1 shadow）被 grid 路径消费——c=0 退化 1PL
+ * 的非选择题路径与现状逐位相同；翻转 flag 才进 3PL 分支。
+ */
+export function fisherInformation3pl(theta: number, b: number, c = 0): number {
+  if (c === 0) return fisherInformation(theta, b); // byte-identical 1PL regression anchor
+  const phat = expectedScore(theta, b); // σ(θ − b)，3PL 内层 1PL 概率
+  const P = c + (1 - c) * phat;
+  const dP = (1 - c) * phat * (1 - phat); // dP/dθ
+  const denom = P * (1 - P);
+  if (!(denom > 0)) return 0; // P 触 0/1 边界（c=1 或 p̂→1）→ 无信息
+  return (dP * dP) / denom;
+}
+
+/**
  * θ̂ 标准误，从累积 precision 派生：SE = 1/√(precision)。**不持久化 SE**——只存
  * precision，SE 由本函数现算（schema 单一真相）。floor 1e-9 防 precision=0 时除零。
  */
