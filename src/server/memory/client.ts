@@ -22,6 +22,23 @@ const DEFAULT_HISTORY_DB_PATH = '/var/lib/mem0/history.db'; // 绝对路径（�
 
 export type Env = Record<string, string | undefined>;
 
+/**
+ * YUK-557 (Q2a/Q5): one row of mem0's SQLite `memory_history` tombstone
+ * (SQLiteManager schema: memory_history(memory_id, previous_value, new_value,
+ * action, created_at, updated_at, is_deleted)). A DELETE row carries
+ * previous_value = the deleted text and is_deleted = 1 — the free副保底 the undo
+ * runbook reads when the WAL prev_text is absent (pre-Q2b historical rows).
+ */
+export type MemoryHistoryEntry = {
+  memory_id: string;
+  previous_value: string | null;
+  new_value: string | null;
+  action: string;
+  created_at: string | null;
+  updated_at?: string | null;
+  is_deleted: number;
+};
+
 type Mem0Like = {
   add(
     messages: string,
@@ -31,6 +48,11 @@ type Mem0Like = {
     query: string,
     config: { topK?: number; filters?: Record<string, unknown> },
   ): Promise<SearchResult>;
+  // YUK-557 (Q2a): mem0 official delete() — real vector DELETE that first writes
+  // payload.data into the SQLite memory_history tombstone (index.mjs:6980→7164).
+  delete(memoryId: string): Promise<{ message: string }>;
+  // YUK-557 (Q5): read the memory_history rows for a memory (undo face).
+  history(memoryId: string): Promise<MemoryHistoryEntry[]>;
 };
 
 export type MemoryEventInput = {
@@ -66,6 +88,16 @@ export type MemoryClient = {
     query: string,
     opts?: { topK?: number; filters?: Record<string, unknown> },
   ): Promise<SearchResult>;
+  // YUK-557 (Q2a): idempotent hard delete via mem0 official delete() — writes a
+  // tombstone (previous_value + is_deleted=1) before the real vector DELETE.
+  hardDelete(memoryId: string): Promise<void>;
+  // YUK-557 (Q5): read a memory's history rows (undo face reads the DELETE tombstone).
+  history(memoryId: string): Promise<MemoryHistoryEntry[]>;
+  // YUK-557 (Q5/M5): verbatim restore of a deleted/overwritten memory. Uses
+  // add(..., {infer:false}) so the text is stored as a single memory WITHOUT
+  // re-running the extraction LLM (NOT addEventMemory, which is infer:true +
+  // eventToText envelope → a paraphrase, not the original). Produces a NEW UUID.
+  restoreVerbatim(text: string, metadata: Record<string, unknown>): Promise<SearchResult>;
 };
 
 function requireEnv(env: Env, name: string): string {
@@ -213,6 +245,33 @@ export function createMemoryClient(
       }
       filters.user_id = 'self';
       return memory.search(query, { topK: searchOpts.topK, filters });
+    },
+    // YUK-557 (Q2a): idempotent — swallow "already gone" so a half-applied batch
+    // can replay. mem0's deleteMemory throws `Memory with ID <id> not found` when
+    // the row is absent (index.mjs:7166), matched by the same regex hardDeleteMemory
+    // used for the raw-SQL path (42P01 kept for the rare table-missing case).
+    async hardDelete(memoryId) {
+      try {
+        await memory.delete(memoryId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/not found|does not exist|42P01/i.test(msg)) return;
+        throw err;
+      }
+    },
+    async history(memoryId) {
+      return memory.history(memoryId);
+    },
+    async restoreVerbatim(text, metadata) {
+      // infer:false → mem0's addToVectorStore skips the extraction LLM and calls
+      // createMemory(text, {}, metadata) directly (index.mjs:6419-6436): the raw
+      // text is embedded and inserted as a single new memory (new UUID), with NO
+      // MD5 dedup against existing rows (dedup lives only in the infer:true branch,
+      // index.mjs:6539-6552). Verified against装机 mem0ai 3.0.6. NEVER route undo
+      // through addEventMemory (infer:true + eventToText envelope → a re-extracted
+      // paraphrase, not the verbatim original). Fallback if this ever changes:
+      // direct pgvector INSERT + manual embed (see docs/runbooks/memory-reconcile-undo.md).
+      return memory.add(text, { userId: 'self', metadata, infer: false });
     },
   };
 }

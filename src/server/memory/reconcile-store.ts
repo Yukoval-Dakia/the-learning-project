@@ -3,6 +3,7 @@ import { eq, isNull, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { memory_reconciliation_log } from '@/db/schema';
+import type { MemoryClient } from './client';
 
 // P2 (YUK-342): softSupersede + write-ahead log data layer for mem0 reconcile.
 // Self-built — does NOT depend on mem0 history. The mem0 pgvector collection
@@ -137,26 +138,21 @@ export async function rewriteMemoryText(
 
 /**
  * Physically delete a mem0 vector row (MERGE drops the new row after rewriting
- * old; RETRACT_NEW drops a duplicate new row). Idempotent: 'not found' is
- * swallowed so a half-applied batch can safely re-run.
+ * old; RETRACT_NEW drops a duplicate new row).
+ *
+ * YUK-557 (Q2a): now delegates to mem0's OFFICIAL delete() via client.hardDelete,
+ * which writes payload.data into the SQLite memory_history tombstone (is_deleted=1)
+ * BEFORE the real vector DELETE — turning the previously no-tombstone raw DELETE
+ * into a recoverable delete (副保底; the primary undo source is the WAL prev_text,
+ * which is in the backup boundary). Idempotent 'not found' handling lives inside
+ * client.hardDelete. The design §3.2 red line never封禁 official delete() (only
+ * softSupersede/rewriteMemoryText keep raw SQL, for the update() payload-clobber bug).
  */
 export async function hardDeleteMemory(
-  db: Db,
-  collectionName: string,
+  client: Pick<MemoryClient, 'hardDelete'>,
   memoryId: string,
 ): Promise<void> {
-  assertSafeCollectionName(collectionName);
-  try {
-    await db.execute(
-      sql`DELETE FROM ${sql.raw(`"${collectionName}"`)} WHERE id = ${memoryId}::uuid`,
-    );
-  } catch (err) {
-    // Idempotent: if the row was already deleted in a prior partial run, swallow.
-    // postgres-js error code 42P01 (undefined table) or a 'not found' are non-fatal.
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/not found|does not exist|42P01/i.test(msg)) return;
-    throw err;
-  }
+  await client.hardDelete(memoryId);
 }
 
 /**

@@ -513,7 +513,7 @@ export function buildMemoryReconcileHandler(
         const newMemInputs = job.data.memories ?? [];
 
         // Idempotent resume: replay any unapplied planned rows from prior runs.
-        await applyPlannedRows(db, userId, collectionName);
+        await applyPlannedRows(db, userId, { collectionName, getClient: () => memoryClient });
 
         if (newMemInputs.length === 0) continue;
 
@@ -741,7 +741,7 @@ export function buildMemoryReconcileHandler(
         await insertPlannedRows(db, plannedRows);
 
         // Apply phase: execute actions, then mark applied.
-        await applyPlannedRows(db, userId, collectionName);
+        await applyPlannedRows(db, userId, { collectionName, getClient: () => memoryClient });
       } catch (err) {
         // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
         // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
@@ -780,17 +780,37 @@ export function buildMemoryReconcileHandler(
 async function applyPlannedRows(
   db: Db,
   userId: string,
-  injectedCollectionName?: string,
+  deps: { collectionName?: string; getClient: () => MemoryClient | undefined },
 ): Promise<void> {
   const pending = await loadUnappliedLog(db, userId);
   if (pending.length === 0) return;
 
   const collectionName =
-    injectedCollectionName ??
+    deps.collectionName ??
     createMem0Config().vectorStore.config.collectionName ??
     'learning_project_memories';
 
+  // YUK-557 (Q2a/m7): MERGE/RETRACT_NEW now hard-delete via mem0's official
+  // delete() (client.hardDelete), so those branches need a MemoryClient. Resolve
+  // it lazily and ONLY when a destructive row is actually pending — a pure
+  // KEEP_BOTH/SUPERSEDE replay must never demand a Mem0 key (F-4 posture). When a
+  // destructive row is pending but no client is available (e.g. the job-start
+  // replay before lazy init), leave those rows unapplied for the next job.
+  const needsClient = pending.some((r) => r.action === 'MERGE' || r.action === 'RETRACT_NEW');
+  const client = needsClient ? deps.getClient() : undefined;
+  if (needsClient && !client) {
+    console.warn(
+      '[memory_reconcile] Mem0 client unavailable; MERGE/RETRACT_NEW rows left unapplied for resume',
+    );
+  }
+
   for (const row of pending) {
+    // m7: a destructive row with no client → skip the WHOLE branch (do NOT run
+    // rewriteMemoryText, do NOT markApplied) so the row replays intact next job.
+    // markApplied after a half-run (rewrite done, delete skipped) would orphan the
+    // new row permanently. KEEP_BOTH/SUPERSEDE need no client and proceed.
+    if ((row.action === 'MERGE' || row.action === 'RETRACT_NEW') && !client) continue;
+
     const now = Date.now();
     const llmRaw = row.llm_raw as {
       new_created_ms?: number | null;
@@ -829,7 +849,14 @@ async function applyPlannedRows(
               mergedText,
               createdMs: newCreatedMs,
             });
-            await hardDeleteMemory(db, collectionName, row.new_memory_id);
+            // client! — the m7 guard above continued past any client-less
+            // MERGE/RETRACT_NEW, so client is guaranteed present in this branch.
+            // biome-ignore lint/style/noNonNullAssertion: guaranteed by the m7 skip above.
+            await hardDeleteMemory(client!, row.new_memory_id);
+            // Q3 detection: one grep-able line per destructive apply (undo trigger).
+            console.warn(
+              `[memory_reconcile] destructive apply MERGE new_memory_id=${row.new_memory_id} old_memory_id=${row.old_memory_id} log_id=${row.id}`,
+            );
           } else {
             // Defensive (parse should require merged_text for MERGE): no merged
             // text → mark old superseded WITHOUT rewriting/dropping new (no data loss).
@@ -844,7 +871,12 @@ async function applyPlannedRows(
         break;
       case 'RETRACT_NEW':
         if (row.new_memory_id) {
-          await hardDeleteMemory(db, collectionName, row.new_memory_id);
+          // biome-ignore lint/style/noNonNullAssertion: guaranteed by the m7 skip above.
+          await hardDeleteMemory(client!, row.new_memory_id);
+          // Q3 detection: one grep-able line per destructive apply (undo trigger).
+          console.warn(
+            `[memory_reconcile] destructive apply RETRACT_NEW new_memory_id=${row.new_memory_id} log_id=${row.id}`,
+          );
         }
         break;
     }

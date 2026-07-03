@@ -7,7 +7,9 @@
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import type { MemoryClient } from './client';
 import {
+  capturePrevState,
   hardDeleteMemory,
   insertPlannedRows,
   loadUnappliedLog,
@@ -125,17 +127,39 @@ describe('reconcile-store — rewriteMemoryText (MERGE survivor stays live)', ()
   });
 });
 
-describe('reconcile-store — hardDeleteMemory', () => {
+// YUK-557 (Q2a/M4): a test-double whose hardDelete executes a REAL raw DELETE
+// against the injected test collection — the guts of what the production
+// client.hardDelete does (mem0 official delete()). This preserves genuine
+// physical-delete coverage (getPayload===null) rather than degrading to
+// "mock was called". Idempotent 'not found'/'undefined table' swallowed, mirroring
+// the production client.hardDelete.
+function rawDeleteClient(): Pick<MemoryClient, 'hardDelete'> {
+  return {
+    async hardDelete(memoryId: string) {
+      try {
+        await testDb().execute(
+          sql`DELETE FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${memoryId}::uuid`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/not found|does not exist|42P01/i.test(msg)) return;
+        throw err;
+      }
+    },
+  };
+}
+
+describe('reconcile-store — hardDeleteMemory (delegates to client.hardDelete)', () => {
   beforeEach(async () => {
     await resetDb();
     await createTestCollection();
   });
 
-  it('physically deletes the row', async () => {
+  it('physically deletes the row via the injected client', async () => {
     const id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
     await seedMem0Row(id, { data: 'temp memory' });
 
-    await hardDeleteMemory(testDb(), COLLECTION, id);
+    await hardDeleteMemory(rawDeleteClient(), id);
 
     const payload = await getPayload(id);
     expect(payload).toBeNull();
@@ -143,7 +167,31 @@ describe('reconcile-store — hardDeleteMemory', () => {
 
   it('is idempotent — deleting a non-existent row does not throw', async () => {
     const nonExistent = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
-    await expect(hardDeleteMemory(testDb(), COLLECTION, nonExistent)).resolves.toBeUndefined();
+    await expect(hardDeleteMemory(rawDeleteClient(), nonExistent)).resolves.toBeUndefined();
+  });
+});
+
+describe('reconcile-store — capturePrevState', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('returns { text, metadata } for an existing row (write-ahead snapshot source)', async () => {
+    const id = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const payload = { data: 'snapshot me', user_id: 'self', kind: 'preference', hash: 'h1' };
+    await seedMem0Row(id, payload);
+
+    const snap = await capturePrevState(testDb(), COLLECTION, id);
+    expect(snap).not.toBeNull();
+    expect(snap?.text).toBe('snapshot me');
+    expect(snap?.metadata).toMatchObject(payload);
+  });
+
+  it('returns null for a non-existent row (defensive; caller leaves prev_metadata NULL)', async () => {
+    const nonExistent = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const snap = await capturePrevState(testDb(), COLLECTION, nonExistent);
+    expect(snap).toBeNull();
   });
 });
 

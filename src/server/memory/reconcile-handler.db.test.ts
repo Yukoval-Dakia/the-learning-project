@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import type { MemoryClient } from './client';
 import { type CandidateEntry, type NewMemoryEntry, ReconcileParseError } from './reconcile-llm';
-import { loadUnappliedLog, makePlannedRow } from './reconcile-store';
+import { insertPlannedRows, loadUnappliedLog, makePlannedRow } from './reconcile-store';
 import { buildMemoryReconcileHandler } from './triggers';
 
 const COLLECTION = 'test_reconcile_collection';
@@ -52,6 +52,17 @@ function mockMemoryClient(
   return {
     addEventMemory: vi.fn(),
     search: vi.fn(async () => ({ results: searchResults })),
+    // YUK-557 (Q2a/M4): hardDelete runs a REAL raw DELETE against the test
+    // collection — the guts of what production client.hardDelete does (mem0
+    // official delete()). This keeps the physical-delete assertions
+    // (newRows.toHaveLength(0)) as genuine coverage rather than "mock was called".
+    hardDelete: vi.fn(async (memoryId: string) => {
+      await testDb().execute(
+        sql`DELETE FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${memoryId}::uuid`,
+      );
+    }),
+    history: vi.fn(async () => []),
+    restoreVerbatim: vi.fn(async () => ({ results: [] })),
   };
 }
 
@@ -914,5 +925,143 @@ describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by actio
     expect(byAction.RETRACT_NEW.prev_metadata).toBeNull(); // event-sourced, not captured
     expect(byAction.KEEP_BOTH.prev_text).toBeNull();
     expect(byAction.KEEP_BOTH.prev_metadata).toBeNull();
+  });
+});
+
+describe('reconcile handler — m7: destructive rows deferred when Mem0 client is unavailable', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('MERGE/RETRACT_NEW left applied_at IS NULL (old row unrewritten); SUPERSEDE still applies', async () => {
+    const db = testDb();
+    const mergeOld = '11111111-1111-1111-1111-111111111111';
+    const mergeNew = '22222222-2222-2222-2222-222222222222';
+    const retractNew = '33333333-3333-3333-3333-333333333333';
+    const supOld = '44444444-4444-4444-4444-444444444444';
+    const supNew = '55555555-5555-5555-5555-555555555555';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${mergeOld}::uuid, ${JSON.stringify({ data: 'merge old', user_id: 'self' })}::jsonb),
+        (${retractNew}::uuid, ${JSON.stringify({ data: 'retract dup', user_id: 'self' })}::jsonb),
+        (${supOld}::uuid, ${JSON.stringify({ data: 'sup old', user_id: 'self' })}::jsonb)
+    `);
+    await insertPlannedRows(db, [
+      makePlannedRow({
+        user_id: 'self',
+        new_memory_id: mergeNew,
+        old_memory_id: mergeOld,
+        action: 'MERGE',
+        reason: 'm',
+        llm_raw: { merged_text: 'MERGED', new_created_ms: 2000 },
+      }),
+      makePlannedRow({
+        user_id: 'self',
+        new_memory_id: retractNew,
+        old_memory_id: null,
+        action: 'RETRACT_NEW',
+        reason: 'r',
+        llm_raw: {},
+      }),
+      makePlannedRow({
+        user_id: 'self',
+        new_memory_id: supNew,
+        old_memory_id: supOld,
+        action: 'SUPERSEDE',
+        reason: 's',
+        llm_raw: { new_created_ms: 2000 },
+      }),
+    ]);
+
+    // Handler with NO injected memoryClient + injected collectionName. An empty
+    // batch triggers ONLY the job-start replay (applyPlannedRows) BEFORE any lazy
+    // createMemoryClient — so getClient() returns undefined (the m7 path).
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const handler = buildMemoryReconcileHandler(db, {
+        judge: vi.fn() as never,
+        collectionName: COLLECTION,
+      });
+      await handler(makeJob({ memories: [], user_id: 'self' }) as never);
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    // MERGE + RETRACT_NEW rows remain unapplied; SUPERSEDE applied (no client needed).
+    const unapplied = await loadUnappliedLog(db, 'self');
+    expect(unapplied.map((r) => r.action).sort()).toEqual(['MERGE', 'RETRACT_NEW']);
+
+    // MERGE old row NOT rewritten (rewriteMemoryText was NOT run — whole branch skipped).
+    const mergeOldRows = (await db.execute(
+      sql`SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${mergeOld}::uuid`,
+    )) as Array<{ data: string }>;
+    expect(mergeOldRows[0].data).toBe('merge old');
+    // RETRACT_NEW row NOT deleted.
+    const retractRows = (await db.execute(
+      sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${retractNew}::uuid`,
+    )) as unknown[];
+    expect(retractRows).toHaveLength(1);
+    // SUPERSEDE applied.
+    const supRows = (await db.execute(
+      sql`SELECT payload->>'superseded_by' AS sb FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${supOld}::uuid`,
+    )) as Array<{ sb: string | null }>;
+    expect(supRows[0].sb).toBe(supNew);
+  });
+});
+
+describe('reconcile handler — M1: replay never overwrites the write-ahead prev snapshot', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('MERGE crash after rewrite before markApplied → replay keeps prev_text/prev_metadata original', async () => {
+    const db = testDb();
+    const oldId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const newId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    // Post-crash state: rewriteMemoryText already ran (old row shows a rewritten
+    // value), new row already gone, but markApplied never fired. The write-ahead
+    // snapshot was captured BEFORE the rewrite, so it must still be the ORIGINAL.
+    const originalPayload = { data: 'original old text', user_id: 'self', kind: 'preference' };
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload)
+      VALUES (${oldId}::uuid, ${JSON.stringify({ data: 'rewritten pre-crash', user_id: 'self' })}::jsonb)
+    `);
+    await insertPlannedRows(db, [
+      makePlannedRow({
+        user_id: 'self',
+        new_memory_id: newId,
+        old_memory_id: oldId,
+        action: 'MERGE',
+        reason: 'overlap',
+        llm_raw: { merged_text: 'MERGED FINAL', new_created_ms: 2000 },
+        prev_text: 'original old text',
+        prev_metadata: originalPayload,
+      }),
+    ]);
+
+    // Replay via empty-batch handler WITH a client so the MERGE branch runs.
+    const memoryClient = mockMemoryClient([]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: vi.fn() as never,
+      collectionName: COLLECTION,
+    });
+    await handler(makeJob({ memories: [], user_id: 'self' }) as never);
+
+    expect(await loadUnappliedLog(db, 'self')).toHaveLength(0); // now applied
+    // The write-ahead snapshot is UNTOUCHED by apply/replay (captured once at
+    // write-ahead; apply never re-captures — the M1 correctness invariant).
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].prev_text).toBe('original old text');
+    expect(rows[0].prev_metadata).toMatchObject(originalPayload);
+    // The apply DID run (old row rewritten to merged_text), proving the snapshot
+    // predates the mutation rather than mirroring the post-merge state.
+    const oldRows = (await db.execute(
+      sql`SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldId}::uuid`,
+    )) as Array<{ data: string }>;
+    expect(oldRows[0].data).toBe('MERGED FINAL');
   });
 });
