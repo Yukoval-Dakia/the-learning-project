@@ -203,6 +203,10 @@ export function newCheckReasoning(label?: string): string {
   return `你刚学了${kpSuffix(label)}，自测一道确认真的进脑子了。`;
 }
 // B3 frontier（与 composeDailyStream 的 frontier 尾文案一致——单一真相）。
+// 措辞红线（YUK-551 spec §Q6；Cosyn et al. 2021 JMP 实证 outer-fringe 首答正确率仅 ~27%）:
+// frontier 是「结构可达」信号,不是「容易/该会/正确率高」信号——不要在这段文案引入后者措辞
+// （「前置拿下了、可以开这块」是可达性叙述,非难度承诺）。详见
+// docs/design/2026-07-03-frontier-gate-spec.md §Q6。
 export function frontierReasoning(label?: string): string {
   return `${kpSuffix(label)}的前置你都拿下了，可以开这块新内容了。`;
 }

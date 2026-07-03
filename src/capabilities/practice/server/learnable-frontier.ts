@@ -58,6 +58,40 @@ export const FRONTIER_DEPTH_LIMIT = 16;
  * anchor guard) trips it.
  */
 export const FRONTIER_NODE_CAP = 10_000;
+/**
+ * ═══ 阈值/常量联合记录（YUK-551, spec Q3；docs/design/2026-07-03-frontier-gate-spec.md §M3）═══
+ * 本模块与相邻模块共有多组独立、各自服务不同消费者的阈值/常量,此前无单一 artifact 交叉引用。
+ * 数值本身是各自 owner-fixed 决策,不在此改（本 docblock 是纯文档动作,零行为变更）。
+ *
+ *   ① masteryTone 0.67/0.45（src/capabilities/knowledge/ui/mastery-tone.ts:17-22）——展示层
+ *      3-tone（good/hard/again）,驱动 MasteryRing 环色。⚠️ 这对数值**不是**孤立常量,而是
+ *      S5/YUK-335 跨三个展示面的**统一点**:ring disc(masteryTone) + decay pill
+ *      (NodeDrawer.decayCue) + legend,专门修一个「~43% 节点环上读 good/黄、衰减 pill 读
+ *      again/红」的分裂（audit §3.8）。任何对齐动作须三面同步,否则重开该分裂。
+ *   ② MASTERED_PL_THRESHOLD=0.7 AND FRONTIER_MASTERY_MIN_EVIDENCE=4（本文件）——gate 层复合判据
+ *      （YUK-539）,决定 KC 是否离开 frontier 池/满足下游 prereq。注:0.67/0.45（①）与 0.7（②）
+ *      在 YUK-335 是「三面统一点」的语境,②的 0.7 与①的 0.67 相差 ~0.03 是 owner-fixed 分工。
+ *   ③ FRONTIER_DEPTH_LIMIT=16 / FRONTIER_NODE_CAP=10_000（本文件）——闭包 fail-safe,与①②语义
+ *      无关,纯 SQL 递归防爆界（overflow→[] + Q1 单点 warn）。
+ *
+ * ①②读同一个 getMasteryProjection() 标量但独立评估——一个 KC 可能在 MasteryRing 上显示「好」
+ * （①）同时未过 frontier 门（②,evidence 不够）。是否对齐①②是 owner 决策,且对齐 = 三面回改
+ * （①统一点）,本文件默认保留独立分工。
+ *
+ * p(L) 的构念（防 BKT 名字撞车,spec Q3b）:本项目 p(L) = σ(PFA logit),是**recall 概率的点
+ * 估计**,NOT BKT 的 P(learned) 后验（对二值掌握潜变量）,尽管共用「p(L)」记号。故 BKT/
+ * Cognitive-Tutor 惯例 0.95（及老 Khan 0.94）**off-scale、不迁移**到本门。置信度在本项目住在
+ * band(lo/hi) + FRONTIER_MASTERY_MIN_EVIDENCE,不在抬高 p(L) 阈值上——这正是「提高置信要求」的
+ * 正确落点是 evidence floor 而非更高 p(L) 的原因。故「0.7 是否向 0.95 靠拢」在构念上 malformed。
+ *
+ * evidence-floor × 单题出题的交互（spec Q5/⑤）:frontier 尾对每 KC 取恰一道题
+ * （stream-store.ts collectComposerInputs, orderBy(question.id).limit(1)）。对 ≤floor 题的薄
+ * 编排/冷启 KC,同一题跨日反复出现,evidence_count 靠**重复暴露同一 item** 爬满——它数尝试量非
+ * 证据独立性。故在冷启薄编排场景,floor 大多只买到「同一题多做一次」,而非多题印证。这是
+ * authoring-supply/refill 路径（单独 owner）的输入,非本门可修——记此以免被误读为「floor 已
+ * 保证 diverse 证据」。
+ */
+
 /** p(L) at/above which a KC counts as MASTERED (self-not-mastered + prereq-mastered gate).
  *  ⚠️ Never compare raw p(L) against this alone for a mastered/frontier decision — use
  *  `isMasteredForFrontier` below, which ANDs the FRONTIER_MASTERY_MIN_EVIDENCE floor

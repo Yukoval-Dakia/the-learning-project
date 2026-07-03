@@ -12,6 +12,11 @@
 // NodeDrawer.decayCue (was 0.7 / 0.4 here vs 0.67 / 0.45 there) — the mismatch made a
 // ~43% node read 'hard'/yellow on the ring but '衰减中'/again-red on the decay pill
 // (audit §3.8). disc color, the decay cue, and the legend now all agree.
+//
+// SEE ALSO（YUK-551, spec Q3）: learnable-frontier.ts 顶部「阈值/常量联合记录」docblock。本模块
+// 的 0.67/0.45 与 frontier gate 的 0.7 + evidence-floor(4) 是两组独立、服务不同消费者的阈值
+// （展示层 tone vs gate 层复合判据）;且本对数值是 YUK-335 跨三面统一点（+ NodeDrawer.decayCue
+// + legend）,任何对齐须三面同步（详见该 docblock §① 与 spec §Q3）。
 export type MasteryTone = 'good' | 'hard' | 'again';
 
 export function masteryTone(mastery: number | null | undefined): MasteryTone {

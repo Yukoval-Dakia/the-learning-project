@@ -923,6 +923,11 @@ export async function reRankAfterAnswer(
     // ── 待做非到期诊断行（重排作用域的全集）= 当前 pending + question + source(variant/
     //    new_check) + snapshot 非 recall-locked。到期行(decay)/卷/snapshot recall-locked/任何
     //    done|in_progress|skipped 行 = 冻结，它们既不进作用域、也不进候选池、position/status 逐字不动。
+    // 设计决策（YUK-551 spec §Q7）:frontier item 进初始 softmax sampler 池（softmax-selection
+    // sourceForRole 可产出 source:'frontier'）,但**排除**在作答后 reRank 之外——filter 只含
+    // variant/new_check。placed frontier item 在 θ̂ 移动下冻结、不换。刻意如此:frontier 是
+    // **结构可达性**信号（前置全掌握）,非 θ̂-诊断 slot;reRank 只 churn θ̂-诊断项（variant/
+    // new_check）。改一侧前先读此注释,勿「修好一边破了不变量」。
     const allPendingNonDue = rows.filter(
       (r) =>
         r.status === 'pending' &&
