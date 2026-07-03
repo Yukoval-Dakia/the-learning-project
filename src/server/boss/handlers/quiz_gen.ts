@@ -95,6 +95,12 @@ export interface QuizGenJobData {
 }
 
 // §4 — default question count when the trigger doesn't specify one.
+// YUK-554 (spec docs/design/2026-07-03-verify-check-spec.md §Q7) — the MANUAL POST
+// /api/questions/quiz-gen endpoint accepts an UNBOUNDED `count` (only the nightly supply job is
+// capped, at DEFAULT_MAX_PER_RUN=25). Now that quiz_verify spends 2-3 LLM calls per row (verify +
+// independent solve), a large `count` is more load-bearing on the AGENT-queue 2h expire — a
+// manual-endpoint hard cap is an independent Linear follow-up (touches handlers.ts routing/
+// validation), NOT part of this solve-check wiring.
 export const QUIZ_GEN_DEFAULT_COUNT = 3;
 
 // YUK-225 (S2 slice 4) — cap on total few-shot exemplars folded into the prompt
