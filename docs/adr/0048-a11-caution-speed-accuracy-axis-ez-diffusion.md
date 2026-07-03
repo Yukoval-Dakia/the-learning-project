@@ -1,4 +1,8 @@
-# ADR-0047 — A11 谨慎 / 速度-精度轴（EZ-diffusion 描述符）
+# ADR-0048 — A11 谨慎 / 速度-精度轴（EZ-diffusion 描述符）
+
+> 重编号记录（YUK-559 / S5，2026-07-04）：本文原误号 ADR-0047，与两篇 on-topic 的
+> KG-承重借用 ADR-0047 撞号。A11（速度-精度描述符）与 KG 借用无关，按 `docs/adr/` max+1
+> 重编号为 **0048**；两篇 on-topic 0047 合并为 `0047-kg-load-bearing-borrow.md`。
 
 **Status**: Proposed (2026-06-27) — 草案，待 owner ratify，勿自行改 Accepted。
 **Part of**: YUK-445 · 学习者全面档案 — n=1 firm-up · P5 效率/描述符 · Wave2 axis2。
