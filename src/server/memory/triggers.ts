@@ -31,8 +31,10 @@ import {
   type NewMemoryEntry,
   type ReconcileAction,
   ReconcileParseError,
+  isHardDelete,
   judgeReconciliation,
   kindForbidsMerge,
+  needsOldTarget,
   passesStructuralCorroboration,
 } from './reconcile-llm';
 import {
@@ -473,6 +475,28 @@ export function buildMemoryBriefRegenHandler(
  * fallback where floor-skip (undefined → gate abstains + log) is the safe
  * alternative. No scored candidates → undefined (caller logs "floor skipped").
  */
+/**
+ * YUK-557 (F6) — single downgrade primitive for the action-synthesis loop. Every
+ * downgrade (bad-target / per-kind / score-floor) forces KEEP_BOTH and prepends a
+ * cause prefix to the prior reason with a "`. `" join, so action↔reason never
+ * diverges in the WAL (spec Q1 论证 #6 / Lens A A5-1). The warn (Q3 detection) stays
+ * at each call site — it is an observability side effect, not part of the reason.
+ */
+function downgradeToKeepBoth(
+  prefix: string,
+  orig: string,
+): { action: ReconcileAction; reason: string } {
+  return { action: 'KEEP_BOTH', reason: `${prefix}. ${orig}` };
+}
+
+/**
+ * YUK-557 (Q1) — max candidate score for the RETRACT_NEW null-old_index fallback.
+ * outlier-permissive approximation: `max` is the statistic MOST sensitive to a
+ * single entity-boosted candidate spiking to ~0.99, so it biases toward PASSING
+ * the floor. Acceptable because the null-old_index path is the noise∪duplicate
+ * fallback where floor-skip (undefined → gate abstains + log) is the safe
+ * alternative. No scored candidates → undefined (caller logs "floor skipped").
+ */
 function topCandidateScore(cands: CandidateEntry[]): number | undefined {
   const scores = cands.map((c) => c.score).filter((s): s is number => typeof s === 'number');
   return scores.length > 0 ? Math.max(...scores) : undefined;
@@ -505,6 +529,22 @@ export function buildMemoryReconcileHandler(
   let memoryClient = deps.memoryClient;
   const judge = deps.judge ?? judgeReconciliation;
   const collectionName = deps.collectionName;
+  // YUK-557 (F4): lazy client init for applyPlannedRows. applyPlannedRows only
+  // calls getClient when a destructive (MERGE/RETRACT_NEW) row is actually pending,
+  // so a pure KEEP_BOTH/SUPERSEDE replay never triggers init (F-4 posture: a
+  // client-less replay must not demand a Mem0 key). On init failure the client
+  // stays undefined → applyPlannedRows emits the aggregated warn and defers the
+  // destructive rows to the next job (m7).
+  const getClientLazy = (): MemoryClient | undefined => {
+    if (!memoryClient) {
+      try {
+        memoryClient = createMemoryClient();
+      } catch {
+        /* stays undefined → aggregated warn in applyPlannedRows */
+      }
+    }
+    return memoryClient;
+  };
   return async (jobs) => {
     for (const job of jobs) {
       // F-1 equivalent — per-job try/catch prevents retry storm.
@@ -513,7 +553,7 @@ export function buildMemoryReconcileHandler(
         const newMemInputs = job.data.memories ?? [];
 
         // Idempotent resume: replay any unapplied planned rows from prior runs.
-        await applyPlannedRows(db, userId, { collectionName, getClient: () => memoryClient });
+        await applyPlannedRows(db, userId, { collectionName, getClient: getClientLazy });
 
         if (newMemInputs.length === 0) continue;
 
@@ -657,44 +697,63 @@ export function buildMemoryReconcileHandler(
           const newMem = newMems[d.new_index];
           const cands = candidatesByNew.get(d.new_index) ?? [];
           const oldMem = d.old_index != null ? cands[d.old_index] : undefined;
-          const destructive = d.action === 'SUPERSEDE' || d.action === 'MERGE';
           const badTarget =
-            !newMem || (destructive && !oldMem) || (d.action === 'RETRACT_NEW' && !newMem);
+            !newMem ||
+            (needsOldTarget(d.action) && !oldMem) ||
+            (d.action === 'RETRACT_NEW' && !newMem);
 
-          // 1) bad-target degrade (existing semantics)
-          let action: ReconcileAction = badTarget ? 'KEEP_BOTH' : d.action;
-          let reason = badTarget
-            ? `out-of-range index degraded from ${d.action}; ${d.reason}`
-            : d.reason;
+          // Unified synthesis: badTarget → per-kind (Q1b) → score-floor (Q1) →
+          // final. Every downgrade routes through downgradeToKeepBoth so
+          // action↔reason never diverge in the WAL (F6 / Lens A A5-1/A5-2).
+          let action: ReconcileAction = d.action;
+          let reason = d.reason;
+
+          // 1) bad-target degrade (out-of-range / unresolved old index → KEEP_BOTH)
+          if (badTarget) {
+            ({ action, reason } = downgradeToKeepBoth(
+              `out-of-range index downgraded from ${d.action}`,
+              d.reason,
+            ));
+          }
 
           // 2) per-kind gate (Q1b): weakness/event forbid MERGE
           if (action === 'MERGE' && newMem && kindForbidsMerge(newMem.kind)) {
-            reason = `Per-kind guard (kind=${newMem.kind} forbids MERGE); downgraded from MERGE. ${reason}`;
-            action = 'KEEP_BOTH';
+            ({ action, reason } = downgradeToKeepBoth(
+              `Per-kind guard (kind=${newMem.kind} forbids MERGE); downgraded from MERGE`,
+              reason,
+            ));
             console.warn(
               `[memory_reconcile] per-kind MERGE suppressed (kind=${newMem.kind}) new_index=${d.new_index}`,
             ); // Q3 detection
           }
 
           // 3) score floor (Q1): MERGE keys on the referenced candidate's score;
-          // RETRACT_NEW on the referenced candidate else topCandidateScore fallback.
+          // RETRACT_NEW keys on the referenced candidate, else the topCandidateScore
+          // fallback ONLY when there is NO referenced candidate (old_index=null). A
+          // referenced candidate that carries no score must NOT fall through to max —
+          // it abstains (undefined → gate passes) + logs m8, symmetric with MERGE
+          // (F3: max fallback is authorized only for old_index=null).
           const referencedScore =
             action === 'MERGE'
               ? oldMem?.score
               : action === 'RETRACT_NEW'
-                ? (oldMem?.score ?? topCandidateScore(cands))
+                ? oldMem
+                  ? oldMem.score
+                  : topCandidateScore(cands)
                 : undefined;
           const corroborated = passesStructuralCorroboration(action, referencedScore);
-          if (!corroborated && (action === 'MERGE' || action === 'RETRACT_NEW')) {
-            reason = `Low structural corroboration (score=${referencedScore}); downgraded from ${action}. ${reason}`;
-            action = 'KEEP_BOTH';
+          // !corroborated already implies isHardDelete(action): passesStructural-
+          // Corroboration only returns false for MERGE/RETRACT_NEW (dead action
+          // conjunct removed, F6/V7).
+          if (!corroborated) {
+            ({ action, reason } = downgradeToKeepBoth(
+              `Low structural corroboration (score=${referencedScore}); downgraded from ${action}`,
+              reason,
+            ));
             console.warn(
               `[memory_reconcile] score-floor downgrade (score=${referencedScore}) new_index=${d.new_index}`,
             ); // Q3 detection
-          } else if (
-            (action === 'MERGE' || action === 'RETRACT_NEW') &&
-            referencedScore === undefined
-          ) {
+          } else if (isHardDelete(action) && referencedScore === undefined) {
             console.warn(
               `[memory_reconcile] score-floor skipped (no candidate score) action=${action} new_index=${d.new_index}`,
             ); // m8
@@ -711,7 +770,7 @@ export function buildMemoryReconcileHandler(
                 ? (newMem?.text ?? null)
                 : (oldMem?.text ?? null);
           let prevMetadata: Record<string, unknown> | null = null;
-          if (action === 'SUPERSEDE' || action === 'MERGE') {
+          if (needsOldTarget(action)) {
             const snap = oldMem
               ? await capturePrevState(db, resolvedCollectionName, oldMem.memory_id)
               : null;
@@ -741,7 +800,7 @@ export function buildMemoryReconcileHandler(
         await insertPlannedRows(db, plannedRows);
 
         // Apply phase: execute actions, then mark applied.
-        await applyPlannedRows(db, userId, { collectionName, getClient: () => memoryClient });
+        await applyPlannedRows(db, userId, { collectionName, getClient: getClientLazy });
       } catch (err) {
         // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
         // propagate so pg-boss retries the job (enqueueMemoryReconcile sets
@@ -796,7 +855,7 @@ async function applyPlannedRows(
   // KEEP_BOTH/SUPERSEDE replay must never demand a Mem0 key (F-4 posture). When a
   // destructive row is pending but no client is available (e.g. the job-start
   // replay before lazy init), leave those rows unapplied for the next job.
-  const needsClient = pending.some((r) => r.action === 'MERGE' || r.action === 'RETRACT_NEW');
+  const needsClient = pending.some((r) => isHardDelete(r.action));
   const client = needsClient ? deps.getClient() : undefined;
   if (needsClient && !client) {
     console.warn(
@@ -808,8 +867,12 @@ async function applyPlannedRows(
     // m7: a destructive row with no client → skip the WHOLE branch (do NOT run
     // rewriteMemoryText, do NOT markApplied) so the row replays intact next job.
     // markApplied after a half-run (rewrite done, delete skipped) would orphan the
-    // new row permanently. KEEP_BOTH/SUPERSEDE need no client and proceed.
-    if ((row.action === 'MERGE' || row.action === 'RETRACT_NEW') && !client) continue;
+    // new row permanently. KEEP_BOTH/SUPERSEDE need no client and proceed. This
+    // blanket-skips ALL MERGE rows including a hypothetical blank-merged_text MERGE
+    // (whose apply branch below falls back to softSupersede, needing no client) —
+    // harmless, because a blank-merged_text MERGE is unreachable: the parse barrier
+    // rejects it upstream (reconcile-llm.ts:263-266) (V5 子1 REFUTED, 留档).
+    if (isHardDelete(row.action) && !client) continue;
 
     const now = Date.now();
     const llmRaw = row.llm_raw as {

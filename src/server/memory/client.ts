@@ -3,7 +3,7 @@
 // default so a backup restores to the exact table the client reads from (Cursor OCR
 // minor, PR #491: the literal was duplicated in both files).
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
-import { Memory, type MemoryConfig, type SearchResult } from 'mem0ai/oss';
+import { Memory, type MemoryConfig, type MemoryItem, type SearchResult } from 'mem0ai/oss';
 
 // P1 (YUK-341)：mem0 个性化半边换血到 GLM 5.2 + 百炼 v4，LLM/embedder 全走
 // openai-compat provider——mem0ai 3.0.6 的 openai provider 转发 config.baseURL
@@ -53,6 +53,11 @@ type Mem0Like = {
   delete(memoryId: string): Promise<{ message: string }>;
   // YUK-557 (Q5): read the memory_history rows for a memory (undo face).
   history(memoryId: string): Promise<MemoryHistoryEntry[]>;
+  // YUK-557 (F1): mem0 public get() — returns the memory item, or null for an
+  // absent row (index.mjs:6769-6772 → PGVector.get:4693-4703, both return null;
+  // NEVER throws for a missing row). hardDelete uses it to verify-absence after a
+  // failed delete instead of pattern-matching the error message.
+  get(memoryId: string): Promise<MemoryItem | null>;
 };
 
 export type MemoryEventInput = {
@@ -246,17 +251,31 @@ export function createMemoryClient(
       filters.user_id = 'self';
       return memory.search(query, { topK: searchOpts.topK, filters });
     },
-    // YUK-557 (Q2a): idempotent — swallow "already gone" so a half-applied batch
-    // can replay. mem0's deleteMemory throws `Memory with ID <id> not found` when
-    // the row is absent (index.mjs:7166), matched by the same regex hardDeleteMemory
-    // used for the raw-SQL path (42P01 kept for the rare table-missing case).
+    // YUK-557 (Q2a, F1 verify-absence): idempotent — a half-applied batch can
+    // replay. On ANY delete error, VERIFY whether the row still exists via mem0's
+    // public get() (returns null for an absent row, index.mjs:6769-6772). Absent →
+    // the delete's failure was "already gone" → return (idempotent, safe to replay).
+    // Row still present, OR the existence check itself fails → RETHROW the original
+    // error. This replaces the old error-message regex (/not found|does not exist|
+    // 42P01/), which was unsound: server-side errors like `role "x" does not exist`
+    // or `relation ... does not exist` matched the `does not exist` arm and were
+    // swallowed → a MERGE would be marked applied while the old row is already
+    // rewritten and the new row is still live = permanent orphan + false-success
+    // log (independent review V1). The 42P01 arm was also dead — the pg driver puts
+    // the SQLSTATE on err.code, not in the message. Cost: one extra get() on the
+    // error path only.
     async hardDelete(memoryId) {
       try {
         await memory.delete(memoryId);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/not found|does not exist|42P01/i.test(msg)) return;
-        throw err;
+        let stillExists: boolean;
+        try {
+          stillExists = (await memory.get(memoryId)) !== null;
+        } catch {
+          throw err; // cannot verify absence → surface the original delete error
+        }
+        if (stillExists) throw err; // row is still there → the delete truly failed
+        // row is gone → treat as idempotent success (already deleted / replay)
       }
     },
     async history(memoryId) {

@@ -18,6 +18,7 @@ import { sql } from 'drizzle-orm';
 import { unzipSync, zipSync } from 'fflate';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { createMem0Collection, seedMem0Row } from '../../../tests/helpers/mem0-collection';
 import { memR2 } from '../../../tests/helpers/r2';
 import { buildBackupArchive, restoreFromArchive } from './archive';
 
@@ -26,26 +27,15 @@ const DIMS = 1024;
 
 let prevCollectionEnv: string | undefined;
 
+// YUK-557 (F7): DDL/seed delegate to the shared tests/helpers/mem0-collection
+// (seed passes the vector via the optional param). readRows stays local (the
+// backup round-trip's vector::text read is specific to this suite).
 async function createCollection() {
-  const db = testDb();
-  await db.execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
-  await db.execute(
-    sql.raw(`
-      CREATE TABLE "${COLLECTION}" (
-        id uuid PRIMARY KEY,
-        vector vector(${DIMS}),
-        payload jsonb
-      )
-    `),
-  );
+  await createMem0Collection(testDb(), COLLECTION, DIMS);
 }
 
 async function seedRow(id: string, vector: number[], payload: Record<string, unknown>) {
-  const db = testDb();
-  await db.execute(sql`
-    INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, vector, payload)
-    VALUES (${id}::uuid, ${`[${vector.join(',')}]`}::vector, ${JSON.stringify(payload)}::jsonb)
-  `);
+  await seedMem0Row(testDb(), COLLECTION, id, payload, vector);
 }
 
 async function readRows(): Promise<Array<{ id: string; vector: string; payload: unknown }>> {

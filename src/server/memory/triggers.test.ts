@@ -1,5 +1,6 @@
 import type { Job } from 'pg-boss';
 import { describe, expect, it, vi } from 'vitest';
+import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import {
   MEMORY_BRIEF_REGEN_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
@@ -85,15 +86,9 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: {
-        addEventMemory,
-        search: vi.fn(),
-        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
-        // these MemoryClient methods are unused no-op stubs (satisfy the type).
-        hardDelete: vi.fn(),
-        history: vi.fn(async () => []),
-        restoreVerbatim: vi.fn(async () => ({ results: [] })),
-      },
+      // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
+      // only addEventMemory is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemory }),
     });
 
     await handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>] as Job<{
@@ -140,15 +135,9 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: {
-        addEventMemory,
-        search: vi.fn(),
-        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
-        // these MemoryClient methods are unused no-op stubs (satisfy the type).
-        hardDelete: vi.fn(),
-        history: vi.fn(async () => []),
-        restoreVerbatim: vi.fn(async () => ({ results: [] })),
-      },
+      // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
+      // only addEventMemory is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemory }),
     });
 
     await handler([{ data: { event_id: 'evt_1' } } as Job<{ event_id: string }>] as Job<{
@@ -186,15 +175,9 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: {
-        addEventMemory,
-        search: vi.fn(),
-        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
-        // these MemoryClient methods are unused no-op stubs (satisfy the type).
-        hardDelete: vi.fn(),
-        history: vi.fn(async () => []),
-        restoreVerbatim: vi.fn(async () => ({ results: [] })),
-      },
+      // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
+      // only addEventMemory is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemory }),
     });
 
     await handler([{ data: { event_id: 'evt_agent' } } as Job<{ event_id: string }>]);
@@ -228,15 +211,9 @@ describe('buildMemoryEventIngestHandler', () => {
         created_at: new Date('2026-05-27T00:00:00Z'),
         kind: 'event',
       }),
-      memoryClient: {
-        addEventMemory,
-        search: vi.fn(),
-        // YUK-557: ingest-handler tests never reach the reconcile apply path, so
-        // these MemoryClient methods are unused no-op stubs (satisfy the type).
-        hardDelete: vi.fn(),
-        history: vi.fn(async () => []),
-        restoreVerbatim: vi.fn(async () => ({ results: [] })),
-      },
+      // YUK-557 (F7): ingest-handler tests never reach the reconcile apply path, so
+      // only addEventMemory is load-bearing; the rest default to no-ops.
+      memoryClient: memoryClientMock({ addEventMemory }),
     });
 
     await handler([{ data: { event_id: 'evt_user' } } as Job<{ event_id: string }>]);
@@ -292,13 +269,7 @@ describe('registerMemoryHandlers', () => {
     };
 
     await registerMemoryHandlers(boss, {} as never, {
-      memoryClient: {
-        addEventMemory: vi.fn(),
-        search: vi.fn(),
-        hardDelete: vi.fn(),
-        history: vi.fn(async () => []),
-        restoreVerbatim: vi.fn(async () => ({ results: [] })),
-      },
+      memoryClient: memoryClientMock(),
       generateBrief: vi.fn(),
     });
 
