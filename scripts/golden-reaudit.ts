@@ -27,9 +27,10 @@ import { foldLearningItem } from '@/core/projections/learning_item';
 import { foldMistakeVariant } from '@/core/projections/mistake_variant';
 import { foldQuestionBlock } from '@/core/projections/question_block';
 import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
-import { ALL_PROJECTION_KINDS, type ProjectionKind } from '@/server/projections/entity-registry';
+import type { ProjectionKind } from '@/server/projections/entity-registry';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import type { GoldenSnapshot } from './capture-golden';
+import { parseKindArg } from './projection-kind-arg';
 
 // Revive ISO-8601 date strings → Date so the reducers (created_at.getTime()) + diffSnapshots (Date
 // equality) compare like-for-like against the fold's Date output.
@@ -111,24 +112,12 @@ function latestGoldenPath(kind: ProjectionKind): string | null {
   return latest ? resolve(GOLDEN_DIR, latest) : null;
 }
 
-function parseKindArg(): ProjectionKind {
-  const arg = process.argv.find((a) => a.startsWith('--kind='));
-  const kind = arg?.slice('--kind='.length);
-  if (!kind || !(ALL_PROJECTION_KINDS as readonly string[]).includes(kind)) {
-    console.error(
-      `[golden-reaudit] --kind=<X> required, one of: ${ALL_PROJECTION_KINDS.join(', ')}`,
-    );
-    process.exit(2);
-  }
-  return kind as ProjectionKind;
-}
-
 function main(): void {
-  const kind = parseKindArg();
+  const kind = parseKindArg('golden-reaudit');
   const path = latestGoldenPath(kind);
   if (!path) {
     console.error(
-      `[golden-reaudit] no golden captured for ${kind} (scripts/golden/${kind}-*.json). Run pnpm capture-golden --kind=${kind} before flipping it.`,
+      `[golden-reaudit] no golden captured for ${kind} (scripts/golden/${kind}-*.json). Run pnpm capture:golden --kind=${kind} before flipping it.`,
     );
     process.exit(2);
   }
@@ -148,7 +137,7 @@ function main(): void {
   console.log(
     '\nA post-flip reducer/gather change broke fold==imperative for these rows. Either the change is a\n' +
       'regression (revert/fix it), or it is an INTENTIONAL model change — in which case re-capture the\n' +
-      'golden (pnpm capture-golden) AFTER re-verifying the new imperative rows are correct.',
+      'golden (pnpm capture:golden) AFTER re-verifying the new imperative rows are correct.',
   );
   process.exit(1);
 }

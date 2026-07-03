@@ -39,6 +39,7 @@ import {
   assertMistakeVariantParity,
   goalLiveRowToSnapshot,
   hasKnowledgeNodeGenesisAnchor,
+  knowledgeEdgesWithGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
   learningItemLiveRowToSnapshot,
   mistakeVariantLiveRowToSnapshot,
@@ -560,5 +561,98 @@ describe('assertXParity — OFF-entity prod-warn contract (goal / mistake_varian
     await expect(assertLearningItemParity(db, 'li1', divergent)).resolves.toBeUndefined();
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0]?.[0]).toContain('[projection-parity]');
+  });
+});
+
+// ── YUK-548 (independent review K1): knowledgeEdgesWithGenesisAnchor — action filter is load-bearing ─
+//
+// The edge anchor gate must count ONLY events the edge fold can seed a row from (`generate` /
+// `experimental:genesis` — KNOWLEDGE_EDGE_ANCHOR_ACTIONS, mirroring edgesWithOriginatingEvent). The
+// K1 regression: `proposeKnowledgeEdgeArchive` writes a `propose` event keyed on the REAL edge_id, so
+// an un-anchored legacy edge with ONLY that propose event must NOT count as anchored — otherwise the
+// Q4a sweep skips the applicability gate, folds it to null, and reports a FALSE MISSING (plus a
+// permanent false forensic breadcrumb). This helper previously had zero direct coverage.
+describe('knowledgeEdgesWithGenesisAnchor (K1) — anchor-action filter', () => {
+  const KE_T0 = new Date('2026-06-01T00:00:00.000Z');
+
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  // relation_type must vary per edge — knowledge_edge_unique constrains (from, to, relation_type)
+  // and every test edge shares the same endpoint pair. Irrelevant to the anchor query under test.
+  async function insertEdge(id: string, relationType: string): Promise<void> {
+    const db = testDb();
+    await db.insert(knowledge_edge).values({
+      id,
+      from_knowledge_id: 'kn_from',
+      to_knowledge_id: 'kn_to',
+      relation_type: relationType,
+      weight: 1,
+      created_by: { by: 'user' },
+      reasoning: null,
+      created_at: KE_T0,
+      archived_at: null,
+    });
+  }
+
+  async function insertEdgeEvent(edgeId: string, action: string): Promise<void> {
+    const db = testDb();
+    await db.insert(event).values({
+      id: `ev_${action.replace(/[^a-z_]/gi, '_')}_${edgeId}`,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'test',
+      action,
+      subject_kind: 'knowledge_edge',
+      subject_id: edgeId,
+      outcome: 'partial',
+      payload: {},
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: KE_T0,
+    });
+  }
+
+  it('an edge whose ONLY event is a `propose` (edge-archive proposal on the real edge_id) is NOT anchored', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_from' });
+    await insertKnowledge({ id: 'kn_to' });
+    await insertEdge('ke_propose_only', 'related_to');
+    // The K1 trigger: proposeKnowledgeEdgeArchive writes action='propose' keyed on the edge id.
+    await insertEdgeEvent('ke_propose_only', 'propose');
+
+    const anchored = await knowledgeEdgesWithGenesisAnchor(db, ['ke_propose_only']);
+    // fold-blind (the edge fold only seeds from generate/genesis) → must be SKIPPED, not anchored.
+    expect(anchored.has('ke_propose_only')).toBe(false);
+  });
+
+  it('a `generate` event anchors; an `experimental:genesis` seed anchors; an index anchor anchors; event-less does not', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'kn_from' });
+    await insertKnowledge({ id: 'kn_to' });
+    await insertEdge('ke_generate', 'related_to');
+    await insertEdge('ke_genesis', 'contrasts_with');
+    await insertEdge('ke_indexed', 'applied_in');
+    await insertEdge('ke_eventless', 'derived_from');
+    await insertEdgeEvent('ke_generate', 'generate');
+    await insertEdgeEvent('ke_genesis', 'experimental:genesis');
+    await db.insert(materialized_id_index).values({
+      materialized_id: 'ke_indexed',
+      anchor_event_id: 'ev_anchor_ke_indexed',
+      subject_kind: 'knowledge_edge',
+    });
+
+    const anchored = await knowledgeEdgesWithGenesisAnchor(db, [
+      'ke_generate',
+      'ke_genesis',
+      'ke_indexed',
+      'ke_eventless',
+    ]);
+    expect(anchored.has('ke_generate')).toBe(true);
+    expect(anchored.has('ke_genesis')).toBe(true);
+    expect(anchored.has('ke_indexed')).toBe(true);
+    expect(anchored.has('ke_eventless')).toBe(false);
   });
 });

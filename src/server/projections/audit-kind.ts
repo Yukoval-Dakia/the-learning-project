@@ -8,12 +8,6 @@
 // structural reads, same shared mappers, same diffSnapshots equality (the SAME deep-diff the in-tx
 // parity assert uses), same learning_item YUK-547 prefetch. READ-ONLY; writes nothing.
 
-import type {
-  GoalRowSnapshotT,
-  KnowledgeRowSnapshotT,
-  LearningItemRowSnapshotT,
-  MistakeVariantRowSnapshotT,
-} from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import {
   artifact,
@@ -36,11 +30,19 @@ import {
   gatherAndFoldQuestionBlock,
   prefetchLearningItemMergeEvents,
 } from './gather';
+// Live-row → snapshot mappers REUSED from the accept-time parity asserts (review K9): one exported
+// field-pick per row shape, so the audit snapshot shape can never drift from what the parity assert
+// compares (same doctrine as the snapshot-mappers import below).
+import {
+  goalLiveRowToSnapshot,
+  knowledgeLiveRowToSnapshot,
+  learningItemLiveRowToSnapshot,
+  mistakeVariantLiveRowToSnapshot,
+} from './parity';
 import { diffSnapshots } from './snapshot-diff';
 import { artifactRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
 
 type DbLike = Db | Tx;
-type KnowledgeRow = typeof knowledge.$inferSelect;
 
 // ── Allowlist shape (mirror audit-schema-allowlist.json) ──────────────────────────────
 export interface AllowlistEntry {
@@ -68,26 +70,10 @@ export interface KindAuditResult {
   allowed: DriftRecord[];
 }
 
-// The auditor reads ONLY the structural snapshot columns — NOT the large embed_* vectors
-// (embedding / embed_model / embed_version / embed_content_hash). A narrow-column read keeps the
-// full-table scan from pulling every node's embedding into memory at prod-clone scale.
-type KnowledgeStructuralRow = Pick<
-  KnowledgeRow,
-  | 'id'
-  | 'name'
-  | 'domain'
-  | 'parent_id'
-  | 'merged_from'
-  | 'archived_at'
-  | 'proposed_by_ai'
-  | 'approval_status'
-  | 'created_at'
-  | 'updated_at'
-  | 'version'
->;
-
-// The structural columns to SELECT for the node scan (skips embed_*). Mirrors the
-// KnowledgeStructuralRow field set above — keep the two in sync.
+// The structural columns to SELECT for the node scan — ONLY the structural snapshot columns, NOT
+// the large embed_* vectors (a narrow-column read keeps the full-table scan from pulling every
+// node's embedding into memory at prod-clone scale). The field set must satisfy
+// knowledgeLiveRowToSnapshot's inline param type — tsc enforces the sync at the call site (K9).
 const KNOWLEDGE_STRUCTURAL_COLUMNS = {
   id: knowledge.id,
   name: knowledge.name,
@@ -124,105 +110,6 @@ const LEARNING_ITEM_STRUCTURAL_COLUMNS = {
   updated_at: learning_item.updated_at,
   version: learning_item.version,
 } as const;
-
-type LearningItemStructuralRow = Pick<
-  typeof learning_item.$inferSelect,
-  | 'id'
-  | 'source'
-  | 'source_ref'
-  | 'title'
-  | 'content'
-  | 'knowledge_ids'
-  | 'primary_artifact_id'
-  | 'parent_learning_item_id'
-  | 'status'
-  | 'user_pinned'
-  | 'completed_at'
-  | 'dismissed_at'
-  | 'archived_at'
-  | 'archived_reason'
-  | 'created_at'
-  | 'updated_at'
-  | 'version'
->;
-
-// Map a live `goal` row to its snapshot so the deep-diff compares like-for-like against the goal
-// fold output. goal has NO derived/embed columns — the full row IS the snapshot.
-function goalRowToSnapshot(row: typeof goal.$inferSelect): GoalRowSnapshotT {
-  return {
-    id: row.id,
-    title: row.title,
-    subject_id: row.subject_id,
-    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-    sequence_hint: row.sequence_hint,
-    status: row.status,
-    source: row.source,
-    source_ref: row.source_ref,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
-// Map a live `mistake_variant` row to its snapshot (no derived/embed/version columns — the full row
-// IS the snapshot, incl. the fold-blind cause_category the base event reproduces).
-function mistakeVariantRowToSnapshot(
-  row: typeof mistake_variant.$inferSelect,
-): MistakeVariantRowSnapshotT {
-  return {
-    id: row.id,
-    parent_question_id: row.parent_question_id,
-    variant_question_id: row.variant_question_id,
-    proposal_event_id: row.proposal_event_id,
-    status: row.status as MistakeVariantRowSnapshotT['status'],
-    failure_reasons: row.failure_reasons ?? [],
-    cause_category: row.cause_category,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
-
-// Map a live learning_item row (narrow structural read) to its snapshot; excluded columns are
-// dropped from the SELECT too, so they never enter the diff.
-function learningItemRowToSnapshot(row: LearningItemStructuralRow): LearningItemRowSnapshotT {
-  return {
-    id: row.id,
-    source: row.source,
-    source_ref: row.source_ref,
-    title: row.title,
-    content: row.content,
-    knowledge_ids: row.knowledge_ids ?? [],
-    primary_artifact_id: row.primary_artifact_id,
-    parent_learning_item_id: row.parent_learning_item_id,
-    status: row.status,
-    user_pinned: row.user_pinned,
-    completed_at: row.completed_at,
-    dismissed_at: row.dismissed_at,
-    archived_at: row.archived_at,
-    archived_reason: row.archived_reason,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
-// Map a live knowledge row (narrow structural read) to its snapshot; embed_* excluded both here AND
-// from the SELECT.
-function knowledgeRowToSnapshot(row: KnowledgeStructuralRow): KnowledgeRowSnapshotT {
-  return {
-    id: row.id,
-    name: row.name,
-    domain: row.domain,
-    parent_id: row.parent_id,
-    merged_from: row.merged_from,
-    archived_at: row.archived_at,
-    proposed_by_ai: row.proposed_by_ai,
-    approval_status: row.approval_status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
 
 // Push a drift record (into `allowed` if allowlisted, else `drift`) when the deep-diff found any.
 function classify(
@@ -261,7 +148,7 @@ export async function auditProjectionKind(
       for (const row of rows) {
         const expected = await gatherAndFoldKnowledgeNode(db, row.id);
         const diffs = diffSnapshots(
-          knowledgeRowToSnapshot(row),
+          knowledgeLiveRowToSnapshot(row),
           expected as Record<string, unknown> | null,
         );
         classify(row.id, 'knowledge', diffs, allowlist, drift, allowed);
@@ -289,7 +176,7 @@ export async function auditProjectionKind(
       for (const row of rows) {
         const expected = await gatherAndFoldGoal(db, row.id);
         const diffs = diffSnapshots(
-          goalRowToSnapshot(row),
+          goalLiveRowToSnapshot(row),
           expected as Record<string, unknown> | null,
         );
         classify(row.id, 'goal', diffs, allowlist, drift, allowed);
@@ -301,7 +188,7 @@ export async function auditProjectionKind(
       for (const row of rows) {
         const expected = await gatherAndFoldMistakeVariant(db, row.id);
         const diffs = diffSnapshots(
-          mistakeVariantRowToSnapshot(row),
+          mistakeVariantLiveRowToSnapshot(row),
           expected as Record<string, unknown> | null,
         );
         classify(row.id, 'mistake_variant', diffs, allowlist, drift, allowed);
@@ -315,7 +202,7 @@ export async function auditProjectionKind(
       for (const row of rows) {
         const expected = await gatherAndFoldLearningItem(db, row.id, prefetchedMergeEvents);
         const diffs = diffSnapshots(
-          learningItemRowToSnapshot(row),
+          learningItemLiveRowToSnapshot(row),
           expected as Record<string, unknown> | null,
         );
         classify(row.id, 'learning_item', diffs, allowlist, drift, allowed);
@@ -386,7 +273,7 @@ async function buildKindScanData(db: DbLike, kind: ProjectionKind): Promise<Kind
     case 'knowledge': {
       const rows = await db.select(KNOWLEDGE_STRUCTURAL_COLUMNS).from(knowledge);
       for (const row of rows)
-        map.set(row.id, knowledgeRowToSnapshot(row) as Record<string, unknown>);
+        map.set(row.id, knowledgeLiveRowToSnapshot(row) as Record<string, unknown>);
       return {
         liveSnapshots: map,
         foldOne: async (id) =>
@@ -408,7 +295,8 @@ async function buildKindScanData(db: DbLike, kind: ProjectionKind): Promise<Kind
     }
     case 'goal': {
       const rows = await db.select().from(goal);
-      for (const row of rows) map.set(row.id, goalRowToSnapshot(row) as Record<string, unknown>);
+      for (const row of rows)
+        map.set(row.id, goalLiveRowToSnapshot(row) as Record<string, unknown>);
       return {
         liveSnapshots: map,
         foldOne: async (id) => (await gatherAndFoldGoal(db, id)) as Record<string, unknown> | null,
@@ -417,7 +305,7 @@ async function buildKindScanData(db: DbLike, kind: ProjectionKind): Promise<Kind
     case 'mistake_variant': {
       const rows = await db.select().from(mistake_variant);
       for (const row of rows)
-        map.set(row.id, mistakeVariantRowToSnapshot(row) as Record<string, unknown>);
+        map.set(row.id, mistakeVariantLiveRowToSnapshot(row) as Record<string, unknown>);
       return {
         liveSnapshots: map,
         foldOne: async (id) =>
@@ -428,7 +316,7 @@ async function buildKindScanData(db: DbLike, kind: ProjectionKind): Promise<Kind
       const rows = await db.select(LEARNING_ITEM_STRUCTURAL_COLUMNS).from(learning_item);
       const prefetched = await prefetchLearningItemMergeEvents(db);
       for (const row of rows)
-        map.set(row.id, learningItemRowToSnapshot(row) as Record<string, unknown>);
+        map.set(row.id, learningItemLiveRowToSnapshot(row) as Record<string, unknown>);
       return {
         liveSnapshots: map,
         foldOne: async (id) =>
@@ -469,11 +357,15 @@ export async function auditProjectionKindSymmetric(
   allowlist: ProjectionAllowlist = {},
 ): Promise<SymmetricRecord[]> {
   const adapter = PROJECTION_ENTITIES[kind];
-  const live = await adapter.liveIds(db);
+  // Review K7 — ONE table scan: buildKindScanData already reads every live row for the snapshot map,
+  // so derive the live id set from its keys instead of a second adapter.liveIds(db) scan of the same
+  // table. The universe→anchored ordering constraint is unchanged; adapter.liveIds stays on the
+  // interface (the rebuild path's allProjectionIds still consumes it).
+  const { liveSnapshots, foldOne } = await buildKindScanData(db, kind);
+  const live = new Set(liveSnapshots.keys());
   const subjects = await adapter.eventSubjectIds(db);
   const universe = [...new Set([...live, ...subjects])];
   const anchored = await adapter.withGenesisAnchor(db, universe);
-  const { liveSnapshots, foldOne } = await buildKindScanData(db, kind);
 
   const out: SymmetricRecord[] = [];
   for (const id of universe) {

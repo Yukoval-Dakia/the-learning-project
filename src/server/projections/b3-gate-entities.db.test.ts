@@ -235,7 +235,7 @@ describe.each(INDEX_ENTITY_FIXTURES)('runB3Gate NO-GO legs (registry-driven) —
     // and compares it to the tampered live row → DRIFT (a post-rebuild audit would miss this).
     expect(report.go).toBe(false);
     expect(report.audit.clean).toBe(false);
-    expect(report.audit.driftCount).toBeGreaterThan(0);
+    expect(report.audit.driftCount).toBe(1); // exactly the one tampered row (hermetic fixture — K14 determinism)
     expect(report.audit.topologyReject).toBeNull();
   });
 
@@ -290,7 +290,7 @@ describe('runB3Gate NO-GO legs (registry-driven) — question_block', () => {
 
     expect(report.go).toBe(false);
     expect(report.audit.clean).toBe(false);
-    expect(report.audit.driftCount).toBeGreaterThan(0);
+    expect(report.audit.driftCount).toBe(1); // exactly the one tampered row (hermetic fixture — K14 determinism)
   });
 
   it('GHOST: an event-only block (live row dropped) is RESURRECTED by the rebuild — survival.created', async () => {
@@ -369,7 +369,7 @@ describe('runB3Gate — M5 over-inclusion scoping NO-GO (learning_item)', () => 
     // false CLEAN → false GO (the exact M5 failure mode).
     expect(report.go).toBe(false);
     expect(report.audit.clean).toBe(false);
-    expect(report.audit.driftCount).toBeGreaterThan(0);
+    expect(report.audit.driftCount).toBe(1); // exactly the one tampered row (hermetic fixture — K14 determinism)
   });
 });
 
