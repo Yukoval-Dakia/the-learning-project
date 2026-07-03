@@ -1515,6 +1515,14 @@ export const memory_reconciliation_log = pgTable(
     // write-ahead 游标：planned_at = 意图写入时；applied_at NULL = 待重放。
     planned_at: timestamp('planned_at', { withTimezone: true }).notNull(),
     applied_at: timestamp('applied_at', { withTimezone: true }),
+    // YUK-557（Q2b）— ARIES 级 undo：记决策元数据不够，必须记足以重建旧状态的原文。
+    // write-ahead 阶段捕获（非 apply-time，防崩溃重放读到已改写值污染快照）。语义因
+    // action 而异：SUPERSEDE/MERGE 存 old 行原文/完整 payload（被软取代/被吸收那份）；
+    // RETRACT_NEW 的 prev_text 存 new 行原文（被丢弃那份），prev_metadata 留 NULL（其
+    // metadata 由本项目 addEventMemory 刚写、可从 event 表溯源）。KEEP_BOTH 恒 NULL。
+    // 可空——不回填历史行。恢复 runbook：docs/runbooks/memory-reconcile-undo.md。
+    prev_text: text('prev_text'),
+    prev_metadata: jsonb('prev_metadata'),
   },
   (t) => [
     index('memory_recon_user_idx').on(t.user_id),
