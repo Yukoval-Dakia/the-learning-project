@@ -6,10 +6,13 @@ import {
   GRAPH_LAPLACIAN_ENABLED,
   GRAPH_LAPLACIAN_KAPPA,
   GRAPH_LAPLACIAN_LAMBDA,
+  GRAPH_SMOOTH_COMPONENT_CAP,
   type SymmetricEdge,
   buildLaplacian,
+  connectedComponents,
   gmrfPosteriorMean,
   smoothTheta,
+  smoothThetaByComponent,
   solveDense,
 } from './graph-laplacian';
 
@@ -262,5 +265,111 @@ describe('smoothTheta convenience wrapper', () => {
     );
     expect(out.get('a')).toBeCloseTo(4, 12);
     expect(out.get('b')).toBeCloseTo(0, 12);
+  });
+});
+
+// YUK-559 (S4 / RP8) — component-partitioned solve + oversized-component fail-safe.
+describe('connectedComponents — symmetric graph partition', () => {
+  it('every node lands in exactly one component; edgeless nodes are singletons', () => {
+    const comps = connectedComponents(
+      ['a', 'b', 'c', 'd'],
+      [{ a: 'a', b: 'b', weight: 1 }], // a-b connected; c, d isolated
+    );
+    const sorted = comps.map((c) => [...c].sort()).sort((x, y) => x[0].localeCompare(y[0]));
+    expect(sorted).toEqual([['a', 'b'], ['c'], ['d']]);
+    // partition covers all nodes exactly once
+    expect(comps.flat().sort()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('a chain a-b-c is ONE component; edges to nodes outside the set are ignored', () => {
+    const comps = connectedComponents(
+      ['a', 'b', 'c'],
+      [
+        { a: 'a', b: 'b', weight: 1 },
+        { a: 'b', b: 'c', weight: 1 },
+        { a: 'c', b: 'z', weight: 1 }, // z ∉ node set → dropped
+      ],
+    );
+    expect(comps).toHaveLength(1);
+    expect([...comps[0]].sort()).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('smoothThetaByComponent — block-diagonal equivalence + cap fail-safe', () => {
+  const thetaHat = new Map([
+    ['a', 1.0],
+    ['b', 0.0],
+    ['c', 3.0],
+    ['d', -2.0],
+  ]);
+  const precision = new Map([
+    ['a', 4],
+    ['b', 0],
+    ['c', 5],
+    ['d', 5],
+  ]);
+  // Two disjoint components: {a,b} via related_to, {c,d} via related_to.
+  const edges: SymmetricEdge[] = [
+    { a: 'a', b: 'b', weight: 1 },
+    { a: 'c', b: 'd', weight: 1 },
+  ];
+  const nodes = ['a', 'b', 'c', 'd'];
+
+  it('under-cap: chunked solve is IDENTICAL to the whole-set solve (block-diagonal)', () => {
+    const whole = smoothTheta(nodes, edges, thetaHat, precision, 0.5, 0.01);
+    const chunked = smoothThetaByComponent(nodes, edges, thetaHat, precision, 0.5, 0.01, 256);
+    for (const id of nodes) {
+      expect(chunked.theta.get(id)).toBeCloseTo(whole.get(id) as number, 12);
+    }
+    expect(chunked.skippedComponentSizes).toEqual([]);
+    expect(chunked.componentSizes.sort()).toEqual([2, 2]);
+  });
+
+  it('over-cap: an oversized component is left UN-smoothed (raw θ̂) + its size recorded', () => {
+    // cap = 1 forces BOTH 2-node components over the cap → passthrough raw θ̂.
+    const chunked = smoothThetaByComponent(nodes, edges, thetaHat, precision, 0.5, 0.01, 1);
+    expect(chunked.theta.get('a')).toBe(1.0); // raw, un-smoothed
+    expect(chunked.theta.get('b')).toBe(0.0);
+    expect(chunked.theta.get('c')).toBe(3.0);
+    expect(chunked.theta.get('d')).toBe(-2.0);
+    expect(chunked.skippedComponentSizes.sort()).toEqual([2, 2]);
+  });
+
+  it('mixed: under-cap components smooth, over-cap ones passthrough (per-component)', () => {
+    // A 3-node chain {x,y,z} (over cap=2) + a 2-node component {a,b} (at cap=2).
+    const nodes2 = ['x', 'y', 'z', 'a', 'b'];
+    const edges2: SymmetricEdge[] = [
+      { a: 'x', b: 'y', weight: 1 },
+      { a: 'y', b: 'z', weight: 1 },
+      { a: 'a', b: 'b', weight: 1 },
+    ];
+    const th = new Map([
+      ['x', 2],
+      ['y', 0],
+      ['z', 0],
+      ['a', 1],
+      ['b', 0],
+    ]);
+    const pr = new Map([
+      ['x', 5],
+      ['y', 0],
+      ['z', 0],
+      ['a', 4],
+      ['b', 0],
+    ]);
+    const chunked = smoothThetaByComponent(nodes2, edges2, th, pr, 0.5, 0.01, 2);
+    // {x,y,z} over cap → raw passthrough.
+    expect(chunked.theta.get('x')).toBe(2);
+    expect(chunked.theta.get('y')).toBe(0);
+    expect(chunked.skippedComponentSizes).toEqual([3]);
+    // {a,b} at cap → smoothed (identical to a standalone solve of that component).
+    const standalone = smoothTheta(['a', 'b'], [{ a: 'a', b: 'b', weight: 1 }], th, pr, 0.5, 0.01);
+    expect(chunked.theta.get('a')).toBeCloseTo(standalone.get('a') as number, 12);
+    expect(chunked.theta.get('b')).toBeCloseTo(standalone.get('b') as number, 12);
+  });
+
+  it('GRAPH_SMOOTH_COMPONENT_CAP is a positive owner-fixed conservative default', () => {
+    expect(GRAPH_SMOOTH_COMPONENT_CAP).toBeGreaterThan(0);
+    expect(Number.isInteger(GRAPH_SMOOTH_COMPONENT_CAP)).toBe(true);
   });
 });

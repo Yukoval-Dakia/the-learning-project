@@ -62,12 +62,18 @@ vi.mock('@/core/theta-grid', async (importOriginal) => {
 // else in each module (buildLaplacian / gmrfPosteriorMean / prereqAdjustments / …)
 // stays the REAL implementation.
 const laplFlag = { value: false };
+// YUK-559 (S4) — override the A5 component cap so a small seeded related_to component
+// can trip the fail-safe (null = use the real GRAPH_SMOOTH_COMPONENT_CAP=256).
+const smoothCapOverride: { value: number | null } = { value: null };
 vi.mock('@/core/graph-laplacian', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/graph-laplacian')>();
   return {
     ...actual,
     get GRAPH_LAPLACIAN_ENABLED() {
       return laplFlag.value;
+    },
+    get GRAPH_SMOOTH_COMPONENT_CAP() {
+      return smoothCapOverride.value ?? actual.GRAPH_SMOOTH_COMPONENT_CAP;
     },
   };
 });
@@ -516,6 +522,8 @@ describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () 
     // Reset both dark flags so a flag-ON test never leaks into the next.
     laplFlag.value = false;
     prereqFlag.value = false;
+    smoothCapOverride.value = null;
+    vi.restoreAllMocks();
   });
 
   async function seedObserved(kc: string, thetaHat: number, precision = 4) {
@@ -591,6 +599,29 @@ describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () 
     // unobserved node (κ ridge + neighbour coupling), so its raw θ̂ IS preserved.
     expect(proj.get(kObs)?.provenance).toBe('observed');
     expect(proj.get(kObs)?.theta_hat_raw).toBeCloseTo(2.0, 12);
+  });
+
+  it('A5 ON: an oversized related_to component trips the cap → no smoothing + one warn (YUK-559 S4)', async () => {
+    const kObs = createId();
+    const kUnobs = createId();
+    await seedObserved(kObs, 2.0, 5);
+    await seedKnowledge(kUnobs); // NO mastery_state row
+    await seedEdge(kObs, kUnobs, 'related_to'); // 2-node related_to component
+    laplFlag.value = true;
+    smoothCapOverride.value = 1; // component size 2 > 1 → over cap → fail-safe skip
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const proj = await getMasteryProjection(db, [kObs, kUnobs]);
+    // Fail-safe: the component was NOT smoothed, so the unobserved KC borrows nothing.
+    expect(proj.has(kUnobs)).toBe(false);
+    // The observed KC keeps its RAW θ̂ (no smoothing) → no theta_hat_raw stamped.
+    expect(proj.get(kObs)?.theta_hat).toBe(2.0);
+    expect(proj.get(kObs)?.theta_hat_raw).toBeUndefined();
+    // Exactly ONE structured cap warn.
+    const capWarns = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes('A5 component cap tripped'),
+    );
+    expect(capWarns).toHaveLength(1);
   });
 
   it('A5 ON: contrasts_with is EXCLUDED from smoothing (reverse signal never borrows)', async () => {

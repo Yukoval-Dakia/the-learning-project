@@ -235,6 +235,16 @@ export async function emitPrereqRiskSignal(input: {
           threshold_deferred: true,
         },
         caused_by_event_id: attemptEventId ?? null,
+        // YUK-559 (S4 / RP9) — ADR-0021 memory-ingestion opt-out (YUK-190 auto-enroll
+        // precedent). Without the stamp, writeEvent leaves ingest_at NULL → the memory
+        // outbox poller (triggers.ts, WHERE ingest_at IS NULL) feeds this to Mem0 AND the
+        // brief-regen fan-out STILL runs for extraction-gated events. This is a forensic/
+        // experimental diagnostic projection (threshold_deferred, no live consumer), so once
+        // the flag flips, "每答错 × N 前置 × affected_scopes" must NOT storm brief-regen. This
+        // stamps an opt-out only; it does NOT change the event body/payload/timing. dark emit
+        // = 0 today so this is inert until the flag flips; owner-ratifiable (can be removed to
+        // let prereq_risk feed memory — spec §7 open question 5).
+        ingest_at: now,
         created_at: now,
       });
       return { eventId, knowledgeId: reading.knowledge_id };
