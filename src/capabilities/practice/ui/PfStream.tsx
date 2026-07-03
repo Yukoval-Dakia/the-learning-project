@@ -19,17 +19,38 @@ import {
   recomposeStream,
 } from './practice-api';
 
-const SRC_META: Record<StreamSource, { label: string; tone: string; icon: string }> = {
+type SrcMeta = { label: string; tone: string; icon: string };
+
+const SRC_META: Record<StreamSource, SrcMeta> = {
   decay: { label: '衰减复习', tone: 'info', icon: 'history' },
   variant: { label: '错题变式', tone: 'again', icon: 'mistakes' },
   new_check: { label: '新学自测', tone: 'good', icon: 'spark2' },
   paper: { label: '打包卷', tone: 'coral', icon: 'layers' },
   on_demand: { label: '点播', tone: 'neutral', icon: 'send' },
   import: { label: '导入', tone: 'neutral', icon: 'record' },
+  // YUK-551 — frontier（B3 learnable_frontier 尾）。label/icon 逐字借自已上线姊妹组件
+  // FrontierRail.tsx（A5 S2/YUK-354）：label '下一步'（FrontierRail.tsx:72 frontier-tag-next）、
+  // icon 'target'（FrontierRail.tsx:96 + 设计源 screen-knowledge-a5.jsx:39）。tone 'hard' —— pface
+  // 设计源 PFACE_SRC（data-pface.jsx:6-13）无 frontier token，故换未占用既有 tone：SRC_META 已占
+  // info/again/good/coral/neutral，六态 badge token 集（globals.css .badge.tone-*）中唯一未占用者
+  // = 'hard'（避与 paper 的 coral 撞色，owner pre-flight 决策 B）。
+  frontier: { label: '下一步', tone: 'hard', icon: 'target' },
 };
 
-export function PfSrcBadge({ source }: { source: StreamSource }) {
-  const s = SRC_META[source];
+// 未知 source 防御 fallback（YUK-551）——src/ui/lib/api.ts 的 apiJson 是运行时零校验裸 cast
+// （`res.json() as Promise<T>`），源枚举有四份手维护副本无共享 SoT。TS `Record<StreamSource>`
+// 穷尽性只保护本文件定义处字面量，对「后端产出 FE 未同步新源」这一失效模式零防护（'frontier'
+// 漂移就是活证据）。集中式 accessor（入参 widen 到 string）+ fallback = 归队 QuestionsPage.tsx:80
+// 的 srcMeta idiom，镜像 softmax-selection.ts resolveEnumKind「未知枚举值→安全兜底，绝不 throw」。
+const FALLBACK_SRC_META: SrcMeta = { label: '其它', tone: 'neutral', icon: 'dots' };
+
+// 所有 SRC_META 访问一律经此（PfSrcBadge + done 行锚点 + PfSolo 顶栏）——不再有 bare index。
+function srcMeta(source: string): SrcMeta {
+  return SRC_META[source as StreamSource] ?? FALLBACK_SRC_META;
+}
+
+export function PfSrcBadge({ source }: { source: string }) {
+  const s = srcMeta(source);
   return (
     <span className={`badge tone-${s.tone}`}>
       <LoomIcon name={s.icon as never} size={12} />
@@ -125,7 +146,7 @@ export function PfStream({
       // FOLLOW-UP（phase-deferred）：verdict（again/hard/good，设计 color-is-judgment）与
       // 完成时刻（pf-done-at）在 review event 侧，StreamItem wire 未 join——故暂不渲染
       // verdict 三色 badge，完成时刻显示静态「已完成」。补 wire 字段后接真值，见报告。
-      const doneAnchor = anchorFromReasoning(it.reasoning) ?? SRC_META[it.source].label;
+      const doneAnchor = anchorFromReasoning(it.reasoning) ?? srcMeta(it.source).label;
       return (
         <div key={it.id} className={cls}>
           <span className="pf-node" />
