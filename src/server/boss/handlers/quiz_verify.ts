@@ -54,7 +54,12 @@ import { event, knowledge, question, source_document } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { checksForTier } from '@/server/quiz/verify-framework';
+import {
+  type SolveCheckQuestion,
+  checksForTier,
+  runSolveCheck,
+  solveCheckBlocks,
+} from '@/server/quiz/verify-framework';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';
@@ -371,6 +376,46 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // omits kind_conformance (tier 1/2).
     const kindConformanceOk =
       !tierChecks.includes('kind_conformance') || parsed.kind_conformance?.verdict !== 'fail';
+    // YUK-538 / YUK-554 (spec §Q1 + Lens B M3) — solve_check is the ONLY tier3/4 signal
+    // that fires a second, INDEPENDENT LLM call (SolutionGenerateTask), distinct from the
+    // single closed-book QuizVerifyTask above (which produces grounding/knowledge_hit/
+    // material_grounding/kind_conformance in one JSON). Short-circuit: only spend the
+    // independent solver when every FREE check already passed. Because solve is the LAST
+    // conjunct of `promote`, gating it behind freeChecksPass NEVER changes the promote
+    // result (any earlier false already forces promote=false); it only saves cost + sharpens
+    // the rollback signal (a solve verdict is recorded ONLY on the row where it is the
+    // marginal veto, not smeared onto already-doomed rows). tierChecks always includes
+    // solve_check for this handler (every row is tier3/4), but gate explicitly to stay
+    // correct if CHECK_SETS_BY_TIER is ever reconfigured.
+    const freeChecksPass =
+      parsed.overall === 'pass' &&
+      checksPass &&
+      !isTooClose &&
+      materialGroundingOk &&
+      kindConformanceOk;
+    const solveResult =
+      freeChecksPass && tierChecks.includes('solve_check')
+        ? await runSolveCheck(
+            {
+              id: row.id,
+              kind: row.kind,
+              prompt_md: row.prompt_md,
+              reference_md: row.reference_md,
+              choices_md: row.choices_md,
+              judge_kind_override: row.judge_kind_override,
+              rubric_json: row.rubric_json,
+              knowledge_ids: row.knowledge_ids,
+              metadata: metadataRaw,
+            } satisfies SolveCheckQuestion,
+            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile }, db },
+          )
+        : undefined;
+    // Layered veto (Q1): solveCheckBlocks reads compared_by to pick the semantic vs
+    // normalize flag. undefined (short-circuited / no solve_check in set) → never blocks.
+    // A semantic confident-fail vetoes; a normalize (exact) fail vetoes by default but
+    // records needs_review ("hold for human review") — see the SOLVE_CHECK_TIER34_VETO
+    // docblock. Neither lowers draft_status below 'draft' (m7 invariant note in the else).
+    const solveCheckOk = solveResult === undefined || !solveCheckBlocks(solveResult);
     // YUK-350 (RL1 red-line invariant) — the promote gate MUST stay a POSITIVE
     // whitelist anchored on `parsed.overall === 'pass'`. NEVER rewrite this as a
     // negative test (e.g. `parsed.overall !== 'fail'`): a negative test would let
@@ -384,7 +429,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       checksPass &&
       !isTooClose &&
       materialGroundingOk &&
-      kindConformanceOk;
+      kindConformanceOk &&
+      // YUK-538 / YUK-554 — solve_check veto (last conjunct; short-circuited above so
+      // solveResult is only defined when all five prior checks passed, and solveCheckOk is
+      // vacuously true otherwise → promote result is identical to evaluating solve eagerly).
+      solveCheckOk;
     // verificationStatus + the success-path writeEvent (below) + the metadata
     // verification block only ever observe the 3 model-verdict values
     // (pass|needs_review|fail); the system-error class 'error' NEVER reaches this
@@ -427,6 +476,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           : []),
         ...(parsed.kind_conformance
           ? [{ axis_name: 'kind_conformance' as const, verdict: parsed.kind_conformance.verdict }]
+          : []),
+        // YUK-538 / YUK-554 — solve_check axis carries ONLY the verdict (VerifyAxis base
+        // shape); its reason/compared_by/solver_final_answer live in the payload block below
+        // (avoids depending on note projection). Present only when solve actually ran.
+        ...(solveResult
+          ? [{ axis_name: 'solve_check' as const, verdict: solveResult.verdict }]
           : []),
       ],
     });
@@ -503,7 +558,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           }
         }
       } else {
-        // needs_review / fail / too_close — stay draft, never reaches the pool.
+        // needs_review / fail / too_close / solve_check veto — stay draft, never reaches
+        // the pool.
+        // YUK-538 / YUK-554 (Lens B m7 invariant) — quiz_verify has NO demote branch (unlike
+        // source_verify.ts:456-481's YUK-479 active→draft demote) and that is SAFE: no path
+        // pre-promotes a quiz_gen row to active before quiz_verify runs (cold-start
+        // image-candidate-accept hardcodes web_sourced→source_verify;
+        // verify-and-promote/proposal-appliers/legacy-record-appliers active-writers never
+        // target an unverified quiz_gen draft). The new solve_check veto lands in this
+        // existing else and only writes metadata/updated_at — draft_status is never touched
+        // (a solve-vetoed row was already 'draft'), so no demote is needed.
         await tx
           .update(question)
           .set({
@@ -558,6 +622,24 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 kind_conformance: {
                   skill_loaded: verifySkills !== undefined,
                   verdict: parsed.kind_conformance?.verdict ?? null,
+                },
+              }
+            : {}),
+          // YUK-538 / YUK-554 — solve_check authoritative audit block (verdict + which axis
+          // compared + the independent solver's answer + the human-readable reason). Keyed
+          // on `solveResult` (undefined when short-circuited), NOT tierChecks.includes (which
+          // is always true for this handler). additive JSONB, zero DDL. NOTE (Lens B m8): no
+          // new event action (cardinality unchanged) so the memory-outbox poller predicate
+          // (triggers.ts WHERE ingest_at IS NULL) is unaffected; solve_check.reason text
+          // could reference solver/reference answers and would flow into any future memory
+          // embedding of this event (additive, low risk).
+          ...(solveResult
+            ? {
+                solve_check: {
+                  verdict: solveResult.verdict,
+                  compared_by: solveResult.compared_by,
+                  solver_final_answer: solveResult.solver_final_answer ?? null,
+                  reason: solveResult.reason,
                 },
               }
             : {}),
