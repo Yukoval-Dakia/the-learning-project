@@ -16,13 +16,21 @@
 // body is still authored and runs wherever the environment supports it.
 
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
 import { sql } from 'drizzle-orm';
 import { Memory, type MemoryConfig } from 'mem0ai/oss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+
+// better-sqlite3 ships no bundled types and @types/better-sqlite3 is not a project
+// dep. Load it via require and type only the sliver this test uses (the same
+// createRequire pattern the native-parity tests use for their addon).
+type SqliteStatement = { all(...params: unknown[]): unknown[] };
+type SqliteDatabase = { prepare(source: string): SqliteStatement; close(): void };
+type SqliteCtor = new (path: string, opts?: { readonly?: boolean }) => SqliteDatabase;
+const Database = createRequire(import.meta.url)('better-sqlite3') as SqliteCtor;
 
 const DIMS = 8;
 const COLLECTION = 'test_tombstone_collection';
