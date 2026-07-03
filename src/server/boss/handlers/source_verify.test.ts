@@ -23,6 +23,9 @@ import { runSourceVerify } from './source_verify';
 
 // Solver output shape consumed by verify-framework.runSolveCheck (it only reads
 // reference_solution.final_answer + answer_equivalents).
+// R1 (YUK-554 review) — a shared richer twin lives in tests/helpers/solve-check-fixtures.ts
+// (used by verify-framework.test.ts + quiz_verify.test.ts); this local minimal copy stays by
+// review裁决 (source_verify is comment-only this round). Keep the consumed shape in lockstep.
 function solverOutput(finalAnswer: string, equivalents: string[] = []): string {
   return JSON.stringify({
     reference_solution: { final_answer: finalAnswer, answer_equivalents: equivalents },

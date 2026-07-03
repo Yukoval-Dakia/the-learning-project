@@ -18,6 +18,11 @@
 // SolutionGenerateTask as an independent solver via verify-framework's runSolveCheck).
 // This片 keeps the verify handler thin per plan §2.4 — kind_conformance (skill-driven)
 // arrives in slice 4.
+//
+// R4 (YUK-554 review) — tier2 vetoes EVERY solve_check fail (including normalize) BY DESIGN,
+// unlike tier3/4's per-axis split in quiz_verify.ts: tier2 references are anchored on real web
+// extracts, tier3/4's are same-model self-authored. See the solveCheckBlocks docblock in
+// verify-framework.ts for the full asymmetry rationale before "unifying" the two.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';

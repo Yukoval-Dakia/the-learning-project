@@ -150,6 +150,60 @@ describe('listDraftReview', () => {
     expect(row?.verify_reason).toBe('语义不够清晰');
   });
 
+  // YUK-554 (review ALT-1) — a solve_check-vetoed hold-for-review draft must surface the
+  // INDEPENDENT SOLVER's disagreement as its驳回理由, not just the verifier model's own
+  // (pass-leaning) summary_md: solve_check only runs after every free check passed, so on
+  // these rows summary_md by construction reads like a pass.
+  it('synthesizes the solve_check disagreement into verify_reason (list)', async () => {
+    const q = await seedQuestion({ source: 'quiz_gen', draft_status: 'draft' });
+    await seedVerifyEvent({
+      questionId: q,
+      action: 'experimental:quiz_verify',
+      outcome: 'partial',
+      payload: {
+        promoted: false,
+        verification_status: 'needs_review',
+        overall: 'pass',
+        summary_md: '复核结论：pass',
+        solve_check: {
+          verdict: 'fail',
+          compared_by: 'normalize',
+          solver_final_answer: '助词',
+          reason: 'solver answer "助词" disagrees with reference "代词" (normalized)',
+        },
+      },
+    });
+
+    const page = await listDraftReview(testDb(), {});
+    const row = page.rows.find((r) => r.id === q);
+    expect(row?.verify_status).toBe('needs_review');
+    // the synthesized reason carries the axis + the solver's diverging answer + the check's
+    // reason, with the model self-review appended for context — not the self-review alone.
+    expect(row?.verify_reason).toContain('solve_check(normalize)');
+    expect(row?.verify_reason).toContain('助词');
+    expect(row?.verify_reason).toContain('模型自评：复核结论：pass');
+  });
+
+  it('does NOT rewrite verify_reason when solve_check passed (non-veto)', async () => {
+    const q = await seedQuestion({ source: 'quiz_gen', draft_status: 'draft' });
+    await seedVerifyEvent({
+      questionId: q,
+      action: 'experimental:quiz_verify',
+      outcome: 'partial',
+      payload: {
+        promoted: false,
+        verification_status: 'needs_review',
+        overall: 'needs_review',
+        summary_md: '题意含糊',
+        solve_check: { verdict: 'pass', compared_by: 'normalize', reason: 'matches' },
+      },
+    });
+
+    const page = await listDraftReview(testDb(), {});
+    const row = page.rows.find((r) => r.id === q);
+    expect(row?.verify_reason).toBe('题意含糊');
+  });
+
   it('derives failed from the latest terminal quiz_verify event', async () => {
     const q = await seedQuestion({ source: 'quiz_gen', draft_status: 'draft' });
     await seedVerifyEvent({
@@ -372,6 +426,34 @@ describe('getDraftReviewDetail', () => {
     const detail = await getDraftReviewDetail(testDb(), q);
     expect(detail?.verify_status).toBe('needs_review');
     expect(detail?.verify_reason).toBe('题意含糊');
+  });
+
+  // YUK-554 (review ALT-1) — the detail pane goes through the same derivation, so a
+  // solve_check-vetoed draft shows the solver disagreement there too.
+  it('synthesizes the solve_check disagreement into verify_reason (detail)', async () => {
+    const q = await seedQuestion({ draft_status: 'draft', source: 'quiz_gen' });
+    await seedVerifyEvent({
+      questionId: q,
+      action: 'experimental:quiz_verify',
+      outcome: 'partial',
+      payload: {
+        promoted: false,
+        verification_status: 'needs_review',
+        overall: 'pass',
+        summary_md: '复核结论：pass',
+        solve_check: {
+          verdict: 'fail',
+          compared_by: 'semantic',
+          solver_final_answer: '独立求解的另一种答案',
+          reason: 'SemanticJudge confidently scored the independent solver answer as incorrect',
+        },
+      },
+    });
+
+    const detail = await getDraftReviewDetail(testDb(), q);
+    expect(detail?.verify_status).toBe('needs_review');
+    expect(detail?.verify_reason).toContain('solve_check(semantic)');
+    expect(detail?.verify_reason).toContain('独立求解的另一种答案');
   });
 
   it('returns null for a non-draft question (active)', async () => {

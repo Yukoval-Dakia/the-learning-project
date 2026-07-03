@@ -424,16 +424,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // 3-value) and the system 'error' class lives solely in the catch-bottom (which
     // throws before reaching here), this success-path code never sees 'error' — the
     // positive whitelist makes that structurally true rather than relying on it.
-    const promote =
-      parsed.overall === 'pass' &&
-      checksPass &&
-      !isTooClose &&
-      materialGroundingOk &&
-      kindConformanceOk &&
-      // YUK-538 / YUK-554 — solve_check veto (last conjunct; short-circuited above so
-      // solveResult is only defined when all five prior checks passed, and solveCheckOk is
-      // vacuously true otherwise → promote result is identical to evaluating solve eagerly).
-      solveCheckOk;
+    //
+    // YUK-554 (review SIMP-1) — composed as freeChecksPass && solveCheckOk: freeChecksPass
+    // IS the positive whitelist above (its first conjunct is `parsed.overall === 'pass'`),
+    // and reusing it keeps this predicate byte-identical to the solve short-circuit gate —
+    // a 6th check added to one but not the other can no longer drift. solveCheckOk is the
+    // last conjunct (vacuously true when short-circuited, so the result is identical to
+    // evaluating solve eagerly).
+    const promote = freeChecksPass && solveCheckOk;
     // verificationStatus + the success-path writeEvent (below) + the metadata
     // verification block only ever observe the 3 model-verdict values
     // (pass|needs_review|fail); the system-error class 'error' NEVER reaches this
@@ -640,6 +638,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                   compared_by: solveResult.compared_by,
                   solver_final_answer: solveResult.solver_final_answer ?? null,
                   reason: solveResult.reason,
+                  // EFF-1 (YUK-554 review) — the solve legs' own spend (the event-level
+                  // cost_micro_usd column covers only the QuizVerifyTask call): run ids in
+                  // call order + summed cost when the runner reported them.
+                  task_run_ids: solveResult.task_run_ids ?? null,
+                  cost_usd: solveResult.cost_usd ?? null,
                 },
               }
             : {}),
