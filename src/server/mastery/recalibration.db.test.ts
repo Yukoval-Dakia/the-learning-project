@@ -710,6 +710,47 @@ describe('recalibrateQuestion (data-gated AIPW firm-up)', () => {
     expect(result.updated).toBe(false);
     expect(result.reason).toBe('no_anchor');
   });
+
+  it('YUK-558 — fluke-π batch: RecalibrateResult carries clipActivations=1, minPi=4e-4, maxPi=0.5', async () => {
+    // 11 honest @π=0.5 (b_label=0.0) + 1 fluke @π=4e-4 (b_label=2.0)。b_anchor=0.0 ⇒ b_calib =
+    // Hájek 加权均值。median=2、cap=C·2=8 → fluke 权重截 2500→8 → 单条截权激活。
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.0); // b_anchor = 0.0
+    await seedLabels(q, Array(RECALIBRATION_MIN_LABELS - 1).fill(0.0), 0.5); // 11 honest
+    await db.insert(difficulty_calibration_label).values({
+      id: newId(),
+      question_id: q,
+      attempt_event_id: createId(),
+      theta_snapshot: 0,
+      outcome: 0,
+      b_label: 2.0,
+      inclusion_probability: 4e-4, // fluke low-π
+      created_at: now(),
+    });
+
+    const result = await recalibrateQuestion(db, q);
+    expect(result.updated).toBe(true);
+    expect(result.clipActivations).toBe(1);
+    expect(result.minPi).toBeCloseTo(4e-4, 12);
+    expect(result.maxPi).toBeCloseTo(0.5, 12);
+    // 截权后 fluke 不支配：b_calib ≈ 16/30 ≈ 0.533，远离 uncapped ~1.98。
+    expect(result.bCalib as number).toBeCloseTo(16 / 30, 6);
+    expect(result.bCalib as number).toBeLessThan(0.6);
+  });
+
+  it('YUK-558 — homogeneous-π batch: clipActivations=0 (cap does not bind)', async () => {
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    await seedLabels(q, Array(RECALIBRATION_MIN_LABELS).fill(1.5), 0.5);
+
+    const result = await recalibrateQuestion(db, q);
+    expect(result.updated).toBe(true);
+    expect(result.clipActivations).toBe(0);
+    expect(result.minPi).toBeCloseTo(0.5, 12);
+    expect(result.maxPi).toBeCloseTo(0.5, 12);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

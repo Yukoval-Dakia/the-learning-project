@@ -116,6 +116,44 @@ describe('runRecalibrationNightly', () => {
     expect(cal?.calibration_n).toBe(RECALIBRATION_MIN_LABELS);
   });
 
+  // (a2) YUK-558 M1 — clip 可观测聚合：截权激活数跨 firm-up 题累加，min_pi_seen 追踪最小 π。
+  it('aggregates clip_activations + min_pi_seen across firmed-up questions (YUK-558)', async () => {
+    // Q1: fluke batch (11 honest @π=0.5 + 1 fluke @π=4e-4) → 1 clip activation, minPi=4e-4.
+    const qFluke = createId();
+    await seedQuestion(qFluke);
+    await seedItemCalibration(qFluke, 0.0);
+    await seedLabels(qFluke, RECALIBRATION_MIN_LABELS - 1, {
+      bLabel: 0.0,
+      pi: 0.5,
+      createdAt: IN_WINDOW,
+    });
+    await db.insert(difficulty_calibration_label).values({
+      id: newId(),
+      question_id: qFluke,
+      attempt_event_id: createId(),
+      theta_snapshot: 0,
+      outcome: 0,
+      b_label: 2.0,
+      inclusion_probability: 4e-4,
+      created_at: IN_WINDOW,
+    });
+    // Q2: homogeneous batch (12 @π=0.5) → 0 clip activations, minPi=0.5.
+    const qClean = createId();
+    await seedQuestion(qClean);
+    await seedItemCalibration(qClean, 0.5);
+    await seedLabels(qClean, RECALIBRATION_MIN_LABELS, {
+      bLabel: 1.5,
+      pi: 0.5,
+      createdAt: IN_WINDOW,
+    });
+
+    const result = await runRecalibrationNightly(db, { now: JOB_NOW });
+
+    expect(result.recalibrated).toBe(2);
+    expect(result.clip_activations).toBe(1); // only the fluke question clipped.
+    expect(result.min_pi_seen).toBeCloseTo(4e-4, 12); // smallest π across both firm-up batches.
+  });
+
   // (b) in-window labels but total < threshold → not even a candidate (HAVING count gate),
   // b_calib stays NULL.
   it('does not recalibrate a question below the label threshold', async () => {
@@ -213,6 +251,8 @@ describe('runRecalibrationNightly', () => {
       skipped_below: 0,
       skipped_no_anchor: 0,
       skipped_failed: 0,
+      clip_activations: 0,
+      min_pi_seen: null,
     });
   });
 
