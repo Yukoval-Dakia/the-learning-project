@@ -6,6 +6,9 @@ import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { z } from 'zod';
 
+// YUK-558 (spec Q6-A / M2)：prod sampler 种子化——选题决策可重构（同 seed + 同输入 ⇒ 同选集）。
+// seed 走 log-only（不进 DB 列，Q-d deferred）。两抽样事件（compose / rerank）各派生独立 seed。
+import { buildSeededSelectionRng } from '../server/selection-seed';
 import {
   advanceStreamItem,
   getStream,
@@ -34,7 +37,11 @@ export async function GET(req: Request): Promise<Response> {
     const date = resolveDate(url.searchParams.get('date'));
     // 只有「今天」才 lazy compose——翻看历史日期不应凭空生出新流。
     const isToday = date === streamLocalDate();
-    const view = await getStream(db, date, { composeIfEmpty: isToday });
+    // YUK-558：compose 事件种子化（仅 isToday 才可能触发 compose；历史日期不 compose，不派生 seed）。
+    const view = await getStream(db, date, {
+      composeIfEmpty: isToday,
+      composeDeps: isToday ? { rng: buildSeededSelectionRng(date, 'compose', date) } : undefined,
+    });
     return Response.json(view);
   } catch (err) {
     return errorResponse(err);
@@ -49,7 +56,10 @@ export async function POST(req: Request): Promise<Response> {
     const parsed = RecomposeBody.safeParse(raw);
     if (!parsed.success) throw new ApiError('validation_error', 'invalid body', 400);
     const date = resolveDate(parsed.data.date ?? null);
-    const added = await recomposeStream(db, date);
+    // YUK-558：recompose 事件种子化（独立 eventKind，与 lazy compose / nightly 各派生独立 seed）。
+    const added = await recomposeStream(db, date, {
+      composeDeps: { rng: buildSeededSelectionRng(date, 'recompose', date) },
+    });
     const view = await getStream(db, date);
     return Response.json({ added, ...view });
   } catch (err) {
@@ -72,7 +82,10 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
         400,
       );
     }
-    const row = await advanceStreamItem(db, params.id, parsed.data.status);
+    // YUK-558：rerank 事件种子化（triggerId=被推进的 streamItemId——独立于 compose 事件的 seed）。
+    const row = await advanceStreamItem(db, params.id, parsed.data.status, {
+      rng: buildSeededSelectionRng(streamLocalDate(), 'rerank', params.id),
+    });
     if (!row) throw new ApiError('not_found', `stream item ${params.id} not found`, 404);
     return Response.json({ item: row });
   } catch (err) {
