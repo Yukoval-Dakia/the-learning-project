@@ -8,11 +8,14 @@
 
 import { softmaxProbabilities } from '@/core/selection-signals';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_TEMPERATURE } from './selection-constants';
 import {
+  SAMPLING_EPSILON,
   type WeightedCandidate,
   inclusionProbabilities,
   sampleByWeight,
 } from './selection-sampler';
+import { buildSeededSelectionRng, hashSelectionSeed } from './selection-seed';
 
 // 确定性 PRNG（mulberry32）。**不用 Math.random**：测试需可复现。
 function mulberry32(seed: number): () => number {
@@ -277,5 +280,93 @@ describe('Monte Carlo: empirical inclusion frequency ≈ recorded π_i (THE corr
     // Σ π_i ≈ targetCount (scheme size property).
     const sumPi = piDirect.reduce((a, b) => a + b, 0);
     expect(sumPi).toBeCloseTo(targetCount, 6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-558 (spec Q3 / M3 sampler 侧) — 三个手拍常量的字面量域 pin。
+// 不加运行时 throw（硬编码模块常量上的 throw 是不可触发的死分支，Lens B-F7）——
+// 改用单测 pin 字面量域：ε ∈ (0,1)、T > 0。n_min / C 的 pin 在 recalibration.test.ts（PR-1）。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('hand-picked constant domain pins (YUK-558 M3)', () => {
+  it('SAMPLING_EPSILON ∈ (0, 1) — exploration floor, must be a small positive fraction', () => {
+    expect(SAMPLING_EPSILON).toBeGreaterThan(0);
+    expect(SAMPLING_EPSILON).toBeLessThan(1);
+  });
+
+  it('DEFAULT_TEMPERATURE > 0 — softmax temperature must be positive (runtime guard exists for param)', () => {
+    expect(DEFAULT_TEMPERATURE).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-558 (spec Q6-A) — 种子化 sampler 确定性：同 seed ⇒ 选集逐位相同；异 seed ⇒ 统计上不同。
+// 复用 calibration/rng.ts mulberry32（不新写 PRNG）；统计上无害（HT 无偏性只依赖记录的 π 正确）。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('seeded sampler determinism (YUK-558 Q6-A)', () => {
+  const cands: WeightedCandidate[] = [
+    { refId: 'a', weight: 1 },
+    { refId: 'b', weight: 5 },
+    { refId: 'c', weight: 2 },
+    { refId: 'd', weight: 3 },
+    { refId: 'e', weight: 0.5 },
+  ];
+
+  it('hashSelectionSeed is deterministic + distinguishes triples (FNV-1a)', () => {
+    // 同三元组 ⇒ 同 seed（确定性）。
+    expect(hashSelectionSeed('2026-07-03', 'compose', '2026-07-03')).toBe(
+      hashSelectionSeed('2026-07-03', 'compose', '2026-07-03'),
+    );
+    // 异 eventKind ⇒ 异 seed（compose vs rerank 同 triggerId 也要分开）。
+    expect(hashSelectionSeed('2026-07-03', 'compose', 'x')).not.toBe(
+      hashSelectionSeed('2026-07-03', 'rerank', 'x'),
+    );
+    // 异 triggerId ⇒ 异 seed。
+    expect(hashSelectionSeed('2026-07-03', 'rerank', 'slot-A')).not.toBe(
+      hashSelectionSeed('2026-07-03', 'rerank', 'slot-B'),
+    );
+    // 32-bit 无符号范围。
+    for (const s of [
+      hashSelectionSeed('2026-07-03', 'compose', '2026-07-03'),
+      hashSelectionSeed('2026-07-03', 'rerank', 'slot-A'),
+    ]) {
+      expect(Number.isInteger(s)).toBe(true);
+      expect(s).toBeGreaterThanOrEqual(0);
+      expect(s).toBeLessThanOrEqual(0xffffffff);
+    }
+  });
+
+  it('same seed → sampleByWeight selection is bit-for-bit identical (reproducible re-materialization)', () => {
+    // 同 rng 函数（同 seed 构造）⇒ 同 Poisson Bernoulli 抽签序列 ⇒ 同选集逐位相等。
+    const out1 = sampleByWeight(cands, { temperature: T, targetCount: 2, rng: mulberry32(42) });
+    const out2 = sampleByWeight(cands, { temperature: T, targetCount: 2, rng: mulberry32(42) });
+    expect(out1.map((s) => s.refId)).toEqual(out2.map((s) => s.refId));
+    expect(out1.map((s) => s.inclusionProbability)).toEqual(
+      out2.map((s) => s.inclusionProbability),
+    );
+  });
+
+  it('buildSeededSelectionRng: same (date, eventKind, triggerId) ⇒ identical selection', () => {
+    // prod seed helper：同三元组 ⇒ 同 rng ⇒ 同选集（可重构回放契约）。
+    const opts = { temperature: T, targetCount: 2 };
+    const out1 = sampleByWeight(cands, {
+      ...opts,
+      rng: buildSeededSelectionRng('2026-07-03', 'compose', '2026-07-03'),
+    });
+    const out2 = sampleByWeight(cands, {
+      ...opts,
+      rng: buildSeededSelectionRng('2026-07-03', 'compose', '2026-07-03'),
+    });
+    expect(out1.map((s) => s.refId)).toEqual(out2.map((s) => s.refId));
+  });
+
+  it('different seeds → statistically different selections (sample-by-sample, not asserted bitwise)', () => {
+    // 异 seed ⇒ 异抽签序列。不逐位断言「不同」（理论上有小概率碰撞），而是 assert rng 流本身不同：
+    // 取首 draw，两个不同 seed 的首 draw 应不同（mulberry32 对相近 seed 散开良好）。
+    const r1 = mulberry32(1);
+    const r2 = mulberry32(2);
+    const draws1 = Array.from({ length: 5 }, () => r1());
+    const draws2 = Array.from({ length: 5 }, () => r2());
+    expect(draws1).not.toEqual(draws2);
   });
 });

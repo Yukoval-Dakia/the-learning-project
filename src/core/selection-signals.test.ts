@@ -178,6 +178,26 @@ describe('softmaxProbabilities', () => {
     expect(p.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
   });
 
+  // YUK-558 (spec Q4 / M4) — CLAMP_K 下溢地板 + reduce-max 减法回归 pin。
+  // 现行护栏已实现且强于 VW 基线（双 lens UPHELD，探针关闭）；本 pin 防未来重构静默删掉 CLAMP_K
+  // 或把 reduce-max 换回 Math.max(...spread)。weights=[1000,0]、T=0.25 ⇒ 低分项 centered exponent
+  // = (0−1000)/0.25 = −4000；无 CLAMP_K 时 exp(−4000) 硬清零 ⇒ q=0 ⇒ π=0 ⇒ 永不入 IPW 资产
+  // （§7 positivity 违例）。CLAMP_K=700 把 exponent clamp 到 −700 ⇒ exp(−700) ≈ 9.9e-305（正规
+  // double）⇒ q>0。reduce-max 减法保证 max=1000 ⇒ 高分项 exponent=0 ⇒ exp(0)=1（有限）。
+  it('YUK-558 Q4 — CLAMP_K 下溢地板：[1000,0] 全 q>0（防 positivity 违例）+ reduce-max 保有限', () => {
+    const p = softmaxProbabilities([1000, 0], 0.25);
+    // (a) CLAMP_K 地板：每个 q_i > 0（无硬清零）。
+    expect(p.every((q) => q > 0)).toBe(true);
+    // (b) reduce-max 减法回归：全有限 + 归一（max=1000 ⇒ 高分项 exp=1，无 overflow）。
+    expect(p.every((q) => Number.isFinite(q))).toBe(true);
+    expect(p.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+    // (c) 单调性保持：高分项 q 仍高于低分项（clamp 是单调非降映射，不反转排序）。
+    expect(p[0]).toBeGreaterThan(p[1]);
+    // (d) 低分项被 clamp 抬成极小正（非精确零）：exp(−700)/[exp(0)+exp(−700)] ≈ 9.9e-305。
+    expect(p[1]).toBeGreaterThan(0);
+    expect(p[1]).toBeLessThan(1e-300);
+  });
+
   it('temperature ≤ 0 抛错（除零 / 负温反转排序的护栏）', () => {
     expect(() => softmaxProbabilities([2, 1], 0)).toThrow(/temperature must be > 0/);
     expect(() => softmaxProbabilities([2, 1], -1)).toThrow(/temperature must be > 0/);

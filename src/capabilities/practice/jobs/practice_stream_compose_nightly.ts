@@ -29,6 +29,7 @@
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
+import { buildSeededSelectionRng } from '../server/selection-seed';
 import { composeNightly, streamLocalDate } from '../server/stream-store';
 
 export interface StreamComposeNightlyResult {
@@ -43,7 +44,11 @@ export interface StreamComposeNightlyResult {
  */
 export async function runStreamComposeNightly(db: Db): Promise<StreamComposeNightlyResult> {
   const date = streamLocalDate();
-  const added = await composeNightly(db, date);
+  // YUK-558 (spec Q6-A / M2)：夜间预产 compose 事件种子化（独立 eventKind='compose-nightly'，
+  // 与用户首读 lazy compose / 手动 recompose 各派生独立 seed）。幂等不变（今天已物化 → no-op）。
+  const added = await composeNightly(db, date, {
+    composeDeps: { rng: buildSeededSelectionRng(date, 'compose-nightly', date) },
+  });
   return { date, added };
 }
 

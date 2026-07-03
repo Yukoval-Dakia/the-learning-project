@@ -475,12 +475,22 @@ async function tryLlmOrchestration(
 ): Promise<{ weighted: WeightedCandidate[]; arrangementByRef: Map<string, number> } | null> {
   try {
     const inputText = buildSelectionOrchestratorInput(samplable);
-    if (inputText.trim().length === 0) return null;
+    if (inputText.trim().length === 0) {
+      // YUK-558 (register (a) / spec M2)：先前此处静默 return null → L1 统计 fallback 触发却无留痕。
+      // 补结构化 warn，让「LLM 编排输入为空」这条 fallback 路径可观测（与下方 catch 的 L2-failure
+      // warn + parsed-empty warn 一道闭合三态 fallback 的可检测性）。
+      console.warn('[softmax-selection] L2 empty-input → statistical fallback');
+      return null;
+    }
     const fn = runTaskFn ?? (await defaultRunTaskFn());
     const result = await fn('SelectionOrchestratorTask', { candidates: inputText }, { db });
     const refIds = samplable.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
-    if (parsed.length === 0) return null;
+    if (parsed.length === 0) {
+      // YUK-558 (register (a) / spec M2)：LLM 返回但 parse 后零条编排结果——静默 return null 同上。
+      console.warn('[softmax-selection] L2 parsed-empty → statistical fallback');
+      return null;
+    }
 
     // FINDING 1（positivity / silent candidate loss）：LLM 可能只编排 samplable 的**子集**
     //   （漏排 / 重复被 dedup / 幻觉 id 被 ⊆filter 丢）。parse barrier 只在结果**全空**时才

@@ -60,8 +60,14 @@ import { softmaxProbabilities } from '@/core/selection-signals';
  * 候选 π_i ≥ ε·(n/N) > 0（positivity airtight），且 Σπ 精确守恒 = n（仿射混合到均匀，
  * 见文件头数学 (a)(b)）。取极小值：主导项 π≈1 几乎不变（1→1−ε+ε/N），只把会被 IPPS 锁定
  * 吃光预算而清零的极小项抬成极小正值——既保 positivity 又不实质扰动 LLM 编排意图。
+ *
+ * **未经数据校准的保守初值，非拟合结果**（n=1 红线：不从数据拟合；与 DEFAULT_TEMPERATURE /
+ * RECALIBRATION_MIN_LABELS 同列——三个手拍常量，spec docs/design/2026-07-03-softmax-spec.md
+ * §1.2 / Q3）。firm-up 路径：只经 deferred T×ε replay harness（owner-gated，NG3）从真数据重调，
+ * 绝不二次拍脑袋。域守护走**字面量单测 pin**（非运行时 throw——硬编码模块常量上的 throw 是
+ * 不可触发的死分支，Lens B-F7）。
  */
-const SAMPLING_EPSILON = 1e-3;
+export const SAMPLING_EPSILON = 1e-3;
 
 /** 一条加权候选（来自 SelectionOrchestratorTask 输出）。weight ≥ 0。 */
 export interface WeightedCandidate {
