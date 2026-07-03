@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { eq, inArray, or } from 'drizzle-orm';
 
 import type { FoldEvent } from '@/core/projections/fold-event';
-import { type Db, db } from '@/db/client';
+import { type Db, type Tx, db } from '@/db/client';
 import {
   artifact,
   event,
@@ -77,39 +77,62 @@ const CROSS_REF_ACTIONS = [
   'experimental:edit_question_block_structured',
 ] as const;
 
-// Map ONE live row of `kind` to its IMPERATIVE snapshot (the exported live-row mappers — the same
-// field-pick the parity assert / audit use, so the golden shape matches what the fold reproduces).
-function rowToSnapshot(
+// Per-kind TYPED row capture (review O8): each branch selects from its CONCRETE table so the
+// drizzle-inferred row type flows straight into the exported parity mapper — no `as never` bridge.
+// A renamed / re-typed schema column now fails HERE at compile time instead of silently producing a
+// corrupted golden baseline. The mappers are the SAME field-picks the parity assert / audit use, so
+// the golden shape matches what the fold reproduces.
+async function captureRowSnapshots(
+  tx: Db | Tx,
   kind: ProjectionKind,
-  row: Record<string, unknown>,
-): Record<string, unknown> {
+): Promise<Record<string, Record<string, unknown>>> {
+  const out: Record<string, Record<string, unknown>> = {};
   switch (kind) {
-    case 'knowledge':
-      return knowledgeLiveRowToSnapshot(row as never) as Record<string, unknown>;
-    case 'knowledge_edge':
-      return edgeRowToSnapshot(row as never) as Record<string, unknown>;
-    case 'goal':
-      return goalLiveRowToSnapshot(row as never) as Record<string, unknown>;
-    case 'mistake_variant':
-      return mistakeVariantLiveRowToSnapshot(row as never) as Record<string, unknown>;
-    case 'learning_item':
-      return learningItemLiveRowToSnapshot(row as never) as Record<string, unknown>;
-    case 'artifact':
-      return artifactLiveRowToSnapshot(row as never) as Record<string, unknown>;
-    case 'question_block':
-      return questionBlockLiveRowToSnapshot(row as never) as Record<string, unknown>;
+    case 'knowledge': {
+      const rows = await tx.select().from(knowledge);
+      for (const r of rows) out[r.id] = knowledgeLiveRowToSnapshot(r) as Record<string, unknown>;
+      return out;
+    }
+    case 'knowledge_edge': {
+      const rows = await tx.select().from(knowledge_edge);
+      for (const r of rows) out[r.id] = edgeRowToSnapshot(r) as Record<string, unknown>;
+      return out;
+    }
+    case 'goal': {
+      const rows = await tx.select().from(goal);
+      for (const r of rows) out[r.id] = goalLiveRowToSnapshot(r) as Record<string, unknown>;
+      return out;
+    }
+    case 'mistake_variant': {
+      const rows = await tx.select().from(mistake_variant);
+      for (const r of rows)
+        out[r.id] = mistakeVariantLiveRowToSnapshot(r) as Record<string, unknown>;
+      return out;
+    }
+    case 'learning_item': {
+      const rows = await tx.select().from(learning_item);
+      for (const r of rows) out[r.id] = learningItemLiveRowToSnapshot(r) as Record<string, unknown>;
+      return out;
+    }
+    case 'artifact': {
+      const rows = await tx.select().from(artifact);
+      for (const r of rows) out[r.id] = artifactLiveRowToSnapshot(r) as Record<string, unknown>;
+      return out;
+    }
+    case 'question_block': {
+      const rows = await tx.select().from(question_block);
+      for (const r of rows)
+        out[r.id] = questionBlockLiveRowToSnapshot(r) as Record<string, unknown>;
+      return out;
+    }
+    default: {
+      // Exhaustiveness backstop (review O4/O10 pattern): tsconfig lacks noImplicitReturns, so a
+      // missing case would silently return undefined for a future kind.
+      const _exhaustive: never = kind;
+      throw new Error(`captureRowSnapshots: unhandled ProjectionKind ${String(_exhaustive)}`);
+    }
   }
 }
-
-const KIND_TABLE = {
-  knowledge,
-  knowledge_edge,
-  goal,
-  mistake_variant,
-  learning_item,
-  artifact,
-  question_block,
-} as const;
 
 /**
  * Capture the golden snapshot for `kind`: every live row → its imperative snapshot, plus the
@@ -124,11 +147,7 @@ const KIND_TABLE = {
 export async function captureGolden(db: Db, kind: ProjectionKind): Promise<GoldenSnapshot> {
   return db.transaction(
     async (tx) => {
-      const liveRows = (await tx.select().from(KIND_TABLE[kind])) as Record<string, unknown>[];
-      const rows: Record<string, Record<string, unknown>> = {};
-      for (const row of liveRows) {
-        rows[row.id as string] = rowToSnapshot(kind, row);
-      }
+      const rows = await captureRowSnapshots(tx, kind);
 
       const eventRows = await tx
         .select()
@@ -139,7 +158,7 @@ export async function captureGolden(db: Db, kind: ProjectionKind): Promise<Golde
       return {
         kind,
         capturedAt: new Date().toISOString(),
-        rowCount: liveRows.length,
+        rowCount: Object.keys(rows).length,
         rows,
         events,
       };
@@ -186,8 +205,9 @@ async function main(): Promise<void> {
   );
 }
 
-// CLI-gate: only run as the CLI entry point so the DB test can import captureGolden.
-if (typeof process.argv[1] === 'string' && process.argv[1].endsWith('capture-golden.ts')) {
+// CLI-gate: only run as the CLI entry point so the DB test can import captureGolden. Path-resolved
+// form (review O5 — matches audit-projection.ts): robust to a transpiled .js filename too.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main()
     .then(() => process.exit(0))
     .catch((err) => {

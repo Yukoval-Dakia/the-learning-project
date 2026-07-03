@@ -233,6 +233,8 @@ export function warnFlipOrder(): void {
 
 **重审（reducer/gather 变更触发）**：新脚本 `scripts/golden-reaudit.ts --kind=<X>`：对 golden 事件集重跑当前 `gatherAndFoldX` + `foldX`，与 golden 命令式行 `diffSnapshots`。任何 diff = post-flip reducer 回归 → 非零 exit + 报 drifted id。触发方式 = 一个 `audit:golden` npm script，纳入「touched `src/core/projections/**` 或 `src/server/projections/gather.ts` 且该实体已 ON」时的 pre-PR 人工 checklist（register 用词「reducer-code-hash-triggered」——本单元落地为 path-触发的 checklist 项，不建 hash 基建，n=1 足够；hash 自动化留 owner 未来可选）。
 
+**Gather 边界（bot 轮 CB1 补注，2026-07-03）**：golden 重审是**纯离线 foldX**（无 DB，golden 自带事件集）——它只覆盖 **reducer 漂移**，**不覆盖 gather 谓词漂移**；后者由 CI 的 gather/shell-parity DB 测试 + prod-clone `audit:projection`/`b3-gate` 重跑（真 gather vs 已物化行）覆盖。见附录「独立 review 轮裁决」CB1 行。
+
 **边界（Lens A M2/M1 诚实标注）**：Q4b 对 artifact/question_block（已 ON、genesis-only、golden 构造性等于行）**无追溯牙**；对未来 goal/mistake_variant/learning_item **全效，且 learning_item flip 前硬性**（register）。
 
 ---
@@ -333,7 +335,8 @@ Slice 6 明确**非本次交付**——本 spec 交付「翻转的 oracle 机制
 
 | # | 主张 | 裁决 | 理由 |
 |---|---|---|---|
-| **K3** golden-reaudit 的 dateReviver 全树 revive 太宽，应按键收窄 | **REFUTED** | 对称 revive（rows + events 同一 reviver）+ snapshot-diff 的 normalize（Date→getTime、严格 ISO→epoch）已闭合 Date/string 缝。按键收窄反而是回归风险：漏掉一个嵌套日期键会破 fold 的 `.getTime()` 调用。全树 + 严格 ISO 正则是正确取舍。 |
-| **K5** oracle sweep 单 REPEATABLE READ tx 包全 kind 太重，应 per-kind tx | **REFUTED** | spec M4 的语义要求是 per-kind 的行读/事件读同快照——单 tx 是其超集，天然满足。拆分不减少任何 fold 工作量；n=1 周跑一次的 tx 时长对 autovacuum 的影响可忽略。保留单 tx（实现更简、跨 kind 时点一致还是免费加成）。 |
-| **K16** warnFlipOrder 只硬编码 learning_item→artifact 单对，应泛化成依赖表 | **REFUTED** | Ledger m3 逐字裁决就是「已知顺序依赖的**最小代理**」，且该对已 code-ground 到唯一真实耦合（actions.ts:1308-1325 retract 归档配对 artifact）。当前代码库不存在第二条跨实体 flip 依赖；预建泛化依赖表是给不存在的耦合造基建——as-designed。 |
-| **K8**（方向部分）capture-golden 的 CROSS_REF_ACTIONS 应按实体收窄 | **REFUTED（方向）** | 按实体收窄 rate/correct 是危险的 under-scope：rate 的 subject 是 proposal（subject_kind='event'），链在 caused_by_event_id 上——收窄等于在 capture 侧重造各 gather 的谓词，恰是 CROSS_REF_ACTIONS 注释刻意避免的脆弱面。纯 reducer 按 id+action 过滤，宽超集只是字节成本。（**安全**的 propose/generate 砍除作为 follow-up 单独评估，不在本 PR。） |
+| **K3** | golden-reaudit 的 dateReviver 全树 revive 太宽，应按键收窄 | **REFUTED** | 对称 revive（rows + events 同一 reviver）+ snapshot-diff 的 normalize（Date→getTime、严格 ISO→epoch）已闭合 Date/string 缝。按键收窄反而是回归风险：漏掉一个嵌套日期键会破 fold 的 `.getTime()` 调用。全树 + 严格 ISO 正则是正确取舍。 |
+| **K5** | oracle sweep 单 REPEATABLE READ tx 包全 kind 太重，应 per-kind tx | **REFUTED** | spec M4 的语义要求是 per-kind 的行读/事件读同快照——单 tx 是其超集，天然满足。拆分不减少任何 fold 工作量；n=1 周跑一次的 tx 时长对 autovacuum 的影响可忽略。保留单 tx（实现更简、跨 kind 时点一致还是免费加成）。 |
+| **K16** | warnFlipOrder 只硬编码 learning_item→artifact 单对，应泛化成依赖表 | **REFUTED** | Ledger m3 逐字裁决就是「已知顺序依赖的**最小代理**」，且该对已 code-ground 到唯一真实耦合（actions.ts:1308-1325 retract 归档配对 artifact）。当前代码库不存在第二条跨实体 flip 依赖；预建泛化依赖表是给不存在的耦合造基建——as-designed。 |
+| **K8**（方向部分） | capture-golden 的 CROSS_REF_ACTIONS 应按实体收窄 | **REFUTED（方向）** | 按实体收窄 rate/correct 是危险的 under-scope：rate 的 subject 是 proposal（subject_kind='event'），链在 caused_by_event_id 上——收窄等于在 capture 侧重造各 gather 的谓词，恰是 CROSS_REF_ACTIONS 注释刻意避免的脆弱面。纯 reducer 按 id+action 过滤，宽超集只是字节成本。（**安全**的 propose/generate 砍除作为 follow-up 单独评估，不在本 PR。） |
+| **CB1**（bot 轮 2026-07-03） | golden-reaudit 纯离线重 fold，绕过 gather.ts——测不到 gather 谓词漂移 | **ACCEPT（文档化，非代码改）** | 观察属实且 as-designed：golden 腿的职责=**reducer（纯 fold）漂移**（离线、无 DB，这正是它非重言的原因）。gather 谓词漂移由另两腿覆盖：(a) CI 的 gather.db.test.ts + 各实体 shell-parity DB 测试（每条 gather 谓词都有 fold==row 事件链覆盖，回归当场红）；(b) prod-clone `audit:projection`/`b3-gate` 重跑——它们走**真 gatherAndFoldX** 对比已物化行（旧代码产物），gather 变更后的欠采会现形为 DRIFT。组件 7 的「重跑当前 gatherAndFoldX + foldX」措辞据此校正为 foldX（golden 无 DB 可 gather）。 |

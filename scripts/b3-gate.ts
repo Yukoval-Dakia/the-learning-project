@@ -52,13 +52,38 @@ import {
   type ProjectionKind,
 } from '@/server/projections/entity-registry';
 import { type ProjectionAllowlist, loadAllowlist } from './audit-projection';
-import { type BackfillCounts, backfillGenesisEvents } from './backfill-genesis-events';
+import {
+  backfillArtifactGenesis,
+  backfillGoalGenesis,
+  backfillKnowledgeEdgeGenesis,
+  backfillKnowledgeGenesis,
+  backfillLearningItemGenesis,
+  backfillMistakeVariantGenesis,
+  backfillQuestionBlockGenesis,
+} from './backfill-genesis-events';
 import { type RebuildCounts, rebuildProjectionForKinds } from './rebuild-projection';
+
+type KindBackfillCounts = { seeded: number; skipped: number };
+
+// Per-kind backfill dispatch (review O3): the gate backfills ONLY the kinds it gates. The all-7
+// backfillGenesisEvents ran once per cluster (6×7 = 42 full-table scans, 5 runs pure no-ops) AND
+// meant a per-cluster gate WROTE genesis events for kinds outside its cluster — violating the
+// cluster-isolation story. All 7 functions share the (db, now) → {seeded, skipped} shape.
+const KIND_BACKFILL: Record<ProjectionKind, (db: Db, now: Date) => Promise<KindBackfillCounts>> = {
+  knowledge: backfillKnowledgeGenesis,
+  knowledge_edge: backfillKnowledgeEdgeGenesis,
+  goal: backfillGoalGenesis,
+  mistake_variant: backfillMistakeVariantGenesis,
+  learning_item: backfillLearningItemGenesis,
+  artifact: backfillArtifactGenesis,
+  question_block: backfillQuestionBlockGenesis,
+};
 
 export interface B3GateReport {
   go: boolean;
   kinds: ProjectionKind[];
-  backfill: BackfillCounts;
+  // per-kind backfill counts — ONLY the gated kinds (cluster-scoped, review O3).
+  backfill: Partial<Record<ProjectionKind, KindBackfillCounts>>;
   // audit runs BEFORE the rebuild — fold(events) vs the CURRENT imperative row (real value-drift
   // teeth). driftCount = non-allowlisted drift over the requested kinds; topologyReject is set if
   // folding a cyclic prerequisite THROWS mid-scan.
@@ -112,17 +137,23 @@ export async function runB3Gate(
   // 1. snapshot the live id sets per kind BEFORE the gate mutates anything.
   const before = await liveIdsByKind(db, kinds);
 
-  // 2. genesis backfill (idempotent, ALL kinds). Idempotent, so re-running per cluster is safe; the
-  // backfill contract is "apply the SAME backfill to prod".
-  const backfill = await backfillGenesisEvents(db, now);
+  // 2. genesis backfill (idempotent), CLUSTER-SCOPED (review O3): only the gated kinds — a
+  // per-cluster gate must not write genesis events for kinds outside its cluster, and the CLI's
+  // 6-cluster loop backfills each kind exactly once instead of 6 redundant all-7 passes.
+  const backfill: B3GateReport['backfill'] = {};
+  for (const kind of kinds) {
+    backfill[kind] = await KIND_BACKFILL[kind](db, now);
+  }
 
   // 3. AUDIT — the real teeth. Compare fold(events) against the CURRENT imperative row PER kind,
   // BEFORE the rebuild. A cyclic prerequisite makes the edge fold THROW — caught here as a topology
   // NO-GO (the rebuild re-confirms at step 4). A NON-topology error is a real failure and propagates.
+  // Counts are hoisted OUTSIDE the try (review CR3/O2): a later kind's topology throw must not
+  // discard the drift/allowed already accumulated from earlier kinds in the same cluster.
   let audit: B3GateReport['audit'];
+  let driftCount = 0;
+  let allowedCount = 0;
   try {
-    let driftCount = 0;
-    let allowedCount = 0;
     for (const kind of kinds) {
       const r = await auditProjectionKind(db, kind, allowlist);
       driftCount += r.drift.length;
@@ -132,7 +163,7 @@ export async function runB3Gate(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!/topology reject/i.test(msg)) throw err;
-    audit = { clean: false, driftCount: 0, allowedCount: 0, topologyReject: msg };
+    audit = { clean: false, driftCount, allowedCount, topologyReject: msg };
   }
 
   // 4. rebuild IN ONE TX (FK-cluster) — materialize the post-flip state + independently re-confirm
@@ -178,6 +209,12 @@ function printReport(report: B3GateReport): void {
   console.log(
     `\n=== B3 SoT-flip gate [${report.kinds.join(', ')}]: ${report.go ? 'GO ✅' : 'NO-GO ❌'} ===\n`,
   );
+  // backfill visibility (review O1): it is a MUTATING step (genesis events + index entries), so the
+  // human-readable path must show what it did — not just the --json path.
+  const bfEntries = Object.entries(report.backfill)
+    .map(([k, c]) => `${k}: seeded ${c.seeded}, skipped ${c.skipped}`)
+    .join('; ');
+  console.log(`backfill — ${bfEntries || '(none)'}`);
   // audit FIRST (it runs before the rebuild — the real fold-vs-imperative teeth).
   if (report.audit.topologyReject) {
     console.log(
