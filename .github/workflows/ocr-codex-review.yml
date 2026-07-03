@@ -257,7 +257,10 @@ jobs:
             const crypto = require('crypto');
 
             const runId = Number.isFinite(context.runId) ? context.runId : 0;
-            const runAttempt = Number.isFinite(context.runAttempt) ? context.runAttempt : 1;
+            const envAttempt = parseInt(process.env.GITHUB_RUN_ATTEMPT, 10);
+            const runAttempt = (Number.isFinite(envAttempt) && envAttempt >= 1)
+              ? envAttempt
+              : (Number.isFinite(context.runAttempt) ? context.runAttempt : 1);
             const RUN_TAG = `${runId}-${runAttempt}`;
             const REVIEW_TAG = `<!-- ocr-codex-review run=${RUN_TAG} -->`;
             const SUMMARY_TAG = `<!-- ocr-codex-review-summary:${RUN_TAG} -->`;
@@ -299,17 +302,28 @@ jobs:
               return out.join('\n');
             }
 
+            function stableCommentId(comment) {
+              const key = [
+                comment.path || '',
+                comment.start_line || 0,
+                comment.end_line || 0,
+                String(comment.content || '').trim(),
+              ].join('\0');
+              const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+              return `ocr-${RUN_TAG}-${hash}`;
+            }
+
             function inlineItem(comment) {
               const line = comment.end_line || comment.start_line;
               if (!comment.path || !line) return null;
               const start = comment.start_line;
               const end = comment.end_line;
               if (start >= 1 && end >= 1 && start < end) {
-                return { comment, id: newCommentId(), lines: { start_line: start, line: end, start_side: 'RIGHT', side: 'RIGHT' } };
+                return { comment, id: stableCommentId(comment), lines: { start_line: start, line: end, start_side: 'RIGHT', side: 'RIGHT' } };
               } else if (end >= 1) {
-                return { comment, id: newCommentId(), lines: { line: end, side: 'RIGHT' } };
+                return { comment, id: stableCommentId(comment), lines: { line: end, side: 'RIGHT' } };
               } else if (start >= 1) {
-                return { comment, id: newCommentId(), lines: { line: start, side: 'RIGHT' } };
+                return { comment, id: stableCommentId(comment), lines: { line: start, side: 'RIGHT' } };
               }
               return null;
             }
@@ -469,8 +483,9 @@ jobs:
               if (!error) return null;
               const status = error.status;
               const message = String(error.message || '');
+              const isNetwork = status == null && /ECONNRESET|ETIMEDOUT|ENOTFOUND|socket|network|fetch failed|aborted/i.test(message);
               const isRateLimit = status === 429 || (status === 403 && /rate limit|abuse|secondary/i.test(message));
-              const isTransient = (status >= 500 && status < 600) || status === 408;
+              const isTransient = (status >= 500 && status < 600) || status === 408 || isNetwork;
               if (!isRateLimit && !isTransient) return null;
 
               const headers = ((error.response || {}).headers) || {};
@@ -535,10 +550,6 @@ jobs:
               } catch (_) { return null; }
             }
 
-            function newCommentId() {
-              return `ocr-${RUN_TAG}-${crypto.randomBytes(8).toString('hex')}`;
-            }
-
             function toReviewPayload(item) {
               return {
                 path: item.comment.path,
@@ -567,10 +578,55 @@ jobs:
 
             if (comments.length === 0) {
               summaryBody += '\n\nNo actionable comments found.';
-              await github.rest.pulls.createReview({
-                owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT', body: summaryBody
-              });
+              let emptyReviewExists = false;
+              try {
+                const existing = await findExistingBatchReview({ owner, repo, prNumber: issue_number, tag: REVIEW_TAG });
+                emptyReviewExists = existing.found;
+              } catch (checkErr) {
+                console.log(`Empty-review idempotency check failed (${checkErr.message}); attempting create anyway.`);
+              }
+              if (!emptyReviewExists) {
+                await withRetry('createReview(empty)', () => github.rest.pulls.createReview({
+                  owner, repo, pull_number: issue_number, commit_id, event: 'COMMENT', body: summaryBody
+                }));
+              } else {
+                console.log('Empty review with this run tag already exists; skipping.');
+              }
               return;
+            }
+
+            async function attemptBatchCreateReview() {
+              try {
+                const existing = await findExistingBatchReview({ owner, repo, prNumber: issue_number, tag: REVIEW_TAG });
+                if (existing.found) {
+                  try {
+                    const postedIds = await getPostedCommentIds({ owner, repo, prNumber: issue_number });
+                    const missing = reviewComments.filter((item) => !postedIds.has(item.id));
+                    if (missing.length === 0) {
+                      console.log(`Batch review already complete (review_id=${existing.review.id}); skipping duplicate create.`);
+                      return { data: existing.review, headers: {} };
+                    }
+                    const err = new Error('Batch review exists but inline comments incomplete');
+                    err.status = 409;
+                    throw err;
+                  } catch (idErr) {
+                    if (idErr.status === 409) throw idErr;
+                    console.log(`Could not verify posted comment ids (${idErr.message}); deferring to per-comment fallback.`);
+                    const err = new Error('Batch review exists; deferring to per-comment fallback');
+                    err.status = 409;
+                    throw err;
+                  }
+                }
+              } catch (checkErr) {
+                if (checkErr.status === 409) throw checkErr;
+                console.log(`Pre-create idempotency check failed (${checkErr.message}); attempting create anyway.`);
+              }
+              return github.rest.pulls.createReview({
+                owner, repo, pull_number: issue_number, commit_id,
+                body: summaryBody,
+                event: 'COMMENT',
+                comments: reviewComments.map(toReviewPayload)
+              });
             }
 
             let successCount = 0;
@@ -579,12 +635,7 @@ jobs:
             const failedComments = [];
 
             try {
-              const batchRes = await withRetry('createReview(batch)', () => github.rest.pulls.createReview({
-                owner, repo, pull_number: issue_number, commit_id,
-                body: summaryBody,
-                event: 'COMMENT',
-                comments: reviewComments.map(toReviewPayload)
-              }));
+              const batchRes = await withRetry('createReview(batch)', () => attemptBatchCreateReview());
               successCount = reviewComments.length;
               console.log(`Successfully posted review with ${successCount} inline comments (${commentsWithoutLine.length} in summary)`);
               logRateLimitQuota(batchRes, 'after batch createReview');
@@ -601,10 +652,14 @@ jobs:
 
               let toRetry = reviewComments;
               if (existingReview && existingReview.found) {
-                const postedIds = await getPostedCommentIds({ owner, repo, prNumber: issue_number });
-                toRetry = reviewComments.filter((item) => !postedIds.has(item.id));
-                successCount = reviewComments.length - toRetry.length;
-                console.log(`Batch review already exists (review_id=${existingReview.review.id}). ${successCount}/${reviewComments.length} inline comments already posted. ${toRetry.length} missing, will retry only those.`);
+                try {
+                  const postedIds = await getPostedCommentIds({ owner, repo, prNumber: issue_number });
+                  toRetry = reviewComments.filter((item) => !postedIds.has(item.id));
+                  successCount = reviewComments.length - toRetry.length;
+                  console.log(`Batch review already exists (review_id=${existingReview.review.id}). ${successCount}/${reviewComments.length} inline comments already posted. ${toRetry.length} missing, will retry only those.`);
+                } catch (idErr) {
+                  console.log(`Failed to enumerate posted comment ids (${idErr.message}); retrying all inline comments.`);
+                }
               } else {
                 console.log('Batch review not found on server. Falling back to per-comment posting...');
               }
@@ -693,6 +748,10 @@ jobs:
                 }
               }
 
+              const shouldPostSummary = failedCount > 0 || unverifiableCount > 0 || failedComments.length > 0;
+              if (!shouldPostSummary) {
+                console.log('All inline comments posted successfully; skipping separate summary issue comment.');
+              } else {
               let finalBody = headerLines.join('\n');
               finalBody += formatSummaryComments(commentsWithoutLine);
               finalBody += `\n\n---\n\n📊 **Posting Statistics:**`;
@@ -726,7 +785,10 @@ jobs:
               } else if (summaryAlreadyPosted === null) {
                 console.log('Cannot verify whether summary comment already exists (read API failed); skipping to avoid duplicate.');
               } else {
-                await github.rest.issues.createComment({ owner, repo, issue_number, body: finalBody });
+                await withRetry('createComment(summary)', () =>
+                  github.rest.issues.createComment({ owner, repo, issue_number, body: finalBody })
+                );
+              }
               }
             }
   # When a PR is MERGED, capture the final verdict of OCR's inline comments and
