@@ -184,6 +184,24 @@ export const knowledgeCapability = defineCapability({
         load: () =>
           import('./jobs/projection_oracle_sweep').then((m) => m.buildProjectionOracleSweepHandler),
       },
+      {
+        // YUK-559 (S3, worklist #6): kg-borrowing SHADOW sweep — weekly REPORT-ONLY,
+        // FLAG-INDEPENDENT shadow of the A5/A6 soft layer. Re-runs the SAME pure math the
+        // live path would (smoothThetaByComponent / propagatePrereq) over live mastery_state +
+        // related_to/prerequisite/derived_from edges WITHOUT the dark flag check, and emits ONE
+        // summary event (experimental:kg_borrow_shadow, ingest_at=now opt-out) carrying the
+        // flip's move/borrow/component-size distribution — so the owner gets data DURING dark
+        // (data门只 gate 翻转不 gate build; breaks the "wait for data to flip" dead loop).
+        // Weekly Mon 05:00 Asia/Shanghai — offset from projection_oracle_sweep (04:30) +
+        // merge_attribution_sweep (04:00), before the daily frontier_fill (05:15). queue 'llm':
+        // WRITES an evidence event, joining the backfill DLQ/retry family like its siblings
+        // (the runner self-swallows, so a failed run logs but never DLQ-thrashes). Auto-mounted.
+        name: 'kg_borrow_shadow_sweep',
+        schedule: { cron: '0 5 * * 1', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/kg_borrow_shadow_sweep').then((m) => m.buildKgBorrowShadowSweepHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。knowledge_node / knowledge_mutation 的
