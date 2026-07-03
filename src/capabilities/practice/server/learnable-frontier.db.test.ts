@@ -8,10 +8,11 @@
 
 import { knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   FRONTIER_DEPTH_LIMIT,
+  FRONTIER_NODE_CAP,
   learnableFrontier,
   learnableFrontierResolved,
 } from './learnable-frontier';
@@ -355,5 +356,62 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
     await setMastered('F');
     const frontier = await learnableFrontier(testDb());
     expect(frontier).toEqual([]);
+  });
+
+  // ── YUK-551 (spec Q1) — overflow single-point emit observability ────────────────
+  // The overflow fail-safe (depth/node-cap → blank frontier) now emits ONE console.warn in
+  // learnableFrontierResolved, so all three consumers (composer / FrontierRail / nightly)
+  // inherit it. Pin: overflow fires exactly once with the fail-safe payload; sparse + dense
+  // stay SILENT (negative assertions guard against emitting on the wrong branch).
+
+  it('(p) overflow → single console.warn carrying the fail-safe payload', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // Reuse (d)/(j)/(k) overflow shape: a linear chain deeper than FRONTIER_DEPTH_LIMIT.
+      const n = FRONTIER_DEPTH_LIMIT + 4;
+      for (let i = 0; i < n; i++) await seedPrereq(`ow${i}`, `ow${i + 1}`);
+      const res = await learnableFrontierResolved(testDb());
+      expect(res.kind).toBe('overflow');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('[frontier] closure overflow'),
+        expect.objectContaining({
+          depthOverflow: true,
+          depthLimit: FRONTIER_DEPTH_LIMIT,
+          nodeCap: FRONTIER_NODE_CAP,
+          rows: expect.any(Number),
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('(q) sparse (no prereq edges) → NO console.warn (not the overflow branch)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await seedKc('sw1');
+      await setNotMastered('sw1');
+      const res = await learnableFrontierResolved(testDb());
+      expect(res.kind).toBe('sparse');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('(r) dense (a real mastered-prereq closure) → NO console.warn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await seedPrereq('dwp', 'dwF');
+      await setMastered('dwp');
+      await setNotMastered('dwF');
+      const res = await learnableFrontierResolved(testDb());
+      expect(res.kind).toBe('dense');
+      expect(res.ids).toEqual(['dwF']);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
