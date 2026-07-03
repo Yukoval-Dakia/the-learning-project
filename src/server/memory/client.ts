@@ -271,11 +271,23 @@ export function createMemoryClient(
         let stillExists: boolean;
         try {
           stillExists = (await memory.get(memoryId)) !== null;
-        } catch {
+        } catch (verifyErr) {
+          // OCR (PR #699, client.ts:276) — the get() existence check itself failed,
+          // so absence cannot be confirmed. Log the check failure (idempotency rests
+          // on get() working) and surface the ORIGINAL delete error.
+          console.warn(
+            `[memory] hardDelete: existence check (get) failed for ${memoryId}; surfacing original delete error`,
+            verifyErr,
+          );
           throw err; // cannot verify absence → surface the original delete error
         }
         if (stillExists) throw err; // row is still there → the delete truly failed
-        // row is gone → treat as idempotent success (already deleted / replay)
+        // OCR (PR #699, client.ts:278) — row is gone: treat the failed delete as an
+        // idempotent already-applied op (crash/replay). Log it so an operator in a
+        // reconcile/crash-replay context can tell a genuine replay from a silent swallow.
+        console.warn(
+          `[memory] hardDelete: treating as idempotent success (row already absent) memoryId=${memoryId}`,
+        );
       }
     },
     async history(memoryId) {

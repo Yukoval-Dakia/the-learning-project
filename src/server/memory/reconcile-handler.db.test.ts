@@ -856,6 +856,57 @@ describe('reconcile handler — F3 RETRACT_NEW keys strictly on the referenced c
   });
 });
 
+describe('reconcile handler — CR-4: out-of-range old_index (LLM hallucination) fail-safes to KEEP_BOTH', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('RETRACT_NEW with old_index=99 (unresolvable) → KEEP_BOTH; new memory NOT deleted', async () => {
+    const db = testDb();
+    const newMemId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const candId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload)
+      VALUES (${newMemId}::uuid, ${JSON.stringify({ data: 'dup text', user_id: 'self' })}::jsonb)
+    `);
+    // One real candidate (index 0). The judge hallucinates old_index=99 — out of
+    // range, so cands[99] is undefined. RETRACT_NEW is NOT in needsOldTarget, so
+    // pre-CR-4 this bogus index slipped past badTarget and the new memory could be
+    // hard-deleted on the top-score/abstain path. CR-4's invalidOldIndex guard
+    // fail-safes it to KEEP_BOTH before any deletion decision.
+    const memoryClient = mockMemoryClient([{ id: candId, memory: 'a neighbor', score: 0.9 }]);
+    const judge = vi.fn(async () => [
+      {
+        new_index: 0,
+        action: 'RETRACT_NEW',
+        old_index: 99,
+        confidence: 0.9,
+        reason: 'hallucinated index',
+      },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({ memories: [mem(newMemId, 'dup text', 'event', 2000)], user_id: 'self' }) as never,
+    );
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('KEEP_BOTH'); // fail-safe downgrade
+    expect(rows[0].reason).toContain('out-of-range index downgraded from RETRACT_NEW');
+    expect(rows[0].prev_text).toBeNull(); // KEEP_BOTH captures no undo snapshot
+    // The new memory row must still exist (NOT retracted on a hallucinated index).
+    const newRows = (await db.execute(
+      sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
+    )) as unknown[];
+    expect(newRows).toHaveLength(1);
+  });
+});
+
 describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by action', () => {
   beforeEach(async () => {
     await resetDb();
@@ -1035,13 +1086,19 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
     ]);
 
     // Handler with NO injected memoryClient + injected collectionName. An empty
-    // batch triggers ONLY the job-start replay (applyPlannedRows) BEFORE any lazy
-    // createMemoryClient — so getClient() returns undefined (the m7 path).
+    // batch triggers ONLY the job-start replay (applyPlannedRows). The injected
+    // createClient factory throws (CR-1), so getClientLazy() catches → getClient()
+    // returns undefined (the m7 path) DETERMINISTICALLY — the branch no longer
+    // depends on the shell env lacking ZHIPU/DASHSCOPE keys (a bare
+    // createMemoryClient() would succeed on any machine that carries them).
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const handler = buildMemoryReconcileHandler(db, {
         judge: vi.fn() as never,
         collectionName: COLLECTION,
+        createClient: () => {
+          throw new Error('mem0 client unavailable (test)');
+        },
       });
       await handler(makeJob({ memories: [], user_id: 'self' }) as never);
     } finally {

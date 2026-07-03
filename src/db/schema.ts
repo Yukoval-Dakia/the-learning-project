@@ -1517,7 +1517,9 @@ export const memory_reconciliation_log = pgTable(
     applied_at: timestamp('applied_at', { withTimezone: true }),
     // YUK-557（Q2b）— ARIES 级 undo：记决策元数据不够，必须记足以重建旧状态的原文。
     // write-ahead 阶段捕获（非 apply-time，防崩溃重放读到已改写值污染快照）。语义因
-    // action 而异：SUPERSEDE/MERGE 存 old 行原文/完整 payload（被软取代/被吸收那份）；
+    // action 而异：SUPERSEDE/MERGE 存 old 行原文/完整 payload（被软取代/被吸收那份）——
+    // prev_text 优先取 capturePrevState 读到的 DB 快照原文（verbatim 保真），candidate
+    // text 仅作快照缺失时的兜底（PR #699 CR-5）；
     // RETRACT_NEW 的 prev_text 存 new 行原文（被丢弃那份），prev_metadata 留 NULL（其
     // metadata 由本项目 addEventMemory 刚写、可从 event 表溯源）。KEEP_BOTH 恒 NULL。
     // 可空——不回填历史行。恢复 runbook：docs/runbooks/memory-reconcile-undo.md。
