@@ -1,0 +1,159 @@
+// YUK-548 (worklist #5, Q4b / component 7) — retained-golden RE-AUDIT: re-fold a frozen golden's
+// events with the CURRENT reducer/gather and diff against the golden's IMPERATIVE rows.
+//
+// This is the NON-TAUTOLOGICAL leg (register line 673). The golden ROW is the imperative path's
+// frozen output (captured under the gate-certified OLD code); this re-fold runs the PRESENT foldX. A
+// post-flip reducer/gather change that no longer reproduces the imperative row surfaces as DRIFT — a
+// genuine cross-check, because the reference is never a re-interpretation of the current fold.
+//
+// TRIGGER: run whenever `src/core/projections/**` or the `src/server/projections/gather.ts` branch of
+// an ALREADY-ON entity changes (a pre-PR checklist item — see docs/design/… §7; the register's
+// "reducer-code-hash-triggered" is landed as a path-triggered manual gate, n=1 sufficient; hash
+// automation left optional). PURE — no DB (folds the golden's own captured events in memory).
+//
+// CLI:
+//   pnpm audit:golden --kind=goal   # re-fold the latest scripts/golden/goal-*.json; exit 1 on drift
+
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { foldArtifact } from '@/core/projections/artifact';
+import type { FoldEvent } from '@/core/projections/fold-event';
+import { foldGoal } from '@/core/projections/goal';
+import { foldKnowledgeNode } from '@/core/projections/knowledge';
+import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
+import { foldLearningItem } from '@/core/projections/learning_item';
+import { foldMistakeVariant } from '@/core/projections/mistake_variant';
+import { foldQuestionBlock } from '@/core/projections/question_block';
+import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
+import { ALL_PROJECTION_KINDS, type ProjectionKind } from '@/server/projections/entity-registry';
+import { diffSnapshots } from '@/server/projections/snapshot-diff';
+import type { GoldenSnapshot } from './capture-golden';
+
+// Revive ISO-8601 date strings → Date so the reducers (created_at.getTime()) + diffSnapshots (Date
+// equality) compare like-for-like against the fold's Date output.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+function dateReviver(_key: string, value: unknown): unknown {
+  return typeof value === 'string' && ISO_DATE.test(value) ? new Date(value) : value;
+}
+
+export function parseGolden(text: string): GoldenSnapshot {
+  return JSON.parse(text, dateReviver) as GoldenSnapshot;
+}
+
+// Re-fold one golden id with the CURRENT reducer. edge folds against the golden live-edge mesh.
+function foldGoldenRow(
+  kind: ProjectionKind,
+  id: string,
+  events: FoldEvent[],
+  mesh: KnowledgeEdgeRowSnapshotT[],
+): Record<string, unknown> | null {
+  switch (kind) {
+    case 'knowledge':
+      return foldKnowledgeNode(id, events) as Record<string, unknown> | null;
+    case 'knowledge_edge':
+      return foldKnowledgeEdge(id, events, mesh) as Record<string, unknown> | null;
+    case 'goal':
+      return foldGoal(id, events) as Record<string, unknown> | null;
+    case 'mistake_variant':
+      return foldMistakeVariant(id, events) as Record<string, unknown> | null;
+    case 'learning_item':
+      return foldLearningItem(id, events) as Record<string, unknown> | null;
+    case 'artifact':
+      return foldArtifact(id, events) as Record<string, unknown> | null;
+    case 'question_block':
+      return foldQuestionBlock(id, events) as Record<string, unknown> | null;
+  }
+}
+
+export interface GoldenReauditResult {
+  kind: ProjectionKind;
+  checked: number;
+  drifted: { id: string; diffs: string[] }[];
+}
+
+/**
+ * Re-fold every golden id with the current reducer and diff against the golden imperative row.
+ * PURE — no DB. Any diff = a post-flip reducer/gather regression.
+ */
+export function reauditGolden(golden: GoldenSnapshot): GoldenReauditResult {
+  const events = golden.events;
+  // edge fold needs the live topology mesh — the golden's own live (archived_at IS NULL) edge rows.
+  const mesh =
+    golden.kind === 'knowledge_edge'
+      ? (Object.values(golden.rows).filter(
+          (r) => r.archived_at === null,
+        ) as unknown as KnowledgeEdgeRowSnapshotT[])
+      : [];
+
+  const drifted: { id: string; diffs: string[] }[] = [];
+  for (const [id, goldenRow] of Object.entries(golden.rows)) {
+    const folded = foldGoldenRow(golden.kind, id, events, mesh);
+    const diffs = diffSnapshots(goldenRow, folded);
+    if (diffs.length > 0) drifted.push({ id, diffs });
+  }
+  return { kind: golden.kind, checked: Object.keys(golden.rows).length, drifted };
+}
+
+const GOLDEN_DIR = resolve(fileURLToPath(new URL('./golden', import.meta.url)));
+
+// Find the most recent golden file for `kind` (files are `<kind>-YYYY-MM-DD.json`, so lexical max = latest).
+function latestGoldenPath(kind: ProjectionKind): string | null {
+  let files: string[];
+  try {
+    files = readdirSync(GOLDEN_DIR);
+  } catch {
+    return null;
+  }
+  const matches = files.filter((f) => f.startsWith(`${kind}-`) && f.endsWith('.json')).sort();
+  const latest = matches.at(-1);
+  return latest ? resolve(GOLDEN_DIR, latest) : null;
+}
+
+function parseKindArg(): ProjectionKind {
+  const arg = process.argv.find((a) => a.startsWith('--kind='));
+  const kind = arg?.slice('--kind='.length);
+  if (!kind || !(ALL_PROJECTION_KINDS as readonly string[]).includes(kind)) {
+    console.error(
+      `[golden-reaudit] --kind=<X> required, one of: ${ALL_PROJECTION_KINDS.join(', ')}`,
+    );
+    process.exit(2);
+  }
+  return kind as ProjectionKind;
+}
+
+function main(): void {
+  const kind = parseKindArg();
+  const path = latestGoldenPath(kind);
+  if (!path) {
+    console.error(
+      `[golden-reaudit] no golden captured for ${kind} (scripts/golden/${kind}-*.json). Run pnpm capture-golden --kind=${kind} before flipping it.`,
+    );
+    process.exit(2);
+  }
+  const golden = parseGolden(readFileSync(path, 'utf8'));
+  const result = reauditGolden(golden);
+
+  console.log(`golden-reaudit — ${kind}: re-folded ${result.checked} row(s) from ${path}`);
+  if (result.drifted.length === 0) {
+    console.log('CLEAN — the current reducer reproduces every golden imperative row.');
+    process.exit(0);
+  }
+  console.log(`\nDRIFT — ${result.drifted.length} row(s) the current fold no longer reproduces:`);
+  for (const d of result.drifted) {
+    console.log(`  - ${d.id}:`);
+    for (const line of d.diffs) console.log(`      ${line}`);
+  }
+  console.log(
+    '\nA post-flip reducer/gather change broke fold==imperative for these rows. Either the change is a\n' +
+      'regression (revert/fix it), or it is an INTENTIONAL model change — in which case re-capture the\n' +
+      'golden (pnpm capture-golden) AFTER re-verifying the new imperative rows are correct.',
+  );
+  process.exit(1);
+}
+
+// CLI-gate: only run as the CLI entry point so the DB test can import reauditGolden.
+if (typeof process.argv[1] === 'string' && process.argv[1].endsWith('golden-reaudit.ts')) {
+  main();
+}
