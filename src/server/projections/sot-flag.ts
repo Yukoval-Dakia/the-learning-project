@@ -78,3 +78,48 @@ export function projectionIsWriter(entity?: ProjectionEntity): boolean {
   const envName = PER_ENTITY_FLAG_ENV[entity];
   return envName !== undefined && process.env[envName] === '1';
 }
+
+/**
+ * The current SoT-writer flag vector (YUK-548). knowledge + knowledge_edge share the bare global.
+ * Printed at boot for the owner to eyeball two-process consistency (the CHEAP cross-process guard —
+ * the spec REJECTs a heavyweight shared fingerprint table as over-engineering for n=1; stop-the-world
+ * flipping already closes the split-brain window).
+ */
+export function trackedFlagVector(): Record<string, boolean> {
+  return {
+    'knowledge+knowledge_edge': projectionIsWriter(),
+    goal: projectionIsWriter('goal'),
+    mistake_variant: projectionIsWriter('mistake_variant'),
+    learning_item: projectionIsWriter('learning_item'),
+    artifact: projectionIsWriter('artifact'),
+    question_block: projectionIsWriter('question_block'),
+  };
+}
+
+/**
+ * Startup-time flip-order guardrail (YUK-548, component 6). WARN, NEVER throw.
+ *
+ * The learning_item retract path ALSO archives paired `artifact` rows + emits artifact lifecycle
+ * events (src/server/proposals/actions.ts:1308-1325 — the grounded W3 coupling), so learning_item
+ * depends on artifact for a coherent retract. If learning_item is ON while artifact is OFF, a WARN
+ * flags the reverse-rollback dependency.
+ *
+ * WHY WARN, NOT A BOOT-THROW (Lens B M3): each entity flips independently (sot-flag.ts:37). A
+ * boot-throw here would BRICK app+worker during exactly a single-entity artifact rollback while
+ * learning_item is still ON — a rollback DEADLOCK. The real ordering hard-check lives in the CLI /
+ * runbook (a human confirms artifact ON before flipping learning_item), not a runtime invariant.
+ */
+export function warnFlipOrder(): void {
+  if (projectionIsWriter('learning_item') && !projectionIsWriter('artifact')) {
+    console.warn(
+      '[sot-flag] learning_item ON while artifact OFF — the learning_item retract path ALSO archives ' +
+        'paired artifact rows + emits artifact lifecycle events (actions.ts:1308-1325, the W3 coupling). ' +
+        'For an artifact-only rollback, roll back learning_item FIRST (reverse rollback order — see the ' +
+        'SoT-flip rollback runbook). WARN, not a boot-throw: throwing would brick app+worker during that ' +
+        'very rollback.',
+    );
+  }
+  // Cheap cross-process consistency aid: print this process's flag vector so the owner can eyeball
+  // app vs worker agreement (stop-the-world flipping keeps them consistent; no shared table).
+  console.info('[sot-flag] flag vector at boot:', trackedFlagVector());
+}

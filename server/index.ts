@@ -5,12 +5,15 @@
 // 仍可独立运行（两者共用 startBossWorker 配方，队列层面共存无冲突）。
 
 import { capabilities } from '@/capabilities';
+import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { buildHonoApp } from './app';
 import { loadEnv } from './env';
 
 loadEnv();
+// YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
+warnFlipOrder();
 
 // YUK-345: `??` only guards null/undefined, so a bare `API_PORT=` (dotenv loads
 // it as '') would make Number('') === 0 → listen(0) binds a RANDOM port instead

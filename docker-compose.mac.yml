@@ -1,0 +1,26 @@
+# Mac-local production override (untracked, NOT for NAS). Publishes app + postgres to the host
+# and EXCLUDES cloudflared (no public tunnel — local-only). Use by naming services explicitly:
+#   docker compose -f docker-compose.yml -f docker-compose.mac.yml up -d --build migrate app worker postgres
+# Reach the app at http://localhost:8787 ; host DB access (flip migrations) at localhost:5433.
+services:
+  app:
+    ports:
+      - "8787:8787"
+    # YUK-471 SoT flip: projection becomes the row writer (rollback = remove + recreate).
+    #   PROJECTION_IS_WRITER          = W1 knowledge / knowledge_edge (live since W1).
+    #   PROJECTION_IS_WRITER_ARTIFACT = W3-D artifact fold (flipped 2026-06-28 after prod-clone + live audit:projection CLEAN).
+    #   PROJECTION_IS_WRITER_QUESTION_BLOCK = W3-D question_block fold (same gate; 69 rows folded clean, no bbox sweep needed).
+    # Rollback any entity = remove its line + recreate app/worker; the double-write never stopped
+    # (events keep flowing), so the imperative OFF path resumes with zero data loss.
+    environment:
+      PROJECTION_IS_WRITER: "1"
+      PROJECTION_IS_WRITER_ARTIFACT: "1"
+      PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
+  worker:
+    environment:
+      PROJECTION_IS_WRITER: "1"
+      PROJECTION_IS_WRITER_ARTIFACT: "1"
+      PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
+  postgres:
+    ports:
+      - "5433:5432"
