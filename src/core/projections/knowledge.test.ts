@@ -603,3 +603,87 @@ describe('foldKnowledgeNode', () => {
     expect(out?.version).toBe(2);
   });
 });
+
+// ====================================================================
+// YUK-548 Q7(a) — permutation invariance (DETERMINISM premise, NOT causal ordering).
+//
+// foldKnowledgeNode re-sorts its input (`[...events].sort(byCreatedThenId)`) before applying, so its
+// output must depend ONLY on the canonical (created_at, id) order, never on the order the events
+// happen to arrive in the array. Shuffle a non-trivial mutation chain (genesis → reparent-accept →
+// archive-accept, each at a DISTINCT created_at so the canonical order is unambiguous) many times and
+// assert every fold is byte-identical to the canonical fold.
+//
+// HONEST SCOPE (spec §Q7 / Lens A M6): this proves the DETERMINISM PREMISE — the internal sort is
+// live, so array order is irrelevant. It does NOT (and by construction CANNOT) validate that the
+// (created_at, id) tiebreak is the CAUSALLY-correct order for SAME-millisecond events: distinct-
+// created_at events have exactly one unambiguous order, so a permutation test passes for that
+// reason alone. Same-millisecond causal-order adversarial coverage lives in learning_item.test.ts
+// Q7(b) (same-ms complete/relearn → fold == arrival order).
+// ====================================================================
+describe('foldKnowledgeNode — Q7(a) permutation invariance (determinism, not causal ordering)', () => {
+  // Decorate-sort-undecorate shuffle keyed by a deterministic PRNG so failures reproduce; no index
+  // access (avoids noUncheckedIndexedAccess undefined) and a valid uniform-ish permutation.
+  function mulberry32(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function shuffled<T>(arr: readonly T[], rand: () => number): T[] {
+    return arr
+      .map((v) => ({ v, k: rand() }))
+      .sort((a, b) => a.k - b.k)
+      .map((x) => x.v);
+  }
+
+  it('genesis → reparent → archive folds identically under 50 random input permutations', () => {
+    const seed = {
+      id: 'k_node',
+      name: 'Seed',
+      domain: 'wenyan' as string | null,
+      parent_id: 'k_root',
+      merged_from: [] as string[],
+      archived_at: null as Date | null,
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: T0,
+      updated_at: T0,
+      version: 0,
+    };
+    // Distinct created_at (0 / 1000 / 1001 / 2000 / 2001) ⇒ one unambiguous canonical order; explicit
+    // ids link each rate to the propose it accepts.
+    const events: FoldEvent[] = [
+      genesis({ id: 'zzz_genesis', created_at: at(0), row: seed }),
+      mutationPropose({
+        id: 'prop_reparent',
+        created_at: at(1000),
+        action: 'experimental:knowledge_reparent',
+        subject_id: 'k_node',
+        payload: { node_id: 'k_node', new_parent_id: 'k_new_parent', expected_version: 0 },
+      }),
+      rate({ created_at: at(1001), causedBy: 'prop_reparent', rating: 'accept' }),
+      archivePropose({
+        id: 'prop_arch',
+        created_at: at(2000),
+        node_id: 'k_node',
+        expected_version: 1,
+      }),
+      rate({ created_at: at(2001), causedBy: 'prop_arch', rating: 'accept' }),
+    ];
+
+    const canonical = foldKnowledgeNode('k_node', events);
+    // sanity: the fold actually exercised the mutation chain (not a degenerate genesis-only row).
+    expect(canonical?.parent_id).toBe('k_new_parent');
+    expect(canonical?.domain).toBeNull(); // reparent clears domain
+    expect(canonical?.archived_at?.getTime()).toBe(at(2001).getTime());
+    expect(canonical?.version).toBe(2);
+
+    const rand = mulberry32(0x51548);
+    for (let i = 0; i < 50; i++) {
+      expect(foldKnowledgeNode('k_node', shuffled(events, rand))).toEqual(canonical);
+    }
+  });
+});
