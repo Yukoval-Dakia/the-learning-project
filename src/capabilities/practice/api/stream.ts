@@ -2,6 +2,7 @@
 // 当日为空时 lazy compose（首次打开练习面）；recompose 是手动重排入口
 //（M4 夜链落地后 composer_nightly 接管日常生成，这两个入口保留为兜底/调试面）。
 
+import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { z } from 'zod';
@@ -56,9 +57,14 @@ export async function POST(req: Request): Promise<Response> {
     const parsed = RecomposeBody.safeParse(raw);
     if (!parsed.success) throw new ApiError('validation_error', 'invalid body', 400);
     const date = resolveDate(parsed.data.date ?? null);
-    // YUK-558：recompose 事件种子化（独立 eventKind，与 lazy compose / nightly 各派生独立 seed）。
+    // YUK-558（C9+C10③）：recompose 事件种子化（独立 eventKind，与 lazy compose / nightly 各派生
+    // 独立 seed）。triggerId=newId() **nonce**——recompose 是手动重排入口，**无自然稳定触发 id**
+    // （同日可反复按），故不用 date 当 triggerId：那会让同日多次 recompose 共享同一 seed（每次抽同一
+    // 签，违背「每按新抽」语义）。nonce 保留「每次 recompose 重新抽」语义；replay 凭日志记录的 seed
+    // （非可从 (date, eventKind) 重导——这是 recompose 与 compose/compose-nightly 的语义分野：后两者
+    // 用 date 当 triggerId 是因为**物化幂等**是真 feature（同日重跑 = 同选集，双重检查命中不 double-compose））。
     const added = await recomposeStream(db, date, {
-      composeDeps: { rng: buildSeededSelectionRng(date, 'recompose', date) },
+      composeDeps: { rng: buildSeededSelectionRng(date, 'recompose', newId()) },
     });
     const view = await getStream(db, date);
     return Response.json({ added, ...view });
@@ -83,6 +89,10 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       );
     }
     // YUK-558：rerank 事件种子化（triggerId=被推进的 streamItemId——独立于 compose 事件的 seed）。
+    // localDate=streamLocalDate() 只做 seed **命名空间熵**（区隔不同日的 rerank seed 空间）；rerank
+    // 实跑用的日期是 updated.date（被推进 slot 的归属日），非本地日——两者可在跨午夜作答时不同，但
+    // seed 只需稳定可记录，命名空间熵用本地日无害。replay key = 日志记录的 seed + triggerId
+    // （itemId 全局唯一；done 是终态、无重入 ⇒ 同一 itemId 的 rerank 抽签事件至多一次，seed 稳定可回放）。
     const row = await advanceStreamItem(db, params.id, parsed.data.status, {
       rng: buildSeededSelectionRng(streamLocalDate(), 'rerank', params.id),
     });

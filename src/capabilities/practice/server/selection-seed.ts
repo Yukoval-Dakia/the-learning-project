@@ -48,12 +48,18 @@ export function hashSelectionSeed(
 }
 
 /**
- * 构造 seeded rng（mulberry32）+ log seed/eventKind/triggerId（log-only，不进 DB）。
+ * 构造 seeded rng（mulberry32）+ **惰性**自记 seed/eventKind/triggerId 日志（log-only，不进 DB）。
  *
  * production caller 在最外层调本 helper，把返回的 rng 经 composeSoftmaxDeps.rng /
  * rerankDeps.rng 线程注入 sampler。seed 派生是确定性的（同三元组 ⇒ 同 rng ⇒ 同选集），
  * 让选题决策可重构——register (a) 静默分支日志（softmax-selection.ts:478/:483 的 warn）
  * + 本 seed log 共同支撑「这次选题是怎么来的」回放。
+ *
+ * **惰性日志（C2）**：日志推迟到 rng **首次真实被调用**（首次抽签）时才打，且**恰打一次**。
+ * 缘由：caller 无条件构造 rng 并经 DI 线程注入，但许多路径根本不消费它——已物化流的 GET
+ * （composeIfEmpty 命中已存流）/ no-op nightly（当日已产）/ 非 rerank 的 PATCH（done/skip 不触发
+ * 重排抽样）。若在构造期即打日志，这些路径会产生 decoy「seeded」行（误导回放：日志说抽了签，
+ * 实际没抽）。惰性 thunk 让日志与真实抽签一一对应——未消费 ⇒ 零日志。
  */
 export function buildSeededSelectionRng(
   localDate: string,
@@ -61,7 +67,14 @@ export function buildSeededSelectionRng(
   triggerId: string,
 ): () => number {
   const seed = hashSelectionSeed(localDate, eventKind, triggerId);
-  // Log-only（spec Q-d：seed 列 deferred，加列 = 5 面登记税）。回放 = 看日志 + 手喂 seed 重跑。
-  console.log('[selection] seeded', { eventKind, triggerId, localDate, seed });
-  return mulberry32(seed);
+  let inner: (() => number) | null = null;
+  return () => {
+    if (inner === null) {
+      // Log-only（spec Q-d：seed 列 deferred，加列 = 5 面登记税）。回放 = 看日志 + 手喂 seed 重跑。
+      // 恰在首次真实抽签时打（惰性）——未消费的 rng 零 decoy 日志。
+      console.log('[selection] seeded', { eventKind, triggerId, localDate, seed });
+      inner = mulberry32(seed);
+    }
+    return inner();
+  };
 }
