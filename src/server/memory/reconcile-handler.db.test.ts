@@ -40,7 +40,14 @@ function mem(id: string, text = 'some memory', kind = 'event', created_ms = 1000
 }
 
 function mockMemoryClient(
-  searchResults: Array<{ id: string; memory: string; metadata?: Record<string, unknown> }>,
+  searchResults: Array<{
+    id: string;
+    memory: string;
+    metadata?: Record<string, unknown>;
+    // YUK-557 (Q1): mem0 fused score — threaded into CandidateEntry.score and
+    // consumed by the structural corroboration gate.
+    score?: number;
+  }>,
 ): MemoryClient {
   return {
     addEventMemory: vi.fn(),
@@ -259,8 +266,11 @@ describe('reconcile handler — MERGE rewrites old payload.data with merged_text
         (${newMemId}::uuid, ${JSON.stringify({ data: 'new text', user_id: 'self' })}::jsonb)
     `);
     // search returns the old candidate (the new id is filtered out by newIdSet).
+    // YUK-557: score 0.9 ≥ floor → the structural gate passes on a PRESENT score
+    // (not abstention), so the MERGE genuinely clears both gates. kind=preference
+    // (not weakness/event) so the per-kind gate does not forbid MERGE either.
     const memoryClient = mockMemoryClient([
-      { id: oldMemId, memory: 'old text', metadata: { created_ms: 1000 } },
+      { id: oldMemId, memory: 'old text', metadata: { created_ms: 1000 }, score: 0.9 },
     ]);
     const judge = vi.fn(async () => [
       {
@@ -322,7 +332,10 @@ describe('reconcile handler — RETRACT_NEW drops the duplicate new row, leaves 
         (${oldMemId}::uuid, ${JSON.stringify({ data: 'canonical', user_id: 'self' })}::jsonb),
         (${newMemId}::uuid, ${JSON.stringify({ data: 'duplicate', user_id: 'self' })}::jsonb)
     `);
-    const memoryClient = mockMemoryClient([{ id: oldMemId, memory: 'canonical' }]);
+    // YUK-557: score 0.9 ≥ floor. RETRACT_NEW here has old_index=null, so the gate
+    // keys on topCandidateScore (max over candidates) = 0.9 → passes on a present
+    // score, exercising the fallback path (not abstention).
+    const memoryClient = mockMemoryClient([{ id: oldMemId, memory: 'canonical', score: 0.9 }]);
     const judge = vi.fn(async () => [
       {
         new_index: 0,
@@ -531,5 +544,375 @@ describe('reconcile handler — duplicate new_index decisions are deduped', () =
     `)) as Array<{ sb: string | null }>;
     expect(oldRows[0].sb).toBeNull(); // dup SUPERSEDE was dropped, old untouched
     expect(await loadUnappliedLog(db, 'self')).toHaveLength(0);
+  });
+});
+
+// YUK-557 (Q1/Q1b/Q2b) — second structural gate, per-kind execution gate, and
+// write-ahead undo snapshot in the reconcile handler's action synthesis.
+type LogRow = {
+  action: string;
+  reason: string;
+  llm_raw: Record<string, unknown>;
+  prev_text: string | null;
+  prev_metadata: Record<string, unknown> | null;
+};
+
+async function loadLogRows(): Promise<LogRow[]> {
+  const db = testDb();
+  return (await db.execute(sql`
+    SELECT action, reason, llm_raw, prev_text, prev_metadata
+    FROM memory_reconciliation_log WHERE user_id = 'self' ORDER BY planned_at
+  `)) as unknown as LogRow[];
+}
+
+describe('reconcile handler — Q1 score floor downgrades a low-corroboration MERGE', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('MERGE with score below floor → KEEP_BOTH; structurally_corroborated=false AND reason consistent', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${oldMemId}::uuid, ${JSON.stringify({ data: 'old text', user_id: 'self' })}::jsonb),
+        (${newMemId}::uuid, ${JSON.stringify({ data: 'new text', user_id: 'self' })}::jsonb)
+    `);
+    // Low fused score (0.2 < 0.5 floor). kind=preference so the per-kind gate does
+    // NOT fire — the downgrade is attributable purely to the score floor (Q1).
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'old text', metadata: { created_ms: 1000 }, score: 0.2 },
+    ]);
+    const judge = vi.fn(async () => [
+      {
+        new_index: 0,
+        action: 'MERGE',
+        old_index: 0,
+        confidence: 0.9, // clears the 0.6 confidence gate — only the score floor bites
+        reason: 'they overlap',
+        merged_text: 'MERGED: should not be written',
+      },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({
+        memories: [mem(newMemId, 'new text', 'preference', 2000)],
+        user_id: 'self',
+      }) as never,
+    );
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('KEEP_BOTH'); // downgraded
+    // Lock the observability flag AND action↔reason consistency (A5-1): not just the flag.
+    expect(rows[0].llm_raw.structurally_corroborated).toBe(false);
+    expect(rows[0].reason).toContain('Low structural corroboration');
+    expect(rows[0].reason).toContain('downgraded from MERGE');
+    expect(rows[0].reason).toContain('score=0.2');
+
+    // The destructive apply did NOT happen: old row keeps its original text, new
+    // row is still present (nothing hard-deleted).
+    const oldRows = (await db.execute(sql`
+      SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
+    `)) as Array<{ data: string }>;
+    expect(oldRows[0].data).toBe('old text');
+    const newRows = (await db.execute(
+      sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
+    )) as unknown[];
+    expect(newRows).toHaveLength(1); // new row NOT dropped
+  });
+});
+
+describe('reconcile handler — Q1b per-kind gate forbids weakness/event MERGE', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('kind=weakness MERGE (even high score) → KEEP_BOTH; reason cites the per-kind guard', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${oldMemId}::uuid, ${JSON.stringify({ data: 'old weakness', user_id: 'self' })}::jsonb),
+        (${newMemId}::uuid, ${JSON.stringify({ data: 'new weakness', user_id: 'self' })}::jsonb)
+    `);
+    // HIGH score (0.95) — the per-kind gate must fire BEFORE / independent of the
+    // score floor, closing the high-similarity wrong-MERGE hole the floor cannot.
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'old weakness', metadata: { created_ms: 1000 }, score: 0.95 },
+    ]);
+    const judge = vi.fn(async () => [
+      {
+        new_index: 0,
+        action: 'MERGE',
+        old_index: 0,
+        confidence: 0.95,
+        reason: 'looks like the same error',
+        merged_text: 'MERGED: should not be written',
+      },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({
+        memories: [mem(newMemId, 'new weakness', 'weakness', 2000)],
+        user_id: 'self',
+      }) as never,
+    );
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('KEEP_BOTH');
+    expect(rows[0].reason).toContain('Per-kind guard');
+    expect(rows[0].reason).toContain('kind=weakness');
+    expect(rows[0].reason).toContain('downgraded from MERGE');
+    // Old weakness row keeps its history (not rewritten).
+    const oldRows = (await db.execute(sql`
+      SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
+    `)) as Array<{ data: string }>;
+    expect(oldRows[0].data).toBe('old weakness');
+  });
+});
+
+describe('reconcile handler — Q1 score floor passes a well-corroborated MERGE (regression)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('score ≥ floor + confidence ≥ 0.6 → MERGE executes; structurally_corroborated=true', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${oldMemId}::uuid, ${JSON.stringify({ data: 'old text', user_id: 'self' })}::jsonb),
+        (${newMemId}::uuid, ${JSON.stringify({ data: 'new text', user_id: 'self' })}::jsonb)
+    `);
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'old text', metadata: { created_ms: 1000 }, score: 0.72 },
+    ]);
+    const judge = vi.fn(async () => [
+      {
+        new_index: 0,
+        action: 'MERGE',
+        old_index: 0,
+        confidence: 0.9,
+        reason: 'they overlap',
+        merged_text: 'MERGED: prefers dark mode and terse feedback',
+      },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({
+        memories: [mem(newMemId, 'new text', 'preference', 2000)],
+        user_id: 'self',
+      }) as never,
+    );
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('MERGE'); // NOT downgraded
+    expect(rows[0].llm_raw.structurally_corroborated).toBe(true);
+    // MERGE actually applied: old row rewritten to merged_text, new row dropped.
+    const oldRows = (await db.execute(sql`
+      SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
+    `)) as Array<{ data: string }>;
+    expect(oldRows[0].data).toBe('MERGED: prefers dark mode and terse feedback');
+    const newRows = (await db.execute(
+      sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
+    )) as unknown[];
+    expect(newRows).toHaveLength(0);
+  });
+});
+
+describe('reconcile handler — Q1 RETRACT_NEW with no candidates skips the floor (m8)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('empty candidates → gate abstains, logs "floor skipped (no score)", RETRACT executes', async () => {
+    const db = testDb();
+    const newMemId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload)
+      VALUES (${newMemId}::uuid, ${JSON.stringify({ data: 'noise', user_id: 'self' })}::jsonb)
+    `);
+    // No search candidates → referencedScore undefined → floor skipped.
+    const memoryClient = mockMemoryClient([]);
+    const judge = vi.fn(async () => [
+      { new_index: 0, action: 'RETRACT_NEW', old_index: null, confidence: 0.9, reason: 'noise' },
+    ]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const handler = buildMemoryReconcileHandler(db, {
+        memoryClient,
+        judge: judge as never,
+        collectionName: COLLECTION,
+      });
+      await handler(
+        makeJob({ memories: [mem(newMemId, 'noise', 'event', 2000)], user_id: 'self' }) as never,
+      );
+
+      const skipLog = warnSpy.mock.calls.find((c) =>
+        String(c[0]).includes('score-floor skipped (no candidate score)'),
+      );
+      expect(skipLog).toBeDefined();
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('RETRACT_NEW'); // abstained gate → executes
+    expect(rows[0].llm_raw.structurally_corroborated).toBe(true);
+    const newRows = (await db.execute(
+      sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
+    )) as unknown[];
+    expect(newRows).toHaveLength(0); // noise dropped
+  });
+});
+
+describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by action', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('SUPERSEDE → prev_text=oldMem.text, prev_metadata=old payload; captured write-ahead', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const oldPayload = { data: 'old canonical', user_id: 'self', kind: 'preference' };
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload)
+      VALUES (${oldMemId}::uuid, ${JSON.stringify(oldPayload)}::jsonb)
+    `);
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'old canonical', metadata: { created_ms: 1000 }, score: 0.8 },
+    ]);
+    const judge = vi.fn(async () => [
+      { new_index: 0, action: 'SUPERSEDE', old_index: 0, confidence: 0.9, reason: 'newer' },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({
+        memories: [mem(newMemId, 'new canonical', 'preference', 2000)],
+        user_id: 'self',
+      }) as never,
+    );
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('SUPERSEDE');
+    expect(rows[0].prev_text).toBe('old canonical');
+    // Full payload snapshot (write-ahead: before softSupersede added markers).
+    expect(rows[0].prev_metadata).toMatchObject(oldPayload);
+    expect(rows[0].prev_metadata).not.toHaveProperty('superseded_by');
+  });
+
+  it('MERGE → prev_text=oldMem.text, prev_metadata=old payload BEFORE rewrite', async () => {
+    const db = testDb();
+    const newMemId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const oldMemId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const oldPayload = { data: 'old mergeable', user_id: 'self' };
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${oldMemId}::uuid, ${JSON.stringify(oldPayload)}::jsonb),
+        (${newMemId}::uuid, ${JSON.stringify({ data: 'new mergeable', user_id: 'self' })}::jsonb)
+    `);
+    const memoryClient = mockMemoryClient([
+      { id: oldMemId, memory: 'old mergeable', metadata: { created_ms: 1000 }, score: 0.8 },
+    ]);
+    const judge = vi.fn(async () => [
+      {
+        new_index: 0,
+        action: 'MERGE',
+        old_index: 0,
+        confidence: 0.9,
+        reason: 'overlap',
+        merged_text: 'MERGED text',
+      },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({
+        memories: [mem(newMemId, 'new mergeable', 'preference', 2000)],
+        user_id: 'self',
+      }) as never,
+    );
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('MERGE');
+    // prev_text = the OLD row's original text (before it was rewritten to MERGED).
+    expect(rows[0].prev_text).toBe('old mergeable');
+    expect(rows[0].prev_metadata).toMatchObject({ data: 'old mergeable' });
+    // Confirm the apply DID overwrite the live row — proving the snapshot pre-dates it.
+    const oldRows = (await db.execute(sql`
+      SELECT payload->>'data' AS data FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${oldMemId}::uuid
+    `)) as Array<{ data: string }>;
+    expect(oldRows[0].data).toBe('MERGED text');
+  });
+
+  it('RETRACT_NEW → prev_text=newMem.text, prev_metadata=null; KEEP_BOTH → both null', async () => {
+    const db = testDb();
+    const retractNewId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const keepNewId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${retractNewId}::uuid, ${JSON.stringify({ data: 'dup', user_id: 'self' })}::jsonb),
+        (${keepNewId}::uuid, ${JSON.stringify({ data: 'distinct', user_id: 'self' })}::jsonb)
+    `);
+    const memoryClient = mockMemoryClient([]);
+    const judge = vi.fn(async () => [
+      { new_index: 0, action: 'RETRACT_NEW', old_index: null, confidence: 0.9, reason: 'dup' },
+      { new_index: 1, action: 'KEEP_BOTH', old_index: null, confidence: 0.9, reason: 'distinct' },
+    ]);
+    const handler = buildMemoryReconcileHandler(db, {
+      memoryClient,
+      judge: judge as never,
+      collectionName: COLLECTION,
+    });
+    await handler(
+      makeJob({
+        memories: [
+          mem(retractNewId, 'dup text', 'event', 2000),
+          mem(keepNewId, 'distinct text', 'event', 2000),
+        ],
+        user_id: 'self',
+      }) as never,
+    );
+
+    const rows = await loadLogRows();
+    const byAction = Object.fromEntries(rows.map((r) => [r.action, r]));
+    expect(byAction.RETRACT_NEW.prev_text).toBe('dup text'); // the DISCARDED new text
+    expect(byAction.RETRACT_NEW.prev_metadata).toBeNull(); // event-sourced, not captured
+    expect(byAction.KEEP_BOTH.prev_text).toBeNull();
+    expect(byAction.KEEP_BOTH.prev_metadata).toBeNull();
   });
 });

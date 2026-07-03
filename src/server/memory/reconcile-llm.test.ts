@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   type CandidateEntry,
+  MERGE_RETRACT_SCORE_FLOOR,
   type NewMemoryEntry,
   ReconcileParseError,
   applyConfidenceThreshold,
   buildReconcilePrompt,
   judgeReconciliation,
+  kindForbidsMerge,
   parseReconcileResponse,
+  passesStructuralCorroboration,
 } from './reconcile-llm';
 
 // Minimal env for createMem0Config inside judgeReconciliation
@@ -40,8 +43,22 @@ function mockCandidates(): Map<number, CandidateEntry[]> {
     [
       0,
       [
-        { index: 0, text: 'User prefers light mode', memory_id: 'mem-old-1', created_ms: 1000 },
-        { index: 1, text: 'User likes terse feedback', memory_id: 'mem-old-2', created_ms: 2000 },
+        // YUK-557: candidates now carry mem0's fused `score` — must not leak into
+        // the prompt (indices only) nor break parsing.
+        {
+          index: 0,
+          text: 'User prefers light mode',
+          memory_id: 'mem-old-1',
+          created_ms: 1000,
+          score: 0.77,
+        },
+        {
+          index: 1,
+          text: 'User likes terse feedback',
+          memory_id: 'mem-old-2',
+          created_ms: 2000,
+          score: 0.34,
+        },
       ],
     ],
     [1, []],
@@ -341,5 +358,72 @@ describe('judgeReconciliation', () => {
         fetchImpl: fetchMock as unknown as typeof fetch,
       }),
     ).rejects.toThrow(ReconcileParseError);
+  });
+});
+
+// YUK-557 (Q1) — second, non-LLM structural corroboration gate.
+describe('passesStructuralCorroboration (Q1 score floor)', () => {
+  it('MERGE/RETRACT_NEW below floor → false (four-quadrant: destructive × below)', () => {
+    const below = MERGE_RETRACT_SCORE_FLOOR - 0.1;
+    expect(passesStructuralCorroboration('MERGE', below)).toBe(false);
+    expect(passesStructuralCorroboration('RETRACT_NEW', below)).toBe(false);
+  });
+
+  it('MERGE/RETRACT_NEW at/above floor → true (destructive × at-or-above)', () => {
+    expect(passesStructuralCorroboration('MERGE', MERGE_RETRACT_SCORE_FLOOR)).toBe(true);
+    expect(passesStructuralCorroboration('RETRACT_NEW', MERGE_RETRACT_SCORE_FLOOR + 0.3)).toBe(
+      true,
+    );
+  });
+
+  it('SUPERSEDE/KEEP_BOTH are exempt → always true even below floor (non-destructive × below)', () => {
+    const below = MERGE_RETRACT_SCORE_FLOOR - 0.4;
+    expect(passesStructuralCorroboration('SUPERSEDE', below)).toBe(true);
+    expect(passesStructuralCorroboration('KEEP_BOTH', below)).toBe(true);
+  });
+
+  it('score===undefined → gate abstains (returns true) for every action (undefined × any)', () => {
+    expect(passesStructuralCorroboration('MERGE', undefined)).toBe(true);
+    expect(passesStructuralCorroboration('RETRACT_NEW', undefined)).toBe(true);
+    expect(passesStructuralCorroboration('SUPERSEDE', undefined)).toBe(true);
+    expect(passesStructuralCorroboration('KEEP_BOTH', undefined)).toBe(true);
+  });
+});
+
+describe('kindForbidsMerge (Q1b per-kind execution gate)', () => {
+  it('weakness / event forbid MERGE (mistake/error trajectory history)', () => {
+    expect(kindForbidsMerge('weakness')).toBe(true);
+    expect(kindForbidsMerge('event')).toBe(true);
+  });
+
+  it('preference / habit do not forbid MERGE (single-latest-truth kinds)', () => {
+    expect(kindForbidsMerge('preference')).toBe(false);
+    expect(kindForbidsMerge('habit')).toBe(false);
+  });
+
+  it('unknown kind does not forbid MERGE (only the two named kinds are guarded)', () => {
+    expect(kindForbidsMerge('anything-else')).toBe(false);
+    expect(kindForbidsMerge('')).toBe(false);
+  });
+});
+
+describe('CandidateEntry.score does not break prompt build or parse', () => {
+  it('scored candidates never leak score/uuid into the prompt (indices only)', () => {
+    const { user } = buildReconcilePrompt(mockNewMems(), mockCandidates());
+    // Scores present on the candidates must NOT appear in the LLM-facing prompt
+    // (values chosen to not collide with the prompt's example confidence literals).
+    expect(user).not.toContain('0.77');
+    expect(user).not.toContain('0.34');
+    expect(user).not.toContain('mem-old-1');
+    expect(user).toContain('old_index=0');
+  });
+
+  it('parseReconcileResponse is unaffected by candidate scores (parse is over decisions)', () => {
+    const raw = JSON.stringify({
+      decisions: [
+        { new_index: 0, action: 'KEEP_BOTH', old_index: null, confidence: 0.9, reason: 'ok' },
+      ],
+    });
+    expect(parseReconcileResponse(raw)).toHaveLength(1);
   });
 });
