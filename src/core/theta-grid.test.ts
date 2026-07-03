@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { expectedScore, fisherInformation } from './theta';
+import { expectedScore, fisherInformation, fisherInformation3pl } from './theta';
 import {
   GRID_MAX,
   GRID_MIN,
@@ -12,9 +12,13 @@ import {
   THETA_GRID_ENABLED,
   type ThetaGridPosterior,
   binaryLikelihood,
+  choicesToGuess,
   continuousCbLikelihood,
   gridUpdate,
+  isGraduationCandidate,
   klpScoreFromGrid,
+  masterySnapshot,
+  posteriorMassAbove,
   posteriorMean,
   posteriorSe,
   posteriorVar,
@@ -236,5 +240,192 @@ describe('klpScoreFromGrid — posterior-weighted Fisher over the ACTUAL grid (A
       0,
     );
     expect(klpScoreFromGrid(post, b, thetaGlobal)).toBeCloseTo(manual, 12);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BKT graft 1 — 3PL lower-asymptote (c = 1/k guess). DARK-SHIP, n=1-legal.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('fisherInformation3pl — 3PL Fisher (theta.ts)', () => {
+  it('c=0 reduces BIT-EXACTLY to fisherInformation (1PL regression anchor)', () => {
+    for (const [theta, b] of [
+      [0, 0],
+      [0.5, 0.2],
+      [-1.3, 0.7],
+      [2.1, -0.4],
+    ] as const) {
+      expect(fisherInformation3pl(theta, b, 0)).toBe(fisherInformation(theta, b));
+    }
+  });
+
+  it('c>0 (choice item): at θ=b, Fisher is STRICTLY LESS than 1PL peak 0.25', () => {
+    // 3PL raises P(correct) by c, so at θ=b: P=0.5+c·0.5 > 0.5 ⇒ moves off the
+    // Fisher peak ⇒ strictly less information than the 1PL 0.25.
+    const c = 1 / 4; // 4-choice item
+    expect(fisherInformation3pl(0, 0, c)).toBeLessThan(0.25);
+    expect(fisherInformation3pl(0, 0, c)).toBeGreaterThan(0);
+  });
+
+  it('c>0: larger k (smaller c) approaches 1PL Fisher monotonically', () => {
+    // As k→∞, c→0, 3PL→1PL. Information at the peak should increase toward 0.25 as c shrinks.
+    const atB4 = fisherInformation3pl(0, 0, 1 / 4);
+    const atB5 = fisherInformation3pl(0, 0, 1 / 5);
+    const atB10 = fisherInformation3pl(0, 0, 1 / 10);
+    expect(atB4).toBeLessThan(atB5);
+    expect(atB5).toBeLessThan(atB10);
+    expect(atB10).toBeLessThan(0.25);
+  });
+});
+
+describe('choicesToGuess — n=1-legal c=1/k bridge from choices_md', () => {
+  it('null / undefined / empty / single → 0 (1PL degenerate, non-choice)', () => {
+    expect(choicesToGuess(null)).toBe(0);
+    expect(choicesToGuess(undefined)).toBe(0);
+    expect(choicesToGuess([])).toBe(0);
+    expect(choicesToGuess(['only-one'])).toBe(0);
+  });
+
+  it('k choices → exactly 1/k (design constant, NOT a fit param)', () => {
+    expect(choicesToGuess(['a', 'b'])).toBeCloseTo(0.5, 12);
+    expect(choicesToGuess(['a', 'b', 'c', 'd'])).toBeCloseTo(0.25, 12);
+    expect(choicesToGuess(Array.from({ length: 6 }, (_, i) => `${i}`))).toBeCloseTo(1 / 6, 12);
+  });
+});
+
+describe('binaryLikelihood / gridUpdate / klpScoreFromGrid — 3PL c param', () => {
+  it('c=0 default is BIT-IDENTICAL to the no-arg call (regression anchor preserved)', () => {
+    const offset = 0.4;
+    const bPrime = -0.1;
+    expect(binaryLikelihood(offset, bPrime, 1, 0)).toBe(binaryLikelihood(offset, bPrime, 1));
+    expect(binaryLikelihood(offset, bPrime, 0, 0)).toBe(binaryLikelihood(offset, bPrime, 0));
+    // gridUpdate: c=0 explicit == c=0 default.
+    const prior = uniformPrior();
+    expect(gridUpdate(prior, 0.3, 1, 0)).toEqual(gridUpdate(prior, 0.3, 1));
+    // klpScore: c=0 explicit == default.
+    expect(klpScoreFromGrid(prior, 0.2, 0.5, 0)).toBeCloseTo(klpScoreFromGrid(prior, 0.2, 0.5), 12);
+  });
+
+  it('3PL correct likelihood RAISES the floor by c (guess helps low-ability correct)', () => {
+    // At a very negative offset (p̂≈0), 1PL says P(correct)≈0; 3PL says P(correct)≈c.
+    const offset = GRID_MIN; // -4
+    const bPrime = 0;
+    const c = 0.25;
+    const pl1 = binaryLikelihood(offset, bPrime, 1); // 1PL ≈ σ(-4) ≈ 0.018
+    const pl3 = binaryLikelihood(offset, bPrime, 1, c); // 3PL ≈ 0.25 + 0.75·0.018
+    expect(pl3).toBeGreaterThan(pl1);
+    expect(pl3).toBeCloseTo(c + (1 - c) * expectedScore(offset, bPrime), 12);
+    // And the floor asymptote approaches c (never below c).
+    expect(pl3).toBeGreaterThan(c - 1e-9);
+  });
+
+  it('3PL wrong likelihood = (1−c)·(1−p̂), strictly below 1PL (1−p̂) for c>0', () => {
+    const offset = 0.5;
+    const bPrime = 0.3;
+    const c = 0.2;
+    const wrong1 = binaryLikelihood(offset, bPrime, 0); // 1−p̂
+    const wrong3 = binaryLikelihood(offset, bPrime, 0, c); // (1−c)(1−p̂)
+    expect(wrong3).toBeCloseTo((1 - c) * (1 - expectedScore(offset, bPrime)), 12);
+    expect(wrong3).toBeLessThan(wrong1);
+  });
+
+  it('3PL gridUpdate still renormalises to sum 1 and folds evidence', () => {
+    const post = gridUpdate(uniformPrior(), 0.3, 1, 0.25);
+    expect(post.probs.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+    expect(post.evidence).toBe(1);
+  });
+
+  it('klpScoreFromGrid with c>0: a point-mass reduces to point 3PL Fisher', () => {
+    const b = 0.5;
+    const thetaGlobal = 0.5;
+    const c = 0.25;
+    // point mass on offset 0 ⇒ effective = θ_global + 0 = 0.5 = b.
+    const score = klpScoreFromGrid(pointPosterior(0), b, thetaGlobal, c);
+    expect(score).toBeCloseTo(fisherInformation3pl(thetaGlobal, b, c), 12);
+    // strictly less than the 1PL peak (same item, guess erodes information).
+    expect(score).toBeLessThan(fisherInformation(thetaGlobal, b));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BKT graft 2 — mastery transition pure functions (no IO, caller owns trajectory).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('posteriorMassAbove — p_mastery = mass at/above mastery line (bPrime)', () => {
+  it('uniform prior: mass ≥ 0 = 21/41 (origin counts — 41-point ODD grid, ≥ semantics)', () => {
+    // 41 points symmetric about 0 WITH a point exactly at 0 (index 20). "以上" = ≥,
+    // so the origin + 20 positive points = 21 of 41 carry mass above the mastery line.
+    expect(posteriorMassAbove(uniformPrior(), 0)).toBeCloseTo(21 / 41, 12);
+  });
+
+  it('mass above GRID_MAX = 0; mass above GRID_MIN-ε = 1', () => {
+    expect(posteriorMassAbove(uniformPrior(), GRID_MAX)).toBeCloseTo(1 / GRID_POINTS, 12);
+    expect(posteriorMassAbove(uniformPrior(), GRID_MAX + 1)).toBe(0);
+    expect(posteriorMassAbove(uniformPrior(), GRID_MIN - 1)).toBeCloseTo(1, 12);
+  });
+
+  it('a correct-at-bPrime=0 posterior concentrates mass above 0 (> uniform)', () => {
+    const post = gridUpdate(uniformPrior(), 0, 1);
+    expect(posteriorMassAbove(post, 0)).toBeGreaterThan(posteriorMassAbove(uniformPrior(), 0));
+  });
+
+  it('threshold = bPrime encodes the θ_global translation (== mass above effective θ*)', () => {
+    // θ*=0.5 mastery line, θ_global=0.2 ⇒ offset threshold = 0.5−0.2 = 0.3 = bPrime.
+    // Mass above effective θ* (θ_global+offset≥θ*) must equal mass above offset≥0.3.
+    const thetaGlobal = 0.2;
+    const b = 0.5;
+    const bPrime = b - thetaGlobal; // 0.3
+    const post = gridUpdate(uniformPrior(), bPrime, 1);
+    // effective-ability mass-above: Σ mass_i over θ_global+GRID_THETA_i ≥ b ⇔ GRID_THETA_i ≥ bPrime.
+    const effMass = post.probs.reduce(
+      (acc, m, i) => acc + (thetaGlobal + GRID_THETA[i] >= b ? m : 0),
+      0,
+    );
+    expect(posteriorMassAbove(post, bPrime)).toBeCloseTo(effMass, 12);
+  });
+});
+
+describe('masterySnapshot — p_mastery + width derived read', () => {
+  it('uniform prior: p_mastery = 21/41 (origin counts), width = posteriorSe', () => {
+    const prior = uniformPrior();
+    const snap = masterySnapshot(prior, 0);
+    expect(snap.pMastery).toBeCloseTo(21 / 41, 12);
+    expect(snap.width).toBeCloseTo(posteriorSe(prior), 12);
+  });
+});
+
+describe('isGraduationCandidate — graduation trigger (N consecutive + ε + M)', () => {
+  const cfg = { pMasteryMin: 0.8, widthMax: 0.5, consecutiveN: 3, evidenceMin: 8 };
+  // pointPosterior(0): all mass on offset 0 (a real grid point via indexOf) ⇒ p_mastery
+  // (mass ≥ bPrime=0) = 1, width = posteriorSe of a point mass = 0.
+  const peaked: ThetaGridPosterior = { ...pointPosterior(0), evidence: 10 };
+  const goodSnap = masterySnapshot(peaked, 0); // pMastery=1, width=0
+
+  it('rejects when evidence < M (not enough information yet)', () => {
+    const thin: ThetaGridPosterior = { ...peaked, evidence: 3 };
+    expect(isGraduationCandidate(thin, [goodSnap, goodSnap, goodSnap], cfg)).toBe(false);
+  });
+
+  it('rejects when fewer than N=3 recent snapshots (trajectory too short)', () => {
+    expect(isGraduationCandidate(peaked, [goodSnap, goodSnap], cfg)).toBe(false);
+  });
+
+  it('graduates when evidence≥M AND last N snapshots all clear p>0.8 && width<ε', () => {
+    expect(isGraduationCandidate(peaked, [goodSnap, goodSnap, goodSnap], cfg)).toBe(true);
+    // 4 snapshots, last 3 all good (the first one being bad is fine — tail-only).
+    const badSnap = { pMastery: 0.2, width: 2 };
+    expect(isGraduationCandidate(peaked, [badSnap, goodSnap, goodSnap, goodSnap], cfg)).toBe(true);
+  });
+
+  it('rejects if ANY of the last N snapshots fails (a recent dip)', () => {
+    expect(
+      isGraduationCandidate(peaked, [goodSnap, goodSnap, { pMastery: 0.3, width: 2 }], cfg),
+    ).toBe(false);
+  });
+
+  it('uses handoff defaults when cfg omitted: p>0.8, width<1.0, N=3, M=8', () => {
+    // With defaults: a peaked posterior (width 0, pMastery 1) at evidence 8 graduates.
+    const atMinEvidence = { ...peaked, evidence: 8 };
+    expect(isGraduationCandidate(atMinEvidence, [goodSnap, goodSnap, goodSnap])).toBe(true);
   });
 });

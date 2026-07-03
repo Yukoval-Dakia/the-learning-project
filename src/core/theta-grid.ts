@@ -36,7 +36,7 @@
 //   single-KC calibration. The wiring seam (state.ts) enforces the single-KC gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { expectedScore, fisherInformation } from './theta';
+import { expectedScore, fisherInformation3pl } from './theta';
 
 /**
  * Master flag for the discrete grid-Bayes θ_KC posterior. **Default false (dark-ship).**
@@ -147,9 +147,32 @@ export function uniformPrior(): ThetaGridPosterior {
  * the offset as the free coordinate and θ_global folded into the anchor — orthogonal
  * to A2, building ON its θ_global. correct ⇒ p, wrong ⇒ 1 − p.
  */
-export function binaryLikelihood(offset: number, bPrime: number, outcome: 0 | 1): number {
-  const p = expectedScore(offset, bPrime); // σ(offset − b') = σ((θ_global+offset) − b)
-  return outcome === 1 ? p : 1 - p;
+export function binaryLikelihood(offset: number, bPrime: number, outcome: 0 | 1, c = 0): number {
+  // BKT graft 1 (YUK-436): 3PL lower-asymptote. c=0 ⇒ 1PL 退化（显式 delegate 保
+  // byte-identical 回归锚）；c>0（选择题，c=1/k）走 3PL 渐近线 P=c+(1−c)·σ。
+  //   correct ⇒ P(correct) = c + (1−c)·σ(offset − b')
+  //   wrong   ⇒ P(wrong)   = (1−c)·(1 − σ(offset − b'))      （= 1 − P(correct)）
+  // c 是 choices_md.length 派生的设计常量（n=1 红线合规，见 fisherInformation3pl 注）。
+  if (c === 0) {
+    const p = expectedScore(offset, bPrime); // σ(offset − b') = σ((θ_global+offset) − b)
+    return outcome === 1 ? p : 1 - p;
+  }
+  const phat = expectedScore(offset, bPrime);
+  return outcome === 1 ? c + (1 - c) * phat : (1 - c) * (1 - phat);
+}
+
+/**
+ * 从 question.choices_md（jsonb<string[]>）派生 3PL guess 参数 c = 1/k。
+ *
+ * k = choices_md.length（选择题选项数）；k<2（null / 空 / 单选占位）按非选择题处理
+ * ⇒ c=0，binaryLikelihood/gridUpdate/klpScoreFromGrid 退化为现有 1PL（逐位相同）。
+ * **选择题的决定性特征就是 choices_md**（参 exact.ts:71-102 的判分侧用法），无需新
+ * schema 列；接线（state.ts 把 choices_md 喂进来）在 inc-2 grid→SoT cut-over 才上，
+ * 故本桥当前是 DARK-SHIP 算法层供件，无 live caller。
+ */
+export function choicesToGuess(choices: readonly string[] | null | undefined): number {
+  if (!choices || choices.length < 2) return 0; // 非选择题 → 1PL 退化
+  return 1 / choices.length;
 }
 
 /**
@@ -195,9 +218,10 @@ export function gridUpdate(
   prior: ThetaGridPosterior,
   bPrime: number,
   outcome: 0 | 1,
+  c = 0,
 ): ThetaGridPosterior {
   const unnorm = prior.probs.map(
-    (mass, i) => mass * binaryLikelihood(GRID_THETA[i], bPrime, outcome),
+    (mass, i) => mass * binaryLikelihood(GRID_THETA[i], bPrime, outcome, c),
   );
   const total = unnorm.reduce((acc, m) => acc + m, 0);
   if (!(total > 0)) {
@@ -272,9 +296,104 @@ export function klpScoreFromGrid(
   posterior: ThetaGridPosterior,
   b: number,
   thetaGlobal: number,
+  c = 0,
 ): number {
+  // BKT graft 1：c>0（选择题）用 3PL Fisher；c=0（非选择题）fisherInformation3pl
+  // 显式 delegate 到 fisherInformation（逐位相同），故既有 1PL 测试锚点不变。
   return posterior.probs.reduce(
-    (acc, mass, i) => acc + mass * fisherInformation(thetaGlobal + GRID_THETA[i], b),
+    (acc, mass, i) => acc + mass * fisherInformation3pl(thetaGlobal + GRID_THETA[i], b, c),
     0,
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BKT graft 2 (YUK-436) — 掌握跃迁检测（从 θ̂ 后验轨迹派生，无新模型）。
+//
+// 设计见 handoff：每 KC 维护滚动窗口——
+//   p_mastery = 后验落在 θ* 以上的质量
+//   width     = 后验标准差（posteriorSe）
+//   毕业触发  = p_mastery > 0.8 连续 N=3 次 且 width < ε 且 evidence_count >= M≈8
+//   掌握线 θ* = 该 KC 的 item_calibration.b
+//
+// **θ* 的 offset 轴表达**：grid posterior 是 over θ_KC OFFSET，effective ability 在
+//   grid 点 i = θ_global + GRID_THETA_i。「后验落在 θ* 以上」= 后验 mass 落在
+//   θ_global + GRID_THETA_i ≥ θ* 的点 = GRID_THETA_i ≥ θ* − θ_global = b − θ_global
+//   = bPrime（嫁接 1 用的同一个 A2 锚！）。所以掌握线在 offset 轴上恰好是 bPrime，
+//   无需 θ_global 作参数——caller 传 bPrime 即可。
+//
+// DARK-SHIP / DEFER：本节全是纯函数、零 IO、无 caller（inc-1 shadow）。轨迹持久化
+//   （recent 滚动窗口的 jsonb 字段，参 RtCorrectBuffer 的环形缓冲模式）+ KcGraduated
+//   事件枚举 + state.ts 接线 + 掌握线读取 item_calibration.b，全部 defer 到 inc-2
+//   grid→SoT cut-over（flag 翻转后才有意义：现在 grid 不被任何路径算）。先落地纯数学
+//   让 cut-over 不必再推。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 一次作答更新后的掌握派生量（caller 现算，不持久化——轨迹才是状态）。 */
+export interface MasterySnapshot {
+  /** 后验落在掌握线 θ*（offset 轴 = bPrime）以上的质量。 */
+  pMastery: number;
+  /** 后验标准差 = posteriorSe；小 ⇒ 后验集中 ⇒ 量估计更可信。 */
+  width: number;
+}
+
+/**
+ * 毕业判定的可调阈值（handoff 默认值；ε/M 等 inc-2 拿真实后验收敛宽度后再定）。
+ * 全部带默认值，调用方零配置即可用。
+ */
+export interface GraduationConfig {
+  /** p_mastery 下限，默认 0.8（handoff）。 */
+  readonly pMasteryMin?: number;
+  /** width 上限 ε（logit offset 轴），默认 1.0——占位，待校准。 */
+  readonly widthMax?: number;
+  /** 连续命中 N 次，默认 3（handoff）。 */
+  readonly consecutiveN?: number;
+  /** evidence_count 下限 M，默认 8（handoff ≈8）。 */
+  readonly evidenceMin?: number;
+}
+
+/**
+ * 后验落在 offset 阈值（= 掌握线 bPrime）以上的总质量。
+ *   p_mastery = Σ_{i : GRID_THETA_i ≥ thresholdOffset} probs_i
+ *
+ * 用 ≥ 而非 >：grid 步长 0.2，掌握线恰好落在格点上（bPrime 是 b−θ_global，连续值，
+ * 一般不正好落格点），用 ≥ 保证边界一致。posteriorMassAbove 也可单独用于「掌握度读数」，
+ * 不必走毕业判定。
+ */
+export function posteriorMassAbove(posterior: ThetaGridPosterior, thresholdOffset: number): number {
+  return posterior.probs.reduce(
+    (acc, mass, i) => acc + (GRID_THETA[i] >= thresholdOffset ? mass : 0),
+    0,
+  );
+}
+
+/**
+ * 从一次后验现算 MasterySnapshot（p_mastery + width）。纯函数无 IO。
+ * caller（inc-2 接线）每次 gridUpdate 后调它，把 snapshot 推进 recent 滚动窗口。
+ */
+export function masterySnapshot(posterior: ThetaGridPosterior, bPrime: number): MasterySnapshot {
+  return {
+    pMastery: posteriorMassAbove(posterior, bPrime),
+    width: posteriorSe(posterior),
+  };
+}
+
+/**
+ * 是否满足毕业触发条件：p_mastery>0.8 连续 N=3 次 且 width<ε 且 evidence≥M。
+ *
+ * - posterior.evidence < M  → false（证据不足，还没到可毕业的信息量）。
+ * - recent 不足 N 个 → false（轨迹太短，连续性无法判定）。
+ * - 否则取 recent 最后 N 个，逐个验 pMastery>p_min && width<ε。
+ *
+ * 纯函数：不读不写任何状态。recent 滚动窗口的持久化是 caller 的 inc-2 责任。
+ */
+export function isGraduationCandidate(
+  posterior: ThetaGridPosterior,
+  recent: readonly MasterySnapshot[],
+  cfg: GraduationConfig = {},
+): boolean {
+  const { pMasteryMin = 0.8, widthMax = 1.0, consecutiveN = 3, evidenceMin = 8 } = cfg;
+  if (posterior.evidence < evidenceMin) return false;
+  if (recent.length < consecutiveN) return false;
+  const tail = recent.slice(recent.length - consecutiveN);
+  return tail.every((s) => s.pMastery > pMasteryMin && s.width < widthMax);
 }
