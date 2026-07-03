@@ -7,6 +7,10 @@
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import {
+  createMem0Collection,
+  seedMem0Row as seedMem0RowHelper,
+} from '../../../tests/helpers/mem0-collection';
 import type { MemoryClient } from './client';
 import {
   capturePrevState,
@@ -21,25 +25,15 @@ import {
 
 const COLLECTION = 'test_mem0_collection';
 
+// YUK-557 (F7): DDL/seed delegate to the shared tests/helpers/mem0-collection
+// (single source of the runtime-created mem0 collection DDL). getPayload stays
+// local (a test-only read util, not converged with prod — V8-E2/R4 WONTFIX).
 async function createTestCollection() {
-  const db = testDb();
-  // Drop if exists (from prior run), then create fresh.
-  await db.execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
-  await db.execute(sql`
-    CREATE TABLE "${sql.raw(COLLECTION)}" (
-      id uuid PRIMARY KEY,
-      vector vector(1024),
-      payload jsonb
-    )
-  `);
+  await createMem0Collection(testDb(), COLLECTION);
 }
 
 async function seedMem0Row(id: string, payload: Record<string, unknown>) {
-  const db = testDb();
-  await db.execute(sql`
-    INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload)
-    VALUES (${id}::uuid, ${JSON.stringify(payload)}::jsonb)
-  `);
+  await seedMem0RowHelper(testDb(), COLLECTION, id, payload);
 }
 
 async function getPayload(id: string): Promise<Record<string, unknown> | null> {
@@ -131,20 +125,16 @@ describe('reconcile-store — rewriteMemoryText (MERGE survivor stays live)', ()
 // against the injected test collection — the guts of what the production
 // client.hardDelete does (mem0 official delete()). This preserves genuine
 // physical-delete coverage (getPayload===null) rather than degrading to
-// "mock was called". Idempotent 'not found'/'undefined table' swallowed, mirroring
-// the production client.hardDelete.
+// "mock was called". No error-swallowing needed: a raw DELETE against a missing
+// row is a natural 0-row no-op (idempotent), so this double stays a faithful
+// stand-in without copying any not-found handling (F1: the production idempotency
+// is verify-absence, exercised as a unit in client.test.ts).
 function rawDeleteClient(): Pick<MemoryClient, 'hardDelete'> {
   return {
     async hardDelete(memoryId: string) {
-      try {
-        await testDb().execute(
-          sql`DELETE FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${memoryId}::uuid`,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/not found|does not exist|42P01/i.test(msg)) return;
-        throw err;
-      }
+      await testDb().execute(
+        sql`DELETE FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${memoryId}::uuid`,
+      );
     },
   };
 }
@@ -210,6 +200,9 @@ describe('reconcile-store — write-ahead log lifecycle', () => {
       action: 'SUPERSEDE',
       reason: 'updated preference',
       llm_raw: { confidence: 0.9 },
+      // YUK-557 (Q2b/F2): a destructive row must carry its undo snapshot or
+      // insertPlannedRows fail-closes.
+      prev_text: 'old preference text',
     });
     const row2 = makePlannedRow({
       user_id: 'self',
@@ -287,5 +280,46 @@ describe('reconcile-store — write-ahead log lifecycle', () => {
     const selfUnapplied = await loadUnappliedLog(db, 'self');
     expect(selfUnapplied).toHaveLength(1);
     expect(selfUnapplied[0].user_id).toBe('self');
+  });
+});
+
+describe('reconcile-store — insertPlannedRows prev_text invariant (F2)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('fail-closes on a destructive row (SUPERSEDE/MERGE/RETRACT_NEW) missing prev_text', async () => {
+    const db = testDb();
+    for (const action of ['SUPERSEDE', 'MERGE', 'RETRACT_NEW'] as const) {
+      const row = makePlannedRow({
+        user_id: 'self',
+        new_memory_id: 'memN',
+        old_memory_id: action === 'RETRACT_NEW' ? null : 'memO',
+        action,
+        reason: 'x',
+        llm_raw: null,
+        // prev_text intentionally omitted
+      });
+      await expect(insertPlannedRows(db, [row])).rejects.toThrow(
+        /destructive planned row without prev_text snapshot/,
+      );
+    }
+    // Nothing was written (fail-closed BEFORE the insert).
+    expect(await loadUnappliedLog(db, 'self')).toHaveLength(0);
+  });
+
+  it('allows a KEEP_BOTH row without prev_text (no undo target)', async () => {
+    const db = testDb();
+    const row = makePlannedRow({
+      user_id: 'self',
+      new_memory_id: 'memN',
+      old_memory_id: null,
+      action: 'KEEP_BOTH',
+      reason: 'different facts',
+      llm_raw: null,
+    });
+    await expect(insertPlannedRows(db, [row])).resolves.toBeUndefined();
+    expect(await loadUnappliedLog(db, 'self')).toHaveLength(1);
   });
 });

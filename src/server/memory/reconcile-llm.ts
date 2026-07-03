@@ -318,6 +318,28 @@ export function kindForbidsMerge(kind: string): boolean {
 }
 
 /**
+ * YUK-557 (F6) — the "hard-delete set": actions whose apply physically drops a
+ * mem0 vector row (MERGE drops the absorbed new row; RETRACT_NEW drops the new
+ * row). Distinct from `needsOldTarget` below (the "needs an existing old row"
+ * set) — MERGE is in BOTH, RETRACT_NEW only here, SUPERSEDE only there. Used to
+ * gate the score floor, the "floor skipped" log, the apply-time client
+ * requirement, and the m7 client-less skip so they never drift apart.
+ */
+export function isHardDelete(action: ReconcileAction): boolean {
+  return action === 'MERGE' || action === 'RETRACT_NEW';
+}
+
+/**
+ * YUK-557 (F6) — the "needs an existing old row" set: actions that reference and
+ * act on an existing candidate (SUPERSEDE marks it, MERGE rewrites it). Drives
+ * bad-target degrade (no resolvable old row → KEEP_BOTH) and the write-ahead
+ * prev_metadata capture (only these two have an old payload to snapshot).
+ */
+export function needsOldTarget(action: ReconcileAction): boolean {
+  return action === 'SUPERSEDE' || action === 'MERGE';
+}
+
+/**
  * Apply confidence threshold: any decision below the threshold is downgraded
  * to KEEP_BOTH (no destructive action on low-confidence judgments).
  *
