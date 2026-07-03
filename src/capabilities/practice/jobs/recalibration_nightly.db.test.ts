@@ -167,6 +167,7 @@ describe('runRecalibrationNightly', () => {
     expect(result.recalibrated).toBe(2);
     expect(result.clip_activations).toBe(3); // 1 (Q1) + 2 (Q2) — accumulation, not single-assign.
     expect(result.min_pi_seen).toBeCloseTo(4e-4, 12); // smallest π across both firm-up batches.
+    expect(result.max_pi_seen).toBeCloseTo(0.5, 12); // largest π (honest 0.5) across both batches (min-max π face).
   });
 
   // (b) in-window labels but total < threshold → not even a candidate (HAVING count gate),
@@ -268,6 +269,7 @@ describe('runRecalibrationNightly', () => {
       skipped_failed: 0,
       clip_activations: 0,
       min_pi_seen: null,
+      max_pi_seen: null,
     });
   });
 

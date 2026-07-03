@@ -347,6 +347,13 @@ export const IPW_WEIGHT_CAP_C = 4;
  * capFactor 默认 IPW_WEIGHT_CAP_C；测试 / 运行时回滚可传 Number.POSITIVE_INFINITY ⇒ cap 永不
  * bind ⇒ weights === 原始 1/π 逐位相等、clipped=0（精确还原旧行为）。
  *
+ * **判别式耦合（YUK-558 bot 轮成文，零行为改动）**：下方 `raw` 必须保持字面 `1/pi` 除法——
+ * estimator（ppiPlusMean / aipwMean）的 division-form 判别式 `w === 1/s.pi`（区分未截项走
+ * `residual/π` 单舍入 vs 截项走 `residual*w`）依赖 raw 与 estimator 侧 `1/s.pi` **逐位同值**
+ * （同操作数、同一 IEEE 除法 op）。改成 `Math.pow(pi,-1)` / 重排运算都会破坏该逐位相等 ⇒ C=∞
+ * 逐位回滚不再精确还原 uncapped 旧行为，已由 estimator 级 rollback identity 测试（capFactor=∞
+ * ⇒ 逐位等价 uncapped）钉死。
+ *
  * @returns weights = 截权后的 IPW 权重（与 pis 等长同序）；clipped = 被截权的条数（w > cap）。
  */
 export function cappedIpwWeights(
