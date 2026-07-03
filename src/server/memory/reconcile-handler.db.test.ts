@@ -9,6 +9,8 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { createMem0Collection } from '../../../tests/helpers/mem0-collection';
+import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient } from './client';
 import { type CandidateEntry, type NewMemoryEntry, ReconcileParseError } from './reconcile-llm';
 import { insertPlannedRows, loadUnappliedLog, makePlannedRow } from './reconcile-store';
@@ -16,16 +18,9 @@ import { buildMemoryReconcileHandler } from './triggers';
 
 const COLLECTION = 'test_reconcile_collection';
 
+// YUK-557 (F7): DDL delegates to the shared tests/helpers/mem0-collection.
 async function createTestCollection() {
-  const db = testDb();
-  await db.execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
-  await db.execute(sql`
-    CREATE TABLE "${sql.raw(COLLECTION)}" (
-      id uuid PRIMARY KEY,
-      vector vector(1024),
-      payload jsonb
-    )
-  `);
+  await createMem0Collection(testDb(), COLLECTION);
 }
 
 type MemInput = { id: string; text: string; created_ms: number; kind: string };
@@ -49,21 +44,20 @@ function mockMemoryClient(
     score?: number;
   }>,
 ): MemoryClient {
-  return {
-    addEventMemory: vi.fn(),
+  // YUK-557 (F7): partial reuse of the shared MemoryClient double — only search +
+  // hardDelete are load-bearing here (addEventMemory/history/restoreVerbatim default
+  // to no-ops). hardDelete runs a REAL raw DELETE against the test collection — the
+  // guts of what production client.hardDelete does (mem0 official delete()) — so the
+  // physical-delete assertions (newRows.toHaveLength(0)) stay genuine coverage
+  // rather than "mock was called".
+  return memoryClientMock({
     search: vi.fn(async () => ({ results: searchResults })),
-    // YUK-557 (Q2a/M4): hardDelete runs a REAL raw DELETE against the test
-    // collection — the guts of what production client.hardDelete does (mem0
-    // official delete()). This keeps the physical-delete assertions
-    // (newRows.toHaveLength(0)) as genuine coverage rather than "mock was called".
     hardDelete: vi.fn(async (memoryId: string) => {
       await testDb().execute(
         sql`DELETE FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${memoryId}::uuid`,
       );
     }),
-    history: vi.fn(async () => []),
-    restoreVerbatim: vi.fn(async () => ({ results: [] })),
-  };
+  });
 }
 
 describe('reconcile handler — failure mode 1: LLM parse failure degrades to KEEP_BOTH', () => {
@@ -800,6 +794,68 @@ describe('reconcile handler — Q1 RETRACT_NEW with no candidates skips the floo
   });
 });
 
+describe('reconcile handler — F3 RETRACT_NEW keys strictly on the referenced candidate (no max borrow)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+  });
+
+  it('old_index candidate scoreless → abstains (RETRACT executes), floor skipped, referenced_score null; sibling 0.9 NOT borrowed', async () => {
+    const db = testDb();
+    const newMemId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const dupId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; // referenced candidate (old_index=0), NO score
+    await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload)
+      VALUES (${newMemId}::uuid, ${JSON.stringify({ data: 'dup text', user_id: 'self' })}::jsonb)
+    `);
+    // Candidate 0 = the RETRACT target, carries NO score; candidate 1 carries a HIGH
+    // score (0.9). The pre-F3 fallback (oldMem?.score ?? topCandidateScore) would
+    // have borrowed candidate 1's 0.9 and passed the floor with a DEFINED score. F3
+    // keys strictly on the referenced candidate (undefined) → abstain + m8 skip +
+    // referenced_score null, and never borrows the sibling's score.
+    const memoryClient = mockMemoryClient([
+      { id: dupId, memory: 'the duplicate' /* no score */ },
+      { id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', memory: 'unrelated but scored', score: 0.9 },
+    ]);
+    const judge = vi.fn(async () => [
+      {
+        new_index: 0,
+        action: 'RETRACT_NEW',
+        old_index: 0,
+        confidence: 0.9,
+        reason: 'exact duplicate',
+      },
+    ]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const handler = buildMemoryReconcileHandler(db, {
+        memoryClient,
+        judge: judge as never,
+        collectionName: COLLECTION,
+      });
+      await handler(
+        makeJob({ memories: [mem(newMemId, 'dup text', 'event', 2000)], user_id: 'self' }) as never,
+      );
+      const skipLog = warnSpy.mock.calls.find((c) =>
+        String(c[0]).includes('score-floor skipped (no candidate score)'),
+      );
+      expect(skipLog).toBeDefined(); // proves it did NOT downgrade on a borrowed max
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    const rows = await loadLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].action).toBe('RETRACT_NEW'); // abstained (NOT downgraded)
+    expect(rows[0].llm_raw.structurally_corroborated).toBe(true);
+    expect(rows[0].llm_raw.referenced_score).toBeNull(); // did NOT borrow the sibling 0.9
+    const newRows = (await db.execute(
+      sql`SELECT id FROM ${sql.raw(`"${COLLECTION}"`)} WHERE id = ${newMemId}::uuid`,
+    )) as unknown[];
+    expect(newRows).toHaveLength(0); // retracted
+  });
+});
+
 describe('reconcile handler — Q2b write-ahead prev_text/prev_metadata by action', () => {
   beforeEach(async () => {
     await resetDb();
@@ -955,6 +1011,8 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
         action: 'MERGE',
         reason: 'm',
         llm_raw: { merged_text: 'MERGED', new_created_ms: 2000 },
+        // YUK-557 (Q2b/F2): destructive rows carry their undo snapshot.
+        prev_text: 'merge old',
       }),
       makePlannedRow({
         user_id: 'self',
@@ -963,6 +1021,7 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
         action: 'RETRACT_NEW',
         reason: 'r',
         llm_raw: {},
+        prev_text: 'retract dup',
       }),
       makePlannedRow({
         user_id: 'self',
@@ -971,6 +1030,7 @@ describe('reconcile handler — m7: destructive rows deferred when Mem0 client i
         action: 'SUPERSEDE',
         reason: 's',
         llm_raw: { new_created_ms: 2000 },
+        prev_text: 'sup old',
       }),
     ]);
 

@@ -782,3 +782,66 @@ apply-vs-write-ahead 捕获时序、hardDelete 测试迁移）+ over-claim 1 处
    hermetic（触网/需 embedder key），按 YUK-501 式 CI-skip gate（skip 时打显式理由日志），纯 mock 不可替代。
 
 Linear：YUK-557（parent YUK-538）。
+
+---
+
+## 附录 B — 独立 review 环裁决（2026-07-03）
+
+初实现（HEAD `481067a0`）后经一轮 **8-finder → 8-verifier 对抗裁决**（fable×2 + Opus×6）。以下修入清单与
+REFUTED/as-designed 留档为该环的落地结论；不重开设计，只硬化既有实现。
+
+### 修入清单（F1–F7）
+
+- **F1（V1 fable，最重）**：`client.ts` `hardDelete` 幂等判定从「错误 message 正则 `/not found|does not exist|
+  42P01/i`」改为「删后核行是否仍存在」。正则会把 server-side 真错误（`role "x" does not exist`/`relation ...
+  does not exist`）误判为幂等 → 吞 → markApplied → 永久 orphan + 假成功日志（MERGE 场景 old 已改写、new 还活着）；
+  42P01 臂是死代码（pg 驱动把 SQLSTATE 放 `err.code` 不进 message）。新逻辑：catch 任意错误 → `memory.get(id)`
+  核在场性（mem0 public get 缺行返 null，index.mjs:6769-6772 → PGVector.get:4693-4703），不存在 → return（幂等
+  安全），仍存在或核查自身 throw → 重抛原始错误。代价仅错误路径多一次 `get`。`Mem0Like` 加 `get`；`rawDeleteClient`
+  double 删自带正则拷贝（raw DELETE 对缺行天然 0-row no-op）。
+- **F2（V2 fable）**：`insertPlannedRows` 在 empty-check 之后、insert 之前加**破坏性行 prev_text 结构守卫**——
+  `action !== 'KEEP_BOTH' && prev_text == null` → throw（fail-closed，尚未销毁任何东西）。prev_text 是恢复地板，
+  MERGE 场景是旧行文本的**唯一**来源。配套负例测试断言 throw。
+- **F3（V3，latent 硬化）**：RETRACT_NEW 的 score fallback `(oldMem?.score ?? topCandidateScore(cands))` →
+  `(oldMem ? oldMem.score : topCandidateScore(cands))`。目标候选在场但无 score 时**不**借兄弟候选的 max，改为
+  abstain 放行 + m8「floor skipped」日志 + `referenced_score===null`，与 MERGE 对称（max fallback 只授权
+  old_index=null）。**标 latent**：mem0 3.0.6 恒发 numeric score，此为防御对称性修复（见下 V3）。
+- **F4（V5 子2，low-liveness 硬化）**：`getClient` 从 `() => memoryClient` 改为按需 lazy-init（抽成局部
+  `getClientLazy`）。`applyPlannedRows` 只在有破坏性待 apply 行时才调 getClient，纯 KEEP_BOTH/SUPERSEDE 重放
+  永不触发 init（F-4 优雅降级保留）。
+- **F5（V6）**：`hardDelete` swallow/rethrow 分支加纯 unit（already-gone / 真失败双 fail / 行仍存在 / happy
+  path get-not-called 四例）；tombstone 集成测试加**版本哨兵**——对 absent id 调真 `Memory.delete` 断言抛
+  `/Memory with ID .+ not found/`（mem0 换文案时 CI 红）。
+- **F6（V7，形态收敛 ~25 行）**：模块级 `isHardDelete`（硬删集合 MERGE∪RETRACT_NEW）/`needsOldTarget`（需旧行集合
+  SUPERSEDE∪MERGE）两谓词 DRY 四处消费点 + `:660 destructive→needsOldTarget` 改名 + `downgradeToKeepBoth(prefix,
+  orig)` 原语 DRY badTarget/per-kind/floor 三降级站（顺带统一 badTarget「degraded→downgraded」措辞）+ 删 score-floor
+  条件的死谓词（`!corroborated` 已蕴含 isHardDelete）。测试子串锚（`Low structural corroboration`/`Per-kind
+  guard`/`downgraded from MERGE`/`score-floor skipped`）全保。
+- **F7（V8，测试基建 + 投影）**：新建 `tests/helpers/memory-client-mock.ts`（`memoryClientMock` 复用 MemoryClient
+  外层 double，triggers.test ×5 + search-memory-facts + reconcile-handler mockMemoryClient 部分复用）+
+  `tests/helpers/mem0-collection.ts`（`createMem0Collection`/`seedMem0Row` 吸收三份 DDL；tombstone 测试不动）；
+  `loadUnappliedLog` 裸 `.select()` 改显式 8 列投影（重放游标，刻意不携 undo 快照列）。client.test.ts 的
+  `mem0LikeMock` 留**文件内**（Mem0Like 是 mem0 内层 surface，与 MemoryClient 不同类型）。
+
+### REFUTED / as-designed 留档
+
+- **V1 子2 REFUTED**：mem0 delete 链无「log-but-resolve」矛盾——遥测 `_captureEvent` 于 §8.6 强制关 + try/catch
+  包裹，净零新增副作用。
+- **V1 子3 REFUTED**：42P01 死臂纠错正确，但「无限重试」双轴不成立——切官方 delete 后活锁（若有）会响亮报错，
+  非静默。
+- **V4 as-designed**：score-floor abstain（`score===undefined`→放行）是 fail-open by design——0.6 confidence 闸
+  先行，保证不劣于现状；abstain 只在无佐证目标时退让，方向安全。
+- **V5 子1 REFUTED**：blank-merged_text MERGE 经 parse barrier（`reconcile-llm.ts:263-266` 强制 MERGE 带非空
+  merged_text）不可达；apply 的 blank-merged_text defensive 分支是 dead defensive，保留留档（已在 m7 skip 上方
+  加注）。
+- **V7-S2 as-designed**：`applyPlannedRows` 的 `needsClient` 预扫描 + 聚合 warn 是**观测性属性**，不删（V7 删门
+  建议被否）；只把两处谓词换 `isHardDelete`。
+- **V8-E2/R4 WONTFIX**：`capturePrevState` 不批取（1–5 次 PK 点查 vs GLM judge 主导成本，不值批量优化）；
+  `getPayload`/`readRows` 测试 util 不与 prod 收敛（V8 明确留局部）。
+
+### V3 latent 标注
+
+`MERGE_RETRACT_SCORE_FLOOR` / RETRACT_NEW fallback 的 score 消费全链依赖 mem0 `Memory.search()` 发 numeric
+`score`。mem0 3.0.6 实测恒发 numeric score，故 F3 修的「referenced 候选无 score」路径在当前 substrate **不可达**——
+标 **latent**：修的是防御对称性（未来 substrate 或 provider 变体可能发 undefined score 时不误借 max），非当前活
+bug。`score===undefined` 的 abstain + m8 日志使该路径一旦被触发即可见/可计数。

@@ -173,4 +173,18 @@ describe('mem0 official delete() writes a memory_history tombstone (Q2a)', () =>
       sqlite.close();
     }
   });
+
+  it('delete() of an absent id throws the exact mem0 not-found text (F5 version sentinel)', async (ctx) => {
+    if (!memory) {
+      ctx.skip();
+      return;
+    }
+    // F5: client.hardDelete's verify-absence idempotency (client.ts) rests on the
+    // precondition that mem0's real delete() THROWS for a missing row
+    // (index.mjs:7166-7167: `Memory with ID <id> not found`). The swallow decision
+    // keys on get(), not on this message, but pin the exact文案 anyway so a mem0
+    // upgrade that changes the delete-throws contract lights up CI.
+    const absent = 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2';
+    await expect(memory.delete(absent)).rejects.toThrow(/Memory with ID .+ not found/);
+  });
 });

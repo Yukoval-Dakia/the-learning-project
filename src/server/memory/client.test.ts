@@ -1,5 +1,23 @@
-import { describe, expect, it, vi } from 'vitest';
+import { type Mock, describe, expect, it, vi } from 'vitest';
 import { createMem0Config, createMemoryClient } from './client';
+
+// YUK-557 (F1/F7): file-local Mem0Like factory. Mem0Like is the INNER mem0 surface
+// (add/search/delete/history/get) that createMemoryClient wraps — a DIFFERENT type
+// from MemoryClient, so this stays file-local (NOT tests/helpers/memoryClientMock,
+// which mocks the OUTER project surface). Every method is a no-op default with a
+// spread override for whichever one a given test drives.
+function mem0LikeMock(
+  overrides: Partial<Record<'add' | 'search' | 'delete' | 'history' | 'get', Mock>> = {},
+) {
+  return {
+    add: vi.fn(async () => ({ results: [] })),
+    search: vi.fn(async () => ({ results: [] })),
+    delete: vi.fn(async () => ({ message: 'ok' })),
+    history: vi.fn(async () => []),
+    get: vi.fn(async () => null),
+    ...overrides,
+  };
+}
 
 // P1 (YUK-341)：LLM/embedder 全走 openai-compat（智谱 GLM + 阿里百炼），凭据经 config
 // 传入，无 process.env 改写（旧 withXiaomiBaseUrl env-dance + YUK-232 mutex 已删）。
@@ -99,14 +117,9 @@ describe('createMem0Config', () => {
 
 describe('createMemoryClient', () => {
   it('forces the single-user Mem0 invariant on add/search', async () => {
-    const memory = {
-      add: vi.fn(async () => ({ results: [] })),
+    const memory = mem0LikeMock({
       search: vi.fn(async () => ({ results: [{ id: 'm1', memory: 'prefers terse feedback' }] })),
-      // YUK-557: Mem0Like now also surfaces delete/history (used by hardDelete /
-      // history / restoreVerbatim). Unused here — no-op stubs to satisfy the type.
-      delete: vi.fn(async () => ({ message: 'ok' })),
-      history: vi.fn(async () => []),
-    };
+    });
     const client = createMemoryClient({ env, memoryFactory: () => memory });
 
     await client.addEventMemory({
@@ -155,12 +168,7 @@ describe('createMemoryClient', () => {
       env,
       memoryFactory: (config) => {
         seenConfig = config;
-        return {
-          add: vi.fn(),
-          search: vi.fn(),
-          delete: vi.fn(async () => ({ message: 'ok' })),
-          history: vi.fn(async () => []),
-        };
+        return mem0LikeMock();
       },
     });
     expect(seenConfig?.llm.config.apiKey).toBe('zhipu-key');
@@ -169,15 +177,74 @@ describe('createMemoryClient', () => {
   });
 
   it('不暴露 mem0 公开 update()（红线：update 替换式清 payload + textLemmatized）', () => {
+    const client = createMemoryClient({ env, memoryFactory: () => mem0LikeMock() });
+    expect('update' in client).toBe(false);
+  });
+});
+
+// YUK-557 (F5): hardDelete's verify-absence swallow/rethrow semantics. Before F1
+// the only "idempotent" coverage was raw-SQL 0-row DELETE (structurally a no-op —
+// never exercised the swallow branch). These drive the real client.hardDelete:
+// on ANY delete error it consults memory.get to decide swallow (row gone) vs
+// rethrow (row still present or get itself fails).
+describe('createMemoryClient — hardDelete verify-absence (F1)', () => {
+  it('already-gone: delete throws mem0 not-found, get confirms absent → resolves', async () => {
+    const getFn = vi.fn(async () => null);
     const client = createMemoryClient({
       env,
-      memoryFactory: () => ({
-        add: vi.fn(),
-        search: vi.fn(),
-        delete: vi.fn(async () => ({ message: 'ok' })),
-        history: vi.fn(async () => []),
-      }),
+      memoryFactory: () =>
+        mem0LikeMock({
+          delete: vi.fn(async () => {
+            throw new Error('Memory with ID m1 not found');
+          }),
+          get: getFn,
+        }),
     });
-    expect('update' in client).toBe(false);
+    await expect(client.hardDelete('m1')).resolves.toBeUndefined();
+    expect(getFn).toHaveBeenCalledWith('m1');
+  });
+
+  it('real failure: delete throws AND get also fails → rejects with the ORIGINAL delete error', async () => {
+    const client = createMemoryClient({
+      env,
+      memoryFactory: () =>
+        mem0LikeMock({
+          delete: vi.fn(async () => {
+            throw new Error('ECONNREFUSED');
+          }),
+          get: vi.fn(async () => {
+            throw new Error('get also unreachable');
+          }),
+        }),
+    });
+    await expect(client.hardDelete('m1')).rejects.toThrow('ECONNREFUSED');
+  });
+
+  it('delete throws but the row still exists (get returns it) → rejects the original error', async () => {
+    const client = createMemoryClient({
+      env,
+      memoryFactory: () =>
+        mem0LikeMock({
+          delete: vi.fn(async () => {
+            throw new Error('role "x" does not exist'); // the false-idempotent trap F1 closes
+          }),
+          get: vi.fn(async () => ({ id: 'm1', memory: 'still here', metadata: {} })),
+        }),
+    });
+    await expect(client.hardDelete('m1')).rejects.toThrow('role "x" does not exist');
+  });
+
+  it('happy path: delete succeeds → resolves and get is NEVER consulted', async () => {
+    const getFn = vi.fn(async () => null);
+    const client = createMemoryClient({
+      env,
+      memoryFactory: () =>
+        mem0LikeMock({
+          delete: vi.fn(async () => ({ message: 'ok' })),
+          get: getFn,
+        }),
+    });
+    await expect(client.hardDelete('m1')).resolves.toBeUndefined();
+    expect(getFn).not.toHaveBeenCalled();
   });
 });

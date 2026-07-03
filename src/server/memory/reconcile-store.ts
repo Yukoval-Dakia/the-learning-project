@@ -33,11 +33,14 @@ export type PlannedRow = {
   reason: string;
   llm_raw: unknown;
   planned_at: Date;
-  // YUK-557 (Q2b) — write-ahead undo snapshot. Optional so pre-Q2b callers/tests
-  // (KEEP_BOTH-only, replay fixtures) need not set them; captured in the handler's
-  // write-ahead phase (triggers.ts), never at apply-time (replay would read the
-  // already-rewritten payload). SUPERSEDE/MERGE: old row's original text/full
-  // payload; RETRACT_NEW: prev_text = new row's text, prev_metadata = null.
+  // YUK-557 (Q2b) — write-ahead undo snapshot. Optionality is ONLY for KEEP_BOTH
+  // (no undo target) and type convenience for replay fixtures; every DESTRUCTIVE
+  // row (action !== 'KEEP_BOTH') MUST carry prev_text — it is the recovery floor,
+  // and for MERGE it is the ONLY source of the old row's text (enforced fail-closed
+  // in insertPlannedRows before any write). Captured in the handler's write-ahead
+  // phase (triggers.ts), never at apply-time (replay would read the already-
+  // rewritten payload). SUPERSEDE/MERGE: old row's original text/full payload;
+  // RETRACT_NEW: prev_text = new row's text, prev_metadata = null.
   prev_text?: string | null;
   prev_metadata?: Record<string, unknown> | null;
 };
@@ -48,6 +51,19 @@ export type PlannedRow = {
  */
 export async function insertPlannedRows(db: Db, rows: PlannedRow[]): Promise<void> {
   if (rows.length === 0) return;
+  // YUK-557 (Q2b) invariant: every destructive WAL row must carry its undo
+  // snapshot (spec Q2b: the write-ahead side covers all non-KEEP_BOTH actions;
+  // prev_text is the recovery floor — for MERGE it is the ONLY source of the old
+  // row's text). Fail-closed BEFORE insert/apply: nothing has been destroyed yet,
+  // so a missing snapshot is a program bug (a synthesis path that forgot to
+  // capture), never a swallowed data-loss.
+  for (const r of rows) {
+    if (r.action !== 'KEEP_BOTH' && r.prev_text == null) {
+      throw new Error(
+        `[memory_reconcile] destructive planned row without prev_text snapshot: action=${r.action} id=${r.id} user=${r.user_id}`,
+      );
+    }
+  }
   await db.insert(memory_reconciliation_log).values(
     rows.map((r) => ({
       id: r.id,
@@ -203,8 +219,22 @@ export async function markApplied(db: Db, logId: string): Promise<void> {
  * appears.
  */
 export async function loadUnappliedLog(db: Db, userId: string): Promise<PlannedRow[]> {
+  // Explicit 8-column projection (NOT bare .select()): this is the apply/replay
+  // cursor and DELIBERATELY does not carry the undo-snapshot columns
+  // (prev_text/prev_metadata) — apply never consumes them (recovery is an offline
+  // runbook query against the table), and pulling them here would waste bytes on
+  // every replay. YUK-557 (F7).
   const rows = await db
-    .select()
+    .select({
+      id: memory_reconciliation_log.id,
+      user_id: memory_reconciliation_log.user_id,
+      new_memory_id: memory_reconciliation_log.new_memory_id,
+      old_memory_id: memory_reconciliation_log.old_memory_id,
+      action: memory_reconciliation_log.action,
+      reason: memory_reconciliation_log.reason,
+      llm_raw: memory_reconciliation_log.llm_raw,
+      planned_at: memory_reconciliation_log.planned_at,
+    })
     .from(memory_reconciliation_log)
     .where(
       sql`${memory_reconciliation_log.user_id} = ${userId}
