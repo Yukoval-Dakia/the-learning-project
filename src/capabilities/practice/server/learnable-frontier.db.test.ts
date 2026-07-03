@@ -8,7 +8,7 @@
 
 import { knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   FRONTIER_DEPTH_LIMIT,
@@ -59,74 +59,57 @@ async function seedPrereq(
     });
 }
 
-/** Mark a KC mastered (p(L)=σ(0.5·4)=0.88 ≥ 0.7 AND evidence_count 4 ≥ floor 4). */
-async function setMastered(kc: string): Promise<void> {
-  await seedKc(kc);
+/**
+ * Batch-seed a linear prereq chain `${prefix}0 → ${prefix}1 → … → ${prefix}edges` (edges
+ * edges, edges+1 KCs) in TWO bulk inserts instead of 2·edges serial round-trips — the
+ * overflow shapes ((d) / (j) / (p)) need 20+-edge chains and were the slowest seeds in the
+ * file (review E1).
+ */
+async function seedChain(prefix: string, edges: number): Promise<void> {
+  const now = new Date();
   await testDb()
-    .insert(mastery_state)
-    .values({
-      id: createId(),
-      subject_kind: 'knowledge',
-      subject_id: kc,
-      theta_hat: 0,
-      evidence_count: 4,
-      success_count: 4,
-      fail_count: 0,
-      theta_precision: 4,
-      updated_at: new Date(),
-    })
+    .insert(knowledge)
+    .values(
+      Array.from({ length: edges + 1 }, (_, i) => ({
+        id: `${prefix}${i}`,
+        name: `${prefix}${i}`,
+        domain: 'wenyan',
+        parent_id: null,
+        merged_from: [],
+        proposed_by_ai: false,
+        // as const: Array.from 回调内字面量会被 widen 成 string,过不了 enum union 列类型。
+        approval_status: 'approved' as const,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })),
+    )
     .onConflictDoNothing();
-}
-
-/** Mark a KC explicitly NOT mastered (p(L)=σ(0)=0.5 < 0.7). */
-async function setNotMastered(kc: string): Promise<void> {
-  await seedKc(kc);
   await testDb()
-    .insert(mastery_state)
-    .values({
-      id: createId(),
-      subject_kind: 'knowledge',
-      subject_id: kc,
-      theta_hat: 0,
-      evidence_count: 0,
-      success_count: 0,
-      fail_count: 0,
-      theta_precision: 1,
-      updated_at: new Date(),
-    })
-    .onConflictDoNothing();
-}
-
-/** Mark a KC "near-mastered" (YUK-539): raw p(L)=σ(0.5·3)=0.82 ≥ 0.7 BUT evidence_count 3 <
- *  the FRONTIER_MASTERY_MIN_EVIDENCE floor (4) → NOT mastered-enough (three lucky corrects). */
-async function setNearMastered(kc: string): Promise<void> {
-  await seedKc(kc);
-  await testDb()
-    .insert(mastery_state)
-    .values({
-      id: createId(),
-      subject_kind: 'knowledge',
-      subject_id: kc,
-      theta_hat: 0,
-      evidence_count: 3,
-      success_count: 3,
-      fail_count: 0,
-      theta_precision: 4,
-      updated_at: new Date(),
-    })
-    .onConflictDoNothing();
+    .insert(knowledge_edge)
+    .values(
+      Array.from({ length: edges }, (_, i) => ({
+        id: createId(),
+        from_knowledge_id: `${prefix}${i}`,
+        to_knowledge_id: `${prefix}${i + 1}`,
+        relation_type: 'prerequisite',
+        weight: 1,
+        created_by: 'user' as never,
+        reasoning: null,
+        created_at: now,
+        archived_at: null,
+      })),
+    );
 }
 
 /**
- * YUK-551 (spec Q4/M4) — the kg-borrowing borrow-branch SHAPE: high p(L) point estimate BUT
- * evidence_count=0. getMasteryProjection computes `mastery` = σ(pfaLogit(β, γ, ρ, success,
- * fail)) purely from success/fail (β=0 for an unanchored KC) and reads `evidence_count`
- * straight from the column — so success=4/fail=0/evidence_count=0 → point=σ(2.0)=0.88 ≥ 0.7
- * with evidence 0. That is exactly the态 the borrow branch synthesizes (state.ts: mastery=
- * band.point可≥0.7, evidence_count:0, low_confidence:true) — distinct from setNearMastered's
- * 3-corrects shape (evidence 3). Directly inserts the row per the M4 note ("直插一行
- * mastery_state 令 point≥0.7、evidence_count=0"). */
-async function setHighPlZeroEvidence(kc: string): Promise<void> {
+ * Shared mastery_state seeding core (review S3) — the named wrappers below document the four
+ * gate-relevant shapes; tests keep using the wrappers for readability.
+ */
+async function seedMasteryState(
+  kc: string,
+  shape: { evidence: number; success: number; fail?: number; precision?: number },
+): Promise<void> {
   await seedKc(kc);
   await testDb()
     .insert(mastery_state)
@@ -135,18 +118,54 @@ async function setHighPlZeroEvidence(kc: string): Promise<void> {
       subject_kind: 'knowledge',
       subject_id: kc,
       theta_hat: 0,
-      evidence_count: 0,
-      success_count: 4,
-      fail_count: 0,
-      theta_precision: 4,
+      evidence_count: shape.evidence,
+      success_count: shape.success,
+      fail_count: shape.fail ?? 0,
+      theta_precision: shape.precision ?? 4,
       updated_at: new Date(),
     })
     .onConflictDoNothing();
 }
 
+/** Mark a KC mastered (p(L)=σ(0.5·4)=0.88 ≥ 0.7 AND evidence_count 4 ≥ floor 4). */
+const setMastered = (kc: string) => seedMasteryState(kc, { evidence: 4, success: 4 });
+
+/** Mark a KC explicitly NOT mastered (p(L)=σ(0)=0.5 < 0.7). */
+const setNotMastered = (kc: string) =>
+  seedMasteryState(kc, { evidence: 0, success: 0, precision: 1 });
+
+/** Mark a KC "near-mastered" (YUK-539): raw p(L)=σ(0.5·3)=0.82 ≥ 0.7 BUT evidence_count 3 <
+ *  the FRONTIER_MASTERY_MIN_EVIDENCE floor (4) → NOT mastered-enough (three lucky corrects). */
+const setNearMastered = (kc: string) => seedMasteryState(kc, { evidence: 3, success: 3 });
+
+/**
+ * YUK-551 (spec Q4/M4; 诚实化 per review A2) — a SYNTHETIC shape isolating the EVIDENCE arm
+ * of the AND gate: high p(L) point (success=4/fail=0 → σ(2.0)=0.88 at β=0) with
+ * evidence_count=0 (the value the kg-borrow branch hard-codes). This is NOT a reproduction
+ * of the real borrow projection: that branch is IN-MEMORY only (applyKgSoftLayer synthesizes
+ * projection entries — no mastery_state row is ever written), is flag-dark today, and its
+ * point estimate is σ(−β) from pfaLogit(β,γ,ρ,0,0) (state.ts) — ≤0.5 for any β≥0 anchor,
+ * i.e. a real borrowed prereq would typically fail the p(L) arm TOO. Seeding a DB row with
+ * high p(L) + zero evidence deliberately over-approximates that shape: it pins that EVEN IF
+ * a 0-evidence entry cleared the p(L) arm, the evidence floor ALONE still gates. Near-twin
+ * of setNearMastered (evidence=3, test (l)). True borrow-branch characterization (through
+ * applyKgSoftLayer itself) is deferred to register #6 (the kg-borrowing unit).
+ */
+const setSyntheticHighPlZeroEvidence = (kc: string) =>
+  seedMasteryState(kc, { evidence: 0, success: 4 });
+
 describe('learnableFrontier (B3, YUK-349 #3)', () => {
+  // console.warn spy for the overflow-emit tests ((p)/(q)/(r)) — describe-level so the
+  // per-test try/finally boilerplate is gone (review S1); other tests simply ignore it.
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(async () => {
     await resetDb();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('(a) surfaces exactly the {all-prereqs-mastered ∧ self-not-mastered} KCs', async () => {
@@ -194,10 +213,7 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
   it('(d) depth-limit overflow → fail-safe [] (never a partial frontier)', async () => {
     // Linear prereq chain k0 → k1 → ... → kN with N > FRONTIER_DEPTH_LIMIT: the deepest
     // closure row has depth > the limit → whole result refused → [].
-    const n = FRONTIER_DEPTH_LIMIT + 4; // 20
-    for (let i = 0; i < n; i++) {
-      await seedPrereq(`k${i}`, `k${i + 1}`); // k_i is prereq of k_{i+1}
-    }
+    await seedChain('k', FRONTIER_DEPTH_LIMIT + 4); // 20 edges
     const frontier = await learnableFrontier(testDb());
     expect(frontier).toEqual([]);
   });
@@ -322,8 +338,7 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
 
     // overflow: a chain deeper than FRONTIER_DEPTH_LIMIT trips the depth fail-safe →
     // kind 'overflow', ids [] (the case YUK-514 must tell apart from cold-start 'sparse').
-    const n = FRONTIER_DEPTH_LIMIT + 4;
-    for (let i = 0; i < n; i++) await seedPrereq(`c${i}`, `c${i + 1}`);
+    await seedChain('c', FRONTIER_DEPTH_LIMIT + 4);
     const overflow = await learnableFrontierResolved(testDb());
     expect(overflow.kind).toBe('overflow');
     expect(overflow.ids).toEqual([]);
@@ -385,20 +400,21 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
     expect(frontier).toEqual([]);
   });
 
-  it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-branch shape) does NOT satisfy a dependent, even at high p(L) → dependent gated OUT through the real gate', async () => {
+  it('(o) evidence-arm isolation (kg-borrow 前瞻) — a prereq with evidence_count=0 never satisfies a dependent, even at synthetic high p(L)', async () => {
     // 前瞻锚定（YUK-551 spec Q4；register 单元 kg-borrowing-prereq-propagation-sprawl,
-    // state.ts 借值分支硬编码 evidence_count:0）。两 flag（GRAPH_LAPLACIAN_ENABLED /
-    // PREREQ_THETA_PROPAGATION_ENABLED）今 dark。本测经完整 gate（learnableFrontierResolved /
-    // learnableFrontier）钉:evidence_count=0 的 prereq 即便 p(L) 很高（σ(2.0)=0.88）也永不过
-    // floor（4）→ 其 dependent 被 gate out。与既有 (l)（3 corrects, evidence 3, prereq 角色）、
-    // (m)（self 角色）、(n)（边界=4）互补,专钉「借来的 0-evidence prereq」这一 flag-翻转后的路径。
-    // 归属:test 归本单元(gate 防御性质属 gate 测试面);借值分支自身正确性 = kg-borrowing 单元
-    // remediation（tracked trigger 归 register #6,本测只钉交叉引用)。
+    // state.ts 借值分支硬编码 evidence_count:0,两 flag 今 dark）。本测经完整 gate
+    // （learnableFrontierResolved / learnableFrontier）隔离 AND-gate 的 EVIDENCE 臂:
+    // evidence_count=0（借值分支会携带的值）即便 p(L) 合成到很高（σ(2.0)=0.88）也永不过
+    // floor（4）→ 其 dependent 被 gate out。注意这是**合成**形状,非 borrow 投影复现——真实
+    // borrow 是 in-memory、flag-dark、且 point=σ(−β) 通常 ≤0.5（见 helper docblock）;真 borrow
+    // 特性化（经 applyKgSoftLayer）defer 到 register #6。与既有 (l)（evidence=3 近孪生,prereq
+    // 角色）、(m)（self 角色）、(n)（边界=4）互补。归属:test 归本单元(gate 防御性质属 gate 测试
+    // 面);借值分支自身正确性 = kg-borrowing 单元 remediation。
     await seedPrereq('p1', 'F'); // p1 is F's only prerequisite.
-    await setHighPlZeroEvidence('p1'); // borrow-branch shape: p(L)=0.88 but evidence_count=0.
+    await setSyntheticHighPlZeroEvidence('p1'); // synthetic: p(L)=0.88 but evidence_count=0.
     await setNotMastered('F');
     // F's only prereq p1 clears p(L) 0.7 but NOT the evidence floor → NOT mastered-enough →
-    // F gated OUT (distinct from (l)'s 3-corrects shape; this is the evidence_count=0 shape).
+    // F gated OUT (distinct from (l)'s evidence=3 shape; this is the evidence_count=0 shape).
     expect(await learnableFrontier(testDb())).toEqual([]);
   });
 
@@ -406,56 +422,41 @@ describe('learnableFrontier (B3, YUK-349 #3)', () => {
   // The overflow fail-safe (depth/node-cap → blank frontier) now emits ONE console.warn in
   // learnableFrontierResolved, so all three consumers (composer / FrontierRail / nightly)
   // inherit it. Pin: overflow fires exactly once with the fail-safe payload; sparse + dense
-  // stay SILENT (negative assertions guard against emitting on the wrong branch).
+  // stay SILENT (negative assertions guard against emitting on the wrong branch). Spy is the
+  // describe-level warnSpy (beforeEach/afterEach above).
 
   it('(p) overflow → single console.warn carrying the fail-safe payload', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      // Reuse (d)/(j)/(k) overflow shape: a linear chain deeper than FRONTIER_DEPTH_LIMIT.
-      const n = FRONTIER_DEPTH_LIMIT + 4;
-      for (let i = 0; i < n; i++) await seedPrereq(`ow${i}`, `ow${i + 1}`);
-      const res = await learnableFrontierResolved(testDb());
-      expect(res.kind).toBe('overflow');
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('[frontier] closure overflow'),
-        expect.objectContaining({
-          depthOverflow: true,
-          depthLimit: FRONTIER_DEPTH_LIMIT,
-          nodeCap: FRONTIER_NODE_CAP,
-          rows: expect.any(Number),
-        }),
-      );
-    } finally {
-      warn.mockRestore();
-    }
+    // Reuse the (d)/(j)/(k) overflow shape: a linear chain deeper than FRONTIER_DEPTH_LIMIT.
+    await seedChain('ow', FRONTIER_DEPTH_LIMIT + 4);
+    const res = await learnableFrontierResolved(testDb());
+    expect(res.kind).toBe('overflow');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[frontier] closure overflow'),
+      expect.objectContaining({
+        depthOverflow: true,
+        depthLimit: FRONTIER_DEPTH_LIMIT,
+        nodeCap: FRONTIER_NODE_CAP,
+        rows: expect.any(Number),
+      }),
+    );
   });
 
   it('(q) sparse (no prereq edges) → NO console.warn (not the overflow branch)', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      await seedKc('sw1');
-      await setNotMastered('sw1');
-      const res = await learnableFrontierResolved(testDb());
-      expect(res.kind).toBe('sparse');
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
+    await seedKc('sw1');
+    await setNotMastered('sw1');
+    const res = await learnableFrontierResolved(testDb());
+    expect(res.kind).toBe('sparse');
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it('(r) dense (a real mastered-prereq closure) → NO console.warn', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      await seedPrereq('dwp', 'dwF');
-      await setMastered('dwp');
-      await setNotMastered('dwF');
-      const res = await learnableFrontierResolved(testDb());
-      expect(res.kind).toBe('dense');
-      expect(res.ids).toEqual(['dwF']);
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
+    await seedPrereq('dwp', 'dwF');
+    await setMastered('dwp');
+    await setNotMastered('dwF');
+    const res = await learnableFrontierResolved(testDb());
+    expect(res.kind).toBe('dense');
+    expect(res.ids).toEqual(['dwF']);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });

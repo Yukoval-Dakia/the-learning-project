@@ -28,6 +28,7 @@ export interface FrontierRailProps {
 // CodeRabbit minor：frontierQ 的 loading/error 绝不能被折叠成「暂无下一步」（把接口异常误显示
 // 成业务空态）。head 恒显，body 按态分。render helper（小写、内联调用而非 <Component/>），让
 // body element 直接嵌进 FrontierRail tree——单测以浅遍历 onClick 验导航，子组件会挡住遍历。
+// 红线核心句(YUK-551 §Q6):frontier=「结构可达」,非「容易/该会/正确率高」——tag/reason/标题文案勿引入难度承诺(完整版见文件头)。
 function renderFrontierBody({
   items,
   isLoading,
