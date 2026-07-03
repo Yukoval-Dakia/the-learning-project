@@ -28,25 +28,43 @@ const SRC_META: Record<StreamSource, SrcMeta> = {
   paper: { label: '打包卷', tone: 'coral', icon: 'layers' },
   on_demand: { label: '点播', tone: 'neutral', icon: 'send' },
   import: { label: '导入', tone: 'neutral', icon: 'record' },
-  // YUK-551 — frontier（B3 learnable_frontier 尾）。label/icon 逐字借自已上线姊妹组件
-  // FrontierRail.tsx（A5 S2/YUK-354）：label '下一步'（FrontierRail.tsx:72 frontier-tag-next）、
-  // icon 'target'（FrontierRail.tsx:96 + 设计源 screen-knowledge-a5.jsx:39）。tone 'hard' —— pface
-  // 设计源 PFACE_SRC（data-pface.jsx:6-13）无 frontier token，故换未占用既有 tone：SRC_META 已占
-  // info/again/good/coral/neutral，六态 badge token 集（globals.css .badge.tone-*）中唯一未占用者
-  // = 'hard'（避与 paper 的 coral 撞色，owner pre-flight 决策 B）。
-  frontier: { label: '下一步', tone: 'hard', icon: 'target' },
+  // YUK-551 — frontier（B3 learnable_frontier 尾）。label '下一步'/icon 'target' 逐字借自已上线
+  // 姊妹组件 FrontierRail（knowledge-a5 面,A5 S2/YUK-354）:frontier-tag-next（FrontierRail.tsx
+  // renderFrontierBody,:78）+ 头部 target icon（FrontierRail 组件,:102;设计源
+  // screen-knowledge-a5.jsx:39）——跨面借用经 owner 批准（2026-07-03,pface 设计源 PFACE_SRC
+  // data-pface.jsx:6-13 无 frontier token）。tone 'neutral':唯一既不断言难度也不断言掌握判定的
+  // tone（info/good/hard/again 各有判定语义,coral 与 paper 撞色）,与 on_demand/import 共用
+  // neutral 有先例;「下一步」的辨识度由 label + target icon 承担。owner 2026-07-03 重裁——初裁
+  // 'hard' 的「六态中唯一未占用」前提被 review 证伪（neutral 本就被 on_demand+import 双占,
+  // 「唯一性」从不是真约束;而唯一未占用的 hard 是全仓警示琥珀,不宜作中性来源标）。
+  frontier: { label: '下一步', tone: 'neutral', icon: 'target' },
 };
 
 // 未知 source 防御 fallback（YUK-551）——src/ui/lib/api.ts 的 apiJson 是运行时零校验裸 cast
 // （`res.json() as Promise<T>`），源枚举有四份手维护副本无共享 SoT。TS `Record<StreamSource>`
 // 穷尽性只保护本文件定义处字面量，对「后端产出 FE 未同步新源」这一失效模式零防护（'frontier'
-// 漂移就是活证据）。集中式 accessor（入参 widen 到 string）+ fallback = 归队 QuestionsPage.tsx:80
-// 的 srcMeta idiom，镜像 softmax-selection.ts resolveEnumKind「未知枚举值→安全兜底，绝不 throw」。
-const FALLBACK_SRC_META: SrcMeta = { label: '其它', tone: 'neutral', icon: 'dots' };
+// 漂移就是活证据）。集中式 accessor（入参 widen 到 string）+ fallback 与既有 srcMeta idiom 同型
+// （QuestionsPage/DraftReviewPage/QuestionDetailPage 已各复制一份、待收敛——makeLookup 抽取收敛
+// 是 tracked follow-up），并镜像 softmax-selection.ts resolveEnumKind「未知枚举值→安全兜底，
+// 绝不 throw」。fallback 三字段逐字对齐三姊妹页的 *_FALLBACK（'其它来源'/neutral/'doc'）。
+const SRC_META_FALLBACK: SrcMeta = { label: '其它来源', tone: 'neutral', icon: 'doc' };
+
+// dev-only once-per-source 提醒（YUK-551 review F2）:未知 source 纯静默 fallback 会把「后端已
+// 发新源、FE 忘同步」藏进『其它来源』badge——dev 下每个未知值 warn 一次（模块级 Set 去重,
+// 不做无门槛 per-render warn）,prod 零噪声。
+const warnedSources = new Set<string>();
 
 // 所有 SRC_META 访问一律经此（PfSrcBadge + done 行锚点 + PfSolo 顶栏）——不再有 bare index。
 function srcMeta(source: string): SrcMeta {
-  return SRC_META[source as StreamSource] ?? FALLBACK_SRC_META;
+  const meta = SRC_META[source as StreamSource];
+  if (meta) return meta;
+  if (import.meta.env.DEV && !warnedSources.has(source)) {
+    warnedSources.add(source);
+    console.warn(
+      `[PfStream] 未知 stream source '${source}'——已回退『其它来源』badge。若为新增后端源，请同步 practice-api.ts StreamSource 联合 + PfStream SRC_META。`,
+    );
+  }
+  return SRC_META_FALLBACK;
 }
 
 export function PfSrcBadge({ source }: { source: string }) {

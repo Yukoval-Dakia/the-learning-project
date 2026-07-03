@@ -3,6 +3,8 @@
 > **Program**: YUK-538（全项目逻辑打磨），单元 `learnable-frontier-gate`（master register `docs/design/2026-07-02-project-logic-master-register.md` line 366-381）。
 > **Provenance**: research dossier `scratchpad/research/2026-07-02-worklist-frontier-gate-research.md`（三腿 code/lit/OSS + P1 回填）+ 快赢批 `docs/design/2026-07-02-quickwin-batch-pfa-tagging-ocrvlm.md` §A（已 ship，YUK-539/PR#691——evidence-floor=4 + AND-gate + γ/ρ retune，本单元不重做）。**本终稿并入两轴对抗（Lens A 算法/阈值治理 + Lens B 运行态/UI 传播）的裁决——见文末「Attack 裁决 ledger」。**
 > **接地**: main `edc7cf62`（`git rev-parse` 实测），所有 file:line 现场重新核验（含两轴 attack 引用的每一条）。
+> **行号双引用注（review C1/C2, 2026-07-03）**: 「现状」节行号是 `edc7cf62` 历史快照,不随实施漂移,保持原样;决策/机制/测试节中指向**实施后仍存活**位置的引用已刷新为「函数名+行号」双引用（行号=YUK-551 review-fix 轮后快照,函数名是行号再漂移时的稳定锚）。
+> **批准实录（review 回写, 2026-07-03）**: 切片 1 UI pre-flight 两问已由 owner 在主 session（AskUserQuestion）双批,其中 B 经两轮裁决——详见 §切片 1 UI pre-flight 与 §开放问题 5（已决）。
 > **红线**：n=1 不拟合 item 参数；阈值数值变更 = owner 决策（本 spec 只呈选项+依据，不代拍数字）；数据门只 gate 翻转不 gate build；evidence-first；科目是视角不是结构。UI 代码实施前须先过 CLAUDE.md「UI Design Compliance」pre-flight（逐字引 design doc + 声明组件类型 + touch 文件清单，等 owner approve）。
 
 ---
@@ -78,8 +80,8 @@
 
 | 选项 | 依据 | 代价 |
 |---|---|---|
-| **(a) 在 `learnableFrontierResolved` overflow 返回处（`learnable-frontier.ts:224`）单点 `console.warn`** | 三消费点（composer 薄壳、FrontierRail、nightly）**一次继承**——修掉草稿漏的 `frontier-read.ts:217` 知识页盲点，且不用往每个 caller 手抄。`console.warn` 不是 DB 写，不破坏模块 PURE-READ 不变量（INVARIANT BLOCK「no writes」指 DB 写）。overflow 是**持久图病态**非瞬态——一旦 trip，所有 per-recompute 路径（含 per-answer `reRankAfterAnswer`）都 warn，「首次发生即可观测」，解掉草稿原方案「fail-safe 从不 fire→observed warn 永不产生」的近循环触发。 | 单文件单站点 + 测试。三消费点零改动（`stream-store.ts:205`/`frontier-read.ts:217` 保持不动，经 `learnableFrontierResolved` 继承）。 |
-| (b) 往每个 caller 手抄 `console.warn` | register 字面「log/emit」 | **REJECT**——草稿只抄进 1 个（`stream-store.ts`）、漏了 `frontier-read.ts:217`；手抄 N 份天然会漏、且要改多文件。 |
+| **(a) 在 `learnableFrontierResolved` overflow 返回处（接地 `:224`;落地=overflow 分支 `:258`,warn `:268`）单点 `console.warn`** | 三消费点（composer 薄壳、FrontierRail、nightly）**一次继承**——修掉草稿漏的 `frontier-read.ts` `loadFrontierRail`（落地 `:220-221`）知识页盲点，且不用往每个 caller 手抄。`console.warn` 不是 DB 写，不破坏模块 PURE-READ 不变量（INVARIANT BLOCK「no writes」指 DB 写）。overflow 是**持久图病态**非瞬态——一旦 trip，所有 per-recompute 路径（含 per-answer `reRankAfterAnswer`）都 warn，「首次发生即可观测」，解掉草稿原方案「fail-safe 从不 fire→observed warn 永不产生」的近循环触发。 | 单文件单站点 + 测试。三消费点零改动（`stream-store.ts` `learnableFrontier(db)`(:205)/`frontier-read.ts` `loadFrontierRail`(:220-221) 保持不动，经 `learnableFrontierResolved` 继承）。 |
+| (b) 往每个 caller 手抄 `console.warn` | register 字面「log/emit」 | **REJECT**——草稿只抄进 1 个（`stream-store.ts`）、漏了 `frontier-read.ts` `loadFrontierRail` 消费点；手抄 N 份天然会漏、且要改多文件。 |
 | (c) 结构化 meta 传播 → UI 暴露 | owner 关心「data-fix 阶段能看见」 | **REJECT-for-now**——`StreamPlan` 不持久化、`getStream` 从表回读不读 `StreamPlan`，加字段对 owner 零可见度提升；UI 暴露无可复用设计词汇（`YUK-542` `RecordLanding` 是另一 surface）。 |
 
 **裁决：(a) 单点 emit。** 升级触发：**若 `[frontier] closure overflow` 在生产被观测 ≥1 次，升级到 (c) 结构化 meta + UI 暴露**——记在 §M1 代码注释 + §开放问题。
@@ -91,17 +93,17 @@
 
 **立即修复**（补 `'frontier'`）：
 - `practice-api.ts:15` `StreamSource` 联合加 `'frontier'`（今天已知的修复，源枚举同步）。
-- `PfStream.tsx` `SRC_META` 加 `frontier: { label: '下一步', tone: 'coral', icon: 'target' }`（三字段逐字溯源见 §M2）。
+- `PfStream.tsx` `SRC_META` 加 `frontier: { label: '下一步', tone: 'neutral', icon: 'target' }`（三字段逐字溯源见 §M2。tone 经两轮裁决:草稿 coral→pre-flight B 初裁「换未占用 tone」执行选 hard→review 证伪「唯一未占用」前提→owner 2026-07-03 重裁 **neutral**,全程见 §切片1 pre-flight）。
 
 **穷尽性护栏——集中式 accessor（唯一真正防再犯的形态）**：
 
 | 选项 | 依据 | 代价 |
 |---|---|---|
 | (A) 仅 `Record<StreamSource>` 类型穷尽 | 加 key 后编译期强制补键 | **不成立为护栏**——`api.ts:70` 裸 cast，穷尽性只保护定义处字面量，对未来 FE 未同步新源零防护；且**与 string-accessor 互斥**（Record 精确 union key 要求 `source: StreamSource`，string accessor 要求 `source: string`——姊妹 idiom 已选 string）。 |
-| **(B) 集中式 `srcMeta(source: string)` accessor，`SRC_META[source] ?? FALLBACK_SRC_META`，`PfSrcBadge` 与 `:128` 两站点都经它** | 归队 `QuestionsPage.tsx:80-82` 已在用的 `srcMeta(source: string) => MAP[source] ?? FALLBACK` idiom（`DraftReviewPage:66`/`QuestionDetailPage:91` 同）；镜像 `softmax-selection.ts:186-189` `resolveEnumKind`「未知枚举值→安全兜底，绝不 throw」。**覆盖草稿漏的 `:128` 第二站点**——不可漏的运行时 fallback。 | 新增 1 个 accessor + 1 常量；`PfSrcBadge` 与 `:128` 两处改成经 accessor；`SRC_META` 保留 `Record<StreamSource>` 作**字面量定义**形态（编译期仍强制补齐已知键），但 accessor **入参 widen 到 `string`**——不再把 `Record` 穷尽性当「护栏」。 |
+| **(B) 集中式 `srcMeta(source: string)` accessor，`SRC_META[source] ?? SRC_META_FALLBACK`，`PfSrcBadge` 与 done 行两站点都经它** | 与既有 `srcMeta(source: string) => MAP[source] ?? FALLBACK` idiom **同型**（`QuestionsPage.tsx:80-82`/`DraftReviewPage:66`/`QuestionDetailPage:91`——该 idiom 已三份复制、待收敛,`makeLookup` 抽取收敛是 tracked follow-up,见 §Linear 捕获门;措辞校正 per review R1,原「归队」误示存在共享实现）；镜像 `softmax-selection.ts` `resolveEnumKind`「未知枚举值→安全兜底，绝不 throw」。**覆盖草稿漏的 done 行第二站点（接地 `:128`,落地 doneAnchor `:167`）**——不可漏的运行时 fallback。 | 新增 1 个 accessor + 1 常量；`PfSrcBadge` 与 done 行两处改成经 accessor；`SRC_META` 保留 `Record<StreamSource>` 作**字面量定义**形态（编译期仍强制补齐已知键），但 accessor **入参 widen 到 `string`**——不再把 `Record` 穷尽性当「护栏」。 |
 
 **裁决：(B)，`SRC_META` 定义仍用 `Record<StreamSource>`（保留编译期已知键强制），但访问一律经 `srcMeta(source: string)`。** `practice-api.ts` 类型联合照常同步（今天已知修复），运行时 fallback 额外加（防未来漂移）——两者职责不同、不互斥。
-**render-surface 矩阵（触及全部消费点）**：`PfSrcBadge` 被 `PfStream.tsx:133`、`PfStream.tsx:158`、**`PfSolo.tsx:317`**（散题作答顶栏，live）消费；`:128` 是独立第二站点。修 accessor 覆盖全部，但 pre-flight 触及清单与测试矩阵**必须显式含 PfSolo 与 :128**。
+**render-surface 矩阵（触及全部消费点）**：`PfSrcBadge` 被 `PfStream.tsx` done 行(:172)、pending 行(:197)、**`PfSolo.tsx:317`**（散题作答顶栏，live）消费；done 行 `doneAnchor`(:167,接地 :128) 是独立第二站点。修 accessor 覆盖全部，但 pre-flight 触及清单与测试矩阵**必须显式含 PfSolo 与 doneAnchor 站点**。
 
 ---
 
@@ -110,7 +112,7 @@
 | 子问题 | 选项 | 依据 | 裁决 |
 |---|---|---|---|
 | 阈值/常量联合记录 | (b) 保留分工 + 联合 docblock | ALEKS 论文刻意拒绝单一标量展示掌握度（Science_Behind_ALEKS.pdf，Table 2 只给两份清单）——旁证多组独立阈值分工更贴合该问题域。三腿一致：需一次显式文档动作，非改代码。 | **(b)，文档/注释动作。** docblock 内容见 §M3（并入 ①a/①b/⑤）。 |
-| Q3a — `masteryTone`(0.67/0.45) 是否对齐 `MASTERED_PL_THRESHOLD`(0.7)+floor(4) | (a) 对齐；(b) 保留独立 + 交叉引用 | **诚实成本修正（Lens A ①a）**：选项 (a) **不是**「单常量/快照小改」——`0.67/0.45` 是 YUK-335 跨三面统一点（`masteryTone` + `NodeDrawer.decayCue:33-34` + legend），对齐需**三面同步回改**，否则重开 ring-vs-pill 分裂。且 `[0.67, 0.70)` 是 n=1 未拟合标量上 ~0.03 宽的窄窗，dossier 已测「无同屏矛盾」（FrontierRail chip 用 `masteryBandIdx` 非 `masteryTone`）——**未见任何用户可观测 artifact**。 | **不代拍数值，呈两选项给 owner（成本已诚实标注）**。当前默认 = (b) 保留独立 + 加交叉引用注释。选项 (a) 若被选，须按「re-touch YUK-335 三面统一（`masteryTone` + `decayCue` + legend 一起动）」范围实施，非一行改。 |
+| Q3a — `masteryTone`(0.67/0.45) 是否对齐 `MASTERED_PL_THRESHOLD`(0.7)+floor(4) | (a) 对齐；(b) 保留独立 + 交叉引用 | **诚实成本修正（Lens A ①a）**：选项 (a) **不是**「单常量/快照小改」——`0.67/0.45` 是 YUK-335 跨三面统一点（`masteryTone`(:22-27) + `NodeDrawer.tsx` `decayCue()`(:36,接地 :33-34) + legend），对齐需**三面同步回改**，否则重开 ring-vs-pill 分裂。且 `[0.67, 0.70)` 是 n=1 未拟合标量上 ~0.03 宽的窄窗，dossier 已测「无同屏矛盾」（FrontierRail chip 用 `masteryBandIdx` 非 `masteryTone`）——**未见任何用户可观测 artifact**。 | **不代拍数值，呈两选项给 owner（成本已诚实标注）**。当前默认 = (b) 保留独立 + 加交叉引用注释。选项 (a) 若被选，须按「re-touch YUK-335 三面统一（`masteryTone` + `decayCue` + legend 一起动）」范围实施，非一行改。 |
 | Q3b — 0.7 是否要「回应」BKT 惯例 0.95 | 关闭为**确定性文档动作**，非 owner 数值决策 | **Lens A ①b**：p(L)=σ(PFA logit) 点估计 ≠ BKT P(learned) 后验；名字撞车（「p(L)」是 BKT 自己记号）；0.95 **off-scale、不迁移**；置信度在本项目住在 band + evidence floor（这正是「提高置信门」= 加 evidence floor 而非抬 p(L) 的原因）。「0.7 是否向 0.95 靠」是 malformed，不是 live 决策。 | **确定性 doc 动作，写进 M3 disambiguation，close 而非 defer**。残留 owner 选择仅是 **doc-scope**（联合 docblock 是否够，还是**另加**一段「frontier-readiness ≠ mastery-retirement」的正面论证）——这是文档篇幅偏好，不是数值决策（见开放问题）。 |
 | Q3c — evidence-floor 维度是否需 UI 可见 | DEFER | 当前「低置信」标签来自 SE-based 旗标，非 evidence-floor；一个 `evidence_count=3`（p(L)≥0.7 未过门）的 KC 在 `MasteryRing`/`BandChip` 上可能显示「非低置信」——真实可见性缺口。但要么改造 `BandChip` 现有语义、要么新增视觉态，皆设计决策；改动面 4-6 文件；且缺口只在**非 frontier** 的 `MasteryRing` 消费点（frontier 相关面 `FrontierRail` 已带 `evidence_count` 管道，`frontier-read.ts:255-266`）。 | **DEFER**，owner 级开放问题；选中则独立 gated-future UI 切片 + 完整 pre-flight。 |
 
@@ -123,7 +125,7 @@
 | 选项 | 依据 | 裁决 |
 |---|---|---|
 | test 归 #4（本单元） | gate 自身防御性质属 gate 的测试面。 | **裁：test 归本单元。** |
-| **测试形态：DB gate 测试（非叶子谓词单测）** | **Lens A ③**：草稿 M4 提议的 `learnable-frontier.unit.test.ts` 只断言叶子谓词 `isMasteredForFrontier(m,e)`——(1) **冗余**：`learnable-frontier.db.test.ts` 已 ship `(l)`(:326-335，3 clean corrects 的 prereq 不解锁 dependent)/`(m)`(:337-346，self 角色)/`(n)`(:348-358，边界=4)，经**真实 gate** `learnableFrontier(testDb())` 走完整闭包；(2) **测错层/假信心**：叶子单测自称「characterize kg-borrowing 交互」却从不 exercise 借值分支/`getMasteryProjection`/闭包——它是 change-detector，若真回归（`:261` `prereqKcs.every(masteredEnough)` 被降级为裸 `pL(p) >= T`）发生，叶子单测仍 **GREEN**，而 `(l)` 正确 RED。 | **裁：drop 叶子谓词单测；改为通过真实 gate 的 DB 测试**——seed 一个 `evidence_count=0` 的 prereq（正是借值分支的确切形状，区别于 `(l)` 的「3 corrects」形状），断言 dependent 经 `learnableFrontierResolved` 被 gate out。docblock 交叉引用既有 `(l)/(m)/(n)`（它们已是 floor 语义的 characterization）。 |
+| **测试形态：DB gate 测试（非叶子谓词单测）** | **Lens A ③**：草稿 M4 提议的 `learnable-frontier.unit.test.ts` 只断言叶子谓词 `isMasteredForFrontier(m,e)`——(1) **冗余**：`learnable-frontier.db.test.ts` 已 ship `(l)`(:326-335，3 clean corrects 的 prereq 不解锁 dependent)/`(m)`(:337-346，self 角色)/`(n)`(:348-358，边界=4)，经**真实 gate** `learnableFrontier(testDb())` 走完整闭包；(2) **测错层/假信心**：叶子单测自称「characterize kg-borrowing 交互」却从不 exercise 借值分支/`getMasteryProjection`/闭包——它是 change-detector，若真回归（`:261` `prereqKcs.every(masteredEnough)` 被降级为裸 `pL(p) >= T`）发生，叶子单测仍 **GREEN**，而 `(l)` 正确 RED。 | **裁：drop 叶子谓词单测；改为通过真实 gate 的 DB 测试**——seed 一个 `evidence_count=0` 的 prereq（evidence_count=0 是借值分支会携带的值;但这是**合成**形状、非借值投影复现——真实 borrow in-memory 且 p(L)=σ(−β) 通常 ≤0.5,见 §M4 review A2 校正注。区别于 `(l)` 的「3 corrects」形状），断言 dependent 经 `learnableFrontierResolved` 被 gate out。docblock 交叉引用既有 `(l)/(m)/(n)`（它们已是 floor 语义的 characterization）。 |
 | tracked trigger 归 #6 | 「flag 翻转须重审 evidence-floor 语义」属 kg-borrowing 单元 remediation 范围。 | **裁：tracked trigger 归 #6**，本单元只显式钉交叉引用（Linear sub-task 挂 YUK-538），不实现 #6 代码。 |
 
 ---
@@ -153,7 +155,8 @@ dossier P1 回填已完成双源校对（Cosyn et al. 2021 JMP 的 27% 冷启首
 
 ### M1 — Q1：**单点** overflow emit（`learnable-frontier.ts`，覆盖三消费点）
 
-`learnable-frontier.ts`，在 :224 的 overflow 返回处 emit：
+`learnable-frontier.ts`，在 overflow 返回处（接地 :224;落地=分支 :258-279,warn :268）emit。
+**落地注（review 轮）**：实际 warn payload 额外携 `hint`（处置提示:depth 溢出→查过深链/上游环;node-cap→查异常扇出）+ `see`（指回本 spec §Q1）两字段——review F5;以下为设计样稿：
 
 ```ts
 // 现状（:222-224）：
@@ -165,7 +168,7 @@ if (depthOverflow || nodeOverflow) return { kind: 'overflow', ids: [] };
 const depthOverflow = normalised.some((r) => r.depth > FRONTIER_DEPTH_LIMIT);
 const nodeOverflow = normalised.length > FRONTIER_NODE_CAP;
 if (depthOverflow || nodeOverflow) {
-  // YUK-XXX（本 spec Q1）：闭包撞 depth/node-cap fail-safe，frontier 整体坍缩为空——与
+  // YUK-551（本 spec Q1）：闭包撞 depth/node-cap fail-safe，frontier 整体坍缩为空——与
   // 「稀疏图无 prereq 边」的 sparse 态语义完全不同（前者图过密/病态，后者冷启预期态）。
   // 在此**单点** emit，让全部三个消费点（composer 经 learnableFrontier 薄壳、FrontierRail
   // 经 frontier-read.ts:217、nightly 经 kind 分支）一次继承可观测性——不往各 caller 手抄。
@@ -205,20 +208,25 @@ const SRC_META: Record<StreamSource, { label: string; tone: string; icon: string
   paper: { label: '打包卷', tone: 'coral', icon: 'layers' },
   on_demand: { label: '点播', tone: 'neutral', icon: 'send' },
   import: { label: '导入', tone: 'neutral', icon: 'record' },
-  frontier: { label: '下一步', tone: 'coral', icon: 'target' },
+  frontier: { label: '下一步', tone: 'neutral', icon: 'target' }, // tone 两轮裁决见下方溯源节
 };
 
-// 未知 source 防御 fallback（YUK-XXX 本 spec Q2）——src/ui/lib/api.ts:70 的 apiJson 是运行时
+// 未知 source 防御 fallback（YUK-551 本 spec Q2）——src/ui/lib/api.ts:70 的 apiJson 是运行时
 // 零校验裸 cast（`res.json() as Promise<T>`），源枚举有四份手维护副本（schema.ts:1446 $type /
 // stream-composer StreamPlanItem.source / practice-api.ts:15 / 本 SRC_META keys）无共享 SoT。
 // TS Record 穷尽性只保护本文件定义处字面量，对「后端产出 FE 未同步新源」零防护（'frontier'
-// 就是活证据）。集中式 accessor（入参 string）+ fallback = 归队 QuestionsPage.tsx:80-82 的
-// srcMeta idiom，镜像 softmax-selection.ts:186-189「未知枚举值→安全兜底，绝不 throw」。
-const FALLBACK_SRC_META = { label: '其它', tone: 'neutral', icon: 'dots' } as const;
+// 就是活证据）。集中式 accessor（入参 string）+ fallback 与既有 srcMeta idiom **同型**
+// （QuestionsPage/DraftReviewPage/QuestionDetailPage 已三份复制、待收敛——review R1 措辞校正,
+// 原「归队」误示存在共享实现;makeLookup 抽取收敛见捕获门），镜像 softmax-selection.ts
+// resolveEnumKind「未知枚举值→安全兜底，绝不 throw」。命名+三字段逐字对齐三姊妹 *_FALLBACK
+// （'其它来源'/neutral/'doc'——review R2）。
+const SRC_META_FALLBACK = { label: '其它来源', tone: 'neutral', icon: 'doc' } as const;
 
-// 所有 SRC_META 访问一律经此（PfSrcBadge + done 行锚点 :128 + PfSolo）——不再有 bare index。
+// 所有 SRC_META 访问一律经此（PfSrcBadge + done 行锚点 + PfSolo）——不再有 bare index。
+// 落地版另有 dev-only once-per-source console.warn（review F2:未知源纯静默会把「后端已发新源、
+// FE 忘同步」藏进 fallback badge;模块级 Set 去重 + import.meta.env.DEV 门,prod 零噪声）。
 function srcMeta(source: string): { label: string; tone: string; icon: string } {
-  return SRC_META[source as StreamSource] ?? FALLBACK_SRC_META;
+  return SRC_META[source as StreamSource] ?? SRC_META_FALLBACK;
 }
 
 export function PfSrcBadge({ source }: { source: string }) {
@@ -232,7 +240,7 @@ export function PfSrcBadge({ source }: { source: string }) {
 }
 ```
 
-`PfStream.tsx:128`（done 行第二站点，改成经 accessor）：
+`PfStream.tsx` done 行第二站点（接地 `:128`,落地 doneAnchor `:167`），改成经 accessor：
 
 ```ts
 // 现状：const doneAnchor = anchorFromReasoning(it.reasoning) ?? SRC_META[it.source].label;
@@ -240,18 +248,19 @@ const doneAnchor = anchorFromReasoning(it.reasoning) ?? srcMeta(it.source).label
 ```
 
 **逐字溯源**（Q2 决策要求「确切文案/tokens」，实测存在）：
-- `label: '下一步'` — 逐字取自已上线 `FrontierRail.tsx:72`。
-- `icon: 'target'` — `FrontierRail.tsx:96` + 设计源 `screen-knowledge-a5.jsx:39`；`LoomIcon.tsx:65` 实测存在。
-- `tone: 'coral'` — 设计源 `knowledge-a5.css`（`.frontier-ic` background `var(--coral)`）；`web/src/globals.css:6551` `.badge.tone-coral` 实测合法。**⚠️ 与 `paper` 撞色**（`paper` 也是 `coral`，`data-pface.jsx:10` / `PfStream.tsx:26`）——见 pre-flight owner question。
-- `FALLBACK_SRC_META` `tone:'neutral'`（`globals.css:6546` 实测）/`icon:'dots'`（`LoomIcon.tsx:54` 实测）——复用既有色系/icon，不新增视觉语言。
+- `label: '下一步'` — 逐字取自已上线 `FrontierRail.tsx` `renderFrontierBody` 的 frontier-tag-next（落地 :78,接地 :72）。
+- `icon: 'target'` — `FrontierRail.tsx` 头部 icon（落地 :102,接地 :96）+ 设计源 `screen-knowledge-a5.jsx:39`；`LoomIcon.tsx:65` 实测存在。
+- `tone: 'neutral'` — **两轮裁决实录（review 回写,2026-07-03）**：草稿原提 `coral`（FrontierRail 设计源 `.frontier-ic` var(--coral)）并自标与 `paper` 撞色 ⚠️ → pre-flight B 初批「换未占用既有 tone」→ 执行选 `hard`（依据「六态中唯一未占用」）→ review 证伪该前提：**neutral 本就被 on_demand+import 双占,「唯一性」从不是真约束;而唯一未占用的 hard 是全仓警示琥珀（QDIFF 中等/decayCue 缓降/BandChip src-hard 等判定语义）,不宜作中性来源标** → 带修正事实回抛 owner → **owner 同日重裁 `neutral`**：唯一既不断言难度也不断言掌握判定的 tone,与 on_demand/import 共用有先例,「下一步」辨识度由 label + target icon 承担。`globals.css:6546` `.badge.tone-neutral` 实测合法。
+- `SRC_META_FALLBACK`（review R2 更名自 FALLBACK_SRC_META,对齐三姊妹 `*_FALLBACK` 后缀）三字段 `'其它来源'/neutral/'doc'` 逐字对齐 `QSOURCE_FALLBACK`/`DR_SOURCE_FALLBACK`（QuestionsPage/DraftReviewPage/QuestionDetailPage 实测同值）——复用既有色系/icon，不新增视觉语言。
 
 ### M3 — Q3：联合 docblock（并入 ①a/①b/⑤；文档/注释，零行为变更）
 
-`learnable-frontier.ts`，在 `MASTERED_PL_THRESHOLD`（:65）之前新增：
+`learnable-frontier.ts`，在 `MASTERED_PL_THRESHOLD`（接地 :65,落地 :99）之前新增。
+**落地注（review 轮）**：落地版内部引用已刷成函数名+行号双引用——`masteryTone()`(:22-27)、`NodeDrawer.tsx decayCue()`(:36)、②常量落地 :99/:121、③常量 :48/:60 未动;以下为设计样稿（样稿内 :65/:87/:17-22/:33-34 为接地快照）：
 
 ```ts
 /**
- * ═══ 阈值/常量联合记录（YUK-XXX 本 spec Q3，register P2 target shape item 2）═══
+ * ═══ 阈值/常量联合记录（YUK-551 本 spec Q3，register P2 target shape item 2）═══
  * 本模块与相邻模块共有多组独立、各自服务不同消费者的阈值/常量，此前无单一 artifact 交叉引用。
  * 数值本身是各自 owner-fixed 决策，不在此改。
  *
@@ -312,11 +321,11 @@ it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-br
 });
 ```
 
-> helper 说明：若既有 fixture 无「高 p(L) + evidence_count=0」直设入口，实施者用与 `setNearMastered` 同款直写 `mastery_state`（success/fail=0 → cold-start p(L)=0.5 不够；需构造 mastery≥0.7 且 evidence_count=0——可直插一行 mastery_state 令 point≥0.7、evidence_count=0，模拟借值合成结果）。这正是 `state.ts` 借值分支产出的态：`mastery=band.point`（可≥0.7）、`evidence_count:0`、`low_confidence:true`。
+> helper 说明（**review A2 校正**——原文「模拟借值合成结果/这正是借值分支产出的态」为假,如实重记）：直插一行 `mastery_state`（success=4/fail=0/evidence_count=0 → point=σ(2.0)=0.88）得到的是**合成**形状——隔离 AND-gate 的 **evidence 臂**（evidence_count=0 取借值分支会携带的值）,**不是**借值投影复现。真实 borrow 是 **in-memory**（`applyKgSoftLayer` 合成投影条目,从不写 `mastery_state` 行）、flag-dark,且其 point=σ(−β)（`state.ts` `pfaLogit(β,γ,ρ,0,0)`）对 β≥0 锚 **≤0.5**——真借来的 prereq 通常连 p(L) 臂都过不了。合成高 p(L) 是刻意的 over-approximation：钉「**即便** p(L) 臂过了,evidence floor 单臂也 gate」。落地 helper 名 `setSyntheticHighPlZeroEvidence`（诚实化更名自草稿 `setEvidenceZeroHighPL`）;真 borrow 特性化（经 `applyKgSoftLayer` 本体）defer 到 register #6（kg-borrowing 单元）。
 
 ### M5 — Q6：三处措辞红线注释 + Q7 rerank-asymmetry 注释（Lens B MINOR-7）
 
-三处措辞红线（`frontier-read.ts:82`、`softmax-selection.ts:205`、`FrontierRail.tsx:1`）各加：
+三处措辞红线（`frontier-read.ts` `denseReason()` 前——落地注释 :81-83、`softmax-selection.ts` `frontierReasoning()` 前——落地注释 :206-209、`FrontierRail.tsx` 文件头——落地 :8-11）各加（**落地注**：FrontierRail 另在 `renderFrontierBody` 就近补一行红线核心句 :31,防「只读局部不读文件头」漏看——review F4）：
 
 ```ts
 // 措辞红线（本 spec §Q6，Cosyn et al. 2021 JMP 实证 outer-fringe 首答正确率仅 ~27%）：
@@ -324,7 +333,7 @@ it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-br
 // 详见 scratchpad/research/2026-07-03-frontier-gate-draft.md §Q6。
 ```
 
-`stream-store.ts` 的 `reRankAfterAnswer` pool filter（:926-932）加一行决策注释（Lens B MINOR-7，实测过滤只含 `variant`/`new_check`，排除 `frontier`）：
+`stream-store.ts` 的 `reRankAfterAnswer` pool filter（`allPendingNonDue` filter——接地 :926-932,落地 filter :931-937/注释 :926-930）加一行决策注释（Lens B MINOR-7，实测过滤只含 `variant`/`new_check`，排除 `frontier`）：
 
 ```ts
 // 设计决策（本 spec Q7/Lens B MINOR-7）：frontier 进初始 softmax sampler 池，但**排除**在
@@ -339,23 +348,23 @@ it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-br
 
 | # | 内容 | 类型 | 文件（创建/修改） | pre-flight |
 |---|---|---|---|---|
-| **1（先）** | Q2：crash 修复 + 集中式 accessor（覆盖 `:32` + `:128` + PfSolo） | **UI** | 修改 `practice-api.ts`（类型 +frontier）；修改 `PfStream.tsx`（`SRC_META` +frontier、`FALLBACK_SRC_META`、新 `srcMeta` accessor、`PfSrcBadge` 入参 widen、`:128` 经 accessor）；新建 `PfStream.unit.test.tsx` | **是——见下方 UI pre-flight** |
-| 2 | Q1：overflow 单点 emit | server-only | 修改 `learnable-frontier.ts`（:224 单站点）；修改 `learnable-frontier.db.test.ts`（复用既有 `(d)/(j)/(k)` overflow 建图，断言 warn fire + sparse/dense 不 fire） | 不需要（非 UI） |
+| **1（先）** | Q2：crash 修复 + 集中式 accessor（覆盖 `:32` + `:128` + PfSolo） | **UI** | 修改 `practice-api.ts`（类型 +frontier）；修改 `PfStream.tsx`（`SRC_META` +frontier、`SRC_META_FALLBACK`(review R2 名)、新 `srcMeta` accessor、`PfSrcBadge` 入参 widen、done 行 doneAnchor 经 accessor）；新建 `PfStream.unit.test.tsx` | **是——见下方 UI pre-flight** |
+| 2 | Q1：overflow 单点 emit | server-only | 修改 `learnable-frontier.ts`（overflow 返回分支单站点,接地 :224/落地 :258-279）；修改 `learnable-frontier.db.test.ts`（复用既有 `(d)/(j)/(k)` overflow 建图，断言 warn fire + sparse/dense 不 fire） | 不需要（非 UI） |
 | 3 | Q3+Q6+Q7：文档/注释 | docs-only | 修改 `learnable-frontier.ts`（联合 docblock）、`mastery-tone.ts`（回指）、`frontier-read.ts`/`softmax-selection.ts`/`FrontierRail.tsx`（措辞红线）、`stream-store.ts:926`（rerank-asymmetry 注释） | 不需要（纯注释） |
 | 4 | Q4：DB gate 测试 `(o)` | test-only | 修改 `learnable-frontier.db.test.ts`（+1 条经真实 gate 的 evidence_count=0 测试；**不新建叶子单测**） | 不需要（非 UI） |
 | — | Q5 | 无代码变更，仅存档 | — | — |
 
 **建议顺序**：**切片 1（crash）先落**——它是唯一 live-reachable 缺陷（frontier 走 default softmax 路径，一旦有 live prereq 边被 accept + prereq mastered 即可达，且撞「首次解锁」时刻）；切片 2（overflow log）修的是**从未触发**的可观测性缺口。2/3/4 低风险可并行/合并；切片 1 唯一 UI 改动，独立 PR + 独立 review。
 
-### 切片 1（Q2）的 UI pre-flight（按 CLAUDE.md 要求提前完成，供 owner approve）
+### 切片 1（Q2）的 UI pre-flight（**已决——批准实录,review 回写 2026-07-03**）
 
-1. **逐字引用的 design doc 段落 + 显式 owner question**：本单元**没有**覆盖 `/practice` `PfSrcBadge` 的 design doc 新段落——设计源 `docs/design/loom-refresh/project/data-pface.jsx:6-13`（`PFACE_SRC`，`SRC_META` 的 1:1 港口）**本身也无** `frontier` key（该设计文件早于 B3 frontier 落地；frontier 设计 token 只存在于 `knowledge-a5.*`，即 FrontierRail 的 surface）。故本切片是**从已上线、已 owner 审阅通过的姊妹组件 `FrontierRail.tsx`（A5 S2/YUK-354）逐字借用文案/icon/色系**（§M2 三条溯源）。CLAUDE.md pre-flight 要求「找不到就停下问」——**故 owner 需明批以下两问**：
-   - **Q-preflight-A（跨面 token 借用）**：批准 `frontier` badge 的 `label/icon/tone` 从 FrontierRail(knowledge-a5) 借到 pface surface 吗？（pface 设计源 `PFACE_SRC` 无 frontier token；这是「同概念系统内横向复用」而非发明新视觉语言，但 owner 应知情批准这个替代。）
-   - **Q-preflight-B（撞色）**：`frontier` 用 `tone:'coral'` 会与 `paper`（也 coral，`data-pface.jsx:10`）**同色**，仅靠 icon 区分（`target` vs `layers`）。批准 coral 复用，还是给 frontier 挑一个 distinct tone？（badge 六态可选：`neutral`/`coral`/`info`/`good`/`hard`/`again`。）
-2. **组件类型**：**既有页面组件的内部数据结构 + 既有函数的防御性重构**——非新 drawer/route/modal/page。`PfStream.tsx` 是 `/practice` 流视图既有内容组件；本切片改其内部 `SRC_META`（+1 条目）、新增 `srcMeta` accessor + `FALLBACK_SRC_META`、`PfSrcBadge` 入参 widen、done 行 `:128` 经 accessor；不新增组件/路由。
+1. **逐字引用的 design doc 段落 + 显式 owner question**：本单元**没有**覆盖 `/practice` `PfSrcBadge` 的 design doc 新段落——设计源 `docs/design/loom-refresh/project/data-pface.jsx:6-13`（`PFACE_SRC`，`SRC_META` 的 1:1 港口）**本身也无** `frontier` key（该设计文件早于 B3 frontier 落地；frontier 设计 token 只存在于 `knowledge-a5.*`，即 FrontierRail 的 surface）。故本切片是**从已上线、已 owner 审阅通过的姊妹组件 `FrontierRail.tsx`（A5 S2/YUK-354）逐字借用文案/icon/色系**（§M2 三条溯源）。CLAUDE.md pre-flight 要求「找不到就停下问」——两问已问、已批：
+   - **Q-preflight-A（跨面 token 借用）——已批**：owner 2026-07-03 于主 session（AskUserQuestion）批准 `frontier` badge 的 `label/icon` 从 FrontierRail(knowledge-a5) 借到 pface surface（同概念系统内横向复用，非发明新视觉语言）。
+   - **Q-preflight-B（撞色/tone）——已决,两轮**：① owner 2026-07-03 初批「不用 coral（与 paper 撞色），换一个其它 SRC_META 条目未占用的既有 tone」→ 执行据「六态中唯一未占用」选了 `hard`;② review 证伪该前提——**neutral 本就被 on_demand+import 双占,「未占用」从不是既有分配原则;且唯一未占用的 hard 在全仓是警示琥珀语义**——带修正事实回抛 owner → **owner 同日重裁 `tone:'neutral'`**（唯一不断言难度/掌握判定的 tone;共用有先例;辨识度由 label『下一步』+ `target` icon 承担）。最终 token 见 §M2 溯源节。
+2. **组件类型**：**既有页面组件的内部数据结构 + 既有函数的防御性重构**——非新 drawer/route/modal/page。`PfStream.tsx` 是 `/practice` 流视图既有内容组件；本切片改其内部 `SRC_META`（+1 条目）、新增 `srcMeta` accessor + `SRC_META_FALLBACK`、`PfSrcBadge` 入参 widen、done 行 doneAnchor（接地 :128,落地 :167）经 accessor；不新增组件/路由。
 3. **将 touch 的文件**（含 render-surface 全矩阵）：
    - 修改：`src/capabilities/practice/ui/practice-api.ts`（`StreamSource` +frontier）
-   - 修改：`src/capabilities/practice/ui/PfStream.tsx`（`SRC_META` +frontier、`FALLBACK_SRC_META`、`srcMeta` accessor、`PfSrcBadge` 入参 `string`、`:128` doneAnchor 经 accessor）
+   - 修改：`src/capabilities/practice/ui/PfStream.tsx`（`SRC_META` +frontier、`SRC_META_FALLBACK`、`srcMeta` accessor、`PfSrcBadge` 入参 `string`、done 行 doneAnchor 经 accessor）
    - **覆盖但不改**：`src/capabilities/practice/ui/PfSolo.tsx:317`（散题作答顶栏，import `PfSrcBadge`——经修复自动覆盖；列入矩阵供 reviewer 核「所有 frontier render surface 已覆盖」）
    - 新建：`src/capabilities/practice/ui/PfStream.unit.test.tsx`
 
@@ -363,12 +372,13 @@ it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-br
 
 ## 测试与 gate
 
-- **切片 1**：`pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/ui/PfStream.unit.test.tsx`。**测试矩阵（Lens B slice-5 gap 修正——必须含 :128 与 PfSolo）**：
-  - (a) `PfSrcBadge({source:'frontier'})` → `label:'下一步'`/`tone-coral`/`target` icon。
-  - (b) `PfSrcBadge({source:'unknown-future' as any})` → fallback（`其它`/`neutral`/`dots`），**不 throw**。
-  - (c) **done 行 frontier**（`reasoning` 无 `「」` → 强制走 `:128` doneAnchor）→ 锚点回退到 `srcMeta(source).label`，**不 throw**。
-  - (d) **done 行 unknown source** → `:128` 经 accessor 回退，**不 throw**。
-  - (e) **PfSolo 顶栏渲一个 frontier item**（或至少断言 `PfSrcBadge` 覆盖 PfSolo 消费路径）。
+- **切片 1**：`pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/ui/PfStream.unit.test.tsx`。**测试矩阵（Lens B slice-5 gap 修正——必须含 doneAnchor 站点与 PfSolo;落地版经 review 轮更新）**：
+  - (a) `PfSrcBadge({source:'frontier'})` → `label:'下一步'`/`tone-neutral`（owner 重裁,见 pre-flight B）/`target` icon **独有 path 片段**（`r="8"` 三同心圆——review F3:断 'svg' 任何 icon 都过,断独有片段才钉「是这个 icon」）。
+  - (b) `PfSrcBadge({source:'unknown-future'})` → fallback（`其它来源`/`neutral`/`doc` icon 独有片段 `M14 3v5h5`），并断 **dev-only warn 恰一次**（同一未知值重复渲染不重复 warn——review F2）。
+  - (c) **done 行 frontier**（`reasoning` 无 `「」` → 强制走 doneAnchor(:167)）→ 锚点回退到 `srcMeta(source).label`。
+  - (d) **done 行 unknown source** → doneAnchor 经 accessor 回退到 `其它来源`。
+  - (e) ~~PfSolo 顶栏渲一个 frontier item~~ **落地裁决（review A3）**：草稿 (e) 与 (a) 逐字节同型（名不副实的壳）→ **删除**,改在 (a) 注释显式记「PfSolo.tsx:317 经同一 PfSrcBadge/srcMeta 路径消费,badge 级断言即覆盖」（finder C 已实证 PfSolo 走新 accessor;真渲染 PfSolo 需 TanStack Query harness,静态测试不成比例）。
+  - **不 throw 断言形态（review S2）**：`renderToString` 本身即「不 throw」断言（异常直接 fail）——落地版不裹 `.not.toThrow()`。
   - **`audit:partition`**：新文件路径是 `src/capabilities/practice/ui/PfStream.unit.test.tsx`（**非** `src/ui/**`——草稿引用的 glob 路径不准）；既有 `src/capabilities/practice/ui/practice-api.unit.test.ts` + `src/capabilities/knowledge/ui/BandChip.unit.test.tsx` 已作 unit 跑，判例成立，但 `audit:partition` 须对**实际新文件**跑。
 - **切片 2**：`pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/server/learnable-frontier.db.test.ts`——复用既有 `(d)`(depth overflow)/`(j)`/`(k)` 建图，spy `console.warn`：断言 overflow 场景 fire 一次（携 `depthLimit`/`nodeCap`/`rows`），**且** sparse/dense 场景**不** fire（负向断言，防加错分支）。三消费点继承由此单测覆盖（emit 在被三者共调的 `learnableFrontierResolved` 里）。
 - **切片 3**：无新测试（纯注释），`pnpm typecheck`/`pnpm lint`。
@@ -387,7 +397,7 @@ it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-br
    - (b) 保留独立 + 本 spec 已加交叉引用注释（当前默认）。
 3. **Q3b — doc 篇幅偏好（非数值决策）**：0.95 off-scale 已由 M3 disambiguation 关闭。残留仅：M3 联合 docblock 是否够，还是**另加**一段「frontier-readiness ≠ mastery-retirement 为何故意不同」的正面论证段（lit lane 措辞最强的一条）？**不改 0.7 数值本身**。
 4. **Q3c — evidence-floor 维度是否上 `MasteryRing`/`BandChip`**（DEFER）：若要，独立 gated-future UI 切片 + 完整 pre-flight（改造 `BandChip` 语义或新增视觉态，皆 owner 设计决策）。
-5. **Q-preflight-A / Q-preflight-B（切片 1 UI）**：跨面 token 借用（FrontierRail→pface）批准？coral 撞 paper 是否换 distinct tone？
+5. **Q-preflight-A / Q-preflight-B（切片 1 UI）——已决（review 回写 2026-07-03,不再开放）**：A=owner 2026-07-03 批准跨面借用（主 session AskUserQuestion）;B=初批「换未占用 tone」→执行选 hard→review 证伪「唯一未占用」前提（neutral 双占先例,hard=警示琥珀）→owner 同日重裁 **neutral**。全程实录见 §切片 1 pre-flight 与 §M2 溯源。
 6. **Q4 tracked trigger**：已裁归 #6（`kg-borrowing-prereq-propagation-sprawl`）——落地时开轻量 Linear sub-task 挂 YUK-538，交叉引用 register #6 + 本 spec §Q4，不预先实现 #6 代码。
 7. **实施切片粒度**：切片 2/3/4 是否合并（低风险非 UI）？切片 1 建议独立 PR + 独立 review。
 
@@ -426,4 +436,4 @@ it('(o) kg-borrow characterization — a prereq with evidence_count=0 (borrow-br
 
 ---
 
-**Linear 捕获门**：本单元 target shape（overflow 可观测、阈值联合记录、0.67/0.7 决策）已在 master register `learnable-frontier-gate` 条目内，无需新开独立 follow-up。**新登记两条轻量 sub-task（挂 YUK-538）**：① kg-borrowing tracked-trigger 交叉引用（归 #6 消费）；② Q3c evidence-floor UI 暴露（gated-future，owner 选中才启）。两条落地时创建，不在本 spec 阶段抢先。
+**Linear 捕获门**：本单元 target shape（overflow 可观测、阈值联合记录、0.67/0.7 决策）已在 master register `learnable-frontier-gate` 条目内，无需新开独立 follow-up。**新登记三条轻量 sub-task（挂 YUK-538）**：① kg-borrowing tracked-trigger 交叉引用（归 #6 消费）；② Q3c evidence-floor UI 暴露（gated-future，owner 选中才启）；③ **`makeLookup<T>(map, fallback)` 抽到 `src/ui/lib/` + 迁移 4 处 `srcMeta` 副本（PfStream/QuestionsPage/DraftReviewPage/QuestionDetailPage）与 `kindMeta`/`diffMeta` 站点**（idiom 收敛,review R1 派生;coordinator 落 Linear）。三条落地时创建，不在本 spec 阶段抢先。

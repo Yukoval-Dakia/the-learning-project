@@ -63,11 +63,11 @@ export const FRONTIER_NODE_CAP = 10_000;
  * 本模块与相邻模块共有多组独立、各自服务不同消费者的阈值/常量,此前无单一 artifact 交叉引用。
  * 数值本身是各自 owner-fixed 决策,不在此改（本 docblock 是纯文档动作,零行为变更）。
  *
- *   ① masteryTone 0.67/0.45（src/capabilities/knowledge/ui/mastery-tone.ts:17-22）——展示层
- *      3-tone（good/hard/again）,驱动 MasteryRing 环色。⚠️ 这对数值**不是**孤立常量,而是
- *      S5/YUK-335 跨三个展示面的**统一点**:ring disc(masteryTone) + decay pill
- *      (NodeDrawer.decayCue) + legend,专门修一个「~43% 节点环上读 good/黄、衰减 pill 读
- *      again/红」的分裂（audit §3.8）。任何对齐动作须三面同步,否则重开该分裂。
+ *   ① masteryTone 0.67/0.45（src/capabilities/knowledge/ui/mastery-tone.ts masteryTone(),
+ *      :22-27）——展示层 3-tone（good/hard/again）,驱动 MasteryRing 环色。⚠️ 这对数值**不是**
+ *      孤立常量,而是 S5/YUK-335 跨三个展示面的**统一点**:ring disc(masteryTone) + decay pill
+ *      (NodeDrawer.tsx decayCue(), :36) + legend,专门修一个「~43% 节点环上读 good/黄、衰减
+ *      pill 读 again/红」的分裂（audit §3.8）。任何对齐动作须三面同步,否则重开该分裂。
  *   ② MASTERED_PL_THRESHOLD=0.7 AND FRONTIER_MASTERY_MIN_EVIDENCE=4（本文件）——gate 层复合判据
  *      （YUK-539）,决定 KC 是否离开 frontier 池/满足下游 prereq。注:0.67/0.45（①）与 0.7（②）
  *      在 YUK-335 是「三面统一点」的语境,②的 0.7 与①的 0.67 相差 ~0.03 是 owner-fixed 分工。
@@ -273,6 +273,8 @@ export async function learnableFrontierResolved(db: DbLike): Promise<FrontierRes
         depthLimit: FRONTIER_DEPTH_LIMIT,
         nodeCap: FRONTIER_NODE_CAP,
         rows: normalised.length,
+        hint: '检查 prerequisite 边:depth 溢出→过深链/上游环(depth>limit);node-cap 溢出→异常扇出。overflow 期间 frontier 全面为空(composer/FrontierRail/nightly 三面)。',
+        see: 'docs/design/2026-07-03-frontier-gate-spec.md §Q1',
       },
     );
     return { kind: 'overflow', ids: [] };
