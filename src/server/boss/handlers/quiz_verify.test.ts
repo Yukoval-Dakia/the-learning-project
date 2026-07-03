@@ -53,6 +53,59 @@ function runTaskMock(output: string, taskRunId = 'tr_v') {
   }));
 }
 
+// YUK-538 / YUK-554 — solve-check wiring makes tier3/4 verify fire a SECOND task
+// (SolutionGenerateTask) whenever all free checks pass, so tests that want to control the
+// solve outcome must dispatch by task kind. Solver output shape consumed by runSolveCheck
+// (reads only reference_solution.final_answer + answer_equivalents).
+function solverOutput(finalAnswer: string, equivalents: string[] = []): string {
+  return JSON.stringify({
+    reference_solution: { final_answer: finalAnswer, answer_equivalents: equivalents },
+  });
+}
+
+// SemanticJudgeTask output shape (SemanticJudgeOutput schema) for the open-question solve
+// path — only a confident 'incorrect' (confidence>=0.8) makes solve_check fail.
+function semanticJudgeOutput(
+  outcome: 'correct' | 'partial' | 'incorrect',
+  confidence: number,
+): string {
+  return JSON.stringify({
+    score: outcome === 'incorrect' ? 0 : outcome === 'partial' ? 0.5 : 0.9,
+    coarse_outcome: outcome,
+    confidence,
+    feedback_md: 'fb',
+    evidence_json: { matched_points: [], missing_points: [] },
+  });
+}
+
+// QuizVerifyTask → verifyText; SolutionGenerateTask → solverText; everything else →
+// verifyText. Covers the exact (normalize) solve path (no SemanticJudge call).
+function dualTaskMock(verifyText: string, solverText: string, taskRunId = 'tr_v') {
+  return vi.fn(async (kind: string, _input: unknown, _ctx: unknown) => ({
+    text: kind === 'SolutionGenerateTask' ? solverText : verifyText,
+    task_run_id: taskRunId,
+  }));
+}
+
+// Three-way dispatch for the open-question (semantic) solve path: QuizVerifyTask →
+// verifyText, SolutionGenerateTask → solverText, SemanticJudgeTask → semanticText.
+function tripleTaskMock(
+  verifyText: string,
+  solverText: string,
+  semanticText: string,
+  taskRunId = 'tr_v',
+) {
+  return vi.fn(async (kind: string, _input: unknown, _ctx: unknown) => ({
+    text:
+      kind === 'SolutionGenerateTask'
+        ? solverText
+        : kind === 'SemanticJudgeTask'
+          ? semanticText
+          : verifyText,
+    task_run_id: taskRunId,
+  }));
+}
+
 async function seedKnowledge(id: string) {
   const db = testDb();
   const now = new Date();
@@ -96,17 +149,26 @@ async function seedDraftQuestion(opts: {
   promptMd?: string;
   meta?: QuizGenMetadataT;
   source?: string;
+  // YUK-538 / YUK-554 — override to seed an EXACT-kind question (fill_blank / choice) so a
+  // solve-check normalize-mismatch fail can be built. Default stays the semantic short_answer.
+  kind?: string;
+  referenceMd?: string;
+  choicesMd?: string[] | null;
+  judge?: string | null;
+  rubricJson?: unknown;
 }) {
   const db = testDb();
   const now = new Date();
   await db.insert(question).values({
     id: opts.id,
-    kind: 'short_answer',
+    kind: opts.kind ?? 'short_answer',
     prompt_md: opts.promptMd ?? '用你自己的话解释「之」作主谓间助词的作用。',
-    reference_md: '「之」用在主谓之间，取消句子独立性。',
-    rubric_json: { required_points: ['用在主谓之间', '取消句子独立性'] } as never,
-    choices_md: null,
-    judge_kind_override: 'semantic',
+    reference_md: opts.referenceMd ?? '「之」用在主谓之间，取消句子独立性。',
+    rubric_json: (opts.rubricJson ?? {
+      required_points: ['用在主谓之间', '取消句子独立性'],
+    }) as never,
+    choices_md: opts.choicesMd === undefined ? null : opts.choicesMd,
+    judge_kind_override: opts.judge === undefined ? 'semantic' : opts.judge,
     knowledge_ids: [opts.knowledgeId],
     difficulty: 3,
     source: opts.source ?? 'quiz_gen',
@@ -242,8 +304,12 @@ describe('runQuizVerify', () => {
     const result = await runQuizVerify({ db: testDb(), questionId: 'q1', runTaskFn });
 
     expect(result.status).toBe('verified');
-    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    // YUK-538 / YUK-554 — a tier4 all-pass row now fires verify + an independent solve
+    // (SolutionGenerateTask). The single-value mock returns the verify JSON for the solver
+    // too → empty final_answer → solve_check 'unsupported' → non-blocking (promote stands).
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
     expect(runTaskFn.mock.calls[0][0]).toBe('QuizVerifyTask');
+    expect(runTaskFn.mock.calls[1][0]).toBe('SolutionGenerateTask');
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'q1'));
     expect(rows[0].draft_status).toBe('active');
@@ -401,8 +467,8 @@ describe('runQuizVerify', () => {
 
     const second = await runQuizVerify({ db: testDb(), questionId: 'q5', runTaskFn });
     expect(second.status).toBe('skipped:already_verified');
-    // LLM only ran on the first pass.
-    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    // LLM only ran on the first pass (verify + solve = 2); the second run skips.
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
     // exactly one verify event, one fsrs row.
     expect(await countVerifyEvents('q5')).toBe(1);
     expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
@@ -426,7 +492,11 @@ describe('runQuizVerify', () => {
 
     const second = await runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn });
     expect(second.status).toBe('verified');
-    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    // YUK-538 / YUK-554 — 1st run rejects at QuizVerifyTask (never reaches solve); 2nd run
+    // fires verify + solve = 2. The 3rd call (solve) hits the unqueued vi.fn default
+    // (undefined) → runSolveCheck destructures undefined.text → throws → swallowed to
+    // 'unsupported' → non-blocking, status stays verified. Total = 3.
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'q5b'));
     expect(rows[0].draft_status).toBe('active');
@@ -623,6 +693,151 @@ describe('runQuizVerify', () => {
       promoted: false,
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // YUK-538 / YUK-554 — solve_check wiring (spec docs/design/2026-07-03-verify-check-spec.md).
+  // NOTE: the flag-off retreat (SOLVE_CHECK_TIER34_VETO.normalize=false) is verified as a
+  // pure-function unit test in verify-framework.test.ts (`solveCheckBlocks` describe) — the
+  // handler consumes the module-const default, so there is no runtime flag seam to drive here.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  it('solve_check pass (exact normalize match) + all else pass → promotes', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'qsolve_pass',
+      knowledgeId: 'k1',
+      kind: 'fill_blank',
+      judge: 'exact',
+      promptMd: '「之」这个字在此句中的词性是____。',
+      referenceMd: '代词',
+      rubricJson: { required_points: [] },
+    });
+    // solver AGREES with the reference (代词) → normalize match → solve_check pass.
+    const runTaskFn = dualTaskMock(
+      verifyOutput({ overall: 'pass' }),
+      solverOutput('代词'),
+      'tr_sp',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qsolve_pass', runTaskFn });
+    expect(result.status).toBe('verified');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qsolve_pass'));
+    expect(rows[0].draft_status).toBe('active');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+
+    const evs = await verifyEventsFor('qsolve_pass');
+    expect(evs).toHaveLength(1);
+    const payload = evs[0].payload as Record<string, unknown>;
+    expect(payload.solve_check).toMatchObject({ verdict: 'pass', compared_by: 'normalize' });
+    const axes = payload.axes as { axis_name: string; verdict: string }[];
+    expect(axes.find((a) => a.axis_name === 'solve_check')).toMatchObject({ verdict: 'pass' });
+  });
+
+  it('solve_check fail (exact normalize mismatch) → needs_review, stays draft, records fail', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'qsolve_fail',
+      knowledgeId: 'k1',
+      kind: 'fill_blank',
+      judge: 'exact',
+      promptMd: '「之」这个字在此句中的词性是____。',
+      referenceMd: '代词',
+      rubricJson: { required_points: [] },
+    });
+    // solver DISAGREES (助词 vs reference 代词) → normalize mismatch → solve_check fail.
+    const runTaskFn = dualTaskMock(
+      verifyOutput({ overall: 'pass' }),
+      solverOutput('助词'),
+      'tr_sf',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qsolve_fail', runTaskFn });
+    // Q1: an exact normalize-fail VETOES promotion but records `needs_review` (hold for human
+    // review), NOT `failed` — the model self-review said pass, only the weak normalize signal
+    // disagreed.
+    expect(result.status).toBe('needs_review');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qsolve_fail'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+
+    const evs = await verifyEventsFor('qsolve_fail');
+    expect(evs).toHaveLength(1);
+    expect(evs[0].outcome).toBe('partial');
+    const payload = evs[0].payload as Record<string, unknown>;
+    expect(payload.promoted).toBe(false);
+    // Q4/#6 payload completeness — all four solve_check fields present + typed.
+    expect(payload.solve_check).toMatchObject({
+      verdict: 'fail',
+      compared_by: 'normalize',
+      solver_final_answer: '助词',
+    });
+    expect(typeof (payload.solve_check as Record<string, unknown>).reason).toBe('string');
+    const axes = payload.axes as { axis_name: string; verdict: string }[];
+    expect(axes.find((a) => a.axis_name === 'solve_check')).toMatchObject({ verdict: 'fail' });
+  });
+
+  it('solve_check fail (semantic confident-incorrect) → needs_review, compared_by=semantic', async () => {
+    await seedKnowledge('k1');
+    // default seed = short_answer + judge_kind_override 'semantic' → open (semantic) solve path.
+    await seedDraftQuestion({ id: 'qsem_fail', knowledgeId: 'k1' });
+    // solver produces an answer; SemanticJudge confidently scores it incorrect (>=0.8).
+    const runTaskFn = tripleTaskMock(
+      verifyOutput({ overall: 'pass' }),
+      solverOutput('独立求解得到的一个答案'),
+      semanticJudgeOutput('incorrect', 0.95),
+      'tr_semf',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qsem_fail', runTaskFn });
+    expect(result.status).toBe('needs_review');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qsem_fail'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+
+    const evs = await verifyEventsFor('qsem_fail');
+    const payload = evs[0].payload as Record<string, unknown>;
+    expect(payload.solve_check).toMatchObject({ verdict: 'fail', compared_by: 'semantic' });
+  });
+
+  it('solve_check unsupported (empty solver answer) → non-blocking, promotes', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'qsolve_unsup', knowledgeId: 'k1' });
+    // empty solver final_answer → runSolveCheck 'unsupported' (short-circuits before Semantic).
+    const runTaskFn = dualTaskMock(verifyOutput({ overall: 'pass' }), solverOutput(''), 'tr_unsup');
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qsolve_unsup', runTaskFn });
+    // unsupported carries no signal → never blocks (R2 conservative) → promote stands.
+    expect(result.status).toBe('verified');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qsolve_unsup'));
+    expect(rows[0].draft_status).toBe('active');
+
+    const evs = await verifyEventsFor('qsolve_unsup');
+    const payload = evs[0].payload as Record<string, unknown>;
+    expect(payload.solve_check).toMatchObject({ verdict: 'unsupported', compared_by: 'none' });
+  });
+
+  it('short-circuits solve (SolutionGenerateTask NOT called) when a free check already fails', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'qshort', knowledgeId: 'k1' });
+    // overall=pass but grounding=fail → checksPass false → freeChecksPass false → no solve.
+    const runTaskFn = dualTaskMock(
+      verifyOutput({ overall: 'pass', groundingVerdict: 'fail' }),
+      solverOutput('代词'),
+      'tr_short',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qshort', runTaskFn });
+    expect(result.status).toBe('needs_review');
+    // The independent solver was never invoked (cost saved; solve only spends on all-else-pass).
+    expect(runTaskFn.mock.calls.every((c) => c[0] !== 'SolutionGenerateTask')).toBe(true);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    // No solve_check block on the event when solve did not run.
+    const evs = await verifyEventsFor('qshort');
+    expect((evs[0].payload as Record<string, unknown>).solve_check).toBeUndefined();
+  });
 });
 
 describe('buildQuizVerifyHandler', () => {
@@ -639,7 +854,8 @@ describe('buildQuizVerifyHandler', () => {
     const handler = buildQuizVerifyHandler(testDb(), { runTaskFn });
     await handler([{ id: 'j1', data: { question_ids: ['qa', 'qb'] } }] as never);
 
-    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    // YUK-538 / YUK-554 — two tier4 questions × (verify + solve) = 4 calls.
+    expect(runTaskFn).toHaveBeenCalledTimes(4);
     const qa = await testDb().select().from(question).where(eq(question.id, 'qa'));
     const qb = await testDb().select().from(question).where(eq(question.id, 'qb'));
     expect(qa[0].draft_status).toBe('active');
