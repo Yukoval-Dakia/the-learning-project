@@ -215,6 +215,39 @@ export async function knowledgeNodesWithGenesisAnchor(
   return out;
 }
 
+/**
+ * Batch anchor gate for `knowledge_edge` (YUK-548 — the ONLY W1 entity lacking a batch anchor form;
+ * added so the entity-registry / Q4a symmetric audit can gate every ON kind uniformly). An edge is
+ * EVENT-SOURCED (foldable — its fold-null is a genuine drop, not a fold-blind miss) iff it has ANY
+ * subject-keyed event (a `generate` create/archive OR an `experimental:genesis` backfill seed —
+ * mirrors edgesWithOriginatingEvent, the edge backfill's own skip predicate) OR a
+ * materialized_id_index anchor. A live edge with NEITHER is a pure out-of-band INSERT the fold is
+ * blind to (folds null) → the applicability gate SKIPS it (else a false GHOST/DRIFT). READ-ONLY.
+ */
+export async function knowledgeEdgesWithGenesisAnchor(
+  db: DbLike,
+  edgeIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (edgeIds.length === 0) return out;
+  const evRows = await db
+    .select({ subject_id: event.subject_id })
+    .from(event)
+    .where(and(eq(event.subject_kind, 'knowledge_edge'), inArray(event.subject_id, edgeIds)));
+  for (const r of evRows) out.add(r.subject_id);
+  const idxRows = await db
+    .select({ materialized_id: materialized_id_index.materialized_id })
+    .from(materialized_id_index)
+    .where(
+      and(
+        inArray(materialized_id_index.materialized_id, edgeIds),
+        eq(materialized_id_index.subject_kind, 'knowledge_edge'),
+      ),
+    );
+  for (const r of idxRows) out.add(r.materialized_id);
+  return out;
+}
+
 // ── goal genesis-anchor helpers (YUK-471 Wave 2) ─────────────────────────────────────────────
 //
 // A goal is EVENT-SOURCED (reproducible by foldGoal, so its fold-null is a genuine "should not
