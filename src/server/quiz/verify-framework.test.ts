@@ -3,10 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CHECK_SETS_BY_TIER,
   SOLVE_CHECK_SEMANTIC_THRESHOLD,
+  SOLVE_CHECK_TIER34_VETO,
   type SolveCheckQuestion,
+  type SolveCheckResult,
   checksForTier,
   normalizeAnswer,
   runSolveCheck,
+  solveCheckBlocks,
 } from './verify-framework';
 
 // ---------- tier → check-set config ----------
@@ -121,6 +124,46 @@ const openQuestion: SolveCheckQuestion = {
 };
 
 const fakeDb = {} as never;
+
+// ---------- solveCheckBlocks (YUK-538 / YUK-554 — per-axis veto seam) ----------
+
+describe('solveCheckBlocks (tier3/4 per-axis veto)', () => {
+  const fail = (compared_by: SolveCheckResult['compared_by']): SolveCheckResult => ({
+    verdict: 'fail',
+    compared_by,
+    reason: 'r',
+  });
+
+  it('defaults to SOLVE_CHECK_TIER34_VETO (both axes veto a fail)', () => {
+    expect(SOLVE_CHECK_TIER34_VETO.semantic).toBe(true);
+    expect(SOLVE_CHECK_TIER34_VETO.normalize).toBe(true);
+    expect(solveCheckBlocks(fail('semantic'))).toBe(true);
+    expect(solveCheckBlocks(fail('normalize'))).toBe(true);
+  });
+
+  it('flag-off retreat: normalize:false lets an exact fail through WITHOUT touching semantic veto', () => {
+    // THE core Q1 assertion — the exact false-veto can be disabled independently.
+    expect(solveCheckBlocks(fail('normalize'), { semantic: true, normalize: false })).toBe(false);
+    // ...while the semantic veto still fires.
+    expect(solveCheckBlocks(fail('semantic'), { semantic: true, normalize: false })).toBe(true);
+  });
+
+  it('semantic:false disables ONLY the semantic veto; normalize still blocks', () => {
+    expect(solveCheckBlocks(fail('semantic'), { semantic: false, normalize: true })).toBe(false);
+    expect(solveCheckBlocks(fail('normalize'), { semantic: false, normalize: true })).toBe(true);
+  });
+
+  it('never blocks on a non-fail verdict (R2 conservative)', () => {
+    for (const compared_by of ['semantic', 'normalize', 'none'] as const) {
+      expect(solveCheckBlocks({ verdict: 'pass', compared_by, reason: 'r' })).toBe(false);
+      expect(solveCheckBlocks({ verdict: 'unsupported', compared_by, reason: 'r' })).toBe(false);
+    }
+  });
+
+  it("never blocks when compared_by='none' even on a fail (defensive)", () => {
+    expect(solveCheckBlocks(fail('none'))).toBe(false);
+  });
+});
 
 describe('runSolveCheck — exact path (normalize compare)', () => {
   it('passes when the solver answer matches the reference (normalized)', async () => {

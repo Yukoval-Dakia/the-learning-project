@@ -148,6 +148,45 @@ export interface SolveCheckOptions {
 // review). Tunable per-tier via SolveCheckOptions in a later wave.
 export const SOLVE_CHECK_SEMANTIC_THRESHOLD = 0.8;
 
+// YUK-538 / YUK-554 (spec docs/design/2026-07-03-verify-check-spec.md §Q1) — tier3/4
+// solve-check veto switches, split BY COMPARISON AXIS (compared_by). solve_check is the
+// ONLY tier3/4 signal independent of the closed-book self-review (QuizVerifyTask), but its
+// two comparison paths are wildly unequal in reliability:
+//   - semantic (open kinds): runSemanticJudge + the conservative confidence>=0.8 gate
+//     (SOLVE_CHECK_SEMANTIC_THRESHOLD, :393-394) → a confident independent disagreement
+//     is worth blocking promotion → CONFIGURED TO VETO.
+//   - normalize (exact kinds): bare NFKC+lowercase+strip string equality (normalizeAnswer,
+//     :199-205) — NO confidence gate, NO boolean synonymy (真/对/正确/√/T) or numeric
+//     equivalence (0.5↔1/2), and for quiz_gen rows it necessarily compares one solver
+//     final_answer against the WHOLE reference_md (F2 note :171-176 admits "would falsely
+//     fail"). tier3/4 generator=solver=mimo-v2.5-pro (registry.ts:705/721), so same-model
+//     format jitter is a FALSE-veto-rich region → blocks promotion but records
+//     `needs_review` ("hold for human review", NOT "proven wrong"), and is separately
+//     switchable so exact false-vetoes can be turned off WITHOUT touching the semantic veto.
+// OWNER (2026-07-03): normalize default = true, hold-for-review (needs_review → /drafts,
+// DraftReviewPage YUK-403); NOT `failed`. Both flags are compile-time consts — flipping one
+// needs a source edit + esbuild rebundle + worker redeploy (NOT a runtime toggle, unlike
+// AI_PROVIDER_OVERRIDE's env switch); the pure-function seam solveCheckBlocks() below lets
+// tests exercise flag-off without vi.doMock and adds no runtime config surface.
+export const SOLVE_CHECK_TIER34_VETO = {
+  semantic: true,
+  normalize: true, // owner-decision default; hold-for-review (needs_review), NOT proven-wrong
+} as const;
+
+// Pure-function veto decision (test seam): given a SolveCheckResult + the per-axis flags,
+// answer "does this block promotion?". Only a 'fail' verdict can block; the axis
+// (compared_by) picks which flag applies. 'unsupported'/'pass' NEVER block (R2 conservative
+// — a solver that couldn't independently solve, or that agreed, must not kill a question).
+export function solveCheckBlocks(
+  result: SolveCheckResult,
+  flags: { semantic: boolean; normalize: boolean } = SOLVE_CHECK_TIER34_VETO,
+): boolean {
+  if (result.verdict !== 'fail') return false;
+  if (result.compared_by === 'semantic') return flags.semantic;
+  if (result.compared_by === 'normalize') return flags.normalize;
+  return false; // compared_by === 'none' never accompanies verdict='fail'; defensive.
+}
+
 // Question kinds whose answer is an EXACT token (compare by normalization). Open
 // kinds (prose) route to the conservative semantic path. Mirrors the judge layer's
 // exact-vs-semantic split without importing it (this is a content-quality check, not
