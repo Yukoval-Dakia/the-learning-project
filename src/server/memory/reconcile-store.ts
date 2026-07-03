@@ -32,6 +32,13 @@ export type PlannedRow = {
   reason: string;
   llm_raw: unknown;
   planned_at: Date;
+  // YUK-557 (Q2b) — write-ahead undo snapshot. Optional so pre-Q2b callers/tests
+  // (KEEP_BOTH-only, replay fixtures) need not set them; captured in the handler's
+  // write-ahead phase (triggers.ts), never at apply-time (replay would read the
+  // already-rewritten payload). SUPERSEDE/MERGE: old row's original text/full
+  // payload; RETRACT_NEW: prev_text = new row's text, prev_metadata = null.
+  prev_text?: string | null;
+  prev_metadata?: Record<string, unknown> | null;
 };
 
 /**
@@ -50,6 +57,11 @@ export async function insertPlannedRows(db: Db, rows: PlannedRow[]): Promise<voi
       reason: r.reason,
       llm_raw: r.llm_raw as Record<string, unknown> | null,
       planned_at: r.planned_at,
+      // YUK-557 (Q2b) — explicit column map (NOT ...spread): the undo snapshot
+      // columns MUST be listed here or they silently drop AND audit:schema fails
+      // (no write path for the new columns). Undefined → NULL (pre-Q2b callers).
+      prev_text: r.prev_text ?? null,
+      prev_metadata: r.prev_metadata ?? null,
     })),
   );
 }
@@ -145,6 +157,31 @@ export async function hardDeleteMemory(
     if (/not found|does not exist|42P01/i.test(msg)) return;
     throw err;
   }
+}
+
+/**
+ * YUK-557 (Q2b) — read-only snapshot of a mem0 vector row's current payload,
+ * captured in the reconcile handler's WRITE-AHEAD phase (before any apply mutates
+ * it) so the undo log holds the pre-change state. Returns { text, metadata }
+ * where text = payload.data (the memory text) and metadata = the full payload.
+ * Missing row (defensive: LLM-referenced id already gone) → null, so the caller
+ * leaves prev_metadata NULL and relies on prev_text as the floor. NEVER call this
+ * at apply-time: a crash-replay would read the already-rewritten payload and
+ * poison the snapshot (spec Q2b / M1, Lens B M1).
+ */
+export async function capturePrevState(
+  db: Db,
+  collectionName: string,
+  memoryId: string,
+): Promise<{ text: string | null; metadata: Record<string, unknown> } | null> {
+  assertSafeCollectionName(collectionName);
+  const rows = (await db.execute(
+    sql`SELECT payload FROM ${sql.raw(`"${collectionName}"`)} WHERE id = ${memoryId}::uuid`,
+  )) as unknown as Array<{ payload: Record<string, unknown> }>;
+  const payload = rows[0]?.payload;
+  if (!payload) return null;
+  const text = typeof payload.data === 'string' ? payload.data : null;
+  return { text, metadata: payload };
 }
 
 /** UPDATE applied_at = now() — marks a write-ahead row as fully applied. */
