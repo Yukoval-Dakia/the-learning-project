@@ -70,6 +70,8 @@ export interface RecalibrationNightlyResult {
   clip_activations: number;
   /** 本轮所有 firm-up 批里见过的**最小** inclusion probability（fat-tail 深度极值）；无 → null。 */
   min_pi_seen: number | null;
+  /** 本轮所有 firm-up 批里见过的**最大** inclusion probability（min-max π 观测面，spec M1）；无 → null。 */
+  max_pi_seen: number | null;
 }
 
 const DEFAULT_MAX_PER_RUN = 200;
@@ -106,6 +108,7 @@ export async function runRecalibrationNightly(
     skipped_failed: 0,
     clip_activations: 0,
     min_pi_seen: null,
+    max_pi_seen: null,
   };
 
   const windowStart = candidateWindowStart(now);
@@ -164,11 +167,15 @@ export async function runRecalibrationNightly(
       const r = await recalibrateQuestion(db, c.questionId);
       if (r.updated) {
         result.recalibrated++;
-        // Clip 可观测聚合（YUK-558 M1）：累加截权激活数 + 追踪本轮最小 π（fat-tail 深度极值）。
+        // Clip 可观测聚合（YUK-558 M1）：累加截权激活数 + 追踪本轮最小/最大 π（fat-tail 深度极值 + min-max π 面）。
         result.clip_activations += r.clipActivations;
         if (r.minPi !== null) {
           result.min_pi_seen =
             result.min_pi_seen === null ? r.minPi : Math.min(result.min_pi_seen, r.minPi);
+        }
+        if (r.maxPi !== null) {
+          result.max_pi_seen =
+            result.max_pi_seen === null ? r.maxPi : Math.max(result.max_pi_seen, r.maxPi);
         }
       } else if (r.reason === 'no_anchor') {
         result.skipped_no_anchor++;

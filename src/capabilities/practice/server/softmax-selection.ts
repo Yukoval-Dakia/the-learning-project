@@ -478,7 +478,7 @@ async function tryLlmOrchestration(
     if (inputText.trim().length === 0) {
       // YUK-558 (register (a) / spec M2)：先前此处静默 return null → L1 统计 fallback 触发却无留痕。
       // 补结构化 warn，让「LLM 编排输入为空」这条 fallback 路径可观测（与下方 catch 的 L2-failure
-      // warn + parsed-empty warn 一道闭合三态 fallback 的可检测性）。
+      // warn 一道闭合两条 fallback 路径的可检测性——parse-empty 走 throw → catch，非独立分支）。
       console.warn('[softmax-selection] L2 empty-input → statistical fallback');
       return null;
     }
@@ -486,11 +486,10 @@ async function tryLlmOrchestration(
     const result = await fn('SelectionOrchestratorTask', { candidates: inputText }, { db });
     const refIds = samplable.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
-    if (parsed.length === 0) {
-      // YUK-558 (register (a) / spec M2)：LLM 返回但 parse 后零条编排结果——静默 return null 同上。
-      console.warn('[softmax-selection] L2 parsed-empty → statistical fallback');
-      return null;
-    }
+    // parse barrier 保证 parsed 非空（空编排 = throw → 下方 catch 的 L2-failure warn 接管观测，
+    // throw message 如 'no valid candidates after refId ⊆ filter + dedup' 自带诊断上下文），
+    // YUK-558 bot 轮删死分支（旧 `parsed.length === 0` 不可达——见 selection-orchestrator.ts
+    // parseSelectionOrchestratorOutput ⊆-filter+dedup 空即 throw 的契约）。
 
     // FINDING 1（positivity / silent candidate loss）：LLM 可能只编排 samplable 的**子集**
     //   （漏排 / 重复被 dedup / 幻觉 id 被 ⊆filter 丢）。parse barrier 只在结果**全空**时才

@@ -118,6 +118,11 @@ describe('runRecomputeBCalibCap (YUK-558 一次性追溯 recompute)', () => {
     expect(first.recalibrated).toBe(2);
     expect(first.clip_activations).toBeGreaterThanOrEqual(1); // Q1 fluke clipped.
     expect(first.min_pi_seen).toBeCloseTo(4e-4, 12);
+    expect(first.max_pi_seen).toBeCloseTo(0.5, 12); // largest π (honest 0.5) across both batches (min-max π face).
+    // identity: every considered question lands in exactly one bucket (no operator blind spot).
+    expect(first.recalibrated + first.skipped_failed + first.skipped_not_updated).toBe(
+      first.considered,
+    );
 
     const b1q1 = (await readCalibration(q1))?.b_calib as number;
     const b1q2 = (await readCalibration(q2))?.b_calib as number;
@@ -151,5 +156,45 @@ describe('runRecomputeBCalibCap (YUK-558 一次性追溯 recompute)', () => {
     expect(result.skipped_failed).toBe(1);
     expect((await readCalibration(good1))?.b_calib).not.toBeNull();
     expect((await readCalibration(good2))?.b_calib).not.toBeNull();
+  });
+
+  // YUK-558 bot 轮 — updated=false 无异常（no_anchor）落 skipped_not_updated + reason 分桶，
+  // 闭合 considered === recalibrated + skipped_failed + skipped_not_updated 恒等（operator 视野修复）。
+  it('counts updated=false (no exception, no_anchor) into skipped_not_updated with reason breakdown + identity', async () => {
+    // Candidate: b_calib IS NOT NULL (so it is a recompute candidate) but NO anchor (b/b_anchor both
+    // NULL) → recalibrateQuestion returns {updated:false, reason:'no_anchor'} WITHOUT throwing.
+    const noAnchor = createId();
+    await seedQuestion(noAnchor);
+    await db.insert(item_calibration).values({
+      id: newId(),
+      question_id: noAnchor,
+      b: null,
+      b_anchor: null,
+      b_calib: 1.5, // makes it a recompute candidate (b_calib IS NOT NULL)
+      calibration_n: RECALIBRATION_MIN_LABELS,
+      confidence: 0.5,
+      track: 'hard',
+      source: 'llm_prior',
+      created_at: NOW,
+      updated_at: NOW,
+    });
+    await seedLabels(noAnchor, RECALIBRATION_MIN_LABELS, { bLabel: 1.5, pi: 0.5 });
+    // A healthy candidate alongside it, so the identity spans a mixed batch.
+    const good = createId();
+    await seedQuestion(good);
+    await seedItemCalibration(good, 0.5);
+    await seedLabels(good, RECALIBRATION_MIN_LABELS, { bLabel: 1.5, pi: 0.5 });
+    await recalibrateQuestion(db, good); // firm up → b_calib IS NOT NULL (candidate).
+
+    const result = await runRecomputeBCalibCap(db);
+    expect(result.considered).toBe(2);
+    expect(result.recalibrated).toBe(1);
+    expect(result.skipped_failed).toBe(0);
+    expect(result.skipped_not_updated).toBe(1);
+    expect(result.skipped_by_reason.no_anchor).toBe(1);
+    // identity holds: considered === recalibrated + skipped_failed + skipped_not_updated.
+    expect(result.recalibrated + result.skipped_failed + result.skipped_not_updated).toBe(
+      result.considered,
+    );
   });
 });
