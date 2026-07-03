@@ -252,6 +252,33 @@ INSERT 写一次（learning-items/route.ts:76），**无 UPDATE path**。如果 
 
 ---
 
+## 6.6 mastery projection provenance — observed vs inferred（YUK-559 / S2）🆕
+
+`getMasteryProjection`（`src/server/mastery/state.ts`）返回的 `MasteryProjection` Map **混装两类条目**：
+
+- **`provenance:'observed'`** —— KC 自己的 `mastery_state` 行（count 驱动 p(L) band，`evidence_count>0`）。
+- **`provenance:'inferred'`** —— A5/A6 KG-borrowing 软层给「请求但未观测」KC 合成的借用条目
+  （`evidence_count:0`，band = 冷 σ(−β)，θ̂ = 邻居借来的 θ̃）。**仅在 `GRAPH_LAPLACIAN_ENABLED` /
+  `PREREQ_THETA_PROPAGATION_ENABLED` 翻 flag 后才出现**——今日全 dark ⇒ 零 inferred 条目。
+
+**读模型契约（S1 落地）**：`provenance` 判别式（required）+ `theta_hat_raw?`（观测 KC 被就地平滑时保留
+原 θ̂）+ `isObserved(p)` 纯 helper。**这些字段只在读模型**——`provenance`/`theta_hat_raw` **绝不入
+`mastery_state` schema**（加列会诱导落库、污染三轴正交，ADR-0035）。故 `audit:schema` **不涉**本条
+（无新列）。
+
+**数据纪律**：读 `.mastery` / `.theta_hat` 而**不**看 `provenance` / `isObserved` / `evidence_count`
+的消费者，翻 flag 后会把从未作答 KC 的借用值静默当实测。`pnpm audit:mastery-provenance`（`scripts/
+audit-mastery-provenance.ts`）对 `getMasteryProjection` 的直接 caller + 传递消费者做 **file-scope 反查**
+（读 field 且无 guard token ⇒ FLAGGED），**默认 report-only（exit 0）**——今日全 dark 无 live 误用。
+allowlist（`scripts/audit-mastery-provenance-allowlist.json`）带 `resolves_when{kind,ref,expected_by}`。
+**升 hard-gate 是 owner 决策，绑「任一借用 flag 翻转」前置**（kg-borrowing spec §7 开放问题 4）。新增
+「读 `MasteryProjection` field」的消费路径时，要么就地 gate 在 provenance/evidence_count，要么进
+tracked 列表 + allowlist（同 `audit:relations` CONSUMER_REGISTRY 的声明 + 反查形态）。
+
+> 详见 `docs/design/2026-07-04-kg-borrowing-spec.md` §M2′/M2″ + 附 A 红线自查。
+
+---
+
 ## 7. UI 数据 fetch（design 假设的）
 
 ### Q. v2 Today KPI（FSRS 到期 / 归因中 / 学习项 active / AI 提议 pending）
