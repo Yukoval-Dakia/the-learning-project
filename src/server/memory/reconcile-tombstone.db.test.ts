@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { Memory, type MemoryConfig } from 'mem0ai/oss';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 // better-sqlite3 ships no bundled types and @types/better-sqlite3 is not a project
@@ -127,13 +127,17 @@ afterAll(() => {
 });
 
 describe('mem0 official delete() writes a memory_history tombstone (Q2a)', () => {
+  // CR (PR #699) — project rule: DB tests reset state in beforeEach, not the it() body.
+  beforeEach(async () => {
+    await resetDb();
+  });
+
   it('DELETE row carries previous_value=<text> and is_deleted=1 (recoverable delete)', async (ctx) => {
     if (!memory || !historyDbPath) {
       ctx.skip();
       return;
     }
     const db = testDb();
-    await resetDb();
     // Recreate the collection row-space clean (resetDb does not touch this
     // mem0-managed table). The table itself was created by Memory init above.
     await db.execute(sql.raw(`DELETE FROM "${COLLECTION}"`));

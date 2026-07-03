@@ -189,7 +189,7 @@ export async function capturePrevState(
   assertSafeCollectionName(collectionName);
   const rows = (await db.execute(
     sql`SELECT payload FROM ${sql.raw(`"${collectionName}"`)} WHERE id = ${memoryId}::uuid`,
-  )) as unknown as Array<{ payload: Record<string, unknown> }>;
+  )) as Array<{ payload: Record<string, unknown> }>;
   const payload = rows[0]?.payload;
   if (!payload) return null;
   const text = typeof payload.data === 'string' ? payload.data : null;
