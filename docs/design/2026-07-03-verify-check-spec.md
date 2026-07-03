@@ -534,6 +534,12 @@ const promote =
    - **✅ OWNER 裁决（2026-07-03，session AskUserQuestion）= (a) hold-for-review。** `SOLVE_CHECK_TIER34_VETO.normalize`
      默认 `true`：exact normalize-fail → 阻促进 + 落 `needs_review`（进 `/drafts` 池带诊断），**非** `failed`（不判"证明题错"）。
      独立 flag 可单关（只关 exact 假否决、留 semantic 否决）。前提闭环（开放问题③）已接地成立，见下。
+   - **⚠ 独立 review 轮修正（2026-07-03，附录 B A1）**：Opus 深度验证钉死「无削减的 hold-for-review = exact 客观题
+     近乎全量假 fail 进 needs_review → /drafts 全噪 → 自动化实质停摆」（quiz_gen 行 reference_solution 恒缺、backfill
+     两路都 gate 在 reference_md IS NULL 永不进、normalize 不删标点）。已落修法 (i)：reference_md fallback 增加
+     首行 + 首句（仅全角 。！？ 切分，防 3.14 截断）候选 + 双侧尾标点 trim 候选，整段候选保留。(a) 的语义不变，
+     残余 normalize-fail 才进 needs_review。修法 (iii)（quiz_gen 补写 rubric_json.reference_solution，救未来行）
+     记捕获门 → 协调者落 Linear。
 2. **semantic-veto 的确认性重解（cheap self-consistency）**：仅当上线后观测证明 semantic confident-fail 假 FAIL 率
    偏高，才升级为"fail 触发第二次 solve、两次都 fail 才 veto"。留 owner 选项，不在本波（Q2）。
 3. **needs_review → 人工促进闭环是否已存在**（Q1(a)/Q6 依赖）：本 spec 未 ground review 面是否单独暴露
@@ -546,7 +552,10 @@ const promote =
      verify-status filter，DraftReviewPage.tsx:101-109/314-337/597）。故 (a) 的 `needs_review` draft **人工可见 +
      可回写促进**，不退化成死 draft——(a) 的软性真生效。
 4. **Q7 手动端点 count 硬顶**：独立 Linear follow-up（solve-check 使其更 load-bearing，非正交）。owner 若认为紧迫
-   可要求并入（多碰 `handlers.ts` 一文件）；本 spec 默认不扩展。
+   可要求并入（多碰 `handlers.ts` 一文件）；本 spec 默认不扩展。（已捕获 YUK-555。）
+5. **flag 退态 E2E 回归测试**（review B-obs-2）：flag-off 目前由 `solveCheckBlocks` 纯函数单测覆盖（直传 flags）；
+   handler 消费的是 module-const 默认值，端到端「翻 flag 后 promote 变化」无运行时 seam 可驱。defer 到真要翻
+   `SOLVE_CHECK_TIER34_VETO` 时补一条 `vi.doMock` 回归测试再动 const。
 
 ---
 
@@ -579,5 +588,39 @@ const promote =
 接线遗漏而非设计争议（三腿收敛 + Questgen 同构反面先例）；零 schema 改动（`VerifyAxisVerdict` 含 unsupported
 :79，`VerifyAxis` :88-90）；draft-review.ts additive-safe；verify-and-promote.ts 正确传播（solve fail→needs_review
 →promoted:false）；runSolveCheck throw-safe（SolutionGenerateTask leg :309-316 + runSemanticJudge 自吞
-question-contract.ts:261-265 均→unsupported）；audit:draft-status 无关（UPDATE-only）；模型 id 全 mimo-v2.5-pro
+question-contract.ts:261-265 均→unsupported）；audit:draft-status 无关(UPDATE-only)；模型 id 全 mimo-v2.5-pro
 （registry.ts:705/317/721/741）。
+
+---
+
+## 附录 B — 独立 review 轮裁决（2026-07-03，8 finder → 1 Opus 深度验证 + 双确认免验，实施于 M1-M3 落地后）
+
+### 修（已实施，同一 fix commit）
+
+| # | Finding | 裁决 / 落点 |
+|---|---|---|
+| **A1（MAJOR，承重）** | **假 fail 削减**。Opus 验证钉死三事实：① exact-routed 客观题（judge='exact' 或 null+choices/EXACT_KINDS）normalize-only、miss 即 fail 无 semantic 回退；② quiz_gen 行 `reference_solution` 恒缺——backfill 两路都 gate 在 `reference_md IS NULL`，quiz_gen 行恒非空**永不进**→ candidates 必回退整段「答案+解析」reference_md；③ `normalizeAnswer` 只删空白不删标点（『长安。』≠『长安』也 fail）。**净效果：无削减 = exact 客观题近乎全量假 fail 进 needs_review，/drafts 全噪，自动化实质停摆**——原设计的「hold-for-review 兜假否决」被掏空为「全量手动闸」。 | **修法 (i)**：`referenceAnswerCandidates` fallback 增加**首行**候选（`split(/\r?\n/)[0]`）+ **首句**候选（首行再按全角 。！？ 切分——ASCII '.' 排除防 `3.14`→`3` 截断）；`answerCandidates` 增加**尾标点 trim** 变体（保守集 `。．.!！?？`，仅尾部，双侧对称适用）；整段候选保留（多候选 `.includes` = 任一命中即 pass），candidate[0] 仍整段（semantic 路 reference 不变）。**假 pass 反向风险评估**：solver 的 final_answer 需 normalize-等于一条非答案散文行才误 pass——exact 路已被 EXACT_KINDS/choices/judge='exact' 门住，quiz_gen prompt 契约首行=裸答案（choice/true_false=正确选项原文），残余风险=罕见误 pass 回到 pre-solve-check 现状，远小于今天的确定性全量假 fail → **不加 kind 门**。测试：答案+解析裸答案 PASS / 真分歧仍 FAIL / 尾标点双向 / 多行首行 / 3.14 防截断（verify-framework.test.ts A1 describe）。F2 注释同步改写 |
+| **ALT-1/C1（MAJOR，深度+跨文件双独立确认）** | **诊断断链**：solve_check 否决的 needs_review 草稿在 /drafts「驳回理由」显示的是模型自己的 pass 自评（`summary_md` 按构造写于 solve 之前且必为 pass 语气——solve 只在 free checks 全过后才跑）——hold-for-review 的实用价值被掏空 | server-only 修（UI 零改）：`draft-review.ts` `deriveVerifyVerdict` 在 `payload.solve_check.verdict==='fail'` 时合成 `solve_check(<axis>) 否决：独立求解答案「X」；<reason>（模型自评：<summary_md>）` 进 `verify_reason`；listDraftReview 与 getDraftReviewDetail 共经此函数。+3 db 测试（list 合成 / pass 不改写守卫 / detail 合成） |
+| **EFF-1** | solve legs 的 cost/run-id 不可观测（event 列只记 QuizVerifyTask 一跳） | `SolveCheckRunTaskFn` 返回形加可选 `task_run_id`/`cost_usd`；`SolveCheckResult` 加 `task_run_ids[]`（按调用序）+ `cost_usd`（跨 leg 求和）；semantic 路经 recording wrapper 捕 judge leg；payload.solve_check 块加两字段。「solve_check 每题成本」可从 event 表回答。+3 unit 测试 |
+| **EFF-3** | `referenceAnswer.length===0` 的 unsupported 在 solver call 之后 → 注定无效仍花 LLM call | hoist 到 solver call 之前（verdict/reason 不变；该 return 不再携 solver_final_answer——没跑）。测试强化：断言 runTaskFn 未被调用 |
+| **SIMP-1** | promote 五连词与 freeChecksPass byte 重复，第 6 个 check 时会漂移 | `const promote = freeChecksPass && solveCheckOk`（正白名单锚 `parsed.overall==='pass'` 经 freeChecksPass 传递，RL1 注释保留并注明） |
+| **SIMP-2/R3** | runTaskMock/dualTaskMock/tripleTaskMock 三分发器 | 收拢为 `taskMock(defaultText, overrides?, taskRunId?)` 单分发器；`runTaskMock` 保留为 wrapper（15 处既有调用零迁移） |
+| **R1/R2** | solverOutput 三份 / semanticJudgeOutput 两份逐字节重复 | 抽 `tests/helpers/solve-check-fixtures.ts`（依赖零、unit/db 两分区均可 import）；verify-framework.test.ts + quiz_verify.test.ts 迁移；source_verify.test.ts 仅加互指注释（本轮 comment-only 裁决） |
+| **R4** | tier2 全轴否决 vs tier3/4 分轴的不对称未记录 | `solveCheckBlocks` docblock 主记（tier2 reference 网源锚定 vs tier3/4 同模型自源）+ source_verify.ts 文件头互指注释（逻辑零改） |
+| **ALT-3** | pass-case payload 测试缺 solver_final_answer/reason 断言（与 fail-case 不对称） | qsolve_pass 补齐四字段断言 |
+| **B-obs-1** | 幂等重试测试第三次调用靠 vi.fn 默认 undefined 解构异常的巧合 | 改显式第三 mock（`solverOutput('')` → 显式 empty-final_answer unsupported 路径）+ 补 success event 的 `payload.solve_check` 断言 |
+
+### SKIP（留档）
+
+| # | Finding | 裁决 |
+|---|---|---|
+| **A2** | `stripLeadingChoiceLabel` 的 `.` 非 dotAll，多行 labelled 答案不 strip | **skip**：单修不降一分假 fail（主因是答案+解析整块不对称非 label）；A1 首行/首句 split 后输入变单行使其 moot。留 low-pri 注释于函数内 |
+| **ALT-2** | flag 粒度（编译期 const 重） | **as-designed**：ALT-1 修后残余风险大降；编译期 const 的诚实披露保留（M1 docblock） |
+| **B-obs-2** | flag 退态 E2E 回归 | **defer** 到真要翻 flag 时（vi.doMock 回归测试）；已注开放问题⑤ |
+| **SIMP-3** | 测试骨架重构 | 循例不动 |
+| **EFF-2** | 手动端点 count cap | 已捕获 **YUK-555**（Q7/开放问题④） |
+
+### 捕获门（协调者落 Linear）
+
+- **修法 (iii)**：quiz_gen 生成时补写 `rubric_json.reference_solution.final_answer`（+equivalents），让未来行走结构化
+  比对不再依赖 reference_md fallback——治本侧，独立 scope（动 quiz_gen prompt/parser），本轮只落修法 (i) 治标。

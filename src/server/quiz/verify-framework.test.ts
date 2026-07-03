@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  semanticJudgeOutput as semanticOutput,
+  solverOutput,
+} from '../../../tests/helpers/solve-check-fixtures';
+import {
   CHECK_SETS_BY_TIER,
   SOLVE_CHECK_SEMANTIC_THRESHOLD,
   SOLVE_CHECK_TIER34_VETO,
@@ -70,28 +74,8 @@ describe('normalizeAnswer', () => {
 });
 
 // ---------- solve-check helpers ----------
-
-function solverOutput(finalAnswer: string, equivalents: string[] = []): string {
-  return JSON.stringify({
-    reference_solution: {
-      expected_signals: ['s'],
-      final_answer: finalAnswer,
-      answer_equivalents: equivalents,
-    },
-    worked_solution_md: 'work',
-    confidence: 0.9,
-  });
-}
-
-function semanticOutput(outcome: 'correct' | 'partial' | 'incorrect', confidence: number): string {
-  return JSON.stringify({
-    score: outcome === 'incorrect' ? 0 : outcome === 'partial' ? 0.5 : 0.9,
-    coarse_outcome: outcome,
-    confidence,
-    feedback_md: 'fb',
-    evidence_json: { matched_points: [], missing_points: [] },
-  });
-}
+// solverOutput / semanticOutput now come from tests/helpers/solve-check-fixtures (YUK-554
+// review R1/R2 — shared with quiz_verify.test.ts).
 
 const fakeProfile = {
   id: 'wenyan',
@@ -289,6 +273,115 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
   });
 });
 
+// ---------- A1 (YUK-554 review) — reference_md fallback candidates ----------
+//
+// quiz_gen rows carry no rubric_json.reference_solution (and are never backfilled), so the
+// exact compare falls back to reference_md — typically「答案+解析」prose. Without the A1
+// candidates this shape was a near-guaranteed false fail; these tests lock the mitigation.
+describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)', () => {
+  const fillBlank: SolveCheckQuestion = {
+    id: 'q_a1',
+    kind: 'fill_blank',
+    prompt_md: '「之」在此句中作____。',
+    reference_md: '代词。此处之作代词。',
+    choices_md: null,
+    judge_kind_override: 'exact',
+    rubric_json: null,
+    knowledge_ids: ['k_zhi'],
+    metadata: null,
+  };
+
+  it('passes when the solver gives the bare answer against 答案+解析 (first-sentence candidate)', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const result = await runSolveCheck(fillBlank, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('pass');
+    expect(result.compared_by).toBe('normalize');
+  });
+
+  it('still fails on a genuine disagreement against the same reference shape', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('助词') }));
+    const result = await runSolveCheck(fillBlank, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('fail');
+    expect(result.compared_by).toBe('normalize');
+  });
+
+  it('passes via the first-line candidate on a multi-line 答案+解析 reference', async () => {
+    const multiLine = { ...fillBlank, reference_md: '代词\n解析：「之」指代所学的内容。' };
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const result = await runSolveCheck(multiLine, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('pass');
+  });
+
+  it('trailing sentence punctuation does not fail a bare-answer match (both directions)', async () => {
+    // reference carries a trailing 。, solver answers bare:
+    const refPunct = { ...fillBlank, prompt_md: '西汉定都于____。', reference_md: '长安。' };
+    await expect(
+      runSolveCheck(refPunct, {
+        runTaskFn: vi.fn(async () => ({ text: solverOutput('长安') })),
+        profile: fakeProfile,
+      }),
+    ).resolves.toMatchObject({ verdict: 'pass' });
+    // reference bare, solver carries a trailing 。:
+    const refBare = { ...refPunct, reference_md: '长安' };
+    await expect(
+      runSolveCheck(refBare, {
+        runTaskFn: vi.fn(async () => ({ text: solverOutput('长安。') })),
+        profile: fakeProfile,
+      }),
+    ).resolves.toMatchObject({ verdict: 'pass' });
+  });
+
+  it('never truncates decimals (sentence split excludes ASCII "." — 3 ≠ 3.14)', async () => {
+    const decimal = { ...fillBlank, prompt_md: '圆周率约等于____。', reference_md: '3.14' };
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('3') }));
+    const result = await runSolveCheck(decimal, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('fail');
+  });
+});
+
+// ---------- EFF-1 (YUK-554 review) — cost/provenance threading ----------
+
+describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
+  it('captures the solver leg task_run_id + cost_usd on the exact path', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: solverOutput('公元前202年'),
+      task_run_id: 'tr_solver',
+      cost_usd: 0.012,
+    }));
+    const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('pass');
+    expect(result.task_run_ids).toEqual(['tr_solver']);
+    expect(result.cost_usd).toBeCloseTo(0.012);
+  });
+
+  it('captures BOTH legs (solver + judge) on the semantic path, cost summed', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => {
+      if (kind === 'SolutionGenerateTask') {
+        return { text: solverOutput('独立答案'), task_run_id: 'tr_solver', cost_usd: 0.01 };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.9), task_run_id: 'tr_judge', cost_usd: 0.02 };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    const result = await runSolveCheck(openQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
+    expect(result.compared_by).toBe('semantic');
+    expect(result.task_run_ids).toEqual(['tr_solver', 'tr_judge']);
+    expect(result.cost_usd).toBeCloseTo(0.03);
+  });
+
+  it('omits provenance fields when the runner reports none ({ text }-only mock)', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('公元前202年') }));
+    const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
+    expect(result.task_run_ids).toBeUndefined();
+    expect(result.cost_usd).toBeUndefined();
+  });
+});
+
 describe('runSolveCheck — conservative non-fail behaviour (R2)', () => {
   it('returns unsupported (NOT fail) when the solver throws', async () => {
     const runTaskFn = vi.fn(async () => {
@@ -311,13 +404,16 @@ describe('runSolveCheck — conservative non-fail behaviour (R2)', () => {
     expect(result.verdict).toBe('unsupported');
   });
 
-  it('returns unsupported when the question has no reference answer', async () => {
+  it('returns unsupported when the question has no reference answer — WITHOUT spending the solver call (EFF-3)', async () => {
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('x') }));
     const result = await runSolveCheck(
       { ...exactQuestion, reference_md: null },
       { runTaskFn, profile: fakeProfile },
     );
     expect(result.verdict).toBe('unsupported');
+    // EFF-3 (YUK-554 review) — the no-reference check is hoisted before the solver call:
+    // the verdict is 'unsupported' regardless, so the LLM call must not be spent.
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 });
 
