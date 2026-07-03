@@ -8,6 +8,7 @@ import { writeCostLedger } from '@/server/ai/log';
 import { glmChatCostCny } from '@/server/ai/pricing';
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { isQueueCreateRace } from '@/server/boss/client';
+import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import {
   listActiveSubjectsSinceRefresh,
   loadSubjectBriefEvents,
@@ -20,12 +21,7 @@ import {
   regenerateMemoryBrief,
   scopeHasNewEvidence,
 } from './brief';
-import {
-  type MemoryClient,
-  type MemoryEventInput,
-  createMem0Config,
-  createMemoryClient,
-} from './client';
+import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
 import {
   type CandidateEntry,
   type NewMemoryEntry,
@@ -503,6 +499,22 @@ function topCandidateScore(cands: CandidateEntry[]): number | undefined {
 }
 
 /**
+ * YUK-557 (PR #699 CR-3) — resolve the mem0 pgvector collection (table) name
+ * WITHOUT triggering createMem0Config()'s Mem0 API-key validation. createMem0Config()
+ * calls requireEnv on DATABASE_URL / ZHIPU_API_KEY / DASHSCOPE_API_KEY (client.ts:138-140)
+ * and throws if any is missing — but a SUPERSEDE-only or injected-client replay needs
+ * only the collection NAME, never a client (F-4 posture). Derive it straight from
+ * MEM0_PGVECTOR_COLLECTION (the same env optionalEnv reads in createMem0Config) so the
+ * client-less path stays key-free. SoT default = MEM0_COLLECTION_DEFAULT (the live
+ * client and the backup path both resolve to it).
+ */
+function resolveMem0CollectionName(injected?: string): string {
+  return (
+    injected?.trim() || process.env.MEM0_PGVECTOR_COLLECTION?.trim() || MEM0_COLLECTION_DEFAULT
+  );
+}
+
+/**
  * P2 (YUK-342): memory reconcile handler.
  *
  * Consumes a batch of new memory ids, searches for existing candidates per new
@@ -524,11 +536,20 @@ export function buildMemoryReconcileHandler(
     judge?: typeof judgeReconciliation;
     /** Injectable for tests — mem0 collection table name (default: from config) */
     collectionName?: string;
+    /**
+     * YUK-557 (PR #699 CR-1) — injectable Mem0 client factory (default:
+     * createMemoryClient). Tests inject a factory that throws so the m7 "client
+     * unavailable" branch is DETERMINISTIC regardless of the shell env's Mem0 keys:
+     * a bare createMemoryClient() would otherwise succeed on any machine that
+     * happens to carry ZHIPU/DASHSCOPE keys, making m7 depend on ambient env.
+     */
+    createClient?: () => MemoryClient;
   } = {},
 ): (jobs: Job<{ memories: ReconcileMemInput[]; user_id: string }>[]) => Promise<void> {
   let memoryClient = deps.memoryClient;
   const judge = deps.judge ?? judgeReconciliation;
   const collectionName = deps.collectionName;
+  const createClient = deps.createClient ?? createMemoryClient;
   // YUK-557 (F4): lazy client init for applyPlannedRows. applyPlannedRows only
   // calls getClient when a destructive (MERGE/RETRACT_NEW) row is actually pending,
   // so a pure KEEP_BOTH/SUPERSEDE replay never triggers init (F-4 posture: a
@@ -538,9 +559,13 @@ export function buildMemoryReconcileHandler(
   const getClientLazy = (): MemoryClient | undefined => {
     if (!memoryClient) {
       try {
-        memoryClient = createMemoryClient();
-      } catch {
-        /* stays undefined → aggregated warn in applyPlannedRows */
+        memoryClient = createClient();
+      } catch (err) {
+        // OCR (PR #699, triggers.ts:544) — surface the root cause. The empty catch
+        // used to discard the createMemoryClient() failure (missing key / bad
+        // endpoint / invalid config); the only downstream signal was a vague warn in
+        // applyPlannedRows. Mirrors the inline init log below (:565-573).
+        console.warn('[memory_reconcile] Mem0 lazy client init failed', err);
       }
     }
     return memoryClient;
@@ -562,7 +587,7 @@ export function buildMemoryReconcileHandler(
         let client = memoryClient;
         if (!client) {
           try {
-            client = createMemoryClient();
+            client = createClient();
             memoryClient = client;
           } catch (err) {
             console.warn(
@@ -688,17 +713,23 @@ export function buildMemoryReconcileHandler(
         // capturePrevState is async → for...of so the write-ahead snapshot is
         // captured (before apply mutates anything) prior to insert; NEVER capture
         // at apply-time (a crash-replay would read the already-rewritten payload).
-        const resolvedCollectionName =
-          collectionName ??
-          createMem0Config().vectorStore.config.collectionName ??
-          'learning_project_memories';
+        const resolvedCollectionName = resolveMem0CollectionName(collectionName);
         const plannedRows: PlannedRow[] = [];
         for (const d of uniqueDecisions) {
           const newMem = newMems[d.new_index];
           const cands = candidatesByNew.get(d.new_index) ?? [];
           const oldMem = d.old_index != null ? cands[d.old_index] : undefined;
+          // YUK-557 (PR #699 CR-4): an explicitly-provided old_index that fails to
+          // resolve to a candidate (LLM-hallucinated out-of-range index) is invalid
+          // for EVERY action — fail-safe downgrade to KEEP_BOTH before any deletion
+          // decision. Without this, RETRACT_NEW (NOT in needsOldTarget) would let a
+          // bogus old_index slip past badTarget and delete the new memory on a top-
+          // score/abstain path. Pairs with F3/V3: after this guard the RETRACT_NEW
+          // topCandidateScore fallback only ever sees the legal old_index===null state.
+          const invalidOldIndex = d.old_index != null && !oldMem;
           const badTarget =
             !newMem ||
+            invalidOldIndex ||
             (needsOldTarget(d.action) && !oldMem) ||
             (d.action === 'RETRACT_NEW' && !newMem);
 
@@ -733,14 +764,17 @@ export function buildMemoryReconcileHandler(
           // referenced candidate that carries no score must NOT fall through to max —
           // it abstains (undefined → gate passes) + logs m8, symmetric with MERGE
           // (F3: max fallback is authorized only for old_index=null).
-          const referencedScore =
-            action === 'MERGE'
-              ? oldMem?.score
-              : action === 'RETRACT_NEW'
-                ? oldMem
-                  ? oldMem.score
-                  : topCandidateScore(cands)
-                : undefined;
+          // OCR (PR #699, triggers.ts:743) — if/else chain (repo bans nested
+          // ternaries; semantics unchanged): MERGE keys on the referenced candidate;
+          // RETRACT_NEW keys on the referenced candidate, else the topCandidateScore
+          // fallback ONLY when there is NO referenced candidate (old_index===null);
+          // every other action abstains (undefined).
+          let referencedScore: number | undefined;
+          if (action === 'MERGE') {
+            referencedScore = oldMem?.score;
+          } else if (action === 'RETRACT_NEW') {
+            referencedScore = oldMem ? oldMem.score : topCandidateScore(cands);
+          }
           const corroborated = passesStructuralCorroboration(action, referencedScore);
           // !corroborated already implies isHardDelete(action): passesStructural-
           // Corroboration only returns false for MERGE/RETRACT_NEW (dead action
@@ -759,22 +793,32 @@ export function buildMemoryReconcileHandler(
             ); // m8
           }
 
-          // 4) write-ahead prev snapshot (Q2b). SUPERSEDE/MERGE → old row's
-          // text/full payload; RETRACT_NEW → new row's text (payload=NULL, its
-          // metadata is event-sourced); KEEP_BOTH → NULL. Captured NOW so a
-          // crash-replay can't overwrite it with post-merge state (spec M1).
-          const prevText =
-            action === 'KEEP_BOTH'
-              ? null
-              : action === 'RETRACT_NEW'
-                ? (newMem?.text ?? null)
-                : (oldMem?.text ?? null);
+          // 4) write-ahead prev snapshot (Q2b). Captured NOW so a crash-replay can't
+          // overwrite it with post-merge state (spec M1). YUK-557 (PR #699 CR-5):
+          // SUPERSEDE/MERGE (needsOldTarget) prefer the OLD row's authoritative DB
+          // snapshot text (snap.text) for verbatim undo — the search candidate's text
+          // can drift from the pgvector payload — falling back to the candidate text
+          // (oldMem.text) only when the snapshot is absent (defensive: LLM-referenced
+          // id already gone), which keeps prevText's non-null floor (F2 guard).
+          // RETRACT_NEW → the new (discarded) row's text (payload=NULL, its metadata is
+          // event-sourced); KEEP_BOTH → NULL. If/else chain: repo bans nested ternaries
+          // (OCR PR #699 triggers.ts:771).
           let prevMetadata: Record<string, unknown> | null = null;
+          let oldTextForUndo: string | null = null;
           if (needsOldTarget(action)) {
             const snap = oldMem
               ? await capturePrevState(db, resolvedCollectionName, oldMem.memory_id)
               : null;
+            oldTextForUndo = snap?.text ?? oldMem?.text ?? null;
             prevMetadata = snap?.metadata ?? null; // missing/absent → NULL; prev_text is the floor
+          }
+          let prevText: string | null;
+          if (action === 'KEEP_BOTH') {
+            prevText = null;
+          } else if (action === 'RETRACT_NEW') {
+            prevText = newMem?.text ?? null;
+          } else {
+            prevText = oldTextForUndo;
           }
 
           plannedRows.push(
@@ -844,10 +888,7 @@ async function applyPlannedRows(
   const pending = await loadUnappliedLog(db, userId);
   if (pending.length === 0) return;
 
-  const collectionName =
-    deps.collectionName ??
-    createMem0Config().vectorStore.config.collectionName ??
-    'learning_project_memories';
+  const collectionName = resolveMem0CollectionName(deps.collectionName);
 
   // YUK-557 (Q2a/m7): MERGE/RETRACT_NEW now hard-delete via mem0's official
   // delete() (client.hardDelete), so those branches need a MemoryClient. Resolve
