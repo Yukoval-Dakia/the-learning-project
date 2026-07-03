@@ -324,6 +324,8 @@ export const fastTestInclude = [
   // YUK-471 W1 PR-A2b — parity assert throw-routing (mocks ./gather, no DB). The live
   // gather→fold parity coverage is parity.db.test.ts (DB partition).
   'src/server/projections/parity.unit.test.ts',
+  // YUK-548 — warnFlipOrder / trackedFlagVector (process.env only, no DB).
+  'src/server/projections/sot-flag.unit.test.ts',
   // Memory tests are mostly unit-mocked. The outbox real-path integration
   // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) and the P5.2
   // activity-gated brief test (active-subjects.db.test.ts, YUK-143) hit live
