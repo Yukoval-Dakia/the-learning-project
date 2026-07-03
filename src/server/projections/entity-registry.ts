@@ -70,15 +70,41 @@ export const ALL_PROJECTION_KINDS = [
  * dropped it, schema.ts:406-412), so knowledge + knowledge_edge are one cluster (knowledge first)
  * and every other kind is an INDEPENDENT singleton cluster — a single kind's reject never balloons
  * into an all-7 rollback.
+ *
+ * EXHAUSTIVENESS (review O12): unlike PROJECTION_ENTITIES (whose Record<ProjectionKind, …> makes a
+ * missing kind a compile error), a plain array literal has NO such guarantee — a kind absent here
+ * would be silently unreachable from rebuild-projection / the b3-gate CLI. Two guards close that:
+ * the `satisfies` keeps element types literal so MissingClusterKind (below) is a COMPILE error when
+ * a kind is missing, and the module-load assert catches duplicates/mismatch at runtime.
  */
-export const PROJECTION_FK_CLUSTERS: readonly (readonly ProjectionKind[])[] = [
+export const PROJECTION_FK_CLUSTERS = [
   ['knowledge', 'knowledge_edge'],
   ['goal'],
   ['mistake_variant'],
   ['learning_item'],
   ['artifact'],
   ['question_block'],
-] as const;
+] as const satisfies readonly (readonly ProjectionKind[])[];
+
+// Compile-time: every ProjectionKind must appear in the clusters. If one is missing,
+// MissingClusterKind is non-never and the AssertNever instantiation fails to typecheck.
+type ClusterCoveredKind = (typeof PROJECTION_FK_CLUSTERS)[number][number];
+type AssertNever<T extends never> = T;
+export type _AssertClustersCoverEveryKind = AssertNever<
+  Exclude<ProjectionKind, ClusterCoveredKind>
+>;
+
+// Runtime (module load): no duplicates across clusters + exact coverage (belt to the type-level
+// suspenders — the type check cannot catch a kind listed twice).
+{
+  const flat = PROJECTION_FK_CLUSTERS.flat();
+  const set = new Set<ProjectionKind>(flat);
+  if (flat.length !== ALL_PROJECTION_KINDS.length || set.size !== ALL_PROJECTION_KINDS.length) {
+    throw new Error(
+      `PROJECTION_FK_CLUSTERS must cover every ProjectionKind exactly once (got [${flat.join(', ')}])`,
+    );
+  }
+}
 
 export interface ProjectionAdapter {
   kind: ProjectionKind;
@@ -108,6 +134,12 @@ export interface ProjectionAdapter {
 
 // event.subject_id set for `kind`, optionally unioned with the materialized_id_index anchors when
 // the kind writes the index. Shared by every adapter's eventSubjectIds.
+//
+// UNBOUNDED-READ NOTE (review O13, deliberate): no LIMIT/pagination — the id UNIVERSE is the whole
+// point of this read (ghost detection must see every id the log implies; a truncated universe is a
+// blind oracle). Boundedness comes from the deployment envelope, not the query: single-user (n=1)
+// tool, per-kind subject counts are 10²-10⁴ scale, and only distinct ids are retained in the Set.
+// If the event table ever outgrows that envelope, the fix is a DISTINCT/keyset scan — never a LIMIT.
 async function eventSubjectIdSet(
   db: DbLike,
   kind: ProjectionKind,
@@ -143,7 +175,9 @@ type ProjectionTable =
 
 function liveIdsFrom(table: ProjectionTable): (db: DbLike) => Promise<Set<string>> {
   return async (db) => {
-    const rows = (await db.select({ id: table.id }).from(table)) as { id: string }[];
+    // Annotation (not a cast — review O14): assignment-checked against the drizzle-inferred result,
+    // so a future table whose `id` is not a text column fails HERE at compile time.
+    const rows: { id: string }[] = await db.select({ id: table.id }).from(table);
     return new Set(rows.map((r) => r.id));
   };
 }

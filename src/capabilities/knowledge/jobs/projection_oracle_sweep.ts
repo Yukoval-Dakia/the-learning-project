@@ -109,10 +109,19 @@ function logAnomaly(rec: SymmetricRecord): void {
 // record (bounds accumulation + prevents a self-scan feedback loop). Returns true iff it wrote.
 async function writeForensicOnce(db: Db | Tx, rec: SymmetricRecord, now: Date): Promise<boolean> {
   const forensicSubjectId = `${rec.kind}:${rec.id}`;
+  // subject_kind included (review O15): semantically precise AND lets the planner use the composite
+  // event_subject_idx (subject_kind, subject_id, ...) for a direct lookup instead of scanning the
+  // action index as the event table grows.
   const existing = await db
     .select({ id: event.id })
     .from(event)
-    .where(and(eq(event.action, ORACLE_FORENSIC_ACTION), eq(event.subject_id, forensicSubjectId)))
+    .where(
+      and(
+        eq(event.action, ORACLE_FORENSIC_ACTION),
+        eq(event.subject_kind, ORACLE_FORENSIC_SUBJECT_KIND),
+        eq(event.subject_id, forensicSubjectId),
+      ),
+    )
     .limit(1);
   if (existing.length > 0) return false; // already an open record for this id — do NOT re-write per run
   await writeEvent(db, {

@@ -345,7 +345,13 @@ describe('runB3Gate — M5 over-inclusion scoping NO-GO (learning_item)', () => 
       .from(event)
       .where(and(eq(event.subject_id, 'li_scope'), eq(event.action, 'experimental:genesis')))
       .limit(1);
-    const genesisMs = (g?.created_at ?? new Date()).getTime();
+    // Explicit precondition (review CR5): a missing genesis is a broken fixture — fail LOUD here,
+    // never silently fall back to wall-clock (which would mask a backfill regression).
+    if (!g)
+      throw new Error(
+        'precondition failed: backfillLearningItemGenesis wrote no genesis for li_scope',
+      );
+    const genesisMs = g.created_at.getTime();
     // A REAL mutation event: complete → fold transitions pending → done. The live row STAYS 'pending'
     // (as if the imperative writer never applied it) → fold(genesis + complete) = 'done' ≠ live.
     await writeEvent(db, {

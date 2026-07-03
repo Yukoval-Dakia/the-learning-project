@@ -186,8 +186,10 @@ describe('runB3Gate', () => {
     expect(report.rebuild.counts?.knowledge).toBeGreaterThan(0);
     expect(report.rebuild.counts?.knowledge_edge).toBeGreaterThan(0);
     // Backfill anchored the pre-event-sourcing rows (4 nodes + 3 edges).
-    expect(report.backfill.knowledge.seeded).toBe(4);
-    expect(report.backfill.knowledge_edge.seeded).toBe(3);
+    expect(report.backfill.knowledge?.seeded).toBe(4);
+    expect(report.backfill.knowledge_edge?.seeded).toBe(3);
+    // cluster-scoped backfill (review O3): the gate must NOT touch kinds outside its cluster.
+    expect(Object.keys(report.backfill).sort()).toEqual(['knowledge', 'knowledge_edge']);
     // The unanchored seed root SURVIVES the rebuild (the keystone non-delete guard + its anchor).
     const root = await db.select().from(knowledge).where(eq(knowledge.id, 'seed:wenyan:root'));
     expect(root).toHaveLength(1);

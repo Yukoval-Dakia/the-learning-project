@@ -47,6 +47,15 @@ This is a **manual path-triggered gate**, not CI-enforced. The register's "reduc
 form is landed as this checklist item (n=1 sufficient); hash automation is an optional future upgrade
 (open question in the spec §8).
 
+## Coverage boundary (what this leg does NOT catch)
+
+`pnpm audit:golden` re-folds **offline** (no DB) — it covers **reducer drift only**, NOT a
+`gather.ts` predicate drift (the golden carries its own frozen event superset, so a changed gather
+query never runs). Gather drift is covered by (a) the CI gather/shell-parity DB tests and (b) a
+prod-clone `pnpm audit:projection` / `pnpm b3:gate` re-run, which fold through the REAL gather
+against the already-materialized rows. When a PR touches `gather.ts` for an ON entity, rely on those
+two legs (CI is automatic; the clone re-run is the manual belt-and-suspenders).
+
 ## Non-goals
 
 - NOT a runtime double-write (Q1) — offline snapshot + offline re-fold only.

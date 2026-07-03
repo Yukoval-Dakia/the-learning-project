@@ -86,14 +86,17 @@ export function projectionIsWriter(entity?: ProjectionEntity): boolean {
  * flipping already closes the split-brain window).
  */
 export function trackedFlagVector(): Record<string, boolean> {
-  return {
+  // Derived from PER_ENTITY_FLAG_ENV (review O17): Wave 2/3 entities extend that map, and a
+  // hand-enumerated copy here would silently omit a new entity from the boot vector — defeating the
+  // cross-process consistency aid. The bare global (knowledge+knowledge_edge) has no per-entity env
+  // key, so it stays the one explicit entry.
+  const vec: Record<string, boolean> = {
     'knowledge+knowledge_edge': projectionIsWriter(),
-    goal: projectionIsWriter('goal'),
-    mistake_variant: projectionIsWriter('mistake_variant'),
-    learning_item: projectionIsWriter('learning_item'),
-    artifact: projectionIsWriter('artifact'),
-    question_block: projectionIsWriter('question_block'),
   };
+  for (const entity of Object.keys(PER_ENTITY_FLAG_ENV) as ProjectionEntity[]) {
+    vec[entity] = projectionIsWriter(entity);
+  }
+  return vec;
 }
 
 /**
