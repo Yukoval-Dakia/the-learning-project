@@ -267,6 +267,18 @@ describe('fisherInformation3pl — 3PL Fisher (theta.ts)', () => {
     expect(fisherInformation3pl(0, 0, c)).toBeGreaterThan(0);
   });
 
+  it('c=1/4 at θ=b=0 pins the EXACT analytic Fisher 0.15 (distinguishes the wrong denominator)', () => {
+    // Analytic derivation at θ=b=0, c=1/4 — a closed-form rational the inequality
+    // assertions above cannot uniquely pin (a wrong denominator like (1−c)²·p̂·q̂ yields
+    // 0.140625 here and passes <0.25 / >0 / monotone-in-c just the same):
+    //   p̂ = σ(0) = 0.5
+    //   P  = c + (1−c)·p̂ = 0.25 + 0.75·0.5 = 0.625
+    //   dP = (1−c)·p̂·(1−p̂) = 0.75·0.25 = 0.1875
+    //   I  = (dP)² / [P·(1−P)] = 0.1875² / (0.625·0.375) = 0.03515625 / 0.234375 = 0.15
+    // exact 0.15 rational ⇒ the correct P·(1−P) denominator vs the erroneous p̂·q̂ variant.
+    expect(fisherInformation3pl(0, 0, 0.25)).toBeCloseTo(0.15, 12);
+  });
+
   it('c>0: larger k (smaller c) approaches 1PL Fisher monotonically', () => {
     // As k→∞, c→0, 3PL→1PL. Information at the peak should increase toward 0.25 as c shrinks.
     const atB4 = fisherInformation3pl(0, 0, 1 / 4);
@@ -291,6 +303,21 @@ describe('choicesToGuess — n=1-legal c=1/k bridge from choices_md', () => {
     expect(choicesToGuess(['a', 'b', 'c', 'd'])).toBeCloseTo(0.25, 12);
     expect(choicesToGuess(Array.from({ length: 6 }, (_, i) => `${i}`))).toBeCloseTo(1 / 6, 12);
   });
+
+  it('domain property (CR-1/CR-3): range is exactly {0} ∪ (0, 1/2] — never c≥1', () => {
+    // The producer's structural range guarantees the c-domain the 3PL consumers assume:
+    // ∀k∈[2..6]: 0 < 1/k ≤ 1/2 (k=2 hits the 1/2 supremum; larger k strictly smaller).
+    for (let k = 2; k <= 6; k++) {
+      const c = choicesToGuess(Array.from({ length: k }, (_, i) => `${i}`));
+      expect(c).toBeGreaterThan(0);
+      expect(c).toBeLessThanOrEqual(0.5);
+      expect(c).toBeCloseTo(1 / k, 12);
+    }
+    // k≤1 (single/empty/null) collapses to c=0 (the 1PL non-choice degenerate) — the
+    // producer NEVER emits c in (1/2, 1) or c≥1, so consumers can assume c ∈ [0, 1).
+    expect(choicesToGuess([])).toBe(0);
+    expect(choicesToGuess(['only'])).toBe(0);
+  });
 });
 
 describe('binaryLikelihood / gridUpdate / klpScoreFromGrid — 3PL c param', () => {
@@ -302,8 +329,30 @@ describe('binaryLikelihood / gridUpdate / klpScoreFromGrid — 3PL c param', () 
     // gridUpdate: c=0 explicit == c=0 default.
     const prior = uniformPrior();
     expect(gridUpdate(prior, 0.3, 1, 0)).toEqual(gridUpdate(prior, 0.3, 1));
-    // klpScore: c=0 explicit == default.
-    expect(klpScoreFromGrid(prior, 0.2, 0.5, 0)).toBeCloseTo(klpScoreFromGrid(prior, 0.2, 0.5), 12);
+    // klpScore: c=0 explicit takes the SAME code path as default (fisherInformation3pl
+    // delegates c===0 to fisherInformation) ⇒ bit-exact, pin with toBe not toBeCloseTo.
+    expect(klpScoreFromGrid(prior, 0.2, 0.5, 0)).toBe(klpScoreFromGrid(prior, 0.2, 0.5));
+  });
+
+  it('c=1 (OUT OF DOMAIN): gridUpdate degrades GRACEFULLY both ways (pins degradation, NOT support)', () => {
+    // c=1 is OUT OF the producer domain (choicesToGuess returns c ∈ {0}∪(0,1/2], never 1).
+    // This pins the graceful-degradation behaviour if bad wiring ever leaked c=1 — it does
+    // NOT assert c=1 is supported:
+    //   correct ⇒ likelihood ≡ c+(1−c)·p̂ = 1 for every offset ⇒ flat multiply ⇒ posterior
+    //             renormalises back to the (identical-shape) prior.
+    //   wrong   ⇒ likelihood ≡ (1−c)·(1−p̂) = 0 for every offset ⇒ total=0 ⇒ degenerate
+    //             guard falls back to the prior shape (no NaNs).
+    const prior = uniformPrior();
+    const correct = gridUpdate(prior, 0.3, 1, 1);
+    const wrong = gridUpdate(prior, 0.3, 0, 1);
+    for (let i = 0; i < GRID_POINTS; i++) {
+      expect(correct.probs[i]).toBeCloseTo(prior.probs[i], 12); // shape == prior
+      expect(wrong.probs[i]).toBeCloseTo(prior.probs[i], 12); // degenerate fallback == prior
+    }
+    expect(correct.probs.every((m) => Number.isFinite(m))).toBe(true);
+    expect(wrong.probs.every((m) => Number.isFinite(m))).toBe(true);
+    expect(correct.evidence).toBe(1);
+    expect(wrong.evidence).toBe(1);
   });
 
   it('3PL correct likelihood RAISES the floor by c (guess helps low-ability correct)', () => {
@@ -427,5 +476,16 @@ describe('isGraduationCandidate — graduation trigger (N consecutive + ε + M)'
     // With defaults: a peaked posterior (width 0, pMastery 1) at evidence 8 graduates.
     const atMinEvidence = { ...peaked, evidence: 8 };
     expect(isGraduationCandidate(atMinEvidence, [goodSnap, goodSnap, goodSnap])).toBe(true);
+  });
+
+  it('FAIL-CLOSED (CR-2): consecutiveN <= 0 rejects (empty window must NOT vacuously graduate)', () => {
+    // slice(length) = [] and every([]) ≡ true — without the guard a consecutiveN<=0 config
+    // would graduate on a ZERO-length window. The gate must fail closed on bad config.
+    expect(
+      isGraduationCandidate(peaked, [goodSnap, goodSnap, goodSnap], { ...cfg, consecutiveN: 0 }),
+    ).toBe(false);
+    expect(
+      isGraduationCandidate(peaked, [goodSnap, goodSnap, goodSnap], { ...cfg, consecutiveN: -1 }),
+    ).toBe(false);
   });
 });

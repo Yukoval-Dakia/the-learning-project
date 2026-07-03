@@ -591,6 +591,10 @@ export function fisherInformation(theta: number, b: number): number {
  * **n=1 红线合规**：c 是设计常量 1/k（k=选择题选项数，来自 choices_md.length），
  * 非跨考生拟合参数（参 theta.ts:103-108 DINA slip/guess 的明确禁令）。
  *
+ * **c 定义域（CR-1/CR-3）：c ∈ [0, 1)**。唯一 producer 是 `choicesToGuess`（结构性返回
+ * {0} ∪ (0, 1/2]）。c 触 1 时 P→1、denom=P·(1−P)→0，走 `denom>0` 守卫返 0（无信息）——
+ * 优雅降级而非受支持。**inc-2 接线绝不可把 c 回落到 ADR-0035 的软轨 `irt_c` 列**。
+ *
  * **c=0 显式 delegate 到 fisherInformation**：c=0 时 P=p̂，I = p̂²(1−p̂)²/[p̂(1−p̂)] = p̂(1−p̂)
  * == 1PL，故 c===0 直接走原函数保 byte-identical 回归锚（镜像 conjunctiveCreditsContinuous
  * 在 binary 端点 delegate 的 endpoint-exact 模式）。只有 c>0（选择题）走 3PL 分支。
