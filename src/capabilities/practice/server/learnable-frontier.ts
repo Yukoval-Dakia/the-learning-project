@@ -221,7 +221,28 @@ export async function learnableFrontierResolved(db: DbLike): Promise<FrontierRes
   }));
   const depthOverflow = normalised.some((r) => r.depth > FRONTIER_DEPTH_LIMIT);
   const nodeOverflow = normalised.length > FRONTIER_NODE_CAP;
-  if (depthOverflow || nodeOverflow) return { kind: 'overflow', ids: [] };
+  if (depthOverflow || nodeOverflow) {
+    // YUK-551 (spec Q1) — 闭包撞 depth/node-cap fail-safe,frontier 整体坍缩为空;与
+    // 「稀疏图无 prereq 边」的 sparse 态语义完全不同(前者图过密/病态,后者冷启预期态)。
+    // 在此**单点** emit,让全部三个消费点(composer 经 learnableFrontier 薄壳、FrontierRail
+    // 经 frontier-read.ts loadFrontierRail、nightly 经 kind 分支)一次继承可观测性——不往各
+    // caller 手抄(此前 stream-store 与 frontier-read 两处各自把 overflow 无差别坍缩成空、零日志)。
+    // console.warn 不是 DB 写,不破坏本模块 PURE-READ 不变量(INVARIANT BLOCK「no writes」指
+    // DB 写)。不 dedup:overflow 是持久图病态非瞬态,跨消费点(含 per-answer reRankAfterAnswer)的
+    // 重复 warn 即为告警音量,「首次发生即可观测」。今天从未真实触发(n=1 稀疏图);若生产观测到,
+    // 升级为结构化 meta 传播 + UI 暴露(见 docs/design/2026-07-03-frontier-gate-spec.md §Q1)。
+    console.warn(
+      '[frontier] closure overflow — depth/node-cap fail-safe tripped, frontier blanked',
+      {
+        depthOverflow,
+        nodeOverflow,
+        depthLimit: FRONTIER_DEPTH_LIMIT,
+        nodeCap: FRONTIER_NODE_CAP,
+        rows: normalised.length,
+      },
+    );
+    return { kind: 'overflow', ids: [] };
+  }
 
   // ① Empty CTE (sparse graph) → empty frontier (the NO-OP anchor).
   if (normalised.length === 0) return { kind: 'sparse', ids: [] };
