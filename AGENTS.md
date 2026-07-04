@@ -45,68 +45,93 @@ Do not use for: refactoring, writing scripts from scratch, debugging business lo
 4. Answer using the fetched docs
 <!-- context7 -->
 
-<!-- init-deep:START (generated 2026-05-31, 44eeca1a@main) -->
+<!-- init-deep:START (generated 2026-07-03, 614a62c2@workflow/upgrade-ocr-idempotency-v2) -->
 ## CODEBASE MAP
 
-> 导航索引。深层细节看子目录 `AGENTS.md` + 各 `README.md`。架构权威 = [docs/architecture.md](./docs/architecture.md)、决策 = [docs/adr/](./docs/adr/)、领域术语 = [CONTEXT.md](./CONTEXT.md)、命令/约定 = [CLAUDE.md](./CLAUDE.md)。
+> 导航索引。深层细节看子目录 `AGENTS.md` + 各 `README.md`。架构权威 = [ARCHITECTURE.md](./ARCHITECTURE.md)、[docs/architecture.md](./docs/architecture.md)、决策 = [docs/adr/](./docs/adr/)、领域术语 = [CONTEXT.md](./CONTEXT.md)、命令/约定 = [CLAUDE.md](./CLAUDE.md)。
 
 ### OVERVIEW
-`loom` —— self-hosted 单用户 AI 学习系统。Next.js 15 App Router + Postgres/Drizzle + pg-boss worker。**事件驱动核**（ADR-0006 v2）：`material × learning_session × event` 三表，AI 是与用户对等的 event actor。
+`loom` —— self-hosted 单用户 AI 学习系统。当前运行形状（YUK-321 M5 后）：**Hono API (`server/`, :8787) + Vite SPA (`web/`, :5173) + pg-boss worker (`scripts/worker.ts`)** 三进程。Postgres + Drizzle，R2/S3 blob，Claude Agent SDK。事件驱动核（ADR-0006 v2）：`event` 表是统一 action log，AI 是与用户对等的 actor。
 
-### STRUCTURE
+### 新栈两棵树（M0 起）
 ```
-app/             # App Router: (app)/(admin) 页面 + api/ 后端（唯一后端面）
+server/          # Hono API 入口（index.ts）+ 组合根工厂（app.ts）+ env 加载
+web/             # Vite SPA（TanStack Router + React 19 + Tailwind v4）
 src/
-  core/          # 跨学科：Zod schema、capability registry、id helpers（无 IO）
-  db/            # Drizzle schema.ts + Postgres client（单 schema 文件）
-  ai/            # 浏览器侧 task registry + prompt builder（不持 key、无通用 runTask）
-  server/        # server-only：ai runner/tools, ingestion, knowledge, review, artifacts...（20+ 子模块；精确数以 `ls src/server/*/` 为准）
+  kernel/        # CapabilityManifest 契约 + validateComposition
+  capabilities/  # Capability 包：manifest.ts 声明路由 / jobs / copilotTools / ui.pages
+    agency/      # 能动编排：夜链 + goal scope 提议 + agent-notes
+    copilot/     # Copilot 单人格对话面 + 工具贡献
+    ingestion/   # 录入域：OCR / Vision rescue / 抽取 / 入库
+    knowledge/   # 知识图谱域：树 + mesh + 提议 + 归因
+    notes/       # Note artifact 域：block-tree 编辑器 + Living Note refine
+    observability/ # AI 可观测性：admin 四页 + 今日成本条
+    practice/    # 练习域：review / quiz / judge / paper / 题库
+    shell/       # 工作台壳层：收件箱 + Today + Coach
+  core/          # 跨学科 Zod schema、capability registry、id helpers（无 IO）
+  db/            # Drizzle schema.ts + Postgres client
+  ai/            # 浏览器侧 task registry + prompt builder（不持 key）
+  server/        # 旧 server-only 业务层（采石场：仍运行，逐步迁入 capabilities）
   subjects/      # 单学科 bundle：wenyan / math / physics
   ui/            # 共享 React 设计系统
-scripts/         # worker 入口 + 迁移 + audit + local dev（一等公民）
-drizzle/         # 迁移 SQL + meta 快照（DB 演化历史）
-docs/            # architecture / adr / modules / design / agents
+scripts/         # worker.ts + migrate.ts + dev-local.ts + audits
+drizzle/         # 迁移 SQL + meta 快照
+docs/            # architecture / adr / modules / design / agents / superpowers
 ```
-`core/` 跨学科、`subjects/<name>/` 单学科特化——别把学科逻辑漏进 `core/` 或 `server/`。**不是 monorepo**（单 package.json）。
+**不是 monorepo**（单 package.json）。`core/` 跨学科；`subjects/<name>/` 单学科特化；别把学科逻辑漏进 `core/` 或 `server/`。
 
 ### WHERE TO LOOK
 | 任务 | 位置 |
 |------|------|
-| 后端逻辑 / API | `app/api/**`（见 [app/api/AGENTS.md](./app/api/AGENTS.md)）|
-| AI task 调用 / tool / runner | `src/server/ai/`（见 [AGENTS.md](./src/server/ai/AGENTS.md)）；注册表 `src/ai/registry.ts` |
-| 后台 job / cron | `src/server/boss/handlers/`（见 [AGENTS.md](./src/server/boss/handlers/AGENTS.md)）|
-| OCR / 试题抽取 / rescue | `src/server/ingestion/`（见 [AGENTS.md](./src/server/ingestion/AGENTS.md)）|
-| 知识树 / mesh / 复习 | `src/server/knowledge/`（见 [AGENTS.md](./src/server/knowledge/AGENTS.md)）|
+| 后端 API / 组合根 | [server/AGENTS.md](./server/AGENTS.md)、`server/app.ts`、`server/index.ts` |
+| SPA / 路由 / 壳层 | [web/AGENTS.md](./web/AGENTS.md)、`web/src/router.tsx` |
+| capability 契约 | [src/kernel/AGENTS.md](./src/kernel/AGENTS.md)、`src/kernel/manifest.ts` |
+| capability 包总览 | [src/capabilities/AGENTS.md](./src/capabilities/AGENTS.md)、`src/capabilities/index.ts` |
+| 录入 / OCR / rescue | `src/capabilities/ingestion/AGENTS.md` |
+| 知识树 / mesh / 提议 | `src/capabilities/knowledge/AGENTS.md` |
+| 练习 / 判分 / 组卷 | `src/capabilities/practice/AGENTS.md` |
+| Note / artifact | `src/capabilities/notes/AGENTS.md` |
+| Copilot / 对话 / 工具 | `src/capabilities/copilot/AGENTS.md` |
+| 夜链 / 能动性 | `src/capabilities/agency/AGENTS.md` |
+| 可观测性 / admin | `src/capabilities/observability/AGENTS.md` |
+| 工作台 / 收件箱 | `src/capabilities/shell/AGENTS.md` |
+| 旧 server 模块总览 | [src/server/AGENTS.md](./src/server/AGENTS.md) |
+| AI runner / tool / MCP bridge | [src/server/ai/AGENTS.md](./src/server/ai/AGENTS.md) |
+| pg-boss job catalog | [src/server/boss/handlers/AGENTS.md](./src/server/boss/handlers/AGENTS.md) |
 | DB schema / 迁移 | `src/db/schema.ts` + `drizzle/`（见 [src/db/README.md](./src/db/README.md)）|
-| Zod 业务 schema / event union | `src/core/schema/`（见 [AGENTS.md](./src/core/schema/AGENTS.md)）|
-| UI 组件 / 设计系统 | `src/ui/`（见 [AGENTS.md](./src/ui/AGENTS.md)）|
-| server 模块总览 | [src/server/AGENTS.md](./src/server/AGENTS.md) |
-| 运维 / 迁移 / audit 脚本 | `scripts/*.ts` |
+| Zod 业务 schema / event union | [src/core/schema/AGENTS.md](./src/core/schema/AGENTS.md) |
+| UI 组件 / 设计系统 | [src/ui/AGENTS.md](./src/ui/AGENTS.md) |
+| 学科 bundle | `src/subjects/<name>/` |
+| 运维 / audit 脚本 | `scripts/*.ts` |
 
 ### COMMANDS（详见 CLAUDE.md）
 ```bash
-pnpm dev:local        # 推荐本地入口（compose Postgres :5433 为真相源）
+pnpm dev:local        # 推荐本地入口：spawn api(:8787) + web(:5173) + worker
+pnpm rw:api           # tsx watch server/index.ts（RW_WORKER=1 同进程启 worker）
+pnpm rw:web           # vite --config web/vite.config.ts
+pnpm worker:dev       # 独立 pg-boss worker 进程
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
-pnpm test             # 全量门禁：audit:profile + unit + db + migration
-pnpm test:unit:watch  # 快速无-DB watch（UI/core/schema/parser）
+pnpm test             # 全量门禁：audit:profile + audit:draft-status + unit + db + migration
+pnpm test:unit:watch  # 快速无-DB watch
 pnpm test:db:watch    # DB/API watch（需 Docker/OrbStack）
-pnpm build            # next build —— 抓 tsc/biome/vitest 都漏的 route export 校验
+pnpm build            # rw:web:build + esbuild 三产物（server/worker/migrate .cjs）
 ```
-PR 前还需：`pnpm audit:schema` / `audit:partition` / `audit:profile`。
+PR 前还需：`pnpm audit:schema` / `audit:partition` / `audit:profile` / `audit:draft-status`。
 
 ### CONVENTIONS（仅本项目偏离项）
 - 工具链：**仅 Biome**（无 ESLint/Prettier）——2 空格 / 100 列 / 单引号 / 自动整理 imports；`noExplicitAny` + `useImportType` 为 warning。TS strict + ESM + `@/*`→`src/*`。
-- Next：`output:'standalone'`，外置 `pg`/`pg-boss`；**无 Vercel**——别带 `.vercel/` / `vercel env pull` 假设。
-- 测试分区严格：依赖 DB/drizzle/postgres/PgBoss 的测试**禁止**放进 unit config；命名 `*.unit.test.ts` / `*.integration.test.ts` / `*.test.ts`。DB 测试用 `tests/global-setup.ts` 起 testcontainers（`pool:forks` + `singleFork`，共享容器）。
-- 无 coverage gate；但有 schema/partition/profile audit lint。
-- 文件 mode 别硬编码（`0o644`）——尊重 umask（`0o666 & ~umask`）。
+- 后端 surface = capability `manifest.ts` → `src/capabilities/index.ts` 静态组合根 → `server/app.ts` 循环挂载。不再有 `app/api/**` Next.js route handler 壳。
+- 测试分区严格：依赖 DB/drizzle/postgres/PgBoss 的测试**禁止**放进 unit config；新栈约定 `src/kernel/**` / `src/capabilities/**` 的 `*.unit.test.ts` 自动进无 DB 快车道，`*.db.test.ts` 自动进 testcontainer 车道。
+- 无 Vercel / Redis；editing presence 走 PG 表 `editing_presence`。
+- 文件 mode 别硬编码——尊重 umask（`0o666 & ~umask`）。
 
 ### ANTI-PATTERNS (THIS PROJECT)
 - **破坏性 AI 动作没有直接 write tool**：删错题 / 合并节点 / reparent / archive 只能 `propose`，用户 accept route 才执行真实 mutation。
-- 别经 generic `/api/ai/[task]` 暴露 profile-driven / manual-rescue / tool task——走领域 route 或 worker（仅 `ReviewIntentTask` 走 generic 入口）。
-- 浏览器代码**不持** provider key——所有 AI 调用走 route handler 或 worker。
+- 别经 generic `/api/ai/[task]` 暴露 profile-driven / manual-rescue / tool task——走领域 route 或 worker。
+- 浏览器代码**不持** provider key——所有 AI 调用走 Hono route 或 pg-boss worker。
 - 别把派生 lifecycle 字段回写源表——建 reader / projection。
+- capability 包间禁深层 import，走 manifest 公共接口。
 - bug fix 不顺手 refactor。
 - 加新表/字段必须有 write path，否则进 `scripts/audit-schema-allowlist.json` 标注可检查解除条件。
 <!-- init-deep:END -->
