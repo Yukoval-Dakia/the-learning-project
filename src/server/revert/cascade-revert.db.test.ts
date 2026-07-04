@@ -20,6 +20,7 @@
 // / material_fsrs_state → imports tests/helpers/db). Matches allTestInclude's
 // `src/**/*.test.ts` and is NOT in fastTestInclude → db config.
 
+import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/server/attempt-snapshot';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type {
@@ -677,5 +678,127 @@ describe('orchestrateCascadeRevert', () => {
     // Atomicity: θ̂ untouched, no compensation.
     expect(await readTheta(kcId)).toBe(9);
     expect(await countCorrectionsFor(snapEvent)).toBe(0);
+  });
+
+  // ── YUK-561 S3 (O2 dual-sibling) — GOLDEN topology via the real writer ─────────
+  //
+  // Seed the θ̂ bracket through the SAME `writeAttemptSnapshotBrackets` the attempt
+  // writers use (spec §6.5: builder == writer). This proves the orchestrator reverts
+  // the PRODUCTION shape (`${E}:checkpoint:theta` → `${E}:snapshot:theta`), not the
+  // synthetic copilot_user_ask topology the older tests use.
+  async function seedThetaBracket(
+    attemptEventId: string,
+    kcId: string,
+    before: ThetaRowSnapshotT | null,
+    after: number,
+  ): Promise<void> {
+    await testDb().transaction(async (tx) => {
+      await writeAttemptSnapshotBrackets(tx, {
+        attemptEventId,
+        sessionId: null,
+        now: new Date(),
+        thetaSnapshots: [{ kc_id: kcId, before, after }],
+        fsrsSnapshots: [],
+      });
+    });
+  }
+
+  it('reverts the GOLDEN dual-sibling θ̂ bracket (production writer shape)', async () => {
+    const db = testDb();
+    const attemptId = newId();
+    const kcId = newId();
+    // live row = after; the bracket snapshots before→after.
+    await upsertMasteryState(db, {
+      subject_id: kcId,
+      theta_hat: 1.1,
+      evidence_count: 2,
+      success_count: 2,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+    await seedThetaBracket(attemptId, kcId, richBefore(0.2), 1.1);
+
+    const result = await orchestrateCascadeRevert(db, `${attemptId}:checkpoint:theta`);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`expected ok, got ${result.refusal}`);
+    // θ̂ restored to before; both nodes (snapshot + checkpoint) compensated.
+    expect(await readTheta(kcId)).toBe(0.2);
+    expect(result.reverted.snapshotsRestored).toBe(1);
+    expect(await countCorrectionsFor(`${attemptId}:snapshot:theta`)).toBe(1);
+    expect(await countCorrectionsFor(`${attemptId}:checkpoint:theta`)).toBe(1);
+  });
+
+  it('non-existent checkpoint → no_checkpoint refusal (NOT irreversible)', async () => {
+    const db = testDb();
+    const result = await orchestrateCascadeRevert(db, `${newId()}:checkpoint:theta`);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected refusal');
+    // A missing bracket is the honest "nothing to revert, defer" signal — NOT a
+    // caller bug (irreversible). The atomic caller maps it to a full_reprojection marker.
+    expect(result.refusal).toBe('no_checkpoint');
+  });
+
+  it('revert(checkpoint:theta) twice → the SECOND is a conflict (LIFO guard, Lens A F4)', async () => {
+    const db = testDb();
+    const attemptId = newId();
+    const kcId = newId();
+    await upsertMasteryState(db, {
+      subject_id: kcId,
+      theta_hat: 1.1,
+      evidence_count: 2,
+      success_count: 2,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+    await seedThetaBracket(attemptId, kcId, richBefore(0.2), 1.1);
+
+    const first = await orchestrateCascadeRevert(db, `${attemptId}:checkpoint:theta`);
+    expect(first.ok).toBe(true);
+    expect(await readTheta(kcId)).toBe(0.2); // restored to before
+
+    // Second revert: the snapshot IS re-collected (cascade only drops `correct` nodes),
+    // but the conflict guard trips — current θ̂ (0.2 = before) ≠ snapshot.after (1.1).
+    // This is the real double-revert defense (NOT the tombstone) — the §1.2 订正.
+    const second = await orchestrateCascadeRevert(db, `${attemptId}:checkpoint:theta`);
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error('expected conflict');
+    expect(second.refusal).toBe('conflict');
+    expect(await readTheta(kcId)).toBe(0.2); // untouched by the refused second revert
+  });
+
+  it('tx-aware: runs inside a caller tx + threads reasonContext into the retract reason_md', async () => {
+    const db = testDb();
+    const attemptId = newId();
+    const kcId = newId();
+    await upsertMasteryState(db, {
+      subject_id: kcId,
+      theta_hat: 1.1,
+      evidence_count: 2,
+      success_count: 2,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+    await seedThetaBracket(attemptId, kcId, richBefore(0.2), 1.1);
+
+    // The atomic judge-overturn caller passes its OWN tx (revert commits with the
+    // overturn). Inside the tx the orchestrator's step-6 opens a SAVEPOINT.
+    let result: Awaited<ReturnType<typeof orchestrateCascadeRevert>> | undefined;
+    await db.transaction(async (tx) => {
+      result = await orchestrateCascadeRevert(tx, `${attemptId}:checkpoint:theta`, {
+        reasonContext: { appeal_event_id: 'appeal_x', note: 'partial→correct' },
+      });
+    });
+    expect(result?.ok).toBe(true);
+    expect(await readTheta(kcId)).toBe(0.2);
+
+    // The retract for the snapshot node carries the appeal provenance in reason_md.
+    const retracts = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'correct'), eq(event.subject_id, `${attemptId}:snapshot:theta`)));
+    expect(retracts).toHaveLength(1);
+    const reasonMd = (retracts[0].payload as { reason_md: string }).reason_md;
+    expect(reasonMd).toContain('appeal:appeal_x');
+    expect(reasonMd).toContain('partial→correct');
   });
 });
