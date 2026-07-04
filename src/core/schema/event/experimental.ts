@@ -127,6 +127,11 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // barrier instead of falling through — MUST be registered WITH the writer (every
   // attempt tx writes it, so a barrier miss would crash the whole attempt path).
   'experimental:grading_checkpoint',
+  // YUK-561 S4 (revert-bracket §4.5) — the judge-overturn residual-visibility marker
+  // (dedicated ReprojectDeferredExperimental schema, ./state-snapshot.ts). The second-
+  // instance reprojection engine's worklist row. Reserved so a malformed marker fails
+  // the barrier (O1 owner default: reserved + tiny schema, same discipline as checkpoint).
+  'experimental:reproject_deferred',
   // YUK-471 Wave 1 (Codex #4 parse barrier) — pre-W1 row backfill seed has a
   // dedicated GenesisExperimental schema (./genesis.ts). The fold trusts genesis
   // as ground truth, so a malformed seed would corrupt the whole projection;

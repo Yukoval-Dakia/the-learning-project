@@ -164,3 +164,49 @@ export const GradingCheckpointExperimental = z.object({
   cost_micro_usd: z.number().int().optional(),
 });
 export type GradingCheckpointExperimentalT = z.infer<typeof GradingCheckpointExperimental>;
+
+// ---------- ReprojectDeferredExperimental (YUK-561 S4) ----------
+//
+// The residual-visibility marker a judge-overturn writes after (or in place of) a θ̂
+// revert (revert-bracket §4.5 / Q2d). revert-only removes the WRONG θ̂ transition but
+// does NOT re-apply the correct outcome (second-instance reprojection principle), so
+// EVERY overturn that touched θ̂ leaves a residual for the future reprojection engine:
+//   - `reapply_correct_outcome` — the revert succeeded; the correct outcome was never
+//     applied (evidence_count rolled back, eloK learning rate raised, FSRS still on the
+//     overturned verdict's schedule). reason='reverted'.
+//   - `full_reprojection` — the θ̂ transition could NOT be reverted (no checkpoint / a
+//     legacy snapshot / a later attempt moved θ̂ → conflict), so the whole KC needs
+//     replay. reason ∈ { no_checkpoint, later_theta_movement }.
+// This is the COMPLETE worklist the second-instance engine consumes (register "make the
+// residual visible"). ingest_at:now (internal ledger, not a learner fact). Reserved +
+// this dedicated schema (O1 owner default) so a malformed marker fails the parse barrier.
+export const ReprojectDeferredExperimental = z.object({
+  actor_kind: z.literal('agent'),
+  actor_ref: z.string().min(1), // 'rejudge'
+  action: z.literal('experimental:reproject_deferred'),
+  subject_kind: z.literal('event'), // the answer event whose θ̂ needs reprojection
+  subject_id: z.string().min(1),
+  outcome: z.literal('success').nullable().optional(),
+  payload: z.object({
+    appeal_event_id: z.string().min(1),
+    answer_event_id: z.string().min(1),
+    residual: z.enum(['reapply_correct_outcome', 'full_reprojection']),
+    reason: z.enum(['reverted', 'no_checkpoint', 'later_theta_movement']),
+    // the conflicting segment ref (present only on reason='later_theta_movement').
+    kc_conflict: z
+      .object({
+        kind: z.enum(['theta', 'fsrs']),
+        subjectKind: z.string(),
+        subjectId: z.string(),
+      })
+      .optional(),
+    // best-effort YUK-543 merge target (the winner the conflicting KC was merged into).
+    merged_into: z.string().optional(),
+    prior_outcome: z.string(),
+    new_outcome: z.string(),
+  }),
+  caused_by_event_id: z.string().optional(), // = appeal.id (idempotency key family)
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type ReprojectDeferredExperimentalT = z.infer<typeof ReprojectDeferredExperimental>;

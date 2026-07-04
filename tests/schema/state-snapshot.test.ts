@@ -234,4 +234,61 @@ describe('StateSnapshotExperimental — parse barrier (HARD REQ 1)', () => {
     const parsed = parseEvent(legacySnapshot);
     expect(parsed.action).toBe('experimental:state_snapshot');
   });
+
+  it('10. YUK-561 S2 — grading_checkpoint parses via its dedicated schema (parse barrier)', () => {
+    const checkpoint = {
+      actor_kind: 'system',
+      actor_ref: 'attempt_snapshot',
+      action: 'experimental:grading_checkpoint',
+      subject_kind: 'event',
+      subject_id: 'evt_attempt_001',
+      outcome: 'success',
+      payload: { attempt_event_id: 'evt_attempt_001', segment: 'theta' },
+      caused_by_event_id: 'evt_attempt_001',
+    };
+    const parsed = parseEvent(checkpoint);
+    expect(parsed.action).toBe('experimental:grading_checkpoint');
+    // A bad segment enum must be rejected (dedicated schema bites, not the generic).
+    expect(() =>
+      parseEvent({ ...checkpoint, payload: { attempt_event_id: 'x', segment: 'bogus' } }),
+    ).toThrow();
+    // Reserved: the generic fallback must reject a malformed reserved-action payload.
+    const generic = ExperimentalEvent.safeParse({
+      action: 'experimental:grading_checkpoint',
+      payload: {},
+    });
+    expect(generic.success).toBe(false);
+  });
+
+  it('11. YUK-561 S4 — reproject_deferred parses via its dedicated schema (parse barrier)', () => {
+    const marker = {
+      actor_kind: 'agent',
+      actor_ref: 'rejudge',
+      action: 'experimental:reproject_deferred',
+      subject_kind: 'event',
+      subject_id: 'evt_answer_001',
+      outcome: 'success',
+      payload: {
+        appeal_event_id: 'evt_appeal_001',
+        answer_event_id: 'evt_answer_001',
+        residual: 'reapply_correct_outcome',
+        reason: 'reverted',
+        prior_outcome: 'incorrect',
+        new_outcome: 'correct',
+      },
+      caused_by_event_id: 'evt_appeal_001',
+    };
+    const parsed = parseEvent(marker);
+    expect(parsed.action).toBe('experimental:reproject_deferred');
+    // A bad residual/reason enum must be rejected.
+    expect(() =>
+      parseEvent({ ...marker, payload: { ...marker.payload, residual: 'bogus' } }),
+    ).toThrow();
+    // Reserved: the generic fallback must reject a malformed reserved-action payload.
+    const generic = ExperimentalEvent.safeParse({
+      action: 'experimental:reproject_deferred',
+      payload: {},
+    });
+    expect(generic.success).toBe(false);
+  });
 });
