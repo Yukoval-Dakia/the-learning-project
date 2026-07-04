@@ -395,6 +395,63 @@ export function isObserved(p: Pick<MasteryProjection, 'provenance'>): boolean {
   return p.provenance === 'observed';
 }
 
+/**
+ * YUK-559 (S1 / C9) — the LIVE knowledge_edge relation_type set the A5/A6 soft layer
+ * borrows from: `related_to` (A5 symmetric), `prerequisite` + `derived_from` (A6 directed).
+ * `contrasts_with` is deliberately absent (reverse signal → poisons firm-up). SINGLE SOURCE —
+ * both the live projection load ({@link loadEdgesForProjection}) and the shadow sweep
+ * (`kg_borrow_shadow_sweep`) consume this so their admitted relation set can never drift apart.
+ */
+export const PROJECTION_EDGE_RELATION_TYPES = [
+  'related_to',
+  'prerequisite',
+  'derived_from',
+] as const;
+
+/**
+ * YUK-559 (S1 / C9) — the borrow epsilon: a |θ̃ − θ̂| at or below this is treated as "no move"
+ * (float noise, not a real borrow). SINGLE SOURCE shared by the live soft layer
+ * ({@link applyKgSoftLayer}) and the shadow sweep so their move/borrow thresholds can't diverge.
+ */
+export const BORROW_EPS = 1e-9;
+
+/** A raw typed knowledge_edge row feeding the borrow projection split. */
+export interface ProjectionEdgeRow {
+  from_id: string;
+  to_id: string;
+  relation_type: string;
+  weight: number;
+}
+
+/**
+ * YUK-559 (S1 / C9) — split + orientation-normalise live typed knowledge_edge rows into the
+ * A5 symmetric / A6 directed edge lists. PURE code motion (extracted verbatim from
+ * {@link loadEdgesForProjection} so the live path stays bit-equivalent):
+ *   - `related_to`  → {@link SymmetricEdge} {a: from, b: to} (A5, undirected smoothing).
+ *   - `prerequisite` → {@link DirectedEdge} {from: prereq, to: dependent} (A6, prereq→dependent).
+ *   - `derived_from` → {@link DirectedEdge} {from: to (base), to: from (derived)} — orientation
+ *     FLIPPED vs prerequisite ("from 派生自 to" ⇒ base `to` is the prereq-like node, ADR-0010).
+ * Any other relation_type is dropped. Both the live load and the shadow sweep consume this ⇒
+ * their split logic can never drift apart. Pure.
+ */
+export function splitProjectionEdgeRows(rows: ProjectionEdgeRow[]): {
+  symmetric: SymmetricEdge[];
+  directed: DirectedEdge[];
+} {
+  const symmetric: SymmetricEdge[] = [];
+  const directed: DirectedEdge[] = [];
+  for (const r of rows) {
+    if (r.relation_type === 'related_to') {
+      symmetric.push({ a: r.from_id, b: r.to_id, weight: r.weight });
+    } else if (r.relation_type === 'prerequisite') {
+      directed.push({ from: r.from_id, to: r.to_id, weight: r.weight });
+    } else if (r.relation_type === 'derived_from') {
+      directed.push({ from: r.to_id, to: r.from_id, weight: r.weight });
+    }
+  }
+  return { symmetric, directed };
+}
+
 export async function getMasteryProjection(
   // PR #468 finding E — display/AI read-side projection: every caller passes a
   // full Db (node-page / tree / detail / knowledge-readers all
@@ -594,7 +651,7 @@ async function applyKgSoftLayer(
   // 4. Rewrite the surfaced θ̂ (MEAN ONLY) for requested KCs, and append borrowed
   //    entries for requested-but-unobserved KCs that borrowed a non-trivial θ̃.
   const PRIOR_MEAN = 0;
-  const BORROW_EPS = 1e-9;
+  // BORROW_EPS is the exported module const (C9 single source, shared with the shadow sweep).
   const borrowedIds: string[] = [];
   for (const id of requestedIds) {
     const tilde = thetaTilde.get(id);
@@ -677,29 +734,17 @@ async function loadEdgesForProjection(
     .where(
       and(
         isNull(knowledge_edge.archived_at),
-        inArray(knowledge_edge.relation_type, ['related_to', 'prerequisite', 'derived_from']),
+        inArray(knowledge_edge.relation_type, [...PROJECTION_EDGE_RELATION_TYPES]),
         or(
           inArray(knowledge_edge.from_knowledge_id, kcIds),
           inArray(knowledge_edge.to_knowledge_id, kcIds),
         ),
       ),
     );
-  const symmetric: SymmetricEdge[] = [];
-  const directed: DirectedEdge[] = [];
-  for (const r of edgeRows) {
-    if (r.relation_type === 'related_to') {
-      // A5 (YUK-441) — symmetric edge into the graph-Laplacian smoothing prior.
-      symmetric.push({ a: r.from_id, b: r.to_id, weight: r.weight });
-    } else if (r.relation_type === 'prerequisite') {
-      // A6 (YUK-442) — directed: from IS the prerequisite of to (prereq→dependent).
-      directed.push({ from: r.from_id, to: r.to_id, weight: r.weight });
-    } else if (r.relation_type === 'derived_from') {
-      // A6 (YUK-442) — directed inheritance: "from 派生自 to" ⇒ base `to` is the
-      // prereq-like node of the derived `from` (orientation flipped vs prerequisite).
-      directed.push({ from: r.to_id, to: r.from_id, weight: r.weight });
-    }
-  }
-  return { symmetric, directed };
+  // C9 single source — the split + orientation-normalise lives in splitProjectionEdgeRows
+  // (shared with the shadow sweep). A5 symmetric (related_to), A6 directed (prerequisite +
+  // orientation-flipped derived_from); contrasts_with is excluded by the relation-type filter.
+  return splitProjectionEdgeRows(edgeRows);
 }
 
 /**

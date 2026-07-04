@@ -6,5 +6,21 @@
       "ref": "audit:mastery-provenance upgraded to a hard gate when any borrow flag flips on (spec §7 open question 4); this consumer must then gate on isObserved/evidence_count",
       "expected_by": "2027-06-30"
     }
+  },
+  "src/server/ai/tools/knowledge-readers.ts": {
+    "reason": "YUK-559 C1 — reads projection .mastery (weak_points filter / mastery_estimate surfacing) without a code-shaped provenance/isObserved/evidence_count guard (its only 'evidence_count' mention is a comment, stripped by the tightened scan → now correctly UNGUARDED). Acceptable TODAY because both borrow flags are dark, so getMasteryProjection returns zero inferred entries — this consumer can only ever see observed rows. Before either flag flips, this site must gate on isObserved / evidence_count.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "audit:mastery-provenance upgraded to a hard gate when any borrow flag flips on (spec §7 open question 4); this consumer must then gate on isObserved/evidence_count",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "src/server/conjectures/evidence.ts": {
+    "reason": "YUK-559 C1 — transitive consumer (gatherConjectureEvidence) reads the caller-parsed projection .mastery/.theta_hat as the A13 baseline p(L), without a code-shaped provenance/isObserved/evidence_count guard (its only 'provenance' mention is a comment, stripped by the tightened scan → now correctly UNGUARDED). Acceptable TODAY because both borrow flags are dark, so the projection carries zero inferred entries. Before either flag flips, this site must gate on isObserved / evidence_count.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "audit:mastery-provenance upgraded to a hard gate when any borrow flag flips on (spec §7 open question 4); this consumer must then gate on isObserved/evidence_count",
+      "expected_by": "2027-06-30"
+    }
   }
 }

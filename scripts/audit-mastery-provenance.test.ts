@@ -34,6 +34,37 @@ describe('scanFile — field-read + guard detection', () => {
     const scan = scanFile('const lo = proj.mastery_lo; const raw = proj.theta_hat_raw;');
     expect(scan.readsField).toBe(false);
   });
+
+  // C1 — a guard token inside a comment / string is NOT a code guard (post-strip detection).
+  it('a guard token inside a line comment does NOT count as guarded', () => {
+    const scan = scanFile('// evidence_count < 3 → 0.5 placeholder\nconst m = proj.mastery;');
+    expect(scan.readsField).toBe(true);
+    expect(scan.guarded).toBe(false);
+  });
+
+  it('a guard token inside a block comment does NOT count as guarded', () => {
+    const scan = scanFile('/* isObserved gate lives elsewhere */ const t = proj.theta_hat;');
+    expect(scan.readsField).toBe(true);
+    expect(scan.guarded).toBe(false);
+  });
+
+  it('a guard token inside a string literal does NOT count as guarded', () => {
+    const scan = scanFile('const label = "provenance"; const t = proj.theta_hat;');
+    expect(scan.readsField).toBe(true);
+    expect(scan.guarded).toBe(false);
+  });
+
+  it('a bare identifier / object-literal key (no dot, not isObserved) does NOT guard', () => {
+    // `evidence_count:` as an object KEY and a bare `provenance` var are not code-shaped guards.
+    expect(scanFile('const out = { evidence_count: 0 }; use(proj.mastery);').guarded).toBe(false);
+    expect(scanFile('const provenance = 1; use(proj.theta_hat);').guarded).toBe(false);
+  });
+
+  it('a code-shaped guard (.evidence_count read / isObserved) still counts even beside a comment', () => {
+    expect(
+      scanFile('// evidence_count note\nif (proj.evidence_count) use(proj.mastery);').guarded,
+    ).toBe(true);
+  });
 });
 
 describe('computeProvenanceAudit — flag unguarded, non-allowlisted consumers', () => {
@@ -81,6 +112,27 @@ describe('computeProvenanceAudit — flag unguarded, non-allowlisted consumers',
     };
     const r = computeProvenanceAudit(tracked, read, allowlist, TODAY);
     expect(r.redundantAllowlist).toContain('b.ts');
+    expect(r.ok).toBe(false);
+  });
+
+  // C2 — a MISSING tracked file (renamed/deleted) fails the audit (stale tracked-list contract).
+  it('a missing tracked consumer is listed under missing and fails the audit', () => {
+    const r = computeProvenanceAudit(tracked, read, {}, TODAY);
+    expect(r.missing).toContain('missing.ts');
+    expect(r.verdicts.find((v) => v.file === 'missing.ts')?.status).toBe('missing');
+    expect(r.ok).toBe(false);
+  });
+
+  // C8⑤ — an allowlist entry for a no-field-read file is redundant (drift) → fails the audit.
+  it('an allowlist entry for a no-field-read file is reported redundant', () => {
+    const allowlist: Allowlist = {
+      'c.ts': {
+        reason: 'stale — reads no projection field',
+        resolves_when: { kind: 'manual', ref: 'x', expected_by: '2027-06-30' },
+      },
+    };
+    const r = computeProvenanceAudit(tracked, read, allowlist, TODAY);
+    expect(r.redundantAllowlist).toContain('c.ts');
     expect(r.ok).toBe(false);
   });
 });

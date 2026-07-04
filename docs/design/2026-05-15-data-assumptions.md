@@ -268,12 +268,18 @@ INSERT 写一次（learning-items/route.ts:76），**无 UPDATE path**。如果 
 
 **数据纪律**：读 `.mastery` / `.theta_hat` 而**不**看 `provenance` / `isObserved` / `evidence_count`
 的消费者，翻 flag 后会把从未作答 KC 的借用值静默当实测。`pnpm audit:mastery-provenance`（`scripts/
-audit-mastery-provenance.ts`）对 `getMasteryProjection` 的直接 caller + 传递消费者做 **file-scope 反查**
-（读 field 且无 guard token ⇒ FLAGGED），**默认 report-only（exit 0）**——今日全 dark 无 live 误用。
-allowlist（`scripts/audit-mastery-provenance-allowlist.json`）带 `resolves_when{kind,ref,expected_by}`。
-**升 hard-gate 是 owner 决策，绑「任一借用 flag 翻转」前置**（kg-borrowing spec §7 开放问题 4）。新增
-「读 `MasteryProjection` field」的消费路径时，要么就地 gate 在 provenance/evidence_count，要么进
-tracked 列表 + allowlist（同 `audit:relations` CONSUMER_REGISTRY 的声明 + 反查形态）。
+audit-mastery-provenance.ts`）对 `getMasteryProjection` 的直接 caller + 传递消费者做 **file-scope 反查**：
+先 `stripCommentsAndStrings`（注释/字符串/模板内容剥离，escape-aware），再判——读 field 且无 **code-shaped**
+guard（`.provenance` / `isObserved` / `.evidence_count`，非裸 substring、非 object-literal key）⇒ FLAGGED；
+**tracked 文件缺失 ⇒ MISSING ⇒ ok=false**（手维护 tracked 列表是契约，改名/删除须重新接地）。**默认
+report-only（exit 0），`--strict` 才非零 exit**——今日全 dark 无 live 误用。allowlist（`scripts/
+audit-mastery-provenance-allowlist.json`）带 `resolves_when{kind,ref,expected_by}`，当前三条（`mastery-
+progress-signal.ts` 种子 + `knowledge-readers.ts` / `conjectures/evidence.ts`——后两者原被注释里的同名
+token 假 guarded，判据收紧后正确翻 unguarded 入 allowlist）。**残留限制**：code-token 启发式非 AST 作用域，
+DTO-surfacing / 无关同名字段仍可能假 guarded；升 `--strict` hard-gate 是 owner 决策，绑「任一借用 flag
+翻转」前置 + 人工复核（kg-borrowing spec §7 开放问题 4）。新增「读 `MasteryProjection` field」的消费路径时，
+要么就地 gate 在 provenance/evidence_count，要么进 tracked 列表 + allowlist（同 `audit:relations`
+CONSUMER_REGISTRY 的声明 + 反查形态）。
 
 > 详见 `docs/design/2026-07-04-kg-borrowing-spec.md` §M2′/M2″ + 附 A 红线自查。
 
