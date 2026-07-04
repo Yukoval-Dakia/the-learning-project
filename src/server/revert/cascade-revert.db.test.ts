@@ -801,4 +801,87 @@ describe('orchestrateCascadeRevert', () => {
     expect(reasonMd).toContain('appeal:appeal_x');
     expect(reasonMd).toContain('partial→correct');
   });
+
+  it('in-tx re-check conflict rolls back the SAVEPOINT + returns typed refusal; outer tx survives + commits', async () => {
+    // FIX-4 — the atomicity/defence-in-depth path (spec §4.4 / Q2a). step-5 pre-check
+    // PASSES (both snapshots' `after` == the live θ̂), but INSIDE the tx, restoring the
+    // FIRST snapshot moves θ̂ off `after`, so the SECOND snapshot's in-tx re-check sees the
+    // mutation → throws CascadeRevertConflictError → the orchestrator's catch rolls back
+    // ONLY the apply SAVEPOINT and RETURNS a typed `conflict` refusal (never propagates),
+    // leaving the caller's OUTER tx alive to write a marker + commit. Two sibling snapshots
+    // on the SAME kc under one checkpoint is synthetic-but-deterministic topology — the
+    // first restore is the in-cascade mutator that the pre-check couldn't foresee (no mock).
+    const db = testDb();
+    const kcId = newId();
+    // live θ̂ = 1.5 == BOTH snapshots' `after` → step-5 pre-check passes for both.
+    await upsertMasteryState(db, {
+      subject_id: kcId,
+      theta_hat: 1.5,
+      evidence_count: 1,
+      success_count: 1,
+      fail_count: 0,
+      last_outcome_at: new Date(),
+    });
+
+    const checkpoint = await seedEvent({ action: 'experimental:copilot_user_ask' });
+    // Distinct `before` (0.2 / 0.9), both ≠ after — whichever restore runs first moves θ̂
+    // off 1.5, so the other snapshot's in-tx re-check conflicts (order-independent).
+    const snapA = await seedEvent({
+      action: 'experimental:state_snapshot',
+      subject_kind: 'event',
+      subject_id: newId(),
+      caused_by_event_id: checkpoint,
+      payload: snapshotPayload({
+        attemptEventId: checkpoint,
+        theta: { kc_id: kcId, before: richBefore(0.2), after: 1.5 },
+      }),
+    });
+    const snapB = await seedEvent({
+      action: 'experimental:state_snapshot',
+      subject_kind: 'event',
+      subject_id: newId(),
+      caused_by_event_id: checkpoint,
+      payload: snapshotPayload({
+        attemptEventId: checkpoint,
+        theta: { kc_id: kcId, before: richBefore(0.9), after: 1.5 },
+      }),
+    });
+
+    // The atomic caller runs the orchestrator inside its OWN tx, then writes a marker row
+    // in the SAME tx after the typed refusal comes back — the whole outer tx must commit.
+    const markerId = newId();
+    let result: Awaited<ReturnType<typeof orchestrateCascadeRevert>> | undefined;
+    await db.transaction(async (tx) => {
+      result = await orchestrateCascadeRevert(tx, checkpoint);
+      await tx.insert(event).values({
+        id: markerId,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'test',
+        action: 'experimental:reproject_deferred',
+        subject_kind: 'event',
+        subject_id: checkpoint,
+        outcome: 'success',
+        payload: { note: 'outer tx survived the in-tx conflict refusal' },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(),
+      });
+    });
+
+    // Typed refusal RETURNED (not thrown) so the caller could dispatch.
+    expect(result?.ok).toBe(false);
+    if (result?.ok) throw new Error('expected conflict refusal');
+    expect(result?.refusal).toBe('conflict');
+
+    // Outer tx COMMITTED the marker — the SAVEPOINT rollback did not poison the outer tx.
+    const markerRows = await db.select().from(event).where(eq(event.id, markerId));
+    expect(markerRows).toHaveLength(1);
+
+    // SAVEPOINT rollback: θ̂ untouched (still 1.5), NO compensation from either snapshot.
+    expect(await readTheta(kcId)).toBe(1.5);
+    expect(await countCorrectionsFor(snapA)).toBe(0);
+    expect(await countCorrectionsFor(snapB)).toBe(0);
+  });
 });

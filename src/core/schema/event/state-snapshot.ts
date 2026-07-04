@@ -1,3 +1,5 @@
+import type { RtCorrectBuffer } from '@/core/theta'; // FIX-5 shape-lock source (type-only, erased)
+import type { ThetaGridPosterior } from '@/core/theta-grid'; // FIX-5 shape-lock source (type-only, erased)
 import { z } from 'zod';
 import { FsrsStateSchema } from './blocks'; // blocks.ts:68 — z.coerce.date()-based, jsonb-roundtrip-safe
 
@@ -44,6 +46,27 @@ const ThetaGridPosteriorSnapshot = z.object({
   probs: z.array(z.number()),
   evidence: z.number().int(),
 });
+
+// YUK-561 FIX-5 — nested-shape drift lock. The two local zod mirrors above shadow the
+// source TS interfaces (core/theta.ts RtCorrectBuffer, core/theta-grid.ts
+// ThetaGridPosterior) that the persisted mastery_state shadow columns actually hold.
+// These compile-time type-equality assertions turn typecheck RED the moment a source
+// interface gains/loses/retypes a field — forcing the mirror (and thus the verbatim
+// snapshot capture + restore) to move in lockstep, instead of silently dropping the new
+// field at restore time. Type-only imports keep this a pure compile-time guard (no
+// runtime coupling; the mirrors stay locally defined so the parse barrier still validates
+// the FULL row — see the note above).
+type AssertEqual<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+  ? true
+  : false;
+const _rtCorrectBufferShapeLock: AssertEqual<
+  z.infer<typeof RtCorrectBufferSnapshot>,
+  RtCorrectBuffer
+> = true;
+const _thetaGridPosteriorShapeLock: AssertEqual<
+  z.infer<typeof ThetaGridPosteriorSnapshot>,
+  ThetaGridPosterior
+> = true;
 
 // YUK-561 S1 (revert-bracket) — the FULL pre-attempt mastery_state row snapshot.
 // `before` must capture EVERY column an attempt writes so revert = VERBATIM whole-
