@@ -760,5 +760,18 @@
         "notes": "只读，复用 getMasteryProjection（mastery_state SoT）。in-scope 但无 mastery_state 行的 KC → tested:false。缺 goal→400，未知 goal→404。返回 {goalId, title, kcs[], answeredCount}"
       }
     ]
+  },
+  {
+    "path": "/api/admin/conjecture-scores",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "猜测校准环 admin 观测面（conjecture-wire #13 / YUK-538 ⑬ S4 + §10 A4）：双读 prediction_score LOG events + auto-minted kc_typed_state",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "conjecture-wire #13 S4 + A4 fix（reader before producer 红线真守）。READ-ONLY 双读：(a) experimental:prediction_score events（LOG-only 校准锚，诚实 brier_model/brier_baseline/log_loss_model/skill_score_point 单点 proper score，score_basis='single_point' 非「准确度」非窗口均，ADR-0046 Rust-deferred）；(b) kc_typed_state WHERE typed_state='confused-with-X'（reconcile 夜链 auto-mint 的结构性软态，provenance= evidence_event_ids）。producer 接通后 owner 可观测自动 mint 的 confused-with-X 软态变化。需 x-internal-token。响应：{ score_basis, prediction_scores:[...], typed_states:[...] }"
+      }
+    ]
   }
 ]

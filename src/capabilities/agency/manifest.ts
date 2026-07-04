@@ -29,7 +29,7 @@ export const agencyCapability = defineCapability({
         // runner.run() PURE, then answerProbe writes exactly ONE
         // experimental:probe_result event (ND-5). A5-a outcome→resolution split.
         method: 'POST',
-        path: '/api/conjecture/probe/:id/answer',
+        path: '/api/conjecture/probe/[id]/answer',
         load: () => import('./api/probe-answer').then((m) => m.POST),
       },
     ],
