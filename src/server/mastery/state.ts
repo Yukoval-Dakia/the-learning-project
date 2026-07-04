@@ -29,6 +29,7 @@ import {
   PREREQ_THETA_PROPAGATION_ENABLED,
   propagatePrereq,
 } from '@/core/prereq-propagation';
+import type { ThetaRowSnapshotT } from '@/core/schema/event/state-snapshot';
 import {
   DIFFICULTY_PROXY_WEIGHT,
   ELO_K_GLOBAL,
@@ -99,7 +100,10 @@ export interface UpsertMasteryStateInput {
   evidence_count: number;
   success_count: number;
   fail_count: number;
-  last_outcome_at: Date;
+  // YUK-561 S1 — `Date | null`: verbatim revert must be able to restore a row whose
+  // pre-attempt `last_outcome_at` was NULL (the column is nullable). Live attempt
+  // writers always pass a real Date; only the restore primitive passes null.
+  last_outcome_at: Date | null;
   // YUK-361 Phase 2 — 默认让 upsert 维持既有 precision/delta 语义（不传则不更新）。
   theta_precision?: number;
   last_theta_delta?: number | null;
@@ -884,9 +888,12 @@ export interface UpdateThetaForAttemptInput {
  * 'ability_global' subjects (the per-domain global drift block below) so cascade-revert
  * restores the global layer too — otherwise a revert would leave θ_global stale.
  */
+// YUK-561 S1 — `before` is now the FULL pre-attempt row (verbatim restore), not just
+// θ̂. null = cold-start (no pre-attempt row → revert DELETEs the row). Shape mirrors
+// ThetaRowSnapshot (core/schema/event/state-snapshot.ts), the parse-barrier schema.
 export interface ThetaSnapshotEntry {
   kc_id: string;
-  before: number | null;
+  before: ThetaRowSnapshotT | null;
   after: number;
 }
 export interface UpdateThetaForAttemptResult {
@@ -988,10 +995,12 @@ export async function updateThetaForAttempt(
     const row = byId.get(id);
     return {
       id,
-      // YUK-471 Wave 0 (ADR-0044 §3) — RAW pre-attempt θ̂ presence for the snapshot
-      // `before`. null≠0 is PRESERVED here (do NOT use the `theta` coercion below):
-      // no row → null (cold-start → revert deletes the row); 0 is a real prior θ̂.
-      thetaBefore: row === undefined ? null : row.theta_hat,
+      // YUK-561 S1 — the RAW pre-attempt row for the VERBATIM snapshot `before`.
+      // null = cold-start (no row → revert DELETEs the row). Retained whole so the
+      // snapshot push below can capture EVERY attempt-written column (counts /
+      // precision / delta / last_outcome_at / rt buffer / grid), not just θ̂ — a
+      // θ̂-only snapshot leaves counts=0 + stale precision on revert (the pre-S1 bug).
+      raw: row ?? null,
       theta: row?.theta_hat ?? 0,
       evidence: row?.evidence_count ?? 0,
       success: row?.success_count ?? 0,
@@ -1146,9 +1155,27 @@ export async function updateThetaForAttempt(
       rt_correct_ms: rtBuffer,
       last_theta_delta: delta,
     });
-    // YUK-471 Wave 0 — bracket THIS KC's transition. before = RAW pre-attempt row
-    // presence (null = cold-start, distinct from 0); after = the newTheta just written.
-    thetaSnapshots.push({ kc_id: s.id, before: s.thetaBefore, after: newTheta });
+    // YUK-561 S1 — bracket THIS KC's transition VERBATIM. before = the FULL raw
+    // pre-attempt row (null = cold-start, distinct from a 0 θ̂ row); after = the
+    // newTheta just written. Capturing all columns makes revert a byte-for-byte row
+    // restore (counts/precision/delta/rt/grid), not the pre-S1 θ̂-only-with-zeroed-
+    // counts restore. `rt_correct_ms`/`theta_grid_json` are the whole jsonb objects
+    // (not `.samples`/scalar) so restore rewrites the column identically.
+    const before: ThetaRowSnapshotT | null =
+      s.raw === null
+        ? null
+        : {
+            theta_hat: s.raw.theta_hat,
+            evidence_count: s.raw.evidence_count,
+            success_count: s.raw.success_count,
+            fail_count: s.raw.fail_count,
+            theta_precision: s.raw.theta_precision,
+            last_theta_delta: s.raw.last_theta_delta ?? null,
+            last_outcome_at: s.raw.last_outcome_at ?? null,
+            rt_correct_ms: (s.raw.rt_correct_ms as RtCorrectBuffer | null) ?? null,
+            theta_grid_json: (s.raw.theta_grid_json as ThetaGridPosterior | null) ?? null,
+          };
+    thetaSnapshots.push({ kc_id: s.id, before, after: newTheta });
   }
 
   // ── A2 (YUK-434) — per-domain θ_global drift (ONCE per touched domain) ──────────

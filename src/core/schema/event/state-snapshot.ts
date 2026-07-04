@@ -33,9 +33,51 @@ import { FsrsStateSchema } from './blocks'; // blocks.ts:68 — z.coerce.date()-
 // mastery/state.ts:560 coerces missing→0 for math, but the snapshot stores the
 // raw row presence so revert deletes cold-start rows instead of writing θ̂=0).
 
+// YUK-561 S1 — jsonb-roundtrip-safe zod mirrors of the two persisted shadow
+// columns (core/theta.ts RtCorrectBuffer, core/theta-grid.ts ThetaGridPosterior).
+// Kept local (not imported from those modules — they export TS interfaces, no zod)
+// so the parse barrier validates the FULL restored row, not a loose record.
+const RtCorrectBufferSnapshot = z.object({
+  samples: z.array(z.number()),
+});
+const ThetaGridPosteriorSnapshot = z.object({
+  probs: z.array(z.number()),
+  evidence: z.number().int(),
+});
+
+// YUK-561 S1 (revert-bracket) — the FULL pre-attempt mastery_state row snapshot.
+// `before` must capture EVERY column an attempt writes so revert = VERBATIM whole-
+// row restore (not just θ̂ + zeroed counts). SRT_ENABLED is LIVE (theta.ts:259) so
+// `rt_correct_ms` is written on every SRT-eligible correct attempt TODAY — a θ̂-only
+// restore would leave a post-attempt RT sample behind (non-verbatim). `theta_grid_json`
+// is A4-dark (THETA_GRID_ENABLED=false) but captured anyway so the flag flip never
+// silently loses verbatim fidelity. Column set is drift-guarded against mastery_state
+// (tests/schema/theta-snapshot-column-drift.test.ts).
+export const ThetaRowSnapshot = z.object({
+  theta_hat: z.number(),
+  evidence_count: z.number().int(),
+  success_count: z.number().int(),
+  fail_count: z.number().int(),
+  theta_precision: z.number(),
+  last_theta_delta: z.number().nullable(),
+  last_outcome_at: z.coerce.date().nullable(), // jsonb → ISO string coerced back to Date
+  rt_correct_ms: RtCorrectBufferSnapshot.nullable(), // SRT live column (theta.ts:259)
+  theta_grid_json: ThetaGridPosteriorSnapshot.nullable(), // A4 dark (theta-grid.ts:54)
+});
+export type ThetaRowSnapshotT = z.infer<typeof ThetaRowSnapshot>;
+
 export const ThetaSnapshot = z.object({
   kc_id: z.string().min(1),
-  before: z.number().nullable(), // logit-scale θ̂; null = cold-start
+  // YUK-561 S1 union (rollback-compat, Lens B F9): the rich ThetaRowSnapshot (new
+  // writers) | a bare number (pre-S1 on-disk snapshots) | null (cold-start). Both
+  // legacy shapes parse through the barrier so a code rollback never breaks the read
+  // side; the RESTORE primitive refuses a bare-number `before` (typed `legacy_snapshot`
+  // refusal) rather than lossy-restore. z.union tries ThetaRowSnapshot first: a bare
+  // number fails the object and falls to z.number(); a rich object matches.
+  before: z.union([ThetaRowSnapshot, z.number()]).nullable(),
+  // `after` stays the θ̂ scalar (logit-scale): the conflict guard only needs
+  // theta_hat, and every on-disk `after` is a bare number — keeping it scalar avoids
+  // a lossy schema flip + a guard rewrite (see spec §4.3 reconciled deviation).
   after: z.number(),
 });
 export type ThetaSnapshotT = z.infer<typeof ThetaSnapshot>;

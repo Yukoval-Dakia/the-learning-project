@@ -10,7 +10,10 @@ import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
-import type { StateSnapshotExperimentalT } from '@/core/schema/event/state-snapshot';
+import type {
+  StateSnapshotExperimentalT,
+  ThetaRowSnapshotT,
+} from '@/core/schema/event/state-snapshot';
 import { db as rootDb } from '@/db/client';
 import type { Tx } from '@/db/client';
 import { mastery_state, material_fsrs_state } from '@/db/schema';
@@ -61,6 +64,34 @@ async function readTheta(subjectId: string): Promise<number | null> {
   return rows.length === 0 ? null : rows[0].theta;
 }
 
+// YUK-561 S1 — read the FULL mastery_state row (verbatim-restore oracle).
+async function readMasteryRow(subjectId: string) {
+  const rows = await testDb()
+    .select()
+    .from(mastery_state)
+    .where(
+      and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, subjectId)),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+// YUK-561 S1 — build a rich ThetaRowSnapshot `before` (the new verbatim shape).
+function richTheta(over: Partial<ThetaRowSnapshotT> = {}): ThetaRowSnapshotT {
+  return {
+    theta_hat: 1.25,
+    evidence_count: 3,
+    success_count: 2,
+    fail_count: 1,
+    theta_precision: 4.5,
+    last_theta_delta: 0.3,
+    last_outcome_at: new Date('2026-06-01T00:00:00Z'),
+    rt_correct_ms: { samples: [1200, 900] },
+    theta_grid_json: null,
+    ...over,
+  };
+}
+
 // Read a material_fsrs_state reps directly from DB (independent oracle).
 async function readFsrsReps(
   subjectKind: 'question' | 'knowledge',
@@ -93,10 +124,20 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
     await resetDb();
   });
 
-  it('test 14: restore theta before!=null upserts the row back to `before`', async () => {
+  it('test 14: restore theta before!=null upserts the WHOLE row back to `before` (verbatim)', async () => {
     const kcId = 'kc_restore_14';
-    // Seed a mastery_state row at θ̂=X (the pre-attempt state).
+    // Seed a mastery_state row at the pre-attempt state (θ̂=X + full counts/precision).
     const X = 1.25;
+    const beforeRow = richTheta({
+      theta_hat: X,
+      evidence_count: 3,
+      success_count: 2,
+      fail_count: 1,
+      theta_precision: 4.5,
+      last_theta_delta: 0.3,
+      last_outcome_at: new Date('2026-06-01T00:00:00Z'),
+      rt_correct_ms: { samples: [1100, 800] },
+    });
     await upsertMasteryState(testDb(), {
       subject_id: kcId,
       theta_hat: X,
@@ -104,8 +145,52 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
       success_count: 2,
       fail_count: 1,
       last_outcome_at: new Date('2026-06-01T00:00:00Z'),
+      theta_precision: 4.5,
+      last_theta_delta: 0.3,
+      rt_correct_ms: { samples: [1100, 800] },
     });
-    // Simulate the attempt having moved θ̂ to Y (current DB state != before).
+    // Simulate the attempt having moved θ̂ to Y + advanced the counts/precision.
+    const Y = 2.5;
+    await upsertMasteryState(testDb(), {
+      subject_id: kcId,
+      theta_hat: Y,
+      evidence_count: 4,
+      success_count: 3,
+      fail_count: 1,
+      last_outcome_at: new Date('2026-06-21T00:00:00Z'),
+      theta_precision: 5.9,
+      last_theta_delta: 1.25,
+      rt_correct_ms: { samples: [1100, 800, 700] },
+    });
+    // Oracle: current live row is Y.
+    expect(await readTheta(kcId)).toBe(Y);
+
+    // Restore inside a tx (primitive takes a tx per plan §2).
+    await testDb().transaction(async (tx: Tx) => {
+      const r = await restoreStateSnapshot(
+        tx,
+        snapshotPayload([{ kc_id: kcId, before: beforeRow, after: Y }], []),
+      );
+      expect(r.ok).toBe(true);
+    });
+
+    // Oracle: the WHOLE row is restored to `before` byte-for-byte — not just θ̂ with
+    // zeroed counts (the pre-S1 bug). Every captured column comes back.
+    const row = await readMasteryRow(kcId);
+    expect(row).not.toBeNull();
+    expect(row?.theta_hat).toBe(X);
+    expect(row?.evidence_count).toBe(3);
+    expect(row?.success_count).toBe(2);
+    expect(row?.fail_count).toBe(1);
+    expect(row?.theta_precision).toBe(4.5);
+    expect(row?.last_theta_delta).toBeCloseTo(0.3, 5);
+    expect(row?.last_outcome_at?.getTime()).toBe(new Date('2026-06-01T00:00:00Z').getTime());
+    expect((row?.rt_correct_ms as { samples: number[] } | null)?.samples).toEqual([1100, 800]);
+  });
+
+  it('test 14b: legacy bare-number theta before → refused (legacy_snapshot), NOTHING mutated', async () => {
+    const kcId = 'kc_restore_14b';
+    // A pre-S1 on-disk snapshot carried a BARE NUMBER before. Current live row = Y.
     const Y = 2.5;
     await upsertMasteryState(testDb(), {
       subject_id: kcId,
@@ -115,16 +200,23 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
       fail_count: 1,
       last_outcome_at: new Date('2026-06-21T00:00:00Z'),
     });
-    // Oracle: current live row is Y.
-    expect(await readTheta(kcId)).toBe(Y);
 
-    // Restore inside a tx (primitive takes a tx per plan §2).
     await testDb().transaction(async (tx: Tx) => {
-      await restoreStateSnapshot(tx, snapshotPayload([{ kc_id: kcId, before: X, after: Y }], []));
+      const r = await restoreStateSnapshot(
+        tx,
+        // Legacy bare-number before (still in the S1 union, refused by restore).
+        snapshotPayload([{ kc_id: kcId, before: 0.5, after: Y }], []),
+      );
+      // Refused, not lossy-restored.
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.refusal).toBe('legacy_snapshot');
+        expect(r.ref.kcId).toBe(kcId);
+      }
     });
 
-    // Oracle: live row theta_hat must now equal X (before), not Y.
-    expect(await readTheta(kcId)).toBe(X);
+    // Oracle: the live row is UNTOUCHED (θ̂ still Y — no lossy restore to 0.5).
+    expect(await readTheta(kcId)).toBe(Y);
   });
 
   it('test 15: restore theta before=null deletes the cold-start row', async () => {

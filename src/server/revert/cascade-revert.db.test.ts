@@ -22,7 +22,10 @@
 
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
-import type { StateSnapshotExperimentalT } from '@/core/schema/event/state-snapshot';
+import type {
+  StateSnapshotExperimentalT,
+  ThetaRowSnapshotT,
+} from '@/core/schema/event/state-snapshot';
 import { event, knowledge, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { and, eq } from 'drizzle-orm';
@@ -81,11 +84,28 @@ function makeCard(over: Partial<FsrsStateSchemaT> = {}): FsrsStateSchemaT {
   };
 }
 
+// YUK-561 S1 — build a rich ThetaRowSnapshot `before` (verbatim shape). `theta_hat`
+// is the only field the conflict guard/restore assertions here read; the rest are
+// valid filler so the parse barrier + verbatim restore accept it.
+function richBefore(theta_hat: number): ThetaRowSnapshotT {
+  return {
+    theta_hat,
+    evidence_count: 1,
+    success_count: 1,
+    fail_count: 0,
+    theta_precision: 1,
+    last_theta_delta: null,
+    last_outcome_at: new Date('2026-06-01T00:00:00Z'),
+    rt_correct_ms: null,
+    theta_grid_json: null,
+  };
+}
+
 // Build a state_snapshot event payload. `theta` / `fsrs` describe the
 // before/after pairs the orchestrator must conflict-check + restore.
 function snapshotPayload(opts: {
   attemptEventId: string;
-  theta?: { kc_id: string; before: number | null; after: number };
+  theta?: { kc_id: string; before: ThetaRowSnapshotT | number | null; after: number };
   fsrs?: {
     subject_kind: 'question' | 'knowledge';
     subject_id: string;
@@ -247,7 +267,7 @@ describe('orchestrateCascadeRevert', () => {
       caused_by_event_id: checkpoint,
       payload: snapshotPayload({
         attemptEventId: checkpoint,
-        theta: { kc_id: kcId, before: 0, after: 1.5 },
+        theta: { kc_id: kcId, before: richBefore(0), after: 1.5 },
       }),
     });
     const { edgeId, generateEventId } = await seedLiveEdgeWithGenerate({
@@ -321,7 +341,7 @@ describe('orchestrateCascadeRevert', () => {
       caused_by_event_id: checkpoint,
       payload: snapshotPayload({
         attemptEventId: checkpoint,
-        theta: { kc_id: kcId, before: 0.5, after: afterDouble },
+        theta: { kc_id: kcId, before: richBefore(0.5), after: afterDouble },
       }),
     });
 

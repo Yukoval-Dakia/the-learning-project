@@ -46,7 +46,11 @@ import {
   emitPrereqRiskSignal,
 } from '@/server/mastery/prereq-propagation';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
-import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
+import {
+  type ThetaSnapshotEntry,
+  getMasteryState,
+  updateThetaForAttempt,
+} from '@/server/mastery/state';
 import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
 
@@ -651,7 +655,7 @@ export async function submitPaperSlot(
     // YUK-471 Wave 0 — captured inside the θ̂ gate, consumed by the (e) snapshot append
     // below. Empty when θ̂ is skipped (photo-only / unsupported) — those paths still
     // snapshot their FSRS transition (if any) with theta_snapshots: [].
-    let thetaSnapshots: { kc_id: string; before: number | null; after: number }[] = [];
+    let thetaSnapshots: ThetaSnapshotEntry[] = [];
     if (!photoOnlyUnsupported && scheduled !== null && coarseOutcome !== 'unsupported') {
       // YUK-361 finding #3 修复 — 在 updateThetaForAttempt **之前**捕获 family primary
       // knowledge（q.knowledge_ids[0]）的 PRE-attempt θ̂。家族残差必须对着作答前的 θ̂

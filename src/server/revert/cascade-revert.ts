@@ -353,7 +353,17 @@ export async function orchestrateCascadeRevert(
         if (conflict) {
           throw new CascadeRevertConflictError(e.eventId, conflict);
         }
-        await restoreStateSnapshot(tx, payload);
+        // YUK-561 S1 — restore now returns a typed result. A legacy bare-number θ̂
+        // `before` (pre-S1 snapshot) is unrevertable → refuse. S1: throw to roll back
+        // the tx (fail-loud, no live caller yet); S3 converts this into a returned
+        // `legacy_snapshot` refusal the atomic caller can dispatch on.
+        const restored = await restoreStateSnapshot(tx, payload);
+        if (!restored.ok) {
+          throw new Error(
+            `cascade revert: state_snapshot ${e.eventId} has a legacy bare-number θ̂ before for ` +
+              `${restored.ref.kcId} — unrevertable (pre-S1 snapshot, no checkpoint in prod). Refusing.`,
+          );
+        }
         snapshotsRestored += 1;
       } else if (e.reversibility === 'structural_imperative') {
         // B-class with a live SoT row — mirror the FULL live archive dual-write
