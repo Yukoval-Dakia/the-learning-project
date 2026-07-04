@@ -449,6 +449,17 @@ jobs:
               return ids;
             }
 
+            async function partitionReviewCommentsByPosted({ owner, repo, prNumber, items }) {
+              const postedIds = await getPostedCommentIds({ owner, repo, prNumber });
+              const missing = items.filter((item) => !postedIds.has(item.id));
+              return { missing, postedCount: items.length - missing.length };
+            }
+
+            function isBatchReviewWithSummary(body) {
+              const text = body || '';
+              return text.includes(REVIEW_TAG) && text.includes('## OCR review');
+            }
+
             async function isCommentAlreadyPosted({ owner, repo, prNumber, id }) {
               try {
                 const posted = await getPostedCommentIds({ owner, repo, prNumber });
@@ -598,24 +609,22 @@ jobs:
             async function attemptBatchCreateReview() {
               try {
                 const existing = await findExistingBatchReview({ owner, repo, prNumber: issue_number, tag: REVIEW_TAG });
-                if (existing.found) {
-                  try {
-                    const postedIds = await getPostedCommentIds({ owner, repo, prNumber: issue_number });
-                    const missing = reviewComments.filter((item) => !postedIds.has(item.id));
-                    if (missing.length === 0) {
-                      console.log(`Batch review already complete (review_id=${existing.review.id}); skipping duplicate create.`);
-                      return { data: existing.review, headers: {} };
-                    }
-                    const err = new Error('Batch review exists but inline comments incomplete');
-                    err.status = 409;
-                    throw err;
-                  } catch (idErr) {
-                    if (idErr.status === 409) throw idErr;
-                    console.log(`Could not verify posted comment ids (${idErr.message}); deferring to per-comment fallback.`);
-                    const err = new Error('Batch review exists; deferring to per-comment fallback');
-                    err.status = 409;
-                    throw err;
-                  }
+                const { missing, postedCount } = await partitionReviewCommentsByPosted({
+                  owner, repo, prNumber: issue_number, items: reviewComments,
+                });
+                if (missing.length === 0) {
+                  const reviewId = existing.found ? existing.review.id : 'n/a';
+                  console.log(`All inline comments already posted (review_id=${reviewId}); skipping duplicate create.`);
+                  return { data: existing.found ? existing.review : {}, headers: {} };
+                }
+                if (existing.found || postedCount > 0) {
+                  const err = new Error(
+                    existing.found
+                      ? 'Batch review exists but inline comments incomplete'
+                      : `${postedCount}/${reviewComments.length} inline comments already posted without tagged batch review`,
+                  );
+                  err.status = 409;
+                  throw err;
                 }
               } catch (checkErr) {
                 if (checkErr.status === 409) throw checkErr;
@@ -651,17 +660,22 @@ jobs:
               }
 
               let toRetry = reviewComments;
-              if (existingReview && existingReview.found) {
-                try {
-                  const postedIds = await getPostedCommentIds({ owner, repo, prNumber: issue_number });
-                  toRetry = reviewComments.filter((item) => !postedIds.has(item.id));
-                  successCount = reviewComments.length - toRetry.length;
-                  console.log(`Batch review already exists (review_id=${existingReview.review.id}). ${successCount}/${reviewComments.length} inline comments already posted. ${toRetry.length} missing, will retry only those.`);
-                } catch (idErr) {
-                  console.log(`Failed to enumerate posted comment ids (${idErr.message}); retrying all inline comments.`);
+              try {
+                const { missing, postedCount } = await partitionReviewCommentsByPosted({
+                  owner, repo, prNumber: issue_number, items: reviewComments,
+                });
+                toRetry = missing;
+                successCount = postedCount;
+                if (toRetry.length === 0) {
+                  console.log('All inline comments already posted; skipping per-comment fallback.');
+                } else if (postedCount > 0) {
+                  const reviewId = existingReview?.found ? existingReview.review.id : 'n/a';
+                  console.log(`${postedCount}/${reviewComments.length} inline comments already posted. ${toRetry.length} missing, will retry only those (review_id=${reviewId}).`);
+                } else {
+                  console.log('Batch review not found on server. Falling back to per-comment posting...');
                 }
-              } else {
-                console.log('Batch review not found on server. Falling back to per-comment posting...');
+              } catch (idErr) {
+                console.log(`Failed to enumerate posted comment ids (${idErr.message}); retrying all inline comments.`);
               }
 
               const batchRetry = computeRetryDelayMs(e, 0);
@@ -678,7 +692,7 @@ jobs:
                   try {
                     const res = await github.rest.pulls.createReview({
                       owner, repo, pull_number: issue_number, commit_id,
-                      body: '', event: 'COMMENT', comments: [toReviewPayload(item)]
+                      body: REVIEW_TAG, event: 'COMMENT', comments: [toReviewPayload(item)]
                     });
                     successCount++;
                     posted = true;
@@ -749,8 +763,12 @@ jobs:
               }
 
               // Unanchored findings only lived on the failed batch request body; per-comment
-              // fallback posts inline items with an empty review body.
-              const batchReviewLanded = !!(existingReview && existingReview.found);
+              // fallback tags reviews with REVIEW_TAG but not the full batch summary body.
+              const batchReviewLanded = !!(
+                existingReview &&
+                existingReview.found &&
+                isBatchReviewWithSummary(existingReview.review.body)
+              );
               const shouldPostSummary =
                 failedCount > 0 ||
                 unverifiableCount > 0 ||
