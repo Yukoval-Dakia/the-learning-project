@@ -224,6 +224,45 @@
       ]
     },
     {
+      "name": "conjecture",
+      "item": [
+        {
+          "name": "POST /api/conjecture/probe/:id/answer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conjecture/probe/:id/answer",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "conjecture", "probe", ":id", "answer"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。A5-a 分流：judge 'incorrect' → outcome=0 → 'confirmed'（猜测成立）；'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answer_md\": \"2x·cos(x^2)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "copilot",
       "item": [
         {
