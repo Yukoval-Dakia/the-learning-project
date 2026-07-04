@@ -317,6 +317,25 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
     expect(await probeResultEvents(probeId)).toHaveLength(0);
   });
+
+  it('422 when judge_kind_override is corrupt (guard checks .success not truthiness — PR #705 CodeRabbit+OCR)', async () => {
+    const probeId = await serveProbe();
+    // Corrupt the override to a non-JudgeKind garbage value. The DB column is
+    // free-form text. The guard MUST check `overrideParsed.success`, NOT
+    // `!overrideParsed` (safeParse always returns a truthy result object, so a
+    // plain truthiness check is dead code — caught by CodeRabbit + OCR review).
+    await testDb()
+      .update(question)
+      .set({ judge_kind_override: 'not-a-real-judge-kind' })
+      .where(eq(question.id, probeId));
+
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+    const res = await answer(probeId, 'whatever');
+    expect(res.status).toBe(422);
+    // Override guard fires BEFORE the judge call (saves LLM cost).
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(await probeResultEvents(probeId)).toHaveLength(0);
+  });
 });
 
 async function resJson(res: Response): Promise<Record<string, unknown>> {

@@ -107,9 +107,9 @@ ORDER BY created_at DESC LIMIT 20;
 
 ## 场景 B：answer route 返 422 fail-closed
 
-**症状**：`POST .../answer` 返 422，body `{"error":"probe_partial_unscoreable"}` 或 `{"error":"probe_unsupported_judge"}`。
+**症状**：`POST .../answer` 返 422，body `{"error":"unsupported_judge_route"}`。
 
-**语义**（A5-a）：judge `coarse_outcome` 是 `partial` 或 `unsupported` → 探针**保持 active**（slot 未消费），不写 probe_result。partial 在判别探针上不 cleanly discriminate，注入 n=1 校准锚会污染软态信号。owner 可重答（探针还在），或走 admin 直接查/弃。
+**语义**（A5-a）：单一 error code 覆盖三种 fail-closed 触发——(1) judge `coarse_outcome` 是 `partial` 或 `unsupported`（判别探针不 cleanly discriminate，注入 n=1 校准锚会污染软态信号）；(2) probe question `kind` 列 corrupt（非合法 `QuestionKind`）；(3) `judge_kind_override` 列 corrupt（非合法 `JudgeKind`）。三种都 → 探针**保持 active**（slot 未消费），不写 probe_result。owner 可重答（探针还在），或走 admin 直接查/弃。
 
 **不是 bug**——是诚实 fail-closed。若频繁 partial → judge rubric / probe_md 设计问题，回 induce 期调。
 

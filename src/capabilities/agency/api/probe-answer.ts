@@ -156,7 +156,11 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     const overrideParsed = probe.judge_kind_override
       ? JudgeKind.safeParse(probe.judge_kind_override)
       : null;
-    if (probe.judge_kind_override && !overrideParsed) {
+    // NOTE: `safeParse()` returns a truthy result object whether success or
+    // failure — the guard must check `.success`, NOT truthiness of the result
+    // (a plain `!overrideParsed` is always false here, since SafeParseReturnType
+    // is always a truthy object). Caught by CodeRabbit + OCR review (PR #705).
+    if (overrideParsed && !overrideParsed.success) {
       throw new ApiError(
         'unsupported_judge_route',
         `probe ${probeQuestionId} has unknown judge_kind_override '${probe.judge_kind_override}'`,
