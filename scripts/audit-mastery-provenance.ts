@@ -14,16 +14,22 @@
  * 看 provenance / isObserved / evidence_count 的消费者，翻 flag 后会把从未作答 KC 的借用
  * θ̃/合成 σ(−β) 当实测 mastery——本审计把这类站点标出来。
  *
- * ── 判据（report-only，report 不 fail）─────────────────────────────────────
+ * ── 判据（默认 report-only，report 不 fail）───────────────────────────────
  *
- * 对每个 tracked consumer 文件：若它**读** projection field（`.mastery` / `.theta_hat`）
- * 但文件内**不含**任何 provenance-guard token（`provenance` / `isObserved` / `evidence_count`）
- * ⇒ UNGUARDED。UNGUARDED 且不在 allowlist ⇒ FLAGGED（报告）。allowlist 条目须带
- * `resolves_when{kind,ref,expected_by}`（同 audit:schema 契约）。
+ * 对每个 tracked consumer 文件（先 **stripCommentsAndStrings** 剥离注释 + 字符串/模板内容，
+ * 再扫）：若它**读** projection field（`.mastery` / `.theta_hat`）但**不含**任何 **code-shaped**
+ * provenance-guard（`.provenance` / `isObserved` / `.evidence_count` —— 成员读或 isObserved
+ * 调用/导入，**非**裸标识符、**非** object-literal key `evidence_count:`）⇒ UNGUARDED。UNGUARDED
+ * 且不在 allowlist ⇒ FLAGGED（报告）。tracked 文件不存在 ⇒ MISSING（tracked 列表是手维护契约，
+ * 改名/删除的 consumer 须重新接地，不静默跳过 → MISSING 也 fail，`--strict` 非零 exit，C2）。
+ * allowlist 条目须带 `resolves_when{kind,ref,expected_by}`（同 audit:schema 契约）。
  *
- * 判据是 **file-scope 启发式**（非 AST 作用域）——与 audit:relations 的 file:marker 反查
- * 同源、同样是声明式 + 反查、同样有「未声明的新消费路径抓不到」的 shape 限制。tracked 列表
- * 手维护 = getMasteryProjection 的直接 caller + 命名的传递消费者。这忠于「report-only 埋点、
+ * 判据是 **file-scope 启发式**（剥离后 code-token 反查，非 AST 作用域）——与 audit:relations 的
+ * file:marker 反查同源、同样声明式 + 反查、同样有 shape 限制。**残留限制（不代码修）**：
+ * DTO-surfacing / 无关同名字段仍可能假 guarded（node-page / tree / detail / placement-profile
+ * 携同名 `.provenance` / `.evidence_count` 字段却未真正 gate 本 projection 的借用行为）——AST 语义
+ * 检测超本轮修复；`--strict` 升 hard-gate 须配人工复核 flagged/guarded verdict（开放问题 4）。tracked
+ * 列表手维护 = getMasteryProjection 的直接 caller + 命名的传递消费者。这忠于「report-only 埋点、
  * 硬 gate 待翻 flag 前置」（M2″：升 hard-gate 绑「任一借用 flag 翻转」前置，开放问题 4）。
  *
  * ── 默认 report-only（exit 0）；--strict 才非零 exit ──────────────────────────
@@ -67,17 +73,150 @@ export const TRACKED_CONSUMERS: readonly string[] = [
   'src/server/conjectures/evidence.ts',
 ] as const;
 
-// ── field-read + guard-token detection ───────────────────────────────────
+// ── comment/string stripping (char-stepped, escape-aware) ─────────────────
+//
+// Both the field-read and guard scans run on the SOURCE WITH COMMENTS AND STRING/TEMPLATE
+// CONTENT REMOVED, so a `.mastery` inside a docstring or a bare `evidence_count` token quoted
+// in a comment (as in knowledge-readers.ts / conjectures/evidence.ts) is NOT mistaken for a
+// real code read/guard. Char-stepping technique mirrors audit-draft-status.ts extractObjectBlock
+// (line/block comments; single/double/template strings; escape-aware; `${…}` interpolation code
+// is KEPT so `${proj.mastery}` still counts). Nested templates-inside-interpolation are handled
+// approximately (a documented heuristic limitation).
+export function stripCommentsAndStrings(src: string): string {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  let inLine = false;
+  let inBlock = false;
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  // brace depth (tracked only to know when a `}` closes a `${…}` interpolation vs a plain block).
+  let braceDepth = 0;
+  const interpStack: number[] = [];
+  while (i < n) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (inLine) {
+      if (c === '\n') {
+        inLine = false;
+        out += c;
+      }
+      i += 1;
+      continue;
+    }
+    if (inBlock) {
+      if (c === '*' && next === '/') {
+        inBlock = false;
+        i += 2;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (inSingle) {
+      if (c === '\\') {
+        i += 2;
+        continue;
+      }
+      if (c === "'") inSingle = false;
+      i += 1;
+      continue;
+    }
+    if (inDouble) {
+      if (c === '\\') {
+        i += 2;
+        continue;
+      }
+      if (c === '"') inDouble = false;
+      i += 1;
+      continue;
+    }
+    if (inTemplate) {
+      if (c === '\\') {
+        i += 2;
+        continue;
+      }
+      if (c === '`') {
+        inTemplate = false;
+        i += 1;
+        continue;
+      }
+      if (c === '$' && next === '{') {
+        // enter interpolation — resume emitting CODE until the matching `}`.
+        interpStack.push(braceDepth);
+        braceDepth += 1;
+        inTemplate = false;
+        i += 2;
+        continue;
+      }
+      i += 1; // strip template text
+      continue;
+    }
+    // not in any string/comment.
+    if (c === '/' && next === '/') {
+      inLine = true;
+      i += 2;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      inBlock = true;
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      i += 1;
+      continue;
+    }
+    if (c === '`') {
+      inTemplate = true;
+      i += 1;
+      continue;
+    }
+    if (c === '{') {
+      braceDepth += 1;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === '}') {
+      braceDepth -= 1;
+      if (interpStack.length > 0 && interpStack[interpStack.length - 1] === braceDepth) {
+        // closes a `${…}` interpolation → back to template text; do not emit the brace.
+        interpStack.pop();
+        inTemplate = true;
+        i += 1;
+        continue;
+      }
+      out += c;
+      i += 1;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+// ── field-read + guard-token detection (on the stripped source) ───────────
 //
 // `.mastery`（\b 排除 .mastery_lo / .mastery_hi / .mastery_state）与 `.theta_hat`
 // （\b 排除 .theta_hat_raw / .theta_hat_json）的读取。
 const FIELD_READ_RE = /\.mastery\b|\.theta_hat\b/;
 
-// provenance-awareness token：文件内出现任一即视为「知道借用/观测之分」。
-export const GUARD_TOKENS: readonly string[] = [
-  'provenance',
-  'isObserved',
-  'evidence_count',
+// provenance-awareness guards — CODE-SHAPED (not bare substring): a member read `.provenance`
+// / `.evidence_count`, or an `isObserved` call/import. A bare identifier or an object-literal
+// KEY (`evidence_count:`) does NOT guard — a guard must be a real read of the discriminant.
+export const GUARD_TOKEN_PATTERNS: readonly RegExp[] = [
+  /\.provenance\b/,
+  /\bisObserved\b/,
+  /\.evidence_count\b/,
 ] as const;
 
 export type FileScan = {
@@ -87,11 +226,20 @@ export type FileScan = {
   guarded: boolean;
 };
 
-/** Scan one file's source for projection-field reads + guard tokens. Pure. */
+/**
+ * Scan one file's source for projection-field reads + guard tokens, on the COMMENT/STRING-
+ * STRIPPED source. Pure. NOTE (heuristic limitation): `guarded` is a post-strip code-token
+ * heuristic, NOT AST scope analysis — a file that merely DTO-surfaces a same-named field
+ * (`provenance` / `evidence_count` on an unrelated shape — node-page / tree / detail /
+ * placement-profile carry such fields) can read as guarded without actually gating the
+ * borrow-aware behaviour on THIS projection. Upgrading `--strict` to a hard gate must pair
+ * with human review of the flagged/guarded verdicts (spec §7 open question 4).
+ */
 export function scanFile(src: string): FileScan {
+  const code = stripCommentsAndStrings(src);
   return {
-    readsField: FIELD_READ_RE.test(src),
-    guarded: GUARD_TOKENS.some((t) => src.includes(t)),
+    readsField: FIELD_READ_RE.test(code),
+    guarded: GUARD_TOKEN_PATTERNS.some((re) => re.test(code)),
   };
 }
 
@@ -175,11 +323,18 @@ export type ProvenanceAuditResult = {
   verdicts: ConsumerVerdict[];
   /** unguarded field-reading consumers NOT covered by the allowlist. */
   flagged: string[];
+  /** tracked consumers whose file no longer exists (stale tracked list → drift). */
+  missing: string[];
   /** allowlist entries whose file is now guarded (allowlist entry redundant → drift). */
   redundantAllowlist: string[];
   /** allowlist schema problems. */
   allowlistProblems: AllowlistProblem[];
-  /** true iff no flagged consumers, no redundant allowlist entries, no allowlist problems. */
+  /**
+   * true iff no flagged consumers, no MISSING tracked files, no redundant allowlist entries,
+   * and no allowlist problems. A MISSING tracked file fails the audit — the tracked list is a
+   * hand-maintained contract, so a renamed/deleted consumer must be re-grounded, not silently
+   * skipped (C2).
+   */
   ok: boolean;
 };
 
@@ -196,6 +351,7 @@ export function computeProvenanceAudit(
 ): ProvenanceAuditResult {
   const verdicts: ConsumerVerdict[] = [];
   const flagged: string[] = [];
+  const missing: string[] = [];
   const redundantAllowlist: string[] = [];
   const allowlistProblems: AllowlistProblem[] = [];
 
@@ -203,6 +359,7 @@ export function computeProvenanceAudit(
     const src = readFile(file);
     if (src === null) {
       verdicts.push({ file, status: 'missing' });
+      missing.push(file);
       continue;
     }
     const scan = scanFile(src);
@@ -230,9 +387,14 @@ export function computeProvenanceAudit(
   return {
     verdicts,
     flagged,
+    missing,
     redundantAllowlist,
     allowlistProblems,
-    ok: flagged.length === 0 && redundantAllowlist.length === 0 && allowlistProblems.length === 0,
+    ok:
+      flagged.length === 0 &&
+      missing.length === 0 &&
+      redundantAllowlist.length === 0 &&
+      allowlistProblems.length === 0,
   };
 }
 
@@ -287,6 +449,12 @@ function main(): void {
           `    - ${f}: reads .mastery/.theta_hat without provenance/isObserved/evidence_count. Gate borrow-aware behaviour on provenance (isObserved) or evidence_count, or add an allowlist entry with resolves_when.`,
         );
       }
+    }
+    if (result.missing.length > 0) {
+      console.log(
+        `\n  MISSING (tracked consumer file not found — re-ground the tracked list):  ${result.missing.length}`,
+      );
+      for (const f of result.missing) console.log(`    - ${f}`);
     }
     if (result.redundantAllowlist.length > 0) {
       console.log(

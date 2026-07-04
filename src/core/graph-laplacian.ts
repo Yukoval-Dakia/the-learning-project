@@ -230,14 +230,35 @@ export function smoothTheta(
   });
 }
 
+/** The result of a component partition (YUK-559 / S4 + C3 O(E) edge bucketing). */
+export interface ComponentPartition {
+  /** connected components over the symmetric graph; every node in EXACTLY one. */
+  components: string[][];
+  /**
+   * the admitted edges of each component, index-aligned with {@link components}. An edge
+   * is bucketed into the component of its endpoints iff BOTH endpoints are in `nodeIds`
+   * and share a root (`find(a) === find(b)`) — this is EXACTLY the `memberSet.has(a) &&
+   * memberSet.has(b)` admission the previous `edges.filter(...)` used (self-loops route
+   * to their node's component; a weight≤0 edge whose only-path across two components was
+   * itself lands in NEITHER; out-of-set endpoints are dropped), and edges keep their
+   * original relative order within each bucket → downstream Laplacian float accumulation
+   * is bit-identical.
+   */
+  componentEdges: SymmetricEdge[][];
+}
+
 /**
- * YUK-559 (S4) — partition `nodeIds` into connected components over the SYMMETRIC edge
- * graph. Every node appears in EXACTLY one component; a node touched by no admitted edge
- * is its own singleton component. Only edges with BOTH endpoints in `nodeIds`, a≠b, and
- * weight>0 connect nodes — matching {@link buildLaplacian}'s edge admission, so the
+ * YUK-559 (S4 + C3) — partition `nodeIds` into connected components over the SYMMETRIC
+ * edge graph AND bucket the admitted edges per component in ONE O(E) pass (no per-component
+ * `edges.filter`). Every node appears in EXACTLY one component; a node touched by no admitted
+ * edge is its own singleton component. Only edges with BOTH endpoints in `nodeIds`, a≠b, and
+ * weight>0 CONNECT nodes (union) — matching {@link buildLaplacian}'s edge admission, so the
  * component structure equals the block structure of the graph Laplacian. Pure.
  */
-export function connectedComponents(nodeIds: string[], edges: SymmetricEdge[]): string[][] {
+export function partitionByComponent(
+  nodeIds: string[],
+  edges: SymmetricEdge[],
+): ComponentPartition {
   const parent = new Map<string, string>();
   for (const id of nodeIds) parent.set(id, id);
   const find = (x: string): string => {
@@ -264,14 +285,38 @@ export function connectedComponents(nodeIds: string[], edges: SymmetricEdge[]): 
     if (!(w > 0)) continue;
     union(e.a, e.b);
   }
-  const groups = new Map<string, string[]>();
+  // Group nodes by root in first-seen order (identical ordering to the old groups Map).
+  const rootIndex = new Map<string, number>();
+  const components: string[][] = [];
   for (const id of nodeIds) {
     const root = find(id);
-    const g = groups.get(root);
-    if (g) g.push(id);
-    else groups.set(root, [id]);
+    let idx = rootIndex.get(root);
+    if (idx === undefined) {
+      idx = components.length;
+      rootIndex.set(root, idx);
+      components.push([]);
+    }
+    components[idx].push(id);
   }
-  return [...groups.values()];
+  // ONE O(E) pass: route each edge whose endpoints share a component into that bucket.
+  const componentEdges: SymmetricEdge[][] = components.map(() => []);
+  for (const e of edges) {
+    if (!parent.has(e.a) || !parent.has(e.b)) continue; // endpoint outside node set
+    const ra = find(e.a);
+    if (ra !== find(e.b)) continue; // cross-component (its only tie was a non-uniting edge)
+    const idx = rootIndex.get(ra);
+    if (idx !== undefined) componentEdges[idx].push(e);
+  }
+  return { components, componentEdges };
+}
+
+/**
+ * YUK-559 (S4) — connected components over the SYMMETRIC edge graph. Thin wrapper over
+ * {@link partitionByComponent} (public API unchanged). Every node appears in EXACTLY one
+ * component; a node touched by no admitted edge is its own singleton. Pure.
+ */
+export function connectedComponents(nodeIds: string[], edges: SymmetricEdge[]): string[][] {
+  return partitionByComponent(nodeIds, edges).components;
 }
 
 /** The result of a component-partitioned smooth (YUK-559 / S4). */
@@ -307,11 +352,12 @@ export function smoothThetaByComponent(
   componentCap: number,
   priorMean = 0,
 ): ComponentSmoothResult {
-  const components = connectedComponents(nodeIds, edges);
+  const { components, componentEdges } = partitionByComponent(nodeIds, edges);
   const theta = new Map<string, number>();
   const skippedComponentSizes: number[] = [];
   const componentSizes: number[] = [];
-  for (const component of components) {
+  for (let i = 0; i < components.length; i++) {
+    const component = components[i];
     componentSizes.push(component.length);
     if (component.length > componentCap) {
       // Fail-safe: skip the dense solve for an oversized component — passthrough raw θ̂.
@@ -319,11 +365,11 @@ export function smoothThetaByComponent(
       skippedComponentSizes.push(component.length);
       continue;
     }
-    const memberSet = new Set(component);
-    const subEdges = edges.filter((e) => memberSet.has(e.a) && memberSet.has(e.b));
+    // componentEdges[i] is EXACTLY the old `edges.filter(memberSet.has(a)&&memberSet.has(b))`
+    // (same edges, original order) → buildLaplacian float accumulation is bit-identical.
     const solved = smoothTheta(
       component,
-      subEdges,
+      componentEdges[i],
       thetaHat,
       observationPrecision,
       lambda,

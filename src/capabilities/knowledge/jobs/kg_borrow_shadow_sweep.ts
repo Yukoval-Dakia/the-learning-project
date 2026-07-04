@@ -9,6 +9,16 @@
 // needs to decide the flip ("翻 A5/A6 会改多少 θ、多少 KC 会借、分量多大"). Data门只 gate
 // 翻转不 gate build — the埋点 is electrified DURING dark.
 //
+// PAYLOAD SHAPE (C4/C5/C7 — this is a FOLD-INERT observation payload, zero consumers):
+//   - THREE-VARIANT attribution {a5_only, a6_only, joint}: one shared A5 dense solve, then
+//     a5_only = A5 θ̃, a6_only = propagatePrereq(bare θ̂), joint = propagatePrereq(A5 θ̃). The
+//     owner sees each flag's marginal effect + the joint separately.
+//   - quantiles are type-7 (linear interpolation, `@/core/theta` quantile) — same convention
+//     as the rest of the codebase; min/max are the sorted endpoints.
+//   - the component-size histogram buckets are DERIVED from the component cap (powers of two
+//     up to the first ≥ cap, then one overflow bucket); component metrics are top-level (A5
+//     structural quantities), reported once — not per variant.
+//
 // SAFETY INVARIANTS:
 //   - FLAG-INDEPENDENT but READ-ONLY: it never writes mastery_state / knowledge_edge; its
 //     ONLY write is ONE fold-inert summary event (subject_kind 'kg_borrow_shadow', queried
@@ -47,9 +57,17 @@ import {
   PREREQ_THETA_PROPAGATION_ENABLED,
   propagatePrereq,
 } from '@/core/prereq-propagation';
+import { quantile } from '@/core/theta';
 import type { Db } from '@/db/client';
 import { knowledge_edge, mastery_state } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
+// C9 single source — the borrow epsilon, admitted relation-type set, and edge split are the
+// live soft layer's (state.ts) exports so the shadow can never drift from the live path.
+import {
+  BORROW_EPS,
+  PROJECTION_EDGE_RELATION_TYPES,
+  splitProjectionEdgeRows,
+} from '@/server/mastery/state';
 
 export const KG_BORROW_SHADOW_ACTION = 'experimental:kg_borrow_shadow';
 export const KG_BORROW_SHADOW_SUBJECT_KIND = 'kg_borrow_shadow';
@@ -60,9 +78,6 @@ export const KG_BORROW_SHADOW_SUBJECT_ID = 'global';
 // a divergence between the shadow's projected skip set and the live guard's would make the
 // shadow lie about the flip, so they share the same constant.
 export const SHADOW_BORROW_COMPONENT_CAP = GRAPH_SMOOTH_COMPONENT_CAP;
-
-// Mirror the live borrow epsilon (state.ts applyKgSoftLayer BORROW_EPS).
-const SHADOW_EPS = 1e-9;
 
 interface ObservedNode {
   theta_hat: number;
@@ -77,25 +92,47 @@ export interface QuantileSummary {
   max: number;
 }
 
-/** Deterministic nearest-rank quantile summary over an UNSORTED sample (null if empty). Pure. */
+/**
+ * Deterministic quantile summary over an UNSORTED sample (null if empty). Pure.
+ *
+ * C4 — p50/p90/p99 use the shared `@/core/theta` `quantile` (type-7 / linear interpolation
+ * between order statistics, the Excel PERCENTILE convention) so the sweep reports the SAME
+ * quantile convention the rest of the codebase uses; `min`/`max` are the sorted endpoints.
+ */
 export function quantileSummary(sample: number[]): QuantileSummary | null {
   if (sample.length === 0) return null;
   const sorted = [...sample].sort((a, b) => a - b);
-  const n = sorted.length;
-  const at = (p: number): number => sorted[Math.min(n - 1, Math.max(0, Math.round(p * (n - 1))))];
-  return { min: sorted[0], p50: at(0.5), p90: at(0.9), p99: at(0.99), max: sorted[n - 1] };
+  return {
+    min: sorted[0],
+    p50: quantile(sorted, 0.5),
+    p90: quantile(sorted, 0.9),
+    p99: quantile(sorted, 0.99),
+    max: sorted[sorted.length - 1],
+  };
 }
 
-const COMPONENT_HISTOGRAM_BUCKETS = [1, 2, 4, 8, 16, 32, 64, 128, 256] as const;
-
-/** Bucket component sizes into a bounded power-of-two-ish histogram. Pure. */
-export function componentHistogram(sizes: number[]): Record<string, number> {
+/**
+ * Bucket component sizes into a bounded power-of-two histogram whose boundaries are DERIVED
+ * from `cap` (C7): `<=1, <=2, <=4, …` up to the first power of two ≥ `cap`, then a single
+ * `>N` overflow bucket. With `cap`=256 the boundaries are `[1,2,4,8,16,32,64,128,256]` + `>256`
+ * (byte-for-byte the prior hardcoded set). Pure.
+ */
+export function componentHistogram(sizes: number[], cap: number): Record<string, number> {
+  // Power-of-two boundaries up to the first ≥ cap (so the top bucket always covers the cap).
+  const buckets: number[] = [];
+  let b = 1;
+  while (b < cap) {
+    buckets.push(b);
+    b *= 2;
+  }
+  buckets.push(b); // first power of two ≥ cap
+  const overflowLabel = `>${buckets[buckets.length - 1]}`;
   const h: Record<string, number> = {};
   for (const s of sizes) {
-    let label = '>256';
-    for (const b of COMPONENT_HISTOGRAM_BUCKETS) {
-      if (s <= b) {
-        label = `<=${b}`;
+    let label = overflowLabel;
+    for (const bound of buckets) {
+      if (s <= bound) {
+        label = `<=${bound}`;
         break;
       }
     }
@@ -104,14 +141,26 @@ export function componentHistogram(sizes: number[]): Record<string, number> {
   return h;
 }
 
-export interface ShadowBorrowStats {
-  observed_count: number;
+/** Per-variant move/borrow summary (C5 — one per A5-only / A6-only / joint counterfactual). */
+export interface VariantStats {
   observed_moved_count: number;
   would_borrow_count: number;
   /** Δθ (θ̃ − θ̂) magnitude distribution over MOVED observed KCs. */
   delta_theta: QuantileSummary | null;
   /** the borrowed θ̃ distribution over would-borrow (unobserved) KCs. */
   borrowed_theta: QuantileSummary | null;
+}
+
+export interface ShadowBorrowStats {
+  observed_count: number;
+  /** A5 ONLY — the symmetric graph-Laplacian smoothing counterfactual (bare θ̂ in). */
+  a5_only: VariantStats;
+  /** A6 ONLY — the directed prereq-propagation counterfactual over the bare θ̂. */
+  a6_only: VariantStats;
+  /** JOINT — A5 smoothing THEN A6 propagation (what the live soft layer would do). */
+  joint: VariantStats;
+  // Component metrics are A5 STRUCTURAL quantities (the related_to partition) — reported ONCE
+  // at the top level (not per variant): they describe the graph, not a counterfactual.
   component_count: number;
   component_size_max: number;
   component_size_histogram: Record<string, number>;
@@ -120,9 +169,47 @@ export interface ShadowBorrowStats {
 }
 
 /**
- * PURE — the shadow computation: given the observed KC states + typed edges, run the SAME
- * A5-then-A6 chain the live soft layer would run (structural gating only, flags omitted) and
- * summarise the moves/borrows/component sizes. Deterministic, no IO. Exported for unit tests.
+ * PURE — summarise one variant's θ̃ against the bare observed θ̂: count moved observed KCs
+ * (|Δθ| > BORROW_EPS), would-borrow unobserved KCs (|θ̃| > BORROW_EPS), and their quantile
+ * distributions. Deterministic, no IO.
+ */
+function summariseVariant(
+  nodeIds: string[],
+  thetaTilde: Map<string, number>,
+  observed: Map<string, ObservedNode>,
+): VariantStats {
+  const deltas: number[] = [];
+  const borrowed: number[] = [];
+  for (const id of nodeIds) {
+    const tilde = thetaTilde.get(id);
+    if (tilde === undefined) continue;
+    const obs = observed.get(id);
+    if (obs) {
+      const delta = tilde - obs.theta_hat;
+      if (Math.abs(delta) > BORROW_EPS) deltas.push(Math.abs(delta));
+    } else if (Math.abs(tilde) > BORROW_EPS) {
+      // Unobserved node that borrowed a non-trivial θ̃ → would materialise a borrowed entry.
+      borrowed.push(tilde);
+    }
+  }
+  return {
+    observed_moved_count: deltas.length,
+    would_borrow_count: borrowed.length,
+    delta_theta: quantileSummary(deltas),
+    borrowed_theta: quantileSummary(borrowed),
+  };
+}
+
+/**
+ * PURE — the shadow computation (C5 THREE-VARIANT ATTRIBUTION): given the observed KC states +
+ * typed edges, run ONE shared dense A5 solve and attribute the borrow effect three ways:
+ *   - `a5_only`: the A5 smoothed θ̃ (symmetric graph-Laplacian only).
+ *   - `a6_only`: `propagatePrereq(bare θ̂)` (directed prereq propagation only).
+ *   - `joint`  : `propagatePrereq(A5-smoothed θ̃)` (what the live soft layer would produce).
+ * STRUCTURAL gating (mirrors applyKgSoftLayer, flags omitted): no symmetric edges ⇒ A5
+ * degenerates (a5_only ≡ identity, joint ≡ a6_only); no directed edges ⇒ a6_only ≡ identity,
+ * joint ≡ a5_only. Component metrics are the A5 partition structure, reported once. Deterministic,
+ * no IO. Exported for unit tests.
  */
 export function computeShadowBorrowStats(
   observed: Map<string, ObservedNode>,
@@ -148,8 +235,8 @@ export function computeShadowBorrowStats(
     observationPrecision.set(id, node.theta_precision);
   }
 
-  // A5 (symmetric) then A6 (directed) — mirror applyKgSoftLayer's STRUCTURAL gating (no flag).
-  let thetaTilde = thetaHat;
+  // A5 — the SINGLE shared dense solve. Degenerate (a5Theta ≡ θ̂) when no symmetric edges.
+  let a5Theta = thetaHat;
   let componentSizes: number[] = nodeIds.map(() => 1); // default: singletons (no A5 run)
   let skippedComponentSizes: number[] = [];
   if (symmetric.length > 0) {
@@ -162,44 +249,30 @@ export function computeShadowBorrowStats(
       GRAPH_LAPLACIAN_KAPPA,
       componentCap,
     );
-    thetaTilde = smoothed.theta;
+    a5Theta = smoothed.theta;
     componentSizes = smoothed.componentSizes;
     skippedComponentSizes = smoothed.skippedComponentSizes;
   }
-  if (directed.length > 0) {
-    thetaTilde = propagatePrereq(
-      nodeIds,
-      thetaTilde,
-      directed,
-      PREREQ_PROP_LAMBDA_DOWN,
-      PREREQ_PROP_LAMBDA_UP,
-    );
-  }
-
-  const deltas: number[] = [];
-  const borrowed: number[] = [];
-  for (const id of nodeIds) {
-    const tilde = thetaTilde.get(id);
-    if (tilde === undefined) continue;
-    const obs = observed.get(id);
-    if (obs) {
-      const delta = tilde - obs.theta_hat;
-      if (Math.abs(delta) > SHADOW_EPS) deltas.push(Math.abs(delta));
-    } else if (Math.abs(tilde) > SHADOW_EPS) {
-      // Unobserved node that borrowed a non-trivial θ̃ → would materialise a borrowed entry.
-      borrowed.push(tilde);
-    }
-  }
+  // A6 — propagatePrereq is PURE (fresh map): a6_only over bare θ̂, joint over the A5 θ̃.
+  const a6Theta =
+    directed.length > 0
+      ? propagatePrereq(nodeIds, thetaHat, directed, PREREQ_PROP_LAMBDA_DOWN, PREREQ_PROP_LAMBDA_UP)
+      : thetaHat;
+  const jointTheta =
+    directed.length > 0
+      ? propagatePrereq(nodeIds, a5Theta, directed, PREREQ_PROP_LAMBDA_DOWN, PREREQ_PROP_LAMBDA_UP)
+      : a5Theta;
 
   return {
     observed_count: observed.size,
-    observed_moved_count: deltas.length,
-    would_borrow_count: borrowed.length,
-    delta_theta: quantileSummary(deltas),
-    borrowed_theta: quantileSummary(borrowed),
+    a5_only: summariseVariant(nodeIds, a5Theta, observed),
+    a6_only: summariseVariant(nodeIds, a6Theta, observed),
+    joint: summariseVariant(nodeIds, jointTheta, observed),
     component_count: componentSizes.length,
-    component_size_max: componentSizes.length > 0 ? Math.max(...componentSizes) : 0,
-    component_size_histogram: componentHistogram(componentSizes),
+    // C6 — reduce-based max (never Math.max(...spread): a whole-tree partition can exceed the
+    // JS argument-count limit and throw RangeError).
+    component_size_max: componentSizes.reduce((m, s) => (s > m ? s : m), 0),
+    component_size_histogram: componentHistogram(componentSizes, componentCap),
     skipped_components: skippedComponentSizes.length,
     skipped_component_sizes: [...skippedComponentSizes].sort((a, b) => a - b),
   };
@@ -212,12 +285,18 @@ export interface KgBorrowShadowReport extends ShadowBorrowStats {
   eventId: string | null;
 }
 
-const EMPTY_STATS: ShadowBorrowStats = {
-  observed_count: 0,
+const EMPTY_VARIANT: VariantStats = {
   observed_moved_count: 0,
   would_borrow_count: 0,
   delta_theta: null,
   borrowed_theta: null,
+};
+
+const EMPTY_STATS: ShadowBorrowStats = {
+  observed_count: 0,
+  a5_only: EMPTY_VARIANT,
+  a6_only: EMPTY_VARIANT,
+  joint: EMPTY_VARIANT,
   component_count: 0,
   component_size_max: 0,
   component_size_histogram: {},
@@ -267,10 +346,9 @@ export async function runKgBorrowShadowSweep(
       ]),
     );
 
-    // Load live typed edges (archived_at IS NULL). Split + orientation-normalise EXACTLY as
-    // state.ts loadEdgesForProjection: related_to → symmetric (A5); prerequisite → directed
-    // {from:prereq,to:dependent}; derived_from → directed {from:base,to:derived} (flipped);
-    // contrasts_with EXCLUDED (reverse signal).
+    // Load ALL live typed edges (archived_at IS NULL) — the shadow is global, so unlike the
+    // live loadEdgesForProjection it has no incident-to-requested filter. C9: the admitted
+    // relation set + split/orientation-normalise are state.ts's shared exports (single source).
     const edgeRows = await db
       .select({
         from_id: knowledge_edge.from_knowledge_id,
@@ -282,20 +360,10 @@ export async function runKgBorrowShadowSweep(
       .where(
         and(
           isNull(knowledge_edge.archived_at),
-          inArray(knowledge_edge.relation_type, ['related_to', 'prerequisite', 'derived_from']),
+          inArray(knowledge_edge.relation_type, [...PROJECTION_EDGE_RELATION_TYPES]),
         ),
       );
-    const symmetric: SymmetricEdge[] = [];
-    const directed: DirectedEdge[] = [];
-    for (const r of edgeRows) {
-      if (r.relation_type === 'related_to') {
-        symmetric.push({ a: r.from_id, b: r.to_id, weight: r.weight });
-      } else if (r.relation_type === 'prerequisite') {
-        directed.push({ from: r.from_id, to: r.to_id, weight: r.weight });
-      } else if (r.relation_type === 'derived_from') {
-        directed.push({ from: r.to_id, to: r.from_id, weight: r.weight });
-      }
-    }
+    const { symmetric, directed } = splitProjectionEdgeRows(edgeRows);
 
     const stats = computeShadowBorrowStats(observed, symmetric, directed, componentCap);
 
@@ -332,8 +400,8 @@ export async function runKgBorrowShadowSweep(
 
     console.log('[kg_borrow_shadow_sweep] done', {
       observed: stats.observed_count,
-      moved: stats.observed_moved_count,
-      wouldBorrow: stats.would_borrow_count,
+      jointMoved: stats.joint.observed_moved_count,
+      jointWouldBorrow: stats.joint.would_borrow_count,
       skippedComponents: stats.skipped_components,
     });
     return { ...stats, noop: false, eventId };

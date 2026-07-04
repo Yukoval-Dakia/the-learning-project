@@ -108,17 +108,25 @@ describe('runKgBorrowShadowSweep (YUK-559 S3)', () => {
 
     const p = ev.payload as Record<string, unknown>;
     expect(p.observed_count).toBe(1);
-    // kObs moved (κ ridge + coupling) → observed_moved_count ≥ 1; kUnobs would borrow.
-    expect(p.observed_moved_count).toBe(1);
-    expect(p.would_borrow_count).toBe(1);
+    // related_to only → A5 acts (kObs moved by κ ridge + coupling; kUnobs would borrow); A6
+    // is inert (no directed edges), so joint ≡ a5_only.
+    const a5 = p.a5_only as Record<string, unknown>;
+    const a6 = p.a6_only as Record<string, unknown>;
+    const joint = p.joint as Record<string, unknown>;
+    expect(a5.observed_moved_count).toBe(1);
+    expect(a5.would_borrow_count).toBe(1);
+    expect(a6.observed_moved_count).toBe(0);
+    expect(a6.would_borrow_count).toBe(0);
+    expect(joint.observed_moved_count).toBe(1);
+    expect(joint.would_borrow_count).toBe(1);
     expect(p.threshold_deferred).toBe(true);
     // const snapshot travels with the event for later re-read.
     const consts = p.consts as Record<string, unknown>;
     expect(consts.lambda).toBeCloseTo(0.5, 10);
     expect(consts.kappa).toBeCloseTo(0.01, 10);
-    // delta_theta summary present (there is a move).
-    expect(p.delta_theta).not.toBeNull();
-    expect(p.borrowed_theta).not.toBeNull();
+    // a5_only distributions present (there is a move + a borrow).
+    expect(a5.delta_theta).not.toBeNull();
+    expect(a5.borrowed_theta).not.toBeNull();
   });
 
   it('A6: a weak prereq presses the dependent down → counted as a move', async () => {
@@ -127,9 +135,12 @@ describe('runKgBorrowShadowSweep (YUK-559 S3)', () => {
     await seedEdge('kPre', 'kDep', 'prerequisite');
 
     const report = await runKgBorrowShadowSweep(db, { now: NOW });
-    // Both observed KCs move (dependent pressed down, prereq retro-credited up).
-    expect(report.observed_moved_count).toBe(2);
-    expect(report.would_borrow_count).toBe(0);
+    // prerequisite only → A5 inert (a5_only ≡ identity), A6 moves both observed KCs
+    // (dependent pressed down, prereq retro-credited up); joint ≡ a6_only (no symmetric edge).
+    expect(report.a5_only.observed_moved_count).toBe(0);
+    expect(report.a6_only.observed_moved_count).toBe(2);
+    expect(report.a6_only.would_borrow_count).toBe(0);
+    expect(report.joint.observed_moved_count).toBe(2);
   });
 
   it('archived edges are ignored (no move, no borrow)', async () => {
@@ -138,8 +149,10 @@ describe('runKgBorrowShadowSweep (YUK-559 S3)', () => {
     await seedEdge('kObs2', 'kUn2', 'related_to', /* archived */ true);
 
     const report = await runKgBorrowShadowSweep(db, { now: NOW });
-    expect(report.observed_moved_count).toBe(0);
-    expect(report.would_borrow_count).toBe(0);
+    expect(report.a5_only.observed_moved_count).toBe(0);
+    expect(report.a5_only.would_borrow_count).toBe(0);
+    expect(report.joint.observed_moved_count).toBe(0);
+    expect(report.joint.would_borrow_count).toBe(0);
   });
 
   it('over-cap related_to component → skipped (no smoothing) + size recorded', async () => {
@@ -151,9 +164,11 @@ describe('runKgBorrowShadowSweep (YUK-559 S3)', () => {
     const report = await runKgBorrowShadowSweep(db, { now: NOW, componentCap: 1 });
     expect(report.skipped_components).toBe(1);
     expect(report.skipped_component_sizes).toEqual([2]);
-    // component was skipped → no smoothing → nothing moved / borrowed.
-    expect(report.observed_moved_count).toBe(0);
-    expect(report.would_borrow_count).toBe(0);
+    // component was skipped → no smoothing → nothing moved / borrowed in any variant.
+    expect(report.a5_only.observed_moved_count).toBe(0);
+    expect(report.a5_only.would_borrow_count).toBe(0);
+    expect(report.joint.observed_moved_count).toBe(0);
+    expect(report.joint.would_borrow_count).toBe(0);
   });
 
   it('REPORT-ONLY: never writes mastery_state / knowledge_edge', async () => {
