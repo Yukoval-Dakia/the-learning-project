@@ -135,6 +135,20 @@ describe('computeProvenanceAudit — flag unguarded, non-allowlisted consumers',
     expect(r.redundantAllowlist).toContain('c.ts');
     expect(r.ok).toBe(false);
   });
+
+  // PR #703 OCR round — an allowlist entry whose file is NOT tracked at all is dead
+  // configuration (renamed consumer re-added under a new path) → redundant, fails audit.
+  it('an orphaned allowlist entry (file not in tracked list) is reported redundant', () => {
+    const allowlist: Allowlist = {
+      'ghost.ts': {
+        reason: 'orphaned — consumer was renamed',
+        resolves_when: { kind: 'manual', ref: 'x', expected_by: '2027-06-30' },
+      },
+    };
+    const r = computeProvenanceAudit(tracked, read, allowlist, TODAY);
+    expect(r.redundantAllowlist).toContain('ghost.ts');
+    expect(r.ok).toBe(false);
+  });
 });
 
 describe('validateAllowlistEntry — resolves_when contract', () => {
@@ -182,6 +196,12 @@ describe('validateAllowlistEntry — resolves_when contract', () => {
     ]);
     // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed for the negative test.
     expect(validateAllowlistEntry('f.ts', 'oops' as any, TODAY).map((p) => p.problem)).toEqual([
+      'invalid_resolves_when',
+    ]);
+    // Arrays pass `typeof === 'object'` — the guard must reject them up front too
+    // (PR #703 OCR round), not fall through to a misleading resolves_when message.
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed for the negative test.
+    expect(validateAllowlistEntry('f.ts', [] as any, TODAY).map((p) => p.problem)).toEqual([
       'invalid_resolves_when',
     ]);
   });
