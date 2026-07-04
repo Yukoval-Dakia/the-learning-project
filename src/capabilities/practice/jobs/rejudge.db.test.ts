@@ -77,7 +77,9 @@ async function readReprojectMarkers(appealEventId: string) {
 // prior outcome / conflict setup.
 async function seedOverturnable(opts: {
   answerAction: 'attempt' | 'review';
-  priorOutcome: 'correct' | 'partial' | 'incorrect';
+  // YUK-561 FIX-1 — includes the θ̂-skipped priors (unsupported/unknown): the judge event
+  // records this coarse_outcome verbatim, so seeding them exercises the thetaSkippedPrior route.
+  priorOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported' | 'unknown';
   autoRated?: boolean; // solo review payload.judge.auto_rated
   kcId: string;
   thetaBefore: number;
@@ -440,6 +442,41 @@ describe('rejudge job (D15 申诉自动重判)', () => {
     expect(await readReprojectMarkers(appealEventId)).toHaveLength(0);
   });
 
+  it('solo auto_rate=true overturn (incorrect→correct): judge-driven review limb → θ̂ reverted + marker', async () => {
+    // FIX-2 — the review-true branch of judgeDriven (answerEvent.action==='review' &&
+    // payload.judge.auto_rated===true). Previously only the auto_rate=false (no-revert)
+    // branch was covered; this reddens the true limb: an auto-rated solo review IS
+    // judge-driven, so an incorrect→correct overturn (bit flip 0→1) reverts θ̂.
+    const db = testDb();
+    const kcId = createId();
+    const { attemptEventId, appealEventId } = await seedOverturnable({
+      answerAction: 'review',
+      autoRated: true, // θ̂ came from the JUDGE's suggested rating → judge-driven
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      snapshotAfter: 1.2,
+      liveTheta: 1.2, // guard passes
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') },
+    );
+    expect(outcome.status).toBe('overturned');
+
+    // θ̂ reverted to `before` (0.3) — the review-true limb ran the revert.
+    expect(await readTheta(kcId)).toBe(0.3);
+
+    // One happy-path residual marker (reapply / reverted).
+    const markers = await readReprojectMarkers(appealEventId);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].residual).toBe('reapply_correct_outcome');
+    expect(markers[0].reason).toBe('reverted');
+    expect(markers[0].answer_event_id).toBe(attemptEventId);
+  });
+
   it('overturn partial→correct (θ̂ bit NOT flipped): no revert, no marker (legal signal kept)', async () => {
     const db = testDb();
     const kcId = createId();
@@ -511,6 +548,42 @@ describe('rejudge job (D15 申诉自动重判)', () => {
     expect(markers[0].residual).toBe('full_reprojection');
     expect(markers[0].reason).toBe('no_checkpoint');
   });
+
+  // FIX-1 (P0) — a θ̂-skipped prior (unsupported/unknown) overturned to a θ̂-meaningful
+  // outcome MUST still write a residual marker (spec §Q2b(3)). Pre-FIX-1 the double gate
+  // used outcomeBit only: outcomeBit('unsupported')=0 === outcomeBit('incorrect')=0 →
+  // shouldRevertTheta=false → line-210 zero-marker return, silently dropping the residual.
+  // A θ̂-skipped prior has no theta bracket, so the revert path returns no_checkpoint →
+  // full_reprojection marker (symmetric with unsupported→correct/partial).
+  for (const skippedPrior of ['unsupported', 'unknown'] as const) {
+    it(`overturn ${skippedPrior}→incorrect (θ̂-skipped prior) → deferred(no_checkpoint) marker`, async () => {
+      const db = testDb();
+      const kcId = createId();
+      const { appealEventId } = await seedOverturnable({
+        answerAction: 'attempt', // judge-driven (paper attempt)
+        priorOutcome: skippedPrior, // θ̂ was skipped → no theta bracket exists
+        kcId,
+        thetaBefore: 0.3,
+        liveTheta: 1.2,
+        withCheckpoint: false, // a θ̂-skipped prior never wrote a `${E}:checkpoint:theta`
+      });
+
+      const outcome = await handleRejudge(
+        db,
+        { appeal_event_id: appealEventId },
+        { judgeFn: mockJudge('incorrect', 'still wrong — but a θ̂-meaningful verdict now') },
+      );
+      expect(outcome.status).toBe('overturned');
+
+      // The dropped residual is now visible: exactly one full_reprojection/no_checkpoint marker.
+      const markers = await readReprojectMarkers(appealEventId);
+      expect(markers).toHaveLength(1);
+      expect(markers[0].residual).toBe('full_reprojection');
+      expect(markers[0].reason).toBe('no_checkpoint');
+      expect(markers[0].prior_outcome).toBe(skippedPrior);
+      expect(markers[0].new_outcome).toBe('incorrect');
+    });
+  }
 
   it('atomicity: a transient revert failure rolls back the WHOLE overturn; retry replays cleanly', async () => {
     const db = testDb();

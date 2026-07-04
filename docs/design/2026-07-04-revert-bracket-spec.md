@@ -127,8 +127,8 @@ snapshot payload schema（`src/core/schema/event/state-snapshot.ts`）：
 θ̂ revert 只在**两个条件同时成立**时触发：
 
 1. **判决实际驱动了 θ̂**：`answerEvent.action === 'attempt'`（paper，恒判决驱动）或 `answerEvent.action === 'review'` 且 `payload.judge?.auto_rated === true`（submit.ts:502 已存）。auto_rate=false 的 solo：θ̂ 来自用户手评（submit.ts:390 + :282-306），overturn 撤它是纯污染——与 family-calibration 的同源判例（:722-727）一致。
-2. **改判翻转了 θ̂ 位**（终裁补充，两 lens 均未点到）：`bit(coarse) = coarse ∈ {correct, partial} ? 1 : 0`（solo 经 ratingFromCoarseOutcome→again 二分、paper 经 attemptOutcome 派生，两路同构；paper partial→1 见 paper-submit.ts:671）。`bit(priorOutcome) === bit(newOutcome)`（如 partial→correct）时 θ̂ transition 本就是正确位的更新，**revert 会删掉合法信号**——不 revert、不写 marker（无 θ̂ 残留）。
-3. 边角：prior='unsupported'（θ̂ 被跳过，snapshot 可能 `theta_snapshots:[]`——paper-submit.ts:651-655）→ 无可撤，若 new outcome 有 θ̂ 意义则直接写 `reproject_deferred`（residual=reapply）。θ̂ 段为空的 snapshot 同理：caller 检出后跳 revert 直落 marker，不做空转 retract。
+2. **改判翻转了 θ̂ 位**（终裁补充，两 lens 均未点到）：`bit(coarse) = coarse ∈ {correct, partial} ? 1 : 0`（solo 经 ratingFromCoarseOutcome→again 二分、paper 经 attemptOutcome 派生，两路同构；paper partial→1 见 paper-submit.ts:671）。**此位翻转「no-marker」判据只裁真 θ̂-moving prior（prior 与 new 均 θ̂-有意义，∈ {correct, partial, incorrect}）**：`bit(priorOutcome) === bit(newOutcome)`（如 partial→correct）时 θ̂ transition 本就是正确位的更新，**revert 会删掉合法信号**——不 revert、不写 marker（O3，无 θ̂ 残留）。**θ̂-skipped prior（unsupported/unknown）绝不走此判据**：它无 bit（θ̂ 从未动），`outcomeBit` 会把它误并进 failure 位（0），故 `unsupported/unknown → incorrect`（同 0 位）会被误判成「位未翻」而**漏掉本该写的 residual marker**（FIX-1 修复的 P0）——由 item 3 的 skipped-prior 分句单独接管。
+3. **θ̂-skipped prior（FIX-1 P0，rejudge.ts `thetaSkippedPrior` 门）**：prior ∈ {unsupported, unknown}（θ̂ 被跳过，`theta_snapshots:[]` / 无 `${E}:checkpoint:theta`——paper-submit.ts:651-655）overturn 到**任意 θ̂-有意义 new outcome**（correct/partial/incorrect；`new === 'unsupported'` 已在 rejudge.ts:113 当 upheld 过滤，故此处 new 必 θ̂-有意义）→ **一律经 revert 路径**（门直接置 `shouldRevertTheta = judgeDriven && (thetaSkippedPrior || 位翻转)`，绕过位翻转判据）。因无 checkpoint，orchestrator 天然返 `no_checkpoint` → 同 tx 写 `reproject_deferred（residual=full_reprojection, reason=no_checkpoint）`（**与 Q2c 表对齐**——本条此前误写 `residual=reapply`，与 no_checkpoint→full_reprojection 自相矛盾，已订正）。θ̂ 段为空的 snapshot 同理：caller 检出后跳 revert 直落 marker，不做空转 retract。
 
 不满足门的 overturn：**不 revert、不写 marker**（θ̂ 无残留；FSRS 半走既有用户确认流）——记录为决策而非静默（O 段确认窗口）。
 
@@ -139,7 +139,7 @@ orchestrator 对 rootRow 缺失现返 `refusal:'irreversible'`（cascade-revert.
 | orchestrator 结果 | caller 动作 |
 |---|---|
 | `ok:true` | 同 tx 写 `reproject_deferred`（residual:'reapply_correct_outcome'——见 Q4）|
-| `refusal:'no_checkpoint'` | 同 tx 写 `reproject_deferred`（residual:'full_reprojection', reason:'no_checkpoint'）——旧数据 honest 排队 |
+| `refusal:'no_checkpoint'` | 同 tx 写 `reproject_deferred`（residual:'full_reprojection', reason:'no_checkpoint'）——旧数据/θ̂-skipped prior 的 overturn honest 排队（含 Q2b item 3 的 unsupported/unknown→θ̂-meaningful）|
 | `refusal:'conflict'` | 同 tx 写 `reproject_deferred`（residual:'full_reprojection', reason:'later_theta_movement', kc_conflict）|
 | `refusal:'irreversible' \| 'truncated'` | 不应发生（C 闭包只有 snapshot）→ fail-loud error marker，绝不当成功 |
 
@@ -400,7 +400,7 @@ await db.transaction(async (tx) => {                    // Q2a：同生共死
 | # | Finding | 裁决 | 处置 |
 |---|---|---|---|
 | A-F1 | rejudge 幂等守卫在 revert 前短路，部分失败→retry→skip→θ̂ 自愈永久跳过且报成功 | **ACCEPT（MAJOR，= B-F1）** | Q2a：同 tx 原子（选 (a)）；orchestrator tx-aware+SAVEPOINT；备选 (b) 记录不采 |
-| A-F2 | θ̂-only 部分 revert 永久毒化共享快照，FSRS-revert 未来结构性不可达 | **PARTIAL** | 「结构性不可能」过强——`revert(C,['fsrs'])` 段过滤守卫即可达（draft §4.4 已含段过滤）。存活半：retract 须段感知 + forensic reason 不失真 + 文档化「部分 revert 后必段过滤」；拆双 event 记 O2 完整案（Q3b） |
+| A-F2 | θ̂-only 部分 revert 永久毒化共享快照，FSRS-revert 未来结构性不可达 | **PARTIAL** | 「结构性不可能」过强——`revert(C,['fsrs'])` 段过滤守卫即可达（draft §4.4 已含段过滤）。存活半：retract 须段感知 + forensic reason 不失真 + 文档化「部分 revert 后必段过滤」；拆双 event 记 O2 完整案（Q3b）。**O2 对齐（2026-07-04 终裁，消歧）**：段选择 = 撤哪个 checkpoint（`${E}:checkpoint:theta` vs `:fsrs`）；**无 `revertSegments`、无 orchestrator 段裁切、无「部分 revert 后必段过滤」文档规则**——三者皆已被 O2 双 sibling 拓扑取代（θ̂ 段撤了不碰 `S_f`，二者独立墓碑；见 §3/§4.4/Q6）。本 disposition 中「`revert(C,['fsrs'])` 段过滤」为轻量案措辞，仅存证裁决轨迹，非现行实现。 |
 | A-F3 | 残留只在 conflict 可见，happy-path revert-only 的「正确证据未计入」残留对第二实例不可见 | **ACCEPT（MAJOR）** | Q2d：成功路径也写 `reproject_deferred`（residual=reapply），worklist 完整 |
 | A-F4 | revert-of-revert 防线归因错（tombstone vs 冲突守卫）| **ACCEPT** | §1.2 订正 + 注释/ADR 归因 + revert-twice 回归测试；守卫=LIFO 正确性载体点明 |
 | A-F5 | legacy「typed refusal」与 parseSnapshotPayload 实际 throw 不符 | **ACCEPT** | Q3 union schema + restore 层 `legacy_snapshot` typed refusal；缓解事实（no_checkpoint 先挡）照记 |
@@ -412,7 +412,7 @@ await db.transaction(async (tx) => {                    // Q2a：同生共死
 | B-F3 | checkpoint-not-found 落 irreversible→error 洪水，与散文自相矛盾 | **ACCEPT（MAJOR）** | Q2c：`no_checkpoint` refusal 子类 + 四态分派表 |
 | B-F4 | YUK-543 KC-merge 缝全程缺席（renamed 把错判 baked 进 winner） | **ACCEPT** | Q3 表末行：staleness 语义声明 + renamed 测试 + marker 带 merged_into；frozen/竞态文档化 |
 | B-F5 | 「verbatim」漏 rt_correct_ms/theta_grid_json 影子列 | **ACCEPT（终裁加重）** | `SRT_ENABLED=true`（theta.ts:259）→ rt 列**今天就 live**，非 flag-coupled。选 (a) 全列捕获（非 draft 的 (b) 排除案）+ 列漂移守卫测试（§6.4） |
-| B-F6 | 段过滤须覆盖三站点（step-5/step-6/restore），draft 只点两个 | **ACCEPT** | 入口一次性裁 payload，三站点自然收敛（§4.4） |
+| B-F6 | 段过滤须覆盖三站点（step-5/step-6/restore），draft 只点两个 | **ACCEPT** | 入口一次性裁 payload，三站点自然收敛（§4.4）。**O2 对齐（2026-07-04 终裁，消歧）**：双 sibling 下**根本无「段过滤」概念**——每 checkpoint 闭包只含单段 snapshot（`revert(${E}:checkpoint:theta)` 闭包只 `S_θ`），三站点各自只见目标段，orchestrator 一视同仁 collect→classify→conflict-check→restore，无段裁切逻辑（见 §3/§4.4/Q6）。「入口裁 payload」为轻量案措辞，仅存证裁决轨迹，非现行实现。 |
 | B-F7 | Q1-a 写放大 ROI 递延（sibling 全 deferred/非 event 写） | **ACCEPT（记录）** | Q1 诚实标注；owner 决策不推翻；Q1-b 留回退姿态 |
 | B-F8 | 新 action 登记面只走完 1/3 | **ACCEPT（+终裁裁剪）** | 砍 `cascade_revert_applied` 遥测 event（观测由既有行覆盖）→ 剩 2 个 action 全 reserved+schema+ingest_at:now（Q4） |
 | B-F9 | schema 硬替换破坏 rollback 兼容 | **ACCEPT** | union（rich \| legacy bare），吸收 legacy 分支（Q3） |
@@ -434,3 +434,27 @@ await db.transaction(async (tx) => {                    // Q2a：同生共死
 4. **O1/O4 按 spec 默认自决**:reproject_deferred 同走 reserved+schema(与 grading_checkpoint 同纪律);PR-4 与 PR-3 分开落(原子重构与 caller 强耦合但边界清晰)。
 
 Linear:YUK-561(parent YUK-538)。
+
+---
+
+## 附录 — 独立 review 环裁决（2026-07-04）
+
+终稿落地后跑了一轮独立对抗 review 环（Opus 终裁，逐簇独立验证到 node_modules 源码级）。裁决落地为 **FIX-1..5**（P0 correctness + review-limb/grid/atomicity 测试 + 嵌套形状锁）与 **SPEC-1/SPEC-2**（本 doc 内部张力订正）。以下为**不进本波修复**的裁决留档；DEFER 项另开 Linear follow-up。
+
+### 已落地（本波）
+- **FIX-1（P0 correctness，rejudge.ts）**：双触发门漏「θ̂-skipped prior」——`outcomeBit('unsupported')=outcomeBit('incorrect')=0` → 误判「位未翻」→ 漏写 `unsupported→incorrect` 的 residual marker（§Q2b(3)）。改为 `judgeDriven && (thetaSkippedPrior || 位翻转)`；skipped prior 经 revert 路径 → `no_checkpoint` → `full_reprojection` marker。非回归：`partial→correct` 仍不 revert，`unsupported→correct/partial` 不变（只改经 skipped 分句）。
+- **FIX-2/3/4（测试）**：judgeDriven review-true 支路（auto_rated=true）可红；restore-snapshot test 14 补 `theta_grid_json` 非-null verbatim round-trip（闭合唯一从未非-null round-trip 的列）；cascade-revert 补 in-tx re-check→catch→typed refusal→外层 tx 存活→marker commits（双 sibling 同-KC 快照确定性构造，无 mock）。
+- **FIX-5（加固，state-snapshot.ts）**：编译期类型相等锁——`z.infer<RtCorrectBufferSnapshot>` ≙ `RtCorrectBuffer`、`z.infer<ThetaGridPosteriorSnapshot>` ≙ `ThetaGridPosterior`；源接口未来加字段则 typecheck 红，而非 restore 时静默丢字段。
+- **SPEC-1/SPEC-2**：§Q2b(2/3) 化解 FIX-1 暴露的内部张力（位翻转 no-marker 只裁真 θ̂-moving prior；skipped prior 欠 marker，residual=full_reprojection/no_checkpoint 与 Q2c 表对齐）；附 B Attack Ledger A-F2/B-F6 加 O2-reconciliation 注（段选择=撤哪个 checkpoint，无 revertSegments/段裁切/段过滤规则，已被双 sibling 取代）。
+
+### DEFER（独立 follow-up，不塞进 revert 波）
+- **DEFER-1（C3）**：并发双投递（同 appeal 两 worker 并跑）→ 各撤各的 θ̂ → spurious `later_theta_movement` marker。修需 advisory-lock 或 appeal 结论键 unique-index，超本修复轮。当前 `caused_by` 幂等守卫（rejudge.ts:58-62）挡串行重跑、不挡真并发。
+- **DEFER-2（C8）**：memory-brief 被内部 ledger 行污染——checkpoint/snapshot/retract/`reproject_deferred` 虽 `ingest_at:now` opt-out outbox，但 memory-brief 的 S2 聚合面另有读路径把内部行放大（1→4-6）。跨子系统修（须把 outbox 的 `ingest_at IS NULL` gate 镜像到 brief ingest 面），不塞进本波。
+- **DEFER-3（C10）**：overturn tx 内 4 INSERT / N+1 SELECT（marker/retract/merge-lookup）批量化。n=1 可忽略，纯性能，defer。
+
+### REFUTE（独立验证后判无需修，留档防重提）
+- **C2（correctness）**：savepoint `ROLLBACK TO` 保外层 tx 存活——drizzle 嵌套 tx 转 SAVEPOINT，in-tx conflict/legacy throw 只回滚 savepoint，外层 tx 继续（FIX-4 实测坐实）。
+- **C7**：`double precision`（f8）theta_hat + jsonb grid/rt round-trip 精确——postgres-js binary64 经 TEXT 无损往返（FIX-3 verbatim 断言坐实）。
+- **C5**：legacy bare-number `before` → 生产侧 `no_checkpoint` 先挡（legacy snapshot 无 checkpoint），restore 层 `legacy_snapshot` typed refusal 是 defence-in-depth——spec §4.3/§6.6 明文，非漏。
+- **C6**：missing checkpoint = `no_checkpoint`（honest-defer）而非 `irreversible`——Q2c ratified；`irreversible`/`truncated` 对 C_θ 闭包（只有 reversible snapshot）结构性不可能，发生即拓扑损坏 bug → fail-loud，绝不静默 commit。
+- **C4c**：allowlist（union `ThetaRowSnapshot | number`）双向失效是固有代价——FIX-3 全行 round-trip（含 grid）兜底，legacy 分支 typed refusal 不 lossy。

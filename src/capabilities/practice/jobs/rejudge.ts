@@ -149,7 +149,15 @@ export async function handleRejudge(
   const judgeDriven =
     answerEvent.action === 'attempt' ||
     (answerEvent.action === 'review' && answerJudge?.auto_rated === true);
-  const shouldRevertTheta = judgeDriven && outcomeBit(priorOutcome) !== outcomeBit(newOutcome);
+  // A θ̂-skipped prior (unsupported/unknown — θ̂ never moved, no bracket) has NO bit;
+  // outcomeBit conflates it with the failure bit (0), silently dropping the
+  // unsupported→incorrect residual marker (spec §Q2b(3)). Route any skipped-prior overturn
+  // to a θ̂-meaningful new outcome through the revert path (→ no_checkpoint → marker),
+  // symmetric with unsupported→correct/partial. (newOutcome guaranteed θ̂-meaningful here
+  // — 'unsupported' is filtered as upheld at line 113.)
+  const thetaSkippedPrior = priorOutcome === 'unsupported' || priorOutcome === 'unknown';
+  const shouldRevertTheta =
+    judgeDriven && (thetaSkippedPrior || outcomeBit(priorOutcome) !== outcomeBit(newOutcome));
 
   let newJudgeId = '';
   let correctionId = '';
