@@ -172,4 +172,17 @@ describe('validateAllowlistEntry — resolves_when contract', () => {
       'invalid_expected_by',
     );
   });
+
+  it('a null / non-object entry is reported (not a TypeError crash)', () => {
+    // loadAllowlist casts JSON.parse output unsafely; a hand-edited allowlist may carry a null
+    // or scalar value. The guard must report invalid_resolves_when instead of throwing.
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed for the negative test.
+    expect(validateAllowlistEntry('f.ts', null as any, TODAY).map((p) => p.problem)).toEqual([
+      'invalid_resolves_when',
+    ]);
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed for the negative test.
+    expect(validateAllowlistEntry('f.ts', 'oops' as any, TODAY).map((p) => p.problem)).toEqual([
+      'invalid_resolves_when',
+    ]);
+  });
 });

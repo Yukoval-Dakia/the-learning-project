@@ -79,6 +79,14 @@ export const KG_BORROW_SHADOW_SUBJECT_ID = 'global';
 // shadow lie about the flip, so they share the same constant.
 export const SHADOW_BORROW_COMPONENT_CAP = GRAPH_SMOOTH_COMPONENT_CAP;
 
+// Two-layer guardrail (warning water level only): the shadow loads ALL 'knowledge' mastery_state
+// rows + ALL live typed edges globally (no LIMIT/chunking — it is a global observation). At n=1
+// the graph is thousands of rows, far below this line; a whole-graph load only becomes a memory
+// concern at tens of thousands. If the combined loaded scale crosses this, log a warn (zero
+// intervention — the run proceeds) so a future scale problem is visible before it OOMs. Chunking
+// is deliberately NOT added (weekly job, n=1 scale). Conservative initial value, NOT data-calibrated.
+const SHADOW_SWEEP_SCALE_WARN = 50_000;
+
 interface ObservedNode {
   theta_hat: number;
   theta_precision: number;
@@ -364,6 +372,18 @@ export async function runKgBorrowShadowSweep(
         ),
       );
     const { symmetric, directed } = splitProjectionEdgeRows(edgeRows);
+
+    // Scale water-level warn (guardrail, no intervention): the global load has no LIMIT/chunking,
+    // so surface it if the combined row count crosses the conservative threshold before it becomes
+    // a memory concern. The run proceeds unchanged.
+    const loadedScale = observedRows.length + edgeRows.length;
+    if (loadedScale > SHADOW_SWEEP_SCALE_WARN) {
+      console.warn('[kg_borrow_shadow_sweep] global load scale high — no chunking (guardrail)', {
+        observedRows: observedRows.length,
+        edgeRows: edgeRows.length,
+        threshold: SHADOW_SWEEP_SCALE_WARN,
+      });
+    }
 
     const stats = computeShadowBorrowStats(observed, symmetric, directed, componentCap);
 

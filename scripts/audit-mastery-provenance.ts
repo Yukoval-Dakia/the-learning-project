@@ -81,7 +81,12 @@ export const TRACKED_CONSUMERS: readonly string[] = [
 // real code read/guard. Char-stepping technique mirrors audit-draft-status.ts extractObjectBlock
 // (line/block comments; single/double/template strings; escape-aware; `${…}` interpolation code
 // is KEPT so `${proj.mastery}` still counts). Nested templates-inside-interpolation are handled
-// approximately (a documented heuristic limitation).
+// approximately (a documented heuristic limitation). Regex literals are NOT stripped either — a
+// pattern like `/\.mastery\b/` or `/\.theta_hat/` in a tracked consumer would survive and match
+// FIELD_READ_RE, yielding a false field-read positive. JS regex-vs-divide lexing is ambiguous
+// enough that a heuristic stripper is not worth the risk; no current tracked consumer contains
+// such a regex, so this stays a documented limitation (alongside the DTO-surfacing `guarded`
+// heuristic noted on scanFile) rather than a code fix.
 export function stripCommentsAndStrings(src: string): string {
   let out = '';
   let i = 0;
@@ -268,6 +273,18 @@ export function validateAllowlistEntry(
   today: string,
 ): AllowlistProblem[] {
   const problems: AllowlistProblem[] = [];
+  // loadAllowlist() casts JSON.parse output with an unsafe `as Allowlist`, so a hand-edited
+  // allowlist may carry a null / non-object value. Guard first: report it gracefully as an
+  // invalid entry rather than TypeError-crashing on entry.reason / entry.resolves_when.
+  if (entry === null || typeof entry !== 'object') {
+    return [
+      {
+        file,
+        problem: 'invalid_resolves_when',
+        detail: 'allowlist entry must be an object with reason/resolves_when',
+      },
+    ];
+  }
   if (typeof entry.reason !== 'string' || entry.reason.trim().length === 0) {
     problems.push({ file, problem: 'missing_reason', detail: 'reason must be a non-empty string' });
   }
@@ -317,6 +334,15 @@ export function validateAllowlistEntry(
 export type ConsumerVerdict = {
   file: string;
   status: 'missing' | 'guarded' | 'no-field-read' | 'allowlisted' | 'flagged';
+};
+
+/** Fixed-width console tag per verdict status (lookup map — nested ternaries are banned). */
+const STATUS_TAGS: Record<ConsumerVerdict['status'], string> = {
+  flagged: 'FLAGGED',
+  allowlisted: 'allow  ',
+  guarded: 'guarded',
+  'no-field-read': 'no-read',
+  missing: 'MISSING',
 };
 
 export type ProvenanceAuditResult = {
@@ -411,7 +437,14 @@ function readFileOrNull(relPath: string): string | null {
 function loadAllowlist(): Allowlist {
   try {
     return JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8')) as Allowlist;
-  } catch {
+  } catch (err) {
+    // A corrupt / missing allowlist silently degrades to {} → every previously-allowlisted
+    // consumer flips to FLAGGED (and --strict CI fails) with no visible root cause. Emit a
+    // stderr diagnostic so the failure mode is attributable; behaviour (return {}) unchanged.
+    console.error(
+      `[audit:mastery-provenance] failed to load allowlist at ${ALLOWLIST_PATH}; treating as empty — previously-allowlisted consumers will FLAG:`,
+      err instanceof Error ? err.message : err,
+    );
     return {};
   }
 }
@@ -427,17 +460,7 @@ function main(): void {
   } else {
     console.log('audit:mastery-provenance — 借用 provenance 消费纪律审计 (YUK-559 / S2)\n');
     for (const v of result.verdicts) {
-      const tag =
-        v.status === 'flagged'
-          ? 'FLAGGED'
-          : v.status === 'allowlisted'
-            ? 'allow  '
-            : v.status === 'guarded'
-              ? 'guarded'
-              : v.status === 'no-field-read'
-                ? 'no-read'
-                : 'MISSING';
-      console.log(`  [${tag}] ${v.file}`);
+      console.log(`  [${STATUS_TAGS[v.status]}] ${v.file}`);
     }
     console.log('');
     if (result.flagged.length === 0) {
