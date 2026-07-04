@@ -37,11 +37,25 @@ import { upsertFsrsState } from '@/server/fsrs/state';
 import { upsertMasteryState } from '@/server/mastery/state';
 
 /**
+ * The restore result. YUK-561 S1: a pre-S1 on-disk snapshot carries a BARE-NUMBER
+ * θ̂ `before` (just theta_hat, no counts/precision/rt/grid) — it is NOT verbatim-
+ * restorable, so restore REFUSES it (`legacy_snapshot`) WITHOUT mutating any row
+ * rather than lossy-restore (never write θ̂ back while zeroing the rest). New
+ * snapshots carry the rich ThetaRowSnapshot → { ok: true }.
+ */
+export type RestoreSnapshotResult =
+  | { ok: true }
+  | { ok: false; refusal: 'legacy_snapshot'; ref: { kind: 'theta'; kcId: string } };
+
+/**
  * Restore the two A-class imperative state tables from a state_snapshot event
  * payload. MUST be called inside the caller's revert transaction (`tx`).
  *
- * θ̂ segment: before!=null → upsert mastery_state back to θ̂=before; before=null
- *   → DELETE the mastery_state row (cold-start revert).
+ * θ̂ segment: before=rich ThetaRowSnapshot → VERBATIM whole-row upsert (YUK-561 S1:
+ *   theta_hat + counts + precision + delta + last_outcome_at + rt buffer + grid all
+ *   restored, not just θ̂ with zeroed counts); before=null → DELETE the row (cold-
+ *   start revert); before=bare number (legacy) → refuse `legacy_snapshot`, mutate
+ *   nothing (scan-first, see below).
  * FSRS segment: before!=null → upsert material_fsrs_state back to the before
  *   Card; before=null → DELETE the row.
  *
@@ -54,10 +68,23 @@ import { upsertMasteryState } from '@/server/mastery/state';
 export async function restoreStateSnapshot(
   tx: Tx,
   payload: StateSnapshotExperimentalT['payload'],
-): Promise<void> {
+): Promise<RestoreSnapshotResult> {
+  // YUK-561 S1 — SCAN-FIRST for a legacy bare-number θ̂ `before` (pre-S1 on-disk
+  // snapshot). A bare number can't be verbatim-restored (counts/precision/rt/grid
+  // absent), so refuse the WHOLE restore WITHOUT mutating any row — never a partial-
+  // or-lossy restore (Lens A F5). Defence-in-depth: legacy rows have no checkpoint,
+  // so the orchestrator returns `no_checkpoint` before ever reaching this primitive;
+  // this branch bites only a direct caller / synthetic legacy payload (spec §6.6).
+  for (const snap of payload.theta_snapshots) {
+    if (typeof snap.before === 'number') {
+      return { ok: false, refusal: 'legacy_snapshot', ref: { kind: 'theta', kcId: snap.kc_id } };
+    }
+  }
+
   // ---------- θ̂ segment (mastery_state) ----------
   for (const snap of payload.theta_snapshots) {
-    if (snap.before === null) {
+    const before = snap.before;
+    if (before === null) {
       // Cold-start revert: the attempt had created this row; restore = remove it.
       await tx
         .delete(mastery_state)
@@ -67,23 +94,31 @@ export async function restoreStateSnapshot(
             eq(mastery_state.subject_id, snap.kc_id),
           ),
         );
-    } else {
-      // Warm revert: restore θ̂ to its pre-attempt value.
-      // The snapshot only carries theta_hat (before/after) — the count columns
-      // (evidence/success/fail) are NOT in the payload. We zero them on revert
-      // because the revert undoes the attempt that produced the after-state: a
-      // faithful restore removes the evidence of the reverted attempt too. The
-      // orchestrator (later wave) owns any richer compensation; the primitive
-      // restores the θ̂ axis value as captured.
-      await upsertMasteryState(tx, {
-        subject_id: snap.kc_id,
-        theta_hat: snap.before,
-        evidence_count: 0,
-        success_count: 0,
-        fail_count: 0,
-        last_outcome_at: new Date(0),
-      });
+      continue;
     }
+    if (typeof before === 'number') {
+      // Unreachable — the scan above refused any bare-number before. Guard for TS +
+      // defence: never lossy-restore even if the scan were bypassed.
+      continue;
+    }
+    // Warm verbatim revert: restore the ENTIRE pre-attempt row (YUK-561 S1). Every
+    // column is passed explicitly (incl. null) so the upsert force-writes it back to
+    // its captured value — leaving one out would keep the reverted attempt's value on
+    // that column (the pre-S1 zeroed-counts / stale-precision bug). rt_correct_ms /
+    // theta_grid_json passed as null force the column to NULL (upsert writes when the
+    // key is present, even if null); last_theta_delta null likewise.
+    await upsertMasteryState(tx, {
+      subject_id: snap.kc_id,
+      theta_hat: before.theta_hat,
+      evidence_count: before.evidence_count,
+      success_count: before.success_count,
+      fail_count: before.fail_count,
+      last_outcome_at: before.last_outcome_at,
+      theta_precision: before.theta_precision,
+      last_theta_delta: before.last_theta_delta,
+      theta_grid_json: before.theta_grid_json,
+      rt_correct_ms: before.rt_correct_ms,
+    });
   }
 
   // ---------- FSRS segment (material_fsrs_state) ----------
@@ -115,4 +150,6 @@ export async function restoreStateSnapshot(
       });
     }
   }
+
+  return { ok: true };
 }

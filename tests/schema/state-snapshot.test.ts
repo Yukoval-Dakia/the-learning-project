@@ -176,4 +176,62 @@ describe('StateSnapshotExperimental — parse barrier (HARD REQ 1)', () => {
     });
     expect(parsed.action).toBe('experimental:foo');
   });
+
+  it('8. YUK-561 S1 — rich ThetaRowSnapshot before parses (verbatim shape)', () => {
+    // The new verbatim `before`: a full-row snapshot object (not a bare number).
+    const richSnapshot = {
+      ...validSnapshot,
+      payload: {
+        ...validSnapshot.payload,
+        theta_snapshots: [
+          {
+            kc_id: 'kc_rich',
+            before: {
+              theta_hat: 0.7,
+              evidence_count: 5,
+              success_count: 3,
+              fail_count: 2,
+              theta_precision: 6.1,
+              last_theta_delta: -0.2,
+              last_outcome_at: '2026-06-30T00:00:00.000Z',
+              rt_correct_ms: { samples: [1500, 1100, 900] },
+              theta_grid_json: null,
+            },
+            after: 0.9,
+          },
+        ],
+      },
+    };
+    const parsed = parseEvent(richSnapshot);
+    expect(parsed.action).toBe('experimental:state_snapshot');
+    if ('actor_kind' in parsed && 'theta_snapshots' in parsed.payload) {
+      const before = parsed.payload.theta_snapshots[0].before;
+      // Routed to the rich branch: before is the object (not a number/null), and
+      // last_outcome_at was coerced from ISO string → Date.
+      expect(typeof before).toBe('object');
+      expect(before).not.toBeNull();
+      if (before !== null && typeof before === 'object') {
+        expect(before.theta_hat).toBe(0.7);
+        expect(before.evidence_count).toBe(5);
+        expect(before.last_outcome_at).toBeInstanceOf(Date);
+        expect(before.rt_correct_ms?.samples).toEqual([1500, 1100, 900]);
+      }
+    } else {
+      throw new Error('rich snapshot did not route to the dedicated schema branch');
+    }
+  });
+
+  it('9. YUK-561 S1 — legacy bare-number before still parses (rollback-compat union)', () => {
+    // A bare number `before` (pre-S1 on-disk snapshot) must still parse through the
+    // union so a code rollback never breaks the read side (restore refuses it later).
+    const legacySnapshot = {
+      ...validSnapshot,
+      payload: {
+        ...validSnapshot.payload,
+        theta_snapshots: [{ kc_id: 'kc_legacy', before: -0.3, after: 0.1 }],
+      },
+    };
+    const parsed = parseEvent(legacySnapshot);
+    expect(parsed.action).toBe('experimental:state_snapshot');
+  });
 });

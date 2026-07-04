@@ -150,11 +150,21 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     }).payload;
     const thetaSeeded = payloadSeeded.theta_snapshots.find((t) => t.kc_id === 'kc_seeded');
     expect(thetaSeeded).toBeDefined();
-    // before = seeded prior θ̂ (the independent oracle, NOT read from the snapshot).
-    // 8 digits, not 10: jsonb stores a double with a ~1e-8 round-trip delta vs the
-    // live row read back through Drizzle — still proves the snapshot brackets the
-    // EXACT transition (not a tautology — before/after come from independent oracles).
-    expect(thetaSeeded?.before).toBeCloseTo(seededTheta, 6);
+    // YUK-561 S1 — `before` is now the FULL pre-attempt row (verbatim), not a bare
+    // number. It captures the seeded prior θ̂ + counts (independent oracle, NOT read
+    // from the snapshot). 6 digits: jsonb stores a double with a ~1e-8 round-trip
+    // delta vs the live row read back through Drizzle — still proves the snapshot
+    // brackets the EXACT transition (before/after come from independent oracles).
+    const beforeSeeded = thetaSeeded?.before;
+    expect(beforeSeeded).not.toBeNull();
+    expect(typeof beforeSeeded).toBe('object'); // rich row, not the legacy bare number
+    if (beforeSeeded !== null && typeof beforeSeeded === 'object') {
+      expect(beforeSeeded.theta_hat).toBeCloseTo(seededTheta, 6);
+      // verbatim also captured the seeded counts (the pre-S1 bug lost these).
+      expect(beforeSeeded.evidence_count).toBe(3);
+      expect(beforeSeeded.success_count).toBe(2);
+      expect(beforeSeeded.fail_count).toBe(1);
+    }
     // after = the LIVE posterior θ̂ (independent oracle).
     expect(thetaSeeded?.after).toBeCloseTo(livePosterior, 6);
 
