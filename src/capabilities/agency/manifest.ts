@@ -22,6 +22,16 @@ export const agencyCapability = defineCapability({
         path: '/api/goals',
         load: () => import('./api/goal-create').then((m) => m.POST),
       },
+      {
+        // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S3) — probe answer route.
+        // Isolated from the attempt/FSRS write path: judge routes via
+        // defaultJudgeKindForQuestion → capability registry resolveJudge →
+        // runner.run() PURE, then answerProbe writes exactly ONE
+        // experimental:probe_result event (ND-5). A5-a outcome→resolution split.
+        method: 'POST',
+        path: '/api/conjecture/probe/:id/answer',
+        load: () => import('./api/probe-answer').then((m) => m.POST),
+      },
     ],
   },
   jobs: {

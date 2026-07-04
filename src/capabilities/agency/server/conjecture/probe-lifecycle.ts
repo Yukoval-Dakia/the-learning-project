@@ -189,6 +189,8 @@ export interface AnswerProbeParams {
 
 export interface AnswerProbeResult {
   status: 'confirmed' | 'retired';
+  /** The recorded 0|1 outcome (faithfully reported on BOTH fresh + idempotent paths). */
+  outcome: 0 | 1;
   probe_result_event_id: string;
   idempotent?: boolean;
 }
@@ -268,8 +270,20 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
           500,
         );
       }
+      // Faithful idempotent report: return the RECORDED outcome (not the caller's
+      // current value). A re-answer with a different outcome must never rewrite what
+      // the record says happened. Validate it lands on 0|1; a corrupt row surfaces 500.
+      const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
+      if (recordedOutcome !== 0 && recordedOutcome !== 1) {
+        throw new ApiError(
+          'probe_result_corrupt',
+          `probe ${probeQuestionId} has a probe_result event with an invalid outcome`,
+          500,
+        );
+      }
       return {
         status: recordedResolution,
+        outcome: recordedOutcome,
         probe_result_event_id: existing.id,
         idempotent: true,
       };
@@ -296,6 +310,6 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       created_at: now,
     });
 
-    return { status: resolution, probe_result_event_id: probeResultEventId };
+    return { status: resolution, outcome, probe_result_event_id: probeResultEventId };
   });
 }

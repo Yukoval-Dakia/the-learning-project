@@ -225,6 +225,21 @@
     ]
   },
   {
+    "path": "/api/conjecture/probe/:id/answer",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "answer_md": "2x·cos(x^2)"
+        },
+        "notes": "conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。A5-a 分流：judge 'incorrect' → outcome=0 → 'confirmed'（猜测成立）；'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }"
+      }
+    ]
+  },
+  {
     "path": "/api/workbench/overnight-digest",
     "methods": [
       {
@@ -735,7 +750,13 @@
       {
         "method": "GET",
         "summary": "placement-done 起始档案：按 goal scope 读 per-KC mastery（冷启 inc-B / Slice 4）",
-        "query": [{ "name": "goal", "required": true, "example": "goal-1" }],
+        "query": [
+          {
+            "name": "goal",
+            "required": true,
+            "example": "goal-1"
+          }
+        ],
         "notes": "只读，复用 getMasteryProjection（mastery_state SoT）。in-scope 但无 mastery_state 行的 KC → tested:false。缺 goal→400，未知 goal→404。返回 {goalId, title, kcs[], answeredCount}"
       }
     ]
