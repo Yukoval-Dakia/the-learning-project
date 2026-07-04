@@ -179,8 +179,8 @@ export interface GmrfInput {
  * KC page induces a ~1-hop star, but a whole-tree read (mastery/state.ts loadEdgesFor
  * Projection over up to LOAD_TREE_SNAPSHOT_LIMIT requested KCs) can pass the whole
  * related_to connected component. Callers running on request-shaped node sets MUST
- * partition by connected component and cap component size — see {@link smoothThetaBy
- * Component} + {@link GRAPH_SMOOTH_COMPONENT_CAP}.
+ * partition by connected component and cap component size — see
+ * {@link smoothThetaByComponent} + {@link GRAPH_SMOOTH_COMPONENT_CAP}.
  */
 export function gmrfPosteriorMean(input: GmrfInput): Map<string, number> {
   const { nodeIds, thetaHat, observationPrecision, L, lambda, kappa } = input;

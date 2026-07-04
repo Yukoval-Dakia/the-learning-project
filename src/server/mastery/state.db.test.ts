@@ -103,6 +103,7 @@ import {
 } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
 import {
+  BORROW_EPS,
   effectiveThetaForKc,
   getMasteryProjection,
   getMasteryState,
@@ -622,6 +623,32 @@ describe('getMasteryProjection — A5/A6 KG soft layer (YUK-441 / YUK-442)', () 
       String(c[0]).includes('A5 component cap tripped'),
     );
     expect(capWarns).toHaveLength(1);
+  });
+
+  it('A5 ON: a sub-BORROW_EPS θ̂ move does NOT stamp theta_hat_raw (noise floor, C9 threshold)', async () => {
+    // A related_to SINGLETON observed KC with a huge precision d: the κ ridge pulls it toward
+    // μ₀=0 by only θ̂·κ/(d+κ) ≈ 1e-11 < BORROW_EPS (1e-9). A strict θ̃ ≠ θ̂ WOULD stamp raw on
+    // this noise-floor move (GMRF dense-solve FP noise / sub-eps ridge pull); the shared
+    // BORROW_EPS threshold must NOT. A second related_to pair trips symmetric.length>0 so the
+    // A5 solve runs; kNoise is its own singleton component (solved: θ̃ = d·θ̂/(d+κ)).
+    const kNoise = createId();
+    const kA = createId();
+    const kB = createId();
+    await seedObserved(kNoise, 1.0, 1e9); // huge precision → sub-BORROW_EPS ridge move
+    await seedObserved(kA, 0.5, 5);
+    await seedObserved(kB, -0.5, 5);
+    await seedEdge(kA, kB, 'related_to'); // symmetric.length > 0; kNoise stays isolated
+    laplFlag.value = true;
+
+    const proj = await getMasteryProjection(db, [kNoise, kA, kB]);
+    // The mean DID move (by < BORROW_EPS), but the raw field must stay ABSENT — below the
+    // shared move threshold it is treated as unmoved for provenance purposes.
+    expect(proj.get(kNoise)?.theta_hat_raw).toBeUndefined();
+    expect(proj.get(kNoise)?.provenance).toBe('observed');
+    // Sanity: the move is real but strictly sub-eps (proves a strict !== WOULD have stamped).
+    const moved = proj.get(kNoise)?.theta_hat ?? 0;
+    expect(moved).not.toBe(1.0);
+    expect(Math.abs(moved - 1.0)).toBeLessThan(BORROW_EPS);
   });
 
   it('A5 ON: contrasts_with is EXCLUDED from smoothing (reverse signal never borrows)', async () => {

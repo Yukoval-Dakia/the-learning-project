@@ -661,9 +661,13 @@ async function applyKgSoftLayer(
       // Observed KC: move the surfaced ability mean; leave se / precision / p(L) band.
       // YUK-559 (S1) — preserve the pre-move raw θ̂ so a neighbour-dominated weak
       // observation stays inspectable. Only stamp theta_hat_raw when the mean actually
-      // moved (θ̃ ≠ θ̂) — an unmoved observed KC keeps the field absent (flag-off never
-      // reaches here, so the field is absent on the byte-identical path).
-      if (tilde !== existing.theta_hat) existing.theta_hat_raw = existing.theta_hat;
+      // moved beyond the shared BORROW_EPS threshold (|θ̃ − θ̂| > BORROW_EPS) — the same
+      // "did it move?" test the borrow detection (below) and the shadow sweep use (C9).
+      // A strict θ̃ ≠ θ̂ would spuriously stamp on GMRF dense-solve FP noise / a sub-eps κ
+      // ridge pull, polluting the raw field for clients that inspect it. An unmoved observed
+      // KC keeps the field absent (flag-off never reaches here → absent on the byte-identical path).
+      if (Math.abs(tilde - existing.theta_hat) > BORROW_EPS)
+        existing.theta_hat_raw = existing.theta_hat;
       existing.theta_hat = tilde;
     } else if (Math.abs(tilde - PRIOR_MEAN) > BORROW_EPS) {
       // Unobserved requested KC that borrowed from observed neighbours → mark for a
