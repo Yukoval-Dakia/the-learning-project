@@ -259,72 +259,68 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     ).toEqual([]);
   });
 
-  // YUK-471 Wave 0 (ADR-0044 §3) — REVERSE invariant: each A-class attempt tx (solo
-  // submit.ts + paper paper-submit.ts) MUST append exactly one
-  // `experimental:state_snapshot` event anchored to the attempt event, so the θ̂/FSRS
-  // in-place overwrite it performs is always bracketed (A-class snapshot reversibility).
-  // This is the source-level companion to the DB tests (submit-snapshot.db.test.ts /
-  // paper-submit-snapshot.db.test.ts): those prove the runtime behaviour against the
-  // live rows; this static walker proves the WRITER exists in each attempt path's source
-  // (and would catch a future edit that silently drops the append). We assert on the
-  // source text because the step9 audit is a pure-Node fs walker, not a DB harness.
-  it('each attempt tx (solo + paper) appends exactly one experimental:state_snapshot anchored to the attempt event', async () => {
+  // YUK-561 S2 (revert-bracket §4.1, was YUK-471 W0) — REVERSE invariant: each A-class
+  // attempt tx (solo submit.ts + paper paper-submit.ts) MUST bracket the θ̂/FSRS
+  // in-place overwrite it performs, so the transition is always revertable. Post-S2 the
+  // bracket write moved into the shared `writeAttemptSnapshotBrackets` helper (O2 dual-
+  // sibling: θ̂ + FSRS each get their own checkpoint + snapshot). This static walker
+  // proves (a) each attempt path routes through the shared helper exactly once (and does
+  // NOT hand-roll a state_snapshot writeEvent — single-owner), and (b) the helper writes
+  // both the grading_checkpoint anchor + the state_snapshot with the correct caused_by
+  // chain + outbox opt-out. It is the source-level companion to the DB tests
+  // (submit-snapshot / paper-submit-snapshot).
+  it('each attempt tx (solo + paper) brackets its θ̂/FSRS transition via the shared writeAttemptSnapshotBrackets helper', async () => {
     const ATTEMPT_PATHS = [
       'src/capabilities/practice/api/submit.ts',
       'src/capabilities/practice/server/paper-submit.ts',
     ] as const;
     for (const rel of ATTEMPT_PATHS) {
       const src = await fs.readFile(path.join(REPO_ROOT, rel), 'utf8');
-      // Exactly one snapshot writeEvent literal per attempt path (the single append
-      // site). More than one would mean a duplicate (double snapshot per attempt);
-      // zero would mean the A-class invariant is unestablished for that path.
-      const actionRe = /action:\s*'experimental:state_snapshot'/;
-      const actionLiterals = src.match(new RegExp(actionRe, 'g')) ?? [];
+      // Exactly one call to the shared bracket writer (the single append site).
+      const calls = src.match(/writeAttemptSnapshotBrackets\(/g) ?? [];
       expect(
-        actionLiterals.length,
-        `${rel} must contain EXACTLY one experimental:state_snapshot append (found ${actionLiterals.length})`,
+        calls.length,
+        `${rel} must call writeAttemptSnapshotBrackets EXACTLY once (found ${calls.length})`,
       ).toBe(1);
-
-      // SCOPE the field assertions to the snapshot writeEvent block. The whole-file
-      // regexes used previously could match a `caused_by_event_id: eventId` /
-      // `ingest_at: now` field in ANY other event block (e.g. the attempt event
-      // itself), letting the invariant pass without truly covering the snapshot
-      // writeEvent. We slice from the `action: 'experimental:state_snapshot'`
-      // literal through the close of its enclosing writeEvent call (`});`), then
-      // run the field regexes against that scoped substring.
-      const actionIdx = src.search(actionRe);
+      // Single-owner: the attempt path must NOT hand-roll a state_snapshot writeEvent —
+      // the bracket shape lives ONLY in the helper.
       expect(
-        actionIdx,
-        `${rel} must contain an experimental:state_snapshot action literal`,
-      ).toBeGreaterThanOrEqual(0);
-      const writeEventOpenIdx = src.lastIndexOf('writeEvent(', actionIdx);
-      expect(
-        writeEventOpenIdx,
-        `${rel} snapshot action literal must live inside a writeEvent( call`,
-      ).toBeGreaterThanOrEqual(0);
-      // The block ends at the matching `});` that closes the writeEvent call that
-      // opens at/before the action literal. Find the first `});` at or after the
-      // action literal — that is the tail of this writeEvent argument object.
-      const closeIdx = src.indexOf('});', actionIdx);
-      expect(
-        closeIdx,
-        `${rel} snapshot writeEvent call must be terminated by '});'`,
-      ).toBeGreaterThanOrEqual(0);
-      const snapshotBlock = src.slice(writeEventOpenIdx, closeIdx + '});'.length);
-
-      // The append must back-link to the attempt event via caused_by_event_id (the
-      // cascade CTE chain edge). submit.ts uses `eventId`; paper-submit.ts uses
-      // `attemptEventId` — accept either attempt-event identifier.
-      expect(
-        /caused_by_event_id:\s*(eventId|attemptEventId)\b/.test(snapshotBlock),
-        `${rel} snapshot append must set caused_by_event_id to the attempt event id (inside the snapshot writeEvent block)`,
-      ).toBe(true);
-      // HARD REQ 2 — the snapshot opts out of the memory outbox (ingest_at non-NULL).
-      expect(
-        /ingest_at:\s*now/.test(snapshotBlock),
-        `${rel} snapshot append must stamp ingest_at: now (HARD REQ 2 — skip the memory outbox; inside the snapshot writeEvent block)`,
-      ).toBe(true);
+        /action:\s*'experimental:state_snapshot'/.test(src),
+        `${rel} must NOT hand-roll a state_snapshot writeEvent — route through writeAttemptSnapshotBrackets`,
+      ).toBe(false);
     }
+
+    // The shared helper is the single owner of the bracket write shape.
+    const helper = await fs.readFile(
+      path.join(REPO_ROOT, 'src/capabilities/practice/server/attempt-snapshot.ts'),
+      'utf8',
+    );
+    // One grading_checkpoint + one state_snapshot writeEvent literal (the per-segment
+    // writer runs once per segment at runtime, but the SOURCE has one of each literal).
+    expect(
+      (helper.match(/action:\s*'experimental:grading_checkpoint'/g) ?? []).length,
+      'attempt-snapshot.ts must write exactly one grading_checkpoint literal',
+    ).toBe(1);
+    expect(
+      (helper.match(/action:\s*'experimental:state_snapshot'/g) ?? []).length,
+      'attempt-snapshot.ts must write exactly one state_snapshot literal',
+    ).toBe(1);
+    // Both the checkpoint + snapshot opt out of the memory outbox (ingest_at: now).
+    // Match the code shape `ingest_at: now,` (with the trailing comma) so a prose
+    // mention of `ingest_at:now` in the docblock doesn't inflate the count.
+    expect(
+      (helper.match(/ingest_at: now,/g) ?? []).length,
+      'attempt-snapshot.ts must stamp ingest_at: now on BOTH the checkpoint and snapshot (HARD REQ 2)',
+    ).toBe(2);
+    // caused_by chain: snapshot → its segment checkpoint; checkpoint → the attempt event.
+    expect(
+      /caused_by_event_id:\s*`\$\{attemptEventId\}:checkpoint:\$\{segment\}`/.test(helper),
+      'attempt-snapshot.ts snapshot must back-link to its segment checkpoint',
+    ).toBe(true);
+    expect(
+      /caused_by_event_id:\s*attemptEventId\b/.test(helper),
+      'attempt-snapshot.ts checkpoint must back-link to the attempt event id',
+    ).toBe(true);
   });
 
   for (const dropped of ['mistake', 'review_event', 'dreaming_proposal', 'ingestion_session']) {
