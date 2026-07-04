@@ -155,6 +155,12 @@ export async function handleRejudge(
   // to a θ̂-meaningful new outcome through the revert path (→ no_checkpoint → marker),
   // symmetric with unsupported→correct/partial. (newOutcome guaranteed θ̂-meaningful here
   // — 'unsupported' is filtered as upheld at line 113.)
+  // Note (PR #704 OCR round): 'unknown' is a pure defensive/type branch — it is the
+  // `coarse_outcome`-missing fallback (:94), but every appeal targets a placeholder judge
+  // that unconditionally writes a real CoarseOutcome (submit.ts:610 / paper-submit.ts:602),
+  // so priorOutcome='unknown' is unreachable via the live appeal path. Even if forced, a
+  // coarse_outcome-less judge ⟺ no judge-driven θ̂ move (photo-unsupported has no checkpoint;
+  // solo-manual has judgeDriven=false), so it can never over-revert a real correct/partial.
   const thetaSkippedPrior = priorOutcome === 'unsupported' || priorOutcome === 'unknown';
   const shouldRevertTheta =
     judgeDriven && (thetaSkippedPrior || outcomeBit(priorOutcome) !== outcomeBit(newOutcome));

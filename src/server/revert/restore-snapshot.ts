@@ -96,9 +96,14 @@ export async function restoreStateSnapshot(
       continue;
     }
     if (typeof before === 'number') {
-      // Unreachable — the scan above refused any bare-number before. Guard for TS +
-      // defence: never lossy-restore even if the scan were bypassed.
-      continue;
+      // Unreachable — the scan above refused any bare-number before. Fail-loud rather
+      // than `continue`: silently skipping one KC's restore while upserting the rest
+      // (and still returning ok) would be a silent partial revert (项目头号忌). The
+      // enclosing tx/savepoint rolls back, so nothing is half-persisted. Same fail-loud
+      // discipline as rejudge.ts's unreachable-state throw. (PR #704 OCR round.)
+      throw new Error(
+        'restoreStateSnapshot: bare-number `before` survived the scan-first guard (unreachable)',
+      );
     }
     // Warm verbatim revert: restore the ENTIRE pre-attempt row (YUK-561 S1). Every
     // column is passed explicitly (incl. null) so the upsert force-writes it back to
