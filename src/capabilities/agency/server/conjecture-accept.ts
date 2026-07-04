@@ -183,16 +183,23 @@ export async function acceptConjectureProposal(
     }
 
     // conjecture-wire #13 (YUK-538 ⑬) — serve the discriminating probe ATOMICALLY
-    // with the rate event + dark promotion. Best-effort enrichment: a `cap_reached`
-    // return (≤3 active probes already — MAX_CONCURRENT_ACTIVE_PROBES) is tolerated —
-    // accept still succeeds, the probe is simply not served this round (a slot frees
-    // up as prior probes get answered → reconcile scores them → countActiveProbes
-    // drops). serveProbeOnce's internal `db.transaction` nests as a SAVEPOINT inside
-    // this outer tx; its `pg_advisory_xact_lock` is transaction-scoped to this outer
-    // tx, so the cap-serialize guarantee holds across the whole accept. ND-5 preserved:
-    // serveProbeOnce writes ONLY the draft question row (no FSRS / attempt / θ̂).
-    // Idempotency: the existingRate short-circuit above prevents re-accept from ever
-    // reaching this tx, so a probe is served at most once per conjecture.
+    // with the rate event + dark promotion. Per spec §4 Q1 (line 69) the atomicity
+    // is INTENTIONAL: "同 tx 原子（rate event + probe serve 一起回滚）" was the chosen
+    // semantic — a probe-serve THROW (DB constraint / serialization conflict / etc.)
+    // propagates through the nested SAVEPOINT and aborts the WHOLE outer tx (rate
+    // event + dark promotion roll back together), so the owner never gets an accept
+    // record without its probe. Only `cap_reached` is tolerated — it's a normal
+    // RETURN (not a throw), so the probe is simply not served this round (a slot
+    // frees up as prior probes get answered → reconcile scores them →
+    // countActiveProbes drops). serveProbeOnce's internal `db.transaction` nests as
+    // a SAVEPOINT inside this outer tx; its `pg_advisory_xact_lock` is transaction-
+    // scoped to this outer tx, so the cap-serialize guarantee holds across the whole
+    // accept. ND-5 preserved: serveProbeOnce writes ONLY the draft question row
+    // (no FSRS / attempt / θ̂). Idempotency: the existingRate short-circuit above
+    // prevents re-accept from ever reaching this tx, so a probe is served at most
+    // once per conjecture. (Earlier "best-effort / accept still succeeds" framing
+    // was wrong — corrected per OCR review PR #705; atomicity is the design, not a
+    // tolerated fallback.)
     await serveProbeOnce({
       db: tx,
       conjectureProposalId: conjectureId,
