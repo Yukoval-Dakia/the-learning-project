@@ -3,15 +3,17 @@
 // effective-truth 断言）/ 维持（appeal_upheld 留痕）/ 幂等跳过。
 // FSRS 刻意不在 handler 内重写（设计稿语义：评级是用户确认动作）——见 rejudge.ts 头注。
 
-import { event, question } from '@/db/schema';
+import type { ThetaRowSnapshotT } from '@/core/schema/event/state-snapshot';
+import { event, knowledge, mastery_state, question } from '@/db/schema';
 import type { JudgeAnswerResult } from '@/server/ai/judges/question-contract';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { writeAttemptSnapshotBrackets } from '../../practice/server/attempt-snapshot';
 import { POST as appealPost } from '../api/appeal';
 import { getEffectiveTruth } from '../server/effective-truth';
-import { handleRejudge } from './rejudge';
+import { type RejudgeDeps, handleRejudge } from './rejudge';
 
 function mockJudge(outcome: 'correct' | 'partial' | 'incorrect', feedback: string) {
   const base = {
@@ -29,6 +31,178 @@ function mockJudge(outcome: 'correct' | 'partial' | 'incorrect', feedback: strin
         ? { ...base, coarse_outcome: 'partial' as const, score: 0.5 }
         : { ...base, coarse_outcome: 'incorrect' as const, score: 0 as const };
   return async (): Promise<JudgeAnswerResult> => ({ route: 'semantic', result });
+}
+
+// YUK-561 S4 — rich verbatim θ̂ `before` for the seeded snapshot bracket.
+function richBefore(theta_hat: number): ThetaRowSnapshotT {
+  return {
+    theta_hat,
+    evidence_count: 2,
+    success_count: 1,
+    fail_count: 1,
+    theta_precision: 3,
+    last_theta_delta: 0.1,
+    last_outcome_at: new Date('2026-06-01T00:00:00Z'),
+    rt_correct_ms: null,
+    theta_grid_json: null,
+  };
+}
+
+async function readTheta(kcId: string): Promise<number | null> {
+  const rows = await testDb()
+    .select({ theta: mastery_state.theta_hat })
+    .from(mastery_state)
+    .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, kcId)))
+    .limit(1);
+  return rows[0]?.theta ?? null;
+}
+
+async function readReprojectMarkers(appealEventId: string) {
+  const rows = await testDb()
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:reproject_deferred'),
+        eq(event.caused_by_event_id, appealEventId),
+      ),
+    );
+  return rows.map((r) => r.payload as Record<string, unknown>);
+}
+
+// YUK-561 S4 — seed an overturnable attempt with (optionally) a live θ̂ bracket, so the
+// rejudge overturn's θ̂ revert path can be exercised end-to-end. Mirrors seedAppealedJudge
+// but adds: a live mastery_state row (the θ̂ 'after'), the dual-sibling θ̂ checkpoint bracket
+// (via the REAL writer helper — golden shape), and configurable answer action / auto_rate /
+// prior outcome / conflict setup.
+async function seedOverturnable(opts: {
+  answerAction: 'attempt' | 'review';
+  priorOutcome: 'correct' | 'partial' | 'incorrect';
+  autoRated?: boolean; // solo review payload.judge.auto_rated
+  kcId: string;
+  thetaBefore: number;
+  snapshotAfter?: number; // the θ̂ 'after' the bracket records (default thetaBefore+1)
+  liveTheta?: number; // current mastery_state.theta_hat (default = snapshotAfter → guard passes)
+  withCheckpoint?: boolean; // default true; false = an OLD attempt with no bracket
+  seedMastery?: boolean; // default true; false = the loser KC row is absent (merge-rename seam)
+}): Promise<{
+  questionId: string;
+  attemptEventId: string;
+  judgeEventId: string;
+  appealEventId: string;
+}> {
+  const db = testDb();
+  const now = new Date();
+  const questionId = createId();
+  await db.insert(question).values({
+    id: questionId,
+    kind: 'short_answer',
+    prompt_md: 'p',
+    reference_md: 'r',
+    knowledge_ids: [opts.kcId],
+    difficulty: 3,
+    source: 'manual',
+    variant_depth: 0,
+    figures: [],
+    image_refs: [],
+    structured: null,
+    metadata: {},
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+
+  const snapshotAfter = opts.snapshotAfter ?? opts.thetaBefore + 1;
+  const liveTheta = opts.liveTheta ?? snapshotAfter;
+
+  if (opts.seedMastery !== false) {
+    await db.insert(mastery_state).values({
+      id: createId(),
+      subject_kind: 'knowledge',
+      subject_id: opts.kcId,
+      theta_hat: liveTheta,
+      evidence_count: 3,
+      success_count: 2,
+      fail_count: 1,
+      last_outcome_at: now,
+      updated_at: now,
+    });
+  }
+
+  const attemptEventId = createId();
+  const answerPayload: Record<string, unknown> = { answer_md: 'ans', answer_image_refs: [] };
+  if (opts.answerAction === 'review' && opts.autoRated !== undefined) {
+    answerPayload.judge = { auto_rated: opts.autoRated };
+  }
+  await db.insert(event).values({
+    id: attemptEventId,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: opts.answerAction,
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: 'failure',
+    payload: answerPayload,
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: now,
+  });
+
+  // θ̂ bracket via the REAL writer (golden shape) — unless simulating an old attempt.
+  if (opts.withCheckpoint !== false) {
+    await db.transaction(async (tx) => {
+      await writeAttemptSnapshotBrackets(tx, {
+        attemptEventId,
+        sessionId: null,
+        now,
+        thetaSnapshots: [
+          { kc_id: opts.kcId, before: richBefore(opts.thetaBefore), after: snapshotAfter },
+        ],
+        fsrsSnapshots: [],
+      });
+    });
+  }
+
+  const judgeEventId = createId();
+  await db.insert(event).values({
+    id: judgeEventId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'paper_judge',
+    action: 'judge',
+    subject_kind: 'event',
+    subject_id: attemptEventId,
+    outcome: 'success',
+    payload: {
+      cause: {
+        primary_category: 'other',
+        secondary_categories: [],
+        analysis_md: '<seed>',
+        confidence: 0.7,
+      },
+      coarse_outcome: opts.priorOutcome,
+      score: 0.4,
+      judge_route: 'semantic',
+      capability_ref: { id: 'semantic', version: '1.0.0' },
+      profile_version: '1.0.0',
+    },
+    caused_by_event_id: attemptEventId,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: now,
+  });
+
+  const res = await appealPost(
+    new Request('http://t/api/review/appeal', {
+      method: 'POST',
+      body: JSON.stringify({ judge_event_id: judgeEventId, reason_md: 'S4 test appeal' }),
+    }),
+  );
+  expect(res.status).toBe(200);
+  const { appeal_event_id } = (await res.json()) as { appeal_event_id: string };
+  return { questionId, attemptEventId, judgeEventId, appealEventId: appeal_event_id };
 }
 
 async function seedAppealedJudge(): Promise<{
@@ -196,5 +370,226 @@ describe('rejudge job (D15 申诉自动重判)', () => {
       { judgeFn: mockJudge('incorrect', '不该被调用') },
     );
     expect(second).toEqual({ status: 'skipped', reason: 'already_resolved' });
+  });
+
+  // ── YUK-561 S4 — θ̂ revert-on-overturn (the live caller) ──────────────────────
+
+  it('paper overturn (incorrect→correct): θ̂ reverted + reproject_deferred(reapply) + retract', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { attemptEventId, appealEventId } = await seedOverturnable({
+      answerAction: 'attempt', // paper attempt → judge-driven
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      snapshotAfter: 1.2,
+      liveTheta: 1.2, // guard passes
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') },
+    );
+    expect(outcome.status).toBe('overturned');
+
+    // θ̂ reverted to `before` (0.3), FSRS untouched (no fsrs bracket seeded).
+    expect(await readTheta(kcId)).toBe(0.3);
+
+    // happy-path residual marker: reapply / reverted, carrying the answer event id.
+    const markers = await readReprojectMarkers(appealEventId);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].residual).toBe('reapply_correct_outcome');
+    expect(markers[0].reason).toBe('reverted');
+    expect(markers[0].answer_event_id).toBe(attemptEventId);
+    expect(markers[0].prior_outcome).toBe('incorrect');
+    expect(markers[0].new_outcome).toBe('correct');
+
+    // retract on the θ̂ snapshot node (segment identity is self-evident from subject_id).
+    const retracts = await db
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'correct'), eq(event.subject_id, `${attemptEventId}:snapshot:theta`)),
+      );
+    expect(retracts).toHaveLength(1);
+    expect((retracts[0].payload as { reason_md: string }).reason_md).toContain('appeal:');
+  });
+
+  it('solo auto_rate=false overturn (incorrect→correct): NOT judge-driven → no revert, no marker', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { appealEventId } = await seedOverturnable({
+      answerAction: 'review', // solo review
+      autoRated: false, // θ̂ came from the user's manual rating, NOT the judge
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      liveTheta: 1.2,
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') },
+    );
+    expect(outcome.status).toBe('overturned');
+    // θ̂ untouched (reverting a manually-rated θ̂ would be pure pollution).
+    expect(await readTheta(kcId)).toBe(1.2);
+    // O3 — no θ̂ residual → no marker.
+    expect(await readReprojectMarkers(appealEventId)).toHaveLength(0);
+  });
+
+  it('overturn partial→correct (θ̂ bit NOT flipped): no revert, no marker (legal signal kept)', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { appealEventId } = await seedOverturnable({
+      answerAction: 'attempt',
+      priorOutcome: 'partial', // bit(partial)=1
+      kcId,
+      thetaBefore: 0.3,
+      liveTheta: 1.2,
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') }, // bit(correct)=1 → NOT flipped
+    );
+    expect(outcome.status).toBe('overturned');
+    expect(await readTheta(kcId)).toBe(1.2); // untouched — the θ̂ move was already correct-bit
+    expect(await readReprojectMarkers(appealEventId)).toHaveLength(0);
+  });
+
+  it('overturn with a later θ̂ movement → conflict → deferred(later_theta_movement), θ̂ not clobbered', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { appealEventId } = await seedOverturnable({
+      answerAction: 'attempt',
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      snapshotAfter: 1.2,
+      liveTheta: 2.5, // a LATER attempt moved θ̂ off the snapshot.after → conflict
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') },
+    );
+    expect(outcome.status).toBe('overturned');
+    // θ̂ NOT clobbered by the refused revert.
+    expect(await readTheta(kcId)).toBe(2.5);
+    const markers = await readReprojectMarkers(appealEventId);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].residual).toBe('full_reprojection');
+    expect(markers[0].reason).toBe('later_theta_movement');
+    expect((markers[0].kc_conflict as { subjectId: string }).subjectId).toBe(kcId);
+  });
+
+  it('overturn of an OLD attempt (no checkpoint) → deferred(no_checkpoint), no error flood', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { appealEventId } = await seedOverturnable({
+      answerAction: 'attempt',
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      liveTheta: 1.2,
+      withCheckpoint: false, // pre-S2 attempt — no bracket
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') },
+    );
+    expect(outcome.status).toBe('overturned'); // NOT a fail-loud error
+    const markers = await readReprojectMarkers(appealEventId);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].residual).toBe('full_reprojection');
+    expect(markers[0].reason).toBe('no_checkpoint');
+  });
+
+  it('atomicity: a transient revert failure rolls back the WHOLE overturn; retry replays cleanly', async () => {
+    const db = testDb();
+    const kcId = createId();
+    const { appealEventId } = await seedOverturnable({
+      answerAction: 'attempt',
+      priorOutcome: 'incorrect',
+      kcId,
+      thetaBefore: 0.3,
+      snapshotAfter: 1.2,
+      liveTheta: 1.2,
+    });
+
+    // Inject a throwing revert (a 40001/timeout/disconnect analog) → the atomic tx must
+    // roll back newJudge + correction too (the pre-S4 bug: they'd commit, the guard would
+    // then skip on retry, and θ̂ self-heal would be permanently lost + reported success).
+    const throwingRevert = (async () => {
+      throw new Error('transient DB error');
+    }) as RejudgeDeps['orchestrateRevert'];
+    await expect(
+      handleRejudge(
+        db,
+        { appeal_event_id: appealEventId },
+        { judgeFn: mockJudge('correct', 'ok'), orchestrateRevert: throwingRevert },
+      ),
+    ).rejects.toThrow();
+
+    // newJudge NOT committed (rolled back) — the idempotency guard finds nothing.
+    const newJudges = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, appealEventId)));
+    expect(newJudges).toHaveLength(0);
+    expect(await readTheta(kcId)).toBe(1.2); // θ̂ unchanged (nothing applied)
+
+    // Retry WITHOUT the injection → full clean replay → success + revert + marker.
+    const retry = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') },
+    );
+    expect(retry.status).toBe('overturned');
+    expect(await readTheta(kcId)).toBe(0.3); // now reverted
+    expect(await readReprojectMarkers(appealEventId)).toHaveLength(1);
+  });
+
+  it('overturn after a YUK-543 KC-merge rename → conflict → deferred with merged_into (winner)', async () => {
+    const db = testDb();
+    const now = new Date();
+    const loserKc = createId();
+    const winnerKc = createId();
+    // The winner absorbed the loser (merged_from ⊇ [loserKc]); the loser's mastery_state
+    // row was RENAMED away → the snapshot's loser KC has no live row → conflict.
+    await db.insert(knowledge).values({
+      id: winnerKc,
+      name: 'winner',
+      merged_from: [loserKc],
+      created_at: now,
+      updated_at: now,
+    });
+
+    const { appealEventId } = await seedOverturnable({
+      answerAction: 'attempt',
+      priorOutcome: 'incorrect',
+      kcId: loserKc,
+      thetaBefore: 0.3,
+      snapshotAfter: 1.2,
+      seedMastery: false, // loser row absent (renamed into the winner)
+    });
+
+    const outcome = await handleRejudge(
+      db,
+      { appeal_event_id: appealEventId },
+      { judgeFn: mockJudge('correct', 'ok') },
+    );
+    expect(outcome.status).toBe('overturned');
+    const markers = await readReprojectMarkers(appealEventId);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].reason).toBe('later_theta_movement'); // conflict (missing row)
+    expect(markers[0].merged_into).toBe(winnerKc); // best-effort locating hint
   });
 });

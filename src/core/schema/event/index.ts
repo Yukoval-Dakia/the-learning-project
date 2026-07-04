@@ -25,7 +25,11 @@ import {
   QuestionBlockCreateExperimental,
   QuestionBlockLifecycleExperimental,
 } from './question-block-events';
-import { GradingCheckpointExperimental, StateSnapshotExperimental } from './state-snapshot';
+import {
+  GradingCheckpointExperimental,
+  ReprojectDeferredExperimental,
+  StateSnapshotExperimental,
+} from './state-snapshot';
 
 export * from './blocks';
 export * from './known';
@@ -52,6 +56,8 @@ export * from './question-block-events';
 //   5. StateSnapshotExperimental — experimental:state_snapshot 的特化（ADR-0044 §3）
 //   5b. GradingCheckpointExperimental — experimental:grading_checkpoint 的特化
 //       （YUK-561 S2：snapshot 的可逆锚，θ̂/FSRS 双 sibling，payload.segment 判别）
+//   5c. ReprojectDeferredExperimental — experimental:reproject_deferred 的特化
+//       （YUK-561 S4：judge-overturn 残留可见 marker，第二实例重投影引擎 worklist）
 //   6. GenesisExperimental — experimental:genesis 的特化（YUK-471 W1, Codex #4 parse barrier）
 //   7. GoalStatusUpdateExperimental / GoalScopeUpdateExperimental — goal 动作事件特化
 //      （YUK-471 W2，使 status/scope 变更 fold-visible，./goal-events.ts）
@@ -80,6 +86,7 @@ export const Event = z.union([
   MemoryBriefRefreshExperimental,
   StateSnapshotExperimental,
   GradingCheckpointExperimental,
+  ReprojectDeferredExperimental,
   GenesisExperimental,
   GoalStatusUpdateExperimental,
   GoalScopeUpdateExperimental,
