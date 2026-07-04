@@ -15,9 +15,8 @@
 //
 // GUARD-AGNOSTIC (plan §6.5 / §6.5 resolved): this primitive does NOT assert
 // `current == snapshot.after` before restoring. That conflict guard lives in the
-// cascade-revert orchestrator (later wave) — the primitive is a caller-asserted
-// idempotent upsert/delete. Do not add the guard here (deferred to orchestrator
-// wave per §6.5).
+// cascade-revert orchestrator (its live caller — cascade-revert.ts) — the primitive
+// is a caller-asserted idempotent upsert/delete. Do not add the guard here.
 //
 // No-op on empty arrays (degenerate snapshot with no KCs / no FSRS subjects).
 //
@@ -145,7 +144,8 @@ export async function restoreStateSnapshot(
         // thinking the restored card was last reviewed by the very attempt we just undid.
         // The snapshot's `before` carries only the FSRS Card scalars (not the prior
         // last_review_event_id), so the primitive restores this to null ("unknown prior").
-        // The orchestrator wave passes the true prior review event id when it has one.
+        // Accepted limitation: the FSRS segment is not reverted by the live caller
+        // (rejudge reverts θ̂ only — O5), so no live path relies on this back-reference.
         last_review_event_id: null,
       });
     }
