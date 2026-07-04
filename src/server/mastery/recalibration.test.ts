@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { expectedScore } from '@/core/theta';
+import { isObserved } from '@/server/mastery/state';
 import {
   IPW_WEIGHT_CAP_C,
   type LabeledResidual,
@@ -464,5 +465,14 @@ describe('impliedBLabel (anchored-θ IRT-derived difficulty label, §6)', () => 
     // 答对一道远低于能力的题 → label 略低于锚但不极端（clamp 内）。
     expect(label).toBeLessThanOrEqual(bAnchor);
     expect(label).toBeGreaterThan(bAnchor - 2.0001);
+  });
+});
+
+// YUK-559 (S1 / C8) — the state.ts provenance discriminant helper (co-located with the
+// mastery unit tests). observed KC row → true; KG-borrowed inferred entry → false.
+describe('isObserved — MasteryProjection provenance discriminant', () => {
+  it('provenance "observed" → true, "inferred" → false', () => {
+    expect(isObserved({ provenance: 'observed' })).toBe(true);
+    expect(isObserved({ provenance: 'inferred' })).toBe(false);
   });
 });
