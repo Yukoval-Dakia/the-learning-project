@@ -8,6 +8,7 @@ describe('ConjectureDraft', () => {
   const valid = {
     claim_md: '你把链式法则当成「导数相乘」，忽略内层函数的代入。',
     probe_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
+    probe_reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式：外导 × 内导）。",
     cause_category: 'concept_confusion',
     recurrence_count: 3,
     predicted_p: 0.35,

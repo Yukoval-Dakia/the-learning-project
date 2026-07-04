@@ -26,6 +26,7 @@
 // import 环 gate：本文件不得 import producers/writer/actions；共享 helper 走
 // @/server/proposals/applier-helpers（与 sibling proposal-appliers 同约束）。
 
+import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import {
   K_PROMOTE,
   misconceptionPromoteEnabled,
@@ -180,6 +181,26 @@ export async function acceptConjectureProposal(
         now,
       });
     }
+
+    // conjecture-wire #13 (YUK-538 ⑬) — serve the discriminating probe ATOMICALLY
+    // with the rate event + dark promotion. Best-effort enrichment: a `cap_reached`
+    // return (≤3 active probes already — MAX_CONCURRENT_ACTIVE_PROBES) is tolerated —
+    // accept still succeeds, the probe is simply not served this round (a slot frees
+    // up as prior probes get answered → reconcile scores them → countActiveProbes
+    // drops). serveProbeOnce's internal `db.transaction` nests as a SAVEPOINT inside
+    // this outer tx; its `pg_advisory_xact_lock` is transaction-scoped to this outer
+    // tx, so the cap-serialize guarantee holds across the whole accept. ND-5 preserved:
+    // serveProbeOnce writes ONLY the draft question row (no FSRS / attempt / θ̂).
+    // Idempotency: the existingRate short-circuit above prevents re-accept from ever
+    // reaching this tx, so a probe is served at most once per conjecture.
+    await serveProbeOnce({
+      db: tx,
+      conjectureProposalId: conjectureId,
+      knowledgeId: requiredString(change.knowledge_id, 'knowledge_id', proposalId),
+      probeMd: requiredString(change.probe_md, 'probe_md', proposalId),
+      referenceMd: requiredString(change.probe_reference_md, 'probe_reference_md', proposalId),
+      now,
+    });
   });
 
   // EDIT only: the owner's rewritten claim goes to mem0 CORE (single-writer

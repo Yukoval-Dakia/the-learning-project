@@ -31,6 +31,7 @@ function conjecture(opts: {
       confidence: opts.confidence,
       recurrence_count: opts.recurrence_count,
       probe_md: `probe for ${opts.claim}`,
+      probe_reference_md: `reference for ${opts.claim}`,
       discriminating: true,
       predicted_p: 0.3,
       baseline_p_at_induction: 0.6,

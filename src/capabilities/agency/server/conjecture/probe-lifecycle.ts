@@ -67,7 +67,12 @@ const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 const PROBE_SERVE_LOCK_KEY = 406_440_3 as const;
 
 export interface ServeProbeOnceParams {
-  db: Db;
+  // conjecture-wire #13 — acceptConjectureProposal passes its OUTER tx here so the
+  // probe serve is atomic with the rate event + dark promotion hop (drizzle nests
+  // `db.transaction` inside an outer tx as a SAVEPOINT; `pg_advisory_xact_lock` is
+  // transaction-scoped to the OUTERMOST tx, so the cap-serialize lock holds across
+  // the whole accept). Callers may also pass a top-level Db for standalone serves.
+  db: DbOrTx;
   /** = the conjecture event id (proposalId). Stamped into the question provenance. */
   conjectureProposalId: string;
   /** The KC the conjecture targets; carried as the probe question's knowledge_ids. */

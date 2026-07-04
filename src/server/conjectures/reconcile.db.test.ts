@@ -45,6 +45,7 @@ async function seedAnsweredProbe(opts: SeedOpts = {}) {
         confidence: 0.66,
         recurrence_count: 3,
         probe_md: 'probe text',
+        probe_reference_md: 'reference text',
         discriminating: true,
         corrected_by_owner: false,
         predicted_p: opts.predicted_p ?? 0.3,

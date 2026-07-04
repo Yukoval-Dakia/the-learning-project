@@ -56,6 +56,7 @@ async function seedConjecture(): Promise<string> {
         confidence: 0.7,
         recurrence_count: 2,
         probe_md: 'd/dx sin(x^2) = ?',
+        probe_reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule).',
         discriminating: true,
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
