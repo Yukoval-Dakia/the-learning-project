@@ -121,6 +121,12 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // StateSnapshotExperimental schema (./state-snapshot.ts). Generic fallback
   // must reject it so malformed snapshot payloads can't lose schema validation.
   'experimental:state_snapshot',
+  // YUK-561 S2 (revert-bracket §4.2) — the reversible grading checkpoint anchor a
+  // state_snapshot hangs off (dedicated GradingCheckpointExperimental schema,
+  // ./state-snapshot.ts). Reserved so a malformed checkpoint payload fails the parse
+  // barrier instead of falling through — MUST be registered WITH the writer (every
+  // attempt tx writes it, so a barrier miss would crash the whole attempt path).
+  'experimental:grading_checkpoint',
   // YUK-471 Wave 1 (Codex #4 parse barrier) — pre-W1 row backfill seed has a
   // dedicated GenesisExperimental schema (./genesis.ts). The fold trusts genesis
   // as ground truth, so a malformed seed would corrupt the whole projection;

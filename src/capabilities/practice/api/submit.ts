@@ -61,6 +61,7 @@ import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
+import { writeAttemptSnapshotBrackets } from '../server/attempt-snapshot';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { activeEffectiveTruth } from '../server/effective-truth';
 import { scheduleReview } from '../server/fsrs';
@@ -670,47 +671,28 @@ async function persistSubmit(
       familyPrimaryKnowledgeId: primaryKnowledgeId,
     });
 
-    // YUK-471 Wave 0 (ADR-0044 §3) — A-class state_snapshot append. The 6th atomic
-    // write of the attempt tx: brackets the EXACT θ̂ (mastery_state) + FSRS
-    // (material_fsrs_state) transition this attempt just performed, so cascade-revert
-    // can restore both segments independently (ADR-0035 R⟂p(L)). MUST be in the OUTER
-    // `tx`, NOT a SAVEPOINT — the snapshot is a HARD invariant of the attempt (it dies
-    // with the attempt on rollback, never half-committed). Appended BEFORE the
-    // best-effort family/calibration SAVEPOINTs below so a SAVEPOINT rollback there
-    // never touches it.
-    //
-    // HARD REQ 2 — `ingest_at: now` opts the snapshot out of the memory outbox (it is
-    //   an internal rollback ledger row, not a learner fact; the poller's
-    //   `WHERE ingest_at IS NULL` never selects it).
-    // §6.7 idempotency — deterministic id `${eventId}:snapshot` + writeEvent's
-    //   onConflictDoNothing: a retried/redelivered attempt tx never double-writes a
-    //   fresh row (which would re-arm ingest_at=null on a new id). Mirrors the
-    //   auto-enroll stable-id precedent.
-    await writeEvent(tx, {
-      id: `${eventId}:snapshot`,
-      session_id: body.session_id ?? null,
-      actor_kind: 'system',
-      actor_ref: 'attempt_snapshot',
-      action: 'experimental:state_snapshot',
-      subject_kind: 'event',
-      subject_id: eventId,
-      outcome: 'success',
-      payload: {
-        attempt_event_id: eventId,
-        theta_snapshots: thetaResult.theta_snapshots,
-        fsrs_snapshots: fsrsUpdates.map((update) => ({
-          subject_kind: update.subject_kind,
-          subject_id: update.subject_id,
-          before: update.before,
-          after: update.stateAfter,
-        })),
-      },
-      caused_by_event_id: eventId,
-      task_run_id: null,
-      cost_micro_usd: null,
-      // HARD REQ 2 — skip the memory outbox (non-NULL opt-out at INSERT).
-      ingest_at: now,
-      created_at: now,
+    // YUK-561 S2 (revert-bracket §4.1 / O2 dual-sibling) — A-class snapshot append,
+    // now as TWO independent sibling brackets (θ̂ + FSRS) so a judge-overturn can
+    // revert the θ̂ transition ALONE. Replaces the pre-S2 single snapshot hung off the
+    // attempt event `eventId` — which was structurally UNREVERTABLE (eventId has
+    // caused_by=null → always a cascade root → classifyRow=irreversible; register F8).
+    // The helper writes each segment iff it moved + upholds the C↔snapshot same-
+    // condition write invariant. MUST be in the OUTER `tx`, NOT a SAVEPOINT — a HARD
+    // invariant of the attempt (dies with it on rollback). Appended BEFORE the best-
+    // effort family/calibration SAVEPOINTs below so a SAVEPOINT rollback never touches
+    // it. `ingest_at:now` + deterministic ids (inside the helper) give the outbox
+    // opt-out + retried-tx idempotency (§6.7).
+    await writeAttemptSnapshotBrackets(tx, {
+      attemptEventId: eventId,
+      sessionId: body.session_id ?? null,
+      now,
+      thetaSnapshots: thetaResult.theta_snapshots,
+      fsrsSnapshots: fsrsUpdates.map((update) => ({
+        subject_kind: update.subject_kind,
+        subject_id: update.subject_id,
+        before: update.before,
+        after: update.stateAfter,
+      })),
     });
 
     // YUK-361 Phase 5 — 家族级 b_personalized 观测（慢尺度，与上面 θ̂ 快尺度正交）。

@@ -113,6 +113,11 @@ const EVENT_LAYER_ACTIONS: ReadonlySet<string> = new Set([
   'experimental:teach_message',
   'experimental:copilot_user_ask',
   'experimental:copilot_chip_trigger',
+  // YUK-561 S2 (revert-bracket §4.2) — the grading_checkpoint anchor a state_snapshot
+  // hangs off. NO independent live SoT row (the A-class state is in the snapshot it
+  // anchors), so a `correct`(retract) event IS its complete reversal — same class as
+  // the copilot_user_ask / chip_trigger checkpoint anchors above.
+  'experimental:grading_checkpoint',
   'propose',
   'rate',
 ]);
