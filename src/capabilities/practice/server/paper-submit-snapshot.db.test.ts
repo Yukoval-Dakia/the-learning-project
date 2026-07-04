@@ -100,12 +100,45 @@ async function seedPaper(id: string, questionIds: string[], primaryKc: string) {
   });
 }
 
+// YUK-561 S2 — parse the state_snapshot payload for ONE segment (θ̂ / FSRS sibling).
+async function snapshotSegment(attemptEventId: string, segment: 'theta' | 'fsrs') {
+  const db = testDb();
+  const rows = await db
+    .select()
+    .from(event)
+    .where(eq(event.id, `${attemptEventId}:snapshot:${segment}`));
+  const snap = rows[0];
+  if (!snap) throw new Error(`no ${segment} snapshot for ${attemptEventId}`);
+  return {
+    row: snap,
+    payload: StateSnapshotExperimental.parse({
+      actor_kind: snap.actor_kind,
+      actor_ref: snap.actor_ref,
+      action: snap.action,
+      subject_kind: snap.subject_kind,
+      subject_id: snap.subject_id,
+      outcome: snap.outcome,
+      payload: snap.payload,
+      caused_by_event_id: snap.caused_by_event_id ?? undefined,
+    }).payload,
+  };
+}
+
+async function readCheckpoint(attemptEventId: string, segment: 'theta' | 'fsrs') {
+  const db = testDb();
+  const rows = await db
+    .select()
+    .from(event)
+    .where(eq(event.id, `${attemptEventId}:checkpoint:${segment}`));
+  return rows[0] ?? null;
+}
+
 describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 11)', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  it('appends exactly one state_snapshot per paper slot, θ̂ before/after bracket the live transition', async () => {
+  it('appends dual-sibling brackets per paper slot; θ̂ snapshot before/after bracket the live transition', async () => {
     const db = testDb();
     await seedQuestion('pq1', 'true', ['kc_paper']);
     await seedPaper('paper_snap', ['pq1'], 'kc_paper');
@@ -128,20 +161,27 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
     );
     const attemptEventId = result.attemptEventId;
 
-    // exactly one snapshot, anchored to the attempt event.
+    // YUK-561 S2 — a graded paper slot moves BOTH axes → two sibling snapshots.
     const snaps = await db
       .select()
       .from(event)
       .where(
         and(eq(event.action, 'experimental:state_snapshot'), eq(event.subject_id, attemptEventId)),
       );
-    expect(snaps).toHaveLength(1);
-    const snap = snaps[0];
-    expect(snap.subject_kind).toBe('event');
-    expect(snap.caused_by_event_id).toBe(attemptEventId);
-    expect(snap.actor_kind).toBe('system');
-    // HARD REQ 2 — skips the outbox.
-    expect(snap.ingest_at).not.toBeNull();
+    expect(snaps).toHaveLength(2);
+    for (const snap of snaps) {
+      expect(snap.subject_kind).toBe('event');
+      expect(snap.actor_kind).toBe('system');
+      expect(snap.ingest_at).not.toBeNull(); // HARD REQ 2 — skips the outbox.
+    }
+
+    // θ̂ segment: snapshot hung off its own checkpoint (caused_by chain).
+    const thetaCheckpoint = await readCheckpoint(attemptEventId, 'theta');
+    expect(thetaCheckpoint).not.toBeNull();
+    const { row: thetaRow, payload } = await snapshotSegment(attemptEventId, 'theta');
+    expect(thetaRow.caused_by_event_id).toBe(`${attemptEventId}:checkpoint:theta`);
+    expect(payload.attempt_event_id).toBe(attemptEventId);
+    expect(payload.fsrs_snapshots).toHaveLength(0); // segment isolation
 
     // ORACLE: the live mastery_state posterior (independent of the snapshot payload).
     const live = await getMasteryState(db, 'kc_paper');
@@ -149,22 +189,9 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
     const livePosterior = (live as { theta_hat: number }).theta_hat;
     expect(livePosterior).toBeGreaterThan(0); // correct → rose off cold-start 0
 
-    const payload = StateSnapshotExperimental.parse({
-      actor_kind: snap.actor_kind,
-      actor_ref: snap.actor_ref,
-      action: snap.action,
-      subject_kind: snap.subject_kind,
-      subject_id: snap.subject_id,
-      outcome: snap.outcome,
-      payload: snap.payload,
-      caused_by_event_id: snap.caused_by_event_id ?? undefined,
-    }).payload;
-    expect(payload.attempt_event_id).toBe(attemptEventId);
     const theta = payload.theta_snapshots.find((t) => t.kc_id === 'kc_paper');
     expect(theta).toBeDefined();
     // cold-start → before null (preserves null≠0); after == live posterior oracle.
-    // 8 digits: jsonb double round-trip delta (~1e-8) vs the live row; still brackets
-    // the EXACT transition (before/after from independent oracles, not tautological).
     expect(theta?.before).toBeNull();
     expect(theta?.after).toBeCloseTo(livePosterior, 6);
   });
@@ -228,7 +255,9 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
     if (!liveFsrs) throw new Error('liveFsrs should exist after the unsupported attempt');
     expect(liveFsrs.last_review_event_id).toBe(attemptEventId);
 
-    // (3) exactly ONE experimental:state_snapshot anchored to the attempt event.
+    // (3) YUK-561 S2 — θ̂ skipped (SF-3), so ONLY the FSRS segment is bracketed: exactly
+    // ONE state_snapshot (`:fsrs`), and NEITHER the θ̂ checkpoint NOR the θ̂ snapshot
+    // exists (per-segment same-condition write invariant — θ̂ array empty → no θ̂ bracket).
     const snaps = await db
       .select()
       .from(event)
@@ -236,30 +265,20 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
         and(eq(event.action, 'experimental:state_snapshot'), eq(event.subject_id, attemptEventId)),
       );
     expect(snaps).toHaveLength(1);
-    const snap = snaps[0];
+    expect(snaps[0].id).toBe(`${attemptEventId}:snapshot:fsrs`);
+    expect(await readCheckpoint(attemptEventId, 'theta')).toBeNull();
+
+    const { row: snap, payload } = await snapshotSegment(attemptEventId, 'fsrs');
     expect(snap.subject_kind).toBe('event');
     expect(snap.subject_id).toBe(attemptEventId);
-    expect(snap.caused_by_event_id).toBe(attemptEventId);
+    expect(snap.caused_by_event_id).toBe(`${attemptEventId}:checkpoint:fsrs`);
     expect(snap.actor_kind).toBe('system');
-
     // (6) HARD REQ 2 — skips the memory outbox.
     expect(snap.ingest_at).not.toBeNull();
-
-    const payload = StateSnapshotExperimental.parse({
-      actor_kind: snap.actor_kind,
-      actor_ref: snap.actor_ref,
-      action: snap.action,
-      subject_kind: snap.subject_kind,
-      subject_id: snap.subject_id,
-      outcome: snap.outcome,
-      payload: snap.payload,
-      caused_by_event_id: snap.caused_by_event_id ?? undefined,
-    }).payload;
     expect(payload.attempt_event_id).toBe(attemptEventId);
 
-    // (4) θ̂ skipped on unsupported (SF-3: don't penalize p(L) for an ungradeable
-    // answer) — theta_snapshots is EMPTY, and the live mastery_state row was
-    // never created.
+    // (4) θ̂ skipped on unsupported (SF-3) — this FSRS-segment snapshot carries an
+    // EMPTY θ̂ array, and the live mastery_state row was never created.
     expect(payload.theta_snapshots).toEqual([]);
     expect(await getMasteryState(db, 'kc_unsup')).toBeNull();
 

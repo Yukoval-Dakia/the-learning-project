@@ -53,16 +53,46 @@ function submitReq(body: unknown) {
   });
 }
 
-/** Read the single state_snapshot event for an attempt event id (parsed). */
-async function readSnapshot(attemptEventId: string) {
+/** All state_snapshot rows for an attempt (YUK-561 S2: θ̂ + FSRS sibling snapshots). */
+async function readSnapshotRows(attemptEventId: string) {
   const db = testDb();
-  const rows = await db
+  return db
     .select()
     .from(event)
     .where(
       and(eq(event.action, 'experimental:state_snapshot'), eq(event.subject_id, attemptEventId)),
     );
-  return rows;
+}
+
+/** Parse the state_snapshot payload for ONE segment (`${id}:snapshot:${seg}`). */
+async function snapshotSegment(attemptEventId: string, segment: 'theta' | 'fsrs') {
+  const db = testDb();
+  const rows = await db
+    .select()
+    .from(event)
+    .where(eq(event.id, `${attemptEventId}:snapshot:${segment}`));
+  const snap = rows[0];
+  if (!snap) throw new Error(`no ${segment} snapshot for ${attemptEventId}`);
+  return StateSnapshotExperimental.parse({
+    actor_kind: snap.actor_kind,
+    actor_ref: snap.actor_ref,
+    action: snap.action,
+    subject_kind: snap.subject_kind,
+    subject_id: snap.subject_id,
+    outcome: snap.outcome,
+    payload: snap.payload,
+    caused_by_event_id: snap.caused_by_event_id ?? undefined,
+  }).payload;
+}
+
+/** Read a grading_checkpoint row for one segment, or null. */
+async function readCheckpoint(attemptEventId: string, segment: 'theta' | 'fsrs') {
+  const db = testDb();
+  const rows = await db
+    .select()
+    .from(event)
+    .where(eq(event.id, `${attemptEventId}:checkpoint:${segment}`));
+  return rows[0] ?? null;
 }
 
 describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () => {
@@ -70,8 +100,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     await resetDb();
   });
 
-  // Test 8 — exactly one snapshot per attempt, correctly anchored to the review event.
-  it('appends exactly one state_snapshot per attempt, anchored to the review event', async () => {
+  // Test 8 (YUK-561 S2 / O2 dual-sibling) — a graded attempt appends TWO sibling
+  // brackets (θ̂ + FSRS), each = checkpoint + snapshot, with segment-isolated payloads
+  // and the correct caused_by chain (snapshot → checkpoint → attempt).
+  it('appends dual-sibling brackets (θ̂ + FSRS), each snapshot hung off its own checkpoint', async () => {
     await seedQuestion('q_snap1', { knowledge_ids: ['kc_snap1'] });
 
     const res = await POST(
@@ -81,26 +113,66 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     const body = (await res.json()) as { review_event: { id: string } };
     const reviewEventId = body.review_event.id;
 
-    const snaps = await readSnapshot(reviewEventId);
-    expect(snaps).toHaveLength(1);
-    const snap = snaps[0];
-    expect(snap.subject_kind).toBe('event');
-    expect(snap.subject_id).toBe(reviewEventId);
-    expect(snap.caused_by_event_id).toBe(reviewEventId);
-    expect(snap.actor_kind).toBe('system');
-    // The dedicated schema parses it (HARD REQ 1 — proves the parse barrier routed
-    // to StateSnapshotExperimental, not the loose generic fallback).
-    const parsed = StateSnapshotExperimental.parse({
-      actor_kind: snap.actor_kind,
-      actor_ref: snap.actor_ref,
-      action: snap.action,
-      subject_kind: snap.subject_kind,
-      subject_id: snap.subject_id,
-      outcome: snap.outcome,
-      payload: snap.payload,
-      caused_by_event_id: snap.caused_by_event_id ?? undefined,
-    });
-    expect(parsed.payload.attempt_event_id).toBe(reviewEventId);
+    // Exactly two state_snapshots (θ̂ + FSRS), both anchored to the review event.
+    const snaps = await readSnapshotRows(reviewEventId);
+    expect(snaps).toHaveLength(2);
+    for (const snap of snaps) {
+      expect(snap.subject_kind).toBe('event');
+      expect(snap.subject_id).toBe(reviewEventId);
+      expect(snap.actor_kind).toBe('system');
+    }
+
+    // θ̂ segment: snapshot `${E}:snapshot:theta` hung off checkpoint
+    // `${E}:checkpoint:theta`; payload carries ONLY the θ̂ segment (fsrs empty).
+    const thetaCheckpoint = await readCheckpoint(reviewEventId, 'theta');
+    expect(thetaCheckpoint).not.toBeNull();
+    expect(thetaCheckpoint?.action).toBe('experimental:grading_checkpoint');
+    expect(thetaCheckpoint?.caused_by_event_id).toBe(reviewEventId); // E is the parent
+    expect((thetaCheckpoint?.payload as { segment?: string }).segment).toBe('theta');
+    const thetaPayload = await snapshotSegment(reviewEventId, 'theta');
+    expect(thetaPayload.attempt_event_id).toBe(reviewEventId);
+    expect(thetaPayload.theta_snapshots.length).toBeGreaterThan(0);
+    expect(thetaPayload.fsrs_snapshots).toHaveLength(0); // segment isolation
+    const thetaSnapRow = snaps.find((s) => s.id === `${reviewEventId}:snapshot:theta`);
+    expect(thetaSnapRow?.caused_by_event_id).toBe(`${reviewEventId}:checkpoint:theta`);
+
+    // FSRS segment: mirror shape, payload carries ONLY the FSRS segment (θ̂ empty).
+    const fsrsCheckpoint = await readCheckpoint(reviewEventId, 'fsrs');
+    expect(fsrsCheckpoint).not.toBeNull();
+    expect((fsrsCheckpoint?.payload as { segment?: string }).segment).toBe('fsrs');
+    const fsrsPayload = await snapshotSegment(reviewEventId, 'fsrs');
+    expect(fsrsPayload.fsrs_snapshots.length).toBeGreaterThan(0);
+    expect(fsrsPayload.theta_snapshots).toHaveLength(0); // segment isolation
+    const fsrsSnapRow = snaps.find((s) => s.id === `${reviewEventId}:snapshot:fsrs`);
+    expect(fsrsSnapRow?.caused_by_event_id).toBe(`${reviewEventId}:checkpoint:fsrs`);
+  });
+
+  // Test 8b (YUK-561 S2, spec §4.1 same-condition write invariant) — per segment, the
+  // checkpoint and its snapshot are BOTH-or-NEITHER. A question with NO knowledge_ids
+  // moves NO θ̂ (updateThetaForAttempt early-returns on empty KCs) → NEITHER the θ̂
+  // checkpoint NOR the θ̂ snapshot is written; the FSRS segment (always moves on solo)
+  // has BOTH.
+  it('per-segment C↔snapshot same-condition write invariant (θ̂ absent when no KCs)', async () => {
+    await seedQuestion('q_nokc', { knowledge_ids: [] });
+
+    const res = await POST(
+      submitReq({ activity_ref: { kind: 'question', id: 'q_nokc' }, rating: 'good' }),
+    );
+    expect(res.status).toBe(200);
+    const reviewEventId = ((await res.json()) as { review_event: { id: string } }).review_event.id;
+
+    // θ̂ segment: NEITHER row (no KC moved).
+    expect(await readCheckpoint(reviewEventId, 'theta')).toBeNull();
+    const thetaSnapRows = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.id, `${reviewEventId}:snapshot:theta`));
+    expect(thetaSnapRows).toHaveLength(0);
+
+    // FSRS segment: BOTH rows (a solo attempt always moves the FSRS card).
+    expect(await readCheckpoint(reviewEventId, 'fsrs')).not.toBeNull();
+    const fsrsPayload = await snapshotSegment(reviewEventId, 'fsrs');
+    expect(fsrsPayload.fsrs_snapshots.length).toBeGreaterThan(0);
   });
 
   // Test 9 — θ̂ before/after bracket the real mastery_state transition.
@@ -138,16 +210,7 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     // sanity: a graded success moved θ̂ off the seeded value.
     expect(livePosterior).not.toBe(seededTheta);
 
-    const snapSeeded = (await readSnapshot(reviewSeeded))[0];
-    const payloadSeeded = StateSnapshotExperimental.parse({
-      actor_kind: snapSeeded.actor_kind,
-      actor_ref: snapSeeded.actor_ref,
-      action: snapSeeded.action,
-      subject_kind: snapSeeded.subject_kind,
-      subject_id: snapSeeded.subject_id,
-      outcome: snapSeeded.outcome,
-      payload: snapSeeded.payload,
-    }).payload;
+    const payloadSeeded = await snapshotSegment(reviewSeeded, 'theta');
     const thetaSeeded = payloadSeeded.theta_snapshots.find((t) => t.kc_id === 'kc_seeded');
     expect(thetaSeeded).toBeDefined();
     // YUK-561 S1 — `before` is now the FULL pre-attempt row (verbatim), not a bare
@@ -183,16 +246,7 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(liveCold).not.toBeNull();
     const liveColdTheta = (liveCold as { theta_hat: number }).theta_hat;
 
-    const snapCold = (await readSnapshot(reviewCold))[0];
-    const payloadCold = StateSnapshotExperimental.parse({
-      actor_kind: snapCold.actor_kind,
-      actor_ref: snapCold.actor_ref,
-      action: snapCold.action,
-      subject_kind: snapCold.subject_kind,
-      subject_id: snapCold.subject_id,
-      outcome: snapCold.outcome,
-      payload: snapCold.payload,
-    }).payload;
+    const payloadCold = await snapshotSegment(reviewCold, 'theta');
     const thetaCold = payloadCold.theta_snapshots.find((t) => t.kc_id === 'kc_cold');
     expect(thetaCold).toBeDefined();
     // cold-start → before is null (NOT 0 — preserves the null≠0 distinction).
@@ -219,16 +273,7 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(liveFsrs).not.toBeNull();
     const liveCard = (liveFsrs as { state: { stability: number; reps: number } }).state;
 
-    const snap = (await readSnapshot(reviewEventId))[0];
-    const payload = StateSnapshotExperimental.parse({
-      actor_kind: snap.actor_kind,
-      actor_ref: snap.actor_ref,
-      action: snap.action,
-      subject_kind: snap.subject_kind,
-      subject_id: snap.subject_id,
-      outcome: snap.outcome,
-      payload: snap.payload,
-    }).payload;
+    const payload = await snapshotSegment(reviewEventId, 'fsrs');
     const fsrsSnap = payload.fsrs_snapshots.find(
       (f) => f.subject_kind === 'knowledge' && f.subject_id === 'kc_fsrs',
     );
@@ -260,16 +305,7 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(res2.status).toBe(200);
     const review2 = ((await res2.json()) as { review_event: { id: string } }).review_event.id;
 
-    const snap = (await readSnapshot(review2))[0];
-    const payload = StateSnapshotExperimental.parse({
-      actor_kind: snap.actor_kind,
-      actor_ref: snap.actor_ref,
-      action: snap.action,
-      subject_kind: snap.subject_kind,
-      subject_id: snap.subject_id,
-      outcome: snap.outcome,
-      payload: snap.payload,
-    }).payload;
+    const payload = await snapshotSegment(review2, 'fsrs');
     const fsrsSnap = payload.fsrs_snapshots.find(
       (f) => f.subject_kind === 'knowledge' && f.subject_id === 'kc_fsrs2',
     );
@@ -325,16 +361,7 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     // The knowledge row was created by THIS attempt (seeded from the question card).
     expect(await getFsrsState(db, 'knowledge', 'kc_fb')).not.toBeNull();
 
-    const snap = (await readSnapshot(reviewEventId))[0];
-    const payload = StateSnapshotExperimental.parse({
-      actor_kind: snap.actor_kind,
-      actor_ref: snap.actor_ref,
-      action: snap.action,
-      subject_kind: snap.subject_kind,
-      subject_id: snap.subject_id,
-      outcome: snap.outcome,
-      payload: snap.payload,
-    }).payload;
+    const payload = await snapshotSegment(reviewEventId, 'fsrs');
     const fsrsSnap = payload.fsrs_snapshots.find(
       (f) => f.subject_kind === 'knowledge' && f.subject_id === 'kc_fb',
     );
@@ -357,15 +384,29 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     const reviewEventId = ((await res.json()) as { review_event: { id: string } }).review_event.id;
 
     const db = testDb();
+    // YUK-561 S2 — two sibling snapshots (θ̂ + FSRS); BOTH skip the outbox.
     const snapRows = await db
       .select({ ingest_at: event.ingest_at })
       .from(event)
       .where(
         and(eq(event.action, 'experimental:state_snapshot'), eq(event.subject_id, reviewEventId)),
       );
-    expect(snapRows).toHaveLength(1);
-    // HARD REQ 2 — the outbox poller's `WHERE ingest_at IS NULL` never selects it.
-    expect(snapRows[0].ingest_at).not.toBeNull();
+    expect(snapRows).toHaveLength(2);
+    // HARD REQ 2 — the outbox poller's `WHERE ingest_at IS NULL` never selects them.
+    for (const row of snapRows) expect(row.ingest_at).not.toBeNull();
+
+    // The grading_checkpoint rows are internal ledger rows too — outbox opt-out.
+    const checkpointRows = await db
+      .select({ ingest_at: event.ingest_at })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:grading_checkpoint'),
+          eq(event.subject_id, reviewEventId),
+        ),
+      );
+    expect(checkpointRows).toHaveLength(2);
+    for (const row of checkpointRows) expect(row.ingest_at).not.toBeNull();
 
     // Contrast: the attempt's own review event IS pending ingest (ingest_at NULL).
     const reviewRows = await db

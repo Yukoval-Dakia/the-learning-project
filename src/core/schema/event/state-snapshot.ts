@@ -119,8 +119,48 @@ export const StateSnapshotExperimental = z.object({
     fsrs_snapshots: z.array(FsrsSnapshot),
   }),
   // baseOptionalFields parity (mirror UserCause/RecordCapture/MemoryBriefRefresh):
-  caused_by_event_id: z.string().optional(), // = attempt event id (cascade CTE chain edge)
+  caused_by_event_id: z.string().optional(), // = grading checkpoint id (cascade CTE chain edge)
   task_run_id: z.string().optional(),
   cost_micro_usd: z.number().int().optional(),
 });
 export type StateSnapshotExperimentalT = z.infer<typeof StateSnapshotExperimental>;
+
+// ---------- GradingCheckpointExperimental (YUK-561 S2 / O2 dual-sibling) ----------
+//
+// The reversible ANCHOR a state_snapshot hangs off (revert-bracket §4.1). Pre-S2 the
+// snapshot hung directly off the attempt event E (caused_by=E); E has caused_by=null
+// so it can only ever be a cascade ROOT, and classifyRow(E)='irreversible' → the
+// snapshot's success path was structurally UNREACHABLE (register F8). S2 inserts a
+// grading_checkpoint C between E and the snapshot: revert(C) closes over {snapshot}
+// only (E is C's PARENT, the reverse-CTE never climbs up), so the snapshot is now
+// reachable + reversible.
+//
+// O2 completeness (owner 2026-07-04): ONE checkpoint action carries BOTH the θ̂ and
+// FSRS segments as two SIBLING instances, discriminated by `payload.segment`:
+//   C_θ = `${E}:checkpoint:theta` anchors `${E}:snapshot:theta` (θ̂ segment)
+//   C_f = `${E}:checkpoint:fsrs`  anchors `${E}:snapshot:fsrs`  (FSRS segment)
+// Reverting a segment = reverting ITS checkpoint (no revertSegments filter) — the two
+// segments close over disjoint snapshots so they revert orthogonally (ADR-0035 R⟂p(L)).
+//
+// classifyRow maps this action to EVENT_LAYER (cascade-revert.ts): the checkpoint has
+// NO independent live SoT row (the A-class state lives in the snapshot it anchors), so
+// a `correct`(retract) event IS its complete reversal — same shape as the
+// copilot_user_ask / chip_trigger anchors. ingest_at:now (internal ledger row, not a
+// learner fact). Reserved + this dedicated schema so a malformed checkpoint payload
+// can't lose validation (parse barrier) — MUST land with the writer (spec §4.2 red-flag).
+export const GradingCheckpointExperimental = z.object({
+  actor_kind: z.literal('system'),
+  actor_ref: z.string().min(1), // e.g. 'attempt_snapshot'
+  action: z.literal('experimental:grading_checkpoint'),
+  subject_kind: z.literal('event'), // hangs off the attempt/review event
+  subject_id: z.string().min(1), // = attempt/review event id
+  outcome: z.literal('success').nullable().optional(),
+  payload: z.object({
+    attempt_event_id: z.string().min(1),
+    segment: z.enum(['theta', 'fsrs']), // which axis this checkpoint brackets
+  }),
+  caused_by_event_id: z.string().optional(), // = attempt event id (E is the parent)
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type GradingCheckpointExperimentalT = z.infer<typeof GradingCheckpointExperimental>;

@@ -53,6 +53,7 @@ import {
 } from '@/server/mastery/state';
 import { and, desc, eq, isNull, not, sql } from 'drizzle-orm';
 import { assertSessionMutable, freezeAnswerDraft } from './answer-draft';
+import { writeAttemptSnapshotBrackets } from './attempt-snapshot';
 
 // The feedback_policy sentinel that buffers feedback until paper completion
 // (critic #5). Any other value (incl. the default 'immediate' / unset) → the
@@ -763,55 +764,38 @@ export async function submitPaperSlot(
       }
     }
 
-    // (e) YUK-471 Wave 0 (ADR-0044 §3) — A-class state_snapshot append on the PAPER path
-    // (mirrors submit.ts). Brackets the EXACT θ̂ (mastery_state) + FSRS (material_fsrs_state)
-    // transition this slot attempt performed, so cascade-revert restores both segments
-    // independently (ADR-0035 R⟂p(L)). Fires whenever EITHER axis moved:
-    //  - a graded answer moves θ̂ (+ usually FSRS) → theta_snapshots non-empty;
-    //  - a non-photo `unsupported` answer (judge route unregistered / semantic provider
-    //    failed — reachable, see embedded-check tests) maps to 'again' and overwrites
-    //    material_fsrs_state at (c) WITHOUT touching θ̂ (SF-3: don't penalize p(L) for an
-    //    ungradeable answer) → its FSRS overwrite is still bracketed with theta_snapshots: [].
-    // MUST be in the OUTER `tx`, NOT a SAVEPOINT — a HARD invariant of the attempt (dies with
-    // it on rollback). The best-effort family/calibration SAVEPOINTs above touch neither
-    // mastery_state nor material_fsrs_state, so the snapshot's scope is unaffected by being
-    // appended after them. `fsrsBefore` was captured before the (c) upsert overwrote it.
-    // HARD REQ 2 — `ingest_at: now` skips the memory outbox (internal rollback ledger row,
-    //   not a learner fact). §6.7 — deterministic id `${attemptEventId}:snapshot` +
-    //   writeEvent onConflictDoNothing makes a retried tx idempotent.
-    if (fsrsWrote || thetaSnapshots.length > 0) {
-      await writeEvent(tx, {
-        id: `${attemptEventId}:snapshot`,
-        session_id: input.sessionId,
-        actor_kind: 'system',
-        actor_ref: 'attempt_snapshot',
-        action: 'experimental:state_snapshot',
-        subject_kind: 'event',
-        subject_id: attemptEventId,
-        outcome: 'success',
-        payload: {
-          attempt_event_id: attemptEventId,
-          theta_snapshots: thetaSnapshots,
-          fsrs_snapshots:
-            fsrsWrote && stateAfter !== null
-              ? [
-                  {
-                    subject_kind: fsrsSubjectKind,
-                    subject_id: fsrsSubjectId,
-                    before: fsrsBefore,
-                    after: stateAfter,
-                  },
-                ]
-              : [],
-        },
-        caused_by_event_id: attemptEventId,
-        task_run_id: null,
-        cost_micro_usd: null,
-        // HARD REQ 2 — skip the memory outbox (non-NULL opt-out at INSERT).
-        ingest_at: now,
-        created_at: now,
-      });
-    }
+    // (e) YUK-561 S2 (revert-bracket §4.1 / O2 dual-sibling) — A-class snapshot append
+    // on the PAPER path (mirrors submit.ts), now as TWO independent sibling brackets
+    // (θ̂ + FSRS) so a judge-overturn can revert the θ̂ transition ALONE. Replaces the
+    // pre-S2 single snapshot hung off the (irreversible) attempt event. The helper
+    // writes each segment iff it moved + upholds the C↔snapshot same-condition write
+    // invariant, so it fires exactly on the pre-S2 `fsrsWrote || thetaSnapshots.length`
+    // condition (both empty on the photo-only path → nothing written):
+    //  - a graded answer moves θ̂ (+ usually FSRS) → both segments;
+    //  - a non-photo `unsupported` answer maps to 'again' and overwrites
+    //    material_fsrs_state at (c) WITHOUT touching θ̂ (SF-3) → FSRS segment only.
+    // MUST be in the OUTER `tx`, NOT a SAVEPOINT (HARD invariant of the attempt). The
+    // best-effort family/calibration SAVEPOINTs above touch neither state table, so the
+    // snapshot scope is unaffected by being appended after them. `fsrsBefore` was
+    // captured before the (c) upsert overwrote it. `ingest_at:now` + deterministic ids
+    // (inside the helper) give the outbox opt-out + retried-tx idempotency (§6.7).
+    await writeAttemptSnapshotBrackets(tx, {
+      attemptEventId,
+      sessionId: input.sessionId,
+      now,
+      thetaSnapshots,
+      fsrsSnapshots:
+        fsrsWrote && stateAfter !== null
+          ? [
+              {
+                subject_kind: fsrsSubjectKind,
+                subject_id: fsrsSubjectId,
+                before: fsrsBefore,
+                after: stateAfter,
+              },
+            ]
+          : [],
+    });
 
     // Freeze the answer draft (set submitted_at + event_id). Re-submission after
     // abandon→reopen writes a NEW frozen row; this one stays immutable (§4.5).
