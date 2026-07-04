@@ -179,11 +179,30 @@ export type CascadeRevertRefusal =
       reason: string;
     }
   | {
+      // YUK-561 S3 — the checkpoint row does not exist: this segment/attempt has no
+      // snapshot bracket to revert (pre-S2 attempt, or a segment that never moved).
+      // NOT a caller bug — it's the honest "nothing to revert here, defer" signal
+      // (distinct from `irreversible`, which is a real learner fact in the closure).
+      ok: false;
+      refusal: 'no_checkpoint';
+      reason: string;
+    }
+  | {
       ok: false;
       refusal: 'irreversible';
       reason: string;
       /** Event ids that are irreversible (or unknown → fail-closed). */
       irreversibleEventIds: string[];
+    }
+  | {
+      // YUK-561 S3 — the snapshot carries a legacy bare-number θ̂ `before` (pre-S1
+      // on-disk snapshot), which is not verbatim-restorable. Surfaced from the restore
+      // primitive (never a lossy restore). Defence-in-depth: legacy snapshots have no
+      // checkpoint in prod, so `no_checkpoint` fires first.
+      ok: false;
+      refusal: 'legacy_snapshot';
+      reason: string;
+      ref: { kind: 'theta'; kcId: string };
     }
   | {
       ok: false;
@@ -195,7 +214,16 @@ export type CascadeRevertRefusal =
 
 export type OrchestrateCascadeRevertResult = CascadeRevertResult | CascadeRevertRefusal;
 
-export interface OrchestrateCascadeRevertOptions extends CollectCascadeOptions {}
+export interface OrchestrateCascadeRevertOptions extends CollectCascadeOptions {
+  /**
+   * YUK-561 S3 — provenance threaded onto the retract compensation events' reason_md
+   * (e.g. the appeal that drove a judge-overturn revert + the prior→new outcome). O2:
+   * there is NO `revertSegments` option — the segment is selected by WHICH checkpoint
+   * the caller reverts (`${E}:checkpoint:theta` vs `:fsrs`), each closing over a
+   * single-segment snapshot. The orchestrator has no segment-slicing logic.
+   */
+  reasonContext?: { appeal_event_id?: string; note?: string };
+}
 
 /**
  * Classify a single event ROW into its reversibility class (fail-closed).
@@ -248,10 +276,17 @@ function classifyRow(row: EventRow): RevertableEffect {
  * order (deepest first; root last), writing a `correct` compensation event per node.
  */
 export async function orchestrateCascadeRevert(
-  db: Db,
+  db: DbLike,
   checkpointEventId: string,
   opts?: OrchestrateCascadeRevertOptions,
 ): Promise<OrchestrateCascadeRevertResult> {
+  // YUK-561 S3 — `db` is DbLike (Db | Tx): the atomic judge-overturn caller passes its
+  // OWN tx so the revert commits with the overturn (all-or-nothing). Steps 1-5 are
+  // read-only pre-checks (no mutation); step 6 opens db.transaction(...) — a SAVEPOINT
+  // when db is already a Tx (so an in-tx conflict/legacy rolls back ONLY the apply
+  // savepoint and returns a typed refusal, leaving the caller's tx alive to write a
+  // deferred marker + commit), a real tx when db is a top-level Db.
+
   // 1. Collect the cascade. Truncation → honest-reject (no half set).
   const cascade = await collectCascadeFromCheckpoint(db, checkpointEventId, opts);
   if (cascade.truncated) {
@@ -266,11 +301,14 @@ export async function orchestrateCascadeRevert(
   //    (cascade.ts excludes the root from the collected set — cascade.ts:18).
   const rootRow = await loadEventRow(db, checkpointEventId);
   if (!rootRow) {
+    // YUK-561 S3 — a missing checkpoint is `no_checkpoint`, NOT `irreversible`. It
+    // means "this segment/attempt was never bracketed" (a pre-S2 attempt, or a segment
+    // that didn't move) — the honest "nothing to revert, defer" signal. `irreversible`
+    // is reserved for a real learner fact inside the closure (a genuine caller bug).
     return {
       ok: false,
-      refusal: 'irreversible',
-      reason: `checkpoint event ${checkpointEventId} not found`,
-      irreversibleEventIds: [checkpointEventId],
+      refusal: 'no_checkpoint',
+      reason: `checkpoint event ${checkpointEventId} not found — no snapshot bracket for this segment/attempt (nothing to revert; the caller should defer to full reprojection)`,
     };
   }
 
@@ -333,85 +371,129 @@ export async function orchestrateCascadeRevert(
     }
   }
 
-  // 6. Execute inside ONE tx: reverse-dependency order (effects already deepest-
-  //    first, root last). Each reversible node gets its effect applied + a
-  //    `correct` compensation event so re-collection won't re-sweep it.
+  // 6. Execute inside ONE tx (a SAVEPOINT when `db` is a caller Tx). reverse-dependency
+  //    order (effects already deepest-first, root last). Each reversible node gets its
+  //    effect applied + a `correct`(retract) compensation event.
+  //
+  //    YUK-561 S3 — the tx callback throws a TYPED error on an in-tx conflict/legacy re-
+  //    check; the try/catch below rolls the tx/SAVEPOINT back and RETURNS a typed refusal
+  //    (so the atomic caller can write a deferred marker in the same outer tx + commit).
+  //    Any OTHER throw (missing edge, etc.) still propagates — fail-loud.
   const compensationEventIds: string[] = [];
   let snapshotsRestored = 0;
   let structuralRowsArchived = 0;
   let eventLayerCompensated = 0;
   const now = new Date();
 
-  await db.transaction(async (tx) => {
-    for (const e of effects) {
-      if (e.reversibility === 'state_snapshot') {
-        const payload = snapshotPayloads.get(e.eventId);
-        if (!payload) {
-          // Defensive: every snapshot was parsed in step 5.
-          throw new Error(`snapshot payload for ${e.eventId} missing in apply phase`);
-        }
-        // Re-assert the conflict guard inside the tx (defence-in-depth against a
-        // concurrent writer between pre-check and tx). A conflict here throws to
-        // roll back the whole tx — the pre-check already returned the typed
-        // refusal in the common case.
-        const conflict = await assertSnapshotMatchesCurrent(tx, payload);
-        if (conflict) {
-          throw new CascadeRevertConflictError(e.eventId, conflict);
-        }
-        // YUK-561 S1 — restore now returns a typed result. A legacy bare-number θ̂
-        // `before` (pre-S1 snapshot) is unrevertable → refuse. S1: throw to roll back
-        // the tx (fail-loud, no live caller yet); S3 converts this into a returned
-        // `legacy_snapshot` refusal the atomic caller can dispatch on.
-        const restored = await restoreStateSnapshot(tx, payload);
-        if (!restored.ok) {
-          throw new Error(
-            `cascade revert: state_snapshot ${e.eventId} has a legacy bare-number θ̂ before for ` +
-              `${restored.ref.kcId} — unrevertable (pre-S1 snapshot, no checkpoint in prod). Refusing.`,
-          );
-        }
-        snapshotsRestored += 1;
-      } else if (e.reversibility === 'structural_imperative') {
-        // B-class with a live SoT row — mirror the FULL live archive dual-write
-        // (actions.ts:413-439): archive the edge row imperatively AND write a
-        // fold-visible generate(edge_op='archive') so a projection REBUILD re-
-        // derives archived (the `correct` event below is invisible to the edge
-        // fold). Same tx, same `now`, so imperative archived_at == folded archived_at.
-        await applyImperativeUndo(tx, e.imperativeUndo, e.eventId, now);
-        structuralRowsArchived += 1;
-      } else {
-        // event_layer → the `correct`(retract) below IS the complete reversal.
-        eventLayerCompensated += 1;
-      }
+  // YUK-561 S3 — provenance suffix for the retract reason_md (e.g. the appeal + the
+  // prior→new outcome that drove a judge-overturn revert). Empty for a bare revert.
+  const rc = opts?.reasonContext;
+  const reasonSuffix = rc
+    ? ` — appeal:${rc.appeal_event_id ?? '?'}${rc.note ? ` (${rc.note})` : ''}`
+    : '';
 
-      // Write the compensation `correct`(retract) event for EVERY reverted node so
-      // a re-collection skips it (cascade.ts drops action='correct' children + the
-      // getCorrectionStatuses fold honours it). For structural_imperative this is
-      // BELT-AND-BRACES with the imperative archive above (so a future SoT-flip
-      // re-projection that DOES read corrections stays consistent).
-      const compId = newId();
-      await writeEvent(tx, {
-        id: compId,
-        actor_kind: 'agent',
-        actor_ref: CASCADE_REVERT_ACTOR_REF,
-        action: 'correct',
-        subject_kind: 'event',
-        subject_id: e.eventId,
-        outcome: 'success',
-        payload: {
-          correction_kind: 'retract',
-          reason_md: `cascade revert of checkpoint ${checkpointEventId} (${e.reversibility})`,
-          affected_refs: [{ kind: 'open_inquiry', id: e.eventId }],
-        },
-        caused_by_event_id: e.eventId,
-        created_at: now,
-        // Internal rollback ledger row — opt out of the memory outbox (ADR-0044
-        // §42 mirrors the state_snapshot opt-out; a compensation is not a learner
-        // fact). Non-NULL stamp = outbox poller's `WHERE ingest_at IS NULL` skips it.
-        ingest_at: now,
-      });
-      compensationEventIds.push(compId);
+  try {
+    await db.transaction(async (tx) => {
+      for (const e of effects) {
+        if (e.reversibility === 'state_snapshot') {
+          const payload = snapshotPayloads.get(e.eventId);
+          if (!payload) {
+            // Defensive: every snapshot was parsed in step 5.
+            throw new Error(`snapshot payload for ${e.eventId} missing in apply phase`);
+          }
+          // Re-assert the conflict guard inside the tx (defence-in-depth against a
+          // concurrent writer between pre-check and tx). A conflict here throws → the
+          // catch below returns the typed refusal (the pre-check already returned it in
+          // the common case).
+          const conflict = await assertSnapshotMatchesCurrent(tx, payload);
+          if (conflict) {
+            throw new CascadeRevertConflictError(e.eventId, conflict);
+          }
+          // YUK-561 S3 — a legacy bare-number θ̂ `before` (pre-S1 snapshot) is
+          // unrevertable → throw the typed legacy error so the catch returns a
+          // `legacy_snapshot` refusal (never a lossy restore).
+          const restored = await restoreStateSnapshot(tx, payload);
+          if (!restored.ok) {
+            throw new CascadeRevertLegacyError(e.eventId, restored.ref);
+          }
+          snapshotsRestored += 1;
+        } else if (e.reversibility === 'structural_imperative') {
+          // B-class with a live SoT row — mirror the FULL live archive dual-write
+          // (actions.ts:413-439): archive the edge row imperatively AND write a
+          // fold-visible generate(edge_op='archive') so a projection REBUILD re-
+          // derives archived (the `correct` event below is invisible to the edge
+          // fold). Same tx, same `now`, so imperative archived_at == folded archived_at.
+          await applyImperativeUndo(tx, e.imperativeUndo, e.eventId, now);
+          structuralRowsArchived += 1;
+        } else {
+          // event_layer → the `correct`(retract) below IS the complete reversal.
+          eventLayerCompensated += 1;
+        }
+
+        // Write the compensation `correct`(retract) event for EVERY reverted node.
+        //
+        // YUK-561 S1 attribution订正 (Lens A F4): this retract is the fold/read-layer
+        // TOMBSTONE (the proposal-inbox + getCorrectionStatuses projections honour it,
+        // and cascade.ts drops action='correct' from re-collection). It is NOT what stops
+        // a DOUBLE revert of the SAME snapshot — cascade.ts's `action <> 'correct'` only
+        // excludes the compensation node itself, so the state_snapshot IS re-collected on
+        // a second revert. What actually blocks the double-apply is the CONFLICT GUARD:
+        // after the first revert the live row = snapshot.before ≠ snapshot.after, so the
+        // second revert's guard trips → conflict refuse. That guard is also the LIFO
+        // correctness carrier (restore-to-before is only mathematically right for the
+        // KC's MOST-RECENT transition). For structural_imperative the retract is BELT-
+        // AND-BRACES with the imperative archive above (a future SoT-flip re-projection
+        // that DOES read corrections stays consistent).
+        const compId = newId();
+        await writeEvent(tx, {
+          id: compId,
+          actor_kind: 'agent',
+          actor_ref: CASCADE_REVERT_ACTOR_REF,
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: e.eventId,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'retract',
+            // YUK-561 S3 — reasonSuffix threads the caller provenance (appeal + prior→new)
+            // onto the retract so the forensic trail is traceable to the overturn (O2:
+            // the segment is self-evident from subject_id = the snapshot event id).
+            reason_md: `cascade revert of checkpoint ${checkpointEventId} (${e.reversibility})${reasonSuffix}`,
+            affected_refs: [{ kind: 'open_inquiry', id: e.eventId }],
+          },
+          caused_by_event_id: e.eventId,
+          created_at: now,
+          // Internal rollback ledger row — opt out of the memory outbox (ADR-0044
+          // §42 mirrors the state_snapshot opt-out; a compensation is not a learner
+          // fact). Non-NULL stamp = outbox poller's `WHERE ingest_at IS NULL` skips it.
+          ingest_at: now,
+        });
+        compensationEventIds.push(compId);
+      }
+    });
+  } catch (err) {
+    // YUK-561 S3 — an in-tx conflict/legacy re-check throws a TYPED error; the tx
+    // (or SAVEPOINT) is already rolled back. Return the corresponding typed refusal so
+    // the atomic caller can dispatch (deferred marker). Any OTHER error is a real fault
+    // (missing edge, DB failure) — re-throw fail-loud.
+    if (err instanceof CascadeRevertConflictError) {
+      return {
+        ok: false,
+        refusal: 'conflict',
+        reason: `state_snapshot ${err.snapshotEventId} conflict (in-tx re-check): current ${err.conflictRef.kind} state for ${err.conflictRef.subjectKind}/${err.conflictRef.subjectId} != snapshot.after — refusing the whole revert.`,
+        conflictRef: err.conflictRef,
+      };
     }
-  });
+    if (err instanceof CascadeRevertLegacyError) {
+      return {
+        ok: false,
+        refusal: 'legacy_snapshot',
+        reason: `state_snapshot ${err.snapshotEventId} has a legacy bare-number θ̂ before for ${err.ref.kcId} — unrevertable (pre-S1 snapshot). Refusing (defer to full reprojection).`,
+        ref: err.ref,
+      };
+    }
+    throw err;
+  }
 
   return {
     ok: true,
@@ -524,6 +606,23 @@ class CascadeRevertConflictError extends Error {
         `${conflictRef.subjectKind}/${conflictRef.subjectId} (${conflictRef.kind})`,
     );
     this.name = 'CascadeRevertConflictError';
+  }
+}
+
+/**
+ * YUK-561 S3 — thrown inside the tx when restore hits a legacy bare-number θ̂ `before`
+ * (pre-S1 snapshot), which is not verbatim-restorable. The catch converts it into a
+ * `legacy_snapshot` refusal (never a lossy restore).
+ */
+class CascadeRevertLegacyError extends Error {
+  constructor(
+    public readonly snapshotEventId: string,
+    public readonly ref: { kind: 'theta'; kcId: string },
+  ) {
+    super(
+      `cascade revert: legacy bare-number θ̂ before on snapshot ${snapshotEventId} (${ref.kcId})`,
+    );
+    this.name = 'CascadeRevertLegacyError';
   }
 }
 
