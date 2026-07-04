@@ -14,6 +14,7 @@ import type {
   StateSnapshotExperimentalT,
   ThetaRowSnapshotT,
 } from '@/core/schema/event/state-snapshot';
+import { GRID_POINTS } from '@/core/theta-grid'; // YUK-561 FIX-3 — grid vector length
 import { db as rootDb } from '@/db/client';
 import type { Tx } from '@/db/client';
 import { mastery_state, material_fsrs_state } from '@/db/schema';
@@ -128,6 +129,18 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
     const kcId = 'kc_restore_14';
     // Seed a mastery_state row at the pre-attempt state (θ̂=X + full counts/precision).
     const X = 1.25;
+    // YUK-561 FIX-3 — a NON-null theta_grid_json `before` closes the one column that was
+    // never round-tripped through a non-null verbatim restore (it is A4-dark today, so
+    // every prior test left it null). Exact-double grid points (/64) so the jsonb round-
+    // trip is lossless; a DIFFERENT grid on the live row proves restore overwrites it.
+    const beforeGrid = {
+      probs: Array.from({ length: GRID_POINTS }, (_, i) => (i + 1) / 64),
+      evidence: 6,
+    };
+    const afterGrid = {
+      probs: Array.from({ length: GRID_POINTS }, () => 0.25),
+      evidence: 9,
+    };
     const beforeRow = richTheta({
       theta_hat: X,
       evidence_count: 3,
@@ -137,6 +150,7 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
       last_theta_delta: 0.3,
       last_outcome_at: new Date('2026-06-01T00:00:00Z'),
       rt_correct_ms: { samples: [1100, 800] },
+      theta_grid_json: beforeGrid,
     });
     await upsertMasteryState(testDb(), {
       subject_id: kcId,
@@ -148,8 +162,9 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
       theta_precision: 4.5,
       last_theta_delta: 0.3,
       rt_correct_ms: { samples: [1100, 800] },
+      theta_grid_json: beforeGrid,
     });
-    // Simulate the attempt having moved θ̂ to Y + advanced the counts/precision.
+    // Simulate the attempt having moved θ̂ to Y + advanced the counts/precision/grid.
     const Y = 2.5;
     await upsertMasteryState(testDb(), {
       subject_id: kcId,
@@ -161,6 +176,7 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
       theta_precision: 5.9,
       last_theta_delta: 1.25,
       rt_correct_ms: { samples: [1100, 800, 700] },
+      theta_grid_json: afterGrid,
     });
     // Oracle: current live row is Y.
     expect(await readTheta(kcId)).toBe(Y);
@@ -186,6 +202,8 @@ describe('restoreStateSnapshot (YUK-471 Wave 0 restore primitive)', () => {
     expect(row?.last_theta_delta).toBeCloseTo(0.3, 5);
     expect(row?.last_outcome_at?.getTime()).toBe(new Date('2026-06-01T00:00:00Z').getTime());
     expect((row?.rt_correct_ms as { samples: number[] } | null)?.samples).toEqual([1100, 800]);
+    // FIX-3 — theta_grid_json round-trips verbatim (restored to `before`, not left at afterGrid).
+    expect(row?.theta_grid_json).toEqual(beforeGrid);
   });
 
   it('test 14b: legacy bare-number theta before → refused (legacy_snapshot), NOTHING mutated', async () => {
