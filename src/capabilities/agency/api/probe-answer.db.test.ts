@@ -3,15 +3,17 @@
 // Asserts the route's three contracts:
 //   1. HAPPY (A5-a outcome→resolution split): judge 'incorrect' → outcome=0 →
 //      'confirmed' + probe_result event; judge 'correct' → outcome=1 → 'retired'.
-//   2. IDEMPOTENCY: re-answer returns the RECORDED result (answerProbe's per-probe
-//      advisory lock + existing-event guard).
+//   2. IDEMPOTENCY: re-answer short-circuits via `peekExistingProbeResult` BEFORE
+//      invoking the judge (LLM cost guard) — judge NOT called, recorded values
+//      returned with coarse_outcome: null.
 //   3. FAIL-CLOSED: judge 'unsupported' / 'partial' → 422, NO probe_result written,
 //      probe stays active (served-but-unanswered slot not consumed).
 // Plus the gating errors: 400 (bad body), 404 (no question), 409 (not a mind_probe).
 //
-// The judge is mocked (getDefaultRegistry → resolveJudge → run) so the test pins
-// coarse_outcome per case and exercises the route's outcome-mapping + write logic,
-// NOT the real LLM judge. serveProbeOnce (the producer half, wired in S2) is real,
+// The judge invoker is mocked (`createDefaultJudgeInvoker` → `invoke`) so the test
+// pins coarse_outcome per case and exercises the route's outcome-mapping + write
+// logic, NOT the real LLM judge. The mock mirrors how submit.ts / advice.ts tests
+// mock the same chokepoint. serveProbeOnce (the producer half, wired in S2) is real,
 // so the probe question row is genuine.
 
 import { and, eq } from 'drizzle-orm';
@@ -20,22 +22,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
-import { writeEvent } from '@/server/events/queries';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './probe-answer';
 
-// ── Judge mock ──────────────────────────────────────────────────────────────────
-// vi.hoisted so the fn reference survives vi.mock's factory hoisting.
-const { mockRun } = vi.hoisted(() => ({ mockRun: vi.fn() }));
+// ── Judge invoker mock ─────────────────────────────────────────────────────────
+// vi.hoisted so the fn reference survives vi.mock's factory hoisting. The route
+// calls `createDefaultJudgeInvoker().invoke(...)` — we mock the invoker module so
+// `invoke` returns a pinned JudgeResultV2T without an LLM call. This is the SAME
+// module submit.ts / advice.ts mock in their tests (the invoker is the shared
+// judge chokepoint; the base registry's `resolveJudge().run()` is a validation
+// stub, NOT a runtime judge — review PR #705 CRITICAL).
+const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 
-vi.mock('@/core/capability/judges', () => ({
-  // The route only calls resolveJudge → run(); manifest shape is irrelevant to the
-  // route logic. defaultJudgeKindForQuestion stays real (pure) and routes
-  // short_answer → 'semantic', which this mock registry resolves to the mock runner.
-  getDefaultRegistry: () => ({
-    resolveJudge: () => ({ manifest: { id: 'mock' }, run: mockRun }),
-  }),
+vi.mock('@/server/judge/invoker', () => ({
+  createDefaultJudgeInvoker: () => ({ invoke: mockInvoke }),
 }));
 
 const KC_ID = 'kn_chain_rule';
@@ -54,6 +55,11 @@ function judgeResult(coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsu
   if (coarse_outcome === 'partial') return { ...base, coarse_outcome, score: 0.5 };
   if (coarse_outcome === 'incorrect') return { ...base, coarse_outcome, score: 0 };
   return { ...base, coarse_outcome, score: null, confidence: 0, feedback_md: 'unsupported' };
+}
+
+// Invoker returns `{ result, telemetry }` — only `result` is read by the route.
+function invokeResult(coarse_outcome: 'correct' | 'incorrect' | 'partial' | 'unsupported') {
+  return { result: judgeResult(coarse_outcome), telemetry: { route: 'semantic' } };
 }
 
 async function seedKnowledge(): Promise<void> {
@@ -136,12 +142,12 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
   beforeEach(async () => {
     await resetDb();
     await seedKnowledge();
-    mockRun.mockReset();
+    mockInvoke.mockReset();
   });
 
   it('judge incorrect → outcome=0 → confirmed + ONE probe_result event, no FSRS (ND-5)', async () => {
     const probeId = await serveProbe();
-    mockRun.mockResolvedValue(judgeResult('incorrect'));
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
 
     const res = await answer(probeId, 'cos(x^2)');
     expect(res.status).toBe(200);
@@ -163,16 +169,18 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     });
     // ND-5 red line — probe answer NEVER enrolls / writes FSRS.
     expect(await fsrsRowCount()).toBe(0);
-    // Judge received the owner's answer verbatim.
-    expect(mockRun).toHaveBeenCalledWith({
-      question: expect.objectContaining({ id: probeId }),
-      answer: { content: 'cos(x^2)' },
-    });
+    // Invoker received the owner's answer verbatim via the standard chokepoint.
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: expect.objectContaining({ id: probeId }),
+        answer_md: 'cos(x^2)',
+      }),
+    );
   });
 
   it('judge correct → outcome=1 → retired (conjecture falsified)', async () => {
     const probeId = await serveProbe();
-    mockRun.mockResolvedValue(judgeResult('correct'));
+    mockInvoke.mockResolvedValue(invokeResult('correct'));
 
     const res = await answer(probeId, '2x·cos(x^2)');
     expect(res.status).toBe(200);
@@ -189,23 +197,30 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(events[0].payload).toMatchObject({ outcome: 1, resolution: 'retired' });
   });
 
-  it('re-answer is idempotent — one probe_result event, idempotent:true, recorded resolution wins', async () => {
+  it('re-answer short-circuits via peek — judge NOT invoked, recorded values win, coarse_outcome null', async () => {
     const probeId = await serveProbe();
-    mockRun.mockResolvedValue(judgeResult('incorrect'));
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
 
     const first = await answer(probeId, 'cos(x^2)');
     expect(first.status).toBe(200);
-    // Second answer — judge now says 'correct', but the RECORDED resolution (confirmed)
-    // must win (answerProbe idempotency: never rewrite what the record says happened).
-    mockRun.mockResolvedValue(judgeResult('correct'));
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+    // Second answer — peek finds the existing probe_result and short-circuits
+    // BEFORE invoking the judge. The recorded resolution (confirmed) wins; the
+    // judge is NOT called again (LLM cost guard). coarse_outcome is null because
+    // this call did not judge.
+    mockInvoke.mockClear();
     const second = await answer(probeId, '2x·cos(x^2)');
 
     expect(second.status).toBe(200);
     const body = await resJson(second);
+    expect(mockInvoke).not.toHaveBeenCalled();
     expect(body.idempotent).toBe(true);
-    // Recorded resolution is faithfully reported, NOT the second request's retire.
+    expect(body.coarse_outcome).toBeNull();
+    // Recorded resolution is faithfully reported, NOT rewritten by this request.
     expect(body.status).toBe('confirmed');
     expect(body.resolution).toBe('confirmed');
+    expect(body.outcome).toBe(0);
 
     const events = await probeResultEvents(probeId);
     expect(events).toHaveLength(1);
@@ -214,7 +229,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
   it('judge unsupported → 422 fail-closed, NO probe_result written, probe stays active', async () => {
     const probeId = await serveProbe();
-    mockRun.mockResolvedValue(judgeResult('unsupported'));
+    mockInvoke.mockResolvedValue(invokeResult('unsupported'));
 
     const res = await answer(probeId, 'something');
     expect(res.status).toBe(422);
@@ -228,7 +243,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
   it('judge partial → 422 fail-closed (ambiguous outcome does not discriminate)', async () => {
     const probeId = await serveProbe();
-    mockRun.mockResolvedValue(judgeResult('partial'));
+    mockInvoke.mockResolvedValue(invokeResult('partial'));
 
     const res = await answer(probeId, 'x·cos(x^2)');
     expect(res.status).toBe(422);
@@ -236,9 +251,11 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
   });
 
   it('404 when the probe question does not exist', async () => {
-    mockRun.mockResolvedValue(judgeResult('incorrect'));
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
     const res = await answer(newId(), 'whatever');
     expect(res.status).toBe(404);
+    // Judge never reached (404 guard is before the judge call).
+    expect(mockInvoke).not.toHaveBeenCalled();
   });
 
   it('409 when the question exists but is not a mind_probe', async () => {
@@ -259,14 +276,15 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
         updated_at: now,
       });
 
-    mockRun.mockResolvedValue(judgeResult('incorrect'));
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
     const res = await answer(regularId, 'whatever');
     expect(res.status).toBe(409);
+    expect(mockInvoke).not.toHaveBeenCalled();
   });
 
   it('400 when answer_md is missing or empty', async () => {
     const probeId = await serveProbe();
-    mockRun.mockResolvedValue(judgeResult('incorrect'));
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
 
     const resMissing = await POST(
       new Request(`http://localhost/api/conjecture/probe/${probeId}/answer`, {
@@ -280,6 +298,24 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
     const resBlank = await answer(probeId, '   ');
     expect(resBlank.status).toBe(400);
+    // Judge never reached on a bad body.
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('422 when probe kind is corrupt (early fail-closed before judge LLM cost)', async () => {
+    const probeId = await serveProbe();
+    // Corrupt the kind to a non-QuestionKind garbage value.
+    await testDb()
+      .update(question)
+      .set({ kind: 'not-a-real-kind' })
+      .where(eq(question.id, probeId));
+
+    mockInvoke.mockResolvedValue(invokeResult('incorrect'));
+    const res = await answer(probeId, 'whatever');
+    expect(res.status).toBe(422);
+    // Early kind guard fires BEFORE the judge call (saves LLM cost).
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(await probeResultEvents(probeId)).toHaveLength(0);
   });
 });
 

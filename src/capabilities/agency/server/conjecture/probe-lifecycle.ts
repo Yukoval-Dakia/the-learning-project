@@ -313,3 +313,48 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     return { status: resolution, outcome, probe_result_event_id: probeResultEventId };
   });
 }
+
+/**
+ * Non-claiming peek: read an existing `probe_result` event for a probe WITHOUT
+ * judging or writing. Used by the probe-answer route to short-circuit idempotent
+ * re-answers BEFORE invoking the judge (saves the LLM cost on re-answer — the
+ * recorded outcome/resolution is faithful and immutable, so re-judging is pure
+ * waste). Mirrors `existingAcceptRate` in the proposal-accept path.
+ *
+ * Returns:
+ *   - the recorded `AnswerProbeResult` (idempotent: true) when a VALID probe_result
+ *     exists (outcome ∈ {0,1}, resolution ∈ {confirmed,retired});
+ *   - `null` when NO probe_result exists (caller proceeds to judge + answerProbe);
+ *   - `null` when an existing event is CORRUPT (caller proceeds to judge + answerProbe,
+ *     which surfaces the `probe_result_corrupt` 500 — the judge call is wasted on this
+ *     rare manual-DB-edit edge case, acceptable vs duplicating validation here).
+ *
+ * ND-5: READ-ONLY (single SELECT, zero writes).
+ */
+export async function peekExistingProbeResult(
+  db: Db,
+  probeQuestionId: string,
+): Promise<AnswerProbeResult | null> {
+  const [existing] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, PROBE_RESULT_ACTION),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, probeQuestionId),
+      ),
+    )
+    .limit(1);
+  if (!existing) return null;
+  const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
+  const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
+  if (recordedResolution !== 'confirmed' && recordedResolution !== 'retired') return null;
+  if (recordedOutcome !== 0 && recordedOutcome !== 1) return null;
+  return {
+    status: recordedResolution,
+    outcome: recordedOutcome,
+    probe_result_event_id: existing.id,
+    idempotent: true,
+  };
+}

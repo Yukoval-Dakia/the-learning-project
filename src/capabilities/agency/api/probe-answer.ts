@@ -1,15 +1,23 @@
 // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S3) — probe answer route.
 //
 // The CONSUMER half of the dark-loop: the owner answers a served probe and this
-// route closes the lifecycle. Isolated from the attempt/FSRS write path by
-// construction (ND-5 red line):
-//   - judge routing goes through `defaultJudgeKindForQuestion` → capability
-//     registry `resolveJudge` → `runner.run()` PURE evaluation (no FSRS, no
-//     attempt event, no θ̂). This is NOT submit.ts's `createDefaultJudgeInvoker`
-//     path — that wrapper is attempt-domain-coupled; the isolated registry path
-//     CANNOT physically reach the FSRS/attempt write.
-//   - the only write is `answerProbe`, which writes exactly ONE
+// route closes the lifecycle.
+//
+// ND-5 RED LINE — the boundary is `answerProbe`, NOT the judge dispatch:
+//   - the judge is invoked via `createDefaultJudgeInvoker().invoke()` — the SAME
+//     pure-evaluation chokepoint submit.ts uses. `JudgeInvoker.invoke()` resolves
+//     the route, runs the judge (incl. the real `runSemanticJudge` async LLM path
+//     for free-text probes), and emits telemetry. It does NOT write FSRS /
+//     attempt / θ̂ — the FSRS write in submit.ts happens AFTER the judge call, in
+//     submit's own code, not inside the invoker (verified: `invoker.ts` has zero
+//     fsrs/attempt/event writes). The invoker is judge-only.
+//   - the only write on THIS route is `answerProbe`, which writes exactly ONE
 //     `experimental:probe_result` event (ND-5-confirmed in probe-lifecycle.ts).
+//   - the earlier "isolated registry path" (`resolveJudge().run()`) was a
+//     defect (review PR #705 CRITICAL): the base registry's semantic runner is a
+//     profile-validation STUB returning coarse_outcome='unsupported' — so every
+//     free-text probe fail-closed 422 and no probe_result was ever written. The
+//     invoker path is the ONLY path that actually evaluates free-text.
 //
 // A5-a outcome→resolution split (spec §10 A5 option a; retire semantics moved
 // INTO this wave from §8 defer):
@@ -26,17 +34,23 @@
 // not discriminate cleanly; injecting ambiguous evidence into an n=1
 // calibration anchor would poison the soft-track signal. The owner can re-answer
 // (the slot is still active) or resolve via the admin reader (S4).
+//
+// Idempotency: a cheap `peekExistingProbeResult` pre-check short-circuits a
+// re-answer to the RECORDED outcome/resolution WITHOUT invoking the judge (LLM
+// cost guard — mirrors acceptConjectureProposal's `existingAcceptRate` pattern).
+// A corrupt existing row falls through to `answerProbe`, which surfaces it as a
+// `probe_result_corrupt` 500 (never papered over).
 
-import { getDefaultRegistry } from '@/core/capability/judges';
+import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { JudgeKind, QuestionKind } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { answerProbe } from '../server/conjecture/probe-lifecycle';
+import { answerProbe, peekExistingProbeResult } from '../server/conjecture/probe-lifecycle';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
@@ -78,6 +92,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     const probeQuestionId = parsedParams.data.id;
 
+    // Intentional null fallback: an unparseable body is treated as an invalid
+    // request (→ 400 below), NOT a 500. This is request-validation gating, not a
+    // swallowed error — safeParse(null) produces a clear validation failure.
     const raw = await req.json().catch(() => null);
     const parsed = AnswerBody.safeParse(raw);
     if (!parsed.success) {
@@ -108,12 +125,26 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
 
-    // Isolated judge routing (ND-5): resolve the kind from the probe's structural
-    // shape, resolve the capability runner from the registry, and call run() PURE.
-    // This path never touches submit.ts / createDefaultJudgeInvoker / FSRS.
-    //
-    // The DB `kind` is a free-form text column; safeParse guards against a corrupt
-    // / unknown kind landing here (fail-closed 422 rather than a judge crash).
+    // Idempotency pre-check (LLM cost guard): if a probe_result is already
+    // recorded, short-circuit to the RECORDED values WITHOUT invoking the judge.
+    // answerProbe re-validates on its own locked path; peek is the cheap read-only
+    // front door. `coarse_outcome: null` signals "not judged this call".
+    const existing = await peekExistingProbeResult(db, probeQuestionId);
+    if (existing) {
+      return Response.json({
+        status: existing.status,
+        resolution: existing.status,
+        outcome: existing.outcome,
+        probe_result_event_id: existing.probe_result_event_id,
+        coarse_outcome: null,
+        idempotent: true,
+      });
+    }
+
+    // Early fail-closed on a corrupt / unknown question kind BEFORE spending an
+    // LLM call. The DB `kind` column is free-form text; safeParse guards against
+    // garbage. (The invoker's own route resolution would also catch this, but
+    // later — this guard saves the LLM cost on a corrupt row.)
     const kindParsed = QuestionKind.safeParse(probe.kind);
     if (!kindParsed.success) {
       throw new ApiError(
@@ -132,24 +163,23 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         422,
       );
     }
-    const judgeKind = defaultJudgeKindForQuestion({
-      kind: kindParsed.data,
-      judge_kind_override: overrideParsed?.data ?? null,
-      rubric_json: probe.rubric_json,
-    });
-    const runner = getDefaultRegistry().resolveJudge(judgeKind);
-    if (!runner) {
-      throw new ApiError(
-        'unsupported_judge_route',
-        `judge kind '${judgeKind}' has no registered capability runner`,
-        422,
-      );
-    }
 
-    const judgeResult = await runner.run({
-      question: probe as unknown as Record<string, unknown>,
-      answer: { content: answerMd },
+    // Judge via the standard invoker chokepoint (same path submit.ts uses).
+    // `resolveSubjectProfileForKnowledgeIds` always returns a profile (falls back
+    // to default on unresolvable knowledge id), so no null guard needed. ND-5
+    // preserved: invoke() is judge-only (zero FSRS/attempt writes); the sole write
+    // on this route is answerProbe's single probe_result event below.
+    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
+      db,
+      probe.knowledge_ids ?? [],
+    );
+    const invoked = await createDefaultJudgeInvoker().invoke({
+      db,
+      question: probe,
+      answer_md: answerMd,
+      subjectProfile,
     });
+    const judgeResult = invoked.result;
 
     const mapped = mapOutcome(judgeResult.coarse_outcome);
     if (mapped === null) {
