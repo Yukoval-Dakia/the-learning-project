@@ -413,6 +413,13 @@ export const ConjectureProposalChange = z.object({
   confidence: z.number().min(0).max(1),
   recurrence_count: z.number().int().min(2),
   probe_md: z.string().min(1).max(2000),
+  // conjecture-wire #13 (YUK-538 ⑬) — judge gold reference (single-writer: induced
+  // once, flows to serveProbeOnce.referenceMd → question.reference_md). max 2000
+  // mirrors ConjectureDraft.probe_reference_md (business.ts) — the draft feeds this
+  // payload directly, so the caps MUST stay in lockstep (a wider draft would let a
+  // 2001-char reference pass induction then throw at this parse-barrier, swallowed +
+  // mis-logged as a retryable AI failure — same trap as claim_md, see business.ts).
+  probe_reference_md: z.string().min(1).max(2000),
   discriminating: z.boolean(),
   corrected_by_owner: z.boolean().default(false),
   predicted_p: z.number().min(0).max(1),

@@ -370,6 +370,14 @@ export const ConjectureDraft = z.object({
   // parse-barrier → silently swallowed + mis-logged as a retryable AI failure.
   claim_md: z.string().min(1).max(280),
   probe_md: z.string().min(1).max(1000),
+  // conjecture-wire #13 (YUK-538 ⑬) — single-writer judge gold reference, produced
+  // once at induction by the same Opus sample that produces claim+probe (no runtime
+  // LLM regen). Flows draft → ConjectureProposalChange → serveProbeOnce.referenceMd →
+  // question.reference_md, where the answer route's judge run() reads it as the gold.
+  // max 2000 (looser than probe_md's 1000): a reference answer carries rationale /
+  // worked steps the probe prompt itself doesn't. Mirrors reference_md cap on the
+  // question table.
+  probe_reference_md: z.string().min(1).max(2000),
   cause_category: z.string().min(1).max(120),
   recurrence_count: z.number().int().min(2),
   predicted_p: z.number().min(0).max(1),
