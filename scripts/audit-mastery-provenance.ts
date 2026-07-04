@@ -276,7 +276,7 @@ export function validateAllowlistEntry(
   // loadAllowlist() casts JSON.parse output with an unsafe `as Allowlist`, so a hand-edited
   // allowlist may carry a null / non-object value. Guard first: report it gracefully as an
   // invalid entry rather than TypeError-crashing on entry.reason / entry.resolves_when.
-  if (entry === null || typeof entry !== 'object') {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
     return [
       {
         file,
@@ -410,6 +410,15 @@ export function computeProvenanceAudit(
     }
   }
 
+  // Reverse check: allowlist entries whose file is no longer in TRACKED_CONSUMERS are
+  // dead configuration (e.g. a consumer renamed and re-added under a new path). Surface
+  // them via the same redundantAllowlist channel so they fail --strict instead of
+  // silently accumulating.
+  const trackedSet = new Set(tracked);
+  for (const file of Object.keys(allowlist)) {
+    if (!trackedSet.has(file)) redundantAllowlist.push(file);
+  }
+
   return {
     verdicts,
     flagged,
@@ -436,7 +445,17 @@ function readFileOrNull(relPath: string): string | null {
 
 function loadAllowlist(): Allowlist {
   try {
-    return JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8')) as Allowlist;
+    const parsed: unknown = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8'));
+    // Syntactically-valid JSON can still be a non-object root (null / array / scalar).
+    // Object.hasOwn / allowlist[file] on such a value would misbehave (crash or coerce),
+    // so treat it like a corrupt file: diagnose to stderr and degrade to {} (fail-visible).
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.error(
+        `[audit:mastery-provenance] allowlist at ${ALLOWLIST_PATH} has a non-object root (${Array.isArray(parsed) ? 'array' : typeof parsed}); treating as empty — previously-allowlisted consumers will FLAG`,
+      );
+      return {};
+    }
+    return parsed as Allowlist;
   } catch (err) {
     // A corrupt / missing allowlist silently degrades to {} → every previously-allowlisted
     // consumer flips to FLAGGED (and --strict CI fails) with no visible root cause. Emit a
