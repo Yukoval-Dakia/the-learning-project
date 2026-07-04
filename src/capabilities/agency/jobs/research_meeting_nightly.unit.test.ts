@@ -70,6 +70,7 @@ function fakeInduced(input: InduceConjectureInput): InduceConjectureResult {
     draft: {
       claim_md: `你混淆 ${cell.knowledge_id}`,
       probe_md: `probe for ${cell.knowledge_id}`,
+      probe_reference_md: `reference answer for ${cell.knowledge_id}`,
       cause_category: cell.cause_category,
       recurrence_count: cell.recurrence_count,
       predicted_p: 0.3,

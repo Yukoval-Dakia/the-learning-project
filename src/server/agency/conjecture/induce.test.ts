@@ -31,6 +31,8 @@ function sample(
     text: `reasoning...\n${JSON.stringify({
       claim_md: claim,
       probe_md: "对 f(x)=sin(x^2)，写出 f'(x) 并说明用到链式法则的哪一层。",
+      // conjecture-wire #13 — judge gold reference (single-writer, produced with probe).
+      probe_reference_md: "f'(x)=2x·cos(x^2)；外层 cos·内层 2x（链式法则：外导 × 内导）。",
       cause_category: 'concept_confusion',
       recurrence_count: 3,
       predicted_p: extra.predicted_p ?? 0.3,
@@ -55,6 +57,8 @@ describe('induceConjecture self-consistency', () => {
     expect(result.draft.agreement_count).toBe(2);
     expect(result.draft.predicted_p).toBe(0.25); // dominant representative (first in cluster)
     expect(result.draft.discriminating).toBe(true);
+    // conjecture-wire #13 — judge gold reference flows through safeParse → draft.
+    expect(result.draft.probe_reference_md).toContain('cos(x^2)');
     expect(result.samples).toBe(3);
     expect(result.confidence).toBeCloseTo(2 / 3, 5);
     expect(result.confidence_capped).toBe(false);
@@ -106,6 +110,7 @@ describe('induceConjecture self-consistency', () => {
         structured_output: {
           claim_md: '你从单一例题过度泛化',
           probe_md: '这是例题没覆盖的新情形，请预测。',
+          probe_reference_md: '对新情形应用原例题的泛化规则，给出预测值与依据。',
           cause_category: 'concept_confusion',
           recurrence_count: 2,
           predicted_p: 0.4,

@@ -31,6 +31,7 @@ async function seedConjecture(kcId: string, claim: string): Promise<string> {
         confidence: 0.5,
         recurrence_count: 3,
         probe_md: `probe for ${claim}`,
+        probe_reference_md: `reference for ${claim}`,
         discriminating: true,
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
