@@ -36,6 +36,15 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/admin-subjects').then((m) => m.GET),
       },
       {
+        // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4) — calibration loop
+        // admin reader. READ-ONLY: prediction_score LOG events + auto-minted
+        // kc_typed_state confused-with-X rows. Honest score render (single-point
+        // brier/log_loss/skill_score, NOT «accuracy» nor a window mean).
+        method: 'GET',
+        path: '/api/admin/conjecture-scores',
+        load: () => import('./api/conjecture-scores').then((m) => m.GET),
+      },
+      {
         method: 'GET',
         path: '/api/cost/today',
         load: () => import('./api/cost-today').then((m) => m.GET),
