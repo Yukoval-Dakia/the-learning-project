@@ -41,6 +41,7 @@
 //   （与硬轨 difficulty 标签同纪律，见序列读取）。
 
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { event, item_calibration, question } from '@/db/schema';
 import { applyKtEstimate } from '@/server/mastery/kt-calibration';
 import { estimateBkt } from '@/server/mastery/kt-estimator';
@@ -141,8 +142,9 @@ export async function runKtEstimateNightly(
     .where(
       and(
         eq(item_calibration.track, 'hard'),
-        // G5：draft_status IS DISTINCT FROM 'draft'（NULL 也算非 draft）。
-        sql`${question.draft_status} IS DISTINCT FROM 'draft'`,
+        // G5：pool-visibility（NULL≡active，仅排字面 'draft'）——shared notDraftPredicate
+        //     （@/db/predicates；结果与 IS DISTINCT FROM 'draft' 逐值等价，见 spec §5.1）。
+        notDraftPredicate(question.draft_status),
         // 有 ≥1 条**客观 judge 锚定的**二元作答事件（无客观锚序列 → 不该有 KT 画像，省开销）。
         sql`EXISTS (
           SELECT 1 FROM ${event} AS ev

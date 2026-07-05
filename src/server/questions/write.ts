@@ -34,10 +34,11 @@
 // event carrying before/after values, so changes are traceable and reversible.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { writeEvent } from '@/server/events/queries';
@@ -388,10 +389,7 @@ export async function archiveQuestion(
         version: sql`${question.version} + 1`,
       })
       .where(
-        and(
-          eq(question.parent_question_id, questionId),
-          or(isNull(question.draft_status), ne(question.draft_status, 'draft')),
-        ),
+        and(eq(question.parent_question_id, questionId), notDraftPredicate(question.draft_status)),
       )
       .returning({ id: question.id });
     const cascadedPartIds = cascaded.map((r) => r.id);

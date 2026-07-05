@@ -37,11 +37,12 @@ import { pickProbeForKnowledge } from '@/capabilities/practice/server/variant-ro
 import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { type Db, db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
 import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/server/events/queries';
 import { errorResponse } from '@/server/http/errors';
-import { and, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).
@@ -232,8 +233,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
     // YUK-350 (L2, RL2) — embedded/teaching checks are NO LONGER NULL-stays-in-pool:
     // they now land draft_status='draft' (container-only by design), so this predicate
     // already excludes them. NULL-stays-in-pool remains the truth ONLY for auto-enroll
-    // / legacy rows.
-    const notDraftQuiz = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
+    // / legacy rows. Single definition: notDraftPredicate (@/db/predicates).
 
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
     const usedDueQuestionIds = new Set<string>();
@@ -294,7 +294,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
         and(
           eq(material_fsrs_state.subject_kind, 'question'),
           lte(material_fsrs_state.due_at, now),
-          notDraftQuiz,
+          notDraftPredicate(question.draft_status),
         ),
       )
       .orderBy(material_fsrs_state.due_at, question.created_at)
@@ -434,8 +434,8 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           })
           .from(question)
           // Gate-B invariant: never surface an unverified quiz draft, even if it
-          // somehow carries a failure attempt (see `notDraftQuiz` above).
-          .where(and(inArray(question.id, trulyNew), notDraftQuiz));
+          // somehow carries a failure attempt (notDraftPredicate — see the Gate-B note above).
+          .where(and(inArray(question.id, trulyNew), notDraftPredicate(question.draft_status)));
         const qById = new Map(qRows.map((q) => [q.id, q]));
         // Preserve attempt order (newest-first from getFailureAttempts).
         for (const qid of trulyNew) {

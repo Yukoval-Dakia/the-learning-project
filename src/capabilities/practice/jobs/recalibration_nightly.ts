@@ -36,6 +36,7 @@
 //     last_calibrated_at——never item b / stream / due。本 job 不新增任何写。
 
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { difficulty_calibration_label, item_calibration, question } from '@/db/schema';
 import {
   RECALIBRATION_MIN_LABELS,
@@ -136,8 +137,9 @@ export async function runRecalibrationNightly(
         eq(item_calibration.track, 'hard'),
       ),
     )
-    // G5：draft_status IS DISTINCT FROM 'draft'（NULL 也算非 draft）。
-    .where(sql`${question.draft_status} IS DISTINCT FROM 'draft'`)
+    // G5：pool-visibility（NULL≡active，仅排字面 'draft'）——shared notDraftPredicate
+    //     （@/db/predicates；结果与 IS DISTINCT FROM 'draft' 逐值等价，见 spec §5.1）。
+    .where(notDraftPredicate(question.draft_status))
     .groupBy(difficulty_calibration_label.question_id)
     .having(
       and(

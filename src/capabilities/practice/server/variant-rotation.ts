@@ -20,8 +20,9 @@
 
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db } from '@/db/client';
+import { isPoolVisible, notDraftPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
-import { and, eq, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
+import { and, eq, notInArray, or, sql } from 'drizzle-orm';
 
 // ADR-0030 §1 — by-kind routing class.
 export type RotationClass = 'recall' | 'application';
@@ -103,10 +104,6 @@ const QUESTION_PROJECTION = {
   draft_status: question.draft_status,
 } as const;
 
-// Gate-B non-draft predicate — same三-valued-logic-safe shape as due-list's
-// `notDraftQuiz` (NULL stays in pool; only literal 'draft' excluded).
-const notDraft = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
-
 function knowledgeContains(knowledgeId: string) {
   return sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`;
 }
@@ -121,10 +118,6 @@ function toProbe(row: QuestionRow): SelectedProbe {
     source: row.source,
     metadata: row.metadata,
   };
-}
-
-function isNonDraft(row: { draft_status: string | null }): boolean {
-  return row.draft_status === null || row.draft_status !== 'draft';
 }
 
 // Resolve the question id presented at the knowledge point's LAST review:
@@ -172,7 +165,11 @@ async function firstForKnowledge(
     .select(QUESTION_PROJECTION)
     .from(question)
     .where(
-      and(knowledgeContains(knowledgeId), notDraft, notInArray(question.id, [...usedQuestionIds])),
+      and(
+        knowledgeContains(knowledgeId),
+        notDraftPredicate(question.draft_status),
+        notInArray(question.id, [...usedQuestionIds]),
+      ),
     )
     .orderBy(question.created_at, question.id)
     .limit(1)) as QuestionRow[];
@@ -196,7 +193,7 @@ async function readFamily(
       and(
         or(eq(question.root_question_id, familyRoot), eq(question.id, familyRoot)),
         knowledgeContains(knowledgeId),
-        notDraft,
+        notDraftPredicate(question.draft_status),
       ),
     )) as QuestionRow[];
 }
@@ -259,7 +256,7 @@ export async function pickProbeForKnowledge(
     // Original-question repeat: re-present the same question iff it is still
     // non-draft, still tagged K, and not already used this page.
     const stillTagsK = (lastQuestion.knowledge_ids ?? []).includes(knowledgeId);
-    if (isNonDraft(lastQuestion) && stillTagsK && !usedQuestionIds.has(lastQuestion.id)) {
+    if (isPoolVisible(lastQuestion) && stillTagsK && !usedQuestionIds.has(lastQuestion.id)) {
       usedQuestionIds.add(lastQuestion.id);
       return toProbe(lastQuestion);
     }
