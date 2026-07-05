@@ -270,7 +270,7 @@ JS twins are shape-indistinguishable from F2 promote guards, so JS detection can
 Mirror `audit-relations.ts`'s CLI tail:
 - default → print report (sites scanned, F1 inline hits by dialect, `UNKNOWN-SHAPE`, allowlist drift/hygiene), **`exit 0` always**.
 - `--json` → machine output.
-- `--strict` → `process.exit(1)` on any hand-rolled F1 inline (non-helper, non-allowlisted) OR any `UNKNOWN-SHAPE` OR allowlist hygiene issue (+ `UNCLASSIFIED-JS` if Engine B is shipped).
+- `--strict` → `process.exit(1)` on any **non-allowlisted** hand-rolled F1 inline OR **non-allowlisted** `UNKNOWN-SHAPE` OR allowlist hygiene / helper-def sentinel issue (+ `UNCLASSIFIED-JS` if Engine B is shipped). **(Review-fix, YUK-569 finding 1:** `UNKNOWN-SHAPE` is file-allowlistable — a genuinely-benign non-predicate raw read of the column (`SELECT COUNT(draft_status)` / `GROUP BY draft_status`) gets an escape hatch instead of hard-failing `pnpm test` with no recourse; a NEW `UNKNOWN` still fails closed until migrated to the helper or consciously allowlisted with reason+resolves_when, so novel pool predicates cannot proliferate silently.**)
 - CLI guard: `if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))` so pure functions are unit-importable without firing the walk.
 
 **Test wiring recommendation (single PR, G1–G4 together):**

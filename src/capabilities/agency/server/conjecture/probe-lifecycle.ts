@@ -6,8 +6,8 @@
 // THREE LOAD-BEARING INVARIANTS (the whole point of this unit):
 //
 //   1. POOL-INVISIBILITY — the probe question is inserted `draft_status='draft'`
-//      + `source='mind_probe'`. The due-list filter (due-list.ts:236 `notDraftQuiz
-//      = or(isNull(draft_status), ne(draft_status, 'draft'))`) excludes every
+//      + `source='mind_probe'`. The shared pool filter `notDraftPredicate`
+//      (src/db/predicates.ts = `or(isNull(draft_status), ne(draft_status, 'draft'))`) excludes every
 //      'draft' row from EVERY review pool, so a served probe NEVER appears in
 //      /api/review/due. This is the recurrence regression-lock (roadmap U3).
 //
@@ -151,7 +151,7 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
         // Provenance: trace the probe question back to its conjecture event.
         source_ref: conjectureProposalId,
         // INVARIANT #1 (pool-invisibility / recurrence regression-lock): 'draft' so
-        // due-list.ts:236 notDraftQuiz excludes it from EVERY review pool, forever.
+        // notDraftPredicate (src/db/predicates.ts) excludes it from EVERY review pool, forever.
         draft_status: 'draft',
         metadata: {
           conjecture_proposal_id: conjectureProposalId,

@@ -29,12 +29,18 @@
  * UNKNOWN-SHAPE backstop (§6.2): any `draft_status` token inside a sql`` template that is
  * neither helper-routed nor R1/R2 is reported UNKNOWN-SHAPE (needs triage) rather than
  * silently passing — this catches novel raw-SQL dialects (NOT IN / coalesce(...) /
- * IS DISTINCT FROM 'active' / cross-variable predicates). KNOWN LIMITATION (mirrors the
- * INSERT audit's regex-shape blind-spot docblock): the backstop is scoped to sql``-template
- * context; a novel DRIZZLE-combinator dialect in plain code (e.g. not(eq(col,'draft'))) is
- * caught only by D1's positive match, so a genuinely novel drizzle form would escape. Spec
- * Appendix A confirms no such executable dialect exists at baseline; adding one should route
- * through the helper.
+ * IS DISTINCT FROM 'active' / cross-variable predicates). UNKNOWN is FILE-ALLOWLISTABLE
+ * (YUK-569 review finding 1): a genuinely-benign non-predicate raw read of the column
+ * (`SELECT COUNT(draft_status)`, `GROUP BY draft_status`) — which is not a pool predicate but
+ * still mentions the token inside a sql`` — has an escape hatch (allowlist the file with a
+ * reason + resolves_when) instead of hard-failing `pnpm test` with no recourse. A NEW UNKNOWN
+ * still fails closed until someone migrates it to the helper or consciously allowlists it, so
+ * novel pool predicates cannot proliferate silently. KNOWN LIMITATION (mirrors the INSERT
+ * audit's regex-shape blind-spot docblock): the backstop is scoped to sql``-template context;
+ * a novel DRIZZLE-combinator dialect in plain code (e.g. not(eq(col,'draft'))) is caught only
+ * by D1's positive match, so a genuinely novel drizzle form would escape. Spec Appendix A
+ * confirms no such executable dialect exists at baseline; adding one should route through the
+ * helper.
  *
  * ── Engine B — JS closed-world ledger — DEFERRED (§6.3 C3) ─────────────────────────────
  * JS twins (`row.draft_status !== 'draft'`) are shape-INDISTINGUISHABLE from F2 promote
@@ -48,8 +54,8 @@
  * 用法：
  *   pnpm audit:draft-status-reads          # report-only (exit 0 always)
  *   pnpm audit:draft-status-reads --json   # machine output
- *   pnpm audit:draft-status-reads --strict # exit 1 on any hand-rolled F1 inline (non-helper,
- *                                          # non-allowlisted) OR UNKNOWN-SHAPE OR allowlist
+ *   pnpm audit:draft-status-reads --strict # exit 1 on any non-allowlisted hand-rolled F1 inline
+ *                                          # OR non-allowlisted UNKNOWN-SHAPE OR allowlist
  *                                          # hygiene / helper-def sentinel issue
  *
  * ── OWNER-DECISION note (§6.6) ────────────────────────────────────────────────────────
@@ -253,14 +259,20 @@ export type ReadAuditResult = {
   hits: ReadHit[];
   allowlisted: ReadHit[];
   unknown: UnknownHit[];
+  allowlistedUnknown: UnknownHit[];
   hygieneIssues: HygieneIssue[];
   helperDefIssues: string[];
 };
 
 /**
- * Core gate: a hand-rolled F1 inline hit fails unless its file is allowlisted. UNKNOWN-SHAPE,
- * allowlist-hygiene, and helper-def sentinel issues always fail (never allowlistable — §6.6).
- * Exported pure for unit testing.
+ * Core gate: a hand-rolled F1 inline hit OR an UNKNOWN-SHAPE draft_status token fails unless its
+ * FILE is allowlisted (file-level exception, same reason+resolves_when contract as the INSERT
+ * audit). UNKNOWN is allowlistable so a genuinely-benign non-predicate raw read of the column
+ * (`SELECT COUNT(draft_status)` / `GROUP BY draft_status`) has an escape hatch instead of hard-
+ * failing `pnpm test` with no recourse (YUK-569 review finding 1) — but a NEW UNKNOWN still
+ * fails closed until someone consciously migrates it or allowlists it with a tracked, expiring
+ * reason, so novel pool predicates can't proliferate silently. Allowlist-hygiene and helper-def
+ * sentinel issues always fail (never allowlistable). Exported pure for unit testing.
  */
 export function validateReadGate(
   hits: ReadHit[],
@@ -277,12 +289,26 @@ export function validateReadGate(
     if (allowed.has(hit.file)) allowlisted.push(hit);
     else flagged.push(hit);
   }
+  const flaggedUnknown: UnknownHit[] = [];
+  const allowlistedUnknown: UnknownHit[] = [];
+  for (const u of unknown) {
+    if (allowed.has(u.file)) allowlistedUnknown.push(u);
+    else flaggedUnknown.push(u);
+  }
   const ok =
     flagged.length === 0 &&
-    unknown.length === 0 &&
+    flaggedUnknown.length === 0 &&
     hygieneIssues.length === 0 &&
     helperDefIssues.length === 0;
-  return { ok, hits: flagged, allowlisted, unknown, hygieneIssues, helperDefIssues };
+  return {
+    ok,
+    hits: flagged,
+    allowlisted,
+    unknown: flaggedUnknown,
+    allowlistedUnknown,
+    hygieneIssues,
+    helperDefIssues,
+  };
 }
 
 // ---------- CLI ----------
@@ -324,7 +350,8 @@ function main(): void {
     console.log(`  source files scanned:            ${files.length}`);
     console.log(`  hand-rolled F1 inline (flagged): ${result.hits.length}`);
     console.log(`  allowlisted F1 inline:           ${result.allowlisted.length}`);
-    console.log(`  UNKNOWN-SHAPE (needs triage):    ${result.unknown.length}\n`);
+    console.log(`  UNKNOWN-SHAPE (flagged):         ${result.unknown.length}`);
+    console.log(`  allowlisted UNKNOWN-SHAPE:       ${result.allowlistedUnknown.length}\n`);
 
     if (result.helperDefIssues.length > 0) {
       console.log(`HELPER-DEF / SENTINEL ISSUE:  ${result.helperDefIssues.length}`);
