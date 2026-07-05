@@ -1010,6 +1010,9 @@ export function getTaskSystemPrompt(
     // ride in the input, not the prompt voice, and the 归因研究员 instructions are generic
     // across subjects. Joins the pass-through group (registry-inline systemPrompt IS the
     // runtime SoT) — no profile builder.
+    // YUK-538 — ClaimGroupingTask is subject-NEUTRAL: structural grouping task whose
+    // prompt is entirely generic (no subject voice). Joins the pass-through group.
+    case 'ClaimGroupingTask':
     case 'MindModelInductionTask':
       return tasks[task].systemPrompt;
     default:
