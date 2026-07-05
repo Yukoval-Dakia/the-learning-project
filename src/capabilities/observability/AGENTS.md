@@ -5,11 +5,12 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 11 条 API 路由 + admin 四页 ui.pages |
+| `manifest.ts` | 13 条 API 路由 + admin 四页 ui.pages |
 | `api/admin-runs.ts` / `admin-run-detail.ts` | AI task runs 列表与时间线 |
 | `api/admin-cost.ts` / `cost-today.ts` | cost 汇总与今日成本条 |
 | `api/admin-failures.ts` | failure 聚类 |
 | `api/admin-subjects.ts` | subject registry 只读视图 |
+| `api/conjecture-scores.ts` | conjecture 判别探针 A4 双读 reader（`/api/admin/conjecture-scores`：`prediction_score` + auto-mint `kc_typed_state` confused-with-X，#13 通电） |
 | `api/calibration-maturity.ts` / `effectiveness-trend.ts` | 成效趋势只读面 |
 | `api/backup-export.ts` / `backup-import.ts` | 备份/恢复（破坏性，需 confirm） |
 | `api/event-correct.ts` | 统一事件流撤回 |
