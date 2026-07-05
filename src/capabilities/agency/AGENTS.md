@@ -5,8 +5,8 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 2 条 API 路由 + 5 个 cron job + 6 proposal kinds + 5 copilot tools + 1 event action + todayBlock |
-| `api/*.ts` | agent-notes、goal-create |
+| `manifest.ts` | 3 条 API 路由 + 5 个 cron job + 6 proposal kinds + 5 copilot tools + 1 event action + todayBlock |
+| `api/*.ts` | agent-notes、goal-create、probe-answer（conjecture 判别探针作答，#13 通电——与 attempt/FSRS 写面隔离，只写 1 个 `experimental:probe_result` 事件） |
 | `server/` | dreaming nightly、coach daily/weekly、goal scope propose、conjecture、agent-notes、proposal-appliers |
 | `jobs/` | `dreaming_nightly`、`coach_daily`、`coach_weekly`、`goal_scope_propose_nightly`、`research_meeting_nightly` |
 | `ui/AgentNotesPage.tsx` | `/agent-notes` 观察窗 |
