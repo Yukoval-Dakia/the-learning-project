@@ -29,6 +29,7 @@ import { ConjectureDraft, type ConjectureDraftT } from '@/core/schema/business';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { EvidenceCell } from '@/server/conjectures/evidence';
+import { z } from 'zod';
 
 export interface InduceConjectureInput {
   /** Deterministic 取证 cells for ONE candidate (the job passes one salient cell). */
@@ -78,6 +79,79 @@ function claimKey(claim: string): string {
   return claim.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// YUK-538 — GroupSchema: structural output contract for ClaimGroupingTask.
+// Local constant — not exported, not persisted.
+const GroupSchema = z.object({
+  groups: z.array(z.array(z.number().int().min(0)).min(1)).min(1),
+});
+
+interface DeduplicateClaimsResult {
+  groups: number[][];
+  cost_usd: number;
+  task_run_id: string | undefined;
+}
+
+/**
+ * Groups claim indices by semantic equivalence via a single ClaimGroupingTask call.
+ * Always called when dominant.length < drafts.length (i.e., not unanimous via claimKey).
+ *
+ * Returns index groups, accumulated cost, and the task_run_id for provenance.
+ * Falls back to all-singletons on any failure (throw, parse error, or coverage mismatch)
+ * — graceful degradation restores original claimKey behaviour rather than crashing
+ * the nightly cell.
+ */
+async function deduplicateClaims(
+  claims: string[],
+  runTaskFn: TaskTextRunFn,
+): Promise<DeduplicateClaimsResult> {
+  const singleton = (): DeduplicateClaimsResult => ({
+    groups: claims.map((_, i) => [i]),
+    cost_usd: 0,
+    task_run_id: undefined,
+  });
+
+  if (claims.length <= 1) {
+    return { groups: [claims.map((_, i) => i)], cost_usd: 0, task_run_id: undefined };
+  }
+
+  let result: TaskTextResult;
+  try {
+    result = await runTaskFn(
+      'ClaimGroupingTask',
+      { claims },
+      { outputFormat: zodToJsonSchemaOutputFormat(GroupSchema) },
+    );
+  } catch {
+    return singleton();
+  }
+
+  // Parse structured output; fall back to text char-scan on missing structured_output.
+  const raw: unknown =
+    result.structured_output ??
+    (() => {
+      const s = result.text.indexOf('{');
+      const e = result.text.lastIndexOf('}');
+      if (s === -1 || e === -1 || e < s) return null;
+      try {
+        return JSON.parse(result.text.slice(s, e + 1));
+      } catch {
+        return null;
+      }
+    })();
+
+  const parsed = raw ? GroupSchema.safeParse(raw) : { success: false as const };
+  if (!parsed.success) return singleton();
+
+  // Coverage guard: flat count (not set size) catches duplicate indices.
+  if (parsed.data.groups.flat().length !== claims.length) return singleton();
+
+  return {
+    groups: parsed.data.groups,
+    cost_usd: result.cost_usd ?? 0,
+    task_run_id: result.task_run_id,
+  };
+}
+
 export async function induceConjecture(
   input: InduceConjectureInput,
 ): Promise<InduceConjectureResult> {
@@ -117,7 +191,7 @@ export async function induceConjecture(
     throw new Error('induceConjecture: no sample produced a valid ConjectureDraft');
   }
 
-  // Cluster by normalized claim; the dominant cluster wins, agreement = its size.
+  // Fast path: claimKey clustering (byte-identical after normalisation).
   const clusters = new Map<string, ConjectureDraftT[]>();
   for (const d of drafts) {
     const key = claimKey(d.claim_md);
@@ -129,9 +203,36 @@ export async function induceConjecture(
   for (const bucket of clusters.values()) {
     if (bucket.length > dominant.length) dominant = bucket;
   }
+
+  // Semantic dedup: fires whenever samples are not byte-identical unanimous.
+  // This is the primary post-fast-path step, not a rare fallback — at temperature > 0
+  // with N=3 on Opus, all three samples will almost always produce distinct surface
+  // strings, so this call fires on essentially every nightly invocation.
+  // Cost: +1 ClaimGroupingTask (mimo default, not Opus) per conjecture per run.
+  // The grouping call is non-deterministic: confidence reflects the expected value
+  // of agreement, not a stable per-run signal. Downstream thresholds must treat
+  // confidence as a distribution, not a point estimate.
+  if (dominant.length < drafts.length && drafts.length > 1) {
+    const dedup = await deduplicateClaims(
+      drafts.map((d) => d.claim_md),
+      runTaskFn,
+    );
+    // Accumulate cost + provenance from the dedup call.
+    costUsd += dedup.cost_usd;
+    if (dedup.task_run_id) taskRunIds.push(dedup.task_run_id);
+
+    // Re-map groups to draft arrays; pick the largest group as dominant.
+    // Tie-break: smallest minimum index (preserves first-run-first selection
+    // convention, making claim_md selection deterministic on size ties).
+    const groupDrafts = dedup.groups
+      .map((g) => ({ drafts: g.map((i) => drafts[i]), minIdx: Math.min(...g) }))
+      .sort((a, b) => b.drafts.length - a.drafts.length || a.minIdx - b.minIdx);
+    dominant = groupDrafts[0].drafts;
+  }
+
   const agreement = dominant.length;
-  // Self-consistency confidence = agreement fraction over the N samples REQUESTED
-  // (not parsed) — a sample that failed to parse is a non-agreement, not ignored.
+  // confidence denominator is `samples` (requested), not `drafts.length` (parsed) —
+  // a failed parse is a non-agreement, not ignored. Unchanged from original.
   let confidence = agreement / samples;
 
   // Judge-only-evidence cap: every supporting cell is agent-judge, no owner cause.
