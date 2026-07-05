@@ -284,7 +284,7 @@ describe('induceConjecture self-consistency', () => {
     expect((dedupCall[1] as { claims: string[] }).claims).toHaveLength(2);
   });
 
-  it('dedup falls back when LLM returns duplicate indices (flat count mismatch)', async () => {
+  it('dedup falls back when LLM returns extra indices (flat count > N)', async () => {
     const runTaskFn = vi
       .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
       .mockResolvedValueOnce(sample('A'))
@@ -295,12 +295,29 @@ describe('induceConjecture self-consistency', () => {
           [0, 1, 2],
           [1, 2],
         ]),
-      ); // flat count=5, not 3
+      ); // flat count=5 ≠ N=3 → partition invalid
 
     const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
 
-    // Falls back to claimKey singletons.
     expect(result.draft.agreement_count).toBe(1);
     expect(result.confidence).toBeCloseTo(1 / 3, 5);
+  });
+
+  it('dedup falls back on in-range duplicate indices (flat count = N but not a partition)', async () => {
+    // [[0, 0], [1]] has flat length 3 = N=3 but index 0 is duplicated and index 2 missing.
+    // The old flat-length guard missed this; the partition check catches it.
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockResolvedValueOnce(sample('A'))
+      .mockResolvedValueOnce(sample('B'))
+      .mockResolvedValueOnce(sample('C'))
+      .mockResolvedValueOnce(groupResult([[0, 0], [1]])); // flat=[0,0,1], length=3=N but 0 duplicated, 2 missing
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    // Partition check rejects → falls back to claimKey singletons.
+    expect(result.draft.agreement_count).toBe(1);
+    expect(result.confidence).toBeCloseTo(1 / 3, 5);
+    expect(runTaskFn).toHaveBeenCalledTimes(4); // 3 induction + 1 dedup
   });
 });

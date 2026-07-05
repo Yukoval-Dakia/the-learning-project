@@ -121,7 +121,9 @@ async function deduplicateClaims(
       { claims },
       { outputFormat: zodToJsonSchemaOutputFormat(GroupSchema) },
     );
-  } catch {
+  } catch (err) {
+    // Warn so nightly pipeline failures are observable (silent degradation masks persistent issues).
+    console.warn('[induceConjecture] ClaimGroupingTask failed, falling back to singletons:', err);
     return singleton();
   }
 
@@ -142,8 +144,13 @@ async function deduplicateClaims(
   const parsed = raw ? GroupSchema.safeParse(raw) : { success: false as const };
   if (!parsed.success) return singleton();
 
-  // Coverage guard: flat count (not set size) catches duplicate indices.
-  if (parsed.data.groups.flat().length !== claims.length) return singleton();
+  // Coverage guard: verify groups form a complete partition of 0..N-1
+  // (each index appears exactly once — catches duplicates, gaps, and out-of-range indices).
+  // A flat-length-only check passes e.g. [[0,0],[1]] (length=3=N but index 0 duplicated).
+  const flatSorted = [...parsed.data.groups.flat()].sort((a, b) => a - b);
+  const isPartition =
+    flatSorted.length === claims.length && flatSorted.every((v, i) => v === i);
+  if (!isPartition) return singleton();
 
   return {
     groups: parsed.data.groups,
