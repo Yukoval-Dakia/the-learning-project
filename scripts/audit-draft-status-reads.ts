@@ -83,7 +83,10 @@ const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude'
 // sentinel marker so a rename that forgets to update this constant fails loud (§6.4 point 1).
 export const HELPER_DEF_FILES = ['src/db/predicates.ts'];
 export const HELPER_SENTINEL = '// AUDIT-DRAFT-READS: canonical-definition';
-const HELPER_CALL_MARK = 'notDraftPredicate(';
+// A helper-routed sql`` interpolation `${notDraftPredicate(<col>.draft_status)}`. Masked (not
+// whole-span-skipped) before scanning so a MIXED template — a helper call PLUS a separate
+// hand-rolled predicate — still gets the hand-rolled part flagged (CodeRabbit YUK-569).
+const HELPER_SQL_INTERPOLATION = /\$\{\s*notDraftPredicate\s*\([^}]*\bdraft_status\b[^}]*\)\s*\}/g;
 
 // ---------- allowlist contract (reuse the INSERT audit's validateAllowlistHygiene) ----------
 
@@ -148,11 +151,6 @@ const R1 = /IS\s+NULL\s+OR\b[\s\S]{0,80}?(?:<>|!=)\s*['"]draft['"]/i;
 // R2 — raw NULL-safe canonical form inside a sql`` template.
 const R2 = /draft_status[\s\S]{0,40}?IS\s+DISTINCT\s+FROM\s+['"]draft['"]/i;
 
-function firstDraftIndexIn(src: string, start: number, end: number): number {
-  const idx = src.slice(start, end).search(/\bdraft_status\b/);
-  return idx === -1 ? start : start + idx;
-}
-
 function snippetAt(src: string, index: number): string {
   const lineStart = src.lastIndexOf('\n', index) + 1;
   let lineEnd = src.indexOf('\n', index);
@@ -187,20 +185,25 @@ export function scanReads(file: string, src: string): { hits: ReadHit[]; unknown
     }
   }
 
-  // R1/R2 + helper-routed + UNKNOWN — one verdict per sql`` template that mentions draft_status.
+  // R1/R2 + UNKNOWN — one verdict per sql`` template that still mentions draft_status AFTER
+  // masking helper-routed interpolations. Masking (not whole-span skipping) means a MIXED
+  // template — a `${notDraftPredicate(...)}` call PLUS a separate hand-rolled predicate — still
+  // gets the hand-rolled part flagged (CodeRabbit YUK-569). Same-length space masking preserves
+  // absolute indices, so `span.start + rel` and snippetAt(src, ...) report the real line.
   for (const span of sqlSpans) {
     const text = src.slice(span.start, span.end + 1);
-    if (!text.includes('draft_status')) continue;
-    if (text.includes(HELPER_CALL_MARK)) continue; // migrated / helper-routed → covered.
-    const at = firstDraftIndexIn(src, span.start, span.end + 1);
-    if (R2.test(text)) {
+    const uncovered = text.replace(HELPER_SQL_INTERPOLATION, (m) => ' '.repeat(m.length));
+    const rel = uncovered.search(/\bdraft_status\b/);
+    if (rel === -1) continue; // no draft_status outside a helper interpolation → covered.
+    const at = span.start + rel;
+    if (R2.test(uncovered)) {
       hits.push({
         file,
         line: lineOf(src, at),
         dialect: 'is-distinct-from',
         snippet: snippetAt(src, at),
       });
-    } else if (R1.test(text) && text.includes('draft_status')) {
+    } else if (R1.test(uncovered)) {
       hits.push({
         file,
         line: lineOf(src, at),
