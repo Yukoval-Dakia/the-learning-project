@@ -92,7 +92,7 @@ Development loop:
 - UI/core/schema/prompt/parser changes: run `pnpm test:unit:watch <test-file>` and touched-file Biome.
 - API/DB/route/job changes: run `pnpm test:db:watch <test-file>`.
 - Migration SQL changes: run `pnpm test:migration`.
-- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, `pnpm audit:profile`, `pnpm audit:draft-status`, `pnpm test`, and `pnpm build`. `pnpm build` 经 esbuild 全量 bundle（server/worker/migrate 三 .cjs）+ Vite build，catch tsc/biome/vitest 都漏的 bundle 期错误（per YUK-67）。
+- Before PR: run `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`, `pnpm audit:partition`, `pnpm audit:profile`, `pnpm audit:draft-status`, `pnpm audit:draft-status-reads`, `pnpm test`, and `pnpm build`. `pnpm build` 经 esbuild 全量 bundle（server/worker/migrate 三 .cjs）+ Vite build，catch tsc/biome/vitest 都漏的 bundle 期错误（per YUK-67）。
 
 Single test: `pnpm vitest run --config vitest.unit.config.ts path/to/file.test.ts -t 'name'` for no-DB tests, or `pnpm vitest run --config vitest.db.config.ts path/to/file.test.ts -t 'name'` for DB/API tests.
 

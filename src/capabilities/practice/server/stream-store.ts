@@ -26,7 +26,9 @@ import {
 import { ApiError } from '@/server/http/errors';
 // YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from '@/server/question-supply/refill';
-import { and, asc, eq, gte, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+
+import { notDraftPredicate } from '@/db/predicates';
 
 import { QuestionKind } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
@@ -102,10 +104,9 @@ async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, s
 }
 
 export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
-  // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'。
-  //   谓词与 due-list.ts 的 notDraftQuiz 同形（NULL≡active / 'active' 留池，仅排 'draft'；NULL 需
-  //   显式 isNull，否则 `<> 'draft'` 在三值逻辑下会误丢 NULL 行）。new_check + frontier 共用。
-  const notDraft = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
+  // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'
+  //   （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
+  //   notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
 
   // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
   const dueRes = await handleReviewDue(
@@ -175,7 +176,12 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
         const [q] = await db
           .select({ id: question.id })
           .from(question)
-          .where(and(sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`, notDraft))
+          .where(
+            and(
+              sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
+              notDraftPredicate(question.draft_status),
+            ),
+          )
           .limit(1);
         if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: kid });
       }
@@ -208,7 +214,12 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     const [q] = await db
       .select({ id: question.id })
       .from(question)
-      .where(and(sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`, notDraft))
+      .where(
+        and(
+          sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`,
+          notDraftPredicate(question.draft_status),
+        ),
+      )
       // Deterministic pick (reproducible composition) — the new_check sibling omits this;
       // frontier is net-new so we make it stable from the start.
       .orderBy(question.id)
