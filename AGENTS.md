@@ -71,7 +71,7 @@ src/
   core/          # 跨学科 Zod schema、capability registry、id helpers（无 IO）
   db/            # Drizzle schema.ts + Postgres client
   ai/            # 浏览器侧 task registry + prompt builder（不持 key）
-  server/        # 旧 server-only 业务层（采石场：仍运行，逐步迁入 capabilities）
+  server/        # 旧 server-only 业务层（采石场：仍运行，逐步迁入 capabilities；子模块精确数以 `ls src/server/*/` 为准）
   subjects/      # 单学科 bundle：wenyan / math / physics
   ui/            # 共享 React 设计系统
 scripts/         # worker.ts + migrate.ts + dev-local.ts + audits
