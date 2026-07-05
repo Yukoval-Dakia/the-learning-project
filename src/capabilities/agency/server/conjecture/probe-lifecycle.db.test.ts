@@ -3,8 +3,8 @@
 //   1. POOL-INVISIBILITY / recurrence regression-lock — a served `mind_probe`
 //      'draft' question NEVER surfaces in due-list.ts output, even when it carries
 //      a failure attempt that would otherwise make it eligible for the
-//      never-reviewed slice (this is what exercises the notDraftQuiz filter at
-//      due-list.ts:438 — remove draft_status='draft' and this test goes red).
+//      never-reviewed slice (this is what exercises the notDraftPredicate filter
+//      in due-list.ts — remove draft_status='draft' and this test goes red).
 //   2. ≤3 concurrent active probes (MAX_CONCURRENT_ACTIVE_PROBES) + freeing on answer.
 //   3. ND-5 — answering writes exactly ONE canonical experimental:probe_result
 //      event and ZERO attempt events / ZERO FSRS rows.
@@ -170,7 +170,7 @@ describe('probe one-shot lifecycle (U3)', () => {
     if (served.status !== 'served') throw new Error('expected served');
 
     // Make the probe eligible for the never-reviewed slice; the ONLY thing keeping
-    // it out of the pool must be draft_status='draft' (due-list.ts:438 notDraftQuiz).
+    // it out of the pool must be draft_status='draft' (notDraftPredicate in due-list.ts).
     await seedFailureAttempt(served.probe_question_id);
 
     const rows = await dueRows();

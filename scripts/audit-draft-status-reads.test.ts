@@ -260,9 +260,18 @@ describe('validateReadGate — gate semantics (drives --strict exit)', () => {
     expect(res.allowlisted).toHaveLength(1);
   });
 
-  it('ok=false when an UNKNOWN-SHAPE hit is present (never allowlistable)', () => {
+  it('ok=false when a non-allowlisted UNKNOWN-SHAPE hit is present', () => {
     const res = validateReadGate([], [{ file: 'src/x.ts', line: 2, snippet: '' }], {}, {}, []);
     expect(res.ok).toBe(false);
+    expect(res.unknown).toHaveLength(1);
+  });
+
+  it('ok=true when an UNKNOWN-SHAPE hit is allowlisted (benign non-predicate read escape hatch)', () => {
+    const unknownHit = [{ file: 'src/x.ts', line: 2, snippet: '' }];
+    const res = validateReadGate([], unknownHit, cleanAllowlist, cleanAllowlist, []);
+    expect(res.ok).toBe(true);
+    expect(res.unknown).toHaveLength(0);
+    expect(res.allowlistedUnknown).toHaveLength(1);
   });
 
   it('ok=false when a helper-def sentinel issue is present', () => {
