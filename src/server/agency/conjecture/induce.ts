@@ -148,8 +148,7 @@ async function deduplicateClaims(
   // (each index appears exactly once — catches duplicates, gaps, and out-of-range indices).
   // A flat-length-only check passes e.g. [[0,0],[1]] (length=3=N but index 0 duplicated).
   const flatSorted = [...parsed.data.groups.flat()].sort((a, b) => a - b);
-  const isPartition =
-    flatSorted.length === claims.length && flatSorted.every((v, i) => v === i);
+  const isPartition = flatSorted.length === claims.length && flatSorted.every((v, i) => v === i);
   if (!isPartition) return singleton();
 
   return {
