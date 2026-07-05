@@ -33,6 +33,7 @@ vi.mock('@/server/session/placement', async (importOriginal) => {
 
 import { seedKnowledge as seedSubjectRoots } from '@/capabilities/knowledge/server/seed';
 import { tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
+import { EMBED_DIMS } from '@/server/ai/embed';
 import { GET as getProfile } from './placement-profile';
 import { POST as startPlacement } from './placement-start';
 
@@ -71,7 +72,9 @@ async function seedDayOneGoal(id: string): Promise<void> {
   });
 }
 
-// The auto-enroll landed shape (structural check passed → active, tagged with the proposed KC).
+// The placement-eligibility-faithful landed shape: draft_status 'active' + tagged KC match
+// auto-enroll's structural-verify output exactly (the two fields eligibility gates on);
+// `source` differs (auto-enroll lands sessionEntrypoint, not 'manual') and is inert here.
 async function seedUploadedQuestion(id: string, kcs: string[]): Promise<void> {
   const now = new Date();
   await db.insert(question).values({
@@ -123,11 +126,15 @@ describe('cold-start day-one e2e (upload-shaped KC → placement → profile)', 
     const seeded = await seedSubjectRoots(db);
     expect(seeded.inserted).toBeGreaterThan(0);
 
-    // Upload-pipeline tagging on a thin tree: roots carry no embedding, so there are no match
-    // candidates ([] query vec short-circuits retrieval the same way) → PROPOSE branch, the
-    // real applyProposeNew + audit-event tx.
+    // Upload-pipeline tagging on a thin tree. The injected vector is NON-empty and
+    // EMBED_DIMS-sized (production embedText always returns a full vector or throws), so the
+    // REAL retrieval SQL runs and returns no candidate because the seed roots carry NULL
+    // embedding — `embedding IS NOT NULL` (match-similarity) is exactly the structural guard
+    // against the 2026-06-22 "questions pile on the root" regression, and this path exercises
+    // it (review F1: an `[]` vec would short-circuit at the TS guard and never touch the SQL).
+    const basisVec = Array.from({ length: EMBED_DIMS }, (_, i) => (i === 0 ? 1 : 0));
     const tag = await tagKnowledge(
-      { db, embedFn: async () => [], nameKcFn: async () => ({ kc_name: '通假字' }) },
+      { db, embedFn: async () => basisVec, nameKcFn: async () => ({ kc_name: '通假字' }) },
       { questionText: '「说」通「悦」，愉快之意。', subjectRootId: 'seed:wenyan:root' },
     );
     expect(tag.kind).toBe('propose');
@@ -177,8 +184,12 @@ describe('cold-start day-one e2e (upload-shaped KC → placement → profile)', 
     expect(tested).toBeDefined();
     expect(tested.tested).toBe(true);
     expect(tested.name).toBe('通假字');
-    expect(typeof tested.p_l).toBe('number');
-    expect(typeof tested.theta_se).toBe('number');
+    expect(tested.evidence_count).toBe(1);
+    // Range-tight (review F2): `typeof NaN === 'number'`, so a broken band would pass a bare
+    // typeof check. p(L) is a probability, SE is strictly positive.
+    expect(tested.p_l).toBeGreaterThan(0);
+    expect(tested.p_l).toBeLessThan(1);
+    expect(tested.theta_se).toBeGreaterThan(0);
     const root = byId['seed:wenyan:root'];
     expect(root).toBeDefined();
     expect(root.tested).toBe(false);
