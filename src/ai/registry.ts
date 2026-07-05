@@ -631,6 +631,28 @@ export const tasks = {
     systemPrompt:
       '你是教研例会的归因研究员。输入 { evidence_cells: [{ knowledge_id, cause_category, recurrence_count, theta_hat, theta_precision, baseline_p, evidence_event_ids: [...] }], prior_claim_md?: string }——每个 cell 是某知识点上某错因类别累积了 ≥2 次不同 attempt 的确定性取证结果。theta_precision 低（或为 null）代表该处掌握度估计不确定（值得探针）；baseline_p 是该知识点当前的掌握概率 p(L)（可能为 null=冷启动）。\n你的任务：归纳/更新关于 owner**思维方式**的一个猜想（claim），为它合成恰好一个能区分该猜想真伪的探针（probe），并给出两个问责量。\n要点：\n- claim_md 必须是**第二人称、关于思维的**陈述（例：「你把链式法则当成导数相乘」「你混淆必要与充分条件」），不是关于某道题对错的陈述。\n- probe_md 是恰好一道能证实或证伪该 claim 的题（一道题的量），未测过的角度。\n- probe_reference_md 是 probe_md 的**参考答案/判分金标**（conjecture-wire #13）：机器判分时按此对照 owner 作答判对错。必须是与 probe_md 配套的完整答案——客观题给最终选项/值，主观/步骤题给关键步骤与结论。它和 probe_md 在你这一次输出里**同时产生**（single-writer：后续不再 runtime 重生）。\n- cause_category 选输入 evidence_cells 里出现的某个错因类别。\n- recurrence_count 取支撑该 claim 的 cell 的最大 recurrence_count（≥2）。\n- predicted_p ∈ [0,1]：若该 claim 成立，你预测 owner**答对** probe_md 的概率（这是 claim 的可证伪赌注——通常误解成立时偏低）。\n- discriminating：布尔。true 仅当这道 probe**只有**该误解才会导致错答（能把它和别的错因分开）；若答错也可能来自别的原因，填 false。\n先用一段 markdown 写出你的归纳推理（证据如何指向这个思维模式、为什么这个 predicted_p），然后严格输出 JSON（不带 markdown 代码块包裹）：{"claim_md":"...","probe_md":"...","probe_reference_md":"...","cause_category":"...","recurrence_count":<int≥2>,"predicted_p":<0..1>,"discriminating":<bool>,"agreement_count":1}。agreement_count 恒填 1（多样本一致性由调用方统计）。',
   },
+  // YUK-538 — ClaimGroupingTask: semantic dedup for induceConjecture self-consistency.
+  // Groups paraphrase-diverse MindModelInductionTask samples into equivalence buckets
+  // so that the dominant claim reflects semantic agreement, not byte-identical claimKey
+  // agreement. Called once per induceConjecture invocation when samples are not
+  // unanimously byte-identical (i.e., on almost every nightly invocation at temperature>0).
+  // Cost: +1 mimo call per conjecture per run. Default model stays mimo (registry.ts:12-16
+  // forbids anthropic-sub as defaultProvider; ClaimGroupingTask is a structural task, not
+  // a reasoning task, so Opus is not needed here).
+  ClaimGroupingTask: {
+    kind: 'ClaimGroupingTask',
+    description:
+      'Groups a list of misconception claim strings by semantic equivalence. Input = { claims: string[] }. Output = { groups: number[][] } where each inner array is a 0-based index group. Every index appears in exactly one group. Used by induceConjecture to consolidate paraphrase-diverse self-consistency samples.',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 30_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    systemPrompt:
+      '你的任务是将一组误解陈述（claims）按语义等价分组。如果两条陈述描述的是同一个错误信念（即使表述不同），它们属于同一组；如果它们描述不同的错误，则分属不同组。\n\n等价示例：\n  "你把链式法则当成导数相乘"≡ "你误以为链式法则就是把各层导数相乘"\n  "你忘记负号" ≡ "你在移项时丢失了负号"\n\n不等价示例：\n  "你把链式法则当成导数相乘" ≢ "你忘记用乘积法则"\n  "你混淆了充分条件和必要条件" ≢ "你在集合运算中搞错了并集和交集"\n\n输入格式：{ "claims": [...] }，每条 claim 由调用方编号0起。\n严格输出 JSON（不带 markdown 代码块包裹）：{"groups":[[i,j,...],...]}\n每个下标0..N-1必须恰好出现在一个组中。',
+  },
   // ADR-0031 / YUK-304 (lane B) — QuizIntentParseTask (the YUK-275 free-text 求卷
   // C-form parser) is RETIRED with the chat.ts pre-dispatch: 判断+编排权交回模型.
   MemoryBriefTask: {
