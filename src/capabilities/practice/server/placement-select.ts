@@ -25,8 +25,9 @@ import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/doma
 import { QuestionKind } from '@/core/schema/business';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
-import { and, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
+import { and, notInArray, sql } from 'drizzle-orm';
 import { type CandidateInput, collectCandidateSignals } from './candidate-signals';
 
 type DbLike = Db | Tx;
@@ -144,11 +145,14 @@ export async function selectNextPlacementItem(
     kcs.map((kc) => sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`),
     sql` OR `,
   );
-  const notDraft = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
   const whereClause =
     exclude.length > 0
-      ? and(sql`(${kcContainment})`, notDraft, notInArray(question.id, exclude))
-      : and(sql`(${kcContainment})`, notDraft);
+      ? and(
+          sql`(${kcContainment})`,
+          notDraftPredicate(question.draft_status),
+          notInArray(question.id, exclude),
+        )
+      : and(sql`(${kcContainment})`, notDraftPredicate(question.draft_status));
 
   const rows = await db
     .select({

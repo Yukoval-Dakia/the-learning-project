@@ -20,6 +20,7 @@
 // migrating onto poolFetch MUST re-apply the kind filter + tier sort + slice on
 // top, and project source/metadata, or it will silently change selection.
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 import { type SQL, and, asc, isNull, sql } from 'drizzle-orm';
@@ -77,7 +78,7 @@ export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]
     sql`${question.knowledge_ids} @> ${JSON.stringify([c.knowledgeId])}::jsonb`,
   ];
   if (c.activeOnly !== false) {
-    preds.push(sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`);
+    preds.push(notDraftPredicate(question.draft_status));
   }
   if (c.difficultyMin != null) preds.push(sql`${question.difficulty} >= ${c.difficultyMin}`);
   if (c.difficultyMax != null) preds.push(sql`${question.difficulty} <= ${c.difficultyMax}`);

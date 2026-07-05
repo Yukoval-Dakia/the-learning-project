@@ -13,6 +13,7 @@ import {
   projectAddressableStructure,
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   artifact,
   completion_evidence,
@@ -844,7 +845,7 @@ export async function executeGetReviewDue(
       .where(
         and(
           sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
-          sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+          notDraftPredicate(question.draft_status),
         ),
       )
       .orderBy(asc(question.created_at), asc(question.id))
@@ -876,7 +877,7 @@ export async function executeGetReviewDue(
     // could surface a draft question. NULL handling is explicit: only 'draft'
     // is excluded (`draft_status <> 'draft'` alone would drop NULL rows under
     // SQL three-valued logic).
-    sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+    notDraftPredicate(question.draft_status),
   ];
   if (input.knowledgeIds?.length) {
     legacyQuestionConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
@@ -959,7 +960,7 @@ export async function executeGetReviewDue(
               // surface here as a never-reviewed-failure candidate. Apply the same
               // exclusion the due-list.ts public path applies to its never-
               // reviewed slice. NULL handling explicit: only 'draft' excluded.
-              sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
+              notDraftPredicate(question.draft_status),
             ),
           )
       : [];

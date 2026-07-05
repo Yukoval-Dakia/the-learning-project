@@ -382,6 +382,7 @@ export async function acceptQuestionDraftProposal(
   if (!row) {
     throw new ApiError('not_found', `question ${questionId} not found`, 404);
   }
+  // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
   if (row.draft_status !== 'draft') {
     throw new ApiError(
       'conflict',

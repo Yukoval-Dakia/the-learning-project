@@ -76,6 +76,12 @@ export const fastTestInclude = [
   // YUK-383 Phase 0 — pure (no-DB) unit for the pgvector customType codec in
   // src/db/vector.ts (string <-> number[] only; no Postgres touched) → unit partition.
   'src/db/vector.test.ts',
+  // YUK-569 — pure (no-DB) unit for the isPoolVisible JS twin in src/db/predicates.ts
+  // (imports ONLY the connection-free predicate module relatively; no drizzle-orm, no
+  // Postgres). The Drizzle compiled-SQL shape assertion is the sibling
+  // src/db/predicates.db.test.ts (imports drizzle-orm → db partition, falls through the
+  // src/**/*.test.ts allTestInclude glob). src/db has no unit glob, so this MUST be listed.
+  'src/db/predicates.test.ts',
   // YUK-383 Phase 0 — domain embedder + entity->embed-text are pure no-DB units
   // (fetch is stubbed in embed.test.ts; embed-source.test.ts is string-join only).
   'src/server/ai/embed.test.ts',

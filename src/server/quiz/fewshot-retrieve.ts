@@ -24,6 +24,8 @@ import {
   deriveSourceTier,
 } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
+import { question } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 
 export interface FewShotExample {
@@ -126,12 +128,15 @@ export async function retrieveFewShotExamples(
         ELSE 4
       END`;
 
+  // C2 (YUK-569): notDraftPredicate emits a QUALIFIED "question"."draft_status"; safe here only
+  // while the FROM is an unaliased single table (FROM question) — the qualified column resolves
+  // unambiguously alongside the other bare columns. Alias/join this query → re-check first.
   const rows = (await db.execute(sql`
       SELECT id, kind, prompt_md, reference_md, choices_md, rubric_json, difficulty,
              knowledge_ids, source, metadata, created_at
       FROM question
       WHERE kind = ${kind}
-        AND (draft_status IS NULL OR draft_status <> 'draft')
+        AND ${notDraftPredicate(question.draft_status)}
         ${overlapPredicate}
       ORDER BY ${tierRank} ASC, created_at DESC
       LIMIT ${CANDIDATE_POOL}

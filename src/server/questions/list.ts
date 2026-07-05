@@ -29,6 +29,7 @@ import {
   deriveSourceTier,
 } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { knowledge, question } from '@/db/schema';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
@@ -257,7 +258,7 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   if (!params.includeDrafts) {
     // draft 排除惯例 (sourcing-sequence:116 / due-list): nullable column must
     // carry the IS NULL branch, not a bare `<> 'draft'`.
-    filters.push(sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`);
+    filters.push(notDraftPredicate(question.draft_status));
   }
   return filters;
 }
@@ -429,9 +430,7 @@ async function enrichItems(
 
   // 1. 取所有 parent 的 question_part 子行（loom 大题展开所需）。一次 IN 查全 page。
   const parentIds = items.map((it) => it.id);
-  const draftFilter = includeDrafts
-    ? undefined
-    : sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`;
+  const draftFilter = includeDrafts ? undefined : notDraftPredicate(question.draft_status);
   const childRows = (await db
     .select(CANDIDATE_COLUMNS)
     .from(question)
@@ -642,10 +641,7 @@ export async function loadFamilyMembers(
 ): Promise<CandidateRow[]> {
   const membership = sql`(${question.root_question_id} = ${rootKey} OR ${question.id} = ${rootKey})`;
   const where = excludeDrafts
-    ? and(
-        membership,
-        sql`(${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`,
-      )
+    ? and(membership, notDraftPredicate(question.draft_status))
     : membership;
   return (await db
     .select(CANDIDATE_COLUMNS)

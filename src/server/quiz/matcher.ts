@@ -24,6 +24,7 @@ import { newId } from '@/core/ids';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
+import { isPoolVisible } from '@/db/predicates';
 import { knowledge } from '@/db/schema';
 import { embedText } from '@/server/ai/embed';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
@@ -499,7 +500,8 @@ export async function matcher(
     // 仓库「可用」语义 (codex P2-1) = draft_status <> 'draft'. NULL≡active、'active'、legacy
     // 'final' 等任何非 'draft' 行都直接用——唯一送 lazy verify 的是 r.draft_status === 'draft'。
     // (此前误把「非 NULL 非 active」整批送 verify，'final' 等可用行被错送验证门。)
-    if (r.draft_status !== 'draft') {
+    // F1 pool-visibility JS twin — shared isPoolVisible (@/db/predicates).
+    if (isPoolVisible(r)) {
       used.push({ question_id: r.id, source: r.source, tier, promotedFromDraft: false });
       continue;
     }

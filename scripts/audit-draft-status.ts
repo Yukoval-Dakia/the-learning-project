@@ -39,6 +39,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractObjectBlock } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -139,137 +140,12 @@ export function walkSource(root: string, out: string[] = []): string[] {
   return out;
 }
 
-// ---------- brace-balanced object-block extraction ----------
-
-/**
- * Given source text and the index of the `{` that opens an object literal, return the
- * substring from that `{` to its matching `}` (inclusive). Brace-balanced and aware of:
- *   - single / double / template-literal strings (braces inside are NOT counted; for
- *     template literals `${...}` interpolation braces ARE counted so we don't lose the
- *     real object depth)
- *   - line comments (// ...) and block comments (/* ... *​/)
- * Returns the matched block, or null if no matching close brace is found.
- *
- * Exported pure for unit testing (nested metadata objects, strings carrying '}', etc.).
- */
-export function extractObjectBlock(src: string, openIdx: number): string | null {
-  if (src[openIdx] !== '{') return null;
-  let depth = 0;
-  let i = openIdx;
-  // String / comment state. For template literals we track `${}` interpolation depth so
-  // braces inside an interpolation contribute to the real object depth.
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-  // Stack of template-interpolation brace depths (to know when a `}` closes ${} vs object).
-  const templateInterpDepth: number[] = [];
-
-  for (; i < src.length; i += 1) {
-    const c = src[i];
-    const next = src[i + 1];
-    const prev = src[i - 1];
-
-    if (inLineComment) {
-      if (c === '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (c === '*' && next === '/') {
-        inBlockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (inSingle) {
-      if (c === '\\') {
-        i += 1;
-        continue;
-      }
-      if (c === "'") inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (c === '\\') {
-        i += 1;
-        continue;
-      }
-      if (c === '"') inDouble = false;
-      continue;
-    }
-    if (inTemplate) {
-      if (c === '\\') {
-        i += 1;
-        continue;
-      }
-      if (c === '`') {
-        inTemplate = false;
-        continue;
-      }
-      if (c === '$' && next === '{') {
-        // enter an interpolation — record the object-brace depth at entry so the
-        // matching `}` is recognised as closing the interpolation, not the object.
-        templateInterpDepth.push(depth);
-        depth += 1;
-        i += 1;
-        continue;
-      }
-      // braces inside template text (not interpolation) are literal — ignore.
-      if (c === '}' && templateInterpDepth.length > 0) {
-        // could be closing an interpolation only if depth matches; handled in the
-        // generic `}` branch below — but we are still inTemplate, so the generic
-        // branch is not reached. Mirror the decrement here.
-        const entryDepth = templateInterpDepth[templateInterpDepth.length - 1];
-        if (depth - 1 === entryDepth) {
-          templateInterpDepth.pop();
-          depth -= 1;
-          // resume scanning template text (we are still inside the backticks).
-          continue;
-        }
-      }
-      continue;
-    }
-
-    // not in any string/comment.
-    if (c === '/' && next === '/') {
-      inLineComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      inBlockComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === "'") {
-      inSingle = true;
-      continue;
-    }
-    if (c === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (c === '`') {
-      inTemplate = true;
-      continue;
-    }
-    if (c === '{') {
-      depth += 1;
-      continue;
-    }
-    if (c === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return src.slice(openIdx, i + 1);
-      }
-      continue;
-    }
-    // `prev` referenced to satisfy the no-unused guard for future escape handling.
-    void prev;
-  }
-  return null;
-}
+// extractObjectBlock lives in scripts/lib/ts-tokenize.ts now (shared with the read-side
+// audit audit-draft-status-reads.ts, YUK-569) so both draft-status audits use ONE proven
+// comment/string/template-aware scanner. Re-exported here so this module's public surface
+// (and its unit test's `import { extractObjectBlock } from './audit-draft-status'`) stays
+// unchanged; scanQuestionInserts below uses the imported binding directly.
+export { extractObjectBlock };
 
 // ---------- scan ----------
 

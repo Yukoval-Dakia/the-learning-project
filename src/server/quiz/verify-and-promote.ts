@@ -144,6 +144,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
     if (!isPromotableSource(row.source)) {
       return { promoted: false, status: 'skipped:unsupported_source' };
     }
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
     if (row.draft_status !== 'draft') {
       return { promoted: false, status: 'skipped:not_draft' };
     }
@@ -253,6 +254,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   //   - A non-draft row WITHOUT a terminal verify event (owner-UI retry on an already-
   //     active row, never legitimately promoted via this path) → skipped:not_draft.
   // Either way the PAID run fn is NOT dispatched against a non-draft.
+  // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
   if (row.draft_status !== 'draft') {
     const verifyEventId = await lookupVerifyEventId(
       db,
@@ -300,6 +302,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       .from(question)
       .where(eq(question.id, questionId))
       .limit(1);
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
     const alreadyActive = post[0] !== undefined && post[0].draft_status !== 'draft';
     if (alreadyActive) {
       const verifyEventId = await lookupVerifyEventId(

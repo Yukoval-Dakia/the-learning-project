@@ -33,6 +33,7 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 import { WebSourcedProvenance } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { type TaskTextResult, aiAgentRef } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
@@ -235,9 +236,9 @@ async function checkDedup(db: Db, row: QuestionRow): Promise<CheckOutcome> {
     .where(
       and(
         ne(question.id, row.id),
-        // draft_status IS NULL OR <> 'draft' — legacy active rows carry NULL
-        // draft_status (due-list.ts:216 precedent); a bare ne() would drop them.
-        or(isNull(question.draft_status), ne(question.draft_status, 'draft')),
+        // Pool-visibility (红线-4, NULL≡active; legacy active rows carry NULL — a bare
+        // ne() would drop them). Shared notDraftPredicate (@/db/predicates).
+        notDraftPredicate(question.draft_status),
         or(...overlapClauses),
       ),
     )

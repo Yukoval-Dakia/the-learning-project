@@ -31,12 +31,13 @@ import { rotationClassForKind } from '@/capabilities/practice/server/variant-rot
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import { item_calibration, learning_item, question } from '@/db/schema';
 import { effectiveB } from '@/server/mastery/recalibration';
 import { getMasteryState, globalThetaForDomain } from '@/server/mastery/state';
 import { resolveSubjectProfile, subjectProfiles } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
-import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 // ── Types（Task 13 Step 1，prompt 字面给定的形状即权威）────────────────────────
 
@@ -595,9 +596,9 @@ async function loadFrontierKnowledge(db: Db): Promise<FrontierKnowledgeInput[]> 
  * 只取与 active-goal KC 相关的题（按 KC 过滤，非全库扫描）。
  *
  * review FINDING #1——**过滤掉 draft_status='draft'**：草稿（未验证/被拒）不是可用 item，不该被当作
- * 已覆盖而压制 R1/R2。复用既有 draft-exclusion 三值逻辑安全谓词（mirror due-list.ts `notDraftQuiz`
- * / variant-rotation.ts `notDraft`：`draft_status IS NULL OR draft_status != 'draft'`——NULL/已晋升
- * 留池，仅字面 'draft' 排除）。一个唯一题是被拒 draft 的 KC 于是正确留着缺口（R1/R2 复发），fingerprint
+ * 已覆盖而压制 R1/R2。复用共享 draft-exclusion 三值逻辑安全谓词 notDraftPredicate（@/db/predicates：
+ * `draft_status IS NULL OR draft_status != 'draft'`——NULL/已晋升留池，仅字面 'draft' 排除）。一个唯一
+ * 题是被拒 draft 的 KC 于是正确留着缺口（R1/R2 复发），fingerprint
  * cooldown（dispatcher）节流重复派发。
  *
  * review FINDING #4——同时读 b_anchor / b_calib，PoolQuestion.calibrationB 装 effectiveB（与
@@ -611,8 +612,6 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
   const orConds = frontierKids.map(
     (kid) => sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
   );
-  // review FINDING #1：draft-exclusion 三值逻辑安全谓词（NULL/已晋升留池，仅 'draft' 排除）。
-  const notDraft = or(isNull(question.draft_status), ne(question.draft_status, 'draft'));
   const rows = await db
     .select({
       id: question.id,
@@ -623,7 +622,7 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
       knowledge_ids: question.knowledge_ids,
     })
     .from(question)
-    .where(and(sql`(${sql.join(orConds, sql` OR `)})`, notDraft));
+    .where(and(sql`(${sql.join(orConds, sql` OR `)})`, notDraftPredicate(question.draft_status)));
   if (rows.length === 0) return [];
 
   // item_calibration（track='hard'）批量读：b / b_anchor / b_calib → effectiveB（FINDING #4）。
