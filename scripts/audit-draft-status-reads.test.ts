@@ -105,6 +105,23 @@ describe('scanReads — helper-routed migrated sites are NOT flagged', () => {
     expect(hits).toHaveLength(0);
     expect(unknown).toHaveLength(0);
   });
+
+  it('STILL flags a hand-rolled predicate coexisting with a helper call in the SAME template (mixed, CodeRabbit YUK-569)', () => {
+    const src =
+      "const q = db.execute(sql`SELECT id FROM question WHERE ${notDraftPredicate(question.draft_status)} AND (draft_status IS NULL OR draft_status <> 'draft')`);";
+    const { hits, unknown } = scanReads(F, src);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].dialect).toBe('raw-is-null-or');
+    expect(unknown).toHaveLength(0);
+  });
+
+  it('STILL flags an UNKNOWN shape coexisting with a helper call in the SAME template (mixed)', () => {
+    const src =
+      "const q = db.execute(sql`SELECT id FROM question WHERE ${notDraftPredicate(question.draft_status)} AND draft_status NOT IN ('draft')`);";
+    const { hits, unknown } = scanReads(F, src);
+    expect(hits).toHaveLength(0);
+    expect(unknown).toHaveLength(1);
+  });
 });
 
 describe('scanReads — PROSE in comments / strings / non-sql templates is NOT flagged', () => {
