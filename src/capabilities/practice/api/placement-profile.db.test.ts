@@ -29,12 +29,16 @@ async function seedKnowledge(id: string, name: string): Promise<void> {
   });
 }
 
-async function seedGoal(id: string, scope: string[]): Promise<void> {
+async function seedGoal(
+  id: string,
+  scope: string[],
+  subjectId: string | null = null,
+): Promise<void> {
   const now = new Date();
   await db.insert(goal).values({
     id,
     title: 'G',
-    subject_id: null,
+    subject_id: subjectId,
     scope_knowledge_ids: scope,
     sequence_hint: 0,
     status: 'active',
@@ -192,6 +196,69 @@ describe('GET /api/placement/profile', () => {
       n_obs: 55,
       provenance: 'probe',
     });
+  });
+
+  // YUK-516 — the profile must resolve scope through the SAME three tiers as placement-start
+  // (tier-1 frozen non-empty → tier-2 subject live-resolve → tier-3 full active tree). A
+  // cold-start goal placed via tier-2/3 has its probe answers in mastery_state; a frozen-only
+  // read returns an EMPTY profile for exactly the day-one goals this feature serves.
+  it('tier-2 (YUK-516): empty frozen scope + subject live-resolves the subject KC set', async () => {
+    await seedKnowledge('kc1', '虚词·之'); // domain 'wenyan' → aliases to subject 'wenyan'
+    await seedKnowledge('kc2', '使动用法'); // in resolved scope, never attempted → untested
+    await seedGoal('g1', [], 'wenyan');
+    await seedMastery('kc1', {
+      evidence_count: 3,
+      success_count: 2,
+      fail_count: 1,
+      theta_precision: 2.1,
+    });
+
+    const res = await GET(req('g1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.totalKcs).toBe(2);
+    const byId = Object.fromEntries(body.kcs.map((k: { id: string }) => [k.id, k]));
+    expect(byId.kc1.tested).toBe(true);
+    expect(byId.kc1.evidence_count).toBe(3);
+    expect(byId.kc2.tested).toBe(false);
+    expect(body.testedCount).toBe(1);
+  });
+
+  it('tier-3 (YUK-516): empty frozen scope + no subject falls back to the full active tree', async () => {
+    await seedKnowledge('kc1', '虚词·之');
+    await seedGoal('g1', [], null);
+    await seedMastery('kc1', {
+      evidence_count: 2,
+      success_count: 1,
+      fail_count: 1,
+      theta_precision: 1.4,
+    });
+
+    const res = await GET(req('g1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.totalKcs).toBe(1);
+    expect(body.kcs[0].id).toBe('kc1');
+    expect(body.kcs[0].tested).toBe(true);
+  });
+
+  it('tier-3 (YUK-516): barren/unknown subject falls back to the full active tree', async () => {
+    await seedKnowledge('kc1', '虚词·之');
+    // subject string that resolveKnownSubjectId does not recognise → tier-2 yields nothing.
+    await seedGoal('g1', [], 'no_such_subject');
+    await seedMastery('kc1', {
+      evidence_count: 2,
+      success_count: 1,
+      fail_count: 1,
+      theta_precision: 1.4,
+    });
+
+    const res = await GET(req('g1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.totalKcs).toBe(1);
+    expect(body.kcs[0].id).toBe('kc1');
+    expect(body.kcs[0].tested).toBe(true);
   });
 
   it('omits the axis field for scope KCs with no learner_axis_state row', async () => {

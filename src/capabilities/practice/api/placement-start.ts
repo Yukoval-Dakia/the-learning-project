@@ -13,16 +13,13 @@
 
 import { z } from 'zod';
 
-import {
-  resolveAllActiveKnowledgeIds,
-  resolveSubjectKnowledgeIds,
-} from '@/capabilities/knowledge/server/domain';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
+import { resolveGoalPlacementScope } from '../server/placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
 
 const StartBody = z.object({
@@ -64,9 +61,11 @@ export async function POST(req: Request): Promise<Response> {
     }
     const { goalId, knowledgeIds: explicit, leanings, pace } = parsed.data;
 
-    // Resolve the probe's KC scope: explicit set wins; else the goal's scope_knowledge_ids.
-    // subject=view: the caller derives the KC set via the effective-domain axis (or supplies a
-    // goal whose scope was so derived) — no subject root node is involved here.
+    // Resolve the probe's KC scope: explicit set wins; else the goal's scope through the SHARED
+    // three-tier resolver (tier-1 frozen non-empty → tier-2 subject live-resolve → tier-3 full
+    // active tree — see placement-scope.ts for the tier rationale). Shared with
+    // placement-profile (YUK-516) so probe scope and profile read can never drift again.
+    // subject=view: no subject root node is involved here.
     let knowledgeIds = explicit ?? [];
     if (knowledgeIds.length === 0 && goalId) {
       const rows = await db
@@ -75,36 +74,12 @@ export async function POST(req: Request): Promise<Response> {
         .where(eq(goal.id, goalId))
         .limit(1);
       const goalRow = rows[0];
-      const frozenScope = goalRow?.scope ?? [];
-      // Three-tier dynamic scope resolution (YUK-481, building on YUK-482 Lane B). A cold-start
-      // goal is declared on an empty tree (goal-create.ts: empty resolved scope is ALLOWED), so
-      // its FROZEN scope_knowledge_ids stays empty even after uploads bridge new child KCs. A
-      // frozen-only read would make placement permanently blind to those KCs (sourcingNeeded /
-      // 400 forever). subject=view: scope is a DERIVED axis recomputed each call — we never write
-      // the resolved set back onto the goal row. See docs/design/2026-06-20-cold-start-day-one-
-      // design.md / YUK-481.
-      if (frozenScope.length > 0) {
-        // Tier 1: a NON-empty frozen scope is an EXPLICIT narrow scope — respected as-is, never
-        // widened by live-resolve.
-        knowledgeIds = frozenScope;
-      } else {
-        // Tier 2 (YUK-482 Lane B): frozen empty AND goal carries a subject → RE-RESOLVE the
-        // subject's KC set LIVE (effective-domain axis, alias-aware), so newly-bridged KCs enter
-        // scope.
-        if (goalRow?.subjectId) {
-          knowledgeIds = await resolveSubjectKnowledgeIds(db, goalRow.subjectId);
-        }
-        // Tier 3 (YUK-481): subject resolution still yielded nothing — no subject_id, an unknown
-        // subject string, or a subject whose root is planted but has no child KC yet. This is the
-        // original YUK-473 live trigger (day-one goals are often cross-subject / pick no subject).
-        // Fall back to the FULL active tree rather than 400, so the cold-start probe is still
-        // reachable. selectNextPlacementItem filters to KCs with ≥1 eligible question, so the
-        // wide scope introduces no phantom KC. Cold-start crutch only: tier-2 takes over once a
-        // subject is selected or uploads grow subject-scoped KCs.
-        if (knowledgeIds.length === 0) {
-          knowledgeIds = await resolveAllActiveKnowledgeIds(db);
-        }
-      }
+      // An unknown goalId keeps the pre-YUK-516 behavior: empty frozen scope + no subject →
+      // tier-3 full-tree resolution (the 400 below only fires when the whole tree is empty).
+      knowledgeIds = await resolveGoalPlacementScope(db, {
+        scope: goalRow?.scope ?? null,
+        subjectId: goalRow?.subjectId ?? null,
+      });
     }
     if (knowledgeIds.length === 0) {
       // Post-YUK-481 this fires only in two genuinely-unresolvable cases: (a) neither a goalId nor

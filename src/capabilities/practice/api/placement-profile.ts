@@ -5,19 +5,15 @@
 // the deprecated knowledge_mastery view). In-scope KCs with no mastery_state row come back
 // as `tested:false` (untested · 0 题). Read-only; no θ̂/FSRS writes.
 //
-// Scope here is the goal's FROZEN scope_knowledge_ids — a single-layer read (subject = view,
-// no root node). The probe's answers populated those KCs' mastery_state; untested in-scope
-// KCs surface as the profile's "未测" rows so the picture is honest about coverage.
-//
-// DIVERGENCE (YUK-481, tracked in YUK-516): this profile does NOT mirror placement-start. Since
-// YUK-482→YUK-481, placement-start resolves scope in three tiers (tier-1 frozen non-empty →
-// tier-2 subject live-resolve → tier-3 full active tree), but this read stayed frozen-only. So a
-// cold-start goal placed via tier-2/3 (empty/no-subject/barren-subject) has its KCs in
-// mastery_state yet returns an EMPTY profile here (frozen scope is still empty). Pre-existing for
-// tier-2 (YUK-482), widened to tier-3 by YUK-481; harmless while PLACEMENT_PROBE_ENABLED=false
-// (no live caller) but must be fixed before flag flip. Note this reads the goal's frozen scope,
-// NOT the session-persisted scope (YUK-470), so a stored tier-3 set does not rescue it either.
-// YUK-516 will reuse the same tier-1/2/3 resolver (or read the session scope) to close the gap.
+// Scope resolution (YUK-516): mirrors placement-start EXACTLY by sharing the same three-tier
+// resolver (resolveGoalPlacementScope: tier-1 frozen non-empty → tier-2 subject live-resolve →
+// tier-3 full active tree), so a cold-start goal placed via tier-2/3 reads back the KC set the
+// probe was scoped over — the pre-YUK-516 frozen-only read returned an EMPTY profile for
+// exactly those day-one goals. Sharing the resolver (issue option 1) was chosen over reading
+// the session-persisted scope (YUK-470, option 2): the profile tracks the CURRENT resolved
+// scope, so KCs bridged after the probe surface as honest "未测" rows instead of being pinned
+// to the probe-time snapshot. Untested in-scope KCs come back as tested:false so the picture
+// stays honest about coverage (subject = view, no root node).
 
 import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
@@ -27,6 +23,7 @@ import { type DayOnePrior, loadDayOnePriors } from '@/server/coldstart/propagate
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { eq, inArray } from 'drizzle-orm';
+import { resolveGoalPlacementScope } from '../server/placement-scope';
 
 /** How many in-scope KCs the profile surfaces (tested first). A broad goal can scope many
  * KCs; the probe only touched a handful, so cap the list to keep the reveal legible. */
@@ -77,7 +74,7 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     const goalRows = await db
-      .select({ scope: goal.scope_knowledge_ids, title: goal.title })
+      .select({ scope: goal.scope_knowledge_ids, subjectId: goal.subject_id, title: goal.title })
       .from(goal)
       .where(eq(goal.id, goalId))
       .limit(1);
@@ -86,11 +83,17 @@ export async function GET(req: Request): Promise<Response> {
       throw new ApiError('not_found', `goal ${goalId} not found`, 404);
     }
 
+    // Shared three-tier resolution (YUK-516, see header) — then the profile's own hygiene
+    // (trim/dedupe) on whatever tier won, matching the pre-YUK-516 treatment of frozen ids.
+    const resolvedScope = await resolveGoalPlacementScope(db, {
+      scope: g.scope,
+      subjectId: g.subjectId,
+    });
     const scope = Array.from(
-      new Set((g.scope ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
+      new Set(resolvedScope.map((id) => id.trim()).filter((id) => id.length > 0)),
     );
     if (scope.length === 0) {
-      // Cold goal (north-star, no resolvable scope yet) — nothing to project.
+      // Nothing resolvable anywhere (tier-3 found zero active KC) — honest empty profile.
       return Response.json({
         goalId,
         title: g.title,
