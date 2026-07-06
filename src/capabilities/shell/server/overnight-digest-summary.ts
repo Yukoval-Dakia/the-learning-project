@@ -125,9 +125,11 @@ export interface OvernightDigest {
   /** 窗内新 agent notes 数。 */
   agent_notes_count: number;
   /**
-   * 静默失败标红（YUK-580）：窗内 error 计数达阈值的 task_kind 列表。空数组 = 无降级 kind
-   * （不影响 has_overnight_activity 判定——降级信号与「有无活动」正交，同一窗内可同时
-   * has_overnight_activity=true 且 degraded_kinds 非空）。
+   * 静默失败标红（YUK-580）：窗内 error 计数达阈值的 task_kind 列表。空数组 = 无降级 kind。
+   * 注意这不是独立信号——error runs 本身计入 runs_total，故 degraded_kinds 非空时
+   * has_overnight_activity 必为 true（单向蕴含，非对称正交）；反之 has_overnight_activity=true
+   * 不代表有降级 kind。UI 侧的标红渲染独立于 has_overnight_activity 分支（见 TodayPage 注释），
+   * 但这只是渲染路径独立，不代表两个字段在数据上互不相关。
    */
   degraded_kinds: DegradedKind[];
 }
@@ -172,7 +174,8 @@ export interface DegradedKind {
   recent_error_messages: string[];
 }
 
-const DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER = '(no error_message)';
+/** error_message 为 null 时的占位串（导出供测试按符号断言，不重复字面量）。 */
+export const DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER = '(no error_message)';
 
 function truncateErrorMessage(msg: string): string {
   if (msg.length <= DEGRADED_KIND_MESSAGE_MAX_LEN) return msg;
@@ -195,7 +198,11 @@ export function computeDegradedKinds(rows: RunErrorRow[]): DegradedKind[] {
   const out: DegradedKind[] = [];
   for (const [task_kind, list] of byKind) {
     if (list.length < DEGRADED_KIND_ERROR_THRESHOLD) continue;
-    const sorted = [...list].sort((a, b) => (a.finished_at < b.finished_at ? 1 : -1));
+    // 三段式比较（antisymmetric）：相等 finished_at 返回 0，交给 Array.sort 的稳定排序
+    // （V8/Node 保证稳定）落回原数组序——避免同毫秒多条 error 时取样/顺序不确定。
+    const sorted = [...list].sort((a, b) =>
+      a.finished_at < b.finished_at ? 1 : a.finished_at > b.finished_at ? -1 : 0,
+    );
     const recent_error_messages = sorted
       .slice(0, DEGRADED_KIND_SAMPLE_SIZE)
       .map((r) => truncateErrorMessage(r.error_message ?? DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER));
