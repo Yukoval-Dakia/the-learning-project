@@ -3,8 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ReportFindingsSchema,
-  assertPrimaryEvidenceRefs,
   createFindingsCapture,
+  filterPrimaryEvidenceRefs,
   isPrimaryEvidenceRef,
 } from './report-findings';
 
@@ -78,9 +78,9 @@ describe('createFindingsCapture', () => {
   });
 });
 
-describe('assertPrimaryEvidenceRefs', () => {
+describe('filterPrimaryEvidenceRefs', () => {
   it('keeps primary event ids, order-preserving', () => {
-    expect(assertPrimaryEvidenceRefs(['attempt_1', 'probe_2', 'prediction_score_3'])).toEqual([
+    expect(filterPrimaryEvidenceRefs(['attempt_1', 'probe_2', 'prediction_score_3'])).toEqual([
       'attempt_1',
       'probe_2',
       'prediction_score_3',
@@ -89,12 +89,12 @@ describe('assertPrimaryEvidenceRefs', () => {
 
   it('filters out agent_note ids (self-reinforcement backstop)', () => {
     expect(
-      assertPrimaryEvidenceRefs(['attempt_1', 'agent_note_abc', 'probe_2', 'agent_note_def']),
+      filterPrimaryEvidenceRefs(['attempt_1', 'agent_note_abc', 'probe_2', 'agent_note_def']),
     ).toEqual(['attempt_1', 'probe_2']);
   });
 
   it('returns empty when every ref is an agent_note (caller then rejects)', () => {
-    expect(assertPrimaryEvidenceRefs(['agent_note_x', 'agent_note_y'])).toEqual([]);
+    expect(filterPrimaryEvidenceRefs(['agent_note_x', 'agent_note_y'])).toEqual([]);
   });
 
   it('isPrimaryEvidenceRef classifies the agent_note prefix', () => {

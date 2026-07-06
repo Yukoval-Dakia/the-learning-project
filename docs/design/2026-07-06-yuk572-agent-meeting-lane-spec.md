@@ -2,7 +2,7 @@
 
 Status: FINAL（终裁 reconciled）。2026-07-06. Author: designer subagent；对抗 review（Lens A 红线/机制 + Lens B 价值/对照/经济学）终裁修订见附录 B。关键 SDK typings claim 均经终裁 pass 亲核（sdk.d.ts@0.3.168 + runner.ts 实读），非转述。
 Decision provenance: owner 拍「直接 B，启动」= 跳过 (a) reframe，直接建 **agent-led 例会 shadow lane**。确定性 `research_meeting_nightly.ts` **一行不动 = 纯对照组**。
-Supersedes: `scratchpad/research/2026-07-06-yuk560-scout-spec-draft.md` **§6**（scout findings 经 TS 闸门注入确定性管道的集成假设）——本 lane 里 scout 是 director 经 SDK 原生 `agents` 嵌套 spawn 的 subagent，findings 直接回 director in-context，不再经 TS capture→induce 缝。scout spec 的 **§1–§5**（evidence MCP 6 工具 + 行数上界、三问 prompt、`report_findings` schema、`tool_call_log` 留痕、`<untrusted_learner_text>` 防注入、`excludeSourceKinds` 防自我强化）**原样复用**为共享 scout 原语。
+Supersedes: `docs/design/2026-07-06-yuk560-scout-spec.md` §6（本 spec 取代其集成形态；§1-§5 仍权威） **§6**（scout findings 经 TS 闸门注入确定性管道的集成假设）——本 lane 里 scout 是 director 经 SDK 原生 `agents` 嵌套 spawn 的 subagent，findings 直接回 director in-context，不再经 TS capture→induce 缝。scout spec 的 **§1–§5**（evidence MCP 6 工具 + 行数上界、三问 prompt、`report_findings` schema、`tool_call_log` 留痕、`<untrusted_learner_text>` 防注入、`excludeSourceKinds` 防自我强化）**原样复用**为共享 scout 原语。
 
 红线（贯穿全 spec，逐条对齐 CLAUDE.md）：
 - **ND-5**：例会系（含本 agent lane）绝不写 FSRS / θ̂ / kc_typed_state。
