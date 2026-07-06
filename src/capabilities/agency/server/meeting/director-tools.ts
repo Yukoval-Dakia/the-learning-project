@@ -177,8 +177,18 @@ const ProposeConjectureShape = {
   // PRIMARY event ids only (attempt / probe / prediction_score) — agent_note ids are
   // filtered out server-side (§7 backstop). .max(12) mirrors the scout's
   // report-findings.ts evidence_refs bound (round-2 review MINOR #5 — consistency + a
-  // blast-radius cap on the tool-return payload).
-  evidence_refs: z.array(z.string()).max(12),
+  // blast-radius cap on the tool-return payload). round-4 review MAJOR 0.80 —
+  // .refine(...) rejects a duplicate id: repeating the SAME event id (e.g.
+  // ["att_1","att_1"]) would otherwise inflate primaryRefs.length, which is exactly the
+  // count the off-menu (no matching candidate cell) branch uses as recurrenceCount —
+  // silently bypassing the ≥2 first-hand-evidence recurrence floor with only ONE
+  // distinct piece of evidence.
+  evidence_refs: z
+    .array(z.string())
+    .max(12)
+    .refine((refs) => new Set(refs).size === refs.length, {
+      message: 'evidence_refs must not contain duplicate event ids',
+    }),
 } as const;
 const ProposeConjectureSchema = z.object(ProposeConjectureShape);
 
@@ -186,7 +196,15 @@ const LeaveAgentNoteShape = {
   target_agents: z.array(z.string()).min(1),
   signal_kind: z.string().min(1),
   summary_md: z.string().min(1),
-  refs: z.array(z.object({ kind: z.string(), id: z.string() })),
+  // round-4 review MAJOR 0.80 cross-check — same duplicate-id guard as
+  // propose_conjecture's evidence_refs (uniqueness by id; kind is normalized to
+  // 'event' server-side after filtering, see the handler below, so it is not part of
+  // the uniqueness key).
+  refs: z
+    .array(z.object({ kind: z.string(), id: z.string() }))
+    .refine((refs) => new Set(refs.map((r) => r.id)).size === refs.length, {
+      message: 'refs must not contain duplicate ids',
+    }),
 } as const;
 const LeaveAgentNoteSchema = z.object(LeaveAgentNoteShape);
 
@@ -470,7 +488,16 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           // non-empty but every entry got filtered out as an agent_note id — that is
           // suspicious (the director tried to cite "evidence" that was entirely soft
           // hints masquerading as primary).
-          const primaryRefs = a.refs.filter((r) => isPrimaryEvidenceRef(r.id));
+          // round-4 review minor 0.75 — normalize kind to 'event' server-side rather than
+          // persisting whatever string the LLM supplied: propose_conjecture already
+          // hardcodes `{ kind: 'event' as const }` for its (equally filtered) primary
+          // refs, since the filter guarantees every surviving id IS a first-hand event
+          // id. Persisting an arbitrary LLM-supplied kind here would let the model
+          // inject any string into agent_note.refs[].kind, inconsistent with the
+          // propose side's single-writer discipline for the same data shape.
+          const primaryRefs = a.refs
+            .filter((r) => isPrimaryEvidenceRef(r.id))
+            .map((r) => ({ kind: 'event' as const, id: r.id }));
           if (a.refs.length > 0 && primaryRefs.length === 0) {
             return textResult({
               ok: false,
