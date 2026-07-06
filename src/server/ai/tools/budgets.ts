@@ -220,6 +220,16 @@ export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
   totalChars: 4000, // whole-history truncation, oldest dropped first (防循环 ④)
 };
 
+// CROSS-REFERENCE (PR #717 round-2 OCR fix #1) — `totalChars` above bounds the
+// PINNED learner-state header too (chat.ts's assembleConversationHistory reserves
+// the header's char cost first, before the oldest-first drop loop touches real
+// turns). Keep LEARNER_STATE_HEADER_BUDGET.maxChars well BELOW this value: if
+// maxChars ever grows past totalChars, a lone pinned header (with zero real turns
+// left) cannot fit at all — chat.ts's guard drops the header too rather than ship
+// an orphaned over-budget entry, but that means a misconfigured maxChars silently
+// degrades the header to nothing. See the matching note on LEARNER_STATE_HEADER_
+// BUDGET below.
+
 // ── YUK-574 Copilot learner-state header budget ─────────────────────────────
 //
 // The session-anchored learner-state header (assembled ONCE per validity window,
@@ -237,6 +247,14 @@ export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
 // size. The pinned header is NEVER dropped by the COPILOT_HISTORY_BUDGET oldest-
 // first truncation (its char cost is reserved first). Kept alongside
 // COPILOT_HISTORY_BUDGET so all Copilot input-budget tunables live in one place.
+//
+// CROSS-REFERENCE (PR #717 round-2 OCR fix #1) — `maxChars` here MUST stay well
+// below COPILOT_HISTORY_BUDGET.totalChars (400 vs. 4000 today, comfortable
+// headroom). chat.ts's assembleConversationHistory has a programmatic guard for
+// the violation case (a lone pinned header that alone exceeds totalChars gets
+// dropped entirely rather than shipped over-budget), but relying on that guard
+// means a misconfigured maxChars silently degrades the header to nothing instead
+// of failing loudly — keep this constant comfortably under totalChars instead.
 export interface LearnerStateHeaderBudget {
   /** Whole-header char cap; the assembled prose is hard-truncated to this. */
   maxChars: number;

@@ -3,10 +3,10 @@
 // qualitative output — NEVER a bare probability or %. Cold start renders the explicit
 // 未知 band (not 0). Band-mapping math itself is covered by mastery-band.unit.test.ts.
 
+import type { MasteryBandInput, MasteryBandView } from '@/core/mastery-band';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { BandChip, BandChipView } from './BandChip';
-import type { MasteryBandInput, MasteryBandView } from './mastery-band';
 
 function input(overrides: Partial<MasteryBandInput> = {}): MasteryBandInput {
   return {
