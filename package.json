@@ -41,6 +41,7 @@
     "audit:relations": "tsx scripts/audit-relations.ts",
     "audit:mastery-provenance": "tsx scripts/audit-mastery-provenance.ts",
     "audit:fold-writes": "tsx scripts/audit-fold-writes.ts",
+    "audit:flags": "tsx scripts/audit-flags.ts",
     "audit:calibration": "tsx scripts/audit-calibration.ts",
     "audit:projection": "tsx scripts/audit-projection.ts",
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
