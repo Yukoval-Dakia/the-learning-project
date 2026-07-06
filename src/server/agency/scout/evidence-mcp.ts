@@ -24,7 +24,7 @@ import { event, kc_typed_state, question } from '@/db/schema';
 import { writeToolCallLog } from '@/server/ai/log';
 import { getFailureAttemptById } from '@/server/events/queries';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { FindingsCapture } from './report-findings';
 import { ReportFindingsSchema, ReportFindingsShape } from './report-findings';
@@ -52,8 +52,17 @@ export const EVIDENCE_LIMITS = {
   agentNotes: 20,
 } as const;
 
-/** get_probe_history reads these event actions filtered by payload.knowledge_id. */
-const PROBE_HISTORY_ACTIONS = ['experimental:probe_result', 'experimental:prediction_score'];
+// get_probe_history event actions. The two actions are KEYED DIFFERENTLY (review F1):
+//   - `experimental:prediction_score` carries payload.knowledge_id directly;
+//   - `experimental:probe_result` does NOT — its payload is {conjecture_event_id,
+//     outcome, resolution, retrievability_at_judge, answer_md} keyed by
+//     subject_id = the probe QUESTION id (probe-lifecycle.ts writer). It resolves to
+//     a KC via question.knowledge_ids jsonb containment. A payload-knowledge_id
+//     filter alone returns ZERO probe_result rows — hiding the learner's raw probe
+//     answer_md (the scout's most valuable first-hand evidence) for the entire
+//     pre-reconcile window.
+const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
+const PROBE_RESULT_ACTION = 'experimental:probe_result';
 
 /** The knowledge-channel these agent-notes are addressed to (spec §1). */
 const AGENT_NOTES_CHANNEL = 'research_meeting' as const;
@@ -96,6 +105,22 @@ function truncate(text: string, max: number): string {
 
 function truncateNullable(text: string | null, max: number): string | null {
   return text === null ? null : truncate(text, max);
+}
+
+// probe_result payloads carry the learner's raw probe answer (answer_md) — learner
+// free text, so it gets the same delimit+truncate discipline as get_attempt_details
+// (review F1/F2 family). Other payload keys — and prediction_score payloads, which
+// carry no learner text — pass through untouched.
+function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown {
+  if (action !== PROBE_RESULT_ACTION || payload === null || typeof payload !== 'object') {
+    return payload;
+  }
+  const p = payload as Record<string, unknown>;
+  if (typeof p.answer_md !== 'string') return payload;
+  return {
+    ...p,
+    answer_md: wrapUntrustedLearnerText(truncate(p.answer_md, EVIDENCE_LIMITS.attemptTextChars)),
+  };
 }
 
 /**
@@ -212,6 +237,15 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;
+          // probe_result rows are keyed by subject_id = the probe question id, so
+          // resolve them via the KC's question-id set (question.knowledge_ids @>
+          // [knowledgeId] jsonb containment — same predicate pool-fetch /
+          // target-discovery use). Uncorrelated subquery: one round-trip, and both
+          // action branches share ONE ORDER BY + row cap.
+          const probeQuestionIds = db
+            .select({ id: question.id })
+            .from(question)
+            .where(sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`);
           const rows = await db
             .select({
               id: event.id,
@@ -221,9 +255,15 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
             })
             .from(event)
             .where(
-              and(
-                inArray(event.action, PROBE_HISTORY_ACTIONS),
-                sql`${event.payload}->>'knowledge_id' = ${knowledgeId}`,
+              or(
+                and(
+                  eq(event.action, PREDICTION_SCORE_ACTION),
+                  sql`${event.payload}->>'knowledge_id' = ${knowledgeId}`,
+                ),
+                and(
+                  eq(event.action, PROBE_RESULT_ACTION),
+                  inArray(event.subject_id, probeQuestionIds),
+                ),
               ),
             )
             .orderBy(desc(event.created_at), desc(event.id))
@@ -238,7 +278,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
               event_id: r.id,
               action: r.action,
               created_at: r.created_at.toISOString(),
-              payload: r.payload,
+              payload: sanitizeProbeHistoryPayload(r.action, r.payload),
             })),
           });
         },
@@ -249,10 +289,19 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
         { knowledge_id: z.string() },
         async (args) => {
           const knowledgeId = (args as { knowledge_id: string }).knowledge_id;
+          // subject_kind pinned to 'knowledge' (kc_typed_state is keyed on
+          // subject_kind × subject_id — a same-id row of another kind must not leak),
+          // and ORDER BY makes the row cap deterministic (review F3).
           const rows = await db
             .select()
             .from(kc_typed_state)
-            .where(eq(kc_typed_state.subject_id, knowledgeId))
+            .where(
+              and(
+                eq(kc_typed_state.subject_kind, 'knowledge'),
+                eq(kc_typed_state.subject_id, knowledgeId),
+              ),
+            )
+            .orderBy(desc(kc_typed_state.updated_at), desc(kc_typed_state.id))
             .limit(EVIDENCE_LIMITS.typedStateRows);
           trace(
             getTypedStateName,
@@ -292,7 +341,8 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
             notes: notes.map((n) => ({
               id: n.id,
               type: n.type,
-              title: n.title,
+              // Note titles can be learner-authored — same delimit discipline (review F2).
+              title: wrapUntrustedLearnerText(n.title),
               knowledge_ids: n.knowledge_ids,
               generation_status: n.generation_status,
               verification_status: n.verification_status,
