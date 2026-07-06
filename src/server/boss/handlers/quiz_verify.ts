@@ -427,6 +427,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // scores 题干清晰度 / 唯一正解性 / 干扰项诊断力(仅选择题) —歧义题比事实错更隐蔽地污染 θ̂ 信号
     // (冷启期尤其值). tierChecks always includes teaching_quality for this handler (every row is
     // tier3/4), but gate explicitly to stay correct if CHECK_SETS_BY_TIER is ever reconfigured.
+    //
+    // ACCEPTED TRADE-OFF (peer, not chained): teaching_quality gates on freeChecksPass (the closed-book
+    // self-review), NOT on solveCheckOk — so when solve_check has ALREADY vetoed (freeChecksPass true,
+    // solveCheckOk false), teaching still runs once. This is intentional, not an oversight to "optimize
+    // away": for a single-user tool the marginal mimo call is cost-negligible, and running it means a
+    // solve-vetoed draft can carry BOTH signals — the wrong-answer verdict (solve_check) AND an
+    // independent ambiguous-stem/no-unique-answer read (teaching_quality) — in the SAME held-for-review
+    // draft, giving the owner richer review context in one pass instead of two. Do not "fix" this into a
+    // solveCheckOk && ... short-circuit without re-litigating that trade-off.
     const teachingResult =
       freeChecksPass && tierChecks.includes('teaching_quality')
         ? await runTeachingQualityCheck(
