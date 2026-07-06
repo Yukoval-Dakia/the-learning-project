@@ -9,7 +9,7 @@
 //
 // This is a red-line backstop, NOT the only defence: the agent prompt also states
 // the framing, and propose_conjecture's evidence_refs-must-be-primary check
-// (report-findings.ts assertPrimaryEvidenceRefs) is the structural stop that keeps
+// (report-findings.ts filterPrimaryEvidenceRefs) is the structural stop that keeps
 // a poisoned finding from laundering agent_note ids into evidence. Delimiting is the
 // first, cheapest layer.
 
