@@ -192,73 +192,171 @@ describe('get_question', () => {
   });
 });
 
+// The probe_result seeds below mirror the REAL writer shape (probe-lifecycle.ts):
+// payload has NO knowledge_id — {conjecture_event_id, outcome, resolution,
+// retrievability_at_judge, answer_md} keyed by subject_id = the probe question id.
+// Review F1 killed the payload-only filter that made these rows unreachable.
+async function seedProbeQuestion(id: string, knowledgeIds: string[]): Promise<void> {
+  await testDb().insert(question).values({
+    id,
+    kind: 'short_answer',
+    prompt_md: 'probe prompt',
+    knowledge_ids: knowledgeIds,
+    source: 'test',
+    created_at: NOW,
+    updated_at: NOW,
+  });
+}
+
+function probeResultRow(id: string, probeQuestionId: string, answerMd: string, createdAt: Date) {
+  return {
+    id,
+    session_id: null,
+    actor_kind: 'system' as const,
+    actor_ref: 'mind_probe',
+    action: 'experimental:probe_result',
+    subject_kind: 'question',
+    subject_id: probeQuestionId,
+    outcome: null,
+    payload: {
+      conjecture_event_id: 'conj_1',
+      outcome: 0,
+      resolution: 'refuted',
+      retrievability_at_judge: 0.8,
+      answer_md: answerMd,
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: createdAt,
+  };
+}
+
+function predictionScoreRow(id: string, knowledgeId: string, createdAt: Date) {
+  return {
+    id,
+    session_id: null,
+    actor_kind: 'agent' as const,
+    actor_ref: 'reconcile',
+    action: 'experimental:prediction_score',
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: null,
+    payload: { knowledge_id: knowledgeId, score: 1 },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: createdAt,
+  };
+}
+
 describe('get_probe_history', () => {
-  it('returns newest-first, capped at the row bound, filtered by knowledge_id', async () => {
-    const rows = [];
-    for (let i = 0; i < EVIDENCE_LIMITS.probeHistoryRows + 5; i++) {
-      rows.push({
-        id: `ps_${i}`,
-        session_id: null,
-        actor_kind: 'agent' as const,
-        actor_ref: 'reconcile',
-        action: 'experimental:prediction_score',
-        subject_kind: 'query',
-        subject_id: `ps_${i}`,
-        outcome: null,
-        payload: { knowledge_id: 'k1', score: i },
-        caused_by_event_id: null,
-        task_run_id: null,
-        cost_micro_usd: null,
-        created_at: new Date(NOW.getTime() + i * 1000),
-      });
-    }
-    // A different KC's probe must be excluded.
-    rows.push({
-      id: 'ps_other',
-      session_id: null,
-      actor_kind: 'agent' as const,
-      actor_ref: 'reconcile',
-      action: 'experimental:prediction_score',
-      subject_kind: 'query',
-      subject_id: 'ps_other',
-      outcome: null,
-      payload: { knowledge_id: 'k2', score: 99 },
-      caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: new Date(NOW.getTime() + 999_000),
-    });
-    await testDb().insert(event).values(rows);
+  it('returns probe_result rows via the question join, answer_md delimited (F1)', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_probe_k1', ['k1']);
+    await seedProbeQuestion('q_probe_k2', ['k2']);
+    await db.insert(event).values([
+      probeResultRow('pr_1', 'q_probe_k1', 'learner probe answer', new Date(NOW.getTime() + 2000)),
+      // Another KC's probe_result — the question join must exclude it.
+      probeResultRow(
+        'pr_other',
+        'q_probe_k2',
+        'other learner answer',
+        new Date(NOW.getTime() + 3000),
+      ),
+      // A prediction_score for the same KC merges into the same history.
+      predictionScoreRow('ps_1', 'k1', new Date(NOW.getTime() + 1000)),
+    ]);
 
     const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
-    const probes = out.probes as Array<{ event_id: string; payload: { knowledge_id: string } }>;
+    const probes = out.probes as Array<{
+      event_id: string;
+      action: string;
+      payload: Record<string, unknown>;
+    }>;
+    // Merged newest-first: the probe_result (t+2000) leads the prediction_score (t+1000);
+    // the k2 probe_result never leaks in.
+    expect(probes.map((p) => p.event_id)).toEqual(['pr_1', 'ps_1']);
+    const pr = probes[0];
+    expect(pr.action).toBe('experimental:probe_result');
+    // The learner's raw probe answer is first-hand evidence — delimited as untrusted.
+    expect(pr.payload.answer_md).toBe(
+      '<untrusted_learner_text>learner probe answer</untrusted_learner_text>',
+    );
+    // Non-learner payload keys pass through untouched.
+    expect(pr.payload.conjecture_event_id).toBe('conj_1');
+    expect(pr.payload.resolution).toBe('refuted');
+  });
+
+  it('merges both actions newest-first under ONE shared row cap', async () => {
+    const db = testDb();
+    await seedProbeQuestion('q_probe_k1', ['k1']);
+    // 25 interleaved rows (odd i → probe_result, even i → prediction_score), newest =
+    // highest i. Cap 20 ⇒ exactly i ∈ [5, 24] survive, from BOTH actions.
+    const total = EVIDENCE_LIMITS.probeHistoryRows + 5;
+    const rows = [];
+    for (let i = 0; i < total; i++) {
+      const at = new Date(NOW.getTime() + i * 1000);
+      rows.push(
+        i % 2 === 1
+          ? probeResultRow(`row_${i}`, 'q_probe_k1', `answer ${i}`, at)
+          : predictionScoreRow(`row_${i}`, 'k1', at),
+      );
+    }
+    await db.insert(event).values(rows);
+
+    const out = await callTool('get_probe_history', { knowledge_id: 'k1' });
+    const probes = out.probes as Array<{ event_id: string; action: string }>;
     expect(probes).toHaveLength(EVIDENCE_LIMITS.probeHistoryRows);
-    // Newest first: the highest-index (latest created_at) k1 row leads.
-    expect(probes[0].event_id).toBe(`ps_${EVIDENCE_LIMITS.probeHistoryRows + 4}`);
-    // k2 never leaks in.
-    expect(probes.every((p) => p.payload.knowledge_id === 'k1')).toBe(true);
+    const expected = [];
+    for (let i = total - 1; i >= total - EVIDENCE_LIMITS.probeHistoryRows; i--) {
+      expected.push(`row_${i}`);
+    }
+    expect(probes.map((p) => p.event_id)).toEqual(expected);
+    const actions = new Set(probes.map((p) => p.action));
+    expect(actions).toContain('experimental:probe_result');
+    expect(actions).toContain('experimental:prediction_score');
   });
 });
 
 describe('get_typed_state', () => {
-  it('returns the typed-state row for the knowledge id', async () => {
+  it('returns only subject_kind=knowledge rows for the knowledge id (F3)', async () => {
     await testDb()
       .insert(kc_typed_state)
-      .values({
-        id: 'kts_1',
-        subject_kind: 'knowledge',
-        subject_id: 'k1',
-        typed_state: 'confused-with-X',
-        confused_with_kc_id: 'k2',
-        lifecycle: 'open',
-        evidence_event_ids: ['e1'],
-        last_evidence_at: NOW,
-        updated_at: NOW,
-      });
+      .values([
+        {
+          id: 'kts_1',
+          subject_kind: 'knowledge',
+          subject_id: 'k1',
+          typed_state: 'confused-with-X',
+          confused_with_kc_id: 'k2',
+          lifecycle: 'open',
+          evidence_event_ids: ['e1'],
+          last_evidence_at: NOW,
+          updated_at: NOW,
+        },
+        // Same subject_id under another subject_kind — must NOT leak in (F3).
+        {
+          id: 'kts_other_kind',
+          subject_kind: 'question',
+          subject_id: 'k1',
+          typed_state: 'no-evidence',
+          confused_with_kc_id: null,
+          lifecycle: 'open',
+          evidence_event_ids: [],
+          last_evidence_at: null,
+          updated_at: NOW,
+        },
+      ]);
 
     const out = await callTool('get_typed_state', { knowledge_id: 'k1' });
-    const states = out.typed_states as Array<{ typed_state: string; confused_with_kc_id: string }>;
+    const states = out.typed_states as Array<{
+      id: string;
+      typed_state: string;
+      confused_with_kc_id: string;
+    }>;
     expect(states).toHaveLength(1);
+    expect(states[0].id).toBe('kts_1');
     expect(states[0].typed_state).toBe('confused-with-X');
     expect(states[0].confused_with_kc_id).toBe('k2');
   });
@@ -282,8 +380,12 @@ describe('get_notes', () => {
     await testDb().insert(artifact).values(rows);
 
     const out = await callTool('get_notes', { knowledge_id: 'k1' });
-    const notes = out.notes as Array<{ id: string }>;
+    const notes = out.notes as Array<{ id: string; title: string }>;
     expect(notes).toHaveLength(EVIDENCE_LIMITS.noteSummaries);
+    // Note titles can be learner-authored — delimited as untrusted (F2).
+    for (const n of notes) {
+      expect(n.title).toMatch(/^<untrusted_learner_text>note \d+<\/untrusted_learner_text>$/);
+    }
   });
 });
 

@@ -53,6 +53,8 @@ export function buildEvidenceScoutAgentDefinition(opts: BuildEvidenceScoutOpts):
     // "继承主线程" (spec §1/§6); the SDK documents omit / 'inherit' as the main model.
     tools: [...EVIDENCE_READ_TOOL_NAMES, REPORT_FINDINGS_TOOL_NAME],
     disallowedTools: [SPAWN_TOOL_NAME, ...DIRECTOR_WRITE_TOOL_NAMES],
+    // By-name reference to the top-level in-process server (E-3: runtime resolution
+    // unverified until PR-2 dev validation; fallback form is {type:'sdk',name}).
     mcpServers: [EVIDENCE_SERVER_NAME],
     maxTurns: EVIDENCE_SCOUT_MAX_TURNS,
   };
