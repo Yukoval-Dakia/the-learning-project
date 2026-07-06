@@ -380,7 +380,7 @@ Task 工具调用**不经** mcp-bridge（那是 in-process MCP 工具的 wrapper
 - owner inbox 审阅是天然的人工过滤层——伪造/不相关的 evidence_refs 会在 claim_md / probe_md 与实际证据不符时被 owner 一眼看穿。
 - 结算侧（`reconcileConjecturePredictions`）按 `conjecture_event_id` 直连 join，**从不 join evidence_refs**（reconcile.ts）——即使 evidence_refs 指向不存在或不相关的事件，也不会污染 prediction_score / typed-ledger 的结算路径。
 
-**结论**：服务端存在性/归属校验属于 hardening，会扩大本 PR 的 scope（需要按 kind 分派 event 查询 + knowledge_id/cause 归属比对），故本 PR **不做**，记为 follow-up（Linear YUK-581 占位 —— 若实际号不同以 PR body 为准）。
+**结论**：服务端存在性/归属校验属于 hardening，会扩大本 PR 的 scope（需要按 kind 分派 event 查询 + knowledge_id/cause 归属比对），故本 PR **不做**，记为 follow-up（Linear **YUK-584**）。
 
 ---
 
