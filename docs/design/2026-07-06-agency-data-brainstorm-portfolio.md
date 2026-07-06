@@ -2,7 +2,7 @@
 
 > **命题**（owner）：最大化利用 AI 的能动性和我们的数据。**收敛参数**：全谱系分层（day-zero / data-flywheel / product-face）；红线可挑战但须标记，结算层（θ̂/FSRS/mastery 账本直写）零能动性不可协商。
 >
-> **流程**：ultracode workflow `wf_8f129ae5-eae`（47 agent / 3.37M tokens）——6 透镜并行生成（数据考古 / 议程权最大化 / 教研团拟人化 / 自我改进闭环 / 外部对标 / 红线挑战者）→ 语义去重 + backlog 对撞 → 逐条 Opus skeptic 攻击（必须实读代码核实 feasibility hook）→ Opus xhigh 终审综合。**漏斗：58 原始 → 39 去重 → 11 存活 / 27 击杀 / 1 漏审**（第 12 条「Provider×task_kind 舱位路由」的 skeptic 在 workflow 内结构化输出 5 次超限被静默丢弃，事后单独补审判 KILL，见附录 A——非存活合计 28，击杀率 72%）。
+> **流程**：ultracode workflow `wf_8f129ae5-eae`（47 agent / 3.37M tokens）——6 透镜并行生成（数据考古 / 议程权最大化 / 教研团拟人化 / 自我改进闭环 / 外部对标 / 红线挑战者）→ 语义去重 + backlog 对撞 → 逐条 Opus skeptic 攻击（必须实读代码核实 feasibility hook）→ Opus xhigh 终审综合。**漏斗：58 原始 → 39 去重 → 11 存活 / 27 击杀 / 1 漏审**（第 12 条「Provider×task_kind 舱位路由」的 skeptic 在 workflow 内结构化输出 5 次超限被静默丢弃，事后中性三票复核一致判 KILL（`wf_a55a643a-7a5`），见附录 A——非存活合计 28，击杀率 72%）。
 >
 > **Owner 裁决（2026-07-06）**：Top-3 落 Linear —— 审题闸 **YUK-578** / 覆盖细目表 **YUK-579** / 运维看门狗 **YUK-580**；其余 8 条存活想法留档本 doc 待后续挑选；红线挑战组 3 条（knowledge_edge 升 A 档 / applied_in 通电 / 自动 dismiss 悬空提案）**未拍板**，取用时按报告第五节前置 gate 走。
 >
@@ -156,17 +156,18 @@
 
 ---
 
-## 附录 A：第 12 条补审——「证据驱动的 Provider×task_kind 舱位路由」（KILL）
+## 附录 A：第 12 条重跑——「证据驱动的 Provider×task_kind 舱位路由」（中性三票一致 KILL）
 
-workflow 内该条的 skeptic 5 次结构化输出均失败被静默丢弃，主 session 事后单独派 Opus skeptic 补审，判 **KILL**：
+**Process note**：workflow 内该条的 skeptic 5 次结构化输出均失败被静默丢弃。主 session 首次补审的 prompt 带诱导（把击杀角度直接喂给了 skeptic），owner 令重跑。重跑（workflow `wf_a55a643a-7a5`）= 原 workflow **逐字相同的中性攻击 prompt 重放** + 经济/价值、可行性/数据两个透镜的独立 skeptic，三票全部不喂结论、各自实读代码取证。**结果 3/3 KILL**——中性复核独立收敛到同一组结构性理由，并挖出两条诱导版没有的事实：
 
-- **经济前提伪造**（决定性）：`src/server/ai/pricing.ts:41-53` 把 Opus 订阅 lane（anthropic-sub）成本诚实记 0（flat subscription 无边际），mimo 费率是文件头标注的 PLACEHOLDER——「每美元质量」的分母不存在。与被击杀的「预算仲裁官」死于同一条：owner flat-rate 付 Claude Max，「Opus 的钱」不随调用数增长，无可优化标的。
-- **无反事实数据**：AI_PROVIDER_OVERRIDE / VISION_JUDGE_PROVIDER 都是 all-or-nothing 全局开关，任一时间窗内 ai_task_runs.provider 是单一常量，同 task_kind 从未在可比输入上跑过两个 provider，学不出 A vs B。
-- **质量代理无归因链**：proposal_signals 按 (kind, cooldown_key) 聚合，无 provider/model 列，无 task_run_id→provider join。
-- **残值被既有单拥有**：provider 间质量对比采样 = YUK-573 by design 的产出；provider 选择层 = YUK-576 的地盘。相减后独立增量为零。
-- **复活条件**（若坚持）：等 YUK-573 落地复用其双 judge 采样、补 task_run_id→provider 归因链、范围收敛到 1-2 个高频 task_kind——届时它只是 573 的下游只读 dashboard，不足以独立立项。
+1. **对比数据结构性不存在**（neutral + data 独立收敛）：`AI_PROVIDER_OVERRIDE` 是 process-global（providers.ts:169-180，一开翻全部 task），`VISION_JUDGE_PROVIDER` 只成对翻两个 vision judge 且默认 UNSET（dark-ship）——provider 与墙钟时间完全共线，历史上从不存在「task A 走 mimo、task B 走 Opus」的并存态，ai_task_runs 里没有 per-task-kind 跨 provider 对照可学。要生成可比样本须先建 dual-run/shadow harness——那是另一条前瞻实验想法（不同机制、不同 horizon），不是本条声称的「消费已采集 telemetry」。
+2. **质量代理归因链断**（三票同抓）：proposal_signals 按 (kind, cooldown_key) 聚合，无 provider/model/task_run_id 列，accept/dismiss 无法 join 回产出它的 provider；**judge「翻案率」的表面（judgment + user_appeal 表）已被 DROP（schema.ts:595-597）——声称的第三路数据输入根本不存在**（data skeptic 新增，诱导版未发现）。
+3. **经济前提伪造**（econ 独立复现 + 加深）：`pricing.ts:41-53` Opus 订阅 lane 记 0（flat 无边际）、mimo 费率是文件自述的占位价——「每美元质量」一个分母是 0、一个是假数；**真正稀缺的是 Max 订阅的 rate-limit 额度而非美元**（econ 新增）——想法连成本维度都建模错了。
+4. **可救残片不足立项**（三票一致）：per-task_kind 成本下钻 = 既有 admin cost 面的一个 group-by 增强（XS，不值开单）；质量对比的前置（provider 归因列 + 主动双跑采样）与 YUK-573 双 judge 采样 / YUK-576 provider 选择层高度重叠，相减后独立增量为零。
 
-## 附录 B：击杀名单（28 条，防复活留档）
+**结论：KILL 维持且比诱导版更硬**——无提示复核不仅复现全部论点，还证伪了想法自报的 data_inputs 之一。若未来复活，前置 = 先补 proposal/judge 事件的 provider+task_run_id 归因链，且届时它只是 YUK-573 的下游只读 dashboard。三票完整裁决原文在 workflow journal `wf_a55a643a-7a5/journal.jsonl`。
+
+## 附录 B：击杀名单（workflow 内 27 条，防复活留档；第 28 条 = 附录 A）
 
 - **工具效力账本 + Agent 自我复盘注入**：击杀，三层证据叠加：
 
