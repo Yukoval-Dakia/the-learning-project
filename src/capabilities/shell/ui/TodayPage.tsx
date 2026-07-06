@@ -253,11 +253,18 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
           errorText="夜链交班暂不可用。"
           skeleton={<SkLines rows={2} />}
         >
-          {/* YUK-580：静默失败标红——与 has_overnight_activity 正交，独立渲染（既有
-              LoomBadge tone="again" + LoomIcon "alert" primitives，同 observability 面
-              <Badge tone="again">error</Badge> 口径，无新组件）。 */}
+          {/* YUK-580：静默失败标红。degraded_kinds 非空时 activity 必为 true（error runs
+              计入 runs_total，非独立信号）；这里的「独立渲染」只是指标红 badge 不挂在
+              has_overnight_activity 的条件分支下（既有 LoomBadge tone="again" + LoomIcon
+              "alert" primitives，同 observability 面 <Badge tone="again">error</Badge>
+              口径，无新组件）。marginBottom 仅在下方 activity chips 行也会渲染时补一档
+              纵向间距（既有 inline style 约定，见 L437 marginLeft），避免两行 .digest-chips
+              贴在一起。 */}
           {d && d.degraded_kinds.length > 0 && (
-            <div className="digest-chips">
+            <div
+              className="digest-chips"
+              style={d.has_overnight_activity ? { marginBottom: 'var(--s-2)' } : undefined}
+            >
               {d.degraded_kinds.map((dk) => (
                 <LoomBadge
                   key={dk.task_kind}
