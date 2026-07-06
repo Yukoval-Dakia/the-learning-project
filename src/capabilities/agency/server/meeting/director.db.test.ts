@@ -259,6 +259,43 @@ describe('runResearchMeetingDirector — pipeline', () => {
     expect(scans[0].payload).toMatchObject({ error: 'error_max_turns' });
   });
 
+  it('does not throw when persistToolTraceFn fails post-run — returns a degraded/partial result (§3 review fix MAJOR)', async () => {
+    const runAgentTaskFn = vi.fn(async () => {
+      // Exercise an evidence read tool so the toolTrace is non-empty — persistToolTraceFn
+      // is only invoked at all when trace.length > 0. A nonexistent attempt_event_id
+      // still pushes a toolTrace entry (evidence-mcp.ts traces found:false calls too).
+      await callTool('get_attempt_details', { attempt_event_id: 'nonexistent_att' });
+      await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_run_persist_fail',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.03,
+      };
+    });
+    const persistToolTraceFn = vi.fn(async () => {
+      throw new Error('tool_call_log write blew up');
+    });
+
+    const result = await runResearchMeetingDirector(
+      testDb(),
+      baseDeps({ runAgentTaskFn, persistToolTraceFn }),
+    );
+
+    // The persistence failure must NOT propagate — proposals still landed, so this is
+    // 'partial' (some progress + a post-run write hiccup), not 'failure'.
+    expect(result.outcome).toBe('partial');
+    expect(result.proposals_created).toBe(1);
+    expect(persistToolTraceFn).toHaveBeenCalledTimes(1);
+
+    // The scan event STILL gets written (its own independent try/catch) and records the
+    // 'partial' outcome so the failure is observable, not silently swallowed.
+    const scans = await testDb().select().from(event).where(eq(event.action, SCAN_ACTION));
+    expect(scans).toHaveLength(1);
+    expect(scans[0].payload).toMatchObject({ outcome: 'partial' });
+  });
+
   it('shadow isolation: the agent run writes only research_meeting_agent-actor rows', async () => {
     await runResearchMeetingDirector(testDb(), baseDeps());
     // The deterministic control actor is never written by the agent lane.
