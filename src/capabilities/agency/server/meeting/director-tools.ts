@@ -64,8 +64,19 @@ export const AGENT_NOTE_TARGET_WHITELIST: readonly AgentNoteTarget[] = Object.fr
   'research_meeting',
 ]);
 
-const [PROPOSE_CONJECTURE_LOCAL_NAME, LEAVE_AGENT_NOTE_LOCAL_NAME] =
-  DIRECTOR_WRITE_TOOL_LOCAL_NAMES;
+// round-3 review OCR MINOR #6 — literal constants (NOT positional array destructuring of
+// DIRECTOR_WRITE_TOOL_LOCAL_NAMES): a reorder of that shared tuple in tool-names.ts would
+// silently SWAP these two constants' meanings under destructuring (both are plain
+// `string`, so TS would not catch the swap). The assignment below is a compile-time
+// consistency check instead: TS rejects it if the shared tuple's literal order ever
+// diverges from these two constants.
+const PROPOSE_CONJECTURE_LOCAL_NAME = 'propose_conjecture';
+const LEAVE_AGENT_NOTE_LOCAL_NAME = 'leave_agent_note';
+const _directorWriteToolOrderCheck: readonly [
+  typeof PROPOSE_CONJECTURE_LOCAL_NAME,
+  typeof LEAVE_AGENT_NOTE_LOCAL_NAME,
+] = DIRECTOR_WRITE_TOOL_LOCAL_NAMES;
+void _directorWriteToolOrderCheck;
 const GET_MEETING_CONTEXT_LOCAL_NAME = 'get_meeting_context';
 
 /** WIRE name of the director agenda read tool (declared here — PR-2 owns it). */
@@ -214,18 +225,19 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   // via knownConjectureKeys.
   const proposedThisRun = new Set<string>();
   // Cheap lookup for the server-owned recurrence_count / baseline_p snapshot.
-  // §7 review MINOR #5 — verified data source: c.cause_category here comes from
-  // meetingContext.candidate_cells, which director.ts builds from
-  // gatherConjectureEvidence()'s deterministic EvidenceCell[] output (a server-side
-  // projection over FailureAttempt[] + mastery — see director.ts's `candidateCells`
-  // assembly). It is NEVER LLM input. MeetingCandidateCell widens the field to `string`
-  // only for the JSON tool-return round trip; the underlying value is already a
-  // validated CauseCategoryT, so this cast is safe (contrast the propose_conjecture
-  // handler below, where a.cause_category IS LLM-supplied and is parsed through
-  // CauseCategoryId before use — §7 review MINOR #6).
+  // round-3 review OCR MINOR #5 — no cast needed here at all: CauseCategoryId is
+  // `z.string().regex(...)`, whose inferred TS type (CauseCategoryT) is plain `string`
+  // (the regex is a runtime-only refinement, not a branded type) — c.cause_category
+  // (also `string`, from MeetingCandidateCell) already satisfies conjectureKey's
+  // parameter type with no cast. (Verified data source, unrelated to the type match:
+  // c.cause_category comes from meetingContext.candidate_cells, which director.ts
+  // builds from gatherConjectureEvidence()'s deterministic EvidenceCell[] output — a
+  // server-side projection, never LLM input — contrast the propose_conjecture handler
+  // below, where a.cause_category IS LLM-supplied and is parsed through CauseCategoryId
+  // before use, §7 review MINOR #6.)
   const cellByKey = new Map<string, MeetingCandidateCell>();
   for (const c of meetingContext.candidate_cells) {
-    cellByKey.set(conjectureKey(c.cause_category as never, c.knowledge_id), c);
+    cellByKey.set(conjectureKey(c.cause_category, c.knowledge_id), c);
   }
 
   const server = createSdkMcpServer({
@@ -245,7 +257,21 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
         'PROPOSE (not write) one conjecture about how the owner thinks + its discriminating probe. At most 3 per night; a cause×KC that already has a pending conjecture is refused. evidence_refs must be first-hand event ids (attempt / probe / prediction_score) — agent_note ids are stripped. You do NOT supply baseline mastery — the server snapshots it by knowledge point.',
         ProposeConjectureShape,
         async (args) => {
-          // Cap FIRST — before any work, and it is not consumed by a later reject.
+          // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
+          // tool_use blocks in one turn; if the MCP bridge dispatches them by invoking
+          // each handler back-to-back (each handler's synchronous prefix runs to
+          // completion before yielding at its OWN first `await` — JS never preempts
+          // mid-synchronous-stretch), then the cap/dedup RESERVATION must land before
+          // this handler's first `await` (getMasteryProjectionFn / writeAiProposalFn,
+          // below), or a concurrent second call for the SAME cell could race past every
+          // synchronous check seeing the SAME stale (not-yet-reserved) state. All
+          // synchronous validation (cap / Zod / evidence / cause_category / dedup /
+          // recurrence floor / ConjectureDraft) runs FIRST and rejects with no
+          // reservation to unwind; the reservation itself sits at the very end of that
+          // synchronous stretch (see below), with only the one downstream (async) reject
+          // — a write failure — needing an explicit rollback (decrement / delete), so a
+          // legitimately-retryable write rejection doesn't permanently burn a cap slot or
+          // block a real later proposal for that cell.
           if (caps.proposeCount >= DIRECTOR_MAX_PROPOSALS) {
             return textResult({
               ok: false,
@@ -334,6 +360,14 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
+          // SYNCHRONOUS reservation (A2 fix) — every check above this line is
+          // synchronous (no await), so this line is reached, for ANY single invocation,
+          // strictly before that invocation's first await. A concurrent second call for
+          // the SAME key, dispatched back-to-back before this call's first await
+          // resolves, sees this reservation already applied.
+          caps.proposeCount += 1;
+          proposedThisRun.add(key);
+
           // baseline_p auto-snapshot (§5.4): the cell's value, else the live mastery
           // projection, else the cold-start neutral 0.5 — the LLM NEVER supplies it.
           let baselineP = matchedCell?.baseline_p ?? null;
@@ -388,14 +422,15 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             proposalId = await writeAiProposalFn(db, input);
           } catch (err) {
             // A CauseCategory / payload parse failure (writeAiProposal → parseAiProposalPayload)
-            // is a validation reject, not a run-fatal error — return it so the director can fix.
+            // is a validation reject, not a run-fatal error — return it so the director can
+            // fix. Roll back the reservation (A2 fix): a write-time rejection is retryable.
+            caps.proposeCount -= 1;
+            proposedThisRun.delete(key);
             return textResult({
               ok: false,
               reason: `提案写入被拒（校验）: ${err instanceof Error ? err.message : String(err)}`,
             });
           }
-          caps.proposeCount += 1;
-          proposedThisRun.add(key);
           proposalIds.push(proposalId);
           return textResult({ ok: true, proposal_id: proposalId });
         },
@@ -452,19 +487,22 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             expires_at: new Date(now.getTime() + AGENT_NOTE_TTL_MS).toISOString(),
             caused_by_event_id: triggerEventId,
           };
-          // §7 review MAJOR #4 — mirror propose_conjecture's soft-reject-on-write-failure
-          // discipline: a DB write throw here must not blow up the whole director run.
-          // caps.noteCount only advances on a CONFIRMED write.
+          // round-3 review CodeRabbit Major (A2) — SAME TOCTOU fix as propose_conjecture:
+          // reserve the cap slot SYNCHRONOUSLY (before the first await), so a concurrent
+          // second leave_agent_note call sees the reservation instead of racing past the
+          // cap check too. §7 review MAJOR #4's soft-reject-on-write-failure discipline
+          // is preserved: a write failure rolls the reservation back.
+          caps.noteCount += 1;
           let noteId: string;
           try {
             noteId = await writeAgentNoteFn(db, note);
           } catch (err) {
+            caps.noteCount -= 1;
             return textResult({
               ok: false,
               reason: `note 写入被拒（校验/DB）: ${err instanceof Error ? err.message : String(err)}`,
             });
           }
-          caps.noteCount += 1;
           noteIds.push(noteId);
           return textResult({ ok: true, note_id: noteId });
         },

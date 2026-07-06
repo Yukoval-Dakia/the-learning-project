@@ -200,6 +200,24 @@ describe('runResearchMeetingDirector — pipeline', () => {
     expect(triggers).toHaveLength(1);
   });
 
+  it('records a genuine zero cost as 0 (not null) — round-3 review OCR #7, dreaming_nightly:388 precedent (null means UNKNOWN/degraded, not "no spend")', async () => {
+    const runAgentTaskFn = vi.fn(async () => {
+      await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_run_zero_cost',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0, // flat OAuth lane genuinely reporting no per-call cost — NOT degraded
+      };
+    });
+    const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+    expect(result.outcome).toBe('success');
+    const scans = await testDb().select().from(event).where(eq(event.action, SCAN_ACTION));
+    expect(scans).toHaveLength(1);
+    expect(scans[0].cost_micro_usd).toBe(0); // NOT null — a successful run's real 0 is a fact
+  });
+
   it('dedups against a pending conjecture the deterministic lane already raised (cross-actor)', async () => {
     // Seed a PENDING conjecture from the deterministic lane (actor research_meeting).
     await writeAiProposal(testDb(), {
@@ -306,7 +324,11 @@ describe('runResearchMeetingDirector — pipeline', () => {
       // subagent) to bump scoutSpawns → the scout_spawned event write is attempted.
       const hooks = (ctx as { hooks?: { PreToolUse?: Array<{ hooks: unknown[] }> } }).hooks;
       const hookFn = hooks?.PreToolUse?.[0]?.hooks[0] as (input: unknown) => Promise<unknown>;
-      await hookFn({ hook_event_name: 'PreToolUse', tool_name: 'Task' });
+      await hookFn({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Task',
+        tool_use_id: 'test-spawn-1',
+      });
       await callTool('propose_conjecture', validProposeArgs);
       return {
         task_run_id: 'director_run_multi_fail',
@@ -339,14 +361,27 @@ describe('runResearchMeetingDirector — pipeline', () => {
     expect(postRunError).toContain('scout_spawned write blew up');
   });
 
-  it('canUseTool denies the second Task spawn attempt (round-2 review MAJOR #9 — independent enforcement layer sharing the same counter as the PreToolUse hook)', async () => {
+  it('idempotent id-keyed spawn cap: BOTH layers consulted for the SAME call agree (round-3 review A1 — stronger than "hook increments, canUseTool reads-only")', async () => {
+    // Round-2's design ("hook increments, canUseTool reads-only") has a real flaw if the
+    // SDK consults BOTH layers for the SAME single Task call: hook grants + increments
+    // 0→1 for the FIRST spawn, then canUseTool re-checks the ALREADY-incremented counter
+    // for that SAME call and would incorrectly deny the very call the hook just approved
+    // — under MAX_SCOUT_SPAWNS=1 the scout would never successfully spawn at all. The
+    // fix keys the decision on `tool_use_id` (PreToolUseHookInput) / `toolUseID`
+    // (canUseTool's options) — the SAME per-call correlation id on both SDK surfaces
+    // (sdk.d.ts:2167-2172 / CanUseTool options) — so a SECOND consultation of an
+    // ALREADY-granted call re-allows (idempotent), while a genuinely NEW call is capped.
+    let capturedHooks:
+      | { PreToolUse?: Array<{ hooks: Array<(input: unknown) => Promise<unknown>> }> }
+      | undefined;
     let capturedCanUseTool:
-      | ((toolName: string, input: unknown, options: unknown) => Promise<unknown>)
+      | ((toolName: string, input: unknown, options: { toolUseID: string }) => Promise<unknown>)
       | undefined;
     const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: never) => {
+      capturedHooks = (ctx as { hooks?: typeof capturedHooks }).hooks;
       capturedCanUseTool = (ctx as { canUseTool?: typeof capturedCanUseTool }).canUseTool;
       return {
-        task_run_id: 'director_run_canusetool',
+        task_run_id: 'director_run_a1',
         text: '',
         finishReason: 'stop',
         usage: { inputTokens: 0, outputTokens: 0 },
@@ -356,15 +391,49 @@ describe('runResearchMeetingDirector — pipeline', () => {
 
     await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
 
+    const hookFn = capturedHooks?.PreToolUse?.[0]?.hooks[0];
+    expect(hookFn).toBeTypeOf('function');
     expect(capturedCanUseTool).toBeTypeOf('function');
     const canUseTool = capturedCanUseTool as NonNullable<typeof capturedCanUseTool>;
-    const first = await canUseTool('Task', {}, {});
-    expect(first).toMatchObject({ behavior: 'allow' });
-    const second = await canUseTool('Task', {}, {});
-    expect(second).toMatchObject({ behavior: 'deny' });
-    // a non-spawn tool is never denied by this layer.
-    const nonSpawn = await canUseTool('mcp__research_evidence__get_question', {}, {});
-    expect(nonSpawn).toMatchObject({ behavior: 'allow' });
+    const invokeHook = hookFn as NonNullable<typeof hookFn>;
+
+    // Call #1 ('call-1'): simulate BOTH layers consulted for the SAME call, hook first
+    // (per sdk.d.ts:3446, a hook deny bypasses canUseTool — implying hook runs first).
+    const hook1 = await invokeHook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Task',
+      tool_use_id: 'call-1',
+    });
+    expect(hook1).toMatchObject({ continue: true });
+    const cut1 = await canUseTool('Task', {}, { toolUseID: 'call-1' });
+    // MUST allow — canUseTool is re-asked about the SAME already-granted call, not a new one.
+    expect(cut1).toMatchObject({ behavior: 'allow' });
+
+    // Call #2 ('call-2'): a genuinely NEW call — both layers must deny it.
+    const hook2 = await invokeHook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Task',
+      tool_use_id: 'call-2',
+    });
+    expect(hook2).toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
+    const cut2 = await canUseTool('Task', {}, { toolUseID: 'call-2' });
+    expect(cut2).toMatchObject({ behavior: 'deny' });
+
+    // A non-spawn tool is never denied by either layer.
+    const nonSpawnHook = await invokeHook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'mcp__research_evidence__get_question',
+      tool_use_id: 'call-3',
+    });
+    expect(nonSpawnHook).toMatchObject({ continue: true });
+    const nonSpawnCanUseTool = await canUseTool(
+      'mcp__research_evidence__get_question',
+      {},
+      { toolUseID: 'call-3' },
+    );
+    expect(nonSpawnCanUseTool).toMatchObject({ behavior: 'allow' });
   });
 
   it('shadow isolation: the agent run writes only research_meeting_agent-actor rows', async () => {

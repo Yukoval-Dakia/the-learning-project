@@ -34,6 +34,38 @@
 //      accepted, logged trade-off; see director.ts's degrade comment), unlike the
 //      PRE-LLM-throw case above, which is a true zero-spend retry.
 //
+//      RESIDUAL RACE (round-3 review OCR MINOR, evaluated + accepted, not engineered
+//      away): the orphan-recovery branch above has NO nonce-race protection of its own
+//      (unlike the fresh-claim branch, which reads back its own write and compares
+//      nonces) — if TWO concurrent invocations both discover the SAME orphaned claim
+//      ("exists + no scan") at the same time, BOTH proceed and BOTH re-run the director,
+//      a genuine double-spend. Two facts bound how often this is reachable and why a
+//      fix was NOT added:
+//        (a) queue-timeout cross-check (A3/A4): EXPIRE_AGENT=7200s (2h, the 'agent'
+//            queue tier — see the manifest.ts A4 fix) comfortably exceeds the
+//            director's own 300s wall-clock abort. A HEALTHY run always self-aborts
+//            long before pg-boss's own queue-level expiry could ever redeliver it —
+//            so the orphan path is reachable ONLY via an ABNORMAL termination (a
+//            worker process crash/restart), not a normal in-budget timeout race.
+//        (b) a SOUND fix is not cheap here: `writeEvent` is deliberately append-only
+//            (INSERT ... ON CONFLICT DO NOTHING, first-write-wins, NEVER an UPDATE —
+//            see writeEvent's own docblock) — there is no compare-and-swap path to
+//            "reclaim" the EXISTING fixed claim id with a new nonce. A naive
+//            "write-my-own-marker-then-read-all-and-pick-first" scheme does NOT
+//            actually close the race (it just relocates the same TOCTOU to the
+//            read-after-write ordering assumption — the ORIGINAL claim's soundness
+//            comes from the DB's real uniqueness constraint on ONE fixed id, not
+//            from "read back and compare"). A genuinely sound second-tier reclaim
+//            would need its OWN fixed per-day id (a real second onConflictDoNothing
+//            race) — implementable, but then a REPEATED orphan within the same
+//            night (a reclaim-of-a-reclaim) needs the SAME treatment again,
+//            recursively — a real scope increase past a light-touch fix.
+//      Given (a) the trigger condition is already abnormal/rare (single worker +
+//      nightly cron + a crash mid-flight) and (b) the spec's own §3 already grounds
+//      the WHOLE claim scheme's soundness in the "single worker + nightly cron +
+//      single user" operational model (not a fully distributed-safe design), this
+//      residual gap is ACCEPTED and documented here rather than engineered away.
+//
 // NEVER calls reconcile (settlement single-home stays with the deterministic lane).
 
 import type { Job } from 'pg-boss';
