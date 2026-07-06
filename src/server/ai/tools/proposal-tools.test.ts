@@ -651,6 +651,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
           caused_by_event_id: attemptEventId,
           created_at: new Date(BASE.getTime() + 4_000),
         });
+        // YUK-379: helper now returns a discriminant — the race-winner wrote a judge.
+        return { outcome: 'written' as const };
       });
 
     const raced = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
@@ -663,6 +665,24 @@ describe('Wave 3 proposal/action DomainTools', () => {
     spy.mockRestore();
     const judges = await db.select().from(event).where(eq(event.action, 'judge'));
     expect(judges).toHaveLength(1);
+  });
+
+  // YUK-379 (B1): the helper's contract flip (rethrow-classified failures via a
+  // discriminant, never throwing) MUST leave the copilot attribute_mistake path
+  // byte-identical: on a retryable LLM failure the helper writes no judge and
+  // does not throw, so the re-read finds nothing and the tool returns
+  // {status:'failed'}. Pins this contract; does not change the implementation.
+  it('YUK-379: attribute_mistake returns failed when the attribution LLM throws (helper never throws)', async () => {
+    const db = testDb();
+    await seedKnowledgeGraph();
+    await seedQuestionAndFailure();
+    mockRunner.runTask.mockRejectedValueOnce(new Error('LLM down'));
+
+    const out = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
+    expect(out.status).toBe('failed');
+
+    const judges = await db.select().from(event).where(eq(event.action, 'judge'));
+    expect(judges).toHaveLength(0);
   });
 
   it('propose_variant reuses runVariantGen rules and creates a variant proposal ledger row', async () => {

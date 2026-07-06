@@ -18,7 +18,7 @@ import { getJudgeForAttempt, writeEvent } from '@/server/events/queries';
 import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { writeRetryableAiFailureLedger } from './ai_failure_log';
+import { writePermanentAiFailureLedger } from './ai_failure_log';
 import { retrieveCauseCandidates } from './attribute-retrieve';
 
 // Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
@@ -74,16 +74,55 @@ export interface RunAttributionAndWriteJudgeEventParams {
 }
 
 /**
+ * Outcome discriminant for {@link runAttributionAndWriteJudgeEvent} (YUK-379 B1).
+ *
+ * The helper NEVER throws — it classifies every terminal state so the caller
+ * decides retry policy:
+ *  - `written`   — a real judge event was written.
+ *  - `skipped`   — a real judge already existed (idempotent early-out).
+ *  - `retryable` — the idempotency read / LLM call / judge write hit a transient
+ *                  (DB fault or provider) failure. NO ledger row is written; the
+ *                  caller (pg-boss job) rethrows `error` so pg-boss retries + the
+ *                  llm_dlq are the record of record.
+ *  - `permanent` — the LLM SUCCEEDED but its output failed parse/validate.
+ *                  Retrying re-spends money on a systematic failure, so a
+ *                  `failed_permanent` cost_ledger row (carrying the task_run_id)
+ *                  is written for observability and the job does not retry.
+ */
+export type AttributionOutcome =
+  | { outcome: 'written' }
+  | { outcome: 'skipped' }
+  | { outcome: 'retryable'; error: unknown }
+  | { outcome: 'permanent'; error: unknown };
+
+/**
  * Runs the AttributionTask LLM call, parses the JSON output, and writes a
  * JudgeOnEvent row chained on the attempt via caused_by_event_id.
  *
- * Idempotency: if a prior judge already exists for this attempt, skip + warn.
- * Errors (LLM failure, parse failure) are caught and logged; the attempt event
- * remains intact (no judge written).
+ * Idempotency: if a real prior judge already exists for this attempt, returns
+ * `{ outcome: 'skipped' }` + warns. Never throws — every failure is classified
+ * into the {@link AttributionOutcome} discriminant so the caller owns retry
+ * policy (YUK-379 B1). The attempt event is never mutated on any path.
  */
 export async function runAttributionAndWriteJudgeEvent(
   params: RunAttributionAndWriteJudgeEventParams,
-): Promise<void> {
+): Promise<AttributionOutcome> {
+  // Profile resolution is IO-free; hoisted out of the try so it is in scope for
+  // the LLM call, the post-LLM parse, and the judge write.
+  const profile = params.subjectProfile ?? defaultSubjectProfile;
+
+  // Round-6 fix #1: track the placeholder's visibility/verdict fields to inherit.
+  let inheritedVisibility: {
+    visible_to_user?: boolean;
+    coarse_outcome?: string;
+    score?: number;
+  } | null = null;
+
+  // ── Stage A: idempotency read + LLM call ──────────────────────────────────
+  // A failure here (DB read fault OR LLM provider error) is RETRYABLE: write NO
+  // ledger row and return the discriminant so the caller rethrows — pg-boss
+  // retries + llm_dlq are the durable record.
+  let result: Awaited<ReturnType<TaskTextRunFn>>;
   try {
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
     // PK conflict in writeEvent gives us idempotency on event id, but here we
@@ -96,12 +135,6 @@ export async function runAttributionAndWriteJudgeEvent(
     // the D4 mistake-flywheel stays silent. Skip only when a real attribution
     // judge (no attribution_pending flag, or explicitly false) is present.
     const existing = await getJudgeForAttempt(params.db, params.attemptEventId);
-    // Round-6 fix #1: track the placeholder's visibility/verdict fields to inherit.
-    let inheritedVisibility: {
-      visible_to_user?: boolean;
-      coarse_outcome?: string;
-      score?: number;
-    } | null = null;
     if (existing) {
       // Peek at the raw payload to check attribution_pending.
       // getJudgeForAttempt returns the processed shape; we need the raw flag.
@@ -122,7 +155,7 @@ export async function runAttributionAndWriteJudgeEvent(
         console.warn(
           `runAttributionAndWriteJudgeEvent: skipped — real judge already exists for attempt ${params.attemptEventId}`,
         );
-        return;
+        return { outcome: 'skipped' };
       }
       // attribution_pending=true: paper placeholder — fall through and run real
       // attribution. Capture the placeholder's visibility/verdict so the new judge
@@ -136,8 +169,8 @@ export async function runAttributionAndWriteJudgeEvent(
       };
     }
 
-    // YUK-462 — retrieve→rerank-with-rationale. Resolve the profile once and reuse
-    // it for both the L1 retriever and the post-LLM parse/clamp.
+    // YUK-462 — retrieve→rerank-with-rationale. The profile (resolved above) is
+    // reused for both the L1 retriever and the post-LLM parse/clamp.
     //
     // Stage 1 (retrieve): deterministic, no-LLM candidate selection. For every
     // current profile (cause vocab <= K_SMALL) this returns the full vocab verbatim,
@@ -148,15 +181,38 @@ export async function runAttributionAndWriteJudgeEvent(
     // candidate list + gives a per-candidate rationale. The candidate field is
     // added only to this internal rerank input; AttributionInput stays pure for
     // the 3 external callers. Post-LLM parse/clamp/write are unchanged below.
-    const profile = params.subjectProfile ?? defaultSubjectProfile;
     const candidates = retrieveCauseCandidates(params.input, profile);
-    const result = await params.runTaskFn(
+    result = await params.runTaskFn(
       'AttributionRerankTask',
       { ...params.input, candidates },
       { env: params.env, subjectProfile: profile },
     );
-    const parsed = parseAttributionOutput(result.text, profile);
+  } catch (err) {
+    console.error('runAttributionAndWriteJudgeEvent: retryable failure (attempt unaffected)', err);
+    return { outcome: 'retryable', error: err };
+  }
 
+  // ── Stage B: parse / validate ─────────────────────────────────────────────
+  // The LLM already succeeded (cost incurred, task_run_id present). A parse or
+  // schema-validate throw is PERMANENT — retrying re-spends money on a
+  // systematic failure. Write a failed_permanent ledger row CARRYING
+  // result.task_run_id so it joins into run-detail observability.
+  let parsed: AttributionOutput;
+  try {
+    parsed = parseAttributionOutput(result.text, profile);
+  } catch (err) {
+    console.error(
+      'runAttributionAndWriteJudgeEvent: permanent parse failure (attempt unaffected)',
+      err,
+    );
+    await writePermanentAiFailureLedger(params.db, 'AttributionTask', result.task_run_id);
+    return { outcome: 'permanent', error: err };
+  }
+
+  // ── Stage C: write the judge event ────────────────────────────────────────
+  // A DB fault writing the judge is RETRYABLE (same rationale as stage A): no
+  // ledger row, the caller rethrows.
+  try {
     const judgeId = newId();
     // D6 (U4 L-stamp): attribution is a non-routed judge — it runs AttributionRerankTask
     // directly (above), never through JudgeInvoker. So the version source here is
@@ -203,7 +259,12 @@ export async function runAttributionAndWriteJudgeEvent(
       created_at: new Date(),
     });
   } catch (err) {
-    console.error('runAttributionAndWriteJudgeEvent: failed (attempt unaffected)', err);
-    await writeRetryableAiFailureLedger(params.db, 'AttributionTask');
+    console.error(
+      'runAttributionAndWriteJudgeEvent: retryable write failure (attempt unaffected)',
+      err,
+    );
+    return { outcome: 'retryable', error: err };
   }
+
+  return { outcome: 'written' };
 }
