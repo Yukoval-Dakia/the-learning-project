@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEGRADED_KIND_ERROR_THRESHOLD,
   DEGRADED_KIND_MESSAGE_MAX_LEN,
+  DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER,
   DEGRADED_KIND_SAMPLE_SIZE,
   type RunErrorRow,
   type RunStatusCountRow,
@@ -144,13 +145,29 @@ describe('computeDegradedKinds — task_kind 窗内 error 计数超阈值升级�
     ).toBe(true);
   });
 
-  it('null error_message 兜底为占位串，不抛错', () => {
+  it('null error_message 兜底为占位串（按符号断言，不抛错）', () => {
     const rows = [
       row('dreaming', null, '2026-06-26T18:00:00.000Z'),
       row('dreaming', null, '2026-06-26T19:00:00.000Z'),
     ];
     expect(() => computeDegradedKinds(rows)).not.toThrow();
-    expect(computeDegradedKinds(rows)[0].recent_error_messages).toHaveLength(2);
+    const out = computeDegradedKinds(rows);
+    expect(out[0].recent_error_messages).toHaveLength(2);
+    expect(out[0].recent_error_messages[0]).toBe(DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER);
+    expect(out[0].recent_error_messages[1]).toBe(DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER);
+  });
+
+  it('相等 finished_at（同毫秒多条 error）→ 排序确定性稳定（落回原数组序，antisymmetric 比较）', () => {
+    const rows = [
+      row('dreaming', 'tie-a', '2026-06-26T18:00:00.000Z'),
+      row('dreaming', 'tie-b', '2026-06-26T18:00:00.000Z'),
+      row('dreaming', 'tie-c', '2026-06-26T18:00:00.000Z'),
+    ];
+    const out1 = computeDegradedKinds(rows);
+    const out2 = computeDegradedKinds(rows);
+    // 稳定排序（V8/Node 保证）：相等 key 落回原数组序，多次调用结果一致。
+    expect(out1[0].recent_error_messages).toEqual(['tie-a', 'tie-b', 'tie-c']);
+    expect(out2[0].recent_error_messages).toEqual(out1[0].recent_error_messages);
   });
 
   it('多 kind 各自独立判定，仅达阈值的 kind 入选，task_kind 升序输出', () => {
