@@ -494,3 +494,24 @@ describe('persistToolTrace', () => {
     expect(toolNames).toEqual(['get_attempt_details', 'get_typed_state']);
   });
 });
+
+describe('get_agent_notes summary cap (OCR PR #713)', () => {
+  it('truncates an over-long LLM-generated summary_md to the char bound', async () => {
+    const db = testDb();
+    const future = new Date(NOW.getTime() + 30 * 24 * 3600 * 1000).toISOString();
+    await writeAgentNote(db, {
+      target_agents: ['research_meeting'],
+      source_task_kind: 'dreaming',
+      refs: [],
+      summary_md: 'x'.repeat(EVIDENCE_LIMITS.agentNoteSummaryChars + 500),
+      signal_kind: 'attention',
+      expires_at: future,
+    });
+
+    const out = await callTool('get_agent_notes', {});
+    const notes = out.agent_notes as Array<{ summary_md: string }>;
+    expect(notes).toHaveLength(1);
+    // truncate() is a hard slice — the bound is exact.
+    expect(notes[0].summary_md).toHaveLength(EVIDENCE_LIMITS.agentNoteSummaryChars);
+  });
+});

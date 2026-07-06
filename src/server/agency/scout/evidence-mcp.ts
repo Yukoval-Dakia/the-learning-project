@@ -50,6 +50,9 @@ export const EVIDENCE_LIMITS = {
   noteSummaries: 10,
   /** get_agent_notes row cap. */
   agentNotes: 20,
+  /** char cap per agent-note summary_md — LLM-generated, can be arbitrarily long
+   *  (OCR PR #713: every other tool truncates its free text; same discipline). */
+  agentNoteSummaryChars: 800,
 } as const;
 
 // get_probe_history event actions. The two actions are KEYED DIFFERENTLY (review F1):
@@ -374,7 +377,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
               created_at: n.created_at.toISOString(),
               source_task_kind: n.source_task_kind,
               signal_kind: n.signal_kind,
-              summary_md: n.summary_md,
+              summary_md: truncate(n.summary_md, EVIDENCE_LIMITS.agentNoteSummaryChars),
               refs: n.refs,
               confidence: n.confidence ?? null,
               expires_at: n.expires_at ?? null,
