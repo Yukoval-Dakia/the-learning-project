@@ -1,0 +1,178 @@
+{
+  "CONFUSABLE_CONTRAST_ENABLED": {
+    "kind": "env",
+    "literals": ["1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "file": "src/server/question-supply/confusable-contrast-discovery.ts",
+    "notes": "dark-ship confusable-contrast supply. Read: process.env.X === '1'. A5/A6 mastery-projection dark-ship sibling."
+  },
+  "MISCONCEPTION_PROMOTE_ENABLED": {
+    "kind": "env",
+    "literals": ["1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "file": "src/capabilities/agency/server/misconception-promote.ts",
+    "notes": "gates misconception promote. Read: process.env.X === '1'."
+  },
+  "MISCONCEPTION_HARD_CONFIRM_ENABLED": {
+    "kind": "env",
+    "literals": ["1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "file": "src/capabilities/agency/server/misconception-promote.ts",
+    "notes": "gates misconception hard-confirm. Read: process.env.X === '1'."
+  },
+  "RESEARCH_MEETING_AGENT_ENABLED": {
+    "kind": "env",
+    "literals": ["1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "file": "src/capabilities/agency/jobs/research_meeting_agent_nightly.ts",
+    "notes": "kill switch for the research-meeting agent nightly (dark-ship). Read via ENV const RESEARCH_MEETING_AGENT_ENABLED_ENV: process.env[X] !== '1'."
+  },
+  "PLACEMENT_PROBE_ENABLED": {
+    "kind": "env",
+    "literals": ["true"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "file": "src/server/session/placement.ts",
+    "notes": "gates the placement probe. Hybrid: a module-load const that reads process.env.X === 'true'."
+  },
+  "QUESTION_SUPPLY_REFILL_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "file": "src/server/question-supply/refill.ts",
+    "notes": "dark-ship question-supply refill. Read via refillEnabled(): raw === 'true' || raw === '1' (accepts BOTH literals — the only flag that does)."
+  },
+  "WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED": {
+    "kind": "env",
+    "literals": ["true"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
+    "notes": "CRITICAL-SAFETY auto-enroll gate. Read via autoEnrollEnabled() (name = AUTO_ENROLL_FLAG const): value.toLowerCase() === 'true'."
+  },
+  "WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED": {
+    "kind": "env",
+    "literals": ["true"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
+    "notes": "student-answer grading gate (YUK-482 cut 4). Read via studentAnswerGradingEnabled() (name = STUDENT_ANSWER_GRADING_FLAG const): value.toLowerCase() === 'true'."
+  },
+  "WORKFLOW_JUDGE_OBSERVE_ENABLED": {
+    "kind": "env",
+    "literals": ["false"],
+    "case_insensitive": true,
+    "polarity": "opt-out",
+    "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
+    "notes": "observe-only gate, DEFAULT ON (opt-out). Read via observeEnabled() (name = OBSERVE_FLAG const): !(value.toLowerCase() === 'false') — the disabling literal is 'false', not the enabling literal."
+  },
+  "WAVE6_TRIGGER_MARK_WRONG_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "false"],
+    "case_insensitive": true,
+    "polarity": "opt-out",
+    "file": "src/capabilities/notes/server/note-refine-triggers.ts",
+    "notes": "note-refine mark_wrong trigger, DEFAULT ON (opt-out kill switch). Read via noteRefineTriggerEnabled() (name in FLAG_BY_KIND map): normalized 'true'→on / 'false'→off / else default."
+  },
+  "WAVE6_TRIGGER_MASTERY_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "false"],
+    "case_insensitive": true,
+    "polarity": "opt-out",
+    "file": "src/capabilities/notes/server/note-refine-triggers.ts",
+    "notes": "note-refine mastery_change trigger, DEFAULT ON (opt-out kill switch). Same helper as the other WAVE6 triggers."
+  },
+  "WAVE6_TRIGGER_DREAMING_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "false"],
+    "case_insensitive": true,
+    "polarity": "opt-out",
+    "file": "src/capabilities/notes/server/note-refine-triggers.ts",
+    "notes": "note-refine dreaming trigger, DEFAULT ON (opt-out kill switch). Same helper as the other WAVE6 triggers."
+  },
+  "WAVE6_TRIGGER_VERIFY_ENABLED": {
+    "kind": "env",
+    "literals": ["true", "false"],
+    "case_insensitive": true,
+    "polarity": "opt-in",
+    "file": "src/capabilities/notes/server/note-refine-triggers.ts",
+    "notes": "note-refine verify trigger, DEFAULT OFF (opt-in) — the ONE WAVE6 trigger whose default polarity differs (YUK-358 决定7, Red line 2). Same helper, same literal grammar; only the DEFAULT_ENABLED_BY_KIND default differs."
+  },
+  "DAY_ONE_PRIOR_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/core/theta-grid.ts",
+    "notes": "compile-time const dark-ship. export const X = false."
+  },
+  "EARLY_KLP_ENABLED": {
+    "kind": "const",
+    "value": true,
+    "file": "src/core/selection-signals.ts",
+    "notes": "compile-time const, shipped ON. export const X = true."
+  },
+  "GRAPH_LAPLACIAN_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/core/graph-laplacian.ts",
+    "notes": "A5 mastery-projection graph-Laplacian borrow, dark. export const X = false. (audit:mastery-provenance names this as a borrow flag.)"
+  },
+  "HIERARCHICAL_ELO_ENABLED": {
+    "kind": "const",
+    "value": true,
+    "file": "src/core/theta.ts",
+    "notes": "compile-time const, shipped ON. export const X = true."
+  },
+  "MISCONCEPTION_RECURRENCE_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/capabilities/practice/server/selection-constants.ts",
+    "notes": "compile-time const dark-ship. export const X = false."
+  },
+  "POLY_SIGMOID_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/core/poly-exp.ts",
+    "notes": "compile-time const dark-ship. export const X = false."
+  },
+  "PREREQ_RISK_EMIT_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/server/mastery/prereq-propagation.ts",
+    "notes": "A13 prereq risk-emit producer, dark. export const X = false. Renamed FROM PREREQ_PROPAGATION_ENABLED to disambiguate."
+  },
+  "PREREQ_THETA_PROPAGATION_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/core/prereq-propagation.ts",
+    "notes": "A6 directed theta-hat propagation borrow, dark. export const X = false. Renamed FROM PREREQ_PROPAGATION_ENABLED to disambiguate. (audit:mastery-provenance names this as a borrow flag.)"
+  },
+  "RECOMPUTE_BADGE_ENABLED": {
+    "kind": "const",
+    "value": true,
+    "file": "src/capabilities/onboarding/ui/recompute/recompute-core.ts",
+    "notes": "compile-time const, shipped ON. export const X = true."
+  },
+  "SRT_ENABLED": {
+    "kind": "const",
+    "value": true,
+    "file": "src/core/theta.ts",
+    "notes": "compile-time const, shipped ON. export const X = true."
+  },
+  "SRT_FISHER_WEIGHT_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/core/theta.ts",
+    "notes": "compile-time const dark-ship. export const X = false."
+  },
+  "THETA_GRID_ENABLED": {
+    "kind": "const",
+    "value": false,
+    "file": "src/core/theta-grid.ts",
+    "notes": "compile-time const dark-ship. export const X = false. A3 cold-start scoped erratum deadline is tied to this flag's flip."
+  }
+}
