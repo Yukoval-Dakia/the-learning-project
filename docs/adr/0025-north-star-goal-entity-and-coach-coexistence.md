@@ -138,6 +138,19 @@ TodayPlan = [ 复习/到期/其他录入任务 — 原样不动 ]
 轮转 + 薄弱 scope 优先，作为 objective/prompt 里的**软指导**（模型挑），handler
 不硬切额度。可调，留 hook。
 
+**ND-5 标签用法消歧（A7 结算裁决，2026-07-07；不重编号）**：`ND-5` 标签已在三处以
+不同外延被引用，**三义并存合法，追溯时按引用处上下文取义**；不另立编号（全仓 78 处
+历史引用不回改）：
+
+- **① 本 ADR 正主含义** = 北极星 goal 不得**抑制 / 挤占 / 改写** FSRS 复习（由上方
+  conservation test 守卫）。
+- **② `docs/agents/objectives.md` 引用** = proposal-only 破坏性操作的 owner 出处。
+- **③ agentic lane specs（scout / meeting / reconcile 注释）中的 ND-5** = **结算账本
+  写面禁令**（scout / agent 绝不直写 FSRS / θ̂ / `kc_typed_state` —— 结算层单写者由
+  `tests/integration/step9-invariant-audit.test.ts` 的 fs-walker 机器强制，含
+  `kc_typed_state`（`src/server/conjectures/typed-state.ts`）与 `learner_axis_state`
+  （`src/server/calibration/axis-writer.ts`）两条断言）。
+
 ---
 
 ## 接受的代价 / 边界
