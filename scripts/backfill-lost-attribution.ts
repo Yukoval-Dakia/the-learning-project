@@ -13,43 +13,66 @@
 // The enqueued attribution_followup job is idempotent (getJudgeForAttempt skips
 // when a real judge already exists), so re-running --apply never double-judges.
 //
-// RACE NOTE (--apply): the census has no created_at floor, so a brand-new
-// failure attempt whose ORIGINAL attribution_followup job is enqueued but not
-// yet run can be censused as "lost"; the re-enqueue could then race the
-// original (idempotency is read-then-write with no unique constraint on
-// caused_by_event_id → both could pass the read → double judge + double LLM).
-// Ops rule: run --apply only while the attribution_followup queue is
-// drained/idle (the one-time backfill context), after a dry-run census review.
+// RACE GUARD (--apply): the census applies a created_at floor of NOW - 6h (OCR
+// #1), so a brand-new failure attempt whose ORIGINAL attribution_followup job is
+// still enqueued/in-flight is NOT censused and cannot be re-enqueued. That
+// programmatically closes the read-then-write double-judge race (the idempotency
+// check has no unique constraint on caused_by_event_id → both reads could miss →
+// double judge + double LLM), replacing the previous ops-discipline-only rule.
+// Still best run after a dry-run census review.
 
 // Load `.env` BEFORE importing `@/db/client` (the client throws on a missing
-// DATABASE_URL at construction). Scripts load `.env`, NOT `.env.local`.
+// DATABASE_URL at construction). Scripts load `.env`, NOT `.env.local`. The
+// `@/db/client` import is lazy (inside main) so this module — and its pure
+// `parseLimit` — stays importable in the unit test without a DATABASE_URL.
 import './load-env';
 
-import { runLostAttributionBackfill } from '@/capabilities/knowledge/server/lost-attribution-backfill';
-import { db } from '@/db/client';
+import {
+  type EnqueueAttributionFollowupFn,
+  runLostAttributionBackfill,
+} from '@/capabilities/knowledge/server/lost-attribution-backfill';
 
-const DEFAULT_LIMIT = 25;
+export const DEFAULT_LIMIT = 25;
+const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
-function parseLimit(argv: string[]): number {
+/**
+ * Parse `--limit=<n>` / `--limit <n>`. A MISSING flag silently uses
+ * {@link DEFAULT_LIMIT}; a PRESENT-but-invalid value (non-numeric or <= 0) is an
+ * operator mistake, so it warns before falling back (OCR #2) rather than
+ * silently degrading a production backfill.
+ */
+export function parseLimit(argv: string[]): number {
+  let raw: string | undefined;
   const eqArg = argv.find((a) => a.startsWith('--limit='));
   if (eqArg) {
-    const n = Number(eqArg.slice('--limit='.length));
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_LIMIT;
+    raw = eqArg.slice('--limit='.length);
+  } else {
+    const idx = argv.indexOf('--limit');
+    if (idx !== -1 && idx + 1 < argv.length) raw = argv[idx + 1];
   }
-  const idx = argv.indexOf('--limit');
-  if (idx !== -1 && idx + 1 < argv.length) {
-    const n = Number(argv[idx + 1]);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_LIMIT;
+  if (raw === undefined) return DEFAULT_LIMIT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.warn(
+      `[backfill-lost-attribution] ignoring invalid --limit "${raw}"; using default ${DEFAULT_LIMIT}.`,
+    );
+    return DEFAULT_LIMIT;
   }
-  return DEFAULT_LIMIT;
+  return Math.floor(n);
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
   const argv = process.argv.slice(2);
   const dryRun = !argv.includes('--apply');
   const limit = parseLimit(argv);
+  // OCR #1: floor the census at NOW - 6h so a fresh attempt whose original
+  // attribution_followup job may still be in flight is never re-enqueued (see the
+  // RACE GUARD note above). 6h clears any realistic queue backlog + retry window.
+  const createdBefore = new Date(Date.now() - SIX_HOURS_MS);
 
-  let send: ((attemptEventId: string) => Promise<void>) | undefined;
+  const { db } = await import('@/db/client');
+
+  let send: EnqueueAttributionFollowupFn | undefined;
   if (!dryRun) {
     const { getStartedBoss } = await import('@/server/boss/client');
     const boss = await getStartedBoss();
@@ -58,7 +81,7 @@ async function main(): Promise<void> {
     };
   }
 
-  const result = await runLostAttributionBackfill({ db, dryRun, limit, send });
+  const result = await runLostAttributionBackfill({ db, dryRun, limit, createdBefore, send });
   console.log(
     `[backfill-lost-attribution] mode=${result.mode} limit=${limit} — found ${result.found} lost attempt(s), ` +
       `enqueued ${result.enqueued}.`,
@@ -66,6 +89,18 @@ async function main(): Promise<void> {
   if (result.attemptIds.length > 0) {
     console.log(`[backfill-lost-attribution] attempt ids: ${result.attemptIds.join(', ')}`);
   }
+  // OCR #3: consume the pipeline's per-item enqueue failures (implemented once,
+  // in runLostAttributionBackfill) — print each and exit non-zero so a partial
+  // backfill is never mistaken for a clean run.
+  if (result.errors.length > 0) {
+    for (const e of result.errors) {
+      console.error(
+        `[backfill-lost-attribution] enqueue failed for ${e.attemptEventId}: ${e.message}`,
+      );
+    }
+    return 1;
+  }
+  return 0;
 }
 
 if (
@@ -73,7 +108,7 @@ if (
   process.argv[1].endsWith('backfill-lost-attribution.ts')
 ) {
   main()
-    .then(() => process.exit(0))
+    .then((code) => process.exit(code))
     .catch((err) => {
       console.error('[backfill-lost-attribution] failed:', err);
       process.exit(1);
