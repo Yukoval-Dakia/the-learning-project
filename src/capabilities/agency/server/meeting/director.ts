@@ -27,7 +27,6 @@
 // is an accepted degrade rather than a silent black hole. Only the PRE-LLM DB reads can
 // throw a genuine, zero-spend retryable fault out of this function.
 
-import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evidence-mcp';
@@ -267,60 +266,74 @@ export async function runResearchMeetingDirector(
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
-  // Breadth cap (§6, round-2 review MAJOR #9): TWO independent layers attempt to deny the
-  // 2nd Task spawn, sharing the SAME `scoutSpawns` closure counter (never two separate
-  // counters — that could each independently grant one spawn, doubling the effective
-  // cap): a PreToolUse hook (below) and a `canUseTool` callback (wired into the
-  // runAgentTaskFn ctx alongside `hooks`, further down). The hook is also the
-  // spawn-count source for the scout_spawned event (evidence-first 留痕 without a
-  // runner message-loop change).
+  // Breadth cap (§6, round-3 review A1 — supersedes round-2's design): TWO independent
+  // layers attempt to deny the 2nd Task spawn — a PreToolUse hook (below) and a
+  // `canUseTool` callback (wired into the runAgentTaskFn ctx alongside `hooks`, further
+  // down) — but round-2's design ("both layers increment scoutSpawns, deny if
+  // scoutSpawns >= MAX") has a proven DOUBLE-INCREMENT DEADLOCK if the SDK consults BOTH
+  // layers for the SAME single Task call: the hook grants + increments the FIRST spawn
+  // (0→1), then canUseTool re-checks the ALREADY-incremented counter for that SAME call
+  // and denies the very call the hook just approved — under MAX_SCOUT_SPAWNS=1 the scout
+  // would NEVER successfully spawn at all (confirmed by director.db.test.ts's round-2
+  // regression test, which failed exactly this way against the round-2 implementation).
   //
-  // E-4 status (reassessed, round-2): adding canUseTool does NOT settle E-4 by itself.
-  // Per our own read of sdk.d.ts, `Options.canUseTool`'s doc ("called before each tool
-  // execution to determine if it should be allowed, denied, or prompt the user") does
-  // NOT confirm it fires under permissionMode:'bypassPermissions' either — the
-  // bypassPermissions doc says it "bypasses ALL permission checks", and canUseTool is
-  // ITSELF documented as a "permission handler", so it is PLAUSIBLE canUseTool is ALSO
-  // skipped under bypass (the same class of uncertainty as the hook). Nor do the
-  // typings settle whether the SDK consults BOTH callbacks for the SAME single tool
-  // call (sdk.d.ts:3446 only documents that a hook DENY bypasses canUseTool — it is
-  // silent on what happens when the hook ALLOWS/continues). If both layers ARE
-  // consulted sequentially for one call, the shared counter has a known, ACCEPTED
-  // edge case: the hook grants + increments the FIRST spawn, then canUseTool sees the
-  // already-incremented count and denies that same (already-approved) call — an
-  // over-strict false deny of the legitimate first spawn, not a safety violation (the
-  // anti-swarm cap is about never exceeding the max, not about never under-granting).
-  // This residual uncertainty is why E-4 is not declared "solved by canUseTool" — it
-  // remains an open question only the dev harness (scripts/dev/yuk572-e1-e4-spawn-
-  // checks.ts, whose denyTriggered metric now also covers both layers) can resolve
-  // empirically: does the scout ever actually get to spawn once wired? Depth ≤1 is
+  // FIX (stronger than the requested "hook increments, canUseTool reads-only" split —
+  // that split has the SAME flaw, since canUseTool's read would still see the hook's own
+  // just-applied increment for the identical call): both `PreToolUseHookInput`
+  // (`tool_use_id: string`, sdk.d.ts:2167-2172) and `canUseTool`'s options
+  // (`toolUseID: string`) carry a PER-CALL correlation id for what is almost certainly
+  // the SAME underlying tool invocation. `decideSpawn` below tracks WHICH calls have
+  // been granted (a Set of tool_use ids, not a bare count):
+  //   - a call whose id is ALREADY granted (the other layer approved it moments
+  //     earlier) is always RE-ALLOWED — no false re-deny of an already-approved call;
+  //   - a genuinely NEW call (unseen id) is granted only while under MAX_SCOUT_SPAWNS,
+  //     else denied — consistently, however many times it is re-asked about (a rejected
+  //     id is never added, so repeated deny-checks for that SAME id stay deny).
+  // This is sound regardless of which layer(s) the SDK actually consults, and for which
+  // calls — that consultation-order/mode question is the SAME class of uncertainty E-4
+  // has always carried (NOT settled by this fix): per our own read of sdk.d.ts,
+  // `Options.canUseTool`'s doc ("called before each tool execution…") does not confirm
+  // it fires under permissionMode:'bypassPermissions' either — the bypassPermissions doc
+  // says it "bypasses ALL permission checks", and canUseTool is ITSELF documented as a
+  // "permission handler", so it is PLAUSIBLE canUseTool is ALSO skipped under bypass
+  // (same uncertainty as the hook). E-4's dev harness (scripts/dev/yuk572-e1-e4-spawn-
+  // checks.ts, mirroring this SAME id-keyed design) must still empirically confirm at
+  // least one layer actually fires before the flag may be flipped. Depth ≤1 is
   // unaffected either way (scout.tools omits Task — enforced in scout-agent.ts).
-  let scoutSpawns = 0;
+  const grantedSpawnToolUseIds = new Set<string>();
+  function decideSpawn(toolUseId: string): 'allow' | 'deny' {
+    if (grantedSpawnToolUseIds.has(toolUseId)) {
+      return 'allow';
+    }
+    if (grantedSpawnToolUseIds.size >= MAX_SCOUT_SPAWNS) {
+      return 'deny';
+    }
+    grantedSpawnToolUseIds.add(toolUseId);
+    return 'allow';
+  }
   const spawnCapMatcher: HookCallbackMatcher = {
     hooks: [
       async (input) => {
-        if (input.hook_event_name === 'PreToolUse' && input.tool_name === 'Task') {
-          if (scoutSpawns >= MAX_SCOUT_SPAWNS) {
-            return {
-              hookSpecificOutput: {
-                hookEventName: 'PreToolUse',
-                permissionDecision: 'deny',
-                permissionDecisionReason: '侦察兵每晚上限已达（≤1）',
-              },
-            };
-          }
-          scoutSpawns += 1;
+        if (
+          input.hook_event_name === 'PreToolUse' &&
+          input.tool_name === 'Task' &&
+          decideSpawn(input.tool_use_id) === 'deny'
+        ) {
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny',
+              permissionDecisionReason: '侦察兵每晚上限已达（≤1）',
+            },
+          };
         }
         return { continue: true };
       },
     ],
   };
-  const spawnCapCanUseTool: CanUseTool = async (toolName) => {
-    if (toolName === SPAWN_TOOL_NAME) {
-      if (scoutSpawns >= MAX_SCOUT_SPAWNS) {
-        return { behavior: 'deny', message: '侦察兵每晚上限已达（≤1）' };
-      }
-      scoutSpawns += 1;
+  const spawnCapCanUseTool: CanUseTool = async (toolName, _input, options) => {
+    if (toolName === SPAWN_TOOL_NAME && decideSpawn(options.toolUseID) === 'deny') {
+      return { behavior: 'deny', message: '侦察兵每晚上限已达（≤1）' };
     }
     return { behavior: 'allow' };
   };
@@ -362,6 +375,9 @@ export async function runResearchMeetingDirector(
   const proposalsCreated = director.readProposalIds().length;
   const notesCreated = director.readNoteIds().length;
   const trace: ToolTraceEntry[] = evidence.readToolTrace();
+  // Distinct GRANTED tool_use ids (round-3 review A1) — more accurate than a bare
+  // increment counter would be, since a rejected/deduped id is never added.
+  const scoutSpawns = grantedSpawnToolUseIds.size;
 
   // §3 review fix (MAJOR) — POST-LLM persistence is best-effort: a throw here must NOT
   // propagate (see the file-header degrade comment for the residual-retry-cost trade-off
@@ -388,7 +404,7 @@ export async function runResearchMeetingDirector(
     }
   }
 
-  // Spawn 留痕 (evidence-first): the hook-counted spawns → one scout_spawned event.
+  // Spawn 留痕 (evidence-first): the granted spawns → one scout_spawned event.
   if (scoutSpawns > 0) {
     try {
       await writeEventFn(db, {
@@ -437,15 +453,16 @@ export async function runResearchMeetingDirector(
   }
   const costUsd = taskResult?.cost_usd ?? 0;
 
-  // §10 review fix — flattened from a nested ternary. Scan event: cost-bearing
-  // (proposals are 0-cost so the scan carries the run spend ONCE — no double-count,
-  // mirrors dreaming_scan). On a degraded run the cost is unknown (the throw is before
-  // the runner's cost ledger write) so it is recorded null (§7 — degrade spend is not
-  // accounted; observability rides `outcome:'partial'`).
+  // §10 review fix — flattened from a nested ternary. round-3 review OCR #7 — the
+  // round-2 formula ALSO treated a genuine $0 cost (the flat OAuth lane legitimately
+  // reporting no per-call cost on a SUCCESSFUL run) as null, conflating "no spend" with
+  // "unknown/degraded". Fixed per the dreaming_nightly.ts:388 precedent
+  // (`cost_usd === undefined ? null : Math.round(...)`): null means ONLY "degraded, cost
+  // unknown because the throw happened before the runner's cost ledger write" — a real,
+  // successful $0 is recorded as the literal 0, not null (mirrors dreaming_scan — the
+  // scan is still cost-bearing even when that cost happens to be zero).
   let costMicroUsd: number | null;
   if (degraded) {
-    costMicroUsd = null;
-  } else if (costUsd === 0) {
     costMicroUsd = null;
   } else {
     costMicroUsd = Math.round(costUsd * 1_000_000);

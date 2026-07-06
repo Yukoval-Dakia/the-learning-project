@@ -85,12 +85,24 @@ export const agencyCapability = defineCapability({
       // constraint, §3) keeps the two lanes' app-level pending-dedup TOCTOU closed — the
       // deterministic lane has committed its proposals by the time the agent lane reads
       // the pending inbox as its dedup base. Kill switch RESEARCH_MEETING_AGENT_ENABLED
-      // (default OFF) makes the handler a no-op; the cron stays registered. queue:'llm'
-      // (Opus anthropic-sub OAuth lane, same as the deterministic meeting).
+      // (default OFF) makes the handler a no-op; the cron stays registered.
+      //
+      // round-3 review CodeRabbit Major (A4) — queue:'agent', NOT 'llm': unlike the
+      // deterministic research_meeting_nightly (a SEQUENTIAL producer loop — no MCP
+      // tools, no tool-call loop, just N single-shot induceConjecture calls, correctly
+      // classified 'llm' per queue-config.ts's own tier docs: "single ~30-90s LLM call
+      // handlers"), ResearchMeetingDirectorTask IS a multi-turn, multi-tool-call agent
+      // loop with a nested scout subagent spawn — the EXACT profile queue-config.ts's
+      // 'agent' tier describes ("multi-step tool-calling agents that can legitimately
+      // run for many minutes"), the SAME classification dreaming_nightly already uses.
+      // Confirmed timeout coverage (round-3 A3/A4 cross-check): EXPIRE_AGENT=7200s (2h)
+      // comfortably exceeds the director's own 300s wall-clock abort budget — pg-boss's
+      // queue-level expiry is a crash-recovery safety net, never the primary backstop
+      // (the director's own 300s abort always fires first on a healthy run).
       {
         name: 'research_meeting_agent_nightly',
         schedule: { cron: '35 5 * * *', tz: 'Asia/Shanghai' },
-        queue: 'llm',
+        queue: 'agent',
         load: () =>
           import('./jobs/research_meeting_agent_nightly').then(
             (m) => m.buildResearchMeetingAgentNightlyHandler,
