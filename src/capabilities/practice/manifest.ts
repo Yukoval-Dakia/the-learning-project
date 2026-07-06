@@ -222,8 +222,9 @@ export const practiceCapability = defineCapability({
       },
       // YUK-361 Phase 4 (Task 9) — hybrid 运行时夜间预产 job。每夜（用户晨起前）为「今天」
       // 预产练习流，省去首读 lazy compose 的 LLM 网络往返。cron 5:30 Asia/Shanghai：错开
-      // 既有夜链 job（最晚 item_prior_backfill 4:20 / agency goal_scope 4:30），且在数据
-      // 预产链（item_prior / mastery 夜链）之后跑，让选题信号（θ̂ / b 锚）已新鲜。queue=llm：
+      // 既有夜链 job，且在数据预产链（item_prior 04:20 / embed 04:40 / recalibration 04:50 /
+      // reference 05:20）之后跑，让选题信号（θ̂ / b 锚 / 参考答案）已新鲜。（旧注「mastery
+      // 夜链」已删——该 job 从不存在，mastery_state 在线写入；YUK-377 复审 §6.4。）queue=llm：
       // softmax_mfi 默认路径会调 SelectionOrchestratorTask（LLM 编排），与 item_prior 同档。
       // 幂等由 composeNightly 的单飞锁 + 双重检查保证（夜产后用户首读 lazy 命中 no-op）。
       {
@@ -238,7 +239,8 @@ export const practiceCapability = defineCapability({
       // YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发夜扫。确定性缺口扫描
       // （discoverSupplyTargets，零写零 LLM）→ dispatchSupplyTargets 派到既有 sourcing /
       // quiz_gen 队列或标 manual。cron 06:00 Asia/Shanghai：错开并排在所有数据预产 job 之后
-      // （item_prior 04:20 / mastery 夜链 / compose 05:30），让前沿/题池信号已新鲜、缺口判定准。
+      // （item_prior 04:20 → compose 05:30 整条 backfill 链；旧注「mastery 夜链」已删——该
+      // job 从不存在），让前沿/题池信号已新鲜、缺口判定准。
       // queue=llm：派出的 sourcing / quiz_gen 本身是 LLM 重型 job，本 job 与其同档 DLQ 重试。
       // **成本护栏**：dispatcher 的 7d fingerprint cooldown 是唯一防 job-spam 闸（同未满足缺口
       // 7 天内只真派一次）；本 job 依赖它，绝不绕过 dispatcher 直发付费队列。
