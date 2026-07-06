@@ -247,7 +247,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           const a = parsed.data;
 
           // First-hand evidence only (§7 backstop): strip agent_note ids. KNOWN GAP
-          // (YUK-581 follow-up, doc'd in the spec §7): filterPrimaryEvidenceRefs only
+          // (YUK-584 follow-up, doc'd in the spec §7): filterPrimaryEvidenceRefs only
           // excludes the agent_note ID SHAPE — it does NOT verify each surviving ref
           // actually resolves to a real attempt/probe/prediction_score event for THIS
           // knowledge_id/cause. The LLM's evidence_refs are asserted, not verified.
