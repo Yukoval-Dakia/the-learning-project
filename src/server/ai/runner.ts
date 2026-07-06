@@ -136,6 +136,25 @@ export interface RunTaskCtx {
    * stream + one-shot json_schema output are deferred to a follow-up YUK.
    */
   outputFormat?: OutputFormat;
+  /**
+   * YUK-572 seam: SDK-native nested subagent definitions
+   * (Record<string, AgentDefinition>). OMITTED (the default) ⇒ buildQueryOptions does
+   * NOT write the key ⇒ the Options object is byte-identical to pre-seam (zero
+   * regression). Type is re-exported 1:1 from the SDK's `Options['agents']` so it never
+   * drifts from the SDK typings. Only the research-meeting director lane sets it.
+   */
+  agents?: Options['agents'];
+  /**
+   * YUK-572 seam: PreToolUse/… hook callbacks (used by the director spawn-cap
+   * counter+deny, §6). Same undefined-guard zero-regression contract + 1:1 SDK type
+   * re-export as `agents` above.
+   */
+  hooks?: Options['hooks'];
+  /**
+   * YUK-572 seam: optional canUseTool permission callback (spawn-cap fallback impl,
+   * §6). Same undefined-guard zero-regression contract + 1:1 SDK type re-export.
+   */
+  canUseTool?: Options['canUseTool'];
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -452,6 +471,20 @@ function buildQueryOptions(
   // handler that explicitly threads ctx.outputFormat opts into structured output.
   if (ctx.outputFormat !== undefined) {
     options.outputFormat = ctx.outputFormat;
+  }
+  // YUK-572 seam: SDK-native nested-agent / hooks / canUseTool passthrough. Same
+  // undefined-guard as the outputFormat seam above — when a caller does not set these
+  // (every existing runTask/runAgentTask/streamTask caller), the keys are NOT written
+  // and Options stays byte-identical to pre-seam (零回归). Only the research-meeting
+  // director lane threads them.
+  if (ctx.agents !== undefined) {
+    options.agents = ctx.agents;
+  }
+  if (ctx.hooks !== undefined) {
+    options.hooks = ctx.hooks;
+  }
+  if (ctx.canUseTool !== undefined) {
+    options.canUseTool = ctx.canUseTool;
   }
   return options;
 }
