@@ -164,8 +164,10 @@ const ProposeConjectureShape = {
   predicted_p: z.number().min(0).max(1),
   discriminating: z.boolean(),
   // PRIMARY event ids only (attempt / probe / prediction_score) — agent_note ids are
-  // filtered out server-side (§7 backstop).
-  evidence_refs: z.array(z.string()),
+  // filtered out server-side (§7 backstop). .max(12) mirrors the scout's
+  // report-findings.ts evidence_refs bound (round-2 review MINOR #5 — consistency + a
+  // blast-radius cap on the tool-return payload).
+  evidence_refs: z.array(z.string()).max(12),
 } as const;
 const ProposeConjectureSchema = z.object(ProposeConjectureShape);
 
@@ -336,8 +338,21 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
           // projection, else the cold-start neutral 0.5 — the LLM NEVER supplies it.
           let baselineP = matchedCell?.baseline_p ?? null;
           if (baselineP === null) {
-            const projection = await getMasteryProjectionFn(db, [a.knowledge_id]);
-            baselineP = projection.get(a.knowledge_id)?.mastery ?? 0.5;
+            // round-2 review MAJOR #3 — a mastery-projection read failure must NOT
+            // reject an otherwise-valid proposal: this read is advisory input to the
+            // baseline snapshot (a number the server owns), not a gate on whether the
+            // proposal itself is valid. Fall back to the same cold-start-neutral value
+            // used when no mastery row exists at all, and continue.
+            try {
+              const projection = await getMasteryProjectionFn(db, [a.knowledge_id]);
+              baselineP = projection.get(a.knowledge_id)?.mastery ?? 0.5;
+            } catch (err) {
+              console.error(
+                '[director-tools] getMasteryProjectionFn failed — falling back to baseline_p=0.5',
+                err,
+              );
+              baselineP = 0.5;
+            }
           }
 
           const input: WriteAiProposalInput = {
@@ -410,7 +425,23 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
+          // round-2 review MINOR #6 — spec judgment (spec line 276 vs propose_conjecture's
+          // line 265): leave_agent_note's spec bullet says only "refs 经
+          // assertPrimaryEvidenceRefs" — NO explicit reject-if-empty clause, unlike
+          // propose_conjecture's ("过滤后为空 → 拒绝"). Notes are soft hints (notes.ts:
+          // "HINTS, NOT FACTS"), not accountable falsifiable claims, so a genuinely
+          // empty-from-the-start refs[] (a pure textual "watch this KC" hint with zero
+          // evidence) is LEGITIMATE per spec. Only reject the OCR-flagged case: refs WAS
+          // non-empty but every entry got filtered out as an agent_note id — that is
+          // suspicious (the director tried to cite "evidence" that was entirely soft
+          // hints masquerading as primary).
           const primaryRefs = a.refs.filter((r) => isPrimaryEvidenceRef(r.id));
+          if (a.refs.length > 0 && primaryRefs.length === 0) {
+            return textResult({
+              ok: false,
+              reason: '全部 refs 都是软提示引用（非一手证据），请改用一手事件 id 或留空',
+            });
+          }
           const note: WriteAgentNoteInput = {
             target_agents: a.target_agents as AgentNoteTarget[],
             source_task_kind: RESEARCH_MEETING_AGENT_ACTOR,

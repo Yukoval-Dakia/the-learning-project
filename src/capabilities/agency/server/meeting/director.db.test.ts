@@ -7,6 +7,7 @@
 // scan, cross-actor dedup, degrade, shadow isolation, and claim idempotency.
 
 import { event } from '@/db/schema';
+import { type WriteEventInput, writeEvent } from '@/server/events/queries';
 import type { FailureAttempt } from '@/server/events/queries';
 import type { MasteryProjection } from '@/server/mastery/state';
 import { writeAiProposal } from '@/server/proposals/writer';
@@ -46,6 +47,7 @@ import { runResearchMeetingAgentNightly } from '../../jobs/research_meeting_agen
 import {
   RESEARCH_MEETING_AGENT_ACTOR,
   SCAN_ACTION,
+  SCOUT_SPAWNED_ACTION,
   TRIGGER_ACTION,
   runResearchMeetingDirector,
 } from './director';
@@ -294,6 +296,75 @@ describe('runResearchMeetingDirector — pipeline', () => {
     const scans = await testDb().select().from(event).where(eq(event.action, SCAN_ACTION));
     expect(scans).toHaveLength(1);
     expect(scans[0].payload).toMatchObject({ outcome: 'partial' });
+  });
+
+  it('accumulates postRunError across MULTIPLE post-run write failures (round-2 review MINOR #7 — was "keep first only")', async () => {
+    const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: never) => {
+      // Exercise an evidence read tool (non-empty toolTrace → persistToolTraceFn invoked).
+      await callTool('get_attempt_details', { attempt_event_id: 'nonexistent_att' });
+      // Manually drive the PreToolUse hook for a Task call (the stub never spawns a real
+      // subagent) to bump scoutSpawns → the scout_spawned event write is attempted.
+      const hooks = (ctx as { hooks?: { PreToolUse?: Array<{ hooks: unknown[] }> } }).hooks;
+      const hookFn = hooks?.PreToolUse?.[0]?.hooks[0] as (input: unknown) => Promise<unknown>;
+      await hookFn({ hook_event_name: 'PreToolUse', tool_name: 'Task' });
+      await callTool('propose_conjecture', validProposeArgs);
+      return {
+        task_run_id: 'director_run_multi_fail',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.02,
+      };
+    });
+    const persistToolTraceFn = vi.fn(async () => {
+      throw new Error('tool_call_log write blew up');
+    });
+    const writeEventFn = vi.fn(async (db: unknown, input: WriteEventInput) => {
+      if (input.action === SCOUT_SPAWNED_ACTION) {
+        throw new Error('scout_spawned write blew up');
+      }
+      return writeEvent(db as never, input);
+    });
+
+    const result = await runResearchMeetingDirector(
+      testDb(),
+      baseDeps({ runAgentTaskFn, persistToolTraceFn, writeEventFn }),
+    );
+
+    expect(result.outcome).toBe('partial');
+    const scans = await testDb().select().from(event).where(eq(event.action, SCAN_ACTION));
+    expect(scans).toHaveLength(1);
+    const postRunError = (scans[0].payload as { post_run_error?: string }).post_run_error;
+    expect(postRunError).toContain('tool_call_log write blew up');
+    expect(postRunError).toContain('scout_spawned write blew up');
+  });
+
+  it('canUseTool denies the second Task spawn attempt (round-2 review MAJOR #9 — independent enforcement layer sharing the same counter as the PreToolUse hook)', async () => {
+    let capturedCanUseTool:
+      | ((toolName: string, input: unknown, options: unknown) => Promise<unknown>)
+      | undefined;
+    const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: never) => {
+      capturedCanUseTool = (ctx as { canUseTool?: typeof capturedCanUseTool }).canUseTool;
+      return {
+        task_run_id: 'director_run_canusetool',
+        text: '',
+        finishReason: 'stop',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost_usd: 0.01,
+      };
+    });
+
+    await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
+
+    expect(capturedCanUseTool).toBeTypeOf('function');
+    const canUseTool = capturedCanUseTool as NonNullable<typeof capturedCanUseTool>;
+    const first = await canUseTool('Task', {}, {});
+    expect(first).toMatchObject({ behavior: 'allow' });
+    const second = await canUseTool('Task', {}, {});
+    expect(second).toMatchObject({ behavior: 'deny' });
+    // a non-spawn tool is never denied by this layer.
+    const nonSpawn = await canUseTool('mcp__research_evidence__get_question', {}, {});
+    expect(nonSpawn).toMatchObject({ behavior: 'allow' });
   });
 
   it('shadow isolation: the agent run writes only research_meeting_agent-actor rows', async () => {
