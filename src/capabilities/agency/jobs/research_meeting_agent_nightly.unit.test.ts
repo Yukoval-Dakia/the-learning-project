@@ -76,6 +76,38 @@ describe('runResearchMeetingAgentNightly — dayKey claim idempotency', () => {
     expect(runDirectorFn).toHaveBeenCalledTimes(1); // never re-runs → no re-spend
   });
 
+  it('skips the director on a CONCURRENT redeliver: the existence check races past null, but a foreign winner nonce already landed by read-back (nonce-mismatch branch)', async () => {
+    // Simulates two "simultaneous" claimants: both pass the existence check as null
+    // (neither has committed yet), both attempt to write their own claim, but only
+    // ONE nonce actually persists (onConflictDoNothing first-write-wins in the real
+    // DB). THIS run's own write attempt lost that race — so when it reads back the
+    // row, it sees a DIFFERENT (winner's) nonce, not its own. That mismatch is the
+    // ONLY guard for the concurrent-redeliver window (the sequential-retry test
+    // above never reaches this branch — its existence check already short-circuits
+    // to `false` before any write is attempted).
+    let readCalls = 0;
+    const readEventByIdFn = vi.fn(async () => {
+      readCalls += 1;
+      if (readCalls === 1) return null; // existence check: not yet claimed (race window)
+      // persisted read-back: a concurrent winner's row already landed with a
+      // DIFFERENT nonce than the one THIS run generated for its own write.
+      return { payload: { claim_nonce: 'winner-nonce-from-another-worker' } };
+    });
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const runDirectorFn = vi.fn(async () => directorResult());
+
+    const result = await runResearchMeetingAgentNightly(
+      {} as never,
+      deps({ readEventByIdFn, writeEventFn, runDirectorFn }),
+    );
+
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('already_claimed_today');
+    expect(runDirectorFn).not.toHaveBeenCalled(); // the loser never spends
+    expect(writeEventFn).toHaveBeenCalledTimes(1); // this run DID attempt an insert (lost it)
+    expect(readEventByIdFn).toHaveBeenCalledTimes(2); // existence check + persisted read-back
+  });
+
   it('pins the director run to the claim timestamp (shared now)', async () => {
     let seenNow: Date | undefined;
     const runDirectorFn = vi.fn(async (_db: unknown, injected: AgentNightlyDeps) => {
