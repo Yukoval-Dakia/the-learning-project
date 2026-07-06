@@ -15,8 +15,17 @@
 // Degrade (red line): a runAgentTask throw (maxTurns / 300s abort / SDK error) is caught
 // and turned into a PARTIAL scan event + a degraded result — it is NOT rethrown, so the
 // nightly job returns cleanly (already-landed proposals are kept; the dayKey claim, held
-// by the job, blocks any re-spend). Only the PRE-LLM DB reads / event writes can throw
-// out of here (legit retryable faults).
+// by the job, blocks any re-spend). POST-LLM persistence (persistToolTrace + the
+// scout_spawned / scan event writes) is ALSO best-effort — wrapped in its own try/catch,
+// logged, and swallowed (§3 review fix): a throw there must not propagate either, since by
+// that point the LLM has already run and a pg-boss retry driven by a rethrow would
+// re-spend Opus quota for no benefit. RESIDUAL RISK (accepted trade-off, documented not
+// hidden): if the scan event write itself fails, the nightly job's dayKey-claim +
+// scan-existence check (research_meeting_agent_nightly.ts §2 fix) treats "claim exists,
+// no scan" as an orphaned mid-run failure and allows ONE retry on the next invocation —
+// that retry DOES re-spend tokens (unlike the zero-spend PRE-LLM-throw retry case), which
+// is an accepted degrade rather than a silent black hole. Only the PRE-LLM DB reads can
+// throw a genuine, zero-spend retryable fault out of this function.
 
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { newId } from '@/core/ids';
@@ -314,65 +323,119 @@ export async function runResearchMeetingDirector(
   const notesCreated = director.readNoteIds().length;
   const trace: ToolTraceEntry[] = evidence.readToolTrace();
 
+  // §3 review fix (MAJOR) — POST-LLM persistence is best-effort: a throw here must NOT
+  // propagate (see the file-header degrade comment for the residual-retry-cost trade-off
+  // this accepts). `postRunError` downgrades the final outcome to 'partial' when the LLM
+  // run itself succeeded but a persistence write hiccuped.
+  let postRunError: string | undefined;
+
   // Persist the evidence read trace to tool_call_log (best-effort). On a degraded run
   // (no SDK task_run_id) fall back to the synthetic tool-context run id so the reads are
   // still correlatable.
   const traceRunId = taskResult?.task_run_id ?? toolContextTaskRunId;
   if (trace.length > 0) {
-    await persistToolTraceFn(db, trace, {
-      taskRunId: traceRunId,
-      taskKind: 'ResearchMeetingDirectorTask',
-    });
+    try {
+      await persistToolTraceFn(db, trace, {
+        taskRunId: traceRunId,
+        taskKind: 'ResearchMeetingDirectorTask',
+      });
+    } catch (err) {
+      postRunError = err instanceof Error ? err.message : String(err);
+      console.error(
+        '[research_meeting_agent director] persistToolTrace failed (best-effort, degrading)',
+        err,
+      );
+    }
   }
 
   // Spawn 留痕 (evidence-first): the hook-counted spawns → one scout_spawned event.
   if (scoutSpawns > 0) {
-    await writeEventFn(db, {
-      id: `research_meeting_agent_scout_${newId()}`,
-      actor_kind: 'agent',
-      actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
-      action: SCOUT_SPAWNED_ACTION,
-      subject_kind: 'query',
-      subject_id: triggerEventId,
-      outcome: 'success',
-      payload: { subagent_type: 'evidence-scout', spawns: scoutSpawns, day_key: dayKey },
-      caused_by_event_id: triggerEventId,
-      cost_micro_usd: null,
-      created_at: now,
-    });
+    try {
+      await writeEventFn(db, {
+        id: `research_meeting_agent_scout_${newId()}`,
+        actor_kind: 'agent',
+        actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+        action: SCOUT_SPAWNED_ACTION,
+        subject_kind: 'query',
+        subject_id: triggerEventId,
+        outcome: 'success',
+        payload: { subagent_type: 'evidence-scout', spawns: scoutSpawns, day_key: dayKey },
+        caused_by_event_id: triggerEventId,
+        cost_micro_usd: null,
+        created_at: now,
+      });
+    } catch (err) {
+      postRunError = postRunError ?? (err instanceof Error ? err.message : String(err));
+      console.error(
+        '[research_meeting_agent director] scout_spawned event write failed (best-effort, degrading)',
+        err,
+      );
+    }
   }
 
-  const outcome: ResearchMeetingDirectorResult['outcome'] = degraded
-    ? proposalsCreated > 0 || notesCreated > 0
-      ? 'partial'
-      : 'failure'
-    : 'success';
+  // §9 review fix — flattened from a nested ternary (house style forbids ternary-in-
+  // ternary). Precedence: an LLM-run degrade (maxTurns/abort/SDK error) wins over a
+  // post-run persistence hiccup for classifying failure vs partial.
+  let outcome: ResearchMeetingDirectorResult['outcome'];
+  if (degraded) {
+    if (proposalsCreated > 0 || notesCreated > 0) {
+      outcome = 'partial';
+    } else {
+      outcome = 'failure';
+    }
+  } else if (postRunError !== undefined) {
+    outcome = 'partial';
+  } else {
+    outcome = 'success';
+  }
   const costUsd = taskResult?.cost_usd ?? 0;
 
-  // Scan event: cost-bearing (proposals are 0-cost so the scan carries the run spend
-  // ONCE — no double-count, mirrors dreaming_scan). On a degraded run the cost is
-  // unknown (the throw is before the runner's cost ledger write) so it is recorded null
-  // (§7 — degrade spend is not accounted; observability rides `outcome:'partial'`).
-  await writeEventFn(db, {
-    id: `research_meeting_agent_scan_${newId()}`,
-    actor_kind: 'agent',
-    actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
-    action: SCAN_ACTION,
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: degraded ? 'failure' : 'success',
-    payload: {
+  // §10 review fix — flattened from a nested ternary. Scan event: cost-bearing
+  // (proposals are 0-cost so the scan carries the run spend ONCE — no double-count,
+  // mirrors dreaming_scan). On a degraded run the cost is unknown (the throw is before
+  // the runner's cost ledger write) so it is recorded null (§7 — degrade spend is not
+  // accounted; observability rides `outcome:'partial'`).
+  let costMicroUsd: number | null;
+  if (degraded) {
+    costMicroUsd = null;
+  } else if (costUsd === 0) {
+    costMicroUsd = null;
+  } else {
+    costMicroUsd = Math.round(costUsd * 1_000_000);
+  }
+
+  try {
+    await writeEventFn(db, {
+      id: `research_meeting_agent_scan_${newId()}`,
+      actor_kind: 'agent',
+      actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+      action: SCAN_ACTION,
+      subject_kind: 'query',
+      subject_id: triggerEventId,
       outcome,
-      proposals_created: proposalsCreated,
-      notes_created: notesCreated,
-      scout_spawned: scoutSpawns,
-      day_key: dayKey,
-      ...(degradeError !== undefined ? { error: degradeError } : {}),
-    },
-    caused_by_event_id: triggerEventId,
-    cost_micro_usd: degraded ? null : costUsd === 0 ? null : Math.round(costUsd * 1_000_000),
-    created_at: now,
-  });
+      payload: {
+        outcome,
+        proposals_created: proposalsCreated,
+        notes_created: notesCreated,
+        scout_spawned: scoutSpawns,
+        day_key: dayKey,
+        ...(degradeError !== undefined ? { error: degradeError } : {}),
+        ...(postRunError !== undefined ? { post_run_error: postRunError } : {}),
+      },
+      caused_by_event_id: triggerEventId,
+      cost_micro_usd: costMicroUsd,
+      created_at: now,
+    });
+  } catch (err) {
+    // Best-effort — see the file-header degrade comment: if THIS write itself fails, the
+    // scan event never lands, and a subsequent nightly run will see "claim exists, no
+    // scan" (research_meeting_agent_nightly.ts §2 fix) and retry (re-spending tokens
+    // once). Never rethrow.
+    console.error(
+      '[research_meeting_agent director] scan event write failed (best-effort, degrading)',
+      err,
+    );
+  }
 
   return {
     proposals_created: proposalsCreated,

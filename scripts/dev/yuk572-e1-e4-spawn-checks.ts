@@ -13,7 +13,8 @@
 //        total_cost_usd (§2 — the "no-aggregation fallback" branch was deleted, so the
 //        design DEPENDS on this). Verified by a spawn-run cost > a no-spawn-run cost. On
 //        the flat OAuth lane total_cost_usd may be 0 → INCONCLUSIVE (inspect modelUsage by
-//        hand, §7); NOT a pass.
+//        hand, §7); NOT a pass — see computeExitCode below (review MAJOR #1: an
+//        inconclusive E-2 must NEVER exit 0 and silently authorize flipping the flag).
 //   E-3  mcpServers by-name resolution: the scout's AgentDefinition.mcpServers:['research_
 //        evidence'] resolves to the top-level in-process server, i.e. the scout can call an
 //        evidence read tool (its call lands in the shared evidence toolTrace).
@@ -30,11 +31,15 @@
 // a pass): DATABASE_URL + a working provider for the anthropic-sub override
 // (CLAUDE_CODE_OAUTH_TOKEN) OR set AI_PROVIDER_OVERRIDE + the matching auth. Run with:
 //   RESEARCH_MEETING_AGENT_ENABLED=1 pnpm tsx scripts/dev/yuk572-e1-e4-spawn-checks.ts
+//
+// Exit codes: 0 = all checks pass (E-1 AND the three blocking checks E-2/E-3/E-4) — safe
+// to flip the flag. 1 = cannot run (missing env / harness crash) — no verdict reached. 2 =
+// at least one check genuinely FAILED — do not flip. 3 = E-2 is INCONCLUSIVE (flat OAuth
+// lane reports total_cost_usd=0) — a human must inspect result.modelUsage by hand before
+// the flag may be flipped; this is DISTINCT from both pass (0) and fail (2).
 
-import { loadEnv } from '../../server/env';
-
-loadEnv();
-
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 
 const REQUIRED_ENV = ['DATABASE_URL'];
@@ -47,8 +52,37 @@ interface CheckReport {
   taskRunId: string;
 }
 
+/**
+ * Pure exit-code decision table (review MAJOR #1) — no SDK/DB dependency, so it is
+ * directly unit-testable (yuk572-e1-e4-spawn-checks.unit.test.ts). The house style
+ * forbids nested ternaries (see director.ts §9/§10 fixes); this is written as a plain
+ * if/else chain instead of `blockingOk && e1 ? 0 : e2Inconclusive ? 3 : 2`.
+ *
+ * CONTRACT: e2Inconclusive must NEVER produce exit 0 — an unmeasured cost delta must
+ * never be silently treated as a pass that authorizes flipping the flag.
+ */
+export interface ECheckOutcome {
+  e1: boolean;
+  e2Pass: boolean;
+  e2Inconclusive: boolean;
+  e3: boolean;
+  e4: boolean;
+}
+
+export function computeExitCode(outcome: ECheckOutcome): number {
+  const blockingOk = outcome.e2Pass && outcome.e3 && outcome.e4;
+  if (blockingOk && outcome.e1) {
+    return 0;
+  }
+  if (outcome.e2Inconclusive) {
+    return 3;
+  }
+  return 2;
+}
+
 async function assembleAndRun(directive: string): Promise<CheckReport> {
-  // Dynamic import AFTER loadEnv(): @/db/client reads DATABASE_URL at module top.
+  // Dynamic import AFTER loadEnv() (called in main() below): @/db/client reads
+  // DATABASE_URL at module top.
   const [
     { db },
     { runAgentTask },
@@ -162,6 +196,9 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
 }
 
 async function main() {
+  const { loadEnv } = await import('../../server/env');
+  loadEnv();
+
   const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
   if (missing.length > 0) {
     console.error(`[E-checks] cannot run — missing env: ${missing.join(', ')}`);
@@ -233,11 +270,23 @@ async function main() {
   );
   console.log('\nBLOCKING (E-2/E-3/E-4): the flag must NOT be flipped unless all three PASS.');
 
-  const blockingOk = (e2Pass || e2Inconclusive) && e3 && e4;
-  process.exit(blockingOk && e1 ? 0 : 2);
+  const exitCode = computeExitCode({ e1, e2Pass, e2Inconclusive, e3, e4 });
+  if (exitCode === 3) {
+    console.log(
+      '\nE-2 INCONCLUSIVE → exit 3，需人工核 cost 聚合后才能翻 flag（inspect result.modelUsage ' +
+        'by hand, §7 — do NOT flip RESEARCH_MEETING_AGENT_ENABLED until a human confirms the ' +
+        'nested scout usage actually rolled into the parent cost)。',
+    );
+  }
+  process.exit(exitCode);
 }
 
-main().catch((err) => {
-  console.error('[E-checks] harness failed', err);
-  process.exit(1);
-});
+// Only run the CLI entrypoint when this file is executed directly (not when
+// computeExitCode is imported for unit testing — mirrors scripts/audit-draft-status.ts's
+// guard so importing this module never triggers a real DB/SDK run as a side effect).
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error('[E-checks] harness failed', err);
+    process.exit(1);
+  });
+}
