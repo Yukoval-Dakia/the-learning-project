@@ -14,9 +14,13 @@
 // runAttributionAndWriteJudgeEvent, whose getJudgeForAttempt skip-check no-ops
 // when a real judge already exists. So an over-inclusive census wastes at most an
 // enqueue (the job skips, zero LLM cost). The census predicate mirrors the
-// helper's own skip rule exactly: an attempt is "lost" iff it has no chained
-// judge whose payload.attribution_pending IS DISTINCT FROM 'true' (i.e. a
-// pending paper placeholder still counts as lost — it needs real attribution).
+// helper's skip rule in the normal single-judge lifecycle: an attempt is "lost"
+// iff it has no chained judge whose payload.attribution_pending IS DISTINCT
+// FROM 'true' (a pending paper placeholder still counts as lost — it needs real
+// attribution). Known nuance: the helper inspects only the NEWEST judge while
+// this census checks NOT-EXISTS-ANY real judge — they diverge only for the
+// pathological older-real-judge + newer-pending-placeholder ordering (should
+// not occur; the lifecycle is placeholder-first), where the census errs safe.
 //
 // One-time ops script (scripts/backfill-lost-attribution.ts); NOT wired into any
 // live request path and NOT scheduled.
