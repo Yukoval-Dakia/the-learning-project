@@ -214,7 +214,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   // allowlist IS the machine-checkable canonical enumeration of the settlement
   // write surface. Mirrors the mastery_state / item_calibration blocks above
   // (violations-only). Test-file writers are auto-exempt (findWriteHits default
-  // includeTests: false) — the sole test writer is retire-state-on-merge.db.test.ts.
+  // includeTests: false).
   it('db.{insert,update}(kc_typed_state) appears only in src/server/conjectures/typed-state.ts (A7 settlement ledger)', async () => {
     const ALLOWED_KC_TYPED_STATE_WRITERS = ['src/server/conjectures/typed-state.ts'] as const;
     const hits = await findWriteHits('kc_typed_state');
