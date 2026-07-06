@@ -1,91 +1,91 @@
 {
   "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
   "knowledge.delete_reason": {
-    "reason": "Soft-delete metadata; Sub 1 maintenance lane (ADR-0004) will write it",
+    "reason": "Soft-delete metadata; Sub 1 maintenance lane (ADR-0004) will write it | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 1 MaintenanceProposeTask delete_knowledge path implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-15"
     }
   },
   "question.rubric_json": {
-    "reason": "Sub 1 JudgeTask grading config; not yet written by ingestion",
+    "reason": "Sub 1 JudgeTask grading config; not yet written by ingestion | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 1 JudgeTask + question authoring path implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-15"
     }
   },
   "question.judge_kind_override": {
-    "reason": "Sub 1 per-question judge override; not yet written",
+    "reason": "Sub 1 per-question judge override; not yet written | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 1 JudgeTask implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-15"
     }
   },
   "question.source_ref": {
-    "reason": "Provenance ref unused; ADR-0006 v2 后 event.payload.source 替代",
+    "reason": "Provenance ref unused; ADR-0006 v2 后 event.payload.source 替代 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 落地，决定 keep or drop",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-31"
     }
   },
   "question.created_by": {
-    "reason": "Provenance for AI-generated questions; ADR-0006 v2 will fill via event(action='generate', subject_kind='question')",
+    "reason": "Provenance for AI-generated questions; ADR-0006 v2 will fill via event(action='generate', subject_kind='question') | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 event generation path implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-31"
     }
   },
   "learning_item.source_ref": {
-    "reason": "Provenance ref; same as question.source_ref",
+    "reason": "Provenance ref; same as question.source_ref | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 落地，决定 keep or drop",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-31"
     }
   },
   "learning_item.primary_artifact_id": {
-    "reason": "ADR-0027 (YUK-203 P1) — primary_artifact_id 现为 learning_item→note 的可空 representative 引用指针（INSERT via acceptLearningIntent；无 UPDATE re-point path）。ADR-0004 的双向 ownership 已被 supersede。",
+    "reason": "ADR-0027 (YUK-203 P1) — primary_artifact_id 现为 learning_item→note 的可空 representative 引用指针（INSERT via acceptLearningIntent；无 UPDATE re-point path）。ADR-0004 的双向 ownership 已被 supersede。 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "ADR-0027 reference-model: 当 learning_item→note 读全量切到 label 交集 (notesForItem, P1-PR2/P4) 后评估 drop 此列",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-31"
     }
   },
   "learning_item.child_learning_item_ids": {
-    "reason": "Denormalised counterpart to parent_learning_item_id; children are derived via SELECT WHERE parent_learning_item_id=X. Keep the column for forward-compat (Phase 2 may activate it for ordering) but no write path planned.",
+    "reason": "Denormalised counterpart to parent_learning_item_id; children are derived via SELECT WHERE parent_learning_item_id=X. Keep the column for forward-compat (Phase 2 may activate it for ordering) but no write path planned. | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 2 — if/when ordered child arrays become a UX need; otherwise drop",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-11-15"
     }
   },
   "learning_item.ai_score": {
-    "reason": "AI-assessed value score; not yet implemented",
+    "reason": "AI-assessed value score; not yet implemented | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 0d AI proposal scoring path implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-12-15"
     }
   },
   "learning_item.due_at": {
-    "reason": "Sub 0d MaintenanceProposeTask sets due_at on learning_item; not yet written",
+    "reason": "Sub 0d MaintenanceProposeTask sets due_at on learning_item; not yet written | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 0d MaintenanceProposeTask implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-12-15"
     }
   },
   "learning_item.reviewed_at": {
-    "reason": "Sub 0d learning lane review timestamp; not yet written",
+    "reason": "Sub 0d learning lane review timestamp; not yet written | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 0d Phase 1 (review_event handler) implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-12-15"
     }
   },
   "answer.vision_extracted": {
@@ -97,308 +97,308 @@
     }
   },
   "artifact.id": {
-    "reason": "artifact table zero usage; ADR-0006 v2 revives via GenerateArtifact event",
+    "reason": "artifact table zero usage; ADR-0006 v2 revives via GenerateArtifact event | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.kind": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.title": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.body_md": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.metadata": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.created_by": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.source_event_id": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.parent_artifact_id": {
-    "reason": "Same as artifact.id (tree structure)",
+    "reason": "Same as artifact.id (tree structure) | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.intent_source": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.source_ref": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.tool_kind": {
-    "reason": "Same as artifact.id (tool_kind for tool-based artifacts e.g. quiz)",
+    "reason": "Same as artifact.id (tool_kind for tool-based artifacts e.g. quiz) | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.tool_state": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.generation_status": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.generated_by": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "artifact.history": {
-    "reason": "Same as artifact.id",
+    "reason": "Same as artifact.id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 + Sub 0d GenerateArtifact handler lands",
-      "expected_by": "2026-07-31"
+      "expected_by": "2027-01-31"
     }
   },
   "echo_jobs.error_md": {
-    "reason": "Sub 0c golden E2E hard-fail path not implemented; echo handler only writes success path. error_md reserved for explicit failure scenarios test",
+    "reason": "Sub 0c golden E2E hard-fail path not implemented; echo handler only writes success path. error_md reserved for explicit failure scenarios test | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 0c echo hard-fail E2E test added OR field dropped",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-11-30"
     }
   },
   "echo_jobs.input": {
-    "reason": "YUK-166 surfaced: the echo job ROW is enqueued from the golden-E2E test harness (no src/ INSERT of echo_jobs); the echo handler only UPDATEs output/status, never input. The old file-level lint falsely counted input as written because the handler's writeJobEvent payload `{ input, output }` shares the column name across tables — exactly the cross-table masking YUK-166 fixes. No src/ write path exists for echo_jobs.input.",
+    "reason": "YUK-166 surfaced: the echo job ROW is enqueued from the golden-E2E test harness (no src/ INSERT of echo_jobs); the echo handler only UPDATEs output/status, never input. The old file-level lint falsely counted input as written because the handler's writeJobEvent payload `{ input, output }` shares the column name across tables — exactly the cross-table masking YUK-166 fixes. No src/ write path exists for echo_jobs.input. | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Sub 0c echo enqueue path moved into src/ OR field dropped",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-11-30"
     }
   },
   "_comment_phase1c1_lane_a": "Phase 1c.1 Lane A added 4 new tables (event, learning_session, material_fsrs_state, knowledge_edge). Their write paths land in Lane B (Zod schemas in src/core/schema/event/**) and main-lane Step 4-6 (server read-path rewrite + /api/events + edges CRUD). Lane A only declares schema; write paths must follow.",
   "learning_session.summary_md": {
-    "reason": "type='conversation' session summary; Lane B / Step 5 LearningSession module writes",
+    "reason": "type='conversation' session summary; Lane B / Step 5 LearningSession module writes | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 5 LearningSession.Conversation handler implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-09-30"
     }
   },
   "learning_session.goal_id": {
-    "reason": "Phase 1d goal linkage placeholder; not written in 1c.1",
+    "reason": "Phase 1d goal linkage placeholder; not written in 1c.1 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1d goal-tracking implementation",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-11-15"
     }
   },
   "learning_session.started_at": {
-    "reason": "Session writer in Lane B / Step 5; defaults via DB but no app-level write yet",
+    "reason": "Session writer in Lane B / Step 5; defaults via DB but no app-level write yet | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 5 LearningSession module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-09-30"
     }
   },
   "learning_session.ended_at": {
-    "reason": "Session end transition in Lane B / Step 5",
+    "reason": "Session end transition in Lane B / Step 5 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 5 LearningSession module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.session_id": {
-    "reason": "event-stream writer lands in Lane B / Step 4 (server read-path rewrite + events queries module)",
+    "reason": "event-stream writer lands in Lane B / Step 4 (server read-path rewrite + events queries module) | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "event.actor_kind": {
-    "reason": "Same as event.session_id",
+    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "event.actor_ref": {
-    "reason": "Same as event.session_id",
+    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "event.action": {
-    "reason": "Same as event.session_id",
+    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "event.subject_kind": {
-    "reason": "Same as event.session_id",
+    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "event.subject_id": {
-    "reason": "Same as event.session_id",
+    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "event.caused_by_event_id": {
-    "reason": "event chain — judge ← attempt link; Lane B / Step 4 attribution writer",
+    "reason": "event chain — judge ← attempt link; Lane B / Step 4 attribution writer | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 attribution event writer implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "event.cost_micro_usd": {
-    "reason": "AI event cost stamping in Lane B / Step 7 AI prompt/registry updates",
+    "reason": "AI event cost stamping in Lane B / Step 7 AI prompt/registry updates | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 7 AI prompts emit cost on event write",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-08-31"
     }
   },
   "material_fsrs_state.subject_kind": {
-    "reason": "FSRS projection writer in Step 4-5 review handler",
+    "reason": "FSRS projection writer in Step 4-5 review handler | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-09-15"
     }
   },
   "material_fsrs_state.subject_id": {
-    "reason": "Same as material_fsrs_state.subject_kind",
+    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-09-15"
     }
   },
   "material_fsrs_state.due_at": {
-    "reason": "Same as material_fsrs_state.subject_kind",
+    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-09-15"
     }
   },
   "material_fsrs_state.last_review_event_id": {
-    "reason": "Same as material_fsrs_state.subject_kind",
+    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-09-15"
     }
   },
   "knowledge_edge.from_knowledge_id": {
-    "reason": "knowledge_edge CRUD in Step 6 /api/knowledge/edges and Step 7 AI propose-edge branch",
+    "reason": "knowledge_edge CRUD in Step 6 /api/knowledge/edges and Step 7 AI propose-edge branch | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-15"
     }
   },
   "knowledge_edge.to_knowledge_id": {
-    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-15"
     }
   },
   "knowledge_edge.relation_type": {
-    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-15"
     }
   },
   "knowledge_edge.weight": {
-    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-15"
     }
   },
   "knowledge_edge.created_by": {
-    "reason": "Same as knowledge_edge.from_knowledge_id",
+    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-07-31"
+      "expected_by": "2026-10-15"
     }
   },
   "_comment_b1_w1_soft_track": "B1-W1 (ADR-0035) soft-track columns. n=1 (single learner) makes the cohort-structured IRT/CDM/KT parameters STRUCTURALLY non-estimable — this is a ceiling of the single-learner regime (Stocking 1990 / B1 foundation §6.3), NOT a 'write path not built yet' gap. They NEVER feed p(L)/scheduling (ADR-0035 决定 #4). kind:'manual' because the Wave 2 phase is not yet named in docs/superpowers/status.md (a kind:'phase' entry would fail the phase-match check). NOTE (YUK-348): item_calibration.kt_json is NO LONGER allowlisted — it now has an UPDATE write path via src/server/mastery/kt-calibration.ts applyKtEstimate (BKT forward sink, prior-echo at n=1), so audit:schema sees it as update-only (non-stub). It remains a PURE PERSISTENCE SINK with ZERO downstream consumer — having a write path does NOT soften 决定 #4. The other 5 columns (irt_a/irt_c/cdm_json + the 2 mastery_state columns) stay NULL + allowlisted.",
