@@ -325,6 +325,48 @@ describe('propose_conjecture — server-enforced single writer', () => {
     if (h.proposals[0].payload.kind !== 'conjecture') throw new Error('kind narrowing');
     expect(h.proposals[0].payload.proposed_change.baseline_p_at_induction).toBe(0.5);
   });
+
+  it('closes the cap/dedup TOCTOU: two "concurrent" propose_conjecture calls for the SAME cell only let ONE land (round-3 review CodeRabbit Major A2)', async () => {
+    // Claude can emit multiple tool_use blocks in one turn; if the MCP bridge dispatches
+    // them by invoking each handler back-to-back (each handler runs synchronously up to
+    // its OWN first `await`, then yields — no preemption mid-synchronous-stretch), the
+    // cap/dedup reservation MUST happen before that first await, or both calls' checks
+    // race past the gate seeing the SAME stale (not-yet-reserved) state. This test fires
+    // both calls WITHOUT awaiting the first before starting the second (matching that
+    // dispatch model) and gates getMasteryProjectionFn's await so both calls' synchronous
+    // prefixes run to completion before either's async tail resolves.
+    let releaseGate: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const h = build({
+      meetingContext: meetingContext({ candidate_cells: [] }), // off-menu → getMasteryProjectionFn IS awaited
+      getMasteryProjectionFn: async () => {
+        await gate; // block here until the test releases it
+        return new Map<string, MasteryProjection>();
+      },
+    });
+
+    // Fire BOTH calls WITHOUT awaiting the first — each handler's synchronous prefix
+    // (including the cap/dedup reservation) runs to completion, back-to-back, before
+    // either's async tail (the gated getMasteryProjectionFn call) resolves.
+    const first = callTool(
+      'propose_conjecture',
+      validProposeArgs({ knowledge_id: 'k_race', evidence_refs: ['att_1', 'att_2'] }),
+    );
+    const second = callTool(
+      'propose_conjecture',
+      validProposeArgs({ knowledge_id: 'k_race', evidence_refs: ['att_1', 'att_2'] }),
+    );
+
+    releaseGate?.();
+    const [r1, r2] = await Promise.all([first, second]);
+
+    const oks = [r1, r2].filter((r) => r.ok === true);
+    expect(oks).toHaveLength(1); // only ONE actually landed
+    expect(h.proposals).toHaveLength(1);
+    expect(h.caps.proposeCount).toBe(1); // the reservation was not double-consumed either
+  });
 });
 
 describe('leave_agent_note — server-enforced', () => {

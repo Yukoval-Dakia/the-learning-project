@@ -213,19 +213,41 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
-  // review round-2 MAJOR #2/#9 — ONE shared counter pair for BOTH enforcement layers
-  // (the PreToolUse hook below AND the canUseTool callback further down). Never two
-  // independent counters: that could let each layer independently grant one spawn,
-  // doubling the effective cap. `denyTriggered` is the DIRECT signal a deny actually
-  // fired (from either layer) — `scoutSpawns === 1` alone cannot distinguish "a 2nd
-  // spawn was attempted and denied" from "the LLM never even tried a 2nd spawn".
-  let scoutSpawns = 0;
+  // review round-3 A1 — id-keyed idempotent design (mirrors director.ts's spawn-cap
+  // fix exactly; see director.ts for the full soundness writeup + the double-increment
+  // deadlock this SUPERSEDES). `PreToolUseHookInput.tool_use_id` and canUseTool's
+  // `options.toolUseID` correlate to the SAME underlying tool call across both SDK
+  // surfaces, so decideSpawn's granted-id Set is safe against either layer being
+  // consulted once, both being consulted for the same call, or both for different
+  // calls. `denyTriggered` (round-2 #2) is the DIRECT signal a deny actually fired.
+  const grantedSpawnToolUseIds = new Set<string>();
   let denyTriggered = 0;
+  // review round-3 CodeRabbit Minor #10 — the director's OWN evidence reads share the
+  // SAME evidence server + toolTrace as any spawned scout (director.ts §5: "director 与
+  // scout 共享此 server"), and the director's allowlist includes the same 6 read tools.
+  // Without a time-window filter, a director-side read (e.g. before ever spawning the
+  // scout) would be miscounted as scout activity, false-positiving E-3 even if the
+  // scout itself never got to call an evidence tool. Recorded the moment the FIRST
+  // spawn is granted (0→1 transition only); trace entries at/after this timestamp are
+  // scout-attributable (the validation directive tells the director to spawn BEFORE
+  // investigating, so anything before this point is unambiguously the director's own).
+  let scoutSpawnedAt: string | undefined;
+  function decideSpawn(toolUseId: string): 'allow' | 'deny' {
+    if (grantedSpawnToolUseIds.has(toolUseId)) {
+      return 'allow';
+    }
+    if (grantedSpawnToolUseIds.size >= 1) {
+      return 'deny';
+    }
+    grantedSpawnToolUseIds.add(toolUseId);
+    scoutSpawnedAt = scoutSpawnedAt ?? new Date().toISOString();
+    return 'allow';
+  }
   const spawnCapMatcher: HookCallbackMatcher = {
     hooks: [
       async (input) => {
         if (input.hook_event_name === 'PreToolUse' && input.tool_name === 'Task') {
-          if (scoutSpawns >= 1) {
+          if (decideSpawn(input.tool_use_id) === 'deny') {
             denyTriggered += 1;
             return {
               hookSpecificOutput: {
@@ -235,7 +257,6 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
               },
             };
           }
-          scoutSpawns += 1;
         }
         return { continue: true };
       },
@@ -244,14 +265,15 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
   // Mirrors director.ts's canUseTool layer exactly (same rationale + the same HONEST
   // caveat about SDK-consultation-order uncertainty lives there — see director.ts's
   // spawn-cap comment for the full writeup; this harness must exercise the identical
-  // wiring production uses so the dev validation run is representative).
-  const spawnCapCanUseTool: CanUseTool = async (toolName) => {
-    if (toolName === 'Task') {
-      if (scoutSpawns >= 1) {
-        denyTriggered += 1;
-        return { behavior: 'deny', message: 'E-4 validation: scout spawn cap reached (≤1)' };
-      }
-      scoutSpawns += 1;
+  // wiring production uses so the dev validation run is representative). Note:
+  // denyTriggered can be incremented more than once for the SAME rejected 2nd call if
+  // BOTH layers independently process it — harmless for the `>= 1` pass/fail gate
+  // (E-4 only needs "at least one deny fired somewhere"), just not an exact per-call
+  // tally.
+  const spawnCapCanUseTool: CanUseTool = async (toolName, _input, options) => {
+    if (toolName === 'Task' && decideSpawn(options.toolUseID) === 'deny') {
+      denyTriggered += 1;
+      return { behavior: 'deny', message: 'E-4 validation: scout spawn cap reached (≤1)' };
     }
     return { behavior: 'allow' };
   };
@@ -279,12 +301,19 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
 
   const readNames = new Set<string>(EVIDENCE_READ_TOOL_NAMES);
   const trace = evidence.readToolTrace();
-  const scoutReadToolCalls = trace.filter((t) =>
-    readNames.has(`mcp__research_evidence__${t.tool}`),
-  ).length;
+  let scoutReadToolCalls: number;
+  if (scoutSpawnedAt === undefined) {
+    // The scout never spawned — every evidence read recorded is the director's own.
+    scoutReadToolCalls = 0;
+  } else {
+    const spawnedAt = scoutSpawnedAt;
+    scoutReadToolCalls = trace.filter(
+      (t) => readNames.has(`mcp__research_evidence__${t.tool}`) && t.t > spawnedAt,
+    ).length;
+  }
 
   return {
-    scoutSpawns,
+    scoutSpawns: grantedSpawnToolUseIds.size,
     scoutReadToolCalls,
     reportFindingsCaptured: capture.value !== null,
     denyTriggered,
