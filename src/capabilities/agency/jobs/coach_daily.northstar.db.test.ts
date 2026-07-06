@@ -147,6 +147,9 @@ function dueQueueFingerprint(queue: { rows: DueQueueRow[] }) {
     // fsrs_state keyed by id (order-independent) → proves no item was re-dued and
     // the same set of due times / states is returned.
     fsrsById: Object.fromEntries(queue.rows.map((r) => [r.id, r.fsrs_state])),
+    // knowledge_ids keyed by id — restores the per-row payload coverage the old
+    // order-sensitive toEqual had (a legal reorder must re-emit rows untouched).
+    knowledgeById: Object.fromEntries(queue.rows.map((r) => [r.id, r.knowledge_ids])),
   };
 }
 
