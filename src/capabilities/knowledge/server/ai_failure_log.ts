@@ -19,12 +19,14 @@ export async function writeRetryableAiFailureLedger(db: Db, taskKind: string): P
 
 /**
  * YUK-379 (B1): permanent AI failure ledger — the LLM call itself SUCCEEDED
- * (cost incurred, `taskRunId` present) but a downstream deterministic step
- * (parse / schema validate) failed, so retrying is wasteful. Carrying
- * `taskRunId` is load-bearing: it lets this ledger row join into run-detail
- * observability (task_run_id join), making it the first real consumer of the
- * cost_ledger outcome column. Errors are swallowed like the retryable sibling —
- * a ledger hiccup must never mask the permanent classification.
+ * (cost incurred) but a downstream deterministic step (parse / schema validate)
+ * failed, so retrying is wasteful. When present, `taskRunId` lets this row join
+ * into run-detail observability (the task_run_id join) — the row is written FOR
+ * that read surface; no query consumes the outcome column itself yet. If the
+ * task runner returned no task_run_id the row degrades to task_run_id=NULL
+ * (visible only via direct SQL — the same invisibility the backfill doc
+ * describes). Errors are swallowed like the retryable sibling — a ledger hiccup
+ * must never mask the permanent classification.
  */
 export async function writePermanentAiFailureLedger(
   db: Db,

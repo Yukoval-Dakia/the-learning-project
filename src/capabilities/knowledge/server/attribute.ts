@@ -211,7 +211,10 @@ export async function runAttributionAndWriteJudgeEvent(
 
   // ── Stage C: write the judge event ────────────────────────────────────────
   // A DB fault writing the judge is RETRYABLE (same rationale as stage A): no
-  // ledger row, the caller rethrows.
+  // ledger row, the caller rethrows. Honest cost note: a Stage-C retry
+  // RE-INVOKES the LLM — the idempotency read precedes the LLM call and the
+  // judge was never written, so nothing short-circuits the second attempt.
+  // Accepted trade-off: Stage-C DB faults are rare, correctness > cost.
   try {
     const judgeId = newId();
     // D6 (U4 L-stamp): attribution is a non-routed judge — it runs AttributionRerankTask
