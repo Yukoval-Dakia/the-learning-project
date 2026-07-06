@@ -396,17 +396,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       !isTooClose &&
       materialGroundingOk &&
       kindConformanceOk;
-    // YUK-538 / YUK-554 (spec §Q1 + Lens B M3) — solve_check is the ONLY tier3/4 signal
-    // that fires a second, INDEPENDENT LLM call (SolutionGenerateTask), distinct from the
-    // single closed-book QuizVerifyTask above (which produces grounding/knowledge_hit/
-    // material_grounding/kind_conformance in one JSON). Short-circuit: only spend the
-    // independent solver when every FREE check already passed. Because solve is the LAST
-    // conjunct of `promote`, gating it behind freeChecksPass NEVER changes the promote
-    // result (any earlier false already forces promote=false); it only saves cost + sharpens
-    // the rollback signal (a solve verdict is recorded ONLY on the row where it is the
-    // marginal veto, not smeared onto already-doomed rows). tierChecks always includes
-    // solve_check for this handler (every row is tier3/4), but gate explicitly to stay
-    // correct if CHECK_SETS_BY_TIER is ever reconfigured.
+    // freeChecksPass 的 gating 理由（YUK-538 / YUK-554 solve_check 短路 + 成本论证）见上方注释块。
     //
     // YUK-578 (入池前审题闸) — teaching_quality is a SECOND independent LLM probe (TeachingQualityTask),
     // a PEER of solve_check: both are gated behind the SAME freeChecksPass condition (only spend the
