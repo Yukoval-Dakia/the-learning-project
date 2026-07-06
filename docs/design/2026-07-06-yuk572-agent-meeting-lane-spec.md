@@ -371,6 +371,17 @@ Task 工具调用**不经** mcp-bridge（那是 in-process MCP 工具的 wrapper
 - 现金 $：anthropic-sub 是 flat 订阅，marginal $≈0——**真但不是约束**；约束在 quota。
 - **实测项 E-6**：翻 flag 后首夜观测 rate-limit 状态；429 → throw → degrade → job 照常（不炸对照组，两 lane 逻辑隔离）。若 utilization 持续 warning，owner 停机准则（§8）提前触发。
 
+### 已知 gap（PR-2 实施补记，独立 review MINOR-1）：evidence_refs 是 LLM-asserted，未验证指向真实事件
+
+`propose_conjecture` 的 `evidence_refs`（director-tools.ts `filterPrimaryEvidenceRefs` 调用点）只做**形状过滤**——剔除 `agent_note_` 前缀的 id，确保不把软提示当一手证据。它**不**验证剩下的 id 是否真的对应一条存在的 `attempt` / `probe_result` / `prediction_score` 事件，也不验证该事件确实归属 LLM 声称的 `knowledge_id` × `cause_category`。这与确定性 lane 形成对照：`research_meeting_nightly` 的 `evidence_refs` 全部来自 `gatherConjectureEvidence` 对真实 `FailureAttempt[]` 的确定性聚合（`cell.evidence_event_ids`），link 天然成立；agent lane 的 director 是自由工具调用 + LLM 自报 refs，link 由 LLM 的诚实度担保，服务端未做存在性/归属校验。
+
+**blast radius 有界（本 gap 不是红线破口）**：
+- propose-only —— 任何 evidence_refs 造假只会出现在一条 owner 需手动 accept/edit/reject 的 inbox 提案里，从不自动生效。
+- owner inbox 审阅是天然的人工过滤层——伪造/不相关的 evidence_refs 会在 claim_md / probe_md 与实际证据不符时被 owner 一眼看穿。
+- 结算侧（`reconcileConjecturePredictions`）按 `conjecture_event_id` 直连 join，**从不 join evidence_refs**（reconcile.ts）——即使 evidence_refs 指向不存在或不相关的事件，也不会污染 prediction_score / typed-ledger 的结算路径。
+
+**结论**：服务端存在性/归属校验属于 hardening，会扩大本 PR 的 scope（需要按 kind 分派 event 查询 + knowledge_id/cause 归属比对），故本 PR **不做**，记为 follow-up（Linear YUK-581 占位 —— 若实际号不同以 PR body 为准）。
+
 ---
 
 ## 8. shadow 对照面
