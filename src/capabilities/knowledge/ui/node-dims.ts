@@ -28,7 +28,7 @@ import {
   masteryBandIdx,
   masteryBandUnknown,
   masteryBandView,
-} from './mastery-band';
+} from '@/core/mastery-band';
 
 // 维度 key（同屏并列，绝不合并——三轴正交）。
 export type NodeDimKey = 'R' | 'pL' | 'diff';

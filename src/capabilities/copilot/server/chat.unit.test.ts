@@ -1779,6 +1779,41 @@ describe('runCopilotChat — learner-state header (YUK-574)', () => {
     );
   });
 
+  // PR #717 round-2 OCR fix #1 (minor 0.60) — there was no PROGRAMMATIC invariant
+  // between LEARNER_STATE_HEADER_BUDGET.maxChars and COPILOT_HISTORY_BUDGET.
+  // totalChars: the oldest-first drop loop only shifts real turns, so if the
+  // header ALONE (with zero real turns left) still exceeds totalChars, the old
+  // code would return an orphaned over-budget header instead of respecting the
+  // total-chars ceiling. Uses a genuinely oversized header_md (well past the
+  // REAL totalChars) rather than an artificial budget, so this exercises the
+  // actual constants chat.ts wires — the guard must drop the header too rather
+  // than ship a lone entry that blows the whole-array budget.
+  it('an oversized header (alone, over totalChars) is dropped too — never ships an orphaned over-budget header', async () => {
+    const runAgentTaskFn = mkRun();
+    // Deliberately larger than COPILOT_HISTORY_BUDGET.totalChars on its own.
+    const oversizedHeader = 'x'.repeat(COPILOT_HISTORY_BUDGET.totalChars + 500);
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        resolveLearnerStateHeaderFn: async () => ({
+          header_md: oversizedHeader,
+          proposal_feedback: [],
+        }),
+        loadHistoryFn: async () => [],
+      },
+    );
+
+    const input = captureInput(runAgentTaskFn);
+    // No orphaned over-budget header — the whole-array invariant wins.
+    expect(input.conversation_history).toEqual([]);
+  });
+
   // Review-verdict fix #3(a) (MINOR) — a throwing resolver degrades to an empty
   // header (chat.ts's own try/catch around resolveLearnerState), which then makes
   // assembleConversationHistory skip the pin entirely (empty header_md → no

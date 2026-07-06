@@ -15,7 +15,7 @@ import {
   type MasteryBandView,
   UNKNOWN_BAND_LABEL,
   masteryBandView,
-} from './mastery-band';
+} from '@/core/mastery-band';
 
 // 渲染一个已算好的 band 视图。labels = 该轴的 4 档名（默认 p(L)/R 的 A5_BANDS；
 // difficulty 轴传 DIFFICULTY_BANDS）。unknownLabel = 冷启未知态档名。

@@ -15,10 +15,10 @@
 //     不足 / 低置信」。**不假造 CDM/IRT 数字**（无后端 follow-up）。
 //   - MisconceptionList（S4 误区）本片完全不碰。
 
+import { A5_BANDS, UNKNOWN_BAND_LABEL } from '@/core/mastery-band';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useState } from 'react';
 import { BandChipView } from './BandChip';
-import { A5_BANDS, UNKNOWN_BAND_LABEL } from './mastery-band';
 import { type NodeThreeDimInput, buildNodeThreeDim } from './node-dims';
 
 export interface NodeCompositeProps {

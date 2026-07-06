@@ -673,10 +673,21 @@ function assembleConversationHistory(
     pinnedHeaderMd && pinnedHeaderMd.length > 0 ? { role: 'context', text: pinnedHeaderMd } : null;
   // 防循环 ④ — whole-array cap: drop OLDEST real turn (front) until the serialized
   // array (header included in the accounting) fits. The pinned header is NEVER
-  // dropped, only real turns.
+  // dropped WHILE there are still real turns to shift, only real turns.
   const serialized = () => JSON.stringify(pinned ? [pinned, ...mapped] : mapped);
   while (mapped.length > 0 && serialized().length > budget.totalChars) {
     mapped.shift();
+  }
+  // PR #717 round-2 OCR fix #1 (minor 0.60) — PROGRAMMATIC invariant guard: the
+  // loop above only shifts real turns, so if the header ALONE (mapped already
+  // drained) still exceeds totalChars, there is nothing left to drop except the
+  // header itself. Without this, a future misconfiguration where
+  // LEARNER_STATE_HEADER_BUDGET.maxChars grows past COPILOT_HISTORY_BUDGET.
+  // totalChars (see the cross-reference comments at both constants in budgets.ts)
+  // would silently ship an orphaned over-budget header with zero real turns —
+  // worse than an empty history. Give up the header too in that case.
+  if (pinned && mapped.length === 0 && serialized().length > budget.totalChars) {
+    return [];
   }
   return pinned ? [pinned, ...mapped] : mapped;
 }

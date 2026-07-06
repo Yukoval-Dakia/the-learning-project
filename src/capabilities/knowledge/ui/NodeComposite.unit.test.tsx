@@ -5,10 +5,10 @@
 // the honest empty states for transfer + CDM/IRT (no fabricated numbers). The dim
 // banding math itself is covered by node-dims.unit.test.ts.
 
+import type { MasteryBandInput } from '@/core/mastery-band';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
-import type { MasteryBandInput } from './mastery-band';
 import type { NodeThreeDimInput } from './node-dims';
 
 function masteryInput(overrides: Partial<MasteryBandInput> = {}): MasteryBandInput {
