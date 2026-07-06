@@ -147,6 +147,8 @@
 | **applied_in 迁移探针** | 「死边留着没用」的处置 | 是否给 applied_in 死边一个下游消费者。**前置**：先跑 population SQL，边 < 一手直接 shelve。成功判据钉死为「owner 实际消费迁移题」，**禁止是 audit 转绿**（否则第 4 条 dark lane）。触发信号用 MasteryProjection.mastery，禁用 kt-estimator.pLFinal。 | **中**（动机须换、须防自欺绿灯） |
 | **自动 dismiss 陈旧 B 提案** | propose-only 覆盖面（**dismiss 安全侧**） | 是否允许 agent 自动 dismiss **仅结构可证已删目标**的提案。dismiss 可 un-dismiss、写可审计 reason、单夜 cap 超限退全人审。 | **低**（安全方向、最小切片） |
 
+> **交叉指针（2026-07-07 红线挑战审查 · A1-seven 终裁）**：上三条扩权挑战全部触及第七条产品红线「写入仅 propose」（见 `docs/design/2026-06-14-product-rethink-phase0-current-map.md` §5 行 1 ⑦ + 行 7）。A1-seven 终裁将其登记为红线 ⑦ 的 **pending owner 审议项（OWNER-DECIDE）**——不预改条文、按本节前置 gate 走；`knowledge_edge` CREATE 升 A 尤为「最大扩权」，收窄式改写红线会放走它（KG 边创建既非破坏性也非活跃池），故必须逐条 owner 拍板而非条文松绑。（Linear 单 pending MCP 重连后补挂。）
+
 ### B. 碰到但严格尊重（仅告知，无需拍板）
 
 - **Checkpoint 非自适应校准探针**：碰**结算层**红线，但 LLM 全程只组固定难度卷，`calibration_residual` 写走确定性 `state.ts` 单写者，LLM 绝不碰 θ̂/残差值。**唯一附加要求**：必须同时接一个确定性 consumer（producer+consumer 一体交付），否则触发「建成不通电」。

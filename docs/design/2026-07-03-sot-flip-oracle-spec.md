@@ -5,6 +5,8 @@
 > **Provenance**: research dossier `scratchpad/research/2026-07-02-worklist-sot-flip-research.md`（三腿 CODE/LIT/OSS + P0-2 生产实测补洞）+ 姊妹 spec `docs/design/2026-07-02-kc-dedup-attribution-rewrite-spec.md`（文体先例、YUK-543/544 landed 事实）+ 两轴对抗攻击（Lens A oracle 有效性 / Lens B 运维回滚顺序）。
 > **Status**: 终稿，已吸收两轴 attack 裁决（见附录 Attack Ledger）。全部代码断言本轮直接对 HEAD `bb5e115f` 重新核验，file:line 已 re-ground。
 > **可交付性**: 本 spec 切片到文件/函数级，可直接交 Opus executor 实施。**红线**：n=1 不拟合 item 参数；misconception/θ̂ 信号不写 mastery/p(L)/FSRS/difficulty；数据门只 gate 翻转不 gate build（oracle 机制必须实现+接线+live 跑通，只有最终 flip 动作等证据）；fold-owned 表禁 raw UPDATE；evidence-first 可追溯可回滚。
+>
+> **红线 corollary（2026-07-07 A5 审查补注 · additive，不重写既有句）**：dark-ship flag 钉在 **act/消费点**；OFF 期间**采集/producer 面照常 live 产数**（范式 = sot-flag 事件恒写 / auto-enroll observe 恒写 / A1 SRT 采集 live）。唯一例外 = **整能力 go-live 门**（采集本身即用户可见动作，如 placement probe）——此类 flag 必须当刻登记进翻转单（YUK-571 式），带精确 env 名 + 字面量 + expected_by。
 
 ---
 
