@@ -12,6 +12,14 @@
 //
 // The enqueued attribution_followup job is idempotent (getJudgeForAttempt skips
 // when a real judge already exists), so re-running --apply never double-judges.
+//
+// RACE NOTE (--apply): the census has no created_at floor, so a brand-new
+// failure attempt whose ORIGINAL attribution_followup job is enqueued but not
+// yet run can be censused as "lost"; the re-enqueue could then race the
+// original (idempotency is read-then-write with no unique constraint on
+// caused_by_event_id → both could pass the read → double judge + double LLM).
+// Ops rule: run --apply only while the attribution_followup queue is
+// drained/idle (the one-time backfill context), after a dry-run census review.
 
 // Load `.env` BEFORE importing `@/db/client` (the client throws on a missing
 // DATABASE_URL at construction). Scripts load `.env`, NOT `.env.local`.
