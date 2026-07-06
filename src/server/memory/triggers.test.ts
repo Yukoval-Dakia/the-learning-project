@@ -1,6 +1,7 @@
 import type { Job } from 'pg-boss';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
+import { resolveQualifyingEventSubjects } from './active-subjects';
 import {
   MEMORY_BRIEF_REGEN_QUEUE,
   MEMORY_EVENT_INGEST_QUEUE,
@@ -11,6 +12,23 @@ import {
   registerMemoryHandlers,
   shouldExtractToMemory,
 } from './triggers';
+
+// YUK-581 — the ingest handler's subject brief bridge calls
+// resolveQualifyingEventSubjects (a DB-touching resolver). Mock ONLY that export
+// (spread the rest — QUALIFYING_ACTIONS, listActiveSubjectsSinceRefresh, … stay
+// real) so the ingest-handler logic is unit-testable without a live Postgres; the
+// resolver's own DB contract is covered separately in active-subjects.db.test.ts.
+// The default returns an empty Map so the pre-existing ingest tests (which drive
+// qualifying `attempt` events) see no extra enqueue and their send counts hold.
+vi.mock('./active-subjects', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./active-subjects')>();
+  return {
+    ...actual,
+    resolveQualifyingEventSubjects: vi.fn(async () => new Map<string, string>()),
+  };
+});
+
+const mockResolve = vi.mocked(resolveQualifyingEventSubjects);
 
 describe('enqueueBriefRegen', () => {
   it('uses a per-scope singleton key with a 6 minute anti-storm window', async () => {
@@ -224,6 +242,125 @@ describe('buildMemoryEventIngestHandler', () => {
       expect.objectContaining({ user_id: 'self' }),
       expect.anything(),
     );
+  });
+});
+
+// YUK-581 — subject brief bridge inside the ingest handler. A qualifying learning
+// event (attempt / review / record_capture) never tags a `subject:*` scope in its
+// affected_scopes, so the affected_scopes fan-out can't refresh the per-subject
+// brief. The bridge resolves the event → subject via the canonical resolver and
+// enqueues its `subject:<id>` regen, moving subject-brief freshness from the
+// next-day 03:00 sweep to ≤6min after the activity. It is best-effort: a resolver /
+// enqueue failure is swallowed (the nightly sweep backstops dropped bridges), and
+// non-qualifying actions never touch the resolver.
+describe('buildMemoryEventIngestHandler — YUK-581 subject brief bridge', () => {
+  beforeEach(() => {
+    mockResolve.mockClear();
+  });
+
+  it('bridges a qualifying event to a subject:<id> brief regen (per-scope singleton)', async () => {
+    mockResolve.mockResolvedValueOnce(new Map([['evt_q', 'math']]));
+    const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_q',
+        actor_kind: 'user',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: { referenced_knowledge_ids: ['k-math'] },
+        affected_scopes: ['global', 'topic:k-math'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock(),
+    });
+
+    await handler([{ data: { event_id: 'evt_q' } } as Job<{ event_id: string }>]);
+
+    // Resolver was fed a QualifyingEventRow carrying the event's id/action/payload
+    // (outcome passed as null per the resolver contract).
+    expect(mockResolve).toHaveBeenCalledWith({}, [
+      expect.objectContaining({ id: 'evt_q', action: 'attempt', outcome: null }),
+    ]);
+    // The resolved subject → a subject:math regen with the shared 6-min singleton.
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: 'subject:math' },
+      {
+        singletonKey: 'memory.regen.subject:math',
+        singletonSeconds: 360,
+        singletonNextSlot: true,
+      },
+    );
+  });
+
+  it('does NOT bridge a non-qualifying action (resolver untouched, no subject:<id> enqueue)', async () => {
+    const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_rate',
+        actor_kind: 'user',
+        action: 'rate', // not in QUALIFYING_ACTIONS
+        subject_kind: 'event',
+        subject_id: 'e1',
+        payload: {},
+        affected_scopes: ['global'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'preference',
+      }),
+      memoryClient: memoryClientMock(),
+    });
+
+    await handler([{ data: { event_id: 'evt_rate' } } as Job<{ event_id: string }>]);
+
+    expect(mockResolve).not.toHaveBeenCalled();
+    const subjectRegen = send.mock.calls.find(
+      (c) =>
+        c[0] === MEMORY_BRIEF_REGEN_QUEUE &&
+        (c[1] as { scope_key: string }).scope_key.startsWith('subject:'),
+    );
+    expect(subjectRegen).toBeUndefined();
+  });
+
+  it('swallows a bridge failure (ingest completes, warns) and still fans out affected_scopes', async () => {
+    mockResolve.mockRejectedValueOnce(new Error('resolve boom'));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const send = vi.fn(async (_name: string, _data: object, _opts?: object) => 'job-1');
+    const boss = { send };
+    const handler = buildMemoryEventIngestHandler({} as never, boss, {
+      loadEvent: async () => ({
+        id: 'evt_q',
+        actor_kind: 'user',
+        action: 'review',
+        subject_kind: 'question',
+        subject_id: 'q1',
+        payload: { referenced_knowledge_ids: ['k-math'] },
+        affected_scopes: ['global'],
+        created_at: new Date('2026-05-27T00:00:00Z'),
+        kind: 'event',
+      }),
+      memoryClient: memoryClientMock(),
+    });
+
+    // The bridge throw must NOT reject the ingest job (best-effort; sweep backstops).
+    await expect(
+      handler([{ data: { event_id: 'evt_q' } } as Job<{ event_id: string }>]),
+    ).resolves.toBeUndefined();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[memory_brief_bridge]'),
+      expect.any(Error),
+    );
+    // Bridge failure is isolated — the affected_scopes fan-out still ran.
+    expect(send).toHaveBeenCalledWith(
+      MEMORY_BRIEF_REGEN_QUEUE,
+      { scope_key: 'global' },
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
   });
 });
 

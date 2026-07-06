@@ -37,7 +37,7 @@ import type { BriefEvent } from './brief';
 // DEFAULT subject via the orphan fallback (YUK-56), rather than being dropped. The
 // enroll answered path writes `action='attempt'`, already covered, which DOES carry
 // referenced_knowledge_ids.
-const QUALIFYING_ACTIONS = ['attempt', 'review', 'experimental:record_capture'] as const;
+export const QUALIFYING_ACTIONS = ['attempt', 'review', 'experimental:record_capture'] as const;
 const RECORD_CAPTURE_ACTION = 'experimental:record_capture';
 
 const DEFAULT_LOOKBACK_DAYS = 30;
@@ -108,7 +108,7 @@ function extractKnowledgeIds(payload: unknown): string[] {
  * carries neither still falls back to the default subject via the orphan
  * fallback (YUK-56), rather than being dropped.
  */
-async function resolveQualifyingEventSubjects(
+export async function resolveQualifyingEventSubjects(
   db: Db,
   rows: QualifyingEventRow[],
 ): Promise<Map<string, string>> {
