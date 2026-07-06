@@ -16,6 +16,17 @@
 export const UNTRUSTED_OPEN = '<untrusted_learner_text>';
 export const UNTRUSTED_CLOSE = '</untrusted_learner_text>';
 
+// Delimiter-injection guard (OCR major, PR #713): learner text containing the literal
+// delimiter tokens (any casing) could otherwise close the untrusted block early and
+// plant instruction-shaped text OUTSIDE the boundary. Defang embedded tokens into an
+// HTML-entity form the agent still reads as text but that can never terminate the
+// block. Applied to BOTH open and close so a payload can't fabricate nested blocks.
+const EMBEDDED_DELIMITER = /<(\/?)(untrusted_learner_text)>/gi;
+
+function defangEmbeddedDelimiters(text: string): string {
+  return text.replace(EMBEDDED_DELIMITER, '&lt;$1$2&gt;');
+}
+
 /**
  * Wrap learner-authored free text in the <untrusted_learner_text> delimiter block.
  *
@@ -29,5 +40,5 @@ export function wrapUntrustedLearnerText(text: null): null;
 export function wrapUntrustedLearnerText(text: string | null): string | null;
 export function wrapUntrustedLearnerText(text: string | null): string | null {
   if (text === null) return null;
-  return `${UNTRUSTED_OPEN}${text}${UNTRUSTED_CLOSE}`;
+  return `${UNTRUSTED_OPEN}${defangEmbeddedDelimiters(text)}${UNTRUSTED_CLOSE}`;
 }
