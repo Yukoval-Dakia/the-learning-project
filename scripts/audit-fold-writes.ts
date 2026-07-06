@@ -141,7 +141,7 @@ const SANCTIONED_WRITERS: SanctionedWriter[] = [
     file: 'src/capabilities/knowledge/server/proposals.ts',
     marker: 'projectionIsWriter()',
     role: 'gated-dual-path',
-    note: 'accept-path appliers (propose_new / reparent / archive / merge) gate on projectionIsWriter() — when ON the imperative row-write is skipped and the shell writes; same-tx writeEvent keeps it event-native.',
+    note: 'accept-path appliers: only propose_new gates on projectionIsWriter() (writeRow: !flip skips the INSERT when ON); reparent/archive/merge/split keep their version-guarded imperative UPDATE unconditionally + same-tx rate=accept event (event-native-by-caller) — when flip is ON the projection shell overwrites from events (proposals.ts:1158-1163).',
   },
   {
     table: 'knowledge',
