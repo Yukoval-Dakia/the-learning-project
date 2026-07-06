@@ -15,7 +15,11 @@ import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { listActiveSubjectsSinceRefresh, loadSubjectBriefEvents } from './active-subjects';
+import {
+  listActiveSubjectsSinceRefresh,
+  loadSubjectBriefEvents,
+  resolveQualifyingEventSubjects,
+} from './active-subjects';
 import { type GenerateBrief, loadEventsFromDbForTest } from './brief';
 import { buildMemoryBriefRegenHandler, buildMemoryBriefSweepHandler } from './triggers';
 
@@ -702,6 +706,61 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
     expect(math?.subject_id).toBe('math');
     expect(wenyan?.evidence_count).toBe(1);
     expect(math?.evidence_count).toBe(1);
+  });
+});
+
+// YUK-581 — resolveQualifyingEventSubjects is now exported (the ingest-handler
+// subject bridge consumes it). Direct contract test of the export against real
+// Postgres: attempt resolves via payload knowledge ids; record_capture resolves
+// via the linked learning_record JOIN — the SAME BR-4 bridge the sweep uses.
+describe('resolveQualifyingEventSubjects (YUK-581 — exported contract)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('resolves an attempt event to its knowledge-derived subject', async () => {
+    await seedKnowledge('k-math', 'math');
+    const eventId = await insertAttempt({ knowledgeIds: ['k-math'], createdAt: daysAgo(1) });
+
+    const [row] = await testDb()
+      .select({
+        id: event.id,
+        action: event.action,
+        subject_kind: event.subject_kind,
+        subject_id: event.subject_id,
+        outcome: event.outcome,
+        payload: event.payload,
+        created_at: event.created_at,
+      })
+      .from(event)
+      .where(eq(event.id, eventId));
+
+    const resolved = await resolveQualifyingEventSubjects(testDb(), [row]);
+    expect(resolved.get(eventId)).toBe('math');
+  });
+
+  it('resolves a record_capture event via its linked record, not the default subject', async () => {
+    await seedKnowledge('k-math', 'math');
+    const { eventId } = await insertCapture({
+      recordKnowledgeIds: ['k-math'],
+      createdAt: daysAgo(2),
+    });
+
+    const [row] = await testDb()
+      .select({
+        id: event.id,
+        action: event.action,
+        subject_kind: event.subject_kind,
+        subject_id: event.subject_id,
+        outcome: event.outcome,
+        payload: event.payload,
+        created_at: event.created_at,
+      })
+      .from(event)
+      .where(eq(event.id, eventId));
+
+    const resolved = await resolveQualifyingEventSubjects(testDb(), [row]);
+    expect(resolved.get(eventId)).toBe('math');
   });
 });
 
