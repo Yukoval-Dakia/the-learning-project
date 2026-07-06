@@ -38,10 +38,23 @@ const PROJECTION = (over: Partial<LearnerStateProjection> = {}): LearnerStatePro
   ...over,
 });
 
+// Review-verdict fix #2 (MINOR) — the house cron domain runs Asia/Shanghai; a UTC
+// day bucket fires cross-day invalidation at Beijing 08:00, not midnight. bucket
+// by Asia/Shanghai calendar day instead.
 describe('dayBucket', () => {
-  it('buckets by UTC calendar day (YYYY-MM-DD)', () => {
-    expect(dayBucket(new Date('2026-07-05T23:59:59.000Z'))).toBe('2026-07-05');
-    expect(dayBucket(new Date('2026-07-06T00:00:00.000Z'))).toBe('2026-07-06');
+  it('buckets by Asia/Shanghai calendar day (YYYY-MM-DD), NOT UTC', () => {
+    // Beijing 2026-07-06 23:59:59 = UTC 2026-07-06 15:59:59 (still the same BJT day).
+    expect(dayBucket(new Date('2026-07-06T15:59:59.000Z'))).toBe('2026-07-06');
+    // Beijing 2026-07-07 00:00:00 = UTC 2026-07-06 16:00:00 (BJT day just rolled over).
+    expect(dayBucket(new Date('2026-07-06T16:00:00.000Z'))).toBe('2026-07-07');
+  });
+
+  it('cross-day boundary: Beijing 00:30 (UTC previous-day 16:30) is judged a NEW day', () => {
+    // Beijing 2026-07-06 00:30:00 = UTC 2026-07-05 16:30:00.
+    expect(dayBucket(new Date('2026-07-05T16:30:00.000Z'))).toBe('2026-07-06');
+    // The UTC calendar day at that instant is STILL 2026-07-05 — proving this is
+    // genuinely Asia/Shanghai-bucketed, not accidentally UTC-equivalent.
+    expect(new Date('2026-07-05T16:30:00.000Z').toISOString().slice(0, 10)).toBe('2026-07-05');
   });
 });
 

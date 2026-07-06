@@ -76,6 +76,40 @@ async function writeDreamingScan(at: Date): Promise<void> {
   });
 }
 
+// Review-lane fixture (review-verdict fix #1) — the FSRS review-queue clearing
+// write (src/capabilities/practice/api/submit.ts) uses a DISTINCT action='review',
+// not 'attempt'. A pure-review session (no fresh 'attempt' rows) must still
+// invalidate the header, since it directly moves review_due_count.
+async function writeReview(at: Date): Promise<void> {
+  await writeEvent(db, {
+    id: `review_${createId()}`,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'review',
+    subject_kind: 'question',
+    subject_id: `q_${createId()}`,
+    outcome: 'success',
+    payload: {
+      fsrs_rating: 'good',
+      fsrs_state_after: {
+        state: 'review',
+        due: at.toISOString(),
+        stability: 1,
+        difficulty: 1,
+        elapsed_days: 0,
+        scheduled_days: 1,
+        learning_steps: 0,
+        reps: 1,
+        lapses: 0,
+        last_review: at.toISOString(),
+      },
+      user_response_md: null,
+      referenced_knowledge_ids: [],
+    },
+    created_at: at,
+  });
+}
+
 async function cacheRowCount(sessionId: string): Promise<number> {
   const rows = await db
     .select({ id: event.id })
@@ -101,6 +135,32 @@ describe('readLearnerStateWatermarks', () => {
     expect(wm.attempt_at).toBe('2026-07-06T09:00:00.000Z');
     expect(wm.dreaming_at).toBe('2026-07-06T03:00:00.000Z');
     expect(wm.proposal_decision_at).toBe('2026-07-06T07:00:00.000Z');
+  });
+
+  // Review-verdict fix #1 (MAJOR) — FSRS review-queue clearing writes a DISTINCT
+  // action='review' (practice/api/submit.ts), not 'attempt'. A pure-review
+  // session (no 'attempt' rows) must still advance attempt_at, since 'review'
+  // directly moves review_due_count — otherwise "今日待复习" headline goes stale
+  // until some OTHER trigger fires.
+  it('folds a newer `review` event into attempt_at (pure-review session counts as new activity)', async () => {
+    await writeAttempt(new Date('2026-07-06T08:00:00.000Z'));
+    await writeReview(new Date('2026-07-06T09:30:00.000Z')); // newer than the attempt
+
+    const wm = await readLearnerStateWatermarks(db);
+    expect(wm.attempt_at).toBe('2026-07-06T09:30:00.000Z');
+  });
+
+  it('folds attempt_at from `review` alone when there is no `attempt` row at all', async () => {
+    await writeReview(new Date('2026-07-06T09:30:00.000Z'));
+    const wm = await readLearnerStateWatermarks(db);
+    expect(wm.attempt_at).toBe('2026-07-06T09:30:00.000Z');
+  });
+
+  it('keeps the newer `attempt` when it postdates `review` (fold takes the max, not review-always-wins)', async () => {
+    await writeReview(new Date('2026-07-06T08:00:00.000Z'));
+    await writeAttempt(new Date('2026-07-06T09:30:00.000Z'));
+    const wm = await readLearnerStateWatermarks(db);
+    expect(wm.attempt_at).toBe('2026-07-06T09:30:00.000Z');
   });
 });
 
@@ -214,6 +274,30 @@ describe('resolveLearnerStateHeader (real cache IO + watermark-driven invalidati
     expect(projectionCalls).toBe(2);
     expect(h3.header_md).toContain('2');
     expect(await cacheRowCount('ls_db_resolve')).toBe(2);
+  });
+
+  // Review-verdict fix #1 (MAJOR) — a PURE-REVIEW session (no 'attempt' events at
+  // all) must still invalidate a warm cache, because FSRS review clearing is the
+  // exact signal that moves review_due_count (the header's "今日待复习" headline).
+  it('a pure-review session (no attempt events) invalidates the cached header', async () => {
+    const deps = {
+      readProjectionFn: async () => COLD_PROJECTION,
+      loadProposalFeedbackFn: async () => [],
+      now: () => new Date('2026-07-06T09:00:00.000Z'),
+    };
+
+    // Cold assemble + cache.
+    await resolveLearnerStateHeader(db, 'ls_db_review', deps);
+    expect(await cacheRowCount('ls_db_review')).toBe(1);
+
+    // Warm reuse: still one row (no new events).
+    await resolveLearnerStateHeader(db, 'ls_db_review', deps);
+    expect(await cacheRowCount('ls_db_review')).toBe(1);
+
+    // A review event lands (FSRS queue clearing) — NO 'attempt' row at all.
+    await writeReview(new Date('2026-07-06T08:59:00.000Z'));
+    await resolveLearnerStateHeader(db, 'ls_db_review', deps);
+    expect(await cacheRowCount('ls_db_review')).toBe(2);
   });
 });
 
