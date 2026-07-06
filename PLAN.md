@@ -45,7 +45,7 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **红线挑战审查条文波（2026-07-07 active）**：多 lane 各自 worktree 产条文/docs PR——本 **Lane D** = CLAUDE.md（merge 政策 P1/P2/P6/P8/P9 六项）+ PLAN.md 手术 + design-docs（A1/A2/A3/A5/X2/A6）+ 审查报告入库；**Lane E** = ADR-0025（X6 northstar fixture 退化修复）。红线 wave 三 PR ⚠️待核（编号待开）；**停等 owner merge**（本波承载 merge 政策换文，bootstrap 期不自主合）。
+- **红线挑战审查条文波（2026-07-07 active）**：多 lane 各自 worktree 产条文/docs PR——本 **Lane D** = CLAUDE.md（merge 政策 P1/P2/P6/P8/P9 六项）+ PLAN.md 手术 + design-docs（A1/A2/A3/A5/X2/A6）+ 审查报告入库；**Lane E** = ADR-0025（X6 northstar fixture 退化修复）。红线 wave 三 PR = **#724**（本 Lane D）/ **#725**（Lane E：X6+A7+P6）/ **#726**（Lane F：audit:fold-writes + audit:flags）；**停等 owner merge**（本波承载 merge 政策换文，bootstrap 期不自主合）。
 - **ulw Wave 2 双 lane（2026-07-07 在飞）**：**Lane E = YUK-573 judge 校准 MVP**（生产流量 golden set + 双 judge 不同意率采样 job；report-only 绝不改 outcome/mastery/θ̂；默认 OFF kill switch）· **Lane F = YUK-576 registry 诚实化**（maxCost/fallbackChain 接线或删除 + 结构化输出迁移 + task_run_stuck reconcile sweeper）。各自 worktree off `dba3f77d` + TDD + 独立 Opus 审 → PR；撞车预期 `src/ai/registry.ts` 后合者 rebase。（注：此 Wave 2 与红线条文波共用「Lane E」名但为不同波次。）
 - **噪音/stale PR 待周期清**：audit-drift 周报 draft（#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
 
