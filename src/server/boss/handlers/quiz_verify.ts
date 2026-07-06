@@ -396,30 +396,18 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       !isTooClose &&
       materialGroundingOk &&
       kindConformanceOk;
-    const solveResult =
-      freeChecksPass && tierChecks.includes('solve_check')
-        ? await runSolveCheck(
-            {
-              id: row.id,
-              kind: row.kind,
-              prompt_md: row.prompt_md,
-              reference_md: row.reference_md,
-              choices_md: row.choices_md,
-              judge_kind_override: row.judge_kind_override,
-              rubric_json: row.rubric_json,
-              knowledge_ids: row.knowledge_ids,
-              metadata: metadataRaw,
-            } satisfies SolveCheckQuestion,
-            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile }, db },
-          )
-        : undefined;
-    // Layered veto (Q1): solveCheckBlocks reads compared_by to pick the semantic vs
-    // normalize flag. undefined (short-circuited / no solve_check in set) → never blocks.
-    // A semantic confident-fail vetoes; a normalize (exact) fail vetoes by default but
-    // records needs_review ("hold for human review") — see the SOLVE_CHECK_TIER34_VETO
-    // docblock. Neither lowers draft_status below 'draft' (m7 invariant note in the else).
-    const solveCheckOk = solveResult === undefined || !solveCheckBlocks(solveResult);
-
+    // YUK-538 / YUK-554 (spec §Q1 + Lens B M3) — solve_check is the ONLY tier3/4 signal
+    // that fires a second, INDEPENDENT LLM call (SolutionGenerateTask), distinct from the
+    // single closed-book QuizVerifyTask above (which produces grounding/knowledge_hit/
+    // material_grounding/kind_conformance in one JSON). Short-circuit: only spend the
+    // independent solver when every FREE check already passed. Because solve is the LAST
+    // conjunct of `promote`, gating it behind freeChecksPass NEVER changes the promote
+    // result (any earlier false already forces promote=false); it only saves cost + sharpens
+    // the rollback signal (a solve verdict is recorded ONLY on the row where it is the
+    // marginal veto, not smeared onto already-doomed rows). tierChecks always includes
+    // solve_check for this handler (every row is tier3/4), but gate explicitly to stay
+    // correct if CHECK_SETS_BY_TIER is ever reconfigured.
+    //
     // YUK-578 (入池前审题闸) — teaching_quality is a SECOND independent LLM probe (TeachingQualityTask),
     // a PEER of solve_check: both are gated behind the SAME freeChecksPass condition (only spend the
     // extra call when every FREE self-review check already passed) and both are conjuncts of promote,
@@ -436,9 +424,36 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // independent ambiguous-stem/no-unique-answer read (teaching_quality) — in the SAME held-for-review
     // draft, giving the owner richer review context in one pass instead of two. Do not "fix" this into a
     // solveCheckOk && ... short-circuit without re-litigating that trade-off.
-    const teachingResult =
+    //
+    // OCR (PR #716 round-2) — solve_check and teaching_quality are independent PEER probes with no
+    // data dependency on each other (each reads only the row + subjectProfile already in scope), so
+    // fire both CONCURRENTLY via Promise.all instead of sequential awaits — wall-clock is
+    // max(solve_time, teaching_time), not solve_time + teaching_time. Each keeps its own
+    // freeChecksPass && tierChecks.includes(...) gate; the absent side resolves to `undefined`
+    // (Promise.resolve(undefined)) exactly as the prior sequential `? await ... : undefined` did, so
+    // solveResult/teachingResult and every downstream veto/promote predicate are unchanged. Both
+    // check functions internally catch their own runTaskFn/parse errors and resolve to an
+    // 'unsupported' verdict rather than rejecting, so racing them is safe (neither can leave the
+    // other's Promise.all settle blocked or produce an unhandled rejection).
+    const [solveResult, teachingResult] = await Promise.all([
+      freeChecksPass && tierChecks.includes('solve_check')
+        ? runSolveCheck(
+            {
+              id: row.id,
+              kind: row.kind,
+              prompt_md: row.prompt_md,
+              reference_md: row.reference_md,
+              choices_md: row.choices_md,
+              judge_kind_override: row.judge_kind_override,
+              rubric_json: row.rubric_json,
+              knowledge_ids: row.knowledge_ids,
+              metadata: metadataRaw,
+            } satisfies SolveCheckQuestion,
+            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile }, db },
+          )
+        : Promise.resolve(undefined),
       freeChecksPass && tierChecks.includes('teaching_quality')
-        ? await runTeachingQualityCheck(
+        ? runTeachingQualityCheck(
             {
               id: row.id,
               kind: row.kind,
@@ -449,7 +464,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             } satisfies TeachingQualityQuestion,
             { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile } },
           )
-        : undefined;
+        : Promise.resolve(undefined),
+    ]);
+    // Layered veto (Q1): solveCheckBlocks reads compared_by to pick the semantic vs
+    // normalize flag. undefined (short-circuited / no solve_check in set) → never blocks.
+    // A semantic confident-fail vetoes; a normalize (exact) fail vetoes by default but
+    // records needs_review ("hold for human review") — see the SOLVE_CHECK_TIER34_VETO
+    // docblock. Neither lowers draft_status below 'draft' (m7 invariant note in the else).
+    const solveCheckOk = solveResult === undefined || !solveCheckBlocks(solveResult);
     // Per-axis veto (teachingQualityBlocks): only an overall 'fail' can block, then the failing
     // axis's flag decides. undefined (short-circuited / no teaching_quality in set) → never blocks.
     // A confident fail vetoes promotion but records needs_review ("hold for human review"), NOT

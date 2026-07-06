@@ -280,8 +280,14 @@ describe('runQuizVerify', () => {
     // 'unsupported'; both non-blocking (promote stands). verify + solve + teaching = 3 calls.
     expect(runTaskFn).toHaveBeenCalledTimes(3);
     expect(runTaskFn.mock.calls[0][0]).toBe('QuizVerifyTask');
-    expect(runTaskFn.mock.calls[1][0]).toBe('SolutionGenerateTask');
-    expect(runTaskFn.mock.calls[2][0]).toBe('TeachingQualityTask');
+    // OCR (PR #716 round-2) — solve_check and teaching_quality now fire CONCURRENTLY via
+    // Promise.all, so their relative order in mock.calls is no longer a production-code
+    // guarantee (only QuizVerifyTask's position is, since it strictly precedes the
+    // Promise.all block). Assert the SET of kinds fired at calls 1/2, not their position.
+    const concurrentKinds = runTaskFn.mock.calls.slice(1).map((c) => c[0]);
+    expect(new Set(concurrentKinds)).toEqual(
+      new Set(['SolutionGenerateTask', 'TeachingQualityTask']),
+    );
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'q1'));
     expect(rows[0].draft_status).toBe('active');
@@ -454,16 +460,30 @@ describe('runQuizVerify', () => {
     // failure event with outcome='error'); second invocation succeeds. The second
     // run MUST re-invoke the task and verify, NOT skip as already_verified.
     // B-obs-1 (review) — every call explicitly mocked: 1st run rejects at QuizVerifyTask
-    // (never reaches solve); 2nd run fires verify (2nd mock) + solve (3rd mock, EXPLICIT
-    // empty final_answer → the documented 'solver returned an empty final_answer'
-    // unsupported path → non-blocking) + teaching (4th mock, YUK-578 — explicit pass →
-    // non-blocking). No reliance on vi.fn's undefined default.
-    const runTaskFn = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('transient boom'))
-      .mockResolvedValueOnce({ text: verifyOutput({ overall: 'pass' }), task_run_id: 'tr_retry' })
-      .mockResolvedValueOnce({ text: solverOutput(''), task_run_id: 'tr_retry_solve' })
-      .mockResolvedValueOnce({ text: teachingQualityOutput({}), task_run_id: 'tr_retry_tq' });
+    // (never reaches solve); 2nd run fires verify (2nd mock) + solve (EXPLICIT empty
+    // final_answer → the documented 'solver returned an empty final_answer' unsupported
+    // path → non-blocking) + teaching (YUK-578 — explicit pass → non-blocking).
+    // OCR (PR #716 round-2) — solve_check and teaching_quality now fire CONCURRENTLY via
+    // Promise.all, so which of the two lands as "the 3rd call" vs "the 4th call" is no
+    // longer a production-code guarantee. Dispatch the 2nd invocation's mock BY KIND (not
+    // by raw call-sequence position) so the test doesn't depend on that ordering; only the
+    // very first call (call count 1, across BOTH invocations) is order-guaranteed to be the
+    // rejected QuizVerifyTask attempt, since nothing else runs before verify succeeds.
+    let callCount = 0;
+    const runTaskFn = vi.fn(async (kind: string, _input: unknown, _ctx: unknown) => {
+      callCount += 1;
+      if (callCount === 1) throw new Error('transient boom');
+      if (kind === 'QuizVerifyTask') {
+        return { text: verifyOutput({ overall: 'pass' }), task_run_id: 'tr_retry' };
+      }
+      if (kind === 'SolutionGenerateTask') {
+        return { text: solverOutput(''), task_run_id: 'tr_retry_solve' };
+      }
+      if (kind === 'TeachingQualityTask') {
+        return { text: teachingQualityOutput({}), task_run_id: 'tr_retry_tq' };
+      }
+      throw new Error(`unexpected task kind in retry test: ${kind}`);
+    });
 
     await expect(runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn })).rejects.toThrow(
       /transient boom/,
@@ -473,8 +493,14 @@ describe('runQuizVerify', () => {
     expect(second.status).toBe('verified');
     // 1st run = 1 call (rejected verify); 2nd run = verify + solve + teaching. Total = 4.
     expect(runTaskFn).toHaveBeenCalledTimes(4);
-    expect(runTaskFn.mock.calls[2][0]).toBe('SolutionGenerateTask');
-    expect(runTaskFn.mock.calls[3][0]).toBe('TeachingQualityTask');
+    expect(runTaskFn.mock.calls[0][0]).toBe('QuizVerifyTask');
+    expect(runTaskFn.mock.calls[1][0]).toBe('QuizVerifyTask');
+    // solve_check + teaching_quality race concurrently — assert the SET of kinds fired at
+    // calls 2/3, not their relative position.
+    const concurrentKinds = runTaskFn.mock.calls.slice(2).map((c) => c[0]);
+    expect(new Set(concurrentKinds)).toEqual(
+      new Set(['SolutionGenerateTask', 'TeachingQualityTask']),
+    );
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'q5b'));
     expect(rows[0].draft_status).toBe('active');
