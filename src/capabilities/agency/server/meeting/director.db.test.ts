@@ -213,6 +213,7 @@ describe('runResearchMeetingDirector — pipeline', () => {
     });
     const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
     expect(result.outcome).toBe('success');
+    expect(result.cost_usd).toBe(0); // round-5 review minor 0.80 — genuinely $0, NOT null
     const scans = await testDb().select().from(event).where(eq(event.action, SCAN_ACTION));
     expect(scans).toHaveLength(1);
     expect(scans[0].cost_micro_usd).toBe(0); // NOT null — a successful run's real 0 is a fact
@@ -271,6 +272,10 @@ describe('runResearchMeetingDirector — pipeline', () => {
 
     expect(result.outcome).toBe('failure'); // nothing landed before the throw
     expect(result.proposals_created).toBe(0);
+    // round-5 review minor 0.80 — degraded result.cost_usd is null (unknown), matching
+    // the scan event's cost_micro_usd:null semantics for the SAME degrade — a bare 0
+    // here would be indistinguishable from a genuine free successful run.
+    expect(result.cost_usd).toBeNull();
 
     const scans = await testDb().select().from(event).where(eq(event.action, SCAN_ACTION));
     expect(scans).toHaveLength(1);

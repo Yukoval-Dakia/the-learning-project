@@ -193,7 +193,16 @@ const ProposeConjectureShape = {
 const ProposeConjectureSchema = z.object(ProposeConjectureShape);
 
 const LeaveAgentNoteShape = {
-  target_agents: z.array(z.string()).min(1),
+  // round-5 review minor 0.70 — same duplicate guard as evidence_refs/refs
+  // (consistency; a repeated target_agents entry has no functional bypass here, since
+  // the whitelist check is set-based, but the uniqueness discipline should be uniform
+  // across every LLM-supplied array field on this write face).
+  target_agents: z
+    .array(z.string())
+    .min(1)
+    .refine((agents) => new Set(agents).size === agents.length, {
+      message: 'target_agents must not contain duplicates',
+    }),
   signal_kind: z.string().min(1),
   summary_md: z.string().min(1),
   // round-4 review MAJOR 0.80 cross-check — same duplicate-id guard as
@@ -214,8 +223,21 @@ function textResult(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
 }
 
+// round-5 review minor 0.60 — visible marker on WRITE-side truncation (this function,
+// used only for leave_agent_note's summary_md persistence). Semantic distinction from
+// PR-1's READ-side defensive char caps (evidence-mcp.ts's truncate() on learner-authored
+// free text): those are a pure context-size clamp on data the model reads, never
+// persisted or independently consumed — no marker needed there, and it stays UNCHANGED.
+// This truncation, by contrast, is PERSISTED and genuinely CONSUMED downstream by
+// dreaming/coach (readAgentNotes) — a silent, unmarked cut could make a downstream
+// reader mistake a truncated note for the LLM's complete thought. The marker costs
+// nothing and preserves that distinction for a real consumer.
+export const NOTE_TRUNCATION_MARKER = '…[truncated]';
+
 function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) : text;
+  if (text.length <= max) return text;
+  if (max <= NOTE_TRUNCATION_MARKER.length) return text.slice(0, max); // degenerate: cap smaller than the marker itself
+  return `${text.slice(0, max - NOTE_TRUNCATION_MARKER.length)}${NOTE_TRUNCATION_MARKER}`;
 }
 
 /**
