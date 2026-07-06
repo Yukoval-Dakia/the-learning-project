@@ -368,6 +368,25 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
   };
 }
 
+// PR #717 bot review fix #2 (MINOR) — a persisted cache row may predate a
+// schema shift (or otherwise be corrupt); a blind cast let a malformed cell
+// through and would crash a downstream `.top_dismiss_reasons.length` read.
+// Per-cell type guard: FILTER bad cells out rather than rejecting the whole
+// payload (one corrupt cell must not sink the entire cached digest).
+function isValidScopedProposalFeedbackCell(v: unknown): v is ScopedProposalFeedbackCell {
+  if (!v || typeof v !== 'object') return false;
+  const c = v as Record<string, unknown>;
+  return (
+    typeof c.kind === 'string' &&
+    (c.relation === null || typeof c.relation === 'string') &&
+    typeof c.acceptance_rate === 'number' &&
+    Array.isArray(c.top_dismiss_reasons) &&
+    c.top_dismiss_reasons.every((r) => typeof r === 'string') &&
+    Array.isArray(c.top_rubric_gates) &&
+    c.top_rubric_gates.every((g) => typeof g === 'string')
+  );
+}
+
 function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache | null {
   const headerMd = payload.header_md;
   const dayBucketVal = payload.day_bucket;
@@ -378,7 +397,7 @@ function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache |
   const wmField = (k: string): string | null =>
     typeof wmRaw[k] === 'string' ? (wmRaw[k] as string) : null;
   const pf = Array.isArray(payload.proposal_feedback)
-    ? (payload.proposal_feedback as ScopedProposalFeedbackCell[])
+    ? payload.proposal_feedback.filter(isValidScopedProposalFeedbackCell)
     : [];
   return {
     header_md: headerMd,
@@ -445,7 +464,11 @@ export async function writeLearnerStateHeaderCache(
 
 export interface ResolveLearnerStateHeaderDeps {
   readCacheFn?: (db: DbLike, sessionId: string) => Promise<LearnerStateHeaderCache | null>;
-  readWatermarksFn?: (db: DbLike, now: Date) => Promise<LearnerStateWatermarks>;
+  // PR #717 bot review fix #3 (MINOR) — the real readLearnerStateWatermarks(db)
+  // takes only `db`; a `now` second parameter here was misleading (silently
+  // dropped at every call site). dayBucket(now) is computed separately by the
+  // resolver itself, not through this seam.
+  readWatermarksFn?: (db: DbLike) => Promise<LearnerStateWatermarks>;
   readProjectionFn?: (db: DbLike, now: Date) => Promise<LearnerStateProjection>;
   loadProposalFeedbackFn?: (db: DbLike) => Promise<ProposalFeedbackCell[]>;
   writeCacheFn?: (db: DbLike, cache: PersistedLearnerStateHeaderCache) => Promise<void>;
@@ -460,6 +483,15 @@ const EMPTY_HEADER: LearnerStateHeader = { header_md: '', proposal_feedback: [] 
  * hard constraint), else (re)assemble the projection + scoped digest, persist a
  * new cache row, and return it. Additive-input red line: any read failure
  * degrades to a stale cache (if any) or an empty header, never crashing the chat.
+ *
+ * PR #717 bot review fix #1 (MAJOR) — the cache read and the watermark read
+ * degrade INDEPENDENTLY (they used to be coupled in one Promise.all, so a
+ * watermark-read failure discarded an already-resolved cache and returned
+ * EMPTY_HEADER even when a perfectly good cache existed):
+ *   - cache read fails  → treated as `cached=null` (cold-start shape); the flow
+ *     CONTINUES and attempts a full reassembly using whatever watermarks it did get.
+ *   - watermark read fails → we cannot judge staleness at all, so we return
+ *     `cached ?? EMPTY_HEADER` immediately (stale cache beats no cache).
  */
 export async function resolveLearnerStateHeader(
   db: DbLike,
@@ -468,7 +500,7 @@ export async function resolveLearnerStateHeader(
 ): Promise<LearnerStateHeader> {
   const now = deps.now?.() ?? new Date();
   const readCache = deps.readCacheFn ?? readLatestLearnerStateHeaderCache;
-  const readWatermarks = deps.readWatermarksFn ?? ((d: DbLike) => readLearnerStateWatermarks(d));
+  const readWatermarks = deps.readWatermarksFn ?? readLearnerStateWatermarks;
   const readProjection = deps.readProjectionFn ?? ((d: DbLike) => readLearnerStateProjection(d));
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
@@ -479,20 +511,34 @@ export async function resolveLearnerStateHeader(
       writeLearnerStateHeaderCache(d, cache, now));
 
   const dayBucketNow = dayBucket(now);
-  let cached: LearnerStateHeaderCache | null;
-  let currentWatermarks: LearnerStateWatermarks;
-  try {
-    [cached, currentWatermarks] = await Promise.all([
-      readCache(db, sessionId),
-      readWatermarks(db, now),
-    ]);
-  } catch (err) {
-    console.error('[resolveLearnerStateHeader] cache/watermark read failed; degrading to empty', {
+
+  // Independent settle (NOT a shared try/catch) — one read failing must not
+  // discard the other's already-resolved result (the coupling bug fixed here).
+  const [cacheResult, watermarksResult] = await Promise.allSettled([
+    readCache(db, sessionId),
+    readWatermarks(db),
+  ]);
+
+  let cached: LearnerStateHeaderCache | null = null;
+  if (cacheResult.status === 'fulfilled') {
+    cached = cacheResult.value;
+  } else {
+    console.error('[resolveLearnerStateHeader] cache read failed; degrading to no cache', {
       session_id: sessionId,
-      err,
+      err: cacheResult.reason,
     });
-    return EMPTY_HEADER;
   }
+
+  if (watermarksResult.status === 'rejected') {
+    console.error(
+      '[resolveLearnerStateHeader] watermark read failed; degrading to cached (if any)',
+      { session_id: sessionId, err: watermarksResult.reason },
+    );
+    return cached
+      ? { header_md: cached.header_md, proposal_feedback: cached.proposal_feedback }
+      : EMPTY_HEADER;
+  }
+  const currentWatermarks = watermarksResult.value;
 
   if (
     cached &&
