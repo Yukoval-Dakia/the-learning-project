@@ -1018,6 +1018,11 @@ export function getTaskSystemPrompt(
     // in the input, not the prompt voice. Joins the pass-through group (registry-inline
     // systemPrompt IS the runtime SoT) — no buildTeachingQualityPrompt builder.
     case 'TeachingQualityTask':
+    // YUK-572 — ResearchMeetingDirectorTask is subject-NEUTRAL: the candidate evidence
+    // cells ride in the input, not the prompt voice, and the 教研 director charter is
+    // generic across subjects. Joins the pass-through group (registry-inline systemPrompt
+    // IS the runtime SoT) — no profile builder.
+    case 'ResearchMeetingDirectorTask':
     case 'MindModelInductionTask':
       return tasks[task].systemPrompt;
     default:

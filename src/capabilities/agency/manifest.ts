@@ -80,6 +80,22 @@ export const agencyCapability = defineCapability({
             (m) => m.buildResearchMeetingNightlyHandler,
           ),
       },
+      // YUK-572 — agent-led 教研例会 director (shadow lane, dark-ship). Staggered a HARD
+      // 60min after the deterministic research_meeting (04:35): the ≥60min gap (a hard
+      // constraint, §3) keeps the two lanes' app-level pending-dedup TOCTOU closed — the
+      // deterministic lane has committed its proposals by the time the agent lane reads
+      // the pending inbox as its dedup base. Kill switch RESEARCH_MEETING_AGENT_ENABLED
+      // (default OFF) makes the handler a no-op; the cron stays registered. queue:'llm'
+      // (Opus anthropic-sub OAuth lane, same as the deterministic meeting).
+      {
+        name: 'research_meeting_agent_nightly',
+        schedule: { cron: '35 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () =>
+          import('./jobs/research_meeting_agent_nightly').then(
+            (m) => m.buildResearchMeetingAgentNightlyHandler,
+          ),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。learning_item / completion /

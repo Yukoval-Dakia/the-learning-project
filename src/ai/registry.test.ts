@@ -294,3 +294,45 @@ describe('MindModelInductionTask registry entry', () => {
     expect(p).toContain('第二人称');
   });
 });
+
+// YUK-572 — agent-led 教研例会 director task registry entry.
+describe('ResearchMeetingDirectorTask registry entry', () => {
+  it('is a tool-call loop on the Opus lane (override only, never default), 24 turns / 300s', () => {
+    const def: TaskDef = tasks.ResearchMeetingDirectorTask;
+    expect(def.kind).toBe('ResearchMeetingDirectorTask');
+    // anthropic-sub is opt-in via per-call override only; NEVER a task default
+    // (registry.ts:12-16 forbids it as defaultProvider so tests need no OAuth token).
+    expect(def.defaultProvider).not.toBe('anthropic-sub');
+    // unlike MindModelInductionTask, the director IS a tool-call loop.
+    expect(def.needsToolCall).toBe(true);
+    expect(def.isMultimodal).toBe(false);
+    // registry default stays empty; the nightly orchestrator injects the real allowlist.
+    expect(def.allowedTools).toEqual([]);
+    // §7 wired run-away backstops: 24 turns + 300s wall-clock abort.
+    expect(def.budget.maxIterations).toBe(24);
+    expect(def.budget.timeout).toBe(300_000);
+  });
+
+  it('charter pins the three hard boundaries (propose-only / no-settlement / scout ≤1)', () => {
+    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    // 1. propose-only red line.
+    expect(p).toContain('propose-only');
+    // 2. never touches settlement (θ̂ / mastery / FSRS).
+    expect(p).toContain('不碰结算');
+    expect(p).toContain('FSRS');
+    // 3. scout depth cap = 1 (Task at most once; scout cannot re-spawn).
+    expect(p).toContain('侦察兵 ≤1');
+    expect(p).toContain('至多');
+  });
+
+  it('charter names the spawn + write tools the orchestrator injects', () => {
+    const p = tasks.ResearchMeetingDirectorTask.systemPrompt;
+    expect(p).toContain('Task');
+    expect(p).toContain('evidence-scout');
+    expect(p).toContain('propose_conjecture');
+    expect(p).toContain('leave_agent_note');
+    expect(p).toContain('get_meeting_context');
+    // anti-injection contract carried into the charter.
+    expect(p).toContain('<untrusted_learner_text>');
+  });
+});
