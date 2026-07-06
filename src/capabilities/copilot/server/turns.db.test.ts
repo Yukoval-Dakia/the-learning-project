@@ -472,7 +472,6 @@ describe('runCopilotChat — conversation session envelope (S3a)', () => {
       {
         runAgentTaskFn,
         buildMcpServerFn,
-        loadProposalFeedbackFn: async () => [],
         now: () => t1,
       },
     );
@@ -500,7 +499,6 @@ describe('runCopilotChat — conversation session envelope (S3a)', () => {
       {
         runAgentTaskFn,
         buildMcpServerFn,
-        loadProposalFeedbackFn: async () => [],
         now: () => t2,
       },
     );

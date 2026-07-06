@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/server/ai/tools/allowlists';
-import { PROPOSAL_FEEDBACK_BUDGET } from '@/server/ai/tools/budgets';
+import { COPILOT_HISTORY_BUDGET } from '@/server/ai/tools/budgets';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   CopilotChatRequest,
@@ -33,7 +33,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         writeEventFn,
         // P5.4-L2 / YUK-174 — stub the feedback reader so the {}-stub db is never
         // queried (cold-start no-op), mirroring the Dreaming/Coach DI stubs.
-        loadProposalFeedbackFn: async () => [],
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
         // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
         // is never touched (these are pure routing/wiring unit tests).
         findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -108,7 +108,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         runAgentTaskFn,
         writeEventFn,
         findOrCreateConversationFn,
-        loadProposalFeedbackFn: async () => [],
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
         now: () => new Date('2026-06-04T00:00:00.000Z'),
       },
     );
@@ -168,7 +168,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
-        loadProposalFeedbackFn: async () => [],
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
         // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
         // is never touched (these are pure routing/wiring unit tests).
         findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -200,7 +200,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
-        loadProposalFeedbackFn: async () => [],
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
         // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
         // is never touched (these are pure routing/wiring unit tests).
         findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -236,7 +236,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
-        loadProposalFeedbackFn: async () => [],
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
         // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
         // is never touched (these are pure routing/wiring unit tests).
         findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -293,14 +293,17 @@ describe('runCopilotChat (two-surface routing)', () => {
     );
   });
 
-  // P5.4-L2 / YUK-174 (Facet A, §3.3) — the edge-scoped reason digest reaches the
-  // CopilotTask run input as `proposal_feedback`. Copilot proposes ONLY
-  // knowledge_edge, so non-edge cells are filtered out; the field is char-bounded
-  // at read time.
-  it('threads an edge-scoped proposal_feedback digest into the CopilotTask input', async () => {
+  // YUK-574 (Facet A migration) — the `proposal_feedback` digest is no longer read
+  // per turn; it rides on the session-anchored learner-state block resolved by
+  // resolveLearnerStateHeaderFn. chat.ts forwards the resolver's scoped cells
+  // verbatim into the CopilotTask run input as `proposal_feedback` (its OWN field,
+  // NOT folded into conversation_history). The scope/order/truncation logic itself
+  // is unit-tested in learner-state.unit.test.ts (scopeCopilotProposalFeedback).
+  it('forwards the resolver-supplied proposal_feedback digest into the CopilotTask input', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    const buildMcpServerFn = vi.fn(
+      (_opts: BuildMcpServerOptions) => ({ name: 'fake-loom' }) as never,
+    );
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_copilot_feedback',
       text: 'OK',
@@ -308,6 +311,15 @@ describe('runCopilotChat (two-surface routing)', () => {
       usage: { inputTokens: 1, outputTokens: 2 },
     }));
     const writeEventFn = vi.fn(async (_db, input) => input.id);
+    const digest = [
+      {
+        kind: 'knowledge_edge' as const,
+        relation: 'related_to',
+        acceptance_rate: 0.1,
+        top_dismiss_reasons: ['dumping ground'],
+        top_rubric_gates: ['related_to_dumping_ground'],
+      },
+    ];
 
     await runCopilotChat(
       db,
@@ -316,129 +328,20 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
-        loadProposalFeedbackFn: async () => [
-          {
-            kind: 'knowledge_edge',
-            relation: 'related_to',
-            accept_count: 1,
-            dismiss_count: 9,
-            total: 10,
-            acceptance_rate: 0.1,
-            top_dismiss_reasons: ['dumping ground'],
-            top_rubric_gates: ['related_to_dumping_ground'],
-          },
-          // Non-edge cell — must NOT reach Copilot (it cannot act on it).
-          {
-            kind: 'completion',
-            relation: null,
-            accept_count: 0,
-            dismiss_count: 3,
-            total: 3,
-            acceptance_rate: 0,
-            top_dismiss_reasons: ['too early'],
-            top_rubric_gates: [],
-          },
-        ],
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: digest }),
         findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
+        loadHistoryFn: async () => [],
         now: () => new Date('2026-05-31T00:00:00.000Z'),
       },
     );
 
     const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
-      proposal_feedback: Array<{ kind: string; relation: string | null }>;
+      proposal_feedback: unknown[];
+      conversation_history: unknown[];
     };
-    expect(taskInput.proposal_feedback).toEqual([
-      {
-        kind: 'knowledge_edge',
-        relation: 'related_to',
-        acceptance_rate: 0.1,
-        top_dismiss_reasons: ['dumping ground'],
-        top_rubric_gates: ['related_to_dumping_ground'],
-      },
-    ]);
-    // Char-bound: the serialized field never exceeds the whole-digest cap.
-    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(
-      PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars,
-    );
-  });
-
-  // P5.4-L2 / YUK-174 (P1 fix) — a realistic multi-cell digest must NOT collapse to
-  // [] (the per-string maxChars=180 is NOT the whole-digest cap), and reason-bearing
-  // (actionable, low-acceptance) cells must be kept ahead of reason-less ones.
-  it('keeps reason-bearing edge cells under realistic data (no collapse) and orders them first', async () => {
-    const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
-    const runAgentTaskFn = vi.fn(async () => ({
-      task_run_id: 'task_copilot_feedback_multi',
-      text: 'OK',
-      finishReason: 'stop',
-      usage: { inputTokens: 1, outputTokens: 2 },
-    }));
-    const writeEventFn = vi.fn(async (_db, input) => input.id);
-    const mkCell = (relation: string, rate: number, reasons: string[], gates: string[]) => ({
-      kind: 'knowledge_edge' as const,
-      relation,
-      accept_count: Math.round(rate * 10),
-      dismiss_count: 10 - Math.round(rate * 10),
-      total: 10,
-      acceptance_rate: rate,
-      top_dismiss_reasons: reasons,
-      top_rubric_gates: gates,
-    });
-
-    await runCopilotChat(
-      db,
-      { user_message: '连边建议', triggered_by: 'chat' },
-      {
-        buildMcpServerFn,
-        runAgentTaskFn,
-        writeEventFn,
-        // Sorted acceptance DESC (as the digest emits): high-acceptance reason-less
-        // cells first, then low-acceptance reason-bearing ones.
-        loadProposalFeedbackFn: async () => [
-          mkCell('derived_from', 0.9, [], []),
-          mkCell('prerequisite', 0.8, [], []),
-          mkCell(
-            'related_to',
-            0.1,
-            ['dumping ground; too vague to be useful'],
-            ['related_to_dumping_ground'],
-          ),
-          mkCell(
-            'applied_in',
-            0.2,
-            ['not actually applied here'],
-            ['applied_in_no_application_evidence'],
-          ),
-        ],
-        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
-        now: () => new Date('2026-05-31T00:00:00.000Z'),
-      },
-    );
-
-    const taskInput = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
-      proposal_feedback: Array<{ relation: string; top_dismiss_reasons: string[] }>;
-    };
-    // Did NOT collapse to [] (the P1 bug).
-    expect(taskInput.proposal_feedback.length).toBeGreaterThan(0);
-    const relations = taskInput.proposal_feedback.map((c) => c.relation);
-    // Reason-bearing cells survive truncation.
-    expect(relations).toContain('related_to');
-    expect(relations).toContain('applied_in');
-    // ...and are ordered ahead of any reason-less cell that survived.
-    const lastActionable = Math.max(
-      relations.indexOf('related_to'),
-      relations.indexOf('applied_in'),
-    );
-    const firstReasonless = relations.findIndex(
-      (r) => r === 'derived_from' || r === 'prerequisite',
-    );
-    if (firstReasonless !== -1) expect(lastActionable).toBeLessThan(firstReasonless);
-    // Still whole-digest bounded.
-    expect(JSON.stringify(taskInput.proposal_feedback).length).toBeLessThanOrEqual(
-      PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars,
-    );
+    expect(taskInput.proposal_feedback).toEqual(digest);
+    // proposal_feedback is its OWN field, not folded into conversation_history.
+    expect(JSON.stringify(taskInput.conversation_history)).not.toContain('dumping ground');
   });
 
   it('emits an empty proposal_feedback on cold start (no-op back-compat)', async () => {
@@ -460,7 +363,7 @@ describe('runCopilotChat (two-surface routing)', () => {
         buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
-        loadProposalFeedbackFn: async () => [],
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
         // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
         // is never touched (these are pure routing/wiring unit tests).
         findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -507,7 +410,7 @@ describe('runCopilotChat (two-surface routing)', () => {
           buildMcpServerFn,
           runAgentTaskFn,
           writeEventFn,
-          loadProposalFeedbackFn: async () => [],
+          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
           // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
           // is never touched (these are pure routing/wiring unit tests).
           findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -550,7 +453,7 @@ describe('runCopilotChat (two-surface routing)', () => {
           buildMcpServerFn,
           runAgentTaskFn,
           writeEventFn,
-          loadProposalFeedbackFn: async () => [],
+          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
           // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
           // is never touched (these are pure routing/wiring unit tests).
           findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -583,7 +486,7 @@ describe('runCopilotChat (two-surface routing)', () => {
           buildMcpServerFn,
           runAgentTaskFn,
           writeEventFn,
-          loadProposalFeedbackFn: async () => [],
+          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
           // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
           // is never touched (these are pure routing/wiring unit tests).
           findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -613,7 +516,7 @@ describe('runCopilotChat (two-surface routing)', () => {
           buildMcpServerFn,
           runAgentTaskFn,
           writeEventFn,
-          loadProposalFeedbackFn: async () => [],
+          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
           // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
           // is never touched (these are pure routing/wiring unit tests).
           findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
@@ -638,7 +541,7 @@ describe('runCopilotChat (two-surface routing)', () => {
 describe('runCopilotChat — skill routing (U6)', () => {
   const baseDeps = {
     findOrCreateConversationFn: async () => ({ sessionId: 'ls_copilot', created: false }),
-    loadProposalFeedbackFn: async () => [],
+    resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     now: () => new Date('2026-06-05T00:00:00.000Z'),
   };
 
@@ -915,7 +818,7 @@ describe('runCopilotChat — skill routing (U6)', () => {
 describe('runCopilotChat — quiz C→A free-form routing (ADR-0031)', () => {
   const baseDeps = {
     findOrCreateConversationFn: async () => ({ sessionId: 'ls_copilot', created: false }),
-    loadProposalFeedbackFn: async () => [],
+    resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     loadHistoryFn: async () => [],
     now: () => new Date('2026-06-10T00:00:00.000Z'),
   };
@@ -1059,7 +962,7 @@ describe('runCopilotChat — quiz C→A free-form routing (ADR-0031)', () => {
 describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
   const baseDeps = {
     findOrCreateConversationFn: async () => ({ sessionId: 'ls_copilot', created: false }),
-    loadProposalFeedbackFn: async () => [],
+    resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     now: () => new Date('2026-06-08T00:00:00.000Z'),
   };
 
@@ -1248,7 +1151,7 @@ describe('CopilotChatRequest wire enum (C3 / YUK-284)', () => {
 describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
   const baseDeps = {
     findOrCreateConversationFn: async () => ({ sessionId: 'ls_stream', created: false }),
-    loadProposalFeedbackFn: async () => [],
+    resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     now: () => new Date('2026-06-07T00:00:00.000Z'),
   };
 
@@ -1434,7 +1337,7 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
 describe('runCopilotChat — conversation memory + ambient (C2)', () => {
   const baseDeps = {
     findOrCreateConversationFn: async () => ({ sessionId: 'ls_mem', created: false }),
-    loadProposalFeedbackFn: async () => [],
+    resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     now: () => new Date('2026-06-07T00:00:00.000Z'),
   };
 
@@ -1613,7 +1516,7 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
     expect(JSON.stringify(replyPayload)).not.toContain('/knowledge/k1');
   });
 
-  it('防循环 ③: proposal_feedback is read fresh per message and is NOT mixed into history', async () => {
+  it('防循环 ③: proposal_feedback rides its OWN field (from the resolver), NOT mixed into history', async () => {
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 't',
       text: 'OK',
@@ -1621,18 +1524,21 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
       usage: { inputTokens: 1, outputTokens: 2 },
     }));
     const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
-    const loadProposalFeedbackFn = vi.fn(async () => [
-      {
-        kind: 'knowledge_edge' as const,
-        relation: 'related_to',
-        accept_count: 1,
-        dismiss_count: 1,
-        total: 2,
-        acceptance_rate: 0.5,
-        top_dismiss_reasons: ['FEEDBACK_MARKER'],
-        top_rubric_gates: [],
-      },
-    ]);
+    // YUK-574 — the digest now comes from the session-anchored learner-state
+    // resolver (assemble-once), not a per-turn read. It must still land in the
+    // dedicated proposal_feedback field and NEVER leak into conversation_history.
+    const resolveLearnerStateHeaderFn = vi.fn(async () => ({
+      header_md: '',
+      proposal_feedback: [
+        {
+          kind: 'knowledge_edge' as const,
+          relation: 'related_to',
+          acceptance_rate: 0.5,
+          top_dismiss_reasons: ['FEEDBACK_MARKER'],
+          top_rubric_gates: [],
+        },
+      ],
+    }));
 
     await runCopilotChat(
       {} as never,
@@ -1641,13 +1547,14 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
         ...baseDeps,
         runAgentTaskFn,
         writeEventFn,
-        loadProposalFeedbackFn,
+        resolveLearnerStateHeaderFn,
         buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
         loadHistoryFn: async () => [mkTurn('user', 'earlier ask')],
       },
     );
 
-    expect(loadProposalFeedbackFn).toHaveBeenCalledTimes(1);
+    // Resolved ONCE for this turn.
+    expect(resolveLearnerStateHeaderFn).toHaveBeenCalledTimes(1);
     const input = captureRunInput(runAgentTaskFn);
     // proposal_feedback is its OWN field, not folded into conversation_history.
     expect(JSON.stringify(input.conversation_history)).not.toContain('FEEDBACK_MARKER');
@@ -1752,6 +1659,160 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
   });
 });
 
+// YUK-574 — the session-anchored learner-state header rides as the PINNED first
+// entry of conversation_history (role:'context'), assembled ONCE per validity
+// window (the resolver caches it; here it is injected). The pinned header is never
+// dropped by the COPILOT_HISTORY_BUDGET oldest-first truncation, and the migrated
+// Facet A proposal_feedback digest comes from the SAME resolver (its own field).
+describe('runCopilotChat — learner-state header (YUK-574)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_state', created: false }),
+    now: () => new Date('2026-07-06T09:00:00.000Z'),
+  };
+  const mkRun = () =>
+    vi.fn(async () => ({
+      task_run_id: 't',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+  const mkTurn = (role: 'user' | 'ai', text: string) =>
+    ({ role, text, at: '2026-07-06T00:00:00.000Z', event_id: `e_${text.slice(0, 4)}` }) as never;
+  const captureInput = (runAgentTaskFn: ReturnType<typeof vi.fn>) =>
+    (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: Array<{ role: string; text: string }>;
+      proposal_feedback: unknown[];
+    };
+
+  it('first turn pins the header at conversation_history[0] (role:context) + forwards the digest', async () => {
+    const runAgentTaskFn = mkRun();
+    const digest = [
+      {
+        kind: 'knowledge_edge' as const,
+        relation: 'prerequisite',
+        acceptance_rate: 0.6,
+        top_dismiss_reasons: [],
+        top_rubric_gates: [],
+      },
+    ];
+    const resolveLearnerStateHeaderFn = vi.fn(async (_db: unknown, _sessionId: string) => ({
+      header_md: '今日待复习 7 项\n当前目标：掌握「之」的用法',
+      proposal_feedback: digest,
+    }));
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        resolveLearnerStateHeaderFn,
+        loadHistoryFn: async () => [mkTurn('user', '上一轮的问题')],
+      },
+    );
+
+    // Resolver called once, scoped to the resolved conversation session id.
+    expect(resolveLearnerStateHeaderFn).toHaveBeenCalledTimes(1);
+    expect(resolveLearnerStateHeaderFn.mock.calls[0]?.[1]).toBe('ls_state');
+
+    const input = captureInput(runAgentTaskFn);
+    // Pinned header is the FIRST entry; the real turn follows it.
+    expect(input.conversation_history[0]).toEqual({
+      role: 'context',
+      text: '今日待复习 7 项\n当前目标：掌握「之」的用法',
+    });
+    expect(input.conversation_history[1]).toEqual({ role: 'user', text: '上一轮的问题' });
+    // The migrated digest rides its own field.
+    expect(input.proposal_feedback).toEqual(digest);
+  });
+
+  it('empty header → no context entry prepended (byte-for-byte the pre-YUK-574 history)', async () => {
+    const runAgentTaskFn = mkRun();
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        loadHistoryFn: async () => [mkTurn('user', 'only turn')],
+      },
+    );
+    const input = captureInput(runAgentTaskFn);
+    expect(input.conversation_history).toEqual([{ role: 'user', text: 'only turn' }]);
+  });
+
+  it('history truncation PINS the header: it survives the oldest-first drop', async () => {
+    const runAgentTaskFn = mkRun();
+    // Enough big turns that the serialized array blows past totalChars → oldest
+    // real turns are dropped, but the pinned header must remain at index 0.
+    const big = 'x'.repeat(700);
+    const turns = Array.from({ length: 8 }, (_, i) => mkTurn('user', `${i}-${big}`));
+    const header = '学习者状态：今日待复习 3 项';
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: header, proposal_feedback: [] }),
+        loadHistoryFn: async () => turns,
+      },
+    );
+
+    const input = captureInput(runAgentTaskFn);
+    // The header is pinned at index 0 (never dropped)…
+    expect(input.conversation_history[0]).toEqual({ role: 'context', text: header });
+    // …truncation actually happened (fewer than the 8 injected real turns survive)…
+    const realTurns = input.conversation_history.filter((e) => e.role !== 'context');
+    expect(realTurns.length).toBeLessThan(8);
+    // …and the whole array (header included) still fits the budget.
+    expect(JSON.stringify(input.conversation_history).length).toBeLessThanOrEqual(
+      COPILOT_HISTORY_BUDGET.totalChars,
+    );
+  });
+
+  it('teaching turns do NOT resolve the learner-state header (short-circuit)', async () => {
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+    } as never;
+    const resolveLearnerStateHeaderFn = vi.fn(async () => ({
+      header_md: 'should not appear',
+      proposal_feedback: [],
+    }));
+    const runTeachingSkillFn = vi.fn(async () => ({
+      text_md: '讲讲。',
+      kind: 'explain' as const,
+      suggested_next: 'continue' as const,
+      task_run_id: 'task_teaching_ls',
+    }));
+
+    await runCopilotChat(
+      db,
+      {
+        user_message: '讲讲',
+        triggered_by: 'chat',
+        skill_context: { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_ls' } },
+      },
+      {
+        ...baseDeps,
+        writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        resolveLearnerStateHeaderFn,
+        runTeachingSkillFn,
+      },
+    );
+    expect(resolveLearnerStateHeaderFn).not.toHaveBeenCalled();
+  });
+});
+
 // YUK-307 (C1 — presentation layer §2.3) — primary_view hero nomination. The
 // model appends an HTML-comment marker as its reply's LAST output; chat.ts
 // parses + strips it at the single JSON/streaming convergence point, persists
@@ -1762,7 +1823,7 @@ describe('runCopilotChat — conversation memory + ambient (C2)', () => {
 describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
   const baseDeps = {
     findOrCreateConversationFn: async () => ({ sessionId: 'ls_pv', created: false }),
-    loadProposalFeedbackFn: async () => [],
+    resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     loadHistoryFn: async () => [],
     now: () => new Date('2026-06-10T00:00:00.000Z'),
   };
