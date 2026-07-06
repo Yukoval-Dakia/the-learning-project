@@ -360,4 +360,74 @@ describe('resolveLearnerStateHeader (assemble-once + invalidation)', () => {
     expect(header.header_md).toContain('8');
     expect(header.proposal_feedback).toEqual(scopeCopilotProposalFeedback(rawFeedback));
   });
+
+  // PR #717 bot review fix #1 (MAJOR) — readCache and readWatermarks were
+  // coupled in ONE Promise.all, so a watermark-read failure (e.g. a transient DB
+  // timeout) discarded an ALREADY-RESOLVED cached header and returned EMPTY_HEADER
+  // — contradicting this module's own documented degrade contract ("any read
+  // failure degrades to a stale cache (if any) or an empty header"). The two
+  // reads must degrade INDEPENDENTLY: a watermark-read failure can't judge
+  // staleness at all, so it must return the (valid) cache as-is, never EMPTY.
+  it('a throwing readWatermarksFn with a valid cache degrades to the CACHED header, not EMPTY', async () => {
+    const cached: LearnerStateHeaderCache = {
+      header_md: '今日待复习 5 项',
+      proposal_feedback: scopeCopilotProposalFeedback(rawFeedback),
+      assembled_at: '2026-07-06T08:30:00.000Z',
+      day_bucket: '2026-07-06',
+      watermarks: WM({ attempt_at: '2026-07-06T08:00:00.000Z' }),
+    };
+    const readCacheFn = vi.fn(async () => cached);
+    const readWatermarksFn = vi.fn(async () => {
+      throw new Error('watermark read blew up (transient DB timeout)');
+    });
+    const readProjectionFn = vi.fn(async () => PROJECTION({ reviewDueCount: 999 }));
+    const loadProposalFeedbackFn = vi.fn(async () => rawFeedback);
+    const writeCacheFn = vi.fn(async () => {});
+
+    const header = await resolveLearnerStateHeader({} as never, 'ls_1', {
+      readCacheFn,
+      readWatermarksFn,
+      readProjectionFn,
+      loadProposalFeedbackFn,
+      writeCacheFn,
+      now,
+    });
+
+    // Stale cache beats an empty header — we cannot judge staleness without
+    // watermarks, so the safest move is to serve what we already had.
+    expect(header.header_md).toBe(cached.header_md);
+    expect(header.proposal_feedback).toEqual(cached.proposal_feedback);
+    // No reassembly attempted (nothing to compare staleness against).
+    expect(readProjectionFn).not.toHaveBeenCalled();
+    expect(writeCacheFn).not.toHaveBeenCalled();
+  });
+
+  // PR #717 bot review fix #1 (MAJOR), counterpart branch — a cache-read
+  // failure degrades to `cached=null` and the flow CONTINUES (attempts
+  // reassembly using the watermarks it DID get), rather than bailing out
+  // entirely. This is the "cold start" shape: no cache to reuse, so assemble.
+  it('a throwing readCacheFn (with a healthy readWatermarksFn) degrades to cached=null and still reassembles', async () => {
+    const readCacheFn = vi.fn(async () => {
+      throw new Error('cache read blew up (transient DB timeout)');
+    });
+    const readWatermarksFn = vi.fn(async () => WM({ attempt_at: '2026-07-06T08:00:00.000Z' }));
+    const readProjectionFn = vi.fn(async () => PROJECTION({ reviewDueCount: 3 }));
+    const loadProposalFeedbackFn = vi.fn(async () => rawFeedback);
+    const writeCacheFn = vi.fn(async () => {});
+
+    const header = await resolveLearnerStateHeader({} as never, 'ls_1', {
+      readCacheFn,
+      readWatermarksFn,
+      readProjectionFn,
+      loadProposalFeedbackFn,
+      writeCacheFn,
+      now,
+    });
+
+    // No cache to compare against → treated as stale → full reassembly runs.
+    expect(readProjectionFn).toHaveBeenCalledTimes(1);
+    expect(writeCacheFn).toHaveBeenCalledTimes(1);
+    expect(header.header_md).toContain('3');
+    expect(header.proposal_feedback).toEqual(scopeCopilotProposalFeedback(rawFeedback));
+  });
 });
