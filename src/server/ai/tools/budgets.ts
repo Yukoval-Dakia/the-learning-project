@@ -226,10 +226,15 @@ export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
 // not per turn — owner's hard constraint against per-turn 装配注入) rides as the
 // PINNED first entry of conversation_history. It is a deterministic code-read
 // projection (due count + active goal + top-2 误区 + θ̂/mastery band + 昨夜交班),
-// bounded here so a single tunable source documents its size. Owner target:
-// 100–200 tokens; for the CJK-heavy summary text ≈ 1 token/char, so `maxChars`
-// caps the assembled prose at read/assembly time (over-limit → hard truncate),
-// and the pinned header is NEVER dropped by the COPILOT_HISTORY_BUDGET oldest-
+// bounded here so a single tunable source documents its size. `maxChars` is a
+// HARD character cap on the assembled prose (over-limit → hard truncate at read/
+// assembly time), NOT a token estimate — review-verdict fix #4: for Claude-family
+// tokenizers, CJK runs at roughly 1.5–2.5 tokens/char (not ~1), so a maxed-out
+// 400-char CJK header could be ~600–1000 tokens, well past the original
+// "100–200 tokens" aspiration. In practice the assembled 5-short-line snapshot
+// (due count / goal / top-2 误区 / mastery band / one 昨夜交班 sentence) sits far
+// below the 400-char ceiling, so the cap is a safety rail, not the steady-state
+// size. The pinned header is NEVER dropped by the COPILOT_HISTORY_BUDGET oldest-
 // first truncation (its char cost is reserved first). Kept alongside
 // COPILOT_HISTORY_BUDGET so all Copilot input-budget tunables live in one place.
 export interface LearnerStateHeaderBudget {
@@ -238,7 +243,7 @@ export interface LearnerStateHeaderBudget {
 }
 
 export const LEARNER_STATE_HEADER_BUDGET: LearnerStateHeaderBudget = {
-  maxChars: 400, // ≈ 100–200 tokens for the CJK-heavy 5-line snapshot
+  maxChars: 400, // hard cap; CJK-heavy content near this ceiling ≈ 400-1000 tokens
 };
 
 // ── P5.4-L2 gate-bias config (AB-3, §5 Q1) ──────────────────────────────────
