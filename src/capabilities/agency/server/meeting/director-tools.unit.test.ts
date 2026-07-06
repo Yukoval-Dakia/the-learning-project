@@ -292,6 +292,39 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(res.issues).toBeUndefined(); // no raw Zod issues dump
     expect(h.proposals).toHaveLength(0);
   });
+
+  it('rejects evidence_refs beyond the 12-item bound (round-2 review MINOR #5 — mirrors scout report_findings.max(12))', async () => {
+    const h = build();
+    const tooMany = Array.from({ length: 13 }, (_, i) => `att_${i}`);
+    const res = await callTool('propose_conjecture', validProposeArgs({ evidence_refs: tooMany }));
+    expect(res.ok).toBe(false);
+    expect(h.proposals).toHaveLength(0);
+  });
+
+  it('does NOT reject a proposal at exactly the 12-ref bound', async () => {
+    const h = build();
+    const twelve = Array.from({ length: 12 }, (_, i) => `att_${i}`);
+    const res = await callTool('propose_conjecture', validProposeArgs({ evidence_refs: twelve }));
+    expect(res.ok).toBe(true);
+    expect(h.proposals).toHaveLength(1);
+  });
+
+  it('falls back to baseline_p=0.5 (does NOT reject the proposal) when getMasteryProjectionFn throws (round-2 review MAJOR #3)', async () => {
+    const h = build({
+      meetingContext: meetingContext({ candidate_cells: [] }), // no matching cell → live mastery read attempted
+      getMasteryProjectionFn: async () => {
+        throw new Error('mastery projection DB read blew up');
+      },
+    });
+    const res = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ knowledge_id: 'k_read_fail' }),
+    );
+    expect(res.ok).toBe(true); // a read failure is NOT a reason to reject an otherwise-valid proposal
+    expect(h.proposals).toHaveLength(1);
+    if (h.proposals[0].payload.kind !== 'conjecture') throw new Error('kind narrowing');
+    expect(h.proposals[0].payload.proposed_change.baseline_p_at_induction).toBe(0.5);
+  });
 });
 
 describe('leave_agent_note — server-enforced', () => {
@@ -364,6 +397,39 @@ describe('leave_agent_note — server-enforced', () => {
     const res = await callTool('leave_agent_note', validNoteArgs());
     expect(res.ok).toBe(false);
     expect(String(res.reason)).toMatch(/写入被拒|failed|error/i);
+    expect(h.notes).toHaveLength(0);
+    expect(h.caps.noteCount).toBe(0);
+  });
+
+  // Round-2 review MINOR #6 — spec judgment (spec line 276): leave_agent_note's refs
+  // spec bullet says only "refs 经 assertPrimaryEvidenceRefs" — NO explicit reject-if-
+  // empty clause, unlike propose_conjecture's bullet (spec line 265: "过滤后为空 →
+  // 拒绝"). Notes are soft hints (notes.ts: "HINTS, NOT FACTS"), not accountable
+  // falsifiable claims, so a genuinely-empty-from-the-start refs[] (a pure textual
+  // "watch this KC" hint with zero evidence) is a LEGITIMATE input per spec. The only
+  // thing that should be rejected is the OCR-flagged case: refs WAS non-empty but every
+  // entry got filtered out as an agent_note id (that's suspicious — the director tried
+  // to cite "evidence" that was entirely soft hints masquerading as primary).
+  it('accepts a genuinely empty refs[] (a pure no-evidence soft hint — legitimate per spec §5)', async () => {
+    const h = build();
+    const res = await callTool('leave_agent_note', validNoteArgs({ refs: [] }));
+    expect(res.ok).toBe(true);
+    expect(h.notes).toHaveLength(1);
+    expect(h.notes[0].refs).toEqual([]);
+  });
+
+  it('rejects when refs was non-empty but EVERY entry filtered out as agent_note ids (round-2 review MINOR #6)', async () => {
+    const h = build();
+    const res = await callTool(
+      'leave_agent_note',
+      validNoteArgs({
+        refs: [
+          { kind: 'event', id: 'agent_note_a' },
+          { kind: 'event', id: 'agent_note_b' },
+        ],
+      }),
+    );
+    expect(res.ok).toBe(false);
     expect(h.notes).toHaveLength(0);
     expect(h.caps.noteCount).toBe(0);
   });
