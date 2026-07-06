@@ -1,12 +1,33 @@
 // Task #16 — attribution_followup handler tests.
 
 import { event, knowledge, question } from '@/db/schema';
+import { cost_ledger } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { runAttributionFollowup } from './attribution_followup';
+import {
+  type AttributionFollowupJobData,
+  buildAttributionFollowupHandler,
+  runAttributionFollowup,
+} from './attribution_followup';
+
+async function seedXuciKnowledge() {
+  await testDb().insert(knowledge).values({
+    id: 'k_xuci',
+    name: '虚词',
+    domain: 'wenyan',
+    parent_id: null,
+    merged_from: [],
+    proposed_by_ai: false,
+    approval_status: 'approved',
+    created_at: new Date(),
+    updated_at: new Date(),
+    version: 0,
+  });
+}
 
 async function seedQuestion(id: string, knowledgeIds = ['k_xuci']) {
   const db = testDb();
@@ -306,5 +327,94 @@ describe('runAttributionFollowup', () => {
         ),
       );
     expect(judges).toHaveLength(1);
+  });
+
+  // ── YUK-379 (B1): retryable rethrow + permanent continue ──────────────────
+
+  it('YUK-379: retryable attribution (runTaskFn throws) rethrows and does NOT enqueue variant_gen', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+
+    const runTaskFn = vi.fn(async () => {
+      throw new Error('LLM down');
+    });
+    const enqueueVariantGen = vi.fn(async () => {});
+
+    // The pure runner rethrows the classified-retryable error BEFORE the
+    // variant_gen fan-out — so pg-boss retries and no empty variant_gen spins.
+    await expect(
+      runAttributionFollowup({ db, attemptEventId: attemptId, runTaskFn, enqueueVariantGen }),
+    ).rejects.toThrow('LLM down');
+    expect(enqueueVariantGen).not.toHaveBeenCalled();
+
+    const judges = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judges).toHaveLength(0);
+    // retryable path writes NO ledger row — pg-boss + llm_dlq record it.
+    const ledger = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'AttributionTask'));
+    expect(ledger).toHaveLength(0);
+  });
+
+  it('YUK-379: handler rethrows on retryable so pg-boss retries', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+
+    const runTaskFn = vi.fn(async () => {
+      throw new Error('LLM down');
+    });
+    const handler = buildAttributionFollowupHandler(db, {
+      runTaskFn,
+      enqueueVariantGen: vi.fn(async () => {}),
+    });
+    const jobs = [
+      { id: 'job1', data: { attempt_event_id: attemptId } },
+    ] as Job<AttributionFollowupJobData>[];
+    await expect(handler(jobs)).rejects.toThrow('LLM down');
+  });
+
+  it('YUK-379: permanent parse failure returns attempted (no throw) and still fans out variant_gen', async () => {
+    const db = testDb();
+    await seedXuciKnowledge();
+    await seedQuestion('q1');
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+
+    const runTaskFn = vi.fn(async () => ({ text: '不是 JSON', task_run_id: 'tr_perm' }));
+    const enqueueVariantGen = vi.fn(async () => {});
+
+    const result = await runAttributionFollowup({
+      db,
+      attemptEventId: attemptId,
+      runTaskFn,
+      enqueueVariantGen,
+    });
+    // permanent is a completed attribution attempt — the job does not retry, and
+    // the best-effort variant_gen fan-out still fires (idempotent, cause-gated).
+    expect(result.status).toBe('attempted');
+    expect(enqueueVariantGen).toHaveBeenCalledTimes(1);
+
+    const judges = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judges).toHaveLength(0);
+    const ledger = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'AttributionTask'));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].outcome).toBe('failed_permanent');
+    expect(ledger[0].task_run_id).toBe('tr_perm');
   });
 });
