@@ -220,6 +220,27 @@ export const COPILOT_HISTORY_BUDGET: CopilotHistoryBudget = {
   totalChars: 4000, // whole-history truncation, oldest dropped first (防循环 ④)
 };
 
+// ── YUK-574 Copilot learner-state header budget ─────────────────────────────
+//
+// The session-anchored learner-state header (assembled ONCE per validity window,
+// not per turn — owner's hard constraint against per-turn 装配注入) rides as the
+// PINNED first entry of conversation_history. It is a deterministic code-read
+// projection (due count + active goal + top-2 误区 + θ̂/mastery band + 昨夜交班),
+// bounded here so a single tunable source documents its size. Owner target:
+// 100–200 tokens; for the CJK-heavy summary text ≈ 1 token/char, so `maxChars`
+// caps the assembled prose at read/assembly time (over-limit → hard truncate),
+// and the pinned header is NEVER dropped by the COPILOT_HISTORY_BUDGET oldest-
+// first truncation (its char cost is reserved first). Kept alongside
+// COPILOT_HISTORY_BUDGET so all Copilot input-budget tunables live in one place.
+export interface LearnerStateHeaderBudget {
+  /** Whole-header char cap; the assembled prose is hard-truncated to this. */
+  maxChars: number;
+}
+
+export const LEARNER_STATE_HEADER_BUDGET: LearnerStateHeaderBudget = {
+  maxChars: 400, // ≈ 100–200 tokens for the CJK-heavy 5-line snapshot
+};
+
 // ── P5.4-L2 gate-bias config (AB-3, §5 Q1) ──────────────────────────────────
 //
 // Single-source threshold + cold-start guard for `computeGateBump`. The

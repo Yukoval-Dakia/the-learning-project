@@ -18,6 +18,15 @@
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
+// YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
+// The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
+// same session-anchored block (folded in, same invalidation rules, proposal
+// decisions its dedicated refresh trigger) — chat.ts no longer reads the digest
+// per turn; the resolver owns both the learner-state header and the scoped digest.
+import {
+  type LearnerStateHeader,
+  resolveLearnerStateHeader,
+} from '@/capabilities/copilot/server/learner-state';
 // ADR-0031 / YUK-304 (quiz C→A, lane B) — the YUK-275 C-form quiz pre-dispatch
 // (detectQuizIntent 粗筛 + resolveQuizIntent 参数解析 + runQuizSkill service
 // out-port) is RETIRED: 判断+编排权交回模型. Quiz turns (free-text 求卷 AND the
@@ -70,23 +79,10 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-import {
-  COPILOT_HISTORY_BUDGET,
-  PROPOSAL_FEEDBACK_BUDGET,
-  resolveContextBudget,
-} from '@/server/ai/tools/budgets';
+import { COPILOT_HISTORY_BUDGET, resolveContextBudget } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
-// P5.4-L2 / YUK-174 (Facet A, §3.3) — feed the per-(kind, relation) accept-
-// learned reason digest into the Copilot run input, EDGE-scoped (Copilot
-// proposes knowledge_edge, COPILOT_TOOLS). Explicitly truncated to
-// PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars at READ TIME — the ContextBudgetTracker
-// gates the tool-call loop, NOT initial-input chars (codex#3). Cold-start inert.
-import {
-  type ProposalFeedbackCell,
-  getProposalFeedbackDigest,
-} from '@/server/proposals/adaptive-bias';
 // AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
 // find-or-creates a learning_session(type='conversation') so turns persist and
 // the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays
@@ -579,9 +575,15 @@ type FindOrCreateConversationFn = (
   db: Db,
   opts: { now?: Date },
 ) => Promise<{ sessionId: string; created: boolean }>;
-// P5.4-L2 / YUK-174 (Facet A) — swappable feedback-digest reader (unit tests
-// inject a fixture / [] since db is a stub). Defaults to getProposalFeedbackDigest.
-type LoadProposalFeedbackFn = (db: Db) => Promise<ProposalFeedbackCell[]>;
+// YUK-574 — swappable session-anchored learner-state resolver. Defaults to
+// resolveLearnerStateHeader (cache read + cheap invalidation, assemble-once). Unit
+// tests inject a fixture so the {}-stub db is never touched; the default itself
+// degrades to an empty header on read failure (additive-input red line).
+type ResolveLearnerStateHeaderFn = (
+  db: Db,
+  sessionId: string,
+  opts: { now?: () => Date },
+) => Promise<LearnerStateHeader>;
 // YUK-267 (C2) — swappable conversation-history reader. Defaults to
 // getRecentCopilotTurns (the SAME reader the drawer replay uses). Unit tests
 // inject a fixture so the {}-stub db is never touched. Session-scoped by
@@ -600,9 +602,11 @@ export interface CopilotChatDeps {
   // are added (back-compat no-op).
   buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
   writeEventFn?: WriteEventFn;
-  // P5.4-L2 / YUK-174 — defaults to getProposalFeedbackDigest. The unit test
-  // injects [] so the {}-stub db is never queried (cold-start no-op).
-  loadProposalFeedbackFn?: LoadProposalFeedbackFn;
+  // YUK-574 — defaults to resolveLearnerStateHeader. The unit test injects a
+  // fixture so the {}-stub db is never touched. It supplies BOTH the session-
+  // anchored learner-state header (pinned in conversation_history) and the
+  // migrated Facet A proposal_feedback digest.
+  resolveLearnerStateHeaderFn?: ResolveLearnerStateHeaderFn;
   // YUK-267 (C2) — defaults to getRecentCopilotTurns. The unit test injects a
   // fixture so the {}-stub db is never touched. A read failure degrades to [].
   loadHistoryFn?: LoadHistoryFn;
@@ -624,60 +628,13 @@ export interface CopilotChatDeps {
   now?: () => Date;
 }
 
-// P5.4-L2 / YUK-174 (Facet A, §3.3) — Copilot proposes ONLY knowledge_edge
-// (COPILOT_TOOLS), so its digest scope is edge cells. Build the edge-scoped cell
-// list, order reason-bearing cells FIRST, then truncate the SERIALIZED field to
-// PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars at read time (the ContextBudgetTracker
-// does NOT account initial-input chars — codex#3): drop whole cells from the
-// least-actionable tail until the serialized JSON fits, so the field stays
-// structured and bounded regardless of the tracker. Cold start (no edge cells) → [].
-function scopeCopilotProposalFeedback(
-  digest: ProposalFeedbackCell[],
-): Array<
-  Pick<
-    ProposalFeedbackCell,
-    'kind' | 'relation' | 'acceptance_rate' | 'top_dismiss_reasons' | 'top_rubric_gates'
-  >
-> {
-  const edgeCells = digest
-    .filter((cell) => cell.kind === 'knowledge_edge')
-    .map((cell) => ({
-      kind: cell.kind,
-      relation: cell.relation,
-      acceptance_rate: cell.acceptance_rate,
-      top_dismiss_reasons: cell.top_dismiss_reasons,
-      top_rubric_gates: cell.top_rubric_gates,
-    }));
-  // Copilot learns most from cells that carry an actual failure mode (net-negative
-  // cells with dismiss reasons / rubric gates). The digest is sorted acceptance_rate
-  // DESC, so a naive tail-drop would discard exactly those low-acceptance cells —
-  // order reason-bearing cells FIRST so whole-digest truncation keeps them; reason-less
-  // (typically high-acceptance) cells are dropped first. Stable within each group.
-  const hasReasonContent = (c: (typeof edgeCells)[number]) =>
-    c.top_dismiss_reasons.length > 0 || c.top_rubric_gates.length > 0;
-  const ordered = [
-    ...edgeCells.filter(hasReasonContent),
-    ...edgeCells.filter((c) => !hasReasonContent(c)),
-  ];
-  // Truncate the SERIALIZED field to the whole-digest cap `maxSerializedChars` (NOT
-  // `maxChars`, which is the per-string reason cap; a single populated cell exceeds
-  // maxChars, so reusing it would collapse the feed to []). Drop the least-actionable
-  // tail until it fits.
-  const scoped = [...ordered];
-  while (
-    scoped.length > 0 &&
-    JSON.stringify(scoped).length > PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars
-  ) {
-    scoped.pop();
-  }
-  return scoped;
-}
-
 // YUK-267 (C2) — the minimal history shape carried in the run input. ONLY role +
 // text (the persisted ask原文 / reply正文); everything else from the turn row is
-// EXPLICITLY dropped (防循环 ①/⑤).
+// EXPLICITLY dropped (防循环 ①/⑤). YUK-574 adds the 'context' role for the pinned
+// learner-state header (a deterministic projection, NOT a persisted turn — it is
+// prepended fresh from the session-anchored cache and never read back from turns).
 export interface CopilotHistoryTurn {
-  role: 'user' | 'ai';
+  role: 'user' | 'ai' | 'context';
   text: string;
 }
 
@@ -692,9 +649,18 @@ export interface CopilotHistoryTurn {
 //      OLDEST turns first until the serialized array fits (recency matters most).
 // `turns` arrive oldest→newest (the reader reverses to chronological). We keep the
 // newest maxTurns, per-turn truncate, then oldest-first whole-array truncate.
+//
+// YUK-574 — `pinnedHeaderMd` (the session-anchored learner-state header) is
+// prepended as a `{role:'context'}` entry that is PINNED: the oldest-first drop
+// loop only ever removes real conversation turns, never the header. The header's
+// char cost is reserved FIRST so it is counted against COPILOT_HISTORY_BUDGET yet
+// survives truncation (the header is pre-bounded at assembly to
+// LEARNER_STATE_HEADER_BUDGET, always well under totalChars). Absent / empty header
+// → byte-for-byte the pre-YUK-574 output (no context entry prepended).
 function assembleConversationHistory(
   turns: CopilotTurn[],
   budget: typeof COPILOT_HISTORY_BUDGET,
+  pinnedHeaderMd?: string,
 ): CopilotHistoryTurn[] {
   // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice).
   const recent = turns.slice(-budget.maxTurns);
@@ -703,11 +669,16 @@ function assembleConversationHistory(
     role: t.role,
     text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
   }));
-  // 防循环 ④ — whole-array cap: drop OLDEST (front) until the serialized array fits.
-  while (mapped.length > 0 && JSON.stringify(mapped).length > budget.totalChars) {
+  const pinned: CopilotHistoryTurn | null =
+    pinnedHeaderMd && pinnedHeaderMd.length > 0 ? { role: 'context', text: pinnedHeaderMd } : null;
+  // 防循环 ④ — whole-array cap: drop OLDEST real turn (front) until the serialized
+  // array (header included in the accounting) fits. The pinned header is NEVER
+  // dropped, only real turns.
+  const serialized = () => JSON.stringify(pinned ? [pinned, ...mapped] : mapped);
+  while (mapped.length > 0 && serialized().length > budget.totalChars) {
     mapped.shift();
   }
-  return mapped;
+  return pinned ? [pinned, ...mapped] : mapped;
 }
 
 function selectSurface(triggeredBy: CopilotChatTriggerKind): DomainToolSurface {
@@ -740,9 +711,13 @@ async function runCopilotChatImpl(
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const buildTavily = deps.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const write = deps.writeEventFn ?? writeEvent;
-  const loadFeedback =
-    deps.loadProposalFeedbackFn ??
-    ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));
+  // YUK-574 — the session-anchored learner-state resolver (assemble-once +
+  // invalidation). Supplies the pinned header + the migrated Facet A digest, so
+  // there is NO per-turn proposal_feedback read here any more.
+  const resolveLearnerState =
+    deps.resolveLearnerStateHeaderFn ??
+    ((db: Db, sessionId: string, opts: { now?: () => Date }) =>
+      resolveLearnerStateHeader(db, sessionId, { now: opts.now }));
   const loadHistory = deps.loadHistoryFn ?? getRecentCopilotTurns;
   const findOrCreateConversation =
     deps.findOrCreateConversationFn ?? Conversation.findOrCreateCopilotConversation;
@@ -784,14 +759,42 @@ async function runCopilotChatImpl(
   // free-form turn. Additive-input red line: a read failure degrades to [] and
   // never crashes the chat (same pattern as the feedback digest). 防循环 ① is the
   // {role,text}-only map in assembleConversationHistory.
+  //
+  // YUK-574 — resolve the session-anchored learner-state header FIRST (free-form
+  // path only), then prepend it as the PINNED first entry of conversation_history.
+  // The header is assembled ONCE per validity window (owner hard constraint: no
+  // per-turn 装配注入) and cached; the resolver returns cached bytes when fresh.
+  // It also carries the migrated Facet A `proposal_feedback` digest (folded into
+  // the same session-anchored block). Additive-input red line: any failure degrades
+  // to an empty header + [] digest and never crashes the chat.
   let conversationHistory: CopilotHistoryTurn[] = [];
+  let learnerState: LearnerStateHeader = { header_md: '', proposal_feedback: [] };
   if (!req.skill_context || req.skill_context.skill === 'quiz') {
     try {
-      const rawTurns = await loadHistory(db, { limit: COPILOT_HISTORY_BUDGET.maxTurns, now });
-      conversationHistory = assembleConversationHistory(rawTurns, COPILOT_HISTORY_BUDGET);
+      learnerState = await resolveLearnerState(db, sessionId, { now: deps.now });
     } catch (err) {
-      conversationHistory = [];
-      console.error('[runCopilotChat] loadHistory failed; degrading to []', {
+      learnerState = { header_md: '', proposal_feedback: [] };
+      console.error('[runCopilotChat] resolveLearnerState failed; degrading to empty header', {
+        task_run_id: taskRunId,
+        surface,
+        err,
+      });
+    }
+    try {
+      const rawTurns = await loadHistory(db, { limit: COPILOT_HISTORY_BUDGET.maxTurns, now });
+      conversationHistory = assembleConversationHistory(
+        rawTurns,
+        COPILOT_HISTORY_BUDGET,
+        learnerState.header_md,
+      );
+    } catch (err) {
+      // History read failed — still ride the pinned header alone (pin-in-budget).
+      conversationHistory = assembleConversationHistory(
+        [],
+        COPILOT_HISTORY_BUDGET,
+        learnerState.header_md,
+      );
+      console.error('[runCopilotChat] loadHistory failed; degrading to header-only', {
         task_run_id: taskRunId,
         surface,
         err,
@@ -1060,26 +1063,13 @@ async function runCopilotChatImpl(
     },
   });
 
-  // P5.4-L2 / YUK-174 (Facet A, §3.3) — read the feedback digest ONCE for this
-  // message and edge-scope + char-bound it before building the run input. A
-  // single bounded read (not per-tool-call), pre-truncated to maxChars so the
-  // per-message prompt cannot bloat regardless of the ContextBudgetTracker (which
-  // gates only the tool-call loop, codex#3). Cold start → [].
-  //
-  // The digest is an ADDITIVE input (ND-5): a read failure must NOT crash the
-  // chat. Degrade to [] (same as cold start) and continue; log so the silent
-  // empty is traceable (codex C4).
-  let proposalFeedback: ReturnType<typeof scopeCopilotProposalFeedback> = [];
-  try {
-    proposalFeedback = scopeCopilotProposalFeedback(await loadFeedback(db));
-  } catch (err) {
-    proposalFeedback = [];
-    console.error('[runCopilotChat] loadProposalFeedback failed; degrading to []', {
-      task_run_id: taskRunId,
-      surface,
-      err,
-    });
-  }
+  // YUK-574 (Facet A migration) — the `proposal_feedback` digest is NO LONGER read
+  // per turn here. It is resolved ONCE with the session-anchored learner-state
+  // header (`learnerState`, assembled above) under the SAME invalidation rules,
+  // with proposal decision events as its dedicated refresh trigger. The scoped
+  // cell shape + in-context-learning semantics are unchanged (byte-identical
+  // between proposal decisions); only the injection cadence moved off per-turn.
+  const proposalFeedback = learnerState.proposal_feedback;
 
   // YUK-198 — optionally fold in the remote Tavily MCP (web grounding) for the
   // Copilot surface. Env-gated: when TAVILY_API_KEY is unset, buildTavily()
@@ -1102,12 +1092,17 @@ async function runCopilotChatImpl(
     triggered_by: req.triggered_by,
     user_message: req.user_message,
     ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
-    // Edge-scoped, char-bounded reason digest. Serialized verbatim into the
-    // prompt by promptFromInput (runner.ts JSON.stringify) — no new plumbing.
+    // YUK-574 — edge-scoped, char-bounded reason digest, now sourced from the
+    // session-anchored learner-state block (assemble-once + invalidation) instead
+    // of a per-turn read. Same scoped cell shape; serialized verbatim by
+    // promptFromInput (runner.ts JSON.stringify).
     proposal_feedback: proposalFeedback,
     // YUK-267 (C2) — bounded, history-only conversation context (防循环 ①/④/⑤).
     // [{role,text}], oldest→newest, double-truncated. The current ask is excluded
     // (read before the ask write). Serialized verbatim by promptFromInput.
+    // YUK-574 — the FIRST entry may be a pinned {role:'context'} learner-state
+    // header (assembled once, session-anchored); it is never dropped by the
+    // oldest-first truncation and is not a persisted turn.
     conversation_history: conversationHistory,
     // YUK-267 (C2) — ambient context for THIS message only (防循环 ②). Present only
     // when the request carried it; NEVER written to any turn payload, so it is not
