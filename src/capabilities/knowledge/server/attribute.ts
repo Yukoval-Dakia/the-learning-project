@@ -18,7 +18,7 @@ import { getJudgeForAttempt, writeEvent } from '@/server/events/queries';
 import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { writePermanentAiFailureLedger } from './ai_failure_log';
+import { writePermanentAiFailureLedger, writeRetryableAiFailureLedger } from './ai_failure_log';
 import { retrieveCauseCandidates } from './attribute-retrieve';
 
 // Lane B `CauseSchema` uses `analysis_md`. Step 7 cut over: the AttributionTask
@@ -81,9 +81,13 @@ export interface RunAttributionAndWriteJudgeEventParams {
  *  - `written`   — a real judge event was written.
  *  - `skipped`   — a real judge already existed (idempotent early-out).
  *  - `retryable` — the idempotency read / LLM call / judge write hit a transient
- *                  (DB fault or provider) failure. NO ledger row is written; the
- *                  caller (pg-boss job) rethrows `error` so pg-boss retries + the
- *                  llm_dlq are the record of record.
+ *                  (DB fault or provider) failure. The caller (pg-boss job)
+ *                  rethrows `error` so pg-boss retries + the llm_dlq are the
+ *                  record of record. A best-effort `failed_retryable` ledger row
+ *                  is ALSO written (OCR #6): the copilot `attribute_mistake`
+ *                  caller does NOT rethrow (no pg-boss retry / llm_dlq), so that
+ *                  row is its only observability for a retryable failure. The
+ *                  discriminant + rethrow contract is unchanged.
  *  - `permanent` — the LLM SUCCEEDED but its output failed parse/validate.
  *                  Retrying re-spends money on a systematic failure, so a
  *                  `failed_permanent` cost_ledger row (carrying the task_run_id)
@@ -119,9 +123,11 @@ export async function runAttributionAndWriteJudgeEvent(
   } | null = null;
 
   // ── Stage A: idempotency read + LLM call ──────────────────────────────────
-  // A failure here (DB read fault OR LLM provider error) is RETRYABLE: write NO
-  // ledger row and return the discriminant so the caller rethrows — pg-boss
-  // retries + llm_dlq are the durable record.
+  // A failure here (DB read fault OR LLM provider error) is RETRYABLE: return the
+  // discriminant so the pg-boss caller rethrows — pg-boss retries + llm_dlq are
+  // the durable record. OCR #6: ALSO write a best-effort `failed_retryable`
+  // ledger row for the copilot `attribute_mistake` caller, which does NOT rethrow
+  // and so has no other observability for a retryable failure.
   let result: Awaited<ReturnType<TaskTextRunFn>>;
   try {
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
@@ -189,6 +195,8 @@ export async function runAttributionAndWriteJudgeEvent(
     );
   } catch (err) {
     console.error('runAttributionAndWriteJudgeEvent: retryable failure (attempt unaffected)', err);
+    // Best-effort (swallows internally); never masks the retryable classification.
+    await writeRetryableAiFailureLedger(params.db, 'AttributionTask');
     return { outcome: 'retryable', error: err };
   }
 
@@ -210,8 +218,9 @@ export async function runAttributionAndWriteJudgeEvent(
   }
 
   // ── Stage C: write the judge event ────────────────────────────────────────
-  // A DB fault writing the judge is RETRYABLE (same rationale as stage A): no
-  // ledger row, the caller rethrows. Honest cost note: a Stage-C retry
+  // A DB fault writing the judge is RETRYABLE (same rationale as stage A): the
+  // caller rethrows, plus the best-effort `failed_retryable` ledger row (OCR #6)
+  // for the non-rethrowing copilot caller. Honest cost note: a Stage-C retry
   // RE-INVOKES the LLM — the idempotency read precedes the LLM call and the
   // judge was never written, so nothing short-circuits the second attempt.
   // Accepted trade-off: Stage-C DB faults are rare, correctness > cost.
@@ -266,6 +275,8 @@ export async function runAttributionAndWriteJudgeEvent(
       'runAttributionAndWriteJudgeEvent: retryable write failure (attempt unaffected)',
       err,
     );
+    // Best-effort (swallows internally); never masks the retryable classification.
+    await writeRetryableAiFailureLedger(params.db, 'AttributionTask');
     return { outcome: 'retryable', error: err };
   }
 

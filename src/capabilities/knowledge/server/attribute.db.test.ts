@@ -374,11 +374,14 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     expect(judgeRows).toHaveLength(0);
   });
 
-  // YUK-379 (B1): the helper no longer swallows failures into a silent
-  // failed_retryable ledger row + void return. It returns a discriminant and
-  // never throws. runTaskFn/DB failures classify as `retryable` and write NO
-  // ledger row (pg-boss retries + llm_dlq are the record of record).
-  it('runTaskFn error → returns {outcome:retryable}; NO judge event; NO ledger row', async () => {
+  // YUK-379 (B1): the helper no longer swallows failures into a void return —
+  // it returns a discriminant and never throws. A runTaskFn/DB fault classifies
+  // as `retryable`; the discriminant + rethrow contract (pg-boss retries +
+  // llm_dlq are the record of record) is unchanged. OCR #6: the retryable catch
+  // ALSO writes a best-effort `failed_retryable` ledger row, because the copilot
+  // `attribute_mistake` caller does NOT rethrow (no pg-boss retry / llm_dlq), so
+  // this row is that path's only observability for a retryable failure.
+  it('runTaskFn error → returns {outcome:retryable}; NO judge event; ONE failed_retryable ledger row', async () => {
     const db = testDb();
     const attemptId = 'attempt_e_err';
     await insertAttemptEvent({ attemptId, questionId: 'q_err' });
@@ -398,7 +401,8 @@ describe('runAttributionAndWriteJudgeEvent', () => {
       .select()
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
-    expect(ledgerRows).toHaveLength(0);
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0].outcome).toBe('failed_retryable');
   });
 
   // YUK-379 (B1): parse failure classifies as `permanent` — the LLM already

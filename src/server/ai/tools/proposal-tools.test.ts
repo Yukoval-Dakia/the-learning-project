@@ -2,6 +2,7 @@ import * as attributeModule from '@/capabilities/knowledge/server/attribute';
 import { runWriteProposal } from '@/capabilities/knowledge/server/review';
 import {
   artifact,
+  cost_ledger,
   event,
   knowledge,
   knowledge_edge,
@@ -672,6 +673,9 @@ describe('Wave 3 proposal/action DomainTools', () => {
   // byte-identical: on a retryable LLM failure the helper writes no judge and
   // does not throw, so the re-read finds nothing and the tool returns
   // {status:'failed'}. Pins this contract; does not change the implementation.
+  // OCR #6: this path does NOT rethrow (unlike the pg-boss job), so the helper's
+  // best-effort failed_retryable ledger row is its ONLY observability for the
+  // retryable failure — pinned here.
   it('YUK-379: attribute_mistake returns failed when the attribution LLM throws (helper never throws)', async () => {
     const db = testDb();
     await seedKnowledgeGraph();
@@ -683,6 +687,15 @@ describe('Wave 3 proposal/action DomainTools', () => {
 
     const judges = await db.select().from(event).where(eq(event.action, 'judge'));
     expect(judges).toHaveLength(0);
+
+    // OCR #6: best-effort failed_retryable ledger row restores observability the
+    // pre-fix swallow provided (the discarded outcome would otherwise be silent).
+    const ledger = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'AttributionTask'));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].outcome).toBe('failed_retryable');
   });
 
   it('propose_variant reuses runVariantGen rules and creates a variant proposal ledger row', async () => {
