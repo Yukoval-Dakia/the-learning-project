@@ -56,9 +56,12 @@ import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import {
   type SolveCheckQuestion,
+  type TeachingQualityQuestion,
   checksForTier,
   runSolveCheck,
+  runTeachingQualityCheck,
   solveCheckBlocks,
+  teachingQualityBlocks,
 } from '@/server/quiz/verify-framework';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
@@ -416,6 +419,36 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // records needs_review ("hold for human review") — see the SOLVE_CHECK_TIER34_VETO
     // docblock. Neither lowers draft_status below 'draft' (m7 invariant note in the else).
     const solveCheckOk = solveResult === undefined || !solveCheckBlocks(solveResult);
+
+    // YUK-578 (入池前审题闸) — teaching_quality is a SECOND independent LLM probe (TeachingQualityTask),
+    // a PEER of solve_check: both are gated behind the SAME freeChecksPass condition (only spend the
+    // extra call when every FREE self-review check already passed) and both are conjuncts of promote,
+    // so this insertion leaves solve_check's behavior UNCHANGED. It reads only the question面 data and
+    // scores 题干清晰度 / 唯一正解性 / 干扰项诊断力(仅选择题) —歧义题比事实错更隐蔽地污染 θ̂ 信号
+    // (冷启期尤其值). tierChecks always includes teaching_quality for this handler (every row is
+    // tier3/4), but gate explicitly to stay correct if CHECK_SETS_BY_TIER is ever reconfigured.
+    const teachingResult =
+      freeChecksPass && tierChecks.includes('teaching_quality')
+        ? await runTeachingQualityCheck(
+            {
+              id: row.id,
+              kind: row.kind,
+              prompt_md: row.prompt_md,
+              reference_md: row.reference_md,
+              choices_md: row.choices_md,
+              rubric_json: row.rubric_json,
+            } satisfies TeachingQualityQuestion,
+            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile } },
+          )
+        : undefined;
+    // Per-axis veto (teachingQualityBlocks): only an overall 'fail' can block, then the failing
+    // axis's flag decides. undefined (short-circuited / no teaching_quality in set) → never blocks.
+    // A confident fail vetoes promotion but records needs_review ("hold for human review"), NOT
+    // failed — the model self-review said pass, only the审题闸 disagreed. Lands in the existing
+    // else branch (writes metadata only; draft_status is never touched — a vetoed row was already
+    // 'draft', so no demote is needed — same m7 invariant as solve_check).
+    const teachingQualityOk =
+      teachingResult === undefined || !teachingQualityBlocks(teachingResult);
     // YUK-350 (RL1 red-line invariant) — the promote gate MUST stay a POSITIVE
     // whitelist anchored on `parsed.overall === 'pass'`. NEVER rewrite this as a
     // negative test (e.g. `parsed.overall !== 'fail'`): a negative test would let
@@ -431,7 +464,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // a 6th check added to one but not the other can no longer drift. solveCheckOk is the
     // last conjunct (vacuously true when short-circuited, so the result is identical to
     // evaluating solve eagerly).
-    const promote = freeChecksPass && solveCheckOk;
+    // YUK-578 — teachingQualityOk joins as a further conjunct (peer of solveCheckOk, gated on the
+    // same freeChecksPass). Vacuously true when short-circuited, so the promote result is identical
+    // to evaluating it eagerly; a confident审题闸 fail flips promote to false → the else branch.
+    const promote = freeChecksPass && solveCheckOk && teachingQualityOk;
     // verificationStatus + the success-path writeEvent (below) + the metadata
     // verification block only ever observe the 3 model-verdict values
     // (pass|needs_review|fail); the system-error class 'error' NEVER reaches this
@@ -480,6 +516,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // (avoids depending on note projection). Present only when solve actually ran.
         ...(solveResult
           ? [{ axis_name: 'solve_check' as const, verdict: solveResult.verdict }]
+          : []),
+        // YUK-578 — teaching_quality axis carries ONLY the overall verdict; the per-axis
+        // breakdown (clarity / unique_answer / distractor_power) rides in the payload block
+        // below. Present only when the审题闸 actually ran (freeChecksPass short-circuit).
+        ...(teachingResult
+          ? [{ axis_name: 'teaching_quality' as const, verdict: teachingResult.verdict }]
           : []),
       ],
     });
@@ -643,6 +685,24 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                   // call order + summed cost when the runner reported them.
                   task_run_ids: solveResult.task_run_ids ?? null,
                   cost_usd: solveResult.cost_usd ?? null,
+                },
+              }
+            : {}),
+          // YUK-578 (入池前审题闸) — teaching_quality authoritative audit block: overall verdict +
+          // the three per-axis verdicts/reasons (clarity / unique_answer / distractor_power; the
+          // last is 'skipped' for non-choice) + the审题闸's own run-id/cost. Keyed on
+          // `teachingResult` (undefined when short-circuited). additive JSONB, zero DDL — mirrors
+          // the solve_check block. No new event action (cardinality unchanged).
+          ...(teachingResult
+            ? {
+                teaching_quality: {
+                  verdict: teachingResult.verdict,
+                  clarity: teachingResult.clarity,
+                  unique_answer: teachingResult.unique_answer,
+                  distractor_power: teachingResult.distractor_power,
+                  reason: teachingResult.reason,
+                  task_run_ids: teachingResult.task_run_ids ?? null,
+                  cost_usd: teachingResult.cost_usd ?? null,
                 },
               }
             : {}),
