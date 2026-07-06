@@ -269,6 +269,29 @@ describe('propose_conjecture — server-enforced single writer', () => {
     if (h.proposals[0].payload.kind !== 'conjecture') throw new Error('kind narrowing');
     expect(h.proposals[0].payload.proposed_change.baseline_p_at_induction).toBe(0.5);
   });
+
+  it('rejects a malformed cause_category (uppercase/space) BEFORE it can compute a mismatched dedup key (§7 review MINOR #6)', async () => {
+    const h = build();
+    const res = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ cause_category: 'Concept Confusion' }),
+    );
+    expect(res.ok).toBe(false);
+    expect(h.proposals).toHaveLength(0);
+    expect(h.caps.proposeCount).toBe(0); // rejected, cap not consumed
+  });
+
+  it('rejects an off-menu proposal with <2 first-hand refs with a HUMAN-READABLE reason, not a raw Zod dump (§7 review MINOR #7)', async () => {
+    const h = build({ meetingContext: meetingContext({ candidate_cells: [] }) }); // no matching cell
+    const res = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ knowledge_id: 'k_offmenu', evidence_refs: ['att_only_one'] }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe('证据不足需≥2条一手证据，请补充或另选候选单元');
+    expect(res.issues).toBeUndefined(); // no raw Zod issues dump
+    expect(h.proposals).toHaveLength(0);
+  });
 });
 
 describe('leave_agent_note — server-enforced', () => {
@@ -330,5 +353,18 @@ describe('leave_agent_note — server-enforced', () => {
       }),
     );
     expect(h.notes[0].refs).toEqual([{ kind: 'event', id: 'att_1' }]);
+  });
+
+  it('soft-rejects when writeAgentNoteFn throws (DB write failure) — noteCount does not advance (§7 review MAJOR #4)', async () => {
+    const h = build({
+      writeAgentNoteFn: async () => {
+        throw new Error('db write blew up');
+      },
+    });
+    const res = await callTool('leave_agent_note', validNoteArgs());
+    expect(res.ok).toBe(false);
+    expect(String(res.reason)).toMatch(/写入被拒|failed|error/i);
+    expect(h.notes).toHaveLength(0);
+    expect(h.caps.noteCount).toBe(0);
   });
 });

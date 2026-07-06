@@ -21,6 +21,7 @@ import type {
 } from '@/capabilities/agency/server/notes';
 import { writeAgentNote } from '@/capabilities/agency/server/notes';
 import { ConjectureDraft } from '@/core/schema/business';
+import { CauseCategoryId } from '@/core/schema/cause';
 import type { Db } from '@/db/client';
 import {
   filterPrimaryEvidenceRefs,
@@ -211,6 +212,15 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
   // via knownConjectureKeys.
   const proposedThisRun = new Set<string>();
   // Cheap lookup for the server-owned recurrence_count / baseline_p snapshot.
+  // §7 review MINOR #5 — verified data source: c.cause_category here comes from
+  // meetingContext.candidate_cells, which director.ts builds from
+  // gatherConjectureEvidence()'s deterministic EvidenceCell[] output (a server-side
+  // projection over FailureAttempt[] + mastery — see director.ts's `candidateCells`
+  // assembly). It is NEVER LLM input. MeetingCandidateCell widens the field to `string`
+  // only for the JSON tool-return round trip; the underlying value is already a
+  // validated CauseCategoryT, so this cast is safe (contrast the propose_conjecture
+  // handler below, where a.cause_category IS LLM-supplied and is parsed through
+  // CauseCategoryId before use — §7 review MINOR #6).
   const cellByKey = new Map<string, MeetingCandidateCell>();
   for (const c of meetingContext.candidate_cells) {
     cellByKey.set(conjectureKey(c.cause_category as never, c.knowledge_id), c);
@@ -263,25 +273,52 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             });
           }
 
+          // §7 review MINOR #6 — a.cause_category is LLM-supplied (ProposeConjectureShape
+          // only requires a non-empty string) and MUST be validated BEFORE it is used to
+          // compute the dedup key: an unvalidated string (uppercase / spaces / stray
+          // punctuation) would hash to a DIFFERENT conjectureKey than the same logical
+          // cause the candidate_cells/pending-dedup base used, silently bypassing the
+          // pending-dedup gate below.
+          const causeCategoryCheck = CauseCategoryId.safeParse(a.cause_category);
+          if (!causeCategoryCheck.success) {
+            return textResult({
+              ok: false,
+              reason:
+                'cause_category 格式不合法（须为小写字母数字下划线，字母开头）；请改用候选单元里出现过的错因类别',
+            });
+          }
+          const causeCategory = causeCategoryCheck.data;
+
           // Pending-dedup: ALL pending (cross-actor) + same-run. candidate_cells is
           // already deduped against pending, but an off-menu pick could still collide.
-          const key = conjectureKey(a.cause_category as never, a.knowledge_id);
+          const key = conjectureKey(causeCategory, a.knowledge_id);
           if (knownConjectureKeys.has(key) || proposedThisRun.has(key)) {
             return textResult({ ok: false, reason: '该错因×知识点已有 pending 猜想，换一个' });
           }
 
           // recurrence_count is server-owned: the matching cell's count, else the count
-          // of first-hand refs the director cited. The ConjectureDraft ≥2 floor (below)
-          // enforces the recurrence invariant either way (an off-menu pick with <2
-          // first-hand refs is rejected with a clear validation error).
+          // of first-hand refs the director cited.
           const matchedCell = cellByKey.get(key);
           const recurrenceCount = matchedCell?.recurrence_count ?? primaryRefs.length;
+
+          // §7 review MINOR #7 — pre-check the ConjectureDraft ≥2 recurrence floor
+          // explicitly, with a HUMAN-READABLE reason. Before this fix, an off-menu
+          // proposal (no matching candidate cell) with <2 first-hand refs fell straight
+          // into ConjectureDraft.safeParse below and surfaced as an opaque raw Zod
+          // issues dump — a fixable "cite one more ref" case the director could not act
+          // on from the error shape alone.
+          if (recurrenceCount < 2) {
+            return textResult({
+              ok: false,
+              reason: '证据不足需≥2条一手证据，请补充或另选候选单元',
+            });
+          }
 
           const draftCheck = ConjectureDraft.safeParse({
             claim_md: a.claim_md,
             probe_md: a.probe_md,
             probe_reference_md: a.probe_reference_md,
-            cause_category: a.cause_category,
+            cause_category: causeCategory,
             recurrence_count: recurrenceCount,
             predicted_p: a.predicted_p,
             discriminating: a.discriminating,
@@ -314,7 +351,7 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
               proposed_change: {
                 claim_md: a.claim_md,
                 knowledge_id: a.knowledge_id,
-                cause_category: a.cause_category,
+                cause_category: causeCategory,
                 confidence: DIRECTOR_FIXED_CONFIDENCE,
                 recurrence_count: recurrenceCount,
                 probe_md: a.probe_md,
@@ -384,7 +421,18 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
             expires_at: new Date(now.getTime() + AGENT_NOTE_TTL_MS).toISOString(),
             caused_by_event_id: triggerEventId,
           };
-          const noteId = await writeAgentNoteFn(db, note);
+          // §7 review MAJOR #4 — mirror propose_conjecture's soft-reject-on-write-failure
+          // discipline: a DB write throw here must not blow up the whole director run.
+          // caps.noteCount only advances on a CONFIRMED write.
+          let noteId: string;
+          try {
+            noteId = await writeAgentNoteFn(db, note);
+          } catch (err) {
+            return textResult({
+              ok: false,
+              reason: `note 写入被拒（校验/DB）: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }
           caps.noteCount += 1;
           noteIds.push(noteId);
           return textResult({ ok: true, note_id: noteId });
