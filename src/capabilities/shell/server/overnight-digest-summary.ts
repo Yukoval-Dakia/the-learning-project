@@ -124,4 +124,82 @@ export interface OvernightDigest {
   new_conjectures_count: number;
   /** 窗内新 agent notes 数。 */
   agent_notes_count: number;
+  /**
+   * 静默失败标红（YUK-580）：窗内 error 计数达阈值的 task_kind 列表。空数组 = 无降级 kind
+   * （不影响 has_overnight_activity 判定——降级信号与「有无活动」正交，同一窗内可同时
+   * has_overnight_activity=true 且 degraded_kinds 非空）。
+   */
+  degraded_kinds: DegradedKind[];
+}
+
+// ── YUK-580：degraded_kinds（AI 运维看门狗最小切片）──
+// 范围红线：①不做成本/去重轴；②不做滚动基线回归/聚类——group-by top error 足够；
+// ③不新增 schema/cron/agent；④与 YUK-576 stuck-run sweeper 正交（那边管 running 卡死，
+// 这里只管 error 计数），不越界。
+
+/**
+ * 某 task_kind 在窗内被判定为「降级」的阈值——error 计数 ≥ 此值才升为一等 degraded_kinds
+ * 字段。选 2 是为了滤掉单次瞬时抖动噪音（1 次 error 太常见，不值得标红打扰交班缕）。
+ */
+export const DEGRADED_KIND_ERROR_THRESHOLD = 2;
+
+/**
+ * 每个 degraded kind 最多附带几条最近 error_message 原串。选 3——同一 kind 反复出现的
+ * error 通常重复度高，3 条足够定位问题模式，且避免 digest payload 过大。
+ */
+export const DEGRADED_KIND_SAMPLE_SIZE = 3;
+
+/**
+ * 每条 error_message 原串的截断长度（字符数）。防止单条超长堆栈/prompt 回显把 digest
+ * payload 撑爆——只取前缀足够人眼判断错误类型，不追求完整堆栈。
+ */
+export const DEGRADED_KIND_MESSAGE_MAX_LEN = 200;
+
+/** ai_task_runs 窗内一条 status='error' 行的精简视图（供 computeDegradedKinds 消费）。 */
+export interface RunErrorRow {
+  task_kind: string;
+  error_message: string | null;
+  /** ISO-8601 UTC，用于按新→旧排序取最近 N 条。 */
+  finished_at: string;
+}
+
+/** 一个被判定为「降级」的 task_kind：error 计数 + 最近 N 条 error_message（已截断）。 */
+export interface DegradedKind {
+  task_kind: string;
+  /** 窗内该 kind 的 error 总计数（不止 recent_error_messages 展示的那几条）。 */
+  error_count: number;
+  /** 最近 N 条 error_message 原串（新→旧排序，超长已截断）。 */
+  recent_error_messages: string[];
+}
+
+const DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER = '(no error_message)';
+
+function truncateErrorMessage(msg: string): string {
+  if (msg.length <= DEGRADED_KIND_MESSAGE_MAX_LEN) return msg;
+  return `${msg.slice(0, DEGRADED_KIND_MESSAGE_MAX_LEN)}…`;
+}
+
+/**
+ * 静默失败标红（YUK-580）：把窗内 status='error' 的原始行按 task_kind 分组，error 计数
+ * ≥ DEGRADED_KIND_ERROR_THRESHOLD 的 kind 升级为 degraded_kinds 条目，附最近
+ * DEGRADED_KIND_SAMPLE_SIZE 条 error_message（新→旧，按 finished_at 排序，逐条截断）。
+ * 纯函数——不做成本/去重/滚动基线（YUK-580 边界①②），只做 group-by + top-N。
+ */
+export function computeDegradedKinds(rows: RunErrorRow[]): DegradedKind[] {
+  const byKind = new Map<string, RunErrorRow[]>();
+  for (const row of rows) {
+    const list = byKind.get(row.task_kind) ?? [];
+    list.push(row);
+    byKind.set(row.task_kind, list);
+  }
+  const out: DegradedKind[] = [];
+  for (const [task_kind, list] of byKind) {
+    if (list.length < DEGRADED_KIND_ERROR_THRESHOLD) continue;
+    const sorted = [...list].sort((a, b) => (a.finished_at < b.finished_at ? 1 : -1));
+    const recent_error_messages = sorted
+      .slice(0, DEGRADED_KIND_SAMPLE_SIZE)
+      .map((r) => truncateErrorMessage(r.error_message ?? DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER));
+    out.push({ task_kind, error_count: list.length, recent_error_messages });
+  }
+  return out.sort((a, b) => a.task_kind.localeCompare(b.task_kind));
 }
