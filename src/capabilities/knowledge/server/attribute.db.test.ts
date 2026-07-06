@@ -158,12 +158,14 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     const fakeRunTask = async () => ({
       text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
     });
-    await runAttributionAndWriteJudgeEvent({
+    const res = await runAttributionAndWriteJudgeEvent({
       db,
       attemptEventId: attemptId,
       input: validInput,
       runTaskFn: fakeRunTask,
     });
+    // YUK-379: successful judge write returns the `written` discriminant.
+    expect(res.outcome).toBe('written');
     const judgeRows = await db
       .select()
       .from(event)
@@ -359,32 +361,63 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     const fakeRunTask = async () => ({
       text: '{"primary_category":"memory","secondary_categories":[],"ai_analysis_md":"forgot","confidence":0.7}',
     });
-    await runAttributionAndWriteJudgeEvent({
+    const res = await runAttributionAndWriteJudgeEvent({
       db,
       attemptEventId: attemptId,
       input: validInput,
       runTaskFn: fakeRunTask,
     });
+    // YUK-379: legacy field name fails Zod parse → classified permanent.
+    expect(res.outcome).toBe('permanent');
     const judgeRows = await db.select().from(event).where(eq(event.caused_by_event_id, attemptId));
     // Step 7 removed the Zod bridge; legacy field name fails parse, no judge event written.
     expect(judgeRows).toHaveLength(0);
   });
 
-  it('swallows runTask error (no judge event written; no throw)', async () => {
+  // YUK-379 (B1): the helper no longer swallows failures into a silent
+  // failed_retryable ledger row + void return. It returns a discriminant and
+  // never throws. runTaskFn/DB failures classify as `retryable` and write NO
+  // ledger row (pg-boss retries + llm_dlq are the record of record).
+  it('runTaskFn error → returns {outcome:retryable}; NO judge event; NO ledger row', async () => {
     const db = testDb();
     const attemptId = 'attempt_e_err';
     await insertAttemptEvent({ attemptId, questionId: 'q_err' });
     const fakeRunTask = async () => {
       throw new Error('LLM down');
     };
-    await expect(
-      runAttributionAndWriteJudgeEvent({
-        db,
-        attemptEventId: attemptId,
-        input: validInput,
-        runTaskFn: fakeRunTask,
-      }),
-    ).resolves.toBeUndefined();
+    const res = await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+    expect(res.outcome).toBe('retryable');
+    const rows = await db.select().from(event).where(eq(event.caused_by_event_id, attemptId));
+    expect(rows).toHaveLength(0);
+    const ledgerRows = await db
+      .select()
+      .from(cost_ledger)
+      .where(eq(cost_ledger.task_kind, 'AttributionTask'));
+    expect(ledgerRows).toHaveLength(0);
+  });
+
+  // YUK-379 (B1): parse failure classifies as `permanent` — the LLM already
+  // succeeded (cost incurred, task_run_id present), only the parse/validate
+  // step failed, so retrying wastes money. Writes exactly ONE failed_permanent
+  // ledger row CARRYING result.task_run_id so it joins into run-detail
+  // observability (ledger's first real consumer). No judge event.
+  it('parse error → returns {outcome:permanent}; ONE failed_permanent ledger row carrying task_run_id; NO judge', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_e_parse';
+    await insertAttemptEvent({ attemptId, questionId: 'q_parse' });
+    const fakeRunTask = async () => ({ text: '不是 JSON', task_run_id: 'tr_parse_fail' });
+    const res = await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: validInput,
+      runTaskFn: fakeRunTask,
+    });
+    expect(res.outcome).toBe('permanent');
     const rows = await db.select().from(event).where(eq(event.caused_by_event_id, attemptId));
     expect(rows).toHaveLength(0);
     const ledgerRows = await db
@@ -392,24 +425,8 @@ describe('runAttributionAndWriteJudgeEvent', () => {
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
     expect(ledgerRows).toHaveLength(1);
-    expect(ledgerRows[0].outcome).toBe('failed_retryable');
-  });
-
-  it('swallows parse error (no judge event written)', async () => {
-    const db = testDb();
-    const attemptId = 'attempt_e_parse';
-    await insertAttemptEvent({ attemptId, questionId: 'q_parse' });
-    const fakeRunTask = async () => ({ text: '不是 JSON' });
-    await expect(
-      runAttributionAndWriteJudgeEvent({
-        db,
-        attemptEventId: attemptId,
-        input: validInput,
-        runTaskFn: fakeRunTask,
-      }),
-    ).resolves.toBeUndefined();
-    const rows = await db.select().from(event).where(eq(event.caused_by_event_id, attemptId));
-    expect(rows).toHaveLength(0);
+    expect(ledgerRows[0].outcome).toBe('failed_permanent');
+    expect(ledgerRows[0].task_run_id).toBe('tr_parse_fail');
   });
 
   it('idempotent — calling twice on same attempt does not duplicate judge event', async () => {
@@ -532,13 +549,15 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     const secondSpy = vi.fn(async () => ({
       text: '{"primary_category":"memory","secondary_categories":[],"analysis_md":"should not write","confidence":0.5}',
     }));
-    await runAttributionAndWriteJudgeEvent({
+    const res = await runAttributionAndWriteJudgeEvent({
       db,
       attemptEventId: attemptId,
       input: validInput,
       runTaskFn: secondSpy,
     });
 
+    // YUK-379: idempotency early-out returns the `skipped` discriminant.
+    expect(res.outcome).toBe('skipped');
     expect(secondSpy).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalled();
 

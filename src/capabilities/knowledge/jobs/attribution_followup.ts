@@ -12,8 +12,11 @@
 // knowledge_ids, call runAttributionAndWriteJudgeEvent (existing helper,
 // idempotent — skips when a judge event already exists).
 //
-// Failures rethrow → pg-boss retries per queue policy. Attribution helper
-// already swallows LLM errors internally; only DB/lookup errors propagate.
+// Failures rethrow → pg-boss retries per queue policy. YUK-379 (B1): the
+// attribution helper no longer swallows — it returns a discriminant; a
+// `retryable` outcome (DB/LLM fault) is rethrown here (→ pg-boss retry → llm_dlq),
+// while `permanent` (LLM ok, parse failed) is recorded via a failed_permanent
+// ledger row inside the helper and does NOT retry.
 
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -135,7 +138,7 @@ export async function runAttributionFollowup(
     .map((n) => ({ id: n.id, name: n.name, effective_domain: n.effective_domain }));
   const subjectProfile = resolveSubjectProfile(pickedNodes[0]?.effective_domain ?? null);
 
-  await runAttributionAndWriteJudgeEvent({
+  const outcome = await runAttributionAndWriteJudgeEvent({
     db,
     attemptEventId,
     input: {
@@ -148,6 +151,16 @@ export async function runAttributionFollowup(
     runTaskFn,
     subjectProfile,
   });
+
+  // YUK-379 (B1): a retryable attribution failure (DB / LLM fault) rethrows HERE
+  // — before the variant_gen fan-out — so pg-boss retries the whole job (→
+  // llm_dlq after the queue's retry_limit) and no empty variant_gen job spins off
+  // a mistake that never got a cause. written / skipped / permanent fall through:
+  // the attribution attempt is complete (permanent already wrote its own
+  // failed_permanent ledger row), so the best-effort fan-out proceeds as before.
+  if (outcome.outcome === 'retryable') {
+    throw outcome.error;
+  }
 
   // Task #17: fan out to variant_gen. Idempotent on the consumer side
   // (variant_gen checks parent_variant_id uniqueness + cause eligibility),
