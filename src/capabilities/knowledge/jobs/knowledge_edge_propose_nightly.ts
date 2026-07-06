@@ -14,6 +14,7 @@
 // ops cost (unregister/re-register queue+schedule); kept as-is until a separate
 // reason to move it.
 
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
@@ -21,13 +22,106 @@ import {
   type RunTaskFn,
   runEdgeProposeAndWrite,
 } from '@/capabilities/knowledge/server/propose_edge';
+import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { getFailureAttempts } from '@/server/events/queries';
+import { event } from '@/db/schema';
+import { getFailureAttempts, writeEvent } from '@/server/events/queries';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
+  // YUK-583 — test-only seam to drive the backlog-paging path cheaply (mirrors
+  // merge_attribution_sweep's `maxRepair` injectable cap). Never set in prod:
+  // production always uses EDGE_PROPOSE_SCAN_LIMIT.
+  scanLimit?: number;
 };
+
+// YUK-583 — watermark anchor-event coordinates. A generic `experimental:*` action
+// (NOT a RESERVED_EXPERIMENTAL_ACTION) so it parses via the loose ExperimentalEvent
+// escape hatch and matches no proposalWhere()/knowledge-fold predicate — audit-only,
+// never a pending inbox item (same fold-fall-through shape as `experimental:kc_dedup_scan`).
+const EDGE_PROPOSE_WATERMARK_ACTION = 'experimental:edge_propose_watermark';
+// Stable sentinel subject_id (no single KC is the subject of the scan) — mirrors
+// kc_dedup_nightly's `subject_id: 'kc_dedup_scan'`.
+const EDGE_PROPOSE_WATERMARK_SUBJECT_ID = 'edge_propose_watermark';
+// limit 200 = 自然分页: a backlog > 200 advances the cursor only to the 200th event
+// this run, and the next run continues from there (never a jump to `now`).
+const EDGE_PROPOSE_SCAN_LIMIT = 200;
+// First-run-only fallback window (no watermark yet) — the legacy 24h窗, kept so the
+// very first run does not re-scan all history (防重扫全史).
+const FIRST_RUN_FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export interface EdgeProposeWatermark {
+  last_processed_at: Date;
+  last_processed_event_id: string;
+}
+
+/**
+ * Recover the续扫 cursor from the LATEST watermark anchor event, or `null` on the
+ * first-ever run. Ordered by the PAYLOAD cursor (last_processed_at, then
+ * last_processed_event_id) DESC — i.e. the FURTHEST cursor ever recorded, matching
+ * the keyset order getFailureAttempts pages by. (Ordering by the row's wall-clock
+ * created_at would be fragile if two anchors shared a millisecond; the cursor value
+ * is monotonic by construction, so ordering on it is exact.) ISO-8601 UTC strings
+ * (written via toISOString below) sort lexically == chronologically.
+ */
+export async function loadEdgeProposeWatermark(db: Db): Promise<EdgeProposeWatermark | null> {
+  const rows = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, EDGE_PROPOSE_WATERMARK_ACTION),
+        eq(event.subject_kind, 'knowledge'),
+        eq(event.subject_id, EDGE_PROPOSE_WATERMARK_SUBJECT_ID),
+      ),
+    )
+    .orderBy(
+      desc(sql`${event.payload}->>'last_processed_at'`),
+      desc(sql`${event.payload}->>'last_processed_event_id'`),
+    )
+    .limit(1);
+  const payload = rows[0]?.payload as
+    | { last_processed_at?: unknown; last_processed_event_id?: unknown }
+    | undefined;
+  if (typeof payload?.last_processed_at !== 'string') return null;
+  if (typeof payload?.last_processed_event_id !== 'string') return null;
+  const at = new Date(payload.last_processed_at);
+  if (Number.isNaN(at.getTime())) return null;
+  return { last_processed_at: at, last_processed_event_id: payload.last_processed_event_id };
+}
+
+/**
+ * Persist the续扫 cursor as an audit anchor event. RED LINE: only ever called on the
+ * success path (see runKnowledgeEdgeProposeNightly). `ingest_at: now` opts the row
+ * OUT of the memory-ingestion outbox (memory/triggers.ts `WHERE ingest_at IS NULL`)
+ * so this internal bookkeeping row never fans out to Mem0/brief-regen — mirrors
+ * merge_attribution_sweep's forensic-event opt-out.
+ */
+export async function writeEdgeProposeWatermark(
+  db: Db,
+  watermark: EdgeProposeWatermark,
+  now: Date = new Date(),
+): Promise<void> {
+  await writeEvent(db, {
+    id: newId(),
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'knowledge_edge_propose_nightly',
+    action: EDGE_PROPOSE_WATERMARK_ACTION,
+    subject_kind: 'knowledge',
+    subject_id: EDGE_PROPOSE_WATERMARK_SUBJECT_ID,
+    outcome: 'success',
+    payload: {
+      last_processed_at: watermark.last_processed_at.toISOString(),
+      last_processed_event_id: watermark.last_processed_event_id,
+    },
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    ingest_at: now,
+  });
+}
 
 async function resolveDominantSubjectProfile(
   db: Db,
@@ -73,15 +167,47 @@ export interface NightlyResult {
 }
 
 /**
- * Scan the last 24h of failure attempts and run KnowledgeEdgeProposeTask once
- * with the batch. 0 attempts → no-op (cheaper than calling LLM with empty input).
+ * Scan failure attempts FORWARD from the durable watermark cursor (YUK-583) and run
+ * KnowledgeEdgeProposeTask once with the batch. Replaces the old lossy 24h rolling
+ * window: a failure event that landed between the last cursor and the 24h window (a
+ * swallowed nightly LLM failure, or a missed cron trigger) is no longer dropped —
+ * the cursor is only advanced past events that were actually, successfully processed.
+ *
+ * - First run (no watermark): fall back to the legacy 24h窗 so we do NOT re-scan all
+ *   history, then establish the cursor from that batch.
+ * - Every run after: read attempts strictly after (last_processed_at,
+ *   last_processed_event_id), ASC, capped at EDGE_PROPOSE_SCAN_LIMIT. A backlog >
+ *   limit pages forward across runs (自然分页) — the cursor advances only to the last
+ *   event this run processed, NEVER to `now`.
+ * - 0 attempts (vacuum tail) → no-op, no LLM call, cursor unchanged (re-scanning the
+ *   empty tail next run is a cheap indexed 0-row lookup).
+ *
+ * RED LINE: the watermark advances iff runEdgeProposeAndWrite returns `ok === true`.
+ * `ok` is false ONLY when that pipeline SWALLOWED an error (its catch-all), so a
+ * 吞错夜 never advances — the batch is re-scanned next run. A successfully-processed
+ * batch advances even when it produced ZERO proposals (the gate is "batch processed",
+ * never "proposed > 0" — else a批次 the LLM keeps declining would be re-scanned forever).
  */
 export async function runKnowledgeEdgeProposeNightly(
   db: Db,
   deps: DepsOverride = {},
 ): Promise<NightlyResult> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const attempts = await getFailureAttempts(db, { since: cutoff, limit: 200 });
+  const scanLimit = deps.scanLimit ?? EDGE_PROPOSE_SCAN_LIMIT;
+  const cursor = await loadEdgeProposeWatermark(db);
+
+  const attempts = cursor
+    ? await getFailureAttempts(db, {
+        afterCreatedAt: cursor.last_processed_at,
+        afterEventId: cursor.last_processed_event_id,
+        order: 'asc',
+        limit: scanLimit,
+      })
+    : await getFailureAttempts(db, {
+        since: new Date(Date.now() - FIRST_RUN_FALLBACK_WINDOW_MS),
+        order: 'asc',
+        limit: scanLimit,
+      });
+
   if (attempts.length === 0) {
     return {
       proposed: 0,
@@ -98,7 +224,7 @@ export async function runKnowledgeEdgeProposeNightly(
   }
 
   const runTaskFn: RunTaskFn = deps.runTaskFn ?? defaultRunTaskFn;
-  const stats = await runEdgeProposeAndWrite({
+  const { ok, ...stats } = await runEdgeProposeAndWrite({
     db,
     recentFailures: attempts,
     runTaskFn,
@@ -110,6 +236,19 @@ export async function runKnowledgeEdgeProposeNightly(
     env: process.env,
     subjectProfile: await resolveDominantSubjectProfile(db, attempts),
   });
+
+  // RED LINE (YUK-583): advance the cursor ONLY inside the success path. `ok` is the
+  // success/failure discriminant on runEdgeProposeAndWrite's return — false ONLY when
+  // it swallowed an error. `attempts` is ASC, so its LAST element is the max
+  // (created_at, id) = the new keyset cursor. (attempts.length ≥ 1 here — the vacuum
+  // branch returned above.)
+  if (ok) {
+    const last = attempts[attempts.length - 1];
+    await writeEdgeProposeWatermark(db, {
+      last_processed_at: last.created_at,
+      last_processed_event_id: last.attempt_event_id,
+    });
+  }
 
   return { ...stats, attempts_considered: attempts.length };
 }

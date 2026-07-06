@@ -86,6 +86,14 @@ export interface RunEdgeProposeAndWriteParams {
 }
 
 export interface RunEdgeProposeAndWriteResult {
+  // YUK-583 — success/failure discriminant. `true` on EVERY genuine return
+  // (including the empty-tree no-op and a batch that yielded zero proposals);
+  // `false` ONLY when the catch-all below SWALLOWED an error. The nightly
+  // watermark advances iff `ok === true`, so a吞错夜 (swallowed LLM/DB failure)
+  // never advances the cursor — that is exactly the loss YUK-583 fixes. EMPTY_RESULT
+  // overloads "nothing to do" and "error swallowed" into the same zero-stats shape,
+  // so the counts alone cannot carry this bit; this flag is the disambiguator.
+  ok: boolean;
   proposed: number;
   skipped_self_loop: number;
   skipped_unknown_node: number;
@@ -113,6 +121,10 @@ export interface RunEdgeProposeAndWriteResult {
 }
 
 const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
+  // Base is the SUCCESS shape (ok: true) — it seeds `stats` for the live loop and
+  // is returned verbatim on the genuine tree-empty no-op. The catch-all path
+  // overrides `ok: false` explicitly (YUK-583).
+  ok: true,
   proposed: 0,
   skipped_self_loop: 0,
   skipped_unknown_node: 0,
@@ -636,7 +648,11 @@ export async function runEdgeProposeAndWrite(
       err instanceof Error ? err.message : String(err),
     );
     await writeRetryableAiFailureLedger(params.db, 'KnowledgeEdgeProposeTask');
-    return { ...EMPTY_RESULT };
+    // YUK-583 — ok: false marks a SWALLOWED error. The nightly must NOT advance
+    // the watermark on this path (advancing would drop the batch's events forever,
+    // reproducing the bug this issue fixes). Distinct from the tree-empty no-op
+    // (ok: true) which is safe to advance past.
+    return { ...EMPTY_RESULT, ok: false };
   }
 }
 

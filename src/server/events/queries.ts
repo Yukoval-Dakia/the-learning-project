@@ -36,7 +36,7 @@ import type { CauseCategoryT, CauseSchemaT, FsrsStateSchemaT } from '@/core/sche
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { computeAffectedScopes } from '@/server/memory/scope_tagger';
-import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   type CorrectionStatus,
   activeCorrectionStatus,
@@ -107,6 +107,19 @@ export interface GetFailureAttemptsOpts {
   // the partitioned slice is already bounded by `questionIds.length *
   // perQuestionLimit * 3`.
   perQuestionLimit?: number;
+  // YUK-583 — keyset cursor for the knowledge_edge_propose_nightly watermark
+  // 续扫. When BOTH are set, only attempts strictly AFTER (afterCreatedAt,
+  // afterEventId) in (created_at, id) order are returned; the id tie-break means
+  // a second attempt sharing the cursor's exact created_at is not lost. Pairs
+  // with `order: 'asc'` so the caller pages forward and advances the watermark to
+  // the last (max) row. Every legacy caller omits these → unchanged behaviour.
+  afterCreatedAt?: Date;
+  afterEventId?: string;
+  // YUK-583 — scan direction for the non-perQuestion path. Default 'desc'
+  // preserves the newest-first window every existing caller relies on; the
+  // watermark scan passes 'asc' so a backlog > limit pages oldest-first and the
+  // cursor advances only to the last event actually processed (never to `now`).
+  order?: 'asc' | 'desc';
 }
 
 const DEFAULT_FAILURE_ATTEMPTS_LIMIT = 100;
@@ -183,6 +196,18 @@ export async function getFailureAttempts(
   if (opts.since) {
     conditions.push(gte(event.created_at, opts.since));
   }
+  // YUK-583 — keyset cursor predicate: strict "(created_at, id) > (afterCreatedAt,
+  // afterEventId)" so the row at the exact cursor is excluded but a DIFFERENT row
+  // sharing the cursor's created_at (larger id) is still returned (no same-instant
+  // event loss). Lives in `conditions` so both the main query and the
+  // takeActiveRows offset loop share it. Only applied when BOTH cursor parts are set.
+  if (opts.afterCreatedAt !== undefined && opts.afterEventId !== undefined) {
+    const cursorPredicate = or(
+      gt(event.created_at, opts.afterCreatedAt),
+      and(eq(event.created_at, opts.afterCreatedAt), gt(event.id, opts.afterEventId)),
+    );
+    if (cursorPredicate) conditions.push(cursorPredicate);
+  }
   // YUK-76 codex P2 — secondary `desc(event.id)` makes the order
   // deterministic when two failure attempts share the same `created_at`.
   // Without it, callers like `/api/review/due`'s per-question cap pick a
@@ -232,11 +257,19 @@ export async function getFailureAttempts(
       .flat()
       .sort((a, b) => b.created_at.getTime() - a.created_at.getTime() || b.id.localeCompare(a.id));
   } else {
+    // YUK-583 — 'asc' (oldest first) for the watermark scan so a backlog > limit
+    // pages forward deterministically; default 'desc' keeps the legacy
+    // newest-first window for every other caller. Both the main query and the
+    // takeActiveRows offset loop must share the SAME order.
+    const orderBy =
+      (opts.order ?? 'desc') === 'asc'
+        ? [asc(event.created_at), asc(event.id)]
+        : [desc(event.created_at), desc(event.id)];
     const attemptQuery = db
       .select()
       .from(event)
       .where(and(...conditions))
-      .orderBy(desc(event.created_at), desc(event.id));
+      .orderBy(...orderBy);
     const attemptRows = unbounded ? await attemptQuery : await attemptQuery.limit(limit * 3);
 
     if (attemptRows.length === 0) return [];
@@ -248,7 +281,7 @@ export async function getFailureAttempts(
             .select()
             .from(event)
             .where(and(...conditions))
-            .orderBy(desc(event.created_at), desc(event.id))
+            .orderBy(...orderBy)
             .limit(nextLimit)
             .offset(offset),
         );
