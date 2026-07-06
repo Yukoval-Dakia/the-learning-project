@@ -43,6 +43,7 @@ export type VerifyCheck =
   | 'source_consistency' // the question matches its declared source (tier 2)
   | 'material_grounding' // the question actually probes its grounded material (tier 3)
   | 'kind_conformance' // the question looks like a real exam item of its kind (skill, slice 4)
+  | 'teaching_quality' // YUK-578: the question is clear, single-solution + (choice) has diagnostic distractors
   | 'dedup' // not a near-duplicate of an existing pool question
   | 'grounding' // tier-4 legacy: fact grounding vs self-reported source_refs
   | 'copy_safety' // tier-4 legacy: originality vs source snippets
@@ -60,10 +61,11 @@ export type VerifyCheck =
 //   tier 4 generated — purely generated; the existing grounding/copy_safety/
 //                      knowledge_hit checks (quiz_verify.ts §5) + solve-check.
 //
-// NOTE: this slice DECLARED the config + shipped solve-check. kind_conformance (YUK-225) and
-// solve_check (YUK-538 / YUK-554) are now BOTH consumed by the live tier3/4 handler
-// (quiz_verify.ts); tier2's set is consumed by source_verify.ts. Every check named in a tier's
-// set now has a live consumer — CHECK_SETS_BY_TIER is the single source of truth the handlers read.
+// NOTE: this slice DECLARED the config + shipped solve-check. kind_conformance (YUK-225),
+// solve_check (YUK-538 / YUK-554) and teaching_quality (YUK-578 入池前审题闸) are all consumed by
+// the live tier3/4 handler (quiz_verify.ts); tier2's set is consumed by source_verify.ts. Every
+// check named in a tier's set has a live consumer — CHECK_SETS_BY_TIER is the single source of
+// truth the handlers read.
 export const CHECK_SETS_BY_TIER: Record<SourceTier, readonly VerifyCheck[]> = {
   1: ['structure_completeness', 'knowledge_hit'],
   2: ['structure_completeness', 'source_consistency', 'solve_check', 'dedup'],
@@ -72,6 +74,7 @@ export const CHECK_SETS_BY_TIER: Record<SourceTier, readonly VerifyCheck[]> = {
     'material_grounding',
     'solve_check',
     'kind_conformance',
+    'teaching_quality',
     'knowledge_hit',
   ],
   4: [
@@ -81,6 +84,7 @@ export const CHECK_SETS_BY_TIER: Record<SourceTier, readonly VerifyCheck[]> = {
     'knowledge_hit',
     'kind_conformance',
     'solve_check',
+    'teaching_quality',
   ],
 };
 
@@ -534,6 +538,247 @@ export async function runSolveCheck(
       ? `SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`
       : `SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`,
     compared_by: 'semantic',
+    ...runProvenance(),
+  };
+}
+
+// ---------- teaching-quality check (YUK-578 入池前审题闸) ----------
+//
+// 现有 verify 轴（grounding / copy_safety / knowledge_hit / kind_conformance + solve_check）
+// 只保「题对不对、有没有抄、能不能解」，不保「问得清不清」。歧义题比事实错更隐蔽地污染 θ̂ 信号，
+// 冷启期尤其值——第一批题就干净，θ̂ 从 day-one 就不被坏题带偏。这是照 solve_check（YUK-538/554）的
+// 落地路径后加的又一个 tier3/4 独立检查：一次独立 LLM 调用（TeachingQualityTask，与自复核
+// QuizVerifyTask 不同 task/prompt 维度），judge 纯只读题面数据（prompt_md / reference_md /
+// rubric_json / choices），零运行数据前置。
+//
+// 三个检查轴（issue scope）：
+//   1. 题干清晰度（clarity）：题干是否无歧义、可被唯一理解。
+//   2. 唯一正解性（unique_answer）：是否只有一个正确答案；rubric 有容错声明（等价答案 / 容差）
+//      的算满足——判据交给 judge，rubric_json 随 input 喂进去让它 CAN honor it。
+//   3. 干扰项诊断力（distractor_power）：仅选择题；干扰项是否指向真实误区、有区分度。非选择题
+//      SKIP 该轴（code-side determinism：由 choices 是否非空决定，不信 LLM 的自报）。
+//
+// 边界（issue 攻击轮加固）：本单只对干扰项做「泛化评估」——「误区人格判别力轴」（misconception
+// typed_state 做 grounded persona）是独立 follow-up，NOT 本单。confident-fail 处置：只翻
+// draft_status 留 draft + 记 needs_review 理由，绝不 promote（quiz_verify.ts 既有 verify-then-
+// promote 骨架的 else 分支，不碰 draft_status）。
+//
+// PROMPT-CHANGE DISCIPLINE（校准纪律，对齐 YUK-573）：TeachingQualityTask 的 prompt（registry.ts）
+// 与本 parser + 决策映射由 verify-framework.test.ts 的 mini golden set 钉死（清晰好题 pass / 歧义题干
+// fail / 第二说得通答案 fail / 干扰项无诊断力 flag / 非选择题跳过干扰项轴 / rubric 容错声明满足唯一解 /
+// parse 失败 → unsupported 不阻促进）。**改 prompt 或本输出契约（tests/helpers/teaching-quality-
+// fixtures.ts）必须先过这组 fixture。**
+
+// Loose run seam (mirrors SolveCheckRunTaskFn): the check consumes { text } from the runner,
+// plus OPTIONAL task_run_id / cost_usd when the runner reports them (production TaskTextResult
+// does; { text }-only test mocks still satisfy the type).
+export type TeachingQualityRunTaskFn = (
+  kind: string,
+  input: unknown,
+  ctx: unknown,
+) => Promise<{ text: string; task_run_id?: string; cost_usd?: number }>;
+
+// The minimal read-only question shape the check needs — pure 题面数据, zero runtime data.
+export interface TeachingQualityQuestion {
+  id: string;
+  kind: string;
+  prompt_md: string;
+  reference_md: string | null;
+  choices_md: string[] | null;
+  rubric_json: unknown;
+}
+
+export interface TeachingQualityOptions {
+  runTaskFn: TeachingQualityRunTaskFn;
+  // the resolved subject profile, forwarded to the judge for subject voice/context.
+  profile: {
+    id: string;
+    // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
+    full: any;
+  };
+}
+
+// Per-axis verdict. clarity / unique_answer are always evaluated; distractor_power is
+// 'skipped' for non-choice questions (or when the choice-question judge omits it).
+export type TeachingQualityAxisVerdict = 'pass' | 'fail' | 'skipped';
+
+export interface TeachingQualityAxis {
+  verdict: TeachingQualityAxisVerdict;
+  reason: string;
+}
+
+// Overall verdict: 'fail' if ANY in-scope axis failed; 'pass' if all in-scope axes passed;
+// 'unsupported' when the judge produced no trustworthy signal (parse error / missing mandatory
+// axis) — conservative, never blocks (R2, mirrors solve-check).
+export type TeachingQualityVerdict = 'pass' | 'fail' | 'unsupported';
+
+export interface TeachingQualityResult {
+  verdict: TeachingQualityVerdict;
+  clarity: TeachingQualityAxis;
+  unique_answer: TeachingQualityAxis;
+  distractor_power: TeachingQualityAxis;
+  reason: string;
+  // provenance/cost of the single LLM call, when the runner reported them.
+  task_run_ids?: string[];
+  cost_usd?: number;
+}
+
+// YUK-578 — per-axis veto switches (mirrors SOLVE_CHECK_TIER34_VETO). All three axes veto a
+// fail by default. Split BY AXIS so the owner can later downgrade the generalized
+// distractor_power axis to report-only (distractor_power:false) WITHOUT losing the
+// clarity/unique-answer gate — the same switchability hedge solve_check carries for its
+// semantic/normalize split. Compile-time consts (flipping one needs a source edit + esbuild
+// rebundle + worker redeploy, NOT a runtime toggle); the pure-function seam
+// teachingQualityBlocks() below lets tests exercise flag-off without vi.doMock.
+export const TEACHING_QUALITY_TIER34_VETO = {
+  clarity: true,
+  unique_answer: true,
+  distractor_power: true,
+} as const;
+
+// Pure-function veto decision (test seam): given a TeachingQualityResult + the per-axis flags,
+// answer "does this block promotion?". Only an overall 'fail' can block; then the specific
+// failing axis's flag decides. 'unsupported'/'pass' NEVER block (R2 conservative — a judge that
+// produced no signal, or that approved, must not hold a good question for review).
+export function teachingQualityBlocks(
+  result: TeachingQualityResult,
+  flags: {
+    clarity: boolean;
+    unique_answer: boolean;
+    distractor_power: boolean;
+  } = TEACHING_QUALITY_TIER34_VETO,
+): boolean {
+  if (result.verdict !== 'fail') return false;
+  if (result.clarity.verdict === 'fail' && flags.clarity) return true;
+  if (result.unique_answer.verdict === 'fail' && flags.unique_answer) return true;
+  if (result.distractor_power.verdict === 'fail' && flags.distractor_power) return true;
+  return false;
+}
+
+// Parse one axis object { verdict, reason } from the raw judge output. Returns null when the
+// verdict is absent/invalid (so a missing mandatory axis surfaces as 'unsupported' overall
+// rather than a fabricated verdict).
+function readTeachingAxis(raw: unknown): TeachingQualityAxis | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const verdict = obj.verdict;
+  if (verdict !== 'pass' && verdict !== 'fail') return null;
+  const reason = typeof obj.reason === 'string' ? obj.reason : '';
+  return { verdict, reason };
+}
+
+/**
+ * Teaching-quality审题闸: a separate judge (TeachingQualityTask) reads ONLY the question面
+ * data and scores three pedagogical axes — 题干清晰度 / 唯一正解性 / 干扰项诊断力(仅选择题).
+ *
+ * CONSERVATIVE by design (R2, mirrors solve-check): the goal is to catch ambiguous / multi-answer
+ * / no-diagnostic questions BEFORE they enter the θ̂ signal source, WITHOUT killing good ones the
+ * judge merely failed to parse. So:
+ *   - task throws / unparseable / missing a mandatory axis  → 'unsupported' (NOT fail — no signal)
+ *   - any in-scope axis 'fail'                              → overall 'fail' (blocks via veto)
+ *   - all in-scope axes 'pass'                              → overall 'pass'
+ * distractor_power is code-side gated to choice questions (choices非空); non-choice → 'skipped'.
+ */
+export async function runTeachingQualityCheck(
+  question: TeachingQualityQuestion,
+  opts: TeachingQualityOptions,
+): Promise<TeachingQualityResult> {
+  const isChoice = (question.choices_md ?? []).length > 0;
+
+  const taskRunIds: string[] = [];
+  let costUsd: number | undefined;
+  const recordRun = (r: { task_run_id?: string; cost_usd?: number }): void => {
+    if (typeof r.task_run_id === 'string' && r.task_run_id.length > 0)
+      taskRunIds.push(r.task_run_id);
+    if (typeof r.cost_usd === 'number' && Number.isFinite(r.cost_usd)) {
+      costUsd = (costUsd ?? 0) + r.cost_usd;
+    }
+  };
+  const runProvenance = (): Pick<TeachingQualityResult, 'task_run_ids' | 'cost_usd'> => ({
+    ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
+    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+  });
+
+  const skipped = (verdict: TeachingQualityVerdict, reason: string): TeachingQualityResult => ({
+    verdict,
+    clarity: { verdict: 'skipped', reason },
+    unique_answer: { verdict: 'skipped', reason },
+    distractor_power: { verdict: 'skipped', reason },
+    reason,
+    ...runProvenance(),
+  });
+
+  let parsed: unknown;
+  try {
+    const input = {
+      prompt_md: question.prompt_md,
+      kind: question.kind,
+      reference_md: question.reference_md,
+      // Choice options live in a separate column — pass them explicitly so the distractor
+      // axis has the actual options to reason about.
+      choices_md: question.choices_md ?? [],
+      // rubric_json carries any容错声明 (answer_equivalents / tolerance); the judge reads it to
+      // decide whether the unique-answer axis is satisfied ("rubric 有容错声明的算满足").
+      rubric_json: question.rubric_json ?? null,
+      // code-side ground truth for the distractor axis (do NOT trust the LLM to self-classify).
+      is_choice: isChoice,
+    };
+    const ctx = { subjectProfile: opts.profile.full };
+    const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
+    recordRun(run);
+    parsed = extractJsonObject(run.text);
+  } catch (err) {
+    return skipped(
+      'unsupported',
+      `teaching-quality judge did not produce usable output: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return skipped('unsupported', 'teaching-quality output was not a JSON object');
+  }
+  const obj = parsed as Record<string, unknown>;
+  const clarity = readTeachingAxis(obj.clarity);
+  const uniqueAnswer = readTeachingAxis(obj.unique_answer);
+  if (!clarity || !uniqueAnswer) {
+    // A missing mandatory axis means the output is untrustworthy — no signal, do not block.
+    return skipped(
+      'unsupported',
+      'teaching-quality output missing a mandatory axis (clarity / unique_answer)',
+    );
+  }
+
+  // distractor_power: choice questions only. Non-choice → skipped (never contributes to fail);
+  // a choice question whose judge omitted the verdict is also skipped (do not fabricate a fail).
+  let distractor: TeachingQualityAxis;
+  if (isChoice) {
+    distractor = readTeachingAxis(obj.distractor_power) ?? {
+      verdict: 'skipped',
+      reason: 'distractor_power verdict absent from choice-question judge output',
+    };
+  } else {
+    distractor = {
+      verdict: 'skipped',
+      reason: 'non-choice question — distractor diagnostic-power axis skipped',
+    };
+  }
+
+  const failingAxes: string[] = [];
+  if (clarity.verdict === 'fail') failingAxes.push('clarity');
+  if (uniqueAnswer.verdict === 'fail') failingAxes.push('unique_answer');
+  if (distractor.verdict === 'fail') failingAxes.push('distractor_power');
+  const verdict: TeachingQualityVerdict = failingAxes.length > 0 ? 'fail' : 'pass';
+  const reason =
+    failingAxes.length > 0
+      ? `teaching-quality fail on: ${failingAxes.join(', ')}`
+      : 'teaching-quality pass on all in-scope axes';
+
+  return {
+    verdict,
+    clarity,
+    unique_answer: uniqueAnswer,
+    distractor_power: distractor,
+    reason,
     ...runProvenance(),
   };
 }

@@ -4,16 +4,22 @@ import {
   semanticJudgeOutput as semanticOutput,
   solverOutput,
 } from '../../../tests/helpers/solve-check-fixtures';
+import { teachingQualityOutput } from '../../../tests/helpers/teaching-quality-fixtures';
 import {
   CHECK_SETS_BY_TIER,
   SOLVE_CHECK_SEMANTIC_THRESHOLD,
   SOLVE_CHECK_TIER34_VETO,
   type SolveCheckQuestion,
   type SolveCheckResult,
+  TEACHING_QUALITY_TIER34_VETO,
+  type TeachingQualityQuestion,
+  type TeachingQualityResult,
   checksForTier,
   normalizeAnswer,
   runSolveCheck,
+  runTeachingQualityCheck,
   solveCheckBlocks,
+  teachingQualityBlocks,
 } from './verify-framework';
 
 // ---------- tier → check-set config ----------
@@ -30,13 +36,18 @@ describe('CHECK_SETS_BY_TIER / checksForTier', () => {
     );
   });
 
-  it('tier 3 material requires material_grounding + solve_check + kind_conformance', () => {
+  it('tier 3 material requires material_grounding + solve_check + kind_conformance + teaching_quality', () => {
     expect(checksForTier(3)).toEqual(
-      expect.arrayContaining(['material_grounding', 'solve_check', 'kind_conformance']),
+      expect.arrayContaining([
+        'material_grounding',
+        'solve_check',
+        'kind_conformance',
+        'teaching_quality',
+      ]),
     );
   });
 
-  it('tier 4 generated keeps legacy checks and adds kind_conformance + solve_check', () => {
+  it('tier 4 generated keeps legacy checks and adds kind_conformance + solve_check + teaching_quality', () => {
     expect(checksForTier(4)).toEqual(
       expect.arrayContaining([
         'grounding',
@@ -44,8 +55,14 @@ describe('CHECK_SETS_BY_TIER / checksForTier', () => {
         'knowledge_hit',
         'kind_conformance',
         'solve_check',
+        'teaching_quality',
       ]),
     );
+  });
+
+  it('tier 1/2 do NOT carry teaching_quality (入池前审题闸 is tier3/4 only)', () => {
+    expect(checksForTier(1)).not.toContain('teaching_quality');
+    expect(checksForTier(2)).not.toContain('teaching_quality');
   });
 
   it('every tier includes structure_completeness', () => {
@@ -490,5 +507,248 @@ describe('runSolveCheck — open path (SemanticJudge, conservative)', () => {
     const result = await runSolveCheck(openQuestion, { runTaskFn, profile: fakeProfile });
     expect(result.verdict).toBe('unsupported');
     expect(result.compared_by).toBe('none');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-578 — teaching_quality VerifyCheck (入池前审题闸)
+//
+// MINI GOLDEN SET (校准纪律, aligns with YUK-573): these fixtures pin the parser +
+// decision mapping for the three teaching-quality axes — 题干清晰度 / 唯一正解性 /
+// 干扰项诊断力(仅选择题). Any change to the TeachingQualityTask prompt (registry.ts) or
+// this output contract (tests/helpers/teaching-quality-fixtures.ts) MUST be re-validated
+// against this set before shipping. mocked-LLM output drives parser + verdict + veto.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const choiceQuestionTQ: TeachingQualityQuestion = {
+  id: 'tq_choice',
+  kind: 'choice',
+  prompt_md: '「学而时习之」中「之」的词性是？',
+  reference_md: '代词',
+  choices_md: ['代词', '助词', '动词', '连词'],
+  rubric_json: null,
+};
+
+const openQuestionTQ: TeachingQualityQuestion = {
+  id: 'tq_open',
+  kind: 'short_answer',
+  prompt_md: '用你自己的话解释「之」作主谓间助词的作用。',
+  reference_md: '「之」用在主谓之间，取消句子独立性。',
+  choices_md: null,
+  rubric_json: { required_points: ['取消句子独立性'] },
+};
+
+describe('teachingQualityBlocks (tier3/4 per-axis veto seam)', () => {
+  const result = (axes: {
+    clarity?: 'pass' | 'fail';
+    unique?: 'pass' | 'fail';
+    distractor?: 'pass' | 'fail' | 'skipped';
+  }): TeachingQualityResult => {
+    const clarity = axes.clarity ?? 'pass';
+    const unique = axes.unique ?? 'pass';
+    const distractor = axes.distractor ?? 'skipped';
+    const anyFail = clarity === 'fail' || unique === 'fail' || distractor === 'fail';
+    return {
+      verdict: anyFail ? 'fail' : 'pass',
+      clarity: { verdict: clarity, reason: 'c' },
+      unique_answer: { verdict: unique, reason: 'u' },
+      distractor_power: { verdict: distractor, reason: 'd' },
+      reason: 'r',
+    };
+  };
+
+  it('defaults to TEACHING_QUALITY_TIER34_VETO (all three axes veto a fail)', () => {
+    expect(TEACHING_QUALITY_TIER34_VETO.clarity).toBe(true);
+    expect(TEACHING_QUALITY_TIER34_VETO.unique_answer).toBe(true);
+    expect(TEACHING_QUALITY_TIER34_VETO.distractor_power).toBe(true);
+    expect(teachingQualityBlocks(result({ clarity: 'fail' }))).toBe(true);
+    expect(teachingQualityBlocks(result({ unique: 'fail' }))).toBe(true);
+    expect(teachingQualityBlocks(result({ distractor: 'fail' }))).toBe(true);
+  });
+
+  it('never blocks on a non-fail overall verdict (R2 conservative)', () => {
+    expect(teachingQualityBlocks(result({}))).toBe(false); // all pass
+    const unsupported: TeachingQualityResult = {
+      verdict: 'unsupported',
+      clarity: { verdict: 'skipped', reason: 'c' },
+      unique_answer: { verdict: 'skipped', reason: 'u' },
+      distractor_power: { verdict: 'skipped', reason: 'd' },
+      reason: 'no signal',
+    };
+    expect(teachingQualityBlocks(unsupported)).toBe(false);
+  });
+
+  it('flag-off retreat: distractor_power:false lets a distractor fail through, keeping clarity/unique veto', () => {
+    const flags = { clarity: true, unique_answer: true, distractor_power: false };
+    // owner may downgrade the generalized distractor axis to report-only WITHOUT losing
+    // the clarity/unique-answer gate (mirrors solve_check's per-axis switchability).
+    expect(teachingQualityBlocks(result({ distractor: 'fail' }), flags)).toBe(false);
+    expect(teachingQualityBlocks(result({ clarity: 'fail' }), flags)).toBe(true);
+    expect(teachingQualityBlocks(result({ unique: 'fail' }), flags)).toBe(true);
+  });
+
+  it('clarity:false disables ONLY the clarity veto; other axes still block', () => {
+    const flags = { clarity: false, unique_answer: true, distractor_power: true };
+    expect(teachingQualityBlocks(result({ clarity: 'fail' }), flags)).toBe(false);
+    expect(teachingQualityBlocks(result({ unique: 'fail' }), flags)).toBe(true);
+  });
+});
+
+describe('runTeachingQualityCheck — mini golden set (parser + decision mapping)', () => {
+  it('clear good question (all axes pass) → verdict pass', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: teachingQualityOutput({}) }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('pass');
+    expect(result.clarity.verdict).toBe('pass');
+    expect(result.unique_answer.verdict).toBe('pass');
+    expect(result.distractor_power.verdict).toBe('pass');
+    expect(teachingQualityBlocks(result)).toBe(false);
+    expect(runTaskFn).toHaveBeenCalledWith(
+      'TeachingQualityTask',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('ambiguous stem (clarity fail) → verdict fail, blocks promotion', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: teachingQualityOutput({ clarity: 'fail' }) }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('fail');
+    expect(result.clarity.verdict).toBe('fail');
+    expect(teachingQualityBlocks(result)).toBe(true);
+  });
+
+  it('a second plausible answer (unique_answer fail) → verdict fail, blocks promotion', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: teachingQualityOutput({ uniqueAnswer: 'fail' }),
+    }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('fail');
+    expect(result.unique_answer.verdict).toBe('fail');
+    expect(teachingQualityBlocks(result)).toBe(true);
+  });
+
+  it('choice question with no-diagnostic-power distractors (distractor fail) → verdict fail, flagged', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: teachingQualityOutput({ distractorPower: 'fail' }),
+    }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('fail');
+    expect(result.distractor_power.verdict).toBe('fail');
+    expect(teachingQualityBlocks(result)).toBe(true);
+  });
+
+  it('non-choice question SKIPS the distractor axis (code-side, even if the LLM emits a distractor fail)', async () => {
+    // The LLM erroneously returns a distractor fail, but the question has no choices → the
+    // code forces distractor_power to skipped, so it never contributes to the verdict.
+    const runTaskFn = vi.fn(async () => ({
+      text: teachingQualityOutput({ distractorPower: 'fail' }),
+    }));
+    const result = await runTeachingQualityCheck(openQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.distractor_power.verdict).toBe('skipped');
+    expect(result.verdict).toBe('pass');
+    expect(teachingQualityBlocks(result)).toBe(false);
+  });
+
+  it('rubric tolerance declaration satisfies unique-answer (rubric threaded to the judge input)', async () => {
+    const withTolerance: TeachingQualityQuestion = {
+      ...openQuestionTQ,
+      rubric_json: {
+        required_points: ['取消句子独立性'],
+        answer_equivalents: ['取独', '取消独立性'],
+        tolerance_note: '任一等价表述均视为正解',
+      },
+    };
+    // The judge sees the tolerance declaration and returns unique_answer=pass.
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: teachingQualityOutput({ uniqueAnswer: 'pass' }),
+    }));
+    const result = await runTeachingQualityCheck(withTolerance, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('pass');
+    expect(result.unique_answer.verdict).toBe('pass');
+    // the rubric (carrying the tolerance declaration) must reach the judge so it CAN honor it.
+    const input = runTaskFn.mock.calls[0][1] as Record<string, unknown>;
+    expect(input.rubric_json).toMatchObject({ tolerance_note: '任一等价表述均视为正解' });
+  });
+
+  it('choice question with an ABSENT distractor verdict → distractor skipped (non-blocking)', async () => {
+    // choice question, but the LLM omitted distractor_power → do not fabricate a fail.
+    const runTaskFn = vi.fn(async () => ({
+      text: teachingQualityOutput({ distractorPower: null }),
+    }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.distractor_power.verdict).toBe('skipped');
+    expect(result.verdict).toBe('pass');
+  });
+});
+
+describe('runTeachingQualityCheck — conservative non-blocking behaviour (R2)', () => {
+  it('returns unsupported (NOT fail) when the task throws', async () => {
+    const runTaskFn = vi.fn(async () => {
+      throw new Error('teaching-quality outage');
+    });
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('unsupported');
+    expect(teachingQualityBlocks(result)).toBe(false);
+  });
+
+  it('returns unsupported when the output has no JSON object', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: 'no json here' }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('unsupported');
+  });
+
+  it('returns unsupported when a mandatory axis (clarity/unique_answer) is missing', async () => {
+    // A malformed output missing clarity → no trustworthy signal → unsupported, non-blocking.
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({ unique_answer: { verdict: 'pass' }, summary: 's' }),
+    }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.verdict).toBe('unsupported');
+    expect(teachingQualityBlocks(result)).toBe(false);
+  });
+
+  it('captures task_run_id + cost_usd when the runner reports them', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: teachingQualityOutput({}),
+      task_run_id: 'tr_tq',
+      cost_usd: 0.004,
+    }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+    });
+    expect(result.task_run_ids).toEqual(['tr_tq']);
+    expect(result.cost_usd).toBeCloseTo(0.004);
   });
 });

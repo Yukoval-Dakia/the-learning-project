@@ -1013,6 +1013,11 @@ export function getTaskSystemPrompt(
     // YUK-538 — ClaimGroupingTask is subject-NEUTRAL: structural grouping task whose
     // prompt is entirely generic (no subject voice). Joins the pass-through group.
     case 'ClaimGroupingTask':
+    // YUK-578 — TeachingQualityTask (入池前审题闸) is subject-NEUTRAL: it judges generic
+    // pedagogical form (clarity / unique-answer / distractor power), and the question rides
+    // in the input, not the prompt voice. Joins the pass-through group (registry-inline
+    // systemPrompt IS the runtime SoT) — no buildTeachingQualityPrompt builder.
+    case 'TeachingQualityTask':
     case 'MindModelInductionTask':
       return tasks[task].systemPrompt;
     default:

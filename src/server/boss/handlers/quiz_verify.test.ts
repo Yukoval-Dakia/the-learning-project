@@ -18,6 +18,7 @@ import type { QuizGenMetadataT } from '@/core/schema/quiz_gen';
 import { event, knowledge, material_fsrs_state, question, source_document } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';
+import { teachingQualityOutput } from '../../../../tests/helpers/teaching-quality-fixtures';
 import {
   COPY_SAFETY_TOO_CLOSE_THRESHOLD,
   buildQuizVerifyHandler,
@@ -54,6 +55,10 @@ function verifyOutput(opts: {
 // parses the verify JSON → empty final_answer → solve 'unsupported' → non-blocking).
 // solverOutput / semanticJudgeOutput come from tests/helpers/solve-check-fixtures (R1/R2 —
 // shared with verify-framework.test.ts).
+// YUK-578 — teaching_quality (TeachingQualityTask) is a further tier3/4 probe gated on the SAME
+// freeChecksPass. Plain tests leave it unmatched → it too gets `defaultText` (the verify JSON),
+// which lacks the clarity/unique_answer axes → teaching 'unsupported' → non-blocking. Tests that
+// control the审题闸 outcome pass a { TeachingQualityTask: teachingQualityOutput(...) } override.
 function taskMock(
   defaultText: string,
   overrides: Partial<Record<string, string>> = {},
@@ -268,12 +273,15 @@ describe('runQuizVerify', () => {
     const result = await runQuizVerify({ db: testDb(), questionId: 'q1', runTaskFn });
 
     expect(result.status).toBe('verified');
-    // YUK-538 / YUK-554 — a tier4 all-pass row now fires verify + an independent solve
-    // (SolutionGenerateTask). The single-value mock returns the verify JSON for the solver
-    // too → empty final_answer → solve_check 'unsupported' → non-blocking (promote stands).
-    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    // YUK-538 / YUK-554 — a tier4 all-pass row fires verify + an independent solve
+    // (SolutionGenerateTask). YUK-578 — plus the teaching_quality审题闸 (TeachingQualityTask),
+    // a peer probe on the same freeChecksPass. The single-value mock returns the verify JSON for
+    // both extra legs → solve empty final_answer → 'unsupported'; teaching missing axes →
+    // 'unsupported'; both non-blocking (promote stands). verify + solve + teaching = 3 calls.
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
     expect(runTaskFn.mock.calls[0][0]).toBe('QuizVerifyTask');
     expect(runTaskFn.mock.calls[1][0]).toBe('SolutionGenerateTask');
+    expect(runTaskFn.mock.calls[2][0]).toBe('TeachingQualityTask');
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'q1'));
     expect(rows[0].draft_status).toBe('active');
@@ -431,8 +439,8 @@ describe('runQuizVerify', () => {
 
     const second = await runQuizVerify({ db: testDb(), questionId: 'q5', runTaskFn });
     expect(second.status).toBe('skipped:already_verified');
-    // LLM only ran on the first pass (verify + solve = 2); the second run skips.
-    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    // LLM only ran on the first pass (verify + solve + teaching = 3); the second run skips.
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
     // exactly one verify event, one fsrs row.
     expect(await countVerifyEvents('q5')).toBe(1);
     expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
@@ -448,12 +456,14 @@ describe('runQuizVerify', () => {
     // B-obs-1 (review) — every call explicitly mocked: 1st run rejects at QuizVerifyTask
     // (never reaches solve); 2nd run fires verify (2nd mock) + solve (3rd mock, EXPLICIT
     // empty final_answer → the documented 'solver returned an empty final_answer'
-    // unsupported path → non-blocking). No reliance on vi.fn's undefined default.
+    // unsupported path → non-blocking) + teaching (4th mock, YUK-578 — explicit pass →
+    // non-blocking). No reliance on vi.fn's undefined default.
     const runTaskFn = vi
       .fn()
       .mockRejectedValueOnce(new Error('transient boom'))
       .mockResolvedValueOnce({ text: verifyOutput({ overall: 'pass' }), task_run_id: 'tr_retry' })
-      .mockResolvedValueOnce({ text: solverOutput(''), task_run_id: 'tr_retry_solve' });
+      .mockResolvedValueOnce({ text: solverOutput(''), task_run_id: 'tr_retry_solve' })
+      .mockResolvedValueOnce({ text: teachingQualityOutput({}), task_run_id: 'tr_retry_tq' });
 
     await expect(runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn })).rejects.toThrow(
       /transient boom/,
@@ -461,9 +471,10 @@ describe('runQuizVerify', () => {
 
     const second = await runQuizVerify({ db: testDb(), questionId: 'q5b', runTaskFn });
     expect(second.status).toBe('verified');
-    // 1st run = 1 call (rejected verify); 2nd run = verify + solve. Total = 3.
-    expect(runTaskFn).toHaveBeenCalledTimes(3);
+    // 1st run = 1 call (rejected verify); 2nd run = verify + solve + teaching. Total = 4.
+    expect(runTaskFn).toHaveBeenCalledTimes(4);
     expect(runTaskFn.mock.calls[2][0]).toBe('SolutionGenerateTask');
+    expect(runTaskFn.mock.calls[3][0]).toBe('TeachingQualityTask');
 
     const rows = await testDb().select().from(question).where(eq(question.id, 'q5b'));
     expect(rows[0].draft_status).toBe('active');
@@ -804,24 +815,133 @@ describe('runQuizVerify', () => {
     expect(payload.solve_check).toMatchObject({ verdict: 'unsupported', compared_by: 'none' });
   });
 
-  it('short-circuits solve (SolutionGenerateTask NOT called) when a free check already fails', async () => {
+  it('short-circuits solve + teaching (neither independent probe called) when a free check already fails', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({ id: 'qshort', knowledgeId: 'k1' });
-    // overall=pass but grounding=fail → checksPass false → freeChecksPass false → no solve.
+    // overall=pass but grounding=fail → checksPass false → freeChecksPass false → no solve,
+    // no teaching (both peer probes gate on freeChecksPass).
     const runTaskFn = taskMock(
       verifyOutput({ overall: 'pass', groundingVerdict: 'fail' }),
-      { SolutionGenerateTask: solverOutput('代词') },
+      {
+        SolutionGenerateTask: solverOutput('代词'),
+        TeachingQualityTask: teachingQualityOutput({ clarity: 'fail' }),
+      },
       'tr_short',
     );
 
     const result = await runQuizVerify({ db: testDb(), questionId: 'qshort', runTaskFn });
     expect(result.status).toBe('needs_review');
-    // The independent solver was never invoked (cost saved; solve only spends on all-else-pass).
+    // Neither independent probe was invoked (cost saved; both spend only on all-else-pass).
     expect(runTaskFn.mock.calls.every((c) => c[0] !== 'SolutionGenerateTask')).toBe(true);
+    expect(runTaskFn.mock.calls.every((c) => c[0] !== 'TeachingQualityTask')).toBe(true);
     expect(runTaskFn).toHaveBeenCalledTimes(1);
-    // No solve_check block on the event when solve did not run.
+    // No solve_check / teaching_quality block on the event when neither probe ran.
     const evs = await verifyEventsFor('qshort');
     expect((evs[0].payload as Record<string, unknown>).solve_check).toBeUndefined();
+    expect((evs[0].payload as Record<string, unknown>).teaching_quality).toBeUndefined();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // YUK-578 — teaching_quality VerifyCheck (入池前审题闸) wiring
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  it('teaching_quality pass + all else pass → promotes, records teaching_quality axis + payload', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'qtq_pass', knowledgeId: 'k1' });
+    // solve unsupported (default verify JSON for the solver) + teaching explicit pass → promote.
+    const runTaskFn = taskMock(
+      verifyOutput({ overall: 'pass' }),
+      { TeachingQualityTask: teachingQualityOutput({}) },
+      'tr_tqp',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qtq_pass', runTaskFn });
+    expect(result.status).toBe('verified');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qtq_pass'));
+    expect(rows[0].draft_status).toBe('active');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(1);
+
+    const evs = await verifyEventsFor('qtq_pass');
+    const payload = evs[0].payload as Record<string, unknown>;
+    expect(payload.teaching_quality).toMatchObject({
+      verdict: 'pass',
+      clarity: { verdict: 'pass' },
+      unique_answer: { verdict: 'pass' },
+    });
+    const axes = payload.axes as { axis_name: string; verdict: string }[];
+    expect(axes.find((a) => a.axis_name === 'teaching_quality')).toMatchObject({ verdict: 'pass' });
+  });
+
+  it('teaching_quality fail (ambiguous stem / clarity fail) → needs_review, stays draft, NO FSRS', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'qtq_fail', knowledgeId: 'k1' });
+    // model self-review says pass, but the审题闸 flags an ambiguous stem (clarity fail) →
+    // VETO promotion but record needs_review (hold for human review), NOT failed.
+    const runTaskFn = taskMock(
+      verifyOutput({ overall: 'pass' }),
+      { TeachingQualityTask: teachingQualityOutput({ clarity: 'fail' }) },
+      'tr_tqf',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qtq_fail', runTaskFn });
+    expect(result.status).toBe('needs_review');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qtq_fail'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+    // a draft that did NOT enter the pool leaves a coach-addressed pool-gap hint.
+    expect(await poolGapNotesForKnowledge('k1')).toBe(1);
+
+    const evs = await verifyEventsFor('qtq_fail');
+    expect(evs).toHaveLength(1);
+    expect(evs[0].outcome).toBe('partial');
+    const payload = evs[0].payload as Record<string, unknown>;
+    expect(payload.promoted).toBe(false);
+    expect(payload.teaching_quality).toMatchObject({
+      verdict: 'fail',
+      clarity: { verdict: 'fail' },
+    });
+    expect(typeof (payload.teaching_quality as Record<string, unknown>).reason).toBe('string');
+    const axes = payload.axes as { axis_name: string; verdict: string }[];
+    expect(axes.find((a) => a.axis_name === 'teaching_quality')).toMatchObject({ verdict: 'fail' });
+  });
+
+  it('teaching_quality fail (choice question, distractors lack diagnostic power) → needs_review', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({
+      id: 'qtq_choice',
+      knowledgeId: 'k1',
+      kind: 'choice',
+      judge: 'exact',
+      promptMd: '「之」在「学而时习之」中的词性是？',
+      referenceMd: '代词',
+      choicesMd: ['代词', '助词', '动词', '连词'],
+      rubricJson: { required_points: [] },
+    });
+    // solver agrees (代词) so solve passes; the审题闸 flags no-diagnostic distractors → veto.
+    const runTaskFn = taskMock(
+      verifyOutput({ overall: 'pass' }),
+      {
+        SolutionGenerateTask: solverOutput('代词'),
+        TeachingQualityTask: teachingQualityOutput({ distractorPower: 'fail' }),
+      },
+      'tr_tqc',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'qtq_choice', runTaskFn });
+    expect(result.status).toBe('needs_review');
+
+    const rows = await testDb().select().from(question).where(eq(question.id, 'qtq_choice'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k1')).toBe(0);
+
+    const evs = await verifyEventsFor('qtq_choice');
+    const payload = evs[0].payload as Record<string, unknown>;
+    expect(payload.teaching_quality).toMatchObject({
+      verdict: 'fail',
+      distractor_power: { verdict: 'fail' },
+    });
   });
 });
 
@@ -839,8 +959,8 @@ describe('buildQuizVerifyHandler', () => {
     const handler = buildQuizVerifyHandler(testDb(), { runTaskFn });
     await handler([{ id: 'j1', data: { question_ids: ['qa', 'qb'] } }] as never);
 
-    // YUK-538 / YUK-554 — two tier4 questions × (verify + solve) = 4 calls.
-    expect(runTaskFn).toHaveBeenCalledTimes(4);
+    // YUK-538 / YUK-554 / YUK-578 — two tier4 questions × (verify + solve + teaching) = 6 calls.
+    expect(runTaskFn).toHaveBeenCalledTimes(6);
     const qa = await testDb().select().from(question).where(eq(question.id, 'qa'));
     const qb = await testDb().select().from(question).where(eq(question.id, 'qb'));
     expect(qa[0].draft_status).toBe('active');
