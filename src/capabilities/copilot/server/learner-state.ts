@@ -1,0 +1,505 @@
+// YUK-574 — Copilot learner-state header (session-anchored, assemble-once).
+//
+// The Copilot free-form run input carries a learner-state HEADER: a deterministic
+// (no-LLM) code-read projection of the learner's current state — 今日 due count +
+// 活跃 goal + top-2 误区 + θ̂/mastery band 一行 + 昨夜交班一句话摘要. Depth is left
+// to the model's DomainTools; the header is only a 100–200 token teaser.
+//
+// OWNER HARD CONSTRAINT (never regress): NO per-turn 装配注入. The real cost of
+// re-projecting every turn = 注意力污染 + 天级数据被 turn 级重发. So the header is
+// ASSEMBLED ONCE per validity window and cached session-anchored; subsequent turns
+// reuse the cached bytes (they ride pinned in conversation_history, which is
+// re-sent in full anyway). Re-assembly happens ONLY on a cheap invalidation:
+// cross-day, a new attempt event, dreaming ran overnight, or a proposal decision
+// (accept/dismiss). The invalidation check is a cheap timestamp-comparison query.
+//
+// Facet A (YUK-174) migration: the per-turn `proposal_feedback` digest folds into
+// THIS session-anchored block under the SAME invalidation rules (proposal decision
+// events are its dedicated refresh trigger). Its in-context-learning semantics are
+// unchanged (same scoped cell shape) — only the injection CADENCE moves from
+// per-turn to session-anchored, which is byte-identical between proposal decisions.
+//
+// 防循环 red line (ADR-0039 / YUK-267): the header is a deterministic code read,
+// never orchestrator output, and its cache event is written with `ingest_at` set
+// so the mem0 outbox NEVER ingests it — the projection reads mem0-derived signals
+// (the memory brief), so ingesting the header back would be circular injection.
+
+import { createId } from '@paralleldrive/cuid2';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
+
+import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { A5_BANDS, masteryBandView } from '@/capabilities/knowledge/ui/mastery-band';
+import type { Db, Tx } from '@/db/client';
+import { event } from '@/db/schema';
+import {
+  LEARNER_STATE_HEADER_BUDGET,
+  type LearnerStateHeaderBudget,
+  PROPOSAL_FEEDBACK_BUDGET,
+} from '@/server/ai/tools/budgets';
+import { effectiveCauseCategoryForFailureAttempt } from '@/server/events/cause-policy';
+import {
+  type FailureAttempt,
+  type WriteEventInput,
+  getFailureAttempts,
+  writeEvent,
+} from '@/server/events/queries';
+import { type MasteryProjection, getMasteryProjection } from '@/server/mastery/state';
+import {
+  type ProposalFeedbackCell,
+  getProposalFeedbackDigest,
+} from '@/server/proposals/adaptive-bias';
+import { type CopilotSummary, loadCopilotSummary } from '@/server/today/copilot-summary';
+
+type DbLike = Db | Tx;
+
+// The session-anchored cache is persisted via the SAME ExperimentalEvent escape
+// hatch every other Copilot turn-state row uses (no new schema). turns.ts replay
+// only reads ask/chip/reply actions, so this action never pollutes the drawer.
+export const LEARNER_STATE_HEADER_ACTION = 'experimental:copilot_learner_state_header';
+
+// How many recent failure attempts to scan when ranking the top-2 误区. Bounded —
+// this only runs on (re)assembly, not per turn.
+const FAILURE_SCAN_LIMIT = 40;
+
+// ── Types ───────────────────────────────────────────────────────────────────
+
+/** The cheap invalidation watermarks (ISO strings, null when the category has no
+ *  events yet). Compared cached-vs-current to decide staleness. */
+export interface LearnerStateWatermarks {
+  /** Latest `attempt` event created_at. */
+  attempt_at: string | null;
+  /** Latest `experimental:dreaming_scan` (outcome='success') created_at. */
+  dreaming_at: string | null;
+  /** Latest `rate` event (proposal accept/dismiss decision) created_at. */
+  proposal_decision_at: string | null;
+}
+
+/** The already-scoped Facet A digest shape carried in the header block. */
+export type ScopedProposalFeedbackCell = Pick<
+  ProposalFeedbackCell,
+  'kind' | 'relation' | 'acceptance_rate' | 'top_dismiss_reasons' | 'top_rubric_gates'
+>;
+
+/** The deterministic projection inputs assembled from the read sources. */
+export interface LearnerStateProjection {
+  reviewDueCount: number;
+  activeGoalTitle: string | null;
+  topCauseCategories: string[];
+  masterySummary: string | null;
+  meanTheta: number | null;
+  overnightSentence: string | null;
+}
+
+/** The cached block (persisted in the header cache event payload). */
+export interface LearnerStateHeaderCache {
+  header_md: string;
+  proposal_feedback: ScopedProposalFeedbackCell[];
+  assembled_at: string;
+  day_bucket: string;
+  watermarks: LearnerStateWatermarks;
+}
+
+/** Persisted form: the cache + its owning conversation session id. */
+export type PersistedLearnerStateHeaderCache = LearnerStateHeaderCache & { session_id: string };
+
+/** What the resolver hands back to the run-input assembly. */
+export interface LearnerStateHeader {
+  header_md: string;
+  proposal_feedback: ScopedProposalFeedbackCell[];
+}
+
+// ── Pure helpers ─────────────────────────────────────────────────────────────
+
+/** UTC calendar-day bucket (YYYY-MM-DD) used for the cross-day invalidation. */
+export function dayBucket(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+// Is `current` strictly newer than `cached`? Null cached + non-null current =
+// newer (something appeared). A watermark going null→ (or set→null) never stales
+// (events do not vanish; a null current just means "no read" and is ignored).
+function watermarkAdvanced(cached: string | null, current: string | null): boolean {
+  if (current === null) return false;
+  if (cached === null) return true;
+  return current > cached;
+}
+
+/**
+ * Cheap invalidation predicate. The header is stale when the day rolled over OR
+ * any watermark advanced (new attempt / dreaming ran / proposal decision).
+ */
+export function isLearnerStateHeaderStale(
+  cached: { day_bucket: string; watermarks: LearnerStateWatermarks },
+  current: { day_bucket: string; watermarks: LearnerStateWatermarks },
+): boolean {
+  if (cached.day_bucket !== current.day_bucket) return true;
+  return (
+    watermarkAdvanced(cached.watermarks.attempt_at, current.watermarks.attempt_at) ||
+    watermarkAdvanced(cached.watermarks.dreaming_at, current.watermarks.dreaming_at) ||
+    watermarkAdvanced(
+      cached.watermarks.proposal_decision_at,
+      current.watermarks.proposal_decision_at,
+    )
+  );
+}
+
+/** First sentence (up to the first 。/！/？/newline) of a markdown blob, trimmed. */
+function firstSentence(md: string | null, maxLen: number): string | null {
+  if (!md) return null;
+  const flat = md.replace(/\s+/g, ' ').trim();
+  if (flat.length === 0) return null;
+  const cut = flat.search(/[。！？\n]/);
+  const sentence = cut >= 0 ? flat.slice(0, cut + 1) : flat;
+  return sentence.slice(0, maxLen).trim() || null;
+}
+
+/**
+ * Deterministic projection → header prose, hard-truncated to the size budget.
+ * The due line is always present; the goal / 误区 / mastery / 交班 lines render
+ * only when their data exists (cold start → a minimal, non-blank header).
+ */
+export function assembleLearnerStateHeaderMd(
+  p: LearnerStateProjection,
+  budget: LearnerStateHeaderBudget = LEARNER_STATE_HEADER_BUDGET,
+): string {
+  const lines: string[] = [`今日待复习 ${p.reviewDueCount} 项`];
+  if (p.activeGoalTitle) lines.push(`当前目标：${p.activeGoalTitle}`);
+  if (p.topCauseCategories.length > 0) {
+    lines.push(`近期高频误区：${p.topCauseCategories.slice(0, 2).join('、')}`);
+  }
+  if (p.masterySummary) {
+    const theta = p.meanTheta === null ? '' : `（θ̂≈${p.meanTheta.toFixed(1)}）`;
+    lines.push(`掌握度：${p.masterySummary}${theta}`);
+  }
+  if (p.overnightSentence) lines.push(`昨夜交班：${p.overnightSentence}`);
+  const md = lines.join('\n');
+  return md.length > budget.maxChars ? md.slice(0, budget.maxChars) : md;
+}
+
+// P5.4-L2 / YUK-174 (Facet A) — Copilot proposes ONLY knowledge_edge, so the
+// digest is edge-scoped: reason-bearing cells FIRST (they carry the failure mode
+// Copilot learns most from; the digest is sorted acceptance DESC so a naive
+// tail-drop would discard them), then the SERIALIZED field is truncated to the
+// whole-digest cap by dropping the least-actionable tail. Moved here from chat.ts
+// so the header assembly owns the migrated per-turn digest (folded into the same
+// session-anchored block).
+export function scopeCopilotProposalFeedback(
+  digest: ProposalFeedbackCell[],
+): ScopedProposalFeedbackCell[] {
+  const edgeCells = digest
+    .filter((cell) => cell.kind === 'knowledge_edge')
+    .map((cell) => ({
+      kind: cell.kind,
+      relation: cell.relation,
+      acceptance_rate: cell.acceptance_rate,
+      top_dismiss_reasons: cell.top_dismiss_reasons,
+      top_rubric_gates: cell.top_rubric_gates,
+    }));
+  const hasReasonContent = (c: (typeof edgeCells)[number]) =>
+    c.top_dismiss_reasons.length > 0 || c.top_rubric_gates.length > 0;
+  const ordered = [
+    ...edgeCells.filter(hasReasonContent),
+    ...edgeCells.filter((c) => !hasReasonContent(c)),
+  ];
+  const scoped = [...ordered];
+  while (
+    scoped.length > 0 &&
+    JSON.stringify(scoped).length > PROPOSAL_FEEDBACK_BUDGET.maxSerializedChars
+  ) {
+    scoped.pop();
+  }
+  return scoped;
+}
+
+// ── Projection reads (IO; only run on (re)assembly) ──────────────────────────
+
+function rankTopCauseCategories(failures: FailureAttempt[], n: number): string[] {
+  const counts = new Map<string, number>();
+  for (const fa of failures) {
+    const cause = effectiveCauseCategoryForFailureAttempt(fa);
+    if (!cause) continue;
+    counts.set(cause, (counts.get(cause) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, n)
+    .map(([cause]) => cause);
+}
+
+function summarizeMastery(proj: Map<string, MasteryProjection>): {
+  masterySummary: string | null;
+  meanTheta: number | null;
+} {
+  const bandCounts = [0, 0, 0, 0];
+  const thetas: number[] = [];
+  for (const entry of proj.values()) {
+    const view = masteryBandView(entry);
+    if (view.unknown) continue;
+    bandCounts[view.band] = (bandCounts[view.band] ?? 0) + 1;
+    thetas.push(entry.theta_hat);
+  }
+  if (thetas.length === 0) return { masterySummary: null, meanTheta: null };
+  // High → low band so the strongest mastery reads first.
+  const parts: string[] = [];
+  for (let b = A5_BANDS.length - 1; b >= 0; b -= 1) {
+    if ((bandCounts[b] ?? 0) > 0) parts.push(`${A5_BANDS[b]}${bandCounts[b]}`);
+  }
+  const meanTheta = thetas.reduce((s, t) => s + t, 0) / thetas.length;
+  return { masterySummary: parts.join(' '), meanTheta };
+}
+
+/** IO dependencies for the projection read (injected in tests). */
+export interface ReadProjectionDeps {
+  loadCopilotSummaryFn?: (db: DbLike) => Promise<CopilotSummary>;
+  listActiveGoalsFn?: (db: DbLike) => Promise<{ title: string; scope_knowledge_ids: string[] }[]>;
+  getFailureAttemptsFn?: (db: DbLike) => Promise<FailureAttempt[]>;
+  getMasteryProjectionFn?: (db: DbLike, ids: string[]) => Promise<Map<string, MasteryProjection>>;
+}
+
+export async function readLearnerStateProjection(
+  db: DbLike,
+  deps: ReadProjectionDeps = {},
+): Promise<LearnerStateProjection> {
+  const loadSummary = deps.loadCopilotSummaryFn ?? ((d: DbLike) => loadCopilotSummary(d));
+  const loadGoals = deps.listActiveGoalsFn ?? ((d: DbLike) => listActiveGoals(d));
+  const loadFailures =
+    deps.getFailureAttemptsFn ??
+    ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
+  const loadMastery =
+    deps.getMasteryProjectionFn ??
+    ((d: DbLike, ids: string[]) => getMasteryProjection(d as Db, ids));
+
+  const [summary, goals, failures] = await Promise.all([
+    loadSummary(db),
+    loadGoals(db),
+    loadFailures(db),
+  ]);
+  const activeGoal = goals[0] ?? null;
+  const topCauseCategories = rankTopCauseCategories(failures, 2);
+
+  const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
+  let masterySummary: string | null = null;
+  let meanTheta: number | null = null;
+  if (scopeKcs.length > 0) {
+    const proj = await loadMastery(db, scopeKcs);
+    ({ masterySummary, meanTheta } = summarizeMastery(proj));
+  }
+
+  // No dedicated YUK-520 "交班缕" read point exists yet; the global memory-brief
+  // gestalt (which dreaming/coach feed nightly) is the closest overnight digest.
+  // Gate on dreaming having run so the sentence reads as a genuine 交班. (Follow-up:
+  // a dedicated dreaming 交班 read point when YUK-520 lands one.)
+  const overnightSentence = summary.dreaming_last_run_at
+    ? firstSentence(summary.brief_global_md, 120)
+    : null;
+
+  return {
+    reviewDueCount: summary.review_due_count,
+    activeGoalTitle: activeGoal?.title ?? null,
+    topCauseCategories,
+    masterySummary,
+    meanTheta,
+    overnightSentence,
+  };
+}
+
+// ── Cache + watermark reads (IO) ─────────────────────────────────────────────
+
+/** One grouped MAX(created_at) query for the three invalidation categories. */
+export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
+  const rows = await db
+    .select({
+      action: event.action,
+      max_at: sql<Date>`max(${event.created_at})`,
+    })
+    .from(event)
+    .where(
+      or(
+        eq(event.action, 'attempt'),
+        and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
+        eq(event.action, 'rate'),
+      ),
+    )
+    .groupBy(event.action);
+  const byAction = new Map(rows.map((r) => [r.action, r.max_at]));
+  const iso = (action: string): string | null => {
+    const at = byAction.get(action);
+    return at ? new Date(at).toISOString() : null;
+  };
+  return {
+    attempt_at: iso('attempt'),
+    dreaming_at: iso('experimental:dreaming_scan'),
+    proposal_decision_at: iso('rate'),
+  };
+}
+
+function parseCache(payload: Record<string, unknown>): LearnerStateHeaderCache | null {
+  const headerMd = payload.header_md;
+  const dayBucketVal = payload.day_bucket;
+  const assembledAt = payload.assembled_at;
+  const wmRaw = payload.watermarks as Record<string, unknown> | undefined;
+  if (typeof headerMd !== 'string' || typeof dayBucketVal !== 'string') return null;
+  if (typeof assembledAt !== 'string' || !wmRaw || typeof wmRaw !== 'object') return null;
+  const wmField = (k: string): string | null =>
+    typeof wmRaw[k] === 'string' ? (wmRaw[k] as string) : null;
+  const pf = Array.isArray(payload.proposal_feedback)
+    ? (payload.proposal_feedback as ScopedProposalFeedbackCell[])
+    : [];
+  return {
+    header_md: headerMd,
+    proposal_feedback: pf,
+    assembled_at: assembledAt,
+    day_bucket: dayBucketVal,
+    watermarks: {
+      attempt_at: wmField('attempt_at'),
+      dreaming_at: wmField('dreaming_at'),
+      proposal_decision_at: wmField('proposal_decision_at'),
+    },
+  };
+}
+
+/** Latest header cache row for the session (newest wins); null when none. */
+export async function readLatestLearnerStateHeaderCache(
+  db: DbLike,
+  sessionId: string,
+): Promise<LearnerStateHeaderCache | null> {
+  const rows = await db
+    .select({ payload: event.payload, id: event.id, created_at: event.created_at })
+    .from(event)
+    .where(and(eq(event.session_id, sessionId), eq(event.action, LEARNER_STATE_HEADER_ACTION)))
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return parseCache((row.payload ?? {}) as Record<string, unknown>);
+}
+
+/** Persist a (re)assembled cache row. `ingest_at` opt-out keeps it out of mem0. */
+export async function writeLearnerStateHeaderCache(
+  db: DbLike,
+  cache: PersistedLearnerStateHeaderCache,
+  now: Date,
+  writeFn: (db: DbLike, input: WriteEventInput) => Promise<string> = writeEvent,
+): Promise<void> {
+  const id = `copilot_learner_state_${createId()}`;
+  await writeFn(db, {
+    id,
+    session_id: cache.session_id,
+    actor_kind: 'system',
+    actor_ref: 'system:copilot_learner_state',
+    action: LEARNER_STATE_HEADER_ACTION,
+    subject_kind: 'query',
+    subject_id: id,
+    outcome: null,
+    payload: {
+      session_id: cache.session_id,
+      header_md: cache.header_md,
+      proposal_feedback: cache.proposal_feedback,
+      assembled_at: cache.assembled_at,
+      day_bucket: cache.day_bucket,
+      watermarks: cache.watermarks,
+    },
+    // ADR-0039 / YUK-267 red line: opt out of the mem0 outbox — the header is a
+    // deterministic projection DERIVED FROM mem0 signals; ingesting it is circular.
+    ingest_at: now,
+    created_at: now,
+  });
+}
+
+// ── Resolver (orchestration; injectable sub-seams for unit tests) ────────────
+
+export interface ResolveLearnerStateHeaderDeps {
+  readCacheFn?: (db: DbLike, sessionId: string) => Promise<LearnerStateHeaderCache | null>;
+  readWatermarksFn?: (db: DbLike, now: Date) => Promise<LearnerStateWatermarks>;
+  readProjectionFn?: (db: DbLike, now: Date) => Promise<LearnerStateProjection>;
+  loadProposalFeedbackFn?: (db: DbLike) => Promise<ProposalFeedbackCell[]>;
+  writeCacheFn?: (db: DbLike, cache: PersistedLearnerStateHeaderCache) => Promise<void>;
+  now?: () => Date;
+}
+
+const EMPTY_HEADER: LearnerStateHeader = { header_md: '', proposal_feedback: [] };
+
+/**
+ * Resolve the session-anchored learner-state header: read the cache + current
+ * watermarks (cheap), reuse the cache when fresh (NO reassembly — the owner's
+ * hard constraint), else (re)assemble the projection + scoped digest, persist a
+ * new cache row, and return it. Additive-input red line: any read failure
+ * degrades to a stale cache (if any) or an empty header, never crashing the chat.
+ */
+export async function resolveLearnerStateHeader(
+  db: DbLike,
+  sessionId: string,
+  deps: ResolveLearnerStateHeaderDeps = {},
+): Promise<LearnerStateHeader> {
+  const now = deps.now?.() ?? new Date();
+  const readCache = deps.readCacheFn ?? readLatestLearnerStateHeaderCache;
+  const readWatermarks = deps.readWatermarksFn ?? ((d: DbLike) => readLearnerStateWatermarks(d));
+  const readProjection = deps.readProjectionFn ?? ((d: DbLike) => readLearnerStateProjection(d));
+  const loadFeedback =
+    deps.loadProposalFeedbackFn ??
+    ((d: DbLike) => getProposalFeedbackDigest(d, PROPOSAL_FEEDBACK_BUDGET));
+  const writeCache =
+    deps.writeCacheFn ??
+    ((d: DbLike, cache: PersistedLearnerStateHeaderCache) =>
+      writeLearnerStateHeaderCache(d, cache, now));
+
+  const dayBucketNow = dayBucket(now);
+  let cached: LearnerStateHeaderCache | null;
+  let currentWatermarks: LearnerStateWatermarks;
+  try {
+    [cached, currentWatermarks] = await Promise.all([
+      readCache(db, sessionId),
+      readWatermarks(db, now),
+    ]);
+  } catch (err) {
+    console.error('[resolveLearnerStateHeader] cache/watermark read failed; degrading to empty', {
+      session_id: sessionId,
+      err,
+    });
+    return EMPTY_HEADER;
+  }
+
+  if (
+    cached &&
+    !isLearnerStateHeaderStale(
+      { day_bucket: cached.day_bucket, watermarks: cached.watermarks },
+      { day_bucket: dayBucketNow, watermarks: currentWatermarks },
+    )
+  ) {
+    return { header_md: cached.header_md, proposal_feedback: cached.proposal_feedback };
+  }
+
+  try {
+    const [projection, rawFeedback] = await Promise.all([
+      readProjection(db, now),
+      loadFeedback(db),
+    ]);
+    const proposal_feedback = scopeCopilotProposalFeedback(rawFeedback);
+    const header_md = assembleLearnerStateHeaderMd(projection);
+    const persisted: PersistedLearnerStateHeaderCache = {
+      session_id: sessionId,
+      header_md,
+      proposal_feedback,
+      assembled_at: now.toISOString(),
+      day_bucket: dayBucketNow,
+      watermarks: currentWatermarks,
+    };
+    try {
+      await writeCache(db, persisted);
+    } catch (err) {
+      console.error('[resolveLearnerStateHeader] cache write failed; using fresh header anyway', {
+        session_id: sessionId,
+        err,
+      });
+    }
+    return { header_md, proposal_feedback };
+  } catch (err) {
+    console.error('[resolveLearnerStateHeader] assembly failed; degrading', {
+      session_id: sessionId,
+      err,
+    });
+    return cached
+      ? { header_md: cached.header_md, proposal_feedback: cached.proposal_feedback }
+      : EMPTY_HEADER;
+  }
+}
