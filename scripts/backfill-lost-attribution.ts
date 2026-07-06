@@ -37,9 +37,15 @@ const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Parse `--limit=<n>` / `--limit <n>`. A MISSING flag silently uses
- * {@link DEFAULT_LIMIT}; a PRESENT-but-invalid value (non-numeric or <= 0) is an
- * operator mistake, so it warns before falling back (OCR #2) rather than
- * silently degrading a production backfill.
+ * {@link DEFAULT_LIMIT}; a PRESENT-but-invalid value is an operator mistake, so
+ * it warns before falling back (OCR #2) rather than silently degrading a
+ * production backfill.
+ *
+ * Round-2 OCR: `Number(raw)` accepted non-decimal forms a CLI operator would
+ * never intend as a count — hex (`0x10` -> 16), scientific notation (`1e2` ->
+ * 100), fractionals silently floored. `raw` must match `/^\d+$/` (plain
+ * unsigned decimal digits only) before `parseInt(raw, 10)`; anything else, or a
+ * non-positive result, warns and falls back to {@link DEFAULT_LIMIT}.
  */
 export function parseLimit(argv: string[]): number {
   let raw: string | undefined;
@@ -51,14 +57,20 @@ export function parseLimit(argv: string[]): number {
     if (idx !== -1 && idx + 1 < argv.length) raw = argv[idx + 1];
   }
   if (raw === undefined) return DEFAULT_LIMIT;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
+  if (!/^\d+$/.test(raw)) {
     console.warn(
       `[backfill-lost-attribution] ignoring invalid --limit "${raw}"; using default ${DEFAULT_LIMIT}.`,
     );
     return DEFAULT_LIMIT;
   }
-  return Math.floor(n);
+  const n = Number.parseInt(raw, 10);
+  if (n <= 0) {
+    console.warn(
+      `[backfill-lost-attribution] ignoring invalid --limit "${raw}"; using default ${DEFAULT_LIMIT}.`,
+    );
+    return DEFAULT_LIMIT;
+  }
+  return n;
 }
 
 async function main(): Promise<number> {
