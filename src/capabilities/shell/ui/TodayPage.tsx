@@ -253,6 +253,22 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
           errorText="夜链交班暂不可用。"
           skeleton={<SkLines rows={2} />}
         >
+          {/* YUK-580：静默失败标红——与 has_overnight_activity 正交，独立渲染（既有
+              LoomBadge tone="again" + LoomIcon "alert" primitives，同 observability 面
+              <Badge tone="again">error</Badge> 口径，无新组件）。 */}
+          {d && d.degraded_kinds.length > 0 && (
+            <div className="digest-chips">
+              {d.degraded_kinds.map((dk) => (
+                <LoomBadge
+                  key={dk.task_kind}
+                  tone="again"
+                  title={dk.recent_error_messages.join('\n')}
+                >
+                  <LoomIcon name="alert" size={12} /> {dk.task_kind} 失败 {dk.error_count} 次
+                </LoomBadge>
+              ))}
+            </div>
+          )}
           {d && !d.has_overnight_activity && (
             <div className="quiet-empty">
               昨夜没有需要交班的活动 —— 团队会在你持续学习后，开始为你做夜间复盘。

@@ -24,10 +24,12 @@ import { listNoteRefineChanges } from '@/capabilities/notes/server/note-refine-a
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
 import { countProposalsInWindow } from '@/server/proposals/inbox';
-import { and, count, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import {
   type OvernightDigest,
+  type RunErrorRow,
   type RunStatusCountRow,
+  computeDegradedKinds,
   groupRunsByKind,
   hasOvernightActivity,
   overnightWindow,
@@ -35,6 +37,7 @@ import {
 
 // 向后兼容：重导出纯模块的公共类型 / 纯函数，既有 import 路径单一。
 export type {
+  DegradedKind,
   OvernightDigest,
   OvernightRunGroup,
   OvernightWindow,
@@ -86,6 +89,34 @@ async function countNoteChangesInWindow(db: DbLike, from: Date, to: Date): Promi
   return rows.filter((r) => r.created_at < to).length;
 }
 
+// YUK-580：ai_task_runs 窗内 status='error' 原始行（task_kind + error_message + finished_at），
+// 供纯函数 computeDegradedKinds 消费。按 finished_at desc 预排序（纯函数侧仍二次排序兜底，
+// 保证与查询层排序假设解耦）。与 loadRunRows 各自独立查询——后者只聚合 count，这里要保留
+// 原始 error_message 字符串，两者列不同不宜合并成一次查询。
+async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunErrorRow[]> {
+  const rows = await db
+    .select({
+      task_kind: ai_task_runs.task_kind,
+      error_message: ai_task_runs.error_message,
+      finished_at: ai_task_runs.finished_at,
+    })
+    .from(ai_task_runs)
+    .where(
+      and(
+        eq(ai_task_runs.status, 'error'),
+        gte(ai_task_runs.finished_at, from),
+        lt(ai_task_runs.finished_at, to),
+      ),
+    )
+    .orderBy(desc(ai_task_runs.finished_at));
+  return rows.map((r) => ({
+    task_kind: r.task_kind,
+    error_message: r.error_message,
+    // gte/lt 对 timestamp 列比较已排除 finished_at 为 null 的行，故此处必为 Date。
+    finished_at: (r.finished_at as Date).toISOString(),
+  }));
+}
+
 /**
  * 昨夜 digest 读模型。聚五个夜间事实源到一个 payload，纯读零写（红线①③）。
  * has_overnight_activity 由五源 count 显式组合（红线②）；内部校准概率永不进 payload（红线④）。
@@ -99,18 +130,21 @@ export async function loadOvernightDigest(
 ): Promise<OvernightDigest> {
   const { from, to } = overnightWindow(now);
 
-  const [runRows, noteChangesCount, agentNotesCount, proposalCounts] = await Promise.all([
-    loadRunRows(db, from, to),
-    countNoteChangesInWindow(db, from, to),
-    countAgentNotesInWindow(db, from, to),
-    countProposalsInWindow(db, { from, to }),
-  ]);
+  const [runRows, noteChangesCount, agentNotesCount, proposalCounts, errorRunRows] =
+    await Promise.all([
+      loadRunRows(db, from, to),
+      countNoteChangesInWindow(db, from, to),
+      countAgentNotesInWindow(db, from, to),
+      countProposalsInWindow(db, { from, to }),
+      loadErrorRunRows(db, from, to),
+    ]);
 
   const runs = groupRunsByKind(runRows);
   const runsTotal = runs.reduce((acc, g) => acc + g.count, 0);
   // proposals 与 conjectures 不重叠：new_proposals = 全部 proposals − conjectures 子集。
   const newProposalsCount = proposalCounts.total - proposalCounts.conjectures;
   const newConjecturesCount = proposalCounts.conjectures;
+  const degradedKinds = computeDegradedKinds(errorRunRows);
 
   return {
     window: { from: from.toISOString(), to: to.toISOString() },
@@ -126,5 +160,6 @@ export async function loadOvernightDigest(
     new_proposals_count: newProposalsCount,
     new_conjectures_count: newConjecturesCount,
     agent_notes_count: agentNotesCount,
+    degraded_kinds: degradedKinds,
   };
 }

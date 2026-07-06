@@ -38,6 +38,12 @@ export interface OvernightRunGroup {
   count: number;
   status_breakdown: Record<string, number>;
 }
+// YUK-580：某 task_kind 窗内 error 计数达阈值 → 静默失败标红条目（附最近 N 条 error_message 原串）。
+export interface DegradedKind {
+  task_kind: string;
+  error_count: number;
+  recent_error_messages: string[];
+}
 export interface OvernightDigest {
   window: { from: string; to: string };
   // 空夜显式信号：false → 空夜态（与加载中/失败可区分，永不落 ColdStart）。
@@ -47,6 +53,7 @@ export interface OvernightDigest {
   new_proposals_count: number;
   new_conjectures_count: number;
   agent_notes_count: number;
+  degraded_kinds: DegradedKind[];
 }
 
 export const getOvernightDigest = () => apiJson<OvernightDigest>('/api/workbench/overnight-digest');

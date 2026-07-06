@@ -1,9 +1,16 @@
 // YUK-520 (A1) — overnight-digest 纯判定逻辑 unit 测（no-DB 车道，约定 glob
 // src/capabilities/**/*.unit.test.ts）。覆盖三块纯函数：窗口边界算（BJT 前一日历日 + 边界瞬时）、
 // runs 分组、has_overnight_activity 五源组合（红线②空夜显式信号的执行机制）。
+// YUK-580 补第四块纯函数：computeDegradedKinds（某 task_kind 窗内 error 计数超阈值 → 一等
+// degraded_kinds 字段，附最近 N 条 error_message 原串，截断防超长 payload）。
 import { describe, expect, it } from 'vitest';
 import {
+  DEGRADED_KIND_ERROR_THRESHOLD,
+  DEGRADED_KIND_MESSAGE_MAX_LEN,
+  DEGRADED_KIND_SAMPLE_SIZE,
+  type RunErrorRow,
   type RunStatusCountRow,
+  computeDegradedKinds,
   groupRunsByKind,
   hasOvernightActivity,
   overnightWindow,
@@ -83,5 +90,78 @@ describe('hasOvernightActivity — 五源显式组合（空夜一等态）', () 
     expect(hasOvernightActivity({ ...ZERO, new_proposals_count: 1 })).toBe(true);
     expect(hasOvernightActivity({ ...ZERO, new_conjectures_count: 1 })).toBe(true);
     expect(hasOvernightActivity({ ...ZERO, agent_notes_count: 1 })).toBe(true);
+  });
+});
+
+describe('computeDegradedKinds — task_kind 窗内 error 计数超阈值升级为一等字段（YUK-580）', () => {
+  const row = (
+    task_kind: string,
+    error_message: string | null,
+    finished_at: string,
+  ): RunErrorRow => ({
+    task_kind,
+    error_message,
+    finished_at,
+  });
+
+  it('空输入 → []', () => {
+    expect(computeDegradedKinds([])).toEqual([]);
+  });
+
+  it('低于阈值（error 计数 < DEGRADED_KIND_ERROR_THRESHOLD）→ 不标红', () => {
+    expect(DEGRADED_KIND_ERROR_THRESHOLD).toBeGreaterThanOrEqual(2);
+    const rows = [row('dreaming', 'boom', '2026-06-26T18:00:00.000Z')];
+    expect(computeDegradedKinds(rows)).toEqual([]);
+  });
+
+  it('达到阈值 → 升级为 degraded_kinds，error_count=总数，recent_error_messages 按新→旧取 N 条', () => {
+    const rows = [
+      row('dreaming', 'err-1', '2026-06-26T18:00:00.000Z'),
+      row('dreaming', 'err-2', '2026-06-26T19:00:00.000Z'),
+      row('dreaming', 'err-3', '2026-06-26T20:00:00.000Z'),
+      row('dreaming', 'err-4', '2026-06-26T21:00:00.000Z'),
+    ];
+    const out = computeDegradedKinds(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].task_kind).toBe('dreaming');
+    expect(out[0].error_count).toBe(4);
+    expect(out[0].recent_error_messages).toHaveLength(DEGRADED_KIND_SAMPLE_SIZE);
+    expect(out[0].recent_error_messages).toEqual(['err-4', 'err-3', 'err-2']);
+  });
+
+  it('error_message 超长截断（防超长 payload）', () => {
+    const long = 'x'.repeat(500);
+    const rows = [
+      row('note_refine', long, '2026-06-26T18:00:00.000Z'),
+      row('note_refine', long, '2026-06-26T19:00:00.000Z'),
+    ];
+    const out = computeDegradedKinds(rows);
+    expect(out[0].recent_error_messages[0].length).toBeLessThanOrEqual(
+      DEGRADED_KIND_MESSAGE_MAX_LEN + 1,
+    );
+    expect(
+      out[0].recent_error_messages[0].startsWith('x'.repeat(DEGRADED_KIND_MESSAGE_MAX_LEN)),
+    ).toBe(true);
+  });
+
+  it('null error_message 兜底为占位串，不抛错', () => {
+    const rows = [
+      row('dreaming', null, '2026-06-26T18:00:00.000Z'),
+      row('dreaming', null, '2026-06-26T19:00:00.000Z'),
+    ];
+    expect(() => computeDegradedKinds(rows)).not.toThrow();
+    expect(computeDegradedKinds(rows)[0].recent_error_messages).toHaveLength(2);
+  });
+
+  it('多 kind 各自独立判定，仅达阈值的 kind 入选，task_kind 升序输出', () => {
+    const rows = [
+      row('b_kind', 'e1', '2026-06-26T18:00:00.000Z'),
+      row('b_kind', 'e2', '2026-06-26T19:00:00.000Z'),
+      row('a_kind', 'e1', '2026-06-26T18:00:00.000Z'), // 只 1 次，不达阈值
+      row('c_kind', 'e1', '2026-06-26T18:00:00.000Z'),
+      row('c_kind', 'e2', '2026-06-26T19:00:00.000Z'),
+    ];
+    const out = computeDegradedKinds(rows);
+    expect(out.map((g) => g.task_kind)).toEqual(['b_kind', 'c_kind']);
   });
 });
