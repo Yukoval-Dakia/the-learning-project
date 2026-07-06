@@ -31,7 +31,10 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 
 import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
-import { A5_BANDS, masteryBandView } from '@/capabilities/knowledge/ui/mastery-band';
+// PR #717 round-2 CodeRabbit fix #2 (YUK-574) — imports from src/core/ (RELOCATED
+// from knowledge/ui/mastery-band.ts; see the provenance note in that file). Pure
+// dependency-free band-derivation helpers, no cross-capability / cross-layer reach.
+import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import {
@@ -469,7 +472,12 @@ export interface ResolveLearnerStateHeaderDeps {
   // dropped at every call site). dayBucket(now) is computed separately by the
   // resolver itself, not through this seam.
   readWatermarksFn?: (db: DbLike) => Promise<LearnerStateWatermarks>;
-  readProjectionFn?: (db: DbLike, now: Date) => Promise<LearnerStateProjection>;
+  // PR #717 round-2 OCR fix #3 (MINOR) — same phantom-parameter shape as fix #3
+  // above: readLearnerStateProjection(db) takes only `db` (its projection reads —
+  // due count / goal / mistakes / mastery / overnight — are not time-parameterized
+  // themselves; `now` only matters for the resolver's OWN dayBucket/cache-timestamp
+  // bookkeeping, done separately). `now` here was silently dropped at the call site.
+  readProjectionFn?: (db: DbLike) => Promise<LearnerStateProjection>;
   loadProposalFeedbackFn?: (db: DbLike) => Promise<ProposalFeedbackCell[]>;
   writeCacheFn?: (db: DbLike, cache: PersistedLearnerStateHeaderCache) => Promise<void>;
   now?: () => Date;
@@ -501,7 +509,7 @@ export async function resolveLearnerStateHeader(
   const now = deps.now?.() ?? new Date();
   const readCache = deps.readCacheFn ?? readLatestLearnerStateHeaderCache;
   const readWatermarks = deps.readWatermarksFn ?? readLearnerStateWatermarks;
-  const readProjection = deps.readProjectionFn ?? ((d: DbLike) => readLearnerStateProjection(d));
+  const readProjection = deps.readProjectionFn ?? readLearnerStateProjection;
   const loadFeedback =
     deps.loadProposalFeedbackFn ??
     ((d: DbLike) => getProposalFeedbackDigest(d, PROPOSAL_FEEDBACK_BUDGET));
@@ -551,10 +559,7 @@ export async function resolveLearnerStateHeader(
   }
 
   try {
-    const [projection, rawFeedback] = await Promise.all([
-      readProjection(db, now),
-      loadFeedback(db),
-    ]);
+    const [projection, rawFeedback] = await Promise.all([readProjection(db), loadFeedback(db)]);
     const proposal_feedback = scopeCopilotProposalFeedback(rawFeedback);
     const header_md = assembleLearnerStateHeaderMd(projection);
     const persisted: PersistedLearnerStateHeaderCache = {

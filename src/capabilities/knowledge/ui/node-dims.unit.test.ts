@@ -3,8 +3,8 @@
 // three-axis orthogonality (each dim banded independently), cold-note threshold, and
 // the ⑥ red line (every axis is a discrete band/source, never a bare number).
 
+import type { MasteryBandInput } from '@/core/mastery-band';
 import { describe, expect, it } from 'vitest';
-import type { MasteryBandInput } from './mastery-band';
 import {
   BETA_NEUTRAL_EPSILON,
   COLD_NOTE_MAX_EVIDENCE,

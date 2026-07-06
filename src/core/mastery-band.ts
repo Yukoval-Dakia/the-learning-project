@@ -2,6 +2,18 @@
 // p(L) 点估计 + 真实 σ 区间（mastery_lo / mastery_hi）→ 4 档离散 band + 来源二态 +
 // 低置信旗。纯函数、零写回（三轴正交：band 只展示 p(L) 轴，不耦合 R/difficulty）。
 //
+// PR #717 round-2 CodeRabbit fix #2 (YUK-574) — RELOCATED from
+// src/capabilities/knowledge/ui/mastery-band.ts to src/core/. Server code
+// (copilot/server/learner-state.ts) needed these pure band-derivation helpers for
+// the learner-state header's mastery summary line, and grep confirmed ZERO
+// existing precedent anywhere in the repo for server code importing a capability's
+// ui/ file (every other cross-capability server import stays server↔server; this
+// would have been the first-ever server→ui reach). This module has always been
+// dependency-free (no React/DOM), so it belongs in src/core/ (cross-subject, no
+// IO — the documented home for exactly this kind of shared pure derivation) rather
+// than under knowledge/ui/. All UI importers (BandChip.tsx / NodeComposite.tsx /
+// node-dims.ts) updated to `@/core/mastery-band`; zero logic changes.
+//
 // ⚠️ 避坑：source 的 'hard'/'soft' 是 A5 的「校准 vs 先验」源二态
 //   （evidence_count>0 → hard=有校准证据 / ===0 → soft=先验），**绝非**
 //   src/server/mastery/state.ts 满屏的 item_calibration.track（题难度轨道，同名）。
@@ -10,7 +22,9 @@
 //   **估算** lo/hi（band±spread）。这里用真实 mastery_lo / mastery_hi 各自过
 //   masteryBandIdx 得真区间档，不照搬 mock 估算。
 //
-// 参考 mastery-tone.ts 的 0.67 / 0.45（3-tone），但扩到 4 档（阈值具名常量）。
+// 参考 src/capabilities/knowledge/ui/mastery-tone.ts 的 0.67 / 0.45（3-tone），
+// 但扩到 4 档（阈值具名常量）——mastery-tone.ts 未随本次搬迁（不在 CodeRabbit
+// 本轮 finding 范围内），仍留 knowledge/ui/。
 
 // 4 档 p(L) 阈值（0-1 概率域）。每个值是对应档的下界。
 export const MASTERY_BAND_THRESHOLDS = {
