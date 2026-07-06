@@ -200,6 +200,74 @@ describe('runTask — YUK-299 outputFormat seam', () => {
   });
 });
 
+// YUK-572 — runner agents/hooks/canUseTool passthrough seam. Same zero-regression
+// contract as the outputFormat seam: OMITTED ⇒ the key is not written onto Options
+// (byte-identical to pre-seam); SET ⇒ threaded 1:1. The EXPECTED_KEYS test above is the
+// negative anchor (none of the three keys appear when unset); these are the positive
+// passthrough assertions.
+describe('runTask — YUK-572 agents/hooks/canUseTool seam', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [];
+    logMock.started.mockClear();
+    logMock.finished.mockClear();
+    logMock.cost.mockClear();
+    logMock.tool.mockClear();
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does NOT write agents/hooks/canUseTool when omitted (zero regression)', async () => {
+    mockSdk.messages = [successResult()];
+
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect('agents' in opts).toBe(false);
+    expect('hooks' in opts).toBe(false);
+    expect('canUseTool' in opts).toBe(false);
+  });
+
+  it('threads ctx.agents through to Options.agents when set', async () => {
+    mockSdk.messages = [successResult()];
+    const agents = {
+      'evidence-scout': {
+        description: 'scout',
+        prompt: 'p',
+        tools: ['mcp__research_evidence__get_question'],
+        maxTurns: 12,
+      },
+    };
+
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, agents });
+
+    const opts = mockSdk.capturedOptions as { agents?: unknown };
+    expect(opts.agents).toEqual(agents);
+  });
+
+  it('threads ctx.hooks + ctx.canUseTool through when set', async () => {
+    mockSdk.messages = [successResult()];
+    const hooks = { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] };
+    const canUseTool = async () => ({ behavior: 'allow' as const, updatedInput: {} });
+
+    await runTask(
+      UNMIGRATED_KIND,
+      { q: 1 },
+      {
+        db: fakeDb,
+        hooks: hooks as never,
+        canUseTool: canUseTool as never,
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { hooks?: unknown; canUseTool?: unknown };
+    expect(opts.hooks).toBe(hooks);
+    expect(opts.canUseTool).toBe(canUseTool);
+  });
+});
+
 // YUK-365 — subscription-OAuth lane env block. Asserts that when AI_PROVIDER_OVERRIDE
 // routes a task to the 'anthropic-sub' provider, buildAgentEnv (exercised via the
 // captured SDK Options.env) SETS CLAUDE_CODE_OAUTH_TOKEN and explicitly UNSETS the

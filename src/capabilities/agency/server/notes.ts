@@ -34,7 +34,7 @@ import { createId } from '@paralleldrive/cuid2';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { emitEvent } from '@/kernel/events';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 
@@ -42,7 +42,14 @@ type DbLike = Db | Tx;
 // tool signature target_agents. 'coach' is included per §4 (a task may leave a
 // hint the next Coach round should weigh — distinct from the structured needs[]
 // channel, which Coach consumes as plan input).
-export type AgentNoteTarget = 'dreaming' | 'maintenance' | 'coach';
+//
+// YUK-572 — 'research_meeting' names the nightly 教研例会 CHANNEL (an attention prior
+// for the meeting lane), NOT a per-actor writer. Its current reader is the agent-lane
+// director's get_agent_notes (readAgentNotes for_agent:'research_meeting'); the
+// deterministic lane reads no agent_notes. Naming the channel (not the writing actor)
+// keeps it stable across future meeting forms; self-bias is handled orthogonally on
+// the writer axis via excludeSourceKinds (see ReadAgentNotesOpts).
+export type AgentNoteTarget = 'dreaming' | 'maintenance' | 'coach' | 'research_meeting';
 
 export interface AgentNoteRef {
   kind: string;
@@ -124,6 +131,11 @@ export interface ReadAgentNotesOpts {
   for_agent: AgentNoteTarget;
   now: Date;
   limit?: number;
+  // YUK-572 §7 — self-reinforcement guard. When non-empty, notes whose actor_ref
+  // (= source_task_kind, set by writeAgentNote) is in this list are excluded, so an
+  // agent's get_agent_notes never surfaces its OWN prior notes and close a confirmation
+  // loop (its old conclusion masquerading as new evidence). Omitted/empty ⇒ no filter.
+  excludeSourceKinds?: string[];
 }
 
 export interface ReadAllAgentNotesOpts {
@@ -191,19 +203,24 @@ export async function readAgentNotes(db: DbLike, opts: ReadAgentNotesOpts): Prom
   if (limit <= 0) return [];
   const nowIso = opts.now.toISOString();
 
+  const conditions = [
+    eq(event.action, 'experimental:agent_note'),
+    eq(event.subject_kind, 'query'),
+    // target_agents array contains for_agent (jsonb containment).
+    sql`${event.payload}->'target_agents' @> ${JSON.stringify([opts.for_agent])}::jsonb`,
+    // Un-expired only: no expires_at OR expires_at strictly in the future.
+    sql`(NOT (${event.payload} ? 'expires_at') OR (${event.payload}->>'expires_at') > ${nowIso})`,
+  ];
+  // YUK-572 §7 — self-reinforcement guard: drop notes written by the excluded source
+  // kinds (actor_ref = source_task_kind). Empty list ⇒ no predicate added.
+  if (opts.excludeSourceKinds && opts.excludeSourceKinds.length > 0) {
+    conditions.push(notInArray(event.actor_ref, opts.excludeSourceKinds));
+  }
+
   const rows = await db
     .select()
     .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:agent_note'),
-        eq(event.subject_kind, 'query'),
-        // target_agents array contains for_agent (jsonb containment).
-        sql`${event.payload}->'target_agents' @> ${JSON.stringify([opts.for_agent])}::jsonb`,
-        // Un-expired only: no expires_at OR expires_at strictly in the future.
-        sql`(NOT (${event.payload} ? 'expires_at') OR (${event.payload}->>'expires_at') > ${nowIso})`,
-      ),
-    )
+    .where(and(...conditions))
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(limit);
 
