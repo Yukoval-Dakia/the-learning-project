@@ -24,7 +24,7 @@ export const ReportFindingsShape = {
   // Human-readable synthesis.
   findings_md: z.string().max(4000),
   // PRIMARY event ids only (attempt / probe / prediction_score) — NEVER agent_note ids.
-  // The structural stop is assertPrimaryEvidenceRefs (below); the .max(12) caps blast radius.
+  // The structural stop is filterPrimaryEvidenceRefs (below); the .max(12) caps blast radius.
   evidence_refs: z.array(z.string()).max(12),
   // Internal calibration only — NEVER rendered to the user as a number.
   confidence: z.number().min(0).max(1),
@@ -62,9 +62,12 @@ export function isPrimaryEvidenceRef(id: string): boolean {
 /**
  * YUK-572 §7 red-line backstop: strip agent_note ids from an evidence_refs list so a
  * (possibly injection-poisoned) finding can never launder a soft hint into "evidence".
- * Returns ONLY primary refs; the caller rejects when the result is empty ("need at
- * least one first-hand evidence ref"). Order-preserving.
+ * PURE FILTER (renamed from assert* — it never throws): returns ONLY primary refs,
+ * order-preserving. The enforcement seam is the PR-2 orchestration layer, which
+ * rejects the findings when this comes back empty ("need at least one first-hand
+ * evidence ref") — a tool handler cannot enforce that contract because rejection
+ * policy (warn vs discard) belongs to the run owner, not the capture.
  */
-export function assertPrimaryEvidenceRefs(refs: string[]): string[] {
+export function filterPrimaryEvidenceRefs(refs: string[]): string[] {
   return refs.filter(isPrimaryEvidenceRef);
 }

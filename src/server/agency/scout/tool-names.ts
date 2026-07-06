@@ -41,7 +41,9 @@ export const GET_TRACES_LOCAL_NAME = 'get_traces';
 export const REPORT_FINDINGS_LOCAL_NAME = 'report_findings';
 
 /** WIRE names of the 6 read tools (director + scout allowlist these). */
-export const EVIDENCE_READ_TOOL_NAMES = EVIDENCE_READ_TOOL_LOCAL_NAMES.map(evidenceWire);
+export const EVIDENCE_READ_TOOL_NAMES: readonly string[] = Object.freeze(
+  EVIDENCE_READ_TOOL_LOCAL_NAMES.map(evidenceWire),
+);
 
 /** get_traces WIRE name — registered on the server but NOT in the scout allowlist
  *  (YUK-572 §1/§6: scout tools = 6 read + report_findings). */
@@ -61,4 +63,6 @@ export const DIRECTOR_WRITE_TOOL_LOCAL_NAMES = ['propose_conjecture', 'leave_age
 
 /** WIRE names of the director write tools. scout disallows these so a nested scout can
  *  never propose / leave notes (propose-only single-proposer isolation). */
-export const DIRECTOR_WRITE_TOOL_NAMES = DIRECTOR_WRITE_TOOL_LOCAL_NAMES.map(directorWire);
+export const DIRECTOR_WRITE_TOOL_NAMES: readonly string[] = Object.freeze(
+  DIRECTOR_WRITE_TOOL_LOCAL_NAMES.map(directorWire),
+);

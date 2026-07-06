@@ -69,7 +69,7 @@ owner 决策 ① 引 `sdk.d.ts:38-75` 的 `AgentDefinition`（tools/mcpServers/m
 
 **工厂**：`buildScoutEvidenceServer(opts): { server: SdkMcpServer; readCapturedFindings(): ReportFindingsT | null; readToolTrace(): ScoutToolTraceEntry[] }`
 - `createSdkMcpServer({ name: 'research_evidence', tools })`（决策 ①，不复用 mcp-bridge/DomainTool registry）。
-- `opts = { db: Db; now: Date; targetKnowledgeId: string; evidenceEventIds: string[]; selfSourceKind: string }`。
+- `opts = { db: Db; now: Date; targetKnowledgeId: string; evidenceEventIds: string[]; selfSourceKind: string; capture: { value: ReportFindingsT | null } }`。
 - 每个只读工具 handler 捕获 `db`（闭包），返回 `{ content:[{ type:'text', text: JSON.stringify(capped) }] }`。**每个工具硬编码行数上界**，防单工具拉爆 context。
 - **evidence-first 留痕（Lens A #1，取代草案的『只读不留痕 + console.debug』）**：实读核实——`runTask` 的消息环只处理 `msg.type==='result'`（runner.ts:513-552），tool_use 的 tool_call_log 写入**只**存在于 mcp-bridge wrapper（mcp-bridge.ts:243）与 streamTask 路径，两者 scout 都不走；照草案 ship 会让 scout 的调查步骤零持久痕迹（比每条既有 loop 都弱，evidence-first 回归）。修正：每个只读 handler 把 `{ tool, args, returned_ids, t }` append 进工厂持有的有序 `toolTrace`（内存，`readToolTrace()` 暴露）。runAgentTask 结束后编排层：(a) 把完整 toolTrace 嵌进终态 scout 事件 payload（成功 → `scout_findings.payload.tool_trace`；失败 → `scout_failed.payload.tool_trace`）——调查路径可回放，坏 finding 可诊断；(b) 成功路径再为每条 trace 写一行 `tool_call_log`（复用 `writeToolCallLog`（log.ts:32），`effect:'read'`、`cost:0`、`task_run_id = scoutResult.task_run_id`），对齐 admin tool_calls 观测面。失败路径拿不到 task_run_id（runTask throw 不返回），trace 落 `scout_failed` 事件即可。
 - **不信任标注（Lens A #5）**：工具输出中所有学习者-authored 自由文本（`answer_md` / `prompt_md` / `reference_md` / note body）用显式定界块包裹（如 `<untrusted_learner_text>…</untrusted_learner_text>`）；prompt 的『软提示非事实、须从一手证据重推』框架延伸到**全部**学习者文本，不只 agent_notes——注入放大路径真实存在（learner text → findings → induce 软先验 → proposal claim/probe），§7 的 evidence_refs-must-be-primary 仍是结构性 backstop。
@@ -264,7 +264,7 @@ note 落库即 `experimental:agent_note` 事件（notes.ts:95），是 hint 非 
 风险：scout `get_agent_notes` 会读到**自己上次**的 `conjecture_deep_dive` note → 把自己的旧结论当新证据 → 确认偏误自锁。三层防护：
 
 1. **硬守护 — 排除自身来源**：`get_agent_notes` 传 `excludeSourceKinds:['research_scout']`；`readAgentNotes` 加 SQL 谓词 `actor_ref NOT IN (…)`（notes.ts 的 `actor_ref = source_task_kind`）。scout 只看到**其它** agent（dreaming/coach/quiz_verify…）的观察，看不到自己的历史 note。
-2. **硬守护 — evidence_refs 必须一手**：`report_findings` 契约 + prompt 双重约束 `evidence_refs` 只能是 attempt/probe/prediction_score 事件 id，**禁** agent_note id。db 测断言：注入一条自身旧 note，scout stub 若把 note id 塞进 evidence_refs → 编排层 `assertPrimaryEvidenceRefs()` 过滤/拒绝并 warn（防 LLM 违约）。
+2. **硬守护 — evidence_refs 必须一手**：`report_findings` 契约 + prompt 双重约束 `evidence_refs` 只能是 attempt/probe/prediction_score 事件 id，**禁** agent_note id。db 测断言：注入一条自身旧 note，scout stub 若把 note id 塞进 evidence_refs → 编排层 `filterPrimaryEvidenceRefs()` 过滤/拒绝并 warn（防 LLM 违约）。
 3. **软守护 — guidance 标注**：prompt 明确「agent_notes 是**其它** agent 的软提示、不是事实，绝不当确认，必须从一手 attempt/probe 自行重推」（已入 §3 prompt）。
 
 confidence 衰减：不引入跨夜 confidence 衰减机制（会引入需持久化的状态、复杂且 n=1 下无校准依据）；靠上面「排除自身 + 一手证据」两条硬守护已切断回路。
@@ -283,7 +283,7 @@ confidence 衰减：不引入跨夜 confidence 衰减机制（会引入需持久
   - dayKey：Shanghai tz 边界（UTC 16:00 → 次日）纯计算。
 - `induce` 单测扩展：传 `scoutHint` → `taskInput.scout_hint` 出现；不传 → 字节等价（回归锚）。
 - `report_findings` 捕获闭包 + findings→agentNote builder（纯 fn）字段映射断言。
-- `assertPrimaryEvidenceRefs`（agent_note id 过滤）纯单测。
+- `filterPrimaryEvidenceRefs`（agent_note id 过滤）纯单测。
 - `buildScoutNoteDigest`：三字段拼装 + **≤1200 char 上界** + 超长输入截断（Lens B #4）。
 - 抢救解析（Lens A #3）：fence 剥离 / JSON.parse / schema safeParse 失败 → null，合法内嵌 JSON → ReportFindingsT。
 - toolTrace append 顺序 + `readToolTrace()` 返回形状（纯闭包测）。
@@ -362,7 +362,7 @@ confidence 衰减：不引入跨夜 confidence 衰减机制（会引入需持久
 | B2 (MAJOR) | 工具面砍到 3 只 + 删 get_traces 占位 | **owner 决策 ② 逐字锁定 6 只读工具 + get_traces 占位**——砍面/删桩即推翻 owner 决策，越权。加固已做（§2）：day-one 数据密度诚实标注（哪些工具早期恒空/薄）+ prompt 注明 get_traces 不可用勿调（不烧 turn）+ 『空返回即证据缺席的信息』。只读空返回边际成本 ≈ 一次 read；契约一次定形，免数据成熟时二次动 allowlist/契约。 |
 | B4(b) | note expiry 30d → 7-14d | owner 决策 ③ 锁 ~30d。且 pending-conjecture dedup 使同 target 在 proposal 生命周期内不复跑 scout，note 是该窗口**唯一**深挖记录——不是『每夜可重推导的 hint』，14d 对齐论不成立；digest 截断（B4a 已采纳）已消解 30d 驻留的预算风险，缩 expiry 只剩信息丢失。 |
 | B4(c) | day-one 只 target 'research_meeting'，去掉 dreaming/coach | owner 决策 ③ 逐字锁三目标——砍目标即推翻。digest ≤1200 char 后三目标注入预算已被 (a) 消解；scoutHint→proposal 与 agent_note 双投递语义不同（即时归纳先验 vs 跨夜注意力先验，§6 已记）。 |
-| B5（部分） | 文件合并（mcp 并入 scout.ts、测试合并）+ defer `assertPrimaryEvidenceRefs` | 文件拆分匹配可测缝（mcp 工厂独立 db 测其查询/上界/排除谓词，与 scout 编排测隔离）；`assertPrimaryEvidenceRefs` 是 §7 红线的结构性 backstop、纯函数 + 单测成本极低，defer 会在 scout 首次真跑当天重开『自证据回灌』口——防护成本远小于回路成本，且 Lens A #5 依赖它作 backstop。 |
+| B5（部分） | 文件合并（mcp 并入 scout.ts、测试合并）+ defer `filterPrimaryEvidenceRefs` | 文件拆分匹配可测缝（mcp 工厂独立 db 测其查询/上界/排除谓词，与 scout 编排测隔离）；`filterPrimaryEvidenceRefs` 是 §7 红线的结构性 backstop、纯函数 + 单测成本极低，defer 会在 scout 首次真跑当天重开『自证据回灌』口——防护成本远小于回路成本，且 Lens A #5 依赖它作 backstop。 |
 | B3（部分：defer 整个 feature） | 『若无法论证 ship-now 优于 defer，缩 PR』 | 是否现在建 YUK-560-B 是 owner 已拍的范围决策，不在本 spec 重开；spec 义务是诚实记录首月 spawn ≈ 0（已做，§4/§9），不是重议立项。 |
 
 ### owner 决策点（NEEDS-OWNER）
