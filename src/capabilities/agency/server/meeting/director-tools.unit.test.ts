@@ -47,6 +47,7 @@ import {
   DIRECTOR_MAX_PROPOSALS,
   DIRECTOR_NOTE_SUMMARY_MAX_CHARS,
   type MeetingContext,
+  NOTE_TRUNCATION_MARKER,
   RESEARCH_MEETING_AGENT_ACTOR,
   buildDirectorServer,
   createDirectorCaps,
@@ -419,11 +420,22 @@ describe('leave_agent_note — server-enforced', () => {
     expect(h.notes).toHaveLength(0);
   });
 
-  it('truncates summary_md to the 1200-char bound', async () => {
+  it('rejects target_agents containing a duplicate entry (round-5 review minor 0.70)', async () => {
+    const h = build();
+    const res = await callTool(
+      'leave_agent_note',
+      validNoteArgs({ target_agents: ['dreaming', 'dreaming'] }),
+    );
+    expect(res.ok).toBe(false);
+    expect(h.notes).toHaveLength(0);
+  });
+
+  it('truncates summary_md to the 1200-char bound with a visible marker (round-5 review minor 0.60 — write-side truncation is genuinely consumed downstream by dreaming/coach, unlike PR-1 read-side defensive caps, so an unmarked cut could be mistaken for a complete note)', async () => {
     const h = build();
     const res = await callTool('leave_agent_note', validNoteArgs({ summary_md: 'x'.repeat(2000) }));
     expect(res.ok).toBe(true);
     expect(h.notes[0].summary_md.length).toBe(DIRECTOR_NOTE_SUMMARY_MAX_CHARS);
+    expect(h.notes[0].summary_md.endsWith(NOTE_TRUNCATION_MARKER)).toBe(true);
   });
 
   it('filters agent_note refs out of the note evidence (primary refs only)', async () => {

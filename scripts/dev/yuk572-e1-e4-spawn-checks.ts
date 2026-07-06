@@ -16,8 +16,18 @@
 //        hand, §7); NOT a pass — see computeExitCode below (review MAJOR #1: an
 //        inconclusive E-2 must NEVER exit 0 and silently authorize flipping the flag).
 //   E-3  mcpServers by-name resolution: the scout's AgentDefinition.mcpServers:['research_
-//        evidence'] resolves to the top-level in-process server, i.e. the scout can call an
-//        evidence read tool (its call lands in the shared evidence toolTrace).
+//        evidence'] resolves to the top-level in-process server. round-5 review minor
+//        0.60 — PRIMARY signal is reportFindingsCaptured: report_findings is registered
+//        on research_evidence but is scout-EXCLUSIVE (absent from the director's own
+//        allowlist, tool-names.ts), so capturing it PROVES the nested scout's mcpServers
+//        reference resolved (report_findings lives on that same server) — the exact
+//        thing E-3 exists to verify, with no ambiguity about WHO called it. The
+//        post-spawn read-tool-call count (round-3 #10's time-window filter) is now
+//        AUXILIARY informational output only, not part of the e3 decision: it cannot
+//        distinguish a director-side read AFTER the scout spawns from a genuine scout
+//        read in every case a pure timestamp comparison can miss (e.g. a director read
+//        that happens to land in the same window before ever spawning), whereas
+//        reportFindingsCaptured has no such attribution ambiguity at all.
 //   E-4  bypassPermissions deny enforcement: under permissionMode:'bypassPermissions'
 //        (hardcoded in the runner), a deny on the 2nd Task spawn from EITHER the
 //        PreToolUse hook or the canUseTool callback (round-2 review #9 — two independent
@@ -355,7 +365,10 @@ async function main() {
   );
 
   const e1 = spawnRun.scoutSpawns >= 1 || spawnRun.reportFindingsCaptured;
-  const e3 = spawnRun.scoutReadToolCalls >= 1;
+  // round-5 review minor 0.60 — PRIMARY signal is reportFindingsCaptured (see the E-3
+  // file-header bullet above for the full rationale); scoutReadToolCalls is now purely
+  // auxiliary, printed for diagnostics only and never part of the e3 decision.
+  const e3 = spawnRun.reportFindingsCaptured;
   // review round-2 MAJOR #2 — denyTriggered is the DIRECT signal (either layer actually
   // fired a deny for a 2nd+ spawn attempt), not an inference from the final spawn count
   // (which cannot distinguish "2nd attempt denied" from "no 2nd attempt was ever made").
@@ -380,7 +393,7 @@ async function main() {
     line(
       'E-3  mcpServers by-name resolves for the scout',
       e3,
-      `scout read-tool calls=${spawnRun.scoutReadToolCalls}`,
+      `report_findings captured=${spawnRun.reportFindingsCaptured} (primary — scout-exclusive tool); scout read-tool calls, post-spawn window (informational only)=${spawnRun.scoutReadToolCalls}`,
     ),
   );
   console.log(
