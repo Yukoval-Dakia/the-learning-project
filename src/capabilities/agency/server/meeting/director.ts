@@ -27,6 +27,7 @@
 // is an accepted degrade rather than a silent black hole. Only the PRE-LLM DB reads can
 // throw a genuine, zero-spend retryable fault out of this function.
 
+import { tasks } from '@/ai/registry';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evidence-mcp';
@@ -63,12 +64,24 @@ export { RESEARCH_MEETING_AGENT_ACTOR } from './director-tools';
 export const RESEARCH_MEETING_AGENT_WINDOW_DAYS = 14;
 /** Candidate-cell cap surfaced to the director (§5 — ≤20 cells). */
 export const RESEARCH_MEETING_AGENT_MAX_CELLS = 20;
-/** Director main-thread turn budget (mirrors registry ResearchMeetingDirectorTask). */
-export const RESEARCH_MEETING_AGENT_MAX_TURNS = 24;
+// round-5 review minor 0.60 — DERIVED from the registry (single source of truth), not
+// hand-duplicated magic numbers: tasks.ResearchMeetingDirectorTask.budget IS what
+// buildQueryOptions (runner.ts) actually turns into Options.maxTurns / the abort
+// timer — these two constants used to independently restate the SAME two numbers with
+// no compile-time link to the registry entry that actually governs the runner's real
+// budget, so an edit to one could silently drift from the other. No circular import
+// risk: src/ai/registry.ts is a leaf module (zero imports from src/capabilities/**),
+// and this import direction is already an established pattern elsewhere (e.g.
+// goals/scope.db.test.ts imports { tasks } from '@/ai/registry' too).
+/** Director main-thread turn budget — derived from the registry. */
+export const RESEARCH_MEETING_AGENT_MAX_TURNS =
+  tasks.ResearchMeetingDirectorTask.budget.maxIterations;
 /** Breadth cap: at most one scout spawn per night (§6; structurally ≤1 is E-4-conditional). */
 export const MAX_SCOUT_SPAWNS = 1;
-/** Wall-clock budget echoed into the director input (the abort itself is runner-side). */
-export const RESEARCH_MEETING_AGENT_WALL_CLOCK_S = 300;
+/** Wall-clock budget (seconds) echoed into the director input — derived from the
+ *  registry's timeout (ms), the SAME value the runner's abort timer actually uses. */
+export const RESEARCH_MEETING_AGENT_WALL_CLOCK_S =
+  tasks.ResearchMeetingDirectorTask.budget.timeout / 1000;
 
 export const TRIGGER_ACTION = 'experimental:trigger_research_meeting_agent';
 export const SCAN_ACTION = 'experimental:research_meeting_agent_scan';
@@ -103,8 +116,13 @@ export interface ResearchMeetingDirectorResult {
   proposals_created: number;
   notes_created: number;
   scout_spawned: number;
-  /** total run cost, USD, as reported by the SDK (0 on the flat OAuth lane / degrade). */
-  cost_usd: number;
+  /** total run cost, USD, as reported by the SDK. round-5 review minor 0.80 — null on a
+   *  DEGRADED run (the throw happens before the runner's cost ledger write, so the true
+   *  cost is UNKNOWN), matching the scan event's cost_micro_usd:null semantics for the
+   *  exact same case (round-3 #7 fixed that side; this aligns the public result with
+   *  it). A genuine $0 on a SUCCESSFUL run (the flat OAuth lane reporting no per-call
+   *  cost) is the literal 0, not null — "unknown" and "free" are different facts. */
+  cost_usd: number | null;
   /** the SDK task_run_id (empty string on a degraded run that never produced one). */
   task_run_id: string;
   trigger_event_id: string;
@@ -450,7 +468,11 @@ export async function runResearchMeetingDirector(
   } else {
     outcome = 'success';
   }
-  const costUsd = taskResult?.cost_usd ?? 0;
+  // rawCostUsd is the SDK-reported number regardless of degrade status (0 when
+  // taskResult never resolved); resultCostUsd (below, round-5 review minor 0.80) and
+  // costMicroUsd both separately gate on `degraded` to distinguish "genuinely $0" from
+  // "unknown because the run threw before the runner's cost ledger write".
+  const rawCostUsd = taskResult?.cost_usd ?? 0;
 
   // §10 review fix — flattened from a nested ternary. round-3 review OCR #7 — the
   // round-2 formula ALSO treated a genuine $0 cost (the flat OAuth lane legitimately
@@ -464,7 +486,18 @@ export async function runResearchMeetingDirector(
   if (degraded) {
     costMicroUsd = null;
   } else {
-    costMicroUsd = Math.round(costUsd * 1_000_000);
+    costMicroUsd = Math.round(rawCostUsd * 1_000_000);
+  }
+
+  // round-5 review minor 0.80 — the PUBLIC result.cost_usd had the SAME degraded-vs-$0
+  // conflation as the scan event's cost_micro_usd (round-3 #7 fixed that side; this
+  // aligns the public result with it): a degraded run used to report 0, indistinguishable
+  // from a genuinely free successful run. null now means ONLY "degraded, unknown".
+  let resultCostUsd: number | null;
+  if (degraded) {
+    resultCostUsd = null;
+  } else {
+    resultCostUsd = rawCostUsd;
   }
 
   try {
@@ -506,7 +539,7 @@ export async function runResearchMeetingDirector(
     proposals_created: proposalsCreated,
     notes_created: notesCreated,
     scout_spawned: scoutSpawns,
-    cost_usd: costUsd,
+    cost_usd: resultCostUsd,
     task_run_id: taskResult?.task_run_id ?? '',
     trigger_event_id: triggerEventId,
     outcome,
