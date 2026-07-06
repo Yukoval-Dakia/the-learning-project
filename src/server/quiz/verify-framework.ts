@@ -590,7 +590,8 @@ export interface TeachingQualityQuestion {
 
 export interface TeachingQualityOptions {
   runTaskFn: TeachingQualityRunTaskFn;
-  // the resolved subject profile, forwarded to the judge for subject voice/context.
+  // the resolved subject profile, forwarded in ctx for provenance/logging; the prompt
+  // itself is subject-neutral (pass-through, registry.ts) and does not consume it.
   profile: {
     id: string;
     // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
