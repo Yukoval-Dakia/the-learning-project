@@ -153,6 +153,8 @@ Let me compose the form-axis architecture synthesis.
 
 **防循环注入五防必守**（既有红线）：注入事实非上一轮 prompt 装配物 / ambient 不进历史 / 鲜读 digest 不进历史 / 双层截断 / 专项单测。
 
+> **五防 kind 异质澄清（2026-07-07 A6 审查补注 · 澄清非弱化）**：「五防」是 **3 条 runtime 注入 invariant**（① 注入事实非上轮装配物 / ② ambient 不进历史 / ③ 鲜读 digest 不进历史）+ **1 条预算卫生**（④ 双层截断 = per-turn char cap + whole-array cap，属 context-window 预算而非威胁守卫）+ **1 条 test discipline**（⑤ 专项单测，是前四条的元防御）。三种 kind 异质、非五条并列的独立威胁守卫——避免未来读者误以为每防对应一个独立威胁。
+
 ### 关键 delta（建/改/接线）
 1. **建**：会话级工作记忆契约——把 `ambient_context` 从 `chat.ts` 私有入参升格为所有 surface 共写、编排者共读的正式表/契约，纳入「刚 dismiss 哪条」（直接服务 A4 的 B 档 dismiss 信号回流）。
 2. **接线**：长时 attention prior 接通 mem0 P3 读路径（算法轴 B4 `searchMemories` wrapper），定位只读旁路。
@@ -264,7 +266,7 @@ Let me compose the form-axis architecture synthesis.
 |---|---|---|---|---|
 | **R**（FSRS 记忆维度） | `material_fsrs_state`（知识点 keyed，ADR-0005 单 writer） | 记得牢不牢 / 何时复习（when） | **调度**（per-item due） | PG 表，FSRS 数学单一真相 |
 | **p(L)**（PFA 掌握诊断） | `mastery_state`（新，派生） | 此刻会不会 / 迁移得了吗 | **诊断展示 + 调度 what 信号** | PG 表/物化（取代 view 占位） |
-| **difficulty**（共享桥） | FSRS `D` ≡ PFA `β`（同一潜量两层读） | 这个知识点/题多难 | 两轴共享输入 | 派生 + `item_calibration` 锚 |
+| **difficulty**（共享桥） | FSRS `D` 与 PFA `β` 同 logit 语义、共享 `item_calibration` 输入锚、各自独立估计不共享估计值 | 这个知识点/题多难 | 两轴共享输入 | 派生 + `item_calibration` 锚 |
 | **mem0**（个性化软画像） | mem0 collection（不在 Drizzle） | 偏好/习惯/弱点（attention prior） | 编排者只读，**永不偏置 judge/FSRS** | 自管 pgvector |
 | **KG**（结构） | `knowledge` 树 + `knowledge_edge` 网 + `misconception` | 知识怎么组织 | frontier / credit / 对比题 | PG 表 |
 
@@ -272,6 +274,13 @@ Let me compose the form-axis architecture synthesis.
 - **R ⟂ p(L) 不对账**（B1）。Bjork 失用新论：storage strength（FSRS S/R）与 retrieval strength（即时 accuracy）两构念可双向解耦，健康的间隔学习**本就规律性背离**（间隔越长 R 越低但 S 越高）。无对账先例；统一靠 forgetting-aware KT（PFA logistic 内含遗忘项）。**两轴背离信号重定义为 fluency-illusion 防假学习软提示，绝非 error-grade**——不触发任何自动修正，只在复盘面提示「这点你近期答得顺但间隔拉长后留存可能虚高」。
 - **transfer credit 只进 p(L)**（B1 + RT2），**不碰 R/调度**——FSRS 的 `when` 数学绝不被 credit 污染。
 - **difficulty 是唯一允许的跨轴共享**：FSRS `D` 与 PFA `β` 是「同一知识点难度」的两个观测面，共享 `item_calibration` 的后验锚，但**各自更新各自的状态**（D 走 FSRS review，β 走 PFA 梯度），不互写。
+
+**执行状态（2026-07-07 红线审查 A2 补注 · 拆「单块铁律」幻觉）**：本红线四子条款执行强度不均，「永不互相对账写回」不应伪装成统一强制——各标真实状态：
+
+- **C3 确认回路**（mem0 extraction 不喂编排者自身输出）= **HARD INVARIANT**：`shouldExtractToMemory`（`triggers.ts`）fail-closed + 单测 + owner-lock，代码强制。
+- **C1 credit 裁 due / C2 mem0 曝光偏置 / C4 difficulty 桥** = **OWNER-PENDING ASPIRATION**：现仅文档口号 + 人肉纪律，未落 invariant（见下 §C.1/C.2/C.4「需 owner 拍」处置栏）。
+- **mastery-provenance / relations 审计** = **REPORT-ONLY**：默认 exit 0，非硬 gate，只检测不阻断。
+- **诚实标注（C2 实质威胁未守）**：本红线守的是**直写口**（mem0 不直写 mastery/FSRS）；**C2 长链污染路径（mem0→曝光→证据→p(L))NOT covered by this redline**，现仅因 mem0 未接进合并引擎（`stream-composer` 无 mem0 输入）而**真空安全**；mem0 wiring（H5）落地前必须先补曝光底线 invariant（每 KC 最小曝光，mem0 只进平局打破、不进「是否曝光」二元决策），否则红线形同虚设。
 
 ---
 
@@ -422,7 +431,7 @@ FSRS due（R 轴）+ frontier（KG 结构）+ mastery p(L)（诊断）+ mem0 pri
 - **rubric-validator 已实现语义闸**（`src/capabilities/knowledge/server/rubric-validator.ts`）：`self_edge` / `cross_subject` / `parent_semantic_duplicate` / `prerequisite_no_order_evidence` / `contrasts_with_no_confusion` / `related_to_dumping_ground`——**全是语义层闸，无拓扑层**（环检测/方向矛盾/传递冗余确认零实现）。
 
 ### 目标：双层异构图（否决 GPT 三层平行图）
-**树骨架（`parent_id` 只读）+ 同构 typed-edge 网（5 核心）+ 渐进晋升的 misconception 异构层**。三层分离：身份层（节点/边/misconception）/ 观测层（event 唯一真相，错因现活这）/ 派生层（mastery/credit，不写回）。
+**树骨架（`parent_id` 只读——对工具直写只读；reparent/merge/split 经 propose→accept→fold 受控变更，乐观锁守护）+ 同构 typed-edge 网（5 核心）+ 渐进晋升的 misconception 异构层**。三层分离：身份层（节点/边/misconception）/ 观测层（event 唯一真相，错因现活这）/ 派生层（mastery/credit，不写回）。
 
 **RT1 错因图谱**（升，但「晋升而非复制」）：
 - 同 effective_cause 同知识点跨 attempt 复现 **≥k 次** → 调和环 propose『晋升此错因为 misconception 节点』→ 人审 accept 才建；**只出现一次的永远留 event 层**。
