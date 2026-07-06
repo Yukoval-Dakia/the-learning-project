@@ -138,16 +138,21 @@ export const knowledgeCapability = defineCapability({
         // emits MERGE PROPOSALS (pending inbox items). PROPOSE-ONLY: it NEVER calls
         // applyMerge (a merge is destructive — archives the from-KC, sets merged_from[],
         // and repairs the downstream attribution surfaces — YUK-543; stays behind the
-        // human accept gate). cron 02:00 Asia/Shanghai — BEFORE knowledge_edge_propose 02:30 +
-        // knowledge_maintenance 03:00, so the night's merge proposals are already in
-        // the inbox when those run. queue 'llm': matches the pure-derivation sibling
+        // human accept gate). cron 05:05 Asia/Shanghai — AFTER embed_backfill 04:40
+        // (YUK-377 复审 §3.3): the pair scan hard-gates `embedding IS NOT NULL`, and a KC
+        // minted during the day only gets its vector at the 04:40 embed pass, so the old
+        // 02:00 slot made every new KC wait one extra night before its first dedup scan.
+        // Accepted trade-off: same-night edge_propose 02:30 / maintenance 03:00 no longer
+        // see tonight's merge proposals in the inbox — neither consumes them
+        // programmatically (grep-verified 2026-07-06); pending proposals persist, so the
+        // agent context picks them up the next night. queue 'llm': matches the pure-derivation sibling
         // answer_class_backfill (also declared 'llm') and every other nightly
         // backfill — even though the scan makes NO model call, the 'llm' tier is the
         // family's shared DLQ/retry bucket; 'fast' would skip the DLQ (a dropped run
         // would just wait for the next cron, but the merge-propose write deserves DLQ
         // retry coverage like its siblings). Auto-mounted by register-capability-jobs.
         name: 'kc_dedup_nightly',
-        schedule: { cron: '0 2 * * *', tz: 'Asia/Shanghai' },
+        schedule: { cron: '5 5 * * *', tz: 'Asia/Shanghai' },
         queue: 'llm',
         load: () => import('./jobs/kc_dedup_nightly').then((m) => m.buildKcDedupNightlyHandler),
       },

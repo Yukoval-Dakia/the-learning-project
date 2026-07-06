@@ -11,8 +11,9 @@
 // 闸是 dispatcher 的 7d query-based fingerprint cooldown（recentDispatchExists，commit
 // 30784420 review FINDING #1/#2）：同一未满足缺口在 7 天窗内只真派一次后台 job，其余扫描
 // 命中 cooldown → status='skipped'，不再 boss.send。本 job **依赖** dispatcher 这层 cooldown
-// 作为成本护栏——绝不在此处绕过 dispatcher 直发队列。cron 排在数据预产链之后（item_prior
-// 04:20 / mastery 夜链 / compose 05:30 之前的 06:00），让选题信号已新鲜、缺口判定准确。
+// 作为成本护栏——绝不在此处绕过 dispatcher 直发队列。cron 排在数据预产链（item_prior
+// 04:20 → compose 05:30）之后的 06:00，让选题信号已新鲜、缺口判定准确。（旧注「mastery
+// 夜链」已删——该 job 从不存在，mastery_state 在线写入；YUK-377 复审 §6.4。）
 //
 // ── 红线：草稿排除（G5）+ 只读消费（G3）─────────────────────────────────────
 // 候选 KC 的题池由 discoverSupplyTargets → loadQuestionPool 提供，后者已带 draft 过滤
