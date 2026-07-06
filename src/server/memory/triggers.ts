@@ -10,8 +10,10 @@ import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { isQueueCreateRace } from '@/server/boss/client';
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import {
+  QUALIFYING_ACTIONS,
   listActiveSubjectsSinceRefresh,
   loadSubjectBriefEvents,
+  resolveQualifyingEventSubjects,
   selectSubjectsForRun,
   subjectScopeHasNewEvidence,
 } from './active-subjects';
@@ -328,6 +330,49 @@ export function buildMemoryEventIngestHandler(
       for (const scopeKey of row.affected_scopes) {
         await enqueueBriefRegen(boss, scopeKey);
       }
+
+      // YUK-581 — subject brief bridge. The core learning events never tag a
+      // `subject:*` scope in affected_scopes (attempt/review carry only
+      // referenced_knowledge_ids; record_capture resolves its subject from the
+      // linked learning_record — active-subjects.ts §1.2 / BR-10), so the
+      // affected_scopes fan-out above can NEVER refresh the per-subject brief.
+      // Resolve the qualifying event → subject via the SAME canonical resolver the
+      // nightly sweep uses and enqueue its `subject:<id>` regen, moving subject-
+      // brief freshness from the next-day 03:00 sweep to ≤6min after the activity.
+      // enqueueBriefRegen already dedups per scope_key on a 6-min singleton, so a
+      // burst of same-subject activity collapses to one regen (no extra guard). The
+      // resolver produces a canonical subject-profile id, never a slugged payload
+      // value, so it can never collide with an affected_scopes tag → no double-invoke
+      // guard needed. Best-effort: a resolve/enqueue failure is swallowed + warned so
+      // the ingest job never retries on a bridge failure — a dropped bridge is exactly
+      // what the 03:00 cron sweep now backstops (its role narrows to cold-start / DLQ /
+      // dropped-delivery / dormant coverage). Runs BEFORE the extraction gate `continue`
+      // so it fires for every qualifying event, mirroring the brief-note fan-out above.
+      if ((QUALIFYING_ACTIONS as readonly string[]).includes(row.action)) {
+        try {
+          const subjectByEventId = await resolveQualifyingEventSubjects(db, [
+            {
+              id: row.id,
+              action: row.action,
+              subject_kind: row.subject_kind,
+              subject_id: row.subject_id,
+              outcome: null,
+              payload: row.payload,
+              created_at: row.created_at,
+            },
+          ]);
+          const subjectId = subjectByEventId.get(row.id);
+          if (subjectId) {
+            await enqueueBriefRegen(boss, `${SUBJECT_SCOPE_PREFIX}${subjectId}`);
+          }
+        } catch (err) {
+          console.warn(
+            `[memory_brief_bridge] subject bridge failed for event ${row.id}; nightly sweep will backstop`,
+            err,
+          );
+        }
+      }
+
       if (!admitToExtraction) continue;
       // Thread the extracted memory text + created_ms (the event's time) so the
       // reconcile job searches by text, not by an opaque UUID (see ReconcileMemInput).
