@@ -34,6 +34,7 @@ import { buildEvidenceServer, persistToolTrace } from '@/server/agency/scout/evi
 import type { ToolTraceEntry } from '@/server/agency/scout/evidence-mcp';
 import { createFindingsCapture } from '@/server/agency/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/server/agency/scout/scout-agent';
+import { SPAWN_TOOL_NAME } from '@/server/agency/scout/tool-names';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
 import { conjectureKey, gatherConjectureEvidence } from '@/server/conjectures/evidence';
 import {
@@ -46,7 +47,7 @@ import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
 import { writeAiProposal } from '@/server/proposals/writer';
-import type { HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,
@@ -158,6 +159,14 @@ function buildMeetingContext(
   };
 }
 
+/** round-2 review MINOR #7 — accumulate (not overwrite) post-run errors: the scan event
+ *  is the operator's ONLY observability surface for a degraded run, so it must carry
+ *  every failure that occurred, not just the first. */
+function appendPostRunError(existing: string | undefined, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return existing !== undefined ? `${existing}; ${message}` : message;
+}
+
 export async function runResearchMeetingDirector(
   db: Db,
   deps: DirectorDeps = {},
@@ -258,13 +267,34 @@ export async function runResearchMeetingDirector(
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
 
-  // Breadth cap (§6): a PreToolUse hook counts Task spawns and DENIES the 2nd. The same
-  // closure counter is the spawn-count source for the scout_spawned event (evidence-first
-  // 留痕 without a runner message-loop change). NOTE (E-4, §6): the runner hardcodes
-  // permissionMode:'bypassPermissions', and the SDK typings don't confirm hook-deny is
-  // honoured under bypass — so "breadth ≤1 structural" is E-4-conditional; the flag must
-  // not flip to 1 until E-4 passes. Depth ≤1 is truly structural (scout.tools omit no
-  // Task — enforced in scout-agent.ts, unaffected by E-4).
+  // Breadth cap (§6, round-2 review MAJOR #9): TWO independent layers attempt to deny the
+  // 2nd Task spawn, sharing the SAME `scoutSpawns` closure counter (never two separate
+  // counters — that could each independently grant one spawn, doubling the effective
+  // cap): a PreToolUse hook (below) and a `canUseTool` callback (wired into the
+  // runAgentTaskFn ctx alongside `hooks`, further down). The hook is also the
+  // spawn-count source for the scout_spawned event (evidence-first 留痕 without a
+  // runner message-loop change).
+  //
+  // E-4 status (reassessed, round-2): adding canUseTool does NOT settle E-4 by itself.
+  // Per our own read of sdk.d.ts, `Options.canUseTool`'s doc ("called before each tool
+  // execution to determine if it should be allowed, denied, or prompt the user") does
+  // NOT confirm it fires under permissionMode:'bypassPermissions' either — the
+  // bypassPermissions doc says it "bypasses ALL permission checks", and canUseTool is
+  // ITSELF documented as a "permission handler", so it is PLAUSIBLE canUseTool is ALSO
+  // skipped under bypass (the same class of uncertainty as the hook). Nor do the
+  // typings settle whether the SDK consults BOTH callbacks for the SAME single tool
+  // call (sdk.d.ts:3446 only documents that a hook DENY bypasses canUseTool — it is
+  // silent on what happens when the hook ALLOWS/continues). If both layers ARE
+  // consulted sequentially for one call, the shared counter has a known, ACCEPTED
+  // edge case: the hook grants + increments the FIRST spawn, then canUseTool sees the
+  // already-incremented count and denies that same (already-approved) call — an
+  // over-strict false deny of the legitimate first spawn, not a safety violation (the
+  // anti-swarm cap is about never exceeding the max, not about never under-granting).
+  // This residual uncertainty is why E-4 is not declared "solved by canUseTool" — it
+  // remains an open question only the dev harness (scripts/dev/yuk572-e1-e4-spawn-
+  // checks.ts, whose denyTriggered metric now also covers both layers) can resolve
+  // empirically: does the scout ever actually get to spawn once wired? Depth ≤1 is
+  // unaffected either way (scout.tools omits Task — enforced in scout-agent.ts).
   let scoutSpawns = 0;
   const spawnCapMatcher: HookCallbackMatcher = {
     hooks: [
@@ -284,6 +314,15 @@ export async function runResearchMeetingDirector(
         return { continue: true };
       },
     ],
+  };
+  const spawnCapCanUseTool: CanUseTool = async (toolName) => {
+    if (toolName === SPAWN_TOOL_NAME) {
+      if (scoutSpawns >= MAX_SCOUT_SPAWNS) {
+        return { behavior: 'deny', message: '侦察兵每晚上限已达（≤1）' };
+      }
+      scoutSpawns += 1;
+    }
+    return { behavior: 'allow' };
   };
 
   const input = {
@@ -312,6 +351,7 @@ export async function runResearchMeetingDirector(
       allowedTools: [...DIRECTOR_ALLOWED_TOOLS],
       agents: { 'evidence-scout': scout },
       hooks: { PreToolUse: [spawnCapMatcher] },
+      canUseTool: spawnCapCanUseTool,
     });
   } catch (err) {
     degraded = true;
@@ -340,7 +380,7 @@ export async function runResearchMeetingDirector(
         taskKind: 'ResearchMeetingDirectorTask',
       });
     } catch (err) {
-      postRunError = err instanceof Error ? err.message : String(err);
+      postRunError = appendPostRunError(postRunError, err);
       console.error(
         '[research_meeting_agent director] persistToolTrace failed (best-effort, degrading)',
         err,
@@ -362,10 +402,17 @@ export async function runResearchMeetingDirector(
         payload: { subagent_type: 'evidence-scout', spawns: scoutSpawns, day_key: dayKey },
         caused_by_event_id: triggerEventId,
         cost_micro_usd: null,
-        created_at: now,
+        // round-2 review MINOR #8 — WRITE-TIME timestamp (mirrors dreaming_nightly.ts:390
+        // `deps.now?.() ?? new Date()`), not the function-entry `now` snapshot: this write
+        // happens AFTER the (up to 300s) LLM run, so entry-time `now` would understate how
+        // long ago the run actually started. Predicate-coupling check (§2 review fix):
+        // the nightly job's hasScanEventForDayFn queries `payload.day_key` (an explicit,
+        // entry-time-computed string field, NOT created_at) — so this timestamp change
+        // introduces ZERO coupling risk with the claim/scan idempotency check.
+        created_at: deps.now?.() ?? new Date(),
       });
     } catch (err) {
-      postRunError = postRunError ?? (err instanceof Error ? err.message : String(err));
+      postRunError = appendPostRunError(postRunError, err);
       console.error(
         '[research_meeting_agent director] scout_spawned event write failed (best-effort, degrading)',
         err,
@@ -424,7 +471,9 @@ export async function runResearchMeetingDirector(
       },
       caused_by_event_id: triggerEventId,
       cost_micro_usd: costMicroUsd,
-      created_at: now,
+      // round-2 review MINOR #8 — write-time timestamp (see the scout_spawned write
+      // above for the full rationale + the day_key/created_at decoupling conclusion).
+      created_at: deps.now?.() ?? new Date(),
     });
   } catch (err) {
     // Best-effort — see the file-header degrade comment: if THIS write itself fails, the
