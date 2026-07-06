@@ -3,7 +3,10 @@
 // The Copilot free-form run input carries a learner-state HEADER: a deterministic
 // (no-LLM) code-read projection of the learner's current state — 今日 due count +
 // 活跃 goal + top-2 误区 + θ̂/mastery band 一行 + 昨夜交班一句话摘要. Depth is left
-// to the model's DomainTools; the header is only a 100–200 token teaser.
+// to the model's DomainTools; the header is a short teaser, hard-capped at
+// LEARNER_STATE_HEADER_BUDGET.maxChars (400 chars — a char cap, not a token count;
+// CJK content near that ceiling runs ~400-1000 tokens for Claude-family
+// tokenizers, though the typical 5-line snapshot sits well below the cap).
 //
 // OWNER HARD CONSTRAINT (never regress): NO per-turn 装配注入. The real cost of
 // re-projecting every turn = 注意力污染 + 天级数据被 turn 级重发. So the header is
@@ -110,9 +113,19 @@ export interface LearnerStateHeader {
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 
-/** UTC calendar-day bucket (YYYY-MM-DD) used for the cross-day invalidation. */
+// Review-verdict fix #2 (MINOR) — the house cron domain (dreaming/coach) runs
+// Asia/Shanghai; bucketing by UTC calendar day fires the cross-day invalidation
+// at Beijing 08:00 instead of local midnight. `en-CA` formats as YYYY-MM-DD.
+const SHANGHAI_DAY_BUCKET_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** Asia/Shanghai calendar-day bucket (YYYY-MM-DD) used for cross-day invalidation. */
 export function dayBucket(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return SHANGHAI_DAY_BUCKET_FORMATTER.format(d);
 }
 
 // Is `current` strictly newer than `cached`? Null cached + non-null current =
@@ -305,7 +318,18 @@ export async function readLearnerStateProjection(
 
 // ── Cache + watermark reads (IO) ─────────────────────────────────────────────
 
-/** One grouped MAX(created_at) query for the three invalidation categories. */
+// Review-verdict fix #1 (MAJOR) — pick whichever ISO timestamp is more recent;
+// null is "no signal" and loses to any real timestamp. Both inputs are ISO
+// strings from the SAME `new Date().toISOString()` format (always 'Z'-suffixed
+// UTC), so lexicographic string comparison agrees with chronological order.
+function maxIso(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a > b ? a : b;
+}
+
+/** One grouped MAX(created_at) query for the four invalidation categories
+ *  (attempt + review folded together — see readLearnerStateWatermarks). */
 export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerStateWatermarks> {
   const rows = await db
     .select({
@@ -316,6 +340,12 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     .where(
       or(
         eq(event.action, 'attempt'),
+        // Review-verdict fix #1 (MAJOR) — the FSRS review-queue clearing write
+        // (src/capabilities/practice/api/submit.ts) uses a DISTINCT action='review',
+        // NOT 'attempt'. It directly moves review_due_count (the header's "今日
+        // 待复习" headline), so a pure-review session (no fresh 'attempt' rows)
+        // must still trip the invalidation — folded into attempt_at below.
+        eq(event.action, 'review'),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
       ),
@@ -327,7 +357,12 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     return at ? new Date(at).toISOString() : null;
   };
   return {
-    attempt_at: iso('attempt'),
+    // Fold 'review' into attempt_at: the issue's "new attempt event" invalidation
+    // intent means "new practice activity", and FSRS review IS practice activity
+    // (a distinct action, same intent) — folding (vs. a 5th named watermark) keeps
+    // the invalidation-category shape unchanged (still 3 named fields) since this
+    // is a same-intent union, not a new invalidation category.
+    attempt_at: maxIso(iso('attempt'), iso('review')),
     dreaming_at: iso('experimental:dreaming_scan'),
     proposal_decision_at: iso('rate'),
   };

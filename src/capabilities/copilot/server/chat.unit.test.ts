@@ -1779,6 +1779,63 @@ describe('runCopilotChat — learner-state header (YUK-574)', () => {
     );
   });
 
+  // Review-verdict fix #3(a) (MINOR) — a throwing resolver degrades to an empty
+  // header (chat.ts's own try/catch around resolveLearnerState), which then makes
+  // assembleConversationHistory skip the pin entirely (empty header_md → no
+  // context entry). The chat must still reply, not crash.
+  it('degrade (a): a throwing resolveLearnerStateHeaderFn → chat still replies, conversation_history is empty', async () => {
+    const runAgentTaskFn = mkRun();
+    const resolveLearnerStateHeaderFn = vi.fn(async () => {
+      throw new Error('resolver blew up');
+    });
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        resolveLearnerStateHeaderFn,
+        loadHistoryFn: async () => [],
+      },
+    );
+
+    expect(result.reply).toBe('OK');
+    const input = captureInput(runAgentTaskFn);
+    expect(input.conversation_history).toEqual([]);
+    expect(input.proposal_feedback).toEqual([]);
+  });
+
+  // Review-verdict fix #3(b) (MINOR) — a throwing history reader must NOT lose a
+  // successfully-resolved (non-empty) header: chat.ts's loadHistory catch branch
+  // rebuilds conversation_history from an EMPTY turn list but the SAME
+  // learnerState.header_md, so the pin survives header-only.
+  it('degrade (b): a throwing loadHistoryFn + non-empty header → conversation_history is header-only', async () => {
+    const runAgentTaskFn = mkRun();
+    const header = '今日待复习 4 项';
+
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: header, proposal_feedback: [] }),
+        loadHistoryFn: async () => {
+          throw new Error('history read blew up');
+        },
+      },
+    );
+
+    expect(result.reply).toBe('OK');
+    const input = captureInput(runAgentTaskFn);
+    expect(input.conversation_history).toEqual([{ role: 'context', text: header }]);
+  });
+
   it('teaching turns do NOT resolve the learner-state header (short-circuit)', async () => {
     const db = {
       transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
