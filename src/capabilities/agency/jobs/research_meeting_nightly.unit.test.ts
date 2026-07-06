@@ -243,6 +243,30 @@ describe('runResearchMeetingNightly', () => {
     expect(writeAiProposalFn).not.toHaveBeenCalled();
   });
 
+  it('empty night early-returns AFTER reconcile: zero events written, zero LLM (YUK-377 复审)', async () => {
+    const writeEventFn = vi.fn(async (_db: unknown, input: WriteEventInput) => input.id);
+    const induceConjectureFn = vi.fn(async (input: InduceConjectureInput) => fakeInduced(input));
+    const reconcileFn = vi.fn(async () => ({ reconciled: 3, skipped: 0 }));
+    const deps = baseDeps({
+      getFailureAttemptsFn: vi.fn(async () => []),
+      writeEventFn,
+      induceConjectureFn,
+      reconcileFn,
+    });
+    const result = await runResearchMeetingNightly({} as never, deps);
+    // The deterministic reconcile half still ran (it must never be skipped)…
+    expect(reconcileFn).toHaveBeenCalledTimes(1);
+    expect(result.reconciled).toBe(3);
+    // …but the propose half wrote NOTHING: no trigger/scan anchor events (both are
+    // outbox-eligible → empty nights fan out brief-regen for pure noise), no LLM.
+    expect(writeEventFn).not.toHaveBeenCalled();
+    expect(induceConjectureFn).not.toHaveBeenCalled();
+    expect(result.considered).toBe(0);
+    expect(result.conjectures_created).toBe(0);
+    expect(result.cost_usd).toBe(0);
+    expect(result.trigger_event_id).toBe(''); // '' sentinel: no anchor event exists
+  });
+
   it('runs the A13 reconcile loop and surfaces the reconciled count (U8)', async () => {
     const reconcileFn = vi.fn(async () => ({ reconciled: 2, skipped: 1 }));
     // No failures → empty propose half, isolating the reconcile wiring assertion.

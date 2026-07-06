@@ -74,7 +74,10 @@ export interface ResearchMeetingResult {
   reconcile_skipped: number;
   /** total Opus cost across the run's inductions, USD. */
   cost_usd: number;
-  /** the run's anchor event id (provenance + scan subject). */
+  /**
+   * the run's anchor event id (provenance + scan subject). `''` sentinel when the
+   * run early-returned on an empty night (zero top cells → no anchor event written).
+   */
   trigger_event_id: string;
 }
 
@@ -216,6 +219,25 @@ export async function runResearchMeetingNightly(
   // ── Deterministic 取证 + top-K salience cap ──
   const cells = gatherConjectureEvidence({ failures, masteryByKnowledgeId, knownConjectureKeys });
   const topCells = cells.slice(0, RESEARCH_MEETING_MAX_CONJECTURES);
+
+  // Empty-night early return (YUK-377 复审 §3.5): zero top cells (no recurring failure
+  // evidence, or every cell deduped by a pending conjecture) means the propose half has
+  // nothing to anchor. Skip the trigger + scan events entirely — both are outbox-eligible
+  // (no ingest_at opt-out), so an empty night would otherwise fan two pure-noise rows into
+  // memory ingest → potential brief-regen churn. MUST stay AFTER the reconcile call above:
+  // the deterministic settlement half is never skipped. Zero external consumers of these
+  // events exist (grep-verified 2026-07-06), so skipping them changes no downstream reader.
+  if (topCells.length === 0) {
+    return {
+      considered: 0,
+      conjectures_created: 0,
+      pending_before: knownConjectureKeys.size,
+      reconciled: reconcileResult.reconciled,
+      reconcile_skipped: reconcileResult.skipped,
+      cost_usd: 0,
+      trigger_event_id: '',
+    };
+  }
 
   // Anchor the run (provenance for each proposal + the scan subject).
   const triggerEventId = `research_meeting_${newId()}`;
