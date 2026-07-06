@@ -309,6 +309,16 @@ describe('propose_conjecture — server-enforced single writer', () => {
     expect(h.proposals).toHaveLength(1);
   });
 
+  it('rejects evidence_refs containing a duplicate event id (round-4 review major 0.80 — repeating one id would inflate the off-menu recurrence floor)', async () => {
+    const h = build({ meetingContext: meetingContext({ candidate_cells: [] }) }); // off-menu → recurrence derives from primaryRefs.length
+    const res = await callTool(
+      'propose_conjecture',
+      validProposeArgs({ knowledge_id: 'k_dup', evidence_refs: ['att_1', 'att_1'] }),
+    );
+    expect(res.ok).toBe(false);
+    expect(h.proposals).toHaveLength(0);
+  });
+
   it('falls back to baseline_p=0.5 (does NOT reject the proposal) when getMasteryProjectionFn throws (round-2 review MAJOR #3)', async () => {
     const h = build({
       meetingContext: meetingContext({ candidate_cells: [] }), // no matching cell → live mastery read attempted
@@ -474,5 +484,27 @@ describe('leave_agent_note — server-enforced', () => {
     expect(res.ok).toBe(false);
     expect(h.notes).toHaveLength(0);
     expect(h.caps.noteCount).toBe(0);
+  });
+
+  it('normalizes a surviving ref kind to "event" regardless of what the LLM supplied (round-4 review minor 0.75 — propose_conjecture hardcodes kind:"event" for the same first-hand-refs guarantee; leave_agent_note must match)', async () => {
+    const h = build();
+    await callTool('leave_agent_note', validNoteArgs({ refs: [{ kind: 'junk', id: 'att_1' }] }));
+    expect(h.notes).toHaveLength(1);
+    expect(h.notes[0].refs).toEqual([{ kind: 'event', id: 'att_1' }]);
+  });
+
+  it('rejects refs containing a duplicate id (round-4 review major 0.80 cross-check)', async () => {
+    const h = build();
+    const res = await callTool(
+      'leave_agent_note',
+      validNoteArgs({
+        refs: [
+          { kind: 'event', id: 'att_1' },
+          { kind: 'event', id: 'att_1' },
+        ],
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(h.notes).toHaveLength(0);
   });
 });

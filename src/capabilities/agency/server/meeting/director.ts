@@ -45,7 +45,6 @@ import {
 import { getMasteryProjection } from '@/server/mastery/state';
 import { listProposalInboxRows } from '@/server/proposals/inbox';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
-import { writeAiProposal } from '@/server/proposals/writer';
 import type { CanUseTool, HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 import {
   type BuildDirectorServerOpts,
