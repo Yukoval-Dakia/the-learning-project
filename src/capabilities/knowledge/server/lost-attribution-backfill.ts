@@ -27,7 +27,7 @@
 
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { and, asc, eq, notExists, sql } from 'drizzle-orm';
+import { and, asc, eq, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 export interface LostAttributionCensus {
@@ -38,13 +38,20 @@ export interface LostAttributionCensus {
 /**
  * Census: failure attempts (`action='attempt'`, `subject_kind='question'`,
  * `outcome='failure'`) that have NO chained judge event whose payload's
- * `attribution_pending` is DISTINCT FROM `'true'`. Ordered oldest-first, capped
- * at `limit`. Read-only.
+ * `attribution_pending` is DISTINCT FROM `'true'`, AND were created strictly
+ * before `createdBefore` (the race floor — see OCR #1 below). Ordered
+ * oldest-first, capped at `limit`. Read-only.
  */
 export async function censusLostAttributions(
   db: Db,
-  opts: { limit: number },
+  opts: { limit: number; createdBefore: Date },
 ): Promise<LostAttributionCensus> {
+  // OCR #5: a non-positive limit is an operator error — `0` silently returns an
+  // empty census, a negative value makes Postgres throw an opaque error. Fail
+  // loudly before touching the DB.
+  if (opts.limit <= 0) {
+    throw new Error(`censusLostAttributions: limit must be > 0, got ${opts.limit}`);
+  }
   const judge = alias(event, 'judge');
   const rows = await db
     .select({ id: event.id })
@@ -54,6 +61,14 @@ export async function censusLostAttributions(
         eq(event.action, 'attempt'),
         eq(event.subject_kind, 'question'),
         eq(event.outcome, 'failure'),
+        // OCR #1 (race guard): only census attempts old enough that their
+        // ORIGINAL attribution_followup job has surely run. A brand-new failure
+        // attempt whose native job is still enqueued/in-flight would otherwise be
+        // censused as "lost" and re-enqueued, racing the original — the
+        // read-then-write idempotency has no unique constraint on
+        // caused_by_event_id, so both reads could miss and double-judge (double
+        // LLM). Flooring by created_at closes that race programmatically.
+        lt(event.created_at, opts.createdBefore),
         notExists(
           db
             .select({ one: sql`1` })
@@ -82,8 +97,19 @@ export interface RunLostAttributionBackfillParams {
   dryRun: boolean;
   /** Per-run cap on how many attempts are re-enqueued (CLI default 25). */
   limit: number;
+  /**
+   * Race floor (OCR #1): census only attempts created strictly before this
+   * instant, so an attempt whose original attribution_followup job may still be
+   * in flight is never re-enqueued. The CLI passes NOW - 6h.
+   */
+  createdBefore: Date;
   /** Enqueue fn — injected so the DB test drives it without a live pg-boss. */
   send?: EnqueueAttributionFollowupFn;
+}
+
+export interface LostAttributionBackfillError {
+  attemptEventId: string;
+  message: string;
 }
 
 export interface LostAttributionBackfillResult {
@@ -92,6 +118,14 @@ export interface LostAttributionBackfillResult {
   found: number;
   /** number of attribution_followup jobs enqueued (0 in dry-run). */
   enqueued: number;
+  /**
+   * Per-item enqueue failures (OCR #3/#4). The apply loop is continue-on-error:
+   * a failed `send` neither aborts the run (the job is idempotent, so pressing on
+   * + re-running is safe) nor loses the enqueued count — each failure lands here.
+   * The CLI prints these and exits non-zero. Empty in dry-run and on a clean
+   * apply.
+   */
+  errors: LostAttributionBackfillError[];
   /** the attempt ids the census matched — for CLI reporting. */
   attemptIds: string[];
 }
@@ -103,13 +137,14 @@ export interface LostAttributionBackfillResult {
 export async function runLostAttributionBackfill(
   params: RunLostAttributionBackfillParams,
 ): Promise<LostAttributionBackfillResult> {
-  const { db, dryRun, limit } = params;
-  const census = await censusLostAttributions(db, { limit });
+  const { db, dryRun, limit, createdBefore } = params;
+  const census = await censusLostAttributions(db, { limit, createdBefore });
   if (dryRun) {
     return {
       mode: 'dry-run',
       found: census.attemptIds.length,
       enqueued: 0,
+      errors: [],
       attemptIds: census.attemptIds,
     };
   }
@@ -118,14 +153,29 @@ export async function runLostAttributionBackfill(
     throw new Error('runLostAttributionBackfill: `send` is required in apply mode');
   }
   let enqueued = 0;
+  const errors: LostAttributionBackfillError[] = [];
+  // OCR #3/#4 — continue-on-error partial result. This is the SINGLE
+  // implementation site for the per-item enqueue-failure handling (the CLI layer
+  // only consumes `errors`, it does not re-catch around `send`). A single
+  // boss.send failure must not abort the one-time backfill or drop the
+  // already-enqueued count: record the failure and press on. The idempotent job
+  // makes both pressing-on and a later re-run safe.
   for (const attemptEventId of census.attemptIds) {
-    await send(attemptEventId);
-    enqueued += 1;
+    try {
+      await send(attemptEventId);
+      enqueued += 1;
+    } catch (err) {
+      errors.push({
+        attemptEventId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
   return {
     mode: 'apply',
     found: census.attemptIds.length,
     enqueued,
+    errors,
     attemptIds: census.attemptIds,
   };
 }

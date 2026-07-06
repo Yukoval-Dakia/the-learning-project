@@ -355,12 +355,16 @@ describe('runAttributionFollowup', () => {
       .from(event)
       .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
     expect(judges).toHaveLength(0);
-    // retryable path writes NO ledger row — pg-boss + llm_dlq record it.
+    // OCR #6: the retryable path now writes a best-effort failed_retryable ledger
+    // row (for the non-rethrowing copilot caller); on this pg-boss path it is
+    // redundant with pg-boss + llm_dlq but harmless. The rethrow contract above
+    // is unchanged.
     const ledger = await db
       .select()
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
-    expect(ledger).toHaveLength(0);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].outcome).toBe('failed_retryable');
   });
 
   it('YUK-379: handler rethrows on retryable so pg-boss retries', async () => {
