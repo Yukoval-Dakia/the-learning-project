@@ -241,6 +241,66 @@ describe('learner-state header cache round-trip', () => {
     const cached = await readLatestLearnerStateHeaderCache(db, 'ls_db_latest');
     expect(cached?.header_md).toBe('NEW');
   });
+
+  // PR #717 bot review fix #2 (MINOR) — a persisted cache row may predate a
+  // schema shift (or be otherwise corrupt); a blind cast to
+  // ScopedProposalFeedbackCell[] would let a malformed cell through and crash a
+  // downstream `.top_dismiss_reasons.length` read. parseCache must per-cell
+  // type-guard and FILTER (not reject the whole payload).
+  it('filters malformed proposal_feedback cells but keeps valid ones (no throw)', async () => {
+    const sessionId = 'ls_db_malformed';
+    const id = `copilot_learner_state_${createId()}`;
+    // Written directly (bypassing writeLearnerStateHeaderCache's typed input) to
+    // simulate a corrupt / pre-schema-shift persisted row. experimental:* payload
+    // is a loose z.record escape hatch, so this passes writeEvent's parseEvent.
+    await writeEvent(db, {
+      id,
+      session_id: sessionId,
+      actor_kind: 'system',
+      actor_ref: 'system:copilot_learner_state',
+      action: LEARNER_STATE_HEADER_ACTION,
+      subject_kind: 'query',
+      subject_id: id,
+      outcome: null,
+      payload: {
+        session_id: sessionId,
+        header_md: '今日待复习 2 项',
+        day_bucket: '2026-07-06',
+        assembled_at: '2026-07-06T09:00:00.000Z',
+        watermarks: { attempt_at: null, dreaming_at: null, proposal_decision_at: null },
+        proposal_feedback: [
+          {
+            kind: 'knowledge_edge',
+            relation: 'prerequisite',
+            acceptance_rate: 0.5,
+            top_dismiss_reasons: [],
+            top_rubric_gates: [],
+          },
+          // Malformed: top_dismiss_reasons is missing (not an array at all) —
+          // a blind cast + `.length` read downstream would throw on this cell.
+          { kind: 'knowledge_edge', relation: 'related_to', acceptance_rate: 0.2 },
+          // Malformed: kind is not a string.
+          { kind: 42, relation: null, top_dismiss_reasons: [], top_rubric_gates: [] },
+        ],
+      },
+      ingest_at: new Date('2026-07-06T09:00:00.000Z'),
+      created_at: new Date('2026-07-06T09:00:00.000Z'),
+    });
+
+    const cached = await readLatestLearnerStateHeaderCache(db, sessionId);
+    expect(cached).not.toBeNull();
+    expect(cached?.proposal_feedback).toEqual([
+      {
+        kind: 'knowledge_edge',
+        relation: 'prerequisite',
+        acceptance_rate: 0.5,
+        top_dismiss_reasons: [],
+        top_rubric_gates: [],
+      },
+    ]);
+    // The would-be-crashing field access never throws once filtered.
+    expect(() => cached?.proposal_feedback.map((c) => c.top_dismiss_reasons.length)).not.toThrow();
+  });
 });
 
 describe('resolveLearnerStateHeader (real cache IO + watermark-driven invalidation)', () => {
