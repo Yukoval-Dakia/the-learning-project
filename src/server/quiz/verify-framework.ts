@@ -344,11 +344,18 @@ function answerCandidates(text: string, choices: readonly string[]): string[] {
   return out;
 }
 
-function extractJsonObject(text: string): unknown {
+// OCR (PR #716) — `label` identifies the CALLER (check name + task kind) so a parse-failure
+// error message names the check/task that actually blew up. This is a SHARED helper (solve_check
+// + teaching_quality both parse a bare-JSON structured-output blob); without a caller-provided
+// label, a teaching_quality parse failure was surfacing as "solve-check: SolutionGenerateTask
+// output had no JSON object" — wrong check name AND wrong task name, misleading production
+// triage. Each call site passes its own label; the solve_check call site's label reproduces the
+// PRE-EXISTING string byte-identically (no behavior change there).
+function extractJsonObject(text: string, label: string): unknown {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
-    throw new Error('solve-check: SolutionGenerateTask output had no JSON object');
+    throw new Error(`${label} output had no JSON object`);
   }
   return JSON.parse(text.slice(start, end + 1));
 }
@@ -435,7 +442,8 @@ export async function runSolveCheck(
     recordRun(solverRun); // EFF-1 — captured before parse so a parse throw still keeps the spend.
     const { text } = solverRun;
     // Parse the structured output; only final_answer + answer_equivalents matter here.
-    const parsed = extractJsonObject(text) as {
+    // Label reproduces the pre-existing error string byte-identically (OCR PR #716).
+    const parsed = extractJsonObject(text, 'solve-check: SolutionGenerateTask') as {
       reference_solution?: { final_answer?: unknown; answer_equivalents?: unknown };
     };
     const fa = parsed.reference_solution?.final_answer;
@@ -727,7 +735,7 @@ export async function runTeachingQualityCheck(
     const ctx = { subjectProfile: opts.profile.full };
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
     recordRun(run);
-    parsed = extractJsonObject(run.text);
+    parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {
     return skipped(
       'unsupported',

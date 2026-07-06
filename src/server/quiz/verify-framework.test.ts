@@ -723,6 +723,12 @@ describe('runTeachingQualityCheck — conservative non-blocking behaviour (R2)',
       profile: fakeProfile,
     });
     expect(result.verdict).toBe('unsupported');
+    // OCR (PR #716) — extractJsonObject's shared parse-failure error must name the CALLER
+    // (check + task kind), not the solve_check call site it also serves. Regression guard
+    // against the two call sites' labels being conflated again.
+    expect(result.reason).toContain('teaching-quality: TeachingQualityTask');
+    expect(result.reason).not.toContain('solve-check');
+    expect(result.reason).not.toContain('SolutionGenerateTask');
   });
 
   it('returns unsupported when a mandatory axis (clarity/unique_answer) is missing', async () => {
