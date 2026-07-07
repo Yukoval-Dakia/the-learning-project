@@ -206,6 +206,35 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     ).toEqual([]);
   });
 
+  // A7 settlement (红线审查 2026-07-07, 结算层零能动性) — the settlement ruling named
+  // kc_typed_state + learner_axis_state as settlement ledgers but step9 had ZERO
+  // assertion on them, so the two "named" ledgers were the only ones with no
+  // structural single-owner guard (their sole-writer status lived only in schema
+  // comments). These two blocks close that enforcement gap: after them, the step9
+  // allowlist IS the machine-checkable canonical enumeration of the settlement
+  // write surface. Mirrors the mastery_state / item_calibration blocks above
+  // (violations-only). Test-file writers are auto-exempt (findWriteHits default
+  // includeTests: false).
+  it('db.{insert,update}(kc_typed_state) appears only in src/server/conjectures/typed-state.ts (A7 settlement ledger)', async () => {
+    const ALLOWED_KC_TYPED_STATE_WRITERS = ['src/server/conjectures/typed-state.ts'] as const;
+    const hits = await findWriteHits('kc_typed_state');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_KC_TYPED_STATE_WRITERS));
+    expect(
+      violations,
+      `\`kc_typed_state\` is a settlement-layer single-owner ledger (A7): only src/server/conjectures/typed-state.ts (upsertKcTypedState / retireKcTypedStateOnMerge) may write it. Found extra writers:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('db.{insert,update}(learner_axis_state) appears only in src/server/calibration/axis-writer.ts (A7 settlement ledger)', async () => {
+    const ALLOWED_AXIS_STATE_WRITERS = ['src/server/calibration/axis-writer.ts'] as const;
+    const hits = await findWriteHits('learner_axis_state');
+    const violations = hits.filter((h) => !isAllowed(h, ALLOWED_AXIS_STATE_WRITERS));
+    expect(
+      violations,
+      `\`learner_axis_state\` is a settlement-layer single-owner ledger (A7): only src/server/calibration/axis-writer.ts may write it. Found extra writers:\n  ${violations.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
   // YUK-531 PR-3 (A5 S4 / ADR-0036 RT1) — misconception's L1 DORMANCY HAS ENDED. The
   // conjecture→misconception promotion flow is now the FIRST (and single) writer of the
   // `misconception` table: promoteConjectureToMisconception

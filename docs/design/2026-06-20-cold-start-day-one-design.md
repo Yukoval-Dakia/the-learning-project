@@ -51,7 +51,7 @@
   - **相对排序而非绝对**：p(L) 投影用的是 KC 的**代表 β = 该 KC 全部 hard-track item 的 b 中位数**（`state.ts:353-389`），中位数对单题误锚稳健——这是「信相对不信绝对」的工程体现。
   - **prompt 已能吃 anchored_b**：`buildItemPriorPrompt` 的 `knowledge_context: [{ name, anchored_b? }]`（`task-prompts.ts:777`）——已标定知识点的 b 锚可作参考，offset 校准的接缝已在。
 - **还缺什么**：
-  - **owner 固定锚题（fixed-anchor）机制 ABSENT**。`item_calibration.source` 的注释列了 `'fixed_anchor'` 槽位但**无写入路径**——没有「owner 钦定这 ~5-10 道题的 b 是 X」的录入面。这是 §1.1 校准 offset 的硬前置，也是冷启段唯一能对抗系统性 under-estimation 的杠杆（见 §4.1）。
+  - **owner 固定锚题（fixed-anchor）机制 ✅ 已落地**（2026-07-07 A3 审查勘误——原标 ABSENT 是陈旧快照）。YUK-453 inc-A（2026-06-20）：`src/server/mastery/fixed-anchor.ts` `setFixedAnchor` 单写者写 `item_calibration.{b, b_anchor}` `source='fixed_anchor'` + `ANCHOR_BUCKET_LOGITS` 五档 + `calibration-anchors` API；`effectiveB = b_calib ?? b_anchor ?? b` 自动消费。这曾是 §1.1 校准 offset 的硬前置、冷启段对抗系统性 under-estimation 的杠杆（见 §4.1），现已通电。
   - **学生模拟 / 成对比较 elicitation ABSENT**。当前只有「特征→b」单题路线（已比直评好）。LLaSA 式学生模拟、成对比较两两定序是 spike 点名的更强冷启法（`b-anchor-feasibility-spike.md` §2.2 ④），但**未实现**。
   - **KG prereq 深度作独立难度信号 ABSENT**。prereq 边只在写入期做 acyclicity 校验（见 1.5），**不喂任何难度/选题信号**。
 
@@ -177,8 +177,10 @@
 
 以下每条都是**可写成测试断言**的不变量。括号内是现有的物理保证点。
 
-1. **永不估计 `a` / `c` / slip / guess。** ICC 恒为 `P = σ(θ − b)`（1PL，`theta.ts:27`），无 a、无 c 参数；`item_calibration` 只有 b 半边（`schema.ts:830`）。任何引入 per-item 区分度/猜测的 PR 直接违例。
-   - *断言*：`UpdateThetaForAttemptInput`（`state.ts:391-434`）字段集里**没有** a/c/slip/guess 任何承载位（结构性切断）。
+> **阶段定位（2026-07-07 A3 审查补注）**：本节是慢热阶段②形态的不变量。「锁 b」锁的是尺度不定性（原点 + 单位由外部供给、不可 owner 自证），非 b 数值永久冻结；阶段③ active-PPI 批量去偏 b 标尺**不违本节**——它既非在线 θ̂ 回写（G4）亦非 owner 自证内循环（详见 upstream `difficulty-data-driven-research.md` 问题 1）。
+
+1. **永不拟合跨考生方差分量（IRT `a`、guess `c`、CDM slip/guess）。**（2026-07-07 A3 审查勘误——判据从「代码里是否出现 `c` 符号」收窄为「是否**拟合**跨考生方差分量」。）θ̂ credit 热路径的 ICC 恒为 1PL `P = σ(θ − b)`（`theta.ts` `expectedScore`）。**违例判据 = §0.2 试金石**（参数是否为跨考生方差分量），不是「代码里是否出现 `c` 符号」。题型结构派生的设计常量**不违例**——先例 **YUK-436**：选择题 `c = 1/k`（`choicesToGuess` → `fisherInformation3pl`/`binaryLikelihood`，dark-ship 于 `THETA_GRID_ENABLED=false`；inc-2 cut-over 后 `c` 将进入 grid 似然即 credit 路径，仍合法——`c` 来自 `choices_md.length` 结构而非拟合；绝不可回落 ADR-0035 软轨 `irt_c` 列）。任何引入**拟合出的** per-item 区分度/猜测参数的 PR 直接违例。
+   - *断言（不变）*：`UpdateThetaForAttemptInput`（`src/server/mastery/state.ts`，符号锚）字段集里**没有** a/c/slip/guess 任何承载位（结构性切断）。
 
 2. **选题用 1PL，不用吃 a/c 的 Fisher-info。** MFI = `p(1−p)` = 2PL 在 **a≡1** 时的 information（`selection-signals.ts:8, 77`）；冷启走 KLP（后验加权，`selection-signals.ts:82`）。不得引入需要 a 的 item-information 选题。
 
