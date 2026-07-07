@@ -135,10 +135,9 @@ describe('QuizGenTask registry entry', () => {
     expect(tasks.QuizGenTask.budget.timeout).toBe(120_000);
   });
 
-  it('uses the mimo-v2.5-pro default with mimo-v2.5 fallback', () => {
+  it('uses the mimo-v2.5-pro default (fallbackChain deleted per YUK-576)', () => {
     expect(tasks.QuizGenTask.defaultProvider).toBe('xiaomi');
     expect(tasks.QuizGenTask.defaultModel).toBe('mimo-v2.5-pro');
-    expect(tasks.QuizGenTask.fallbackChain).toEqual([{ provider: 'xiaomi', model: 'mimo-v2.5' }]);
   });
 });
 
@@ -156,12 +155,9 @@ describe('QuizVerifyTask registry entry', () => {
     expect(tasks.QuizVerifyTask.budget.timeout).toBe(60_000);
   });
 
-  it('uses the mimo-v2.5-pro default with mimo-v2.5 fallback', () => {
+  it('uses the mimo-v2.5-pro default (fallbackChain deleted per YUK-576)', () => {
     expect(tasks.QuizVerifyTask.defaultProvider).toBe('xiaomi');
     expect(tasks.QuizVerifyTask.defaultModel).toBe('mimo-v2.5-pro');
-    expect(tasks.QuizVerifyTask.fallbackChain).toEqual([
-      { provider: 'xiaomi', model: 'mimo-v2.5' },
-    ]);
   });
 });
 
@@ -185,12 +181,9 @@ describe('QuestionAuthorTask registry entry', () => {
     expect((tasks.QuestionAuthorTask as TaskDef).invocation).toBeUndefined();
   });
 
-  it('uses the mimo-v2.5-pro default with mimo-v2.5 fallback', () => {
+  it('uses the mimo-v2.5-pro default (fallbackChain deleted per YUK-576)', () => {
     expect(tasks.QuestionAuthorTask.defaultProvider).toBe('xiaomi');
     expect(tasks.QuestionAuthorTask.defaultModel).toBe('mimo-v2.5-pro');
-    expect(tasks.QuestionAuthorTask.fallbackChain).toEqual([
-      { provider: 'xiaomi', model: 'mimo-v2.5' },
-    ]);
   });
 });
 
@@ -215,9 +208,6 @@ describe('SelectionOrchestratorTask registry entry', () => {
   it('uses the mimo-v2.5 runtime default (NOT mimo-v2.5-pro/sonnet/GLM)', () => {
     expect(tasks.SelectionOrchestratorTask.defaultProvider).toBe('xiaomi');
     expect(tasks.SelectionOrchestratorTask.defaultModel).toBe('mimo-v2.5');
-    expect(tasks.SelectionOrchestratorTask.fallbackChain).toEqual([
-      { provider: 'xiaomi', model: 'mimo-v2.5-pro' },
-    ]);
   });
 });
 
@@ -334,5 +324,25 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
     expect(p).toContain('get_meeting_context');
     // anti-injection contract carried into the charter.
     expect(p).toContain('<untrusted_learner_text>');
+  });
+});
+
+// YUK-576 — budget.transientRetries: the honest replacement for the deleted
+// fallbackChain declarations. Same-resolved-target retry budget, consumed by the
+// runner's transient-retry loop (runner.fallback.test.ts). Only the two vision
+// judges opt in (they are synchronous-route sensors whose catch swallows into
+// 'unsupported' — pg-boss never sees a throw, so no durable backstop exists).
+describe('budget.transientRetries (YUK-576)', () => {
+  it('the two vision judges get exactly 1 same-target transient retry', () => {
+    expect(tasks.StepsJudgeTask.budget.transientRetries).toBe(1);
+    expect(tasks.MultimodalDirectJudgeTask.budget.transientRetries).toBe(1);
+  });
+
+  it('every other task inherits the DEFAULT_BUDGET 0 (no in-process retry)', () => {
+    const optedIn = new Set(['StepsJudgeTask', 'MultimodalDirectJudgeTask']);
+    for (const [kind, def] of Object.entries(tasks)) {
+      if (optedIn.has(kind)) continue;
+      expect(def.budget.transientRetries, `${kind} must not opt into in-process retry`).toBe(0);
+    }
   });
 });

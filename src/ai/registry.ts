@@ -24,16 +24,32 @@ export type Provider =
   | 'anthropic-sub';
 export type ModelId = string;
 
+// YUK-576 (registry 诚实化) — the two long-inactive declarative fields are GONE:
+//   - `budget.maxCost` DELETED. Zero read path existed; wiring it to the SDK's
+//     native `Options.maxBudgetUsd` is a one-liner, but both active lanes lack
+//     usable cost reporting (mimo returns no total_cost_usd; the OAuth flat
+//     subscription lane has no per-run billing), so a wired gate would never
+//     trip — a wired-but-inert lie. Re-add WITH the maxBudgetUsd wiring when a
+//     cost-reporting lane (e.g. anthropic direct pay-as-you-go) enters service.
+//   - `fallbackChain` DELETED (design doc 2026-07-07 §1.2, full-chain audit:
+//     zero entries had a legitimate in-process consumption scenario). Durable
+//     jobs keep pg-boss redelivery as their single transient layer; the vision
+//     judges get same-target `transientRetries` below; a REAL cross-provider
+//     judge fallback (anthropic-sub Opus vision lane) is an owner decision and
+//     would land as env config (VISION_JUDGE_* family), not per-task chains.
 export interface TaskBudget {
   maxIterations: number;
   /**
-   * INACTIVE (phase-deferred, T-PD4 @ 2026-05-29): cost-cap not yet wired. The
-   * runner (`src/server/ai/runner.ts`) only enforces `maxIterations` (→ SDK
-   * `maxTurns`) and `timeout` (→ abort). No per-run USD accounting exists, so
-   * this value is declarative metadata only. Activate when a token/cost meter
-   * lands; see roadmap §2.7 T-PD4 ("maxCost / fallbackChain 实装 or 标 inactive").
+   * YUK-576 — in-process SAME-RESOLVED-TARGET retry budget for transient
+   * failures (design doc §1.3/§2.3; consumed by runTask's retry loop in
+   * `src/server/ai/runner.ts`). Fires ONLY when the call site opts in via
+   * `ctx.enableTransientRetry` (paths with no durable backstop — today exactly
+   * the two vision judges) AND routing is not pinned (no ctx.override, no
+   * AI_PROVIDER_OVERRIDE) AND the failure is whitelist-transient AND it arrived
+   * within RETRY_ELAPSED_CAP_MS of the first attempt. This is a retry, not a
+   * fallback — the retried attempt resolves the identical provider/model.
    */
-  maxCost: number; // USD
+  transientRetries: number;
   timeout: number; // ms
 }
 
@@ -42,14 +58,6 @@ export interface TaskDef {
   description: string;
   defaultProvider: Provider;
   defaultModel: ModelId;
-  /**
-   * INACTIVE (phase-deferred, T-PD4 @ 2026-05-29): provider fallback cascade not
-   * yet wired. The runner resolves a single provider/model via the Provider
-   * Manager (`src/server/ai/providers.ts`) and does not auto-retry down this
-   * chain on failure. Declarative metadata only until cascade routing lands;
-   * see roadmap §2.7 T-PD4.
-   */
-  fallbackChain: Array<{ provider: Provider; model: ModelId }>;
   budget: TaskBudget;
   needsToolCall: boolean;
   isMultimodal: boolean;
@@ -62,7 +70,7 @@ export interface TaskDef {
   invocation?: 'auto' | 'manual_rescue_only';
 }
 
-const DEFAULT_BUDGET: TaskBudget = { maxIterations: 6, maxCost: 0.5, timeout: 60_000 };
+const DEFAULT_BUDGET: TaskBudget = { maxIterations: 6, transientRetries: 0, timeout: 60_000 };
 
 // 模型选型规则（与 architecture § 五 对齐）：
 //   - Sonnet 主力（归因 / 变式 / 判分）
@@ -74,7 +82,6 @@ export const tasks = {
     description: '错题归因 + 知识点挂载（profile-scoped cause）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 4 },
     needsToolCall: false,
     isMultimodal: false,
@@ -101,7 +108,6 @@ export const tasks = {
       '错题归因（retrieve→rerank stage 2）：从候选 cause 列表重排 + 选 primary + 逐候选理由',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 4 },
     needsToolCall: false,
     isMultimodal: false,
@@ -115,7 +121,6 @@ export const tasks = {
     description: '错题图片 → 切块 + 题面 + 答案 + bbox（manual rescue only after Sub 0c）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    fallbackChain: [],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: true,
@@ -129,7 +134,6 @@ export const tasks = {
     description: '错题图片 → 切块（heavy / Tier 3 — mimo-v2.5 multimodal manual rescue）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    fallbackChain: [],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: true,
@@ -146,7 +150,6 @@ export const tasks = {
     // multimodal: mimo-v2.5 看图 + 文字 hint，输出结构 JSON。无 fallback —— VLM
     // 失败时 handler 回落到腾讯结构（regression safety，见 lane plan §5）。
     defaultModel: 'mimo-v2.5',
-    fallbackChain: [],
     // 多页大题 = 多图大 prompt，给 120s（spec §7 open Q3 的 token 成本提示）。
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 120_000 },
     needsToolCall: false,
@@ -163,7 +166,6 @@ export const tasks = {
       'T-OC slice A1 (YUK-145, OC-5) — 给一道已作答的录入题草拟错题元数据：判定 outcome（failure/partial/success/unanswered）+ 题型 + 难度 + （错答时）错因。单次结构化输出，非 multimodal。observe-only：草稿挂到 auto_enroll_observed 审计事件，不写 domain 行（enroll flag OFF）。',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // Single-shot structured output (mirrors AttributionTask / TaggingTask).
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
@@ -184,7 +186,6 @@ export const tasks = {
     description: '看 tree + 最近 failure attempts + 已有 edge，提议 0-5 条新 knowledge_edge',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
     needsToolCall: false,
     isMultimodal: false,
@@ -210,7 +211,6 @@ export const tasks = {
       '看 tree + 缺先决覆盖的 KC 列表，提议 0-5 条临时 prerequisite knowledge_edge（empty-frontier 冷启 bootstrap，propose-only 低置信）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 2 },
     needsToolCall: false,
     isMultimodal: false,
@@ -226,7 +226,6 @@ export const tasks = {
     description: '复习 session 结束后生成 ≤120 字短结：今天哪几题、哪个 cause 多、给 1 句下次建议',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // mimo-v2.5-pro 比 Anthropic haiku 慢，60s 给点余量
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
@@ -244,7 +243,6 @@ export const tasks = {
     description: 'Phase 2B — 看 topic + 已有知识图谱节点 + 子节点摘要，提议 1 hub + N atomic 拆分',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -262,7 +260,6 @@ export const tasks = {
       'Phase 2B — 给一个 atomic note 生成 5 种 section（definition/mechanism/example/pitfall/check）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // 单次生成 5 sections 可能很长，给 90s
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
@@ -279,7 +276,6 @@ export const tasks = {
     description: 'Product Track 1 — second-pass verification for generated atomic note sections',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -297,7 +293,6 @@ export const tasks = {
       'Wave 6 / T-88 P4-A — Living Note refine pass. Given an atomic/long/hub note + a refine trigger, output a NotePatch (insert_after / replace_block / delete_block / append_block ops) for the apply pipeline to execute or surface as a proposal.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -315,7 +310,6 @@ export const tasks = {
       'Judge v2 light — semantic answer scoring for prose embedded checks using rubric_json.required_points',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -333,7 +327,6 @@ export const tasks = {
       'Judge v2 physics fallback — parse natural-language units/dimensions when mathjs accelerator cannot parse',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -347,17 +340,24 @@ export const tasks = {
   },
   StepsJudgeTask: {
     kind: 'StepsJudgeTask',
+    // NOTE (YUK-576): "structured output" here means the JSON *product*
+    // (StepsLlmOutput parsed from text) — the SDK-native outputFormat migration
+    // for this judge is a tracked follow-up, deliberately NOT bundled with the
+    // retry change (one behavior change per sensor path at a time).
     description:
       'Math derivation vision-aware step judging — single vision LLM call with structured output (StepsLlmOutput)',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    // MVP: no fallback. If mimo-v2.5 has transient outage, runStepsJudge
-    // returns 'unsupported' (see steps-judge.ts catch path) — caller surfaces
-    // appealable result; user retries later. M2.3 evaluates adding
-    // mimo-v2.5-pro as fallback after volume baseline.
-    fallbackChain: [],
+    // YUK-576 — transientRetries: 1: one same-target in-process retry on a fast
+    // transient failure (mid-stream drop / connection-class api_error_result /
+    // stream_no_terminal; see runner.ts + agent-run-error.ts). This judge is a
+    // synchronous-route sensor with NO durable backstop: runStepsJudge's catch
+    // swallows failures into 'unsupported' (steps-judge.ts), so pg-boss never
+    // sees a throw. A REAL cross-provider fallback (anthropic-sub Opus vision
+    // lane) is an owner decision — env-lever family (VISION_JUDGE_*), not a
+    // registry chain (design doc 2026-07-07 §1.2.1).
     // vision call latency: M0 preflight 7.6s for trivial; derivation prompts will run longer
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000, transientRetries: 1 },
     needsToolCall: false,
     isMultimodal: true,
     // invocation intentionally omitted (defaults to 'auto'): called from
@@ -374,17 +374,20 @@ export const tasks = {
   },
   MultimodalDirectJudgeTask: {
     kind: 'MultimodalDirectJudgeTask',
+    // NOTE (YUK-576): "structured output" here means the JSON *product* — the
+    // SDK-native outputFormat migration is a tracked follow-up (see
+    // StepsJudgeTask note above).
     description:
       'YUK-201 — Holistic vision-aware answer judging (no step-rubric). Single vision LLM call with structured output (MultimodalDirectLlmOutput) for image-bearing prompts/answers that lack a reference_solution (physics calc with a diagram; short-answer with a figure). steps@1 owns step/rubric-weighted derivation judging; this owns the holistic, no-step path.',
     defaultProvider: 'xiaomi',
     // multimodal: mimo-v2.5 reads prompt figures + student answer photos, outputs
     // a holistic JudgeResultV2 fragment. Mirrors StepsJudgeTask (same vision model).
     defaultModel: 'mimo-v2.5',
-    // MVP: no fallback. Transient mimo-v2.5 outage → runMultimodalDirectJudge
-    // returns 'unsupported' (see multimodal-direct-judge.ts catch path).
-    fallbackChain: [],
+    // YUK-576 — transientRetries: 1, same rationale + boundaries as
+    // StepsJudgeTask above (synchronous-route sensor, no durable backstop;
+    // cross-provider fallback = owner decision via env lever).
     // vision call latency: mirror StepsJudgeTask budget (single call, 90s ceiling).
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000, transientRetries: 1 },
     needsToolCall: false,
     isMultimodal: true,
     // invocation omitted (defaults to 'auto'): called from question-contract.ts
@@ -401,7 +404,6 @@ export const tasks = {
       'YUK-17 / ADR-0018 — second-pass content alignment check for an accepted mistake variant. Decides whether the variant still targets the original failure cause; verdict="fail" flips mistake_variant.status to "broken".',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -419,7 +421,6 @@ export const tasks = {
       'Phase 2 — 给一道错题 + cause 生成 1 条 variant_question proposal。spec §3.4.1 cause-targeted；接受后再物化 question/draft_status',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -436,7 +437,6 @@ export const tasks = {
       'Phase 2C — Active Teaching turn. 输入 { learning_item, parent_hub_summary, atomic_sections, messages } → 输出 { kind, text_md, suggested_next }',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -462,7 +462,6 @@ export const tasks = {
       'U7 (YUK-203) — review a draft SubjectProfile for taxonomy/capability/route/prompt/fixture issues. Proposal-only; single-shot, no tools. Input { draft } → strict JSON { review_md, patches[], blocking }.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -475,7 +474,6 @@ export const tasks = {
     description: 'Phase 2A — 看复习队列汇总生成一句话 session intent，≤80 字',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -489,7 +487,6 @@ export const tasks = {
       'Foundation D — nightly Dreaming agent. Uses DomainTools to inspect learning signals and write bounded inbox proposals.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
@@ -509,7 +506,6 @@ export const tasks = {
     // 无 vision 需求 → 走 mimo-v2.5-pro (text-only, 推理强) default，匹配 registry.ts
     // 其他非 vision task 的约定。mimo-v2.5 (multimodal) 作为 fallback 保留。
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
@@ -533,7 +529,6 @@ export const tasks = {
     // Root-cause audit: docs/audit/2026-06-20-copilot-agentic-ux-wiring-audit.md.
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 60_000 },
     needsToolCall: true,
     isMultimodal: false,
@@ -575,7 +570,6 @@ export const tasks = {
       '看完整 tree + 最近 mistakes，提议任意 mutation（reparent/merge/split/archive/propose_new）让 tree 更合理',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
@@ -596,7 +590,6 @@ export const tasks = {
       'YUK-143 / ADR-0024 — North-Star goal→scope translation (ND-2). Input = goal title + knowledge-grid snapshot (nodes + mastery + mesh edges). Output = inferred scope_knowledge_ids[] + rough sequence_hint + reasoning, written as a `goal_scope` AiProposal (confirm/edit/dismiss). Single structured-output call (no tool loop), mimo-v2.5-pro text.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -623,7 +616,6 @@ export const tasks = {
       'YUK-406 (Phase 0) / YUK-440 (A13) — induce/update ONE conjecture about the owner mind from a list of EvidenceCells (cause_category × KC recurrence + θ̂ / θ precision + baseline p(L)) and synthesize its single discriminating probe + A13 fields (predicted_p, discriminating). Emits the small ConjectureDraft record; large reasoning returns as markdown. Single structured-output call (no tool loop). Default model is mimo for token-free tests; the nightly 例会 job runs it on the Opus anthropic-sub lane via per-call override for D2 self-consistency.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -645,7 +637,6 @@ export const tasks = {
       'Groups a list of misconception claim strings by semantic equivalence. Input = { claims: string[] }. Output = { groups: number[][] } where each inner array is a 0-based index group. Every index appears in exactly one group. Used by induceConjecture to consolidate paraphrase-diverse self-consistency samples.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 30_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -672,7 +663,6 @@ export const tasks = {
       'YUK-572 — agent-led nightly 教研例会 director (shadow lane). A charter agent with agenda power: reads recent learning evidence via the research_evidence MCP read tools, may spawn ONE nested evidence-scout for a focused deep dive, and PROPOSES at most 3 conjectures + 2 agent notes through the director write server (propose-only; server enforces per-run caps / pending-dedup / Zod / baseline_p snapshot). Never scores / never touches FSRS / θ̂ (settlement single-home stays with the deterministic lane). Runs on the Opus anthropic-sub OAuth lane via per-call override; the nightly job injects the tool allowlist + in-process servers + the evidence-scout AgentDefinition + the spawn-cap PreToolUse hook.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 24, timeout: 300_000 },
     needsToolCall: true,
     isMultimodal: false,
@@ -695,7 +685,6 @@ export const tasks = {
       'Station 2A (YUK-185, T-37) — per-scope memory brief writer. Input = scopeKey + template + now (ISO age anchor) + capped events[] (newest-first, ≤50, each carrying a top-level outcome (success/failure/partial/null) + a compact { excerpt? } payload projection) + facts[]. Output = strict JSON BriefDraft: 3 time-window markdown summaries (recent_week / recent_months / long_term) + 3 paired evidence_id arrays (subset of input event ids). Single structured-output call (no tool loop), mimo-v2.5-pro text. Drives memory_brief_note rows.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // YUK-189: 120s (was 60s). The real-LLM demo (scripts/demo-flywheel.ts) hit
     // the 60s budget on the `global` scope (full event set on the slow mimo
     // endpoint: subject:wenyan finished 59s, global aborted at 60s). The nightly
@@ -724,7 +713,6 @@ export const tasks = {
     // mimo-v2.5（multimodal-capable model 但这里只喂文字）。与 SemanticJudge /
     // GoalScope 等单次结构化 task 同档。
     defaultModel: 'mimo-v2.5',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -741,7 +729,6 @@ export const tasks = {
     // 纯文本推理（题面 → 学科 + 参考答案），无 vision 需求 → mimo-v2.5。与 TaggingTask /
     // SolutionGenerateTask 等单次结构化 task 同档。
     defaultModel: 'mimo-v2.5',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -759,7 +746,6 @@ export const tasks = {
       'YUK-193 — Generate a reference solution + worked solution for a bare question that has no rubric_json.reference_solution. Output = RubricReferenceSolution (expected_signals + final_answer + answer_equivalents) + worked_solution_md. The solve orchestrator writes it merge-preserving into rubric_json + reference_md so the shipped StepsJudge/SemanticJudge can grade real ingested questions. Single structured-output call, text-only (the question prompt is already text; figures are passed as a textual hint, not images — vision extraction is out of scope).',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -775,7 +761,6 @@ export const tasks = {
       'Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1). Tool-calling agent: plans (knowledge/difficulty/types), searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL questions grounded in sources, and self-declares every used URL into source_refs (§0: provenance is not recoverable from runner logs, so the agent MUST self-report). The Q3 handler injects the Tavily remote MCP + the in-process domain-tool MCP (read user mistakes + knowledge graph) — allowedTools stays [] here so non-handler callers / tests get no tools.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // Tool-calling loop: plan → search/extract (Tavily) → read domain signals →
     // generate. maxIterations 8 + 120s mirrors the Dreaming / Coach agentic budget.
     budget: { ...DEFAULT_BUDGET, maxIterations: 8, timeout: 120_000 },
@@ -795,7 +780,6 @@ export const tasks = {
       "Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety != 'too_close') promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // Single structured-output call (mirrors VariantVerifyTask).
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
@@ -822,7 +806,6 @@ export const tasks = {
     // 纯文本审题推理（读题面 → 三轴 verdict），无 vision → mimo-v2.5-pro（与 QuizVerifyTask /
     // SolutionGenerateTask 同档的单次结构化输出）。
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -845,7 +828,6 @@ export const tasks = {
       'ADR-0031 / YUK-304 (quiz C→A lane B) — author ONE original draft question seeded by knowledge nodes and/or pasted material. Input = { seed_mode, knowledge_context:[{id,name}], requested_kind?, requested_difficulty?, material:{body_md,title?}? }. Output = strict JSON QuestionAuthorDraft: kind + difficulty + knowledge_ids (echo of seed, re-validated code-side) + a StructuredQuestion tree (材料/阅读 kinds emit stem+sub_questions[]; others a standalone node) + optional choices/judge/rubric. prompt_md/reference_md are DERIVED from the tree at persist time. Single structured-output call (no tool loop, no Tavily — 决定6), mimo-v2.5-pro text. Writes land as draft_status=draft + a question_draft proposal (决定5 proposal-only).',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // 90s: one question (possibly a 材料 tree) is heavier than the QuizIntent
     // parse but far lighter than the QuizGen agent loop.
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000 },
@@ -863,7 +845,6 @@ export const tasks = {
       'B1-W1 慢热阶段① — 给一道新题估冷启先验难度 b（logit 尺度）。输入=prompt_md + kind + knowledge_context（节点 name + 可选 anchored_b）。输出=b_logit + confidence + reasoning。单次结构化输出（无 tool loop，无 Tavily），写 item_calibration（source=llm_prior, track=hard）。⚠️ 不直接 prompt 估难度（文献 r≈0，phase2-synthesis-lanes:770），prompt 走「抽教学特征」路线。b 是 θ̂ 更新读的外部锚——只 propose-only 冷启锚，慢热由 fixed-anchor 校准 firm-up。',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // 单次结构化输出（GoalScopeTask / QuestionAuthorTask 范式）：一道题一次文本运行。
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
@@ -891,7 +872,6 @@ export const tasks = {
     // mimo-v2.5（registry runtime default）。⚠️ 不路由 sonnet/GLM——结构化输出不兼容
     // （StructuredOutput 当 deferred 工具去 ToolSearch → 罢工，见 memory）。
     defaultModel: 'mimo-v2.5',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
     // 单次结构化输出（GoalScopeTask / QuestionAuthorTask / ItemPriorTask 范式）：一批
     // 候选一次文本运行。60s（编排批候选，比单题作者轻）。
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
@@ -908,7 +888,6 @@ export const tasks = {
       "YUK-216 S2 slice 2 (题源扩展 Strategy D, docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3). Tool-calling agent: given a subject + 考点/题型 + count, searches the web (Tavily) for EXISTING practice questions, restructures each into a SourcedQuestion (kind + prompt_md + reference_md + per-question source_url/title provenance), and emits a SourcingTaskOutput. First cut extracts from HTML/TEXT sources only (OF-1; no image sources). The sourcing handler injects the Tavily remote MCP + the in-process domain-tool MCP at run time (mirrors QuizGenTask's mount pattern) — allowedTools stays [] here so non-handler callers / tests register no tools. Output questions land as draft_status='draft' (source='web_sourced', tier 2) and chain a source_verify job.",
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5' }],
     // Tool-calling loop: plan → search/extract (Tavily) → read domain signals →
     // structure. Same agentic budget as QuizGenTask (maxIterations 8 + 120s).
     budget: { ...DEFAULT_BUDGET, maxIterations: 8, timeout: 120_000 },
@@ -930,7 +909,6 @@ export const tasks = {
     // 纯文本推理（结构化文字投影 → 合并候选），无 vision 需求 → mimo-v2.5（与
     // TaggingTask 同档：multimodal-capable model 但这里只喂文字）。
     defaultModel: 'mimo-v2.5',
-    fallbackChain: [{ provider: 'xiaomi', model: 'mimo-v2.5-pro' }],
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,

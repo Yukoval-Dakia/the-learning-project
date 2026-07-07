@@ -192,7 +192,7 @@ interface DomainTool<Input, Output> {
 
 **循环控制现状**：
 
-`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行。`maxCost` 与 `fallbackChain` 当前只是 registry metadata / future runtime policy；还没有执行预算 nudge、fallback、degraded 记录。
+`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。**YUK-576（2026-07-07）**：原声明性字段 `maxCost` 与 `fallbackChain` 已删除（零消费者 = 声明性谎言；全量 chain 审计见 `docs/design/2026-07-07-yuk576-registry-honesty.md`）。取而代之的是真实接线的 `TaskBudget.transientRetries`——runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。
 
 ### 5.3 成本控制
 
@@ -200,7 +200,7 @@ interface DomainTool<Input, Output> {
 - 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
 - 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 Claude Agent SDK 所需 env/baseUrl/model。
 - 每次调用写 `ai_task_runs` / `ai_cost_ledger`；tool 调用写 `ai_tool_calls`。
-- **尚未实现**：`maxCost` 硬预算、跨 provider fallback、degraded 标记、结果缓存、prompt caching 策略。不要在实现计划中假设这些已经生效。
+- **尚未实现**：per-run 硬成本预算（原 `maxCost` 已随 YUK-576 删除——将来 cost-reporting lane 进现役时经 SDK 原生 `Options.maxBudgetUsd` 一行接回）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略。不要在实现计划中假设这些已经生效。已实现（YUK-576）：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper。
 
 ### 5.4 Skill / MCP Server / Plugin
 
