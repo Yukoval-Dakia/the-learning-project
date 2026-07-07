@@ -42,11 +42,14 @@ import {
 export interface JudgeCalibrationHandlerDeps {
   /** test hook: replace the env-derived config. */
   config?: JudgeCalibrationConfig;
-  /** test hook: replace the pre-flight resolver (default: REAL resolveTaskProvider). */
+  /** test hook: replace the pre-flight resolver (default: REAL resolveTaskProvider).
+   *  Returns void — the call exists solely for its throwing side-effect, and a
+   *  sync signature keeps an async test double from turning the intended
+   *  pg-boss-visible throw into a dropped promise rejection (OCR review). */
   resolveProviderFn?: (
     kind: 'SemanticJudgeTask',
     override: { provider: Provider; model: string },
-  ) => unknown;
+  ) => void;
   /** test hook: replace the sampling core (default: lazy-imported real core). */
   runSampleFn?: (
     db: Db,

@@ -17,6 +17,8 @@ interface SampleSeed {
   originalOutcome?: 'correct' | 'partial' | 'incorrect';
   sameLane?: boolean;
   at?: Date;
+  /** null → structurally-unexpected row (dedup fallback coverage). */
+  causedBy?: string | null;
 }
 
 async function seedSample(s: SampleSeed = {}): Promise<void> {
@@ -54,7 +56,7 @@ async function seedSample(s: SampleSeed = {}): Promise<void> {
         same_lane_suspected: s.sameLane ?? false,
         sampled_at: now.toISOString(),
       },
-      caused_by_event_id: judgeId,
+      caused_by_event_id: s.causedBy === undefined ? judgeId : s.causedBy,
       task_run_id: null,
       cost_micro_usd: null,
       ingest_at: now,
@@ -187,6 +189,23 @@ describe('loadJudgeCalibrationStats', () => {
       rejudge_route: 'semantic',
       same_lane_suspected: false,
     });
+  });
+
+  it('samples older than the 90d window are excluded from the scan (OCR review)', async () => {
+    for (let i = 0; i < 5; i++) await seedSample({ agreed: true });
+    await seedSample({ agreed: false, at: new Date(Date.now() - 91 * 24 * 3600 * 1000) });
+    const stats = await loadJudgeCalibrationStats(testDb());
+    expect(stats.total_samples).toBe(5);
+    expect(stats.headline).toMatchObject({ status: 'ok', n: 5, agreed: 5 });
+  });
+
+  it('null caused_by rows never collapse into one bucket (dedup key falls back to row id — OCR review)', async () => {
+    // Structurally unexpected (the writer always anchors the judge id), and the
+    // partial unique index does not constrain NULLs — the read side must not
+    // let them swallow each other via a shared '' key.
+    for (let i = 0; i < 5; i++) await seedSample({ agreed: true, causedBy: null });
+    const stats = await loadJudgeCalibrationStats(testDb());
+    expect(stats.total_samples).toBe(5);
   });
 
   it('carries the two honesty notes (agreement≠accuracy + same_lane 时效)', async () => {

@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import type { Db } from '@/db/client';
 import { type JudgeQuestionRow, judgeAnswer } from '@/server/ai/judges/question-contract';
 import { subjectProfiles } from '@/subjects/profile';
+import { z } from 'zod';
 
 /** Unique marker carried by every db-sentinel throw; must never appear in a replay result. */
 export const DB_TOUCH_MARKER = '__JUDGE_GOLDEN_DB_TOUCHED__';
@@ -130,8 +131,10 @@ export async function reauditJudgeGoldenCase(
   }
 
   let llmCalled = false;
-  const runTaskFn = async () => {
+  const llmKinds: string[] = [];
+  const runTaskFn = async (kind: string) => {
     llmCalled = true;
+    llmKinds.push(kind); // recorded for drift diagnostics (OCR review)
     return { text: c.frozen_llm_output ?? '' };
   };
   const imageFetchFn = async (assetIds: string[]) =>
@@ -148,7 +151,9 @@ export async function reauditJudgeGoldenCase(
   });
 
   if (c.llm_must_not_be_called && llmCalled) {
-    diffs.push('llm_must_not_be_called=true but the LLM stub WAS called (accelerator regressed)');
+    diffs.push(
+      `llm_must_not_be_called=true but the LLM stub WAS called with kind(s) [${llmKinds.join(',')}] (accelerator regressed)`,
+    );
   }
   if (route !== c.expected.route) {
     diffs.push(`route: expected '${c.expected.route}' got '${route}'`);
@@ -215,8 +220,51 @@ export function listGoldenFixtureFiles(): string[] {
     .sort();
 }
 
+// Envelope validation at load (OCR review): a malformed committed fixture
+// should fail HERE with a clear path, not as a confusing exception deep inside
+// the replay. `question` stays a loose record on purpose — its shape is
+// exercised by the real judgeAnswer pipeline, which is the actual contract.
+const JudgeGoldenFixtureSchema = z.object({
+  version: z.literal(1),
+  capturedNote: z.string().min(1),
+  cases: z
+    .array(
+      z
+        .object({
+          id: z.string().min(1),
+          description: z.string().min(1),
+          question: z.record(z.string(), z.unknown()),
+          answer_md: z.string(),
+          student_image_refs: z.array(z.string()).optional(),
+          subject_profile_id: z.string().min(1),
+          frozen_llm_output: z.string().optional(),
+          llm_must_not_be_called: z.boolean().optional(),
+          expected: z
+            .object({
+              route: z.string().min(1),
+              coarse_outcome: z.string().min(1),
+              score: z.number().nullable().optional(),
+              confidence: z.number().optional(),
+              feedback_contains: z.string().optional(),
+              evidence_has_keys: z.array(z.string()).optional(),
+            })
+            .strict(),
+        })
+        .strict(),
+    )
+    .min(1),
+});
+
+/** Validate a raw parsed JSON value as a fixture (exported for the load-failure test). */
+export function parseGoldenFixture(raw: unknown): JudgeGoldenFixture {
+  // unknown-bridge on purpose: the schema keeps `question` a loose record (the
+  // real judgeAnswer pipeline is its contract), so the parsed type does not
+  // structurally overlap JudgeQuestionRow.
+  return JudgeGoldenFixtureSchema.parse(raw) as unknown as JudgeGoldenFixture;
+}
+
 export function loadGoldenFixture(file: string): JudgeGoldenFixture {
-  return JSON.parse(readFileSync(resolve(GOLDEN_DIR, file), 'utf8')) as JudgeGoldenFixture;
+  return parseGoldenFixture(JSON.parse(readFileSync(resolve(GOLDEN_DIR, file), 'utf8')));
 }
 
 async function main(): Promise<void> {

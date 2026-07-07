@@ -78,6 +78,8 @@ export interface JudgeCalibrationSampleResult {
   agreed: number;
   disagreed: number;
   skipped: number;
+  /** OCR major 2: answer payload persisted NEITHER text key — face unreconstructable. */
+  skipped_missing_input: number;
   skipped_unsupported: number;
   errors: number;
 }
@@ -246,6 +248,7 @@ export async function runJudgeCalibrationSample(
     agreed: 0,
     disagreed: 0,
     skipped: 0,
+    skipped_missing_input: 0,
     skipped_unsupported: 0,
     errors: 0,
   };
@@ -333,6 +336,19 @@ export async function runJudgeCalibrationSample(
         continue;
       }
       const answerPayload = answerEvent.payload as Record<string, unknown>;
+      // OCR major 2 (same information-face principle as MF2, text axis): when
+      // NEITHER text key was persisted, the original judge saw submitted text
+      // this payload never recorded — re-judging with '' would manufacture
+      // false disagreements. KEY PRESENCE is the discriminator: a persisted ''
+      // means the original judge also judged the empty submission (faces
+      // match, legitimate pair); an absent key is a pre-persistence row (skip).
+      const hasTextFace =
+        typeof answerPayload.answer_md === 'string' ||
+        typeof answerPayload.user_response_md === 'string';
+      if (!hasTextFace) {
+        result.skipped_missing_input += 1;
+        continue;
+      }
       const answerMd =
         (typeof answerPayload.answer_md === 'string' && answerPayload.answer_md) ||
         (typeof answerPayload.user_response_md === 'string' && answerPayload.user_response_md) ||
@@ -431,29 +447,39 @@ export async function runJudgeCalibrationSample(
   }
 
   // ── Run summary (r3 复核吸收 3) — the tool's own health signal. ──────────
-  await writeEvent(db, {
-    id: newId(),
-    session_id: null,
-    actor_kind: 'system',
-    actor_ref: JUDGE_CALIBRATION_ACTOR,
-    action: JUDGE_CALIBRATION_RUN_SUMMARY_ACTION,
-    subject_kind: 'query',
-    subject_id: `judge_calibration_run:${now.toISOString()}`,
-    outcome: null,
-    payload: {
-      ...result,
-      batch_max: cfg.batchMax,
-      window_days: cfg.windowDays,
-      rejudge_provider: cfg.rejudgeProvider,
-      rejudge_model: cfg.rejudgeModel,
-      vision_judge_provider_at_sample: visionProviderAtSample,
-      ai_provider_override_at_sample: globalOverrideAtSample,
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    ingest_at: now,
-    created_at: now,
-  });
+  // Own try/catch (OCR review): a transient summary-write failure must not
+  // throw the whole batch into a pg-boss retry — the per-sample observations
+  // already committed, and a replayed batch would emit a misleading second
+  // summary (all prior samples re-counted as duplicates). Log loud instead.
+  try {
+    await writeEvent(db, {
+      id: newId(),
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: JUDGE_CALIBRATION_ACTOR,
+      action: JUDGE_CALIBRATION_RUN_SUMMARY_ACTION,
+      subject_kind: 'query',
+      subject_id: `judge_calibration_run:${now.toISOString()}`,
+      outcome: null,
+      payload: {
+        ...result,
+        batch_max: cfg.batchMax,
+        window_days: cfg.windowDays,
+        rejudge_provider: cfg.rejudgeProvider,
+        rejudge_model: cfg.rejudgeModel,
+        vision_judge_provider_at_sample: visionProviderAtSample,
+        ai_provider_override_at_sample: globalOverrideAtSample,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      ingest_at: now,
+      created_at: now,
+    });
+  } catch (err) {
+    console.error('[judge_calibration_sample] run-summary write failed (batch results kept)', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   return result;
 }
