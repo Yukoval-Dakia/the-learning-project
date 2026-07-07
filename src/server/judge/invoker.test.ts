@@ -299,6 +299,121 @@ describe('JudgeInvoker', () => {
     );
   });
 
+  // YUK-573 (MF6) — imageFetchFn threading through the two vision dispatches.
+  // The golden replay harness (scripts/judge-golden-reaudit.ts) runs judgeAnswer
+  // with a throwing-Proxy db sentinel; without threading, an image-bearing case
+  // falls into defaultImageFetch → db touch → swallowed into 'image fetch
+  // failed' unsupported. These tests pin that an injected imageFetchFn reaches
+  // the runner and the db is never touched (a real verdict comes back).
+  it('threads imageFetchFn to the steps runner (no db image fetch)', async () => {
+    // Throw only on string-keyed API access (select/insert/…); tolerate
+    // engine-internal symbol reads (pretty-format's Symbol.toStringTag etc.).
+    const throwingDb = new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (typeof prop !== 'string' || prop === 'then' || prop === 'constructor') {
+            return undefined;
+          }
+          throw new Error(`__DB_TOUCHED__:${prop}`);
+        },
+      },
+    ) as unknown as Db;
+    const imageFetchFn = vi
+      .fn()
+      .mockResolvedValue([{ data: 'c3ludGhldGlj', mediaType: 'image/png' }]);
+    const runTaskFn = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        extracted_steps: [{ idx: 0, content: 'x=1', verdict: 'correct', comment: 'ok' }],
+        extracted_final_answer: '1',
+        signal_verdicts: [{ signal_idx: 0, verdict: 'correct', comment: 'ok' }],
+        final_answer_match: true,
+        final_answer_comment: '推导正确。',
+        confidence: 0.9,
+      }),
+    });
+
+    const result = await new JudgeInvoker({ runTaskFn }).invoke({
+      db: throwingDb,
+      question: {
+        ...baseQuestion,
+        id: 'q-steps-img',
+        kind: 'derivation',
+        judge_kind_override: 'steps',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: 'steps' }],
+          reference_solution: {
+            expected_signals: ['列出 x=1'],
+            final_answer: '1',
+            answer_equivalents: [],
+          },
+        },
+      },
+      answer_md: '',
+      student_image_refs: ['asset-img-1'],
+      subjectProfile: mathProfile,
+      imageFetchFn,
+    });
+
+    expect(imageFetchFn).toHaveBeenCalledTimes(1);
+    expect(imageFetchFn.mock.calls[0]?.[0]).toEqual(['asset-img-1']);
+    expect(imageFetchFn.mock.calls[0]?.[1]).toBe(throwingDb);
+    // A real verdict — NOT the 'image fetch failed' unsupported swallow.
+    expect(result.result.coarse_outcome).toBe('correct');
+  });
+
+  it('threads imageFetchFn to the multimodal_direct runner (no db image fetch)', async () => {
+    // Throw only on string-keyed API access (select/insert/…); tolerate
+    // engine-internal symbol reads (pretty-format's Symbol.toStringTag etc.).
+    const throwingDb = new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (typeof prop !== 'string' || prop === 'then' || prop === 'constructor') {
+            return undefined;
+          }
+          throw new Error(`__DB_TOUCHED__:${prop}`);
+        },
+      },
+    ) as unknown as Db;
+    const imageFetchFn = vi
+      .fn()
+      .mockResolvedValue([{ data: 'c3ludGhldGlj', mediaType: 'image/png' }]);
+    const runTaskFn = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        coarse_outcome: 'correct',
+        score: 0.9,
+        feedback_md: '看图作答正确。',
+        evidence: {
+          observed_md: '受力分析完整。',
+          matched_points: ['受力图'],
+          missing_points: [],
+        },
+        confidence: 0.85,
+      }),
+    });
+
+    const result = await new JudgeInvoker({ runTaskFn }).invoke({
+      db: throwingDb,
+      question: {
+        ...baseQuestion,
+        id: 'q-mm-img',
+        kind: 'short_answer',
+        reference_md: null,
+        judge_kind_override: 'multimodal_direct',
+      },
+      answer_md: '受力如图。',
+      student_image_refs: ['asset-img-2'],
+      subjectProfile: physicsProfile,
+      imageFetchFn,
+    });
+
+    expect(imageFetchFn).toHaveBeenCalledTimes(1);
+    expect(imageFetchFn.mock.calls[0]?.[0]).toEqual(['asset-img-2']);
+    expect(imageFetchFn.mock.calls[0]?.[1]).toBe(throwingDb);
+    expect(result.result.coarse_outcome).toBe('correct');
+  });
+
   it('dispatches unit_dimension with db and subject profile context', async () => {
     const runTaskFn = vi.fn().mockResolvedValue({
       text: JSON.stringify({
