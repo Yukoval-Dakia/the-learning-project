@@ -64,11 +64,11 @@ describe('buildJudgeCalibrationSampleHandler', () => {
       model: 'claude-opus-4-8',
     });
     expect(runSampleFn).toHaveBeenCalledTimes(1);
-    expect(runSampleFn.mock.calls[0]?.[0]).toBe(mockDb);
-    expect(runSampleFn.mock.calls[0]?.[1]).toMatchObject({
-      rejudgeProvider: 'anthropic-sub',
-      batchMax: 20,
-    });
+    expect(runSampleFn).toHaveBeenCalledWith(
+      mockDb,
+      expect.objectContaining({ rejudgeProvider: 'anthropic-sub', batchMax: 20 }),
+      undefined,
+    );
   });
 
   it('MF3① pre-flight: missing CLAUDE_CODE_OAUTH_TOKEN → handler throws, zero sampling', async () => {

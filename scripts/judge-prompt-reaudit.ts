@@ -63,9 +63,7 @@ export interface PromptReauditResult {
 export function reauditJudgePrompts(dir: string = PROMPTS_DIR): PromptReauditResult {
   const rendered = renderAllJudgePrompts();
   const drifted: string[] = [];
-  const onDisk = new Set(
-    existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.md')) : [],
-  );
+  const onDisk = new Set(existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.md')) : []);
 
   for (const [file, content] of rendered) {
     if (!onDisk.has(file)) {
@@ -102,8 +100,10 @@ function main(): void {
   if (process.argv.includes('--write')) {
     const written = writeJudgePromptSnapshots();
     console.log(
-      `[judge-prompt-reaudit] wrote ${written.length} snapshot(s) → ${PROMPTS_DIR}\n` +
+      [
+        `[judge-prompt-reaudit] wrote ${written.length} snapshot(s) → ${PROMPTS_DIR}`,
         'Commit the diff — it is the reviewable record of the prompt change.',
+      ].join('\n'),
     );
     process.exit(0);
   }
@@ -118,8 +118,10 @@ function main(): void {
   console.log(`judge-prompt-reaudit — ${result.drifted.length}/${result.checked} DRIFTED:`);
   for (const line of result.drifted) console.log(`  - ${line}`);
   console.log(
-    '\nIf the prompt change is INTENTIONAL, re-freeze with `pnpm audit:judge-prompts --write`\n' +
+    [
+      '\nIf the prompt change is INTENTIONAL, re-freeze with `pnpm audit:judge-prompts --write`',
       'and commit the snapshot diff; otherwise revert the prompt edit.',
+    ].join('\n'),
   );
   process.exit(strict ? 1 : 0);
 }

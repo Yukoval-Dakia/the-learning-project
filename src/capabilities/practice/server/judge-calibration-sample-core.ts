@@ -327,10 +327,7 @@ export async function runJudgeCalibrationSample(
       const priorOutcome = candidate.payload.coarse_outcome as SampledOutcome;
       const isVision = VISION_ROUTES.has(judgeRoute);
 
-      const [answerEvent] = await db
-        .select()
-        .from(event)
-        .where(eq(event.id, candidate.subject_id));
+      const [answerEvent] = await db.select().from(event).where(eq(event.id, candidate.subject_id));
       if (!answerEvent) {
         result.errors += 1;
         continue;
