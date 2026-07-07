@@ -102,6 +102,15 @@ export const observabilityCapability = defineCapability({
         path: '/api/jobs/[kind]/[id]/events',
         load: () => import('./api/job-events').then((m) => m.GET),
       },
+      // YUK-579 — 供题治理覆盖细目表（coverage lattice）只读观测面。读模型
+      // server/coverage-lattice.ts：assembleScanInput + scanCoverageGaps（纯，复用发现引擎，
+      // 零新查询子系统）+ 单条 experimental:question_supply 活动聚合。READ-ONLY 零写零 LLM。
+      // /api/* token 校验由组合根中间件统一施加。
+      {
+        method: 'GET',
+        path: '/api/admin/coverage-lattice',
+        load: () => import('./api/coverage-lattice').then((m) => m.GET),
+      },
     ],
   },
   jobs: {
@@ -123,14 +132,17 @@ export const observabilityCapability = defineCapability({
       },
     ],
   },
-  // M5-T4b (YUK-321)：admin 四页迁 SPA（ui/observability.tsx + ui/subjects.tsx）。
-  // admin 是独立壳形态（design app.jsx:106-114），不挂主 app chrome。
+  // admin 五页 SPA（ui/observability.tsx + ui/subjects.tsx + ui/coverage-lattice.tsx）。
+  // 壳形态：admin 页套主 app chrome（RootShell）——见 docs/design/2026-07-07-yuk579-coverage-
+  // lattice.md §6 决策记录（loom app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，
+  // owner 已收编）。
   ui: {
     pages: [
       { route: '/admin/runs' },
       { route: '/admin/cost' },
       { route: '/admin/failures' },
       { route: '/admin/subjects' },
+      { route: '/admin/coverage-lattice' },
     ],
   },
 });

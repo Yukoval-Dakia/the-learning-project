@@ -299,7 +299,10 @@ const R3_CALIBRATION_KIND: QuestionKindT = 'choice';
 // review FINDING #1/#6：覆盖深度阈值——一个 active-goal KC 的**可用（non-draft）**题数 < 此值
 // 即「前沿/覆盖不足」，R1 发一个 frontier/coverage 目标（架构 doc §Scanner Rules 1「fewer than
 // 2 active questions」）。draft 已在 loadQuestionPool 过滤掉，故这里数的就是可用题。
-const COVERAGE_DEPTH_THRESHOLD = 2;
+// YUK-579: exported so the coverage-lattice read model discloses the threshold to the UI
+// (no magic number on the render side) and its consistency unit test asserts
+// depthMet ⟺ usableCount ≥ COVERAGE_DEPTH_THRESHOLD. Value/behaviour unchanged.
+export const COVERAGE_DEPTH_THRESHOLD = 2;
 
 // ── 纯扫描器（Task 13 Step 2 的四条规则）──────────────────────────────────────
 
@@ -655,13 +658,14 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
 }
 
 /**
- * 端到端只读发现：读 DB → 组装 ScanInput → 跑纯扫描器 → QuestionSupplyTarget[]（priority 降序）。
- * 派发到获取面是 dispatcher.ts 的活；本函数纯发现，零写、零 LLM。
+ * YUK-579 — 只读组装：读 DB（复用两私有 loader）→ 组装 ScanInput（frontier + pool +
+ * routePreference/generationMethod 播种），**不跑扫描器**。零新查询子系统（只复用既有 reader），
+ * 两个 loader 保持私有。供两个消费者共用同一 DB 遍历：
+ *   - discoverSupplyTargets（生产夜间派题链）：assembleScanInput → scanCoverageGaps。
+ *   - coverage-lattice 读模型（YUK-579 只读观测面）：assembleScanInput 拿 frontier+pool 算池级事实
+ *     + scanCoverageGaps 拿缺口 targets，单次 DB 遍历出完整覆盖蓝图。
  */
-export async function discoverSupplyTargets(
-  db: Db,
-  makeId?: () => string,
-): Promise<QuestionSupplyTarget[]> {
+export async function assembleScanInput(db: Db): Promise<ScanInput> {
   const frontier = await loadFrontierKnowledge(db);
   const frontierKids = frontier.map((f) => f.knowledgeId);
   const questions = await loadQuestionPool(db, frontierKids);
@@ -679,8 +683,18 @@ export async function discoverSupplyTargets(
     }
   }
 
-  return scanCoverageGaps(
-    { frontier, questions, routePreferenceBySubject, generationMethodBySubject },
-    makeId,
-  );
+  return { frontier, questions, routePreferenceBySubject, generationMethodBySubject };
+}
+
+/**
+ * 端到端只读发现：读 DB → 组装 ScanInput → 跑纯扫描器 → QuestionSupplyTarget[]（priority 降序）。
+ * 派发到获取面是 dispatcher.ts 的活；本函数纯发现，零写、零 LLM。
+ *
+ * YUK-579：组装体已上提到 assembleScanInput（行为等价——受既有 target-discovery db test 守护）。
+ */
+export async function discoverSupplyTargets(
+  db: Db,
+  makeId?: () => string,
+): Promise<QuestionSupplyTarget[]> {
+  return scanCoverageGaps(await assembleScanInput(db), makeId);
 }
