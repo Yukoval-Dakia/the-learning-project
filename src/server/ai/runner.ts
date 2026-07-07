@@ -43,13 +43,19 @@ import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { createId } from '@paralleldrive/cuid2';
 import type { R2Client } from '../r2';
 import {
+  AgentRunError,
+  RETRY_ELAPSED_CAP_MS,
+  isApiErrorSuccessResult,
+  isTransientAgentFailure,
+} from './agent-run-error';
+import {
   writeAiTaskRunFinished,
   writeAiTaskRunStarted,
   writeCostLedger,
   writeToolCallLog,
 } from './log';
 import { type TokenCounts, effectiveCostUsd } from './pricing';
-import { type ResolvedProvider, resolveTaskProvider } from './providers';
+import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 
 // ============================================================================
 // Public surface
@@ -91,6 +97,23 @@ export interface RunTaskCtx {
   r2?: R2Client;
   /** Override provider/model for testing or per-call routing escapes. */
   override?: { provider?: ResolvedProvider['provider']; model?: string };
+  /**
+   * YUK-576 — in-process transient-retry opt-in. Default OFF (undefined):
+   * every existing caller is byte-identical. ONLY call paths with NO durable
+   * backstop may set this (single-transient-layer principle) — today exactly
+   * the two vision judges (steps-judge.ts / multimodal-direct-judge.ts), whose
+   * catch swallows failures into 'unsupported' so pg-boss never sees a throw.
+   * Durable pg-boss handlers must NOT set it: queue redelivery (queue-config.ts
+   * retryLimit) is their single transient layer — stacking both would multiply
+   * worst-case paid calls (2×3). Enforced by src/server/ai/retry-optin.test.ts
+   * (grep-level pin). Even when set, retry only fires when routing is not
+   * pinned (no ctx.override, no AI_PROVIDER_OVERRIDE), the failure is
+   * whitelist-transient (agent-run-error.ts §2.3 frozen table), the attempt
+   * budget (tasks[kind].budget.transientRetries) has room, and the failure
+   * arrived within RETRY_ELAPSED_CAP_MS of the first attempt (sync-route
+   * wall-clock bound).
+   */
+  enableTransientRetry?: boolean;
   /** Memory-layer hook surface. */
   middleware?: TaskMiddleware;
   /**
@@ -425,9 +448,13 @@ function buildQueryOptions(
   kind: TaskKind,
   ctx: RunTaskCtx,
   abortController: AbortController,
+  // YUK-576 — the caller resolves ONCE per attempt and threads the binding in;
+  // previously this function re-ran resolveTaskProvider internally, so every
+  // entry point resolved twice (runner.ts:430 + its own top). Single resolution
+  // per attempt keeps the retry loop's env/model provably per-attempt-consistent.
+  resolved: ResolvedProvider,
 ): Options {
   const def = tasks[kind];
-  const resolved = resolveTaskProvider(kind, ctx.override);
   const allowedTools = ctx.allowedTools ?? def.allowedTools;
   const options: Options = {
     model: resolved.model,
@@ -495,28 +522,49 @@ function buildQueryOptions(
 // an empty tool list and behave like a single-turn query.
 // ============================================================================
 
-export async function runTask(
-  kind: string,
-  input: unknown,
-  ctx: RunTaskCtx,
-): Promise<RunTaskResult> {
-  if (!isKnownTask(kind)) {
-    throw new Error(`Unknown task kind: ${kind}`);
-  }
-  const def = tasks[kind];
-  const taskRunId = createId();
-  const resolved = resolveTaskProvider(kind, ctx.override);
+/**
+ * YUK-576 — should this call participate in the in-process transient-retry
+ * loop? Gate order (design doc §3.2): call-site opt-in (default OFF, so every
+ * existing caller is byte-identical) → caller-pinned routing OFF → env-pinned
+ * routing OFF (pinned routing is an explicit decision — e.g. induce.ts pins
+ * anthropic-sub per call for self-consistency sampling, where a silent retry
+ * would still be same-target but the pin marks a lane where wall-clock
+ * determinism matters more than absorption).
+ */
+function transientRetryEnabled(ctx: RunTaskCtx): boolean {
+  if (ctx.enableTransientRetry !== true) return false;
+  if (ctx.override?.provider || ctx.override?.model) return false;
+  if (hasGlobalProviderOverride()) return false;
+  return true;
+}
 
-  const actualInput = ctx.middleware?.beforeRun
-    ? await ctx.middleware.beforeRun(kind, input, ctx)
-    : input;
+/**
+ * One SDK attempt: starts its own ai_task_runs row, runs the query, and on
+ * success writes the cost ledger + terminal success row + afterRun. On ANY
+ * post-row failure it throws an `AgentRunError` carrying this attempt's
+ * taskRunId — it never writes the failure terminal row itself: finish_reason
+ * ('error_retried' vs 'error') depends on the transient classification + the
+ * retry gates, which only the outer loop knows (review R2 — a non-final
+ * PERMANENT failure must never be mislabeled 'error_retried').
+ */
+async function runTaskAttempt(args: {
+  kind: TaskKind;
+  actualInput: unknown;
+  ctx: RunTaskCtx;
+  resolved: ResolvedProvider;
+  taskRunId: string;
+  inputHashValue: string;
+}): Promise<RunTaskResult> {
+  const { kind, actualInput, ctx, resolved, taskRunId, inputHashValue } = args;
+  const def = tasks[kind];
+
   try {
     await writeAiTaskRunStarted(ctx.db, {
       id: taskRunId,
       task_kind: kind,
       provider: resolved.provider,
       model: resolved.model,
-      input_hash: inputHash(actualInput),
+      input_hash: inputHashValue,
       started_at: new Date(),
     });
   } catch (err) {
@@ -541,11 +589,35 @@ export async function runTask(
   try {
     const q = sdkQuery({
       prompt: promptFromInput(actualInput),
-      options: buildQueryOptions(kind, ctx, abortController),
+      options: buildQueryOptions(kind, ctx, abortController, resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
       if (msg.type === 'result') {
         if (msg.subtype === 'success') {
+          // YUK-576 (§2.4, probe-frozen): ALL API-level errors (4xx/429/5xx/
+          // connection-class) terminate as success+is_error — never as
+          // SDKResultError. Breadcrumb for every caller; opt-in paths classify
+          // it as an attempt failure so the transient family can be retried.
+          if (isApiErrorSuccessResult(msg)) {
+            console.warn('[runTask] task_run_success_with_error_flag', {
+              event: 'task_run_success_with_error_flag',
+              task_run_id: taskRunId,
+              kind,
+              api_error_status: msg.api_error_status ?? null,
+            });
+            if (transientRetryEnabled(ctx)) {
+              throw new AgentRunError({
+                kind,
+                taskRunId,
+                subtype: 'api_error_result',
+                apiErrorStatus: msg.api_error_status ?? null,
+                errors: [msg.result ?? ''],
+              });
+            }
+            // Non-opt-in: byte-identical to before — the error text is the
+            // result and the run is recorded as success (see design doc §2.4;
+            // the global reclassification is a tracked follow-up).
+          }
           resultText = msg.result ?? '';
           const u = msg.usage;
           usage = {
@@ -575,33 +647,20 @@ export async function runTask(
               task_run_id: taskRunId,
             });
           }
-          const apiStatus =
-            'api_error_status' in msg && msg.api_error_status
-              ? ` http=${msg.api_error_status}`
-              : '';
-          throw new Error(`[${kind}] Agent SDK errored: subtype=${msg.subtype}${apiStatus}`);
+          // YUK-576: SDKResultError carries `errors: string[]` (sdk.d.ts:3550)
+          // and NO api_error_status — the old `'api_error_status' in msg` probe
+          // was dead on this shape and errors[] was dropped. Preserve both into
+          // the structured error (errors ride into error_message via message).
+          throw new AgentRunError({
+            kind,
+            taskRunId,
+            subtype: msg.subtype,
+            errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+          });
         }
         break;
       }
     }
-  } catch (err) {
-    try {
-      await writeAiTaskRunFinished(ctx.db, {
-        id: taskRunId,
-        status: 'failure',
-        finish_reason: 'error',
-        usage,
-        cost_usd,
-        error_message: err instanceof Error ? err.message : String(err),
-      });
-    } catch (finishErr) {
-      console.error('[runTask] writeAiTaskRunFinished failure failed', {
-        task_run_id: taskRunId,
-        kind,
-        err: finishErr,
-      });
-    }
-    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -650,6 +709,18 @@ export async function runTask(
       kind,
       err,
     });
+    // YUK-576 (§5.1 parity): the run actually succeeded but its terminal write
+    // failed → the row is stuck at status='running'. Emit the same scannable
+    // structured event the stream paths use so the reconcile sweeper's log
+    // story covers the runTask (judge) path too. No retry — retrying a DB
+    // write during a DB outage just amplifies it.
+    console.warn('[runTask] task_run_stuck_in_running', {
+      event: 'task_run_stuck_in_running',
+      task_run_id: taskRunId,
+      kind,
+      intended_status: 'success',
+      err: err instanceof Error ? err.message : String(err),
+    });
   }
 
   if (ctx.middleware?.afterRun) {
@@ -661,6 +732,90 @@ export async function runTask(
   }
 
   return result;
+}
+
+export async function runTask(
+  kind: string,
+  input: unknown,
+  ctx: RunTaskCtx,
+): Promise<RunTaskResult> {
+  if (!isKnownTask(kind)) {
+    throw new Error(`Unknown task kind: ${kind}`);
+  }
+  const def = tasks[kind];
+
+  // beforeRun runs exactly once, OUTSIDE the attempt loop — every attempt sees
+  // the same transformed input and therefore the same input_hash.
+  const actualInput = ctx.middleware?.beforeRun
+    ? await ctx.middleware.beforeRun(kind, input, ctx)
+    : input;
+  const inputHashValue = inputHash(actualInput);
+
+  // YUK-576 — bounded same-resolved-target transient retry (design doc §3).
+  // maxAttempts = 1 for every caller that doesn't opt in (byte-identical), and
+  // 1 + budget.transientRetries (== 2 for the two vision judges) when the
+  // gates open. No while, no recursion — the loop bound is the whole story.
+  const maxAttempts = 1 + (transientRetryEnabled(ctx) ? def.budget.transientRetries : 0);
+  const firstAttemptStartedAt = Date.now();
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const taskRunId = createId();
+    // Resolve exactly once per attempt (same target every time — this is a
+    // retry, not a fallback) and thread the binding into buildQueryOptions.
+    const resolved = resolveTaskProvider(kind, ctx.override);
+    try {
+      return await runTaskAttempt({ kind, actualInput, ctx, resolved, taskRunId, inputHashValue });
+    } catch (err) {
+      lastErr = err;
+      const elapsedMs = Date.now() - firstAttemptStartedAt;
+      // R1 sixth gate: only failures that arrived FAST (within the elapsed cap
+      // from the FIRST attempt's start) may retry — a slow 5xx that already ate
+      // most of the budget window must not double the sync-route wall clock.
+      const willRetry =
+        attempt < maxAttempts && isTransientAgentFailure(err) && elapsedMs < RETRY_ELAPSED_CAP_MS;
+      // Failure terminal-write ownership lives HERE, post-classification (R2):
+      // 'error_retried' is only ever written for a genuinely-retried attempt.
+      try {
+        await writeAiTaskRunFinished(ctx.db, {
+          id: err instanceof AgentRunError ? err.taskRunId : taskRunId,
+          status: 'failure',
+          finish_reason: willRetry ? 'error_retried' : 'error',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          cost_usd: undefined,
+          error_message: err instanceof Error ? err.message : String(err),
+        });
+      } catch (finishErr) {
+        console.error('[runTask] writeAiTaskRunFinished failure failed', {
+          task_run_id: taskRunId,
+          kind,
+          err: finishErr,
+        });
+        // YUK-576 (§5.1 parity): failure terminal-write itself failed → row
+        // stuck at 'running'. Same scannable event as the stream paths.
+        console.warn('[runTask] task_run_stuck_in_running', {
+          event: 'task_run_stuck_in_running',
+          task_run_id: taskRunId,
+          kind,
+          intended_status: 'failure',
+          err: finishErr instanceof Error ? finishErr.message : String(finishErr),
+        });
+      }
+      if (!willRetry) throw err;
+      // R3 breadcrumb: chronic flakiness shows up as a stream of these warns
+      // (plus 'error_retried' clusters on the admin Failures page).
+      console.warn('[runTask] task_run_transient_retry', {
+        event: 'task_run_transient_retry',
+        kind,
+        task_run_id: taskRunId,
+        attempt,
+        elapsed_ms: elapsedMs,
+      });
+    }
+  }
+  // Unreachable: the final attempt either returned or threw above. Kept for
+  // exhaustiveness (and to satisfy control-flow analysis without a cast).
+  throw lastErr;
 }
 
 // ============================================================================
@@ -742,7 +897,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
 
         const q = sdkQuery({
           prompt: promptFromInput(actualInput),
-          options: buildQueryOptions(kind, ctx, abortController),
+          options: buildQueryOptions(kind, ctx, abortController, resolved),
         });
         for await (const msg of q as AsyncIterable<SDKMessage>) {
           if (msg.type === 'assistant') {
@@ -1034,7 +1189,7 @@ export async function streamTaskCollecting(
 
     const q = sdkQuery({
       prompt: promptFromInput(actualInput),
-      options: buildQueryOptions(kind, ctx, abortController),
+      options: buildQueryOptions(kind, ctx, abortController, resolved),
     });
     for await (const msg of q as AsyncIterable<SDKMessage>) {
       if (msg.type === 'assistant') {

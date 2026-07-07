@@ -180,6 +180,19 @@ function readEnvOverride(): { provider: Provider; model?: string } | undefined {
 }
 
 /**
+ * YUK-576 — predicate form of the env switch for the runner's transient-retry
+ * gate: when the operator pins the WHOLE process to one provider
+ * (AI_PROVIDER_OVERRIDE), in-process retry stays off (pinned routing is an
+ * explicit operator decision; see runner.ts transientRetryEnabled). Delegates
+ * to `readEnvOverride()` so the truthiness/validation logic is never written
+ * twice — an invalid override value throws the same clear config error here as
+ * it would at resolution time.
+ */
+export function hasGlobalProviderOverride(): boolean {
+  return readEnvOverride() !== undefined;
+}
+
+/**
  * Resolve a task to its concrete provider binding.
  *
  * Lookup order:
