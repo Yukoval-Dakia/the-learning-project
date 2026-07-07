@@ -155,6 +155,20 @@
           "response": []
         },
         {
+          "name": "GET /api/admin/judge-calibration",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/judge-calibration",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "judge-calibration"]
+            },
+            "description": "Judge 校准 agreement 观测面（YUK-573）：不同意率采样只读聚合\n\n**Notes:** READ-ONLY 聚合 experimental:judge_calibration_sample / _run_summary events（practice judge_calibration_sample job 的 report-only 观测行，kill switch JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF）。honesty rails：分层 n<MIN_N(5) 返回 insufficient_data 而非裸比率（S4）；same_lane_suspected 子集剔除出 headline 单列计数（MF5 lane 同源坍缩标记）；notes 携 agreement≠accuracy + same_lane 采样时点时效声明；recent_runs 区分 healthy-but-sparse 与 systematically-skipping（run summary）。需 x-internal-token。响应：{ total_samples, same_lane_suspected_count, headline, by_route, by_original_outcome, recent_samples, recent_runs, notes }"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/admin/runs",
           "request": {
             "method": "GET",
