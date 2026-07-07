@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "capturedNote": "SYNTHETIC — hand-authored; never raw production data. Covers normalizeSemanticResult clamps, extractJsonObject brace-slicing, Zod parse-fail → unsupported, and no-override route dispatch (wenyan short_answer → semantic).",
+  "cases": [
+    {
+      "id": "semantic-correct-floor-01",
+      "description": "correct 分数 floor 钳位：LLM 报 0.5 但 coarse=correct → clamp 到 0.85",
+      "question": {
+        "id": "q-syn-sem-1",
+        "kind": "short_answer",
+        "prompt_md": "（合成）简述甲、乙两个要点。",
+        "reference_md": "要点甲：……；要点乙：……",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "要点覆盖" }],
+          "required_points": ["要点甲", "要点乙"]
+        },
+        "choices_md": null,
+        "judge_kind_override": "semantic"
+      },
+      "answer_md": "（合成）答案覆盖了要点甲与要点乙。",
+      "subject_profile_id": "wenyan",
+      "frozen_llm_output": "{\"score\":0.5,\"coarse_outcome\":\"correct\",\"confidence\":0.7,\"feedback_md\":\"两个要点都覆盖了。\",\"evidence_json\":{\"matched_points\":[\"要点甲\",\"要点乙\"],\"missing_points\":[]}}",
+      "expected": {
+        "route": "semantic",
+        "coarse_outcome": "correct",
+        "score": 0.85,
+        "confidence": 0.7
+      }
+    },
+    {
+      "id": "semantic-partial-cap-02",
+      "description": "partial 分数 cap 钳位：LLM 报 0.95 但 coarse=partial → clamp 到 0.84",
+      "question": {
+        "id": "q-syn-sem-2",
+        "kind": "short_answer",
+        "prompt_md": "（合成）简述两个要点。",
+        "reference_md": "要点甲；要点乙",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "要点覆盖" }],
+          "required_points": ["要点甲", "要点乙"]
+        },
+        "choices_md": null,
+        "judge_kind_override": "semantic"
+      },
+      "answer_md": "（合成）只覆盖了要点甲。",
+      "subject_profile_id": "wenyan",
+      "frozen_llm_output": "{\"score\":0.95,\"coarse_outcome\":\"partial\",\"confidence\":0.6,\"feedback_md\":\"只覆盖了一个要点。\",\"evidence_json\":{\"matched_points\":[\"要点甲\"],\"missing_points\":[\"要点乙\"]}}",
+      "expected": {
+        "route": "semantic",
+        "coarse_outcome": "partial",
+        "score": 0.84,
+        "confidence": 0.6
+      }
+    },
+    {
+      "id": "semantic-partial-floor-03",
+      "description": "partial 分数 floor 钳位：LLM 报 0 但 coarse=partial → clamp 到 0.01",
+      "question": {
+        "id": "q-syn-sem-3",
+        "kind": "short_answer",
+        "prompt_md": "（合成）简述两个要点。",
+        "reference_md": "要点甲；要点乙",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "要点覆盖" }],
+          "required_points": ["要点甲", "要点乙"]
+        },
+        "choices_md": null,
+        "judge_kind_override": "semantic"
+      },
+      "answer_md": "（合成）沾边但没答到要点。",
+      "subject_profile_id": "wenyan",
+      "frozen_llm_output": "{\"score\":0,\"coarse_outcome\":\"partial\",\"confidence\":0.5,\"feedback_md\":\"仅有极少量相关内容。\",\"evidence_json\":{\"matched_points\":[],\"missing_points\":[\"要点甲\",\"要点乙\"]}}",
+      "expected": {
+        "route": "semantic",
+        "coarse_outcome": "partial",
+        "score": 0.01,
+        "confidence": 0.5
+      }
+    },
+    {
+      "id": "semantic-incorrect-zero-04",
+      "description": "incorrect 恒零分：LLM 报 0.7 但 coarse=incorrect → score 0",
+      "question": {
+        "id": "q-syn-sem-4",
+        "kind": "short_answer",
+        "prompt_md": "（合成）简述两个要点。",
+        "reference_md": "要点甲；要点乙",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "要点覆盖" }],
+          "required_points": ["要点甲", "要点乙"]
+        },
+        "choices_md": null,
+        "judge_kind_override": "semantic"
+      },
+      "answer_md": "（合成）答非所问。",
+      "subject_profile_id": "wenyan",
+      "frozen_llm_output": "{\"score\":0.7,\"coarse_outcome\":\"incorrect\",\"confidence\":0.9,\"feedback_md\":\"未命中任何要点。\",\"evidence_json\":{\"matched_points\":[],\"missing_points\":[\"要点甲\",\"要点乙\"]}}",
+      "expected": {
+        "route": "semantic",
+        "coarse_outcome": "incorrect",
+        "score": 0,
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "semantic-prose-wrapped-05",
+      "description": "对抗：JSON 被 prose 包裹 + 尾部垃圾（打 extractJsonObject 首尾大括号切片）",
+      "question": {
+        "id": "q-syn-sem-5",
+        "kind": "short_answer",
+        "prompt_md": "（合成）简述两个要点。",
+        "reference_md": "要点甲；要点乙",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "要点覆盖" }],
+          "required_points": ["要点甲", "要点乙"]
+        },
+        "choices_md": null,
+        "judge_kind_override": "semantic"
+      },
+      "answer_md": "（合成）覆盖两个要点。",
+      "subject_profile_id": "wenyan",
+      "frozen_llm_output": "好的，以下是我的评分结果：\n{\"score\":0.9,\"coarse_outcome\":\"correct\",\"confidence\":0.8,\"feedback_md\":\"要点齐全。\",\"evidence_json\":{\"matched_points\":[\"要点甲\",\"要点乙\"],\"missing_points\":[]}}\n希望这个评分对你有帮助。",
+      "expected": {
+        "route": "semantic",
+        "coarse_outcome": "correct",
+        "score": 0.9,
+        "confidence": 0.8
+      }
+    },
+    {
+      "id": "semantic-zod-fail-06",
+      "description": "缺字段 Zod-fail → unsupported，判别键 validation_error + raw_text（吞 db-touch 只产 {error}，无法伪造）",
+      "question": {
+        "id": "q-syn-sem-6",
+        "kind": "short_answer",
+        "prompt_md": "（合成）简述两个要点。",
+        "reference_md": "要点甲；要点乙",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "要点覆盖" }],
+          "required_points": ["要点甲", "要点乙"]
+        },
+        "choices_md": null,
+        "judge_kind_override": "semantic"
+      },
+      "answer_md": "（合成）随便答。",
+      "subject_profile_id": "wenyan",
+      "frozen_llm_output": "{\"score\":0.9,\"coarse_outcome\":\"correct\",\"confidence\":0.8}",
+      "expected": {
+        "route": "semantic",
+        "coarse_outcome": "unsupported",
+        "score": null,
+        "feedback_contains": "semantic judge output unsupported",
+        "evidence_has_keys": ["validation_error", "raw_text"]
+      }
+    },
+    {
+      "id": "semantic-route-dispatch-07",
+      "description": "无 judge_kind_override：wenyan + short_answer 经 resolveQuestionJudgeRoute 分派到 semantic（路由分派覆盖，MF6）",
+      "question": {
+        "id": "q-syn-sem-7",
+        "kind": "short_answer",
+        "prompt_md": "（合成）简述两个要点。",
+        "reference_md": "要点甲；要点乙",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "要点覆盖" }],
+          "required_points": ["要点甲", "要点乙"]
+        },
+        "choices_md": null,
+        "judge_kind_override": null
+      },
+      "answer_md": "（合成）覆盖两个要点。",
+      "subject_profile_id": "wenyan",
+      "frozen_llm_output": "{\"score\":0.9,\"coarse_outcome\":\"correct\",\"confidence\":0.85,\"feedback_md\":\"要点齐全。\",\"evidence_json\":{\"matched_points\":[\"要点甲\",\"要点乙\"],\"missing_points\":[]}}",
+      "expected": {
+        "route": "semantic",
+        "coarse_outcome": "correct",
+        "score": 0.9,
+        "confidence": 0.85
+      }
+    }
+  ]
+}
