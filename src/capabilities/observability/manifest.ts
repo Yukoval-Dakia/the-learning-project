@@ -108,11 +108,13 @@ export const observabilityCapability = defineCapability({
     handlers: [
       // YUK-576 §5 — stuck-in-running reconcile sweeper（辅触发；主触发是
       // start-worker.ts 的 boot-time sweep）。fast 档（无 DLQ）：sweep 幂等，
-      // 掉一拍下轮 cron 重收敛（queue-config.ts fast 档既定语义）。06:10 避开
-      // 既有夜链 cron 空档；1h 阈值意味着本轮收敛 ≤05:10 起卡住的行。
+      // 掉一拍下轮 cron 重收敛（queue-config.ts fast 档既定语义）。06:40 取空闲
+      // 分钟位（原 06:10 与 #729 judge_calibration_sample_nightly 撞车，
+      // composition 唯一性断言拦下）；sweeper 幂等且时间不敏感，任何空位皆可。
+      // 1h 阈值意味着本轮收敛 ≤05:40 起卡住的行。
       {
         name: 'ai_task_run_reconcile_nightly',
-        schedule: { cron: '10 6 * * *', tz: 'Asia/Shanghai' },
+        schedule: { cron: '40 6 * * *', tz: 'Asia/Shanghai' },
         queue: 'fast',
         load: () =>
           import('@/server/boss/handlers/ai_task_run_reconcile').then(
