@@ -35,6 +35,7 @@
 - `src/server/ai/runner.ts` ✅ 经 `resolveTaskProvider()` 拿 `{ baseUrl, apiKey, model }`，不再直接 `import { anthropic } from '@ai-sdk/anthropic'`
 - `src/ai/registry.ts` Provider 类型扩展为 `'anthropic' | 'xiaomi' | 'openrouter' | 'gateway' | 'openai'`；12 个 task `defaultProvider: 'xiaomi'`
 - `fallbackChain` 字段保留 + 在 registry 实际填了（例：`{ provider: 'xiaomi', model: 'mimo-v2.5' }`），但 runner **目前不读**——保留作为未来 retry/降级的 schema 占位
+  - **2026-07-07 supersede（YUK-576）**：该 schema 占位已**删除**。全量 chain 审计（`docs/design/2026-07-07-yuk576-registry-honesty.md` §1.2.2）证明零条 chain 有合法进程内消费场景。「未来 retry/降级」场景由两件真实接线的机制承接：same-target `TaskBudget.transientRetries`（runner 进程内瞬时重试，vision judges opt-in）+ pg-boss 队列显式重投（queue-config retryLimit）；真·跨 provider fallback（anthropic-sub Opus vision lane）升级为 owner 决策项，落点是 env 杆（VISION_JUDGE_* 家族），不再是 per-task registry 数据。
 
 **为何选 xiaomi 而非 OpenRouter / Vercel AI Gateway**：
 
