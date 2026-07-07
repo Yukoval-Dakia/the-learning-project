@@ -4,6 +4,15 @@ export const practiceCapability = defineCapability({
   name: 'practice',
   description:
     '练习消费侧：FSRS 传感器、判分评级、卷（paper）机制与会话编排。M2 加入流编排器与卷架（YUK-316）。',
+  // YUK-573 — judge 校准观测事件归属（report-only）：sample = 每条复判对照一行
+  // （caused_by = 原 judge event，MF8 partial unique index 唯一化）；run_summary =
+  // 每次 run 一行（mass-skip 自曝面）。写者只有 judge_calibration_sample job。
+  events: {
+    actions: [
+      'experimental:judge_calibration_sample',
+      'experimental:judge_calibration_run_summary',
+    ],
+  },
   api: {
     // M2-T1 (YUK-316)：18 条路由全部带 load 懒加载 thunk（M1 配方）。[id]/[sid]
     // 段由 server/app.ts 的 toHonoPath 转 :id/:sid 并把捕获参数透传 handler。
@@ -360,6 +369,24 @@ export const practiceCapability = defineCapability({
         schedule: { cron: '40 5 * * *', tz: 'Asia/Shanghai' },
         queue: 'llm',
         load: () => import('./jobs/axis_state_nightly').then((m) => m.buildAxisStateNightlyHandler),
+      },
+      // YUK-573 — judge 校准不同意率采样（report-only，dark-ship）。kill switch
+      // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF（cron 保持注册，handler no-op，
+      // 零 spend）。复判走第二 lane（per-call ctx.override=anthropic-sub，绝不翻
+      // 全局 AI_PROVIDER_OVERRIDE）。cron 06:10 Asia/Shanghai：排在既有夜链
+      // （axis_state 05:40 / question_supply 06:00）之后的空槽，夜间避开 owner
+      // 交互期减 Max 订阅 rate-limit 争用（S2）。queue:'agent'（EXPIRE_AGENT=
+      // 7200s）：批内 ≤BATCH_MAX（默认 20）次 LLM 复判调用，是多次调用批任务，
+      // 非单-shot 'llm' 档。幂等由 MF8 partial unique index（drizzle/0059）DB 层
+      // 强制，expire 窗重投递安全。
+      {
+        name: 'judge_calibration_sample',
+        schedule: { cron: '10 6 * * *', tz: 'Asia/Shanghai' },
+        queue: 'agent',
+        load: () =>
+          import('./jobs/judge_calibration_sample').then(
+            (m) => m.buildJudgeCalibrationSampleHandler,
+          ),
       },
     ],
   },
