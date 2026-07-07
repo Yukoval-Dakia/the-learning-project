@@ -29,9 +29,7 @@ describe('judge-golden reaudit (leg A)', () => {
       const result = await reauditJudgeGolden(fixture);
       expect(result.checked).toBe(fixture.cases.length);
       // Rich failure message: which file / case / diff.
-      expect(
-        result.drifted.map((d) => `${file} :: ${d.id} :: ${d.diffs.join(' | ')}`),
-      ).toEqual([]);
+      expect(result.drifted.map((d) => `${file} :: ${d.id} :: ${d.diffs.join(' | ')}`)).toEqual([]);
     }
   });
 
@@ -49,9 +47,7 @@ describe('judge-golden reaudit (leg A)', () => {
     const db = makeDbSentinel() as unknown as Record<string, unknown>;
     expect(() => db.select).toThrowError(new RegExp(DB_TOUCH_MARKER));
     // Engine-internal symbol reads stay benign (pretty-format probes these).
-    expect(
-      (db as unknown as Record<symbol, unknown>)[Symbol.toStringTag],
-    ).toBeUndefined();
+    expect((db as unknown as Record<symbol, unknown>)[Symbol.toStringTag]).toBeUndefined();
   });
 
   it('a swallowed db touch surfaces as deterministic drift (MF6 exposure mechanism)', async () => {

@@ -81,7 +81,13 @@ async function seedJudgedAttempt(opts: SeedOpts): Promise<{
     kind: opts.route === 'steps' ? 'derivation' : 'short_answer',
     prompt_md: '（测试）题面',
     reference_md: '（测试）参考',
-    rubric_json: opts.route === 'steps' ? stepsRubric : { required_points: ['要点'] },
+    rubric_json:
+      opts.route === 'steps'
+        ? stepsRubric
+        : {
+            criteria: [{ name: 'correctness', weight: 1, descriptor: '要点' }],
+            required_points: ['要点'],
+          },
     choices_md: null,
     // 显式 set（audit:draft-status 站点纪律）：测试种子题不进练习池语义之外。
     draft_status: null,
@@ -152,10 +158,7 @@ async function seedJudgedAttempt(opts: SeedOpts): Promise<{
 }
 
 async function sampleEvents() {
-  return testDb()
-    .select()
-    .from(event)
-    .where(eq(event.action, JUDGE_CALIBRATION_SAMPLE_ACTION));
+  return testDb().select().from(event).where(eq(event.action, JUDGE_CALIBRATION_SAMPLE_ACTION));
 }
 
 async function runSummaryEvents() {
@@ -410,8 +413,7 @@ describe('runJudgeCalibrationSample', () => {
 
     expect(result.sampled).toBe(1);
     expect(seenCtx).toHaveLength(1);
-    const override = (seenCtx[0] as { override?: { provider?: string; model?: string } })
-      .override;
+    const override = (seenCtx[0] as { override?: { provider?: string; model?: string } }).override;
     // steps-judge injects override: visionJudgeProviderOverride() ('xiaomi'
     // here) into ctx at its call site — the rejudge wrapper's own override
     // literal MUST come after ...ctx in the spread, so the second lane wins.
