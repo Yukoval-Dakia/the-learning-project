@@ -829,7 +829,7 @@ jobs:
         if: ${{ !cancelled() && steps.run_ocr_review.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ocr-codex-review-${{ github.event.pull_request.number }}
           path: ocr-review.json
@@ -840,7 +840,7 @@ jobs:
         if: ${{ !cancelled() && steps.upload_review_json.outcome == 'failure' }}
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ocr-codex-review-${{ github.event.pull_request.number }}
           path: ocr-review.json
