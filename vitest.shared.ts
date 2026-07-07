@@ -130,6 +130,19 @@ export const fastTestInclude = [
   // be listed explicitly or the db config's src/**/*.test.ts glob sweeps it into
   // the testcontainer partition (pricing.test.ts lesson).
   'src/server/ai/item-prior.test.ts',
+  // YUK-576 — runner transient-retry loop + AgentRunError classification. Same
+  // justification as runner.seam.test.ts: @anthropic-ai/claude-agent-sdk +
+  // @/server/ai/log are vi.mock'd and `db` is an untouched stub → no live
+  // Postgres. src/server/ai/** has no unit glob, so this MUST be listed.
+  'src/server/ai/runner.fallback.test.ts',
+  // YUK-576 (R6) — enableTransientRetry opt-in enforcement (grep-level pin over
+  // src/ via node:fs; zero DB / SDK imports). Same enumeration requirement.
+  'src/server/ai/retry-optin.test.ts',
+  // YUK-576 — queue-level explicit retry policy. Pure no-DB: pg-boss is
+  // vi.mock'd (queue-config → client.ts imports the PgBoss class at module top)
+  // and the boss handed in is a plain capture fake. src/server/boss/** has no
+  // unit glob (client.globalthis.test.ts precedent), so this MUST be listed.
+  'src/server/boss/queue-config.test.ts',
   // YUK-361 Phase 5 (Task 10) — 家族级 b_personalized 纯函数单测（shrinkage /
   // family_key / 客观路由分类 / 隐含难度残差 / effectiveFamilyB）。Pure no-DB: imports
   // 仅 ./personalized-difficulty（其 @/db/client import 是 type-only/erased，@/db/schema

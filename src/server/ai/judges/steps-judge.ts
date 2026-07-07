@@ -247,6 +247,15 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     // unset → undefined → registry mimo default (byte-identical to today). The
     // override is merged into ctx here (the call site), so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
+    //
+    // YUK-576 — enableTransientRetry: true. This judge is a synchronous-route
+    // sensor with NO durable backstop (this catch swallows failures into
+    // 'unsupported', so pg-boss never sees a throw): the sanctioned in-process
+    // transient-retry opt-in (registry StepsJudgeTask budget.transientRetries=1,
+    // runner gates in runner.ts transientRetryEnabled). Set here at the module's
+    // single runTaskFn call site, so ALL sync callers of runStepsJudge are
+    // covered by one flag. When the operator pins routing (VISION_JUDGE_PROVIDER
+    // → ctx.override set), the runner's override gate turns retry off.
     const result = await runTaskFn(
       'StepsJudgeTask',
       { text: llmTextPayload, images },
@@ -254,6 +263,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
         db: params.db,
         subjectProfile: params.subjectProfile,
         override: visionJudgeProviderOverride(),
+        enableTransientRetry: true,
       },
     );
     llmText = result.text;

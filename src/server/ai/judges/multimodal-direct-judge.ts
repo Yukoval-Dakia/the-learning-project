@@ -176,6 +176,10 @@ export async function runMultimodalDirectJudge(
     // unset → undefined → registry mimo default (byte-identical to today). The
     // override is merged into ctx here (the call site), so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
+    //
+    // YUK-576 — enableTransientRetry: true, same rationale + boundaries as
+    // steps-judge.ts (sync-route sensor, no durable backstop; single module-level
+    // call site covers all callers; operator-pinned routing turns retry off).
     const result = await runTaskFn(
       'MultimodalDirectJudgeTask',
       { text: llmTextPayload, images },
@@ -183,6 +187,7 @@ export async function runMultimodalDirectJudge(
         db: params.db,
         subjectProfile: params.subjectProfile,
         override: visionJudgeProviderOverride(),
+        enableTransientRetry: true,
       },
     );
     llmText = result.text;
