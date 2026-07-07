@@ -12,7 +12,7 @@
 // Pure no-DB unit (node:fs walk only). MUST be enumerated in fastTestInclude
 // (vitest.shared.ts): src/server/ai/** has no unit glob.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -27,7 +27,11 @@ const SANCTIONED_OPTIN_FILES = [
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    const st = statSync(full);
+    // lstat + symlink skip (review P2-#4): statSync would resolve symlinks —
+    // traversing a symlinked dir (or throwing on a broken link) would fail this
+    // enforcement test for reasons unrelated to opt-in discipline.
+    const st = lstatSync(full);
+    if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
       if (entry === 'node_modules') continue;
       walk(full, out);
