@@ -89,10 +89,20 @@ async function countNoteChangesInWindow(db: DbLike, from: Date, to: Date): Promi
   return rows.filter((r) => r.created_at < to).length;
 }
 
-// YUK-580：ai_task_runs 窗内 status='error' 原始行（task_kind + error_message + finished_at），
+// YUK-580：ai_task_runs 窗内失败原始行（task_kind + error_message + finished_at），
 // 供纯函数 computeDegradedKinds 消费。按 finished_at desc 预排序（纯函数侧仍二次排序兜底，
 // 保证与查询层排序假设解耦）。与 loadRunRows 各自独立查询——后者只聚合 count，这里要保留
 // 原始 error_message 字符串，两者列不同不宜合并成一次查询。
+//
+// YUK-576 §5.3 — 死过滤修复：原 `eq(status,'error')` 收不到任何生产行——ai_task_runs.status
+// 的封闭写入词表是 {running, success, failure}（log.ts AiTaskRunFinishEntry），零 writer 写
+// 'error'，watchdog 对真实失败全盲。改按 status='failure' 收，并排除两类**非逻辑失败**行
+// （alerting 面排除、admin Failures 翻查面保留——那边按 finish_reason 聚类，仍可见）：
+//   - 'error_retried'：runner 进程内瞬时重试的非末次尝试（runner.ts §3.3）——一次逻辑请求
+//     两跳全挂只计末级 1 条，DEGRADED_KIND_ERROR_THRESHOLD=2 的「2 个独立逻辑失败才标红」
+//     语义不被单次用户动作打满；
+//   - 'reconciled_stuck'：stuck-run sweeper 的收敛行（ai_task_run_reconcile.ts）——状态
+//     收敛不是任务失败。
 async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunErrorRow[]> {
   const rows = await db
     .select({
@@ -103,7 +113,9 @@ async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunEr
     .from(ai_task_runs)
     .where(
       and(
-        eq(ai_task_runs.status, 'error'),
+        eq(ai_task_runs.status, 'failure'),
+        sql`${ai_task_runs.finish_reason} IS DISTINCT FROM 'error_retried'`,
+        sql`${ai_task_runs.finish_reason} IS DISTINCT FROM 'reconciled_stuck'`,
         gte(ai_task_runs.finished_at, from),
         lt(ai_task_runs.finished_at, to),
       ),
