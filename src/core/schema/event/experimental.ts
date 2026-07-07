@@ -197,6 +197,12 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // to reproduce figures/status/imported_*/version; a malformed payload must be rejected at the
   // barrier, not fall through to the loose generic.
   'experimental:question_block_lifecycle',
+  // YUK-577 — copilot 主动开口触发留痕。承重非 report-only（GET /nudges 读它驱动 user-facing
+  // 面 + 频控 + surfacing gate 依赖 payload 承重键），故 RESERVED + 专属 NudgeExperimental schema
+  // （./nudge-events.ts）——坏 payload 在 parseEvent barrier fail-loud，不静默退化。see
+  // docs/design/2026-07-07-yuk577-proactive-triggers.md §3.3. NOTE: `_dismissed`/`_opened` 承重轻
+  // （只锚 nudge id，payload {}），故意 NOT reserved——走通用 hatch 即可。
+  'experimental:copilot_nudge',
 ]);
 
 // ====================================================================

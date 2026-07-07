@@ -32,7 +32,11 @@
 import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { useCopilotDwell, useCopilotOpenSignal } from '@/ui/lib/use-copilot-dwell';
+import {
+  openCopilotForNudge,
+  useCopilotDwell,
+  useCopilotOpenSignal,
+} from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
 import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
@@ -44,6 +48,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
 import { isOneShotSkill } from './skill-lifecycle';
+import { useCopilotNudges } from './useCopilotNudges';
 
 interface DreamingPreviewRow {
   proposal_id: string;
@@ -203,7 +208,16 @@ export interface CopilotDockProps {
 }
 
 export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
-  const { open, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
+  // YUK-577 — proactive-nudge state. `suppressAutoOpen` = 让位 (§3.8): a pending content-driven
+  // nudge stands the blind 30s dwell timer down (main path over保底).
+  const { nudges, dismiss: dismissNudge, markOpened } = useCopilotNudges();
+  const {
+    open,
+    openDrawer,
+    closeDrawer: closeDrawerDwell,
+  } = useCopilotDwell({
+    suppressAutoOpen: nudges.length > 0,
+  });
   const summaryQ = useQuery({
     queryKey: ['copilot-summary'],
     queryFn: () => apiJson<CopilotSummary>('/api/today/copilot-summary'),
@@ -242,10 +256,14 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   //           free-form turns after a session end are not re-routed to a stale
   //           skill. A replayed end turn correctly leaves the ref null.
   const activeSkillRef = useRef<CopilotSkillContextT | null>(null);
+  // YUK-577 — the ingestion session a nudge 「看看」opened, injected into ambient_context so the
+  // user's first reply is context-aware ("about the material I just processed").
+  const nudgeSessionRef = useRef<string | null>(null);
   // AF S4 / YUK-203 U6 — wrap closeDrawer to also clear the active skill context
   // so that re-opening the Dock after closing does not resume a stale skill.
   const closeDrawer = useCallback(() => {
     activeSkillRef.current = null;
+    nudgeSessionRef.current = null;
     // YUK-272 (C3) — also drop the quiz-chip's in-scope knowledge entity so a
     // re-open does not offer a quiz for a stale knowledge node.
     setFocusedKnowledgeId(null);
@@ -355,8 +373,16 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       // active skill ref. Server treats it as current-message-only (防循环 ②).
       const route = pathnameRef.current;
       const focusedEntity = skillContext?.ref;
+      // YUK-577 — when no skill entity is in scope but a nudge opened this conversation, ride the
+      // ingestion session as the focused entity so the agent knows the reply is about that material.
+      const nudgeSession = nudgeSessionRef.current;
+      const ambientFocus = focusedEntity
+        ? focusedEntity
+        : nudgeSession
+          ? { kind: 'learning_session', id: nudgeSession }
+          : undefined;
       const ambientContext = route
-        ? { route, ...(focusedEntity ? { focused_entity: focusedEntity } : {}) }
+        ? { route, ...(ambientFocus ? { focused_entity: ambientFocus } : {}) }
         : undefined;
       const res = await apiFetch('/api/copilot/chat', {
         method: 'POST',
@@ -553,7 +579,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     if (!openRequest) return;
     if (openRequest.seq === lastHandledSeqRef.current) return;
     lastHandledSeqRef.current = openRequest.seq;
-    activeSkillRef.current = openRequest.skill_context;
+    activeSkillRef.current = openRequest.skill_context ?? null;
     // YUK-272 (C3) — if the open-with-context signal carried a knowledge entity,
     // expose it as the quiz-chip's in-scope knowledge id. YUK-266 — else CLEAR it:
     // without this, opening the Dock with a non-knowledge context (e.g. a learning
@@ -565,13 +591,66 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     } else {
       setFocusedKnowledgeId(null);
     }
+    // YUK-577 — nudge 「看看」open: the deterministic headline IS the agent opening turn (seeded
+    // client-side as an `ai` message — never an owner user bubble, MF1 / A3:88). Remember the
+    // ingestion session so the user's reply carries it in ambient_context. Only seed into an empty
+    // stream (never clobber an in-progress conversation).
+    if (openRequest.nudge) {
+      const n = openRequest.nudge;
+      nudgeSessionRef.current = n.session_id;
+      setMessages((prev) =>
+        prev.length === 0 ? [{ id: nextId(), role: 'ai', text: n.headline }] : prev,
+      );
+    }
     openDrawer();
     const prefill = openRequest.prefill;
     clearRequest();
     if (prefill) void send(prefill);
   }, [openRequest, openDrawer, clearRequest, send]);
 
-  const summary = summaryQ.data ? (
+  // YUK-577 — proactive-nudge bar at the top of the summary slot (② owner-approved落点, above
+  // daily_focus). Agent-tone (invitation, NOT alert-red): subtle left border + sparkle + headline +
+  // 看看 / ×. 看看 → seed the headline as the agent opening + open drawer + mark opened (KPI);
+  // × → dismiss (kind-wide daily fuse server-side). Isolated from footer/composer + message list.
+  const nudgeBar =
+    nudges.length > 0 ? (
+      <div className="flex flex-col gap-[6px]" data-testid="copilot-nudge-bar">
+        {nudges.map((n) => (
+          <div
+            key={n.id}
+            className="flex items-start gap-[8px] border-l-2 border-[var(--ink-3)] pl-[8px] py-[3px]"
+          >
+            <LoomIcon name="sparkle" size={14} />
+            <p className="flex-1 text-[12.5px] text-[var(--ink)] leading-[1.5]">{n.headline}</p>
+            <button
+              type="button"
+              className="chip"
+              data-testid="copilot-nudge-open"
+              onClick={() => {
+                void markOpened(n.id);
+                openCopilotForNudge({
+                  nudge_event_id: n.id,
+                  session_id: n.subject_id,
+                  headline: n.headline,
+                });
+              }}
+            >
+              看看
+            </button>
+            <IconBtn
+              icon="close"
+              size={14}
+              title="忽略"
+              aria-label="忽略"
+              data-testid="copilot-nudge-dismiss"
+              onClick={() => void dismissNudge(n.id)}
+            />
+          </div>
+        ))}
+      </div>
+    ) : null;
+
+  const summaryBody = summaryQ.data ? (
     // 4-slot order per Wave 5 ready-to-launch lock §Human decision points:
     // Coach focus → review_due → brief → dreaming → footer.
     <div className="flex flex-col gap-[6px]">
@@ -610,6 +689,14 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     <p className="text-[12.5px] text-[var(--ink-3)]">加载摘要…</p>
   ) : (
     <p className="text-[12.5px] text-[var(--ink-3)]">摘要暂不可用。</p>
+  );
+
+  // YUK-577 — nudge bar rides above the summary body (shows even while summary loads/unavailable).
+  const summary = (
+    <>
+      {nudgeBar}
+      {summaryBody}
+    </>
   );
 
   const footer = (
@@ -671,15 +758,28 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
 
   return (
     <>
-      <Button
-        variant="quiet"
-        size="sm"
-        onClick={openDrawer}
-        data-testid="copilot-drawer-trigger"
-        icon="bot"
-      >
-        召唤 Copilot
-      </Button>
+      {/* YUK-577 — ① collapsed-launcher count badge (owner-approved落点). Agent-tone (var(--ink-2),
+          NOT alert-red — invitation not error); pointer-events-none so it never blocks the button. */}
+      <span className="relative inline-flex">
+        <Button
+          variant="quiet"
+          size="sm"
+          onClick={openDrawer}
+          data-testid="copilot-drawer-trigger"
+          icon="bot"
+        >
+          召唤 Copilot
+        </Button>
+        {nudges.length > 0 ? (
+          <span
+            className="pointer-events-none absolute -top-[4px] -right-[4px] flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-[var(--ink-2)] px-[4px] text-[10px] font-medium leading-none text-[var(--surface,#fff)]"
+            data-testid="copilot-nudge-launcher-badge"
+            aria-label={`${nudges.length} 条主动提示`}
+          >
+            {nudges.length}
+          </span>
+        ) : null}
+      </span>
       <CopilotDrawer
         open={open}
         onClose={closeDrawer}

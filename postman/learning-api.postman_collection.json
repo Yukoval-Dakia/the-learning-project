@@ -308,6 +308,20 @@
       "name": "copilot",
       "item": [
         {
+          "name": "GET /api/copilot/nudges",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/nudges",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "nudges"]
+            },
+            "description": "YUK-577 主动开口 nudge 列表（排 shadow/过期/已处置 + 练习中静默窗 backstop）\n\n**Notes:** 响应 { nudges: [{id,kind,headline,subject_kind,subject_id,created_at}] }；shadow 行绝不出面（surfacing gate）"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/copilot/turns",
           "request": {
             "method": "GET",
@@ -354,6 +368,46 @@
                 }
               }
             }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/copilot/nudges/:id/dismiss",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/nudges/:id/dismiss",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "nudges", ":id", "dismiss"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "YUK-577 忽略一条 nudge（× 关闭）——写 experimental:copilot_nudge_dismissed\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body；404 若 nudge 不存在。KPI 分母之一（dismiss_rate = dismissed/(opened+dismissed)）"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/copilot/nudges/:id/opened",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/nudges/:id/opened",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "nudges", ":id", "opened"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "YUK-577 展开一条 nudge 对话（看看）——写 experimental:copilot_nudge_opened\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body；404 若 nudge 不存在。KPI 分子（opened）；opened 后读模型排除该 nudge"
           },
           "response": []
         }

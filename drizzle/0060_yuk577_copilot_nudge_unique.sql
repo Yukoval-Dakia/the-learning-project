@@ -1,0 +1,19 @@
+-- YUK-577 (§3.3) — DB-enforced per-source idempotency for the copilot proactive-nudge trigger.
+--
+-- The evaluator job (copilot_nudge_evaluate, queue 'fast') writes at most one
+-- `experimental:copilot_nudge` trigger-provenance event per triggering source
+-- event, keyed by caused_by_event_id = <ingestion extract event id> (cut-1) /
+-- <attempt event id> (cut-2 streak). A plain SELECT dedup is NOT sufficient: the
+-- fast queue has no singleton and pg-boss still redelivers on expire/crash, so a
+-- handler that dies mid-write gets redelivered and can double-write — surfacing
+-- two nudges for one event + polluting the dismiss-rate denominator. This partial
+-- unique index closes that at the DB layer; the handler treats a 23505
+-- unique_violation as "already nudged" and skips.
+--
+-- Partial (action-scoped) on purpose: caused_by_event_id is a shared chain column
+-- across many event actions, so a bare unique index would break every other
+-- writer. Hand-written because drizzle-kit does not generate partial `WHERE …`
+-- indexes at this version (0059_yuk573_judge_calibration_sample_unique precedent);
+-- index-only, schema model unchanged, so no meta snapshot needed. See
+-- docs/design/2026-07-07-yuk577-proactive-triggers.md §3.3.
+CREATE UNIQUE INDEX "event_copilot_nudge_unique_idx" ON "event" ("caused_by_event_id") WHERE "action" = 'experimental:copilot_nudge';

@@ -159,17 +159,24 @@ describe('POST /api/ingestion/docx', () => {
     expect(domainEvents[0].outcome).toBe('success');
 
     // Text line enqueues NO extraction job (blocks come from pandoc, not OCR) —
-    // but it DOES fan out the observe-only auto_enroll job post-commit
-    // (docx-ingestion.ts Codex-3: same AI-prefill/auto-enroll observe path as
-    // the visual/PDF/image entrypoints). Assert exactly that one send and that
-    // no tencent_ocr_extract sneaks in.
-    expect(bossSend).toHaveBeenCalledTimes(1);
-    // YUK-486 — the send carries the singleton dedup options (parity with the tencent path).
+    // but it DOES fan out two post-commit observe-only jobs:
+    //   1. auto_enroll (docx-ingestion.ts Codex-3: same AI-prefill/auto-enroll observe
+    //      path as the visual/PDF/image entrypoints), and
+    //   2. copilot_nudge_evaluate (YUK-577: the proactive-nudge evaluator).
+    // Assert exactly those two sends and that no tencent_ocr_extract sneaks in.
+    expect(bossSend).toHaveBeenCalledTimes(2);
+    // YUK-486 — the auto_enroll send carries the singleton dedup options (parity with the tencent path).
     expect(bossSend).toHaveBeenCalledWith(
       'auto_enroll',
       { sessionId: body.session_id },
       { singletonKey: body.session_id, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
     );
+    // YUK-577 — the copilot_nudge_evaluate send carries only the locating ids (facts read back
+    // from the event table by the handler; evidence-first, no payload drift).
+    expect(bossSend).toHaveBeenCalledWith('copilot_nudge_evaluate', {
+      kind: 'ingestion_complete',
+      session_id: body.session_id,
+    });
   });
 
   it('visual line: mathtype docx → queued session + tencent_ocr_extract enqueued', async () => {
