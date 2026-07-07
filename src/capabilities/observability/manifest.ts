@@ -104,6 +104,23 @@ export const observabilityCapability = defineCapability({
       },
     ],
   },
+  jobs: {
+    handlers: [
+      // YUK-576 §5 — stuck-in-running reconcile sweeper（辅触发；主触发是
+      // start-worker.ts 的 boot-time sweep）。fast 档（无 DLQ）：sweep 幂等，
+      // 掉一拍下轮 cron 重收敛（queue-config.ts fast 档既定语义）。06:10 避开
+      // 既有夜链 cron 空档；1h 阈值意味着本轮收敛 ≤05:10 起卡住的行。
+      {
+        name: 'ai_task_run_reconcile_nightly',
+        schedule: { cron: '10 6 * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('@/server/boss/handlers/ai_task_run_reconcile').then(
+            (m) => m.buildAiTaskRunReconcileHandler,
+          ),
+      },
+    ],
+  },
   // M5-T4b (YUK-321)：admin 四页迁 SPA（ui/observability.tsx + ui/subjects.tsx）。
   // admin 是独立壳形态（design app.jsx:106-114），不挂主 app chrome。
   ui: {
