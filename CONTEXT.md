@@ -5,7 +5,7 @@
 
 ## 抽取与分析
 
-- **结构化抽取（structured extraction）**：把试卷 / 教材 / 题目图像转成机器可读的题目结构（题面、选项、答案、配图坐标、用户手写答案）。架构原则：**结构化抽取 = 确定性 API**（Tencent 试题批改 Agent，异步 job），不交给 LLM。见 ADR-0002。
+- **结构化抽取（structured extraction）**：把试卷 / 教材 / 题目图像转成机器可读的题目结构（题面、选项、答案、配图坐标、用户手写答案）。架构原则：**结构化抽取 = 确定性 API**（Tencent 试题批改 Agent，异步 job），不交给 LLM。见 ADR-0002。**（2026-07-07 X2 审查补注：post-YUK-145 T-OC 主结构 owner 已改为付费 VLM `StructureTask`（mimo-v2.5, `invocation:'auto'`），腾讯降为纯文字 OCR hint——「确定性 API」现指腾讯文字底层的接口契约稳定性，主结构抽取是每次录入自动触发的 baseline VLM。付费动作红线 scope = 上传即隐式授权 baseline 抽取，只门控 baseline 之外的 discretionary 付费升级与 cascade；见 ADR-0002 修订 2026-05-30。）**
 - **救援（rescue）**：当 Tencent Mark Agent 切错 / 切不出（`layout_quality='partial' | 'text_only'`，或部分手写涂改无法识别）时，**由用户主动**触发的 LLM Vision 抽取（Tier 2 = haiku，Tier 3 = sonnet）。区别于"自动 cascade fallback"—— 救援是显式的、付费可见的、用户授权的。
 - **配图（figure / illustration）**：题目附带的图（函数图、几何图、表格图像等）。Tencent 返回坐标（`QuestionImagePositions`），系统**自动裁剪**为独立 R2 asset，元数据存于 `question_block.figures`。
 - **配图归属（figure attachment）**：每张 figure 通过 `attached_to_index` 指向所属 StructuredQuestion；初配由 parser 启发式（空间包含 + 最近邻）确定，置 `attach_confidence: 'high' | 'low'`；用户可通过 `PATCH /api/question-blocks/:id/figures/:asset_id` 改归属，状态变 `'manual'`。低置信度归属在 UI 上明确标识，提示用户检查。

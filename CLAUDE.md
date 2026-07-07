@@ -2,23 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-当创建 Subagent 时，应当考虑任务难度自主调度 Opus 与 Sonnet 模型，极少使用 Haiku。
+创建 Subagent 时：默认 Opus；fable 为顶档稀缺只用于终裁/最难验证位；Sonnet 只用于轻量机械活；Haiku 基本不用。（owner 2026-07-03 拍板，2026-07-07 成文化）
 
 ## Scope Discipline
 
 - Implement EXACTLY what the user asked for; do not expand scope into adjacent frameworks (MCP, Skills, Plugins, full harnesses) unless explicitly requested.
 - When tempted to add infrastructure, first ask: "Did the user ask for this?" If unclear, ask before building.
+- The MCP/Skills/Plugins/harness prohibition above targets the PRODUCT surface, not the owner's chosen dev/tooling layer — serena, claude-context, superpowers, and OMC are sanctioned tooling and do not violate this rule.
 
 ## Session Discipline
 
 - **Long-session task tracking**：当前请求涉及 ≥3 个独立步骤、或预期跨多次工具调用时，主动 `ToolSearch` 加载 `TaskCreate/TaskUpdate` 并维护任务列表；不要凭记忆推进多步工作。
 - **Environment-sensitive tasks**：涉及外部 SaaS / 本机权限 / 第三方 CLI（Cloudflare、computer-use、waifu2x 之类）时，先跑 30 秒 pre-flight—— `which` / 版本 / token 在不在 env / 本地化应用名是否解析 —— 打印 pass/fail checklist，全 pass 才进主任务。
 - **Cockpit & 全局视角（多线不乱）**：单 session 是线性引擎，全局态活在外部 ledger、不在上下文里——别试图用 session 的脑子当全局视角。**驾驶舱** = `PLAN.md`（repo 根，NOW / NEXT / PARKED / BLOCKED-ON 活看板，手边）+ Linear（权威 projects/issues）+ `.remember/`（跨 session handoff）。
-  - **Session start**：先读 `PLAN.md` + `.remember/remember.md` + `MEMORY.md` 重建全局视角，别从零推。
+  - **PLAN.md 是看板不是日志**：正文预算 ≤200 行且头部日志区只留最新 1 条【更新】+ `更新于` 戳；超龄【更新】叙事段收尾时滚存进 `.remember/today-*.done.md` 或 `docs/planning/`；四栏对齐 = 就地改写栏目本体（过期条目删改，不得靠追加新段落对冲旧矛盾）。
+  - **Session start**：先读 `PLAN.md` + `.remember/now.md`（近况看 `recent.md` / 当日 `today-*.done.md`）+ `MEMORY.md` 重建全局视角，别从零推。
   - **Capture-at-discovery**：任何中途冒出但出当前线的东西（bug / follow-up / 岔路 fork），当场进 `PLAN.md` PARKED 或 Linear，绝不靠记忆「我记着」。
   - **拓扑**：1 个 driver session 持计划 + 只推一条 active 线；广度派 fan-out（workflow / subagent 当 scout，主线只收结论）；并行执行钉 git worktree（每 lane 独立 worktree + branch）；**别开对等多窗抢同一工作树**（冲突/乱的根源）。
   - **保真**：Linear 会腐败（stale In Progress 是常态）；触及的 issue 状态当场对齐代码，周期性 re-excavation 拿 code ground 一遍。
-  - **收尾 checklist（结束前必跑）**：① `PLAN.md` 四栏对齐现实；② 所有发现的 follow-up 已落 Linear 或 `PLAN.md`（脑子不留）；③ 触及的 Linear issue 状态对齐代码（无假 In Progress）；④ `.remember` handoff 更新；⑤ 在飞 PR / workflow / worktree 列清状态。
+  - **收尾 checklist（结束前必跑）**：① `PLAN.md` 四栏**就地改写**对齐现实 + 滚存超龄日志段 + **commit**（工作树里过夜的看板等于没有看板）；② 所有发现的 follow-up 已落 Linear 或 `PLAN.md`（脑子不留）；③ 触及的 Linear issue 状态对齐代码（无假 In Progress）；④ `.remember` handoff 更新；⑤ 在飞 PR / workflow / worktree 列清状态。
 
 ## UI Design Compliance
 
@@ -80,7 +82,7 @@ pnpm audit:mastery-provenance # 借用 provenance 消费纪律反查（MasteryPr
 
 `pnpm audit:profile` 调用 `scripts/audit-profile.ts`，遍历 `subjectProfiles` 并复用 `validateProfile()` 检查 `SubjectProfileSchema`、`causeCategories` 唯一性、`judgeCapabilities` 是否已在默认 capability registry 注册，以及 registry-backed preferred route 是否已声明。新增或修改 subject profile 后必须先跑 `pnpm audit:profile`；坏 profile 也会在 `SubjectRegistry.register()` 启动期直接抛错。
 
-`pnpm audit:draft-status`（YUK-350）调用 `scripts/audit-draft-status.ts`，扫所有 `.insert(question).values({ ... })` 站点（brace-balanced 抽对象块，跳字符串/模板/注释，word-boundary 排除 `question_block`/`question_part`），要求每个站点要么显式携带 `draft_status` key，要么在 `scripts/audit-draft-status-allowlist.json` 声明 `reason` + `resolves_when{kind,ref,expected_by}`。`question.draft_status` 是 NULL≡active 的三态字段——漏 set 的新 question 会被 review 池当 active 收，容器内专用题（embedded check / teaching check）会静默漏进通用练习池。NULL≡active 是合法语义的 writer（auto-enroll / import / 错题 / 卷题）放 allowlist；allowlisted-AND-explicit 文件静默通过（不 hard-fail）。新增 question INSERT 时要么显式 set draft_status，要么加 allowlist 并标注解除条件。**它已接入 `pnpm test` 链（在 `audit:profile` 之后），所以容器题漏进池的失效模式由自动 gate 强制——不像 `audit:schema`/`audit:partition` 只在 pre-PR 散文清单里靠人工记得跑。**详见 `docs/design/2026-05-15-data-assumptions.md`。
+`pnpm audit:draft-status`（YUK-350）调用 `scripts/audit-draft-status.ts`，扫所有 `.insert(question).values({ ... })` 站点（brace-balanced 抽对象块，跳字符串/模板/注释，word-boundary 排除 `question_block`/`question_part`），要求每个站点要么显式携带 `draft_status` key，要么在 `scripts/audit-draft-status-allowlist.json` 声明 `reason` + `resolves_when{kind,ref,expected_by}`。`question.draft_status` 是 NULL≡active 的三态字段——漏 set 的新 question 会被 review 池当 active 收，容器内专用题（embedded check / teaching check）会静默漏进通用练习池。NULL≡active 是合法语义的 writer（auto-enroll / import / 错题 / 卷题）放 allowlist；allowlisted-AND-explicit 文件静默通过（不 hard-fail）。新增 question INSERT 时要么显式 set draft_status，要么加 allowlist 并标注解除条件。**它已接入 `pnpm test` 链（在 `audit:profile` 之后），所以容器题漏进池的失效模式由自动 gate 强制。执行强度校准（2026-07-07 红线审查，纠旧句「不像 `audit:schema`/`audit:partition` 只在 pre-PR 散文清单里靠人工记得跑」的事实错误）：`audit:schema`/`audit:partition` 并非只靠人工记得——两者由 `.github/workflows/ci-gate.yml` 作为独立步骤在每个非-docs PR 远端硬 gate（见 ci-gate.yml `Audit — schema write-path` / `Audit — test partition` 步骤），而 `pnpm test`（= `audit:profile` + `audit:draft-status` + `audit:draft-status-reads --strict` + unit/db/migration）同样在 ci-gate 里远端跑，故五个 audit 均受远端硬 gate。真实差异在本地：`pnpm test` 只覆盖 profile/draft-status/draft-status-reads，`audit:schema`/`audit:partition` 需本地手跑（见上方 Before-PR 清单）或依赖 CI。**详见 `docs/design/2026-05-15-data-assumptions.md`。
 
 `pnpm audit:relations`（YUK-357 / RT4）调用 `scripts/audit-relations.ts`，做 **KG 死边反向审计**（gap-analysis 决策 7 / gate doc §1.7 7c，源自 GPT §10.1「只保留能影响诊断/推荐/复习的关系」）。对每个核心 `knowledge_edge.relation_type`（prerequisite / related_to / contrasts_with / applied_in / derived_from）反查下游消费路径，按三层分级——`creation-validation`（提议时校验，不算下游学习消费）/ `generic-read`（copilot 一把灌所有 type，最弱信号）/ `specialized`（诊断/推荐/复习按具体 type 驱动行为）。**「死边」= 某 type 零 specialized 消费**（图在转但不影响学习）。消费矩阵是手维护的声明式 `CONSUMER_REGISTRY`，每条带 `file:marker` 证据；脚本对每条做**源码反查**，marker 不再命中即报 STALE（registry↔代码漂移）。**默认 report-only（exit 0），`--strict` 才非零 exit**（gate doc §1.7 标「→ Linear follow-up」非硬 gate；升级为 CI gate 是 owner 决策）。当前实测唯一死边 = `applied_in`（hub-mesh 显式排除、topology-gate 仅 prerequisite、paths 反向邻接仅 related_to/contrasts_with）。新增「按 relation_type 分支」的消费路径时须在 registry 补一条。
 
@@ -215,16 +217,16 @@ Single-context layout with CONTEXT.md and docs/adr/ at repo root. See `docs/agen
 
 ## Product / Design Principles
 
-- Do NOT propose deleting or removing pre-AI features (question banks, quizzes, flows) when designing AI-native improvements; treat them as legacy-compatible and additive unless explicitly told otherwise. "Delete" usually means "demote from sole source," not remove.
+- Pre-AI features (e.g. question banks, quizzes, flows) are load-bearing, first-class parts of the AI-native architecture — not legacy holdovers. Do NOT propose deleting or removing ANY pre-AI feature or deterministic path when designing AI-native improvements; "delete" means "demote from sole source," never remove. Owner-instructed deletions (explicit, e.g. D6/D11-style locked decisions) are the only exception.
 
 ## Engineering Approach
 
-- Prefer the smallest sufficient solution: confirm the simplest approach (e.g., a single vision LLM) before proposing multi-step pipelines or broad refactors.
+- Default to the smallest sufficient solution, and never build unrequested infrastructure or a net-new subsystem lacking a live consumer (the project failure mode 建成不通电). BUT distinguish two cases: (1) clear scope-creep / unrequested infra → cut it, do not ask; (2) a genuine bias-variance or product-judgment fork (e.g. LIGHT vs FULL variant) → present both, mark the recommendation, and let the owner decide — do NOT unilaterally foreclose the fuller option (per `docs/design/2026-07-03-softmax-spec.md` §3, where the anti-over-engineering protocol was explicitly withdrawn in favor of dual LIGHT+FULL presentation with owner as decider). The concrete example (a single vision LLM before multi-step pipelines) still holds for case (1).
 
 ## Code Review Workflow
 
 - When spawning review subagents, ensure each agent has Bash access (or dump the diff to disk and feed it) so it can fetch the PR diff.
-- After addressing review findings on a PR, **resolve the corresponding review threads** (CodeRabbit / OCR github-actions / codex / Cursor bots). For findings you intentionally skip, reply with the rationale first, then resolve (or leave for the owner). Do this *after* the fix is committed + pushed, so threads anchor to the landed diff. Mechanics: `pull_request_read` method `get_review_comments` → thread node IDs (`PRRT_…`); `pull_request_review_write` method `resolve_thread` (threadId); `add_reply_to_pull_request_comment` for skip rationale. Rationale: approval-gate bots (e.g. Cursor's "未批准 / Risk medium") stay stale-blocked while threads are unresolved, and the unresolved-conversation count misrepresents reality. Resolving threads is cleanup only — it never authorizes a merge (PRs are owner-merged, never auto-merged).
+- After addressing review findings on a PR, **resolve the corresponding review threads** (CodeRabbit / OCR github-actions / codex / Cursor bots). For findings you intentionally skip, reply with the rationale first, then resolve (or leave for the owner). Do this *after* the fix is committed + pushed, so threads anchor to the landed diff. Mechanics: `pull_request_read` method `get_review_comments` → thread node IDs (`PRRT_…`); `pull_request_review_write` method `resolve_thread` (threadId); `add_reply_to_pull_request_comment` for skip rationale. Rationale: approval-gate bots (e.g. Cursor's "未批准 / Risk medium") stay stale-blocked while threads are unresolved, and the unresolved-conversation count misrepresents reality. Resolving threads is cleanup only — it never authorizes a merge by itself. **Merge policy（owner 2026-07-07 拍板成文，取代旧句 "PRs are owner-merged, never auto-merged"）**：全量 pre-PR gate + 独立 review + CI 全绿后，PR 可自主 merge 并按 2026-07-03 部署授权自主部署；owner 可随时点名要求任一 PR 人工合。
 
 ## Shell / Environment
 

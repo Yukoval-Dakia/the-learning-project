@@ -22,6 +22,10 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: [self-hosted, ocr-codex-review]
+    # Backstop: a stalled step (e.g. artifact upload hanging against GitHub's
+    # blob storage) must not pin the job to the 6h default. Review itself is
+    # bounded by OCR_TIMEOUT_MINUTES (default 20); 45 leaves generous headroom.
+    timeout-minutes: 45
     permissions:
       contents: read
       issues: write
@@ -213,6 +217,7 @@ jobs:
             }
 
       - name: Run OCR review
+        id: run_ocr_review
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -236,18 +241,6 @@ jobs:
             > ocr-review.json
 
           test -s ocr-review.json
-
-      # Diagnostic artifact only — a transient ECONNRESET from the self-hosted
-      # runner to GitHub's artifact endpoint must NOT fail a review that already
-      # ran and posted comments. Best-effort with retries.
-      - name: Upload OCR review JSON
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: ocr-codex-review-${{ github.event.pull_request.number }}
-          path: ocr-review.json
-          if-no-files-found: error
-          retention-days: 7
 
       - name: Upsert PR review comment
         uses: actions/github-script@v7
@@ -820,6 +813,41 @@ jobs:
               }
               }
             }
+
+      # Diagnostic artifact only — no downstream consumer (learnings collect via
+      # GraphQL, upsert reads local disk), so it runs AFTER the review comment is
+      # posted: a stalled/failed upload can never delay the user-visible review.
+      # The if-condition keeps it alive when the upsert step fails (that is when
+      # the diagnostic matters most) while still requiring the review step to
+      # have produced ocr-review.json, and never resurrecting a cancelled job.
+      # continue-on-error swallows failures; the step-level timeout converts a
+      # stalled blob upload ("Error: Upload progress stalled", observed 2026-07-07
+      # hanging 32+ min and blocking the comment) into a fast failure; one bounded
+      # retry then covers the transient-blip case.
+      - name: Upload OCR review JSON
+        id: upload_review_json
+        if: ${{ !cancelled() && steps.run_ocr_review.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-codex-review-${{ github.event.pull_request.number }}
+          path: ocr-review.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload OCR review JSON (retry)
+        if: ${{ !cancelled() && steps.upload_review_json.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-codex-review-${{ github.event.pull_request.number }}
+          path: ocr-review.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
   # When a PR is MERGED, capture the final verdict of OCR's inline comments and
   # ingest them into the learnings store — WITHOUT running an LLM review. This is
   # the reliable capture point: the review-time collector misses verdicts that
@@ -834,6 +862,9 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       vars.OCR_LEARNINGS != 'off'
     runs-on: [self-hosted, ocr-codex-review]
+    # Same stall backstop as the review job (no LLM here; generous for GraphQL
+    # pagination + learnings ingest).
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read

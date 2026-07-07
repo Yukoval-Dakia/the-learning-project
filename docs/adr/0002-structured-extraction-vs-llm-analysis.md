@@ -7,6 +7,8 @@
 **理由**：
 1. **职责分工**：结构抽取是 deterministic problem，交给专用 OCR；语义分析是 reasoning problem，交给 LLM。混用会让一次录入两层 LLM 调用，既贵又难 debug。
 2. **成本可预测**：OCR 单价稳定，LLM 调用次数固化为"每道题 1 次 Attribution + 1 次 Judge"级别。
+
+   > **成本模型更新（2026-07-07 X2 红线审查 · post-YUK-145 T-OC 2026-05-30）**：主抽取路径现已是**每次录入自动触发的付费 VLM**（`StructureTask`，mimo-v2.5，`invocation:'auto'`，见下方 2026-05-30 修订段），非旧的 OCR-only 确定性 baseline。故「成本可预测」现在建立在「**每次录入 1 次自动 baseline VLM + 受门控的 discretionary rescue**」之上。**红线 scope 明文化**：上传 = 隐式授权 baseline 抽取；本红线（rescue / 付费升级须显式授权、禁自动 cascade fallback）只门控 baseline **之外**的 discretionary 付费升级与 cascade，消除与自动 `StructureTask` 的表面矛盾。
 3. **用户对救援保留控制权**：OCR 切错时**用户主动**升级 Tier 2/3，系统不在背后烧钱。
 
 **接受的代价**：OCR 失败时**没有自动 fallback** —— UI 必须显示"OCR 失败，手动触发救援"，依赖用户介入。单用户工具下可接受。

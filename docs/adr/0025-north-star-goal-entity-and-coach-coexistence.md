@@ -82,12 +82,29 @@ GoalScopeTask 输入 = goal title + 知识网格快照（nodes + mastery + mesh 
 - 抢占当日复习额度；
 - 改任何材料的 `due` 时间 / FSRS 状态。
 
-**结构性保证（不是约定，是数据流事实）**：
-- FSRS 到期队列（`app/api/review/due/route.ts`）只读
-  `material_fsrs_state` + `event(action='attempt', outcome='failure')`，
-  与 `goal` 表 / Coach 输出**零耦合**。
+**结构性保证（SET 级守恒是数据流事实；ORDER 级守恒是 test-enforced 纪律）**：
+
+> **W10 修正注（YUK-167，2026-05-30；照本文末「M5 路径注」先例，带日期就地更正而非
+> 降级规范）**：本 ADR 落笔时（W9 core）due 路由与 `goal` 表**零耦合**属实。W10 的
+> YUK-167 起，due 路由为**软重排**读取 active goals（`rerankOverdueByGoals`，即本文
+> §决策 3「W10 才接：…review 软偏置排序」预授权的扩展）。须区分强度不同的两级守恒：
+>
+> - **SET 级守恒（四条禁令）仍是结构性数据流事实、不是约定**：goal 数据**绝不进入
+>   due 的选择阶段**——SQL `WHERE` / `ORDER` / `limit`、跨学科 round-robin、当日额度
+>   全程无 goal 输入；goal 唯一的触点是**已选定页**上 order-only 的稳定分区
+>   （`rerankOverdueByGoals` 跑在选页 + limit **之后**，对同一 multiset 原样 re-emit
+>   行对象，构造上不可能增删行、改 `due_at` 或 `fsrs_state`）。因此四条禁令
+>   （不抑制 / 不隐藏 / 不抢占额度 / 不改 due）依旧由数据流结构本身保证，而非仅靠测试。
+> - **ORDER 级守恒（W9 的「顺序逐字节一致」）已被 YUK-167 有意放宽**为「goal 相关
+>   overdue item 软上浮」，这一维降级为 test-enforced 纪律（由下方 conservation +
+>   soft-bias 双 DB 测试守护）；这是预授权的 W10 扩展，非静默侵蚀。
+
+- FSRS 到期队列（`src/capabilities/practice/server/due-list.ts` 的 `handleReviewDue`）
+  只从 `material_fsrs_state` + `event(action='attempt', outcome='failure')` 选定返回页；
+  **选择阶段**与 `goal` 表 / Coach 输出**零耦合**，仅在选页 + limit 之后对 overdue 尾段
+  做 order-only 的 goal 软重排（`rerankOverdueByGoals`）。
 - `runCoach`（`coach_daily.ts`）只写 proposal + 一条 `experimental:coach_scan`
-  event；它从不读 review-due 路径、从不 UPDATE `material_fsrs_state`。
+  event；它从不 UPDATE `material_fsrs_state`、从不改 due。
 - goal 集成把 active goals 喂进 Coach 输入，并扩展 `TodayPlan`：
   plan 级加 `goal_ids[]`，plan-item 加 `serves_goal_id` + `knowledge_ids`
   （← 顺带闭合 graph-signals gap：原 TodayPlan 不带 knowledge_ids、Coach 不知
@@ -99,16 +116,40 @@ TodayPlan = [ 复习/到期/其他录入任务 — 原样不动 ]
           + [ 目标导向 strand（带 serves_goal_id / knowledge_ids 标签）]
 ```
 
-**回归守卫**：ND-5 conservation test —— 对同一份 FSRS 状态，断言
-`/api/review/due` 的输出（ids / 顺序 / counts / due_at / fsrs_state）在「有
-active goals」与「无 active goals」两种 fixture 下逐字节一致。该测试是这条不变
-式的 load-bearing 守卫；改动 goal/Coach 路径若让它变红 = 违反 ND-5，必须修复
-而非改测试。
+**回归守卫（双测试分工——W10 后删「顺序」维度）**：ND-5 由两个 load-bearing DB
+测试守护，各守一半，分工不同：
+
+- **`coach_daily.northstar.db.test.ts`（Coach 侧守卫）**：跑完整 `runCoach` + goal
+  strand 路径并直接 snapshot `material_fsrs_state` 行，断言 `/api/review/due` 的输出
+  在「有 / 无 active goals」下 **ids-SET / counts / due_at / fsrs_state 一致**——
+  **ORDER 可因 goal 软偏置变化，故不再断言顺序逐字节一致**。它独家承载 **Coach 侧
+  禁令**（runCoach 从不 UPDATE FSRS / 改 due）。其 fixture 含一个 off-goal overdue
+  item，使软重排路径被真实执行（2026-07-07 修复：旧 fixture 全 goal-relevant →
+  `rerankOverdueByGoals` 的 `others.length===0` 早退 → 重排恒 no-op、测试恒绿，
+  order-only 维度从未被这个测试守到）。
+- **`due-soft-bias.db.test.ts`（重排路径行为守卫）**：goal 软重排的真守卫——覆盖
+  set / count / due_at 守恒 + **over-limit 命门 guard**（一个较不到期的 goal 相关
+  item 绝不被拉进当页顶替更到期的 item，即 goal 不能抢占额度）+ 稳定分区 + off-safe。
+
+改动 goal/Coach 路径若让任一测试变红 = 违反 ND-5，必须修生产代码而非改测试。
 
 **多目标 strand 精力分配（spec §8 Q2，v0）**：`listActiveGoals` 按
 `sequence_hint` then `created_at` 排序，全部喂进 Coach 输入；v0 分配策略 =
 轮转 + 薄弱 scope 优先，作为 objective/prompt 里的**软指导**（模型挑），handler
 不硬切额度。可调，留 hook。
+
+**ND-5 标签用法消歧（A7 结算裁决，2026-07-07；不重编号）**：`ND-5` 标签已在三处以
+不同外延被引用，**三义并存合法，追溯时按引用处上下文取义**；不另立编号（全仓 78 处
+历史引用不回改）：
+
+- **① 本 ADR 正主含义** = 北极星 goal 不得**抑制 / 挤占 / 改写** FSRS 复习（由上方
+  conservation test 守卫）。
+- **② `docs/agents/objectives.md` 引用** = proposal-only 破坏性操作的 owner 出处。
+- **③ agentic lane specs（scout / meeting / reconcile 注释）中的 ND-5** = **结算账本
+  写面禁令**（scout / agent 绝不直写 FSRS / θ̂ / `kc_typed_state` —— 结算层单写者由
+  `tests/integration/step9-invariant-audit.test.ts` 的 fs-walker 机器强制，含
+  `kc_typed_state`（`src/server/conjectures/typed-state.ts`）与 `learner_axis_state`
+  （`src/server/calibration/axis-writer.ts`）两条断言）。
 
 ---
 
