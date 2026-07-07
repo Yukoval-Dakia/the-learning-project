@@ -142,6 +142,11 @@ export interface OvernightDigest {
 /**
  * 某 task_kind 在窗内被判定为「降级」的阈值——error 计数 ≥ 此值才升为一等 degraded_kinds
  * 字段。选 2 是为了滤掉单次瞬时抖动噪音（1 次 error 太常见，不值得标红打扰交班缕）。
+ *
+ * YUK-576：计数**只含末级逻辑失败**——查询层（overnight-digest.ts loadErrorRunRows）
+ * 按 status='failure' 收且排除 finish_reason ∈ {error_retried, reconciled_stuck}
+ * （重试非末次 / sweeper 收敛行都不是逻辑失败）。一次逻辑请求即使两跳全挂也只计 1，
+ * 「2 个独立逻辑失败才标红」的语义不被单次用户动作打满。
  */
 export const DEGRADED_KIND_ERROR_THRESHOLD = 2;
 
