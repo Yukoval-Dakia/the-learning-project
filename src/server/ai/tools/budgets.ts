@@ -8,8 +8,10 @@
 // and in one place (CB-1).
 //
 // IO-free / no dependencies — pure constants + a small lookup. Counting unit is
-// node / edge / event-row for v1 (CB-6); token-level accounting is deferred to
-// the T-PD backlog (the inactive `maxCost` in src/ai/registry.ts). No
+// node / edge / event-row for v1 (CB-6); token-level accounting remains a
+// future cost-meter feature (the registry's inactive `maxCost` was DELETED per
+// YUK-576 — when a cost-reporting lane enters service, wire the SDK-native
+// `Options.maxBudgetUsd` instead of resurrecting declarative metadata). No
 // user-configurable budgets (CB-5) and no hard-reject circuit-breaker (§6):
 // over-budget degrades gracefully via the tracker below.
 
