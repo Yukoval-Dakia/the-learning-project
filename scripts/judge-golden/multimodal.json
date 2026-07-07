@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "capturedNote": "SYNTHETIC — hand-authored; never raw production data. Covers MultimodalDirectLlmOutput→JudgeResultV2 coarse-driven clamps, Zod/JSON parse-fail → unsupported, image path (injected fetcher, zero DB), and no-override dispatch (physics + prompt figure + no reference_solution → multimodal_direct).",
+  "cases": [
+    {
+      "id": "mm-correct-01",
+      "description": "correct：LLM coarse=correct score 0.9 → 0.9",
+      "question": {
+        "id": "q-syn-mm-1",
+        "kind": "short_answer",
+        "prompt_md": "（合成）看图描述物块受力。",
+        "reference_md": null,
+        "rubric_json": null,
+        "choices_md": null,
+        "judge_kind_override": "multimodal_direct"
+      },
+      "answer_md": "（合成）合力向右，大小 5N。",
+      "subject_profile_id": "physics",
+      "frozen_llm_output": "{\"coarse_outcome\":\"correct\",\"score\":0.9,\"feedback_md\":\"受力分析正确。\",\"evidence\":{\"observed_md\":\"图中受力要素齐全。\",\"matched_points\":[\"合力方向\"],\"missing_points\":[]},\"confidence\":0.86}",
+      "expected": {
+        "route": "multimodal_direct",
+        "coarse_outcome": "correct",
+        "score": 0.9,
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "mm-partial-clamp-02",
+      "description": "partial cap 钳位：LLM 报 0.95 但 coarse=partial → 0.84",
+      "question": {
+        "id": "q-syn-mm-2",
+        "kind": "short_answer",
+        "prompt_md": "（合成）看图描述物块受力。",
+        "reference_md": null,
+        "rubric_json": null,
+        "choices_md": null,
+        "judge_kind_override": "multimodal_direct"
+      },
+      "answer_md": "（合成）只说了方向没说大小。",
+      "subject_profile_id": "physics",
+      "frozen_llm_output": "{\"coarse_outcome\":\"partial\",\"score\":0.95,\"feedback_md\":\"缺少合力大小。\",\"evidence\":{\"observed_md\":\"方向正确。\",\"matched_points\":[\"合力方向\"],\"missing_points\":[\"合力大小\"]},\"confidence\":0.7}",
+      "expected": {
+        "route": "multimodal_direct",
+        "coarse_outcome": "partial",
+        "score": 0.84,
+        "confidence": 0.7
+      }
+    },
+    {
+      "id": "mm-incorrect-zero-03",
+      "description": "incorrect 恒零分：LLM 报 0.4 但 coarse=incorrect → score 0",
+      "question": {
+        "id": "q-syn-mm-3",
+        "kind": "short_answer",
+        "prompt_md": "（合成）看图描述物块受力。",
+        "reference_md": null,
+        "rubric_json": null,
+        "choices_md": null,
+        "judge_kind_override": "multimodal_direct"
+      },
+      "answer_md": "（合成）方向说反了。",
+      "subject_profile_id": "physics",
+      "frozen_llm_output": "{\"coarse_outcome\":\"incorrect\",\"score\":0.4,\"feedback_md\":\"方向判断错误。\",\"evidence\":{\"observed_md\":\"合力方向相反。\",\"matched_points\":[],\"missing_points\":[\"合力方向\",\"合力大小\"]},\"confidence\":0.8}",
+      "expected": {
+        "route": "multimodal_direct",
+        "coarse_outcome": "incorrect",
+        "score": 0,
+        "confidence": 0.8
+      }
+    },
+    {
+      "id": "mm-parse-fail-04",
+      "description": "非 JSON 输出（无大括号）→ extractJsonObject throw → unsupported，判别键 error+raw_text",
+      "question": {
+        "id": "q-syn-mm-4",
+        "kind": "short_answer",
+        "prompt_md": "（合成）看图描述物块受力。",
+        "reference_md": null,
+        "rubric_json": null,
+        "choices_md": null,
+        "judge_kind_override": "multimodal_direct"
+      },
+      "answer_md": "（合成）随便答。",
+      "subject_profile_id": "physics",
+      "frozen_llm_output": "这不是一段 JSON 输出，模型直接说了一段话。",
+      "expected": {
+        "route": "multimodal_direct",
+        "coarse_outcome": "unsupported",
+        "score": null,
+        "feedback_contains": "did not match MultimodalDirectLlmOutput schema",
+        "evidence_has_keys": ["error", "raw_text"]
+      }
+    },
+    {
+      "id": "mm-route-dispatch-image-05",
+      "description": "无 judge_kind_override：physics + 题面图 + 无 reference_solution 经 resolveQuestionJudgeRoute 分派到 multimodal_direct；题图+答图均走注入 imageFetchFn（零 DB/R2）",
+      "question": {
+        "id": "q-syn-mm-5",
+        "kind": "short_answer",
+        "prompt_md": "（合成）看图：物块在斜面上，描述受力。",
+        "reference_md": null,
+        "rubric_json": null,
+        "choices_md": null,
+        "judge_kind_override": null,
+        "image_refs": ["syn-fig-1"]
+      },
+      "answer_md": "",
+      "student_image_refs": ["syn-ans-1"],
+      "subject_profile_id": "physics",
+      "frozen_llm_output": "{\"coarse_outcome\":\"correct\",\"score\":0.88,\"feedback_md\":\"手绘受力图完整。\",\"evidence\":{\"observed_md\":\"重力、支持力、摩擦力齐全。\",\"matched_points\":[\"三力齐全\"],\"missing_points\":[]},\"confidence\":0.8}",
+      "expected": {
+        "route": "multimodal_direct",
+        "coarse_outcome": "correct",
+        "score": 0.88,
+        "confidence": 0.8,
+        "evidence_has_keys": ["prompt_image_count", "student_image_count"]
+      }
+    }
+  ]
+}

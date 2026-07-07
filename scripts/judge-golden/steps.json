@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "capturedNote": "SYNTHETIC — hand-authored; never raw production data. Covers the steps accelerator (final_answer_match → partial, LLM-free), StepsLlmOutput→JudgeResultV2 weighted scoring + clamps, signal_verdicts length invariant, Zod parse-fail → unsupported, image path (injected fetcher, zero DB), and no-override dispatch (math derivation → steps).",
+  "cases": [
+    {
+      "id": "steps-accelerator-01",
+      "description": "accelerator：学生打字 final_answer 命中 → partial 0.4 免 LLM（llm_must_not_be_called）",
+      "question": {
+        "id": "q-syn-steps-1",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84"],
+            "final_answer": "42",
+            "answer_equivalents": ["x=42"]
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": "steps"
+      },
+      "answer_md": "42",
+      "subject_profile_id": "math",
+      "llm_must_not_be_called": true,
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "partial",
+        "score": 0.4,
+        "confidence": 0.9,
+        "feedback_contains": "最终答案匹配",
+        "evidence_has_keys": ["accelerator"]
+      }
+    },
+    {
+      "id": "steps-llm-correct-02",
+      "description": "LLM 路径全对：1 signal correct + final match → score 1 → correct",
+      "question": {
+        "id": "q-syn-steps-2",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84"],
+            "final_answer": "42",
+            "answer_equivalents": []
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": "steps"
+      },
+      "answer_md": "2x=84，所以 x=42。",
+      "subject_profile_id": "math",
+      "frozen_llm_output": "{\"extracted_steps\":[{\"idx\":0,\"content\":\"2x=84\",\"verdict\":\"correct\",\"comment\":\"列式正确\"}],\"extracted_final_answer\":\"42\",\"signal_verdicts\":[{\"signal_idx\":0,\"verdict\":\"correct\",\"comment\":\"命中\"}],\"final_answer_match\":true,\"final_answer_comment\":\"推导与答案均正确。\",\"confidence\":0.88}",
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "correct",
+        "score": 1,
+        "confidence": 0.88,
+        "feedback_contains": "推导与答案均正确"
+      }
+    },
+    {
+      "id": "steps-partial-half-03",
+      "description": "步骤半对：2 signals [correct,wrong] + final 不匹配 → 0.6*0.5 = 0.3 → partial",
+      "question": {
+        "id": "q-syn-steps-3",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84 并求 x。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84", "解出 x=42"],
+            "final_answer": "42",
+            "answer_equivalents": []
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": "steps"
+      },
+      "answer_md": "2x=84，x=48。",
+      "subject_profile_id": "math",
+      "frozen_llm_output": "{\"extracted_steps\":[{\"idx\":0,\"content\":\"2x=84\",\"verdict\":\"correct\",\"comment\":\"列式正确\"},{\"idx\":1,\"content\":\"x=48\",\"verdict\":\"wrong\",\"comment\":\"除法算错\"}],\"extracted_final_answer\":\"48\",\"signal_verdicts\":[{\"signal_idx\":0,\"verdict\":\"correct\",\"comment\":\"命中\"},{\"signal_idx\":1,\"verdict\":\"wrong\",\"comment\":\"解错\"}],\"final_answer_match\":false,\"final_answer_comment\":\"只列对了方程。\",\"confidence\":0.7}",
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "partial",
+        "score": 0.3,
+        "confidence": 0.7,
+        "feedback_contains": "只列对了方程"
+      }
+    },
+    {
+      "id": "steps-signal-mismatch-04",
+      "description": "运行时不变量：signal_verdicts 长度 ≠ expected_signals 长度 → unsupported，判别键 expected+got",
+      "question": {
+        "id": "q-syn-steps-4",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84 并求 x。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84", "解出 x=42"],
+            "final_answer": "42",
+            "answer_equivalents": []
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": "steps"
+      },
+      "answer_md": "2x=84。",
+      "subject_profile_id": "math",
+      "frozen_llm_output": "{\"extracted_steps\":[{\"idx\":0,\"content\":\"2x=84\",\"verdict\":\"correct\",\"comment\":\"列式\"}],\"extracted_final_answer\":\"\",\"signal_verdicts\":[{\"signal_idx\":0,\"verdict\":\"correct\",\"comment\":\"命中\"}],\"final_answer_match\":false,\"final_answer_comment\":\"缺一步。\",\"confidence\":0.6}",
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "unsupported",
+        "score": null,
+        "feedback_contains": "signal_verdicts length mismatch",
+        "evidence_has_keys": ["expected", "got"]
+      }
+    },
+    {
+      "id": "steps-zod-fail-05",
+      "description": "缺字段 Zod-fail → unsupported，判别键 error+raw_text",
+      "question": {
+        "id": "q-syn-steps-5",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84"],
+            "final_answer": "42",
+            "answer_equivalents": []
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": "steps"
+      },
+      "answer_md": "2x=84。",
+      "subject_profile_id": "math",
+      "frozen_llm_output": "{\"oops\":true}",
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "unsupported",
+        "score": null,
+        "feedback_contains": "did not match StepsLlmOutput schema",
+        "evidence_has_keys": ["error", "raw_text"]
+      }
+    },
+    {
+      "id": "steps-vision-image-06",
+      "description": "图片作答路径：student_image_refs 经注入 imageFetchFn（零 DB/R2），1 signal partial → 0.3",
+      "question": {
+        "id": "q-syn-steps-6",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84"],
+            "final_answer": "42",
+            "answer_equivalents": []
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": "steps"
+      },
+      "answer_md": "",
+      "student_image_refs": ["syn-asset-1"],
+      "subject_profile_id": "math",
+      "frozen_llm_output": "{\"extracted_steps\":[{\"idx\":0,\"content\":\"2x=84（手写）\",\"verdict\":\"partial\",\"comment\":\"列式部分可辨\"}],\"extracted_final_answer\":\"\",\"signal_verdicts\":[{\"signal_idx\":0,\"verdict\":\"partial\",\"comment\":\"部分命中\"}],\"final_answer_match\":false,\"final_answer_comment\":\"手写步骤部分正确。\",\"confidence\":0.6}",
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "partial",
+        "score": 0.3,
+        "confidence": 0.6,
+        "evidence_has_keys": ["student_image_refs"]
+      }
+    },
+    {
+      "id": "steps-route-dispatch-07",
+      "description": "无 judge_kind_override：math + derivation 经 resolveQuestionJudgeRoute 分派到 steps（路由分派覆盖）",
+      "question": {
+        "id": "q-syn-steps-7",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84"],
+            "final_answer": "42",
+            "answer_equivalents": []
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": null
+      },
+      "answer_md": "2x=84，所以 x=42。",
+      "subject_profile_id": "math",
+      "frozen_llm_output": "{\"extracted_steps\":[{\"idx\":0,\"content\":\"2x=84\",\"verdict\":\"correct\",\"comment\":\"列式正确\"}],\"extracted_final_answer\":\"42\",\"signal_verdicts\":[{\"signal_idx\":0,\"verdict\":\"correct\",\"comment\":\"命中\"}],\"final_answer_match\":true,\"final_answer_comment\":\"完整正确。\",\"confidence\":0.9}",
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "correct",
+        "score": 1,
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "steps-incorrect-08",
+      "description": "全错：1 signal wrong + final 不匹配 → score 0 → incorrect",
+      "question": {
+        "id": "q-syn-steps-8",
+        "kind": "derivation",
+        "prompt_md": "（合成）解方程 2x=84。",
+        "reference_md": "x=42",
+        "rubric_json": {
+          "criteria": [{ "name": "correctness", "weight": 1, "descriptor": "推导步骤" }],
+          "reference_solution": {
+            "expected_signals": ["列出方程 2x=84"],
+            "final_answer": "42",
+            "answer_equivalents": []
+          }
+        },
+        "choices_md": null,
+        "judge_kind_override": "steps"
+      },
+      "answer_md": "x=100。",
+      "subject_profile_id": "math",
+      "frozen_llm_output": "{\"extracted_steps\":[{\"idx\":0,\"content\":\"x=100\",\"verdict\":\"wrong\",\"comment\":\"未列式直接给错答案\"}],\"extracted_final_answer\":\"100\",\"signal_verdicts\":[{\"signal_idx\":0,\"verdict\":\"wrong\",\"comment\":\"未命中\"}],\"final_answer_match\":false,\"final_answer_comment\":\"步骤与答案均错误。\",\"confidence\":0.8}",
+      "expected": {
+        "route": "steps",
+        "coarse_outcome": "incorrect",
+        "score": 0,
+        "confidence": 0.8
+      }
+    }
+  ]
+}
