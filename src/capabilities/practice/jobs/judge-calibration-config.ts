@@ -11,9 +11,11 @@ export const JUDGE_CALIBRATION_DEFAULTS: JudgeCalibrationConfig = {
   // global AI_PROVIDER_OVERRIDE is never set or read for routing.
   rejudgeProvider: 'anthropic-sub',
   rejudgeModel: 'claude-opus-4-8',
-  // Hard per-cron-tick cost gate: ≤20 single-shot re-judge calls per run
-  // (MF8's unique index kills retry amplification; S2 — cost_ledger shows $0
-  // for the oauth lane, the real constraint is the shared Max rate limit).
+  // Per-cron-tick cost gate: default 20 single-shot re-judge calls per run,
+  // env-adjustable up to the 50 clamp below (OCR review: the clamp IS the hard
+  // ceiling — keep it near the documented default so a misconfigured env var
+  // cannot starve the shared Max rate limit; MF8's unique index kills retry
+  // amplification; S2 — cost_ledger shows $0 for the oauth lane).
   batchMax: 20,
   windowDays: 7,
 };
@@ -39,7 +41,7 @@ export function readJudgeCalibrationConfig(
     batchMax: readIntInRange(
       env.JUDGE_CALIBRATION_BATCH_MAX,
       1,
-      200,
+      50,
       JUDGE_CALIBRATION_DEFAULTS.batchMax,
     ),
     windowDays: readIntInRange(

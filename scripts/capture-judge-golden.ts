@@ -119,12 +119,34 @@ async function main(): Promise<void> {
   for (const row of sampleRows) {
     const p = row.payload as CaptureCandidate['samplePayload'];
     const [q] = await db.select().from(question).where(eq(question.id, p.question_id));
-    if (!q) continue;
+    if (!q) {
+      console.warn(`[capture-judge-golden] skip: question ${p.question_id} not found`);
+      continue;
+    }
     const [answerEvent] = await db.select().from(event).where(eq(event.id, p.answer_event_id));
-    if (!answerEvent) continue;
+    if (!answerEvent) {
+      console.warn(`[capture-judge-golden] skip: answer event ${p.answer_event_id} not found`);
+      continue;
+    }
     const skeleton = candidateToFixtureSkeleton({
       samplePayload: p,
-      question: q as unknown as JudgeQuestionRow,
+      // Explicit field pick (OCR review): no blind row cast — a renamed/
+      // re-typed question column fails HERE at compile time, and the skeleton
+      // stays free of non-judge columns (created_at etc.).
+      question: {
+        id: q.id,
+        kind: q.kind,
+        prompt_md: q.prompt_md,
+        reference_md: q.reference_md,
+        rubric_json: q.rubric_json,
+        choices_md: q.choices_md,
+        judge_kind_override: q.judge_kind_override,
+        knowledge_ids: q.knowledge_ids,
+        metadata: q.metadata,
+        figures: q.figures ?? undefined,
+        image_refs: q.image_refs ?? undefined,
+        structured: q.structured,
+      },
       answerPayload: answerEvent.payload as Record<string, unknown>,
     });
     if (skeleton) skeletons.push(skeleton);

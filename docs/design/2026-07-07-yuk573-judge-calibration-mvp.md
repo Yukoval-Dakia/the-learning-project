@@ -158,6 +158,7 @@ practice 域 pg-boss 夜间 cron（默认 OFF），随机抽样已判 LLM-route 
 2. **逐样重建 + 复判**（per-item try/catch 隔离）:
    - 重建: answer event payload → `answer_md` + **`student_image_refs = answerPayload.answer_image_refs`（MF2）**；question row；`resolveSubjectProfileForKnowledgeIds`。
    - **vision 样本 skip 规则（MF2）**: `judge_route ∈ {steps, multimodal_direct}` 且 answer payload **无 `answer_image_refs` 字段**（pre-persistence 旧行，信息面不可复原）→ 计 `skipped`，不复判不写行；字段存在（含 `[]`）→ 原样传入（信息面与原判一致）。图 bytes 经 `defaultImageFetch`（采样 job 持真 db，可用）。
+   - **文本面 skip 规则（PR #729 OCR major 2，同 MF2 信息面原则的文本轴）**: answer payload **两个文本键（`answer_md`/`user_response_md`）均缺失** → 原判所见提交文本未被持久化，信息面不可复原 → 计 `skipped_missing_input`（独立计数，进 run summary），绝不以 `''` 复判制造假 disagreement；**键存在但值为空串** → 原判同样判的是空提交，信息面一致，正常复判。判别子 = 键存在性（`submit.ts:564` 起两键必持久化，缺键即 pre-persistence 行）。
    - 复判: `judgeAnswer({ db, question: {...q, judge_kind_override: <原判 payload.judge_route>}, answer_md, student_image_refs, subjectProfile, runTaskFn: rejudgeRunTaskFn })`。
    - **`rejudgeRunTaskFn`（S1 修订：不包 `defaultRunTaskFn`，防契约折叠丢 task_run_id）**: 直接 `import { runTask } from '@/server/ai/runner'`；closure 形如
      ```ts
