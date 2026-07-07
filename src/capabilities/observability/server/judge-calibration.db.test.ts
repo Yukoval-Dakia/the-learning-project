@@ -62,7 +62,11 @@ async function seedSample(s: SampleSeed = {}): Promise<void> {
     });
 }
 
-async function seedRunSummary(counts: { sampled: number; skipped?: number }): Promise<void> {
+async function seedRunSummary(counts: {
+  sampled: number;
+  skipped?: number;
+  runKey?: string;
+}): Promise<void> {
   const now = new Date();
   await testDb()
     .insert(event)
@@ -73,7 +77,7 @@ async function seedRunSummary(counts: { sampled: number; skipped?: number }): Pr
       actor_ref: 'judge_calibration',
       action: 'experimental:judge_calibration_run_summary',
       subject_kind: 'query',
-      subject_id: `judge_calibration_run:${now.toISOString()}`,
+      subject_id: counts.runKey ?? `judge_calibration_run:${createId()}`,
       outcome: null,
       payload: {
         sampled: counts.sampled,
@@ -162,6 +166,14 @@ describe('loadJudgeCalibrationStats', () => {
     expect(stats.recent_runs).toHaveLength(2);
     expect(stats.recent_runs.map((r) => r.sampled).sort()).toEqual([0, 2]);
     expect(stats.recent_runs.find((r) => r.sampled === 0)?.skipped).toBe(20);
+  });
+
+  it('duplicate run summaries (at-least-once redeliver) are deduped by run key (review finding 2)', async () => {
+    await seedRunSummary({ sampled: 3, runKey: 'judge_calibration_run:2026-07-07T00:00:00Z' });
+    await seedRunSummary({ sampled: 3, runKey: 'judge_calibration_run:2026-07-07T00:00:00Z' });
+    await seedRunSummary({ sampled: 1 });
+    const stats = await loadJudgeCalibrationStats(testDb());
+    expect(stats.recent_runs).toHaveLength(2);
   });
 
   it('recent samples are surfaced (rejudge run id joinable for lane audits — S1)', async () => {
