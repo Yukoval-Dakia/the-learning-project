@@ -10,6 +10,7 @@ import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import { createBoss, isQueueCreateRace } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
+import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 
 export async function startBossWorker(db: Db): Promise<PgBoss> {
@@ -77,5 +78,17 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
   // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标
   // （note_verify）先 ready，注册器再挂链式源。
   await registerCapabilityJobs(boss, db, capabilities);
+  // YUK-576 §5.4 — boot-time stuck-run reconcile (PRIMARY trigger): the main
+  // stuck cause is a process crash, so the restart converges >1h 'running'
+  // ai_task_runs rows within seconds (the 1h threshold guards the previous
+  // process's youngest runs). The nightly cron (observability manifest,
+  // ai_task_run_reconcile_nightly) is the secondary trigger for DB-outage-type
+  // stuck rows where no restart happens. Best-effort: a sweep failure must
+  // never abort worker boot — the queue-draining duty comes first.
+  try {
+    await reconcileStuckAiTaskRuns(db);
+  } catch (err) {
+    console.error('[worker] boot-time stuck-run reconcile failed (non-fatal)', err);
+  }
   return boss;
 }
