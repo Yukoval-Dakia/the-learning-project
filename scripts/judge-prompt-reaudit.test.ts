@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   JUDGE_PROMPT_TASKS,
   PROMPTS_DIR,
+  isSilentNoOp,
   reauditJudgePrompts,
   renderAllJudgePrompts,
 } from './judge-prompt-reaudit';
@@ -49,6 +50,15 @@ describe('judge-prompt reaudit (leg B)', () => {
     writeFileSync(join(tmp, 'RetiredJudgeTask.wenyan.md'), '孤儿 snapshot\n');
     const result = reauditJudgePrompts(tmp);
     expect(result.drifted.join(' | ')).toContain('RetiredJudgeTask.wenyan.md');
+  });
+
+  it('an empty snapshot dir is a silent no-op (exit-2 guard predicate — OCR review)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'judge-prompts-empty-'));
+    tmpDirs.push(tmp);
+    const result = reauditJudgePrompts(tmp);
+    expect(isSilentNoOp(result)).toBe(true);
+    // Content drift on EXISTING snapshots must NOT trip the guard.
+    expect(isSilentNoOp(reauditJudgePrompts())).toBe(false);
   });
 
   it('prompt rendering is deterministic', () => {

@@ -56,6 +56,8 @@ interface SeedOpts {
   priorOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
   /** 'present' → answer_image_refs: [] ; 'absent' → key missing (pre-persistence row). */
   imageRefsKey?: 'present' | 'absent';
+  /** 'absent' → NEITHER answer_md NOR user_response_md key (pre-persistence row). */
+  textKey?: 'present' | 'absent';
   createdAt?: Date;
   answerMd?: string;
 }
@@ -105,7 +107,10 @@ async function seedJudgedAttempt(opts: SeedOpts): Promise<{
   });
 
   const attemptEventId = createId();
-  const answerPayload: Record<string, unknown> = { answer_md: opts.answerMd ?? '2x=84，所以 42' };
+  const answerPayload: Record<string, unknown> =
+    (opts.textKey ?? 'present') === 'present'
+      ? { answer_md: opts.answerMd ?? '2x=84，所以 42' }
+      : {};
   if ((opts.imageRefsKey ?? 'present') === 'present') {
     answerPayload.answer_image_refs = [];
   }
@@ -463,6 +468,48 @@ describe('runJudgeCalibrationSample', () => {
     expect(result.sampled).toBe(0);
     expect(runTaskInner).not.toHaveBeenCalled();
     expect(await sampleEvents()).toHaveLength(0);
+  });
+
+  it('(h2) answer payload with NEITHER text key → skipped_missing_input, no re-judge (OCR major 2)', async () => {
+    // Pre-persistence row: the original judge saw the submitted text, but the
+    // payload never persisted it — the re-judge information face cannot be
+    // reconstructed. Re-judging with '' would manufacture false disagreements.
+    await seedJudgedAttempt({
+      route: 'semantic',
+      priorOutcome: 'correct',
+      textKey: 'absent',
+    });
+    const runTaskInner = vi.fn(async () => ({ task_run_id: 'x', text: semanticOutput('correct') }));
+
+    const result = await runJudgeCalibrationSample(testDb(), mkCfg(), { runTaskInner });
+
+    expect(result.skipped_missing_input).toBe(1);
+    expect(result.sampled).toBe(0);
+    expect(runTaskInner).not.toHaveBeenCalled();
+    expect(await sampleEvents()).toHaveLength(0);
+    // Run summary carries the new counter (mass-skip discriminator).
+    const summaries = await runSummaryEvents();
+    expect(summaries[0]?.payload).toMatchObject({ skipped_missing_input: 1 });
+  });
+
+  it('(h3) text key PRESENT but empty → same information face, re-judge proceeds', async () => {
+    // '' persisted means the original judge also judged the empty submission —
+    // the faces match, so the pair is a legitimate calibration observation.
+    await seedJudgedAttempt({
+      route: 'semantic',
+      priorOutcome: 'incorrect',
+      answerMd: '',
+    });
+    const runTaskInner = vi.fn(async () => ({
+      task_run_id: 'run-syn-h3',
+      text: semanticOutput('incorrect'),
+    }));
+
+    const result = await runJudgeCalibrationSample(testDb(), mkCfg(), { runTaskInner });
+
+    expect(result.sampled).toBe(1);
+    expect(result.skipped_missing_input).toBe(0);
+    expect(runTaskInner).toHaveBeenCalledTimes(1);
   });
 
   it('(i) deterministic routes are whitelisted OUT (exact never sampled — MF4①)', async () => {

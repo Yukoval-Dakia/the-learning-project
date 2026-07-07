@@ -59,6 +59,20 @@ export interface PromptReauditResult {
   drifted: string[];
 }
 
+/**
+ * True when EVERY rendered prompt is missing its snapshot — i.e. the snapshot
+ * dir is absent/empty and the gate would be a silent no-op (leg A's empty-dir
+ * exit-2 guard, mirrored per OCR review). Content drift on existing snapshots
+ * does NOT trip this.
+ */
+export function isSilentNoOp(result: PromptReauditResult): boolean {
+  return (
+    result.checked > 0 &&
+    result.drifted.length >= result.checked &&
+    result.drifted.filter((d) => d.includes('MISSING')).length >= result.checked
+  );
+}
+
 /** Diff rendered prompts vs committed snapshots in `dir` (default: committed dir). */
 export function reauditJudgePrompts(dir: string = PROMPTS_DIR): PromptReauditResult {
   const rendered = renderAllJudgePrompts();
@@ -109,6 +123,12 @@ function main(): void {
   }
   const strict = process.argv.includes('--strict');
   const result = reauditJudgePrompts();
+  if (isSilentNoOp(result)) {
+    console.error(
+      '[judge-prompt-reaudit] no snapshot files under scripts/judge-golden/prompts/ — the gate would be a silent no-op. Run `pnpm audit:judge-prompts --write` and commit the snapshots.',
+    );
+    process.exit(2);
+  }
   if (result.drifted.length === 0) {
     console.log(
       `judge-prompt-reaudit — ${result.checked} rendered prompt(s) match their snapshots. CLEAN.`,

@@ -21,7 +21,15 @@ import { buildJudgeCalibrationSampleHandler } from './judge_calibration_sample';
 const mockDb = {} as Db;
 
 function okResult() {
-  return { sampled: 0, agreed: 0, disagreed: 0, skipped: 0, skipped_unsupported: 0, errors: 0 };
+  return {
+    sampled: 0,
+    agreed: 0,
+    disagreed: 0,
+    skipped: 0,
+    skipped_missing_input: 0,
+    skipped_unsupported: 0,
+    errors: 0,
+  };
 }
 
 describe('buildJudgeCalibrationSampleHandler', () => {
@@ -132,5 +140,8 @@ describe('readJudgeCalibrationConfig', () => {
     });
     expect(cfg.batchMax).toBe(20);
     expect(cfg.windowDays).toBeLessThanOrEqual(90);
+    // OCR review: the clamp IS the hard ceiling — a misconfigured env var
+    // cannot exceed 50 re-judge calls per cron tick.
+    expect(readJudgeCalibrationConfig({ JUDGE_CALIBRATION_BATCH_MAX: '99999' }).batchMax).toBe(50);
   });
 });

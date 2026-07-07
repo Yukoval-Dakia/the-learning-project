@@ -23,12 +23,14 @@
 
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte } from 'drizzle-orm';
 import { z } from 'zod';
 
 export const JUDGE_CALIBRATION_MIN_N = 5;
 const RECENT_SAMPLES_LIMIT = 20;
 const RECENT_RUNS_LIMIT = 10;
+/** OCR review: bound the sample scan — nightly batches accumulate unboundedly. */
+const SAMPLE_WINDOW_DAYS = 90;
 
 const SAMPLE_ACTION = 'experimental:judge_calibration_sample';
 const RUN_SUMMARY_ACTION = 'experimental:judge_calibration_run_summary';
@@ -54,6 +56,8 @@ const RunSummaryPayload = z
     agreed: z.number(),
     disagreed: z.number(),
     skipped: z.number(),
+    // optional: rows written before the OCR-major-2 counter landed lack it.
+    skipped_missing_input: z.number().optional(),
     skipped_unsupported: z.number(),
     errors: z.number(),
     batch_max: z.number(),
@@ -89,6 +93,7 @@ export interface JudgeCalibrationRecentRun {
   agreed: number;
   disagreed: number;
   skipped: number;
+  skipped_missing_input: number;
   skipped_unsupported: number;
   errors: number;
   batch_max: number;
@@ -134,21 +139,30 @@ function groupBy(rows: ParsedSample[], key: (r: ParsedSample) => string) {
 }
 
 export async function loadJudgeCalibrationStats(db: Db): Promise<JudgeCalibrationStats> {
+  // Rolling window (OCR review): sample events accumulate nightly and are
+  // never pruned — an unbounded scan would degrade this admin endpoint over
+  // months. 90d comfortably covers the job's 7d sampling window many times over.
+  const windowStart = new Date(Date.now() - SAMPLE_WINDOW_DAYS * 24 * 3600 * 1000);
   const sampleRows = await db
     .select({
+      id: event.id,
       payload: event.payload,
       caused_by_event_id: event.caused_by_event_id,
       created_at: event.created_at,
     })
     .from(event)
-    .where(eq(event.action, SAMPLE_ACTION))
+    .where(and(eq(event.action, SAMPLE_ACTION), gte(event.created_at, windowStart)))
     .orderBy(desc(event.created_at));
 
   // Defensive DISTINCT by caused_by (MF8 边带): the partial unique index makes
   // duplicates structurally impossible; this is a read-side backstop only.
   const byJudge = new Map<string, ParsedSample>();
   for (const row of sampleRows) {
-    const key = row.caused_by_event_id ?? '';
+    // Null caused_by is structurally unexpected (the writer always anchors the
+    // judge event id) — fall back to the row's OWN id so such rows never
+    // collapse into one shared '' bucket and silently swallow each other (OCR
+    // review; note the partial unique index does not constrain NULLs).
+    const key = row.caused_by_event_id ?? row.id;
     if (byJudge.has(key)) continue;
     const parsed = SamplePayload.safeParse(row.payload);
     if (!parsed.success) continue; // fail-closed: malformed rows never enter aggregates
@@ -182,6 +196,7 @@ export async function loadJudgeCalibrationStats(db: Db): Promise<JudgeCalibratio
       agreed: parsed.data.agreed,
       disagreed: parsed.data.disagreed,
       skipped: parsed.data.skipped,
+      skipped_missing_input: parsed.data.skipped_missing_input ?? 0,
       skipped_unsupported: parsed.data.skipped_unsupported,
       errors: parsed.data.errors,
       batch_max: parsed.data.batch_max,

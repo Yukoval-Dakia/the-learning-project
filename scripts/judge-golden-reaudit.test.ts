@@ -13,6 +13,7 @@ import {
   listGoldenFixtureFiles,
   loadGoldenFixture,
   makeDbSentinel,
+  parseGoldenFixture,
   reauditJudgeGolden,
   reauditJudgeGoldenCase,
 } from './judge-golden-reaudit';
@@ -76,6 +77,18 @@ describe('judge-golden reaudit (leg A)', () => {
     broken.answer_md = '绝不匹配的答案';
     const diffs = await reauditJudgeGoldenCase(broken);
     expect(diffs.join(' | ')).toContain('llm_must_not_be_called');
+  });
+
+  it('a malformed fixture fails loud at load time (Zod envelope — OCR review)', () => {
+    const good = loadGoldenFixture(listGoldenFixtureFiles()[0] as string);
+    // Wrong version literal → clear validation error, not a deep replay crash.
+    const wrongVersion = { ...structuredClone(good), version: 2 };
+    expect(() => parseGoldenFixture(wrongVersion)).toThrowError(/version/);
+    // Unknown expected-key (typo'd assertion field) → strict schema rejects.
+    const typoCase = structuredClone(good);
+    (typoCase.cases[0] as unknown as { expected: Record<string, unknown> }).expected.corse_outcome =
+      'correct';
+    expect(() => parseGoldenFixture(typoCase)).toThrowError();
   });
 
   it('unsupported-expected cases pin discriminator evidence keys (复核吸收 1)', () => {
