@@ -7,6 +7,7 @@ import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
 import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
+import { AdminCoverageLatticeSurface } from '@/capabilities/observability/ui/coverage-lattice';
 import {
   AdminCostSurface,
   AdminFailuresSurface,
@@ -495,6 +496,18 @@ const adminSubjectsRoute = createRoute({
   component: AdminSubjectsRoute,
 });
 
+// YUK-579 — 供题治理覆盖细目表（admin 第五页）。同四页套主 chrome（rootRoute → RootShell）。
+function AdminCoverageLatticeRoute() {
+  const router = useRouter();
+  return <AdminCoverageLatticeSurface navigate={(to) => router.history.push(to)} />;
+}
+
+const adminCoverageLatticeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/coverage-lattice',
+  component: AdminCoverageLatticeRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   todayRoute,
@@ -518,6 +531,7 @@ const routeTree = rootRoute.addChildren([
   adminCostRoute,
   adminFailuresRoute,
   adminSubjectsRoute,
+  adminCoverageLatticeRoute,
 ]);
 
 export const router = createRouter({ routeTree });

@@ -32,6 +32,21 @@ describe('composition root', () => {
     expect(capabilities.map((c) => c.name)).toContain('observability');
   });
 
+  // YUK-579 — coverage-lattice 第五面 API + ui.page 由 observability 独家声明。
+  it('observability owns GET /api/admin/coverage-lattice and its ui.page (YUK-579)', () => {
+    const routeOwners = capabilities.filter((c) =>
+      (c.api?.routes ?? []).some(
+        (r) => r.method === 'GET' && r.path === '/api/admin/coverage-lattice',
+      ),
+    );
+    expect(routeOwners.map((c) => c.name)).toEqual(['observability']);
+
+    const pageOwners = capabilities.filter((c) =>
+      (c.ui?.pages ?? []).some((p) => p.route === '/admin/coverage-lattice'),
+    );
+    expect(pageOwners.map((c) => c.name)).toEqual(['observability']);
+  });
+
   it('declares only schema-known proposal kinds', () => {
     const declared = capabilities.flatMap((c) => c.proposals?.kinds.map((d) => d.kind) ?? []);
     const known = new Set<string>(aiProposalKinds);

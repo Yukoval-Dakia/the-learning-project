@@ -2,12 +2,10 @@
 // SPA 路由 /admin/*。等价平移：视觉/行为与旧 src/ui/admin 版一致，旧 link import
 // 换 navigate prop（capability ui 不 import 路由库——web/src/router.tsx 规则）。
 //
-// Phase-deferred（壳形态决策点）：设计真理源
-// docs/design/loom-refresh/project/app.jsx:106-114 裁决「admin is a separate
-// shell — no main app chrome」；与未来 SPA 收编主 chrome 存在形态决策点（见
-// docs/audit/2026-06-13-visual-gap.md §5 决策点③），收编 chrome 前须 owner
-// 显式拍板。本次平移仅做路由收编，不改壳形态——admin 页保持 pre-loom legacy
-// 视觉与无主 app chrome 形态。
+// 壳形态：admin 页套主 app chrome（RootShell），非独立壳——决策记录见
+// docs/design/2026-07-07-yuk579-coverage-lattice.md §6 + observability/AGENTS.md（loom
+// app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，owner 已收编；visual-gap.md
+// §5 决策点③ 收口）。
 
 import { apiJson } from '@/ui/lib/api';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
@@ -246,6 +244,12 @@ function AdminLinks({ navigate }: AdminSurfaceProps) {
       </AdminLink>
       <AdminLink to="/admin/failures" navigate={navigate}>
         failures
+      </AdminLink>
+      <AdminLink to="/admin/subjects" navigate={navigate}>
+        subjects
+      </AdminLink>
+      <AdminLink to="/admin/coverage-lattice" navigate={navigate}>
+        coverage
       </AdminLink>
     </div>
   );

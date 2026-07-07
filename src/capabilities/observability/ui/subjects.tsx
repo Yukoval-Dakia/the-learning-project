@@ -23,11 +23,10 @@
 // policy that SubjectProfile fields are fixed/immutable. High-impact edits remain
 // "allowed but strongly gated" (spec §0); nothing here implies a field cannot change.
 //
-// Phase-deferred（壳形态决策点）：设计真理源
-// docs/design/loom-refresh/project/app.jsx:106-114 裁决「admin is a separate
-// shell — no main app chrome」；与未来 SPA 收编主 chrome 存在形态决策点（见
-// docs/audit/2026-06-13-visual-gap.md §5 决策点③），收编 chrome 前须 owner
-// 显式拍板。本次平移仅做路由收编，不改壳形态。
+// 壳形态：admin 页套主 app chrome（RootShell），非独立壳——决策记录见
+// docs/design/2026-07-07-yuk579-coverage-lattice.md §6 + observability/AGENTS.md（loom
+// app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，owner 已收编；visual-gap.md
+// §5 决策点③ 收口）。
 
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
@@ -79,6 +78,8 @@ export function AdminSubjectsSurface({ navigate }: { navigate: (to: string) => v
           {link('/admin/runs', 'runs')}
           {link('/admin/cost', 'cost')}
           {link('/admin/failures', 'failures')}
+          {link('/admin/subjects', 'subjects')}
+          {link('/admin/coverage-lattice', 'coverage')}
         </div>
       </PageHeader>
 
