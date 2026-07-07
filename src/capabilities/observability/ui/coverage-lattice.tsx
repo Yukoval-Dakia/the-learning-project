@@ -202,11 +202,15 @@ export function AdminCoverageLatticeSurface({ navigate }: { navigate: (to: strin
         <Button
           variant="secondary"
           icon="refresh"
+          // CodeRabbit (PR #732): 手动 rescan 每次触发一次 3N-5N 串行活扫描，须给点击态反馈。
+          // q.isFetching 覆盖首载 + 手动 rescan 的后台 refetch（isLoading 只覆盖首载）——扫描期
+          // 禁用按钮 + 显式「扫描中…」文案，避免用户误以为无效而重复点击。保持 MF2 no-refetchInterval。
+          disabled={q.isFetching}
           onClick={() => {
             void queryClient.invalidateQueries({ queryKey: ['admin-coverage-lattice'] });
           }}
         >
-          重新扫描
+          {q.isFetching ? '扫描中…' : '重新扫描'}
         </Button>
       </PageHeader>
 
