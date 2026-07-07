@@ -40,6 +40,26 @@ export const EXPIRE_FAST = 3_600; // 1h — brief minimum floor for cheap jobs
 export const EXPIRE_LLM = 3_600; // 1h — single LLM call handlers
 export const EXPIRE_AGENT = 7_200; // 2h — multi-step tool-calling agent loops
 
+// YUK-576 — explicit queue-level retry policy for the DLQ-backed llm/agent
+// producers. pg-boss v12 persists retryLimit in the queue options with
+// COALESCE(..., 2) (plans.js) — the implicit default ALREADY redelivers twice,
+// so `retryLimit: 2` is a zero-count change that turns an accidental dependency
+// into declared intent (copilot_run.ts:138-165 documented the transient→
+// permanent hazard of relying on the implicit default). The deliberate DELTA is
+// retryDelay + retryBackoff (defaults 0/false → immediate redelivery): a failed
+// job now waits ~30s → ~60s before the next paid attempt, giving transient
+// endpoint conditions time to recover instead of hammering the same outage.
+// USER-VISIBLE: failure recovery is 30–90s slower than immediate redelivery —
+// accepted for a single-user self-hosted tool (design doc §6). Semantics:
+// handler re-throw → delayed/backed-off redelivery ×2 → `<queue>_dlq`.
+// Cap = 2 (not memory's 3, triggers.ts:294): each LLM/agent retry is a full
+// inference bill, so the cap stays tighter; the DLQ preserves exhausted jobs.
+// Single-transient-layer note: in-process transient retry (runner.ts) is gated
+// OFF for durable handlers — queue redelivery is their ONLY transient layer, so
+// worst-case paid calls per logical job stays 1 + retryLimit = 3.
+export const JOB_RETRY_LIMIT = 2;
+export const JOB_RETRY_DELAY_SECONDS = 30;
+
 export const FAST_QUEUE_OPTS = {
   expireInSeconds: EXPIRE_FAST,
   retentionSeconds: RETENTION_7D,
@@ -48,12 +68,18 @@ export const FAST_QUEUE_OPTS = {
 /**
  * Build createQueue options for an LLM/agent queue, wiring a dead-letter queue.
  * Caller MUST create the returned `deadLetter` queue first (see createJobQueue).
+ * Includes the explicit YUK-576 retry policy (see JOB_RETRY_LIMIT above); the
+ * reconcile path lands it on pre-existing prod queues too — plans.js
+ * `updateQueue` SETs retry_limit/retry_delay/retry_backoff via COALESCE.
  */
 function jobQueueOpts(queueName: string, expireInSeconds: number) {
   return {
     expireInSeconds,
     retentionSeconds: RETENTION_7D,
     deadLetter: `${queueName}_dlq`,
+    retryLimit: JOB_RETRY_LIMIT,
+    retryDelay: JOB_RETRY_DELAY_SECONDS,
+    retryBackoff: true,
   } as const;
 }
 
@@ -86,7 +112,15 @@ function jobQueueOpts(queueName: string, expireInSeconds: number) {
 export async function createOrUpdateQueue(
   boss: PgBoss,
   name: string,
-  opts: { expireInSeconds: number; retentionSeconds: number; deadLetter?: string },
+  opts: {
+    expireInSeconds: number;
+    retentionSeconds: number;
+    deadLetter?: string;
+    // YUK-576 — explicit queue-level retry policy (see jobQueueOpts).
+    retryLimit?: number;
+    retryDelay?: number;
+    retryBackoff?: boolean;
+  },
 ): Promise<void> {
   try {
     await boss.createQueue(name, opts);
