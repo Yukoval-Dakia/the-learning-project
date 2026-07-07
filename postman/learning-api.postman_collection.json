@@ -133,6 +133,20 @@
           "response": []
         },
         {
+          "name": "GET /api/admin/coverage-lattice",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/coverage-lattice",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "coverage-lattice"]
+            },
+            "description": "供题治理覆盖细目表（YUK-579）：scanCoverageGaps 四规则的 KC 池级覆盖 + emitted 缺口 targets + 供给活动注记\n\n**Notes:** READ-ONLY 只读观测面（零写零 LLM 零新查询子系统）。每次请求跑一次实时扫描：assembleScanInput（复用发现引擎两私有 loader）+ scanCoverageGaps（纯）+ 单条 experimental:question_supply 活动聚合。范围 = scanCoverageGaps 四条单-KC 池规则（frontier_zero/source_quality/diagnostic/format_diversity），非全量缺口并集（confusable_contrast 误区网另计）。响应：{ generated_at, scan_ms, coverage_depth_threshold, near_window, cooldown_days, scope_note, subjects:[{subjectId,displayName,kcs:[{knowledgeId,thetaHat,evidenceCount,usableCount,depthMet,hasHighTier,hasNearThetaAnchor,formatDiverse,gapKinds,gaps:[...]}]}], totals }。需 x-internal-token。"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/admin/failures",
           "request": {
             "method": "GET",
