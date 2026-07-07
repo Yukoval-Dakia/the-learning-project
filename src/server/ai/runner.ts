@@ -585,6 +585,14 @@ async function runTaskAttempt(args: {
   // YUK-299 seam: the SDK fills this on the success result when ctx.outputFormat
   // was set AND the endpoint honoured it; otherwise it stays undefined.
   let structuredOutput: unknown;
+  // YUK-576 — global stream_no_terminal guard (deliberate behavior change,
+  // coordinator-ruled): mirrors streamTaskCollecting's sawTerminalResult. A
+  // stream that ends WITHOUT a terminal result message was previously recorded
+  // as a silent SUCCESS (empty text, stopReason 'unknown', ledger written) —
+  // an observability-plane lie. It now throws for EVERY caller: durable paths
+  // get pg-boss redelivery; judge paths fall to 'unsupported' (same bucket as
+  // today's parse-fail).
+  let sawTerminalResult = false;
 
   try {
     const q = sdkQuery({
@@ -637,6 +645,7 @@ async function runTaskAttempt(args: {
           // SDKResultSuccess here, where structured_output?: unknown lives —
           // sdk.d.ts:3579 — so no cast is needed).
           structuredOutput = msg.structured_output;
+          sawTerminalResult = true;
         } else {
           // YUK-299: SDK structured-output retries exhausted lands here (its
           // SDKResultError subtype, sdk.d.ts:3540) along with every other
@@ -660,6 +669,9 @@ async function runTaskAttempt(args: {
         }
         break;
       }
+    }
+    if (!sawTerminalResult) {
+      throw new AgentRunError({ kind, taskRunId, subtype: 'stream_no_terminal', errors: [] });
     }
   } finally {
     clearTimeout(timer);
