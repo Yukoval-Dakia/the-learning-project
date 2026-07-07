@@ -434,3 +434,42 @@ describe('runTask — YUK-576 transient retry loop', () => {
     expect(afterRun).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── coordinator ack condition 2: GLOBAL stream_no_terminal guard ────────────
+// This is the single non-opt-in behavior change in this PR (deliberate, ruled by
+// the coordinator): a stream that ends WITHOUT a terminal result message was
+// previously recorded as a silent success (empty text, stopReason 'unknown',
+// cost ledger written) — a lie in the observability plane. It now throws
+// AgentRunError('stream_no_terminal') and records a failure row, for EVERY
+// caller (not just opt-in). Durable paths get queue redelivery; judge paths fall
+// to 'unsupported' (same as today's parse-fail).
+
+describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behavior change)', () => {
+  beforeEach(resetAll);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('non-opt-in: stream ending without a terminal result throws + records failure (was: silent success)', async () => {
+    mockSdk.messageQueues = [[]]; // stream yields nothing and ends
+
+    await expect(runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
+      /stream_no_terminal/,
+    );
+
+    const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
+    expect(finish.status).toBe('failure');
+    expect(logMock.cost).not.toHaveBeenCalled(); // no ledger row for a non-run
+  });
+
+  it('opt-in: stream_no_terminal is transient → retried once', async () => {
+    mockSdk.messageQueues = [[], [successResult('second-try')]];
+
+    const result = await runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true });
+
+    expect(result.text).toBe('second-try');
+    expect(mockSdk.capturedOptions).toHaveLength(2);
+    const finish1 = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
+    expect(finish1.finish_reason).toBe('error_retried');
+  });
+});
