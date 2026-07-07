@@ -421,9 +421,11 @@ export async function runJudgeCalibrationSample(
       }
     } catch (err) {
       result.errors += 1;
+      // Message-only on purpose (review finding 3): never dump raw runner
+      // errors — defensive against any future error shape carrying secrets.
       console.error('[judge_calibration_sample] per-item failure (isolated)', {
         judge_event_id: candidate.id,
-        err,
+        error: err instanceof Error ? err.message : String(err),
       });
     }
   }

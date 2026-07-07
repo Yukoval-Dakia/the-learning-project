@@ -158,14 +158,22 @@ export async function loadJudgeCalibrationStats(db: Db): Promise<JudgeCalibratio
   const sameLane = all.filter((r) => r.same_lane_suspected);
   const contrastive = all.filter((r) => !r.same_lane_suspected);
 
+  // Run summaries are AT-LEAST-ONCE (review finding 2): the write has no
+  // unique index (caused_by null), so a mid-batch redeliver can emit a second
+  // summary for the same run. Dedup by subject_id (deterministic per run
+  // timestamp), keeping the newest row; over-fetch to keep the limit honest.
   const runRows = await db
-    .select({ payload: event.payload, created_at: event.created_at })
+    .select({ payload: event.payload, created_at: event.created_at, subject_id: event.subject_id })
     .from(event)
     .where(eq(event.action, RUN_SUMMARY_ACTION))
     .orderBy(desc(event.created_at))
-    .limit(RECENT_RUNS_LIMIT);
+    .limit(RECENT_RUNS_LIMIT * 3);
   const recentRuns: JudgeCalibrationRecentRun[] = [];
+  const seenRunIds = new Set<string>();
   for (const row of runRows) {
+    if (recentRuns.length >= RECENT_RUNS_LIMIT) break;
+    if (seenRunIds.has(row.subject_id)) continue;
+    seenRunIds.add(row.subject_id);
     const parsed = RunSummaryPayload.safeParse(row.payload);
     if (!parsed.success) continue;
     recentRuns.push({
