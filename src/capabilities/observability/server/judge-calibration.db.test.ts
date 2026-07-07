@@ -8,10 +8,7 @@ import { event } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import {
-  JUDGE_CALIBRATION_MIN_N,
-  loadJudgeCalibrationStats,
-} from './judge-calibration';
+import { JUDGE_CALIBRATION_MIN_N, loadJudgeCalibrationStats } from './judge-calibration';
 
 interface SampleSeed {
   agreed?: boolean;

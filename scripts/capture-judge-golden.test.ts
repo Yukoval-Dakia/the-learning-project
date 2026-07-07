@@ -30,6 +30,7 @@ describe('candidateToFixtureSkeleton', () => {
       },
       answerPayload: { answer_md: '真实作答', answer_image_refs: [] },
     });
+    if (skeleton === null) throw new Error('expected a skeleton for a raw-output-bearing row');
 
     // Route is FORCED via judge_kind_override so the replayed case can't drift
     // to a different route than the one that produced the frozen output.

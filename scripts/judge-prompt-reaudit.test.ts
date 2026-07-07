@@ -26,9 +26,7 @@ describe('judge-prompt reaudit (leg B)', () => {
 
   it('committed snapshots cover 3 judge kinds × every registry profile and are CLEAN', () => {
     const result = reauditJudgePrompts();
-    expect(result.checked).toBe(
-      JUDGE_PROMPT_TASKS.length * Object.keys(subjectProfiles).length,
-    );
+    expect(result.checked).toBe(JUDGE_PROMPT_TASKS.length * Object.keys(subjectProfiles).length);
     expect(result.drifted).toEqual([]);
   });
 

@@ -161,8 +161,7 @@ export async function reauditJudgeGoldenCase(
   if (c.expected.score !== undefined) {
     const got = result.score;
     const want = c.expected.score;
-    const match =
-      want === null ? got === null : got !== null && Math.abs(got - want) <= SCORE_EPS;
+    const match = want === null ? got === null : got !== null && Math.abs(got - want) <= SCORE_EPS;
     if (!match) diffs.push(`score: expected ${String(want)} got ${String(got)}`);
   }
   if (c.expected.confidence !== undefined) {
@@ -253,9 +252,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
   console.log(
-    `\nDRIFT — ${totalDrifted} case(s) no longer replay to their frozen expectations.\n` +
-      'Either the normalization change is a regression (fix it), or it is INTENTIONAL —\n' +
+    [
+      `\nDRIFT — ${totalDrifted} case(s) no longer replay to their frozen expectations.`,
+      'Either the normalization change is a regression (fix it), or it is INTENTIONAL —',
       're-freeze the affected fixtures after re-verifying the new expected values are correct.',
+    ].join('\n'),
   );
   process.exit(strict ? 1 : 0);
 }

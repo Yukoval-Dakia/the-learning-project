@@ -59,9 +59,7 @@ export interface JudgeGoldenCaseSkeleton {
  * to freeze). `expected` pins the RE-JUDGE verdict: the replay must reproduce
  * what the frozen raw text normalizes to, not the original judgment.
  */
-export function candidateToFixtureSkeleton(
-  c: CaptureCandidate,
-): JudgeGoldenCaseSkeleton | null {
+export function candidateToFixtureSkeleton(c: CaptureCandidate): JudgeGoldenCaseSkeleton | null {
   const raw = c.samplePayload.rejudge_raw_output;
   if (!raw) return null;
   const answerMd =
@@ -133,13 +131,15 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    '════════════════════════════════════════════════════════════════════════\n' +
-      '⚠️  DESENSITIZE BEFORE COMMIT — the skeletons below contain REAL production\n' +
-      '   prompts / answers / model output. Replace content field-by-field (keep\n' +
-      '   structural quirks), fill subject_profile_id, then hand-place into\n' +
-      '   scripts/judge-golden/*.json and verify with `pnpm audit:judge-golden`.\n' +
-      '   NEVER commit this output as-is.\n' +
+    [
       '════════════════════════════════════════════════════════════════════════',
+      '⚠️  DESENSITIZE BEFORE COMMIT — the skeletons below contain REAL production',
+      '   prompts / answers / model output. Replace content field-by-field (keep',
+      '   structural quirks), fill subject_profile_id, then hand-place into',
+      '   scripts/judge-golden/*.json and verify with `pnpm audit:judge-golden`.',
+      '   NEVER commit this output as-is.',
+      '════════════════════════════════════════════════════════════════════════',
+    ].join('\n'),
   );
   console.log(JSON.stringify({ version: 1, cases: skeletons }, null, 2));
   console.log(`\n[capture-judge-golden] ${skeletons.length} skeleton(s) from ${limit} row(s).`);
