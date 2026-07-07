@@ -50,6 +50,10 @@ export const JudgeInvokerInputSchema = z.object({
   runTaskFn: z
     .custom<NonNullable<JudgeAnswerParams['runTaskFn']>>((value) => typeof value === 'function')
     .optional(),
+  // YUK-573 (MF6) — optional image fetcher threaded to the vision dispatches.
+  imageFetchFn: z
+    .custom<NonNullable<JudgeAnswerParams['imageFetchFn']>>((value) => typeof value === 'function')
+    .optional(),
   // YUK-212 + YUK-484(B) — optional StructuredQuestion.id of the sub-node to
   // grade. Narrowed in invoke() before route resolution + dispatch; absent /
   // unresolvable → whole-row (back-compat). NOT a question_part id.
@@ -172,6 +176,8 @@ export class JudgeInvoker {
         student_image_refs: input.student_image_refs,
         subjectProfile: input.subjectProfile,
         runTaskFn,
+        // YUK-573 (MF6) — additive threading; omitted → runner default.
+        imageFetchFn: input.imageFetchFn,
       });
     }
     if (route === 'multimodal_direct') {
@@ -183,6 +189,8 @@ export class JudgeInvoker {
         student_image_refs: input.student_image_refs,
         subjectProfile: input.subjectProfile,
         runTaskFn,
+        // YUK-573 (MF6) — additive threading; omitted → runner default.
+        imageFetchFn: input.imageFetchFn,
       });
     }
     if (route === 'unit_dimension') {
