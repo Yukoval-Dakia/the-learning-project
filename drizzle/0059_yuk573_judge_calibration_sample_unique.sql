@@ -1,0 +1,21 @@
+-- YUK-573 (MF8) — DB-enforced idempotency for the judge-calibration sampling job.
+--
+-- The sampling job (judge_calibration_sample, queue 'agent') writes exactly one
+-- `experimental:judge_calibration_sample` observation event per sampled judge
+-- event, keyed by caused_by_event_id = <original judge event id>. A plain
+-- SELECT dedup is NOT sufficient: the 'agent' queue tier has a 2h expire window
+-- and boss.schedule has no singleton, so a handler that dies mid-batch gets
+-- redelivered and can double-write — polluting the agreement-rate denominator
+-- and burning BATCH_MAX on duplicates. This partial unique index closes that at
+-- the DB layer; the writer treats a 23505 unique_violation as "already sampled"
+-- and skips.
+--
+-- Partial (action-scoped) on purpose: caused_by_event_id is a shared chain
+-- column — original judge events anchor caused_by = <answer event id>, appeal
+-- events anchor caused_by = <judge event id> — a bare unique index would break
+-- those writers. Hand-written because drizzle-kit does not generate partial
+-- `WHERE …` indexes at this version (0017_outbox_event_ingest precedent); no
+-- meta snapshot needed (index-only, schema model unchanged —
+-- 0026_artifact_knowledge_ids_gin precedent). See
+-- docs/design/2026-07-07-yuk573-judge-calibration-mvp.md §4.2.
+CREATE UNIQUE INDEX "event_judge_calibration_sample_unique_idx" ON "event" ("caused_by_event_id") WHERE "action" = 'experimental:judge_calibration_sample';
