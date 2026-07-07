@@ -156,6 +156,26 @@ describe('runStepsJudge — vision-judge provider override (YUK-482)', () => {
     });
     expect((ctx as { override?: unknown }).override).toBeUndefined();
   });
+
+  // YUK-576 — this judge is the sanctioned in-process transient-retry opt-in
+  // (sync-route sensor, no durable backstop). The flag must ride the SAME ctx
+  // the override rides, so the runner's gates see both together.
+  it('passes enableTransientRetry: true into ctx (YUK-576 opt-in)', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', '');
+    let ctx: unknown;
+    await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'not the answer',
+      subjectProfile: mathProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return llmWrong();
+      },
+      imageFetchFn: async () => [],
+    });
+    expect((ctx as { enableTransientRetry?: boolean }).enableTransientRetry).toBe(true);
+  });
 });
 
 describe('runStepsJudge — score composition (step_weight=0.6)', () => {

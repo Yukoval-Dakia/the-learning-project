@@ -273,6 +273,25 @@ describe('runMultimodalDirectJudge — vision-judge provider override (YUK-482)'
     });
     expect((ctx as { override?: unknown }).override).toBeUndefined();
   });
+
+  // YUK-576 — sanctioned in-process transient-retry opt-in (same rationale as
+  // the steps-judge sibling assertion).
+  it('passes enableTransientRetry: true into ctx (YUK-576 opt-in)', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', '');
+    let ctx: unknown;
+    await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn: async (_kind, _input, c) => {
+        ctx = c;
+        return llmResponse('correct', 0.9);
+      },
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect((ctx as { enableTransientRetry?: boolean }).enableTransientRetry).toBe(true);
+  });
 });
 
 describe('runMultimodalDirectJudge — unsupported / error paths', () => {
