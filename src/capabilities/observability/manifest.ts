@@ -45,6 +45,15 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/conjecture-scores').then((m) => m.GET),
       },
       {
+        // YUK-573 — judge 校准 agreement 观测面（唯一暴露面，无前端 UI）。READ-ONLY：
+        // 聚合 experimental:judge_calibration_sample / _run_summary events。honesty
+        // rails：MIN_N insufficient_data 门（S4）、same_lane 剔除 headline（MF5）、
+        // agreement≠accuracy + same_lane 时效双 note、recent_runs mass-skip 自曝。
+        method: 'GET',
+        path: '/api/admin/judge-calibration',
+        load: () => import('./api/judge-calibration').then((m) => m.GET),
+      },
+      {
         method: 'GET',
         path: '/api/cost/today',
         load: () => import('./api/cost-today').then((m) => m.GET),
