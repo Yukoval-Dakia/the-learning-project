@@ -472,4 +472,28 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
     const finish1 = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish1.finish_reason).toBe('error_retried');
   });
+
+  // Review P2-#1 hardening: an abort (budget timeout) can surface as a
+  // gracefully-ENDED stream rather than a throw. That must classify as the
+  // abort it is (permanent) — never as transient 'stream_no_terminal'. Today
+  // the elapsed gate (10s) < min budget.timeout (30s) masks the difference for
+  // every registry task, but the classifier must not lean on that invariant.
+  it('abort-during-empty-stream classifies as abort (permanent), NOT stream_no_terminal', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    mockSdk.beforeYield = () => {
+      // Fire the budget-timeout abort while the stream is still open, then let
+      // the generator end with no messages (graceful end, aborted signal set).
+      vi.advanceTimersByTime(91_000); // > StepsJudgeTask budget.timeout (90s)
+    };
+    mockSdk.messageQueues = [[], [successResult('never-reached')]];
+
+    await expect(
+      runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
+    ).rejects.toThrow(/aborted/);
+
+    expect(mockSdk.capturedOptions).toHaveLength(1); // permanent → no retry
+    const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
+    expect(finish.finish_reason).toBe('error'); // not error_retried
+    vi.useRealTimers();
+  });
 });

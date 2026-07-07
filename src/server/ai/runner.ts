@@ -671,6 +671,16 @@ async function runTaskAttempt(args: {
       }
     }
     if (!sawTerminalResult) {
+      // Review P2-#1 hardening: an abort (budget timeout / upstream signal) can
+      // surface as a gracefully-ENDED stream rather than a throw. Classify it
+      // as the abort it is (plain Error → permanent by the whitelist-only
+      // classifier), never as transient 'stream_no_terminal'. Today this is
+      // unreachable-for-retry anyway (RETRY_ELAPSED_CAP_MS 10s < the smallest
+      // registry budget.timeout 30s), but the classifier must not lean on that
+      // unstated invariant.
+      if (abortController.signal.aborted) {
+        throw new Error(`[${kind}] Agent SDK run aborted (budget timeout) with no terminal result`);
+      }
       throw new AgentRunError({ kind, taskRunId, subtype: 'stream_no_terminal', errors: [] });
     }
   } finally {

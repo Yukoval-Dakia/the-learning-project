@@ -25,10 +25,15 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     await registerAll(boss);
 
     // YUK-237: AGENT-tier queue — explicit 2h expire, 7-day retention, dead-letter.
+    // YUK-576: + explicit retry policy (retryLimit 2 == pg-boss implicit default
+    // count; retryDelay/retryBackoff are the deliberate delta — see queue-config.ts).
     expect(boss.createQueue).toHaveBeenCalledWith('knowledge_maintenance_nightly', {
       expireInSeconds: 7_200,
       retentionSeconds: 604_800,
       deadLetter: 'knowledge_maintenance_nightly_dlq',
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
     });
     // YUK-237 (CODEX-2 round-2): createQueue is ON CONFLICT DO NOTHING, so an
     // already-existing queue keeps stale config on upgrade. We reconcile via
@@ -38,6 +43,9 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       expireInSeconds: 7_200,
       retentionSeconds: 604_800,
       deadLetter: 'knowledge_maintenance_nightly_dlq',
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
     });
     // Its dead-letter queue is created first (FAST opts, no nested deadLetter).
     expect(boss.createQueue).toHaveBeenCalledWith('knowledge_maintenance_nightly_dlq', {

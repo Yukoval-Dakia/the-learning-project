@@ -249,6 +249,29 @@ describe('loadOvernightDigest read model', () => {
         expect(d.degraded_kinds[0].recent_error_messages).toEqual(['real-fail-2', 'real-fail-1']);
       });
 
+      it('finish_reason=NULL 的 failure 行照常计入（IS DISTINCT FROM 三值语义 pin，review P2-#5）', async () => {
+        // 防未来把 IS DISTINCT FROM 重构成 != 时静默排除 NULL 行（SQL 三值逻辑）。
+        await seedRun({
+          task_kind: 'legacy_kind',
+          status: 'failure',
+          finish_reason: null,
+          finished_at: IN_WINDOW,
+          error_message: 'legacy-null-reason-1',
+        });
+        await seedRun({
+          task_kind: 'legacy_kind',
+          status: 'failure',
+          finish_reason: null,
+          finished_at: new Date(IN_WINDOW.getTime() + 1000),
+          error_message: 'legacy-null-reason-2',
+        });
+
+        const d = await loadOvernightDigest(db, NOW);
+        expect(d.degraded_kinds).toHaveLength(1);
+        expect(d.degraded_kinds[0].task_kind).toBe('legacy_kind');
+        expect(d.degraded_kinds[0].error_count).toBe(2);
+      });
+
       it("'error_retried'（重试非末次）不计入 —— 一次逻辑请求两跳全挂只计 1，不打满阈值", async () => {
         // 同一逻辑请求：attempt-1 error_retried + attempt-2 error → 只计末级 1 条。
         await seedRun({
