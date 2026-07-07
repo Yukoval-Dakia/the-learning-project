@@ -217,6 +217,7 @@ jobs:
             }
 
       - name: Run OCR review
+        id: run_ocr_review
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -816,12 +817,16 @@ jobs:
       # Diagnostic artifact only — no downstream consumer (learnings collect via
       # GraphQL, upsert reads local disk), so it runs AFTER the review comment is
       # posted: a stalled/failed upload can never delay the user-visible review.
+      # The if-condition keeps it alive when the upsert step fails (that is when
+      # the diagnostic matters most) while still requiring the review step to
+      # have produced ocr-review.json, and never resurrecting a cancelled job.
       # continue-on-error swallows failures; the step-level timeout converts a
       # stalled blob upload ("Error: Upload progress stalled", observed 2026-07-07
       # hanging 32+ min and blocking the comment) into a fast failure; one bounded
       # retry then covers the transient-blip case.
       - name: Upload OCR review JSON
         id: upload_review_json
+        if: ${{ !cancelled() && steps.run_ocr_review.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/upload-artifact@v4
@@ -832,7 +837,7 @@ jobs:
           retention-days: 7
 
       - name: Upload OCR review JSON (retry)
-        if: steps.upload_review_json.outcome == 'failure'
+        if: ${{ !cancelled() && steps.upload_review_json.outcome == 'failure' }}
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/upload-artifact@v4
