@@ -295,7 +295,17 @@ describe('runJudgeCalibrationSample', () => {
     const judges = await testDb().select().from(event).where(eq(event.action, 'judge'));
     expect(judges).toHaveLength(1);
     expect(judges[0]?.id).toBe(judgeEventId);
-    // Learning state faces untouched.
+    // Learning state faces untouched. NOTE: θ̂/FSRS snapshots are EVENTS in
+    // this codebase (experimental:state_snapshot / grading_checkpoint,
+    // ADR-0044), not a table — the action-set equality above already excludes
+    // them structurally; these explicit zero-counts close the stated
+    // "mastery/item_calibration/snapshot 三面" contract (review finding 1).
+    const snapshotActions = (await testDb().select({ action: event.action }).from(event)).filter(
+      (r) =>
+        r.action === 'experimental:state_snapshot' ||
+        r.action === 'experimental:grading_checkpoint',
+    );
+    expect(snapshotActions).toHaveLength(0);
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
     expect(await testDb().select().from(item_calibration)).toHaveLength(0);
   });
