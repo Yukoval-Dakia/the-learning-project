@@ -199,6 +199,45 @@
     ]
   },
   {
+    "path": "/api/copilot/nudges",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "YUK-577 主动开口 nudge 列表（排 shadow/过期/已处置 + 练习中静默窗 backstop）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应 { nudges: [{id,kind,headline,subject_kind,subject_id,created_at}] }；shadow 行绝不出面（surfacing gate）"
+      }
+    ]
+  },
+  {
+    "path": "/api/copilot/nudges/:id/dismiss",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "YUK-577 忽略一条 nudge（× 关闭）——写 experimental:copilot_nudge_dismissed",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无 body；404 若 nudge 不存在。KPI 分母之一（dismiss_rate = dismissed/(opened+dismissed)）"
+      }
+    ]
+  },
+  {
+    "path": "/api/copilot/nudges/:id/opened",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "YUK-577 展开一条 nudge 对话（看看）——写 experimental:copilot_nudge_opened",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": null,
+        "notes": "无 body；404 若 nudge 不存在。KPI 分子（opened）；opened 后读模型排除该 nudge"
+      }
+    ]
+  },
+  {
     "path": "/api/cost/today",
     "methods": [
       {

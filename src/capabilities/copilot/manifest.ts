@@ -1,4 +1,5 @@
 import { defineCapability } from '@/kernel/manifest';
+import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 
 // M5-T3 (YUK-321) — copilot 包：D14 单人格对话面（D13 权限继承框架内）。
 // 统一记忆读取面 = server/chat.ts 既有 ambient context 装配 + server/turns.ts
@@ -15,6 +16,11 @@ export const copilotCapability = defineCapability({
       'experimental:copilot_chip_trigger',
       'experimental:copilot_reply',
       'accept_suggestion',
+      // YUK-577 — 主动开口触发线：触发留痕（RESERVED+typed，nudge-events.ts）+ dismiss/opened
+      // 处置留痕（通用 hatch）。KPI 分离：dismiss_rate = dismissed/(opened+dismissed)，不碰 accept_suggestion。
+      'experimental:copilot_nudge',
+      'experimental:copilot_nudge_dismissed',
+      'experimental:copilot_nudge_opened',
     ],
   },
   api: {
@@ -39,6 +45,22 @@ export const copilotCapability = defineCapability({
         path: '/api/teaching-sessions/[id]/accept-chip',
         load: () => import('./api/accept-chip').then((m) => m.POST),
       },
+      // YUK-577 — 主动开口 nudge 面：读（排 shadow/过期/已处置 + 静默窗 backstop）+ 处置（× / 看看）。
+      {
+        method: 'GET',
+        path: '/api/copilot/nudges',
+        load: () => import('./api/nudges').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/copilot/nudges/[id]/dismiss',
+        load: () => import('./api/nudges').then((m) => m.dismissPOST),
+      },
+      {
+        method: 'POST',
+        path: '/api/copilot/nudges/[id]/opened',
+        load: () => import('./api/nudges').then((m) => m.openedPOST),
+      },
     ],
   },
   // YUK-364 (ADR-0041 endurance W1 L2) — durable copilot run job（贡献制，无
@@ -53,6 +75,17 @@ export const copilotCapability = defineCapability({
         queue: 'agent',
         load: () =>
           import('@/server/boss/handlers/copilot_run').then((m) => m.buildCopilotRunHandler),
+      },
+      // YUK-577 — 主动开口触发评估器（按需 job，无 schedule）。producer（ingestion 完成）
+      // boss.send(COPILOT_NUDGE_EVALUATE_QUEUE) → 本 handler 确定性判定 + 写触发留痕。
+      // FAST 档（should#1）：纯-DB 零-LLM，不占 agent 档的 DLQ/retry LLM-记账语义；
+      // 幂等由 partial unique index（caused_by_event_id）保证。queue 名 = 导出常量
+      // COPILOT_NUDGE_EVALUATE_QUEUE，producer 与此处共享（should#8 防跨包漂移）。
+      {
+        name: COPILOT_NUDGE_EVALUATE_QUEUE,
+        queue: 'fast',
+        load: () =>
+          import('./jobs/copilot_nudge_evaluate').then((m) => m.buildCopilotNudgeEvaluateHandler),
       },
     ],
   },

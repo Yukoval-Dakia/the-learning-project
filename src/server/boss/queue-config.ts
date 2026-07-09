@@ -60,6 +60,10 @@ export const EXPIRE_AGENT = 7_200; // 2h — multi-step tool-calling agent loops
 export const JOB_RETRY_LIMIT = 2;
 export const JOB_RETRY_DELAY_SECONDS = 30;
 
+// YUK-577 (should#8) — the copilot proactive-nudge queue name lives in the dependency-free
+// ./queue-names (so producers, the copilot manifest, and unit tests share one source without
+// this DB-tainted module leaking into a unit partition). See queue-names.ts.
+
 export const FAST_QUEUE_OPTS = {
   expireInSeconds: EXPIRE_FAST,
   retentionSeconds: RETENTION_7D,
