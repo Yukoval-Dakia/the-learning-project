@@ -72,7 +72,7 @@ describe('KnowledgeReviewTask system prompt', () => {
   });
 });
 
-async function seedKnowledgeNode(id: string, domain = 'wenyan') {
+async function seedKnowledgeNode(id: string, domain = 'yuwen') {
   const db = testDb();
   const now = new Date();
   await db.insert(knowledge).values({
@@ -233,7 +233,7 @@ describe('runWriteProposal — pure dispatch', () => {
     await testDb().insert(knowledge).values({
       id: 'k_to',
       name: '虚词-之',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -308,7 +308,7 @@ describe('runWriteProposal — pure dispatch', () => {
     await testDb().insert(knowledge).values({
       id: 'k_to',
       name: '虚词-之',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -354,7 +354,7 @@ describe('runWriteProposal — pure dispatch', () => {
     await testDb().insert(knowledge).values({
       id: 'k_to',
       name: '虚词-之',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

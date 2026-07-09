@@ -173,7 +173,7 @@ async function resolveLiveKnowledgeNode(
 // the orchestrator drives SEQUENCE STEPS (`external_sourcing | material_grounded |
 // closed_book`). The old code filtered profile values against the sequence-step name
 // set, so every token that didn't happen to share a name with a step (`sourced`,
-// `material`, `variant`) was silently dropped — wenyan reading collapsed to just
+// `material`, `variant`) was silently dropped — yuwen reading collapsed to just
 // `closed_book` and math/physics skipped external sourcing entirely. We translate via
 // a single explicit token→step map instead.
 //
@@ -458,7 +458,7 @@ export async function runSourcingSequence(
   // knowledge node's own domain instead of silently falling back to the default
   // subject. A 'knowledge' trigger keys off a real node, so its domain is the
   // authoritative subject for the route preference (a math node must not route through
-  // the wenyan default profile). domain wins when explicitly passed.
+  // the yuwen default profile). domain wins when explicitly passed.
   const resolvedDomain = params.domain ?? node.domain;
   const profile = resolveSubjectProfile(resolvedDomain);
   const baseRoute = resolveRoutePreference(profile, kind);

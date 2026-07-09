@@ -553,7 +553,7 @@
             "description": "at-entry 直写 goal（冷启 P0 YUK-472）\n\n**Notes:** 冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；二者皆不可解析/空 scope → 400。title 必填。返回 {id,title,subjectId,scopeKnowledgeIds,status}",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"高中文言文\",\n  \"subjectId\": \"wenyan\",\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ]\n}",
+              "raw": "{\n  \"title\": \"高中文言文\",\n  \"subjectId\": \"yuwen\",\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1001,7 +1001,7 @@
                 },
                 {
                   "key": "subject",
-                  "value": "wenyan",
+                  "value": "yuwen",
                   "disabled": true,
                   "description": "optional"
                 },
@@ -1073,7 +1073,7 @@
                 }
               ]
             },
-            "description": "多轴题库列表（knowledge_id/subject/source/kind/difficulty/visual_complexity/source_tier/family 过滤）\n\n**Query:**\n- `knowledge_id` (optional) e.g. `kn_abc123`\n- `subject` (optional) e.g. `wenyan`\n- `source` (optional) e.g. `manual`\n- `kind` (optional) e.g. `short_answer`\n- `difficulty` (optional) e.g. `3`\n- `visual_complexity` (optional) e.g. `low`\n- `source_tier` (optional) e.g. `1`\n- `sort_by` (optional) e.g. `source_tier`\n- `group_by_family` (optional) e.g. `true`\n- `expand_root` (optional) e.g. `q_root123`\n- `include_drafts` (optional) e.g. `false`\n- `limit` (optional) e.g. `50`\n- `offset` (optional) e.g. `0`\n\n**Notes:** knowledge_id/source_tier 可多值；group_by_family 与 expand_root 互斥；expand_root 不能与 source_tier/sort_by 同用；limit 上限 200；sort_by 枚举：created_at|source_tier"
+            "description": "多轴题库列表（knowledge_id/subject/source/kind/difficulty/visual_complexity/source_tier/family 过滤）\n\n**Query:**\n- `knowledge_id` (optional) e.g. `kn_abc123`\n- `subject` (optional) e.g. `yuwen`\n- `source` (optional) e.g. `manual`\n- `kind` (optional) e.g. `short_answer`\n- `difficulty` (optional) e.g. `3`\n- `visual_complexity` (optional) e.g. `low`\n- `source_tier` (optional) e.g. `1`\n- `sort_by` (optional) e.g. `source_tier`\n- `group_by_family` (optional) e.g. `true`\n- `expand_root` (optional) e.g. `q_root123`\n- `include_drafts` (optional) e.g. `false`\n- `limit` (optional) e.g. `50`\n- `offset` (optional) e.g. `0`\n\n**Notes:** knowledge_id/source_tier 可多值；group_by_family 与 expand_root 互斥；expand_root 不能与 source_tier/sort_by 同用；limit 上限 200；sort_by 枚举：created_at|source_tier"
           },
           "response": []
         },

@@ -64,7 +64,7 @@ describe('batchResolveFamilyKeys — empty + null guards (no DB on empty)', () =
 describe('family_key format — single source of truth parity', () => {
   it('personalized-difficulty.familyKey === family-key-format.buildFamilyKey for all segments', () => {
     const cases: Array<[string, string, string, string]> = [
-      ['wenyan', 'k1', 'short_answer', 'manual'],
+      ['yuwen', 'k1', 'short_answer', 'manual'],
       ['math', 'k_abc', 'mcq', 'ingestion'],
       ['unknown', 'k_quad', 'true_false', 'generated'],
     ];

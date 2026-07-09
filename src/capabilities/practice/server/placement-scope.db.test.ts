@@ -18,7 +18,7 @@ async function seedKnowledge(id: string, opts: { archived?: boolean } = {}): Pro
   await db.insert(knowledge).values({
     id,
     name: id,
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     created_at: now,
     updated_at: now,
@@ -31,7 +31,7 @@ describe('resolveGoalPlacementScope (YUK-516 shared three-tier contract)', () =>
   it('tier-1: a non-empty frozen scope is returned as-is, never widened by live-resolve', async () => {
     await seedKnowledge('kc1');
     await seedKnowledge('kc2'); // active + same subject, but NOT in the frozen scope
-    const scope = await resolveGoalPlacementScope(db, { scope: ['kc1'], subjectId: 'wenyan' });
+    const scope = await resolveGoalPlacementScope(db, { scope: ['kc1'], subjectId: 'yuwen' });
     expect(scope).toEqual(['kc1']);
   });
 
@@ -39,7 +39,7 @@ describe('resolveGoalPlacementScope (YUK-516 shared three-tier contract)', () =>
     await seedKnowledge('kc1');
     await seedKnowledge('kc2');
     await seedKnowledge('kc-archived', { archived: true });
-    const scope = await resolveGoalPlacementScope(db, { scope: [], subjectId: 'wenyan' });
+    const scope = await resolveGoalPlacementScope(db, { scope: [], subjectId: 'yuwen' });
     expect(scope.sort()).toEqual(['kc1', 'kc2']);
   });
 

@@ -48,7 +48,7 @@ async function seedKnowledge(id: string): Promise<void> {
   await db.insert(knowledge).values({
     id,
     name: `K-${id}`,
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     created_at: now,
     updated_at: now,
@@ -127,16 +127,16 @@ describe('placement API flow', () => {
 
   it('start LIVE-resolves an empty frozen goal scope from the goal subject (YUK-482 Lane B)', async () => {
     // Cold-start goal: declared on an empty tree → frozen scope_knowledge_ids is empty. A KC
-    // was later bridged under the subject (effective domain 'wenyan') with a live active
+    // was later bridged under the subject (effective domain 'yuwen') with a live active
     // question. The frozen-only read would see [] → sourcingNeeded; live-resolve must pick the
     // KC up via the subject's effective-domain axis and return a REAL question.
-    await seedKnowledge('kc-bridged'); // domain 'wenyan' (seedKnowledge sets domain: 'wenyan')
+    await seedKnowledge('kc-bridged'); // domain 'yuwen' (seedKnowledge sets domain: 'yuwen')
     await seedQuestion('q-bridged', ['kc-bridged'], 3);
     const now = new Date();
     await db.insert(goal).values({
       id: 'g-cold',
       title: 'Cold goal',
-      subject_id: 'wenyan',
+      subject_id: 'yuwen',
       scope_knowledge_ids: [], // frozen empty (cold-start)
       status: 'active',
       source: 'manual',
@@ -165,7 +165,7 @@ describe('placement API flow', () => {
     await db.insert(goal).values({
       id: 'g-narrow',
       title: 'Narrow goal',
-      subject_id: 'wenyan', // subject has both kc-a + kc-b live...
+      subject_id: 'yuwen', // subject has both kc-a + kc-b live...
       scope_knowledge_ids: ['kc-a'], // ...but the goal is explicitly narrowed to kc-a only
       status: 'active',
       source: 'manual',
@@ -186,7 +186,7 @@ describe('placement API flow', () => {
     // (subject_id null) with a frozen empty scope. Tier-1 (frozen) and tier-2 (subject) both yield
     // nothing, so placement must fall back to the WHOLE active tree rather than 400. A live KC with
     // a question exists in the tree → the probe is reachable and returns a real first question.
-    await seedKnowledge('kc-anywhere'); // active KC in the tree (domain 'wenyan')
+    await seedKnowledge('kc-anywhere'); // active KC in the tree (domain 'yuwen')
     await seedQuestion('q-anywhere', ['kc-anywhere'], 3);
     const now = new Date();
     await db.insert(goal).values({
@@ -212,11 +212,11 @@ describe('placement API flow', () => {
   it('start TIER-3 falls back to the full tree when the goal subject resolves to no KC (YUK-481)', async () => {
     // A goal DOES carry a subject ('physics') but that subject has no live KC yet (root planted,
     // children not grown). Tier-2 resolves empty; tier-3 falls back to the full active tree, which
-    // DOES hold a live KC under a different subject ('wenyan'). This is the deliberate cold-start
+    // DOES hold a live KC under a different subject ('yuwen'). This is the deliberate cold-start
     // looseness (owner decision): a subject-bearing goal whose subject is barren still gets placed
     // over whatever active KCs exist, rather than 400ing the cold-start probe.
-    await seedKnowledge('kc-wenyan'); // domain 'wenyan' (NOT physics)
-    await seedQuestion('q-wenyan', ['kc-wenyan'], 3);
+    await seedKnowledge('kc-yuwen'); // domain 'yuwen' (NOT physics)
+    await seedQuestion('q-yuwen', ['kc-yuwen'], 3);
     const now = new Date();
     await db.insert(goal).values({
       id: 'g-barren-subject',
@@ -232,9 +232,9 @@ describe('placement API flow', () => {
     const res = await startPlacement(jsonReq({ goalId: 'g-barren-subject' }));
     const body = await res.json();
     expect(res.status).toBe(200);
-    // tier-2 (physics) was empty → tier-3 full-tree picked up the wenyan KC.
-    expect(body.knowledgeIds).toEqual(['kc-wenyan']);
-    expect(body.question?.questionId).toBe('q-wenyan');
+    // tier-2 (physics) was empty → tier-3 full-tree picked up the yuwen KC.
+    expect(body.knowledgeIds).toEqual(['kc-yuwen']);
+    expect(body.question?.questionId).toBe('q-yuwen');
   });
 
   it('start 400s only when the ENTIRE active tree is empty (tier-3 found nothing) (YUK-481)', async () => {
@@ -337,9 +337,9 @@ describe('placement API flow', () => {
     // two KCs in different effective domains (subject=view).
     await db.insert(knowledge).values([
       {
-        id: 'kc-wenyan',
+        id: 'kc-yuwen',
         name: 'KW',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         created_at: now,
         updated_at: now,
@@ -355,22 +355,22 @@ describe('placement API flow', () => {
         version: 0,
       },
     ]);
-    // q-math has the higher info (diff 3 → b≈θ̂=0) and would win with NO leaning; q-wenyan (diff
+    // q-math has the higher info (diff 3 → b≈θ̂=0) and would win with NO leaning; q-yuwen (diff
     // 5) is lower info but in the leaning subject → the preference tier orders it first.
     await seedQuestion('q-math', ['kc-math'], 3);
-    await seedQuestion('q-wenyan', ['kc-wenyan'], 5);
+    await seedQuestion('q-yuwen', ['kc-yuwen'], 5);
 
-    // leaning toward 'wenyan' → resolveSubjectKnowledgeIds('wenyan') = [kc-wenyan] → preferred.
+    // leaning toward 'yuwen' → resolveSubjectKnowledgeIds('yuwen') = [kc-yuwen] → preferred.
     const res = await startPlacement(
-      jsonReq({ knowledgeIds: ['kc-wenyan', 'kc-math'], leanings: ['wenyan'] }),
+      jsonReq({ knowledgeIds: ['kc-yuwen', 'kc-math'], leanings: ['yuwen'] }),
     );
     const body = await res.json();
     expect(res.status).toBe(200);
-    expect(body.question?.questionId).toBe('q-wenyan');
+    expect(body.question?.questionId).toBe('q-yuwen');
 
     // control: NO leaning → the higher-info q-math wins (byte-identical to pre-YUK-480).
     const ctrl = await (
-      await startPlacement(jsonReq({ knowledgeIds: ['kc-wenyan', 'kc-math'] }))
+      await startPlacement(jsonReq({ knowledgeIds: ['kc-yuwen', 'kc-math'] }))
     ).json();
     expect(ctrl.question?.questionId).toBe('q-math');
   });

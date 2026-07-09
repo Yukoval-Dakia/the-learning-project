@@ -7,7 +7,7 @@ import { mathProfile } from '@/subjects/math/profile';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
-import { wenyanProfile } from '@/subjects/wenyan/profile';
+import { yuwenProfile } from '@/subjects/yuwen/profile';
 
 export interface ProfileAuditEntry {
   id: string;
@@ -32,7 +32,7 @@ export type ProfileAuditInput = readonly SubjectProfile[] | Record<string, Subje
 // (`runCli`) walks the live registry instead (see below) so a 4th subject
 // auto-enters the audit; this const is NO LONGER the `runCli` source of truth.
 export const auditSubjectProfiles: Record<string, SubjectProfile> = {
-  wenyan: wenyanProfile,
+  yuwen: yuwenProfile,
   math: mathProfile,
   physics: physicsProfile,
 };

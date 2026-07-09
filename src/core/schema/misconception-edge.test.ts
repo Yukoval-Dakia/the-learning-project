@@ -73,7 +73,7 @@ describe('MisconceptionEdgeSchema (YUK-531, ADR-0036 RT1)', () => {
 
   // 项目铁律: subject 是派生视角，永远不进实体存储（effective_domain 派生）。
   it('REJECTS a `subject` field (subject is derived, never stored)', () => {
-    expect(MisconceptionEdgeSchema.safeParse({ ...VALID_EDGE, subject: 'wenyan' }).success).toBe(
+    expect(MisconceptionEdgeSchema.safeParse({ ...VALID_EDGE, subject: 'yuwen' }).success).toBe(
       false,
     );
   });

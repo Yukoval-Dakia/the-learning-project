@@ -9,7 +9,7 @@
 // note-<id>/ 目录）；handler 传 ctx.skills = resolveNoteSkill(subjectId) 来
 // 白名单激活这一个 skill。
 //
-// ⚠️  目录名带 subject 后缀（note-wenyan / note-math / note-physics）是强制的：
+// ⚠️  目录名带 subject 后缀（note-yuwen / note-math / note-physics）是强制的：
 // runner.ts populateIsolatedSkills 把所有科目的 skills/* 扁平 mirror 进同一个
 // CLAUDE_CONFIG_DIR/skills/ 命名空间，裸 note/ 目录多科同名会末次写覆盖前次写。
 // 不要把目录名「简化」回 note/，否则跨科 mirror 冲突静默丢包。

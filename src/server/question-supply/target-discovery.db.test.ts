@@ -19,7 +19,7 @@ import { resetDb } from '../../../tests/helpers/db';
 import { type DispatchResult, type EnqueueFn, dispatchSupplyTargets } from './dispatcher';
 import { type SupplyRoute, discoverSupplyTargets } from './target-discovery';
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
   await db
     .insert(knowledge)
@@ -127,7 +127,7 @@ describe('discoverSupplyTargets — frontier zero questions', () => {
     const t = frontierTargets[0];
     expect(t.knowledgeIds).toEqual([kid]);
     expect(t.desiredCount).toBe(2);
-    expect(t.subjectId).toBe('wenyan');
+    expect(t.subjectId).toBe('yuwen');
     // 零题的 KC 只产 frontier_zero（无池可分析 R2/R3/R4）。
     expect(targets.filter((tt) => tt.knowledgeIds[0] === kid)).toHaveLength(1);
   });
@@ -453,7 +453,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
       id: createId(),
       fingerprint: 'fp-image',
       gapKind: 'frontier_zero' as const,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       knowledgeIds: [kid],
       kind: 'any',
       difficultyBand: 'near' as const,
@@ -530,7 +530,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
       id: createId(),
       fingerprint: 'fp-fallthrough',
       gapKind: 'format_diversity' as const,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       knowledgeIds: [kid],
       kind: 'short_answer',
       difficultyBand: 'near' as const,

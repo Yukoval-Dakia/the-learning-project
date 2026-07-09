@@ -122,7 +122,7 @@ export function resolveQuestionJudgeRoute(
 
   // A question with persisted choices is structurally a multiple/single-choice
   // item regardless of the kind string the subject profile uses
-  // (e.g. wenyan exposes 'single_choice' / 'multiple_choice' while the
+  // (e.g. yuwen exposes 'single_choice' / 'multiple_choice' while the
   // QuestionKind enum still calls the canonical kind 'choice'). The structure
   // is the source of truth: if there are choices, the only safe default is
   // exact match against reference_md — never spend LLM budget on a semantic
@@ -159,7 +159,7 @@ export function resolveQuestionJudgeRoute(
   //   - kind is non-choice (choices short-circuit to 'exact' earlier) and
   //     non-derivation (handled above);
   //   - the question carries prompt figures (q.image_refs?.length > 0);
-  //   - the profile declares multimodal_direct as a preferred route (wenyan/math
+  //   - the profile declares multimodal_direct as a preferred route (yuwen/math
   //     do NOT → unaffected; only physics opts in);
   //   - there is NO step-rubric reference_solution (a rubric reference_solution
   //     belongs to steps@1, never multimodal_direct).

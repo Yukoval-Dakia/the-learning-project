@@ -145,9 +145,9 @@ describe('loadCopilotSummary (db)', () => {
     const db = testDb();
     await db.insert(memory_brief_note).values({
       id: `brief_${createId()}`,
-      scope_key: 'subject:wenyan',
+      scope_key: 'subject:yuwen',
       subject_id: null,
-      recent_week_md: 'wenyan-specific brief',
+      recent_week_md: 'yuwen-specific brief',
       recent_months_md: '',
       long_term_md: '',
       recent_week_evidence_ids: [],

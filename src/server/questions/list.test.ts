@@ -178,7 +178,7 @@ describe('listQuestions', () => {
         new Set([canonicalComp, profileCalc]),
       );
 
-      // reading ← reading_comprehension (wenyan fixtures store reading_comprehension).
+      // reading ← reading_comprehension (yuwen fixtures store reading_comprehension).
       const profileReadingComp = await seedQuestion({ kind: 'reading_comprehension' });
       const byReading = await listQuestions(testDb(), { kind: 'reading', limit: 50, offset: 0 });
       // the earlier canonical 'reading' distractor + the reading_comprehension row.
@@ -419,64 +419,64 @@ describe('listQuestions', () => {
 
   describe('YUK-288 gap B — subject 派生轴 (knowledge effective-domain join)', () => {
     it('filters to questions whose knowledge resolves to the subject', async () => {
-      // wenyan root + a child that inherits the domain; a math root in another subject.
-      const wenyanRoot = await seedKnowledge(newId(), { domain: 'wenyan' });
-      const wenyanChild = await seedKnowledge(newId(), { parent_id: wenyanRoot });
+      // yuwen root + a child that inherits the domain; a math root in another subject.
+      const yuwenRoot = await seedKnowledge(newId(), { domain: 'yuwen' });
+      const yuwenChild = await seedKnowledge(newId(), { parent_id: yuwenRoot });
       const mathRoot = await seedKnowledge(newId(), { domain: 'math' });
 
-      const qWenyanDirect = await seedQuestion({ knowledge_ids: [wenyanRoot] });
-      const qWenyanInherited = await seedQuestion({ knowledge_ids: [wenyanChild] });
+      const qYuwenDirect = await seedQuestion({ knowledge_ids: [yuwenRoot] });
+      const qYuwenInherited = await seedQuestion({ knowledge_ids: [yuwenChild] });
       const qMath = await seedQuestion({ knowledge_ids: [mathRoot] });
 
-      const wenyanIds = await resolveSubjectKnowledgeIds(testDb(), 'wenyan');
-      // both the wenyan root and its (domain-inheriting) child resolve to wenyan.
-      expect(new Set(wenyanIds)).toEqual(new Set([wenyanRoot, wenyanChild]));
+      const yuwenIds = await resolveSubjectKnowledgeIds(testDb(), 'yuwen');
+      // both the yuwen root and its (domain-inheriting) child resolve to yuwen.
+      expect(new Set(yuwenIds)).toEqual(new Set([yuwenRoot, yuwenChild]));
 
       const res = await listQuestions(testDb(), {
-        subjectKnowledgeIds: wenyanIds,
+        subjectKnowledgeIds: yuwenIds,
         limit: 50,
         offset: 0,
       });
       expect(new Set(res.items.map((i) => i.id))).toEqual(
-        new Set([qWenyanDirect, qWenyanInherited]),
+        new Set([qYuwenDirect, qYuwenInherited]),
       );
       expect(res.items.map((i) => i.id)).not.toContain(qMath);
     });
 
     it('does NOT sweep domainless or unknown-domain nodes into the default subject (YUK-288 over-match)', async () => {
       // The over-match: resolveSubjectProfile(null|unknown) falls back to the
-      // DEFAULT profile (wenyan), so a node whose whole parent chain is untagged
-      // OR whose domain is an unregistered string resolved to 'wenyan' and got
-      // swept into ?subject=wenyan. resolveKnownSubjectId returns null for both,
+      // DEFAULT profile (yuwen), so a node whose whole parent chain is untagged
+      // OR whose domain is an unregistered string resolved to 'yuwen' and got
+      // swept into ?subject=yuwen. resolveKnownSubjectId returns null for both,
       // so they match no subject.
-      const wenyanRoot = await seedKnowledge(newId(), { domain: 'wenyan' });
+      const yuwenRoot = await seedKnowledge(newId(), { domain: 'yuwen' });
       // a node with NO domain anywhere up its chain (root has null domain).
       const untaggedRoot = await seedKnowledge(newId(), { domain: null });
       const untaggedChild = await seedKnowledge(newId(), { parent_id: untaggedRoot });
       // a node whose domain is a non-null string the registry does not know.
       const unknownDomain = await seedKnowledge(newId(), { domain: 'chemistry' });
-      // a node whose domain is a KNOWN alias of wenyan — must still match.
+      // a node whose domain is a KNOWN alias of yuwen — must still match.
       const aliasNode = await seedKnowledge(newId(), { domain: 'classical_chinese' });
 
-      const wenyanIds = await resolveSubjectKnowledgeIds(testDb(), 'wenyan');
-      // genuinely-wenyan + its alias only; untagged / unknown excluded.
-      expect(new Set(wenyanIds)).toEqual(new Set([wenyanRoot, aliasNode]));
-      expect(wenyanIds).not.toContain(untaggedRoot);
-      expect(wenyanIds).not.toContain(untaggedChild);
-      expect(wenyanIds).not.toContain(unknownDomain);
+      const yuwenIds = await resolveSubjectKnowledgeIds(testDb(), 'yuwen');
+      // genuinely-yuwen + its alias only; untagged / unknown excluded.
+      expect(new Set(yuwenIds)).toEqual(new Set([yuwenRoot, aliasNode]));
+      expect(yuwenIds).not.toContain(untaggedRoot);
+      expect(yuwenIds).not.toContain(untaggedChild);
+      expect(yuwenIds).not.toContain(unknownDomain);
 
-      // and the questions on those untagged/unknown nodes are NOT in ?subject=wenyan.
-      const qWenyan = await seedQuestion({ knowledge_ids: [wenyanRoot] });
+      // and the questions on those untagged/unknown nodes are NOT in ?subject=yuwen.
+      const qYuwen = await seedQuestion({ knowledge_ids: [yuwenRoot] });
       const qAlias = await seedQuestion({ knowledge_ids: [aliasNode] });
       await seedQuestion({ knowledge_ids: [untaggedChild] });
       await seedQuestion({ knowledge_ids: [unknownDomain] });
 
       const res = await listQuestions(testDb(), {
-        subjectKnowledgeIds: await resolveSubjectKnowledgeIds(testDb(), 'wenyan'),
+        subjectKnowledgeIds: await resolveSubjectKnowledgeIds(testDb(), 'yuwen'),
         limit: 50,
         offset: 0,
       });
-      expect(new Set(res.items.map((i) => i.id))).toEqual(new Set([qWenyan, qAlias]));
+      expect(new Set(res.items.map((i) => i.id))).toEqual(new Set([qYuwen, qAlias]));
     });
 
     it('returns empty when the subject set is empty (subject labels no questions)', async () => {
@@ -492,26 +492,26 @@ describe('listQuestions', () => {
     });
 
     it('intersects the subject axis with an explicit knowledge axis', async () => {
-      const wenyanA = await seedKnowledge(newId(), { domain: 'wenyan' });
-      const wenyanB = await seedKnowledge(newId(), { domain: 'wenyan' });
-      const qA = await seedQuestion({ knowledge_ids: [wenyanA] });
-      await seedQuestion({ knowledge_ids: [wenyanB] });
+      const yuwenA = await seedKnowledge(newId(), { domain: 'yuwen' });
+      const yuwenB = await seedKnowledge(newId(), { domain: 'yuwen' });
+      const qA = await seedQuestion({ knowledge_ids: [yuwenA] });
+      await seedQuestion({ knowledge_ids: [yuwenB] });
 
-      const wenyanIds = await resolveSubjectKnowledgeIds(testDb(), 'wenyan');
+      const yuwenIds = await resolveSubjectKnowledgeIds(testDb(), 'yuwen');
       const res = await listQuestions(testDb(), {
-        subjectKnowledgeIds: wenyanIds,
-        knowledgeIds: [wenyanA],
+        subjectKnowledgeIds: yuwenIds,
+        knowledgeIds: [yuwenA],
         limit: 50,
         offset: 0,
       });
-      // subject = wenyan (both) ∩ explicit knowledge = wenyanA → only qA.
+      // subject = yuwen (both) ∩ explicit knowledge = yuwenA → only qA.
       expect(res.items.map((i) => i.id)).toEqual([qA]);
     });
   });
 
   describe('YUK-409 题库面 enrichment (subject / knowledge_labels / composite children)', () => {
     it('leaves enrichment fields null/empty when enrich is not requested', async () => {
-      const k = await seedKnowledge(newId(), { domain: 'wenyan' });
+      const k = await seedKnowledge(newId(), { domain: 'yuwen' });
       await seedQuestion({ knowledge_ids: [k] });
 
       const res = await listQuestions(testDb(), { limit: 50, offset: 0 });
@@ -524,13 +524,13 @@ describe('listQuestions', () => {
     });
 
     it('enriches subject + knowledge_labels on the default flat path', async () => {
-      const k = await seedKnowledge(newId(), { domain: 'wenyan' });
+      const k = await seedKnowledge(newId(), { domain: 'yuwen' });
       await seedQuestion({ knowledge_ids: [k] });
 
       const res = await listQuestions(testDb(), { enrich: true, limit: 50, offset: 0 });
       expect(res.items).toHaveLength(1);
-      // subject 是派生 profile id（wenyan domain → wenyan profile）。
-      expect(res.items[0].subject).toBe('wenyan');
+      // subject 是派生 profile id（yuwen domain → yuwen profile）。
+      expect(res.items[0].subject).toBe('yuwen');
       // knowledge_labels 解析非归档 name（seedKnowledge 写 name = `node <id>`）。
       expect(res.items[0].knowledge_labels).toEqual([{ id: k, name: `node ${k}` }]);
     });

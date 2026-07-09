@@ -38,7 +38,7 @@ describe('ContextBudgetTracker — tool-call ceiling (soft-stop)', () => {
 describe('ContextBudgetTracker — capInput limit capping (nodes+edges)', () => {
   it('applies the courtesy default when the caller omits the limit', () => {
     const tracker = new ContextBudgetTracker(COPILOT_CONTEXT_BUDGET);
-    const { args, truncation } = tracker.capInput('query_knowledge', { subjectId: 'wenyan' });
+    const { args, truncation } = tracker.capInput('query_knowledge', { subjectId: 'yuwen' });
     // Default 10 fits well under 250 → no rewrite, no truncation note.
     expect((args as { limit?: number }).limit).toBeUndefined();
     expect(truncation).toBeNull();
@@ -48,7 +48,7 @@ describe('ContextBudgetTracker — capInput limit capping (nodes+edges)', () => 
   it('passes an explicit in-budget limit through unchanged', () => {
     const tracker = new ContextBudgetTracker(COPILOT_CONTEXT_BUDGET);
     const { args, truncation } = tracker.capInput('query_knowledge', {
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       limit: 40,
     });
     expect((args as { limit: number }).limit).toBe(40);
@@ -79,12 +79,12 @@ describe('ContextBudgetTracker — capInput limit capping (nodes+edges)', () => 
     const tracker = new ContextBudgetTracker(budget);
 
     // 1st call: 40 fits (remaining 50 → uses 40, 10 left).
-    const first = tracker.capInput('query_knowledge', { subjectId: 'wenyan', limit: 40 });
+    const first = tracker.capInput('query_knowledge', { subjectId: 'yuwen', limit: 40 });
     expect((first.args as { limit: number }).limit).toBe(40);
     expect(first.truncation).toBeNull();
 
     // 2nd call: asks for 30 but only 10 remain → capped to 10 + truncation note.
-    const second = tracker.capInput('query_knowledge', { subjectId: 'wenyan', limit: 30 });
+    const second = tracker.capInput('query_knowledge', { subjectId: 'yuwen', limit: 30 });
     expect((second.args as { limit: number }).limit).toBe(10);
     expect(second.softStop).toBeNull();
     expect(second.truncation).toMatchObject({
@@ -97,7 +97,7 @@ describe('ContextBudgetTracker — capInput limit capping (nodes+edges)', () => 
     // 3rd call: nothing left → EXHAUSTED. FIX 1: graceful soft-stop, NOT a
     // limit:0 rewrite (which would trip the tool's Zod min and throw). No
     // truncation note, no further accounting, args untouched.
-    const third = tracker.capInput('query_knowledge', { subjectId: 'wenyan', limit: 5 });
+    const third = tracker.capInput('query_knowledge', { subjectId: 'yuwen', limit: 5 });
     expect(typeof third.softStop).toBe('string');
     expect(third.softStop).toMatch(/context budget exhausted \(nodesPlusEdges\)/);
     expect(third.truncation).toBeNull();
@@ -144,7 +144,7 @@ describe('ContextBudgetTracker — capInput limit capping (event rows)', () => {
 describe('ContextBudgetTracker — unbounded tools pass through', () => {
   it('does not cap tools without a registered limit param', () => {
     const tracker = new ContextBudgetTracker(COPILOT_CONTEXT_BUDGET);
-    const args = { subjectId: 'wenyan' };
+    const args = { subjectId: 'yuwen' };
     const { args: out, truncation } = tracker.capInput('get_subject_graph_overview', args);
     expect(out).toBe(args);
     expect(truncation).toBeNull();

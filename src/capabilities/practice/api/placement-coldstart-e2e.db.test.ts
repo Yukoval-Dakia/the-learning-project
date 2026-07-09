@@ -61,7 +61,7 @@ async function seedDayOneGoal(id: string): Promise<void> {
   await db.insert(goal).values({
     id,
     title: '文言文进阶',
-    subject_id: 'wenyan',
+    subject_id: 'yuwen',
     scope_knowledge_ids: [], // day-one shape: declared on a thin tree → frozen scope stays empty
     sequence_hint: 0,
     status: 'active',
@@ -135,7 +135,7 @@ describe('cold-start day-one e2e (upload-shaped KC → placement → profile)', 
     const basisVec = Array.from({ length: EMBED_DIMS }, (_, i) => (i === 0 ? 1 : 0));
     const tag = await tagKnowledge(
       { db, embedFn: async () => basisVec, nameKcFn: async () => ({ kc_name: '通假字' }) },
-      { questionText: '「说」通「悦」，愉快之意。', subjectRootId: 'seed:wenyan:root' },
+      { questionText: '「说」通「悦」，愉快之意。', subjectRootId: 'seed:yuwen:root' },
     );
     expect(tag.kind).toBe('propose');
     const kcId = tag.knowledge_ids[0];
@@ -152,10 +152,10 @@ describe('cold-start day-one e2e (upload-shaped KC → placement → profile)', 
       })
       .from(knowledge)
       .where(eq(knowledge.id, kcId));
-    expect(kcRow.parent_id).toBe('seed:wenyan:root');
+    expect(kcRow.parent_id).toBe('seed:yuwen:root');
     expect(kcRow.approval_status).toBe('approved');
     expect(kcRow.archived_at).toBeNull();
-    expect(kcRow.domain).toBeNull(); // inherits 'wenyan' through the parent chain (subject=view)
+    expect(kcRow.domain).toBeNull(); // inherits 'yuwen' through the parent chain (subject=view)
 
     await seedUploadedQuestion('q-upload', [kcId]);
     await seedDayOneGoal('g1');
@@ -190,7 +190,7 @@ describe('cold-start day-one e2e (upload-shaped KC → placement → profile)', 
     expect(tested.p_l).toBeGreaterThan(0);
     expect(tested.p_l).toBeLessThan(1);
     expect(tested.theta_se).toBeGreaterThan(0);
-    const root = byId['seed:wenyan:root'];
+    const root = byId['seed:yuwen:root'];
     expect(root).toBeDefined();
     expect(root.tested).toBe(false);
     expect(profile.testedCount).toBe(1);

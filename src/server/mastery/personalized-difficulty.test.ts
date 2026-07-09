@@ -70,7 +70,7 @@ describe('familyKey', () => {
 
   it('不同 subject / kind / source 产生不同 key', () => {
     const base = familyKey('math', 'k1', 'mcq', 'manual');
-    expect(familyKey('wenyan', 'k1', 'mcq', 'manual')).not.toBe(base);
+    expect(familyKey('yuwen', 'k1', 'mcq', 'manual')).not.toBe(base);
     expect(familyKey('math', 'k1', 'short_answer', 'manual')).not.toBe(base);
     expect(familyKey('math', 'k1', 'mcq', 'ingestion')).not.toBe(base);
   });

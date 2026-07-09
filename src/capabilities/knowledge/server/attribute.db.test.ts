@@ -89,14 +89,14 @@ describe('parseAttributionOutput', () => {
 // ── YUK-462: rerank task prompt (stage 2 system prompt) ───────────────────────
 describe('AttributionRerankTask system prompt', () => {
   it('renders the profile taxonomy + the JSON contract tokens', () => {
-    const wenyan = resolveSubjectProfile('wenyan');
-    const prompt = getTaskSystemPrompt('AttributionRerankTask', wenyan);
+    const yuwen = resolveSubjectProfile('yuwen');
+    const prompt = getTaskSystemPrompt('AttributionRerankTask', yuwen);
     expect(prompt.length).toBeGreaterThan(0);
     // JSON contract tokens (same as buildAttributionPrompt).
     expect(prompt).toContain('primary_category');
     expect(prompt).toContain('analysis_md');
     expect(prompt).toContain('confidence');
-    // Taxonomy of the profile is embedded (e.g. the 'grammar' cause id for wenyan).
+    // Taxonomy of the profile is embedded (e.g. the 'grammar' cause id for yuwen).
     expect(prompt).toContain('grammar');
     // Rerank-specific: the prompt must reference the structured candidates field.
     expect(prompt).toContain('candidates');
@@ -148,7 +148,7 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     prompt_md: '"之"在主谓之间的用法?',
     reference_md: '取消句子独立性',
     wrong_answer_md: '助词',
-    knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'wenyan' }],
+    knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'yuwen' }],
   };
 
   it('writes a judge event chained on the attempt with cause from LLM output', async () => {
@@ -224,7 +224,7 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     const db = testDb();
     const attemptId = 'attempt_e_rerank_kind';
     await insertAttemptEvent({ attemptId, questionId: 'q_rerank_kind' });
-    const wenyan = resolveSubjectProfile('wenyan');
+    const yuwen = resolveSubjectProfile('yuwen');
     const spy = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
       text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
     }));
@@ -233,14 +233,14 @@ describe('runAttributionAndWriteJudgeEvent', () => {
       attemptEventId: attemptId,
       input: validInput,
       runTaskFn: spy,
-      subjectProfile: wenyan,
+      subjectProfile: yuwen,
     });
     expect(spy).toHaveBeenCalledOnce();
     const [kind, rerankInput] = spy.mock.calls[0];
     expect(kind).toBe('AttributionRerankTask');
     const typedInput = rerankInput as AttributionInput & { candidates: unknown };
     // candidates == the full profile vocab (== inline taxonomy of the old prompt).
-    expect(typedInput.candidates).toEqual(wenyan.causeCategories);
+    expect(typedInput.candidates).toEqual(yuwen.causeCategories);
     // Original AttributionInput fields still passed through.
     expect(typedInput.prompt_md).toBe(validInput.prompt_md);
     expect(typedInput.reference_md).toBe(validInput.reference_md);
@@ -314,7 +314,7 @@ describe('runAttributionAndWriteJudgeEvent', () => {
       attemptEventId: attemptId,
       input: validInput,
       runTaskFn: fakeRunTask,
-      subjectProfile: { ...resolveSubjectProfile('wenyan'), version: '2.0.0' },
+      subjectProfile: { ...resolveSubjectProfile('yuwen'), version: '2.0.0' },
     });
     const judgeRows = await db
       .select()
@@ -350,7 +350,7 @@ describe('runAttributionAndWriteJudgeEvent', () => {
       .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
     expect(judgeRows).toHaveLength(1);
     const payload = judgeRows[0].payload as { profile_version?: string };
-    // default profile (wenyan) version — present (not undefined) on the event.
+    // default profile (yuwen) version — present (not undefined) on the event.
     expect(payload.profile_version).toBe(resolveSubjectProfile(null).version);
   });
 

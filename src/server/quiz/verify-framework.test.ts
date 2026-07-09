@@ -95,9 +95,9 @@ describe('normalizeAnswer', () => {
 // review R1/R2 — shared with quiz_verify.test.ts).
 
 const fakeProfile = {
-  id: 'wenyan',
+  id: 'yuwen',
   // runSemanticJudge's builder reads displayName / languageStyle off subjectProfile.
-  full: { id: 'wenyan', displayName: '文言文', languageStyle: 'classical' },
+  full: { id: 'yuwen', displayName: '语文', languageStyle: 'classical' },
 };
 
 const exactQuestion: SolveCheckQuestion = {

@@ -35,7 +35,7 @@ async function seedSentinel(db: ReturnType<typeof testDb>, now: Date): Promise<v
   await db.insert(knowledge).values({
     id: SENTINEL_KNOWLEDGE_ID,
     name: '真实哨兵节点',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     approval_status: 'approved',
     proposed_by_ai: false,
@@ -139,9 +139,9 @@ describe('seed-synthetic (DB integration)', () => {
     expect(bump.tightenMediumToStrong).toBe(true);
     expect(report.l2_tighten_medium_to_strong).toBe(true);
 
-    // Win 5 — listActiveSubjectsSinceRefresh finds the synthetic subject (wenyan).
+    // Win 5 — listActiveSubjectsSinceRefresh finds the synthetic subject (yuwen).
     const active = await listActiveSubjectsSinceRefresh(db, { now });
-    expect(active.some((a) => a.subjectId === 'wenyan')).toBe(true);
+    expect(active.some((a) => a.subjectId === 'yuwen')).toBe(true);
     expect(report.active_subjects_detected).toBeGreaterThan(0);
 
     // ── --reset: synthetic rows gone; sentinel survives ──

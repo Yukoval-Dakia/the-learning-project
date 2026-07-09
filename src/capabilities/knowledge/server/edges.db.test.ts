@@ -12,7 +12,7 @@ import {
 } from './edges';
 
 const KNOWLEDGE_BASE = {
-  domain: 'wenyan',
+  domain: 'yuwen',
   parent_id: null,
   merged_from: [] as string[],
   proposed_by_ai: false,

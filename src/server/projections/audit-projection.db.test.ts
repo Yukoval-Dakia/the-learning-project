@@ -112,7 +112,7 @@ describe('auditProjection', () => {
   it('reports CLEAN when every live row is backed by a matching genesis event', async () => {
     const db = testDb();
     // A small coherent world: 3 knowledge rows + 1 edge.
-    await insertKnowledge({ id: 'kn_a', name: 'A', domain: 'wenyan', parent_id: 'seed:root' });
+    await insertKnowledge({ id: 'kn_a', name: 'A', domain: 'yuwen', parent_id: 'seed:root' });
     await insertKnowledge({ id: 'kn_b', name: 'B', parent_id: 'kn_a', version: 2 });
     await insertKnowledge({ id: 'kn_c', name: 'C' });
     await insertEdge({ id: 'ke_ab', from: 'kn_a', to: 'kn_b' });

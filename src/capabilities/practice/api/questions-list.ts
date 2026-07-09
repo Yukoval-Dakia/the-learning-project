@@ -24,7 +24,7 @@ const SourceTierSchema = z.coerce.number().int().min(1).max(4);
 const ListQuerySchema = z
   .object({
     knowledge_id: z.array(z.string().min(1)).default([]),
-    // YUK-288 subject 派生轴 — a subject profile id (e.g. 'wenyan'); resolved to a
+    // YUK-288 subject 派生轴 — a subject profile id (e.g. 'yuwen'); resolved to a
     // knowledge-id set server-side (never a question column).
     subject: z.string().min(1).optional(),
     source: z.string().min(1).optional(),

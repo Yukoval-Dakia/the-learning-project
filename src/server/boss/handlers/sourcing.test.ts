@@ -176,7 +176,7 @@ async function seedKnowledge(opts: { id: string; domain?: string | null }) {
   await db.insert(knowledge).values({
     id: opts.id,
     name: '之',
-    domain: opts.domain ?? 'wenyan',
+    domain: opts.domain ?? 'yuwen',
     parent_id: null,
     merged_from: [],
     proposed_by_ai: false,
@@ -382,7 +382,7 @@ describe('runSourcing', () => {
 
   it('passes the resolved subject profile into the SourcingTask ctx (non-default subject)', async () => {
     const db = testDb();
-    // a math-domain knowledge node → math profile, NOT the default wenyan voice.
+    // a math-domain knowledge node → math profile, NOT the default yuwen voice.
     await seedKnowledge({ id: 'k1', domain: 'math' });
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_src_profile');
 
@@ -448,7 +448,7 @@ describe('runSourcing', () => {
     await db.insert(knowledge).values({
       id: 'k_archived',
       name: '归档点',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -479,7 +479,7 @@ describe('runSourcing', () => {
     await db.insert(knowledge).values({
       id: 'k_arch_manual',
       name: '归档点',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -541,7 +541,7 @@ describe('runSourcing', () => {
     await db.insert(knowledge).values({
       id: 'k_archived_anchor',
       name: '废弃锚',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

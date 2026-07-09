@@ -110,7 +110,7 @@ async function seedKnowledge(id: string, parentId: string | null): Promise<void>
     .values({
       id,
       name: id,
-      domain: parentId ? null : 'wenyan',
+      domain: parentId ? null : 'yuwen',
       parent_id: parentId,
       created_at: NOW,
       updated_at: NOW,

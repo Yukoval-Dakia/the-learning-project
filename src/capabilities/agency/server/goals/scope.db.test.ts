@@ -56,7 +56,7 @@ describe('runGoalScopeAndWrite', () => {
     await db.insert(knowledge).values({
       id,
       name: id,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -83,7 +83,7 @@ describe('runGoalScopeAndWrite', () => {
     const result = await runGoalScopeAndWrite({
       db,
       goalTitle: '能流畅读《史记》',
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       runTaskFn: fakeRunTask,
     });
 
@@ -116,7 +116,7 @@ describe('runGoalScopeAndWrite', () => {
     const { proposal_id, goal_id } = await runGoalScopeAndWrite({
       db,
       goalTitle: '读懂虚词',
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       runTaskFn: fakeRunTask,
     });
     if (!proposal_id || !goal_id) throw new Error('expected proposal + goal id');

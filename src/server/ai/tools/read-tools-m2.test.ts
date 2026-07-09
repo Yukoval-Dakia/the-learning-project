@@ -63,7 +63,7 @@ async function seedGraph() {
     {
       id: 'k_root',
       name: '文言虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       created_at: BASE,
       updated_at: BASE,
     },
@@ -250,7 +250,7 @@ async function seedLearningObjects() {
     activity_kind: 'attempt',
     processing_status: 'linked',
     origin_event_id: 'att_new',
-    subject_id: 'wenyan',
+    subject_id: 'yuwen',
     knowledge_ids: ['k_zhi'],
     question_id: 'q_new',
     attempt_event_id: 'att_new',
@@ -330,18 +330,18 @@ describe('Foundation D M2 read tools', () => {
   it('reads graph overview, local nodes, subgraph, and path explanations', async () => {
     await seedAll();
 
-    const overview = await getSubjectGraphOverviewTool.execute(ctx(), { subjectId: 'wenyan' });
+    const overview = await getSubjectGraphOverviewTool.execute(ctx(), { subjectId: 'yuwen' });
     expect(overview.root_nodes).toEqual([{ id: 'k_root', name: '文言虚词' }]);
     expect(overview.clusters[0].edge_count).toBe(1);
 
     const overviewWithWeakness = await getSubjectGraphOverviewTool.execute(ctx(), {
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       includeWeaknessSummary: true,
     });
     expect(overviewWithWeakness.clusters[0].recent_failure_count_30d).toBe(1);
 
     const knowledgeRows = await queryKnowledgeTool.execute(ctx(), {
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       query: '之',
       include: ['neighbors', 'recent_failures'],
     });
@@ -351,7 +351,7 @@ describe('Foundation D M2 read tools', () => {
     expect(knowledgeRows.recent_failures?.[0].event_id).toBe('att_new');
 
     const expandedQuery = await queryKnowledgeTool.execute(ctx(), {
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       nodeId: 'k_zhi',
       include: ['ancestors', 'neighbors', 'stats'],
     });

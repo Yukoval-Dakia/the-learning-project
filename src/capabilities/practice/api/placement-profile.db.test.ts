@@ -21,7 +21,7 @@ async function seedKnowledge(id: string, name: string): Promise<void> {
   await db.insert(knowledge).values({
     id,
     name,
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     created_at: now,
     updated_at: now,
@@ -203,9 +203,9 @@ describe('GET /api/placement/profile', () => {
   // cold-start goal placed via tier-2/3 has its probe answers in mastery_state; a frozen-only
   // read returns an EMPTY profile for exactly the day-one goals this feature serves.
   it('tier-2 (YUK-516): empty frozen scope + subject live-resolves the subject KC set', async () => {
-    await seedKnowledge('kc1', '虚词·之'); // domain 'wenyan' → aliases to subject 'wenyan'
+    await seedKnowledge('kc1', '虚词·之'); // domain 'yuwen' → aliases to subject 'yuwen'
     await seedKnowledge('kc2', '使动用法'); // in resolved scope, never attempted → untested
-    await seedGoal('g1', [], 'wenyan');
+    await seedGoal('g1', [], 'yuwen');
     await seedMastery('kc1', {
       evidence_count: 3,
       success_count: 2,

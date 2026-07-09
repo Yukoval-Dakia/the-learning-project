@@ -35,7 +35,7 @@ const db = testDb();
 // an "available" predicate; the degradation path has its own dedicated tests below.
 const TAVILY_UP = () => true;
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
   await db.insert(knowledge).values({
     id,
@@ -137,7 +137,7 @@ function collectingEnqueue(): {
 }
 
 describe('resolveRoutePreference (unit-shaped, no DB)', () => {
-  const profile = resolveSubjectProfile('wenyan');
+  const profile = resolveSubjectProfile('yuwen');
 
   it('returns the default 次序 when the profile declares no preference (S2-4 absent)', () => {
     expect(resolveRoutePreference(profile, 'short_answer')).toEqual(DEFAULT_SOURCING_ROUTE);
@@ -191,13 +191,13 @@ describe('resolveRoutePreference (unit-shaped, no DB)', () => {
 
   it('translates the three subjects’ real profile route preferences', () => {
     // The actual shipped profiles (slice 4) — proves no token is silently dropped.
-    const wenyan = resolveSubjectProfile('wenyan');
-    expect(resolveRoutePreference(wenyan, 'reading_comprehension')).toEqual([
+    const yuwen = resolveSubjectProfile('yuwen');
+    expect(resolveRoutePreference(yuwen, 'reading_comprehension')).toEqual([
       'material_grounded',
       'external_sourcing',
       'closed_book',
     ]);
-    expect(resolveRoutePreference(wenyan, 'translation')).toEqual([
+    expect(resolveRoutePreference(yuwen, 'translation')).toEqual([
       'external_sourcing',
       'material_grounded',
       'closed_book',
@@ -244,7 +244,7 @@ describe('runSourcingSequence', () => {
     await seedKnowledge('k1');
     // insert generated first, authentic second — tier order must win over insert order.
     await seedQuestion({ id: 'gen', knowledgeId: 'k1', source: 'quiz_gen' });
-    await seedQuestion({ id: 'auth', knowledgeId: 'k1', source: 'wenyan', metadata: TIER1_META });
+    await seedQuestion({ id: 'auth', knowledgeId: 'k1', source: 'yuwen', metadata: TIER1_META });
 
     const { fn } = collectingEnqueue();
     const res = await runSourcingSequence({
@@ -446,7 +446,7 @@ describe('runSourcingSequence', () => {
     await seedQuestion({
       id: 'auth-new',
       knowledgeId: 'k1',
-      source: 'wenyan',
+      source: 'yuwen',
       metadata: TIER1_META,
     });
 

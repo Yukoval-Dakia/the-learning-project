@@ -40,7 +40,7 @@ async function seedKnowledge(id: string, domain: string | null): Promise<void> {
 
 describe('POST /api/goals (at-entry goal-create)', () => {
   it('creates a goal from an explicit knowledgeIds scope (source=manual)', async () => {
-    await seedKnowledge('kc1', 'wenyan');
+    await seedKnowledge('kc1', 'yuwen');
     const res = await createGoal(jsonReq({ title: 'G', knowledgeIds: ['kc1'] }));
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -56,35 +56,35 @@ describe('POST /api/goals (at-entry goal-create)', () => {
   });
 
   it('derives the scope from a subjectId via the effective-domain axis', async () => {
-    await seedKnowledge('kc1', 'wenyan'); // effective domain 'wenyan' → subject 'wenyan'
+    await seedKnowledge('kc1', 'yuwen'); // effective domain 'yuwen' → subject 'yuwen'
     await seedKnowledge('kc2', null); // untagged → not in subject
-    const res = await createGoal(jsonReq({ title: 'G', subjectId: 'wenyan' }));
+    const res = await createGoal(jsonReq({ title: 'G', subjectId: 'yuwen' }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.subjectId).toBe('wenyan');
+    expect(body.subjectId).toBe('yuwen');
     expect(body.scopeKnowledgeIds).toEqual(['kc1']);
 
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
-    expect(rows[0].subject_id).toBe('wenyan');
+    expect(rows[0].subject_id).toBe('yuwen');
     expect(rows[0].scope_knowledge_ids).toEqual(['kc1']);
   });
 
-  it('derives scope through the domain→subject alias (classical_chinese → wenyan)', async () => {
+  it('derives scope through the domain→subject alias (classical_chinese → yuwen)', async () => {
     // resolveSubjectKnowledgeIds is alias-aware (domain.ts over-match fix): a node
     // whose raw domain ALIASES to the subject id must be swept in. Lock that the
     // entry path depends on the alias bridge, not bare domain equality.
     await seedKnowledge('kc1', 'classical_chinese');
-    const res = await createGoal(jsonReq({ title: 'G', subjectId: 'wenyan' }));
+    const res = await createGoal(jsonReq({ title: 'G', subjectId: 'yuwen' }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.scopeKnowledgeIds).toEqual(['kc1']);
   });
 
   it('explicit knowledgeIds wins over subjectId-derived scope', async () => {
-    await seedKnowledge('kc1', 'wenyan');
-    await seedKnowledge('kc2', 'wenyan');
+    await seedKnowledge('kc1', 'yuwen');
+    await seedKnowledge('kc2', 'yuwen');
     const res = await createGoal(
-      jsonReq({ title: 'G', subjectId: 'wenyan', knowledgeIds: ['kc2'] }),
+      jsonReq({ title: 'G', subjectId: 'yuwen', knowledgeIds: ['kc2'] }),
     );
     const body = await res.json();
     expect(body.scopeKnowledgeIds).toEqual(['kc2']); // explicit, not the derived [kc1,kc2]
@@ -104,7 +104,7 @@ describe('POST /api/goals (at-entry goal-create)', () => {
   });
 
   it('creates a goal with empty scope when subjectId resolves to no knowledge nodes', async () => {
-    await seedKnowledge('kc1', 'wenyan');
+    await seedKnowledge('kc1', 'yuwen');
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'no_such_subject' }));
     expect(res.status).toBe(200);
     const body = await res.json();

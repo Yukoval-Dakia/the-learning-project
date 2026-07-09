@@ -102,7 +102,7 @@ async function seedRecord(id: string): Promise<void> {
     activity_kind: 'ask',
     processing_status: 'raw',
     origin_event_id: null,
-    subject_id: 'wenyan',
+    subject_id: 'yuwen',
     knowledge_ids: [],
     question_id: null,
     attempt_event_id: null,
@@ -329,7 +329,7 @@ describe('author_question — knowledge|material seed (ADR-0031 lane B)', () => 
     await testDb().insert(knowledge).values({
       id,
       name: '之的用法',
-      domain: 'wenyan',
+      domain: 'yuwen',
       created_at: BASE,
       updated_at: BASE,
     });

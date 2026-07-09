@@ -58,7 +58,7 @@ async function seedFailureAttempt(attemptId: string, qid: string) {
   });
 }
 
-async function seedJudgeForAttempt(attemptId: string, category: string, domain = 'wenyan') {
+async function seedJudgeForAttempt(attemptId: string, category: string, domain = 'yuwen') {
   // Use runAttributionAndWriteJudgeEvent so the chained-event shape stays
   // consistent with production write path.
   const runTaskFn = vi.fn(async () => ({
@@ -131,7 +131,7 @@ async function seedUserCauseForAttempt(attemptId: string, category: string, note
   });
 }
 
-async function seedKnowledge(domain = 'wenyan') {
+async function seedKnowledge(domain = 'yuwen') {
   await testDb().insert(knowledge).values({
     id: 'k_xuci',
     name: '虚词',

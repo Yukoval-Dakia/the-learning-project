@@ -56,7 +56,7 @@ async function seed(
   await db.insert(knowledge).values({
     id: 'k1',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,
@@ -116,7 +116,7 @@ async function seedWithStatus(
   await db.insert(knowledge).values({
     id: 'k1',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,
@@ -254,7 +254,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
@@ -313,7 +313,7 @@ describe('runAutoEnrollForSession', () => {
     const first = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
@@ -334,7 +334,7 @@ describe('runAutoEnrollForSession', () => {
     const second = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
@@ -379,7 +379,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
@@ -404,7 +404,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       // A tagKnowledge throw (provider down / missing seed root) must NEVER auto-enroll.
       tagKnowledgeFn: async () => {
@@ -506,17 +506,17 @@ describe('runAutoEnrollForSession', () => {
       return { kind: 'propose', knowledge_ids: [childId], kc_name: kcName };
     };
 
-  // Seed a THIN tree: only the wenyan subject-root seed node (id seed:wenyan:root,
-  // domain 'wenyan'), plus one ingestion session + one draft block. No concept KCs — the
+  // Seed a THIN tree: only the yuwen subject-root seed node (id seed:yuwen:root,
+  // domain 'yuwen'), plus one ingestion session + one draft block. No concept KCs — the
   // tagKnowledge stub PROPOSEs a child under the root.
   async function seedThinTree(
     db: ReturnType<typeof testDb>,
   ): Promise<{ sessionId: string; blockId: string }> {
     const now = new Date();
     await db.insert(knowledge).values({
-      id: 'seed:wenyan:root',
+      id: 'seed:yuwen:root',
       name: '文言文',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: null,
       proposed_by_ai: false,
@@ -582,7 +582,7 @@ describe('runAutoEnrollForSession', () => {
       runColdStartBridgeFn: async () => ({
         text: JSON.stringify({
           reasoning: '',
-          subject_id: 'wenyan',
+          subject_id: 'yuwen',
           kc_name: '《论语》句子翻译',
           reference_md: '',
         }),
@@ -597,11 +597,11 @@ describe('runAutoEnrollForSession', () => {
     expect(result.enrolled).toBe(1);
     expect(result.routed_to_review).toBe(0);
     // The bridge-classified root was used — NOT seed:undefined:root.
-    expect(tagRootSeen).toBe('seed:wenyan:root');
+    expect(tagRootSeen).toBe('seed:yuwen:root');
     const children = await db
       .select()
       .from(knowledge)
-      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+      .where(eq(knowledge.parent_id, 'seed:yuwen:root'));
     expect(children).toHaveLength(1);
     expect(children[0].name).toBe('《论语》句子翻译');
   });
@@ -613,7 +613,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: proposeChildKc('《论语》句子翻译'),
     });
@@ -626,7 +626,7 @@ describe('runAutoEnrollForSession', () => {
     const children = await db
       .select()
       .from(knowledge)
-      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+      .where(eq(knowledge.parent_id, 'seed:yuwen:root'));
     expect(children).toHaveLength(1);
     const newKc = children[0];
     expect(newKc.name).toBe('《论语》句子翻译');
@@ -680,14 +680,14 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: proposeChildKc('《论语》句子翻译'),
     });
     expect(result.enrolled).toBe(1);
 
     const kcCount = (
-      await db.select().from(knowledge).where(eq(knowledge.parent_id, 'seed:wenyan:root'))
+      await db.select().from(knowledge).where(eq(knowledge.parent_id, 'seed:yuwen:root'))
     ).length;
     expect(kcCount).toBe(1);
 
@@ -708,12 +708,12 @@ describe('runAutoEnrollForSession', () => {
   // new KC minted, NO audit event.
   it('tagKnowledge MATCH: attributes the existing KC, mints nothing', async () => {
     const db = testDb();
-    const { sessionId } = await seed(db); // seeds k1 (domain wenyan)
+    const { sessionId } = await seed(db); // seeds k1 (domain yuwen)
 
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
@@ -740,7 +740,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: async () => {
         throw new Error('tagKnowledge: missing seed root / provider down');
@@ -754,7 +754,7 @@ describe('runAutoEnrollForSession', () => {
     const children = await db
       .select()
       .from(knowledge)
-      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+      .where(eq(knowledge.parent_id, 'seed:yuwen:root'));
     expect(children).toHaveLength(0);
     expect(await db.select().from(question)).toHaveLength(0);
     const blocks = await db.select().from(question_block).where(eq(question_block.id, blockId));
@@ -771,7 +771,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: {}, // enroll OFF, observe ON (default) — must NOT run tagKnowledge / mutate
       runTaggingFn: highConfidenceTagging,
       tagKnowledgeFn: async (deps, input) => {
@@ -787,7 +787,7 @@ describe('runAutoEnrollForSession', () => {
     const children = await db
       .select()
       .from(knowledge)
-      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+      .where(eq(knowledge.parent_id, 'seed:yuwen:root'));
     expect(children).toHaveLength(0);
     expect(await db.select().from(question)).toHaveLength(0);
   });
@@ -798,12 +798,12 @@ describe('runAutoEnrollForSession', () => {
   // model runs) to exercise the actual cache threading, not a hand-rolled stub.
   it('batch cache: sibling blocks proposing the same KC reuse one minted id (one KC, not two)', async () => {
     const db = testDb();
-    // Thin tree with seed:wenyan:root + TWO draft blocks.
+    // Thin tree with seed:yuwen:root + TWO draft blocks.
     const now = new Date();
     await db.insert(knowledge).values({
-      id: 'seed:wenyan:root',
+      id: 'seed:yuwen:root',
       name: '文言文',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: null,
       proposed_by_ai: false,
@@ -869,7 +869,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn,
     });
@@ -880,7 +880,7 @@ describe('runAutoEnrollForSession', () => {
     const children = await db
       .select()
       .from(knowledge)
-      .where(eq(knowledge.parent_id, 'seed:wenyan:root'));
+      .where(eq(knowledge.parent_id, 'seed:yuwen:root'));
     expect(children).toHaveLength(1);
     // Both questions attribute to that same single KC.
     const questions = await db.select().from(question);
@@ -1191,7 +1191,7 @@ describe('runAutoEnrollForSession', () => {
     await runAutoEnrollForSession({
       db: dbObserve,
       sessionId: observeSeed.sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: {},
       runTaggingFn: highConfidenceTagging,
     });
@@ -1213,7 +1213,7 @@ describe('runAutoEnrollForSession', () => {
     await runAutoEnrollForSession({
       db: dbEnroll,
       sessionId: enrollSeed.sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
     });
@@ -1241,7 +1241,7 @@ describe('runAutoEnrollForSession', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       runTaggingFn: highConfidenceTagging,
     });
@@ -1309,7 +1309,7 @@ async function seedAnswered(
   await db.insert(knowledge).values({
     id: 'k1',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,
@@ -1391,7 +1391,7 @@ describe('runAutoEnrollForSession — MistakeEnroll draft (A1)', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: {},
       runTaggingFn: highConfidenceTagging,
       runMistakeEnrollFn,
@@ -1528,7 +1528,7 @@ describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       runMistakeEnrollFn,
@@ -1576,7 +1576,7 @@ describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
     await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       runMistakeEnrollFn,
@@ -1599,7 +1599,7 @@ describe('runAutoEnrollForSession — A2 answered enroll (flag ON)', () => {
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       runMistakeEnrollFn,
@@ -1650,7 +1650,7 @@ async function seedStudentWork(
   await db.insert(knowledge).values({
     id: 'k1',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,
@@ -1708,7 +1708,7 @@ async function seedGlmFallbackNoHandwriting(
   await db.insert(knowledge).values({
     id: 'k1',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,
@@ -1789,7 +1789,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true' }, // GRADE_FLAG unset → grading OFF
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
@@ -1823,7 +1823,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
@@ -1889,7 +1889,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
@@ -1924,7 +1924,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
@@ -1957,7 +1957,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
@@ -1984,7 +1984,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,
@@ -2004,7 +2004,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
   //
   // The defect this catches that the stub-only suite can't: the prior code routed
   // through createDefaultJudgeInvoker().invoke() → resolveQuestionJudgeRoute, which
-  // for a wenyan short_answer block (general profile, no multimodal_direct in
+  // for a yuwen short_answer block (general profile, no multimodal_direct in
   // preferredRoutes) resolves to `semantic` — a TEXT route that ignores
   // student_image_refs and judges an empty answer_md. The vision judge would never
   // see the handwriting. This test FAILS against that code (the stubbed
@@ -2058,9 +2058,9 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      // Deliberately NOT 'physics': wenyan would resolve to `semantic` via the
+      // Deliberately NOT 'physics': yuwen would resolve to `semantic` via the
       // invoker — proving the direct call ignores preferredRoutes.
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       // NO gradeStudentAnswerFn → the production defaultGradeStudentAnswer runs.
@@ -2112,7 +2112,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     await db.insert(knowledge).values({
       id: 'k1',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: null,
       created_at: now,
@@ -2172,7 +2172,7 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [FLAG]: 'true', [GRADE_FLAG]: 'true' },
       tagKnowledgeFn: matchK1,
       gradeStudentAnswerFn,

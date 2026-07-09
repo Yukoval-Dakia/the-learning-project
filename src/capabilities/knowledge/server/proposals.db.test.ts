@@ -56,7 +56,7 @@ async function insertKnowledge(opts: {
   await db.insert(knowledge).values({
     id: opts.id,
     name: opts.name ?? opts.id,
-    domain: opts.domain !== undefined ? opts.domain : 'wenyan',
+    domain: opts.domain !== undefined ? opts.domain : 'yuwen',
     parent_id: opts.parent_id ?? null,
     merged_from: opts.merged_from ?? [],
     proposed_by_ai: false,
@@ -136,7 +136,7 @@ describe('writeKnowledgeProposeEvent', () => {
       payload: {
         mutation: 'propose_new',
         name: '通假字',
-        parent_id: 'seed:wenyan:shici',
+        parent_id: 'seed:yuwen:shici',
       },
       reasoning: '看 mistake 涉及通假字',
     });
@@ -181,17 +181,17 @@ describe('applyProposeNew', () => {
 
   it('inserts a new knowledge row with proposed_by_ai=true', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
     const newId_ = await applyProposeNew(db, {
       mutation: 'propose_new',
       name: '通假字',
-      parent_id: 'seed:wenyan:shici',
+      parent_id: 'seed:yuwen:shici',
     });
     expect(newId_).toMatch(/^[a-z0-9]+$/);
     const rows = await db.select().from(knowledge).where(eq(knowledge.id, newId_));
     expect(rows[0]?.name).toBe('通假字');
     expect(rows[0]?.domain).toBeNull();
-    expect(rows[0]?.parent_id).toBe('seed:wenyan:shici');
+    expect(rows[0]?.parent_id).toBe('seed:yuwen:shici');
     expect(rows[0]?.proposed_by_ai).toBe(true);
   });
 
@@ -217,13 +217,13 @@ describe('acceptProposal (propose_new only)', () => {
 
   it('accepts pending propose_new event: inserts knowledge + writes rate=accept event', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p1',
       payload: {
         mutation: 'propose_new',
         name: '通假字',
-        parent_id: 'seed:wenyan:shici',
+        parent_id: 'seed:yuwen:shici',
       },
     });
     const result = await acceptProposal(db, 'p1');
@@ -312,8 +312,8 @@ describe('applyReparent', () => {
 
   it('moves a child node to a new parent (happy path)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_oldparent', domain: 'wenyan' });
-    await insertKnowledge({ id: 'k_newparent', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
+    await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
     await applyReparent(db, {
       mutation: 'reparent',
@@ -356,7 +356,7 @@ describe('applyReparent', () => {
 
   it('throws stale error when version mismatch (changes=0)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_newparent', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_newparent', version: 5 });
     await expect(
       applyReparent(db, {
@@ -410,8 +410,8 @@ describe('applySplit', () => {
 
   it('archives from + inserts N new children (happy path)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_p1', domain: 'wenyan' });
-    await insertKnowledge({ id: 'k_p2', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_p1', domain: 'yuwen' });
+    await insertKnowledge({ id: 'k_p2', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_p1', version: 7 });
     const newIds = await applySplit(db, {
       mutation: 'split',
@@ -447,7 +447,7 @@ describe('applySplit', () => {
 
   it('throws stale when archive UPDATE returns 0 changes', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_p1', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_p1', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_p1', version: 7 });
     await expect(
       applySplit(db, {
@@ -467,9 +467,9 @@ describe('applyMerge', () => {
 
   it('archives all from_ids + pushes to into.merged_from (happy path)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_into', domain: 'wenyan', version: 1, merged_from: [] });
-    await insertKnowledge({ id: 'k_from1', domain: 'wenyan', version: 2 });
-    await insertKnowledge({ id: 'k_from2', domain: 'wenyan', version: 4 });
+    await insertKnowledge({ id: 'k_into', domain: 'yuwen', version: 1, merged_from: [] });
+    await insertKnowledge({ id: 'k_from1', domain: 'yuwen', version: 2 });
+    await insertKnowledge({ id: 'k_from2', domain: 'yuwen', version: 4 });
     await applyMerge(db, {
       mutation: 'merge',
       from_ids: ['k_from1', 'k_from2'],
@@ -515,8 +515,8 @@ describe('applyMerge', () => {
 
   it('throws stale when any archive UPDATE returns 0 changes', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_into', domain: 'wenyan', version: 1 });
-    await insertKnowledge({ id: 'k_from1', domain: 'wenyan', version: 2 });
+    await insertKnowledge({ id: 'k_into', domain: 'yuwen', version: 1 });
+    await insertKnowledge({ id: 'k_from1', domain: 'yuwen', version: 2 });
     await expect(
       applyMerge(db, {
         mutation: 'merge',
@@ -529,7 +529,7 @@ describe('applyMerge', () => {
 
   it('reports into_id missing as stale (not the from_id)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_from1', domain: 'wenyan', version: 2 });
+    await insertKnowledge({ id: 'k_from1', domain: 'yuwen', version: 2 });
     await expect(
       applyMerge(db, {
         mutation: 'merge',
@@ -798,7 +798,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     const kRow = (id: string) => ({
       id,
       name: id,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -1041,8 +1041,8 @@ describe('acceptProposal — high-tier mutations', () => {
 
   it('dispatches reparent and returns reparent_applied result', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_oldparent', domain: 'wenyan' });
-    await insertKnowledge({ id: 'k_newparent', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
+    await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
     await insertProposeEvent({
       id: 'p_reparent',
@@ -1145,13 +1145,13 @@ describe('acceptProposal — high-tier mutations', () => {
   // propose event row, otherwise both callers pass the pre-check and apply.
   it('concurrent double-accept: exactly one apply succeeds', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_concurrent',
       payload: {
         mutation: 'propose_new',
         name: '通假字',
-        parent_id: 'seed:wenyan:shici',
+        parent_id: 'seed:yuwen:shici',
       },
     });
 
@@ -1202,10 +1202,10 @@ describe('acceptProposal — PR-A2b projection parity', () => {
 
   it('propose_new accept: rate carries materialized_ids, index row written, fold == row', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:shici', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_a2b_new',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:shici' },
+      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:shici' },
     });
 
     const result = await acceptProposal(db, 'p_a2b_new');
@@ -1244,8 +1244,8 @@ describe('acceptProposal — PR-A2b projection parity', () => {
 
   it('split accept: N minted ids in materialized_ids + index; fold == row for each new node', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_p1', domain: 'wenyan' });
-    await insertKnowledge({ id: 'k_p2', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_p1', domain: 'yuwen' });
+    await insertKnowledge({ id: 'k_p2', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_p1', version: 7 });
     // split subject_id convention = from_id (mutationSubjectId proposals.ts:30-42)
     await insertProposeEvent({
@@ -1303,8 +1303,8 @@ describe('acceptProposal — PR-A2b projection parity', () => {
     const db = testDb();
     // Seed the node via a propose_new accept so its genesis lives in the event log
     // (gatherAndFoldKnowledgeNode reconstructs from events, not from a bare INSERT).
-    await insertKnowledge({ id: 'k_oldparent', domain: 'wenyan' });
-    await insertKnowledge({ id: 'k_newparent', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
+    await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_seed_node',
       payload: { mutation: 'propose_new', name: 'movable', parent_id: 'k_oldparent' },
@@ -1347,7 +1347,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
 
   it('archive accept: no materialized_ids; fold == row with archived_at from accept-time', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'k_arch_parent', domain: 'wenyan' });
+    await insertKnowledge({ id: 'k_arch_parent', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_seed_arch',
       payload: { mutation: 'propose_new', name: 'doomed', parent_id: 'k_arch_parent' },
@@ -1425,10 +1425,10 @@ describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)',
 
   it('flag OFF (default): imperative INSERT writes the row; A2b fold==row holds', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'pb1_off',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:p' },
+      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:p' },
     });
     const result = await acceptProposal(db, 'pb1_off');
     if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
@@ -1441,10 +1441,10 @@ describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)',
   it('flag ON: the projection writes the row (imperative INSERT skipped) — row exists and equals its fold', async () => {
     vi.stubEnv('PROJECTION_IS_WRITER', '1');
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'pb1_on',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:p' },
+      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:p' },
     });
     const result = await acceptProposal(db, 'pb1_on');
     if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
@@ -1460,10 +1460,10 @@ describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)',
   it('flag ON vs OFF: the projected row is structurally identical to the imperative row', async () => {
     const db = testDb();
     // OFF run
-    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'pb1_cmp_off',
-      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:wenyan:p' },
+      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:yuwen:p' },
     });
     const off = await acceptProposal(db, 'pb1_cmp_off');
     if (off.kind !== 'propose_new_applied') throw new Error('unexpected kind');
@@ -1473,10 +1473,10 @@ describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)',
 
     // ON run (fresh DB, same shape)
     vi.stubEnv('PROJECTION_IS_WRITER', '1');
-    await insertKnowledge({ id: 'seed:wenyan:p', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'pb1_cmp_on',
-      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:wenyan:p' },
+      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:yuwen:p' },
     });
     const on = await acceptProposal(db, 'pb1_cmp_on');
     if (on.kind !== 'propose_new_applied') throw new Error('unexpected kind');
@@ -1509,8 +1509,8 @@ describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutatio
   it('flag ON: merge into a SEED ROOT (no events / no anchor) leaves BOTH rows surviving — guard skips the delete', async () => {
     const db = testDb();
     // Seed root + a from node, BOTH inserted directly with NO events (pre-event-sourced).
-    await insertKnowledge({ id: 'seed_root', domain: 'wenyan', version: 0, merged_from: [] });
-    await insertKnowledge({ id: 'k_from_seed', domain: 'wenyan', version: 0 });
+    await insertKnowledge({ id: 'seed_root', domain: 'yuwen', version: 0, merged_from: [] });
+    await insertKnowledge({ id: 'k_from_seed', domain: 'yuwen', version: 0 });
     await insertProposeEvent({
       id: 'p_merge_seed',
       subject_id: 'seed_root',
@@ -1544,8 +1544,8 @@ describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutatio
     async function run(flip: boolean) {
       await resetDb();
       const db = testDb();
-      await insertKnowledge({ id: 'rp_oldp', domain: 'wenyan' });
-      await insertKnowledge({ id: 'rp_newp', domain: 'wenyan' });
+      await insertKnowledge({ id: 'rp_oldp', domain: 'yuwen' });
+      await insertKnowledge({ id: 'rp_newp', domain: 'yuwen' });
       await insertProposeEvent({
         id: 'p_seed_rp',
         payload: { mutation: 'propose_new', name: 'movable', parent_id: 'rp_oldp' },

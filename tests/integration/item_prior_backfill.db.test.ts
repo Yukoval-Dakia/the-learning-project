@@ -24,7 +24,7 @@ async function seedKnowledge(id: string) {
   const now = new Date();
   await db
     .insert(knowledge)
-    .values({ id, name: `K-${id}`, domain: 'wenyan', created_at: now, updated_at: now, version: 0 })
+    .values({ id, name: `K-${id}`, domain: 'yuwen', created_at: now, updated_at: now, version: 0 })
     .onConflictDoNothing();
 }
 

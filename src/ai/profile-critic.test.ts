@@ -1,5 +1,5 @@
 import { physicsProfile } from '@/subjects/physics/profile';
-import { wenyanProfile } from '@/subjects/wenyan/profile';
+import { yuwenProfile } from '@/subjects/yuwen/profile';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tasks } from './registry';
 import { getTaskSystemPrompt } from './task-prompts';
@@ -48,7 +48,7 @@ describe('ProfileCriticTask registry entry', () => {
 
 describe('ProfileCriticTask prompt (subject-neutral pass-through, Q3)', () => {
   it('returns the SAME system prompt regardless of profile', () => {
-    const a = getTaskSystemPrompt('ProfileCriticTask', wenyanProfile);
+    const a = getTaskSystemPrompt('ProfileCriticTask', yuwenProfile);
     const b = getTaskSystemPrompt('ProfileCriticTask', physicsProfile);
     expect(a).toBe(b);
     // The pass-through returns the registry-inline systemPrompt verbatim (the SoT).

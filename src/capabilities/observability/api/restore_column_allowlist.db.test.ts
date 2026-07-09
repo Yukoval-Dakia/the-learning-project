@@ -74,7 +74,7 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
     await db.insert(knowledge).values({
       id: 'sentinel',
       name: '不能被删',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       archived_at: null,
@@ -116,7 +116,7 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
     await db.insert(knowledge).values({
       id: 'sentinel2',
       name: '也不能被删',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       archived_at: null,
@@ -148,7 +148,7 @@ describe('restore column allowlist (YUK-136) — wipe is gated on schema validat
     await db.insert(knowledge).values({
       id: 'k1',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       archived_at: null,

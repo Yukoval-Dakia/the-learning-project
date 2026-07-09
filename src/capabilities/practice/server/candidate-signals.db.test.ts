@@ -135,7 +135,7 @@ async function seedCalibration(questionId: string, b: number): Promise<void> {
 }
 
 // Seed a knowledge node with an explicit domain (for family_key subject derivation).
-async function seedKnowledge(id: string, domain = 'wenyan'): Promise<void> {
+async function seedKnowledge(id: string, domain = 'yuwen'): Promise<void> {
   const now = new Date();
   await db.insert(knowledge).values({
     id,
@@ -673,11 +673,11 @@ describe('collectCandidateSignals — batch', () => {
 describe('collectCandidateSignals — family b_delta composition (YUK-372 L3)', () => {
   it('gate-passed family (b_delta≠0) shifts b by the delta and moves mfiScore', async () => {
     const kid = 'kc-fam';
-    await seedKnowledge(kid, 'wenyan');
+    await seedKnowledge(kid, 'yuwen');
     await seedMastery(kid, 0.0, 4);
     await seedCalibration('q-fam', 0.85); // columnar b = 0.85
-    // family_key = `${subject=wenyan}:${kid}:${kind=short_answer}:${source=manual}`.
-    const familyKey = `wenyan:${kid}:short_answer:manual`;
+    // family_key = `${subject=yuwen}:${kid}:${kind=short_answer}:${source=manual}`.
+    const familyKey = `yuwen:${kid}:short_answer:manual`;
     const bDelta = 0.5;
     await seedFamilyCalibration(familyKey, bDelta);
 
@@ -703,7 +703,7 @@ describe('collectCandidateSignals — family b_delta composition (YUK-372 L3)', 
 
   it('NO-OP regression: no family row → b + mfiScore bit-identical to no-source baseline', async () => {
     const kid = 'kc-noop';
-    await seedKnowledge(kid, 'wenyan');
+    await seedKnowledge(kid, 'yuwen');
     await seedMastery(kid, 0.0, 4);
     await seedCalibration('q-noop', 0.85);
     // NO item_family_calibration row for this family.
@@ -758,17 +758,17 @@ describe('collectCandidateSignals — family b_delta composition (YUK-372 L3)', 
       },
     ]);
 
-    // The 'unknown'-keyed family delta applied → proves orphan resolves to 'unknown', not 'wenyan'.
+    // The 'unknown'-keyed family delta applied → proves orphan resolves to 'unknown', not 'yuwen'.
     expect(sig.b).toBeCloseTo(0.85 + 0.4, 10);
   });
 
   it('batch preserves input order with family-keyed candidates + source-missing falls back to pure effectiveB', async () => {
     const kid = 'kc-mix';
-    await seedKnowledge(kid, 'wenyan');
+    await seedKnowledge(kid, 'yuwen');
     await seedMastery(kid, 0.0, 4);
     await seedCalibration('q-fam2', 0.85);
     await seedCalibration('q-plain', 0.85);
-    await seedFamilyCalibration(`wenyan:${kid}:short_answer:manual`, 0.5);
+    await seedFamilyCalibration(`yuwen:${kid}:short_answer:manual`, 0.5);
 
     const sigs = await collectCandidateSignals(db, [
       {
@@ -1269,12 +1269,12 @@ describe('A4 grid→KLP selection wiring (YUK-436, THETA_GRID_ENABLED)', () => {
     // against a sign/translation error in the restore reaching klpScoreFromGrid.
     gridFlag.value = true;
     const grid = shapedPosterior();
-    await seedKnowledge('kc-grid-global', 'wenyan'); // resolvable domain for getEffectiveDomain
+    await seedKnowledge('kc-grid-global', 'yuwen'); // resolvable domain for getEffectiveDomain
     const now = new Date();
     await db.insert(mastery_state).values({
       id: newId(),
-      subject_kind: 'ability_global', // θ_global anchor row for domain 'wenyan'
-      subject_id: 'wenyan',
+      subject_kind: 'ability_global', // θ_global anchor row for domain 'yuwen'
+      subject_id: 'yuwen',
       theta_hat: 0.7,
       evidence_count: 5,
       success_count: 4,

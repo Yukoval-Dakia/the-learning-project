@@ -28,7 +28,7 @@ function frontier(
 ): FrontierKnowledgeInput {
   return {
     knowledgeId,
-    subjectId: 'wenyan',
+    subjectId: 'yuwen',
     thetaHat: 0,
     thetaPrecision: 1,
     evidenceCount: 0,
@@ -414,8 +414,8 @@ describe('seedGenerationMethod — preserve material vs closed_book distinction'
       emptyScan({
         frontier: [frontier('k-new')],
         questions: [],
-        routePreferenceBySubject: { wenyan: ['quiz_gen', 'sourcing_web'] },
-        generationMethodBySubject: { wenyan: 'closed_book' },
+        routePreferenceBySubject: { yuwen: ['quiz_gen', 'sourcing_web'] },
+        generationMethodBySubject: { yuwen: 'closed_book' },
       }),
       seqIds(),
     );
@@ -427,8 +427,8 @@ describe('seedGenerationMethod — preserve material vs closed_book distinction'
       emptyScan({
         frontier: [frontier('k-new')],
         questions: [],
-        routePreferenceBySubject: { wenyan: ['sourcing_web'] },
-        generationMethodBySubject: { wenyan: 'material_grounded' },
+        routePreferenceBySubject: { yuwen: ['sourcing_web'] },
+        generationMethodBySubject: { yuwen: 'material_grounded' },
       }),
       seqIds(),
     );
@@ -496,7 +496,7 @@ function target(overrides: Partial<QuestionSupplyTarget> = {}): QuestionSupplyTa
     id: 't',
     fingerprint: 'fp',
     gapKind: 'frontier_zero',
-    subjectId: 'wenyan',
+    subjectId: 'yuwen',
     knowledgeIds: ['k1'],
     kind: 'any',
     difficultyBand: 'near',

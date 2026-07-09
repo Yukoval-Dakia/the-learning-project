@@ -17,7 +17,7 @@ const db = testDb();
 
 beforeEach(() => resetDb());
 
-async function seedKnowledge(id: string, domain = 'wenyan'): Promise<void> {
+async function seedKnowledge(id: string, domain = 'yuwen'): Promise<void> {
   const now = new Date();
   await db.insert(knowledge).values({
     id,

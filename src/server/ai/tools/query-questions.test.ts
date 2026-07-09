@@ -22,7 +22,7 @@ function ctx(): ToolContext {
 async function seed(): Promise<void> {
   const db = testDb();
   await db.insert(knowledge).values([
-    { id: 'k_root', name: '文言文', domain: 'wenyan', created_at: BASE, updated_at: BASE },
+    { id: 'k_root', name: '文言文', domain: 'yuwen', created_at: BASE, updated_at: BASE },
     {
       id: 'k_zhi',
       name: '之的用法',
@@ -118,7 +118,7 @@ describe('query_questions DomainTool (ADR-0032 D9)', () => {
 
   it('resolves a subject filter through the derived knowledge axis', async () => {
     await seed();
-    const out = await queryQuestionsTool.execute(ctx(), { subject: 'wenyan' });
+    const out = await queryQuestionsTool.execute(ctx(), { subject: 'yuwen' });
     expect(out.total).toBe(3);
     const none = await queryQuestionsTool.execute(ctx(), { subject: 'math' });
     expect(none.total).toBe(0);

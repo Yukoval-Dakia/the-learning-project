@@ -17,7 +17,7 @@ async function seedAtomic(opts: {
     await db.insert(knowledge).values({
       id: opts.knowledgeId,
       name: '之',
-      domain: opts.domain ?? 'wenyan',
+      domain: opts.domain ?? 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -203,7 +203,7 @@ describe('runNoteGenerate', () => {
     };
     expect(ctx.subjectProfile?.id).toBe('math');
     // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
-    // math has a note skill → ['note-math']; wenyan also has one (default domain).
+    // math has a note skill → ['note-math']; yuwen also has one (default domain).
     expect(ctx.skills).toEqual(['note-math']);
   });
 

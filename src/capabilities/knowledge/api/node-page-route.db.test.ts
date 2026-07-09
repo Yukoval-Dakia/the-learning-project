@@ -9,7 +9,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './node-page-route';
 
 const K_BASE = {
-  domain: 'wenyan' as const,
+  domain: 'yuwen' as const,
   parent_id: null as null,
   merged_from: [] as string[],
   proposed_by_ai: false,

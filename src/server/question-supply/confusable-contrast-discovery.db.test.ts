@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '../../../tests/helpers/db';
 import { discoverConfusableContrastTargets } from './confusable-contrast-discovery';
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
   await db
     .insert(knowledge)
@@ -94,7 +94,7 @@ describe('discoverConfusableContrastTargets (YUK-533)', () => {
     expect(t.gapKind).toBe('confusable_contrast');
     expect(t.knowledgeIds).toEqual(['kc_a', 'kc_b']); // canonical sorted pair
     expect(t.kind).toBe('choice');
-    expect(t.subjectId).toBe('wenyan');
+    expect(t.subjectId).toBe('yuwen');
     expect(t.minSourceTier).toBe(3);
     expect(t.routePreference).toEqual(['quiz_gen']);
     expect(t.desiredCount).toBe(1);

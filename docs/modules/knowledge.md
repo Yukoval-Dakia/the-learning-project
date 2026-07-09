@@ -14,8 +14,8 @@
 
 | 设计概念 | 现状 | 备注 |
 |---|---|---|
-| `knowledge` 表 + `parent_id` tree backbone | ✅ | root 节点带 `domain='wenyan'`；子节点继承 effective domain |
-| Wenyan seed | ✅ | `src/subjects/wenyan/curriculum.json` 目前 7 个顶层 cluster：实词 / 虚词 / 句式 / 断句 / 翻译 / 文学常识 / 论述题 |
+| `knowledge` 表 + `parent_id` tree backbone | ✅ | root 节点带 `domain='yuwen'`；子节点继承 effective domain |
+| Yuwen seed | ✅ | `src/subjects/yuwen/curriculum.json` 目前 7 个顶层 cluster：实词 / 虚词 / 句式 / 断句 / 翻译 / 文学常识 / 论述题 |
 | `knowledge_edge` typed mesh | ✅ | 5 个核心 relation type + `experimental:*`；唯一约束 `(from,to,type)` |
 | `knowledge_edge` 单一写入点 | ✅ | `src/server/knowledge/edges.ts` |
 | edge propose event | ✅ | `event(action='propose', subject_kind='knowledge_edge')` |
@@ -44,7 +44,7 @@
 
 `knowledge_edge` 是横向语义，不是目录结构。
 
-| relation_type | 通用语义 | Wenyan 例子 | agent 注意事项 |
+| relation_type | 通用语义 | Yuwen 例子 | agent 注意事项 |
 |---|---|---|---|
 | `prerequisite` | from 是 to 的前置 | 实词词义 → 翻译 | 需要学习顺序证据；不能只因为两个节点同名相近 |
 | `related_to` | 弱关联 | 断句 ↔ 翻译 | 低风险但价值也低；避免泛滥 |
@@ -149,7 +149,7 @@ Seed 输入：
 
 Seed 输出直接 active，但带 `source='ai_seed'` 和 revision event。后续 enrichment 可以覆盖 reading hints，但不能自动改 graph。
 
-### 2.5 Wenyan guide v1
+### 2.5 Yuwen guide v1
 
 | root cluster | role | reading hint |
 |---|---|---|
@@ -164,7 +164,7 @@ Seed 输出直接 active，但带 `source='ai_seed'` 和 revision event。后续
 Subject-level reading hint:
 
 ```text
-Wenyan graph has concept families (实词/虚词/句式/文学常识), methods (断句), applications (翻译), and assessment outputs (论述题).
+Yuwen graph has concept families (实词/虚词/句式/文学常识), methods (断句), applications (翻译), and assessment outputs (论述题).
 Tree parent_id means taxonomy. Mesh edges mean learning relation or observed confusion.
 Do not propose root-level nodes in Phase 1. Prefer narrow child nodes under existing roots.
 ```
@@ -195,7 +195,7 @@ Do not propose root-level nodes in Phase 1. Prefer narrow child nodes under exis
 
 这份 guide 可自动 active；真正的 `knowledge_edge` 仍要根据后续 evidence 走 proposal。
 
-### 2.7 Relation hints for wenyan
+### 2.7 Relation hints for yuwen
 
 `prerequisite`:
 
@@ -422,9 +422,9 @@ Before implementing graph reader tools, create fixed fixtures that force useful 
 
 | fixture | question | expected tool behavior |
 |---|---|---|
-| `wenyan-zhi-confusion` | 我为什么老错“之”？ | `query_knowledge` returns `之` children, recent failures, and `contrasts_with` candidates |
-| `wenyan-translation-prereq` | 翻译总错，是不是实词问题？ | `expand_knowledge_subgraph` shows `实词/句式/虚词 → 翻译` candidate paths |
-| `wenyan-zero-result` | 最近有没有“焉”的错题？ | read tool returns 0 result as a legitimate empty success (P5.6 semantics; no corrective suggestions field) |
+| `yuwen-zhi-confusion` | 我为什么老错“之”？ | `query_knowledge` returns `之` children, recent failures, and `contrasts_with` candidates |
+| `yuwen-translation-prereq` | 翻译总错，是不是实词问题？ | `expand_knowledge_subgraph` shows `实词/句式/虚词 → 翻译` candidate paths |
+| `yuwen-zero-result` | 最近有没有“焉”的错题？ | read tool returns 0 result as a legitimate empty success (P5.6 semantics; no corrective suggestions field) |
 | `edge-duplicate` | propose existing edge | proposal writer rejects duplicate live/pending edge |
 
 These fixtures test whether the agent can understand context, not just whether SQL returns rows.
@@ -432,9 +432,9 @@ These fixtures test whether the agent can understand context, not just whether S
 > **Executable form (P5.5 Phase 1 / YUK-180).** All four fixtures above are gated
 > as code in `src/server/ai/tools/fixtures.test.ts` via the reusable
 > `assertAgentReadable` contract (`src/server/ai/tools/fixtures-assert.ts`), each
-> at its §5-named tool surface: `wenyan-zhi-confusion` → `query_knowledge`
-> (scenario v), `wenyan-translation-prereq` → `expand_knowledge_subgraph`
-> (scenario vi), `wenyan-zero-result` → a knowledge-filtered `query_mistakes`
+> at its §5-named tool surface: `yuwen-zhi-confusion` → `query_knowledge`
+> (scenario v), `yuwen-translation-prereq` → `expand_knowledge_subgraph`
+> (scenario vi), `yuwen-zero-result` → a knowledge-filtered `query_mistakes`
 > (scenario ii), `edge-duplicate` → `propose_knowledge_edge` ×2 (scenario iii).
 > The same test file ALSO gates two ADDITIONAL multi-tool Layer-8 chains beyond
 > these four rows — the `query_mistakes → get_attempt_context → attribute_mistake

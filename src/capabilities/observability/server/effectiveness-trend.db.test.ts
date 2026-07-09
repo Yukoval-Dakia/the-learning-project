@@ -18,7 +18,7 @@ async function seedKc(
   await db.insert(knowledge).values({
     id,
     name,
-    domain: opts.domain === undefined ? 'wenyan' : opts.domain,
+    domain: opts.domain === undefined ? 'yuwen' : opts.domain,
     parent_id: opts.parent_id ?? null,
     merged_from: [],
     archived_at: null,
@@ -93,7 +93,7 @@ describe('loadEffectivenessTrend read model', () => {
   });
 
   it('builds a per-KC ascending time series with name + effective_domain', async () => {
-    await seedKc('k_rise', '宾语前置', { domain: 'wenyan' });
+    await seedKc('k_rise', '宾语前置', { domain: 'yuwen' });
     // seed out of chronological order to prove the read model sorts by created_at
     await seedMasteryProgress({
       knowledge_id: 'k_rise',
@@ -115,7 +115,7 @@ describe('loadEffectivenessTrend read model', () => {
     const s = series[0];
     expect(s.knowledge_id).toBe('k_rise');
     expect(s.name).toBe('宾语前置');
-    expect(s.effective_domain).toBe('wenyan');
+    expect(s.effective_domain).toBe('yuwen');
     expect(s.activity_count).toBe(2);
     // ascending by created_at
     expect(s.points.map((p) => p.theta_hat)).toEqual([-0.1, 0.3]);
@@ -123,9 +123,9 @@ describe('loadEffectivenessTrend read model', () => {
   });
 
   it('classifies rising / holding / falling per KC from the trajectory', async () => {
-    await seedKc('k_up', '上升', { domain: 'wenyan' });
-    await seedKc('k_flat', '持平', { domain: 'wenyan' });
-    await seedKc('k_down', '退步', { domain: 'wenyan' });
+    await seedKc('k_up', '上升', { domain: 'yuwen' });
+    await seedKc('k_flat', '持平', { domain: 'yuwen' });
+    await seedKc('k_down', '退步', { domain: 'yuwen' });
     await seedTrajectory('k_up', [-0.4, -0.2, 0.0, 0.3, 0.6, 0.9, 1.2, 1.5]);
     await seedTrajectory('k_flat', [0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42]);
     await seedTrajectory('k_down', [1.5, 1.2, 0.9, 0.6, 0.3, 0.0, -0.3, -0.6]);
@@ -138,7 +138,7 @@ describe('loadEffectivenessTrend read model', () => {
   });
 
   it('marks insufficient + no mastery signal for a single-attempt KC', async () => {
-    await seedKc('k_one', '单次', { domain: 'wenyan' });
+    await seedKc('k_one', '单次', { domain: 'yuwen' });
     await seedMasteryProgress({ knowledge_id: 'k_one', created_at: NOW, theta_hat: 0.2 });
 
     const { series } = await loadEffectivenessTrend(db);
@@ -150,27 +150,27 @@ describe('loadEffectivenessTrend read model', () => {
   });
 
   it('rolls up per-subject along the derived effective_domain axis (inherited from parent)', async () => {
-    // wenyan root + child that inherits domain via parent walk
-    await seedKc('k_root', '文言根', { domain: 'wenyan', parent_id: null });
+    // yuwen root + child that inherits domain via parent walk
+    await seedKc('k_root', '文言根', { domain: 'yuwen', parent_id: null });
     await seedKc('k_child', '子节点', { domain: null, parent_id: 'k_root' });
     // a second subject
     await seedKc('k_math', '代数', { domain: 'math', parent_id: null });
 
     await seedTrajectory('k_root', [-0.4, -0.2, 0.0, 0.3, 0.6, 0.9, 1.2, 1.5]); // rising
-    await seedTrajectory('k_child', [-0.3, -0.1, 0.1, 0.4, 0.7, 1.0, 1.3, 1.6]); // rising, inherits wenyan
+    await seedTrajectory('k_child', [-0.3, -0.1, 0.1, 0.4, 0.7, 1.0, 1.3, 1.6]); // rising, inherits yuwen
     await seedTrajectory('k_math', [0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42, 0.42]); // holding
 
     const { series, aggregate } = await loadEffectivenessTrend(db);
 
-    // child inherits wenyan via parent walk
-    expect(series.find((s) => s.knowledge_id === 'k_child')?.effective_domain).toBe('wenyan');
+    // child inherits yuwen via parent walk
+    expect(series.find((s) => s.knowledge_id === 'k_child')?.effective_domain).toBe('yuwen');
 
     const bySubject = new Map(aggregate.by_subject.map((r) => [r.effective_domain, r]));
-    const wenyan = bySubject.get('wenyan');
-    expect(wenyan?.kc_count).toBe(2);
-    expect(wenyan?.kc_with_mastery_signal).toBe(2);
-    expect(wenyan?.direction).toBe('rising');
-    expect(wenyan?.activity_count).toBe(16);
+    const yuwen = bySubject.get('yuwen');
+    expect(yuwen?.kc_count).toBe(2);
+    expect(yuwen?.kc_with_mastery_signal).toBe(2);
+    expect(yuwen?.direction).toBe('rising');
+    expect(yuwen?.activity_count).toBe(16);
 
     const math = bySubject.get('math');
     expect(math?.kc_count).toBe(1);

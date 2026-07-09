@@ -14,7 +14,7 @@ describe('getEffectiveDomain', () => {
     await db.insert(knowledge).values({
       id: 'k1',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -23,7 +23,7 @@ describe('getEffectiveDomain', () => {
       updated_at: now,
       version: 0,
     });
-    expect(await getEffectiveDomain(db, 'k1')).toBe('wenyan');
+    expect(await getEffectiveDomain(db, 'k1')).toBe('yuwen');
   });
 
   it('walks up parent chain to find first non-null domain', async () => {
@@ -38,11 +38,11 @@ describe('getEffectiveDomain', () => {
       version: 0,
     };
     await db.insert(knowledge).values([
-      { id: 'k_root', name: 'root', domain: 'wenyan', parent_id: null, ...base },
+      { id: 'k_root', name: 'root', domain: 'yuwen', parent_id: null, ...base },
       { id: 'k_mid', name: 'mid', domain: null, parent_id: 'k_root', ...base },
       { id: 'k_leaf', name: 'leaf', domain: null, parent_id: 'k_mid', ...base },
     ]);
-    expect(await getEffectiveDomain(db, 'k_leaf')).toBe('wenyan');
+    expect(await getEffectiveDomain(db, 'k_leaf')).toBe('yuwen');
   });
 
   it('throws if node not found', async () => {

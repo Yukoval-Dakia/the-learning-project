@@ -23,7 +23,7 @@ async function seedQuestion(db: ReturnType<typeof testDb>, knowledgeId: string):
   await db.insert(knowledge).values({
     id: knowledgeId,
     name: `K-${knowledgeId}`,
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,

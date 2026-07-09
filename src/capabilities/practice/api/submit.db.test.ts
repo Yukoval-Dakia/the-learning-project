@@ -278,7 +278,7 @@ describe('POST /api/review/submit', () => {
         .values({
           id,
           name: id,
-          domain: 'wenyan',
+          domain: 'yuwen',
           parent_id: null,
           merged_from: [],
           proposed_by_ai: false,
@@ -663,7 +663,7 @@ describe('POST /api/review/submit', () => {
       expect(body.judge.telemetry.route).toBe('exact');
       expect(body.judge.telemetry.question_id).toBe('q_exact_correct');
       // knowledge_ids:[] → no domain → neutral default subject (general,
-      // post wenyan-deprotagonist — was wenyan).
+      // post yuwen-deprotagonist — was yuwen).
       expect(body.judge.telemetry.subject_id).toBe('general');
 
       const events = await testDb()
@@ -692,7 +692,7 @@ describe('POST /api/review/submit', () => {
     // stream carries it on BOTH the embedded judge block and the telemetry.
     it('D6: review event payload.judge.capability_ref.version == SubjectProfile.version (2.0.0)', async () => {
       vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce({
-        ...resolveSubjectProfile('wenyan'),
+        ...resolveSubjectProfile('yuwen'),
         version: '2.0.0',
       });
       await seedQuestion('q_d6_version', {

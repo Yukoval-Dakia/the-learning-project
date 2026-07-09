@@ -183,24 +183,24 @@ describe('listActiveSubjectsSinceRefresh', () => {
   });
 
   it('flags a subject ACTIVE when a qualifying event is newer than its brief refreshed_at', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
-    await seedBriefRow({ subjectId: 'wenyan', refreshedAt: daysAgo(5) });
-    await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(1) });
+    await seedKnowledge('k-yuwen', 'yuwen');
+    await seedBriefRow({ subjectId: 'yuwen', refreshedAt: daysAgo(5) });
+    await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(1) });
 
     const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
 
     expect(active).toHaveLength(1);
-    expect(active[0].scopeKey).toBe('subject:wenyan');
-    expect(active[0].subjectId).toBe('wenyan');
+    expect(active[0].scopeKey).toBe('subject:yuwen');
+    expect(active[0].subjectId).toBe('yuwen');
     expect(active[0].events).toHaveLength(1);
     expect(active[0].maxCreatedAt.getTime()).toBe(daysAgo(1).getTime());
   });
 
   it('does NOT flag a dormant subject (no activity since last refresh)', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
-    await seedBriefRow({ subjectId: 'wenyan', refreshedAt: daysAgo(1) });
+    await seedKnowledge('k-yuwen', 'yuwen');
+    await seedBriefRow({ subjectId: 'yuwen', refreshedAt: daysAgo(1) });
     // Activity is OLDER than refreshed_at → dormant.
-    await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(5) });
+    await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(5) });
 
     const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
 
@@ -223,7 +223,7 @@ describe('listActiveSubjectsSinceRefresh', () => {
   it('resolution matches batchResolveSubjectIds incl orphan→default fallback', async () => {
     await seedKnowledge('k-math', 'math');
     // Orphan knowledge id (no row) resolves to the neutral default subject
-    // (general, post wenyan-deprotagonist — was wenyan).
+    // (general, post yuwen-deprotagonist — was yuwen).
     const e1 = await insertAttempt({ knowledgeIds: ['k-math'], createdAt: daysAgo(2) });
     const e2 = await insertAttempt({ knowledgeIds: ['k-orphan'], createdAt: daysAgo(3) });
 
@@ -241,8 +241,8 @@ describe('listActiveSubjectsSinceRefresh', () => {
   // FIX 2 (PR #218) — a record_capture carries NO referenced_knowledge_ids in its
   // payload; the subject must be resolved by JOINing the linked learning_record
   // (event.subject_id === record.id) and reading the record's knowledge_ids.
-  // Before the fix it resolved to the DEFAULT subject (wenyan) — a math capture
-  // wrongly refreshed subject:wenyan. After: it resolves to subject:math.
+  // Before the fix it resolved to the DEFAULT subject (yuwen) — a math capture
+  // wrongly refreshed subject:yuwen. After: it resolves to subject:math.
   it('record_capture resolves its subject from the linked record (math), not the default subject', async () => {
     await seedKnowledge('k-math', 'math');
     await insertCapture({ recordKnowledgeIds: ['k-math'], createdAt: daysAgo(2) });
@@ -262,11 +262,11 @@ describe('listActiveSubjectsSinceRefresh', () => {
   });
 
   it('caps each subject event window at maxEventsPerBrief, most recent first', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
+    await seedKnowledge('k-yuwen', 'yuwen');
     const cap = BRIEF_REFRESH_BUDGET.maxEventsPerBrief;
-    // Seed cap + 10 events, all within window, all wenyan.
+    // Seed cap + 10 events, all within window, all yuwen.
     for (let i = 0; i < cap + 10; i += 1) {
-      await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(i % 25) });
+      await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(i % 25) });
     }
 
     const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
@@ -287,18 +287,18 @@ describe('buildMemoryBriefSweepHandler — per-subject layer', () => {
   });
 
   it('enqueues regen for an active subject via the capped per-subject path', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
-    await seedBriefRow({ subjectId: 'wenyan', refreshedAt: daysAgo(5) });
-    await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(1) });
+    await seedKnowledge('k-yuwen', 'yuwen');
+    await seedBriefRow({ subjectId: 'yuwen', refreshedAt: daysAgo(5) });
+    await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(1) });
     const boss = bossSendMock();
 
     await buildMemoryBriefSweepHandler(testDb(), boss, { now: NOW })([]);
 
-    // The stale subject:wenyan brief row (>24h) is NO LONGER caught by
+    // The stale subject:yuwen brief row (>24h) is NO LONGER caught by
     // listStaleBriefScopes (FIX 1 excludes subject:* from the stale loop), so the
     // ONLY way it is enqueued is the capped per-subject path — and it is active
     // (attempt at 1d > refreshed_at at 5d).
-    expect(enqueuedScopeKeys(boss)).toContain('subject:wenyan');
+    expect(enqueuedScopeKeys(boss)).toContain('subject:yuwen');
   });
 
   // FIX 1 (PR #218) — the stale loop must NOT enqueue subject:* scopes. A stale
@@ -307,7 +307,7 @@ describe('buildMemoryBriefSweepHandler — per-subject layer', () => {
   // (no activity since its refresh) so it must not be enqueued at all, while the
   // stale global row IS enqueued via the stale loop.
   it('stale loop enqueues global but NOT a dormant stale subject row (maxSubjectsPerRun not bypassed)', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
+    await seedKnowledge('k-yuwen', 'yuwen');
     // Stale global brief row (>24h) → stale path.
     await testDb()
       .insert(memory_brief_note)
@@ -320,30 +320,30 @@ describe('buildMemoryBriefSweepHandler — per-subject layer', () => {
         created_at: daysAgo(5),
         updated_at: daysAgo(3),
       });
-    // Stale subject:wenyan brief row (>24h) but DORMANT (last activity 5d ago,
+    // Stale subject:yuwen brief row (>24h) but DORMANT (last activity 5d ago,
     // older than its 2d refresh) → must NOT be enqueued by the stale loop, and not
     // active so the per-subject path skips it too.
-    await seedBriefRow({ subjectId: 'wenyan', refreshedAt: daysAgo(2) });
-    await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(5) });
+    await seedBriefRow({ subjectId: 'yuwen', refreshedAt: daysAgo(2) });
+    await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(5) });
 
     const boss = bossSendMock();
     await buildMemoryBriefSweepHandler(testDb(), boss, { now: NOW })([]);
 
     const enqueued = enqueuedScopeKeys(boss);
     expect(enqueued).toContain('global');
-    expect(enqueued).not.toContain('subject:wenyan');
+    expect(enqueued).not.toContain('subject:yuwen');
   });
 
   // NOTE: the >maxSubjectsPerRun top-N + defer behavior is unit-tested against
   // selectSubjectsForRun in active-subjects.test.ts (only 3 real subject
-  // profiles exist — wenyan/math/physics — so >12 DISTINCT subject buckets are
+  // profiles exist — yuwen/math/physics — so >12 DISTINCT subject buckets are
   // not reachable through the DB resolution path). Here we just assert the
   // sweep enqueues the resolved active subjects via that pure selector.
   it('enqueues all active subjects when under the per-run budget', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
+    await seedKnowledge('k-yuwen', 'yuwen');
     await seedKnowledge('k-math', 'math');
     await seedKnowledge('k-phys', 'physics');
-    await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(1) });
+    await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(1) });
     await insertAttempt({ knowledgeIds: ['k-math'], createdAt: daysAgo(2) });
     await insertAttempt({ knowledgeIds: ['k-phys'], createdAt: daysAgo(3) });
 
@@ -352,20 +352,20 @@ describe('buildMemoryBriefSweepHandler — per-subject layer', () => {
     const subjectEnqueued = enqueuedScopeKeys(boss)
       .filter((s) => s.startsWith('subject:'))
       .sort();
-    expect(subjectEnqueued).toEqual(['subject:math', 'subject:physics', 'subject:wenyan']);
+    expect(subjectEnqueued).toEqual(['subject:math', 'subject:physics', 'subject:yuwen']);
   });
 
   it('sorts active subjects by recency DESC before the budget slice', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
+    await seedKnowledge('k-yuwen', 'yuwen');
     await seedKnowledge('k-math', 'math');
     await seedKnowledge('k-phys', 'physics');
     await insertAttempt({ knowledgeIds: ['k-phys'], createdAt: daysAgo(3) });
-    await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(1) }); // most recent
+    await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(1) }); // most recent
     await insertAttempt({ knowledgeIds: ['k-math'], createdAt: daysAgo(2) });
 
     const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
     const sorted = [...active].sort((a, b) => b.maxCreatedAt.getTime() - a.maxCreatedAt.getTime());
-    expect(sorted.map((a) => a.subjectId)).toEqual(['wenyan', 'math', 'physics']);
+    expect(sorted.map((a) => a.subjectId)).toEqual(['yuwen', 'math', 'physics']);
   });
 
   // FIX 3+4 (PR #218) — a never-built subject whose ONLY qualifying event sits
@@ -439,20 +439,20 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
   }
 
   it('subject brief is NON-EMPTY from referenced_knowledge_ids while affected_scopes loader returns 0 rows', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
-    // attempt event: affected_scopes deliberately has NO subject:wenyan (mirrors
+    await seedKnowledge('k-yuwen', 'yuwen');
+    // attempt event: affected_scopes deliberately has NO subject:yuwen (mirrors
     // computeAffectedScopes for attempt/review), only the knowledge resolves it.
     await insertAttempt({
-      knowledgeIds: ['k-wenyan'],
+      knowledgeIds: ['k-yuwen'],
       createdAt: daysAgo(1),
-      affectedScopes: ['global', 'topic:k-wenyan'],
+      affectedScopes: ['global', 'topic:k-yuwen'],
     });
 
-    // The affected_scopes path sees 0 rows for subject:wenyan...
-    const affectedScopesRows = await loadEventsFromDbForTest(testDb(), 'subject:wenyan');
+    // The affected_scopes path sees 0 rows for subject:yuwen...
+    const affectedScopesRows = await loadEventsFromDbForTest(testDb(), 'subject:yuwen');
     expect(affectedScopesRows).toHaveLength(0);
     // ...but the knowledge-resolved loader returns the qualifying event.
-    const resolved = await loadSubjectBriefEvents(testDb(), 'wenyan', { now: NOW });
+    const resolved = await loadSubjectBriefEvents(testDb(), 'yuwen', { now: NOW });
     expect(resolved).toHaveLength(1);
 
     const generate = fakeGenerate();
@@ -460,13 +460,13 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
       memoryClient: noFactsClient,
       generateBrief: generate,
     });
-    await handler(regenJob('subject:wenyan'));
+    await handler(regenJob('subject:yuwen'));
 
     expect(generate).toHaveBeenCalledTimes(1);
     const briefRow = await testDb()
       .select()
       .from(memory_brief_note)
-      .where(eq(memory_brief_note.scope_key, 'subject:wenyan'));
+      .where(eq(memory_brief_note.scope_key, 'subject:yuwen'));
     expect(briefRow).toHaveLength(1);
     // Non-null latest_evidence_at — proves the regen read the resolved list, not
     // the empty affected_scopes path (which would leave it null → regen-empty
@@ -484,24 +484,24 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
   // re-enqueued every night). After the fix both floor at refreshed_at, so the
   // 40d event loads and the brief refreshes.
   it('refreshes a built subject whose only new event is newer than refreshed_at but older than the 30d window', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
+    await seedKnowledge('k-yuwen', 'yuwen');
     // Built 60d ago, last evidence 60d ago.
     await seedBriefRow({
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       refreshedAt: daysAgo(60),
       latestEvidenceAt: daysAgo(60),
     });
     // One qualifying event at 40d: newer than refreshed_at (60d), older than the
     // 30d lookback window.
     await insertAttempt({
-      knowledgeIds: ['k-wenyan'],
+      knowledgeIds: ['k-yuwen'],
       createdAt: daysAgo(40),
-      affectedScopes: ['global', 'topic:k-wenyan'],
+      affectedScopes: ['global', 'topic:k-yuwen'],
     });
 
     // (i) Detection flags it ACTIVE.
     const active = await listActiveSubjectsSinceRefresh(testDb(), { now: NOW });
-    expect(active.map((a) => a.subjectId)).toContain('wenyan');
+    expect(active.map((a) => a.subjectId)).toContain('yuwen');
 
     // (ii) The regen handler DOES refresh it.
     const generate = fakeGenerate();
@@ -509,13 +509,13 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
       memoryClient: noFactsClient,
       generateBrief: generate,
     });
-    await handler(regenJob('subject:wenyan'));
+    await handler(regenJob('subject:yuwen'));
 
     expect(generate).toHaveBeenCalledTimes(1);
     const briefRow = await testDb()
       .select()
       .from(memory_brief_note)
-      .where(eq(memory_brief_note.scope_key, 'subject:wenyan'));
+      .where(eq(memory_brief_note.scope_key, 'subject:yuwen'));
     expect(briefRow).toHaveLength(1);
     // refreshed_at bumped to ~now (was 60d ago).
     expect(briefRow[0].refreshed_at?.getTime() ?? 0).toBeGreaterThan(daysAgo(1).getTime());
@@ -605,10 +605,10 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
   });
 
   it('per-brief read budget: >maxEventsPerBrief events → exactly maxEventsPerBrief read (graceful)', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
+    await seedKnowledge('k-yuwen', 'yuwen');
     const cap = BRIEF_REFRESH_BUDGET.maxEventsPerBrief;
     for (let i = 0; i < cap + 12; i += 1) {
-      await insertAttempt({ knowledgeIds: ['k-wenyan'], createdAt: daysAgo(i % 25) });
+      await insertAttempt({ knowledgeIds: ['k-yuwen'], createdAt: daysAgo(i % 25) });
     }
 
     const generate = fakeGenerate();
@@ -616,14 +616,14 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
       memoryClient: noFactsClient,
       generateBrief: generate,
     });
-    await handler(regenJob('subject:wenyan'));
+    await handler(regenJob('subject:yuwen'));
 
     // generate received exactly cap events (graceful truncation, not rejection).
     expect(generate.mock.calls[0][0].events).toHaveLength(cap);
     const briefRow = await testDb()
       .select()
       .from(memory_brief_note)
-      .where(eq(memory_brief_note.scope_key, 'subject:wenyan'));
+      .where(eq(memory_brief_note.scope_key, 'subject:yuwen'));
     expect(briefRow[0].evidence_count).toBe(cap);
   });
 
@@ -667,12 +667,12 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
   });
 
   it('parallel no-clobber: subject:A + subject:B enqueued → two distinct rows, neither overwrites', async () => {
-    await seedKnowledge('k-wenyan', 'wenyan');
+    await seedKnowledge('k-yuwen', 'yuwen');
     await seedKnowledge('k-math', 'math');
     await insertAttempt({
-      knowledgeIds: ['k-wenyan'],
+      knowledgeIds: ['k-yuwen'],
       createdAt: daysAgo(1),
-      affectedScopes: ['global', 'topic:k-wenyan'],
+      affectedScopes: ['global', 'topic:k-yuwen'],
     });
     await insertAttempt({
       knowledgeIds: ['k-math'],
@@ -687,7 +687,7 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
     });
     // Same batch, two jobs (mirrors batchSize>1 drain; correct at batchSize:1 too).
     await handler([
-      { data: { scope_key: 'subject:wenyan', now: NOW.toISOString() } } as Job<{
+      { data: { scope_key: 'subject:yuwen', now: NOW.toISOString() } } as Job<{
         scope_key: string;
         now?: string;
       }>,
@@ -699,12 +699,12 @@ describe('buildMemoryBriefRegenHandler — BR-10 subject branch', () => {
 
     const rows = await testDb().select().from(memory_brief_note);
     const scopes = rows.map((r) => r.scope_key).sort();
-    expect(scopes).toEqual(['subject:math', 'subject:wenyan']);
-    const wenyan = rows.find((r) => r.scope_key === 'subject:wenyan');
+    expect(scopes).toEqual(['subject:math', 'subject:yuwen']);
+    const yuwen = rows.find((r) => r.scope_key === 'subject:yuwen');
     const math = rows.find((r) => r.scope_key === 'subject:math');
-    expect(wenyan?.subject_id).toBe('wenyan');
+    expect(yuwen?.subject_id).toBe('yuwen');
     expect(math?.subject_id).toBe('math');
-    expect(wenyan?.evidence_count).toBe(1);
+    expect(yuwen?.evidence_count).toBe(1);
     expect(math?.evidence_count).toBe(1);
   });
 });

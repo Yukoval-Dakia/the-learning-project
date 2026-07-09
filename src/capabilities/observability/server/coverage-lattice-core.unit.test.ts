@@ -82,9 +82,9 @@ function mkTarget(
 function fixture(): { scanInput: ScanInput; targets: QuestionSupplyTarget[] } {
   const scanInput: ScanInput = {
     frontier: [
-      mkFrontier('kn_empty', 'wenyan', 0, 0),
-      mkFrontier('kn_thin', 'wenyan', 0.5, 3),
-      mkFrontier('kn_good', 'wenyan', 0.2, 10),
+      mkFrontier('kn_empty', 'yuwen', 0, 0),
+      mkFrontier('kn_thin', 'yuwen', 0.5, 3),
+      mkFrontier('kn_good', 'yuwen', 0.2, 10),
       mkFrontier('kn_math', 'math', -0.3, 2),
     ],
     questions: [
@@ -99,11 +99,11 @@ function fixture(): { scanInput: ScanInput; targets: QuestionSupplyTarget[] } {
   };
   const targets: QuestionSupplyTarget[] = [
     // 空池：仅 frontier_zero（scanner 短路），desiredCount=2 语义上但此处用默认 1 无碍断言。
-    mkTarget('kn_empty', 'wenyan', 'frontier_zero', { priority: 1.0 }),
+    mkTarget('kn_empty', 'yuwen', 'frontier_zero', { priority: 1.0 }),
     // thin：frontier_zero + source_quality + diagnostic（usableCount 1，轴已评估）。
-    mkTarget('kn_thin', 'wenyan', 'frontier_zero', { priority: 1.0 }),
-    mkTarget('kn_thin', 'wenyan', 'source_quality', { priority: 0.5 }),
-    mkTarget('kn_thin', 'wenyan', 'diagnostic', { priority: 0.7 }),
+    mkTarget('kn_thin', 'yuwen', 'frontier_zero', { priority: 1.0 }),
+    mkTarget('kn_thin', 'yuwen', 'source_quality', { priority: 0.5 }),
+    mkTarget('kn_thin', 'yuwen', 'diagnostic', { priority: 0.7 }),
     // kn_good：无缺口（满覆盖）。
     // kn_math：仅 format_diversity。
     mkTarget('kn_math', 'math', 'format_diversity', { kind: 'short_answer', priority: 0.4 }),
@@ -191,10 +191,10 @@ describe('buildCoverageLattice (YUK-579 read model core)', () => {
   });
 
   it('grouped by subject (sorted) with gaps-first KC ordering', () => {
-    expect(read.subjects.map((s) => s.subjectId)).toEqual(['math', 'wenyan']);
-    const wenyan = read.subjects.find((s) => s.subjectId === 'wenyan');
+    expect(read.subjects.map((s) => s.subjectId)).toEqual(['math', 'yuwen']);
+    const yuwen = read.subjects.find((s) => s.subjectId === 'yuwen');
     // gaps-first by max priority (empty & thin both p1.0 → tie → knowledgeId), covered (kn_good) last.
-    expect(wenyan?.kcs.map((k) => k.knowledgeId)).toEqual(['kn_empty', 'kn_thin', 'kn_good']);
+    expect(yuwen?.kcs.map((k) => k.knowledgeId)).toEqual(['kn_empty', 'kn_thin', 'kn_good']);
   });
 
   it('discloses injected constants + scope note + scan_ms (should#1/#6)', () => {

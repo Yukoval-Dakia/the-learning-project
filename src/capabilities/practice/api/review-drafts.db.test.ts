@@ -39,7 +39,7 @@ async function seedKnowledge(
     .values({
       id,
       name: opts.name ?? id,
-      domain: 'wenyan',
+      domain: 'yuwen',
       archived_at: opts.archivedAt ?? null,
       created_at: new Date(),
       updated_at: new Date(),
