@@ -437,9 +437,7 @@ describe('listQuestions', () => {
         limit: 50,
         offset: 0,
       });
-      expect(new Set(res.items.map((i) => i.id))).toEqual(
-        new Set([qYuwenDirect, qYuwenInherited]),
-      );
+      expect(new Set(res.items.map((i) => i.id))).toEqual(new Set([qYuwenDirect, qYuwenInherited]));
       expect(res.items.map((i) => i.id)).not.toContain(qMath);
     });
 

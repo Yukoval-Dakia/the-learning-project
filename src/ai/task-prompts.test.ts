@@ -334,10 +334,7 @@ describe('getTaskSystemPrompt', () => {
   // contract: per-candidate weight output, the no-due-items 铁律, and the bucketed
   // (NOT raw-float) signal framing (ADR-0042:68 signal-fidelity mitigation).
   it('builds a SelectionOrchestratorTask prompt with per-candidate weight + bucketed-signal + no-due contract', () => {
-    const yuwen = getTaskSystemPrompt(
-      'SelectionOrchestratorTask',
-      resolveSubjectProfile('yuwen'),
-    );
+    const yuwen = getTaskSystemPrompt('SelectionOrchestratorTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('SelectionOrchestratorTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.

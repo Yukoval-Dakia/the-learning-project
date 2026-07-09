@@ -26,11 +26,16 @@
 --     DB, so the rename raises no FK violation. If a non-prod DB has knowledge_edge
 --     rows referencing a seed:wenyan:* node, this migration must be extended to
 --     cascade those columns first.
---   * mastery_state 'knowledge'-kind rows carry subject_id = <knowledge node id>
---     (no formal FK). Prod has 0 mastery rows (no attempts yet); statement 3 below
---     only migrates the ability-global ('n') per-domain row (bare subject_id
---     'wenyan'), per the YUK-249 ruling. Knowledge-kind subject_id backfill is
---     out of scope for this migration.
+--   * Four projection tables key subject_id/node refs on knowledge NODE IDS with
+--     no formal FK and no alias-read fallback (the registry alias normalizes
+--     subject/domain identity strings, not node ids): mastery_state ('knowledge'-
+--     kind rows), kc_typed_state, learner_axis_state, material_fsrs_state. All
+--     four are empty in prod (zero learning activity at migration time), so the
+--     knowledge.id renames in 1a/2 strand nothing. In-place migration of a
+--     POPULATED non-prod DB (e.g. synthetic-seeded dev) is NOT supported by this
+--     file — those node-id refs would dangle and would need a backfill pass.
+--     Statement 3 below migrates only the ability-global per-domain row (bare
+--     subject_id 'wenyan'); knowledge-kind subject_id backfill is out of scope.
 
 -- 1a. knowledge nodes: rename the seed:wenyan: id prefix and flip the domain axis.
 --     Broad WHERE catches the seed root AND any user-uploaded child KC on the
@@ -56,14 +61,17 @@ UPDATE "knowledge"
 SET "id" = replace("id", 'synthetic:wenyan:', 'synthetic:yuwen:')
 WHERE "id" LIKE 'synthetic:wenyan:%';
 
--- 3. mastery_state: the ability-global ('n' = ABILITY_GLOBAL_KIND) per-domain θ_global
---    row keys subject_id on the bare domain. DEVIATION: the ruling wrote
---    subject_kind='ability_global'; the real code literal is 'n' (src/server/mastery/
---    state.ts ABILITY_GLOBAL_KIND). Only 'n' rows carry a bare 'wenyan' subject_id
+-- 3. mastery_state: the ability-global per-domain θ_global row keys subject_id on
+--    the bare domain and subject_kind on ABILITY_GLOBAL_KIND = 'ability_global'
+--    (src/server/mastery/state.ts, stored verbatim — plain text column, no enum/
+--    CHECK/remap). Only ability_global rows carry a bare 'wenyan' subject_id
 --    (knowledge-kind rows use node ids), so this uniquely targets the domain row.
+--    NOTE: the read path (globalThetaForDomain) queries on the already-resolved
+--    'yuwen' domain with no alias fallback, so without this UPDATE a legacy row
+--    would silently become invisible (θ_global reset) once mastery rows exist.
 UPDATE "mastery_state"
 SET "subject_id" = 'yuwen'
-WHERE "subject_kind" = 'n' AND "subject_id" = 'wenyan';
+WHERE "subject_kind" = 'ability_global' AND "subject_id" = 'wenyan';
 
 -- 4. memory_brief_note: subject-scoped brief keys on scope_key `subject:wenyan`,
 --    id `memory_brief:subject:wenyan`, subject_id `wenyan`. Rewrite all three.
