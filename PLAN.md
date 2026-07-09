@@ -17,7 +17,7 @@
 > 模式转向（owner 2026-06-21）：从「捡 issue 吞吐」转「单项目深度冲刺到一条可感 milestone」。原则 [defer flip not build]（记忆 `feedback_defer_flip_not_build`）。执行图 `docs/planning/2026-06-21-cold-start-openable-sprint.md`（镜像 Linear Document 挂 YUK-452）。
 
 - **下一条 active 开发线待定**：Wave 2/3 已全部收官（见「✅ 最近已落」）；候选按 NEXT 排队，首选 = YUK-596 durable PR2（4 阻断前置已记）或 owner 另拍。
-- **方向 B「可开始用」milestone — 代码侧全部完成**：S1 YUK-516（#709 merged）· S2 YUK-478 冷启 e2e（#710 merged）· S3 判定无代码活。**剩硬前置 = YUK-571 flag ①批（owner 运维）**——翻 `PLACEMENT_PROBE_ENABLED` + `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`（顺序①→②→③ + day-zero census）；flag 翻转与部署在 owner 侧机器执行。⚠️ 三 flag 字面量不一致已 code-verify（placement `'true'` / promote `'1'` / refill `'true'|'1'`）。
+- **方向 B「可开始用」milestone — 代码侧全部完成，flag ①批已 LIVE**：S1 YUK-516（#709 merged）· S2 YUK-478 冷启 e2e（#710 merged）· S3 判定无代码活。**YUK-571 flag ①批（`PLACEMENT_PROBE_ENABLED` + `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`）实况 = 2026-07-06 已翻并注入生产容器**（07-09 核验：容器 env + HTTP 零写 smoke 400-not-404；day-zero census 已存档 YUK-571 评论——question=0 / knowledge=3 seed root / 学习表全零）。**剩 gate = 冷库零题（owner 上传/生成内容）→ 首次真实 placement 会话跑通**（空池返回 `sourcingNeeded:true` 走 quiz_gen，设计态非错误态）；② refill 前置未验且空池无意义、③ 按单据明确不动——均维持 off。⚠️ 生产 = 本机 OrbStack compose（`tlp-deploy`），可用性依赖 OrbStack 在跑（always-on ingress 见 PARKED Step6）。
 
 ## NEXT（就绪，排队）
 
