@@ -44,15 +44,29 @@ export interface UseCopilotDwellResult {
 // CopilotDock once on open. `seq` is a monotonically incrementing nonce so the
 // Dock can distinguish a brand-new request from a re-render with the same
 // payload (two consecutive teaching opens for the same item, say).
+// YUK-577 — a proactive-nudge open. The deterministic nudge headline IS the agent's
+// opening turn (seeded client-side, agent-authored — never an owner user bubble, MF1);
+// session_id rides into ambient_context so the user's reply is context-aware.
+export interface CopilotNudgeOpen {
+  nudge_event_id: string;
+  session_id: string;
+  headline: string;
+}
+
 export interface CopilotOpenRequest {
   seq: number;
-  skill_context: CopilotSkillContextT;
+  // Optional: nudge opens carry no skill context (free-form agent opening).
+  skill_context?: CopilotSkillContextT;
   /** Optional message to auto-send on open (none today; reserved for §5.1). */
   prefill?: string;
+  /** YUK-577 — set when the open was triggered by a proactive-nudge 「看看」click. */
+  nudge?: CopilotNudgeOpen;
 }
 
 interface CopilotOpenSignalStore {
   request: CopilotOpenRequest | null;
+  /** YUK-577 — publish a proactive-nudge open (headline as agent opening + session ambient). */
+  openCopilotForNudge: (nudge: CopilotNudgeOpen) => void;
   // PR #305 fix — monotonically increasing counter that persists across
   // clearRequest() so seq never resets to a value already seen by the Dock's
   // lastHandledSeqRef. Bug: seq was derived from s.request?.seq which reset to
@@ -78,6 +92,11 @@ export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
         request: { seq, skill_context: skillContext, prefill },
       };
     }),
+  openCopilotForNudge: (nudge) =>
+    set((s) => {
+      const seq = s.nextSeq + 1;
+      return { nextSeq: seq, request: { seq, nudge } };
+    }),
   clearRequest: () => set({ request: null }),
   // nextSeq is intentionally NOT reset on clearRequest — it must monotonically
   // increase so the Dock's lastHandledSeqRef never matches a future open.
@@ -92,9 +111,24 @@ export function openCopilotWith(skillContext: CopilotSkillContextT, prefill?: st
   useCopilotOpenSignal.getState().openCopilotWith(skillContext, prefill);
 }
 
+/**
+ * YUK-577 — open the global CopilotDock for a proactive nudge 「看看」click: the headline
+ * seeds the agent opening turn client-side, and session_id rides into ambient_context.
+ */
+export function openCopilotForNudge(nudge: CopilotNudgeOpen): void {
+  useCopilotOpenSignal.getState().openCopilotForNudge(nudge);
+}
+
 interface UseCopilotDwellOpts {
   /** Override the 30s dwell window for tests / overrides. */
   dwellMs?: number;
+  /**
+   * YUK-577 (§3.8, dwell 让位) — when true, the blind 30s dwell timer does NOT auto-open.
+   * The Dock passes `nudges.length > 0`: if a content-driven nudge (the主动性 main path) is
+   * pending, the blind保底 timer stands down rather than floating an empty drawer over the话头.
+   * Does NOT change the 30s / visited / dismiss semantics — only gates the timer-fire open.
+   */
+  suppressAutoOpen?: boolean;
 }
 
 function isBrowser(): boolean {
@@ -106,11 +140,16 @@ export function useCopilotDwell(opts: UseCopilotDwellOpts = {}): UseCopilotDwell
   const [open, setOpen] = useState(false);
   const dismissedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // YUK-577 — live-read suppression flag so the timer fire (a closure armed earlier) respects the
+  // latest pending-nudge state without re-arming.
+  const suppressRef = useRef(false);
+  suppressRef.current = opts.suppressAutoOpen ?? false;
 
   const armTimer = useCallback(() => {
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      if (!dismissedRef.current) setOpen(true);
+      // dwell 让位 (§3.8): blind timer stands down when a content-driven nudge is pending.
+      if (!dismissedRef.current && !suppressRef.current) setOpen(true);
     }, dwellMs);
   }, [dwellMs]);
 

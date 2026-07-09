@@ -20,6 +20,7 @@ import {
   LearningItemRelearnExperimental,
 } from './learning-item-events';
 import { MistakeVariantCreateExperimental } from './mistake-variant-events';
+import { NudgeExperimental } from './nudge-events';
 import {
   EditQuestionBlockStructuredExperimental,
   QuestionBlockCreateExperimental,
@@ -41,6 +42,7 @@ export * from './learning-item-events';
 export * from './mistake-variant-events';
 export * from './artifact-events';
 export * from './question-block-events';
+export * from './nudge-events';
 
 // ====================================================================
 // Event — 顶层 union
@@ -74,6 +76,8 @@ export * from './question-block-events';
 //      question_block 动作事件特化（YUK-471 W3-A2：structured 编辑（merge 多行 after）/ 运行时新建
 //      fold-visible；W3-D：lifecycle 使 5 个无事件 fold-truth mutator（reassignFigure / auto-enroll /
 //      import-enroll / import-ignore / revert）fold-visible，./question-block-events.ts）
+//  11b. NudgeExperimental — copilot 主动开口触发留痕特化（YUK-577：承重非 report-only，
+//      GET /nudges 读它 + 频控 + surfacing gate 依赖 payload 承重键，./nudge-events.ts）
 //  12. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
@@ -101,6 +105,7 @@ export const Event = z.union([
   EditQuestionBlockStructuredExperimental,
   QuestionBlockCreateExperimental,
   QuestionBlockLifecycleExperimental,
+  NudgeExperimental,
   ExperimentalEvent,
 ]);
 export type EventT = z.infer<typeof Event>;

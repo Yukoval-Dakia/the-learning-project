@@ -8,6 +8,7 @@ import {
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, question_block, source_document } from '@/db/schema';
+import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 
@@ -241,6 +242,20 @@ export async function initiateDocxTextUpload(
     );
   } catch (err) {
     console.error('[docx_text] failed to enqueue auto_enroll', err);
+  }
+
+  // YUK-577 — fan out to the copilot proactive-nudge evaluator (post-commit, observe-only).
+  // Independent try/catch from auto_enroll so a nudge-enqueue failure never masks the auto_enroll
+  // hook (and vice versa); a failed enqueue must NOT fail an ingestion that already committed.
+  try {
+    const { getStartedBoss } = await import('@/server/boss/client');
+    const boss = await getStartedBoss();
+    await boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {
+      kind: 'ingestion_complete',
+      session_id: result.sessionId,
+    });
+  } catch (err) {
+    console.error('[docx_text] failed to enqueue copilot_nudge_evaluate', err);
   }
 
   return result;

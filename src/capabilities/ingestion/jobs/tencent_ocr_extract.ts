@@ -35,6 +35,7 @@ import type { FigureRefT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { writeCostLedger } from '@/server/ai/log';
+import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
@@ -554,6 +555,20 @@ async function processOneOcrJob(
       );
     } catch (err) {
       console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
+    }
+
+    // YUK-577 — fan out to the copilot proactive-nudge evaluator (post-commit, observe-only).
+    // Independent try/catch from auto_enroll so a nudge-enqueue failure never masks the auto_enroll
+    // hook; a failed enqueue must NOT fail an extraction that already committed.
+    try {
+      const { getStartedBoss } = await import('@/server/boss/client');
+      const boss = await getStartedBoss();
+      await boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {
+        kind: 'ingestion_complete',
+        session_id: sessionId,
+      });
+    } catch (err) {
+      console.error('[tencent_ocr_extract] failed to enqueue copilot_nudge_evaluate', err);
     }
   } catch (err) {
     await markFailedAndLogCost(deps, sessionId, bossJobId, err, engine, {
