@@ -3,7 +3,8 @@
 // This module MUST stay import-free (no DB, no boss/client) so that producers, the consumer
 // manifest, AND unit tests can share one source of truth for a queue name without dragging a
 // DB-tainted import into a unit test partition. `queue-config.ts` (which DOES pull boss/client for
-// `isQueueCreateRace`) re-exports these for callers already importing from there.
+// `isQueueCreateRace`) only points here in a comment — it does NOT re-export these constants;
+// all callers import directly from this file.
 
 /**
  * The copilot proactive-nudge evaluator queue. First producer(ingestion)→consumer(copilot)

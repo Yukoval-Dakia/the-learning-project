@@ -74,6 +74,11 @@ describe('NudgeExperimental parse barrier', () => {
     expect(() => parseEvent(bad)).toThrow();
   });
 
+  it('FAILS LOUD when expires_at is not an ISO datetime (barrier before PG cast)', () => {
+    const bad = nudgeEvent({ expires_at: 'not-a-timestamp' });
+    expect(() => parseEvent(bad)).toThrow();
+  });
+
   it('FAILS LOUD when caused_by_event_id (evidence anchor + unique key) is missing', () => {
     const bad = nudgeEvent();
     // biome-ignore lint/performance/noDelete: test needs the key genuinely absent

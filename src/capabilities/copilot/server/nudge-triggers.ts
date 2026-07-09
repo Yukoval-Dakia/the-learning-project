@@ -106,7 +106,9 @@ export async function evaluateNudgeTrigger(
 
   const shadow = !config.enabled;
 
-  // 4. surfacing 护栏——只在 enabled（写可见 nudge）时施加；shadow 期全写以观测真实触发率（§3.7）。
+  // 4. surfacing 护栏——只在 enabled（写可见 nudge）时施加。shadow 期故意跳过 dailyMax /
+  // dismiss-fuse，以便观测真实触发率（§3.7 澄清：soft-cap 只约束可见写入；COUNT 也只数
+  // 非 shadow 行，所以把同一检查套到 shadow 期要么永不触发、要么压扁观测窗）。
   if (!shadow) {
     // 每日上限：只数当日**可见**（非 shadow）nudge（doc §3.2 表「非 shadow COUNT」）。
     const capRows = await db

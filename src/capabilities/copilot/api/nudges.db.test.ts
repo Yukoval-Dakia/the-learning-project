@@ -128,6 +128,30 @@ describe('POST /api/copilot/nudges/[id]/{dismiss,opened}', () => {
       .where(eqAction('experimental:copilot_nudge_dismissed'));
     expect(rows).toHaveLength(0);
   });
+
+  it('opened is IDEMPOTENT: double-POST for one nudge → exactly one opened event (KPI honesty)', async () => {
+    const id = await seedNudge({});
+    const r1 = await openedPOST(new Request('http://x'), { id });
+    const r2 = await openedPOST(new Request('http://x'), { id });
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200); // dedup returns ok, not an error
+    const rows = await testDb()
+      .select()
+      .from(event)
+      .where(eqAction('experimental:copilot_nudge_opened'));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('dismiss is IDEMPOTENT: double-POST for one nudge → exactly one dismissed event', async () => {
+    const id = await seedNudge({});
+    await dismissPOST(new Request('http://x'), { id });
+    await dismissPOST(new Request('http://x'), { id });
+    const rows = await testDb()
+      .select()
+      .from(event)
+      .where(eqAction('experimental:copilot_nudge_dismissed'));
+    expect(rows).toHaveLength(1);
+  });
 });
 
 function eqAction(action: string) {

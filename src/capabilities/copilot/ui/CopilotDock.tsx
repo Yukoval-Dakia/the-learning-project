@@ -46,6 +46,7 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotHeroCard } from './CopilotHeroCard';
+import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
 import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
 import { isOneShotSkill } from './skill-lifecycle';
 import { useCopilotNudges } from './useCopilotNudges';
@@ -210,7 +211,12 @@ export interface CopilotDockProps {
 export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   // YUK-577 — proactive-nudge state. `suppressAutoOpen` = 让位 (§3.8): a pending content-driven
   // nudge stands the blind 30s dwell timer down (main path over保底).
-  const { nudges, dismiss: dismissNudge, markOpened } = useCopilotNudges();
+  const {
+    nudges,
+    dismiss: dismissNudge,
+    markOpened,
+    isMutating: nudgeMutating,
+  } = useCopilotNudges();
   const {
     open,
     openDrawer,
@@ -375,12 +381,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       const focusedEntity = skillContext?.ref;
       // YUK-577 — when no skill entity is in scope but a nudge opened this conversation, ride the
       // ingestion session as the focused entity so the agent knows the reply is about that material.
-      const nudgeSession = nudgeSessionRef.current;
-      const ambientFocus = focusedEntity
-        ? focusedEntity
-        : nudgeSession
-          ? { kind: 'learning_session', id: nudgeSession }
-          : undefined;
+      const ambientFocus = resolveTurnAmbientFocus(focusedEntity, nudgeSessionRef.current);
       const ambientContext = route
         ? { route, ...(ambientFocus ? { focused_entity: ambientFocus } : {}) }
         : undefined;
@@ -458,6 +459,13 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       if (skillContext && isOneShotSkill(skillContext.skill)) {
         activeSkillRef.current = null;
       }
+      // YUK-577 (Codex P2-1) — one-shot nudge focus: the ingestion-session anchor a 「看看」click
+      // seeded only applies to the FIRST turn after the click, then clears. Same rule as the
+      // one-shot skill clear above — a FAILED send never reaches here (it early-returns at the
+      // no-terminal-payload guard / throws to catch), so 重试 keeps the anchor. Without this, every
+      // later free-form turn would keep re-sending the stale learning_session focus until the
+      // drawer closes (the nudge anchor should not stick to the whole session).
+      nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
       const finalized: ChatMessage = {
         id: aiId,
         role: 'ai',
@@ -626,6 +634,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
               type="button"
               className="chip"
               data-testid="copilot-nudge-open"
+              disabled={nudgeMutating}
               onClick={() => {
                 void markOpened(n.id);
                 openCopilotForNudge({
@@ -643,6 +652,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
               title="忽略"
               aria-label="忽略"
               data-testid="copilot-nudge-dismiss"
+              disabled={nudgeMutating}
               onClick={() => void dismissNudge(n.id)}
             />
           </div>

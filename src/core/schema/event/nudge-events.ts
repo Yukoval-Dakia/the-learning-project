@@ -24,8 +24,10 @@ export const NudgePayload = z.object({
   kind: NudgeKind,
   // 承重：badge 展示文案（确定性模板渲染，零 LLM；ingestion 用 flag-invariant「提取到 N 个题目片段」）。
   headline: z.string(),
-  // 承重：读模型过期 filter（ISO 时间）。过期 nudge 静默自沉（A3「可静默消失」），不删行。
-  expires_at: z.string(),
+  // 承重：读模型过期 filter（ISO 8601）。过期 nudge 静默自沉（A3「可静默消失」），不删行。
+  // `.datetime()` keeps the fail-loud barrier at parseEvent — a malformed stamp must not reach the
+  // PG `::timestamptz` cast in nudge-read (that would 500 the whole GET /nudges, not just one row).
+  expires_at: z.string().datetime(),
   // 承重：surfacing gate（§3.7）。true = shadow 期证据行，GET /nudges 必须排除；owner 读它校准参数。
   shadow: z.boolean(),
   // 承重：静默窗读模型 backstop（§3.2 / Q7）。判定时的 open-practice-session 态，供读模型 defer interrupt-sensitive kind。

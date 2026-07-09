@@ -13,9 +13,11 @@ import { writeEvent } from '@/server/events/queries';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import { loadNudgeConfig } from '../server/nudge-config';
-import { type NudgeEvaluateInput, evaluateNudgeTrigger } from '../server/nudge-triggers';
-
-const NUDGE_ACTION = 'experimental:copilot_nudge';
+import {
+  NUDGE_ACTION,
+  type NudgeEvaluateInput,
+  evaluateNudgeTrigger,
+} from '../server/nudge-triggers';
 
 /** job.data 形状（松守边界，判定事实由 evaluate 从 event 表回读——payload 只带定位 id）。 */
 const JobData = z.object({

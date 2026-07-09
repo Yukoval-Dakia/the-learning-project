@@ -32,6 +32,16 @@ export async function GET(): Promise<Response> {
   }
 }
 
+/** postgres.js surfaces unique violations as code '23505' (possibly wrapped); walk the cause chain. */
+function isUniqueViolation(err: unknown): boolean {
+  let e: unknown = err;
+  for (let depth = 0; depth < 5 && e !== null && typeof e === 'object'; depth++) {
+    if ((e as { code?: unknown }).code === '23505') return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /** 写一条 nudge companion event（dismiss / opened），先校验 nudge 存在防孤儿写。 */
 async function writeNudgeCompanion(
   params: Record<string, string>,
@@ -50,18 +60,31 @@ async function writeNudgeCompanion(
     }
 
     const companionId = newId();
-    await writeEvent(db, {
-      id: companionId,
-      session_id: null,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action,
-      subject_kind: 'event',
-      subject_id: nudgeId,
-      outcome: null,
-      payload: {},
-      caused_by_event_id: nudgeId,
-    });
+    try {
+      await writeEvent(db, {
+        id: companionId,
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action,
+        subject_kind: 'event',
+        subject_id: nudgeId,
+        outcome: null,
+        payload: {},
+        caused_by_event_id: nudgeId,
+      });
+    } catch (err) {
+      // YUK-577 (Codex P2-2) — idempotency: the per-action partial unique index
+      // (event_copilot_nudge_{opened,dismissed}_unique_idx ON event(caused_by_event_id)) rejects a
+      // second companion for the same nudge (network retry / fast double-click). Treat 23505 as
+      // already-recorded — return ok WITHOUT a new event so the opened/dismissed KPI is not
+      // double-counted. (writeEvent's onConflictDoNothing only targets the PK; other unique
+      // violations still throw here.)
+      if (isUniqueViolation(err)) {
+        return Response.json({ ok: true, deduped: true });
+      }
+      throw err;
+    }
     return Response.json({ ok: true, event_id: companionId });
   } catch (err) {
     return errorResponse(err);

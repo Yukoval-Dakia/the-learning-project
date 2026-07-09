@@ -2,8 +2,7 @@
 // design: docs/design/2026-07-07-yuk577-proactive-triggers.md §4. 新文件，零撞车。
 
 import { apiFetch, apiJson } from '@/ui/lib/api';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 export interface CopilotNudge {
   id: string;
@@ -18,10 +17,16 @@ const NUDGES_KEY = ['copilot', 'nudges'] as const;
 
 export interface UseCopilotNudgesResult {
   nudges: CopilotNudge[];
+  /** True while the initial GET is in flight (no cached data yet). */
+  isLoading: boolean;
+  /** True when the GET failed — consumers can distinguish from "no nudges". */
+  isError: boolean;
+  /** True while a dismiss/opened POST is in flight (disable buttons to avoid double-click). */
+  isMutating: boolean;
   /** 「×」——写 dismissed event，该 kind 当日熔断（后端），读模型排除。 */
-  dismiss: (id: string) => Promise<void>;
+  dismiss: (id: string) => Promise<unknown>;
   /** 「看看」——写 opened event（KPI 分子），读模型排除（consumed）。 */
-  markOpened: (id: string) => Promise<void>;
+  markOpened: (id: string) => Promise<unknown>;
 }
 
 export function useCopilotNudges(): UseCopilotNudgesResult {
@@ -33,23 +38,27 @@ export function useCopilotNudges(): UseCopilotNudgesResult {
     refetchInterval: 60_000,
   });
 
-  const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: NUDGES_KEY }), [qc]);
-
-  const dismiss = useCallback(
-    async (id: string) => {
-      await apiFetch(`/api/copilot/nudges/${id}/dismiss`, { method: 'POST' });
-      await invalidate();
+  // useMutation gives isPending so the dock can disable 看看/× during the POST — the DB
+  // companion unique index (0061) is the hard idempotency backstop; this is the UX soft gate.
+  const dismissM = useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/copilot/nudges/${id}/dismiss`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: NUDGES_KEY });
     },
-    [invalidate],
-  );
-
-  const markOpened = useCallback(
-    async (id: string) => {
-      await apiFetch(`/api/copilot/nudges/${id}/opened`, { method: 'POST' });
-      await invalidate();
+  });
+  const openedM = useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/copilot/nudges/${id}/opened`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: NUDGES_KEY });
     },
-    [invalidate],
-  );
+  });
 
-  return { nudges: q.data?.nudges ?? [], dismiss, markOpened };
+  return {
+    nudges: q.data?.nudges ?? [],
+    isLoading: q.isLoading,
+    isError: q.isError,
+    isMutating: dismissM.isPending || openedM.isPending,
+    dismiss: dismissM.mutateAsync,
+    markOpened: openedM.mutateAsync,
+  };
 }
