@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-09　·　历史头部日志（2026-06-23 ~ 07-09 全部超龄【更新】叙事段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真，含 P5/P9/A5 KEEP 裁决证据锚点）。
 
-> **【更新 2026-07-09 · YUK-249 收线：wenyan→yuwen 已上生产 + 金标验收】** #742（squash `b93ad862`，222 files：registry alias 脊柱〔旧 id wenyan 降级 alias〕+ registry-driven 首会 UI + drizzle 0062 数据迁移 + 机械 sweep）+ #743（Dockerfile:71 skills COPY + vitest.shared.ts:389 unit include——两处收尾 rg 范围外 straggler，后者曾致 12 tests 静默掉出 unit 套件）均 merged。独立 4-lens review 抓 1 真 P1：migration stmt 3 `subject_kind='n'` 死条件（executor 基于假前提「纠正」了正确裁决）→ 复核 `src/server/mastery/state.ts:76` 实字面量 `'ability_global'` 修回——空库 migration smoke 抓不到语义死 UPDATE，对抗复核补位。生产（OrbStack compose `tlp-deploy` @ `77075a59`）：0062 applied exit 0、DB 零 wenyan（`seed:yuwen:root|语文` 在位）、`/api/health` 200、`/welcome` Playwright 金标 = 学科倾向/学科视角 chips 均为 语文/数学/物理，无「文言文」顶级 chip、无「英语」幽灵；教学内容按裁决保留文言文语境（identity 迁、content 不动）。**YUK-394 RCA 修正 = OCR 额度耗尽（owner 确认「没额度了」）**——补额度前该 check 全 PR 必挂，勿重跑。owner 新方向：**科目允许用户手填 → 已注入 YUK-597**（连同 5 处暗桩），拍序「收完本 lane 就开设计线」。遗留：本地 `yuk-249-yuwen-migration`、本地+远端 `yuk-249-rename-stragglers` 分支（git-guard/classifier 挡删）留 owner 清理。
+> **【更新 2026-07-09 · YUK-249 收线：wenyan→yuwen 已上生产 + 金标验收】** #742（squash `b93ad862`，222 files：registry alias 脊柱〔旧 id wenyan 降级 alias〕+ registry-driven 首会 UI + drizzle 0062 数据迁移 + 机械 sweep）+ #743（Dockerfile:71 skills COPY + vitest.shared.ts:389 unit include——两处收尾 rg 范围外 straggler，后者曾致 12 tests 静默掉出 unit 套件）均 merged。独立 4-lens review 抓 1 真 P1：migration stmt 3 `subject_kind='n'` 死条件（executor 基于假前提「纠正」了正确裁决）→ 复核 `src/server/mastery/state.ts:76` 实字面量 `'ability_global'` 修回——空库 migration smoke 抓不到语义死 UPDATE，对抗复核补位。生产（OrbStack compose `tlp-deploy` @ `77075a59`）：0062 applied exit 0、DB 零 wenyan（`seed:yuwen:root|语文` 在位）、`/api/health` 200、`/welcome` Playwright 金标 = 学科倾向/学科视角 chips 均为 语文/数学/物理，无「文言文」顶级 chip、无「英语」幽灵；教学内容按裁决保留文言文语境（identity 迁、content 不动）。**YUK-394 RCA 修正 = OCR 额度耗尽（owner 确认「没额度了」）**——补额度前该 check 全 PR 必挂，勿重跑。owner 新方向：**科目允许用户手填 → 已注入 YUK-597**（连同 5 处暗桩），拍序「收完本 lane 就开设计线」。遗留：`yuk-249-yuwen-migration` 与 `yuk-249-rename-stragglers`（均本地+远端） 分支（git-guard/classifier 挡删）留 owner 清理。
 
 ## 🎯 主线方向（当前）
 
@@ -44,7 +44,7 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **无 feature PR 在飞**（YUK-249 收官：#742 `b93ad862` + #743 均 merged 并已部署，2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout，现指 `77075a59`）。**待 owner 清理分支**：本地 `yuk-249-yuwen-migration` · 本地+远端 `yuk-249-rename-stragglers`（git-guard/classifier 挡删）。
+- **无 feature PR 在飞**（YUK-249 收官：#742 `b93ad862` + #743 均 merged 并已部署，2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout，现指 `77075a59`）。**待 owner 清理分支**：`yuk-249-yuwen-migration` · `yuk-249-rename-stragglers`（均本地+远端）（git-guard/classifier 挡删）。
 - **噪音/stale PR 待周期清**：audit-drift 周报 draft（#736/#734/#727/#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
 
 ## ✅ 最近已落（防遗落，下次别重做）
