@@ -19,6 +19,9 @@ import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
+// YUK-575 (N6/MF-C) — the pickup-timeout deadline stamped on the QUEUED event so a
+// consumer (PR2 Dock, isDurablePickupStalled) can detect a worker-down stall.
+import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/server/durable-pickup';
 import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
@@ -48,8 +51,16 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   // YUK-364 (ADR-0041 endurance W1 L2) — durable 分流。判定阈值 v1 = 显式
   // `durable` 标记（最粗、最不误伤短活；先粗、实测后调）。仅 chat surface 入
   // durable 面（chip 是 UI 直触轻活，不写 user_ask；durable 标记落在 chip 上
-  // 时降级回 inline，下方守卫）。shouldEnqueueBackgroundJobs() 在测试环境为 false
-  // → 即便带 durable 标记也走 inline（与 session-end 等 enqueue 守门同款）。
+  // 时降级回 inline，下方守卫）。
+  //
+  // YUK-575 (MF-C 诚实措辞) — shouldEnqueueBackgroundJobs()（runtime-env.ts）**只挡
+  // 测试环境**（NODE_ENV==='test'||VITEST），**零 worker-liveness 检测**；生产恒 true，
+  // 且 boss.send 只 INSERT job 行、无论有无 worker 消费都成功。故它 NOT 一个「worker
+  // 可用」守卫——worker 挂/crash-loop/漏 RW_WORKER 时 run 会卡 QUEUED 无人拾取。PR1 的
+  // pickup-stall 检测 = QUEUED 事件上盖 pickup_deadline_ms + isDurablePickupStalled
+  // 纯谓词（durable-pickup.ts）；主动 surfacing（报错 / force-inline）随 Dock 消费端落
+  // PR2（YUK-596）——不在 dispatch 阻塞 202 等 pickup（batchSize:1 串行下 busy worker
+  // 会 false-timeout + 双结果，strictly worse）。
   //
   // YUK-364 (bot-review C3) — **排除带 skill_context 的 turn**（`!parsed.skill_context`）。
   // 一个 skill_context:{skill:'teaching'} turn 在 inline 路径短路到 runTeachingSkill
@@ -82,14 +93,23 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
         now: new Date(),
       });
       // 3) queued 初态进度事件——消费者订阅后即见 run 已受理（worker 拾起前）。
+      //    YUK-575 (N6) — 盖 pickup_deadline_ms：worker 若没在此前拾取（写 STARTED），
+      //    isDurablePickupStalled 谓词据它检出 worker-down 停摆（PR2 Dock 主动 surface）。
       await writeJobEvent(db, {
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
         event_type: COPILOT_RUN_EVENTS.QUEUED,
-        payload: { session_id: sessionId, triggered_by: parsed.triggered_by },
+        payload: {
+          session_id: sessionId,
+          triggered_by: parsed.triggered_by,
+          pickup_deadline_ms: Date.now() + PICKUP_TIMEOUT_MS,
+        },
       });
-      // 4) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经
-      //    GET /api/copilot/runs/[id]/events（消费端 UI 是后续 lane）重连。
+      // 4) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
+      //    GET /api/jobs/copilot_run/[run_id]/events（YUK-310 caller-agnostic 路由，
+      //    copilot_run 已在其 allowlist）重连；dock 消费端由 YUK-596（PR2）接。
+      //    YUK-575 (S4) — ambient RIDE 进 payload（request-only、从不 persisted，worker
+      //    拾取时无处可重读；conversation_history / learner-state 则从事件重建）。
       const boss = await getStartedBoss();
       await boss.send('copilot_run', {
         run_id: runId,
@@ -97,6 +117,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
         user_message: parsed.user_message,
         triggered_by: parsed.triggered_by,
         ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
+        ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
       });
       // 202 Accepted — run handle 回给客户端用于订阅；非 SSE（durable 面与同步
       // SSE 面是两条返回契约）。

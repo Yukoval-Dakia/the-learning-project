@@ -21,7 +21,7 @@
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { findReusableCopilotConversation } from '@/server/session/conversation';
-import { and, desc, eq, inArray, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, or } from 'drizzle-orm';
 
 export type CopilotTurnRole = 'user' | 'ai';
 
@@ -202,7 +202,17 @@ function replySkillContext(payload: Record<string, unknown>): CopilotTurnSkillCo
  */
 export async function getRecentCopilotTurns(
   dbArg: DbLike,
-  opts: { limit?: number; now?: Date } = {},
+  // YUK-575 (MF-B) — `excludeEventId` drops one event row (by id) from the
+  // returned history. The durable copilot run handler passes its own
+  // `run_id` (= the user_ask event id) here: unlike the inline path — which
+  // reads history BEFORE writing the ask, so the ask is structurally excluded
+  // (chat.ts read-before-write) — the durable path DISPATCH writes the user_ask
+  // first (api/chat.ts), then the worker picks the job up later, so at pickup
+  // time the current ask is already persisted and would otherwise double-count
+  // as the newest user turn (and shove out the oldest real turn). Inline callers
+  // OMIT this (their read-before-write ordering already excludes the ask); only
+  // durable pickup passes it. Absent → byte-identical to the pre-YUK-575 query.
+  opts: { limit?: number; now?: Date; excludeEventId?: string } = {},
 ): Promise<CopilotTurn[]> {
   const limit = clampLimit(opts.limit);
 
@@ -231,6 +241,10 @@ export async function getRecentCopilotTurns(
       and(
         eq(event.session_id, session.id),
         or(inArray(event.action, [...USER_ACTIONS]), eq(event.action, REPLY_ACTION)),
+        // YUK-575 (MF-B) — durable pickup excludes its own just-written user_ask
+        // by id. `and(…, undefined)` is a drizzle no-op, so omitting it (inline)
+        // leaves the query byte-identical.
+        opts.excludeEventId ? ne(event.id, opts.excludeEventId) : undefined,
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id))

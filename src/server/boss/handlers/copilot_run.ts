@@ -20,7 +20,18 @@
 
 import type { Job } from 'pg-boss';
 
-import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import { wrapDeltaSuppressingMarker, writeCopilotReply } from '@/capabilities/copilot/server/chat';
+// YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
+// assembles the FULL run input at pickup time (MF-B: pass excludeUserAskEventId=
+// run_id to drop its own already-written user_ask; conversation_history / learner-
+// state header / proposal_feedback / ambient all fresh at pickup), byte-parity with
+// inline. Before YUK-575 the durable run shipped a minimal {surface,triggered_by,
+// user_message} with NO session memory.
+import {
+  type CopilotAmbientContext,
+  type CopilotRunInput,
+  assembleCopilotRunInput,
+} from '@/capabilities/copilot/server/copilot-run-input';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
@@ -36,7 +47,7 @@ import {
   TAVILY_MCP_SERVER_NAME,
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
-import { runAgentTask } from '@/server/ai/runner';
+import { type StreamCollectResult, streamTaskCollecting } from '@/server/ai/runner';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   resolveDomainToolNames,
@@ -75,7 +86,35 @@ export interface CopilotRunJobData {
   triggered_by: 'chat' | 'chip';
   /** chip 直触可选标识，透传进 run input（同步面 chip_kind）。 */
   chip_kind?: string;
+  /**
+   * YUK-575 (S4) — ambient context（用户当前 route + 可选 focused_entity）。它是
+   * request-only、**从不 persisted**（防循环 ②：绝不写进任何 turn payload），所以
+   * 必须 RIDE 这个 job payload 才能在 worker 拾取时进 run input——不像
+   * conversation_history / learner-state（从事件重建），ambient 无处可重读。
+   */
+  ambient?: CopilotAmbientContext;
 }
+
+// YUK-575 (N5/MF-A) — durable run 的三旋钮预算，经 runner budgetOverride seam
+// （maxIterations→SDK maxTurns、timeoutMs→streamTaskCollecting abort timer）+ 本
+// handler 的 ContextBudgetTracker（maxToolCalls）per-call 覆盖 inline CopilotTask
+// registry 默认（maxIterations:6 / maxToolCalls:10 / timeout:60_000），**不 mutate
+// 共享 registry**（YUK-458 revert 教训：抬 inline 默认只把 error_max_turns 变成
+// inline-request abort，不解 endurance）。
+//   • maxIterations:24 — 给多步 propose 编排足够回合（YUK-458 证 6 太紧）。
+//   • maxToolCalls:60 — **MF-A**：durable 与 inline 同 surface='copilot'，共用
+//     COPILOT_CONTEXT_BUDGET.maxToolCalls=10；不抬它则 24 回合 × ~2-4 tool-call/回合
+//     在 ~7-10 回合就 soft-stop，10 成真正 binding、iterations 24 变死。60 覆盖
+//     24 × 2.5/回合均值，把「谁先 bind」推回 iterations 侧。
+//   • timeoutMs:12min — 封病态 loop 的浪费上限；**承重约束（S6）**：必须 <
+//     STUCK_RUN_THRESHOLD_MS(1h)，否则 stuck-in-running sweeper 误收敛 live run
+//     （见 copilot_run.test.ts 的 static 约束断言）。远 < EXPIRE_AGENT(2h)。
+// 安全帽不是目标——健康流靠模型返回 final reply 自然收，天花板只挡病态 loop。
+export const DURABLE_BUDGET = {
+  maxIterations: 24,
+  maxToolCalls: 60,
+  timeoutMs: 12 * 60_000,
+} as const;
 
 // 同步面 selectSurface / selectActorRef 的 worker 侧镜像（chat.ts 里是模块私有
 // 函数；durable 面在 worker 进程，内联同语义避免跨包导出私有 helper）。
@@ -95,8 +134,17 @@ function selectActorRef(triggeredBy: CopilotRunJobData['triggered_by']) {
 export interface RunCopilotRunParams {
   db: Db;
   data: CopilotRunJobData;
-  /** test seam — 默认 runAgentTask。 */
-  runAgentTaskFn?: typeof runAgentTask;
+  /**
+   * test seam — 默认 streamTaskCollecting（YUK-575 N2：durable run 边跑边流式 delta
+   * 进 job_events）。real streamTaskCollecting graceful-degrades（resolve partial，
+   * 不 throw）；注入一个 THROW 的 fixture 可测 MF1/MF2 的 catch 分诊路径。
+   */
+  streamTaskCollectingFn?: typeof streamTaskCollecting;
+  /**
+   * YUK-575 (A1/N3) test seam — 默认 assembleCopilotRunInput。注入 fixture 断言
+   * pickup-time 装配参数（excludeUserAskEventId=run_id、ambient 透传等）而不打真 DB。
+   */
+  resolveCopilotRunInputFn?: typeof assembleCopilotRunInput;
   /** test seam — 默认 buildMcpServerFromRegistry。 */
   buildMcpServerFn?: typeof buildMcpServerFromRegistry;
   // YUK-364 (bot-review C5) — test seam，默认 env-gated buildTavilyMcpServer。注入
@@ -115,7 +163,8 @@ export type RunCopilotRunResult =
 
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
   const { db, data } = params;
-  const run = params.runAgentTaskFn ?? runAgentTask;
+  const streamRun = params.streamTaskCollectingFn ?? streamTaskCollecting;
+  const assembleRunInput = params.resolveCopilotRunInputFn ?? assembleCopilotRunInput;
   const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
   const resolveSkills = params.resolveCopilotSkillsFn ?? resolveCopilotSkills;
@@ -137,21 +186,19 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // 副作用），但**只对 DONE（成功终态）+ cancelled（用户意图终态）跳过**，对普通
   // FAILED **不跳过**（救活 pg-boss retry）。
   //
-  // 根因：queue 'agent' 档无显式 retryLimit（pg-boss 默认即 redeliver），且
-  // EXPIRE_AGENT=2h 超时也会 redeliver。原守卫见任何 FAILED 就返回 failed/不重跑，
-  // 导致 catch 写 failed + re-throw → pg-boss redeliver → 守卫见 FAILED → 直接返回
-  // failed → **transient 模型/工具故障被首次尝试变成永久失败，retry/DLQ 被绕过**。
-  // 修正：
+  // YUK-575 (Fix 2 — single-shot)：durable copilot 继承 streamTaskCollecting 的
+  // graceful-degrade（run 失败经 {partial} plain-Error 回来、从不 throw AgentRunError），
+  // 故 handler 对失败一律 return-without-throw 写 terminal FAILED(reason='exhausted')，
+  // **不 re-throw、pg-boss 不 redeliver**（single-shot，与 inline copilot 一致；真
+  // transient 自动重试延到 YUK-596）。terminal 守卫据 replay 末态跳重投：
   //   • DONE  → 成功终态，跳过返回现有 reply（重投不重跑、不重写，防重复副作用 +
   //             重复 STARTED/REPLY/DONE，quiz_gen:741-745 同款 hazard）。
   //   • FAILED(reason='cancelled') → 用户意图的早停终态（cancelled-before-start
-  //             落在这里），按现有终态返回 cancelled，不重跑（取消是 deliberate，
-  //             重跑违背用户意图）。
-  //   • FAILED(其余) → transient 错误，**不跳过**：继续往下走 STARTED→SDK run，
-  //             让 pg-boss redeliver 真正重跑（retry 语义恢复）。重跑会再写一轮
-  //             STARTED/REPLY/DONE 事件 + 一条 copilot_reply domain event——这是
-  //             retry 的预期代价（上一次 FAILED 没产生成功副作用，无重复写之忧；
-  //             DONE 守卫仍兜住「成功后重投」）。
+  //             落在这里），按现有终态返回 cancelled，不重跑（取消 deliberate）。
+  //   • FAILED(reason='exhausted') → 单发失败的 deliberate terminal（handleDurableFailure
+  //             写它 + return，不 throw）；此守卫兜「写完 terminal 后、worker 崩溃在
+  //             pg-boss 标 job complete 前」的 EXPIRE_AGENT redeliver，不重跑重烧
+  //             12-min run（下方 priorExhausted）。
   const priorDone = priorEvents.some((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
   if (priorDone) {
     const reply = priorEvents.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
@@ -170,6 +217,21 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   );
   if (priorCancelled) {
     return { status: 'cancelled' };
+  }
+
+  // YUK-575 (MF2b) — terminal-no-retry 幂等守卫（镜像上面的 cancelled）。非 transient
+  // 耗尽 / streamTaskCollecting graceful-degrade 的 catch/partial 分支走 write-FAILED
+  // (reason='exhausted') + return（不 throw），停常规重投；但 worker 写完 FAILED、
+  // pg-boss 标 job complete 前崩溃会 redeliver——此守卫据 replay 里的 FAILED
+  // (reason='exhausted') 早停，不重跑重烧 12-min run。
+  const priorExhausted = priorEvents.find(
+    (e) =>
+      e.event_type === COPILOT_RUN_EVENTS.FAILED &&
+      (e.payload as { reason?: string } | undefined)?.reason === 'exhausted',
+  );
+  if (priorExhausted) {
+    const error = (priorExhausted.payload as { error?: string } | undefined)?.error ?? 'exhausted';
+    return { status: 'failed', error };
   }
 
   // F4 — 复用 copilot-run-status 的 hasCancelRequest helper（消重内联 .some()，
@@ -202,10 +264,18 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   //     「跑得久」，**故意要超过 inline 的 per-message 预算**，照搬会自相矛盾 ——
   //     所以 durable **不挂 interceptInput**（row cap 不适用于 endurance）。
   // 两个 seam 在 buildMcpServerFromRegistry 上是独立可选回调（BuildMcpServerOptions），
-  // 天然可分离，故只取 beforeExecute。budget surface 复用 copilot（maxToolCalls=10）
-  // 作为 v1 上限；若实测 endurance 多回合需要更高 ceiling，后续 lane 调专属 durable
-  // 预算（当前先粗、最不误伤）。
-  const budgetTracker = new ContextBudgetTracker(resolveContextBudget(surface));
+  // 天然可分离，故只取 beforeExecute。
+  //
+  // YUK-575 (MF-A) — **抬 tool-call ceiling 到 DURABLE_BUDGET.maxToolCalls(60)**。
+  // 这是抬 maxIterations 的必要伴随：durable 与 inline 同 surface='copilot'，共用
+  // COPILOT_CONTEXT_BUDGET.maxToolCalls=10；不抬它则 24 回合的 propose 编排在 ~7-10
+  // 回合就被 10 tool-call soft-stop、maxIterations:24 变死（MF-A 要消灭的失效模式）。
+  // 只覆盖 maxToolCalls，其余 context 维度（nodes/edges/events/excerpt）仍取 copilot
+  // 预算（durable NOT 挂 interceptInput，那些 per-message row cap 不生效，见上）。
+  const budgetTracker = new ContextBudgetTracker({
+    ...resolveContextBudget(surface),
+    maxToolCalls: DURABLE_BUDGET.maxToolCalls,
+  });
 
   // ── MCP mount: 照 quiz_gen:415-435 / chat.ts:1038-1098 ────────────────────
   // copilot 全集 surface（chat surface=copilot；chip surface=user-suggested）。
@@ -249,34 +319,86 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // 零差异，spread-when-present 保 byte-compat）。
   const copilotSkills = await resolveSkills();
 
-  // durable run 不带同步面的 conversation_history / proposal_feedback / ambient
-  // （那些是 inline 路径的 per-message 装配，本 lane 不抬）。v1 最小 run input：
-  // 与 CopilotTask registry 契约一致的 surface/triggered_by/user_message。
-  const runInput = {
-    surface,
-    triggered_by: data.triggered_by,
-    user_message: data.user_message,
-    ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
-  };
+  // YUK-575 (A1/N3/MF-B) — 组装 FULL run input（与 inline byte-parity）。**pickup 时**
+  // 重读 conversation_history / learner-state header(YUK-574) / proposal_feedback（保
+  // 新鲜，不在 dispatch 侧冻结），传 excludeUserAskEventId=runId 排除 dispatch 已写的
+  // 当前 ask（durable 时序 = dispatch-写-then-pickup，不像 inline read-before-write）。
+  // ambient RIDE 自 job payload（S4：request-only、从不 persisted，无处可重读）。
+  const runInput: CopilotRunInput = await assembleRunInput(db, {
+    sessionId: data.session_id,
+    userMessage: data.user_message,
+    triggeredBy: data.triggered_by,
+    ...(data.chip_kind ? { chipKind: data.chip_kind } : {}),
+    ...(data.ambient ? { ambient: data.ambient } : {}),
+    now: new Date(),
+    excludeUserAskEventId: runId,
+  });
+
+  // YUK-575 (N2/S3) — 流式 delta → job_events，FIFO promise-chain（onDelta 同步、
+  // writeJobEvent 异步；fire-and-forget 会乱序 id）。terminal REPLY/DONE 前 await 排空
+  // → 每条 delta id 严格早于 REPLY/DONE。primary_view marker 从 live delta 剥掉（与
+  // inline 同一份 wrapDeltaSuppressingMarker；终稿 REPLY 携 cleaned 文本）。
+  let deltaChain: Promise<void> = Promise.resolve();
+  const onDelta = wrapDeltaSuppressingMarker((text: string) => {
+    deltaChain = deltaChain.then(async () => {
+      // MINOR(3) fix — per-write catch INSIDE the .then so one failed delta write
+      // does not poison the chain (a rejected link would skip every subsequent
+      // delta + reject the drain). Each delta is independent best-effort.
+      try {
+        await writeJobEvent(db, {
+          business_table: COPILOT_RUN_TABLE,
+          business_id: runId,
+          event_type: COPILOT_RUN_EVENTS.DELTA,
+          payload: { text },
+        });
+      } catch (err) {
+        console.error('[copilot_run] delta write failed for', runId, err);
+      }
+    });
+  });
 
   try {
-    const result = await run('CopilotTask', runInput, {
-      db,
-      mcpServers,
-      allowedTools,
-      // C2 — spread-when-present：copilotSkills===undefined 时省略 skills 字段，
-      // 与 inline chat.ts 同款降级（runner ctx.skills ?? [] 不变 → 零回归）。
-      ...(copilotSkills ? { skills: copilotSkills } : {}),
-    });
+    const result: StreamCollectResult = await streamRun(
+      'CopilotTask',
+      runInput,
+      {
+        db,
+        mcpServers,
+        allowedTools,
+        // C2 — spread-when-present：copilotSkills===undefined 时省略 skills 字段，
+        // 与 inline chat.ts 同款降级（runner ctx.skills ?? [] 不变 → 零回归）。
+        ...(copilotSkills ? { skills: copilotSkills } : {}),
+        // YUK-575 (N5/MF-A) — durable ceiling：maxIterations→SDK maxTurns、
+        // timeoutMs→streamTaskCollecting abort timer（maxToolCalls 在上方 tracker）。
+        budgetOverride: {
+          maxIterations: DURABLE_BUDGET.maxIterations,
+          timeoutMs: DURABLE_BUDGET.timeoutMs,
+        },
+      },
+      onDelta,
+    );
+    // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
+    await drainDeltaChain(deltaChain, runId);
 
-    // YUK-364 (F1) — 写 conversation-历史可见的 copilot_reply domain event（经与
+    // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
+    // { partial:true, error }（plain Error 内含）而非 throw。partial = run 跑了但失败
+    // （可能有半程文本）→ terminal-no-retry（handleDurableFailure 写 FAILED(exhausted)
+    // + 半程文本/错误 reply + return，不 pg-boss 重烧；重投=从头丢 partial）。
+    if (result.partial) {
+      return await handleDurableFailure(db, {
+        err: new Error(result.error ?? 'run failed'),
+        runId,
+        sessionId: data.session_id,
+        actorRef,
+        partialText: result.text,
+      });
+    }
+
+    // YUK-364 (F1) — 成功：写 conversation-历史可见的 copilot_reply domain event（经与
     // inline 同一份 writeCopilotReply：extractPrimaryView 剥 primary_view marker +
     // chained caused_by → user_ask，同 session_id）。turns.ts 的 conversation_history
-    // 只读 copilot_user_ask + copilot_reply domain event——不写它则 durable 回复对
-    // 历史不可见、user_ask 成 phantom（下一轮模型没有自己上一条 durable 答复的记忆）。
-    // job_events 的 REPLY/DONE 是另一职责（SSE 进度），两者都要：domain event 给
-    // 历史，job_events 给重连进度。terminal job_event 在 domain event 之后写，让
-    // F3 守卫据 DONE 跳过时不会漏写 domain event（domain event 已先落）。
+    // 只读 copilot_user_ask + copilot_reply domain event——不写它则 durable 回复对历史
+    // 不可见、user_ask 成 phantom。terminal job_event 在 domain event 之后写。
     const { cleanedReply } = await writeCopilotReply(db, {
       sessionId: data.session_id,
       userAskEventId: runId,
@@ -285,9 +407,6 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       taskRunId: result.task_run_id,
       now: new Date(),
     });
-
-    // 终稿 reply 事件（done 的前序：消费者可先渲染 reply 再收 done）。持久化 cleaned
-    // 文本（已剥 marker），与 domain event reply_md 一致。
     await writeJobEvent(db, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -302,21 +421,84 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     });
     return { status: 'done', reply: cleanedReply, task_run_id: result.task_run_id };
   } catch (err) {
-    const message = String((err as Error)?.message ?? err);
-    // 失败事件先写（终态可见），再 re-throw 让 pg-boss 走 DLQ/retry 配方（agent 档）。
-    // best-effort：失败事件写入本身再失败也不能吞掉原始错误。
-    try {
-      await writeJobEvent(db, {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: runId,
-        event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: { reason: 'error', error: message },
-      });
-    } catch (writeErr) {
-      console.error('[copilot_run] failed-event write failed for', runId, writeErr);
-    }
-    throw err;
+    // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
+    // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw（测 MF1/MF2）。
+    await drainDeltaChain(deltaChain, runId);
+    return await handleDurableFailure(db, {
+      err,
+      runId,
+      sessionId: data.session_id,
+      actorRef,
+    });
   }
+}
+
+/** S3 — 排空 delta 写链（best-effort：一条 delta 写失败不吞掉 run，也不阻 terminal）。 */
+async function drainDeltaChain(chain: Promise<void>, runId: string): Promise<void> {
+  try {
+    await chain;
+  } catch (err) {
+    console.error('[copilot_run] delta chain write failed for', runId, err);
+  }
+}
+
+/**
+ * YUK-575 (Fix 2 — single-shot) — durable 失败处理。**无 transient/redeliver 分诊**：
+ * durable copilot 继承 streamTaskCollecting 的 graceful-degrade——run 失败经 `{partial}`
+ * （plain Error）回来、从不 throw AgentRunError，故每个 durable 失败都是 deliberate
+ * TERMINAL（single-shot），与 inline copilot 今天完全一致（inline 共享
+ * streamTaskCollecting、从来没有 transient 自动重试，一直 graceful-degrade 成 partial
+ * reply）。**真 transient 自动重试**（把 AgentFailureSubtype 穿过 StreamCollectResult
+ * 让 pg-boss redeliver）**延到 YUK-596**——那里 durable 成默认（每回合都 durable），
+ * single-shot 失败才真正 load-bearing、更重的 runner 契约变更才有正当性。
+ *
+ * 顺序：terminal FAILED(reason='exhausted') 先写（dock terminal 标记 + 上方
+ * priorExhausted 守卫据它跳「写完 terminal 后 pg-boss commit 前崩溃」的重投），再
+ * best-effort 写 phantom-preventing copilot_reply（镜像 chat.ts F2——partial 有文本则
+ * 持久化半程文本，否则错误提示，让 user_ask 不成 conversation_history 的 phantom）。
+ * 两写都 best-effort、不互相阻断、不 throw（single-shot：pg-boss 不 redeliver）。
+ */
+async function handleDurableFailure(
+  db: Db,
+  args: {
+    err: unknown;
+    runId: string;
+    sessionId: string;
+    actorRef: string;
+    /** streamTaskCollecting graceful-degrade 的半程文本（若有），作 phantom-reply 正文。 */
+    partialText?: string;
+  },
+): Promise<RunCopilotRunResult> {
+  const { err, runId, sessionId, actorRef, partialText } = args;
+  const message = String((err as Error)?.message ?? err);
+
+  try {
+    await writeJobEvent(db, {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'exhausted', error: message },
+    });
+  } catch (writeErr) {
+    console.error('[copilot_run] terminal-failed write failed for', runId, writeErr);
+  }
+  const replyText =
+    partialText && partialText.length > 0
+      ? partialText
+      : '这次后台运行没能在预算内收敛完成。可以换个更聚焦的问法再试。';
+  try {
+    await writeCopilotReply(db, {
+      sessionId,
+      userAskEventId: runId,
+      replyText,
+      actorRef,
+      taskRunId: `copilot_run_exhausted_${runId}`,
+      now: new Date(),
+    });
+  } catch (replyErr) {
+    console.error('[copilot_run] exhausted copilot_reply write failed for', runId, replyErr);
+  }
+  return { status: 'failed', error: message };
 }
 
 /**

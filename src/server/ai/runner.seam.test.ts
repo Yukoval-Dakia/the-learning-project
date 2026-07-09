@@ -48,7 +48,7 @@ vi.mock('@/server/ai/log', () => ({
 }));
 
 import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
-import { runTask } from './runner';
+import { runTask, streamTaskCollecting } from './runner';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
 const fakeDb = {} as never;
@@ -361,5 +361,87 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
     expect(opts.env.ANTHROPIC_BASE_URL).toBe('https://api.xiaomimimo.com/anthropic');
     expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(opts.model).toBe('mimo-v2.5-pro');
+  });
+});
+
+// YUK-575 (N5/S2) — the durable copilot run budget override seam. maxIterations →
+// SDK maxTurns (buildQueryOptions, shared by runTask + streamTaskCollecting);
+// timeoutMs → the streamTaskCollecting abort timer (the durable handler's run fn).
+// The third durable knob (maxToolCalls) is NOT here — it lives in the handler's
+// ContextBudgetTracker (MF-A). undefined-guard: non-durable callers keep def.budget.
+describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [successResult()];
+    logMock.started.mockClear();
+    logMock.finished.mockClear();
+    logMock.cost.mockClear();
+    logMock.tool.mockClear();
+    process.env.XIAOMI_API_KEY = 'sk-test-key';
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // CopilotTask registry defaults (the durable target task): maxIterations 6,
+  // timeout 60_000 (registry.ts DEFAULT_BUDGET + CopilotTask). Byte-identical
+  // baselines the override must not touch when omitted.
+  const COPILOT = 'CopilotTask';
+
+  it('omitted budgetOverride → maxTurns == registry default (byte-identical)', async () => {
+    await runTask(COPILOT, { user_message: 'hi', triggered_by: 'chat' }, { db: fakeDb });
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect(opts.maxTurns).toBe(6);
+    // The seam value is consumed into maxTurns — never leaked as an Options key.
+    expect('budgetOverride' in opts).toBe(false);
+  });
+
+  it('budgetOverride.maxIterations → Options.maxTurns (durable ceiling)', async () => {
+    await runTask(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, budgetOverride: { maxIterations: 24 } },
+    );
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect(opts.maxTurns).toBe(24);
+    expect('budgetOverride' in opts).toBe(false);
+  });
+
+  it('empty budgetOverride object → registry maxTurns (|| 1 fallback preserved)', async () => {
+    await runTask(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, budgetOverride: {} },
+    );
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect(opts.maxTurns).toBe(6);
+  });
+
+  it('streamTaskCollecting: budgetOverride.timeoutMs → abort timer uses the override (~12min, not 60s)', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    await streamTaskCollecting(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, budgetOverride: { maxIterations: 24, timeoutMs: 12 * 60_000 } },
+      () => {},
+    );
+    // The durable abort timer is armed with the override, NOT the 60_000 registry
+    // default — guards against the timeout override landing in a no-op position.
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 12 * 60_000);
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 60_000);
+    // maxTurns override still threads through buildQueryOptions on the stream path.
+    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    expect(opts.maxTurns).toBe(24);
+  });
+
+  it('streamTaskCollecting: omitted budgetOverride → abort timer uses registry default (60s)', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    await streamTaskCollecting(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb },
+      () => {},
+    );
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 60_000);
   });
 });

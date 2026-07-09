@@ -18,6 +18,12 @@
 import { createId } from '@paralleldrive/cuid2';
 import { z } from 'zod';
 
+// YUK-575 (A1) — shared free-form run-input assembler (single execution point for
+// inline + durable copilot runs).
+import {
+  type CopilotRunInput,
+  assembleCopilotRunInput,
+} from '@/capabilities/copilot/server/copilot-run-input';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
 // same session-anchored block (folded in, same invalidation rules, proposal
@@ -54,7 +60,6 @@ import {
 // never back). The zod parse schema lives HERE at the extraction point.
 import {
   type CopilotPrimaryView,
-  type CopilotTurn,
   EPHEMERAL_HTML_REF_MAX_CHARS,
   getRecentCopilotTurns,
 } from '@/capabilities/copilot/server/turns';
@@ -79,7 +84,7 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/server/ai/tools/allowlists';
-import { COPILOT_HISTORY_BUDGET, resolveContextBudget } from '@/server/ai/tools/budgets';
+import { resolveContextBudget } from '@/server/ai/tools/budgets';
 import { ContextBudgetTracker } from '@/server/ai/tools/context-throttle';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { type WriteEventInput, writeEvent } from '@/server/events/queries';
@@ -344,7 +349,13 @@ export function extractPrimaryView(
 // very end of the stream) under-emits a few trailing chars — the terminal
 // `reply` SSE event is authoritative and reconciles (CopilotDock already
 // overwrites the live text with the cleaned terminal reply).
-function wrapDeltaSuppressingMarker(onDelta: (text: string) => void): (text: string) => void {
+// YUK-575 (N2) — exported so the durable copilot_run handler suppresses the
+// primary_view marker from its live delta stream exactly like the inline path (the
+// terminal REPLY carries the cleaned text; a raw marker must not flash in the live
+// bubble). Single source, no drift.
+export function wrapDeltaSuppressingMarker(
+  onDelta: (text: string) => void,
+): (text: string) => void {
   let held = '';
   let suppressed = false;
   return (chunk: string) => {
@@ -628,69 +639,11 @@ export interface CopilotChatDeps {
   now?: () => Date;
 }
 
-// YUK-267 (C2) — the minimal history shape carried in the run input. ONLY role +
-// text (the persisted ask原文 / reply正文); everything else from the turn row is
-// EXPLICITLY dropped (防循环 ①/⑤). YUK-574 adds the 'context' role for the pinned
-// learner-state header (a deterministic projection, NOT a persisted turn — it is
-// prepended fresh from the session-anchored cache and never read back from turns).
-export interface CopilotHistoryTurn {
-  role: 'user' | 'ai' | 'context';
-  text: string;
-}
-
-// YUK-267 (C2) — assemble the bounded, history-only conversation_history from the
-// session-scoped turn reader. 防循环 invariants enforced here:
-//   ① each entry is {role, text} ONLY — NO skill_turn / skill_context / session_id
-//      / reply_event_id / event_id / at, and certainly NO prior-run assembly
-//      artifact (conversation_history / proposal_feedback / ambient_context). The
-//      reader only exposes role+text (turns.ts), so this map is the structural
-//      guarantee (防循环 ⑤ test feeds a polluted row and asserts {role,text} only).
-//   ④ DOUBLE truncation — per-turn char cap, then whole-array char cap dropping the
-//      OLDEST turns first until the serialized array fits (recency matters most).
-// `turns` arrive oldest→newest (the reader reverses to chronological). We keep the
-// newest maxTurns, per-turn truncate, then oldest-first whole-array truncate.
-//
-// YUK-574 — `pinnedHeaderMd` (the session-anchored learner-state header) is
-// prepended as a `{role:'context'}` entry that is PINNED: the oldest-first drop
-// loop only ever removes real conversation turns, never the header. The header's
-// char cost is reserved FIRST so it is counted against COPILOT_HISTORY_BUDGET yet
-// survives truncation (the header is pre-bounded at assembly to
-// LEARNER_STATE_HEADER_BUDGET, always well under totalChars). Absent / empty header
-// → byte-for-byte the pre-YUK-574 output (no context entry prepended).
-function assembleConversationHistory(
-  turns: CopilotTurn[],
-  budget: typeof COPILOT_HISTORY_BUDGET,
-  pinnedHeaderMd?: string,
-): CopilotHistoryTurn[] {
-  // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice).
-  const recent = turns.slice(-budget.maxTurns);
-  // 防循环 ① — strip to {role, text} ONLY, then per-turn truncate (防循环 ④).
-  const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
-    role: t.role,
-    text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
-  }));
-  const pinned: CopilotHistoryTurn | null =
-    pinnedHeaderMd && pinnedHeaderMd.length > 0 ? { role: 'context', text: pinnedHeaderMd } : null;
-  // 防循环 ④ — whole-array cap: drop OLDEST real turn (front) until the serialized
-  // array (header included in the accounting) fits. The pinned header is NEVER
-  // dropped WHILE there are still real turns to shift, only real turns.
-  const serialized = () => JSON.stringify(pinned ? [pinned, ...mapped] : mapped);
-  while (mapped.length > 0 && serialized().length > budget.totalChars) {
-    mapped.shift();
-  }
-  // PR #717 round-2 OCR fix #1 (minor 0.60) — PROGRAMMATIC invariant guard: the
-  // loop above only shifts real turns, so if the header ALONE (mapped already
-  // drained) still exceeds totalChars, there is nothing left to drop except the
-  // header itself. Without this, a future misconfiguration where
-  // LEARNER_STATE_HEADER_BUDGET.maxChars grows past COPILOT_HISTORY_BUDGET.
-  // totalChars (see the cross-reference comments at both constants in budgets.ts)
-  // would silently ship an orphaned over-budget header with zero real turns —
-  // worse than an empty history. Give up the header too in that case.
-  if (pinned && mapped.length === 0 && serialized().length > budget.totalChars) {
-    return [];
-  }
-  return pinned ? [pinned, ...mapped] : mapped;
-}
+// YUK-575 (A1) — `CopilotHistoryTurn` + `assembleConversationHistory` moved to the
+// shared assembler `./copilot-run-input` (single execution point for inline +
+// durable; two copies would be the exact drift the panel elevated to a correctness
+// requirement). This file now routes free-form assembly through
+// `assembleCopilotRunInput`.
 
 function selectSurface(triggeredBy: CopilotChatTriggerKind): DomainToolSurface {
   return triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot';
@@ -778,39 +731,32 @@ async function runCopilotChatImpl(
   // It also carries the migrated Facet A `proposal_feedback` digest (folded into
   // the same session-anchored block). Additive-input red line: any failure degrades
   // to an empty header + [] digest and never crashes the chat.
-  let conversationHistory: CopilotHistoryTurn[] = [];
-  let learnerState: LearnerStateHeader = { header_md: '', proposal_feedback: [] };
+  // YUK-575 (A1) — route free-form run-input assembly through the SHARED assembler
+  // (the single execution point shared with the durable copilot_run handler, so the
+  // two paths are byte-parity by construction — the drift the panel elevated to a
+  // correctness requirement). Called HERE, BEFORE the user_ask write below, so the
+  // inline path keeps its proven read-before-write ordering (the current ask is not
+  // yet persisted → structurally excluded) and OMITS `excludeUserAskEventId`. Only
+  // the durable path (dispatch-writes-ask-then-worker-picks-up) passes the exclude
+  // cursor. The additive-input degrade semantics (learner-state / history read
+  // failures → empty, never crash) live inside the assembler now.
+  let freeFormRunInput: CopilotRunInput | undefined;
   if (!req.skill_context || req.skill_context.skill === 'quiz') {
-    try {
-      learnerState = await resolveLearnerState(db, sessionId, { now: deps.now });
-    } catch (err) {
-      learnerState = { header_md: '', proposal_feedback: [] };
-      console.error('[runCopilotChat] resolveLearnerState failed; degrading to empty header', {
-        task_run_id: taskRunId,
-        surface,
-        err,
-      });
-    }
-    try {
-      const rawTurns = await loadHistory(db, { limit: COPILOT_HISTORY_BUDGET.maxTurns, now });
-      conversationHistory = assembleConversationHistory(
-        rawTurns,
-        COPILOT_HISTORY_BUDGET,
-        learnerState.header_md,
-      );
-    } catch (err) {
-      // History read failed — still ride the pinned header alone (pin-in-budget).
-      conversationHistory = assembleConversationHistory(
-        [],
-        COPILOT_HISTORY_BUDGET,
-        learnerState.header_md,
-      );
-      console.error('[runCopilotChat] loadHistory failed; degrading to header-only', {
-        task_run_id: taskRunId,
-        surface,
-        err,
-      });
-    }
+    freeFormRunInput = await assembleCopilotRunInput(
+      db,
+      {
+        sessionId,
+        userMessage: req.user_message,
+        triggeredBy: req.triggered_by,
+        ...(req.chip_kind ? { chipKind: req.chip_kind } : {}),
+        ...(req.ambient_context ? { ambient: req.ambient_context } : {}),
+        now,
+      },
+      {
+        resolveLearnerStateHeaderFn: resolveLearnerState,
+        loadHistoryFn: loadHistory,
+      },
+    );
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -1074,14 +1020,6 @@ async function runCopilotChatImpl(
     },
   });
 
-  // YUK-574 (Facet A migration) — the `proposal_feedback` digest is NO LONGER read
-  // per turn here. It is resolved ONCE with the session-anchored learner-state
-  // header (`learnerState`, assembled above) under the SAME invalidation rules,
-  // with proposal decision events as its dedicated refresh trigger. The scoped
-  // cell shape + in-context-learning semantics are unchanged (byte-identical
-  // between proposal decisions); only the injection cadence moved off per-turn.
-  const proposalFeedback = learnerState.proposal_feedback;
-
   // YUK-198 — optionally fold in the remote Tavily MCP (web grounding) for the
   // Copilot surface. Env-gated: when TAVILY_API_KEY is unset, buildTavily()
   // returns null and both the mcpServers map and allowedTools are identical to
@@ -1098,26 +1036,20 @@ async function runCopilotChatImpl(
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
 
-  const runInput = {
+  // YUK-575 (A1) — the free-form run input assembled by the shared assembler above
+  // (before the ask write, read-before-write). When `freeFormRunInput` is undefined
+  // it is the non-teaching / non-quiz `skill_context` 降级 case (e.g. a legacy
+  // `skill:'solve'`): the assembler guard `!skill_context || quiz` was false, so —
+  // byte-parity with the pre-YUK-575 code, which left `conversationHistory` / the
+  // learner-state at their empty defaults for this path — build a minimal run input
+  // with empty history + empty proposal_feedback (no session memory injected).
+  const runInput: CopilotRunInput = freeFormRunInput ?? {
     surface,
     triggered_by: req.triggered_by,
     user_message: req.user_message,
     ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
-    // YUK-574 — edge-scoped, char-bounded reason digest, now sourced from the
-    // session-anchored learner-state block (assemble-once + invalidation) instead
-    // of a per-turn read. Same scoped cell shape; serialized verbatim by
-    // promptFromInput (runner.ts JSON.stringify).
-    proposal_feedback: proposalFeedback,
-    // YUK-267 (C2) — bounded, history-only conversation context (防循环 ①/④/⑤).
-    // [{role,text}], oldest→newest, double-truncated. The current ask is excluded
-    // (read before the ask write). Serialized verbatim by promptFromInput.
-    // YUK-574 — the FIRST entry may be a pinned {role:'context'} learner-state
-    // header (assembled once, session-anchored); it is never dropped by the
-    // oldest-first truncation and is not a persisted turn.
-    conversation_history: conversationHistory,
-    // YUK-267 (C2) — ambient context for THIS message only (防循环 ②). Present only
-    // when the request carried it; NEVER written to any turn payload, so it is not
-    // replayed. Forwarded verbatim.
+    proposal_feedback: [],
+    conversation_history: [],
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
 
