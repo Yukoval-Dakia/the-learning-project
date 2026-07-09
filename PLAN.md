@@ -2,9 +2,9 @@
 
 > 本项目的「手边」全局看板：比 `.remember/` 结构化、比 Linear 近手。**driver session 持续更新；收尾必同步**（见 `CLAUDE.md` →「Session Discipline · Cockpit & 全局视角」）。Linear 是**权威**驾驶舱（projects/issues 的真相），本文件是工作面镜像 + 当下决策态 + 在飞清单。四栏：NOW / NEXT / PARKED / BLOCKED-ON。**PLAN.md 是看板不是日志**：正文 ≤200 行、头部只留最新 1 条【更新】+ 更新于戳；超龄叙事段滚存归档、四栏就地改写对齐现实。
 >
-> 更新于：2026-07-09　·　历史头部日志（2026-06-23 ~ 07-07 全部【更新】叙事段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真，含 P5/P9/A5 KEEP 裁决证据锚点）。
+> 更新于：2026-07-09　·　历史头部日志（2026-06-23 ~ 07-09 全部超龄【更新】叙事段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真，含 P5/P9/A5 KEEP 裁决证据锚点）。
 
-> **【更新 2026-07-09 · Wave 2/3 收官 + YUK-575 durable PR1 落地】** Wave 2（YUK-573 judge 校准 MVP #729 · YUK-576 registry 诚实化 #730，rebase-merge 含 P2 hardenings `6709f156`/`cf1ae85d`）与 Wave 3（YUK-579 供题覆盖细目表 #732 · YUK-577 主动开口 cut-1 #733 · **YUK-575 durable lane PR1 #738 → main `36709c99`**）全部 merged；红线条文三 PR #724/#725/#726 已于 07-07 落地。#738 走 26-agent 独立 review（8 finder → 逐条双对抗 refuter → Fable xhigh 终裁）：10 findings → 1 fix-before-merge（N3 handler→runner wiring 引用相等断言 `617d3255`）+ Codex P2 future-ask leak = confirmed-defer-PR2，**正确修形 = causal filter**（anchor ask 行定 session + 因果序）而非 temporal cutoff——batchSize:1 串行队列下 replyA.created_at > askB.created_at，时间截断会错杀早 run 迟到 reply；event id 是 cuid2 无序，id-bound 不可行。**4 条 PR2 阻断前置已记 YUK-596 评论（2026-07-09）**。YUK-592 前提证伪 Canceled → YUK-594；YUK-595（主动开口 cut-2）已立。OCR review check 于 #738 连挂两轮 = YUK-394 既存 infra 故障（all file reviews failed / LLM config），非代码 finding（同 workflow 当日 03:30Z 前一 commit 曾过绿）。worktree 拓扑已清：main + `tlp-deploy`。
+> **【更新 2026-07-09 · YUK-249 收线：wenyan→yuwen 已上生产 + 金标验收】** #742（squash `b93ad862`，222 files：registry alias 脊柱〔旧 id wenyan 降级 alias〕+ registry-driven 首会 UI + drizzle 0062 数据迁移 + 机械 sweep）+ #743（Dockerfile:71 skills COPY + vitest.shared.ts:389 unit include——两处收尾 rg 范围外 straggler，后者曾致 12 tests 静默掉出 unit 套件）均 merged。独立 4-lens review 抓 1 真 P1：migration stmt 3 `subject_kind='n'` 死条件（executor 基于假前提「纠正」了正确裁决）→ 复核 `src/server/mastery/state.ts:76` 实字面量 `'ability_global'` 修回——空库 migration smoke 抓不到语义死 UPDATE，对抗复核补位。生产（OrbStack compose `tlp-deploy` @ `77075a59`）：0062 applied exit 0、DB 零 wenyan（`seed:yuwen:root|语文` 在位）、`/api/health` 200、`/welcome` Playwright 金标 = 学科倾向/学科视角 chips 均为 语文/数学/物理，无「文言文」顶级 chip、无「英语」幽灵；教学内容按裁决保留文言文语境（identity 迁、content 不动）。**YUK-394 RCA 修正 = OCR 额度耗尽（owner 确认「没额度了」）**——补额度前该 check 全 PR 必挂，勿重跑。owner 新方向：**科目允许用户手填 → 已注入 YUK-597**（连同 5 处暗桩），拍序「收完本 lane 就开设计线」。遗留：本地 `yuk-249-yuwen-migration`、本地+远端 `yuk-249-rename-stragglers` 分支（git-guard/classifier 挡删）留 owner 清理。
 
 ## 🎯 主线方向（当前）
 
@@ -16,13 +16,13 @@
 
 > 模式转向（owner 2026-06-21）：从「捡 issue 吞吐」转「单项目深度冲刺到一条可感 milestone」。原则 [defer flip not build]（记忆 `feedback_defer_flip_not_build`）。执行图 `docs/planning/2026-06-21-cold-start-openable-sprint.md`（镜像 Linear Document 挂 YUK-452）。
 
-- **下一条 active 开发线待定**：Wave 2/3 已全部收官（见「✅ 最近已落」）；候选按 NEXT 排队，首选 = YUK-596 durable PR2（4 阻断前置已记）或 owner 另拍。
+- **YUK-597 设计线 = 当前 active（owner 拍序 07-09「收完当前 lane 就开设计线」）**：科目用户手填（自定义科目）+ 科目注册表 DB 化调查。形态 = 独立对抗设计 workflow（Fable 核心席、subagent 钉 opus，per 记忆 `feedback_design_workflow_phase`），lane 停在 draft 等 owner 判词；LIGHT vs FULL 双案并呈（softmax-spec §3，不得单边收窄）。暗桩已录 issue：CJK slug scope_key 碰撞（memory/brief 等 4 组装点）、MistakesPage bucket/palette fallback、per-subject skills-dir 契约（populateIsolatedSkills readdirSync + Dockerfile COPY 硬列举）、id 生成策略、onboarding UI 需 design-doc pre-flight。数据层（knowledge.domain / goal.subjectId 自由串）+ capability 层（neutral `general` fallback，YUK-347）已天然兼容——真活在 UI 入口 + 注册表形态。
 - **方向 B「可开始用」milestone — 代码侧全部完成，flag ①批已 LIVE**：S1 YUK-516（#709 merged）· S2 YUK-478 冷启 e2e（#710 merged）· S3 判定无代码活。**YUK-571 flag ①批（`PLACEMENT_PROBE_ENABLED` + `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`）实况 = 2026-07-06 已翻并注入生产容器**（07-09 核验：容器 env + HTTP 零写 smoke 400-not-404；day-zero census 已存档 YUK-571 评论——question=0 / knowledge=3 seed root / 学习表全零）。**剩 gate = 冷库零题（owner 上传/生成内容）→ 首次真实 placement 会话跑通**（空池返回 `sourcingNeeded:true` 走 quiz_gen，设计态非错误态）；② refill 前置未验且空池无意义、③ 按单据明确不动——均维持 off。⚠️ 生产 = 本机 OrbStack compose（`tlp-deploy`），可用性依赖 OrbStack 在跑（always-on ingress 见 PARKED Step6）。
 
 ## NEXT（就绪，排队）
 
 - **YUK-596 durable-by-default flip（YUK-575 PR2）**：翻 copilot durable 默认 + N4 Dock 202-branch + in-loop stop + poll frequency。⚠️ **4 条阻断前置**已记 issue 评论（#738 独立 review 终裁 2026-07-09，含 Codex P2 causal-filter 修形）；宜先跑 PR1 opt-in burn-in。
-- **Wave 3 follow-up 批**：YUK-594（durable judge lane，替代已 Cancel 的 YUK-592）· YUK-595（主动开口 cut-2 连错 streak）· YUK-589（judge 校准第二期）· YUK-590（观测面诚实化第二期）· YUK-593 + YUK-394（OCR review infra ops，#738 又挂两轮）。
+- **Wave 3 follow-up 批**：YUK-594（durable judge lane，替代已 Cancel 的 YUK-592）· YUK-595（主动开口 cut-2 连错 streak）· YUK-589（judge 校准第二期）· YUK-590（观测面诚实化第二期）· YUK-593 + YUK-394（OCR review = **额度耗尽**，owner 07-09 确认；补额度前全 PR 该 check 必挂，勿重跑）。
 - **🦀 Rust 同构核 Phase 0+（YUK-495 project）** ⚠️待核：Phase 1 已 DONE（#634）；Phase 0+/Phase 2 后续项（inc-E YUK-455 prereq 传播 dark-ship 等）状态需 re-ground（原详细 NEXT 记录随头部日志归档）。
 - **旧 loop-wiring 尾巴 + profile/教研团冷启 prior 设计**：openable 通电、有真实交互后据外部信号设计（gated on 数据）。
 
@@ -44,11 +44,12 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **无 feature PR 在飞**（Wave 3 收官：#738 merged `36709c99` 2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout）。
+- **无 feature PR 在飞**（YUK-249 收官：#742 `b93ad862` + #743 均 merged 并已部署，2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout，现指 `77075a59`）。**待 owner 清理分支**：本地 `yuk-249-yuwen-migration` · 本地+远端 `yuk-249-rename-stragglers`（git-guard/classifier 挡删）。
 - **噪音/stale PR 待周期清**：audit-drift 周报 draft（#736/#734/#727/#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
+- **YUK-249 科目顶层改名 wenyan→yuwen（2026-07-09，已上生产 + 金标验收）**：#742（registry alias 脊柱 + registry-driven 首会 UI + drizzle 0062 + 222 文件机械 sweep，4-lens review 抓回 1 P1）· #743（Dockerfile skills COPY + vitest unit include 两处漏网）；生产 0062 applied、DB 零 wenyan、`/welcome` chips = 语文/数学/物理；DB 化 + 手填科目 → YUK-597 设计线（见 NOW）。
 - **红线条文波 + Wave 2（2026-07-07）**：#724（Lane D：CLAUDE.md merge 政策等六项 + PLAN 手术 + 审查报告入库）· #725（Lane E：X6 ADR-0025 northstar fixture）· #726（Lane F：audit:fold-writes + audit:flags）· #729（YUK-573 judge 校准 MVP，report-only）· #730（YUK-576 registry 诚实化；follow-ups YUK-589/590/593 已立）。
 - **Wave 3（2026-07-07~09）**：#732（YUK-579 供题覆盖细目表）· #733（YUK-577 主动开口 cut-1 ingestion）· **#738（YUK-575 durable PR1：opt-in flag + assembleCopilotRunInput 字节等价 + 单发 FAILED 语义 + pickup-stall 检测）**；YUK-592 Canceled→YUK-594；PR2 = YUK-596（4 阻断前置）。
 - **YUK-538 全项目逻辑打磨 program 达成（14/14）**：#690-#707 全 merged（quickwin 批 + kc-dedup + SoT-flip + frontier-gate + softmax + kg-borrowing + verify-check + memory-reconcile + revert-bracket + conjecture-wire + induce-self-consistency + draft-status；#701 YUK-436 BKT 嫁接插单）。
