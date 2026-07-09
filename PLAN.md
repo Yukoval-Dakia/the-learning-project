@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-09　·　历史头部日志（2026-06-23 ~ 07-07 全部【更新】叙事段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真，含 P5/P9/A5 KEEP 裁决证据锚点）。
 
-> **【更新 2026-07-09 · Wave 2/3 收官 + YUK-575 durable PR1 落地】** Wave 2（YUK-573 judge 校准 MVP #729 · YUK-576 registry 诚实化 #730 + 07-08/09 hardenings `6709f156`/`cf1ae85d`）与 Wave 3（YUK-579 供题覆盖细目表 #732 · YUK-577 主动开口 cut-1 #733 · **YUK-575 durable lane PR1 #738 → main `36709c99`**）全部 merged；红线条文三 PR #724/#725/#726 已于 07-07 落地。#738 走 26-agent 独立 review（8 finder → 逐条双对抗 refuter → Fable xhigh 终裁）：10 findings → 1 fix-before-merge（N3 handler→runner wiring 引用相等断言 `617d3255`）+ Codex P2 future-ask leak = confirmed-defer-PR2，**正确修形 = causal filter**（anchor ask 行定 session + 因果序）而非 temporal cutoff——batchSize:1 串行队列下 replyA.created_at > askB.created_at，时间截断会错杀早 run 迟到 reply；event id 是 cuid2 无序，id-bound 不可行。**4 条 PR2 阻断前置已记 YUK-596 评论（2026-07-09）**。YUK-592 前提证伪 Canceled → YUK-594；YUK-595（主动开口 cut-2）已立。OCR review check 于 #738 连挂两轮 = YUK-394 既存 infra 故障（all file reviews failed / LLM config），非代码 finding（同 workflow 当日 03:30Z 前一 commit 曾过绿）。worktree 拓扑已清：main + `tlp-deploy`。
+> **【更新 2026-07-09 · Wave 2/3 收官 + YUK-575 durable PR1 落地】** Wave 2（YUK-573 judge 校准 MVP #729 · YUK-576 registry 诚实化 #730，rebase-merge 含 P2 hardenings `6709f156`/`cf1ae85d`）与 Wave 3（YUK-579 供题覆盖细目表 #732 · YUK-577 主动开口 cut-1 #733 · **YUK-575 durable lane PR1 #738 → main `36709c99`**）全部 merged；红线条文三 PR #724/#725/#726 已于 07-07 落地。#738 走 26-agent 独立 review（8 finder → 逐条双对抗 refuter → Fable xhigh 终裁）：10 findings → 1 fix-before-merge（N3 handler→runner wiring 引用相等断言 `617d3255`）+ Codex P2 future-ask leak = confirmed-defer-PR2，**正确修形 = causal filter**（anchor ask 行定 session + 因果序）而非 temporal cutoff——batchSize:1 串行队列下 replyA.created_at > askB.created_at，时间截断会错杀早 run 迟到 reply；event id 是 cuid2 无序，id-bound 不可行。**4 条 PR2 阻断前置已记 YUK-596 评论（2026-07-09）**。YUK-592 前提证伪 Canceled → YUK-594；YUK-595（主动开口 cut-2）已立。OCR review check 于 #738 连挂两轮 = YUK-394 既存 infra 故障（all file reviews failed / LLM config），非代码 finding（同 workflow 当日 03:30Z 前一 commit 曾过绿）。worktree 拓扑已清：main + `tlp-deploy`。
 
 ## 🎯 主线方向（当前）
 
@@ -45,7 +45,7 @@
 ## 在飞（PRs / workflows / worktrees）
 
 - **无 feature PR 在飞**（Wave 3 收官：#738 merged `36709c99` 2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout）。
-- **噪音/stale PR 待周期清**：audit-drift 周报 draft（#736/#734/#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
+- **噪音/stale PR 待周期清**：audit-drift 周报 draft（#736/#734/#727/#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
