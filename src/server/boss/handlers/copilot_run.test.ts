@@ -228,11 +228,12 @@ describe('runCopilotRun', () => {
   it('N3/S4 — 装配器收到 excludeUserAskEventId=run_id + ambient（从 job payload 透传）', async () => {
     const runId = 'run_assemble_params';
     const assembleSpy = vi.fn(stubRunInput);
+    const run = streamMock('ok');
     const ambient = { route: '/learn/q_9', focused_entity: { kind: 'knowledge', id: 'k_9' } };
     await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: 'sess_assemble', ambient },
-      streamTaskCollectingFn: streamMock('ok') as never,
+      streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: assembleSpy,
       buildMcpServerFn: mcpMock() as never,
     });
@@ -248,6 +249,11 @@ describe('runCopilotRun', () => {
     // 装配器返回的 run input（含 ambient_context）透传给 stream。
     const runInput = await assembleSpy.mock.results[0].value;
     expect(runInput).toMatchObject({ ambient_context: ambient });
+    // N3 wiring 红线（PR #738 独立 review fix-before-merge）：stream 收到的 arg[1] 必须
+    // ===（引用相等）装配器的返回对象。此前所有 run.mock.calls[0] 断言只读 ctx（arg[2]）、
+    // 且上一行只是复读 stub 自身返回值——handler 把 {} / 错对象递给 runner 会全绿通过；
+    // 这条断言封死 handler→runner 的 wiring 回归（PR2 默认翻转恰要重构此 seam）。
+    expect(run.mock.calls[0][1]).toBe(runInput);
   });
 
   // YUK-575 (N5/MF-A) — durable budget：runner budgetOverride（maxIterations/timeoutMs）
