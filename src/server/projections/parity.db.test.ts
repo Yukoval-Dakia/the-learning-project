@@ -57,7 +57,7 @@ async function insertKnowledge(opts: {
   await db.insert(knowledge).values({
     id: opts.id,
     name: opts.name ?? opts.id,
-    domain: opts.domain !== undefined ? opts.domain : 'wenyan',
+    domain: opts.domain !== undefined ? opts.domain : 'yuwen',
     parent_id: opts.parent_id ?? null,
     merged_from: [],
     proposed_by_ai: false,
@@ -113,10 +113,10 @@ describe('assertKnowledgeNodeParity — accept-time projection parity', () => {
 
   it('a CLEAN propose_new accept passes the parity assert (fold == live row)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:root', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:root', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_clean',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:wenyan:root' },
+      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:root' },
     });
 
     // acceptProposal already runs the parity assert internally; reaching here without a
@@ -131,22 +131,22 @@ describe('assertKnowledgeNodeParity — accept-time projection parity', () => {
 
   it('THROWS when the live row is mutated OUT-OF-BAND to diverge from fold(events)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:root', domain: 'wenyan' });
-    await insertKnowledge({ id: 'seed:wenyan:other', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:root', domain: 'yuwen' });
+    await insertKnowledge({ id: 'seed:yuwen:other', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_div',
-      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:wenyan:root' },
+      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:yuwen:root' },
     });
     const result = await acceptProposal(db, 'p_div');
     if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
     const nodeId = result.new_node_id;
 
     // Out-of-band write: directly UPDATE the live knowledge row so it no longer matches the
-    // event log (the fold still reconstructs parent_id='seed:wenyan:root', name='互文'). This
+    // event log (the fold still reconstructs parent_id='seed:yuwen:root', name='互文'). This
     // is exactly the drift the assert exists to catch.
     await db
       .update(knowledge)
-      .set({ name: 'TAMPERED', parent_id: 'seed:wenyan:other' })
+      .set({ name: 'TAMPERED', parent_id: 'seed:yuwen:other' })
       .where(eq(knowledge.id, nodeId));
 
     const tamperedLive = await liveSnapshot(nodeId);
@@ -157,10 +157,10 @@ describe('assertKnowledgeNodeParity — accept-time projection parity', () => {
 
   it('THROWS when the passed-in live row is null but the fold produces a row', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:wenyan:root', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:yuwen:root', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_nullrow',
-      payload: { mutation: 'propose_new', name: '倒装', parent_id: 'seed:wenyan:root' },
+      payload: { mutation: 'propose_new', name: '倒装', parent_id: 'seed:yuwen:root' },
     });
     const result = await acceptProposal(db, 'p_nullrow');
     if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
@@ -174,7 +174,7 @@ describe('assertKnowledgeNodeParity — accept-time projection parity', () => {
     const db = testDb();
     // Seed into + from nodes via propose_new accepts so each has an event-log genesis (the
     // parity gate requires it; a bare INSERT has no anchor and would be skipped).
-    await insertKnowledge({ id: 'seed:root', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:root', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_into',
       payload: { mutation: 'propose_new', name: 'into', parent_id: 'seed:root' },
@@ -222,7 +222,7 @@ describe('knowledge node genesis-anchor gate (parity applicability)', () => {
 
   it('a bare-INSERTed (pre-event-sourcing) node has NO genesis anchor → gate skips it', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'legacy_node', domain: 'wenyan' });
+    await insertKnowledge({ id: 'legacy_node', domain: 'yuwen' });
     expect(await hasKnowledgeNodeGenesisAnchor(db, 'legacy_node')).toBe(false);
     const set = await knowledgeNodesWithGenesisAnchor(db, ['legacy_node']);
     expect(set.has('legacy_node')).toBe(false);
@@ -230,7 +230,7 @@ describe('knowledge node genesis-anchor gate (parity applicability)', () => {
 
   it('a propose_new-minted node HAS a genesis anchor (materialized_id_index row)', async () => {
     const db = testDb();
-    await insertKnowledge({ id: 'seed:root', domain: 'wenyan' });
+    await insertKnowledge({ id: 'seed:root', domain: 'yuwen' });
     await insertProposeEvent({
       id: 'p_anchor',
       payload: { mutation: 'propose_new', name: 'anchored', parent_id: 'seed:root' },
@@ -290,7 +290,7 @@ describe('decideKnowledgeEdgeProposal — accept-time edge parity (via acceptAiP
       await db.insert(knowledge).values({
         id,
         name: id,
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,

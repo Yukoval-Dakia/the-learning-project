@@ -1,5 +1,37 @@
-import { resolveSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
+import {
+  KNOWN_SUBJECT_IDS,
+  resolveKnownSubjectId,
+  resolveSubjectProfile,
+  subjectProfiles,
+  toSlimSubjectProfile,
+} from '@/subjects/profile';
 import type { CSSProperties } from 'react';
+
+// YUK-249 — registry-driven subject enumeration for UI subject pickers / filters.
+// The concrete subjects a picker shows are DERIVED from the registry
+// (KNOWN_SUBJECT_IDS × displayName), never hardcoded — so registering / renaming
+// a subject flows to every picker and a ghost chip (e.g. a subject with no
+// profile, like the old `english`) can't linger. Accent color stays a UI-side
+// concern (map-by-id in each page, default for unknown), NOT a profile-schema field.
+export interface SubjectChoice {
+  id: string;
+  label: string;
+}
+
+export function listSubjectChoices(): SubjectChoice[] {
+  return KNOWN_SUBJECT_IDS.map((id) => ({
+    id,
+    label: subjectProfiles[id]?.displayName ?? id,
+  }));
+}
+
+// Canonical display label for a raw domain / alias / profile id, registry-driven
+// and alias-aware (legacy `wenyan` → yuwen). Falls back to the raw string for an
+// unregistered value so callers never render an empty label.
+export function subjectDisplayName(subject: string): string {
+  const id = resolveKnownSubjectId(subject) ?? subject;
+  return subjectProfiles[id]?.displayName ?? subject;
+}
 
 export interface SlimSubjectProfile {
   id: string;

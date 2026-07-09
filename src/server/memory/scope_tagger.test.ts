@@ -9,10 +9,10 @@ describe('computeAffectedScopes', () => {
         subject_kind: 'question',
         subject_id: 'q1',
         payload: {
-          referenced_knowledge_ids: ['k-wenyan-particles', 'k-punctuation'],
+          referenced_knowledge_ids: ['k-yuwen-particles', 'k-punctuation'],
         },
       }),
-    ).toEqual(['global', 'topic:k-wenyan-particles', 'topic:k-punctuation']);
+    ).toEqual(['global', 'topic:k-yuwen-particles', 'topic:k-punctuation']);
   });
 
   // YUK-581 invariant guard (independent-review MINOR-1): the ingest-handler subject bridge
@@ -39,8 +39,8 @@ describe('computeAffectedScopes', () => {
         subject_id: 'q1',
         payload: {
           final_rating: 'again',
-          fsrs_subject_ids: ['wenyan'],
-          fsrs: { subject_id: 'wenyan' },
+          fsrs_subject_ids: ['yuwen'],
+          fsrs: { subject_id: 'yuwen' },
         },
       },
       // experimental:record_capture (records/queries.ts / enroll.ts shape — subject resolves
@@ -65,11 +65,11 @@ describe('computeAffectedScopes', () => {
         subject_kind: 'question',
         subject_id: 'q1',
         payload: {
-          subject_id: 'wenyan',
+          subject_id: 'yuwen',
           knowledge_ids: ['k1'],
         },
       }),
-    ).toEqual(['global', 'subject:wenyan', 'topic:k1']);
+    ).toEqual(['global', 'subject:yuwen', 'topic:k1']);
   });
 
   it('tags judge/user-cause primary category as a mistake cluster', () => {

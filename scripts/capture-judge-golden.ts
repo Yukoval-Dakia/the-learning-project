@@ -81,7 +81,7 @@ export function candidateToFixtureSkeleton(c: CaptureCandidate): JudgeGoldenCase
     },
     answer_md: answerMd,
     student_image_refs: imageRefs,
-    subject_profile_id: 'DESENSITIZE: 填 registry profile id（wenyan/math/physics/general）',
+    subject_profile_id: 'DESENSITIZE: 填 registry profile id（yuwen/math/physics/general）',
     frozen_llm_output: raw,
     expected: {
       route: c.samplePayload.rejudge_route,

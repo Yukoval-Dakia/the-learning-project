@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "domain": "wenyan",
+  "domain": "yuwen",
   "knowledge_seeds": [
     { "slug": "shici", "name": "实词" },
     { "slug": "xuci", "name": "虚词" },

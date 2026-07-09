@@ -30,7 +30,7 @@ describe('schema generated from drizzle', () => {
     const result = KnowledgeInsert.safeParse({
       id: 'k1',
       name: '宾语前置',
-      domain: 'wenyan',
+      domain: 'yuwen',
       created_at: new Date(),
       updated_at: new Date(),
     });

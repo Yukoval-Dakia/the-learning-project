@@ -20,7 +20,7 @@ describe('loadTreeSnapshot', () => {
       version: 0,
     };
     await db.insert(knowledge).values([
-      { id: 'k1', name: '虚词', domain: 'wenyan', parent_id: null, archived_at: null, ...base },
+      { id: 'k1', name: '虚词', domain: 'yuwen', parent_id: null, archived_at: null, ...base },
       { id: 'k2', name: '之', domain: null, parent_id: 'k1', archived_at: null, ...base },
       {
         id: 'k3',
@@ -33,9 +33,9 @@ describe('loadTreeSnapshot', () => {
     ]);
     const tree = await loadTreeSnapshot(db);
     expect(tree).toHaveLength(3);
-    expect(tree.find((r) => r.id === 'k1')?.effective_domain).toBe('wenyan');
-    expect(tree.find((r) => r.id === 'k2')?.effective_domain).toBe('wenyan');
-    expect(tree.find((r) => r.id === 'k3')?.effective_domain).toBe('wenyan');
+    expect(tree.find((r) => r.id === 'k1')?.effective_domain).toBe('yuwen');
+    expect(tree.find((r) => r.id === 'k2')?.effective_domain).toBe('yuwen');
+    expect(tree.find((r) => r.id === 'k3')?.effective_domain).toBe('yuwen');
     // A5 S1 (YUK-354) — never-attempted nodes expose the BandChip read shape with
     // cold-start defaults (null/null/false) so the client renders the unknown band.
     const k1 = tree.find((r) => r.id === 'k1');
@@ -52,7 +52,7 @@ describe('loadTreeSnapshot', () => {
     const insertValues = Array.from({ length: 40 }, (_, i) => ({
       id: `k${i}`,
       name: `n${i}`,
-      domain: i === 0 ? 'wenyan' : null,
+      domain: i === 0 ? 'yuwen' : null,
       parent_id: i === 0 ? null : `k${i - 1}`,
       archived_at: null,
       merged_from: [] as string[],
@@ -65,8 +65,8 @@ describe('loadTreeSnapshot', () => {
     // Insert root first, then children in order
     await db.insert(knowledge).values(insertValues);
     const tree = await loadTreeSnapshot(db);
-    expect(tree.find((r) => r.id === 'k0')?.effective_domain).toBe('wenyan');
-    expect(tree.find((r) => r.id === 'k32')?.effective_domain).toBe('wenyan');
+    expect(tree.find((r) => r.id === 'k0')?.effective_domain).toBe('yuwen');
+    expect(tree.find((r) => r.id === 'k32')?.effective_domain).toBe('yuwen');
     expect(tree.find((r) => r.id === 'k33')?.effective_domain).toBeNull();
   });
 });

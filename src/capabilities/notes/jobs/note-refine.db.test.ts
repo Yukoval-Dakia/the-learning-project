@@ -99,7 +99,7 @@ async function seedArtifact(opts: {
     await db.insert(knowledge).values({
       id: opts.knowledgeId,
       name: '之',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -607,9 +607,9 @@ describe('runNoteRefine', () => {
         trigger: expect.objectContaining({ kind: 'dreaming', context_md: 'maintenance scan' }),
       }),
       expect.objectContaining({
-        subjectProfile: expect.objectContaining({ id: 'wenyan' }),
+        subjectProfile: expect.objectContaining({ id: 'yuwen' }),
         // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
-        skills: ['note-wenyan'],
+        skills: ['note-yuwen'],
       }),
     );
   });

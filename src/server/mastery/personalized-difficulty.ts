@@ -376,7 +376,7 @@ export async function updateFamilyCalibration(
 // 给一道客观判分的 attempt，解析 family_key 所需的全部派生量并调 updateFamilyCalibration：
 //   - subject：getEffectiveDomain(primaryKnowledgeId) → resolveKnownSubjectId（DERIVED
 //     轴，subject 是视角不是结构）。未知/orphan domain → 'unknown' 段（不塌进 default
-//     'wenyan'，防 YUK-288 式过匹配把不同科目刷成同家族）。
+//     'yuwen'，防 YUK-288 式过匹配把不同科目刷成同家族）。
 //   - bAnchor：item_calibration.b（track='hard'）有则用，否则弱锚 difficultyToLogitB
 //     （与 state.ts θ̂ 更新读的同一锚链，两条慢线对齐同一 b 来源）。
 //   - theta：作答时（PRE-attempt）的 θ̂（快尺度锚）。**必须**用 thetaBefore（finding #3

@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { submitPaperSlot } from './paper-submit';
 
-async function seedKnowledge(id: string, domain = 'wenyan'): Promise<void> {
+async function seedKnowledge(id: string, domain = 'yuwen'): Promise<void> {
   const now = new Date();
   await testDb()
     .insert(knowledge)
@@ -92,7 +92,7 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
 
   it('emits experimental:mastery_progress carrying the real Δθ̂ on a graded paper success', async () => {
     const db = testDb();
-    await seedKnowledge('k_pmp', 'wenyan');
+    await seedKnowledge('k_pmp', 'yuwen');
     await seedTrueFalseQuestion('q_pmp', ['k_pmp']);
     await seedPaper('paper_pmp', ['q_pmp'], 'k_pmp');
     const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_pmp' });
@@ -135,7 +135,7 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
 
   it('does NOT emit mastery_progress on a failed paper answer (gate = success, mirror solo)', async () => {
     const db = testDb();
-    await seedKnowledge('k_pmp_fail', 'wenyan');
+    await seedKnowledge('k_pmp_fail', 'yuwen');
     await seedTrueFalseQuestion('q_pmp_fail', ['k_pmp_fail']);
     await seedPaper('paper_pmp_fail', ['q_pmp_fail'], 'k_pmp_fail');
     const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_pmp_fail' });

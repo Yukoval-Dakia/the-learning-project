@@ -21,7 +21,7 @@ import { targetFingerprint } from '@/server/question-supply/target-discovery';
 import { resetDb } from '../../../../tests/helpers/db';
 import { GET } from './coverage-lattice';
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
   await db
     .insert(knowledge)
@@ -213,7 +213,7 @@ describe('GET /api/admin/coverage-lattice (YUK-579)', () => {
 
     // frontier_zero for an empty KC uses fixed scaffold coords (kind='any'/band='near'/tier2).
     const fp = targetFingerprint({
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       knowledgeIds: [kid],
       kind: 'any',
       difficultyBand: 'near',

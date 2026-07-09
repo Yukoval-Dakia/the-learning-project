@@ -24,7 +24,7 @@ import type {
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { verifyAndPromote } from './verify-and-promote';
 
-async function seedKnowledge(id: string, domain = 'wenyan', archivedAt: Date | null = null) {
+async function seedKnowledge(id: string, domain = 'yuwen', archivedAt: Date | null = null) {
   const db = testDb();
   const now = new Date();
   await db.insert(knowledge).values({
@@ -489,7 +489,7 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
   it('override with an archived knowledge node → rejected, no promote, no FSRS card, no event (B-archived-KC)', async () => {
     const db = testDb();
     await seedKnowledge('k-live');
-    await seedKnowledge('k-dead', 'wenyan', new Date());
+    await seedKnowledge('k-dead', 'yuwen', new Date());
     const qid = await seedQuestion({
       source: 'quiz_gen',
       knowledgeIds: ['k-live', 'k-dead'],

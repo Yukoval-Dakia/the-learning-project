@@ -20,7 +20,7 @@ async function seedBaseGraph() {
   await db.insert(knowledge).values({
     id: 'k_xuci',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     created_at: now,
     updated_at: now,
   });

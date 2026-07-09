@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { serializeProfileToTs } from '@/subjects/serialize';
-import { wenyanProfile } from '@/subjects/wenyan/profile';
+import { yuwenProfile } from '@/subjects/yuwen/profile';
 import { afterAll, describe, expect, it } from 'vitest';
 import { compileProfile, runCli } from './compile-profile';
 
@@ -37,11 +37,11 @@ function makeSandbox(subDir = 'sandbox'): string {
 
 describe('compileProfile (pure core)', () => {
   it('a valid draft → valid:true, empty errors, diff vs current', () => {
-    // Same content as the live wenyan profile but with one cause label edited →
+    // Same content as the live yuwen profile but with one cause label edited →
     // diff should report `causeCategories` as the single changed top-level key (G1).
     const draft = {
-      ...wenyanProfile,
-      causeCategories: wenyanProfile.causeCategories.map((cause, i) =>
+      ...yuwenProfile,
+      causeCategories: yuwenProfile.causeCategories.map((cause, i) =>
         i === 0 ? { ...cause, label: `${cause.label} (edited)` } : cause,
       ),
     };
@@ -151,7 +151,7 @@ describe('runCli --write (RL7 gate)', () => {
     const sandbox = makeSandbox('rl7-newdir');
     // Unique id — timestamp suffix avoids any possible collision with real subjects.
     const newId = `zztest${Date.now()}`;
-    const draft = { ...wenyanProfile, id: newId };
+    const draft = { ...yuwenProfile, id: newId };
     const draftPath = writeDraft('new-subject.json', draft);
 
     // Directory must NOT exist in the sandbox before the test.
@@ -195,7 +195,7 @@ describe('runCli --write (RL7 gate)', () => {
   it('warns when written subject id is not in the default registry (Issue 4)', async () => {
     const sandbox = makeSandbox('rl7-unreg');
     const unregId = `zzunreg${Date.now()}`;
-    const draft = { ...wenyanProfile, id: unregId };
+    const draft = { ...yuwenProfile, id: unregId };
     const draftPath = writeDraft('unreg.json', draft);
 
     // Non-json mode: warning goes to stderr.
@@ -216,7 +216,7 @@ describe('runCli --write (RL7 gate)', () => {
   it('--json --write sets unregistered_subject:true for an unknown id (Issue 4)', async () => {
     const sandbox = makeSandbox('rl7-unreg-json');
     const unregId = `zzunregjson${Date.now()}`;
-    const draft = { ...wenyanProfile, id: unregId };
+    const draft = { ...yuwenProfile, id: unregId };
     const draftPath = writeDraft('unreg-json.json', draft);
 
     const stdoutLines: string[] = [];

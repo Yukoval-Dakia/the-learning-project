@@ -118,7 +118,7 @@ export function skillKindToQuestionKind(skillKind: SubjectQuestionKind): string 
  * reading_comprehension]；derivation → [derivation, proof]）。
  *
  * 为什么需要这个：`business.ts` 声明 canonical = 落库真值，但 seed / fixture 写路径
- * （subjects/{math,physics,wenyan}/fixtures）历史上直接落 profile 词表
+ * （subjects/{math,physics,yuwen}/fixtures）历史上直接落 profile 词表
  * （single_choice / reading_comprehension / calculation），违反了该不变量。所以一个按
  * canonical `kind` 过滤的读路径若用 `eq(question.kind, 'choice')` 会漏掉所有
  * `single_choice` 行（YUK-288 题型 filter 空集 bug）。读侧用本函数把请求的 canonical 展开

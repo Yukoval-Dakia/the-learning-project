@@ -26,12 +26,12 @@ describe('learning_item proposal lifecycle', () => {
     proposalId: string;
   }> {
     const db = testDb();
-    // Seed wenyan topic graph: hub `k_hub_xc` 虚词 + two children for atomic outline.
+    // Seed yuwen topic graph: hub `k_hub_xc` 虚词 + two children for atomic outline.
     await db.insert(knowledge).values([
       {
         id: 'k_hub_xc',
         name: '虚词',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,
@@ -43,7 +43,7 @@ describe('learning_item proposal lifecycle', () => {
       {
         id: 'k_zhi_xc',
         name: '之',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: 'k_hub_xc',
         merged_from: [],
         proposed_by_ai: false,
@@ -55,7 +55,7 @@ describe('learning_item proposal lifecycle', () => {
       {
         id: 'k_qi_xc',
         name: '其',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: 'k_hub_xc',
         merged_from: [],
         proposed_by_ai: false,

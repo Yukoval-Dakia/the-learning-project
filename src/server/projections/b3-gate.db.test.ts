@@ -163,8 +163,8 @@ describe('runB3Gate', () => {
     const db = testDb();
     // An unanchored seed root + children + a live related_to edge + a live prerequisite edge + an
     // archived edge — none have events (pre-event-sourcing), exactly what the backfill anchors.
-    await insertKnowledge({ id: 'seed:wenyan:root', name: 'wenyan', domain: 'wenyan' });
-    await insertKnowledge({ id: 'kn_a', name: 'A', parent_id: 'seed:wenyan:root' });
+    await insertKnowledge({ id: 'seed:yuwen:root', name: 'yuwen', domain: 'yuwen' });
+    await insertKnowledge({ id: 'kn_a', name: 'A', parent_id: 'seed:yuwen:root' });
     await insertKnowledge({ id: 'kn_b', name: 'B', parent_id: 'kn_a' });
     await insertKnowledge({ id: 'kn_c', name: 'C', parent_id: 'kn_a' });
     await insertEdge({ id: 'ke_ab', from: 'kn_a', to: 'kn_b' });
@@ -191,7 +191,7 @@ describe('runB3Gate', () => {
     // cluster-scoped backfill (review O3): the gate must NOT touch kinds outside its cluster.
     expect(Object.keys(report.backfill).sort()).toEqual(['knowledge', 'knowledge_edge']);
     // The unanchored seed root SURVIVES the rebuild (the keystone non-delete guard + its anchor).
-    const root = await db.select().from(knowledge).where(eq(knowledge.id, 'seed:wenyan:root'));
+    const root = await db.select().from(knowledge).where(eq(knowledge.id, 'seed:yuwen:root'));
     expect(root).toHaveLength(1);
   });
 

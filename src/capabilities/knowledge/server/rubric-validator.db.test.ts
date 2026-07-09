@@ -43,12 +43,12 @@ async function seedGraph(): Promise<void> {
   await testDb()
     .insert(knowledge)
     .values([
-      { id: 'k_wenyan', name: '文言文', domain: 'wenyan', created_at: now, updated_at: now },
+      { id: 'k_yuwen', name: '文言文', domain: 'yuwen', created_at: now, updated_at: now },
       {
         id: 'k_zhi',
         name: '之的用法',
         domain: null,
-        parent_id: 'k_wenyan',
+        parent_id: 'k_yuwen',
         created_at: now,
         updated_at: now,
       },
@@ -56,7 +56,7 @@ async function seedGraph(): Promise<void> {
         id: 'k_er',
         name: '而的用法',
         domain: null,
-        parent_id: 'k_wenyan',
+        parent_id: 'k_yuwen',
         created_at: now,
         updated_at: now,
       },
@@ -350,9 +350,9 @@ describe('validateProposalQuality — structural class (G1–G6)', () => {
   });
 
   it('G6 parent_semantic_duplicate (restates tree ancestry)', async () => {
-    // k_zhi.parent_id === k_wenyan → an edge between them only restates the tree.
+    // k_zhi.parent_id === k_yuwen → an edge between them only restates the tree.
     const v = await validateProposalQuality(
-      edgePayload('k_zhi', 'k_wenyan', 'related_to', {
+      edgePayload('k_zhi', 'k_yuwen', 'related_to', {
         evidenceEventIds: ['e_dup'],
       }),
       testDb(),
@@ -375,15 +375,15 @@ describe('validateProposalQuality — G6 scope (FIX 2)', () => {
   });
 
   it('prerequisite parent→child with strong order evidence is NOT G6-rejected → {ok:true}', async () => {
-    // k_wenyan is the direct parent of k_zhi. A prerequisite parent→child edge
+    // k_yuwen is the direct parent of k_zhi. A prerequisite parent→child edge
     // is exactly the §3.3-endorsed "prerequisite concept → narrower task" shape.
     // Two in-window judge-backed failures reference an endpoint (k_zhi) → strong
     // floor + order evidence → must PASS, NOT trip parent_semantic_duplicate.
     await seedEvidence('e_pre_1', ['k_zhi'], 1);
     await seedEvidence('e_pre_2', ['k_zhi'], 2);
     const v = await validateProposalQuality(
-      edgePayload('k_wenyan', 'k_zhi', 'prerequisite', {
-        reasoning: 'attempt e_pre judge cause concept：先掌握 k_wenyan 才能学 k_zhi。',
+      edgePayload('k_yuwen', 'k_zhi', 'prerequisite', {
+        reasoning: 'attempt e_pre judge cause concept：先掌握 k_yuwen 才能学 k_zhi。',
         evidenceEventIds: ['e_pre_1', 'e_pre_2'],
       }),
       testDb(),
@@ -393,14 +393,14 @@ describe('validateProposalQuality — G6 scope (FIX 2)', () => {
   });
 
   it('applied_in between tree-adjacent nodes with role evidence is NOT G6-rejected → {ok:true}', async () => {
-    // applied_in from parent concept k_wenyan to child application k_zhi: a
+    // applied_in from parent concept k_yuwen to child application k_zhi: a
     // valid role direction. Endpoint-referencing strong evidence → passes; the
     // G6 ancestry check must not fire for applied_in.
     await seedEvidence('e_app_1', ['k_zhi'], 1);
     await seedEvidence('e_app_2', ['k_zhi'], 2);
     const v = await validateProposalQuality(
-      edgePayload('k_wenyan', 'k_zhi', 'applied_in', {
-        reasoning: 'attempt e_app judge cause method：k_wenyan 的方法应用在 k_zhi 上。',
+      edgePayload('k_yuwen', 'k_zhi', 'applied_in', {
+        reasoning: 'attempt e_app judge cause method：k_yuwen 的方法应用在 k_zhi 上。',
         evidenceEventIds: ['e_app_1', 'e_app_2'],
       }),
       testDb(),
@@ -412,7 +412,7 @@ describe('validateProposalQuality — G6 scope (FIX 2)', () => {
   it('derived_from between tree ancestor/descendant IS still G6-rejected', async () => {
     // derived_from overlaps tree parentage (§3.1) → G6 still applies.
     const v = await validateProposalQuality(
-      edgePayload('k_zhi', 'k_wenyan', 'derived_from', {
+      edgePayload('k_zhi', 'k_yuwen', 'derived_from', {
         reasoning: 'attempt e_df 显示派生关系',
         evidenceEventIds: ['e_df'],
       }),
@@ -426,7 +426,7 @@ describe('validateProposalQuality — G6 scope (FIX 2)', () => {
   it('related_to parent→child restatement IS still G6-rejected (confirm)', async () => {
     // The pre-P5.4 related_to-only behavior is preserved.
     const v = await validateProposalQuality(
-      edgePayload('k_zhi', 'k_wenyan', 'related_to', {
+      edgePayload('k_zhi', 'k_yuwen', 'related_to', {
         evidenceEventIds: ['e_rt_dup'],
       }),
       testDb(),
@@ -541,7 +541,7 @@ describe('validateProposalQuality — reasoning + evidence floor (G7, §4.2)', (
           id: 'k_unrelated',
           name: '无关',
           domain: null,
-          parent_id: 'k_wenyan',
+          parent_id: 'k_yuwen',
           created_at: new Date(),
           updated_at: new Date(),
         },
@@ -605,7 +605,7 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
           id: 'k_apply_other',
           name: '其它',
           domain: null,
-          parent_id: 'k_wenyan',
+          parent_id: 'k_yuwen',
           created_at: new Date(),
           updated_at: new Date(),
         },
@@ -635,7 +635,7 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
           id: 'k_rel_other',
           name: '无关',
           domain: null,
-          parent_id: 'k_wenyan',
+          parent_id: 'k_yuwen',
           created_at: new Date(),
           updated_at: new Date(),
         },
@@ -660,7 +660,7 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
   // referencing from/to) passed. Now the default branch requires ≥1 in-window
   // judge-backed failure referencing an endpoint, mirroring the other relations.
   it('derived_from_no_endpoint_evidence — 2 same-cause failures reference neither endpoint', async () => {
-    // k_zhi and k_er are siblings (both children of k_wenyan) → NOT tree
+    // k_zhi and k_er are siblings (both children of k_yuwen) → NOT tree
     // ancestor/descendant, so G6 does not fire. Both failures reference an
     // unrelated node (k_df_other) with the SAME 'concept' cause → same-pattern →
     // strong floor passes, but neither touches an endpoint → default gate rejects.
@@ -671,7 +671,7 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
           id: 'k_df_other',
           name: '无关',
           domain: null,
-          parent_id: 'k_wenyan',
+          parent_id: 'k_yuwen',
           created_at: new Date(),
           updated_at: new Date(),
         },
@@ -716,7 +716,7 @@ describe('validateProposalQuality — relation predicates (§4.3)', () => {
           id: 'k_other',
           name: '其它',
           domain: null,
-          parent_id: 'k_wenyan',
+          parent_id: 'k_yuwen',
           created_at: new Date(),
           updated_at: new Date(),
         },
@@ -1004,7 +1004,7 @@ describe('validateProposalQuality — judge-referenced endpoints count as eviden
           id: 'k_other',
           name: '其它',
           domain: null,
-          parent_id: 'k_wenyan',
+          parent_id: 'k_yuwen',
           created_at: new Date(),
           updated_at: new Date(),
         },

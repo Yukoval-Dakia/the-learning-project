@@ -23,7 +23,9 @@
 //   • ribbon「在复习队列」统计同因后端 list 无 review 聚合 → DEFER，ribbon 改渲「含变体」
 //     替代（真 variant_depth>0 计数），不 fabricate 假复习数。
 
+import { resolveKnownSubjectId } from '@/subjects/profile';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -93,21 +95,19 @@ function diffMeta(d: number) {
   return QDIFF[d] ?? { tone: 'hard' as Tone, word: `难度 ${d}` };
 }
 
-// subject profile id → label/tone（data-questions.jsx QSUBJECT，但 key 用真 profile id）。
-// 真后端派生 subject 是 profile id（wenyan/math/general/physics/...）；这里把已知 id
-// 上色，未知 id 用 fallback（neutral + id 原样），不 fabricate。
-const QSUBJECT: Record<string, { label: string; tone: Tone }> = {
-  wenyan: { label: '语文', tone: 'coral' },
-  yuwen: { label: '语文', tone: 'coral' },
-  math: { label: '数学', tone: 'info' },
-  physics: { label: '物理', tone: 'info' },
-  eng: { label: '英语', tone: 'good' },
-  english: { label: '英语', tone: 'good' },
-  general: { label: '通识', tone: 'neutral' },
+// subject 派生轴 → label/tone. Label 从注册表派生（subjectDisplayName，alias-aware：
+// 旧 wenyan → yuwen），不再硬编码；accent 色留 UI 侧 map-by-id（未知 id 用 neutral
+// 默认，不塞进 profile schema）——YUK-249 注册表驱动。真后端派生 subject 是 profile id
+// （yuwen/math/physics/general/...）或旧别名，二者都归一到 canonical id 上色。
+const SUBJECT_TONE: Record<string, Tone> = {
+  yuwen: 'coral',
+  math: 'info',
+  physics: 'info',
 };
 function subjMeta(subject: string | null): { label: string; tone: Tone } {
   if (!subject) return { label: '未分科', tone: 'neutral' };
-  return QSUBJECT[subject] ?? { label: subject, tone: 'neutral' };
+  const id = resolveKnownSubjectId(subject) ?? subject;
+  return { label: subjectDisplayName(subject), tone: SUBJECT_TONE[id] ?? 'neutral' };
 }
 
 // 去 markdown/latex 标记符——仅用于搜索匹配（行 stem 渲染走 QInline 保留 latex）。
@@ -550,9 +550,9 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
               <div className="qb-seg">
                 {[
                   ['all', '全部'],
-                  ['wenyan', '语文'],
-                  ['math', '数学'],
-                  ['eng', '英语'],
+                  // YUK-249 — 科目筛选项从注册表派生（KNOWN_SUBJECT_IDS × displayName）：
+                  // wenyan→yuwen 自动流转、无 profile 的幽灵「英语」chip 自然消失。
+                  ...listSubjectChoices().map((c) => [c.id, c.label]),
                 ].map(([s, l]) => (
                   <button
                     type="button"

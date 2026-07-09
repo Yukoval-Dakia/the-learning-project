@@ -11,7 +11,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './edge-proposal-decide';
 
 const KNOWLEDGE_BASE = {
-  domain: 'wenyan',
+  domain: 'yuwen',
   parent_id: null,
   merged_from: [] as string[],
   proposed_by_ai: false,

@@ -18,7 +18,7 @@ async function seedKnowledge(id: string, opts: { archived?: boolean; name?: stri
     .values({
       id,
       name: opts.name ?? `node ${id}`,
-      domain: 'wenyan',
+      domain: 'yuwen',
       archived_at: opts.archived ? NOW : null,
       created_at: NOW,
       updated_at: NOW,

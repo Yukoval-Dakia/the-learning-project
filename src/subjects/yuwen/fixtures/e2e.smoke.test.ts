@@ -4,7 +4,7 @@ import { type JudgeQuestionRow, judgeAnswer } from '@/server/ai/judges/question-
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 /**
- * P5.8 (YUK-182) — e2e smoke for the wenyan fixture, the FIRST subject fixture
+ * P5.8 (YUK-182) — e2e smoke for the yuwen fixture, the FIRST subject fixture
  * to gate the SEMANTIC judge route.
  *
  * Inserts the fixtures directly via testDb (bypasses HTTP seed endpoint — this
@@ -25,23 +25,23 @@ import { eq } from 'drizzle-orm';
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { type WenyanFixtureItem, loadWenyanFixtures } from './index';
+import { type YuwenFixtureItem, loadYuwenFixtures } from './index';
 
-const ROOT_KID = 'k-wenyan-smoke-root';
+const ROOT_KID = 'k-yuwen-smoke-root';
 
-async function seedWenyanFixtures(db: Db): Promise<void> {
+async function seedYuwenFixtures(db: Db): Promise<void> {
   const now = new Date();
   await db.insert(knowledge).values({
     id: ROOT_KID,
     name: '文言文 smoke root',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,
     updated_at: now,
     version: 0,
   });
-  const fixtures = loadWenyanFixtures();
+  const fixtures = loadYuwenFixtures();
   for (const item of fixtures) {
     await db.insert(question).values({
       id: `q-smoke-${item.ref}`,
@@ -53,7 +53,7 @@ async function seedWenyanFixtures(db: Db): Promise<void> {
       rubric_json: item.rubric_json ?? null,
       knowledge_ids: [ROOT_KID],
       difficulty: item.difficulty,
-      source: 'wenyan_fixture_smoke',
+      source: 'yuwen_fixture_smoke',
       variant_depth: 0,
       figures: [],
       image_refs: [],
@@ -111,8 +111,8 @@ function semanticStub(outcome: 'correct' | 'partial' | 'incorrect') {
   };
 }
 
-describe('wenyan fixture e2e smoke', () => {
-  const wenyanProfile = resolveSubjectProfile('wenyan');
+describe('yuwen fixture e2e smoke', () => {
+  const yuwenProfile = resolveSubjectProfile('yuwen');
   let db: Db;
 
   beforeAll(() => {
@@ -121,7 +121,7 @@ describe('wenyan fixture e2e smoke', () => {
 
   beforeEach(async () => {
     await resetDb();
-    await seedWenyanFixtures(db);
+    await seedYuwenFixtures(db);
   });
 
   async function getRow(ref: string): Promise<typeof question.$inferSelect> {
@@ -136,24 +136,24 @@ describe('wenyan fixture e2e smoke', () => {
   // AC-6: all fixtures land in question with the multimodal carriers empty.
   it('all fixtures land in the question table with figures=[] image_refs=[] structured=null', async () => {
     const rows = await db.select().from(question);
-    const fixtures = loadWenyanFixtures();
+    const fixtures = loadYuwenFixtures();
     expect(rows).toHaveLength(fixtures.length);
     for (const row of rows) {
       expect(row.figures).toEqual([]);
       expect(row.image_refs).toEqual([]);
       expect(row.structured).toBeNull();
-      expect(row.source).toBe('wenyan_fixture_smoke');
+      expect(row.source).toBe('yuwen_fixture_smoke');
     }
   });
 
   // AC-2: single_choice → exact route (no stub; throws if any LLM is reached).
   it('answering a single_choice fixture correctly → exact route → coarse_outcome=correct', async () => {
-    const row = await getRow('wenyan-choice-001');
+    const row = await getRow('yuwen-choice-001');
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '通「悦」，高兴',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('correct'), // would throw if reached → proves no LLM
     });
     expect(route).toBe('exact');
@@ -162,12 +162,12 @@ describe('wenyan fixture e2e smoke', () => {
   });
 
   it('answering a single_choice fixture wrongly → exact route → coarse_outcome=incorrect', async () => {
-    const row = await getRow('wenyan-choice-001');
+    const row = await getRow('yuwen-choice-001');
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '说话',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('correct'),
     });
     expect(route).toBe('exact');
@@ -176,13 +176,13 @@ describe('wenyan fixture e2e smoke', () => {
 
   // AC-3 (THE frontier): translation → semantic route, LLM stubbed. Correct case.
   it('answering a translation fixture (stub=correct) → semantic route → coarse_outcome=correct', async () => {
-    const row = await getRow('wenyan-trans-001');
+    const row = await getRow('yuwen-trans-001');
     expect(row.choices_md).toBeNull(); // not a structural choice item
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '温习旧知识就能领悟新理解，这样就可以做老师了。',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('correct'),
     });
     expect(route).toBe('semantic');
@@ -193,12 +193,12 @@ describe('wenyan fixture e2e smoke', () => {
 
   // AC-3: translation → semantic route, weak answer → partial via normalizeSemanticResult.
   it('answering a translation fixture (stub=partial) → semantic route → coarse_outcome=partial', async () => {
-    const row = await getRow('wenyan-trans-002');
+    const row = await getRow('yuwen-trans-002');
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '鱼和熊掌我都想要。',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('partial'),
     });
     expect(route).toBe('semantic');
@@ -209,12 +209,12 @@ describe('wenyan fixture e2e smoke', () => {
 
   // AC-3: translation → semantic route, wrong answer → incorrect.
   it('answering a translation fixture (stub=incorrect) → semantic route → coarse_outcome=incorrect', async () => {
-    const row = await getRow('wenyan-trans-003');
+    const row = await getRow('yuwen-trans-003');
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '完全不相关的内容。',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('incorrect'),
     });
     expect(route).toBe('semantic');
@@ -226,13 +226,13 @@ describe('wenyan fixture e2e smoke', () => {
   // reading_comprehension is NOT in QuestionKind enum → safeParse fails →
   // 'short_answer' (:141) → semantic (:155-156). This proves the fallback path.
   it('answering a reading_comprehension fixture → semantic route (proves short_answer fallback)', async () => {
-    const row = await getRow('wenyan-read-001');
+    const row = await getRow('yuwen-read-001');
     expect(row.choices_md).toBeNull();
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '作者以莲喻君子，赞美其不与世俗同流合污、洁身自好的高洁品格。',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('correct'),
     });
     expect(route).toBe('semantic');
@@ -241,25 +241,25 @@ describe('wenyan fixture e2e smoke', () => {
   });
 
   it('a second reading_comprehension fixture also routes semantic', async () => {
-    const row = await getRow('wenyan-read-002');
+    const row = await getRow('yuwen-read-002');
     const { route } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '这句开门见山提出中心论点，统领下文论证。',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('correct'),
     });
     expect(route).toBe('semantic');
   });
 
-  // AC-5: fill_blank + keywords rubric → keyword route (the third wenyan capability).
+  // AC-5: fill_blank + keywords rubric → keyword route (the third yuwen capability).
   it('answering a fill_blank fixture with a keyword present → keyword route → correct', async () => {
-    const row = await getRow('wenyan-short-001');
+    const row = await getRow('yuwen-short-001');
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '「之」用于主谓之间，取消句子独立性。',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('correct'), // would throw if reached → keyword is local
     });
     expect(route).toBe('keyword');
@@ -268,12 +268,12 @@ describe('wenyan fixture e2e smoke', () => {
   });
 
   it('answering a fill_blank fixture without the keyword → keyword route → incorrect', async () => {
-    const row = await getRow('wenyan-short-001');
+    const row = await getRow('yuwen-short-001');
     const { route, result } = await judgeAnswer({
       db,
       question: toJudgeRow(row),
       answer_md: '我不知道',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       runTaskFn: semanticStub('correct'),
     });
     expect(route).toBe('keyword');
@@ -282,19 +282,19 @@ describe('wenyan fixture e2e smoke', () => {
 
   // Route coverage: assert every fixture resolves to its expected route per kind.
   it('every fixture routes to its expected route per kind', async () => {
-    const expectedRoute = (item: WenyanFixtureItem): string => {
+    const expectedRoute = (item: YuwenFixtureItem): string => {
       if (item.kind === 'single_choice') return 'exact';
       if (item.kind === 'fill_blank') return 'keyword';
       return 'semantic'; // translation + reading_comprehension
     };
-    for (const item of loadWenyanFixtures()) {
+    for (const item of loadYuwenFixtures()) {
       const row = await getRow(item.ref);
       const answer = item.kind === 'single_choice' ? (item.reference_md ?? '') : '占位作答';
       const { route } = await judgeAnswer({
         db,
         question: toJudgeRow(row),
         answer_md: answer,
-        subjectProfile: wenyanProfile,
+        subjectProfile: yuwenProfile,
         runTaskFn: semanticStub('partial'),
       });
       expect(route, `${item.ref} (${item.kind})`).toBe(expectedRoute(item));

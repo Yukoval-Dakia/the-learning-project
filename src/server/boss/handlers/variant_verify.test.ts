@@ -27,7 +27,7 @@ const FAIL_OUTPUT = JSON.stringify({
   confidence: 0.78,
 });
 
-async function seedKnowledge(domain = 'wenyan') {
+async function seedKnowledge(domain = 'yuwen') {
   await testDb().insert(knowledge).values({
     id: 'k_xuci',
     name: '虚词',
@@ -117,7 +117,7 @@ async function seedJudgeForAttempt(attemptId: string, category: string) {
     },
     referencedKnowledgeIds: ['k_xuci'],
     runTaskFn,
-    subjectProfile: resolveSubjectProfile('wenyan'),
+    subjectProfile: resolveSubjectProfile('yuwen'),
   });
 }
 

@@ -1,9 +1,9 @@
 import type { SubjectProfile } from '../profile';
 
-export const wenyanProfile: SubjectProfile = {
-  id: 'wenyan',
+export const yuwenProfile: SubjectProfile = {
+  id: 'yuwen',
   version: '1.0.0',
-  displayName: '文言文',
+  displayName: '语文',
   languageStyle: '中文讲解，保留必要的古文术语，重视原文证据和语法功能。',
   questionKinds: [
     'single_choice',
@@ -34,7 +34,7 @@ export const wenyanProfile: SubjectProfile = {
     uncertaintyPolicy: '材料不足时标注不确定，不编造出处。',
   },
   promptFragments: {
-    roleNoun: '文言文学习教练',
+    roleNoun: '语文学习教练',
     noteExamplePolicy: '优先使用原文短句和课内常见例句，避免脱离材料泛讲。',
     variantExamplePolicy: '变式题保持同一语法点或阅读技能，不机械替换字词。',
     teachingStyle: '先定位文本证据，再解释判断过程，最后给出可复用规则。',

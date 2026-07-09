@@ -220,7 +220,7 @@ async function seedKnowledge(opts: { id: string; domain?: string | null }) {
   await db.insert(knowledge).values({
     id: opts.id,
     name: '之',
-    domain: opts.domain ?? 'wenyan',
+    domain: opts.domain ?? 'yuwen',
     parent_id: null,
     merged_from: [],
     proposed_by_ai: false,
@@ -865,7 +865,7 @@ describe('runQuizGen', () => {
     await testDb().insert(knowledge).values({
       id: 'k_archived',
       name: '废弃',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -908,7 +908,7 @@ describe('runQuizGen', () => {
     await testDb().insert(knowledge).values({
       id: 'k_arch_same',
       name: '废弃',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

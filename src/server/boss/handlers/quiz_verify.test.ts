@@ -81,7 +81,7 @@ async function seedKnowledge(id: string) {
   await db.insert(knowledge).values({
     id,
     name: '之',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     merged_from: [],
     proposed_by_ai: false,

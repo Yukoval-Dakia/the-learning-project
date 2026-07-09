@@ -8,7 +8,7 @@ import { type JudgeQuestionRow, judgeAnswer, resolveQuestionJudgeRoute } from '.
 // touch it.
 const mockDb = {} as Db;
 
-const wenyanProfile = resolveSubjectProfile('wenyan');
+const yuwenProfile = resolveSubjectProfile('yuwen');
 
 describe('M-1 regression: runnable routes ignore multimodal fields', () => {
   const baseChoice: JudgeQuestionRow = {
@@ -26,13 +26,13 @@ describe('M-1 regression: runnable routes ignore multimodal fields', () => {
       db: mockDb,
       question: baseChoice,
       answer_md: 'A',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     const r2 = await judgeAnswer({
       db: mockDb,
       question: { ...baseChoice, image_refs: ['asset_1', 'asset_2'] },
       answer_md: 'A',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     expect(r1.route).toBe('exact');
     expect(r2.route).toBe('exact');
@@ -45,7 +45,7 @@ describe('M-1 regression: runnable routes ignore multimodal fields', () => {
       db: mockDb,
       question: baseChoice,
       answer_md: 'B',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     const r2 = await judgeAnswer({
       db: mockDb,
@@ -63,7 +63,7 @@ describe('M-1 regression: runnable routes ignore multimodal fields', () => {
         ],
       },
       answer_md: 'B',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     expect(r1.route).toBe('exact');
     expect(r2.route).toBe('exact');
@@ -86,7 +86,7 @@ describe('M-1 regression: runnable routes ignore multimodal fields', () => {
       db: mockDb,
       question: baseKeyword,
       answer_md: 'hello world',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     const r2 = await judgeAnswer({
       db: mockDb,
@@ -100,7 +100,7 @@ describe('M-1 regression: runnable routes ignore multimodal fields', () => {
         image_refs: ['asset_x'],
       },
       answer_md: 'hello world',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     expect(r1.route).toBe('keyword');
     expect(r2.route).toBe('keyword');
@@ -225,21 +225,21 @@ describe('M2.1: resolveQuestionJudgeRoute — derivation kind', () => {
     expect(route).toBe('steps');
   });
 
-  it('routes derivation to semantic for wenyan profile (no steps in preferredRoutes)', async () => {
+  it('routes derivation to semantic for yuwen profile (no steps in preferredRoutes)', async () => {
     const { resolveQuestionJudgeRoute } = await import('./question-contract');
     const route = resolveQuestionJudgeRoute(
       {
         id: 'q-d2',
         kind: 'derivation',
-        prompt_md: 'derivation in wenyan context',
+        prompt_md: 'derivation in yuwen context',
         reference_md: 'ref',
         rubric_json: null,
         choices_md: null,
         judge_kind_override: null,
       },
-      wenyanProfile,
+      yuwenProfile,
     );
-    // wenyan profile preferredRoutes does NOT include 'steps' — falls back to semantic
+    // yuwen profile preferredRoutes does NOT include 'steps' — falls back to semantic
     expect(route).toBe('semantic');
   });
 
@@ -282,8 +282,8 @@ describe('YUK-201: resolveQuestionJudgeRoute — multimodal_direct routing + reg
         choices_md: null,
         judge_kind_override: 'multimodal_direct',
       },
-      // even wenyan (which does NOT prefer it) honors an explicit override
-      wenyanProfile,
+      // even yuwen (which does NOT prefer it) honors an explicit override
+      yuwenProfile,
     );
     expect(route).toBe('multimodal_direct');
   });
@@ -409,7 +409,7 @@ describe('YUK-201: resolveQuestionJudgeRoute — multimodal_direct routing + reg
   });
 
   // Regression suite: the established routes are UNCHANGED by this feature.
-  it('wenyan choice → exact (unchanged)', () => {
+  it('yuwen choice → exact (unchanged)', () => {
     expect(
       resolveQuestionJudgeRoute(
         {
@@ -422,7 +422,7 @@ describe('YUK-201: resolveQuestionJudgeRoute — multimodal_direct routing + reg
           judge_kind_override: null,
           image_refs: ['fig-1'], // figure present but choices short-circuit to exact
         },
-        wenyanProfile,
+        yuwenProfile,
       ),
     ).toBe('exact');
   });
@@ -452,7 +452,7 @@ describe('YUK-201: resolveQuestionJudgeRoute — multimodal_direct routing + reg
     ).toBe('steps');
   });
 
-  it('wenyan short_answer → semantic (unchanged)', () => {
+  it('yuwen short_answer → semantic (unchanged)', () => {
     expect(
       resolveQuestionJudgeRoute(
         {
@@ -464,7 +464,7 @@ describe('YUK-201: resolveQuestionJudgeRoute — multimodal_direct routing + reg
           choices_md: null,
           judge_kind_override: null,
         },
-        wenyanProfile,
+        yuwenProfile,
       ),
     ).toBe('semantic');
   });
@@ -504,7 +504,7 @@ describe('YUK-260: exact route forwards choices_md so letter↔text resolve', ()
       db: mockDb,
       question: optionTextRef,
       answer_md: 'A',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     expect(r.route).toBe('exact');
     expect(r.result.coarse_outcome).toBe('correct');
@@ -516,7 +516,7 @@ describe('YUK-260: exact route forwards choices_md so letter↔text resolve', ()
       db: mockDb,
       question: optionTextRef,
       answer_md: 'B',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     expect(r.route).toBe('exact');
     expect(r.result.coarse_outcome).toBe('incorrect');
@@ -533,7 +533,7 @@ describe('YUK-260: exact route forwards choices_md so letter↔text resolve', ()
       db: mockDb,
       question: multi,
       answer_md: 'C、B',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
     expect(r.route).toBe('exact');
     expect(r.result.coarse_outcome).toBe('correct');

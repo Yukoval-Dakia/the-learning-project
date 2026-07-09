@@ -138,20 +138,20 @@ describe('GET /api/questions', () => {
   });
 
   it('filters by subject query param (derived knowledge join)', async () => {
-    const wenyanK = await seedKnowledge(newId(), 'wenyan');
+    const yuwenK = await seedKnowledge(newId(), 'yuwen');
     const mathK = await seedKnowledge(newId(), 'math');
-    const qWenyan = await seedQuestion({ knowledge_ids: [wenyanK] });
+    const qYuwen = await seedQuestion({ knowledge_ids: [yuwenK] });
     await seedQuestion({ knowledge_ids: [mathK] });
 
-    const res = await GET(mkReq('?subject=wenyan'));
+    const res = await GET(mkReq('?subject=yuwen'));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListBody;
     expect(body.total).toBe(1);
-    expect(body.items.map((i) => i.id)).toEqual([qWenyan]);
+    expect(body.items.map((i) => i.id)).toEqual([qYuwen]);
   });
 
   it('returns empty for a subject that labels no questions', async () => {
-    await seedQuestion({ knowledge_ids: [await seedKnowledge(newId(), 'wenyan')] });
+    await seedQuestion({ knowledge_ids: [await seedKnowledge(newId(), 'yuwen')] });
     const res = await GET(mkReq('?subject=does-not-exist'));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListBody;

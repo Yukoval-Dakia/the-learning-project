@@ -107,7 +107,7 @@ async function seedGoal(id: string, scope_knowledge_ids: string[]) {
     .values({
       id,
       title: `goal ${id}`,
-      subject_id: 'wenyan',
+      subject_id: 'yuwen',
       scope_knowledge_ids,
       sequence_hint: 0,
       status: 'active',
@@ -197,7 +197,7 @@ function withGoalScope(...scope: string[]) {
       {
         id: 'goal_1',
         title: 'g',
-        subject_id: 'wenyan',
+        subject_id: 'yuwen',
         scope_knowledge_ids: scope,
         sequence_hint: 0,
       },

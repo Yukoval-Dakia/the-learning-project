@@ -2,22 +2,22 @@ import { Rubric } from '@/core/schema/business';
 import { z } from 'zod';
 import fixtureData from './data.json' with { type: 'json' };
 
-// P5.8 (2026-05-31, YUK-182): wenyan eval fixture — the FIRST subject fixture
+// P5.8 (2026-05-31, YUK-182): yuwen eval fixture — the FIRST subject fixture
 // to gate the SEMANTIC judge route (translation / reading_comprehension), the
 // next validation frontier after exact/keyword (math) and unit_dimension
 // (physics). Fixture schema is subject-local — does NOT touch framework schema
 // (src/core/schema/*), same boundary the physics fixture documents
 // (physics/fixtures/index.ts:4-8). No new production schema / migration / UI /
-// judge / profile change; the wenyan profile + all three routes (exact /
+// judge / profile change; the yuwen profile + all three routes (exact /
 // keyword / semantic) already exist.
-// See docs/superpowers/specs/2026-05-31-p5.8-wenyan-eval-fixtures-design.md.
+// See docs/superpowers/specs/2026-05-31-p5.8-yuwen-eval-fixtures-design.md.
 
-export const WenyanFixtureItemSchema = z
+export const YuwenFixtureItemSchema = z
   .object({
     ref: z.string().min(1),
-    // The wenyan profile's own kind strings (profile.ts:8-14) — single_choice /
+    // The yuwen profile's own kind strings (profile.ts:8-14) — single_choice /
     // translation / reading_comprehension / short_answer — PLUS 'fill_blank',
-    // which is a canonical QuestionKind (business.ts:19), not a wenyan profile
+    // which is a canonical QuestionKind (business.ts:19), not a yuwen profile
     // kind, included solely to gate the keyword route (F-1/H1/AC-5; routes
     // 'keyword' iff rubric_json.keywords is non-empty, question-contract.ts:146,
     // else 'exact'). Routing is decided by the contract bridging profile-vs-
@@ -76,14 +76,14 @@ export const WenyanFixtureItemSchema = z
       });
     }
   });
-export type WenyanFixtureItem = z.infer<typeof WenyanFixtureItemSchema>;
+export type YuwenFixtureItem = z.infer<typeof YuwenFixtureItemSchema>;
 
-export const WenyanFixtureFileSchema = z.object({
+export const YuwenFixtureFileSchema = z.object({
   version: z.string(),
-  subject_id: z.literal('wenyan'),
-  items: z.array(WenyanFixtureItemSchema).min(10).max(12),
+  subject_id: z.literal('yuwen'),
+  items: z.array(YuwenFixtureItemSchema).min(10).max(12),
 });
 
-export function loadWenyanFixtures(): WenyanFixtureItem[] {
-  return WenyanFixtureFileSchema.parse(fixtureData).items;
+export function loadYuwenFixtures(): YuwenFixtureItem[] {
+  return YuwenFixtureFileSchema.parse(fixtureData).items;
 }

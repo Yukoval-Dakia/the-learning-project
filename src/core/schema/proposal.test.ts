@@ -20,7 +20,7 @@ describe('AiProposalPayload', () => {
         proposed_change: {
           mutation: 'propose_new',
           name: '通假字',
-          parent_id: 'seed:wenyan:shici',
+          parent_id: 'seed:yuwen:shici',
         },
       },
       knowledge_edge: {
@@ -123,7 +123,7 @@ describe('AiProposalPayload', () => {
         target: { subject_kind: 'goal', subject_id: 'goal_1' },
         proposed_change: {
           title: '能流畅读《史记》',
-          subject_id: 'wenyan',
+          subject_id: 'yuwen',
           scope_knowledge_ids: ['k1', 'k2'],
           sequence_hint: 0,
           reasoning: 'k1 是 k2 的 prerequisite，两者共同构成该目标的覆盖范围。',

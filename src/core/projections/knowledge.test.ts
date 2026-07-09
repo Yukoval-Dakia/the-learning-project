@@ -643,7 +643,7 @@ describe('foldKnowledgeNode — Q7(a) permutation invariance (determinism, not c
     const seed = {
       id: 'k_node',
       name: 'Seed',
-      domain: 'wenyan' as string | null,
+      domain: 'yuwen' as string | null,
       parent_id: 'k_root',
       merged_from: [] as string[],
       archived_at: null as Date | null,

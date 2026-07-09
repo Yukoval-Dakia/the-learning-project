@@ -27,7 +27,7 @@ const retrieveInput: AttributionInput = {
   prompt_md: '"之"在主谓之间的用法?',
   reference_md: '取消句子独立性',
   wrong_answer_md: '助词',
-  knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'wenyan' }],
+  knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'yuwen' }],
 };
 
 /** Build a synthetic profile with `n` placeholder cause categories, optionally
@@ -36,7 +36,7 @@ function synthProfile(
   n: number,
   opts?: { matchIndex?: number; matchLabel?: string; matchDescription?: string },
 ): SubjectProfile {
-  const base = resolveSubjectProfile('wenyan');
+  const base = resolveSubjectProfile('yuwen');
   const categories = Array.from({ length: n }, (_, i) => ({
     id: `c${i}`,
     label: opts && i === opts.matchIndex && opts.matchLabel ? opts.matchLabel : `占位错因${i}`,
@@ -50,12 +50,12 @@ describe('retrieveCauseCandidates — small-vocab identity passthrough', () => {
     // EQUIVALENCE CONTRACT: the candidate set handed to stage 2 is byte-identical
     // to what buildAttributionPrompt embeds inline. Every current profile vocab
     // (max 11) is <= K_SMALL (15), so the retriever is an identity passthrough.
-    const wenyan = resolveSubjectProfile('wenyan');
+    const yuwen = resolveSubjectProfile('yuwen');
     const math = resolveSubjectProfile('math');
-    expect(wenyan.causeCategories.length).toBeLessThanOrEqual(K_SMALL);
+    expect(yuwen.causeCategories.length).toBeLessThanOrEqual(K_SMALL);
     expect(math.causeCategories.length).toBeLessThanOrEqual(K_SMALL);
     // Identity (same array reference) — not just deep-equal — proves zero copy/reorder.
-    expect(retrieveCauseCandidates(retrieveInput, wenyan)).toBe(wenyan.causeCategories);
+    expect(retrieveCauseCandidates(retrieveInput, yuwen)).toBe(yuwen.causeCategories);
     expect(retrieveCauseCandidates(retrieveInput, math)).toBe(math.causeCategories);
   });
 });
@@ -130,7 +130,7 @@ describe('retrieveCauseCandidates — large-vocab scorer path (YUK-465 #1/#2)', 
       wrong_answer_md: '帮助词典',
       knowledge_context: [],
     };
-    const base = resolveSubjectProfile('wenyan');
+    const base = resolveSubjectProfile('yuwen');
     // Declaration order: K_MAX zero-score placeholders, then a REAL exact-token
     // match ('词典'), then the cross-boundary-substring candidate ('助词').
     const categories = [

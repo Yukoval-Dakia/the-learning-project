@@ -92,14 +92,14 @@ const GENERIC_PHRASE_DENYLIST = [
 
 // A "concrete signal" is any of: a referenced id token (looks like an id with
 // an underscore/prefix or a long token), an explicit attempt/event/judge
-// reference, or a wenyan-style 知识点 name in 「」 quotes. Deliberately loose —
+// reference, or a yuwen-style 知识点 name in 「」 quotes. Deliberately loose —
 // the goal is to reject empty filler, not to gate genuine prose.
 function namesConcreteSignal(reason: string): boolean {
   // id-ish token: prefix_xxx (k_, e_, att_, q_, judge_, attempt_event_...)
   if (/[a-z]+_[a-z0-9_]+/i.test(reason)) return true;
   // explicit reference vocabulary
   if (/(attempt|judge|cause|event|失败|错题|attempt_event|judge cause)/i.test(reason)) return true;
-  // 「…」 quoted knowledge node name (wenyan §4.4 good example)
+  // 「…」 quoted knowledge node name (yuwen §4.4 good example)
   if (/[「『][^」』]+[」』]/.test(reason)) return true;
   return false;
 }
@@ -314,7 +314,7 @@ function relationGate(
     case 'contrasts_with': {
       // Require confusion evidence: a failure that references BOTH endpoints
       // (the same answer confuses both). Same-name siblings with zero confusion
-      // evidence → reject (the wenyan overuse risk, §4.3 / §5 Q5).
+      // evidence → reject (the yuwen overuse risk, §4.3 / §5 Q5).
       if (referencingBoth.length === 0) {
         return {
           gate: 'contrasts_with_no_confusion',

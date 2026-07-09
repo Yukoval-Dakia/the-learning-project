@@ -11,7 +11,7 @@
 // ⚠️ SUBMIT 契约（grading 真相，bot-review round 修正）：本分支的 exact judge
 // （src/core/capability/judges/exact.ts）做的是**纯 normalize 后整串相等比较**，
 // 没有任何 letter→选项原文展开；而现存所有选择题 fixture 的 reference_md 存的是
-// **选项原文**（src/subjects/wenyan/fixtures/data.json：'苏洵' / '何陋之有' …，
+// **选项原文**（src/subjects/yuwen/fixtures/data.json：'苏洵' / '何陋之有' …，
 // index.test.ts:62 断言 choices.toContain(reference_md)）。因此点选暂存的裸 letter 串
 // （'B'）若原样提交会和 '苏洵' normalize 后不等 → 正确答案被判错。
 // → 提交前必须用 selectionToAnswerMd() 把 letter 串展开成对应选项原文再发给 judge。

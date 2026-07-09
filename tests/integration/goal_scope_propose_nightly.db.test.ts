@@ -4,9 +4,9 @@
 //   §Test plan + §Validation-on-synthetic.
 //
 // All stubbed runTaskFn → zero token, deterministic. Drives the producer trigger
-// against the Station-1 synthetic seed (wenyan knowledge nodes whose mastery view
+// against the Station-1 synthetic seed (yuwen knowledge nodes whose mastery view
 // reads weak: evidence_count<3 → 0.5 < 0.55), so the mastery-based selector picks
-// 'wenyan' as the candidate domain. Then exercises the dedup gates / cap /
+// 'yuwen' as the candidate domain. Then exercises the dedup gates / cap /
 // failure-swallow against hand-built substrate.
 //
 // `*.db.test.ts` under tests/** lands in the db partition (allTestInclude minus
@@ -42,33 +42,33 @@ function stubGoalScopeRunTask(scopeIds: string[] = []) {
 describe('hasWeakNodeInDomain (pure filter — FIX-6 no-weak path)', () => {
   it('returns true when a node in the domain has mastery < 0.55', () => {
     const tree = [
-      { effective_domain: 'wenyan', mastery: 0.9 },
-      { effective_domain: 'wenyan', mastery: 0.4 },
+      { effective_domain: 'yuwen', mastery: 0.9 },
+      { effective_domain: 'yuwen', mastery: 0.4 },
     ];
-    expect(hasWeakNodeInDomain(tree, 'wenyan')).toBe(true);
+    expect(hasWeakNodeInDomain(tree, 'yuwen')).toBe(true);
   });
 
   it('treats a null-mastery node as weak (neutral 0.5 < 0.55)', () => {
-    const tree = [{ effective_domain: 'wenyan', mastery: null }];
-    expect(hasWeakNodeInDomain(tree, 'wenyan')).toBe(true);
+    const tree = [{ effective_domain: 'yuwen', mastery: null }];
+    expect(hasWeakNodeInDomain(tree, 'yuwen')).toBe(true);
   });
 
   it('returns false when every domain node is mastered (>= 0.55)', () => {
     // FIX-6: the all-mastered case the synthetic seed cannot drive (seed nodes
     // with evidence_count<3 read 0.5 < 0.55). Asserted on the pure helper.
     const tree = [
-      { effective_domain: 'wenyan', mastery: 0.55 },
-      { effective_domain: 'wenyan', mastery: 0.8 },
+      { effective_domain: 'yuwen', mastery: 0.55 },
+      { effective_domain: 'yuwen', mastery: 0.8 },
     ];
-    expect(hasWeakNodeInDomain(tree, 'wenyan')).toBe(false);
+    expect(hasWeakNodeInDomain(tree, 'yuwen')).toBe(false);
   });
 
   it('ignores nodes from other domains', () => {
     const tree = [
       { effective_domain: 'math', mastery: 0.1 },
-      { effective_domain: 'wenyan', mastery: 0.9 },
+      { effective_domain: 'yuwen', mastery: 0.9 },
     ];
-    expect(hasWeakNodeInDomain(tree, 'wenyan')).toBe(false);
+    expect(hasWeakNodeInDomain(tree, 'yuwen')).toBe(false);
   });
 });
 
@@ -95,7 +95,7 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
     expect(goalProposals[0].status).toBe('pending');
     expect(goalProposals[0].target.subject_kind).toBe('goal');
     const change = goalProposals[0].payload.proposed_change as { subject_id?: string };
-    expect(change.subject_id).toBe('wenyan');
+    expect(change.subject_id).toBe('yuwen');
   });
 
   it('end-to-end chain: cron → accept → goal materialized → listActiveGoals non-empty', async () => {
@@ -111,23 +111,23 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
 
     const active = await listActiveGoals(db);
     expect(active.length).toBeGreaterThan(0);
-    expect(active.some((g) => g.subject_id === 'wenyan')).toBe(true);
+    expect(active.some((g) => g.subject_id === 'yuwen')).toBe(true);
   });
 
   it('dedup gate-2: a live goal for the subject → skip, no new proposal', async () => {
     const db = testDb();
     await runSeed(db);
 
-    // Materialize an active goal for wenyan via the real producer→accept path.
+    // Materialize an active goal for yuwen via the real producer→accept path.
     const seeded = await runGoalScopeAndWrite({
       db,
-      goalTitle: 'existing wenyan goal',
-      subjectId: 'wenyan',
+      goalTitle: 'existing yuwen goal',
+      subjectId: 'yuwen',
       runTaskFn: stubGoalScopeRunTask(),
     });
     if (!seeded.proposal_id) throw new Error('expected seed proposal id');
     await acceptAiProposal(db, seeded.proposal_id);
-    expect((await listActiveGoals(db)).some((g) => g.subject_id === 'wenyan')).toBe(true);
+    expect((await listActiveGoals(db)).some((g) => g.subject_id === 'yuwen')).toBe(true);
 
     const stub = stubGoalScopeRunTask();
     const result = await runGoalScopeProposeNightly(db, { runTaskFn: stub });
@@ -169,7 +169,7 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
 
     // Land a proposal, accept it, then tombstone the materialized goal to
     // 'dormant' (the accept→dormant path) so gate-2 (live goal) no longer covers
-    // wenyan — isolating the gate-3 caused_by_event_id behavior.
+    // yuwen — isolating the gate-3 caused_by_event_id behavior.
     const first = await runGoalScopeProposeNightly(db, { runTaskFn: stubGoalScopeRunTask() });
     if (!first.proposal_id) throw new Error('expected first proposal id');
     await acceptAiProposal(db, first.proposal_id);
@@ -189,11 +189,11 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
     expect(rate.subject_kind).toBe('event');
 
     // Tombstone the goal to dormant directly (the accept→dormant path) so gate-2
-    // (live goal) no longer covers wenyan — isolating the gate-3
+    // (live goal) no longer covers yuwen — isolating the gate-3
     // caused_by_event_id behavior. (The goal id is the reserved target.subject_id,
     // not the proposal event id, so key on subject_id.)
-    await db.update(goal).set({ status: 'dormant' }).where(eq(goal.subject_id, 'wenyan'));
-    expect((await listActiveGoals(db)).some((g) => g.subject_id === 'wenyan')).toBe(false);
+    await db.update(goal).set({ status: 'dormant' }).where(eq(goal.subject_id, 'yuwen'));
+    expect((await listActiveGoals(db)).some((g) => g.subject_id === 'yuwen')).toBe(false);
 
     // Re-propose must NOT be blocked: the accepted propose has a chained rate, so
     // it is decided (not pending) and drops out of loadPendingGoalScopeSubjects.
@@ -211,7 +211,7 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
     // Land a PENDING proposal (never accepted), then retract it. retractAiProposal
     // writes a `correct` event (subject_kind:'event', caused_by_event_id=propose)
     // and NO `rate`. Without FIX-3 (chained-`correct` arm) the retracted propose
-    // would mis-read as still-pending and lock wenyan out of re-propose forever.
+    // would mis-read as still-pending and lock yuwen out of re-propose forever.
     const first = await runGoalScopeProposeNightly(db, { runTaskFn: stubGoalScopeRunTask() });
     if (!first.proposal_id) throw new Error('expected first proposal id');
 
@@ -230,7 +230,7 @@ describe('runGoalScopeProposeNightly (DB integration)', () => {
     expect(correction.subject_kind).toBe('event');
 
     // No live goal exists (the proposal was never accepted), so gate-2 is clear.
-    expect((await listActiveGoals(db)).some((g) => g.subject_id === 'wenyan')).toBe(false);
+    expect((await listActiveGoals(db)).some((g) => g.subject_id === 'yuwen')).toBe(false);
 
     // Re-propose must NOT be blocked: the retracted propose has a chained `correct`
     // so it is decided (not pending) and drops out of loadPendingGoalScopeSubjects.

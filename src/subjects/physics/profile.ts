@@ -117,7 +117,7 @@ export const physicsProfile: SubjectProfile = {
   //   gaokao.zxxk.com    — 学科网高考专项子站 (形态: 登录边界待 owner 人工确认)。
   //   gaokao.neea.edu.cn — 教育部中国教育考试网, 权威性最高 (形态: 试题评析文章非题库, SSL 不稳)。
   sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
-  // physics 首批无专属 quiz-gen skill (OF-3 首批只覆盖 wenyan/math); 计算题走通用次序。
+  // physics 首批无专属 quiz-gen skill (OF-3 首批只覆盖 yuwen/math); 计算题走通用次序。
   sourcingRoutePreference: {
     calculation: ['sourced', 'closed_book', 'variant'],
   },

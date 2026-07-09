@@ -14,13 +14,13 @@
 // prove the real join, not a re-stubbed fixture.
 //
 // Risk honouring (plan §Integration-risk list):
-//  - Risk 1: the goal stub cites REAL seeded synthetic:wenyan:* node ids
+//  - Risk 1: the goal stub cites REAL seeded synthetic:yuwen:* node ids
 //    (NODES.xuci / NODES.jushi) so scope_knowledge_ids survive scope.ts:92 and
 //    every downstream consumer is non-empty.
 //  - Risk 2: each of the 5 stubbed LLM outputs reuses the exact canned helper
 //    shape from the proven per-layer tests (no hand-drifted JSON).
 //  - Risk 5: Slice H (active-subject detection) is asserted BEFORE the
-//    subject:wenyan brief regen raises wenyan's refreshed_at floor (ordering is
+//    subject:yuwen brief regen raises yuwen's refreshed_at floor (ordering is
 //    load-bearing).
 //  - Risk 6: the goal scope intersects SOME (xuci/jushi) but not ALL overdue
 //    nodes (shici/changshi), so rerankOverdueByGoals has both a relevant and a
@@ -88,7 +88,7 @@ function briefStub(longTermIds: string[]): TaskTextRunFn {
 }
 
 // ── Goal stub (Slice B / D / E) — reuse the fakeRunTask shape from
-// scope.test.ts:75-81. Risk 1 + Risk 6: cite REAL seeded synthetic:wenyan node
+// scope.test.ts:75-81. Risk 1 + Risk 6: cite REAL seeded synthetic:yuwen node
 // ids that intersect SOME (not all) overdue questions. The seed's overdue subset
 // (questions.slice(0,4)) references shici / xuci / jushi / changshi; scoping to
 // [xuci, jushi] makes the xuci+jushi overdue items goal-relevant and the
@@ -122,16 +122,16 @@ describe('Layer-8 flywheel end-to-end (DB, all LLM stubbed)', () => {
   it('runs the whole flywheel on one synthetic dataset; slices A-H all light up', async () => {
     const db = testDb();
 
-    // 2. Seed: synthetic:wenyan:* nodes + questions + attempts/reviews/signals.
+    // 2. Seed: synthetic:yuwen:* nodes + questions + attempts/reviews/signals.
     await runSeed(db, NOW);
 
     // ── Slice H (active-subject detection) — asserted BEFORE step 4's
-    // subject:wenyan brief regen (Risk 5, ordering load-bearing). The seeded
-    // attempts are <= NOW; once a subject:wenyan brief raises wenyan's floor to
+    // subject:yuwen brief regen (Risk 5, ordering load-bearing). The seeded
+    // attempts are <= NOW; once a subject:yuwen brief raises yuwen's floor to
     // NOW, newest-event-strictly-after-floor would flip false. With no subject
-    // brief yet, wenyan floors at NOW-30d so it is detected active. ──
+    // brief yet, yuwen floors at NOW-30d so it is detected active. ──
     const activeSubs = await listActiveSubjectsSinceRefresh(db, { now: NOW });
-    expect(activeSubs.some((a) => a.subjectId === 'wenyan')).toBe(true);
+    expect(activeSubs.some((a) => a.subjectId === 'yuwen')).toBe(true);
 
     // 3. Brief regen — GLOBAL scope. Cite two seeded cluster attempt events that
     //    fall in the 24h window so they survive the D3 filter + resolve freshness.
@@ -154,13 +154,13 @@ describe('Layer-8 flywheel end-to-end (DB, all LLM stubbed)', () => {
     expect(out.note?.long_term_freshness_score).not.toBeNull(); // P5.3 non-null (knownCount>0)
     expect(out.evidence?.long_term_ids.length ?? 0).toBeGreaterThan(0);
 
-    // 4. Brief regen — SUBJECT scope 'subject:wenyan'. SAME literal scope key on
-    //    write + read (Risk 4). NOTE: this raises wenyan's refreshed_at floor —
+    // 4. Brief regen — SUBJECT scope 'subject:yuwen'. SAME literal scope key on
+    //    write + read (Risk 4). NOTE: this raises yuwen's refreshed_at floor —
     //    Slice H is already asserted above.
     const briefStubSubject = briefStub([e1, e2]);
     await regenerateMemoryBrief({
       db: testDb(),
-      scopeKey: 'subject:wenyan',
+      scopeKey: 'subject:yuwen',
       searchFacts: async () => [],
       generate: buildBriefGenerator({ db: testDb(), runTaskFn: briefStubSubject }),
       now: () => NOW,
@@ -168,13 +168,13 @@ describe('Layer-8 flywheel end-to-end (DB, all LLM stubbed)', () => {
 
     // ── Slice A' — subject-scope brief is independently readable + distinct
     // row from global (different scope_key). ──
-    const subjOut = await executeMemoryBrief(toolCtx(), { scopeKey: 'subject:wenyan' });
+    const subjOut = await executeMemoryBrief(toolCtx(), { scopeKey: 'subject:yuwen' });
     expect(subjOut.note).not.toBeNull();
-    expect(subjOut.note?.scope_key).toBe('subject:wenyan');
-    expect(subjOut.note?.subject_id).toBe('wenyan');
+    expect(subjOut.note?.scope_key).toBe('subject:yuwen');
+    expect(subjOut.note?.subject_id).toBe('yuwen');
     expect(subjOut.note?.scope_key).not.toBe(out.note?.scope_key);
 
-    // 5. Goal cron — real selector picks the most-weak KNOWN domain (wenyan), the
+    // 5. Goal cron — real selector picks the most-weak KNOWN domain (yuwen), the
     //    goal stub cites real seeded ids (Risk 1).
     const goalRunStub = goalStub();
     const goalRes = await runGoalScopeProposeNightly(db, { runTaskFn: goalRunStub });
@@ -194,7 +194,7 @@ describe('Layer-8 flywheel end-to-end (DB, all LLM stubbed)', () => {
     const g = active.find((a) => a.id === goalId);
     expect(g).toBeTruthy();
     if (!g) throw new Error('expected materialized goal');
-    expect(g.subject_id).toBe('wenyan'); // picked domain == subject_id
+    expect(g.subject_id).toBe('yuwen'); // picked domain == subject_id
     expect(g.scope_knowledge_ids.length).toBeGreaterThan(0); // real synthetic ids survived
     expect(g.scope_knowledge_ids).toEqual(GOAL_SCOPE_IDS);
 

@@ -22,17 +22,17 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).not.toContain('古文');
   });
 
-  // wenyan is one filled-in sample subject — its prompt is preserved when the
-  // wenyan profile is resolved explicitly (no longer the implicit default).
-  it('builds the wenyan NoteGenerateTask prompt when wenyan is resolved', () => {
-    const prompt = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('wenyan'));
+  // yuwen is one filled-in sample subject — its prompt is preserved when the
+  // yuwen profile is resolved explicitly (no longer the implicit default).
+  it('builds the yuwen NoteGenerateTask prompt when yuwen is resolved', () => {
+    const prompt = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('yuwen'));
 
-    expect(prompt).toContain('你是文言文学习笔记作者');
+    expect(prompt).toContain('你是语文学习笔记作者');
     expect(prompt).toContain('优先使用原文短句');
     expect(prompt).toContain('材料不足时标注不确定');
   });
 
-  it('builds a math NoteGenerateTask prompt without wenyan examples', () => {
+  it('builds a math NoteGenerateTask prompt without yuwen examples', () => {
     const prompt = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('math'));
 
     expect(prompt).toContain('你是数学学习笔记作者');
@@ -60,10 +60,10 @@ describe('getTaskSystemPrompt', () => {
   // still contains (a) I/O JSON shape, (b) noteTemplate injection (per-subject data),
   // (c) fallback semantics sufficient for the degraded (no-skill) path.
   it('NoteGenerateTask slim: I/O shape + noteTemplate + fallback semantics intact', () => {
-    const wenyan = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('wenyan'));
+    const yuwen = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('NoteGenerateTask', resolveSubjectProfile('math'));
 
-    for (const prompt of [wenyan, math]) {
+    for (const prompt of [yuwen, math]) {
       // I/O contract
       expect(prompt).toContain('artifact_id');
       expect(prompt).toContain('artifact_type');
@@ -83,7 +83,7 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('check');
     }
     // noteTemplate injection (per-subject data, not in SKILL.md)
-    expect(wenyan).toContain('引用短句并标明关键字词'); // wenyan example template
+    expect(yuwen).toContain('引用短句并标明关键字词'); // yuwen example template
     expect(math).toContain('带步骤的短例题'); // math example template
   });
 
@@ -159,11 +159,11 @@ describe('getTaskSystemPrompt', () => {
   });
 
   it('builds subject-specific TeachingTurnTask prompts', () => {
-    const wenyan = getTaskSystemPrompt('TeachingTurnTask', resolveSubjectProfile('wenyan'));
+    const yuwen = getTaskSystemPrompt('TeachingTurnTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('TeachingTurnTask', resolveSubjectProfile('math'));
 
-    expect(wenyan).toContain('你是文言文学习教练');
-    expect(wenyan).toContain('定位文本证据');
+    expect(yuwen).toContain('你是语文学习教练');
+    expect(yuwen).toContain('定位文本证据');
     expect(math).toContain('你是数学学习教练');
     expect(math).toContain('检查条件和目标');
     expect(math).not.toContain('文言文');
@@ -228,21 +228,21 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('不带 markdown 代码块包裹');
   });
 
-  it('builds a wenyan SolutionGenerateTask prompt with prose-appropriate signals', () => {
-    const prompt = getTaskSystemPrompt('SolutionGenerateTask', resolveSubjectProfile('wenyan'));
+  it('builds a yuwen SolutionGenerateTask prompt with prose-appropriate signals', () => {
+    const prompt = getTaskSystemPrompt('SolutionGenerateTask', resolveSubjectProfile('yuwen'));
     expect(prompt).toContain('expected_signals');
     expect(prompt).toContain('worked_solution_md');
   });
 
   it('builds a QuizGenTask prompt that enforces the §0 self-declared-sources contract', () => {
-    const wenyan = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('wenyan'));
+    const yuwen = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('QuizGenTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
-    expect(wenyan).toContain('文言文');
+    expect(yuwen).toContain('语文');
     expect(math).toContain('数学');
 
-    for (const prompt of [wenyan, math]) {
+    for (const prompt of [yuwen, math]) {
       // §1 — search for SOURCE MATERIAL, not questions.
       expect(prompt).toContain('素材');
       expect(prompt).toContain('原创');
@@ -271,14 +271,14 @@ describe('getTaskSystemPrompt', () => {
   // generation-side coverage.
 
   it('builds a QuestionAuthorTask prompt with the one-question + structured-tree contract', () => {
-    const wenyan = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('wenyan'));
+    const yuwen = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('QuestionAuthorTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
-    expect(wenyan).toContain('文言文');
+    expect(yuwen).toContain('语文');
     expect(math).toContain('数学');
 
-    for (const prompt of [wenyan, math]) {
+    for (const prompt of [yuwen, math]) {
       // Output shape name + the Axis-A tree contract (stem+sub vs standalone).
       expect(prompt).toContain('QuestionAuthorDraft');
       expect(prompt).toContain('structured');
@@ -302,14 +302,14 @@ describe('getTaskSystemPrompt', () => {
   });
 
   it('builds a QuizVerifyTask prompt with the three §5 checks + two-axis output', () => {
-    const wenyan = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile('wenyan'));
+    const yuwen = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('QuizVerifyTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
-    expect(wenyan).toContain('文言文');
+    expect(yuwen).toContain('语文');
     expect(math).toContain('数学');
 
-    for (const prompt of [wenyan, math]) {
+    for (const prompt of [yuwen, math]) {
       // §5 — three checks: fact/grounding vs source_refs, plagiarism/copy_safety,
       // knowledge-hit.
       expect(prompt).toContain('source_refs');
@@ -334,17 +334,14 @@ describe('getTaskSystemPrompt', () => {
   // contract: per-candidate weight output, the no-due-items 铁律, and the bucketed
   // (NOT raw-float) signal framing (ADR-0042:68 signal-fidelity mitigation).
   it('builds a SelectionOrchestratorTask prompt with per-candidate weight + bucketed-signal + no-due contract', () => {
-    const wenyan = getTaskSystemPrompt(
-      'SelectionOrchestratorTask',
-      resolveSubjectProfile('wenyan'),
-    );
+    const yuwen = getTaskSystemPrompt('SelectionOrchestratorTask', resolveSubjectProfile('yuwen'));
     const math = getTaskSystemPrompt('SelectionOrchestratorTask', resolveSubjectProfile('math'));
 
     // Subject voice flows in via displayName.
-    expect(wenyan).toContain('文言文');
+    expect(yuwen).toContain('语文');
     expect(math).toContain('数学');
 
-    for (const prompt of [wenyan, math]) {
+    for (const prompt of [yuwen, math]) {
       // Per-candidate weight is the 档2 core output.
       expect(prompt).toContain('weight');
       expect(prompt).toContain('arrangement');
@@ -392,14 +389,14 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
   it('Vision* and ReviewIntentTask use subject-neutral registry strings', () => {
     // These 3 tasks pass through to registry.ts. Their prompts should be
     // identical regardless of profile.
-    const wenyanProfile = resolveSubjectProfile('wenyan');
+    const yuwenProfile = resolveSubjectProfile('yuwen');
     const mathProfile = resolveSubjectProfile('math');
     for (const kind of [
       'VisionExtractTask',
       'VisionExtractTaskHeavy',
       'ReviewIntentTask',
     ] as const) {
-      const w = getTaskSystemPrompt(kind, wenyanProfile);
+      const w = getTaskSystemPrompt(kind, yuwenProfile);
       const m = getTaskSystemPrompt(kind, mathProfile);
       expect(w, `${kind} profile-coupling regression`).toBe(m);
       expect(w).toBe(tasks[kind].systemPrompt);

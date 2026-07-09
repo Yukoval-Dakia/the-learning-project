@@ -236,7 +236,7 @@ export function dedupeEvidence(refs: ProposalEvidenceRefWire[]): DedupedEvidence
 //
 // 安全正则只命中明显不透明 ID，不碰中文 / 正常英文 prose：
 //   block-<12+ 位小写字母数字>（cuid2 = 24 位，留余量到 12）
-//   命名空间 ID <小写词>:<8+ 位 [a-z0-9:_-]>（如 synthetic:wenyan:...）
+//   命名空间 ID <小写词>:<8+ 位 [a-z0-9:_-]>（如 synthetic:yuwen:...）
 //   裸长串 <20+ 位小写字母数字>（词边界限定，短词不误伤）
 const RAW_ID_RE = /(block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b)/g;
 

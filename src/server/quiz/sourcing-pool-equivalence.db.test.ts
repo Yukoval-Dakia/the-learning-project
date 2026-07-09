@@ -26,7 +26,7 @@ const db = testDb();
 // does not degrade — this file only asserts step-1 (existing pool) selection.
 const TAVILY_UP = () => true;
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
   await db.insert(knowledge).values({
     id,
@@ -153,7 +153,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       id: 'r-draft',
       knowledgeId: 'kc',
       kind: 'reading',
-      source: 'wenyan',
+      source: 'yuwen',
       createdAt: at(6),
       draft: true,
       metadata: TIER1_META,
@@ -164,7 +164,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       id: 'r-other',
       knowledgeId: 'kc-other',
       kind: 'reading',
-      source: 'wenyan',
+      source: 'yuwen',
       createdAt: at(7),
       metadata: TIER1_META,
     });
@@ -174,7 +174,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       id: 'r-auth',
       knowledgeId: 'kc',
       kind: 'reading',
-      source: 'wenyan',
+      source: 'yuwen',
       createdAt: at(8),
       metadata: TIER1_META,
     });
@@ -293,7 +293,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       id: 'p-auth',
       knowledgeId: 'kc2',
       kind: 'reading',
-      source: 'wenyan',
+      source: 'yuwen',
       createdAt: at(3),
       metadata: TIER1_META,
     });

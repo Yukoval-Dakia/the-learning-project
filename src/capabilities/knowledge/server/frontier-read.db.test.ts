@@ -17,7 +17,7 @@ async function seedKc(id: string, name = id): Promise<void> {
     .values({
       id,
       name,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

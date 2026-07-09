@@ -109,7 +109,7 @@ type RunAgentTaskFn = (
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     allowedTools?: string[];
     // The resolved subject profile drives getTaskSystemPrompt's voice/rules. Omitting
-    // it makes the runner fall back to the default (wenyan) prompt even for math /
+    // it makes the runner fall back to the default (yuwen) prompt even for math /
     // physics triggers — pass it through like other subject-specific handlers.
     subjectProfile?: SubjectProfile;
   },

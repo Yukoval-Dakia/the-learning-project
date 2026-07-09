@@ -17,8 +17,8 @@
 // A question's learning-subject is resolved from its first knowledge id's
 // effective domain (knowledge_ids → parent chain → domain → SubjectProfile).
 // We seed real `knowledge` rows with distinct domains so the questions resolve
-// to wenyan / math / physics. Orphan ids (no knowledge row) fall back to the
-// default profile (wenyan) — that is the single-subject degeneration path the
+// to yuwen / math / physics. Orphan ids (no knowledge row) fall back to the
+// default profile (yuwen) — that is the single-subject degeneration path the
 // existing route/soft-bias/part tests already exercise.
 //
 // DB test (testDb): imports @/db + tests/helpers/db → runs in the db config.
@@ -48,7 +48,7 @@ function makeFsrsState(due: Date) {
 }
 
 // A root knowledge node whose `domain` resolves to a SubjectProfile. domain
-// strings map via the profile alias table: 'wenyan' | 'math' | 'physics'.
+// strings map via the profile alias table: 'yuwen' | 'math' | 'physics'.
 async function seedKnowledge(id: string, domain: string) {
   await testDb()
     .insert(knowledge)
@@ -137,15 +137,15 @@ describe('YUK-168 cross-subject scheduling — round-robin selection', () => {
 
   it('balances the page across subjects round-robin instead of one subject dominating', async () => {
     // Three knowledge domains → three subjects.
-    await seedKnowledge('k_wen', 'wenyan');
+    await seedKnowledge('k_wen', 'yuwen');
     await seedKnowledge('k_math', 'math');
     await seedKnowledge('k_phys', 'physics');
 
-    // wenyan dominates the GLOBAL due order (its three cards are the most-due),
+    // yuwen dominates the GLOBAL due order (its three cards are the most-due),
     // then math, then physics. A plain global-due slice(0,3) would return three
-    // wenyan cards and starve math + physics. Round-robin must surface one of
+    // yuwen cards and starve math + physics. Round-robin must surface one of
     // each within the first three.
-    //   wenyan: w1 (most due), w2, w3
+    //   yuwen: w1 (most due), w2, w3
     //   math:   m1, m2
     //   physics:p1
     await seedOverdue('w1', ['k_wen'], new Date('2026-05-21T00:00:00.000Z'));
@@ -158,14 +158,14 @@ describe('YUK-168 cross-subject scheduling — round-robin selection', () => {
     const ids = (await getDue(3, noGoals)).map((r) => r.id);
 
     // First round-robin pass: most-due item of each subject, in first-seen
-    // (most-due) subject order → wenyan, math, physics.
+    // (most-due) subject order → yuwen, math, physics.
     expect(ids).toEqual(['w1', 'm1', 'p1']);
     // Contrast: the plain global-due page would have been ['w1', 'w2', 'w3'].
     expect(ids).not.toEqual(['w1', 'w2', 'w3']);
   });
 
   it('keeps within-subject due_at order across rounds and fills to limit', async () => {
-    await seedKnowledge('k_wen', 'wenyan');
+    await seedKnowledge('k_wen', 'yuwen');
     await seedKnowledge('k_math', 'math');
 
     await seedOverdue('w1', ['k_wen'], new Date('2026-05-21T00:00:00.000Z'));
@@ -182,7 +182,7 @@ describe('YUK-168 cross-subject scheduling — round-robin selection', () => {
   });
 
   it('only returns DUE items — never a non-due card', async () => {
-    await seedKnowledge('k_wen', 'wenyan');
+    await seedKnowledge('k_wen', 'yuwen');
     await seedKnowledge('k_math', 'math');
 
     // Two overdue (due in the past) + one NOT-yet-due (future) per subject.
@@ -196,7 +196,7 @@ describe('YUK-168 cross-subject scheduling — round-robin selection', () => {
   });
 
   it('count never exceeds limit even with multiple subjects', async () => {
-    await seedKnowledge('k_wen', 'wenyan');
+    await seedKnowledge('k_wen', 'yuwen');
     await seedKnowledge('k_math', 'math');
     for (let i = 0; i < 5; i += 1) {
       await seedOverdue(`w${i}`, ['k_wen'], new Date(`2026-05-2${i + 1}T00:00:00.000Z`));
@@ -207,10 +207,10 @@ describe('YUK-168 cross-subject scheduling — round-robin selection', () => {
   });
 
   it('single-subject degeneration: page is byte-identical to plain global-due order', async () => {
-    // All cards resolve to ONE subject (real wenyan knowledge node). With a
+    // All cards resolve to ONE subject (real yuwen knowledge node). With a
     // single subject the round-robin has exactly one bucket → emits it in due_at
     // order → identical to the pre-change `combined.slice(0, limit)`.
-    await seedKnowledge('k_wen', 'wenyan');
+    await seedKnowledge('k_wen', 'yuwen');
     await seedOverdue('q_c', ['k_wen'], new Date('2026-05-23T00:00:00.000Z'));
     await seedOverdue('q_a', ['k_wen'], new Date('2026-05-21T00:00:00.000Z'));
     await seedOverdue('q_b', ['k_wen'], new Date('2026-05-22T00:00:00.000Z'));
@@ -233,10 +233,10 @@ describe('YUK-168 cross-subject scheduling — round-robin selection', () => {
   });
 
   it('composes with soft-bias: goal-relevant items ordered first WITHIN the round-robin-selected set', async () => {
-    await seedKnowledge('k_wen', 'wenyan');
+    await seedKnowledge('k_wen', 'yuwen');
     await seedKnowledge('k_math', 'math');
 
-    // Round-robin over {wenyan: w1, w2}, {math: m1, m2}. With limit=4 all four
+    // Round-robin over {yuwen: w1, w2}, {math: m1, m2}. With limit=4 all four
     // are selected; round-robin order (no goals) = [w1, m1, w2, m2]. A goal
     // scoped to the math knowledge node floats the math (goal-relevant) cards to
     // the front of the OVERDUE segment, stably — set unchanged, order changes.

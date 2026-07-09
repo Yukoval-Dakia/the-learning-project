@@ -20,12 +20,12 @@ describe('ReviewSessionProposal brief extension (YUK-203 U4)', () => {
       count: 8,
       estimated_minutes: 15,
       knowledge_focus: ['k_zhi', 'k_qi'],
-      subject_mix: [{ subject_id: 'wenyan', weight: 1 }],
+      subject_mix: [{ subject_id: 'yuwen', weight: 1 }],
       time_box_minutes: 25,
       intent_tags: ['weak_recovery'],
     });
     expect(parsed.knowledge_focus).toEqual(['k_zhi', 'k_qi']);
-    expect(parsed.subject_mix).toEqual([{ subject_id: 'wenyan', weight: 1 }]);
+    expect(parsed.subject_mix).toEqual([{ subject_id: 'yuwen', weight: 1 }]);
     expect(parsed.time_box_minutes).toBe(25);
     expect(parsed.intent_tags).toEqual(['weak_recovery']);
   });

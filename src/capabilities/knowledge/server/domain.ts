@@ -91,16 +91,17 @@ export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promi
   for (const row of rows) {
     const domain = effectiveDomain(row.id);
     // Canonical bridge: a raw domain string maps to a subject id via the alias
-    // table, so a `?subject=wenyan` tab matches any node whose domain ALIASES to
-    // that profile (classical_chinese → wenyan) — alias-aware where the bare-
-    // equality precedent (tagging.ts:122) is not.
+    // table, so a `?subject=yuwen` tab matches any node whose domain ALIASES to
+    // that profile (legacy wenyan / classical_chinese → yuwen) — alias-aware
+    // where the bare-equality precedent (tagging.ts:122) is not.
     //
     // YUK-288 over-match fix: we use resolveKnownSubjectId (NOT resolveSubjectProfile),
     // which returns null for a null effective domain OR an unrecognised string
-    // instead of falling back to the DEFAULT profile (wenyan). Without this, every
+    // instead of falling back to the DEFAULT profile. Without this, every
     // untagged-up-the-whole-chain node and every unknown-domain node resolved to
-    // 'wenyan' and was swept into `?subject=wenyan`, conflating "genuinely wenyan"
-    // with "untagged / unknown-domain". A null result matches no subject.
+    // the sample subject and was swept into its `?subject=` tab, conflating
+    // "genuinely subject-tagged" with "untagged / unknown-domain". A null result
+    // matches no subject.
     if (resolveKnownSubjectId(domain) === subject) matched.push(row.id);
   }
   return matched;

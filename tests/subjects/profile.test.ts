@@ -38,15 +38,15 @@ function makeCustomProfile(overrides: Partial<SubjectProfile> = {}): SubjectProf
 }
 
 describe('SubjectProfile extensions', () => {
-  it('wenyan profile has version field', () => {
-    const profile = subjectProfiles.wenyan;
+  it('yuwen profile has version field', () => {
+    const profile = subjectProfiles.yuwen;
     expect(profile.version).toBeDefined();
     expect(typeof profile.version).toBe('string');
     expect(profile.version.length).toBeGreaterThan(0);
   });
 
-  it('wenyan profile has causeCategories array', () => {
-    const profile = subjectProfiles.wenyan;
+  it('yuwen profile has causeCategories array', () => {
+    const profile = subjectProfiles.yuwen;
     expect(Array.isArray(profile.causeCategories)).toBe(true);
     expect(profile.causeCategories.length).toBeGreaterThan(0);
     for (const category of profile.causeCategories) {
@@ -54,14 +54,14 @@ describe('SubjectProfile extensions', () => {
     }
   });
 
-  it('wenyan causeCategories have unique ids', () => {
-    const profile = subjectProfiles.wenyan;
+  it('yuwen causeCategories have unique ids', () => {
+    const profile = subjectProfiles.yuwen;
     const ids = profile.causeCategories.map((category) => category.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('wenyan profile declares subject-specific actionable cause categories', () => {
-    const profile = subjectProfiles.wenyan;
+  it('yuwen profile declares subject-specific actionable cause categories', () => {
+    const profile = subjectProfiles.yuwen;
     const categories = new Map(profile.causeCategories.map((category) => [category.id, category]));
 
     expect(profile.causeCategories).toHaveLength(11);
@@ -72,21 +72,21 @@ describe('SubjectProfile extensions', () => {
     expect(categories.get('concept')?.description).not.toMatch(/词义|语法功能/);
   });
 
-  it('wenyan profile has renderConfig', () => {
-    const profile = subjectProfiles.wenyan;
+  it('yuwen profile has renderConfig', () => {
+    const profile = subjectProfiles.yuwen;
     expect(RenderConfig.safeParse(profile.renderConfig).success).toBe(true);
     expect(profile.renderConfig.font_family).toBe('serif-cjk');
     expect(profile.renderConfig.notation).toBeNull();
   });
 
-  it('wenyan profile has schedulingHints', () => {
-    const profile = subjectProfiles.wenyan;
+  it('yuwen profile has schedulingHints', () => {
+    const profile = subjectProfiles.yuwen;
     expect(SchedulingHints.safeParse(profile.schedulingHints).success).toBe(true);
     expect(profile.schedulingHints.default_policy).toBe('fsrs');
   });
 
-  it('wenyan profile has judgeCapabilities array', () => {
-    const profile = subjectProfiles.wenyan;
+  it('yuwen profile has judgeCapabilities array', () => {
+    const profile = subjectProfiles.yuwen;
     expect(Array.isArray(profile.judgeCapabilities)).toBe(true);
     expect(profile.judgeCapabilities).toContain('exact');
     expect(profile.judgeCapabilities).toContain('keyword');
@@ -117,7 +117,7 @@ describe('SubjectProfile extensions', () => {
     }
   });
 
-  // YUK (wenyan deprotagonist): the neutral default is `general`, not wenyan.
+  // YUK (yuwen deprotagonist): the neutral default is `general`, not yuwen.
   it('resolveSubjectProfile defaults to the neutral general profile for unknown domains', () => {
     expect(resolveSubjectProfile('unknown').id).toBe('general');
     expect(resolveSubjectProfile(null).id).toBe('general');
@@ -127,16 +127,16 @@ describe('SubjectProfile extensions', () => {
 describe('SubjectRegistry', () => {
   it('resolves known subject by id', () => {
     const registry = new SubjectRegistry();
-    const wenyan = registry.resolve('wenyan');
-    expect(wenyan).toBeDefined();
-    expect(wenyan.displayName).toBe('文言文');
+    const yuwen = registry.resolve('yuwen');
+    expect(yuwen).toBeDefined();
+    expect(yuwen.displayName).toBe('语文');
   });
 
   it('resolves subject by alias', () => {
     const registry = new SubjectRegistry();
     const result = registry.resolve('classical_chinese');
     expect(result).toBeDefined();
-    expect(result.id).toBe('wenyan');
+    expect(result.id).toBe('yuwen');
   });
 
   it('resolves math by alias "mathematics"', () => {
@@ -161,14 +161,14 @@ describe('SubjectRegistry', () => {
 
   it('is case-insensitive', () => {
     const registry = new SubjectRegistry();
-    expect(registry.resolve('WENYAN').id).toBe('wenyan');
+    expect(registry.resolve('WENYAN').id).toBe('yuwen');
     expect(registry.resolve('Math').id).toBe('math');
   });
 
   it('lists all registered profile ids', () => {
     const registry = new SubjectRegistry();
     const ids = registry.listIds();
-    expect(ids).toContain('wenyan');
+    expect(ids).toContain('yuwen');
     expect(ids).toContain('math');
   });
 
@@ -249,8 +249,8 @@ describe('SubjectRegistry', () => {
 });
 
 describe('KNOWN_SUBJECT_IDS', () => {
-  it('contains wenyan and math', () => {
-    expect(KNOWN_SUBJECT_IDS).toContain('wenyan');
+  it('contains yuwen and math', () => {
+    expect(KNOWN_SUBJECT_IDS).toContain('yuwen');
     expect(KNOWN_SUBJECT_IDS).toContain('math');
   });
 });

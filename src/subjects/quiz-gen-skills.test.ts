@@ -25,22 +25,22 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 
 describe('resolveQuizGenSkills (per (subject, kind))', () => {
   it('returns the hyphenated skill dir name when a pack exists', async () => {
-    const root = fixtureRoot({ wenyan: ['quiz-gen-translation'] });
-    expect(await resolveQuizGenSkills('wenyan', 'translation', root)).toEqual([
+    const root = fixtureRoot({ yuwen: ['quiz-gen-translation'] });
+    expect(await resolveQuizGenSkills('yuwen', 'translation', root)).toEqual([
       'quiz-gen-translation',
     ]);
   });
 
   it('translates underscore kind to hyphen dir (reading_comprehension)', async () => {
-    const root = fixtureRoot({ wenyan: ['quiz-gen-reading-comprehension'] });
-    expect(await resolveQuizGenSkills('wenyan', 'reading_comprehension', root)).toEqual([
+    const root = fixtureRoot({ yuwen: ['quiz-gen-reading-comprehension'] });
+    expect(await resolveQuizGenSkills('yuwen', 'reading_comprehension', root)).toEqual([
       'quiz-gen-reading-comprehension',
     ]);
   });
 
   it('降级链: returns undefined when the pack dir is absent (unauthored kind)', async () => {
-    const root = fixtureRoot({ wenyan: ['quiz-gen-translation'] });
-    expect(await resolveQuizGenSkills('wenyan', 'reading_comprehension', root)).toBeUndefined();
+    const root = fixtureRoot({ yuwen: ['quiz-gen-translation'] });
+    expect(await resolveQuizGenSkills('yuwen', 'reading_comprehension', root)).toBeUndefined();
   });
 
   it('降级链: returns undefined for a kind with no skill-key mapping', async () => {
@@ -51,18 +51,18 @@ describe('resolveQuizGenSkills (per (subject, kind))', () => {
 
   it('降级链: returns undefined when SKILL.md is missing even if dir exists', async () => {
     const root = mkdtempSync(join(tmpdir(), 'qgskills-'));
-    mkdirSync(join(root, 'wenyan', 'skills', 'quiz-gen-translation'), { recursive: true });
+    mkdirSync(join(root, 'yuwen', 'skills', 'quiz-gen-translation'), { recursive: true });
     // no SKILL.md written
-    expect(await resolveQuizGenSkills('wenyan', 'translation', root)).toBeUndefined();
+    expect(await resolveQuizGenSkills('yuwen', 'translation', root)).toBeUndefined();
   });
 });
 
 describe('resolveQuizGenSkillsForSubject (all packs)', () => {
   it('returns every quiz-gen pack the subject authored', async () => {
     const root = fixtureRoot({
-      wenyan: ['quiz-gen-translation', 'quiz-gen-reading-comprehension'],
+      yuwen: ['quiz-gen-translation', 'quiz-gen-reading-comprehension'],
     });
-    const result = await resolveQuizGenSkillsForSubject('wenyan', root);
+    const result = await resolveQuizGenSkillsForSubject('yuwen', root);
     expect(result).toEqual(
       expect.arrayContaining(['quiz-gen-translation', 'quiz-gen-reading-comprehension']),
     );
@@ -70,8 +70,8 @@ describe('resolveQuizGenSkillsForSubject (all packs)', () => {
   });
 
   it('ignores non quiz-gen dirs', async () => {
-    const root = fixtureRoot({ wenyan: ['quiz-gen-translation', 'some-other-skill'] });
-    expect(await resolveQuizGenSkillsForSubject('wenyan', root)).toEqual(['quiz-gen-translation']);
+    const root = fixtureRoot({ yuwen: ['quiz-gen-translation', 'some-other-skill'] });
+    expect(await resolveQuizGenSkillsForSubject('yuwen', root)).toEqual(['quiz-gen-translation']);
   });
 
   it('降级链: returns undefined when the subject has no skills dir', async () => {
@@ -83,9 +83,9 @@ describe('resolveQuizGenSkillsForSubject (all packs)', () => {
 describe('the shipped first-batch skills resolve against the live SoT', () => {
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the actual
   // authored packs are discoverable, guarding the directory naming convention.
-  it('wenyan translation + reading_comprehension + math calculation are live', async () => {
-    expect(await resolveQuizGenSkills('wenyan', 'translation')).toEqual(['quiz-gen-translation']);
-    expect(await resolveQuizGenSkills('wenyan', 'reading_comprehension')).toEqual([
+  it('yuwen translation + reading_comprehension + math calculation are live', async () => {
+    expect(await resolveQuizGenSkills('yuwen', 'translation')).toEqual(['quiz-gen-translation']);
+    expect(await resolveQuizGenSkills('yuwen', 'reading_comprehension')).toEqual([
       'quiz-gen-reading-comprehension',
     ]);
     expect(await resolveQuizGenSkills('math', 'calculation')).toEqual(['quiz-gen-calculation']);

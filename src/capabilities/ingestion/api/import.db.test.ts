@@ -157,7 +157,7 @@ async function insertBlock(
   });
 }
 
-async function insertKnowledge(db: ReturnType<typeof testDb>, id: string, domain = 'wenyan') {
+async function insertKnowledge(db: ReturnType<typeof testDb>, id: string, domain = 'yuwen') {
   const now = new Date();
   await db.insert(knowledge).values({
     id,

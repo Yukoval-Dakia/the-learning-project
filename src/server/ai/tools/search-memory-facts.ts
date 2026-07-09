@@ -35,7 +35,7 @@ export const SearchMemoryFactsInputSchema = z.object({
   // a fact's `affected_scopes` via `{ contains: scopeKey }` (client.ts:181-183).
   //
   // TRAP (memory map bullet 8): attempt/review-derived learning facts carry ONLY
-  // `global` + `topic:*` scopes — never `subject:X`. Passing a `subject:wenyan`
+  // `global` + `topic:*` scopes — never `subject:X`. Passing a `subject:yuwen`
   // scopeKey therefore silently drops nearly all learning facts. Prefer `topic:*`
   // or leave unset (global) for learning retrieval; reserve `subject:*` for facts
   // you know were tagged at subject scope.

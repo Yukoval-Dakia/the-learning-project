@@ -5,7 +5,7 @@ import { mathProfile } from './math/profile';
 import { physicsProfile } from './physics/profile';
 import type { SubjectProfile } from './profile-schema';
 import { serializeProfileToTs } from './serialize';
-import { wenyanProfile } from './wenyan/profile';
+import { yuwenProfile } from './yuwen/profile';
 
 // Re-evaluate a serialized profile literal by writing it to a temp file UNDER
 // src/subjects/ (so the `import type { SubjectProfile } from '../profile'` header's
@@ -30,13 +30,13 @@ async function roundTrip(profile: SubjectProfile): Promise<SubjectProfile> {
 }
 
 describe('serializeProfileToTs', () => {
-  it('round-trips wenyan exactly (null notation + heterogeneous optional cause fields)', async () => {
-    // wenyan exercises: notation:null (must stay null), causeCategories mixing
+  it('round-trips yuwen exactly (null notation + heterogeneous optional cause fields)', async () => {
+    // yuwen exercises: notation:null (must stay null), causeCategories mixing
     // present/absent variant_targetable, and `other` omitting description entirely
     // (absent optionals must be OMITTED, not emitted as `undefined`). toStrictEqual
     // catches any accidental `key: undefined` (toEqual would mask it).
-    const result = await roundTrip(wenyanProfile);
-    expect(result).toStrictEqual(wenyanProfile);
+    const result = await roundTrip(yuwenProfile);
+    expect(result).toStrictEqual(yuwenProfile);
   });
 
   it('round-trips physics exactly (non-null nullable notation:"katex")', async () => {
@@ -50,9 +50,9 @@ describe('serializeProfileToTs', () => {
   });
 
   it('emits the verified plain-literal form (header + plain export const, no satisfies/as const)', () => {
-    const source = serializeProfileToTs(wenyanProfile);
+    const source = serializeProfileToTs(yuwenProfile);
     expect(source).toContain("import type { SubjectProfile } from '../profile';");
-    expect(source).toContain('export const wenyanProfile: SubjectProfile = {');
+    expect(source).toContain('export const yuwenProfile: SubjectProfile = {');
     expect(source).not.toContain('satisfies');
     expect(source).not.toContain('as const');
   });
