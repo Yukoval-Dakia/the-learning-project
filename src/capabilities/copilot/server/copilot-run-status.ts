@@ -19,8 +19,14 @@ export const COPILOT_RUN_EVENTS = {
   QUEUED: 'copilot_run.queued',
   /** handler 拾起、SDK run 启动前。 */
   STARTED: 'copilot_run.started',
-  /** 回合/进度心跳（v1 单 SDK run 内不细分，保留为 forward-compat 进度槽）。 */
+  /** 回合/进度心跳（工具步进等；v1 保留为 forward-compat 进度槽）。 */
   STEP: 'copilot_run.step',
+  /**
+   * YUK-575 (N2) — 流式文本增量。durable handler 边跑边把每个 assistant chunk 写成
+   * 一条 delta 事件（FIFO promise-chain，terminal 前排空 → delta id 严格早于
+   * REPLY/DONE，S3）。消费端（dock，PR2/YUK-596）据它实时渲染流式文本。非终态。
+   */
+  DELTA: 'copilot_run.delta',
   /** 终稿 reply 文本就位（done 的前序，分开以便流式消费者先渲染 reply 再收 done）。 */
   REPLY: 'copilot_run.reply',
   /** 终态：成功。 */
@@ -87,6 +93,9 @@ export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): Copilot
         break;
       case COPILOT_RUN_EVENTS.STEP:
       case COPILOT_RUN_EVENTS.REPLY:
+      // YUK-575 (N2) — DELTA（流式文本增量）是「run 正在跑」的非终态信号，与 STEP/REPLY
+      // 同级推到 'running'。
+      case COPILOT_RUN_EVENTS.DELTA:
         // CodeRabbit fix — STEP（进度心跳）/ REPLY（终稿就位）是「run 正在跑」的明确
         // 信号，语义上高于 started。原逻辑 `status==='queued' ? 'started' : 'running'`
         // 会把「STEP/REPLY 首次出现但还没见过 STARTED」（如 [STEP] 或 [QUEUED, REPLY]，

@@ -178,6 +178,22 @@ export interface RunTaskCtx {
    * §6). Same undefined-guard zero-regression contract + 1:1 SDK type re-export.
    */
   canUseTool?: Options['canUseTool'];
+  /**
+   * YUK-575 (N5/MF-A) seam: per-call budget override for the durable copilot run.
+   * The inline `CopilotTask` registry budget (maxIterations:6 / timeout:60_000) is
+   * the SYNC-request-window budget and MUST stay bounded (< cloudflared idle-100s)
+   * for the retained inline fallback. A durable pg-boss run needs a much larger
+   * ceiling but MUST NOT mutate the shared registry default (YUK-458 revert lesson:
+   * a raised inline budget only turned error_max_turns into an inline-request abort).
+   * NARROW: only `maxIterations` (→ SDK maxTurns) and `timeoutMs` (→ the abort timer).
+   * The THIRD durable knob — the tool-call ceiling (maxToolCalls) — is NOT here: it
+   * lives in the ContextBudgetTracker (budgets.ts, surface-keyed) and is overridden
+   * at the handler when constructing the tracker (MF-A). OMITTED (the default) ⇒
+   * buildQueryOptions / the stream abort timer read `def.budget` verbatim ⇒
+   * byte-identical to pre-seam (zero regression); only the copilot_run handler sets
+   * it. It is consumed into maxTurns / the timer and is never an Options key.
+   */
+  budgetOverride?: { maxIterations?: number; timeoutMs?: number };
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -463,7 +479,10 @@ function buildQueryOptions(
     env: buildAgentEnv(resolved),
     tools: allowedTools,
     mcpServers: ctx.mcpServers,
-    maxTurns: def.budget.maxIterations || 1,
+    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call. The
+    // `|| 1` fallback is preserved (a 0 override or 0 registry value both floor to
+    // 1). undefined-guard: non-durable callers keep def.budget.maxIterations verbatim.
+    maxTurns: (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     persistSession: false,
@@ -1161,7 +1180,14 @@ export async function streamTaskCollecting(
   let iteration = 0;
 
   const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), def.budget.timeout);
+  // YUK-575 (N5) — durable copilot run overrides the abort budget per-call (the
+  // durable handler runs through streamTaskCollecting). undefined-guard: non-durable
+  // callers keep def.budget.timeout verbatim (< cloudflared idle-100s for the inline
+  // fallback).
+  const timer = setTimeout(
+    () => abortController.abort(),
+    ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
+  );
 
   // YUK-238 [STB-4] parity — thread the request signal so a client disconnect
   // aborts the SDK run, same as streamTask.

@@ -18,9 +18,17 @@
 //     finish_reason='reconciled_stuck', which the overnight watchdog EXCLUDES
 //     from degraded-kind alerting (not a logical task failure) while the admin
 //     Failures page keeps it browsable (alerting-excluded, browse-retained).
-//   - threshold 1h vs the largest budget.timeout (300s) = 12× margin: real run
-//     lifetime is bounded by the cooperative abort timer, so a >1h 'running'
-//     row cannot be a live run — false convergence is structurally excluded.
+//   - threshold 1h vs the largest EFFECTIVE run lifetime (bounded by the
+//     cooperative abort timer) = margin: a >1h 'running' row cannot be a live run,
+//     so false convergence is structurally excluded. The largest *registry*
+//     budget.timeout is 300s (12× margin), BUT YUK-575's durable copilot run
+//     overrides its abort timer per-call to DURABLE_BUDGET.timeoutMs (12min, via
+//     the runner budgetOverride seam), so the largest EFFECTIVE run lifetime is
+//     12min → margin 5×. Still structurally safe (12min < 1h). LOAD-BEARING
+//     invariant (YUK-575 S6): DURABLE_BUDGET.timeoutMs — and any future per-call
+//     budget override — MUST stay < STUCK_RUN_THRESHOLD_MS; a ≥1h durable budget
+//     would let this sweeper converge a LIVE run into a false failure.
+//     (copilot_run.test.ts asserts DURABLE_BUDGET.timeoutMs < STUCK_RUN_THRESHOLD_MS.)
 //
 // Triggers (design doc §5.4):
 //   - PRIMARY: one boot-time sweep in start-worker.ts (process crash is the
