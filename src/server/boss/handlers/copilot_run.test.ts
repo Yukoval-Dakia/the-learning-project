@@ -1,11 +1,13 @@
-// YUK-364 — durable copilot run handler DB test。
+// YUK-364 / YUK-575 — durable copilot run handler DB test。
 //
-// mock AI（runAgentTaskFn）+ real DB（job_events writeJobEvent / computeReplay）。
-// 断言：
+// mock stream AI（streamTaskCollectingFn）+ 共享装配器 stub（resolveCopilotRunInputFn）
+// + real DB（job_events writeJobEvent / computeReplay）。断言：
 //   ① happy path 写 started→reply→done 事件序列 + computeReplay 末态 done；
-//   ② AI throw → 写 failed 事件 + re-throw（pg-boss retry）；
+//   ② 非 transient error（plain Error）→ terminal FAILED(exhausted)+reply+return（不 throw，YUK-575 MF1）；
 //   ③ 启动前已有 cancel 事件 → 早停写 failed(cancelled)，不调 AI；
 //   ④ run handle = run_id = 传入 checkpoint_id（job_events.business_id）。
+//   YUK-575: N2 流式 delta FIFO（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
+//            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,7 +22,14 @@ import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { and, eq } from 'drizzle-orm';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { type CopilotRunJobData, buildCopilotRunHandler, runCopilotRun } from './copilot_run';
+import { STUCK_RUN_THRESHOLD_MS } from './ai_task_run_reconcile';
+import {
+  type CopilotRunJobData,
+  DURABLE_BUDGET,
+  type RunCopilotRunParams,
+  buildCopilotRunHandler,
+  runCopilotRun,
+} from './copilot_run';
 
 // YUK-364 (F1) — 读 conversation-历史可见的 copilot_reply domain event（turns.ts 读
 // 的就是这族 experimental:copilot_reply）。durable 成功路径必须写它，否则回复对历史
@@ -32,22 +41,56 @@ async function copilotReplyEvents(sessionId: string) {
     .where(and(eq(event.session_id, sessionId), eq(event.action, 'experimental:copilot_reply')));
 }
 
-// runAgentTaskFn 的 ctx 形（db + mcpServers + allowedTools），让 mock.calls[0]
-// 携带 typed tuple。
+// streamTaskCollectingFn 的 ctx 形（db + mcpServers + allowedTools + skills +
+// budgetOverride），让 mock.calls[0] 携带 typed tuple。
 type AgentCtx = {
   db: unknown;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
+  skills?: string[];
+  budgetOverride?: { maxIterations?: number; timeoutMs?: number };
 };
 
-function agentMock(text: string, taskRunId = 'tr_x', finishReason = 'end_turn') {
-  return vi.fn(async (_kind: string, _input: unknown, _ctx: AgentCtx) => ({
-    text,
-    task_run_id: taskRunId,
-    finishReason,
-    usage: { inputTokens: 0, outputTokens: 0 },
-  }));
+// streamTaskCollecting mock — 匹配 (kind, input, ctx, onDelta) => Promise<StreamCollectResult>。
+// deltas 若给则在 resolve 前逐个 onDelta（测 N2/S3 FIFO）；partial/error 模拟
+// graceful-degrade。默认不 emit delta（保既有 [STARTED,REPLY,DONE] 事件序列断言）。
+function streamMock(
+  text: string,
+  opts: {
+    taskRunId?: string;
+    finishReason?: string;
+    deltas?: string[];
+    partial?: boolean;
+    error?: string;
+  } = {},
+) {
+  const { taskRunId = 'tr_x', finishReason = 'end_turn', deltas, partial, error } = opts;
+  return vi.fn(
+    async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (t: string) => void) => {
+      if (deltas) for (const d of deltas) onDelta(d);
+      return {
+        text,
+        task_run_id: taskRunId,
+        finishReason,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        ...(partial ? { partial: true, error } : {}),
+      };
+    },
+  );
 }
+
+// 共享装配器 stub — 不打真 DB 的 learner-state / history 机器，返回最小 run input。
+// handler 只把它透传给 stream；装配器自身的 exclude-cursor / byte-parity 由
+// copilot-run-input.db.test.ts 覆盖。ambient 测用 vi.fn spy 断言参数。
+const stubRunInput: RunCopilotRunParams['resolveCopilotRunInputFn'] = async (_db, params) => ({
+  surface: params.triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot',
+  triggered_by: params.triggeredBy,
+  user_message: params.userMessage,
+  ...(params.chipKind ? { chip_kind: params.chipKind } : {}),
+  proposal_feedback: [],
+  conversation_history: [],
+  ...(params.ambient ? { ambient_context: params.ambient } : {}),
+});
 
 // 假 MCP server seam（buildMcpServerFromRegistry 默认会拉 CORE_TOOLS；测试隔离用
 // 一个无害占位，handler 只把它装进 mcpServers map 不解引用）。
@@ -76,11 +119,12 @@ describe('runCopilotRun', () => {
   });
 
   it('① happy path — 写 started→reply→done 序列，computeReplay 末态 done', async () => {
-    const run = agentMock('这是回答');
+    const run = streamMock('这是回答');
     const result = await runCopilotRun({
       db: testDb(),
       data: baseData,
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
 
@@ -93,14 +137,11 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
-    // reply 事件携带终稿文本 + task_run_id。
     const replyEvent = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
     expect(replyEvent?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
-    // 状态派生 → done。
     expect(deriveCopilotRunStatus(events)).toBe('done');
 
-    // YUK-364 (F1) — 成功路径同时写 conversation-历史可见的 copilot_reply domain
-    // event（chained user_ask = run_id，同 session_id），否则回复对历史不可见。
+    // YUK-364 (F1) — 成功路径同时写 conversation-历史可见的 copilot_reply domain event。
     const replies = await copilotReplyEvents(baseData.session_id);
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({
@@ -121,13 +162,12 @@ describe('runCopilotRun', () => {
     const result = await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: sessionId },
-      runAgentTaskFn: agentMock(marked) as never,
+      streamTaskCollectingFn: streamMock(marked) as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
-    // handler 返回的 reply 已剥 marker。
     expect(result).toEqual({ status: 'done', reply: '这是正文', task_run_id: 'tr_x' });
 
-    // domain event reply_md 剥了 marker + 带 primary_view metadata。
     const replies = await copilotReplyEvents(sessionId);
     expect(replies).toHaveLength(1);
     expect(replies[0]?.payload).toMatchObject({
@@ -135,10 +175,122 @@ describe('runCopilotRun', () => {
       primary_view: { source: 'artifact', ref: { kind: 'question', id: 'q_1' } },
     });
 
-    // job_events REPLY 持久化的也是 cleaned 文本（与 domain event 一致，不含 marker）。
     const events = await replay(runId);
     const replyJobEvent = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
     expect(replyJobEvent?.payload).toMatchObject({ reply_md: '这是正文' });
+  });
+
+  // YUK-575 (N2/S3) — 流式 delta → job_events：FIFO + terminal 前 drain → 每条 delta id
+  // 严格早于 REPLY/DONE，且 job_events id 单调。
+  it('N2/S3 — 流式 delta 写 job_events，id 单调、所有 delta 严格早于 REPLY/DONE', async () => {
+    const runId = 'run_delta_fifo';
+    const run = streamMock('最终答复', { deltas: ['最', '终', '答复'] });
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_delta_fifo' },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result.status).toBe('done');
+
+    const events = await replay(runId);
+    // id 单调递增。
+    const ids = events.map((e) => e.id);
+    expect(ids).toEqual([...ids].sort((a, b) => a - b));
+    // 事件序列：STARTED, 3×DELTA, REPLY, DONE。
+    const types = events.map((e) => e.event_type);
+    expect(types).toEqual([
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+    // S3 红线：每条 DELTA id 严格 < REPLY id 且 < DONE id（drain 生效，重放不乱序）。
+    const maxDeltaId = Math.max(
+      ...events.filter((e) => e.event_type === COPILOT_RUN_EVENTS.DELTA).map((e) => e.id),
+    );
+    const replyId = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY)?.id ?? 0;
+    const doneId = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE)?.id ?? 0;
+    expect(maxDeltaId).toBeLessThan(replyId);
+    expect(replyId).toBeLessThan(doneId);
+    // delta payload 携带文本。
+    const firstDelta = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DELTA);
+    expect(firstDelta?.payload).toMatchObject({ text: '最' });
+    // 流式态派生为 running（终态 done 前）。
+    expect(deriveCopilotRunStatus(events.slice(0, 4))).toBe('running');
+  });
+
+  // YUK-575 (N3/A1/MF-B + S4) — handler pickup 时调共享装配器，传 excludeUserAskEventId=
+  // run_id 且 ambient RIDE 自 job payload 进装配参数。
+  it('N3/S4 — 装配器收到 excludeUserAskEventId=run_id + ambient（从 job payload 透传）', async () => {
+    const runId = 'run_assemble_params';
+    const assembleSpy = vi.fn(stubRunInput);
+    const ambient = { route: '/learn/q_9', focused_entity: { kind: 'knowledge', id: 'k_9' } };
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_assemble', ambient },
+      streamTaskCollectingFn: streamMock('ok') as never,
+      resolveCopilotRunInputFn: assembleSpy,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(assembleSpy).toHaveBeenCalledTimes(1);
+    const params = assembleSpy.mock.calls[0][1];
+    expect(params).toMatchObject({
+      sessionId: 'sess_assemble',
+      userMessage: baseData.user_message,
+      triggeredBy: 'chat',
+      excludeUserAskEventId: runId,
+      ambient,
+    });
+    // 装配器返回的 run input（含 ambient_context）透传给 stream。
+    const runInput = await assembleSpy.mock.results[0].value;
+    expect(runInput).toMatchObject({ ambient_context: ambient });
+  });
+
+  // YUK-575 (N5/MF-A) — durable budget：runner budgetOverride（maxIterations/timeoutMs）
+  // 经 ctx 透传；tool-call ceiling（maxToolCalls）抬到 60，第 11 次工具调用不被 soft-stop
+  // （inline 的 10 会在第 11 次停）。
+  it('N5/MF-A — budgetOverride 透传 + tool-call ceiling 抬到 60（第 11 次不 soft-stop）', async () => {
+    const runId = 'run_budget';
+    const run = streamMock('ok');
+    const buildMcp = mcpMock();
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_budget' },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: buildMcp as never,
+    });
+    // runner seam：ctx.budgetOverride = { maxIterations:24, timeoutMs:12min }。
+    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
+    expect(ctx.budgetOverride).toEqual({
+      maxIterations: DURABLE_BUDGET.maxIterations,
+      timeoutMs: DURABLE_BUDGET.timeoutMs,
+    });
+    // MF-A：ContextBudgetTracker 用抬升的 maxToolCalls=60 构造 → 捕获 handler 传给
+    // buildMcpServer 的 beforeExecute gate，连调 11 次不 soft-stop（inline 的 10 会停）。
+    const opts = (
+      buildMcp.mock.calls[0] as unknown as [{ beforeExecute: (t: unknown) => string | undefined }]
+    )[0];
+    const fakeTool = { name: 'query_knowledge', effect: 'read' };
+    let lastStop: string | undefined;
+    for (let i = 0; i < 11; i++) lastStop = opts.beforeExecute(fakeTool);
+    expect(lastStop).toBeUndefined();
+    // 常量对齐。
+    expect(DURABLE_BUDGET).toMatchObject({
+      maxIterations: 24,
+      maxToolCalls: 60,
+      timeoutMs: 720_000,
+    });
+  });
+
+  // YUK-575 (S6) — 承重约束：durable abort budget 必须 < stuck-in-running sweeper 阈值，
+  // 否则 sweeper 误收敛 live durable run 成 failure。
+  it('S6 — DURABLE_BUDGET.timeoutMs < STUCK_RUN_THRESHOLD_MS', () => {
+    expect(DURABLE_BUDGET.timeoutMs).toBeLessThan(STUCK_RUN_THRESHOLD_MS);
   });
 
   it('F3 — 已有 DONE 终态的 run 被重投 → 跳过，不重跑 AI、不重写事件/回复', async () => {
@@ -146,115 +298,120 @@ describe('runCopilotRun', () => {
     const sessionId = 'sess_terminal_done';
     const data = { ...baseData, run_id: runId, session_id: sessionId };
 
-    // 第一次：正常跑完。
-    const run = agentMock('第一次回答');
+    const run = streamMock('第一次回答');
     await runCopilotRun({
       db: testDb(),
       data,
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
     expect(run).toHaveBeenCalledTimes(1);
-    const firstReplies = await copilotReplyEvents(sessionId);
-    expect(firstReplies).toHaveLength(1);
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
     const firstEvents = await replay(runId);
 
-    // 第二次：模拟 retry / redelivery —— 同 run_id 再投一次。
     const result2 = await runCopilotRun({
       db: testDb(),
       data,
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
-    // 返回现有终态。
-    expect(result2.status).toBe('done');
     expect(result2).toMatchObject({ status: 'done', reply: '第一次回答', task_run_id: 'tr_x' });
-    // AI 没被再调（无重复副作用 / 重复 STARTED/REPLY/DONE）。
     expect(run).toHaveBeenCalledTimes(1);
-    // 没有第二条 copilot_reply domain event（不重写历史）。
     expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
-    // job_events 序列不变（无重复 STARTED/REPLY/DONE）。
     const secondEvents = await replay(runId);
     expect(secondEvents.map((e) => e.event_type)).toEqual(firstEvents.map((e) => e.event_type));
   });
 
-  it('C1 — 已有 FAILED(transient) 的 run 被重投 → 重跑 AI（不绕过 retry）', async () => {
+  it('C1 — 已有 FAILED(reason=error) 的 run 被重投 → 重跑（不在 skip-guard，恢复 retry）', async () => {
     const runId = 'run_terminal_failed';
     const sessionId = 'sess_terminal_failed';
-    // 预写一条普通 FAILED（模拟上次 transient 模型/工具故障，catch 写 failed +
-    // re-throw → pg-boss redeliver 又投了一次）。
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
       payload: { reason: 'error', error: 'mimo 500' },
     });
-    const run = agentMock('重试成功的回答');
+    const run = streamMock('重试成功的回答');
     const result = await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: sessionId },
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
-    // C1 红线：普通 FAILED 不跳过——pg-boss redeliver 真正重跑（retry 语义恢复），
-    // 一次 transient 故障不会被首次尝试变成永久失败。
     expect(result).toMatchObject({ status: 'done', reply: '重试成功的回答' });
     expect(run).toHaveBeenCalledTimes(1);
-
-    // 重跑写了新一轮 STARTED→REPLY→DONE（接在旧 FAILED 之后），末态派生为 done。
     const events = await replay(runId);
-    const types = events.map((e) => e.event_type);
-    expect(types).toEqual([
+    expect(events.map((e) => e.event_type)).toEqual([
       COPILOT_RUN_EVENTS.FAILED,
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
     expect(deriveCopilotRunStatus(events)).toBe('done');
-    // 重跑写了 conversation-历史可见的 copilot_reply domain event。
-    const replies = await copilotReplyEvents(sessionId);
-    expect(replies).toHaveLength(1);
-    expect(replies[0]?.payload).toMatchObject({ reply_md: '重试成功的回答' });
   });
 
   it('C1 — 已有 FAILED(reason=cancelled) 的 run 被重投 → 早停返回 cancelled，不重跑', async () => {
     const runId = 'run_terminal_cancelled';
-    const sessionId = 'sess_terminal_cancelled';
-    // 预写 cancelled-before-start 终态（落在 FAILED(reason='cancelled')）。取消是
-    // 用户意图的 deliberate 终态——重投不应重跑（重跑违背用户意图）。
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
       event_type: COPILOT_RUN_EVENTS.FAILED,
       payload: { reason: 'cancelled', cancelled_before_start: true },
     });
-    const run = agentMock('不该被调用');
+    const run = streamMock('不该被调用');
     const result = await runCopilotRun({
       db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: sessionId },
-      runAgentTaskFn: run as never,
+      data: { ...baseData, run_id: runId, session_id: 'sess_terminal_cancelled' },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
     expect(result).toEqual({ status: 'cancelled' });
     expect(run).not.toHaveBeenCalled();
-    // 早停不写新事件（序列只剩预写的那条 FAILED）。
     const events = await replay(runId);
     expect(events.map((e) => e.event_type)).toEqual([COPILOT_RUN_EVENTS.FAILED]);
   });
 
+  // YUK-575 (MF2b) — 已有 FAILED(reason=exhausted) 的 run 被重投（写完 terminal 后崩溃）→
+  // 早停返回 failed，不重跑重烧、不写新 reply。
+  it('MF2b — 已有 FAILED(reason=exhausted) 的 run 被重投 → 早停 failed，不重跑', async () => {
+    const runId = 'run_prior_exhausted';
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'exhausted', error: 'error_max_turns' },
+    });
+    const run = streamMock('不该被调用');
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_prior_exhausted' },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result).toMatchObject({ status: 'failed', error: 'error_max_turns' });
+    expect(run).not.toHaveBeenCalled();
+    const events = await replay(runId);
+    expect(events.map((e) => e.event_type)).toEqual([COPILOT_RUN_EVENTS.FAILED]);
+    expect(await copilotReplyEvents('sess_prior_exhausted')).toHaveLength(0);
+  });
+
   it('C5 — 配置 TAVILY_API_KEY 时挂 Tavily MCP + allowedTools（web grounding 平价）', async () => {
     const runId = 'run_tavily';
-    const run = agentMock('grounded reply');
+    const run = streamMock('grounded reply');
     await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: 'sess_tavily' },
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
-      // 注入 Tavily fixture（不碰 process.env）。
       buildTavilyMcpServerFn: () => ({ type: 'http', url: 'https://mcp.tavily.com/mcp/?k' }),
     });
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    // mcpServers 含 tavily server；allowedTools 含 tavily 工具。
     expect(Object.keys(ctx.mcpServers ?? {})).toContain('tavily');
     expect(ctx.allowedTools).toEqual(
       expect.arrayContaining(['mcp__tavily__tavily_search', 'mcp__tavily__tavily_extract']),
@@ -263,11 +420,12 @@ describe('runCopilotRun', () => {
 
   it('C5 — 未配置 Tavily（builder 返 null）→ 不挂 tavily server / tools（back-compat）', async () => {
     const runId = 'run_no_tavily';
-    const run = agentMock('reply');
+    const run = streamMock('reply');
     await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: 'sess_no_tavily' },
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
       buildTavilyMcpServerFn: () => null,
     });
@@ -278,57 +436,91 @@ describe('runCopilotRun', () => {
 
   it('C2 — copilot SKILL.md 命中时传 ctx.skills（durable 与 inline 行为平价）', async () => {
     const runId = 'run_skills';
-    const run = agentMock('reply');
+    const run = streamMock('reply');
     await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: 'sess_skills' },
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
       resolveCopilotSkillsFn: async () => ['copilot'],
     });
-    const ctx = (run.mock.calls[0] as unknown as [string, unknown, { skills?: string[] }])[2];
+    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
     expect(ctx.skills).toEqual(['copilot']);
   });
 
   it('C2 — SKILL.md 缺包（resolver 返 undefined）→ ctx 省略 skills（降级，零回归）', async () => {
     const runId = 'run_no_skills';
-    const run = agentMock('reply');
+    const run = streamMock('reply');
     await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: 'sess_no_skills' },
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
       resolveCopilotSkillsFn: async () => undefined,
     });
-    const ctx = (run.mock.calls[0] as unknown as [string, unknown, { skills?: string[] }])[2];
+    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
     expect(ctx.skills).toBeUndefined();
   });
 
-  it('② AI throw → 写 failed 事件 + re-throw', async () => {
+  // YUK-575 (Fix 2 — single-shot) — durable copilot 无 transient 分诊：任何失败都是
+  // deliberate terminal → FAILED(reason='exhausted') + phantom-preventing copilot_reply +
+  // return（不 throw、不 redeliver，与 inline copilot 一致）。取代旧 ②「一律
+  // FAILED(error) + re-throw」。真 transient 自动重试延到 YUK-596。
+  it('② 任何失败（这里 plain Error）→ terminal FAILED(exhausted) + copilot_reply + return（不 throw）', async () => {
     const run = vi.fn(async () => {
-      throw new Error('mimo 502');
+      throw new Error('handler bug / unknown failure');
     });
-    await expect(
-      runCopilotRun({
-        db: testDb(),
-        data: { ...baseData, run_id: 'run_fail' },
-        runAgentTaskFn: run as never,
-        buildMcpServerFn: mcpMock() as never,
-      }),
-    ).rejects.toThrow('mimo 502');
-
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: 'run_fail', session_id: 'sess_fail' },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result).toMatchObject({ status: 'failed', error: 'handler bug / unknown failure' });
     const events = await replay('run_fail');
-    const types = events.map((e) => e.event_type);
-    // started 已写，然后 failed（reply/done 未到）。
-    expect(types).toEqual([COPILOT_RUN_EVENTS.STARTED, COPILOT_RUN_EVENTS.FAILED]);
+    expect(events.map((e) => e.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
-    expect(failed?.payload).toMatchObject({ reason: 'error', error: 'mimo 502' });
+    expect(failed?.payload).toMatchObject({ reason: 'exhausted' });
     expect(deriveCopilotRunStatus(events)).toBe('failed');
+    // phantom-prevention：写了 error copilot_reply（chained user_ask=run_id）。
+    const replies = await copilotReplyEvents('sess_fail');
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      caused_by_event_id: 'run_fail',
+      actor_ref: 'agent:copilot',
+    });
+  });
+
+  // YUK-575 (partial) — streamTaskCollecting graceful-degrade（resolve partial，不 throw）
+  // → terminal-no-retry：FAILED(exhausted) + 半程文本作 reply + return。
+  it('partial — streamTaskCollecting graceful-degrade → FAILED(exhausted) + 半程文本 reply', async () => {
+    const runId = 'run_partial';
+    const run = streamMock('半程答复', { partial: true, error: 'stream drop' });
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: 'sess_partial' },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    });
+    expect(result.status).toBe('failed');
+    const events = await replay(runId);
+    const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
+    expect(failed?.payload).toMatchObject({ reason: 'exhausted' });
+    // 半程文本落进 phantom-preventing reply（不丢已说的话）。
+    const replies = await copilotReplyEvents('sess_partial');
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload).toMatchObject({ reply_md: '半程答复' });
   });
 
   it('③ 启动前已有 cancel 事件 → 早停写 failed(cancelled)，不调 AI', async () => {
     const runId = 'run_cancelled';
-    // 预写一条取消请求（模拟别处投递的协作取消）。
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -336,21 +528,22 @@ describe('runCopilotRun', () => {
       payload: { by: 'user' },
     });
 
-    const run = agentMock('不该被调用');
+    const run = streamMock('不该被调用');
     const result = await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId },
-      runAgentTaskFn: run as never,
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({ status: 'cancelled' });
-    // AI 未被调用（早停在 SDK run 之前）。
     expect(run).not.toHaveBeenCalled();
-
     const events = await replay(runId);
-    const types = events.map((e) => e.event_type);
-    expect(types).toEqual([COPILOT_RUN_EVENTS.CANCEL_REQUESTED, COPILOT_RUN_EVENTS.FAILED]);
+    expect(events.map((e) => e.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
     const failed = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.FAILED);
     expect(failed?.payload).toMatchObject({ reason: 'cancelled', cancelled_before_start: true });
   });
@@ -360,7 +553,8 @@ describe('runCopilotRun', () => {
     await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId },
-      runAgentTaskFn: agentMock('ok') as never,
+      streamTaskCollectingFn: streamMock('ok') as never,
+      resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
     });
     const events = await replay(runId);
@@ -381,9 +575,6 @@ describe('buildCopilotRunHandler', () => {
     const db = testDb();
     const handler = buildCopilotRunHandler(db);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    // 仅投缺字段 job——合法 job 会走 real runAgentTask（无 seam，会真打 AI），
-    // 业务路径已由上面注入 seam 的 runCopilotRun 用例覆盖；本用例只验证工厂的
-    // 遍历/跳过纪律不外呼、不污染。
     await expect(
       handler([
         { id: 'j2', data: { run_id: '', user_message: '', triggered_by: 'chat' } },

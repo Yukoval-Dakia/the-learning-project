@@ -349,7 +349,13 @@ export function extractPrimaryView(
 // very end of the stream) under-emits a few trailing chars — the terminal
 // `reply` SSE event is authoritative and reconciles (CopilotDock already
 // overwrites the live text with the cleaned terminal reply).
-function wrapDeltaSuppressingMarker(onDelta: (text: string) => void): (text: string) => void {
+// YUK-575 (N2) — exported so the durable copilot_run handler suppresses the
+// primary_view marker from its live delta stream exactly like the inline path (the
+// terminal REPLY carries the cleaned text; a raw marker must not flash in the live
+// bubble). Single source, no drift.
+export function wrapDeltaSuppressingMarker(
+  onDelta: (text: string) => void,
+): (text: string) => void {
   let held = '';
   let suppressed = false;
   return (chunk: string) => {

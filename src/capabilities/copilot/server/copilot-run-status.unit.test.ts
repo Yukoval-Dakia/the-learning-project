@@ -82,6 +82,20 @@ describe('deriveCopilotRunStatus', () => {
     ).toBe('failed');
   });
 
+  // YUK-575 (N2) — DELTA（流式文本增量）是非终态，把 run 推到 'running'。
+  it('DELTA（流式增量）→ running（非终态）', () => {
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED },
+        { event_type: COPILOT_RUN_EVENTS.STARTED },
+        { event_type: COPILOT_RUN_EVENTS.DELTA },
+        { event_type: COPILOT_RUN_EVENTS.DELTA },
+      ]),
+    ).toBe('running');
+    // DELTA 首次出现（STARTED 乱序/丢失）仍到 running，不降级 started。
+    expect(deriveCopilotRunStatus([{ event_type: COPILOT_RUN_EVENTS.DELTA }])).toBe('running');
+  });
+
   it('cancel_requested 在未到终态时浮出', () => {
     expect(
       deriveCopilotRunStatus([

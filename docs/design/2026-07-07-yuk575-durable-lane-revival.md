@@ -208,14 +208,16 @@ assembleCopilotRunInput(db, {
 
 ## 7. Carry-forward：后端正确性 mustFix（v1 面板已裁，框架无关，逐条保留）
 
-这些是 durable 机制的正确性，(a)/(b) 下都需要，**不 re-derive**，v2 实施照旧：
+这些是 durable 机制的正确性，**不 re-derive**：
 
-- **MF1**：durable 失败分诊严格照 YUK-576 `isTransientAgentFailure()`（单一真相源，无 bespoke list）。`stream_no_terminal` 是 **transient**（agent-run-error.ts:99）非 terminal。terminal-no-retry(return) = `isTransient===false`（`error_max_turns` / budget-abort plain-Error / `error_during_execution` / …）；redeliver(throw) = `stream_no_terminal` / `api_error_result`(null/429/5xx)。
-- **MF2**：单 classifier 调用 + 两处幂等补丁——(a) transient 未耗尽分支发**非终态** `copilot_run.retrying`（不写 FAILED 假终态），但 `priorRetryingCount ≥ JOB_RETRY_LIMIT` 时写真 terminal `transient_exhausted`→DLQ（防 dock 卡 running）；(b) `reason='exhausted'` 进 replay skip-guard（镜像 cancelled，兜「写完 terminal 后 pg-boss commit 前崩溃」的重投）。+ 非 transient 耗尽写 phantom-preventing error `copilot_reply`（镜像 chat.ts F2）。
+- **⚠️ 失败模型 = single-shot（Fix 2，PR1 独立 Opus 对抗 review 后 coordinator 2026-07-07 裁定，取代 v1/v2 的 MF1/MF2 transient 分诊）**：durable copilot 用 `streamTaskCollecting`（N2 需要它流式 delta），而 `streamTaskCollecting` **graceful-degrades**——run 失败在内部 throw plain `Error`、被它自己 catch、resolve 成 `{partial:true, error}`，**从不把 `AgentRunError` throw 给 caller**（runner.ts:1297/1308 throw plain Error → 1374+ catch resolve partial）。故 `isTransientAgentFailure(plainError)` 恒 false，transient/redeliver 分诊在生产**不可达**。**关键一致性事实**：inline copilot **也**用 `streamTaskCollecting`、**从来没有** transient 自动重试（一直 graceful-degrade 成 partial reply）→ durable single-shot **匹配 inline，不是回归**。故 handler 对任何失败一律 `handleDurableFailure` → 写 terminal `FAILED(reason='exhausted')` + phantom-preventing `copilot_reply`（partial 有文本则持久化半程文本）+ **return（不 throw、pg-boss 不 redeliver）**。**保留且可达**：exhausted-terminal + phantom-reply + `reason='exhausted'` replay skip-guard（兜「写完 terminal 后 worker 崩溃在 pg-boss commit 前」的 EXPIRE_AGENT redeliver，不重烧 12-min run；因所有失败现都写 `reason='exhausted'`，此 guard 现覆盖 100% 失败 redeliver）。**删除（生产不可达 + no-fake-completion 纪律）**：`RETRYING` event/derive + `transient_exhausted` + `JOB_RETRY_LIMIT` 计数 + 2 个注入 `AgentRunError` 形状的 transient 测试。
+  - **限定（critic pre-existing note）**：「durable 失败不 throw」指 **run 失败**（`streamTaskCollecting` 的 `{partial}` 或 SDK-run 期 throw，都进 `try`→`handleDurableFailure`→return）。**不覆盖** `try` **之前**的 infra throw（MCP mount / `resolveCopilotSkills` / `assembleCopilotRunInput`）——它们传出 `runCopilotRun` → pg-boss redeliver（STARTED 已写、无 terminal FAILED）。这是 pre-YUK-575 就有的 infra/config edge（assembler 内部对读失败已 degrade 不 throw；MCP mount/skills 与 inline 同结构），不在 single-shot 契约内，本 PR 不改。
+  - **Fix 1（真 transient 自动重试）= YUK-596 显式 scope 腿**：把 `AgentFailureSubtype` 穿过 `StreamCollectResult` 让 durable partial 路按 subtype 分类 + pg-boss redeliver——那是更重的 runner 契约变更（`streamTaskCollecting` 被 inline 共享），在 YUK-596（durable 成默认、每回合都 durable、single-shot 失败才真正 load-bearing）才有正当性，**不塞进 PR1**（违 byte-parity + PR1/PR2 拆分的全部理由）。
+  - **MINOR(4)（PR1 可接受，记此）**：exhausted-terminal 路径先写 FAILED job_event 再 best-effort 写 phantom-reply；若崩在两写之间，skip-guard 靠 FAILED 兜「不重烧」（首要），phantom-reply 缺失只在这一 sub-ms crash-window 残留（次要，与 DONE 路径对 crash-between 的既有容忍同构）。
 - **S6**：durable wall-clock timeout 承重约束 `< STUCK_RUN_THRESHOLD_MS(1h)`，否则 stuck-in-running sweeper 误收敛 live run；更新 `ai_task_run_reconcile.ts` 注释（最大有效 timeout 从 300s→durable ceiling，margin 重算）；加 static 约束断言。
 - **S9**：零新登记面（复用已 ship 的 `/api/jobs/[kind]/[id]/events`）；chat.ts route-literal 注释更正（`/api/copilot/runs/...`→`/api/jobs/copilot_run/...`）。
 
-> 注意：**在 durable-by-default 下，`error_max_turns`（terminal-no-retry）会更常见**（默认路都跑 agent，mimo 收敛不了的任务会打满 ceiling）→ MF1/MF2 的 exhausted-terminal 路径从「边角」变「主力失败态」，其 phantom-reply + 不重烧 语义更重要。
+> 注意：single-shot 下 durable 失败（含 mimo 打满 ceiling 的 `error_max_turns`）都走 exhausted-terminal——其 phantom-reply（防 conversation_history phantom）+ 不 redeliver（不重烧 12-min run）语义是主力失败态的正确性核心。
 
 ---
 
