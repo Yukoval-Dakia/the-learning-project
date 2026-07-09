@@ -206,7 +206,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                 {n.depth > 0 && <span className="know-twig">└</span>}
                 {/* ⑥治理：树行环去裸 pct（showNumber=false），档由 know-end 的 BandChip 给。 */}
                 <MasteryRing mastery={n.mastery} size={30} showNumber={false} />
-                {/* subject-driven: serif-CJK only for genuine wenyan nodes */}
+                {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
                 <span
                   {...subjectContentPropsForDomain(n.effective_domain, { className: 'know-title' })}
                 >

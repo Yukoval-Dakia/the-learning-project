@@ -218,7 +218,7 @@ export function MeshGraph({
                   <text y={4} textAnchor="middle" className="mesh-node-pct mono">
                     {pct == null ? '—' : pct}
                   </text>
-                  {/* subject-driven: serif-CJK only for genuine wenyan nodes */}
+                  {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
                   <text
                     y={r + 18}
                     textAnchor="middle"

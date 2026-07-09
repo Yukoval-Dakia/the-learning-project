@@ -6,6 +6,7 @@
 // authoritative scopeKnowledgeIds come from that response, so the inline scope
 // hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
+import { listSubjectChoices } from '@/ui/lib/subject';
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -14,19 +15,14 @@ import { ObSteps } from './ObSteps';
 import { createGoal } from './onboarding-api';
 import './onboarding.css';
 
-// Inlined from docs/design/loom-refresh/project/data-onboarding.jsx (OB.*).
-const SUBJECTS = [
-  { id: 'wenyan', name: '文言文' },
-  { id: 'math', name: '数学' },
-  { id: 'physics', name: '物理' },
-] as const;
+// YUK-249 — subject chips derive from the registry (KNOWN_SUBJECT_IDS ×
+// displayName) instead of a hardcoded list: the yuwen→yuwen rename flows through
+// automatically, and a subject with no profile (the old ghost `english` leaning)
+// no longer appears. `leanings` values are the canonical KNOWN ids — the YUK-480
+// query passthrough contract (leanings → placement ordering) is unchanged.
+const SUBJECTS = listSubjectChoices();
+const LEANINGS = listSubjectChoices();
 const STAGES = ['初中', '高中', '大学', '自定义'] as const;
-const LEANINGS = [
-  { id: 'wenyan', label: '文言文' },
-  { id: 'math', label: '数学' },
-  { id: 'physics', label: '物理' },
-  { id: 'english', label: '英语' },
-] as const;
 const PACES = [
   { id: 'light', label: '轻', sub: '≈10 分钟 / 天' },
   { id: 'medium', label: '适中', sub: '≈20 分钟 / 天' },
@@ -187,7 +183,7 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
                 onClick={() => setSubject(subject === s.id ? null : s.id)}
               >
                 {subject === s.id && <LoomIcon name="check" size={12} />}
-                {s.name}
+                {s.label}
               </button>
             ))}
           </div>

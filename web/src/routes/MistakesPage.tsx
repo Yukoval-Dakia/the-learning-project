@@ -22,11 +22,13 @@
 //    AttributionBadge），不照搬 loom 简化版——避免双套归因展示漂移。
 // ④ 知识点 chip：knowledge_ids → 经 getTree fan-out 白话化为节点名（present-if-available；
 //    无 name 时降级显 id 前 8 位，不 fabricate）。
-// ⑤ 科目轴：knowledge_ids[0] → getTree effective_domain → QSUBJECT（科目=视角派生，非实体
+// ⑤ 科目轴：knowledge_ids[0] → getTree effective_domain → subjMeta（科目=视角派生，非实体
 //    列；同 QuestionsPage subjMeta 先例）。
 
 import { getTree } from '@/capabilities/knowledge/ui/knowledge-api';
+import { resolveKnownSubjectId } from '@/subjects/profile';
 import { apiJson } from '@/ui/lib/api';
+import { listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { CauseBadge, type CausePrimary } from '@/ui/primitives/CauseBadge';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -69,43 +71,31 @@ interface MistakeRow {
 const MISTAKES_LIMIT = 200;
 const listMistakes = () => apiJson<{ rows: MistakeRow[] }>(`/api/mistakes?limit=${MISTAKES_LIMIT}`);
 
-// ── 科目派生（effective_domain → label/tone）；同 QuestionsPage QSUBJECT 先例。 ──
+// ── 科目派生（effective_domain → label/tone）；同 QuestionsPage subjMeta 先例。 ──
+// Label 从注册表派生（subjectDisplayName，alias-aware：旧 wenyan → yuwen），不再硬编码；
+// accent 色留 UI 侧 map-by-id（未知 id neutral，不塞进 profile schema）——YUK-249 注册表驱动。
 type Tone = 'neutral' | 'coral' | 'info' | 'good' | 'hard' | 'again';
-const QSUBJECT: Record<string, { label: string; tone: Tone }> = {
-  wenyan: { label: '语文', tone: 'coral' },
-  yuwen: { label: '语文', tone: 'coral' },
-  math: { label: '数学', tone: 'info' },
-  suanxue: { label: '数学', tone: 'info' },
-  physics: { label: '物理', tone: 'info' },
-  eng: { label: '英语', tone: 'good' },
-  english: { label: '英语', tone: 'good' },
-  general: { label: '通识', tone: 'neutral' },
+const SUBJECT_TONE: Record<string, Tone> = {
+  yuwen: 'coral',
+  math: 'info',
+  physics: 'info',
 };
 function subjMeta(subject: string | null): { label: string; tone: Tone } {
   if (!subject) return { label: '未分科', tone: 'neutral' };
-  return QSUBJECT[subject] ?? { label: subject, tone: 'neutral' };
+  const id = resolveKnownSubjectId(subject) ?? subject;
+  return { label: subjectDisplayName(subject), tone: SUBJECT_TONE[id] ?? 'neutral' };
 }
 
 // 科目筛选规范化：把「filter chip key」与「effective_domain」折叠到同一规范桶后比 KEY，
 // 不比 label。旧码比 subjMeta(...).label——靠 wenyan/yuwen 共享「语文」标签碰巧对上，但
-// physics(物理)/suanxue 等无对应 chip 的科目会被静默错筛（label 永不等任一 chip label，
-// 等价于「永远不显示」而非「正确地不匹配」）。SUBJECT_OPTS chip key 是展示用别名
-// （yuwen/eng），effective_domain 是 profile id（wenyan/math/physics/general/...），二者
-// 词表不同——必须先各自归一到规范桶。规范桶取 profile id 优先（wenyan/math/physics/
-// general），英语无 profile 故用 eng 桶。
-const SUBJECT_KEY_ALIASES: Record<string, string> = {
-  wenyan: 'wenyan',
-  yuwen: 'wenyan',
-  math: 'math',
-  suanxue: 'math',
-  physics: 'physics',
-  eng: 'eng',
-  english: 'eng',
-  general: 'general',
-};
+// physics(物理) 等无对应 chip 的科目会被静默错筛（label 永不等任一 chip label，等价于
+// 「永远不显示」而非「正确地不匹配」）。SUBJECT_OPTS chip key 是 KNOWN 规范 id（yuwen/
+// math/physics），effective_domain 是原始 domain（旧 alias wenyan、general、未登记值…）。
+// resolveKnownSubjectId 天然 alias-aware：wenyan/yuwen 同归 yuwen 桶，未登记 / general
+// 归 null（只在「全部」下现，不错配任一科目 chip）——YUK-249 注册表驱动，弃硬编码别名表。
 function subjectKey(subject: string | null): string | null {
   if (!subject) return null;
-  return SUBJECT_KEY_ALIASES[subject] ?? subject;
+  return resolveKnownSubjectId(subject);
 }
 
 // loom 状态轴。投影无显式「已纠正/待重学」枚举——按 correction_state.terminal_state 派生：
@@ -191,11 +181,11 @@ function FilterRow({
   );
 }
 
+// 科目 chip 从注册表派生（KNOWN_SUBJECT_IDS × displayName），不再硬编码：wenyan→yuwen
+// 改名自动流过，无 profile 的幽灵科目（旧 eng 英语 chip）不再出现——YUK-249 注册表驱动。
 const SUBJECT_OPTS: [string, string][] = [
   ['all', '全部'],
-  ['yuwen', '语文'],
-  ['math', '数学'],
-  ['eng', '英语'],
+  ...listSubjectChoices().map((c): [string, string] => [c.id, c.label]),
 ];
 const STATE_OPTS: [string, string][] = [
   ['all', '全部'],
@@ -349,7 +339,7 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
     return () => clearInterval(h);
   }, [pending]);
 
-  // 科目筛选比规范键（subjectKey），不比 label——见 SUBJECT_KEY_ALIASES 注释。
+  // 科目筛选比规范键（subjectKey → resolveKnownSubjectId），不比 label——见 subjectKey 注释。
   // shown 保留 derived 条目（含预算 subject），卡片渲染直接复用，不再重算 subjectOf。
   const subjectFilterKey = subject === 'all' ? null : subjectKey(subject);
   const shown = derived.filter((d) => {

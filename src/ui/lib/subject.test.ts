@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { type SlimSubjectProfile, resolveSubjectRenderModel, subjectContentProps } from './subject';
 
 const baseProfile: SlimSubjectProfile = {
-  id: 'wenyan',
-  displayName: '文言文',
+  id: 'yuwen',
+  displayName: '语文',
   renderConfig: {
     font_family: 'serif-cjk',
     notation: null,
@@ -15,8 +15,8 @@ describe('resolveSubjectRenderModel', () => {
   it('maps serif-cjk content to the wenyan font token', () => {
     const model = resolveSubjectRenderModel(baseProfile);
 
-    expect(model.id).toBe('wenyan');
-    expect(model.displayName).toBe('文言文');
+    expect(model.id).toBe('yuwen');
+    expect(model.displayName).toBe('语文');
     expect(model.contentClassName).toContain('subject-content');
     expect(model.contentClassName).toContain('subject-content--font-serif-cjk');
     expect(model.contentStyle.fontFamily).toBe('var(--font-wenyan)');
