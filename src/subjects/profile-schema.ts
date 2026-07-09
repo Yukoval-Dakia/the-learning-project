@@ -6,7 +6,7 @@ import {
 import { z } from 'zod';
 
 export type SubjectId = string;
-export const KNOWN_SUBJECT_IDS = ['wenyan', 'math', 'physics'] as const;
+export const KNOWN_SUBJECT_IDS = ['yuwen', 'math', 'physics'] as const;
 export type KnownSubjectId = (typeof KNOWN_SUBJECT_IDS)[number];
 
 export const SubjectQuestionKindSchema = z.enum([

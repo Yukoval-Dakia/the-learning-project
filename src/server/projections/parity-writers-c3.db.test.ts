@@ -433,7 +433,7 @@ describe('W3-D — question_block set_status parity through runAutoEnrollForSess
     await db.insert(knowledge).values({
       id: 'k1',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: null,
       created_at: T0,
@@ -493,7 +493,7 @@ describe('W3-D — question_block set_status parity through runAutoEnrollForSess
     const result = await runAutoEnrollForSession({
       db,
       sessionId,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       env: { [SET_STATUS_FLAG]: 'true' },
       runTaggingFn: setStatusTagging,
       tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),

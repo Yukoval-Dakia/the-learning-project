@@ -24,7 +24,7 @@ async function seedKc(id: string): Promise<void> {
     .values({
       id,
       name: id,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -73,7 +73,7 @@ async function seedChain(prefix: string, edges: number): Promise<void> {
       Array.from({ length: edges + 1 }, (_, i) => ({
         id: `${prefix}${i}`,
         name: `${prefix}${i}`,
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,
@@ -124,7 +124,7 @@ async function seedBipartite(prereqs: number, dependents: number): Promise<void>
       kcIds.map((id) => ({
         id,
         name: id,
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,

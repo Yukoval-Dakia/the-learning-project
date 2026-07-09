@@ -133,7 +133,7 @@ describe('proposal producer helpers', () => {
       legacy_event_payload: {
         topic: '虚词',
         knowledge_node_id: 'k1',
-        knowledge_node: { id: 'k1', name: '虚词', domain: 'wenyan' },
+        knowledge_node: { id: 'k1', name: '虚词', domain: 'yuwen' },
         hub: { title: '虚词总览', summary_md: 'overview' },
         atomics: [{ knowledge_id: 'k1', title: '之', one_line_intent: 'distinguish usages' }],
       },

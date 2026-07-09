@@ -42,7 +42,7 @@ async function seedItem(id: string, status: string): Promise<void> {
   await db.insert(knowledge).values({
     id: 'k_zhi',
     name: '之',
-    domain: 'wenyan',
+    domain: 'yuwen',
     created_at: BASE,
     updated_at: BASE,
   });

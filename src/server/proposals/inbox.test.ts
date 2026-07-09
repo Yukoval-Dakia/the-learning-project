@@ -579,7 +579,7 @@ describe('proposal inbox reader', () => {
         evidence_refs: [],
         proposed_change: {
           topic: '虚词',
-          knowledge_node: { id: 'k_hub', name: '虚词', domain: 'wenyan' },
+          knowledge_node: { id: 'k_hub', name: '虚词', domain: 'yuwen' },
           hub: { title: '虚词总览', summary_md: '...' },
           atomics: [{ knowledge_id: 'k_zhi', title: '之', one_line_intent: '...' }],
         },

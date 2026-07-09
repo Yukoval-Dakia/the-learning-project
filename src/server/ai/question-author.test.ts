@@ -20,12 +20,12 @@ async function seedKnowledge(): Promise<void> {
   await testDb()
     .insert(knowledge)
     .values([
-      { id: 'k_wenyan', name: '文言文', domain: 'wenyan', created_at: BASE, updated_at: BASE },
+      { id: 'k_yuwen', name: '文言文', domain: 'yuwen', created_at: BASE, updated_at: BASE },
       {
         id: 'k_zhi',
         name: '之的用法',
         domain: null,
-        parent_id: 'k_wenyan',
+        parent_id: 'k_yuwen',
         created_at: BASE,
         updated_at: BASE,
       },
@@ -33,7 +33,7 @@ async function seedKnowledge(): Promise<void> {
         id: 'k_archived',
         name: '已归档',
         domain: null,
-        parent_id: 'k_wenyan',
+        parent_id: 'k_yuwen',
         archived_at: BASE,
         created_at: BASE,
         updated_at: BASE,

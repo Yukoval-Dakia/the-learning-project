@@ -62,7 +62,7 @@ describe('GET /api/notes/[id]', () => {
     await db.insert(knowledge).values({
       id: 'k_zhi',
       name: '之 · 用法',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: null,
       merged_from: [],
@@ -112,6 +112,6 @@ describe('GET /api/notes/[id]', () => {
     expect(body.id).toBe('note_zhi');
     expect(body.labels).toEqual([{ id: 'k_zhi', name: '之 · 用法' }]);
     expect(body.sections).toEqual([expect.objectContaining({ id: 'b1', kind: 'definition' })]);
-    expect(body.subject_profile).toMatchObject({ id: 'wenyan', displayName: '文言文' });
+    expect(body.subject_profile).toMatchObject({ id: 'yuwen', displayName: '语文' });
   });
 });

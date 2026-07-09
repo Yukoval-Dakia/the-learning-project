@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { causeOptionsForSelectedKnowledge } from './cause-options';
 
 const nodes = [
-  { id: 'k_wenyan', name: '虚词', effective_domain: 'wenyan' },
+  { id: 'k_yuwen', name: '虚词', effective_domain: 'yuwen' },
   { id: 'k_math', name: '单位换算', effective_domain: 'math' },
 ];
 

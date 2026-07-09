@@ -111,7 +111,7 @@ export interface StudentGradeVerdict {
  * `runMultimodalDirectJudge` — it does NOT route through the JudgeInvoker /
  * `resolveQuestionJudgeRoute`. Route resolution would only pick `multimodal_direct`
  * when `q.image_refs.length>0 AND the subject profile lists multimodal_direct in
- * preferredRoutes` (today only `physics`), so a wenyan/math/short_answer block
+ * preferredRoutes` (today only `physics`), so a yuwen/math/short_answer block
  * resolves to `semantic` → handwriting pixels never looked at. The direct call
  * unconditionally grades the page image, removing the preferredRoutes trap.
  *
@@ -1268,7 +1268,7 @@ function gradeOutcomeFromVerdict(coarse: CoarseOutcomeT): 'success' | 'partial' 
  * bypassing the JudgeInvoker / `resolveQuestionJudgeRoute`. The resolver only
  * picks `multimodal_direct` when the question carries prompt figures AND the
  * subject profile lists `multimodal_direct` in `preferredRoutes` (today only
- * `physics`); a wenyan/math/short_answer block would resolve to `semantic`, which
+ * `physics`); a yuwen/math/short_answer block would resolve to `semantic`, which
  * ignores `student_image_refs` and judges an empty `answer_md` → the handwriting
  * pixels are never looked at. Cut ④ grades PER-QUESTION (no part-narrowing — that
  * is YUK-485, out of scope), so the invoker's `part_ref` narrowing is not needed

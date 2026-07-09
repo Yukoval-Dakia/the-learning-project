@@ -256,7 +256,7 @@ describe('regenerateMemoryBrief — P5.3 score persistence (no mutation)', () =>
     );
 
     await regenerateMemoryBrief({
-      scopeKey: 'subject:wenyan',
+      scopeKey: 'subject:yuwen',
       loadEvents: async () => [
         {
           id: 'evt_recent',
@@ -327,7 +327,7 @@ describe('regenerateMemoryBrief — P5.3 score persistence (no mutation)', () =>
       ids.map((id) => ({ id, created_at: daysAgo(10) })),
     );
     await regenerateMemoryBrief({
-      scopeKey: 'subject:wenyan',
+      scopeKey: 'subject:yuwen',
       loadEvents: async () => [], // empty window ⇒ all ids "missing" ⇒ routed to the loader
       searchFacts: async () => [],
       generate: vi.fn(async () => draft),

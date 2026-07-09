@@ -71,7 +71,7 @@ describe('MisconceptionSchema (YUK-454 inc-1, ADR-0036 身份层)', () => {
 
   // 项目铁律: subject 是派生视角，永远不进实体存储（effective_domain 派生）。
   it('REJECTS a `subject` field (subject is derived, never stored)', () => {
-    const result = MisconceptionSchema.safeParse({ ...VALID_ROW, subject: 'wenyan' });
+    const result = MisconceptionSchema.safeParse({ ...VALID_ROW, subject: 'yuwen' });
     expect(result.success).toBe(false);
   });
 

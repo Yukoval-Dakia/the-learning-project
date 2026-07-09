@@ -119,7 +119,7 @@ async function seedKnowledge(id: string) {
     .values({
       id,
       name: `K-${id}`,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       created_at: now,
       updated_at: now,
@@ -1866,7 +1866,7 @@ describe('updateThetaForAttempt — family b_delta composition (YUK-372 L3)', ()
     await seedKnowledge(kFam);
     await seedQuestion(qFam, [kFam]);
     await seedItemCalibration(qFam, 0.0);
-    await seedFamily(`wenyan:${kFam}:short_answer:manual`, 1.0);
+    await seedFamily(`yuwen:${kFam}:short_answer:manual`, 1.0);
     const famTheta = await runAttemptTheta({
       kid: kFam,
       qid: qFam,
@@ -1918,7 +1918,7 @@ describe('updateThetaForAttempt — family b_delta composition (YUK-372 L3)', ()
     await seedQuestion(qid, [kQuestionPrimary, kSlotPrimary]);
     await seedItemCalibration(qid, 0.0);
     // Family row is keyed on the QUESTION primary (where the family write side records it).
-    await seedFamily(`wenyan:${kQuestionPrimary}:short_answer:manual`, 1.0);
+    await seedFamily(`yuwen:${kQuestionPrimary}:short_answer:manual`, 1.0);
 
     // Baseline: NO family delta reaches the anchor (no kind/source → family lookup skipped).
     // Compute on the SLOT primary KC so we compare the same updated KC.
@@ -1965,7 +1965,7 @@ describe('updateThetaForAttempt — family b_delta composition (YUK-372 L3)', ()
     await seedQuestion(qid, [kQuestionPrimary, kSlotPrimary]);
     await seedItemCalibration(qid, 0.0);
     // Family row exists ONLY on the question primary.
-    await seedFamily(`wenyan:${kQuestionPrimary}:short_answer:manual`, 1.0);
+    await seedFamily(`yuwen:${kQuestionPrimary}:short_answer:manual`, 1.0);
 
     // Baseline θ̂ on a fresh slot KC with no family delta.
     const kBaseSlot = createId();
@@ -2004,7 +2004,7 @@ describe('updateThetaForAttempt — family b_delta composition (YUK-372 L3)', ()
     await seedKnowledge(kProxy);
     await seedQuestion(qProxy, [kProxy]);
     // NO item_calibration → proxy anchor.
-    await seedFamily(`wenyan:${kProxy}:short_answer:manual`, 0.8);
+    await seedFamily(`yuwen:${kProxy}:short_answer:manual`, 0.8);
     const proxyTheta = await runAttemptTheta({
       kid: kProxy,
       qid: qProxy,
@@ -2044,7 +2044,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
     hierFlag.value = false;
     const k = createId();
     const q = createId();
-    await seedKnowledge(k); // domain 'wenyan'
+    await seedKnowledge(k); // domain 'yuwen'
     await seedQuestion(q, [k], 3);
 
     await db.transaction(async (tx) => {
@@ -2067,7 +2067,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
     expect(s?.fail_count).toBe(0);
     expect(s?.evidence_count).toBe(1);
     // NO 'ability_global' row exists with the flag off (dark-ship).
-    expect(await readGlobal('wenyan')).toBeNull();
+    expect(await readGlobal('yuwen')).toBeNull();
   });
 
   it('flag OFF → multi-KC theta_hat BIT-IDENTICAL to single-layer (toBe) + no global rows', async () => {
@@ -2097,13 +2097,13 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
     expect(a?.theta_hat).toBe(b?.theta_hat);
     expect(a?.theta_hat).toBeCloseTo(-0.02, 12);
     expect(a?.fail_count).toBe(1);
-    expect(await readGlobal('wenyan')).toBeNull();
+    expect(await readGlobal('yuwen')).toBeNull();
   });
 
   // ── FLAG ON: per-domain cold-start inheritance (the main payoff) ───────────────
   it('flag ON → a NEW KC in a domain with θ_global≠0 starts at effective theta ≠ 0 (inherits)', async () => {
     hierFlag.value = true;
-    const domain = 'wenyan';
+    const domain = 'yuwen';
     // Seed a strong domain anchor θ_global = 0.9 (subject_kind='ability_global').
     await upsertMasteryState(db, {
       subject_kind: 'ability_global',
@@ -2147,7 +2147,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
 
   it('flag ON → θ_global drifts SLOWER than θ_KC for the same attempt', async () => {
     hierFlag.value = true;
-    const domain = 'wenyan';
+    const domain = 'yuwen';
     const k = createId();
     const q = createId();
     await seedKnowledgeWithDomain(k, domain);
@@ -2179,7 +2179,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
 
   it('flag ON → a multi-KC SINGLE-DOMAIN item updates that domain global EXACTLY ONCE', async () => {
     hierFlag.value = true;
-    const domain = 'wenyan';
+    const domain = 'yuwen';
     const kA = createId();
     const kB = createId();
     const kC = createId();
@@ -2213,7 +2213,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
     const kWen = createId();
     const kMath = createId();
     const q = createId();
-    await seedKnowledgeWithDomain(kWen, 'wenyan');
+    await seedKnowledgeWithDomain(kWen, 'yuwen');
     await seedKnowledgeWithDomain(kMath, 'math');
     await seedQuestion(q, [kWen, kMath], 3);
 
@@ -2228,7 +2228,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
       });
     });
 
-    const gWen = await readGlobal('wenyan');
+    const gWen = await readGlobal('yuwen');
     const gMath = await readGlobal('math');
     expect(gWen).not.toBeNull();
     expect(gMath).not.toBeNull();
@@ -2279,7 +2279,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
 
   it('flag ON → success/fail counts stay binary integers on both layers', async () => {
     hierFlag.value = true;
-    const domain = 'wenyan';
+    const domain = 'yuwen';
     const k = createId();
     const q = createId();
     await seedKnowledgeWithDomain(k, domain);
@@ -2325,24 +2325,24 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
   it('flag OFF → globalThetaForDomain returns 0 without any DB row; effectiveThetaForKc === θ_KC', async () => {
     hierFlag.value = false;
     const k = createId();
-    await seedKnowledge(k); // domain 'wenyan'
+    await seedKnowledge(k); // domain 'yuwen'
     // Even if an 'ability_global' row somehow existed, the flag-off read must ignore it.
     await upsertMasteryState(db, {
       subject_kind: 'ability_global',
-      subject_id: 'wenyan',
+      subject_id: 'yuwen',
       theta_hat: 5.0, // would be huge if read
       evidence_count: 1,
       success_count: 1,
       fail_count: 0,
       last_outcome_at: new Date(),
     });
-    expect(await globalThetaForDomain(db, 'wenyan')).toBe(0); // flag off → 0, no read
+    expect(await globalThetaForDomain(db, 'yuwen')).toBe(0); // flag off → 0, no read
     expect(await effectiveThetaForKc(db, k, 0.42)).toBe(0.42); // === θ_KC exactly
   });
 
   it('flag ON → effectiveThetaForKc resolves the KC domain and adds θ_global', async () => {
     hierFlag.value = true;
-    const domain = 'wenyan';
+    const domain = 'yuwen';
     const k = createId();
     await seedKnowledgeWithDomain(k, domain);
     await upsertMasteryState(db, {
@@ -2362,7 +2362,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
   it('SRT ON × HIERARCHICAL ON → both apply: SRT modulates credit, hierarchical the θ input', async () => {
     srtFlag.value = true;
     hierFlag.value = true;
-    const domain = 'wenyan';
+    const domain = 'yuwen';
     // Strong domain anchor so the hierarchical layer measurably shifts the θ input.
     await upsertMasteryState(db, {
       subject_kind: 'ability_global',
@@ -2424,7 +2424,7 @@ describe('updateThetaForAttempt — hierarchical Elo (A2 / YUK-434)', () => {
   it('SRT OFF × HIERARCHICAL ON → binary credit at effective θ; global row written', async () => {
     srtFlag.value = false;
     hierFlag.value = true;
-    const domain = 'wenyan';
+    const domain = 'yuwen';
     const k = createId();
     const q = createId();
     await seedKnowledgeWithDomain(k, domain);

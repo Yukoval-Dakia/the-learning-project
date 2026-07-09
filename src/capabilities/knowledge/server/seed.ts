@@ -14,7 +14,7 @@ export interface SeedResult {
  * 挂靠锚（上传子 KC 挂科目节点下、经父链继承 domain），并让 goal scope / placement 有 KC 可指。
  * **不放 curriculum 子树**——子 KC 留给用户上传有机生长（YUK-478）/ 后续动态供题 refill（YUK-474）。
  *
- * 驱动源 = subject profile 注册表的 `KNOWN_SUBJECT_IDS`（wenyan/math/physics；`general` 是
+ * 驱动源 = subject profile 注册表的 `KNOWN_SUBJECT_IDS`（yuwen/math/physics；`general` 是
  * fallback identity、永不作 node domain，故不在此列——见 subjects/profile.ts）。各科平铺一个根
  * 节点，不以任一科为主角。
  *

@@ -13,7 +13,7 @@ async function insertK(id: string, opts: { archived?: boolean; mergedFrom?: stri
   await db.insert(knowledge).values({
     id,
     name: id,
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     merged_from: opts.mergedFrom ?? [],
     proposed_by_ai: false,

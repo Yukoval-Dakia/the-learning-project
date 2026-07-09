@@ -31,7 +31,7 @@ async function seedKnowledge(id: string): Promise<void> {
     .values({
       id,
       name: `K-${id}`,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       created_at: now,
       updated_at: now,

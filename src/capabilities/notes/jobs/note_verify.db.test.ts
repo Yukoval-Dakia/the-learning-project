@@ -89,7 +89,7 @@ async function seedAtomic(opts: {
     await db.insert(knowledge).values({
       id: opts.knowledgeId,
       name: opts.domain === 'math' ? '一元二次方程' : '之',
-      domain: opts.domain ?? 'wenyan',
+      domain: opts.domain ?? 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

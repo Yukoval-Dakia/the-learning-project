@@ -406,7 +406,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
       {
         id: 'k_hub',
         name: 'Hub',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,
@@ -418,7 +418,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
       {
         id: 'k_a',
         name: 'A',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: 'k_hub',
         merged_from: [],
         proposed_by_ai: false,
@@ -473,7 +473,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
     // — but NOTHING materialized through the genesis-writing INSERT path.
     const proposalId = await writeLearningItemProposal(db as never, {
       topic: 'Eventless topic',
-      knowledge_node: { id: 'k_x', name: 'X', domain: 'wenyan' },
+      knowledge_node: { id: 'k_x', name: 'X', domain: 'yuwen' },
       hub: { title: 'Hub', summary_md: 'overview' },
       atomics: [],
       reason_md: 'because',

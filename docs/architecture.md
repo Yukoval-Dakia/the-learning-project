@@ -209,7 +209,7 @@ interface DomainTool<Input, Output> {
 - **Skill**（提示词包，markdown + frontmatter）：Phase 2 在 prompt 重复多了之后再抽
 - **in-process MCP bridge**（当前可用）：领域 route 可手动创建 Claude Agent SDK `mcpServers`，不对外暴露
 - **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；未来复用 DomainTool registry，不重写工具定义
-- **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/wenyan/` 的目录边界
+- **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/yuwen/` 的目录边界
 - **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
 
 ### 5.5 Tool calling 循环位置

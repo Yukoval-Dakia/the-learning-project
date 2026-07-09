@@ -58,7 +58,7 @@ async function seedJudgedAttemptEvent(questionId: string, judgeRoute = 'exact') 
   });
 }
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const db = testDb();
   const now = new Date();
   await db
@@ -139,8 +139,8 @@ describe('finding #3b — paper family_key / distinct 计数基一致 (slot.prim
   it('family 按题的 knowledge_ids[0] 成键 (非 slot 的 primaryKnowledgeId)', async () => {
     const db = testDb();
     // 题的主 knowledge = kQ；slot 指派的 primary = kSlot（故意不同）。
-    await seedKnowledge('kQ', 'wenyan');
-    await seedKnowledge('kSlot', 'wenyan');
+    await seedKnowledge('kQ', 'yuwen');
+    await seedKnowledge('kSlot', 'yuwen');
     await seedTrueFalseQuestion('q1', ['kQ'], 'true');
     await seedPaper('paper_3b', ['q1'], 'kSlot');
 
@@ -164,7 +164,7 @@ describe('finding #3b — paper family_key / distinct 计数基一致 (slot.prim
     const famRows = await db.select().from(item_family_calibration);
     expect(famRows).toHaveLength(1);
     // 修复后：family_key 含 kQ（题的 knowledge_ids[0]），不含 kSlot（slot 指派）。
-    const expectedKey = familyKey('wenyan', 'kQ', 'true_false', 'manual');
+    const expectedKey = familyKey('yuwen', 'kQ', 'true_false', 'manual');
     expect(famRows[0].family_key).toBe(expectedKey);
     expect(famRows[0].family_key).toContain(':kQ:');
     expect(famRows[0].family_key).not.toContain('kSlot');
@@ -172,14 +172,14 @@ describe('finding #3b — paper family_key / distinct 计数基一致 (slot.prim
 
   it('distinct 计数基 = knowledge_ids[0]，与 family_key 同源 (数得到正确题集)', async () => {
     const db = testDb();
-    await seedKnowledge('kQ', 'wenyan');
+    await seedKnowledge('kQ', 'yuwen');
     // 5 道同 (kQ, true_false, manual) 家族的题（按 knowledge_ids[0]=kQ），各产出客观观测。
     for (let i = 0; i < 5; i++) {
       await seedTrueFalseQuestion(`fq${i}`, ['kQ'], 'true');
       await seedJudgedAttemptEvent(`fq${i}`); // finding #1：observed-distinct 需 judged 事件
     }
     // 一道 knowledge_ids[0]=kOther 的干扰题——不属 kQ 家族，不该被计入（也产出观测）。
-    await seedKnowledge('kOther', 'wenyan');
+    await seedKnowledge('kOther', 'yuwen');
     await seedTrueFalseQuestion('noise', ['kOther'], 'true');
     await seedJudgedAttemptEvent('noise');
 

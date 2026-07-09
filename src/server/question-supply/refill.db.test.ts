@@ -22,7 +22,7 @@ import {
 } from './refill';
 import { discoverSupplyTargets, targetFingerprint } from './target-discovery';
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
   await db
     .insert(knowledge)

@@ -67,7 +67,7 @@ import { updateThetaForAttempt } from '@/server/mastery/state';
 import { resetDb } from '../../../tests/helpers/db';
 
 const ABILITY_GLOBAL_KIND = 'ability_global'; // module-private in state.ts — hardcode the literal.
-const DOMAIN = 'wenyan';
+const DOMAIN = 'yuwen';
 
 async function seedKnowledgeWithDomain(id: string, domain = DOMAIN) {
   const now = new Date();
@@ -212,8 +212,8 @@ describe('replayTheta — byte-identity vs production updateThetaForAttempt', ()
     await seedItemCalibration(q1, 0.5);
     await seedItemCalibration(q2, -0.25);
     // family key format = buildFamilyKey(subject, primaryKnowledgeId, kind, source).
-    // subject is derived via getEffectiveDomain→resolveKnownSubjectId; here domain=wenyan.
-    const q1FamilyKey = `wenyan:${kc1}:short_answer:manual`;
+    // subject is derived via getEffectiveDomain→resolveKnownSubjectId; here domain=yuwen.
+    const q1FamilyKey = `yuwen:${kc1}:short_answer:manual`;
     await seedFamily(q1FamilyKey, 0.6); // non-zero delta → b = columnarB + 0.6
 
     // Sequence: q1 correct rt=2000, q2 wrong rt=null, q1 correct rt=40000, q2 correct rt=null.
@@ -235,7 +235,7 @@ describe('replayTheta — byte-identity vs production updateThetaForAttempt', ()
         outcome: 0,
         difficulty: 4,
         responseTimeMs: null,
-        familyKey: `wenyan:${kc1}:short_answer:manual`,
+        familyKey: `yuwen:${kc1}:short_answer:manual`,
         familyPrimaryKnowledgeId: kc1,
       },
       {
@@ -255,7 +255,7 @@ describe('replayTheta — byte-identity vs production updateThetaForAttempt', ()
         outcome: 1,
         difficulty: 4,
         responseTimeMs: null,
-        familyKey: `wenyan:${kc1}:short_answer:manual`,
+        familyKey: `yuwen:${kc1}:short_answer:manual`,
         familyPrimaryKnowledgeId: kc1,
       },
     ];

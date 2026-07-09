@@ -51,7 +51,7 @@ async function seedAndAutoEnroll(
   await db.insert(knowledge).values({
     id: 'k1',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     archived_at: null,
     created_at: now,
@@ -99,7 +99,7 @@ async function seedAndAutoEnroll(
   const result = await runAutoEnrollForSession({
     db,
     sessionId,
-    subjectId: 'wenyan',
+    subjectId: 'yuwen',
     env: { [FLAG]: 'true' },
     // P3 (YUK-489): the ENROLL path now tags via the unified `tagKnowledge` (embedding
     // match-or-propose), not runTaggingFn — inject a stub that MATCHes the seeded KC so no real

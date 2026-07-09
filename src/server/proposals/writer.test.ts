@@ -30,9 +30,9 @@ describe('writeAiProposal', () => {
         proposed_change: {
           mutation: 'propose_new',
           name: '通假字',
-          parent_id: 'seed:wenyan:shici',
+          parent_id: 'seed:yuwen:shici',
         },
-        cooldown_key: 'knowledge_node:seed:wenyan:shici:通假字',
+        cooldown_key: 'knowledge_node:seed:yuwen:shici:通假字',
       },
     });
 
@@ -45,7 +45,7 @@ describe('writeAiProposal', () => {
     expect(row.cost_micro_usd).toBe(12345);
     const payload = row.payload as Record<string, unknown>;
     expect(payload.name).toBe('通假字');
-    expect(payload.parent_id).toBe('seed:wenyan:shici');
+    expect(payload.parent_id).toBe('seed:yuwen:shici');
     expect(payload.reasoning).toBe(base.reason_md);
     expect((payload.ai_proposal as { kind?: string }).kind).toBe('knowledge_node');
   });

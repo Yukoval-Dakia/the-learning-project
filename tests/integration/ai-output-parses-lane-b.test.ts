@@ -74,7 +74,7 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
         prompt_md: '"之"在主谓之间的用法?',
         reference_md: '取消句子独立性',
         wrong_answer_md: '助词',
-        knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'wenyan' }],
+        knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'yuwen' }],
       },
       runTaskFn: fakeRunTask,
       referencedKnowledgeIds: ['k_xuci'],
@@ -110,7 +110,7 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
       {
         id: 'k_lane_b_from',
         name: '虚词',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,
@@ -122,7 +122,7 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
       {
         id: 'k_lane_b_to',
         name: '助词',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,
@@ -178,7 +178,7 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
       {
         id: 'k_exp_a',
         name: 'A',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,
@@ -190,7 +190,7 @@ describe('AI outputs roundtrip through Lane B Event schema', () => {
       {
         id: 'k_exp_b',
         name: 'B',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         merged_from: [],
         proposed_by_ai: false,

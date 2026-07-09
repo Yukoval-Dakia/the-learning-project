@@ -21,7 +21,7 @@ async function seedKnowledge(id: string): Promise<void> {
     .values({
       id,
       name: `node ${id}`,
-      domain: 'wenyan',
+      domain: 'yuwen',
       created_at: NOW,
       updated_at: NOW,
     });

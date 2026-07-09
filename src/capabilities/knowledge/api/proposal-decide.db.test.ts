@@ -19,7 +19,7 @@ async function seedKnowledge(id: string) {
   await db.insert(knowledge).values({
     id,
     name: id,
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     ...KNOWLEDGE_BASE,
     archived_at: null,
@@ -110,11 +110,11 @@ describe('POST /api/knowledge/proposals/[id]', () => {
   });
 
   it('accepts a pending propose_new proposal', async () => {
-    await seedKnowledge('seed:wenyan:shici');
+    await seedKnowledge('seed:yuwen:shici');
     await seedProposeEvent({
       id: 'p1',
       name: '通假字',
-      parent_id: 'seed:wenyan:shici',
+      parent_id: 'seed:yuwen:shici',
       reasoning: 'r',
     });
 

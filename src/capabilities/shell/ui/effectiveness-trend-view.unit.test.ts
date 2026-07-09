@@ -37,7 +37,7 @@ function kc(
     knowledge_id: id,
     name: opts.name ?? id,
     // 用 `in` 而非 ?? —— effective_domain 可以显式是 null（未归类桶），?? 会把它误吞成默认值。
-    effective_domain: 'effective_domain' in opts ? (opts.effective_domain ?? null) : 'wenyan',
+    effective_domain: 'effective_domain' in opts ? (opts.effective_domain ?? null) : 'yuwen',
     points: opts.points ?? [pt(0.3), pt(0.5)],
     trend: {
       direction,
@@ -51,14 +51,14 @@ function kc(
 
 describe('isSeedRoot (合成根毛刺 ①)', () => {
   it('matches seed:<subject>:root', () => {
-    expect(isSeedRoot('seed:wenyan:root')).toBe(true);
+    expect(isSeedRoot('seed:yuwen:root')).toBe(true);
     expect(isSeedRoot('seed:math:root')).toBe(true);
   });
   it('does not match real KC ids or partial shapes', () => {
     expect(isSeedRoot('k_pmp')).toBe(false);
-    expect(isSeedRoot('seed:wenyan:binyu')).toBe(false);
+    expect(isSeedRoot('seed:yuwen:binyu')).toBe(false);
     expect(isSeedRoot('seed::root')).toBe(false); // empty subject segment
-    expect(isSeedRoot('seed:wenyan:root:extra')).toBe(false);
+    expect(isSeedRoot('seed:yuwen:root:extra')).toBe(false);
   });
 });
 
@@ -96,12 +96,12 @@ describe('directionMeta', () => {
 describe('partitionSubjectSeries (毛刺 ① — seed-root = 科目整体)', () => {
   it('splits the seed-root row out as `whole`, leaving real KCs', () => {
     const rows = [
-      kc('seed:wenyan:root', 'rising', 'low'),
+      kc('seed:yuwen:root', 'rising', 'low'),
       kc('k_zhi', 'rising', 'high'),
       kc('k_binyu', 'insufficient', 'low'),
     ];
     const { whole, kcs } = partitionSubjectSeries(rows);
-    expect(whole?.knowledge_id).toBe('seed:wenyan:root');
+    expect(whole?.knowledge_id).toBe('seed:yuwen:root');
     expect(kcs.map((k) => k.knowledge_id)).toEqual(['k_zhi', 'k_binyu']);
   });
   it('no seed-root → whole is null, all rows are KCs', () => {
@@ -115,11 +115,11 @@ describe('partitionSubjectSeries (毛刺 ① — seed-root = 科目整体)', () 
 describe('seriesForDomain (含 null = 未归类桶, 毛刺 ③)', () => {
   it('filters by effective_domain, null matching the uncategorized bucket', () => {
     const series = [
-      kc('a', 'rising', 'high', { effective_domain: 'wenyan' }),
+      kc('a', 'rising', 'high', { effective_domain: 'yuwen' }),
       kc('b', 'holding', 'high', { effective_domain: 'math' }),
       kc('u', 'rising', 'low', { effective_domain: null }),
     ];
-    expect(seriesForDomain(series, 'wenyan').map((k) => k.knowledge_id)).toEqual(['a']);
+    expect(seriesForDomain(series, 'yuwen').map((k) => k.knowledge_id)).toEqual(['a']);
     expect(seriesForDomain(series, null).map((k) => k.knowledge_id)).toEqual(['u']);
   });
 });

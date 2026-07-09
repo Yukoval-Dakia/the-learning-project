@@ -9,7 +9,7 @@ describe('ReviewSubjectSwitchMarker', () => {
   it('shows only when the subject id changes', () => {
     expect(
       shouldShowSubjectSwitchMarker(
-        { id: 'wenyan', displayName: '文言文' },
+        { id: 'yuwen', displayName: '语文' },
         { id: 'math', displayName: '数学' },
       ),
     ).toBe(true);
@@ -25,14 +25,14 @@ describe('ReviewSubjectSwitchMarker', () => {
   it('renders concise next-subject copy', () => {
     const html = renderToString(
       <ReviewSubjectSwitchMarker
-        from={{ id: 'wenyan', displayName: '文言文' }}
+        from={{ id: 'yuwen', displayName: '语文' }}
         to={{ id: 'math', displayName: '数学' }}
       />,
     );
 
     expect(html).toContain('review-subject-switch');
     expect(html).toContain('下一题：数学');
-    expect(html).toContain('从 文言文 切换到 数学');
+    expect(html).toContain('从 语文 切换到 数学');
     expect(html).toContain('data-subject="math"');
   });
 });

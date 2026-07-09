@@ -42,7 +42,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
     await db.insert(knowledge).values({
       id: 'k1',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       archived_at: null,
@@ -186,7 +186,7 @@ describe('round-trip: export → import → DB state mirrored', () => {
     // item_family_calibration: 2 real cols, no jsonb.
     await db.insert(item_family_calibration).values({
       id: 'ifc1',
-      family_key: 'wenyan:k-ms:objective:llm_prior',
+      family_key: 'yuwen:k-ms:objective:llm_prior',
       b_delta: -0.0625,
       evidence_count: 25,
       calibrated_n: 21,

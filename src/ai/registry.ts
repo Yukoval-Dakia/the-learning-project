@@ -582,7 +582,7 @@ export const tasks = {
     // string is kept only as type-required fallback. New tasks MUST add a
     // builder in task-prompts.ts.
     systemPrompt:
-      "你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 effective cause：active user_cause 优先，否则 latest active judge)，propose 让知识图谱更合理的 mutation。\n可选 mutation 分两类:\n- Tree-shape: propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。\n- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type, reasoning }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀（先跑稳，后续 promote）。\n每 propose 一条，调一次 write_proposal({mutation, payload, reasoning})。reasoning 必须具体（指向 attempt event id 或 tree 结构）。不必凑数；如果 tree 已经合理，0 条也行。Phase 1a 单 domain wenyan：禁止 propose_new / reparent / split 把节点变 root（parent_id=null）。",
+      "你是知识图谱维护助手。看完整 tree（含层级 / archived / merged_from）+ 最近 attempt events (action='attempt', outcome='failure' 的事件，含 effective cause：active user_cause 优先，否则 latest active judge)，propose 让知识图谱更合理的 mutation。\n可选 mutation 分两类:\n- Tree-shape: propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。\n- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type, reasoning }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀（先跑稳，后续 promote）。\n每 propose 一条，调一次 write_proposal({mutation, payload, reasoning})。reasoning 必须具体（指向 attempt event id 或 tree 结构）。不必凑数；如果 tree 已经合理，0 条也行。Phase 1a 单 domain yuwen：禁止 propose_new / reparent / split 把节点变 root（parent_id=null）。",
   },
   GoalScopeTask: {
     kind: 'GoalScopeTask',
@@ -687,7 +687,7 @@ export const tasks = {
     defaultModel: 'mimo-v2.5-pro',
     // YUK-189: 120s (was 60s). The real-LLM demo (scripts/demo-flywheel.ts) hit
     // the 60s budget on the `global` scope (full event set on the slow mimo
-    // endpoint: subject:wenyan finished 59s, global aborted at 60s). The nightly
+    // endpoint: subject:yuwen finished 59s, global aborted at 60s). The nightly
     // brief sweep can afford the longer budget; the per-message Copilot path does
     // not call this task. maxIterations stays 1 (single structured-output call).
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 120_000 },

@@ -33,7 +33,7 @@ describe('GET /api/knowledge', () => {
       {
         id: 'k1',
         name: '虚词',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         archived_at: null,
         ...KNOWLEDGE_BASE,
@@ -58,8 +58,8 @@ describe('GET /api/knowledge', () => {
     expect(body.rows).toHaveLength(2);
     const k1 = body.rows.find((r) => r.id === 'k1');
     const k2 = body.rows.find((r) => r.id === 'k2');
-    expect(k1?.effective_domain).toBe('wenyan');
-    expect(k2?.effective_domain).toBe('wenyan');
+    expect(k1?.effective_domain).toBe('yuwen');
+    expect(k2?.effective_domain).toBe('yuwen');
   });
 
   it('excludes archived nodes', async () => {
@@ -69,7 +69,7 @@ describe('GET /api/knowledge', () => {
       {
         id: 'k1',
         name: '活跃',
-        domain: 'wenyan',
+        domain: 'yuwen',
         parent_id: null,
         archived_at: null,
         ...KNOWLEDGE_BASE,

@@ -17,7 +17,7 @@ async function seedKnowledge(db: ReturnType<typeof testDb>): Promise<void> {
     {
       id: 'k_root',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: null,
       created_at: now,
@@ -37,7 +37,7 @@ async function seedKnowledge(db: ReturnType<typeof testDb>): Promise<void> {
     {
       id: 'k_archived',
       name: '已归档',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: now,
       created_at: now,
@@ -66,7 +66,7 @@ describe('buildTaggingGrid', () => {
   it('includes active nodes with paths + mesh edges, excludes archived', async () => {
     const db = testDb();
     await seedKnowledge(db);
-    const grid = await buildTaggingGrid(db, 'wenyan');
+    const grid = await buildTaggingGrid(db, 'yuwen');
     const ids = grid.nodes.map((n) => n.id).sort();
     expect(ids).toEqual(['k_root', 'k_zhi']);
     expect(grid.nodes.find((n) => n.id === 'k_zhi')?.path).toEqual(['虚词', '之-主谓间用法']);
@@ -89,7 +89,7 @@ describe('runTaggingTask', () => {
       db,
       questionMd: '下列句中「之」的用法……',
       knowledgeHint: '之',
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       runTaskFn: async (_kind, input) => {
         captured = input;
         return {
@@ -118,7 +118,7 @@ describe('runTaggingTask', () => {
       db,
       questionMd: 'Q',
       knowledgeHint: null,
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       runTaskFn: async () => ({
         text: JSON.stringify({
           suggestions: [
@@ -143,7 +143,7 @@ describe('runTaggingTask', () => {
         db,
         questionMd: 'Q',
         knowledgeHint: null,
-        subjectId: 'wenyan',
+        subjectId: 'yuwen',
         runTaskFn: async () => ({ text: 'not json at all' }),
       }),
     ).rejects.toBeInstanceOf(TaggingTaskError);
@@ -158,7 +158,7 @@ describe('runTaggingTask', () => {
         db,
         questionMd: 'Q',
         knowledgeHint: null,
-        subjectId: 'wenyan',
+        subjectId: 'yuwen',
         // overall_confidence out of range → Zod reject.
         runTaskFn: async () => ({
           text: JSON.stringify({ suggestions: [], overall_confidence: 5, reasoning: '' }),
@@ -176,7 +176,7 @@ describe('runTaggingTask', () => {
         db,
         questionMd: 'Q',
         knowledgeHint: null,
-        subjectId: 'wenyan',
+        subjectId: 'yuwen',
         runTaskFn: async () => {
           throw new Error('provider down');
         },

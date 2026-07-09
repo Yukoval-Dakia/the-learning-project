@@ -70,9 +70,9 @@ async function seedKnowledgeGraph(): Promise<void> {
   const db = testDb();
   await db.insert(knowledge).values([
     {
-      id: 'k_wenyan',
+      id: 'k_yuwen',
       name: '文言文',
-      domain: 'wenyan',
+      domain: 'yuwen',
       created_at: BASE,
       updated_at: BASE,
     },
@@ -80,7 +80,7 @@ async function seedKnowledgeGraph(): Promise<void> {
       id: 'k_zhi',
       name: '之的用法',
       domain: null,
-      parent_id: 'k_wenyan',
+      parent_id: 'k_yuwen',
       created_at: BASE,
       updated_at: BASE,
     },
@@ -88,7 +88,7 @@ async function seedKnowledgeGraph(): Promise<void> {
       id: 'k_er',
       name: '而的用法',
       domain: null,
-      parent_id: 'k_wenyan',
+      parent_id: 'k_yuwen',
       created_at: BASE,
       updated_at: BASE,
     },
@@ -249,7 +249,7 @@ async function seedRecordTargets(): Promise<void> {
     activity_kind: 'ask',
     processing_status: 'raw',
     origin_event_id: null,
-    subject_id: 'wenyan',
+    subject_id: 'yuwen',
     knowledge_ids: [],
     question_id: null,
     attempt_event_id: null,
@@ -416,7 +416,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
 
     const parentOnly = await proposeKnowledgeEdgeTool.execute(ctx(), {
       from_knowledge_id: 'k_zhi',
-      to_knowledge_id: 'k_wenyan',
+      to_knowledge_id: 'k_yuwen',
       relation_type: 'related_to',
       weight: 1,
       reasoning: 'this repeats the tree',
@@ -524,7 +524,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
 
     const out = await proposeKnowledgeMutationTool.execute(ctx(), {
       mutation: 'propose_new',
-      payload: { name: '判断句', parent_id: 'k_wenyan' },
+      payload: { name: '判断句', parent_id: 'k_yuwen' },
       reasoning: '错题显示需要补一个判断句节点。',
       evidence_event_ids: ['att_failure'],
     });
@@ -536,7 +536,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
       id: out.proposal_id,
       kind: 'knowledge_node',
       payload: {
-        proposed_change: { name: '判断句', parent_id: 'k_wenyan' },
+        proposed_change: { name: '判断句', parent_id: 'k_yuwen' },
         evidence_refs: [{ kind: 'event', id: 'att_failure' }],
       },
     });
@@ -559,7 +559,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
       mutation: 'merge',
       payload: {
         from_ids: ['k_zhi', 'k_er'],
-        into_id: 'k_wenyan',
+        into_id: 'k_yuwen',
         expected_versions: { k_zhi: 0 },
       },
       reasoning: 'Merge two redundant child nodes.',
@@ -1127,7 +1127,7 @@ describe('P5.6 suggestion_kind on propose tools (YUK-178)', () => {
 
     const corrective = await proposeKnowledgeMutationTool.execute(ctx(), {
       mutation: 'propose_new',
-      payload: { name: '判断句', parent_id: 'k_wenyan' },
+      payload: { name: '判断句', parent_id: 'k_yuwen' },
       reasoning: '错题显示需要补一个判断句节点。',
       evidence_event_ids: ['att_failure'],
       suggestion_kind: 'corrective',
@@ -1138,7 +1138,7 @@ describe('P5.6 suggestion_kind on propose tools (YUK-178)', () => {
 
     const proactive = await proposeKnowledgeMutationTool.execute(ctx(), {
       mutation: 'propose_new',
-      payload: { name: '被动句', parent_id: 'k_wenyan' },
+      payload: { name: '被动句', parent_id: 'k_yuwen' },
       reasoning: '另补一个被动句节点。',
       evidence_event_ids: ['att_failure'],
       // omitted → proactive

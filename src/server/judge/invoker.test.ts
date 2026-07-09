@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { type JudgeInvocationTelemetry, JudgeInvoker, JudgeInvokerOutputSchema } from './invoker';
 
 const mockDb = {} as Db;
-const wenyanProfile = resolveSubjectProfile('wenyan');
+const yuwenProfile = resolveSubjectProfile('yuwen');
 const mathProfile = resolveSubjectProfile('math');
 const physicsProfile = resolveSubjectProfile('physics');
 
@@ -38,7 +38,7 @@ describe('JudgeInvoker', () => {
         choices_md: ['答案', '错'],
       },
       answer_md: '答案',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
 
     expect(result.route).toBe('exact');
@@ -48,7 +48,7 @@ describe('JudgeInvoker', () => {
       coarse_outcome: 'correct',
       confidence: 1,
       question_id: 'q-exact',
-      subject_id: 'wenyan',
+      subject_id: 'yuwen',
     });
     expect(result.telemetry.elapsed_ms).toBeGreaterThanOrEqual(0);
     expect(telemetry).toEqual([result.telemetry]);
@@ -57,13 +57,13 @@ describe('JudgeInvoker', () => {
 
   // D6 (U4 L-stamp, critic-R2 HIGH) — capability_ref.version must be pinned from
   // SubjectProfile.version, NOT the judge runner's module-level '1.0.0' constant.
-  // The real wenyan/math/physics profiles are all on '1.0.0', so a same-value
+  // The real yuwen/math/physics profiles are all on '1.0.0', so a same-value
   // assertion would pass silently even on the OLD path. Force a '2.0.0' profile
   // to prove the read path actually switched — and assert BOTH sides: the
   // result.capability_ref (embedded into the review event payload at
   // submit/route.ts:306) AND the telemetry (attribution / analytics path).
   it('pins capability_ref.version + telemetry.profile_version from SubjectProfile.version (both sides)', async () => {
-    const v2Profile = { ...wenyanProfile, version: '2.0.0' };
+    const v2Profile = { ...yuwenProfile, version: '2.0.0' };
     const telemetry: JudgeInvocationTelemetry[] = [];
     const invoker = new JudgeInvoker({
       onTelemetry: (event) => {
@@ -114,7 +114,7 @@ describe('JudgeInvoker', () => {
         },
       },
       answer_md: '覆盖 p1',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
 
     expect(result.route).toBe('semantic');
@@ -128,7 +128,7 @@ describe('JudgeInvoker', () => {
     expect(runTaskFn).toHaveBeenCalledWith(
       'SemanticJudgeTask',
       expect.objectContaining({ answer: { content: '覆盖 p1' } }),
-      expect.objectContaining({ db: mockDb, subjectProfile: wenyanProfile }),
+      expect.objectContaining({ db: mockDb, subjectProfile: yuwenProfile }),
     );
   });
 
@@ -171,7 +171,7 @@ describe('JudgeInvoker', () => {
       db: mockDb,
       question: composite,
       answer_md: '我的答案',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       part_ref: 'p1',
     });
 
@@ -220,7 +220,7 @@ describe('JudgeInvoker', () => {
       db: mockDb,
       question: composite,
       answer_md: '我的答案',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
       // no part_ref → whole-row.
     });
 
@@ -240,7 +240,7 @@ describe('JudgeInvoker', () => {
       db: mockDb,
       question: { ...baseQuestion, id: 'q-semantic-fail', judge_kind_override: 'semantic' },
       answer_md: '答案',
-      subjectProfile: wenyanProfile,
+      subjectProfile: yuwenProfile,
     });
 
     expect(result.route).toBe('semantic');

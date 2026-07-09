@@ -2,7 +2,7 @@
 // BRIEF_REFRESH_BUDGET single-source constant. No DB: selectSubjectsForRun is a
 // pure sort+slice, so the >maxSubjectsPerRun top-N + defer behavior (acceptance
 // §7 "per-run budget enforced", 20+ active subjects) is testable here without
-// seeding 12+ real subject profiles (only wenyan/math/physics exist).
+// seeding 12+ real subject profiles (only yuwen/math/physics exist).
 
 import { BRIEF_REFRESH_BUDGET } from '@/server/ai/tools/budgets';
 import { describe, expect, it } from 'vitest';

@@ -16,7 +16,7 @@ function node(id: string, parent_id: string | null = null): KnowledgeNode {
   return {
     id,
     name: id,
-    domain: parent_id ? null : 'wenyan',
+    domain: parent_id ? null : 'yuwen',
     parent_id,
     archived_at: null,
     mastery: null,
@@ -26,7 +26,7 @@ function node(id: string, parent_id: string | null = null): KnowledgeNode {
     evidence_count: 0,
     last_evidence_at: null,
     last_active_at: new Date('2026-01-01T00:00:00Z'),
-    effective_domain: 'wenyan',
+    effective_domain: 'yuwen',
   };
 }
 

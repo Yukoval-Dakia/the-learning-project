@@ -1322,7 +1322,7 @@ describe('ToolUseQuery', () => {
       outcome: 'success',
       payload: {
         tool_name: 'query_mistakes',
-        args: { domain: 'wenyan', limit: 10 },
+        args: { domain: 'yuwen', limit: 10 },
         result_summary: '3 events found',
         result_count: 3,
       },

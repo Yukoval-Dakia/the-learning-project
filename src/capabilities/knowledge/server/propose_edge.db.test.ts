@@ -91,7 +91,7 @@ describe('runEdgeProposeAndWrite', () => {
     await db.insert(knowledge).values({
       id,
       name: id,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -623,7 +623,7 @@ describe('runEdgeProposeAndWrite — L1 rubric floor (YUK-175)', () => {
 
   async function insertKnowledge(
     id: string,
-    domain: string | null = 'wenyan',
+    domain: string | null = 'yuwen',
     parentId: string | null = null,
   ) {
     const db = testDb();
@@ -986,7 +986,7 @@ describe('runEdgeProposeAndWrite — topology gate (ADR-0034 §2 / YUK-344)', ()
     await db.insert(knowledge).values({
       id,
       name: id,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -1431,7 +1431,7 @@ describe('runEdgeProposeAndWrite — reconciliation ring (ADR-0034 §3 / YUK-344
     await db.insert(knowledge).values({
       id,
       name: id,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

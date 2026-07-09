@@ -20,7 +20,7 @@ async function seedKnowledge(id: string, opts: { parentId?: string | null; domai
     .values({
       id,
       name: id,
-      domain: opts.parentId ? null : (opts.domain ?? 'wenyan'),
+      domain: opts.parentId ? null : (opts.domain ?? 'yuwen'),
       parent_id: opts.parentId ?? null,
       merged_from: [],
       proposed_by_ai: false,

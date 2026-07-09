@@ -27,7 +27,7 @@ async function seedKnowledge(id: string) {
     .values({
       id,
       name: `K-${id}`,
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       archived_at: null,
       created_at: now,

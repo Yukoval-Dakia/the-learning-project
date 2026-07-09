@@ -1,4 +1,4 @@
-// P5.5 Phase 1 — Tool-eval fixtures (wenyan).
+// P5.5 Phase 1 — Tool-eval fixtures (yuwen).
 // Spec: docs/superpowers/specs/2026-05-31-p5.5-tool-eval-fixtures-design.md
 //
 // A Layer-8 fixture-gating DB test layer: it proves the DomainTool suite's
@@ -9,10 +9,10 @@
 // plus scenario-specific assertions.
 //
 // This file gates ALL FOUR knowledge.md §5 fixtures at the §5-named tool surface:
-//   (v)  query_knowledge zhi-confusion           -> §5 `wenyan-zhi-confusion`
-//   (ii) knowledge-filtered zero-result          -> §5 `wenyan-zero-result`
+//   (v)  query_knowledge zhi-confusion           -> §5 `yuwen-zhi-confusion`
+//   (ii) knowledge-filtered zero-result          -> §5 `yuwen-zero-result`
 //   (iii) propose_knowledge_edge ×2 (duplicate)  -> §5 `edge-duplicate`
-//   (vi) expand_knowledge_subgraph prereq paths  -> §5 `wenyan-translation-prereq`
+//   (vi) expand_knowledge_subgraph prereq paths  -> §5 `yuwen-translation-prereq`
 // PLUS two ADDITIONAL multi-tool Layer-8 chains beyond the four §5 rows:
 //   (i)  query_mistakes -> get_attempt_context -> attribute_mistake -> propose_variant
 //        (the diagnostic chain that ALSO answers the zhi-confusion user question)
@@ -94,11 +94,11 @@ const BASE = new Date(Date.now() - 60_000);
 // --- seed primitives (§5.2) — reuse the read-tools-m2.test.ts seedGraph shape
 // and event-seed.ts seedAttempt/seedUserCause; no new helpers. ---
 
-/** One wenyan knowledge node `k_zhi` under a wenyan root (the §5.2 shape). */
+/** One yuwen knowledge node `k_zhi` under a yuwen root (the §5.2 shape). */
 async function seedZhiNode(): Promise<void> {
   const db = testDb();
   await db.insert(knowledge).values([
-    { id: 'k_root', name: '文言虚词', domain: 'wenyan', created_at: BASE, updated_at: BASE },
+    { id: 'k_root', name: '文言虚词', domain: 'yuwen', created_at: BASE, updated_at: BASE },
     {
       id: 'k_zhi',
       name: '之的用法',
@@ -110,12 +110,12 @@ async function seedZhiNode(): Promise<void> {
   ]);
 }
 
-/** Two wenyan endpoints `k_zhi`/`k_er` under a wenyan root, NO edge between
+/** Two yuwen endpoints `k_zhi`/`k_er` under a yuwen root, NO edge between
  *  them (so a contrasts_with propose is novel). */
 async function seedZhiErNodes(): Promise<void> {
   const db = testDb();
   await db.insert(knowledge).values([
-    { id: 'k_root', name: '文言虚词', domain: 'wenyan', created_at: BASE, updated_at: BASE },
+    { id: 'k_root', name: '文言虚词', domain: 'yuwen', created_at: BASE, updated_at: BASE },
     {
       id: 'k_zhi',
       name: '之的用法',
@@ -229,7 +229,7 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
 
   // -------------------------------------------------------------------------
   // Scenario (i) — mistake-confusion chain (CHAIN, LD-5) — §4.1
-  // Answers §5 `wenyan-zhi-confusion`.
+  // Answers §5 `yuwen-zhi-confusion`.
   // query_mistakes -> get_attempt_context -> attribute_mistake -> propose_variant
   // -------------------------------------------------------------------------
   it('scenario (i): mistake-confusion chain is agent-readable end-to-end (AC-2)', async () => {
@@ -355,7 +355,7 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
 
   // -------------------------------------------------------------------------
   // Scenario (ii) — zero-result-corrective (ISOLATED, KNOWN ERROR) — §4.2
-  // Answers §5 `wenyan-zero-result`.
+  // Answers §5 `yuwen-zero-result`.
   // -------------------------------------------------------------------------
   it('scenario (ii): a knowledge-filtered query for 焉 returns 0 results as a legitimate success, not a corrective trigger (AC-3)', async () => {
     const db = testDb();
@@ -617,13 +617,13 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
 
   // -------------------------------------------------------------------------
   // Scenario (v) — query_knowledge zhi-confusion (ISOLATED, §5 graph row) — F1
-  // Answers §5 `wenyan-zhi-confusion` ("我为什么老错『之』？") at the EXACT tool §5
+  // Answers §5 `yuwen-zhi-confusion` ("我为什么老错『之』？") at the EXACT tool §5
   // names — query_knowledge returns 之 children + recent failures + contrasts_with
   // candidates. (Scenario (i) answers the SAME user question via the diagnostic
   // mistake chain; this scenario gates the §5-named query_knowledge surface so
   // knowledge.md §5's "gated as code in fixtures.test.ts" note is literally true.)
   // -------------------------------------------------------------------------
-  it('scenario (v): query_knowledge surfaces 之 children + recent failures + contrasts_with candidates (F1 / §5 wenyan-zhi-confusion)', async () => {
+  it('scenario (v): query_knowledge surfaces 之 children + recent failures + contrasts_with candidates (F1 / §5 yuwen-zhi-confusion)', async () => {
     const db = testDb();
     // k_root → k_zhi (with a child) and k_zhi —contrasts_with→ k_er (the §5.2
     // seedGraph shape + a child so "之 children" can surface).
@@ -691,7 +691,7 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
     });
 
     const k = await queryKnowledgeTool.execute(ctx(), {
-      subjectId: 'wenyan',
+      subjectId: 'yuwen',
       query: '之',
       include: ['children', 'neighbors', 'recent_failures'],
     });
@@ -709,7 +709,7 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
     await assertAgentReadable(
       db,
       queryKnowledgeTool as DomainTool,
-      { subjectId: 'wenyan', query: '之', include: ['children', 'neighbors', 'recent_failures'] },
+      { subjectId: 'yuwen', query: '之', include: ['children', 'neighbors', 'recent_failures'] },
       k,
       {
         keyInsightFields: [
@@ -732,16 +732,16 @@ describe('P5.5 Phase 1 tool-eval fixtures', () => {
 
   // -------------------------------------------------------------------------
   // Scenario (vi) — expand_knowledge_subgraph translation-prereq (ISOLATED,
-  // §5 graph row) — F1. Answers §5 `wenyan-translation-prereq` ("翻译总错，是不
+  // §5 graph row) — F1. Answers §5 `yuwen-translation-prereq` ("翻译总错，是不
   // 是实词问题？") — expand_knowledge_subgraph shows 实词/句式/虚词 → 翻译 candidate
-  // prerequisite paths. Phase-1 implements it with a minimal wenyan prerequisite
-  // seed (LD-2 wenyan-only); richer subject-graph seeding is Phase 2 (P5.8).
+  // prerequisite paths. Phase-1 implements it with a minimal yuwen prerequisite
+  // seed (LD-2 yuwen-only); richer subject-graph seeding is Phase 2 (P5.8).
   // -------------------------------------------------------------------------
-  it('scenario (vi): expand_knowledge_subgraph surfaces 实词/句式/虚词 → 翻译 prerequisite paths (F1 / §5 wenyan-translation-prereq)', async () => {
+  it('scenario (vi): expand_knowledge_subgraph surfaces 实词/句式/虚词 → 翻译 prerequisite paths (F1 / §5 yuwen-translation-prereq)', async () => {
     const db = testDb();
-    // 翻译 (center) with three prerequisite endpoints under a wenyan root.
+    // 翻译 (center) with three prerequisite endpoints under a yuwen root.
     await db.insert(knowledge).values([
-      { id: 'k_root', name: '文言文', domain: 'wenyan', created_at: BASE, updated_at: BASE },
+      { id: 'k_root', name: '文言文', domain: 'yuwen', created_at: BASE, updated_at: BASE },
       {
         id: 'k_translate',
         name: '翻译',

@@ -249,7 +249,7 @@ describe('stepsV1Capability', () => {
 });
 
 describe('question contract routing', () => {
-  const profile = resolveSubjectProfile('wenyan');
+  const profile = resolveSubjectProfile('yuwen');
   const physicsProfile = resolveSubjectProfile('physics');
   const baseQuestion: JudgeQuestionRow = {
     id: 'q1',

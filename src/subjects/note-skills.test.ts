@@ -1,7 +1,7 @@
 // YUK-228 (S3 Slice B) — note-skills resolver unit tests.
 //
 // Test matrix (plan §2 Slice B):
-//   - resolver 发现：wenyan/math/physics have note skill → ['note-<subjectId>']
+//   - resolver 发现：yuwen/math/physics have note skill → ['note-<subjectId>']
 //   - resolver 不误捞：resolveNoteSkill 不返回 quiz-gen-*；
 //     resolveQuizGenSkillsForSubject 不返回 note-*（双向缝隙防御）
 //   - 降级链：缺 note 目录 → undefined
@@ -32,9 +32,9 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 describe('resolveNoteSkill — resolver discovery', () => {
-  it("returns ['note-wenyan'] when note-wenyan/SKILL.md exists for the subject", async () => {
-    const root = fixtureRoot({ wenyan: ['note-wenyan'] });
-    expect(await resolveNoteSkill('wenyan', root)).toEqual(['note-wenyan']);
+  it("returns ['note-yuwen'] when note-yuwen/SKILL.md exists for the subject", async () => {
+    const root = fixtureRoot({ yuwen: ['note-yuwen'] });
+    expect(await resolveNoteSkill('yuwen', root)).toEqual(['note-yuwen']);
   });
 
   it('works for math subject', async () => {
@@ -54,30 +54,30 @@ describe('resolveNoteSkill — 降级链', () => {
     expect(await resolveNoteSkill('unknown_subject', root)).toBeUndefined();
   });
 
-  it('returns undefined when note-wenyan/ dir exists but SKILL.md is missing', async () => {
+  it('returns undefined when note-yuwen/ dir exists but SKILL.md is missing', async () => {
     const root = mkdtempSync(join(tmpdir(), 'noteskills-'));
-    mkdirSync(join(root, 'wenyan', 'skills', 'note-wenyan'), { recursive: true });
+    mkdirSync(join(root, 'yuwen', 'skills', 'note-yuwen'), { recursive: true });
     // no SKILL.md written
-    expect(await resolveNoteSkill('wenyan', root)).toBeUndefined();
+    expect(await resolveNoteSkill('yuwen', root)).toBeUndefined();
   });
 
   it('returns undefined for a subject that only has quiz-gen skills (no note)', async () => {
-    const root = fixtureRoot({ wenyan: ['quiz-gen-translation'] });
-    expect(await resolveNoteSkill('wenyan', root)).toBeUndefined();
+    const root = fixtureRoot({ yuwen: ['quiz-gen-translation'] });
+    expect(await resolveNoteSkill('yuwen', root)).toBeUndefined();
   });
 });
 
 describe('resolveNoteSkill — 缝隙防御 (S2 第二教训)', () => {
   it('resolveNoteSkill does not return quiz-gen-* names', async () => {
-    const root = fixtureRoot({ wenyan: ['note-wenyan', 'quiz-gen-translation'] });
-    const result = await resolveNoteSkill('wenyan', root);
-    expect(result).toEqual(['note-wenyan']);
+    const root = fixtureRoot({ yuwen: ['note-yuwen', 'quiz-gen-translation'] });
+    const result = await resolveNoteSkill('yuwen', root);
+    expect(result).toEqual(['note-yuwen']);
     expect(result?.some((n) => n.startsWith('quiz-gen-'))).toBe(false);
   });
 
   it('resolveQuizGenSkillsForSubject does not return note-*', async () => {
-    const root = fixtureRoot({ wenyan: ['note-wenyan', 'quiz-gen-translation'] });
-    const result = await resolveQuizGenSkillsForSubject('wenyan', root);
+    const root = fixtureRoot({ yuwen: ['note-yuwen', 'quiz-gen-translation'] });
+    const result = await resolveQuizGenSkillsForSubject('yuwen', root);
     expect(result).toEqual(['quiz-gen-translation']);
     expect(result?.some((n) => n.startsWith('note-'))).toBe(false);
   });
@@ -87,8 +87,8 @@ describe('live SoT — shipped SKILL.md files resolve against the real tree', ()
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the three authored
   // note packs are discoverable and have the correct frontmatter name.
 
-  it('wenyan note skill is live and name === note-wenyan', async () => {
-    expect(await resolveNoteSkill('wenyan')).toEqual(['note-wenyan']);
+  it('yuwen note skill is live and name === note-yuwen', async () => {
+    expect(await resolveNoteSkill('yuwen')).toEqual(['note-yuwen']);
   });
 
   it('math note skill is live and name === note-math', async () => {
@@ -100,7 +100,7 @@ describe('live SoT — shipped SKILL.md files resolve against the real tree', ()
   });
 
   it('SKILL.md frontmatter name === note-<subject> for all three subjects', () => {
-    for (const subject of ['wenyan', 'math', 'physics']) {
+    for (const subject of ['yuwen', 'math', 'physics']) {
       const skillFile = join(
         process.cwd(),
         'src',

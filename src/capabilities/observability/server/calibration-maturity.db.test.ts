@@ -14,7 +14,7 @@ async function seedKc(id: string, name: string, opts: { archived?: boolean } = {
   await db.insert(knowledge).values({
     id,
     name,
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     merged_from: [],
     archived_at: opts.archived ? NOW : null,

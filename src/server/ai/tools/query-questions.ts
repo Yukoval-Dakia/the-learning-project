@@ -19,7 +19,7 @@ import type { DomainTool, ToolContext } from './types';
 const QueryQuestionsInputSchema = z.object({
   /** Any-match (OR of containment) over question.knowledge_ids. */
   knowledge_id: z.array(z.string().min(1)).optional(),
-  /** Subject profile id (e.g. 'wenyan') — resolved to its knowledge-id set server-side. */
+  /** Subject profile id (e.g. 'yuwen') — resolved to its knowledge-id set server-side. */
   subject: z.string().min(1).optional(),
   kind: z.string().min(1).optional(),
   source: z.string().min(1).optional(),

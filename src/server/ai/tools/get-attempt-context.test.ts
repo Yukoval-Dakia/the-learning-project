@@ -20,7 +20,7 @@ async function seedAttemptScenario(attemptId: string, qid = 'q1') {
   await db.insert(knowledge).values({
     id: 'k_xuci',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     created_at: now,
     updated_at: now,
   });
@@ -115,7 +115,7 @@ describe('getAttemptContextTool', () => {
       capture_mode: 'text',
       activity_kind: 'attempt',
       processing_status: 'raw',
-      subject_id: 'wenyan',
+      subject_id: 'yuwen',
       knowledge_ids: ['k_xuci'],
       question_id: 'q1',
       attempt_event_id: 'att_with_record',

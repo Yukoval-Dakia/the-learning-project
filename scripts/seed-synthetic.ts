@@ -62,7 +62,7 @@ import {
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
 import { writeAiProposal } from '@/server/proposals/writer';
-import { loadWenyanFixtures } from '@/subjects/wenyan/fixtures';
+import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
@@ -112,18 +112,18 @@ const SEED_PROFILE = {
 } as const;
 
 const SYNTH = 'synthetic:'; // knowledge id prefix marker (D3)
-const SUBJECT_DOMAIN = 'wenyan';
+const SUBJECT_DOMAIN = 'yuwen';
 const Q_SOURCE = 'synthetic_seed';
 
 // Deterministic synthetic ids — re-run = select-then-skip by these ids.
 export const NODES = {
-  root: `${SYNTH}wenyan:root`,
-  shici: `${SYNTH}wenyan:shici`, // 实词
-  xuci: `${SYNTH}wenyan:xuci`, // 虚词
-  jushi: `${SYNTH}wenyan:jushi`, // 句式
-  changshi: `${SYNTH}wenyan:changshi`, // 文学常识
-  fanyi: `${SYNTH}wenyan:fanyi`, // 翻译
-  yufa: `${SYNTH}wenyan:yufa`, // 语法
+  root: `${SYNTH}yuwen:root`,
+  shici: `${SYNTH}yuwen:shici`, // 实词
+  xuci: `${SYNTH}yuwen:xuci`, // 虚词
+  jushi: `${SYNTH}yuwen:jushi`, // 句式
+  changshi: `${SYNTH}yuwen:changshi`, // 文学常识
+  fanyi: `${SYNTH}yuwen:fanyi`, // 翻译
+  yufa: `${SYNTH}yuwen:yufa`, // 语法
 } as const;
 
 type NodeId = (typeof NODES)[keyof typeof NODES];
@@ -138,7 +138,7 @@ const NODE_SPECS: Array<{ id: NodeId; name: string; parent: NodeId | null }> = [
   { id: NODES.yufa, name: '语法', parent: NODES.root },
 ];
 
-// knowledge_hint → synthetic node id (the wenyan fixtures carry knowledge_hint).
+// knowledge_hint → synthetic node id (the yuwen fixtures carry knowledge_hint).
 const HINT_TO_NODE: Record<string, NodeId> = {
   实词: NODES.shici,
   虚词: NODES.xuci,
@@ -272,7 +272,7 @@ async function seedMaterializedEdges(dbh: DbLike, now: Date): Promise<void> {
   }
 }
 
-// ── Step 3 — questions from wenyan fixtures (referencing synthetic nodes) ────
+// ── Step 3 — questions from yuwen fixtures (referencing synthetic nodes) ────
 interface SeededQuestion {
   id: string;
   ref: string;
@@ -280,7 +280,7 @@ interface SeededQuestion {
 }
 
 async function seedQuestions(dbh: DbLike, now: Date): Promise<SeededQuestion[]> {
-  const fixtures = loadWenyanFixtures();
+  const fixtures = loadYuwenFixtures();
   const seenRefs = await existingQuestionRefs(dbh);
   const out: SeededQuestion[] = [];
   for (const item of fixtures) {
@@ -316,7 +316,7 @@ function buildCause(primaryCategory: string, analysis: string): FsrsCauseShape {
   // CauseSchema.parse validates the SHAPE + the primary_category FORMAT regex
   // (/^[a-z][a-z0-9_]*$/) only — it does NOT check registry membership (that is
   // validateCauseAgainstProfile, not called here). Callers pass a value that IS
-  // a registered wenyan category ('concept', profile.ts) so the seeded cause is
+  // a registered yuwen category ('concept', profile.ts) so the seeded cause is
   // registry-valid; the parse just guards against a malformed shape (PR review).
   return CauseSchema.parse({
     primary_category: primaryCategory,

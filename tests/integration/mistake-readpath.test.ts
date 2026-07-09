@@ -21,7 +21,7 @@ async function seedFixture() {
     {
       id: 'k_concept',
       name: '概念',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -33,7 +33,7 @@ async function seedFixture() {
     {
       id: 'k_memory',
       name: '记忆',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

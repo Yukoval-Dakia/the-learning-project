@@ -24,7 +24,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { loadKnowledgeNodePage, loadRetrievabilityMap } from './node-page';
 
 const K_BASE = {
-  domain: 'wenyan' as const,
+  domain: 'yuwen' as const,
   merged_from: [] as string[],
   proposed_by_ai: false,
   approval_status: 'approved' as const,
@@ -277,7 +277,7 @@ describe('loadKnowledgeNodePage', () => {
     expect(page).not.toBeNull();
     expect(page?.id).toBe('k1');
     expect(page?.name).toBe('虚词');
-    expect(page?.effective_domain).toBe('wenyan');
+    expect(page?.effective_domain).toBe('yuwen');
     expect(page?.evidence_count).toBe(0);
     expect(page?.mastery).toBeNull();
     // A5 S1 (YUK-354) — cold-start band fields default to null/null/false so the

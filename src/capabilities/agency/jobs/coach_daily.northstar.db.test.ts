@@ -214,7 +214,7 @@ describe('ND-5 conservation — North-Star goal strand is purely additive', () =
     await db.insert(goal).values({
       id: 'goal_1',
       title: '能流畅读《史记》',
-      subject_id: 'wenyan',
+      subject_id: 'yuwen',
       scope_knowledge_ids: ['k1'],
       sequence_hint: 0,
       status: 'active',
@@ -228,7 +228,7 @@ describe('ND-5 conservation — North-Star goal strand is purely additive', () =
       {
         id: 'goal_1',
         title: '能流畅读《史记》',
-        subject_id: 'wenyan',
+        subject_id: 'yuwen',
         scope_knowledge_ids: ['k1'],
         sequence_hint: 0,
       },

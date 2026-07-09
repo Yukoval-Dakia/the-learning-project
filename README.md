@@ -184,8 +184,8 @@ src/
   ai/             # Task registry + browser-side caller（不持 provider key）
   server/         # Server-only：AI runner/tools、ingestion、knowledge、memory、review、export、R2、pg-boss helpers
   subjects/
-    wenyan/       # Phase 1 subject bundle: classical Chinese
-    math/         # Non-wenyan pressure subject: KaTeX + steps judging
+    yuwen/        # Phase 1 subject bundle: 语文 (current content: classical Chinese)
+    math/         # Non-yuwen pressure subject: KaTeX + steps judging
     physics/      # Foundation closeout subject: units/dimensions pressure test
   ui/             # Shared React components（block-tree Tiptap 编辑器、KnowledgeGraph cytoscape）
 scripts/          # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits（schema/partition/profile）
@@ -194,4 +194,4 @@ docs/             # architecture, modules, ADRs, planning
 ```
 
 `core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。`src/capabilities/<name>/manifest.ts`
-是后端真相源——新增路由/jobs/tools 都通过 manifest 贡献制登记进组合根 `server/app.ts`。当前已从文言文扩展到 math / physics pressure subjects，新增科目应优先新增 profile 与能力声明，不 fork framework 路径。
+是后端真相源——新增路由/jobs/tools 都通过 manifest 贡献制登记进组合根 `server/app.ts`。当前已从语文（首个科目，当前内容为文言文）扩展到 math / physics pressure subjects，新增科目应优先新增 profile 与能力声明，不 fork framework 路径。

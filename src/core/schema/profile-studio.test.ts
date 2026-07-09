@@ -1,5 +1,5 @@
 import { physicsProfile } from '@/subjects/physics/profile';
-import { wenyanProfile } from '@/subjects/wenyan/profile';
+import { yuwenProfile } from '@/subjects/yuwen/profile';
 import { describe, expect, it } from 'vitest';
 import {
   type ProfileImpactReport,
@@ -9,12 +9,12 @@ import {
 
 describe('SubjectProfileDraftSchema', () => {
   it('parses a complete valid draft (a live profile is a valid draft)', () => {
-    const parsed = SubjectProfileDraftSchema.safeParse(wenyanProfile);
+    const parsed = SubjectProfileDraftSchema.safeParse(yuwenProfile);
     expect(parsed.success).toBe(true);
   });
 
   it('parses a draft that omits version (Q7 — version is optional in drafts)', () => {
-    const { version: _version, ...draftWithoutVersion } = wenyanProfile;
+    const { version: _version, ...draftWithoutVersion } = yuwenProfile;
     const parsed = SubjectProfileDraftSchema.safeParse(draftWithoutVersion);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
@@ -23,7 +23,7 @@ describe('SubjectProfileDraftSchema', () => {
   });
 
   it('still rejects a draft missing a non-version required field (G2 — only version relaxed)', () => {
-    const { displayName: _displayName, ...draftMissingDisplayName } = wenyanProfile;
+    const { displayName: _displayName, ...draftMissingDisplayName } = yuwenProfile;
     const parsed = SubjectProfileDraftSchema.safeParse(draftMissingDisplayName);
     expect(parsed.success).toBe(false);
   });
@@ -36,7 +36,7 @@ describe('SubjectProfileDraftSchema', () => {
 
 describe('ProfileImpactReportSchema', () => {
   const sampleReport: ProfileImpactReport = {
-    subject_id: 'wenyan',
+    subject_id: 'yuwen',
     valid: true,
     errors: [],
     warnings: [],

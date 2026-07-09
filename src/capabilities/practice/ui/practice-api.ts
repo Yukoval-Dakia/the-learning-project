@@ -379,7 +379,7 @@ export interface QBankQuestion {
   draft_status: string | null; // NULL≡active；'draft'≡草稿。
   created_at_sec: number; // unix 秒。
   // enrich 路径填（enrich:false 时后端给 null / 非大题默认）。
-  subject: string | null; // 派生学科 profile id（'wenyan'|'math'|'eng'|'general'...）。
+  subject: string | null; // 派生学科 profile id（'yuwen'|'math'|'eng'|'general'...）。
   knowledge_labels: QBankKnowledgeLabel[] | null;
   is_composite: boolean; // 有 question_part 子题（大题）。
   children: QBankQuestion[]; // 大题的有序小题（part_index 序）；非大题为 []。

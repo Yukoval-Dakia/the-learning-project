@@ -21,7 +21,7 @@ vi.mock('@/capabilities/knowledge/server/attribute', () => ({
 // mock 立即 resolve），不再需要 the old after mock / runAfterCallbacks 钩子。
 
 const KNOWLEDGE_BASE = {
-  domain: 'wenyan',
+  domain: 'yuwen',
   parent_id: null,
   merged_from: [] as string[],
   proposed_by_ai: false,

@@ -1415,7 +1415,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
             confidence: 0.9,
             elapsed_ms: 1,
             question_id: 'qmm',
-            subject_id: 'wenyan',
+            subject_id: 'yuwen',
             profile_version: '1.0.0',
           },
         });

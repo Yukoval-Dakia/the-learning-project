@@ -47,9 +47,9 @@ describe('judge-prompt reaudit (leg B)', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'judge-prompts-'));
     tmpDirs.push(tmp);
     cpSync(PROMPTS_DIR, tmp, { recursive: true });
-    writeFileSync(join(tmp, 'RetiredJudgeTask.wenyan.md'), '孤儿 snapshot\n');
+    writeFileSync(join(tmp, 'RetiredJudgeTask.yuwen.md'), '孤儿 snapshot\n');
     const result = reauditJudgePrompts(tmp);
-    expect(result.drifted.join(' | ')).toContain('RetiredJudgeTask.wenyan.md');
+    expect(result.drifted.join(' | ')).toContain('RetiredJudgeTask.yuwen.md');
   });
 
   it('an empty snapshot dir is a silent no-op (exit-2 guard predicate — OCR review)', () => {

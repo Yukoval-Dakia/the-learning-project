@@ -18,7 +18,7 @@ async function seedXuciKnowledge() {
   await testDb().insert(knowledge).values({
     id: 'k_xuci',
     name: '虚词',
-    domain: 'wenyan',
+    domain: 'yuwen',
     parent_id: null,
     merged_from: [],
     proposed_by_ai: false,
@@ -164,7 +164,7 @@ describe('runAttributionFollowup', () => {
     await db.insert(knowledge).values({
       id: 'k_xuci',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,
@@ -296,7 +296,7 @@ describe('runAttributionFollowup', () => {
     await db.insert(knowledge).values({
       id: 'k_xuci',
       name: '虚词',
-      domain: 'wenyan',
+      domain: 'yuwen',
       parent_id: null,
       merged_from: [],
       proposed_by_ai: false,

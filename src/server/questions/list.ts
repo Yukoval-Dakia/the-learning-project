@@ -79,7 +79,7 @@ export interface ListQuestionsParams {
   source?: string;
   // YUK-288 题型 filter: the UI sends a CANONICAL QuestionKind (choice / reading /
   // computation …, from KIND_OPTIONS). Persisted `question.kind` is NOT always
-  // canonical — seed/fixture write paths (subjects/{math,physics,wenyan}/fixtures)
+  // canonical — seed/fixture write paths (subjects/{math,physics,yuwen}/fixtures)
   // store profile vocabulary (single_choice / reading_comprehension / calculation),
   // violating the business.ts canonical-is-truth invariant. So an exact
   // eq(kind, 'choice') matched ZERO seeded single_choice rows (the empty-list bug).

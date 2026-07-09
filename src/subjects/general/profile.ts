@@ -1,10 +1,11 @@
 import type { SubjectProfile } from '../profile';
 
-// YUK (wenyan deprotagonist): the framework's NEUTRAL DEFAULT subject profile.
+// The framework's NEUTRAL DEFAULT subject profile (deprotagonist floor).
 //
-// The product is a general-purpose learning framework; wenyan / math / physics
+// The product is a general-purpose learning framework; yuwen / math / physics
 // are filled-in *sample* subjects, not the product's identity. Before this
-// profile existed, `DEFAULT_SUBJECT_ID` pointed at wenyan, so any null / unknown
+// profile existed, `DEFAULT_SUBJECT_ID` pointed at the classical-Chinese subject
+// (canonical id `yuwen`, pre-rename id `wenyan`; YUK-249), so any null / unknown
 // domain inherited classical-Chinese voice + serif-CJK rendering. `general` is
 // the subject-neutral floor every untagged / unknown-domain node falls back to:
 // plain `system` font, no notation, generic 中文讲解 voice.
@@ -15,7 +16,7 @@ import type { SubjectProfile } from '../profile';
 // KNOWN_SUBJECT_IDS over real node domains).
 //
 // All registry-backed fields reuse the minimal legal set already proven by
-// wenyan (exact / keyword / semantic judges + fsrs scheduler), so it passes
+// yuwen (exact / keyword / semantic judges + fsrs scheduler), so it passes
 // `validateProfile` + `pnpm audit:profile` without touching the capability
 // registry.
 export const generalProfile: SubjectProfile = {

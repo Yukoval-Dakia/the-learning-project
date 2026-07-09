@@ -206,11 +206,11 @@ describe('splitReasonIds', () => {
     ]);
   });
 
-  it('命中命名空间 ID（synthetic:wenyan:...）', () => {
-    const segs = splitReasonIds('来源 synthetic:wenyan:0001 已变更');
-    expect(segs.find((s) => s.raw)?.text).toBe('synthetic:wenyan:0001');
+  it('命中命名空间 ID（synthetic:yuwen:...）', () => {
+    const segs = splitReasonIds('来源 synthetic:yuwen:0001 已变更');
+    expect(segs.find((s) => s.raw)?.text).toBe('synthetic:yuwen:0001');
     // 拼回原文逐字不变
-    expect(segs.map((s) => s.text).join('')).toBe('来源 synthetic:wenyan:0001 已变更');
+    expect(segs.map((s) => s.text).join('')).toBe('来源 synthetic:yuwen:0001 已变更');
   });
 
   it('命中裸长串（≥20 位小写字母数字）', () => {

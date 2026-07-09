@@ -81,7 +81,7 @@ describe('resolveCopilotSkills — 不误捞 (缝隙防御)', () => {
       // quiz-gen-translation is the per-题型 namespace (quiz-gen-skills.ts) — its
       // resolver builds `quiz-gen-<key>` names exactly, so the bare 'quiz-gen'
       // shared pack can never collide; assert the reverse direction here.
-      wenyan: ['note-wenyan', 'quiz-gen-translation'],
+      yuwen: ['note-yuwen', 'quiz-gen-translation'],
     });
     const result = await resolveCopilotSkills(root);
     expect(result).toEqual([COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME]);

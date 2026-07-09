@@ -32,7 +32,7 @@ function solverOutput(finalAnswer: string, equivalents: string[] = []): string {
   });
 }
 
-async function seedKnowledge(id: string, domain = 'wenyan', opts: { archived?: boolean } = {}) {
+async function seedKnowledge(id: string, domain = 'yuwen', opts: { archived?: boolean } = {}) {
   const db = testDb();
   const now = new Date();
   await db.insert(knowledge).values({
@@ -408,7 +408,7 @@ describe('runSourceVerify', () => {
   it('does not promote when the knowledge point was archived after sourcing (F3)', async () => {
     const db = testDb();
     // knowledge point archived between sourcing (draft) and verify (promote).
-    await seedKnowledge('k1', 'wenyan', { archived: true });
+    await seedKnowledge('k1', 'yuwen', { archived: true });
     const qid = await seedQuestion({ knowledgeIds: ['k1'] });
     const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
 

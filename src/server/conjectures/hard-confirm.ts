@@ -72,7 +72,7 @@ export const RECENCY_ACTIVE_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
  * Archive-honesty map: which cause_categories denote INTUITIVE / ONTOLOGICAL misconceptions
  * that are SUPPRESSED-not-deleted (Shtulman) → archive as `dormant` (a "cure" is machine-
  * inexpressible), vs PROCEDURAL ones that can be genuinely `resolved`. Read-time projection,
- * ZERO columns. Grounded against the live subject profiles (general, wenyan, math, physics):
+ * ZERO columns. Grounded against the live subject profiles (general, yuwen, math, physics):
  * only `concept` (概念理解, present in all four) is unambiguously conceptual/ontological. Every
  * other cause — knowledge_gap, reading, memory, method, calculation, computation, expression,
  * unit / unit_error, dimension, formula, grammar, word_meaning, carelessness, time_pressure,

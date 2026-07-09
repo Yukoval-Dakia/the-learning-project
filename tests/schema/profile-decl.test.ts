@@ -34,7 +34,7 @@ describe('CauseCategoryDeclaration', () => {
 });
 
 describe('RenderConfig', () => {
-  it('accepts wenyan-style config', () => {
+  it('accepts yuwen-style config', () => {
     const result = RenderConfig.safeParse({
       font_family: 'serif-cjk',
       notation: null,

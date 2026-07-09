@@ -1,6 +1,6 @@
 ---
 name: quiz-gen-reading-comprehension
-description: 文言文「阅读理解」题组的出题与质检规范包 —— 题组结构（原文 + 配套小题）、各小题题型搭配、设问层次、答案依据要求。当为文言文（wenyan）学科生成或质检 reading_comprehension 题型时加载，让生成的阅读题像真高考/联考文言文阅读题组。
+description: 文言文「阅读理解」题组的出题与质检规范包 —— 题组结构（原文 + 配套小题）、各小题题型搭配、设问层次、答案依据要求。当为文言文（yuwen）学科生成或质检 reading_comprehension 题型时加载，让生成的阅读题像真高考/联考文言文阅读题组。
 ---
 
 # 文言文阅读理解题出题规范
@@ -13,7 +13,7 @@ description: 文言文「阅读理解」题组的出题与质检规范包 ——
 - **排版**：「素材原文 + 由浅入深的设问层次」——典型设问层次见下文小题搭配（实词 → 虚词/句式 → 句意 → 内容概括 → 转换）。
 - **答案语义**：**混合**——客观小题受限（exact，选项 + 依据），开放小题（如其中的转换小题）走 semantic（采分点）。
 
-本规范包就是为这组坐标（nested / 素材+设问层次 / 混合 exact+semantic）写的样板。它在文言文（wenyan）学科把上述结构具体化为「**一份真实文言原文 + 围绕它的一组小题**」的题组：不是单题，考的是在真实语境中综合运用断句、实词、句意理解、内容概括、信息筛选的能力。本规范定义题组结构、设问层次和答案依据标准，供出题（QuizGenTask，走 material_grounded）和质检（QuizVerifyTask 的 kind_conformance + material_grounding 检查）共用。
+本规范包就是为这组坐标（nested / 素材+设问层次 / 混合 exact+semantic）写的样板。它在文言文（yuwen）学科把上述结构具体化为「**一份真实文言原文 + 围绕它的一组小题**」的题组：不是单题，考的是在真实语境中综合运用断句、实词、句意理解、内容概括、信息筛选的能力。本规范定义题组结构、设问层次和答案依据标准，供出题（QuizGenTask，走 material_grounded）和质检（QuizVerifyTask 的 kind_conformance + material_grounding 检查）共用。
 
 ## 题组结构要求
 

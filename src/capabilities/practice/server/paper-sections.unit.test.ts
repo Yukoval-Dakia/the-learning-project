@@ -63,14 +63,14 @@ describe('readPaperSections — U4 session_meta normalization', () => {
   // adaptation_policy as unknown. readPaperSections must normalize before returning
   // so callers always receive ToolStateSectionT (knowledge_focus, string policies).
   const u4Section = {
-    subject_id: 'wenyan',
-    knowledge_ids: ['k_wenyan', 'k_poetry'],
+    subject_id: 'yuwen',
+    knowledge_ids: ['k_yuwen', 'k_poetry'],
     feedback_policy: 'immediate',
     adaptation_policy: 'none',
     assignments: [
       {
         question_id: 'q1',
-        primary_knowledge_id: 'k_wenyan',
+        primary_knowledge_id: 'k_yuwen',
         secondary_knowledge_ids: ['k_poetry'],
         selection_reason: 'high-due',
         review_profile_snapshot: { fsrs_stability: 1.5 },
@@ -85,7 +85,7 @@ describe('readPaperSections — U4 session_meta normalization', () => {
     } as never);
     expect(out).toHaveLength(1);
     // Core normalization: knowledge_ids must appear as knowledge_focus.
-    expect(out[0].knowledge_focus).toEqual(['k_wenyan', 'k_poetry']);
+    expect(out[0].knowledge_focus).toEqual(['k_yuwen', 'k_poetry']);
     // Policies must be strings (not undefined).
     expect(out[0].feedback_policy).toBe('immediate');
     expect(out[0].adaptation_policy).toBe('none');
@@ -98,7 +98,7 @@ describe('readPaperSections — U4 session_meta normalization', () => {
     } as never);
     const a = out[0].assignments[0];
     expect(a.question_id).toBe('q1');
-    expect(a.primary_knowledge_id).toBe('k_wenyan');
+    expect(a.primary_knowledge_id).toBe('k_yuwen');
     expect(a.secondary_knowledge_ids).toEqual(['k_poetry']);
     expect(a.selection_reason).toBe('high-due');
     expect((a.review_profile_snapshot as Record<string, unknown>).fsrs_stability).toBe(1.5);

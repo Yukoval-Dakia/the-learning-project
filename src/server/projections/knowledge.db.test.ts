@@ -406,7 +406,7 @@ describe('projectKnowledgeNode', () => {
         row: {
           id: nodeId,
           name: 'seeded',
-          domain: 'wenyan',
+          domain: 'yuwen',
           parent_id: 'seed:root',
           merged_from: ['old1'],
           archived_at: null,
@@ -424,7 +424,7 @@ describe('projectKnowledgeNode', () => {
 
     const row = await readNode(nodeId);
     expect(row?.name).toBe('seeded');
-    expect(row?.domain).toBe('wenyan');
+    expect(row?.domain).toBe('yuwen');
     expect(row?.parent_id).toBe('seed:root');
     expect(row?.merged_from).toEqual(['old1']);
     expect(row?.proposed_by_ai).toBe(false);

@@ -40,11 +40,11 @@ describe('family-key — read/write parity over an archived domain ancestor', ()
   });
 
   it('single-question (write/θ̂) and batch (selection) resolve to the SAME family_key when the effective domain comes from an archived ancestor', async () => {
-    // 树：root(wenyan, archived) ← child(domain=null, active)。child 的有效 domain 经 archived
-    // 祖先 root 解析为 wenyan。
+    // 树：root(yuwen, archived) ← child(domain=null, active)。child 的有效 domain 经 archived
+    // 祖先 root 解析为 yuwen。
     const rootId = newId();
     const childId = newId();
-    await insertNode({ id: rootId, domain: 'wenyan', parentId: null, archived: true });
+    await insertNode({ id: rootId, domain: 'yuwen', parentId: null, archived: true });
     await insertNode({ id: childId, domain: null, parentId: rootId, archived: false });
 
     const input = { primaryKnowledgeId: childId, kind: 'short_answer', source: 'manual' };
@@ -56,7 +56,7 @@ describe('family-key — read/write parity over an archived domain ancestor', ()
     const batch = await batchResolveFamilyKeys(db, [{ questionId: 'q1', ...input }]);
     const batchKey = batch.get('q1');
 
-    expect(singleKey).toBe(`wenyan:${childId}:short_answer:manual`);
+    expect(singleKey).toBe(`yuwen:${childId}:short_answer:manual`);
     expect(batchKey).toBe(singleKey);
   });
 

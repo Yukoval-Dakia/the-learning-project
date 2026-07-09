@@ -15,7 +15,7 @@ import type { EnqueueFn } from '@/server/question-supply/dispatcher';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runQuestionSupplyNightly } from './question_supply_nightly';
 
-async function seedKnowledge(id: string, domain = 'wenyan') {
+async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
   await db
     .insert(knowledge)

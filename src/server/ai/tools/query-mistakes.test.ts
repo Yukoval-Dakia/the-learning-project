@@ -20,7 +20,7 @@ async function seedKnowledge(id: string, name: string) {
   await db.insert(knowledge).values({
     id,
     name,
-    domain: 'wenyan',
+    domain: 'yuwen',
     created_at: now,
     updated_at: now,
   });

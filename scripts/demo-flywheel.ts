@@ -68,18 +68,18 @@ async function main() {
 
   const gen = buildBriefGenerator({ db });
 
-  // 1) Brief writer (real LLM) — global + subject:wenyan
+  // 1) Brief writer (real LLM) — global + subject:yuwen
   await step('1. brief regen → global', async () => {
     const r = await regenerateMemoryBrief({ db, scopeKey: 'global', generate: gen, searchFacts });
     show('wrote', r.wrote);
     return r;
   });
-  await step('1b. brief regen → subject:wenyan (knowledge-resolved events)', async () => {
-    const events = await loadSubjectBriefEvents(db, 'wenyan', { lookbackDays: 30, now: NOW });
+  await step('1b. brief regen → subject:yuwen (knowledge-resolved events)', async () => {
+    const events = await loadSubjectBriefEvents(db, 'yuwen', { lookbackDays: 30, now: NOW });
     show('subject events loaded', events.length);
     return regenerateMemoryBrief({
       db,
-      scopeKey: 'subject:wenyan',
+      scopeKey: 'subject:yuwen',
       loadEvents: async () => events,
       searchFacts,
       generate: gen,

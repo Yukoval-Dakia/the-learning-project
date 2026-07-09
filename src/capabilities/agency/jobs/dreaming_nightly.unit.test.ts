@@ -155,14 +155,14 @@ describe('runDreamingNightly', () => {
       {
         id: 'goal_1',
         title: '攻克虚词「之」',
-        subject_id: 'wenyan',
+        subject_id: 'yuwen',
         scope_knowledge_ids: ['k_zhi_1', 'k_zhi_2'],
         sequence_hint: 0,
       },
       {
         id: 'goal_2',
         title: '熟练判断句',
-        subject_id: 'wenyan',
+        subject_id: 'yuwen',
         scope_knowledge_ids: ['k_judge_1'],
         sequence_hint: 1,
       },
@@ -197,14 +197,14 @@ describe('runDreamingNightly', () => {
           {
             id: 'goal_1',
             title: '攻克虚词「之」',
-            subject_id: 'wenyan',
+            subject_id: 'yuwen',
             scope_knowledge_ids: ['k_zhi_1', 'k_zhi_2'],
             sequence_hint: 0,
           },
           {
             id: 'goal_2',
             title: '熟练判断句',
-            subject_id: 'wenyan',
+            subject_id: 'yuwen',
             scope_knowledge_ids: ['k_judge_1'],
             sequence_hint: 1,
           },
