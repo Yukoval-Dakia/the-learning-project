@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>#13 conjecture-wire — 选择项影响可视化</title>
+<style>
+  :root {
+    --dark-fill: #f3f4f6;  --dark-stroke: #9ca3af;
+    --wire-fill: #d1fae5;  --wire-stroke: #10b981;
+    --new-fill:  #dbeafe;  --new-stroke:  #3b82f6;
+    --flag-fill: #fef3c7;  --flag-stroke: #f59e0b;
+    --risk-fill: #fee2e2;  --risk-stroke: #ef4444;
+    --ink: #111827; --muted: #6b7280; --bg: #fafafa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.55;
+    margin: 0; padding: 24px 32px 80px; max-width: 1280px; margin: 0 auto;
+  }
+  header { padding: 24px 0 16px; border-bottom: 1px solid #e5e7eb; margin-bottom: 24px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 {
+    font-size: 16px; margin: 36px 0 12px; padding-bottom: 6px;
+    border-bottom: 2px solid var(--new-stroke); color: var(--ink);
+  }
+  h3 { font-size: 13px; margin: 0 0 6px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin: 0; }
+  .legend {
+    display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px;
+    background: white; padding: 10px 14px; border-radius: 6px;
+    border: 1px solid #e5e7eb; margin-bottom: 20px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 22px; height: 14px; border-radius: 3px; border-width: 1.5px; border-style: solid; display: inline-block; }
+  .sw-dark  { background: var(--dark-fill);  border-color: var(--dark-stroke);  border-style: dashed; }
+  .sw-wire  { background: var(--wire-fill);  border-color: var(--wire-stroke); }
+  .sw-new   { background: var(--new-fill);   border-color: var(--new-stroke);  border-style: dashed; }
+  .sw-flag  { background: var(--flag-fill);  border-color: var(--flag-stroke); }
+  .sw-risk  { background: var(--risk-fill);  border-color: var(--risk-stroke); }
+  .qsection { background: white; border-radius: 8px; padding: 18px 22px; margin-bottom: 18px;
+              box-shadow: 0 1px 3px rgba(0,0,0,.04); border: 1px solid #f3f4f6; }
+  .options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 1100px) { .options { grid-template-columns: 1fr; } }
+  .option { border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px 14px; background: #fdfdfd; }
+  .option.recommended { border-color: var(--new-stroke); border-width: 2px; background: #f0f7ff; }
+  .option.risk-option { border-color: var(--risk-stroke); border-width: 2px; background: #fff5f5; }
+  .badge {
+    display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    margin-left: 6px; vertical-align: middle; font-weight: 600; letter-spacing: .3px;
+    text-transform: uppercase; color: white;
+  }
+  .badge.rec  { background: var(--new-stroke); }
+  .badge.risk { background: var(--risk-stroke); }
+  .badge.warn { background: var(--flag-stroke); color: #78350f; }
+  .opt-title { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+  .opt-svg-wrap {
+    background: var(--bg); border-radius: 4px; padding: 6px; margin: 6px 0 10px;
+    border: 1px solid #f3f4f6;
+  }
+  svg.topo { width: 100%; height: auto; display: block; }
+  .impacts { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+  .impacts li { padding: 2px 0; }
+  .impacts li.ok::before   { content: "✓ "; color: var(--wire-stroke); font-weight: 700; }
+  .impacts li.bad::before  { content: "✗ "; color: var(--risk-stroke); font-weight: 700; }
+  .impacts li.warn::before { content: "⚠ "; color: var(--flag-stroke); font-weight: 700; }
+  .impacts li.note::before { content: "• "; color: var(--muted); font-weight: 700; }
+  .impacts li strong { color: var(--ink); }
+  .file { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+          background: #f3f4f6; padding: 1px 5px; border-radius: 2px; color: #374151; }
+  .baseline-wrap { background: white; border-radius: 6px; padding: 14px;
+                   border: 1px solid #e5e7eb; margin-top: 8px; }
+  footer { margin-top: 36px; padding: 16px 0; border-top: 1px solid #e5e7eb;
+           color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>#13 conjecture-wire — 选择项影响可视化</h1>
+  <p class="subtitle">4 决策点 × 12 选项 · 每张卡片画拓扑 diff（与 baseline 对比）+ 红线检查 + 文件 / 代价 / 风险。<strong>蓝边框 = 推荐</strong>，<strong>红边框 = 违红线</strong>，灰虚线 = 维持 dark。</p>
+</header>
+
+<div class="legend">
+  <span><span class="swatch sw-dark"></span>dark / 维持</span>
+  <span><span class="swatch sw-wire"></span>wire / 接通（live）</span>
+  <span><span class="swatch sw-new"></span>新增 / 新建</span>
+  <span><span class="swatch sw-flag"></span>flag 翻转 / 副作用</span>
+  <span><span class="swatch sw-risk"></span>违 register / 项目红线</span>
+</div>
+
+<section id="baseline" class="qsection">
+  <h2>① 当前 dark 拓扑（baseline）</h2>
+  <p class="subtitle">producer（serveProbeOnce / answerProbe）建好+DB-tested，<strong>零 live caller</strong>；consumer（reconcileConjecturePredictions）nightly cron 真跑，但 unscored probe_result 集合恒空 → <code style="font-size:11px">{reconciled:0}</code> 永远。前置 fix（misconception-promote unlocked onConflictDoUpdate）<strong>F1 已修</strong>（advisory lock + monotone source），PLAN 末段「前置 fix」<strong>stale</strong>。</p>
+  <div class="baseline-wrap">
+    <div id="baseline-graph"></div>
+  </div>
+  <p class="subtitle" style="margin-top:8px">所有 wire 工作的本质 = 把虚线接通为实线（或新增节点）。绿色实线 = 已经 live，灰色虚线 = dark 未接，蓝色虚线 = 本波新增。</p>
+</section>
+
+<section id="q1" class="qsection">
+  <h2>② Q1 — Probe serve 时机（producer wire 入口）</h2>
+  <p class="subtitle">conjecture-accept.ts 当前不调 serveProbeOnce（producer dark 根因）。cap ≤3 + advisory lock + <code class="file">draft_status='draft'</code> pool-invisibility 已结构防泛滥。</p>
+  <div class="options">
+    <div class="option recommended" data-q="1" data-opt="A"></div>
+    <div class="option"            data-q="1" data-opt="B"></div>
+    <div class="option"            data-q="1" data-opt="C"></div>
+  </div>
+</section>
+
+<section id="q2" class="qsection">
+  <h2>③ Q2 — Probe answer 入口（answerProbe wire，<span style="color:var(--new-stroke)">judge 自动机评价</span>）</h2>
+  <p class="subtitle">
+    <strong>owner 手评不合理</strong>（conjecture 的 <code>baseline_p</code>/<code>predicted_p</code> 是机器算的，对照也得机器判分才公平）。
+    评价走 <strong>judge capability 的 <code>run()</code> pure function</strong>（exact / keyword / multimodal_direct / steps / semantic，全 pure 不写 FSRS / θ̂ → <strong>不破 ND-5</strong>）。
+    <strong>不走 submit.ts 的 judgeSubmit</strong>（那是 attempt 域，会触发 θ̂/FSRS update，破 ND-5）。
+    <br><strong>硬前置</strong>：扩 <code>induce</code> prompt 产 <code>probe_reference_md</code>（judge 金标来源；当前 <code>ConjectureDraftT</code> 只产 claim_md/probe_md/predicted_p/discriminating，缺 reference）；single-writer 纪律 = reference 在 induce 时一次性产生，不 runtime LLM 重生。3 选项只区分<strong>触发入口</strong>（评价管线统一）。
+  </p>
+  <div class="options">
+    <div class="option recommended" data-q="2" data-opt="A"></div>
+    <div class="option"            data-q="2" data-opt="B"></div>
+    <div class="option"            data-q="2" data-opt="C"></div>
+  </div>
+</section>
+
+<section id="q3" class="qsection">
+  <h2>④ Q3 — Calibration reader（prediction_score 消费）</h2>
+  <p class="subtitle">prediction_score events 当前写入但无人读（hard-confirm.ts 的 gatherDissociationEvidence 是 dark sister）。register 红线：<em>「build/spec the calibration reader before the producer」</em>。</p>
+  <div class="options" style="grid-template-columns: repeat(2, 1fr);">
+    <div class="option recommended" data-q="3" data-opt="A"></div>
+    <div class="option risk-option" data-q="3" data-opt="B"></div>
+  </div>
+</section>
+
+<section id="q4" class="qsection">
+  <h2>⑤ Q4 — MISCONCEPTION_PROMOTE_ENABLED flag</h2>
+  <p class="subtitle">acceptConjectureProposal 当前 flag OFF 仅写 rate event；翻 ON 则 accept 真正 mint misconception + caused_by edge（F1 已加固 unlocked onConflictDoUpdate，hard-confirm 仍 dark）。</p>
+  <div class="options" style="grid-template-columns: repeat(2, 1fr);">
+    <div class="option recommended" data-q="4" data-opt="A"></div>
+    <div class="option risk-option" data-q="4" data-opt="B"></div>
+  </div>
+</section>
+
+<section id="combo" class="qsection">
+  <h2>⑥ 全推荐组合（4A + 3A + 2A + 1A）</h2>
+  <p class="subtitle">所有推荐选项叠加后的最终拓扑：accept 同 tx 派发 probe → conjecture card UI 作答 → reconcile 真处理 → admin reader 显示 score。flag 维持 OFF（defer-flip-not-build），misconception mint 路径仍 dark（已 F1 加固 + DB-tested）。</p>
+  <div class="baseline-wrap">
+    <div id="combo-graph"></div>
+  </div>
+  <p class="subtitle" style="margin-top:8px"><strong>这条组合路径守住全部红线</strong>：ND-5、pool-invisibility、defer-flip-not-build、n=1 cap、register「reader before producer」。代价 = 一个新 route + 一个 conjecture card UI 升级 + 一个 admin observe 面 + 5 行 conjecture-accept.ts 接线。</p>
+</section>
+
+<footer>
+  生成依据：master register §3 #13 conjecture-engine-dark-line（line 318-326）+ code-ground 6 文件（probe-lifecycle / conjecture-accept / reconcile / hard-confirm / misconception-promote / research_meeting_nightly）+ due-list.ts:236 pool-invisibility 验证 + PLAN 末段「下一刀 = #13 conjecture wire」。
+</footer>
+
+<script>
+// ── 节点坐标（SVG viewBox 500x360）───────────────────────────────────────────
+const NODES = {
+  nightly:     { x: 200, y: 14,  w: 160, h: 32, label: 'nightly cron' },
+  proposal:    { x: 200, y: 64,  w: 160, h: 32, label: 'conjecture proposal' },
+  accept:      { x: 200, y: 114, w: 140, h: 32, label: 'accept (UI)' },
+  rate:        { x: 30,  y: 174, w: 120, h: 32, label: 'rate event' },
+  probe:       { x: 350, y: 174, w: 130, h: 32, label: 'probe question' },
+  proberesult: { x: 350, y: 230, w: 130, h: 32, label: 'probe_result event' },
+  reconcile:   { x: 200, y: 230, w: 130, h: 32, label: 'reconcile (cron)' },
+  score:       { x: 30,  y: 230, w: 150, h: 32, label: 'prediction_score' },
+  admin:       { x: 30,  y: 300, w: 130, h: 32, label: 'admin observe' },
+  misc:        { x: 350, y: 300, w: 130, h: 32, label: 'misconception node' },
+};
+
+// 边定义：[from, to, kind] —— kind 在每张图里被 override
+const EDGES = [
+  ['nightly', 'proposal'],
+  ['proposal', 'accept'],
+  ['accept', 'rate'],
+  ['accept', 'probe'],
+  ['accept', 'misc'],
+  ['probe', 'proberesult'],
+  ['proberesult', 'reconcile'],
+  ['reconcile', 'score'],
+  ['score', 'admin'],
+];
+
+// ── baseline 状态：节点 + 边的 kind ─────────────────────────────────────────
+const BASELINE = {
+  nodes: {
+    nightly: 'wire', proposal: 'wire', accept: 'wire', rate: 'wire',
+    probe: 'dark', proberesult: 'dark', reconcile: 'wire',
+    score: 'wire', admin: 'dark', misc: 'dark',
+  },
+  edges: {
+    'nightly→proposal': 'wire',
+    'proposal→accept': 'wire',
+    'accept→rate': 'wire',
+    'accept→probe': 'dark',
+    'accept→misc': 'dark',
+    'probe→proberesult': 'dark',
+    'proberesult→reconcile': 'wire',  // live 但空跑（no input）
+    'reconcile→score': 'wire',         // live 但空跑
+    'score→admin': 'dark',
+  },
+  edgeLabels: {
+    'proberesult→reconcile': '空跑',
+    'reconcile→score': '空跑',
+  },
+};
+
+// ── 每个 option 的 diff（基于 baseline 的 patch）────────────────────────────
+const OPTIONS = {
+  '1-A': {
+    title: 'A. accept 同步派发',
+    badge: 'rec', badgeLabel: '推荐',
+    diff: {
+      nodes: { probe: 'new' },
+      edges: { 'accept→probe': 'new' },
+      edgeLabels: { 'accept→probe': '+1 tx' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：<span class="file">conjecture-accept.ts</span> +5 行（在 <span class="file">db.transaction</span> 内调 <code>serveProbeOnce</code>，与 rate event 原子）' },
+      { type: 'ok',    html: '<strong>ND-5</strong>：probe question 不写 FSRS / attempt，仅写 question 表（draft）' },
+      { type: 'ok',    html: '<strong>pool-invisibility</strong>：<span class="file">draft_status="draft"</span> 经 due-list.ts:236 <code>notDraftQuiz</code> 永远排除 review pool' },
+      { type: 'ok',    html: '<strong>n=1 cap</strong>：serveProbeOnce 内 <code>pg_advisory_xact_lock</code> + <code>MAX_CONCURRENT_ACTIVE_PROBES=3</code> 结构防泛滥' },
+      { type: 'warn',  html: '<strong>代价</strong>：accept tx 多一个 INSERT（轻）；serveProbeOnce 返回 <code>cap_reached</code> 时 accept 应容忍（不 fail）' },
+      { type: 'warn',  html: '<strong>风险</strong>：cap 触顶处理逻辑需测；语义 = 「accept 立即派发 probe」' },
+    ],
+  },
+  '1-B': {
+    title: 'B. nightly 批量派发',
+    badge: 'warn', badgeLabel: '解耦',
+    diff: {
+      nodes: { probe: 'new' },
+      edges: { 'nightly→probe': 'new' },
+      edgeLabels: { 'nightly→probe': '扫 accepted-no-probe' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：<span class="file">research_meeting_nightly.ts</span> +新 step（扫所有 accepted-but-no-probe conjectures 批量调 serveProbeOnce）' },
+      { type: 'ok',    html: '<strong>红线</strong>：同 1-A（ND-5 / pool-invisibility / cap ≤3 全守）' },
+      { type: 'warn',  html: '<strong>代价</strong>：cron 复杂度↑；「accept 后等一夜」语义怪' },
+      { type: 'bad',   html: '<strong>风险</strong>：扫描查询需正确（漏 / 双派 / 时序竞态）；nightly 失败影响多 conjecture' },
+    ],
+  },
+  '1-C': {
+    title: 'C. admin 手动 trigger',
+    badge: 'warn', badgeLabel: '保守',
+    diff: {
+      nodes: { probe: 'new' },
+      edges: { 'accept→probe': 'new' },
+      edgeLabels: { 'accept→probe': 'admin route（非自动）' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：新 admin route <code>POST /api/admin/conjecture/:id/serve-probe</code> + UI button' },
+      { type: 'ok',    html: '<strong>红线</strong>：同 1-A' },
+      { type: 'bad',   html: '<strong>风险</strong>：缺自动化；owner 漏点 → probe 永不派发，与「教研团自动闭环」目标违' },
+      { type: 'warn',  html: '<strong>代价</strong>：admin route + UI 工作；非长期形态' },
+    ],
+  },
+  '2-A': {
+    title: 'A. conjecture card UI + judge 自动机',
+    badge: 'rec', badgeLabel: '推荐',
+    diff: {
+      nodes: { probe: 'wire', proberesult: 'new' },
+      edges: { 'probe→proberesult': 'new' },
+      edgeLabels: { 'probe→proberesult': 'UI form → judge run() → answerProbe' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：① 新 route <code>POST /api/conjecture/probe/:id/answer</code>（token gate）② conjecture card UI 加 probe 作答区 ③ <span class="file">induce.ts</span> + prompt 扩 <code>probe_reference_md</code> ④ <span class="file">ConjectureDraft</span> schema 加字段 ⑤ <span class="file">research_meeting_nightly.ts</span> buildConjectureProposalInput 写 reference ⑥ <span class="file">conjecture-accept.ts</span> 调 serveProbeOnce 时传 referenceMd' },
+      { type: 'ok',    html: '<strong>ND-5</strong>：直接调 judge capability <code>run()</code>（pure），<strong>不走 submit.ts judgeSubmit</strong>（avoid θ̂/FSRS update）；answerProbe 也不写 FSRS' },
+      { type: 'ok',    html: '<strong>pool-invisibility</strong>：probe 不入 due-list / stream-store' },
+      { type: 'ok',    html: '<strong>idempotency</strong>：answerProbe 内 <code>pg_advisory_xact_lock(hashtextextended(probeId))</code> + existing event check' },
+      { type: 'ok',    html: '<strong>判分公平</strong>：baseline_p/predicted_p 机器算，judge 机器判，对照对等；按 question.kind 路由 capability（short_answer→exact/keyword，步骤题→steps，图→multimodal_direct）' },
+      { type: 'warn',  html: '<strong>代价</strong>：UI 工作量中等；induce prompt 扩展（Opus 同时产 claim+probe+reference，token cost 略↑）；新 route + 测试' },
+      { type: 'warn',  html: '<strong>风险</strong>：judge 返回 <code>unsupported</code>（reference 缺失 / kind 不匹配）的 fail-closed 处理；multimodal_direct 需 OAuth token（NAS .env）；judge cost 计入 cost_micro_usd（per probe answer）' },
+    ],
+  },
+  '2-B': {
+    title: 'B. admin observe 面 + judge 自动机',
+    badge: 'warn', badgeLabel: '验证优先',
+    diff: {
+      nodes: { probe: 'wire', proberesult: 'new' },
+      edges: { 'probe→proberesult': 'new' },
+      edgeLabels: { 'probe→proberesult': 'admin form → judge run() → answerProbe' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：admin route + 简单 form（owner 触发，judge 自动机评价，与 2-A 同管线）；induce 扩展同 2-A' },
+      { type: 'ok',    html: '<strong>红线</strong>：同 2-A（judge pure / ND-5 / pool-invisibility / idempotency 全守）' },
+      { type: 'warn',  html: '<strong>代价</strong>：UI 轻；适合先验证 judge 自动机管线' },
+      { type: 'bad',   html: '<strong>风险</strong>：学习者主流程永远看不到 probe（与「教研团自动闭环」目标违）；admin 用久了 = 临时方案变永久' },
+    ],
+  },
+  '2-C': {
+    title: 'C. Copilot dock + judge 自动机',
+    badge: 'warn', badgeLabel: 'out-of-scope',
+    diff: {
+      nodes: { probe: 'wire', proberesult: 'new' },
+      edges: { 'probe→proberesult': 'new' },
+      edgeLabels: { 'probe→proberesult': 'Copilot trigger → judge run() → answerProbe' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：Copilot 状态机 + dock UI 注入 probe（owner/学习者通过 Copilot 答）；induce 扩展同 2-A' },
+      { type: 'ok',    html: '<strong>红线</strong>：同 2-A' },
+      { type: 'bad',   html: '<strong>风险</strong>：Copilot 触发逻辑复杂（何时问？错过 probe 时机？）；超本单元 scope；与「教研团自动闭环」过度耦合' },
+      { type: 'warn',  html: '<strong>代价</strong>：Copilot 状态机改造大；induce 扩展同 2-A' },
+    ],
+  },
+  '3-A': {
+    title: 'A. 同波建 admin reader',
+    badge: 'rec', badgeLabel: '推荐',
+    diff: {
+      nodes: { score: 'wire', admin: 'new' },
+      edges: { 'score→admin': 'new' },
+      edgeLabels: { 'score→admin': 'SELECT prediction_score' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：新 admin route <code>GET /api/admin/conjecture-scores</code> + 简单 admin observe 面（mirror 既有 admin observability four-page 模式）' },
+      { type: 'ok',    html: '<strong>register 红线</strong>：「build/spec the calibration reader before the producer」<strong>满足</strong>' },
+      { type: 'ok',    html: '<strong>read-only</strong>：admin route 不写状态，仅 SELECT + render' },
+      { type: 'warn',  html: '<strong>代价</strong>：admin 面轻（参考既有 observability/admin 模式）' },
+      { type: 'warn',  html: '<strong>风险</strong>：score 数值需诚实呈现（brier / log_loss 不渲染为「准确度」；skill_score_point 单点而非窗口均）' },
+    ],
+  },
+  '3-B': {
+    title: 'B. defer 到 hard-confirm wire',
+    badge: 'risk', badgeLabel: '违红线',
+    diff: {
+      nodes: { admin: 'dark' },  // 维持
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：本波不动（admin reader defer）' },
+      { type: 'bad',   html: '<strong>register 红线</strong>：「build reader before producer」<strong>被违</strong>——producer 接通后 prediction_score 攒数据但无人读' },
+      { type: 'warn',  html: '<strong>代价</strong>：短期省工' },
+      { type: 'bad',   html: '<strong>风险</strong>：数据失检——攒了 score 没人看，owner 拍 hard-confirm flip 时缺数据基础' },
+    ],
+  },
+  '4-A': {
+    title: 'A. 不翻，wire only',
+    badge: 'rec', badgeLabel: '推荐',
+    diff: {
+      nodes: { misc: 'dark' },  // 维持
+      edges: { 'accept→misc': 'dark' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：维持 <span class="file">MISCONCEPTION_PROMOTE_ENABLED=OFF</span>' },
+      { type: 'ok',    html: '<strong>defer-flip-not-build</strong>：<code>feedback_defer_flip_not_build</code> 红线满足' },
+      { type: 'ok',    html: '<strong>dark ship 纪律</strong>：misconception mint 路径仍 dark（已 F1 加固 + DB-tested，潜伏不咬）' },
+      { type: 'warn',  html: '<strong>代价</strong>：本波不验证 mint 路径（但 DB 测试已覆盖）' },
+      { type: 'warn',  html: '<strong>风险</strong>：probe 数据先积累，未来翻 flag 时有数据基础（这是优点不是风险）' },
+    ],
+  },
+  '4-B': {
+    title: 'B. 翻 ON（同时 mint）',
+    badge: 'risk', badgeLabel: '违红线',
+    diff: {
+      nodes: { misc: 'flag' },  // flag 翻转
+      edges: { 'accept→misc': 'flag' },
+      edgeLabels: { 'accept→misc': 'flag ON' },
+    },
+    impacts: [
+      { type: 'note',  html: '<strong>改的文件</strong>：env <code>MISCONCEPTION_PROMOTE_ENABLED=1</code>（NAS .env 运维操作）' },
+      { type: 'bad',   html: '<strong>defer-flip-not-build</strong>：<strong>被违</strong>——本波同时 wire + flip' },
+      { type: 'bad',   html: '<strong>track 不对称</strong>：hard-confirm 仍 dark（<code>MISCONCEPTION_HARD_CONFIRM_ENABLED=OFF</code>），soft track live hard track dark → 边界 case 未探' },
+      { type: 'warn',  html: '<strong>代价</strong>：mint 路径上线；运维决策需 runbook' },
+      { type: 'warn',  html: '<strong>F1 已修</strong> unlocked onConflictDoUpdate（advisory lock + monotone source），所以不会静默降级，但仍是耦合翻转' },
+    ],
+  },
+};
+
+// ── 全推荐组合图 ────────────────────────────────────────────────────────────
+const COMBO = {
+  nodes: {
+    nightly: 'wire', proposal: 'wire', accept: 'wire', rate: 'wire',
+    probe: 'new', proberesult: 'new', reconcile: 'wire',
+    score: 'wire', admin: 'new', misc: 'dark',
+  },
+  edges: {
+    'nightly→proposal': 'wire',
+    'proposal→accept': 'wire',
+    'accept→rate': 'wire',
+    'accept→probe': 'new',
+    'accept→misc': 'dark',
+    'probe→proberesult': 'new',
+    'proberesult→reconcile': 'wire',
+    'reconcile→score': 'wire',
+    'score→admin': 'new',
+  },
+  edgeLabels: {
+    'accept→probe': 'Q1-A',
+    'probe→proberesult': 'Q2-A',
+    'score→admin': 'Q3-A',
+    'accept→misc': 'Q4-A 不翻',
+  },
+};
+
+// ── 渲染函数 ────────────────────────────────────────────────────────────────
+const NS = 'http://www.w3.org/2000/svg';
+
+function applyDiff(base, diff) {
+  const out = {
+    nodes: { ...base.nodes, ...(diff.nodes || {}) },
+    edges: { ...base.edges, ...(diff.edges || {}) },
+    edgeLabels: { ...(base.edgeLabels || {}), ...(diff.edgeLabels || {}) },
+  };
+  return out;
+}
+
+function makeSvg(state, opts = {}) {
+  const W = 500, H = 350;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('class', 'topo');
+  if (opts.width) svg.setAttribute('style', `max-width:${opts.width}px`);
+
+  // defs / markers
+  const defs = document.createElementNS(NS, 'defs');
+  for (const [id, color] of [
+    ['arrow-dark', '#9ca3af'], ['arrow-wire', '#10b981'],
+    ['arrow-new', '#3b82f6'], ['arrow-flag', '#f59e0b'], ['arrow-risk', '#ef4444'],
+  ]) {
+    const m = document.createElementNS(NS, 'marker');
+    m.setAttribute('id', id);
+    m.setAttribute('viewBox', '0 0 10 10');
+    m.setAttribute('refX', '9'); m.setAttribute('refY', '5');
+    m.setAttribute('markerWidth', '6'); m.setAttribute('markerHeight', '6');
+    m.setAttribute('orient', 'auto');
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', 'M0,0 L10,5 L0,10 z');
+    p.setAttribute('fill', color);
+    m.appendChild(p); defs.appendChild(m);
+  }
+  svg.appendChild(defs);
+
+  // 边
+  for (const [from, to] of EDGES) {
+    const key = `${from}→${to}`;
+    const kind = state.edges[key] || 'dark';
+    const f = NODES[from], t = NODES[to];
+    // 连接点：from 底部中心 / 顶部中心 / 左右中心（取最短）
+    const fx = f.x + f.w / 2, fy = f.y + f.h;
+    const tx = t.x + t.w / 2, ty = t.y;
+    // 简单：除非横向跨度大，否则直线
+    let path;
+    const dx = (t.x + t.w / 2) - (f.x + f.w / 2);
+    const dy = t.y - (f.y + f.h);
+    if (Math.abs(dx) > Math.abs(dy) * 0.7) {
+      // 横向：从 from 右/左侧 → to 左/右侧
+      const fromRight = dx > 0;
+      const sx = fromRight ? f.x + f.w : f.x;
+      const sy = f.y + f.h / 2;
+      const ex = fromRight ? t.x : t.x + t.w;
+      const ey = t.y + t.h / 2;
+      const mx = (sx + ex) / 2;
+      path = `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
+    } else {
+      // 纵向：从 from 底 → to 顶
+      const sx = f.x + f.w / 2;
+      const sy = f.y + f.h;
+      const ex = t.x + t.w / 2;
+      const ey = t.y;
+      const my = (sy + ey) / 2;
+      path = `M ${sx} ${sy} C ${sx} ${my}, ${ex} ${my}, ${ex} ${ey}`;
+    }
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', path);
+    p.setAttribute('class', `edge-${kind}`);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('marker-end', `url(#arrow-${kind})`);
+    svg.appendChild(p);
+
+    // edge label
+    const label = state.edgeLabels?.[key];
+    if (label) {
+      // 标在中点
+      const lx = (f.x + f.w / 2 + t.x + t.w / 2) / 2;
+      const ly = (f.y + f.h + t.y) / 2;
+      const txt = document.createElementNS(NS, 'text');
+      txt.setAttribute('x', lx);
+      txt.setAttribute('y', ly - 2);
+      txt.setAttribute('class', 'edge-label');
+      txt.setAttribute('text-anchor', 'middle');
+      txt.textContent = label;
+      // 背景
+      const bg = document.createElementNS(NS, 'rect');
+      const w = label.length * 5.5 + 6;
+      bg.setAttribute('x', lx - w / 2);
+      bg.setAttribute('y', ly - 11);
+      bg.setAttribute('width', w);
+      bg.setAttribute('height', 13);
+      bg.setAttribute('rx', 2);
+      bg.setAttribute('class', 'edge-label-bg');
+      svg.appendChild(bg);
+      svg.appendChild(txt);
+    }
+  }
+
+  // 节点
+  for (const [id, n] of Object.entries(NODES)) {
+    const kind = state.nodes[id] || 'dark';
+    const g = document.createElementNS(NS, 'g');
+    const r = document.createElementNS(NS, 'rect');
+    r.setAttribute('x', n.x); r.setAttribute('y', n.y);
+    r.setAttribute('width', n.w); r.setAttribute('height', n.h);
+    r.setAttribute('rx', 4);
+    r.setAttribute('class', `node-${kind}`);
+    g.appendChild(r);
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', n.x + n.w / 2);
+    t.setAttribute('y', n.y + n.h / 2 + 1);
+    t.setAttribute('class', 'node-text');
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('dominant-baseline', 'middle');
+    t.textContent = n.label;
+    g.appendChild(t);
+    svg.appendChild(g);
+  }
+
+  return svg;
+}
+
+function renderOption(card) {
+  const q = card.dataset.q, opt = card.dataset.opt;
+  const key = `${q}-${opt}`;
+  const optData = OPTIONS[key];
+  if (!optData) return;
+
+  // title + badge
+  const title = document.createElement('div');
+  title.className = 'opt-title';
+  title.innerHTML = `${optData.title}${optData.badge ? `<span class="badge ${optData.badge}">${optData.badgeLabel}</span>` : ''}`;
+  card.appendChild(title);
+
+  // SVG
+  const state = applyDiff(BASELINE, optData.diff);
+  const wrap = document.createElement('div');
+  wrap.className = 'opt-svg-wrap';
+  wrap.appendChild(makeSvg(state));
+  card.appendChild(wrap);
+
+  // impacts
+  const ul = document.createElement('ul');
+  ul.className = 'impacts';
+  for (const i of optData.impacts) {
+    const li = document.createElement('li');
+    li.className = i.type;
+    li.innerHTML = i.html;
+    ul.appendChild(li);
+  }
+  card.appendChild(ul);
+}
+
+// 渲染
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('baseline-graph').appendChild(makeSvg(BASELINE));
+  document.getElementById('combo-graph').appendChild(makeSvg(COMBO));
+  document.querySelectorAll('.option').forEach(renderOption);
+});
+</script>
+
+<style>
+  /* SVG node / edge 样式（必须在 SVG 之后才生效，所以放底） */
+  .node-dark { fill: var(--dark-fill);  stroke: var(--dark-stroke);  stroke-width: 1.5; stroke-dasharray: 4,3; }
+  .node-wire { fill: var(--wire-fill);  stroke: var(--wire-stroke);  stroke-width: 1.8; }
+  .node-new  { fill: var(--new-fill);   stroke: var(--new-stroke);   stroke-width: 1.8; stroke-dasharray: 5,3; }
+  .node-flag { fill: var(--flag-fill);  stroke: var(--flag-stroke);  stroke-width: 1.8; }
+  .node-risk { fill: var(--risk-fill);  stroke: var(--risk-stroke);  stroke-width: 1.8; }
+  .node-text { font-size: 10.5px; fill: var(--ink); font-weight: 500; }
+  .edge-dark { stroke: var(--dark-stroke); stroke-width: 1.4; stroke-dasharray: 4,3; }
+  .edge-wire { stroke: var(--wire-stroke); stroke-width: 1.8; }
+  .edge-new  { stroke: var(--new-stroke);  stroke-width: 1.8; stroke-dasharray: 5,3; }
+  .edge-flag { stroke: var(--flag-stroke); stroke-width: 1.8; }
+  .edge-risk { stroke: var(--risk-stroke); stroke-width: 1.8; }
+  .edge-label { font-size: 9px; fill: #374151; font-weight: 600; }
+  .edge-label-bg { fill: white; stroke: #e5e7eb; stroke-width: 0.5; }
+</style>
+
+</body>
+</html>
