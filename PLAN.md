@@ -2,9 +2,9 @@
 
 > 本项目的「手边」全局看板：比 `.remember/` 结构化、比 Linear 近手。**driver session 持续更新；收尾必同步**（见 `CLAUDE.md` →「Session Discipline · Cockpit & 全局视角」）。Linear 是**权威**驾驶舱（projects/issues 的真相），本文件是工作面镜像 + 当下决策态 + 在飞清单。四栏：NOW / NEXT / PARKED / BLOCKED-ON。**PLAN.md 是看板不是日志**：正文 ≤200 行、头部只留最新 1 条【更新】+ 更新于戳；超龄叙事段滚存归档、四栏就地改写对齐现实。
 >
-> 更新于：2026-07-07　·　历史头部日志（2026-06-23 ~ 07-06 全部【更新】叙事段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真，含 P5/P9/A5 KEEP 裁决证据锚点）。
+> 更新于：2026-07-09　·　历史头部日志（2026-06-23 ~ 07-07 全部【更新】叙事段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真，含 P5/P9/A5 KEEP 裁决证据锚点）。
 
-> **【更新 2026-07-07 · 红线挑战审查收官】** owner「挑战红线，追究原因与合理性」→ ultracode workflow `wf_ac7fa76c-a9b`（46 agent / 4.1M tok：16 簇+补漏 6 簇挑战者→fable 辩护→fable 终裁→fable critic）。**终裁：22 簇 = KEEP×5 / KEEP-WITH-COST×15 / REWRITE×2 / DROP×0**——REWRITE 仅 P2 cockpit（PLAN.md 看板腐败：头部日志占 42%、死指针 `.remember/remember.md`、14 天零 commit）与 X6 ADR-0025（「结构性保证」被 YUK-167 证伪 + northstar 守卫测试 fixture 退化恒绿）。条文本体几乎全承重（12 个非 KEEP 初裁被终裁实读击倒 10 个：P9 grep -c 单行巨段方法论失效 / P7 No Vercel git 考古 / P8 双重血泪 doc 实录 / A3 fixed-anchor 已建等）；**真病灶在体系层**：成文-现实分裂 ≥8 簇无对齐义务（/audit-drift 自己是 dark lane）、机器执行力与爆炸半径倒挂（「纯人肉」×12）、登记面单向棘轮、仲裁判例三案三答。**完整裁决表 + owner 拍板菜单（13 项分三批）= `scratchpad/research/2026-07-07-redline-challenge-audit.md`**；未开 Linear 单（红线改文全属 owner 拍板，拍后逐项开）；sweep 溢出 2 条未审（kg-mesh-no-tree-edge / credit-decay weight 分离）留下轮。⚠️ 执行 P2 滚存归档时须保头部日志原文——P5/P9/A5 三份 KEEP 的证据锚点在其中。
+> **【更新 2026-07-09 · Wave 2/3 收官 + YUK-575 durable PR1 落地】** Wave 2（YUK-573 judge 校准 MVP #729 · YUK-576 registry 诚实化 #730 + 07-08/09 hardenings `6709f156`/`cf1ae85d`）与 Wave 3（YUK-579 供题覆盖细目表 #732 · YUK-577 主动开口 cut-1 #733 · **YUK-575 durable lane PR1 #738 → main `36709c99`**）全部 merged；红线条文三 PR #724/#725/#726 已于 07-07 落地。#738 走 26-agent 独立 review（8 finder → 逐条双对抗 refuter → Fable xhigh 终裁）：10 findings → 1 fix-before-merge（N3 handler→runner wiring 引用相等断言 `617d3255`）+ Codex P2 future-ask leak = confirmed-defer-PR2，**正确修形 = causal filter**（anchor ask 行定 session + 因果序）而非 temporal cutoff——batchSize:1 串行队列下 replyA.created_at > askB.created_at，时间截断会错杀早 run 迟到 reply；event id 是 cuid2 无序，id-bound 不可行。**4 条 PR2 阻断前置已记 YUK-596 评论（2026-07-09）**。YUK-592 前提证伪 Canceled → YUK-594；YUK-595（主动开口 cut-2）已立。OCR review check 于 #738 连挂两轮 = YUK-394 既存 infra 故障（all file reviews failed / LLM config），非代码 finding（同 workflow 当日 03:30Z 前一 commit 曾过绿）。worktree 拓扑已清：main + `tlp-deploy`。
 
 ## 🎯 主线方向（当前）
 
@@ -16,20 +16,19 @@
 
 > 模式转向（owner 2026-06-21）：从「捡 issue 吞吐」转「单项目深度冲刺到一条可感 milestone」。原则 [defer flip not build]（记忆 `feedback_defer_flip_not_build`）。执行图 `docs/planning/2026-06-21-cold-start-openable-sprint.md`（镜像 Linear Document 挂 YUK-452）。
 
-- **红线挑战审查条文落地（2026-07-07，本 wave active）**：ultracode 裁决 22 簇（KEEP×5 / KEEP-WITH-COST×15 / REWRITE×2 / DROP×0）→ 条文/docs 修订波。审查报告入库 `docs/audit/2026-07-07-redline-challenge-audit.md`；owner 拍板菜单 13 项分三批。**merge 政策已成文化（owner 2026-07-07 选项 a：全量 pre-PR gate + 独立 review + CI 绿 → 可自主 merge + 按 07-03 授权自主部署；owner 可点名人工合）** → CLAUDE.md Code Review Workflow 已改。多 lane 并行（各自 worktree）产条文 PR，见「在飞」。
+- **下一条 active 开发线待定**：Wave 2/3 已全部收官（见「✅ 最近已落」）；候选按 NEXT 排队，首选 = YUK-596 durable PR2（4 阻断前置已记）或 owner 另拍。
 - **方向 B「可开始用」milestone — 代码侧全部完成**：S1 YUK-516（#709 merged）· S2 YUK-478 冷启 e2e（#710 merged）· S3 判定无代码活。**剩硬前置 = YUK-571 flag ①批（owner 运维）**——翻 `PLACEMENT_PROBE_ENABLED` + `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`（顺序①→②→③ + day-zero census）；flag 翻转与部署在 owner 侧机器执行。⚠️ 三 flag 字面量不一致已 code-verify（placement `'true'` / promote `'1'` / refill `'true'|'1'`）。
 
 ## NEXT（就绪，排队）
 
-- **ulw Wave 2 双 lane（judge 校准 + registry 诚实化）**——在飞中（见下）；收官后 YUK-573 / YUK-576 关闭。
-- **AI pipeline 批判五单剩余**：YUK-575（durable lane 复活——YUK-364 建的桥零生产 caller = dead code）· YUK-577（主动开口触发线）。（YUK-573/574/576 已在飞或已 merge。）
-- **能动性×数据 brainstorm Top-3 剩余**：YUK-579（供题覆盖细目表）——PARKED 待 owner 三决策点。（YUK-578 #716 / YUK-580 #715 已 merged。）
+- **YUK-596 durable-by-default flip（YUK-575 PR2）**：翻 copilot durable 默认 + N4 Dock 202-branch + in-loop stop + poll frequency。⚠️ **4 条阻断前置**已记 issue 评论（#738 独立 review 终裁 2026-07-09，含 Codex P2 causal-filter 修形）；宜先跑 PR1 opt-in burn-in。
+- **Wave 3 follow-up 批**：YUK-594（durable judge lane，替代已 Cancel 的 YUK-592）· YUK-595（主动开口 cut-2 连错 streak）· YUK-589（judge 校准第二期）· YUK-590（观测面诚实化第二期）· YUK-593 + YUK-394（OCR review infra ops，#738 又挂两轮）。
 - **🦀 Rust 同构核 Phase 0+（YUK-495 project）** ⚠️待核：Phase 1 已 DONE（#634）；Phase 0+/Phase 2 后续项（inc-E YUK-455 prereq 传播 dark-ship 等）状态需 re-ground（原详细 NEXT 记录随头部日志归档）。
 - **旧 loop-wiring 尾巴 + profile/教研团冷启 prior 设计**：openable 通电、有真实交互后据外部信号设计（gated on 数据）。
 
 ## PARKED（已捕获，不是现在）
 
-- **红线审查 owner 拍板菜单（13 项分三批）** = `docs/audit/2026-07-07-redline-challenge-audit.md` §5：**批①** 成文冲突（merge 政策 ✅本 wave · P1 分层措辞 ✅本 wave · P9 路由 ✅本 wave）· **批②** 两 REWRITE 执行（P2 cockpit ✅本 wave · X6 ADR-0025 northstar fixture 退化修复）· **批③** 工程单候选（audit:fold-writes / audit:flags / step9 断言 / P6 到期悬崖拆解 / X2 成本叙事 / A2 执行状态列 / A3 勘误 / /audit-drift 通电）。红线改文属 owner 拍板，拍后逐项开 Linear。sweep 溢出 2 条未审（kg-mesh-no-tree-edge / credit-decay weight 分离）留下轮。
+- **红线审查 owner 拍板菜单（13 项分三批）** = `docs/audit/2026-07-07-redline-challenge-audit.md` §5：批① 成文冲突 ✅（#724）· 批② 两 REWRITE ✅（P2 cockpit #724 · X6 ADR-0025 #725）· 批③ 工程单候选 2/8 已落（audit:fold-writes + audit:flags #726）——**剩 6 项待 owner 拍**（step9 断言 / P6 到期悬崖拆解 / X2 成本叙事 / A2 执行状态列 / A3 勘误 / /audit-drift 通电）。sweep 溢出 2 条未审（kg-mesh-no-tree-edge / credit-decay weight 分离）留下轮。
 - **brainstorm 存活 8 条（留档待挑）** = `docs/design/2026-07-06-agency-data-brainstorm-portfolio.md`：教学督导 Part A（次优①）· 周期校准探针 producer+consumer 一体（次优②）· applied_in 死边通电 · 自动 dismiss 悬空提案 · knowledge_edge CREATE 升 A 档（前置 = proposal_signals 采纳率 gate）· 夜间 job 性价比审计 · 答案泄漏护栏 · 会话连接图。**红线挑战组 3 条** = portfolio §5 决策表未拍板。
 - **🧠 误区(misconception)建模调查 + 翻 MISCONCEPTION_PROMOTE flag 设计** = doc 存档（2026-07-01，`docs/design/2026-07-01-misconception-*`）。
 - **Linear 卫生**（审计 `w8iz32mse`，待 owner 批）：stale 状态对齐（YUK-519/531/476/407 终裁建议翻 Done/收口；YUK-303/306/373/375/360 移出 In Progress）。
@@ -41,16 +40,17 @@
 - **profile P2 翻 flag**（misconceptionRecurrence / B4 answer_class filter）← 需数据 + judge 校准。
 - **matcher 接 live caller** ← 题库规模 + Step2 feeder 验证（小题库 cosine 不稳）。
 - **教研团 YUK-405 / 记忆 YUK-322** ← profile 有真实数据 / 交互历史。
-- **A9 step-grading 倍增器（YUK-438，#522 draft）** ← judge 校准（YUK-573 在飞）。
+- **A9 step-grading 倍增器（YUK-438，#522 draft）** ← judge 校准数据（YUK-573 MVP #729 已 merge，report-only 采样积累中；第二期 YUK-589）。
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **红线挑战审查条文波（2026-07-07 active）**：多 lane 各自 worktree 产条文/docs PR——本 **Lane D** = CLAUDE.md（merge 政策 P1/P2/P6/P8/P9 六项）+ PLAN.md 手术 + design-docs（A1/A2/A3/A5/X2/A6）+ 审查报告入库；**Lane E** = ADR-0025（X6 northstar fixture 退化修复）。红线 wave 三 PR = **#724**（本 Lane D）/ **#725**（Lane E：X6+A7+P6）/ **#726**（Lane F：audit:fold-writes + audit:flags）；**停等 owner merge**（本波承载 merge 政策换文，bootstrap 期不自主合）。
-- **ulw Wave 2 双 lane（2026-07-07 在飞）**：**Lane E = YUK-573 judge 校准 MVP**（生产流量 golden set + 双 judge 不同意率采样 job；report-only 绝不改 outcome/mastery/θ̂；默认 OFF kill switch）· **Lane F = YUK-576 registry 诚实化**（maxCost/fallbackChain 接线或删除 + 结构化输出迁移 + task_run_stuck reconcile sweeper）。各自 worktree off `dba3f77d` + TDD + 独立 Opus 审 → PR；撞车预期 `src/ai/registry.ts` 后合者 rebase。（注：此 Wave 2 与红线条文波共用「Lane E」名但为不同波次。）
-- **噪音/stale PR 待周期清**：audit-drift 周报 draft（#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
+- **无 feature PR 在飞**（Wave 3 收官：#738 merged `36709c99` 2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout）。
+- **噪音/stale PR 待周期清**：audit-drift 周报 draft（#736/#734/#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
+- **红线条文波 + Wave 2（2026-07-07）**：#724（Lane D：CLAUDE.md merge 政策等六项 + PLAN 手术 + 审查报告入库）· #725（Lane E：X6 ADR-0025 northstar fixture）· #726（Lane F：audit:fold-writes + audit:flags）· #729（YUK-573 judge 校准 MVP，report-only）· #730（YUK-576 registry 诚实化；follow-ups YUK-589/590/593 已立）。
+- **Wave 3（2026-07-07~09）**：#732（YUK-579 供题覆盖细目表）· #733（YUK-577 主动开口 cut-1 ingestion）· **#738（YUK-575 durable PR1：opt-in flag + assembleCopilotRunInput 字节等价 + 单发 FAILED 语义 + pickup-stall 检测）**；YUK-592 Canceled→YUK-594；PR2 = YUK-596（4 阻断前置）。
 - **YUK-538 全项目逻辑打磨 program 达成（14/14）**：#690-#707 全 merged（quickwin 批 + kc-dedup + SoT-flip + frontier-gate + softmax + kg-borrowing + verify-check + memory-reconcile + revert-bracket + conjecture-wire + induce-self-consistency + draft-status；#701 YUK-436 BKT 嫁接插单）。
 - **方向 B「可开始用」硬前置代码侧**：#709（YUK-516 placement scope parity）· #710（YUK-478 冷启 e2e）· #708（AGENTS.md maps + program sync）全 merged。
 - **AI pipeline 五单 + brainstorm Top-3（2026-07-06）**：#713（YUK-572 PR-1 scout）· #715（YUK-580 digest 红旗）· #716（YUK-578 审题闸）· #717（YUK-574 learner-state header）· #719（YUK-572 PR-2 director lane）· #720（YUK-581 subject bridge）· #721（YUK-583 edge watermark）· #722（YUK-379 attribution rethrow）· #714（brainstorm portfolio 存档）· #718（YUK-377 cron 复审）全 merged。
