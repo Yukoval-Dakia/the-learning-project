@@ -4,7 +4,7 @@ import { generalProfile } from './general/profile';
 import { mathProfile } from './math/profile';
 import { physicsProfile } from './physics/profile';
 import type { SlimSubjectProfile, SubjectId, SubjectProfile } from './profile-schema';
-import { wenyanProfile } from './wenyan/profile';
+import { yuwenProfile } from './yuwen/profile';
 
 export {
   JudgeRouteKindSchema,
@@ -21,16 +21,19 @@ export {
 
 // YUK (wenyan deprotagonist): the neutral default is `general`, NOT a concrete
 // sample subject. A null / unknown domain resolves to `general` (system font,
-// generic voice) instead of inheriting wenyan's classical-Chinese privilege.
+// generic voice) instead of inheriting the classical-Chinese privilege.
 // `general` is intentionally a plain SubjectId (not KnownSubjectId): it is the
 // fallback identity, never a node domain, so it stays out of KNOWN_SUBJECT_IDS
 // (goal-scope candidates / derived `?subject=` axis iterate that list).
 const DEFAULT_SUBJECT_ID: SubjectId = 'general';
 
 // The generic registry no longer hardcodes any concrete-subject alias. Each
-// sample subject self-declares its aliases at register() time (e.g. wenyan owns
-// classical_chinese / chinese_classics), so the framework default stays
-// subject-neutral and adding/removing a subject can't strand an orphan alias here.
+// sample subject self-declares its aliases at register() time (e.g. yuwen owns
+// the legacy `wenyan` id plus classical_chinese / chinese_classics), so the
+// framework default stays subject-neutral and adding/removing a subject can't
+// strand an orphan alias here. YUK-249: the subject was renamed wenyan → yuwen;
+// the old canonical id `wenyan` is DEMOTED to an alias so legacy domain='wenyan'
+// data, old backup imports, and historical event payloads all resolve to yuwen.
 
 function normalizeSubjectKey(value: string): string {
   return value.trim().toLowerCase();
@@ -68,8 +71,12 @@ export class SubjectRegistry {
     // general = neutral default; registered first so it backs the default id.
     this.register(generalProfile, [], { throwOnInvalid });
     // Each sample subject self-declares its own aliases (归位) — the generic
-    // registry no longer hardcodes any concrete-subject alias table.
-    this.register(wenyanProfile, ['classical_chinese', 'chinese_classics'], { throwOnInvalid });
+    // registry no longer hardcodes any concrete-subject alias table. YUK-249:
+    // `wenyan` is the pre-rename canonical id, now demoted to an alias so legacy
+    // domain='wenyan' data / old backups / event payloads normalise to yuwen.
+    this.register(yuwenProfile, ['wenyan', 'classical_chinese', 'chinese_classics'], {
+      throwOnInvalid,
+    });
     this.register(mathProfile, ['mathematics', 'maths'], { throwOnInvalid });
     this.register(physicsProfile, ['physical'], { throwOnInvalid });
   }
@@ -127,10 +134,10 @@ export class SubjectRegistry {
    * Resolve a domain to its canonical subject id ONLY when the domain is a
    * GENUINE alias/id hit — returns `null` for a null/empty domain OR an
    * unrecognised string. Unlike `resolve()`, this never falls back to the default
-   * subject, so callers can tell "genuinely wenyan" apart from "untagged /
+   * subject, so callers can tell "genuinely yuwen" apart from "untagged /
    * unknown-domain" (YUK-288: the derived `?subject=` axis must NOT sweep
    * domainless or unknown-domain nodes into the default subject). Alias-aware
-   * (classical_chinese → wenyan) where the bare-equality precedent
+   * (wenyan / classical_chinese → yuwen) where the bare-equality precedent
    * (tagging.ts:122) is not.
    */
   resolveKnownSubjectId(domain?: string | null): SubjectId | null {
