@@ -68,7 +68,7 @@ COPY --from=builder /app/drizzle ./drizzle
 # quiz-gen Agent Skill assets — the runner (populateIsolatedSkills) reads
 # src/subjects/<id>/skills/ at runtime via readdirSync (not imported).
 COPY --from=builder /app/src/subjects/math/skills ./src/subjects/math/skills
-COPY --from=builder /app/src/subjects/wenyan/skills ./src/subjects/wenyan/skills
+COPY --from=builder /app/src/subjects/yuwen/skills ./src/subjects/yuwen/skills
 COPY --from=builder /app/src/subjects/physics/skills ./src/subjects/physics/skills
 # sharp + 原生依赖 4 行（来自 sharpdeps 的 flat node_modules）
 COPY --from=sharpdeps /sharp/node_modules/sharp ./node_modules/sharp
