@@ -8,6 +8,11 @@
 // quiz-gen 共享包）漏拷，copilot 会话/copilot_run 的共享规范包在生产
 // 缺席多日无人知晓。本断言是唯一的构建期防线：凡 src/subjects/<dir>/skills
 // 树内存在 SKILL.md，Dockerfile 必须有对应 COPY 行。
+//
+// 防线边界（诚实口径）：只断言「非注释 COPY 行在场」，不验证文件真落进镜像——
+// builder 上下文被 .dockerignore 剥掉嵌套文件（今日 `*.md` 是根级锚定单段，安全）
+// 或 builder 缺文件这两类向量仍靠部署验收的镜像内 ls 步骤兜底；目录扫描用
+// Dirent.isFile/isDirectory，symlink 形态的 skill 目录不入扫描（当前树无 symlink）。
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -41,11 +46,16 @@ describe('YUK-610 — Dockerfile skills COPY 覆盖', () => {
     // 防守：扫描跑空说明布局变了（或 cwd 不是仓库根），断言本身失效——显式翻红。
     expect(skillRoots.length).toBeGreaterThan(0);
 
-    // 匹配「源路径 目标路径」对而非整行 flag 形状，COPY 换 flag 不误伤。
-    const missing = skillRoots.filter(
-      (name) =>
-        !dockerfile.includes(`/app/src/subjects/${name}/skills ./src/subjects/${name}/skills`),
-    );
+    // 匹配「源路径 目标路径」对而非整行 flag 形状（COPY 换 flag 不误伤），并容忍
+    // 多空格 / 尾斜杠的重排版（review-753 P3：includes 单空格假设会假红）。
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const missing = skillRoots.filter((name) => {
+      const pair = new RegExp(
+        `/app/src/subjects/${escape(name)}/skills/?\\s+\\./src/subjects/${escape(name)}/skills/?(?:\\s|$)`,
+        'm',
+      );
+      return !pair.test(dockerfile);
+    });
     expect(missing).toEqual([]);
   });
 });
