@@ -46,15 +46,11 @@ export function subjectDisplayName(subject: string, rows?: readonly SubjectRowLi
   return fromRows ?? subjectProfiles[id]?.displayName ?? subject;
 }
 
-export interface SlimSubjectProfile {
-  id: string;
-  displayName: string;
-  renderConfig: {
-    font_family: string;
-    notation: string | null;
-    code_highlight: string | null;
-  };
-}
+// YUK-598（review-757 P3-2）：双定义收敛——单源 = profile-schema 的
+// Pick<SubjectProfile,...>（RenderConfig 恰三键，结构等价）；re-export 保住
+// 既有 '@/ui/lib/subject' import 面。
+import type { SlimSubjectProfile } from '@/subjects/profile-schema';
+export type { SlimSubjectProfile };
 
 export interface SubjectRenderModel extends SlimSubjectProfile {
   contentClassName: string;

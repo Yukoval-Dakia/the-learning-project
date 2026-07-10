@@ -49,11 +49,7 @@ import {
   TRAIT_PAYLOAD_SCHEMAS,
 } from '@/subjects/trait-schemas';
 import { desc, eq } from 'drizzle-orm';
-import {
-  type TraitResolution,
-  getSubjectTraitResolutions,
-  replaceSubjectTraitResolutions,
-} from './resolution-cache';
+import { type TraitResolution, replaceSubjectTraitResolutions } from './resolution-cache';
 
 // 缓存与派生的权威在 resolution-cache.ts（db-free）；这里 re-export 维持既有
 // import 面（hydrate.db.test / 管理读面）不破。

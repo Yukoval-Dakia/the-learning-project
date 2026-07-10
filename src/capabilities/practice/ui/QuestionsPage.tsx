@@ -185,8 +185,13 @@ function QInline({ text }: { text: string }) {
   );
 }
 
-function QIndicators({ q }: { q: QBankQuestion }) {
-  const { subjects: subjectRows } = useSubjects(); // 同 key 查询去重，零额外请求
+function QIndicators({
+  q,
+  subjectRows,
+}: {
+  q: QBankQuestion;
+  subjectRows: readonly SubjectRowLike[];
+}) {
   const subj = subjMeta(q.subject, subjectRows);
   // knowledge_labels 是 enrich 投影（缺名 id 已被后端落选）；null（未 enrich）→ 用裸 id 兜底。
   const labels = q.knowledge_labels ?? q.knowledge_ids.map((id) => ({ id, name: id }));
@@ -209,13 +214,16 @@ function QIndicators({ q }: { q: QBankQuestion }) {
 interface QRowProps {
   q: QBankQuestion;
   go: (to: string) => void;
+  // YUK-598（review-757 P3-1）：rows 自主组件单次 useSubjects 下传，避免逐行
+  // QueryObserver（网络本就去重；省的是长列表的订阅开销）。
+  subjectRows: readonly SubjectRowLike[];
   expanded?: boolean;
   onToggle?: () => void;
   isChild?: boolean;
   subIndex?: number;
 }
 
-function QRow({ q, go, expanded, onToggle, isChild, subIndex }: QRowProps) {
+function QRow({ q, go, subjectRows, expanded, onToggle, isChild, subIndex }: QRowProps) {
   const isComposite = q.is_composite;
   const lineage = lineageOf(q);
   const glyphCls = lineage === 'variant' ? ' is-variant' : lineage === 'part' ? ' is-part' : '';
@@ -269,7 +277,7 @@ function QRow({ q, go, expanded, onToggle, isChild, subIndex }: QRowProps) {
           )}
           <QInline text={q.prompt_md} />
         </div>
-        <QIndicators q={q} />
+        <QIndicators q={q} subjectRows={subjectRows} />
       </div>
 
       <div className="qb-aside">
@@ -675,13 +683,21 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                   <QRow
                     q={q}
                     go={navigate}
+                    subjectRows={subjectRowsForFilter}
                     expanded={open.has(q.id)}
                     onToggle={() => toggleOpen(q.id)}
                   />
                   {q.is_composite &&
                     open.has(q.id) &&
                     q.children.map((c, i) => (
-                      <QRow key={c.id} q={c} go={navigate} isChild subIndex={i + 1} />
+                      <QRow
+                        key={c.id}
+                        q={c}
+                        go={navigate}
+                        subjectRows={subjectRowsForFilter}
+                        isChild
+                        subIndex={i + 1}
+                      />
                     ))}
                 </Fragment>
               ))}

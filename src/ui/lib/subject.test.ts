@@ -105,3 +105,26 @@ describe('resolveSubjectRenderModel', () => {
     expect(props.style.whiteSpace).toBe('pre-wrap');
   });
 });
+
+// YUK-598（review-757 P2-2 可测半）— rows 参数语义：provider 行驱动 vs 编译期回退。
+describe('listSubjectChoices / subjectDisplayName rows 语义', async () => {
+  const { listSubjectChoices, subjectDisplayName } = await import('./subject');
+  const rows = [
+    { id: 'yuwen', displayName: '语文' },
+    { id: 'subj_chem1', displayName: '化学' },
+  ];
+
+  it('rows 驱动：custom 进列；空数组/省略 → 编译期三 builtin（chips 永不变空）', () => {
+    expect(listSubjectChoices(rows).map((c) => c.id)).toEqual(['yuwen', 'subj_chem1']);
+    const compiled = listSubjectChoices([]).map((c) => c.id);
+    expect(compiled).toEqual(['yuwen', 'math', 'physics']);
+    expect(listSubjectChoices()).toEqual(listSubjectChoices([]));
+  });
+
+  it('subjectDisplayName：rows 优先（custom 只有行认识）、alias 归一后查行、miss 回编译期再回原串', () => {
+    expect(subjectDisplayName('subj_chem1', rows)).toBe('化学');
+    expect(subjectDisplayName('wenyan', rows)).toBe('语文'); // alias → canonical 后行命中
+    expect(subjectDisplayName('math', rows)).toBe('数学'); // 行 miss → 编译期 builtin
+    expect(subjectDisplayName('subj_ghost', rows)).toBe('subj_ghost'); // 全 miss → 原串
+  });
+});

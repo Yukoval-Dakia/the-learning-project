@@ -210,16 +210,18 @@ const ATTR_OPTS: [string, string][] = [
 function MistakeCard({
   m,
   subject,
+  subjectRows,
   kpName,
   navigate,
 }: {
   m: MistakeRow;
+  // YUK-598（review-757 P3-1）：rows 自主组件下传，避免逐卡 QueryObserver。
+  subjectRows: readonly SubjectRowLike[];
   subject: string | null;
   kpName: (id: string) => string;
   navigate: (to: string) => void;
 }) {
   const s = uiState(m);
-  const { subjects: subjectRows } = useSubjects(); // 同 key 去重，零额外请求
   const subj = subjMeta(subject, subjectRows);
   return (
     <LoomCard pad className="mistake-card">
@@ -468,6 +470,7 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
           <div className="grid stagger" style={{ gap: 'var(--s-3)' }}>
             {shown.map((d) => (
               <MistakeCard
+                subjectRows={subjectRowsForOpts}
                 key={d.m.id}
                 m={d.m}
                 subject={d.subject}
