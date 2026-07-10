@@ -37,24 +37,21 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 describe('resolveCopilotSkills — resolver discovery', () => {
-  it("returns ['copilot','quiz-gen'] when BOTH shared packs exist (probe order)", async () => {
+  it("returns ['_shared--copilot','_shared--quiz-gen'] when BOTH shared packs exist (probe order, YUK-611 namespaced)", async () => {
     const root = fixtureRoot({
       [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME],
     });
-    expect(await resolveCopilotSkills(root)).toEqual([
-      COPILOT_SKILL_NAME,
-      COPILOT_QUIZ_GEN_SKILL_NAME,
-    ]);
+    expect(await resolveCopilotSkills(root)).toEqual(['_shared--copilot', '_shared--quiz-gen']);
   });
 
-  it("returns ['copilot'] when only the dialogue pack exists", async () => {
+  it("returns ['_shared--copilot'] when only the dialogue pack exists", async () => {
     const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME] });
-    expect(await resolveCopilotSkills(root)).toEqual([COPILOT_SKILL_NAME]);
+    expect(await resolveCopilotSkills(root)).toEqual(['_shared--copilot']);
   });
 
-  it("returns ['quiz-gen'] when only the quiz-gen pack exists", async () => {
+  it("returns ['_shared--quiz-gen'] when only the quiz-gen pack exists", async () => {
     const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_QUIZ_GEN_SKILL_NAME] });
-    expect(await resolveCopilotSkills(root)).toEqual([COPILOT_QUIZ_GEN_SKILL_NAME]);
+    expect(await resolveCopilotSkills(root)).toEqual(['_shared--quiz-gen']);
   });
 });
 
@@ -84,9 +81,10 @@ describe('resolveCopilotSkills — 不误捞 (缝隙防御)', () => {
       yuwen: ['note-yuwen', 'quiz-gen-translation'],
     });
     const result = await resolveCopilotSkills(root);
-    expect(result).toEqual([COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME]);
-    expect(result?.some((n) => n.startsWith('note-'))).toBe(false);
+    expect(result).toEqual(['_shared--copilot', '_shared--quiz-gen']);
+    expect(result?.some((n) => n.includes('--note-'))).toBe(false);
     expect(result).not.toContain('quiz-gen-translation');
+    expect(result).not.toContain('yuwen--quiz-gen-translation');
   });
 });
 
@@ -94,8 +92,8 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the authored
   // shared packs are discoverable and carry the correct frontmatter names.
 
-  it("both shared packs are live and resolve to ['copilot','quiz-gen']", async () => {
-    expect(await resolveCopilotSkills()).toEqual([COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME]);
+  it("both shared packs are live and resolve to ['_shared--copilot','_shared--quiz-gen']", async () => {
+    expect(await resolveCopilotSkills()).toEqual(['_shared--copilot', '_shared--quiz-gen']);
   });
 
   it.each([COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME])(

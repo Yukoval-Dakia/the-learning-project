@@ -24,17 +24,17 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 describe('resolveQuizGenSkills (per (subject, kind))', () => {
-  it('returns the hyphenated skill dir name when a pack exists', async () => {
+  it('returns the NAMESPACED skill name when a pack exists (YUK-611)', async () => {
     const root = fixtureRoot({ yuwen: ['quiz-gen-translation'] });
     expect(await resolveQuizGenSkills('yuwen', 'translation', root)).toEqual([
-      'quiz-gen-translation',
+      'yuwen--quiz-gen-translation',
     ]);
   });
 
   it('translates underscore kind to hyphen dir (reading_comprehension)', async () => {
     const root = fixtureRoot({ yuwen: ['quiz-gen-reading-comprehension'] });
     expect(await resolveQuizGenSkills('yuwen', 'reading_comprehension', root)).toEqual([
-      'quiz-gen-reading-comprehension',
+      'yuwen--quiz-gen-reading-comprehension',
     ]);
   });
 
@@ -64,14 +64,19 @@ describe('resolveQuizGenSkillsForSubject (all packs)', () => {
     });
     const result = await resolveQuizGenSkillsForSubject('yuwen', root);
     expect(result).toEqual(
-      expect.arrayContaining(['quiz-gen-translation', 'quiz-gen-reading-comprehension']),
+      expect.arrayContaining([
+        'yuwen--quiz-gen-translation',
+        'yuwen--quiz-gen-reading-comprehension',
+      ]),
     );
     expect(result).toHaveLength(2);
   });
 
   it('ignores non quiz-gen dirs', async () => {
     const root = fixtureRoot({ yuwen: ['quiz-gen-translation', 'some-other-skill'] });
-    expect(await resolveQuizGenSkillsForSubject('yuwen', root)).toEqual(['quiz-gen-translation']);
+    expect(await resolveQuizGenSkillsForSubject('yuwen', root)).toEqual([
+      'yuwen--quiz-gen-translation',
+    ]);
   });
 
   it('降级链: returns undefined when the subject has no skills dir', async () => {
@@ -84,11 +89,15 @@ describe('the shipped first-batch skills resolve against the live SoT', () => {
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the actual
   // authored packs are discoverable, guarding the directory naming convention.
   it('yuwen translation + reading_comprehension + math calculation are live', async () => {
-    expect(await resolveQuizGenSkills('yuwen', 'translation')).toEqual(['quiz-gen-translation']);
-    expect(await resolveQuizGenSkills('yuwen', 'reading_comprehension')).toEqual([
-      'quiz-gen-reading-comprehension',
+    expect(await resolveQuizGenSkills('yuwen', 'translation')).toEqual([
+      'yuwen--quiz-gen-translation',
     ]);
-    expect(await resolveQuizGenSkills('math', 'calculation')).toEqual(['quiz-gen-calculation']);
+    expect(await resolveQuizGenSkills('yuwen', 'reading_comprehension')).toEqual([
+      'yuwen--quiz-gen-reading-comprehension',
+    ]);
+    expect(await resolveQuizGenSkills('math', 'calculation')).toEqual([
+      'math--quiz-gen-calculation',
+    ]);
   });
 
   // PR #319 F3 — the persisted question.kind for math calculation questions is
@@ -96,11 +105,11 @@ describe('the shipped first-batch skills resolve against the live SoT', () => {
   // quiz_verify hands the PERSISTED kind to resolveQuizGenSkills, it must still resolve
   // to quiz-gen-calculation via the normalization map; otherwise the verifier loads no
   // math skill and kind_conformance silently degrades.
-  it('resolves the persisted kind (computation) to quiz-gen-calculation', async () => {
+  it('resolves the persisted kind (computation) to math--quiz-gen-calculation', async () => {
     // `as never` mirrors the quiz_verify call site casting a persisted QuestionKind
     // string into the SubjectQuestionKind param; the normalizer accepts it.
     expect(await resolveQuizGenSkills('math', 'computation' as never)).toEqual([
-      'quiz-gen-calculation',
+      'math--quiz-gen-calculation',
     ]);
   });
 });

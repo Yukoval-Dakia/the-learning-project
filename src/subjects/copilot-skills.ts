@@ -14,15 +14,17 @@
 // runner skills ?? [] 显式禁用 → registry.ts 散文兜底回退，never throws。
 // 缺包时与现状零差异（这是 C2 风险可控的关键）。
 //
-// 命名空间：runner 把所有科目 skills/* 扁平 mirror 进同一个 CLAUDE_CONFIG_DIR/skills/，
-// collision 风险只在同名时。'copilot' 与 'quiz-gen' 全仓唯一（quiz-gen-skills.ts 的
-// per-题型目录是 quiz-gen-translation / quiz-gen-calculation 等带后缀名，且其 resolver
-// 按 `quiz-gen-<key>` 精确拼名查找，绝不会捞到裸 'quiz-gen'）。
+// 命名空间（YUK-611）：扁平镜像统一按 <subjectDir>--<pack> 前缀化（populate-skills.ts），
+// 本 resolver 输出 '_shared--copilot' / '_shared--quiz-gen'（skill-namespace.ts 拼名，
+// 与镜像键同源）；跨科/跨包 collision 通道已结构性关闭，另有静态 audit
+// （skill-namespace.test.ts）在构建期挡裸名撞车与 frontmatter 漂移。
 //
 // 见 docs/superpowers/plans/2026-06-08-yuk284-debt-wave.md §2 OPEN-Q1 (单份共享裁决).
 
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
+// YUK-611 — 白名单名从命名空间权威模块拼（与 populate 镜像键同源）。
+import { namespacedSkillName } from './skill-namespace';
 
 // _shared 是落位约定（非注册 subject — SubjectRegistry 是 profile.ts 的显式 import
 // 列表，与目录扫描解耦）。下划线前缀明示「非学科」。
@@ -57,7 +59,8 @@ export async function resolveCopilotSkills(
     const skillFile = join(skillsRoot, COPILOT_SHARED_SUBJECT_DIR, 'skills', name, 'SKILL.md');
     try {
       await access(skillFile);
-      found.push(name);
+      // 白名单键 = 镜像里的命名空间名 _shared--copilot / _shared--quiz-gen（YUK-611）。
+      found.push(namespacedSkillName(COPILOT_SHARED_SUBJECT_DIR, name));
     } catch {
       // pack absent — skip (per-pack 降级, never throws).
     }

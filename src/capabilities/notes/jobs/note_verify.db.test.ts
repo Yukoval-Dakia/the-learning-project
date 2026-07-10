@@ -325,7 +325,8 @@ describe('runNoteVerify', () => {
       expect.objectContaining({
         subjectProfile: expect.objectContaining({ id: 'math' }),
         // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
-        skills: ['note-math'],
+        // YUK-611: resolver 输出命名空间名（== populate 镜像键）。
+        skills: ['math--note-math'],
       }),
     );
   });

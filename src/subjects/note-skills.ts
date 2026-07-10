@@ -9,10 +9,10 @@
 // note-<id>/ 目录）；handler 传 ctx.skills = resolveNoteSkill(subjectId) 来
 // 白名单激活这一个 skill。
 //
-// ⚠️  目录名带 subject 后缀（note-yuwen / note-math / note-physics）是强制的：
-// runner.ts populateIsolatedSkills 把所有科目的 skills/* 扁平 mirror 进同一个
-// CLAUDE_CONFIG_DIR/skills/ 命名空间，裸 note/ 目录多科同名会末次写覆盖前次写。
-// 不要把目录名「简化」回 note/，否则跨科 mirror 冲突静默丢包。
+// 目录名带 subject 后缀（note-yuwen / note-math / note-physics）是历史命名惯例；
+// YUK-611 起扁平镜像统一按 <subjectId>--<pack> 命名空间化（populate-skills.ts），
+// 跨科同名不再互踩，白名单键 = 命名空间名（本 resolver 经 skill-namespace.ts 拼名，
+// 与镜像键同源）。后缀保留不动——静态 audit（skill-namespace.test.ts）另挡裸名撞车。
 //
 // 降级链：缺 note-<id> skill 目录 → 返回 undefined → handler 不传 skills 选项
 // → runner 走 skills ?? [] 显式禁用 → 现状 prompt 散文回退，never throws。
@@ -24,6 +24,8 @@
 
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
+// YUK-611 — 白名单名从命名空间权威模块拼（与 populate 镜像键同源）。
+import { namespacedSkillName } from './skill-namespace';
 
 /**
  * Resolve the Note Agent Skill whitelist for a subject. Returns `['note-<subjectId>']`
@@ -45,5 +47,6 @@ export async function resolveNoteSkill(
   } catch {
     return undefined;
   }
-  return [noteSkillDir];
+  // 白名单键 = 镜像里的命名空间名 <subjectId>--note-<subjectId>（YUK-611）。
+  return [namespacedSkillName(subjectId, noteSkillDir)];
 }

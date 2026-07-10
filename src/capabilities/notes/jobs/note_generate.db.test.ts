@@ -203,8 +203,8 @@ describe('runNoteGenerate', () => {
     };
     expect(ctx.subjectProfile?.id).toBe('math');
     // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
-    // math has a note skill → ['note-math']; yuwen also has one (default domain).
-    expect(ctx.skills).toEqual(['note-math']);
+    // YUK-611: resolver 输出命名空间名（== populate 镜像键）。
+    expect(ctx.skills).toEqual(['math--note-math']);
   });
 
   it('marks generation_status=failed when LLM throws (and rethrows)', async () => {
