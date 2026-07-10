@@ -10,7 +10,10 @@ import type { Job } from 'pg-boss';
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
 // can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
 // backbone and other capture tasks are untouched; goals only add direction.
-import { type ActiveGoal, listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/capabilities/agency/server/goals/queries';
 // codex #3356884494 — Coach consumes the out-of-band agent-note HINT channel
 // (for_agent='coach'). quiz_verify leaves question_pool_gap notes targeting
 // 'coach', but nothing read them until now (the only live readers were Dreaming /
@@ -260,7 +263,9 @@ export async function runCoach(
   const run = deps.runAgentTaskFn ?? runAgentTask;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
-  const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
+  // YUK-603 — resolved read: subject_live goals live-derive their scope (the frozen column
+  // is [] and was previously read verbatim here, blinding the goal strand).
+  const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
   // YUK-203 U4 / D11① — default to listActiveLearningItems; DB tests inject a
   // stub / [] so the {}-stub db is never touched (mirrors listGoals default).
   const listItems = deps.listActiveItemsFn ?? listActiveLearningItems;

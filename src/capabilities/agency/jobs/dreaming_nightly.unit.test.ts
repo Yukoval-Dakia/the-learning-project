@@ -157,6 +157,7 @@ describe('runDreamingNightly', () => {
         title: '攻克虚词「之」',
         subject_id: 'yuwen',
         scope_knowledge_ids: ['k_zhi_1', 'k_zhi_2'],
+        scope_mode: 'explicit' as const,
         sequence_hint: 0,
       },
       {
@@ -164,6 +165,7 @@ describe('runDreamingNightly', () => {
         title: '熟练判断句',
         subject_id: 'yuwen',
         scope_knowledge_ids: ['k_judge_1'],
+        scope_mode: 'explicit' as const,
         sequence_hint: 1,
       },
     ];
@@ -193,6 +195,8 @@ describe('runDreamingNightly', () => {
       'DreamingTask',
       expect.objectContaining({
         run_kind: 'nightly',
+        // NOTE: the prompt payload intentionally OMITS scope_mode — the readers hand the
+        // model the RESOLVED scope_knowledge_ids; the mode is server-side plumbing (YUK-603).
         active_goals: [
           {
             id: 'goal_1',

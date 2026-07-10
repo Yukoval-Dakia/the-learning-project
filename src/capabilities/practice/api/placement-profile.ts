@@ -74,7 +74,12 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     const goalRows = await db
-      .select({ scope: goal.scope_knowledge_ids, subjectId: goal.subject_id, title: goal.title })
+      .select({
+        scope: goal.scope_knowledge_ids,
+        subjectId: goal.subject_id,
+        scopeMode: goal.scope_mode,
+        title: goal.title,
+      })
       .from(goal)
       .where(eq(goal.id, goalId))
       .limit(1);
@@ -88,6 +93,7 @@ export async function GET(req: Request): Promise<Response> {
     const resolvedScope = await resolveGoalPlacementScope(db, {
       scope: g.scope,
       subjectId: g.subjectId,
+      scopeMode: g.scopeMode,
     });
     const scope = Array.from(
       new Set(resolvedScope.map((id) => id.trim()).filter((id) => id.length > 0)),

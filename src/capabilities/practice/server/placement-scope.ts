@@ -20,12 +20,19 @@ import type { Db } from '@/db/client';
 
 export async function resolveGoalPlacementScope(
   db: Db,
-  goalRow: { scope: string[] | null; subjectId: string | null },
+  goalRow: {
+    scope: string[] | null;
+    subjectId: string | null;
+    /** YUK-603 — goal.scope_mode; callers default an unknown/absent goal to 'explicit'. */
+    scopeMode: 'explicit' | 'subject_live';
+  },
 ): Promise<string[]> {
   const frozenScope = goalRow.scope ?? [];
-  // Tier 1: a NON-empty frozen scope is an EXPLICIT narrow scope — respected as-is, never
-  // widened by live-resolve.
-  if (frozenScope.length > 0) return frozenScope;
+  // Tier 1 (YUK-603 gate): ONLY an EXPLICIT goal's non-empty frozen scope short-circuits —
+  // that set is a hand-picked / proposal-confirmed narrow authority, respected as-is and never
+  // widened. A subject_live goal NEVER reads frozen (its column is [] by invariant; even a
+  // stale non-empty value on a legacy row must not pin the scope — that pin was the armed bug).
+  if (goalRow.scopeMode === 'explicit' && frozenScope.length > 0) return frozenScope;
   // Tier 2 (YUK-482 Lane B): frozen empty AND the goal carries a subject → RE-RESOLVE the
   // subject's KC set LIVE (effective-domain axis, alias-aware), so newly-bridged KCs enter
   // scope.

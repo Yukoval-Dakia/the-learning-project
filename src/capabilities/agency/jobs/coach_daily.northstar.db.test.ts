@@ -216,6 +216,7 @@ describe('ND-5 conservation — North-Star goal strand is purely additive', () =
       title: '能流畅读《史记》',
       subject_id: 'yuwen',
       scope_knowledge_ids: ['k1'],
+      scope_mode: 'explicit' as const,
       sequence_hint: 0,
       status: 'active',
       source: 'goal_scope_proposal',
@@ -230,6 +231,7 @@ describe('ND-5 conservation — North-Star goal strand is purely additive', () =
         title: '能流畅读《史记》',
         subject_id: 'yuwen',
         scope_knowledge_ids: ['k1'],
+        scope_mode: 'explicit' as const,
         sequence_hint: 0,
       },
     ];

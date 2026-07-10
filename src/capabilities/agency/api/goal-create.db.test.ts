@@ -55,29 +55,36 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     expect(rows[0].title).toBe('G');
   });
 
-  it('derives the scope from a subjectId via the effective-domain axis', async () => {
-    await seedKnowledge('kc1', 'yuwen'); // effective domain 'yuwen' → subject 'yuwen'
-    await seedKnowledge('kc2', null); // untagged → not in subject
+  it('does NOT freeze a subject-derived scope: subject goal lands scope_mode=subject_live + empty frozen (YUK-603)', async () => {
+    // v2 contract §5.3: a subject goal's scope is a READ-TIME derivation (subject=view).
+    // Freezing the write-time resolution was the armed live bug (YUK-603): the derived set
+    // included the synthetic seed root, pinning placement tier-1 to [root] forever.
+    await seedKnowledge('kc1', 'yuwen');
+    await seedKnowledge('kc2', null); // untagged → not in subject either way
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'yuwen' }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.subjectId).toBe('yuwen');
-    expect(body.scopeKnowledgeIds).toEqual(['kc1']);
+    expect(body.scopeKnowledgeIds).toEqual([]); // no write-time freeze
 
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
     expect(rows[0].subject_id).toBe('yuwen');
-    expect(rows[0].scope_knowledge_ids).toEqual(['kc1']);
+    expect(rows[0].scope_knowledge_ids).toEqual([]);
+    expect(rows[0].scope_mode).toBe('subject_live');
   });
 
-  it('derives scope through the domain→subject alias (classical_chinese → yuwen)', async () => {
-    // resolveSubjectKnowledgeIds is alias-aware (domain.ts over-match fix): a node
-    // whose raw domain ALIASES to the subject id must be swept in. Lock that the
-    // entry path depends on the alias bridge, not bare domain equality.
-    await seedKnowledge('kc1', 'classical_chinese');
+  it('day-one regression (YUK-603): subject goal on a seed-root-only tree must not freeze [seed:*:root]', async () => {
+    // The exact armed-bug shape: only the synthetic subject root exists (zero content KCs).
+    // Pre-fix, resolveSubjectKnowledgeIds returned ['seed:yuwen:root'] (the root self-matches
+    // its own domain) and goal-create froze it → placement tier-1 pinned to [root] → probe
+    // permanently sourcingNeeded. Post-fix the row must be scope_mode=subject_live + [].
+    await seedKnowledge('seed:yuwen:root', 'yuwen');
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'yuwen' }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.scopeKnowledgeIds).toEqual(['kc1']);
+    const rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].scope_knowledge_ids).toEqual([]); // NOT ['seed:yuwen:root']
+    expect(rows[0].scope_mode).toBe('subject_live');
   });
 
   it('explicit knowledgeIds wins over subjectId-derived scope', async () => {
@@ -88,6 +95,8 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     );
     const body = await res.json();
     expect(body.scopeKnowledgeIds).toEqual(['kc2']); // explicit, not the derived [kc1,kc2]
+    const rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].scope_mode).toBe('explicit'); // explicit set → frozen scope stays authoritative
   });
 
   it('creates a scope-less north-star goal when neither knowledgeIds nor subjectId is given (cold-start)', async () => {
@@ -101,15 +110,45 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].source).toBe('manual');
     expect(rows[0].scope_knowledge_ids).toEqual([]);
+    expect(rows[0].scope_mode).toBe('explicit'); // no subject → nothing to live-derive from
   });
 
-  it('creates a goal with empty scope when subjectId resolves to no knowledge nodes', async () => {
+  it('an unknown subjectId still lands subject_live (live resolution degrades to empty, PR4 adds the 422 gate)', async () => {
+    // PR-0 keeps the write permissive (the 归一/422 write gate is YUK-600/PR4 scope); the
+    // row is subject_live so scope resolution stays a read-time concern either way.
     await seedKnowledge('kc1', 'yuwen');
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'no_such_subject' }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.subjectId).toBe('no_such_subject');
     expect(body.scopeKnowledgeIds).toEqual([]);
+    const rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].scope_mode).toBe('subject_live');
+  });
+
+  it('parity holds across both PROJECTION_IS_WRITER_GOAL states for a subject_live goal (§8 test 5)', async () => {
+    // OFF path: assertGoalParity runs in-tx (dev/test THROW on fold!=row) — a scope_mode wiring
+    // gap in GoalRowSnapshot / fold / goalLiveRowToSnapshot would make THIS create throw.
+    await seedKnowledge('kc1', 'yuwen');
+    const offRes = await createGoal(jsonReq({ title: 'G-off', subjectId: 'yuwen' }));
+    expect(offRes.status).toBe(200);
+
+    // ON path: projectGoal write-through folds the genesis and writes the row — the projected
+    // row must carry the same scope_mode the imperative writer would have written.
+    const prev = process.env.PROJECTION_IS_WRITER_GOAL;
+    process.env.PROJECTION_IS_WRITER_GOAL = '1';
+    try {
+      const onRes = await createGoal(jsonReq({ title: 'G-on', subjectId: 'yuwen' }));
+      expect(onRes.status).toBe(200);
+      const onBody = await onRes.json();
+      const rows = await db.select().from(goal).where(eq(goal.id, onBody.id));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].scope_mode).toBe('subject_live');
+      expect(rows[0].scope_knowledge_ids).toEqual([]);
+    } finally {
+      // restore OFF ('0' — projectionIsWriter checks === '1'; precedent parity-writers-c3:144)
+      process.env.PROJECTION_IS_WRITER_GOAL = prev ?? '0';
+    }
   });
 
   it('400s on a missing title', async () => {

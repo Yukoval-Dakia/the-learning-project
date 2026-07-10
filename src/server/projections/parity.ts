@@ -467,6 +467,7 @@ export function goalLiveRowToSnapshot(row: {
   title: string;
   subject_id: string | null;
   scope_knowledge_ids: string[] | null;
+  scope_mode: 'explicit' | 'subject_live';
   sequence_hint: number;
   status: 'active' | 'dormant' | 'done';
   source: string;
@@ -480,6 +481,9 @@ export function goalLiveRowToSnapshot(row: {
     title: row.title,
     subject_id: row.subject_id,
     scope_knowledge_ids: row.scope_knowledge_ids ?? [],
+    // YUK-603 — NOT NULL column with default; always present on a live row, always compared
+    // (the fold side materializes it too, defaulting legacy genesis payloads to 'explicit').
+    scope_mode: row.scope_mode,
     sequence_hint: row.sequence_hint,
     status: row.status,
     source: row.source,

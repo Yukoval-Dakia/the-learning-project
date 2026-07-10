@@ -124,6 +124,7 @@ function withGoalScope(...scope: string[]) {
         title: 'g',
         subject_id: null,
         scope_knowledge_ids: scope,
+        scope_mode: 'explicit' as const,
         sequence_hint: 0,
       },
     ],

@@ -75,6 +75,9 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
       title: projected.title,
       subject_id: projected.subject_id,
       scope_knowledge_ids: projected.scope_knowledge_ids,
+      // YUK-603 — the fold always materializes scope_mode (legacy payloads default 'explicit');
+      // the ?? is a type-level belt for the optional snapshot field, never hit at runtime.
+      scope_mode: projected.scope_mode ?? 'explicit',
       sequence_hint: projected.sequence_hint,
       status: projected.status,
       source: projected.source,
@@ -89,6 +92,7 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
         title: projected.title,
         subject_id: projected.subject_id,
         scope_knowledge_ids: projected.scope_knowledge_ids,
+        scope_mode: projected.scope_mode ?? 'explicit',
         sequence_hint: projected.sequence_hint,
         status: projected.status,
         source: projected.source,
