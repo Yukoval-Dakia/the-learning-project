@@ -5,7 +5,7 @@
  * text by the time the VLM has extracted it). Mirrors the `runTaggingTask`
  * invoker pattern: an injectable `runTaskFn` seam (so DB tests stub the model),
  * strict-JSON parse + Zod validation, and an anti-hallucination check that the
- * returned `subject_id` is one of the supplied `known_subject_ids`.
+ * returned `subject_id` is the `id` of one of the supplied `known_subjects`.
  *
  * Called from the image-candidate accept path (src/.../image-candidate-accept.ts)
  * ONLY when the sourcing-resolved knowledge_ids are empty — i.e. the uploaded
@@ -125,7 +125,7 @@ export async function runColdStartBridge(
   // 闭集校验机制保留：对象数组下按 id 判（display_name 只用于分类不作校验轴）。
   if (!knownSubjects.some((s) => s.id === parsed.subject_id)) {
     throw new ColdStartBridgeError(
-      `ColdStartPlacementBridgeTask returned out-of-vocabulary subject_id="${parsed.subject_id}" (allowed: ${knownSubjects.join(', ')})`,
+      `ColdStartPlacementBridgeTask returned out-of-vocabulary subject_id="${parsed.subject_id}" (allowed: ${knownSubjects.map((s) => s.id).join(', ')})`,
     );
   }
 

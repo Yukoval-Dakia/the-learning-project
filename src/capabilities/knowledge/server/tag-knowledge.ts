@@ -374,7 +374,7 @@ export async function tagKnowledge(
 
 /**
  * Production naming fn — reuses ColdStartPlacementBridgeTask via its existing invoker, with
- * the subject PINNED (single-element known_subject_ids → the classifier cannot pick another
+ * the subject PINNED (single-element known_subjects → the classifier cannot pick another
  * subject; anti-hallucination still satisfied). We read back ONLY `kc_name`; the bridge's
  * `subject_id` (pinned, redundant) and `reference_md` (P4a's concern, not ours) are discarded.
  * `existing_reference_md` is a non-empty placeholder so the bridge takes its ECHO path (no

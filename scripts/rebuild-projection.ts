@@ -26,6 +26,7 @@
 import './load-env';
 
 import { type Db, type Tx, db } from '@/db/client';
+import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import {
   PROJECTION_ENTITIES,
   PROJECTION_FK_CLUSTERS,
@@ -62,6 +63,11 @@ export async function rebuildProjectionForKinds(
 }
 
 async function main(): Promise<void> {
+  // YUK-600（review-760 P2）：foldGoal 现在经活 registry 归一 subject_id（alias→canonical、
+  // unknown→null）。这个 CLI 独立于 server 启动，import-time registry 只有 builtin——不先水合，
+  // 任何 custom 科目（subj_*）的 goal 会被 re-fold 成 subject_id=null 写回（静默去科目化）。
+  // 先水合，让 rebuild 与 live server 看到同一 registry（fold==row 的同一前置）。
+  await hydrateSubjectRegistryFromDb(db);
   // ONE tx per FK-cluster: a topology reject mid-cluster aborts only that cluster, not every kind.
   // Per-cluster isolation (review K2): the clusters are INDEPENDENT (that is the point of the
   // FK-cluster split), so one failing cluster must not abort the remaining ones — its tx rolled back

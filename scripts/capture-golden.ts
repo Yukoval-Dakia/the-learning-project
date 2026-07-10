@@ -47,6 +47,7 @@ import {
   mistakeVariantLiveRowToSnapshot,
   questionBlockLiveRowToSnapshot,
 } from '@/server/projections/parity';
+import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 // PURE re-fold + diff (no side effects; golden-reaudit's CLI is import-gated so importing it here
 // never runs it, and its import of THIS module is type-only — no runtime cycle). Used by main() for
 // the birth self-verification (review K4).
@@ -175,6 +176,10 @@ export function goldenPath(kind: ProjectionKind, date: string): string {
 
 async function main(): Promise<void> {
   const kind = parseKindArg('capture-golden');
+  // YUK-600（review-760 P2 同前置）：foldGoal 经活 registry 归一 subject_id。这个 CLI 有 DB，
+  // 先水合——否则含 custom 科目 goal 的库在下面的 birth reaudit（离线 re-fold）里必然假 DRIFT
+  // 被拒写。golden-reaudit 本体无 DB，见其文件头的水合前置标注。
+  await hydrateSubjectRegistryFromDb(db);
   const golden = await captureGolden(db, kind);
 
   // Birth self-verification (review K4): a golden is only a valid baseline if the CURRENT fold

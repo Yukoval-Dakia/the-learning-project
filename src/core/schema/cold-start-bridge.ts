@@ -57,8 +57,8 @@ export type ColdStartBridgeInputT = z.infer<typeof ColdStartBridgeInput>;
 
 export const ColdStartBridgeOutput = z.object({
   /**
-   * MUST be one of `known_subject_ids` — the invoker rejects an out-of-vocabulary
-   * value rather than coercing it (a wrong subject would mis-root the child KC).
+   * MUST be the `id` of one of the `known_subjects` entries — the invoker rejects an
+   * out-of-vocabulary value rather than coercing it (a wrong subject would mis-root the child KC).
    */
   subject_id: z.string().min(1),
   /**
