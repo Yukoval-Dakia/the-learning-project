@@ -35,6 +35,13 @@ export const observabilityCapability = defineCapability({
         path: '/api/admin/subjects',
         load: () => import('./api/admin-subjects').then((m) => m.GET),
       },
+      // YUK-600 (v3 §3.6) — thin-create：科目创建唯一入口（五步事务 + 幂等回放 +
+      // custom↔builtin 撞名 422；YUK-602 onboarding UI 只调这里不自带写面）。
+      {
+        method: 'POST',
+        path: '/api/admin/subjects',
+        load: () => import('./api/admin-subjects-create').then((m) => m.POST),
+      },
       {
         // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4) — calibration loop
         // admin reader. READ-ONLY: prediction_score LOG events + auto-minted
