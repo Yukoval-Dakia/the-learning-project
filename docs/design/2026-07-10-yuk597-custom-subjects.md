@@ -1,6 +1,7 @@
 # YUK-597 — 科目手填（自定义科目）+ SubjectProfile DB 化：implementation contract draft（v2）
 
 2026-07-10 · v1 终稿（run `wf_eef6dfd1-94a`）经 owner 判词（**D1 = 臂 B 全案 · D2 = opaque `subj_<cuid2>`**，不再复议）后收到 **request changes**（4 阻断 + 8 合同缺口）；本 v2 为契约修订（run `wf_78170c3d-f74`：6 个 opus 验证/设计席逐条实读接地 + Fable 综合）。**状态：implementation contract —— owner 已批准（2026-07-10，PR #748）。实施单 YUK-598~602 对齐本稿；PR-0 = YUK-603 先行。**
+**2026-07-10 稍后：本稿 §2 状态模型与相关写面已被 v3 取代**（`2026-07-10-yuk597-v3-trait-subjects.md`，owner 同日批准 v3.2 = 实施权威）；其余章节（goal 防线 / knownSubjects / 传播 / 启动失败矩阵 / backup 纪律等）按 v3 头部明示方式继续生效。
 
 ---
 
