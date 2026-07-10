@@ -47,7 +47,12 @@ export function computeAffectedScopes(input: EventPartial): string[] {
         : typeof payload.domain === 'string'
           ? payload.domain
           : undefined;
-  if (subjectId) addScope(scopes, `subject:${slug(subjectId)}`);
+  // YUK-598 PR2（v2 AMEND-1）：subject 后缀收 RAW——active-subjects.ts / brief.ts
+  // 两侧从来是裸 id（`subject:${subjectId}`），这里曾独走 slug 形成 L1 三点分歧。
+  // 已证为 cosmetic 死代码（live brief 走 loadSubjectBriefEvents），本处是卫生统一
+  // 非 bug 修；opaque ASCII custom id 下分歧本就从根消失。slug() 保留给
+  // mistake_cluster（:下方）——那是自由文本分类名，语义确实要归一。
+  if (subjectId) addScope(scopes, `subject:${subjectId}`);
 
   for (const knowledgeId of [
     ...stringArray(payload.referenced_knowledge_ids),

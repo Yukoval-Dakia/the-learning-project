@@ -72,6 +72,20 @@ describe('computeAffectedScopes', () => {
     ).toEqual(['global', 'subject:yuwen', 'topic:k1']);
   });
 
+  // YUK-598 PR2 — 非幂等 id 回归：slug(x) ≠ x 的 subject id 必须 RAW 保真（与
+  // active-subjects/brief 的 `subject:${subjectId}` 键构造逐字对齐；slug 化会让
+  // 三点键漂移，同一科目在 L1 出现两个 scope）。
+  it('keeps a non-slug-idempotent subject id RAW (three-callsite key parity)', () => {
+    const scopes = computeAffectedScopes({
+      action: 'attempt_submitted',
+      subject_kind: 'knowledge',
+      subject_id: 'k1',
+      payload: { subject_id: 'Subj-中文 Mixed' },
+    } as never);
+    expect(scopes).toContain('subject:Subj-中文 Mixed'); // RAW，非 'subj_中文_mixed'
+    expect(scopes.filter((s) => s.startsWith('subject:'))).toHaveLength(1);
+  });
+
   it('tags judge/user-cause primary category as a mistake cluster', () => {
     expect(
       computeAffectedScopes({
