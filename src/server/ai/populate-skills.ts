@@ -10,8 +10,9 @@
 // `<subjectDir>--<pack>`（源树保持裸名）：flatten 后跨科同名目录不再静默互踩，
 // resolver 白名单（quiz-gen / note / copilot 三家，均经 skill-namespace.ts 拼名）
 // 与镜像键永远同源。frontmatter 漂移（name != 目录名——静态 audit
-// skill-namespace.test.ts 已在构建期打红）→ 该包保持裸名镜像 + console.error，
-// 不 throw：漂移包白名单必然 miss，宁可单包缺席也不让整个镜像失败。
+// skill-namespace.test.ts 已在构建期打红）→ 镜像目录仍命名空间化、仅 frontmatter
+// 不改写 + console.error，不 throw：漂移包白名单必然 miss，宁可单包缺席也不让
+// 整个镜像失败（目录已前缀化，也不会与他科同名包互踩）。
 
 import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -85,7 +86,7 @@ export function populateIsolatedSkills(
         const rewritten = rewriteSkillMdName(readFileSync(skillMd, 'utf8'), skillName, namespaced);
         if (rewritten === null) {
           console.error(
-            '[runner] SKILL.md frontmatter name != directory name; pack mirrored un-namespaced and will NOT match its whitelist key',
+            '[runner] SKILL.md frontmatter name != directory name; frontmatter NOT rewritten (mirror dir is still namespaced) — pack will NOT match its whitelist key',
             { skill: skillName, subject: subjectId },
           );
           continue;
