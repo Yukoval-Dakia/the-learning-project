@@ -309,12 +309,19 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
     expect(existsSync(skillsDir)).toBe(true);
 
     const populated = readdirSync(skillsDir);
-    // Subject skills are flattened by SKILL.md name (dir name) into skills/.
-    expect(populated).toContain('quiz-gen-translation');
-    expect(populated).toContain('quiz-gen-reading-comprehension');
-    expect(populated).toContain('quiz-gen-calculation');
-    // SKILL.md is mirrored into each skill dir.
-    expect(existsSync(join(skillsDir, 'quiz-gen-translation', 'SKILL.md'))).toBe(true);
+    // YUK-611: subject skills flatten 时目录名命名空间化 <subject>--<pack>（跨科
+    // 同名不互踩），镜像内 SKILL.md frontmatter name 同步改写为同一个键。
+    expect(populated).toContain('yuwen--quiz-gen-translation');
+    expect(populated).toContain('yuwen--quiz-gen-reading-comprehension');
+    expect(populated).toContain('math--quiz-gen-calculation');
+    expect(populated).toContain('_shared--copilot');
+    // 裸名不再产生。
+    expect(populated).not.toContain('quiz-gen-translation');
+    // SKILL.md is mirrored into each skill dir, with the namespaced name inside.
+    const mirroredMd = join(skillsDir, 'yuwen--quiz-gen-translation', 'SKILL.md');
+    expect(existsSync(mirroredMd)).toBe(true);
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync(mirroredMd, 'utf8')).toMatch(/^name: yuwen--quiz-gen-translation$/m);
   });
 
   // populateIsolatedSkills idempotency: CLAUDE_CONFIG_DIR is a process-level
@@ -338,7 +345,7 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
     // Same singleton dir; skills subtree unchanged (no re-populate / no dupes).
     expect(dir2).toBe(dir1);
     expect(skills2).toEqual(skills1);
-    expect(existsSync(join(dir2, 'skills', 'quiz-gen-translation', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(dir2, 'skills', 'yuwen--quiz-gen-translation', 'SKILL.md'))).toBe(true);
   });
 });
 
