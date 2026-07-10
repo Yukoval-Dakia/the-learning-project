@@ -48,10 +48,10 @@ describe('YUK-610 — Dockerfile skills COPY 覆盖', () => {
 
     // 匹配「源路径 目标路径」对而非整行 flag 形状（COPY 换 flag 不误伤），并容忍
     // 多空格 / 尾斜杠的重排版（review-753 P3：includes 单空格假设会假红）。
-    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const missing = skillRoots.filter((name) => {
       const pair = new RegExp(
-        `/app/src/subjects/${escape(name)}/skills/?\\s+\\./src/subjects/${escape(name)}/skills/?(?:\\s|$)`,
+        `/app/src/subjects/${escapeRe(name)}/skills/?\\s+\\./src/subjects/${escapeRe(name)}/skills/?(?:\\s|$)`,
         'm',
       );
       return !pair.test(dockerfile);
