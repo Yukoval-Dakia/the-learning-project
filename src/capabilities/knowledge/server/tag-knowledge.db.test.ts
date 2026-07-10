@@ -61,7 +61,7 @@ function stubName(name: string): {
     questionText: string;
     knowledgeHint: string | null;
     subjectId: string;
-    knownSubjectIds: readonly string[];
+    knownSubjects: ReadonlyArray<{ id: string; display_name: string }>;
   }) => Promise<{ kc_name: string }>;
   calls: number;
 } {

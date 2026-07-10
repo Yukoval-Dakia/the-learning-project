@@ -35,12 +35,13 @@ import type { Job } from 'pg-boss';
 
 import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
 import { runGoalScopeAndWrite } from '@/capabilities/agency/server/goals/scope';
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 // M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
 // 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import type { Db } from '@/db/client';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { KNOWN_SUBJECT_IDS, resolveSubjectProfile } from '@/subjects/profile';
+import { getDefaultSubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
 import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 
 type DepsOverride = {
@@ -105,12 +106,18 @@ export async function runGoalScopeProposeNightly(
   // NOT a logged skip. Do NOT wrap these in a catch-all.
   const tree = await loadTreeSnapshot(db);
 
-  // Mastery-based candidate selection (watermark-independent). Pick the KNOWN
-  // domain with the most weak nodes; KNOWN_SUBJECT_IDS declaration order is the
-  // deterministic tie-break (first-wins, strict `>` keeps earlier ids on ties).
+  // Mastery-based candidate selection (watermark-independent). Pick the selectable
+  // domain with the most weak nodes; registry 序作确定性 tie-break（first-wins，
+  // strict `>` 保先序）。YUK-600（v2 §6 两分述）：
+  //   - **候选源必换** getSelectableSubjectIds()——custom 科目 hydrate 后自动入池
+  //     （worker ≤60s 可见）；分类器合同不改（确定性挑选）。
+  //   - **≥5 KC gate**：resolveSubjectKnowledgeIds(candidate).length >= 5 才有
+  //     资格（PR-0 排根后自动纯内容计数——空科目/只有根的科目不值得夜间 LLM 提案）。
   let domain: string | null = null;
   let bestWeak = 0;
-  for (const candidate of KNOWN_SUBJECT_IDS) {
+  for (const candidate of getDefaultSubjectRegistry().getSelectableSubjectIds()) {
+    const kcs = await resolveSubjectKnowledgeIds(db, candidate);
+    if (kcs.length < 5) continue; // fan-out gate：内容太薄不提案
     const weak = countWeakNodesInDomain(tree, candidate);
     if (weak > bestWeak) {
       bestWeak = weak;
