@@ -338,6 +338,10 @@ export const fastTestInclude = [
   // YUK-288 — resolveKnownSubjectId (pure, no-DB): genuine alias/id hit vs the
   // default-profile over-match fix for the derived ?subject= axis.
   'src/subjects/resolve-known-subject-id.test.ts',
+  // YUK-610 — Dockerfile 运行时 skills COPY 覆盖断言（纯 fs：读 Dockerfile +
+  // 目录扫描，零 DB）。populateIsolatedSkills 走 readdirSync 非 import，漏拷
+  // 不进 tsc/esbuild 视野，这条断言是唯一构建期防线（_shared 漏拷生产事故）。
+  'src/subjects/skills-image-coverage.test.ts',
   // M3 (YUK-317) — hub-mesh / rubric-validator.unit / tree.unit 三条 knowledge
   // unit 条目已随域迁入 src/capabilities/knowledge/（统一 *.unit.test.ts 命名），
   // 由约定 glob 接管。
