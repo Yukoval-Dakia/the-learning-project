@@ -45,7 +45,7 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **在飞 PR**：**#750**（yuk-607-json-parse-repair —— quiz JSON 修复带 + YUK-606 ctx.db，平行 lane，主工作树在推进）· **本 docs PR**（YUK-597 v3.2 合同 + 驾驶舱同步；判词即授权，CI 绿即 merge，merge 后此条清）。worktree 拓扑 = main（现被 yuk-607 lane 占用）+ `tlp-deploy`（部署 checkout，现指 `4918753c` = 生产实况）+ `tlp-yuk597-v3docs`（本 docs PR 临时 worktree，merge 后清）。**待 owner 清理分支**：`yuk-249-yuwen-migration` · `yuk-249-rename-stragglers`（均本地+远端）（git-guard/classifier 挡删）。
+- **在飞 PR**：**#750**（yuk-607-json-parse-repair —— quiz JSON 修复带 + YUK-606 ctx.db，平行 lane，主工作树在推进）· **#751**（YUK-597 v3.2 合同 + 驾驶舱同步 docs PR；判词即授权，CI 绿即 merge，merge 后此条清）。worktree 拓扑 = main（现被 yuk-607 lane 占用）+ `tlp-deploy`（部署 checkout，现指 `4918753c` = 生产实况）+ `tlp-yuk597-v3docs`（本 docs PR 临时 worktree，merge 后清）。**待 owner 清理分支**：`yuk-249-yuwen-migration` · `yuk-249-rename-stragglers`（均本地+远端）（git-guard/classifier 挡删）。
 - **噪音/stale PR 待周期清**：audit-drift 周报 draft（#736/#734/#727/#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
 
 ## ✅ 最近已落（防遗落，下次别重做）
