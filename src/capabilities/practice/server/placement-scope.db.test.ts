@@ -121,4 +121,33 @@ describe('resolveGoalPlacementScope (YUK-516 shared three-tier contract)', () =>
     });
     expect(scope).toEqual(['kc1']); // NOT ['seed:yuwen:root', 'kc1']
   });
+
+  it('tier-3 strips synthetic subject roots when content KCs exist (review F6 — no root/profile leak)', async () => {
+    // subject_live goal on an EMPTY subject (physics: root only, zero content) falls through
+    // tier-2 to the wide tier-3 fallback. Pre-fix that re-admitted every seed root (fake
+    // untested profile rows). Content KCs from other subjects stay — tier-3's documented
+    // full-tree semantics — but structural anchors never read as content (§5.4).
+    await seedKnowledge('seed:physics:root', { domain: 'physics' });
+    await seedKnowledge('seed:yuwen:root');
+    await seedKnowledge('kc1', { parentId: 'seed:yuwen:root', domain: null });
+    const scope = await resolveGoalPlacementScope(db, {
+      scope: [],
+      subjectId: 'physics',
+      scopeMode: 'subject_live',
+    });
+    expect(scope).toEqual(['kc1']); // roots stripped; yuwen content stays (tier-3 is cross-subject)
+  });
+
+  it('tier-3 keeps the roots when the tree is roots-only (reachability → honest sourcingNeeded, not 400)', async () => {
+    await seedKnowledge('seed:yuwen:root');
+    await seedKnowledge('seed:math:root', { domain: 'math' });
+    const scope = await resolveGoalPlacementScope(db, {
+      scope: [],
+      subjectId: 'yuwen',
+      scopeMode: 'subject_live',
+    });
+    // Non-empty scope keeps placement-start on its designed day-one path: probe scope resolves,
+    // no eligible question → sourcingNeeded:true (coldstart e2e honesty leg).
+    expect(scope.sort()).toEqual(['seed:math:root', 'seed:yuwen:root']);
+  });
 });

@@ -96,6 +96,12 @@ describe('0063 scope_mode data-fix (YUK-603 存量 migration 判据)', () => {
     expect(await readGoal('g-picked')).toEqual({ scope_mode: 'explicit', scope: ['kc1', 'kc2'] });
   });
 
+  it('conservative: a SINGLE-element non-root set stays explicit (length-1 branch is root-only)', async () => {
+    await seedGoal({ id: 'g-single', subject_id: 'yuwen', scope: ['kc1'], source: 'manual' });
+    for (const stmt of loadDataFixStatements()) await db.execute(sql.raw(stmt));
+    expect(await readGoal('g-single')).toEqual({ scope_mode: 'explicit', scope: ['kc1'] });
+  });
+
   it('conservative: a multi-element set CONTAINING the root stays explicit (只收单元素 root)', async () => {
     await seedGoal({
       id: 'g-mixed',

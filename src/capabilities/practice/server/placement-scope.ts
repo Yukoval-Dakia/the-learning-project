@@ -47,6 +47,18 @@ export async function resolveGoalPlacementScope(
   // eligible question; the profile surfaces untested KCs as explicit tested:false rows).
   if (knowledgeIds.length === 0) {
     knowledgeIds = await resolveAllActiveKnowledgeIds(db);
+    // YUK-603 (review F6) — §5.4's anchor-not-content invariant holds on the wide fallback
+    // too: synthetic subject roots are stripped so a subject_live goal that fell through an
+    // empty tier-2 doesn't re-admit them (the profile would render them as fake untested
+    // rows). EXCEPT when stripping would empty the scope — a roots-only day-one tree must
+    // stay reachable so the probe reports an honest sourcingNeeded instead of 400ing.
+    const contentOnly = knowledgeIds.filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id));
+    if (contentOnly.length > 0) knowledgeIds = contentOnly;
   }
   return knowledgeIds;
 }
+
+// The seed-root id family ('seed:<subjectId>:root', seed.ts / ensureSubjectRoot). Pattern form
+// because tier-3 is subject-agnostic; domain.ts's tier-2 exclusion stays exact-id (it knows its
+// canonical subject). 3a runtime topic roots (newId + parent_id null) never match.
+const SYNTHETIC_SUBJECT_ROOT_RE = /^seed:[^:]+:root$/;

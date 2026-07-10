@@ -7,10 +7,13 @@ ALTER TABLE "goal" ADD COLUMN "scope_mode" text DEFAULT 'explicit' NOT NULL;--> 
 -- silently widen a narrow goal).
 --
 -- fold==row caveat (documented, accepted): rows converted here had their genesis event
--- written with the OLD frozen scope and no scope_mode key, so a LATER status/scope update's
--- parity assert would diff against this SQL fix. Production carries ZERO matching rows at
--- ship time (day-zero census + pre-merge diagnostic, YUK-603), and the status/scope helpers
--- have no live caller today; a compensating event is deliberately not minted from SQL.
+-- written with the OLD frozen scope and no scope_mode key, so ANY consumer that re-folds them
+-- (the offline projection audit / capture-golden sweep, or a later status/scope update's
+-- in-tx parity assert) would report a scope_mode + scope_knowledge_ids diff against this SQL
+-- fix. The load-bearing guarantee is that production carries ZERO matching rows at ship time
+-- (day-zero census + pre-merge diagnostic, YUK-603) — the UPDATE below is a no-op there; a
+-- compensating event is deliberately not minted from SQL. A non-prod DB that DID carry an
+-- armed row will read the (accurate) drift in the offline audit until re-seeded.
 UPDATE "goal"
 SET "scope_mode" = 'subject_live',
     "scope_knowledge_ids" = '[]'::jsonb
