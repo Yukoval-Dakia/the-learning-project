@@ -25,7 +25,11 @@ function treeHasSkillMd(dir: string): boolean {
 
 describe('YUK-610 — Dockerfile skills COPY 覆盖', () => {
   it('src/subjects/<dir>/skills 含 SKILL.md 的每棵树都有对应 COPY 行', () => {
-    const dockerfile = readFileSync(join(ROOT, 'Dockerfile'), 'utf8');
+    // 剥掉注释行再匹配——被注释掉的 COPY 行不算覆盖（否则调试期注释一行就静默复发）。
+    const dockerfile = readFileSync(join(ROOT, 'Dockerfile'), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n');
     const skillRoots = readdirSync(SUBJECTS_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
