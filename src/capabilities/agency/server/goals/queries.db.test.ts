@@ -90,12 +90,27 @@ describe('listActiveGoalsWithResolvedScope (YUK-603 goal-strand live read)', () 
     for (const g of goals) expect(g.scope_knowledge_ids.sort()).toEqual(['kc1', 'kc2']);
   });
 
-  it('a subject_live goal without a subject (or with an unknown one) resolves to []', async () => {
+  it('a subject_live goal with an UNKNOWN subject resolves to []', async () => {
     await seedSubjectTree();
     await insertGoal(db, {
       id: 'g1',
       title: 'G1',
       subject_id: 'no_such_subject',
+      scope_knowledge_ids: [],
+      scope_mode: 'subject_live',
+      sequence_hint: 0,
+      source: 'manual',
+    });
+    const goals = await listActiveGoalsWithResolvedScope(db);
+    expect(goals[0].scope_knowledge_ids).toEqual([]);
+  });
+
+  it('a subject_live goal with a NULL subject resolves to [] (nothing to derive from)', async () => {
+    await seedSubjectTree();
+    await insertGoal(db, {
+      id: 'g1',
+      title: 'G1',
+      subject_id: null,
       scope_knowledge_ids: [],
       scope_mode: 'subject_live',
       sequence_hint: 0,
