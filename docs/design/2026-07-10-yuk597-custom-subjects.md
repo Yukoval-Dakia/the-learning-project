@@ -1,6 +1,6 @@
 # YUK-597 — 科目手填（自定义科目）+ SubjectProfile DB 化：implementation contract draft（v2）
 
-2026-07-10 · v1 终稿（run `wf_eef6dfd1-94a`）经 owner 判词（**D1 = 臂 B 全案 · D2 = opaque `subj_<cuid2>`**，不再复议）后收到 **request changes**（4 阻断 + 8 合同缺口）；本 v2 为契约修订（run `wf_78170c3d-f74`：6 个 opus 验证/设计席逐条实读接地 + Fable 综合）。**状态：implementation contract draft，等 owner 批准后才动实施单（YUK-598~602 届时对齐本稿）。**
+2026-07-10 · v1 终稿（run `wf_eef6dfd1-94a`）经 owner 判词（**D1 = 臂 B 全案 · D2 = opaque `subj_<cuid2>`**，不再复议）后收到 **request changes**（4 阻断 + 8 合同缺口）；本 v2 为契约修订（run `wf_78170c3d-f74`：6 个 opus 验证/设计席逐条实读接地 + Fable 综合）。**状态：implementation contract —— owner 已批准（2026-07-10，PR #748）。实施单 YUK-598~602 对齐本稿；PR-0 = YUK-603 先行。**
 
 ---
 
@@ -257,7 +257,7 @@ LIGHT 备选（无列，frozen 空 + 有 subject_id 启发式）被弃：intent 
 
 | PR | 内容 | 对应子单 |
 |---|---|---|
-| PR-0 | **scope_mode 修复（armed live bug，先行独立）**：goal 加列 + 写路停冻结 + placement tier-1 gate + goal-strand 4 读者 + 存量 migration + root 源头排除 + projection/parity/genesis 连线 | 新 bug 单（+ YUK-600 引用） |
+| PR-0 | **scope_mode 修复（armed live bug，先行独立）**：goal 加列 + 写路停冻结 + placement tier-1 gate + goal-strand 4 读者 + 存量 migration + root 源头排除 + projection/parity/genesis 连线 | YUK-603（+ YUK-600 引用） |
 | PR1 | 三集合 registry API（BUILTIN 更名 + selectable/resolvable）+ `GET /api/subjects` + provider + 12 客户端消费点 hook 化 + 模块级冻结修复 + stale-const 修复 | YUK-598 |
 | PR2 | scope_key L1 三调用点统一（RAW）+ 回归测试 | YUK-598 |
 | PR3 | `subject_profile` + `subject_name_claim` + migration + `reconcileBuiltinProfiles` + boot 水合（app serve-gate + worker）+ 60s refresh + `upsert()`/冲突守卫 + NFC 归一 + **backup FK_ORDER/SCHEMA_VERSION/round-trip** | YUK-599 |
