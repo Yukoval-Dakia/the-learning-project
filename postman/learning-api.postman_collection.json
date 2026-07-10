@@ -235,6 +235,48 @@
             "description": "获取单个 AI task run 的详细时间线\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** :id 为 task_run_id；不存在返回 404"
           },
           "response": []
+        },
+        {
+          "name": "GET /api/admin/subjects",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects"]
+            },
+            "description": "admin 科目枚举（slim 投影，R11：不带 causeCategories）\n\n**Notes:** 返回 { subjects:[{id, displayName, version, notation, capabilityCount}] }。M5-T4 旧面；YUK-601 将扩容（origin/retiredAt/isGeneralFallback/version 组合串）。需 x-internal-token"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/subjects",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects"]
+            },
+            "description": "thin-create 科目创建唯一入口（YUK-600，v3 §3.6）\n\n**Notes:** 单事务五步（advisory lock → subject 行 + canonical(id) claim + 六绑定 general 种子〔零复制〕+ seed:<id>:root 建根〔genesis+anchor〕+ control journal create）→ commit 后 registry 装配上架。201 = {id, displayName, isGeneralFallback, revision, seedRootId}；幂等同名 → 200 回放；custom↔builtin 撞名（显示名或 id/alias 命名空间）→ 422；空名 → 400。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"化学\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
         }
       ]
     },

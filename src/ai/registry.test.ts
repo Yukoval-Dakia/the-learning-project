@@ -263,6 +263,27 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
   });
 });
 
+// YUK-600（阻断②）— ColdStartPlacementBridgeTask 的 INPUT 合同从 known_subject_ids
+// （字符串数组）换成 known_subjects（{id, display_name, aliases?} 对象数组）：分类依据是
+// display_name/aliases，opaque id 只允许逐字回传。prompt 是这份合同唯一触达模型的面——
+// invoker 的单测全部 stub runTaskFn 测不到它，所以在这里 pin 关键词（粗粒度 substring，
+// 同文件头注释的口径：抓「合同被回退」，不抓措辞微调）。
+describe('ColdStartPlacementBridgeTask.systemPrompt — known_subjects 对象数组合同 (YUK-600)', () => {
+  it('describes the entry shape and the display_name-classify / id-verbatim split', () => {
+    const p = tasks.ColdStartPlacementBridgeTask.systemPrompt;
+    expect(p).toContain('known_subjects');
+    expect(p).toContain('display_name');
+    expect(p).toContain('aliases');
+    // Opaque-id discipline: ids are copied back verbatim, never interpreted.
+    expect(p).toMatch(/verbatim/i);
+    expect(p).toMatch(/opaque/i);
+  });
+
+  it('no longer references the retired known_subject_ids string-array key', () => {
+    expect(tasks.ColdStartPlacementBridgeTask.systemPrompt).not.toContain('known_subject_ids');
+  });
+});
+
 // YUK-406 Phase 0 / YUK-440 A13 — conjecture induction task registry entry.
 describe('MindModelInductionTask registry entry', () => {
   it('is a text-only single-shot task (Opus lane chosen per-call via override, never default)', () => {

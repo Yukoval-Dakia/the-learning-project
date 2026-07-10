@@ -243,6 +243,16 @@ export class SubjectRegistry {
     return this.listIds('selectable');
   }
 
+  // YUK-600（v2 §6）— 列举某科目的别名（不含自别名）；knownSubjects 词表用。
+  listAliasesFor(id: SubjectId): string[] {
+    const key = normalizeSubjectKey(id);
+    const out: string[] = [];
+    for (const [alias, target] of this.aliases) {
+      if (target === key && alias !== key) out.push(alias);
+    }
+    return out;
+  }
+
   getResolvableSubjectIds(): SubjectId[] {
     return this.listIds('resolvable');
   }
@@ -312,6 +322,32 @@ export function resolveSubjectProfile(domain?: string | null): SubjectProfile {
  */
 export function resolveKnownSubjectId(domain?: string | null): SubjectId | null {
   return defaultRegistry.resolveKnownSubjectId(domain);
+}
+
+// YUK-600（v2 §6，阻断②）— AI 分类词表：opaque id 互相零语义差 → 判别近随机；
+// display_name 是分类依据，id 是 opaque stable key 原样回传（LLM 禁自造），
+// aliases present 才序列化。**取数红线**：读活 registry（selectable × get +
+// listAliasesFor），不读编译期冻结快照 subjectProfiles；general 永不入词表
+// （selectable 结构性排除）。
+export interface KnownSubject {
+  id: string;
+  display_name: string;
+  aliases?: string[];
+}
+
+export function getKnownSubjects(): KnownSubject[] {
+  return defaultRegistry.getSelectableSubjectIds().flatMap((id) => {
+    const profile = defaultRegistry.get(id);
+    if (!profile) return [];
+    const aliases = defaultRegistry.listAliasesFor(id);
+    return [
+      {
+        id,
+        display_name: profile.displayName,
+        ...(aliases.length > 0 ? { aliases } : {}),
+      },
+    ];
+  });
 }
 
 export function getDefaultSubjectRegistry(): SubjectRegistry {

@@ -161,7 +161,7 @@ function goalSnapshot(over: Partial<GoalRowSnapshotT> = {}): GoalRowSnapshotT {
   return {
     id: 'goal_1',
     title: 'Master derivatives',
-    subject_id: 'subj_math',
+    subject_id: 'yuwen',
     scope_knowledge_ids: ['k_a', 'k_b'],
     sequence_hint: 0,
     status: 'active',
@@ -231,13 +231,46 @@ describe('foldGoal — scope_mode (YUK-603)', () => {
   });
 });
 
+// YUK-600（阻断④ fold 镜像，review-760 P3）— proposal-materialization 分支现在经
+// registry 归一 subject_id（与 accept 写路同一语义，fold==row 不变量）。改动落在 core，
+// 直测也落在 core：alias→canonical、unknown→null（db 层防线测试只覆盖写路一侧）。
+// 'wenyan' 是 YUK-249 改名前的 canonical，现为 'yuwen' 的编译期 builtin alias。
+describe('foldGoal — proposal subject_id 归一（YUK-600 fold 镜像）', () => {
+  it('normalizes a builtin alias to its canonical id (wenyan → yuwen)', () => {
+    const propose = goalPropose({
+      created_at: at(0),
+      goalId: 'goal_1',
+      title: 'T',
+      subjectId: 'wenyan',
+    });
+    const accept = rateAccept({ created_at: at(1000), causedBy: propose.id, goalId: 'goal_1' });
+    const row = foldGoal('goal_1', [propose, accept]);
+    expect(row).not.toBeNull();
+    expect(row?.subject_id).toBe('yuwen');
+  });
+
+  it('resolves an unknown subject_id to null (row still materializes)', () => {
+    const propose = goalPropose({
+      created_at: at(0),
+      goalId: 'goal_1',
+      title: 'T',
+      subjectId: 'subj_never_registered',
+    });
+    const accept = rateAccept({ created_at: at(1000), causedBy: propose.id, goalId: 'goal_1' });
+    const row = foldGoal('goal_1', [propose, accept]);
+    expect(row).not.toBeNull();
+    expect(row?.subject_id).toBeNull();
+    expect(row?.title).toBe('T');
+  });
+});
+
 describe('foldGoal — proposal + accept chain', () => {
   it('projects a goal materialized from a goal_scope proposal accept (status=active, version=0)', () => {
     const propose = goalPropose({
       created_at: at(0),
       goalId: 'goal_1',
       title: 'Master derivatives',
-      subjectId: 'subj_math',
+      subjectId: 'yuwen',
       scope: ['k_a', 'k_b'],
       sequenceHint: 3,
     });
@@ -246,7 +279,7 @@ describe('foldGoal — proposal + accept chain', () => {
     expect(row).not.toBeNull();
     expect(row?.id).toBe('goal_1');
     expect(row?.title).toBe('Master derivatives');
-    expect(row?.subject_id).toBe('subj_math');
+    expect(row?.subject_id).toBe('yuwen');
     expect(row?.scope_knowledge_ids).toEqual(['k_a', 'k_b']);
     expect(row?.sequence_hint).toBe(3);
     expect(row?.status).toBe('active');
@@ -322,7 +355,7 @@ describe('foldGoal — status/scope action events bump version', () => {
     expect(row?.title).toBe('New');
     expect(row?.sequence_hint).toBe(9);
     expect(row?.scope_knowledge_ids).toEqual(['k_a']); // not in patch → preserved
-    expect(row?.subject_id).toBe('subj_math'); // set-once provenance, never mutated
+    expect(row?.subject_id).toBe('yuwen'); // set-once provenance, never mutated
     expect(row?.version).toBe(1);
     expect(row?.updated_at.getTime()).toBe(at(5000).getTime());
   });

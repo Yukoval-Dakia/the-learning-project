@@ -42,6 +42,8 @@ import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-
 // HIGH-2 — write-time fold==row guard on the OFF branch (genesis written this tx → event-sourced).
 import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
+import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { insertGoal } from '../server/goals/queries';
 
@@ -75,7 +77,17 @@ export async function POST(req: Request): Promise<Response> {
         400,
       );
     }
-    const { title, subjectId, knowledgeIds: explicit } = parsed.data;
+    const { title, subjectId: rawSubjectId, knowledgeIds: explicit } = parsed.data;
+
+    // YUK-600（阻断④防线步 1）—— alias→canonical 归一（tx 外、scope 派生前）：
+    // goal 只能引用已存在科目（thin-create 是创建唯一入口），unknown → 422；
+    // canonical 全程替换 raw 四消费点（scope_mode 分支 / genesis snapshot /
+    // insertGoal / 201 响应）。顺带修 alias-miss 潜伏 bug：传 'wenyan' 曾原样
+    // 落库 + 派生 scope 恒空——归一后 = 'yuwen' + scope 正确。
+    const subjectId = rawSubjectId ? resolveKnownSubjectId(rawSubjectId) : null;
+    if (rawSubjectId && !subjectId) {
+      throw new ApiError('validation_error', `unknown subject '${rawSubjectId}'`, 422);
+    }
 
     // Scope semantics (YUK-603, v2 contract §5.3 — three write branches, NO write-time freeze
     // of a subject derivation):
@@ -135,6 +147,15 @@ export async function POST(req: Request): Promise<Response> {
         anchor_event_id: genesisEventId,
         subject_kind: 'goal',
       });
+      // YUK-600（阻断④防线步 2）—— 建根安全网：挂在两 writer 分岔**之前**的共享
+      // 事务步骤（projectGoal 路完全绕过 insertGoal，防线不能挂 writer 内）。
+      // 幂等 ON CONFLICT no-op；root.name 只从服务端 registry 读（v1 的
+      // subjectDisplayName passthrough 已废除，不信任何 client 串）。
+      // goal-parity 零成本：assertGoalParity 不读 knowledge，同 tx 建根安全。
+      if (subjectId) {
+        const profile = getDefaultSubjectRegistry().get(subjectId);
+        await ensureSubjectRoot(tx, subjectId, profile?.displayName ?? subjectId);
+      }
       // 2. ROW writer — gated on the per-entity flag (critic A1).
       if (projectionIsWriter('goal')) {
         await projectGoal(tx, id);

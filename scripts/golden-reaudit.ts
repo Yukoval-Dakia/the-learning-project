@@ -11,6 +11,14 @@
 // "reducer-code-hash-triggered" is landed as a path-triggered manual gate, n=1 sufficient; hash
 // automation left optional). PURE — no DB (folds the golden's own captured events in memory).
 //
+// REGISTRY PRECONDITION (YUK-600 / review-760 P2): foldGoal normalizes subject_id via the LIVE
+// subject registry (alias→canonical, unknown→null). This CLI has no DB, so it sees only the
+// compile-time builtins — a goal golden containing CUSTOM subject ids (subj_*) would re-fold to
+// subject_id=null and report FALSE drift. Fail-visible, not silent; if a goal golden with custom
+// subjects is ever captured, this CLI must grow a hydration step (or the golden must embed the
+// registry). No goal golden exists today. capture-golden.ts (which HAS a DB) hydrates before its
+// birth reaudit for the same reason.
+//
 // CLI:
 //   pnpm audit:golden --kind=goal   # re-fold the latest scripts/golden/goal-*.json; exit 1 on drift
 
