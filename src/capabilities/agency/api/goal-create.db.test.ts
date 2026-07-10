@@ -113,16 +113,24 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     expect(rows[0].scope_mode).toBe('explicit'); // no subject → nothing to live-derive from
   });
 
-  it('an unknown subjectId still lands subject_live (live resolution degrades to empty, PR4 adds the 422 gate)', async () => {
-    // PR-0 keeps the write permissive (the 归一/422 write gate is YUK-600/PR4 scope); the
-    // row is subject_live so scope resolution stays a read-time concern either way.
+  it('YUK-600（阻断④）：unknown subjectId → 422，零落库（写门反转 PR-0 的 verbatim 行为）', async () => {
+    // PR-0 曾放行 verbatim 落库（写门是本单 scope）；现在 goal 只能引用已存在
+    // 科目——thin-create 是创建唯一入口。
     await seedKnowledge('kc1', 'yuwen');
+    const before = (await db.select().from(goal)).length;
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'no_such_subject' }));
+    expect(res.status).toBe(422);
+    expect((await db.select().from(goal)).length).toBe(before);
+  });
+
+  it('YUK-600：alias 归一——subjectId=wenyan 落库/响应均为 canonical yuwen 且 subject_live', async () => {
+    await seedKnowledge('kc1', 'yuwen');
+    const res = await createGoal(jsonReq({ title: 'G', subjectId: 'wenyan' }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.subjectId).toBe('no_such_subject');
-    expect(body.scopeKnowledgeIds).toEqual([]);
+    expect(body.subjectId).toBe('yuwen'); // canonical，非 raw
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].subject_id).toBe('yuwen');
     expect(rows[0].scope_mode).toBe('subject_live');
   });
 

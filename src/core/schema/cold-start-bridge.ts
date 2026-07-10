@@ -36,8 +36,20 @@ export const ColdStartBridgeInput = z.object({
    * only to disambiguate subject + name the child KC; never authoritative.
    */
   knowledge_hint: z.string().nullable().default(null),
-  /** The known subject ids the classifier MUST pick from (anti-hallucination). */
-  known_subject_ids: z.array(z.string().min(1)).min(1),
+  /**
+   * YUK-600（阻断②）— 分类词表升对象数组：opaque id 互相零语义差（判别近随机），
+   * display_name 才是分类依据；id 是 opaque stable key，LLM 必须原样回传禁自造；
+   * aliases present 才序列化（builtin 的 legacy 别名帮助识别旧语料表述）。
+   */
+  known_subjects: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        display_name: z.string().min(1),
+        aliases: z.array(z.string().min(1)).optional(),
+      }),
+    )
+    .min(1),
 });
 export type ColdStartBridgeInputT = z.infer<typeof ColdStartBridgeInput>;
 
@@ -45,8 +57,8 @@ export type ColdStartBridgeInputT = z.infer<typeof ColdStartBridgeInput>;
 
 export const ColdStartBridgeOutput = z.object({
   /**
-   * MUST be one of `known_subject_ids` — the invoker rejects an out-of-vocabulary
-   * value rather than coercing it (a wrong subject would mis-root the child KC).
+   * MUST be the `id` of one of the `known_subjects` entries — the invoker rejects an
+   * out-of-vocabulary value rather than coercing it (a wrong subject would mis-root the child KC).
    */
   subject_id: z.string().min(1),
   /**

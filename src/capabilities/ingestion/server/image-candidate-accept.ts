@@ -58,7 +58,7 @@ import {
 } from '@/server/proposals/signals';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type R2Client, getR2 } from '@/server/r2';
-import { KNOWN_SUBJECT_IDS } from '@/subjects/profile';
+import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 export interface ImageCandidateAcceptResult {
@@ -644,7 +644,7 @@ export async function acceptImageCandidateProposal(
           // reference_md anyway — P4a owns reference generation).
           existingReferenceMd: '(reference answer not needed for tagging)',
           knowledgeHint: block.knowledge_hint,
-          knownSubjectIds: KNOWN_SUBJECT_IDS,
+          knownSubjects: getKnownSubjects(), // YUK-600：活 registry 词表（custom 入表）
           runTaskFn: deps.runColdStartBridgeFn,
         });
         const subjectRootId = `seed:${bridge.subject_id}:root`;

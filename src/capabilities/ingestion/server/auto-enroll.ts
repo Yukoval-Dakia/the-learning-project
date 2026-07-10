@@ -85,7 +85,7 @@ import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
+import { getKnownSubjects } from '@/subjects/profile';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -499,7 +499,7 @@ export async function runAutoEnrollForSession(
             // owns reference generation) and use only the classified subject_id.
             existingReferenceMd: '(reference answer not needed for tagging)',
             knowledgeHint: block.knowledge_hint,
-            knownSubjectIds: KNOWN_SUBJECT_IDS,
+            knownSubjects: getKnownSubjects(), // YUK-600：活 registry 词表（custom 入表）
             runTaskFn: params.runColdStartBridgeFn,
             ctx: params.ctx ?? { db: params.db },
           });

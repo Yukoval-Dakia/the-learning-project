@@ -5,7 +5,7 @@
  * text by the time the VLM has extracted it). Mirrors the `runTaggingTask`
  * invoker pattern: an injectable `runTaskFn` seam (so DB tests stub the model),
  * strict-JSON parse + Zod validation, and an anti-hallucination check that the
- * returned `subject_id` is one of the supplied `known_subject_ids`.
+ * returned `subject_id` is the `id` of one of the supplied `known_subjects`.
  *
  * Called from the image-candidate accept path (src/.../image-candidate-accept.ts)
  * ONLY when the sourcing-resolved knowledge_ids are empty — i.e. the uploaded
@@ -43,8 +43,8 @@ export interface RunColdStartBridgeParams {
   existingReferenceMd: string | null;
   /** Soft topic hint from extraction (block.knowledge_hint), or null. */
   knowledgeHint: string | null;
-  /** The closed subject-id vocabulary the classifier MUST pick from (KNOWN_SUBJECT_IDS). */
-  knownSubjectIds: readonly string[];
+  /** 闭集分类词表（YUK-600：对象数组——display_name 分类、id 原样回传；活 registry 取数）。 */
+  knownSubjects: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: ColdStartBridgeRunTaskFn;
   /** Forwarded to runTask ctx (db / subjectProfile). */
@@ -80,7 +80,7 @@ async function defaultRunTaskFn(
 
 /**
  * Runs the ColdStartPlacementBridgeTask. Returns a validated output whose
- * `subject_id` is GUARANTEED to be one of `knownSubjectIds` (an out-of-vocabulary
+ * `subject_id` is GUARANTEED to be one of `knownSubjects` (an out-of-vocabulary
  * pick throws `ColdStartBridgeError` — never silently coerced, since a wrong
  * subject mis-roots the child KC). On provider failure / unparseable output throws
  * `ColdStartBridgeError` so the accept path can decide whether to persist anyway.
@@ -88,12 +88,12 @@ async function defaultRunTaskFn(
 export async function runColdStartBridge(
   params: RunColdStartBridgeParams,
 ): Promise<ColdStartBridgeOutputT> {
-  const knownSubjectIds = Array.from(params.knownSubjectIds);
+  const knownSubjects = Array.from(params.knownSubjects);
   const input: ColdStartBridgeInputT = ColdStartBridgeInput.parse({
     question_md: params.questionMd,
     existing_reference_md: params.existingReferenceMd,
     knowledge_hint: params.knowledgeHint,
-    known_subject_ids: knownSubjectIds,
+    known_subjects: [...knownSubjects],
   });
 
   const runTaskFn = params.runTaskFn ?? defaultRunTaskFn;
@@ -122,9 +122,10 @@ export async function runColdStartBridge(
 
   // Anti-hallucination: the subject MUST be one of the supplied known ids. A bad
   // pick would create the child KC under a non-existent / wrong seed root.
-  if (!knownSubjectIds.includes(parsed.subject_id)) {
+  // 闭集校验机制保留：对象数组下按 id 判（display_name 只用于分类不作校验轴）。
+  if (!knownSubjects.some((s) => s.id === parsed.subject_id)) {
     throw new ColdStartBridgeError(
-      `ColdStartPlacementBridgeTask returned out-of-vocabulary subject_id="${parsed.subject_id}" (allowed: ${knownSubjectIds.join(', ')})`,
+      `ColdStartPlacementBridgeTask returned out-of-vocabulary subject_id="${parsed.subject_id}" (allowed: ${knownSubjects.map((s) => s.id).join(', ')})`,
     );
   }
 

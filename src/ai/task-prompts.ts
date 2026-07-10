@@ -250,8 +250,26 @@ StructureNode（递归，**不要**输出 id，运行时会补）：
 //   (a) task-specific I/O 契约（输入字段 / 输出 JSON shape / attrs 约束）
 //   (b) profile.noteTemplate 注入（per-subject 数据，不进 SKILL.md）
 //   (c) 降级安全：skill 未加载时 prompt 仍可独立产出合格 note。
+// YUK-600（判词 R / v3 §4）— charter 两新节的注入片段。空串 = 零注入（种子即
+// 空串——owner 未写规范时全部 prompt 逐字节不变；一期零扰动口径）。
+// rubricGuidance **仅**注入四个「作者化题目级 rubric」锚点（quiz-gen 生成 /
+// question_author / sourcing 提取 / 教学 ask-check）；judge 读端（QuizVerify 判卷、
+// 既有 rubric_json）与 backfill 路径（solution-generate 等）**显式排除**
+// （v3 §4.1/§4.2——动它们等于改判分行为，必须 calibration-gated 二期）。
+function rubricGuidanceSection(profile: SubjectProfile): string {
+  const g = profile.promptFragments.rubricGuidance?.trim();
+  return g
+    ? `\n科目级 rubric 规范（写 rubric_json 的 criteria/keywords/required_points 时遵循）：${g}`
+    : '';
+}
+// methodology → copilot/note 教学 prompt 的方法论段（渐进接入，v3 §4.1）。
+function methodologySection(profile: SubjectProfile): string {
+  const m = profile.promptFragments.methodology?.trim();
+  return m ? `\n科目方法论：${m}` : '';
+}
+
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
-  return `你是${noteWriterRole(profile)}。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...] }。
+  return `你是${noteWriterRole(profile)}。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...] }。${methodologySection(profile)}
 artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 NoteGenerateTask 内的 type switch。
 严格 JSON 输出（不带 markdown 代码块包裹）：
 {"body_blocks":{"type":"doc","content":[...]}}
@@ -527,13 +545,13 @@ ${causeTaxonomyList(profile)}
 function buildTeachingTurnPrompt(profile: SubjectProfile): string {
   return `你是${profile.promptFragments.roleNoun}，正在以对话教学方式辅导用户掌握一个具体 LearningItem。
 输入：{ learning_item: { title, one_line_intent, knowledge_node:{id,name} }, parent_hub_summary, atomic_sections(definition/mechanism/example/pitfall/check), messages: [{role:agent|user,text_md,turn_kind?}] }
-职责：评估对话状态 → 决定下一步 → 输出 1 个 agent 消息。每轮只输出 1 个 turn，**不要**一次塞讲解+追问+总结。
+职责：评估对话状态 → 决定下一步 → 输出 1 个 agent 消息。每轮只输出 1 个 turn，**不要**一次塞讲解+追问+总结。${methodologySection(profile)}
 严格 JSON 输出（不带 markdown 包裹）：
 {"kind":"explain"|"ask_check"|"end","text_md":"...","suggested_next":"continue"|"end","structured_question":{...}}
 仅当 kind="ask_check" 时必须带 structured_question；explain/end 不要带。
 turn 类型：
 - explain：用 1-2 段讲清楚一个概念点 / 例题解析 / 用户上轮答案的反馈，**结尾不带问号**
-- ask_check：1 个检查题（${profile.promptFragments.checkQuestionPolicy}），让用户回答验证理解，**结尾必须是问号**；structured_question = { kind, prompt_md, reference_md, choices_md?, judge_kind_override?, rubric_json? }，kind 取 choice/true_false/fill_blank/short_answer/essay/computation/reading/translation/derivation，prompt_md 通常等于 text_md，reference_md 必须给可判分参考答案
+- ask_check：1 个检查题（${profile.promptFragments.checkQuestionPolicy}），让用户回答验证理解，**结尾必须是问号**；structured_question = { kind, prompt_md, reference_md, choices_md?, judge_kind_override?, rubric_json? }，kind 取 choice/true_false/fill_blank/short_answer/essay/computation/reading/translation/derivation，prompt_md 通常等于 text_md，reference_md 必须给可判分参考答案${rubricGuidanceSection(profile)}
 - end：本次会话目标已达 → 给 1-2 句总结收尾，suggested_next 设 "end"
 节奏（强约束）：
 - 用户首轮（或没有 messages）：先 explain 引入主题，suggested_next="continue"
@@ -629,7 +647,7 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 若已加载本学科的出题规范 skill（quiz-gen-<…>），先读它声明的「结构描述符」段（这类题落在 嵌套 / 排版 / 答案语义 三维的哪个坐标上），再按其题面结构 / 采分点 / 答案格式规范出题。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
+不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
 
 你有工具：
 - 联网检索（tavily_search / tavily_extract）：用来搜**背景素材 / 事实 / 例子**，**不是**搜现成题目。
@@ -739,7 +757,7 @@ function buildQuestionAuthorPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题作者，一次只写**恰好一道**原创题。输入 { seed_mode: 'knowledge'|'material', knowledge_context: [{ id, name }], requested_kind?, requested_difficulty?, material?: { body_md, title? } } —— knowledge_context 是这道题要考查的知识点（id 是你**唯一**能写进 knowledge_ids 的 id）；seed_mode='material' 时 material.body_md 是用户给的命题素材原文，题目必须**据这份素材**出。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
+不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
 
 structured 树形（StructuredQuestion，二选一）：
 - 材料/阅读类（kind=reading 等成篇考查，或输入带 material）：role='stem' 的根节点，prompt_text 放材料/语段**原文**，sub_questions[] 每个小题 role='sub'，各带自己的 prompt_text + answers + analysis（与 OCR 录入的大题/小题同构）。
@@ -865,7 +883,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}题源检索员。任务：根据输入的学科 + 考点/题型 + 数量，**联网检索现成的练习题**，把每道题抽取并结构化为 SourcedQuestion。输入 { subject, knowledge_context, kinds?, count, whitelist } —— count 是期望题数，whitelist 是可信题源域名列表（可能为空）。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
-不确定性策略：${profile.grounding.uncertaintyPolicy}
+不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
 
 你有工具：
 - 联网检索（tavily_search / tavily_extract）：搜**现成的练习题 / 习题 / 真题**；需要题面与答案细节时用 tavily_extract 拉网页正文。

@@ -47,7 +47,7 @@ import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the row when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
+import { getDefaultSubjectRegistry, getKnownSubjects } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { getEffectiveDomain } from './domain';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
@@ -67,7 +67,7 @@ export type NameKcFn = (args: {
   questionText: string;
   knowledgeHint: string | null;
   subjectId: string;
-  knownSubjectIds: readonly string[];
+  knownSubjects: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
 }) => Promise<{ kc_name: string }>;
 
 export interface TagKnowledgeDeps {
@@ -115,7 +115,7 @@ export interface TagKnowledgeInput {
   /** Resolved subject root id — `seed:<subjectId>:root`. The PROPOSE parent. */
   subjectRootId: string;
   /** Closed subject-id vocabulary (anti-hallucination for the naming invoker). */
-  knownSubjectIds?: readonly string[];
+  knownSubjects?: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
   /**
    * Optional caller-supplied provenance anchor for audit traceability (YUK-540) — e.g. the
    * ingestion `question_block.id` (auto-enroll) or the accepted `image_candidate` proposal id
@@ -170,7 +170,9 @@ export async function tagKnowledge(
   // Guard the explicit-empty-array case too: `?? default` fires only on `undefined`, so a
   // caller passing `[]` would otherwise leave `knownSubjectIds[0]` undefined and propagate
   // `[undefined]` into the naming invoker (OCR #562). Treat empty as "use the default vocab".
-  const knownSubjectIds = input.knownSubjectIds?.length ? input.knownSubjectIds : KNOWN_SUBJECT_IDS;
+  // YUK-600：默认回退改活 registry 词表（getKnownSubjects——不读编译期冻结快照；
+  // custom 科目 hydrate 后自动入表）。显式空数组同样落默认（OCR #562 守卫保留）。
+  const knownSubjects = input.knownSubjects?.length ? input.knownSubjects : getKnownSubjects();
   const knowledgeHint = input.knowledgeHint ?? null;
 
   // (1) embed the question text → query vector.
@@ -262,8 +264,8 @@ export async function tagKnowledge(
     knowledgeHint,
     // When the root id isn't the canonical seed shape, fall back to the first known subject
     // so the naming invoker still has a valid pinned vocabulary entry (anti-hallucination).
-    subjectId: subjectId ?? knownSubjectIds[0],
-    knownSubjectIds,
+    subjectId: subjectId ?? knownSubjects[0].id,
+    knownSubjects,
   });
 
   // Defensive: nameKcFn is injectable and ultimately model-backed; an empty / whitespace-only
@@ -372,7 +374,7 @@ export async function tagKnowledge(
 
 /**
  * Production naming fn — reuses ColdStartPlacementBridgeTask via its existing invoker, with
- * the subject PINNED (single-element known_subject_ids → the classifier cannot pick another
+ * the subject PINNED (single-element known_subjects → the classifier cannot pick another
  * subject; anti-hallucination still satisfied). We read back ONLY `kc_name`; the bridge's
  * `subject_id` (pinned, redundant) and `reference_md` (P4a's concern, not ours) are discarded.
  * `existing_reference_md` is a non-empty placeholder so the bridge takes its ECHO path (no
@@ -387,7 +389,13 @@ function makeDefaultNameKc(deps: TagKnowledgeDeps): NameKcFn {
       questionMd: questionText,
       existingReferenceMd: '(reference answer not needed for tagging)',
       knowledgeHint,
-      knownSubjectIds: [subjectId],
+      // 单科 PIN（anti-hallucination）：display_name 从活 registry 解析，miss 回 id。
+      knownSubjects: [
+        {
+          id: subjectId,
+          display_name: getDefaultSubjectRegistry().get(subjectId)?.displayName ?? subjectId,
+        },
+      ],
       runTaskFn: deps.runTaskFn,
       ctx: deps.ctx ?? { db: deps.db },
     });
