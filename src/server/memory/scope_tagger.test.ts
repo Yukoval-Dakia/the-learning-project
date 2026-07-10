@@ -81,8 +81,10 @@ describe('computeAffectedScopes', () => {
       subject_kind: 'knowledge',
       subject_id: 'k1',
       payload: { subject_id: 'Subj-中文 Mixed' },
-    } as never);
+    });
     expect(scopes).toContain('subject:Subj-中文 Mixed'); // RAW，非 'subj_中文_mixed'
+    // 注：单函数恒只吐一个 subject scope（?? 链选一 + 单 addScope）；跨调用点的
+    // 键 parity（vs bridge triggers 的 raw 行）由上面 toContain 的 RAW 形状承载。
     expect(scopes.filter((s) => s.startsWith('subject:'))).toHaveLength(1);
   });
 
