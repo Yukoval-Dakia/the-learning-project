@@ -50,6 +50,10 @@ export const physicsProfile: SubjectProfile = {
     teachingStyle: '先检查物理量与单位是否匹配，再给推导路径，最后做量纲检验。',
     checkQuestionPolicy: '检查题应聚焦一个公式应用、单位换算或量纲分析。',
     learningIntentPolicy: '把模糊目标改写成具体物理量推导、定律应用或单位换算练习。',
+    // YUK-599 — charter trait 两新节的种子 = 空串（v3 §6；写门 default('') 同义，
+    // 此处显式写出保持 profile 对象 = schema 输出形状的逐字段等价）。
+    methodology: '',
+    rubricGuidance: '',
   },
   causeCategories: [
     {

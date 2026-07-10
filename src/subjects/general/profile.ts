@@ -49,6 +49,10 @@ export const generalProfile: SubjectProfile = {
     teachingStyle: '先给出依据，再解释判断过程，最后给出可复用规则。',
     checkQuestionPolicy: '检查题应短小，聚焦一个概念或判断点。',
     learningIntentPolicy: '把模糊目标改写成可练习的具体能力。',
+    // YUK-599 — charter trait 两新节的种子 = 空串（v3 §6；写门 default('') 同义，
+    // 此处显式写出保持 profile 对象 = schema 输出形状的逐字段等价）。
+    methodology: '',
+    rubricGuidance: '',
   },
   causeCategories: [
     {

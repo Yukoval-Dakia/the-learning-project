@@ -41,6 +41,10 @@ export const mathProfile: SubjectProfile = {
     teachingStyle: '先检查条件和目标，再给推导路径，最后总结方法触发信号。',
     checkQuestionPolicy: '检查题应聚焦一个公式、条件判断或关键变形。',
     learningIntentPolicy: '把模糊目标改写成可练习的题型、知识点或解题步骤。',
+    // YUK-599 — charter trait 两新节的种子 = 空串（v3 §6；写门 default('') 同义，
+    // 此处显式写出保持 profile 对象 = schema 输出形状的逐字段等价）。
+    methodology: '',
+    rubricGuidance: '',
   },
   causeCategories: [
     {
