@@ -297,7 +297,7 @@ describe('per-entity flag — OFF vs ON yield identical rows', () => {
       proposalId: 'prop_off',
       goalId: 'goal_off',
       title: 'G',
-      subjectId: 'subj_x',
+      subjectId: 'yuwen',
       scope: ['k_a'],
       sequenceHint: 1,
       created_at: T0,
@@ -308,7 +308,7 @@ describe('per-entity flag — OFF vs ON yield identical rows', () => {
       inboxRow({
         goalId: 'goal_off',
         title: 'G',
-        subjectId: 'subj_x',
+        subjectId: 'yuwen',
         scope: ['k_a'],
         sequenceHint: 1,
       }),
@@ -323,7 +323,7 @@ describe('per-entity flag — OFF vs ON yield identical rows', () => {
       proposalId: 'prop_on',
       goalId: 'goal_on',
       title: 'G',
-      subjectId: 'subj_x',
+      subjectId: 'yuwen',
       scope: ['k_a'],
       sequenceHint: 1,
       created_at: T0,
@@ -334,7 +334,7 @@ describe('per-entity flag — OFF vs ON yield identical rows', () => {
       inboxRow({
         goalId: 'goal_on',
         title: 'G',
-        subjectId: 'subj_x',
+        subjectId: 'yuwen',
         scope: ['k_a'],
         sequenceHint: 1,
       }),
@@ -347,7 +347,7 @@ describe('per-entity flag — OFF vs ON yield identical rows', () => {
     expect(onRow?.status).toBe('active');
     expect(onRow?.version).toBe(0);
     expect(onRow?.title).toBe('G');
-    expect(onRow?.subject_id).toBe('subj_x');
+    expect(onRow?.subject_id).toBe('yuwen');
     expect(onRow?.scope_knowledge_ids).toEqual(['k_a']);
     expect(onRow?.sequence_hint).toBe(1);
     // structural equality of the two rows except the per-run id/source_ref
@@ -381,7 +381,7 @@ describe('retractAiProposal (goal_scope, flag OFF) — fold==row parity', () => 
         evidence_refs: [],
         proposed_change: {
           title: 'Retract me',
-          subject_id: 'subj_x',
+          subject_id: 'yuwen',
           scope_knowledge_ids: ['k_a'],
           sequence_hint: 1,
           reasoning: 'because',
@@ -396,7 +396,7 @@ describe('retractAiProposal (goal_scope, flag OFF) — fold==row parity', () => 
       inboxRow({
         goalId,
         title: 'Retract me',
-        subjectId: 'subj_x',
+        subjectId: 'yuwen',
         scope: ['k_a'],
         sequenceHint: 1,
       }),

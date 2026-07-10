@@ -1,3 +1,4 @@
+import { resolveKnownSubjectId } from '@/subjects/profile';
 import { z } from 'zod';
 import {
   GenesisExperimental,
@@ -190,7 +191,13 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
       row = {
         id: goalId,
         title: pc.data.title ?? '',
-        subject_id: pc.data.subject_id ?? null,
+        // YUK-600（阻断④，fold 镜像）：与 accept 写路**同一**归一——alias→canonical、
+        // unknown→null（fold==row 不变量；YUK-603 scope_mode 同分支先例）。fold 读活
+        // registry：builtin 别名编译期稳定；custom id 在场期间（含 retired，
+        // resolvable-all）恒可解析。parity 断言在 accept 事务内运行，彼时 fold 与
+        // 写路读同一 registry——写时恒等成立；后世 replay 仅在「科目行被 restore
+        // 硬移除」的边缘 case 下漂移（该 case 行本身已引用失踪科目，先于 parity 坏）。
+        subject_id: pc.data.subject_id ? resolveKnownSubjectId(pc.data.subject_id) : null,
         scope_knowledge_ids: [...(pc.data.scope_knowledge_ids ?? [])],
         // YUK-603 — accept 恒 explicit: a proposal's scope is an evidence-first narrow
         // selection the user confirmed; it never live-derives (v2 contract §5.3).
