@@ -82,6 +82,15 @@ const ALL_TABLES = [
   'ai_task_runs',
   'tool_call_log',
   'cost_ledger',
+  // YUK-599 (v3 trait 合同 §2.2) — subject 控制面六表。loose text-ref 无 FK，
+  // 必须显式列入 TRUNCATE，否则 resetDb 漏清 → 跨测 state 泄漏（同 mastery_state
+  // 一族的 footgun）。测试若需 builtin 种子行，须自行调 reconcileBuiltinTraits。
+  'subject',
+  'subject_trait',
+  'subject_trait_journal',
+  'subject_trait_binding',
+  'subject_control_journal',
+  'subject_name_claim',
 ] as const;
 
 export async function resetDb() {

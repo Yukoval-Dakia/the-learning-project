@@ -449,6 +449,13 @@
       "when": 1783665262865,
       "tag": "0063_yuk603_goal_scope_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1783670000000,
+      "tag": "0064_yuk599_subject_trait_tables",
+      "breakpoints": true
     }
   ]
 }

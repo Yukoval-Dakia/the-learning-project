@@ -40,6 +40,10 @@ export const yuwenProfile: SubjectProfile = {
     teachingStyle: '先定位文本证据，再解释判断过程，最后给出可复用规则。',
     checkQuestionPolicy: '检查题应短小，聚焦一个词义、句式或翻译判断。',
     learningIntentPolicy: '把模糊目标改写成可练习的古文阅读或翻译能力。',
+    // YUK-599 — charter trait 两新节的种子 = 空串（v3 §6；写门 default('') 同义，
+    // 此处显式写出保持 profile 对象 = schema 输出形状的逐字段等价）。
+    methodology: '',
+    rubricGuidance: '',
   },
   causeCategories: [
     {

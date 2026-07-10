@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   doublePrecision,
@@ -8,6 +9,7 @@ import {
   jsonb,
   pgTable,
   pgView,
+  primaryKey,
   real,
   text,
   timestamp,
@@ -32,6 +34,8 @@ import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 // erased at compile; the actual grid math lives in src/core/theta-grid.ts).
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
+// YUK-599 — trait kind 枚举的单一来源（browser-safe 模块；防 db/subjects 两处漂移）。
+import { SUBJECT_TRAIT_KINDS } from '../subjects/trait-schemas';
 import { vector } from './vector';
 
 // Drizzle schema (Postgres) — single source of truth.
@@ -1695,5 +1699,155 @@ export const selection_observation = pgTable(
     // 主查询路径：按日 + ref 取观测（writer test + Phase 3 重标定回放）。
     index('selection_observation_date_ref_idx').on(t.date, t.ref_id),
     index('selection_observation_date_idx').on(t.date),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-599 (YUK-597 v3 trait 合同 §2.2) — subject 控制面六表族。
+//
+// 科目 = 六 trait 绑定的聚合视图（charter / judge_policy / cause_taxonomy /
+// source_policy / render_theme / scheduling），无 definition blob。两本
+// append-only journal（trait payload 史 + subject 控制时间线）共用全局序列
+// subject_change_seq 作公共全序坐标（exact as-of = 按 change_seq 重放；trait/
+// subject revision 是各自局部序，created_at 不承诺并发提交顺序）。
+// 一切控制面写事务须先取 pg_advisory_xact_lock(SUBJECT_CONTROL_PLANE_LOCK)
+// （v3 §3.1 并发协议——整面串行化，CAS 只作陈旧 UI 提交守卫）。
+// 表间引用沿仓库 loose text-ref 惯例（无 enforced FK）；FK_ORDER 父先子后。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const subject = pgTable(
+  'subject',
+  {
+    // builtin: general/yuwen/math/physics；custom: subj_<cuid2>（opaque 不可变）。
+    id: text('id').primaryKey(),
+    // rename 权威（root.name 同步，v2 §3.4 语义）；norm = normalizeSubjectKey 预写。
+    display_name: text('display_name').notNull(),
+    display_name_norm: text('display_name_norm').notNull(),
+    origin: text('origin', { enum: ['builtin', 'custom'] }).notNull(),
+    // general → false（结构性排除出 selectable，v2 §2.1）。
+    is_selectable: boolean('is_selectable').notNull().default(true),
+    // 软退休（仓库 archived_at 惯例）；retired 仍 resolvable。
+    retired_at: timestamp('retired_at', { withTimezone: true }),
+    // 控制行 CAS（rename/retire/restore/reset/rebind/fork 每写 +1）；
+    // = subject_control_journal 的单调 PK 轴。
+    revision: integer('revision').notNull().default(0),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // thin-create 幂等承载索引（v2 §3.2：200 回放 / 23505 SELECT 回放；
+    // 消费语义在 YUK-600 落）。
+    uniqueIndex('subject_display_name_norm_live_custom_uq')
+      .on(t.display_name_norm)
+      .where(sql`origin = 'custom' AND retired_at IS NULL`),
+  ],
+);
+
+export const subject_trait = pgTable(
+  'subject_trait',
+  {
+    // 种子: trt_seed_<subject>_<kind>（migrate 幂等键）；custom/fork: trt_<cuid2>。
+    id: text('id').primaryKey(),
+    trait_kind: text('trait_kind', { enum: SUBJECT_TRAIT_KINDS }).notNull(),
+    origin: text('origin', { enum: ['builtin', 'custom'] }).notNull(),
+    // per-kind strict Zod（src/subjects/trait-schemas.ts）守门后的载荷。
+    payload: jsonb('payload').notNull(),
+    payload_schema_version: integer('payload_schema_version').notNull(),
+    // 种子血统 semver：仅种子 trait 非空（reconcile 的比较对象，= v2
+    // profile_version 在 trait 粒度的转世）；custom/fork 恒 null（reconcile 不触达）。
+    seed_version: text('seed_version'),
+    // v3.2（owner R2-P2）：custom/fork trait 的属主科目（fork/thin-create 时落）；
+    // 种子 trait 恒 null——其属主由 id 模式 trt_seed_<subject>_<kind> 表达。
+    // 「自有才可原地写」判据载体（v3 §3.1）。
+    owner_subject_id: text('owner_subject_id'),
+    revision: integer('revision').notNull().default(0),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('subject_trait_kind_idx').on(t.trait_kind)],
+);
+
+export const subject_trait_journal = pgTable(
+  'subject_trait_journal',
+  {
+    trait_id: text('trait_id').notNull(),
+    revision: integer('revision').notNull(),
+    // v3.1（owner P1-3）：每行 = 该 revision 的完整状态快照——payload + schema
+    // 代际 + 时点 seed_version + 血统指针，缺任一都无法从 journal 重建历史状态
+    // （journal 兼任冷启动降级链的快照仓，v3 §2.2）。
+    payload: jsonb('payload').notNull(),
+    payload_schema_version: integer('payload_schema_version').notNull(),
+    seed_version: text('seed_version'),
+    action: text('action', {
+      enum: ['create', 'edit', 'rollback', 'reconcile', 'reset_to_seed', 'fork_source'],
+    }).notNull(),
+    // 固定映射：create/reconcile → 'migrate'；edit/rollback/reset_to_seed/
+    // fork_source → 'owner'。owner-edited 谓词（v3 §6）按此 + revision 边界判。
+    actor: text('actor', { enum: ['owner', 'migrate'] }).notNull(),
+    // fork_source 行专用：来源 trait 与 revision（provenance 可重建，v3 §3.3）。
+    source_trait_id: text('source_trait_id'),
+    source_revision: integer('source_revision'),
+    rolled_back_from: integer('rolled_back_from'),
+    // 两本 journal 共用全局序列 subject_change_seq（v3.2 / owner R2-P2）；
+    // restore 尾必须 setval（序列不随行备份，见 export/constants.ts）。
+    change_seq: bigint('change_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('subject_change_seq')`),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.trait_id, t.revision] })],
+);
+
+export const subject_trait_binding = pgTable(
+  'subject_trait_binding',
+  {
+    subject_id: text('subject_id').notNull(),
+    trait_kind: text('trait_kind', { enum: SUBJECT_TRAIT_KINDS }).notNull(),
+    trait_id: text('trait_id').notNull(),
+  },
+  (t) => [
+    // 每科每 kind 恰一绑定；kind 与目标 trait.trait_kind 一致由写门校验（应用层）。
+    primaryKey({ columns: [t.subject_id, t.trait_kind] }),
+    // boundBy/sharedBy 反查（换绑选择器 + fan-out 波及面，v3 §3.5）。
+    index('subject_trait_binding_trait_idx').on(t.trait_id),
+  ],
+);
+
+export const subject_control_journal = pgTable(
+  'subject_control_journal',
+  {
+    subject_id: text('subject_id').notNull(),
+    // = 控制行 revision（每次控制行写 +1，天然单调 PK 轴）。
+    revision: integer('revision').notNull(),
+    action: text('action', {
+      enum: ['create', 'rename', 'retire', 'restore', 'reset', 'rebind', 'fork'],
+    }).notNull(),
+    // rebind/fork: {kind, from_trait_id, to_trait_id}；rename: {from, to}；
+    // create/retire/restore: {}；reset: {rebound: [{kind, from_trait_id, to_trait_id}]}。
+    detail: jsonb('detail').notNull(),
+    actor: text('actor', { enum: ['owner', 'migrate'] }).notNull(),
+    change_seq: bigint('change_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('subject_change_seq')`),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.subject_id, t.revision] })],
+);
+
+export const subject_name_claim = pgTable(
+  'subject_name_claim',
+  {
+    // normalizeSubjectKey 归一键 = 唯一命名空间（canonical 与 alias 同表同列
+    // 占坑，PK 拦全部抢占——替代 v1 alias 从表，v2 §2.2）。
+    name_norm: text('name_norm').primaryKey(),
+    subject_id: text('subject_id').notNull(),
+    kind: text('kind', { enum: ['canonical', 'alias'] }).notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // 每 subject 恰一 canonical 行（v2 §2.2 部分唯一索引）。
+    uniqueIndex('subject_name_claim_canonical_uq')
+      .on(t.subject_id)
+      .where(sql`kind = 'canonical'`),
   ],
 );
