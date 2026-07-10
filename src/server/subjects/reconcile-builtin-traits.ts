@@ -37,7 +37,7 @@ import {
 } from '@/subjects/builtin-trait-seeds';
 import { BUILTIN_SUBJECT_ALIASES, normalizeSubjectKey, subjectProfiles } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { acquireControlPlaneLockSql } from './control-plane-lock';
 
 // drizzle 事务句柄类型（tx 不带 $client，不能用裸 Db）。
