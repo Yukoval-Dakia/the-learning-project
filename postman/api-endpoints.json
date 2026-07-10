@@ -122,11 +122,11 @@
     "methods": [
       {
         "method": "GET",
-        "summary": "admin 科目枚举（slim 投影，R11：不带 causeCategories）",
+        "summary": "admin 科目管理枚举（YUK-601 v3.2 §3.5 扩容，全量含 general/retired）",
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "返回 { subjects:[{id, displayName, version, notation, capabilityCount}] }。M5-T4 旧面；YUK-601 将扩容（origin/retiredAt/isGeneralFallback/version 组合串）。需 x-internal-token"
+        "notes": "返回 { subjects:[{id, displayName, origin, retiredAt, isGeneralFallback, version(jt 组合串), subjectRevision, notation, capabilityCount}] }。subjectRevision = 写面 expectedSubjectRevision 的首次提交值；isGeneralFallback 对 general 为 null。需 x-internal-token"
       },
       {
         "method": "POST",
@@ -137,6 +137,51 @@
           "displayName": "化学"
         },
         "notes": "单事务五步（advisory lock → subject 行 + canonical(id) claim + 六绑定 general 种子〔零复制〕+ seed:<id>:root 建根〔genesis+anchor〕+ control journal create）→ commit 后 registry 装配上架。201 = {id, displayName, isGeneralFallback, revision, seedRootId}；幂等同名 → 200 回放；custom↔builtin 撞名（显示名或 id/alias 命名空间）→ 422；空名 → 400。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/traits",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "六绑定读面（YUK-601 v3.2 §3.5）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 { subjectRevision, bindings:[{kind, traitId, origin, ownerSubjectId, seedVersion, revision, effectiveRevision, degraded, payload, sharedBy}] }。revision（live）与 effectiveRevision（实际采用）分列，degraded ∈ journal_fallback|code_seed|null。未知科目 404。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/traits",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "跨科 trait 目录（换绑选择器数据源，YUK-601 v3.2 §3.5）",
+        "query": [
+          {
+            "key": "kind",
+            "value": "charter",
+            "description": "必填，六 kind 之一（charter/judge_policy/cause_taxonomy/source_policy/render_theme/scheduling）"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 { traits:[{traitId, origin, ownerSubjectId, seedVersion, revision, boundBy}] }。kind 缺失/非法 400。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/traits/:id/journal",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "trait append-only 历史（rollback UI 数据源，YUK-601 v3.2 §3.5）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 { journal:[{revision, action, actor, payloadSchemaVersion, seedVersion, sourceTraitId, sourceRevision, rolledBackFrom, changeSeq, createdAt}] } 倒序；不含 payload（doc v1.1 §2.2 纯列表裁定）。未知 trait 404。需 x-internal-token"
       }
     ]
   },
