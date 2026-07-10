@@ -8,6 +8,7 @@
 // asserted in the pure-fn test (auto-enroll.test.ts), not here.
 
 import type { AutoEnrollObservation } from '@/ui/lib/auto-enroll';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -72,20 +73,26 @@ const form = {
 const noop = () => {};
 
 function renderEditor(primary: BlockRow) {
+  // YUK-598：BlockEditor 内 useSubjects()（错因下拉行驱动）需要 QueryClient 上下文；
+  // provider 的 initialData = 编译期投影 → renderToString 零请求零 effect，行为
+  // 与 hook 化前逐位一致。
+  const qc = new QueryClient();
   return renderToString(
-    <BlockEditor
-      primary={primary}
-      followers={[]}
-      primaryIndex={0}
-      canMergeIntoPrev={false}
-      form={form}
-      setForm={noop}
-      knowledgeNodes={[]}
-      onMergeIntoPrev={noop}
-      onSplitMerge={noop}
-      onRescue={noop}
-      rescuing={false}
-    />,
+    <QueryClientProvider client={qc}>
+      <BlockEditor
+        primary={primary}
+        followers={[]}
+        primaryIndex={0}
+        canMergeIntoPrev={false}
+        form={form}
+        setForm={noop}
+        knowledgeNodes={[]}
+        onMergeIntoPrev={noop}
+        onSplitMerge={noop}
+        onRescue={noop}
+        rescuing={false}
+      />
+    </QueryClientProvider>,
   );
 }
 

@@ -24,8 +24,9 @@
 //     替代（真 variant_depth>0 计数），不 fabricate 假复习数。
 
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
+import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -104,10 +105,15 @@ const SUBJECT_TONE: Record<string, Tone> = {
   math: 'info',
   physics: 'info',
 };
-function subjMeta(subject: string | null): { label: string; tone: Tone } {
+function subjMeta(
+  subject: string | null,
+  rows?: readonly SubjectRowLike[],
+): { label: string; tone: Tone } {
   if (!subject) return { label: '未分科', tone: 'neutral' };
   const id = resolveKnownSubjectId(subject) ?? subject;
-  return { label: subjectDisplayName(subject), tone: SUBJECT_TONE[id] ?? 'neutral' };
+  // YUK-598：label 行驱动（custom 显示名只有 provider 行认识）；tone 仍本地
+  // map-by-id，custom 恒 neutral = v2 已接受的降级（SUBJECT_TONE 不进水合面）。
+  return { label: subjectDisplayName(subject, rows), tone: SUBJECT_TONE[id] ?? 'neutral' };
 }
 
 // 去 markdown/latex 标记符——仅用于搜索匹配（行 stem 渲染走 QInline 保留 latex）。
@@ -179,8 +185,14 @@ function QInline({ text }: { text: string }) {
   );
 }
 
-function QIndicators({ q }: { q: QBankQuestion }) {
-  const subj = subjMeta(q.subject);
+function QIndicators({
+  q,
+  subjectRows,
+}: {
+  q: QBankQuestion;
+  subjectRows: readonly SubjectRowLike[];
+}) {
+  const subj = subjMeta(q.subject, subjectRows);
   // knowledge_labels 是 enrich 投影（缺名 id 已被后端落选）；null（未 enrich）→ 用裸 id 兜底。
   const labels = q.knowledge_labels ?? q.knowledge_ids.map((id) => ({ id, name: id }));
   return (
@@ -202,13 +214,16 @@ function QIndicators({ q }: { q: QBankQuestion }) {
 interface QRowProps {
   q: QBankQuestion;
   go: (to: string) => void;
+  // YUK-598（review-757 P3-1）：rows 自主组件单次 useSubjects 下传，避免逐行
+  // QueryObserver（网络本就去重；省的是长列表的订阅开销）。
+  subjectRows: readonly SubjectRowLike[];
   expanded?: boolean;
   onToggle?: () => void;
   isChild?: boolean;
   subIndex?: number;
 }
 
-function QRow({ q, go, expanded, onToggle, isChild, subIndex }: QRowProps) {
+function QRow({ q, go, subjectRows, expanded, onToggle, isChild, subIndex }: QRowProps) {
   const isComposite = q.is_composite;
   const lineage = lineageOf(q);
   const glyphCls = lineage === 'variant' ? ' is-variant' : lineage === 'part' ? ' is-part' : '';
@@ -262,7 +277,7 @@ function QRow({ q, go, expanded, onToggle, isChild, subIndex }: QRowProps) {
           )}
           <QInline text={q.prompt_md} />
         </div>
-        <QIndicators q={q} />
+        <QIndicators q={q} subjectRows={subjectRows} />
       </div>
 
       <div className="qb-aside">
@@ -289,6 +304,8 @@ export interface QuestionsPageProps {
 }
 
 export default function QuestionsPage({ navigate }: QuestionsPageProps) {
+  // YUK-598 — 科目筛选行驱动（provider selectable 视图）。
+  const { subjects: subjectRowsForFilter } = useSubjects();
   // server-side 轴 state（变 → query key 变 → 重新 fetch）。题库面恒拉 include_drafts=true
   // 取全集（状态 tab 在 client 按 draft_status 分），server 不带 difficulty（多选 pips 在 client 过）。
   const [subject, setSubject] = useState('all');
@@ -550,9 +567,9 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
               <div className="qb-seg">
                 {[
                   ['all', '全部'],
-                  // YUK-249 — 科目筛选项从注册表派生（KNOWN_SUBJECT_IDS × displayName）：
-                  // wenyan→yuwen 自动流转、无 profile 的幽灵「英语」chip 自然消失。
-                  ...listSubjectChoices().map((c) => [c.id, c.label]),
+                  // YUK-249 → YUK-598：科目筛选项行驱动（provider selectable 视图，
+                  // custom 科目即时进筛选；断网退化三 builtin）。
+                  ...listSubjectChoices(subjectRowsForFilter).map((c) => [c.id, c.label]),
                 ].map(([s, l]) => (
                   <button
                     type="button"
@@ -666,13 +683,21 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                   <QRow
                     q={q}
                     go={navigate}
+                    subjectRows={subjectRowsForFilter}
                     expanded={open.has(q.id)}
                     onToggle={() => toggleOpen(q.id)}
                   />
                   {q.is_composite &&
                     open.has(q.id) &&
                     q.children.map((c, i) => (
-                      <QRow key={c.id} q={c} go={navigate} isChild subIndex={i + 1} />
+                      <QRow
+                        key={c.id}
+                        q={c}
+                        go={navigate}
+                        subjectRows={subjectRowsForFilter}
+                        isChild
+                        subIndex={i + 1}
+                      />
                     ))}
                 </Fragment>
               ))}

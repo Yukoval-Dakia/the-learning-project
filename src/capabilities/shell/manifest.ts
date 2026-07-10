@@ -13,6 +13,13 @@ export const shellCapability = defineCapability({
     '与待审提议」的读模型）。',
   api: {
     routes: [
+      // YUK-598 — learner 面 selectable 科目视图（SPA useSubjects() 数据源；
+      // custom 科目经 YUK-599 水合后自动进列）。字段合同见 handler 头注释。
+      {
+        method: 'GET',
+        path: '/api/subjects',
+        load: () => import('./api/subjects-list').then((m) => m.GET),
+      },
       {
         method: 'GET',
         path: '/api/proposals',

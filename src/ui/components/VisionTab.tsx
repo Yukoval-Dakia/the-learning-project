@@ -18,6 +18,7 @@
 
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { RecordLanding } from '@/ui/components/RecordLanding';
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
@@ -826,9 +827,11 @@ export function BlockEditor({
       .slice(0, 30);
   }, [knowledgeNodes, kFilter]);
   const selectedKnowledgeIds = form?.knowledge_ids;
+  // YUK-598 — 错因下拉行驱动（同 RecordPage）。
+  const { subjects: subjectRows } = useSubjects();
   const causeOptions = useMemo(
-    () => causeOptionsForSelectedKnowledge(knowledgeNodes, selectedKnowledgeIds ?? []),
-    [knowledgeNodes, selectedKnowledgeIds],
+    () => causeOptionsForSelectedKnowledge(knowledgeNodes, selectedKnowledgeIds ?? [], subjectRows),
+    [knowledgeNodes, selectedKnowledgeIds, subjectRows],
   );
 
   useEffect(() => {

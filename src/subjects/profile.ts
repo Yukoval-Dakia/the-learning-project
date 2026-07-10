@@ -7,10 +7,12 @@ import type { SlimSubjectProfile, SubjectId, SubjectProfile } from './profile-sc
 import { yuwenProfile } from './yuwen/profile';
 
 export {
+  BUILTIN_IDS,
   JudgeRouteKindSchema,
   KNOWN_SUBJECT_IDS,
   SubjectProfileSchema,
   SubjectQuestionKindSchema,
+  type BuiltinId,
   type JudgeRouteKind,
   type KnownSubjectId,
   type SlimSubjectProfile,
@@ -66,32 +68,62 @@ export interface SubjectRegistrationResult {
 
 export interface SubjectRegistrationOptions {
   throwOnInvalid?: boolean;
+  // YUK-598 — DB 行的控制面元数据（hydrate 喂入）；缺省 = 新注册 custom 的默认
+  // { isBuiltin: false, isSelectable: true, retiredAt: null }。
+  meta?: SubjectRegistryEntryMeta;
 }
 
 export interface SubjectRegistryOptions {
   throwOnInvalid?: boolean;
 }
 
+// YUK-598（v2 §2.1 三集合语义）— registry entry 的控制面元数据（DB 行经 hydrate
+// 喂入；未提供时按「新注册 custom」默认）。两谓词独立：general 是**结构性**排除
+// （isSelectable=false 永久），retired 是**状态性**排除（retiredAt 非空，可 restore）。
+export interface SubjectRegistryEntryMeta {
+  isBuiltin: boolean;
+  isSelectable: boolean;
+  retiredAt: Date | null;
+}
+
+export type SubjectIdScope = 'resolvable' | 'selectable';
+
 export class SubjectRegistry {
   private profiles = new Map<SubjectId, SubjectProfile>();
   private aliases = new Map<string, SubjectId>();
+  private meta = new Map<SubjectId, SubjectRegistryEntryMeta>();
   private defaultId: SubjectId;
 
   constructor(defaultId: SubjectId = DEFAULT_SUBJECT_ID, opts: SubjectRegistryOptions = {}) {
     this.defaultId = defaultId;
     const throwOnInvalid = opts.throwOnInvalid ?? true;
     // general = neutral default; registered first so it backs the default id.
-    this.register(generalProfile, [], { throwOnInvalid });
+    // isSelectable=false = 结构性排除（v2 §2.1：general 是 fallback 身份，不进
+    // 选择器/词表/nightly 候选）。
+    this.register(generalProfile, [], {
+      throwOnInvalid,
+      meta: { isBuiltin: true, isSelectable: false, retiredAt: null },
+    });
     // Each sample subject self-declares its own aliases (归位) — the generic
     // registry no longer hardcodes any concrete-subject alias table. YUK-249:
     // `wenyan` is the pre-rename canonical id, now demoted to an alias so legacy
     // domain='wenyan' data / old backups / event payloads normalise to yuwen.
+    const builtinMeta: SubjectRegistryEntryMeta = {
+      isBuiltin: true,
+      isSelectable: true,
+      retiredAt: null,
+    };
     this.register(yuwenProfile, [...(BUILTIN_SUBJECT_ALIASES.yuwen ?? [])], {
       throwOnInvalid,
+      meta: builtinMeta,
     });
-    this.register(mathProfile, [...(BUILTIN_SUBJECT_ALIASES.math ?? [])], { throwOnInvalid });
+    this.register(mathProfile, [...(BUILTIN_SUBJECT_ALIASES.math ?? [])], {
+      throwOnInvalid,
+      meta: builtinMeta,
+    });
     this.register(physicsProfile, [...(BUILTIN_SUBJECT_ALIASES.physics ?? [])], {
       throwOnInvalid,
+      meta: builtinMeta,
     });
   }
 
@@ -123,6 +155,7 @@ export class SubjectRegistry {
 
     this.profiles.set(id, normalizedProfile);
     this.aliases.set(id, id);
+    this.meta.set(id, opts.meta ?? { isBuiltin: false, isSelectable: true, retiredAt: null });
     this.registerAliases(id, aliases);
     return { id, valid: true, errors: [] };
   }
@@ -168,6 +201,7 @@ export class SubjectRegistry {
       return { id, valid: false, errors: validation.errors };
     }
     this.profiles.set(id, normalizedProfile);
+    if (opts.meta) this.meta.set(id, opts.meta);
     this.registerAliases(id, aliases);
     return { id, valid: true, errors: [] };
   }
@@ -180,10 +214,37 @@ export class SubjectRegistry {
   remove(id: SubjectId): boolean {
     const key = normalizeSubjectKey(id);
     if (!this.profiles.delete(key)) return false;
+    this.meta.delete(key);
     for (const [alias, target] of this.aliases) {
       if (target === key) this.aliases.delete(alias);
     }
     return true;
+  }
+
+  // ── YUK-598（v2 §2.1）三集合读面 ──────────────────────────────────────────
+  // resolvable-all：全部注册科目含 retired（旧数据/event 串永不悬垂）；
+  // active-selectable：排除 general（结构性）+ retired（状态性），两谓词独立。
+  // BUILTIN_IDS（编译期字面常量）在 profile-schema.ts，运行时零权威。
+
+  getMeta(id: SubjectId): SubjectRegistryEntryMeta | undefined {
+    return this.meta.get(normalizeSubjectKey(id));
+  }
+
+  listIds(scope: SubjectIdScope = 'resolvable'): SubjectId[] {
+    const all = [...this.profiles.keys()];
+    if (scope === 'resolvable') return all;
+    return all.filter((id) => {
+      const m = this.meta.get(id);
+      return m?.isSelectable === true && m.retiredAt === null;
+    });
+  }
+
+  getSelectableSubjectIds(): SubjectId[] {
+    return this.listIds('selectable');
+  }
+
+  getResolvableSubjectIds(): SubjectId[] {
+    return this.listIds('resolvable');
   }
 
   resolve(domain?: string | null): SubjectProfile {
@@ -222,10 +283,6 @@ export class SubjectRegistry {
     return this.profiles.get(normalizeSubjectKey(id));
   }
 
-  listIds(): SubjectId[] {
-    return [...this.profiles.keys()];
-  }
-
   listProfiles(): SubjectProfile[] {
     return [...this.profiles.values()];
   }
@@ -233,10 +290,15 @@ export class SubjectRegistry {
 
 const defaultRegistry = new SubjectRegistry();
 
+// ⚠️ YUK-598（v2 §9①）：以下两个导出是 **import 期代码快照**，水合后不更新——
+// 这是它们的合同（代码种子地板 / migrate 单写者 / SPA 编译期兜底的取数点），
+// 不是 bug。凡语义是「当前活配置」的读点一律用 resolveSubjectProfile()/registry
+// API；新增消费点前先分清你要的是快照还是活值。
 export const subjectProfiles: Record<string, SubjectProfile> = Object.fromEntries(
   defaultRegistry.listProfiles().map((profile) => [profile.id, profile]),
 );
 
+/** @deprecated YUK-598：活值读点用 `resolveSubjectProfile()`；此常量只保留给显式要「代码快照默认档」的场景。 */
 export const defaultSubjectProfile = defaultRegistry.resolve();
 
 export function resolveSubjectProfile(domain?: string | null): SubjectProfile {
