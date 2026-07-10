@@ -6,12 +6,13 @@
 // authoritative scopeKnowledgeIds come from that response, so the inline scope
 // hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
+import { createSubjectErrorText, useCreateSubject } from '@/ui/hooks/useCreateSubject';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices } from '@/ui/lib/subject';
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ObSteps } from './ObSteps';
 import { createGoal } from './onboarding-api';
 import './onboarding.css';
@@ -36,6 +37,13 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
   const { subjects: subjectRows } = useSubjects();
   const SUBJECTS = listSubjectChoices(subjectRows);
   const LEANINGS = SUBJECTS;
+  // YUK-602 §1.2 — 通用模式 badge 的 flag 从原始 subjectRows 按 id join：
+  // listSubjectChoices 只投影 {id,label}，isGeneralFallback 在投影里被丢弃（owner
+  // review P2 点名的断链）。只认 === true（general 的 null 不挂标）。
+  const generalFallbackIds = useMemo(
+    () => new Set(subjectRows.filter((r) => r.isGeneralFallback === true).map((r) => r.id)),
+    [subjectRows],
+  );
   // 自述（轻 · 仅引导排序）。YUK-480：`leanings` + `pace` 现经 query 透传给 placement
   // 探针（leanings → 起始题排序偏好、pace → 探针题量），不入 goal/不落库（仅 placement
   // session 持有）；二者只影响排序/题量，绝不喂 θ̂/p(L)。`stage` 仍是显示态——stage→θ 先验
@@ -186,8 +194,18 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
               >
                 {subject === s.id && <LoomIcon name="check" size={12} />}
                 {s.label}
+                {generalFallbackIds.has(s.id) && (
+                  <span
+                    className="ob-chip-badge"
+                    title="AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
+                    aria-label="通用模式：AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
+                  >
+                    通用
+                  </span>
+                )}
               </button>
             ))}
+            <CreateSubjectChip onCreated={(id) => setSubject(id)} />
           </div>
           {goalReady && err === false && (
             <div className="ob-scope-note">
@@ -253,5 +271,119 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── YUK-602 §1.1 —— 「+ 新科目」手填入口（design doc 2026-07-11，APPROVED v1.1）──
+// 展示件与状态壳分离：CreateSubjectForm 纯 props（SSR 单测直渲），CreateSubjectChip
+// 持展开/草稿/mutation 状态。交互红线：收起判定以整个表单容器为界（relatedTarget
+// 不在容器内才收）——input 单独 blur 不收，防 blur 先于 click 卸载确认按钮吞掉提交
+// （owner review P2）；提交中不收起。服务端幂等/撞名兜底，UI 零去重零归一。
+
+export interface CreateSubjectFormProps {
+  name: string;
+  onName: (value: string) => void;
+  onSubmit: () => void;
+  isPending: boolean;
+  /** 用户可读错误文案（createSubjectErrorText 产出）；null = 无错。 */
+  error: string | null;
+}
+
+export function CreateSubjectForm({
+  name,
+  onName,
+  onSubmit,
+  isPending,
+  error,
+}: CreateSubjectFormProps) {
+  return (
+    <>
+      <input
+        className="ob-new-subject-input"
+        value={name}
+        placeholder="科目名，如：化学"
+        maxLength={32}
+        // biome-ignore lint/a11y/noAutofocus: 展开即输入是该 inline 入口的设计意图（doc §1.1）
+        autoFocus
+        readOnly={isPending}
+        aria-label="新科目名"
+        onChange={(e) => onName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onSubmit();
+        }}
+      />
+      <button
+        type="button"
+        className="chip is-on"
+        disabled={isPending || name.trim().length === 0}
+        onClick={onSubmit}
+      >
+        {isPending ? '创建中…' : '创建'}
+      </button>
+      {error !== null && (
+        <span className="ob-inline-err ob-new-subject-err">
+          <LoomIcon name="alert" size={13} />
+          {error}
+        </span>
+      )}
+    </>
+  );
+}
+
+export function CreateSubjectChip({ onCreated }: { onCreated: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const mutation = useCreateSubject();
+  const boxRef = useRef<HTMLSpanElement | null>(null);
+
+  const close = () => {
+    setOpen(false);
+    mutation.reset();
+  };
+  const submit = () => {
+    const trimmed = name.trim();
+    if (trimmed.length === 0 || mutation.isPending) return;
+    mutation.mutate(trimmed, {
+      onSuccess: (created) => {
+        // 手填即选中（doc §1.1）；chip 本体经 invalidate → provider 通路出现。
+        onCreated(created.id);
+        setName('');
+        close();
+      },
+    });
+  };
+
+  if (!open) {
+    return (
+      <button type="button" className="chip ob-new-subject" onClick={() => setOpen(true)}>
+        + 新科目
+      </button>
+    );
+  }
+  return (
+    <span
+      ref={boxRef}
+      className="ob-new-subject-form"
+      onBlur={(e) => {
+        if (mutation.isPending) return;
+        const next = e.relatedTarget;
+        if (next instanceof Node && boxRef.current?.contains(next)) return;
+        close();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') close();
+      }}
+    >
+      <CreateSubjectForm
+        name={name}
+        onName={(value) => {
+          setName(value);
+          if (mutation.isError) mutation.reset();
+        }}
+        onSubmit={submit}
+        isPending={mutation.isPending}
+        error={mutation.isError ? createSubjectErrorText(mutation.error) : null}
+      />
+    </span>
   );
 }
