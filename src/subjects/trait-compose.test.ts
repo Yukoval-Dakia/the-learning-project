@@ -6,22 +6,14 @@
 // fastTestInclude（vitest.shared.ts 显式 allowlist）。
 
 import { describe, expect, it } from 'vitest';
-import {
-  BUILTIN_SUBJECT_IDS,
-  BUILTIN_TRAIT_SEEDS,
-  seedTraitId,
-} from './builtin-trait-seeds';
+import { BUILTIN_SUBJECT_IDS, BUILTIN_TRAIT_SEEDS, seedTraitId } from './builtin-trait-seeds';
 import { subjectProfiles } from './profile';
 import {
   assembleSubjectProfile,
   composeJudgeTraitVersion,
   decomposeProfileToTraitPayloads,
 } from './trait-compose';
-import {
-  CharterTraitSchema,
-  SUBJECT_TRAIT_KINDS,
-  TRAIT_PAYLOAD_SCHEMAS,
-} from './trait-schemas';
+import { CharterTraitSchema, SUBJECT_TRAIT_KINDS, TRAIT_PAYLOAD_SCHEMAS } from './trait-schemas';
 
 describe('decompose ⇄ assemble 互逆（v3 §8-13 零行为变化基线）', () => {
   it.each(BUILTIN_SUBJECT_IDS)('%s：assemble(decompose(p)) 逐字段 deep-equal', (subjectId) => {
