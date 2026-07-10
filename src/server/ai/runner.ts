@@ -24,7 +24,7 @@
 //     output after.
 
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TaskKind, tasks } from '@/ai/registry';
@@ -54,6 +54,7 @@ import {
   writeCostLedger,
   writeToolCallLog,
 } from './log';
+import { populateIsolatedSkills } from './populate-skills';
 import { type TokenCounts, effectiveCostUsd } from './pricing';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 
@@ -327,70 +328,6 @@ function inputHash(input: unknown): string {
 // pick which ones the model sees (context filter). SoT stays at
 // src/subjects/<id>/skills/; this just mirrors them into the isolated dir.
 let isolatedConfigDir: string | undefined;
-
-// Resolve the on-disk src/subjects root across deploy layouts. In dev/test cwd is the
-// repo root, so <cwd>/src/subjects exists. In the Next standalone production image the
-// worker (`node worker.cjs`) / app (`node server.js`) run with cwd=/app, and the
-// Dockerfile copies the skills subtrees to /app/src/subjects (PR #319 F2) — which the
-// first candidate also covers. The extra candidate (__dirname-relative) is a belt-and-
-// braces fallback should the process be launched from a non-/app cwd. First existing
-// candidate wins; none existing → undefined → no skills (degrade to promptFragments).
-function resolveSubjectsRoot(): string | undefined {
-  const candidates = [
-    join(process.cwd(), 'src', 'subjects'),
-    // standalone server.js/worker.cjs live at /app; src/subjects is a sibling.
-    join('/app', 'src', 'subjects'),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return undefined;
-}
-
-// Mirror every src/subjects/<id>/skills/<skill>/ into <isolatedDir>/skills/.
-// Best-effort + idempotent: a missing subjects tree (e.g. an unusual cwd) just
-// yields no skills, and the runner degrades to promptFragments — never throws.
-function populateIsolatedSkills(isolatedDir: string): void {
-  const subjectsRoot = resolveSubjectsRoot();
-  if (!subjectsRoot) return;
-  const skillsDest = join(isolatedDir, 'skills');
-  let subjectIds: string[];
-  try {
-    subjectIds = readdirSync(subjectsRoot, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name);
-  } catch {
-    return;
-  }
-  for (const subjectId of subjectIds) {
-    const subjectSkillsDir = join(subjectsRoot, subjectId, 'skills');
-    if (!existsSync(subjectSkillsDir)) continue;
-    let skillNames: string[];
-    try {
-      skillNames = readdirSync(subjectSkillsDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => d.name);
-    } catch {
-      continue;
-    }
-    for (const skillName of skillNames) {
-      const src = join(subjectSkillsDir, skillName);
-      // Flatten into <isolatedDir>/skills/<skillName>/ — skill names are unique
-      // across subjects (quiz-gen-<kind> is subject-scoped by directory but the
-      // SKILL.md `name` is the global key, so collisions would be a config bug).
-      const dest = join(skillsDest, skillName);
-      try {
-        cpSync(src, dest, { recursive: true });
-      } catch (err) {
-        console.error('[runner] failed to populate skill into isolated config dir', {
-          skill: skillName,
-          subject: subjectId,
-          err,
-        });
-      }
-    }
-  }
-}
 
 function getIsolatedClaudeConfigDir(): string {
   if (!isolatedConfigDir) {

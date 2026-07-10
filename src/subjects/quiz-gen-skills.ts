@@ -17,6 +17,9 @@
 import { access, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SubjectQuestionKind } from './profile-schema';
+// YUK-611 — 白名单名从命名空间权威模块拼：populate 把镜像目录名 + 镜像内 frontmatter
+// name 统一改写成 <subjectId>--<pack>，resolver 必须产出同一个键。
+import { namespacedSkillName } from './skill-namespace';
 
 // YUK-226 S2-5b (PR #320 验证轮 A) — kind 词表规范化收编进单一权威模块.
 //
@@ -71,10 +74,11 @@ export async function resolveQuizGenSkills(
   } catch {
     return undefined;
   }
-  // The SKILL.md `name` frontmatter == directory name (authored that way), and
-  // the SDK matches `Options.skills` against that name. So the directory name is
-  // the whitelist key.
-  return [dirName];
+  // The SDK matches `Options.skills` against the MIRRORED SKILL.md `name`
+  // frontmatter, which populateIsolatedSkills rewrites to the namespaced key
+  // <subjectId>--<dirName>（YUK-611）。源树 frontmatter 保持裸目录名，name == 目录名
+  // 由静态 audit（skill-namespace.test.ts）钉死。
+  return [namespacedSkillName(subjectId, dirName)];
 }
 
 /**
@@ -112,5 +116,6 @@ export async function resolveQuizGenSkillsForSubject(
   } catch {
     return undefined;
   }
-  return names.length > 0 ? names : undefined;
+  // 白名单键 = 镜像里的命名空间名（YUK-611），不是源树裸目录名。
+  return names.length > 0 ? names.map((n) => namespacedSkillName(subjectId, n)) : undefined;
 }

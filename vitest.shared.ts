@@ -338,6 +338,12 @@ export const fastTestInclude = [
   // YUK-288 — resolveKnownSubjectId (pure, no-DB): genuine alias/id hit vs the
   // default-profile over-match fix for the derived ?subject= axis.
   'src/subjects/resolve-known-subject-id.test.ts',
+  // YUK-611 — skill 命名空间：rewrite helper unit + 真树静态撞名 audit（纯 fs，
+  // 零 DB）。audit 是构建期防线：跨科 basename 重复 / frontmatter name 漂移即红。
+  'src/subjects/skill-namespace.test.ts',
+  // YUK-611 — populateIsolatedSkills 镜像命名空间化 unit（纯 fs：fixture 树 +
+  // isolatedDir 双 mkdtemp；模块自 runner.ts 摘出，零 SDK import）。
+  'src/server/ai/populate-skills.test.ts',
   // M3 (YUK-317) — hub-mesh / rubric-validator.unit / tree.unit 三条 knowledge
   // unit 条目已随域迁入 src/capabilities/knowledge/（统一 *.unit.test.ts 命名），
   // 由约定 glob 接管。

@@ -32,19 +32,19 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 describe('resolveNoteSkill — resolver discovery', () => {
-  it("returns ['note-yuwen'] when note-yuwen/SKILL.md exists for the subject", async () => {
+  it("returns ['yuwen--note-yuwen'] when note-yuwen/SKILL.md exists (YUK-611 namespaced)", async () => {
     const root = fixtureRoot({ yuwen: ['note-yuwen'] });
-    expect(await resolveNoteSkill('yuwen', root)).toEqual(['note-yuwen']);
+    expect(await resolveNoteSkill('yuwen', root)).toEqual(['yuwen--note-yuwen']);
   });
 
   it('works for math subject', async () => {
     const root = fixtureRoot({ math: ['note-math'] });
-    expect(await resolveNoteSkill('math', root)).toEqual(['note-math']);
+    expect(await resolveNoteSkill('math', root)).toEqual(['math--note-math']);
   });
 
   it('works for physics subject', async () => {
     const root = fixtureRoot({ physics: ['note-physics'] });
-    expect(await resolveNoteSkill('physics', root)).toEqual(['note-physics']);
+    expect(await resolveNoteSkill('physics', root)).toEqual(['physics--note-physics']);
   });
 });
 
@@ -71,15 +71,16 @@ describe('resolveNoteSkill — 缝隙防御 (S2 第二教训)', () => {
   it('resolveNoteSkill does not return quiz-gen-* names', async () => {
     const root = fixtureRoot({ yuwen: ['note-yuwen', 'quiz-gen-translation'] });
     const result = await resolveNoteSkill('yuwen', root);
-    expect(result).toEqual(['note-yuwen']);
-    expect(result?.some((n) => n.startsWith('quiz-gen-'))).toBe(false);
+    expect(result).toEqual(['yuwen--note-yuwen']);
+    // 命名空间名形如 <subject>--<pack>，缝隙防御改按 pack 段判（YUK-611）。
+    expect(result?.some((n) => n.includes('quiz-gen-'))).toBe(false);
   });
 
   it('resolveQuizGenSkillsForSubject does not return note-*', async () => {
     const root = fixtureRoot({ yuwen: ['note-yuwen', 'quiz-gen-translation'] });
     const result = await resolveQuizGenSkillsForSubject('yuwen', root);
-    expect(result).toEqual(['quiz-gen-translation']);
-    expect(result?.some((n) => n.startsWith('note-'))).toBe(false);
+    expect(result).toEqual(['yuwen--quiz-gen-translation']);
+    expect(result?.some((n) => n.includes('--note-'))).toBe(false);
   });
 });
 
@@ -87,16 +88,16 @@ describe('live SoT — shipped SKILL.md files resolve against the real tree', ()
   // Uses the default skillsRoot (<cwd>/src/subjects) — verifies the three authored
   // note packs are discoverable and have the correct frontmatter name.
 
-  it('yuwen note skill is live and name === note-yuwen', async () => {
-    expect(await resolveNoteSkill('yuwen')).toEqual(['note-yuwen']);
+  it('yuwen note skill is live and resolves namespaced', async () => {
+    expect(await resolveNoteSkill('yuwen')).toEqual(['yuwen--note-yuwen']);
   });
 
-  it('math note skill is live and name === note-math', async () => {
-    expect(await resolveNoteSkill('math')).toEqual(['note-math']);
+  it('math note skill is live and resolves namespaced', async () => {
+    expect(await resolveNoteSkill('math')).toEqual(['math--note-math']);
   });
 
-  it('physics note skill is live and name === note-physics', async () => {
-    expect(await resolveNoteSkill('physics')).toEqual(['note-physics']);
+  it('physics note skill is live and resolves namespaced', async () => {
+    expect(await resolveNoteSkill('physics')).toEqual(['physics--note-physics']);
   });
 
   it('SKILL.md frontmatter name === note-<subject> for all three subjects', () => {
