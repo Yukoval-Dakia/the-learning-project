@@ -653,7 +653,9 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 }
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizGenOutput：
-{"questions":[QuizGenQuestion, ...],"source_pack":{"query_plan":["你执行的检索查询", ...],"searched_at":"ISO8601 时间戳","tool":"tavily"},"generation_method":"search_grounded"|"closed_book"|"material_grounded","self_copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0,"checked_by":"agent_self"},"material":{"body_md":"...","url":"...","title":"...","fetched_at":"ISO8601"}|null}
+{"questions":[QuizGenQuestion, ...],"source_pack":{"query_plan":["你执行的检索查询", ...],"searched_at":"ISO8601 时间戳","tool":"tavily"|"none"},"generation_method":"search_grounded"|"closed_book"|"material_grounded","self_copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0,"checked_by":"agent_self"},"material":{"body_md":"...","url":"...","title":"...","fetched_at":"ISO8601"}|null}
+
+source_pack.tool 如实自报：真的用了 tavily 检索才填 "tavily"；closed_book 免检索时填 "none"、query_plan 留空数组。
 
 素材生成模式（generation_method="material_grounded"，阅读理解 / 据材出题专用）：
 - 当题型需要一份**真实原文 / 真实数据**作锚（典型：阅读理解、文言翻译、据材料分析），用 tavily_extract 拉一份**真实素材原文**，全部题目都考查这份素材。

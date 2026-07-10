@@ -34,6 +34,7 @@ import {
 } from '@/core/schema/quiz_gen';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, question, source_document } from '@/db/schema';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { RUNNABLE_ROUTES } from '@/server/ai/judges/question-contract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
@@ -209,17 +210,18 @@ function assertGeneratedQuestionHasJudgeContract(q: QuizGenQuestionT): void {
 }
 
 function parseOutput(text: string): QuizGenOutputT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseOutput: no JSON object found in text');
-  }
-  let json: unknown;
+  // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
+  // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。错误串格式与旧实现逐字节一致。
+  let extracted: ReturnType<typeof parseJsonObjectLoose>;
   try {
-    json = JSON.parse(text.slice(start, end + 1));
+    extracted = parseJsonObjectLoose(text, 'quiz_gen parseOutput');
   } catch (e) {
     throw new Error(`parseOutput: JSON.parse failed: ${(e as Error).message}`);
   }
+  if (extracted === null) {
+    throw new Error('parseOutput: no JSON object found in text');
+  }
+  const json: unknown = extracted.json;
   const parsed = QuizGenOutput.safeParse(json);
   if (!parsed.success) {
     throw new Error(

@@ -51,6 +51,7 @@ import {
 } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -91,17 +92,17 @@ async function defaultRunTaskFn(
 }
 
 function parseQuizVerifyOutput(text: string): QuizVerificationResultT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseQuizVerifyOutput: no JSON object found in text');
-  }
-  let json: unknown;
+  // YUK-607 — 宽松提取（jsonrepair 修复带），与 quiz_gen parseOutput 同款；错误串格式不变。
+  let extracted: ReturnType<typeof parseJsonObjectLoose>;
   try {
-    json = JSON.parse(text.slice(start, end + 1));
+    extracted = parseJsonObjectLoose(text, 'parseQuizVerifyOutput');
   } catch (e) {
     throw new Error(`parseQuizVerifyOutput: JSON.parse failed: ${(e as Error).message}`);
   }
+  if (extracted === null) {
+    throw new Error('parseQuizVerifyOutput: no JSON object found in text');
+  }
+  const json: unknown = extracted.json;
   const parsed = QuizVerificationResult.safeParse(json);
   if (!parsed.success) {
     throw new Error(
@@ -452,7 +453,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               choices_md: row.choices_md,
               rubric_json: row.rubric_json,
             } satisfies TeachingQualityQuestion,
-            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile } },
+            // YUK-606 — db 必须进 opts：runner 观测写（ai_task_runs / cost_ledger）读 ctx.db。
+            { runTaskFn, db, profile: { id: subjectProfile.id, full: subjectProfile } },
           )
         : Promise.resolve(undefined),
     ]);

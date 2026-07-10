@@ -37,7 +37,10 @@ export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
 export const QuizGenSourcePack = z.object({
   query_plan: z.array(z.string().min(1)),
   searched_at: z.string().min(1),
-  tool: z.literal('tavily'),
+  // YUK-607 — closed_book 跑法根本不挂检索，'none' 是诚实自报；旧 z.literal('tavily')
+  // 会把整批输出打死（spike 2026-07-10 实测 RC 批阵亡第二因）。'.tool' 无生产消费方，
+  // 纯 provenance 记录，放宽无下游影响。
+  tool: z.enum(['tavily', 'none']),
 });
 export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
 
