@@ -5,7 +5,10 @@ import type { Job } from 'pg-boss';
 // it can BIAS proposals toward weak/under-covered knowledge in their scope.
 // Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
 // reads the FSRS-due queue or mutates review state; goals only add direction.
-import { type ActiveGoal, listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/capabilities/agency/server/goals/queries';
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import { enqueueDreamingNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import type { Db } from '@/db/client';
@@ -272,7 +275,8 @@ export async function runDreamingNightly(
   const run = deps.runAgentTaskFn ?? runAgentTask;
   const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
-  const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
+  // YUK-603 — resolved read (see coach_daily): subject_live goals live-derive their scope.
+  const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
   const loadAcceptanceRates =
     deps.loadProposalAcceptanceRatesFn ??
     ((db: Db) => getProposalFeedbackDigest(db, PROPOSAL_FEEDBACK_BUDGET));

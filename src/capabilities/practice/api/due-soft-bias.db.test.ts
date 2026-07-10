@@ -18,7 +18,7 @@ import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 // handleReviewDue is the deps-injectable handler behind the GET route. It lives
 // in @/capabilities/practice/server/due-list, not the route module, because Next's generated
 // route-type validator rejects any non-handler export from route.ts (YUK-67).
-import { event, goal, material_fsrs_state, question } from '@/db/schema';
+import { event, goal, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -199,6 +199,7 @@ function withGoalScope(...scope: string[]) {
         title: 'g',
         subject_id: 'yuwen',
         scope_knowledge_ids: scope,
+        scope_mode: 'explicit' as const,
         sequence_hint: 0,
       },
     ],
@@ -303,6 +304,55 @@ describe('YUK-167 review soft-bias — goal-relevant re-rank (ND-5)', () => {
     await seedGoal('goal_real', ['k2']);
     // No deps → route uses the real listActiveGoals against the seeded goal row.
     const biased = await getDue();
+    expect(biased.map((r) => r.id)).toEqual(['q_b', 'q_d', 'q_a', 'q_c']);
+  });
+
+  // YUK-603 (§8 test 5) — the UN-STUBBED default must LIVE-resolve a subject_live goal:
+  // its frozen scope is [] (the OLD frozen read would see nothing and never float anything),
+  // so the bias below can only come from listActiveGoalsWithResolvedScope re-deriving the
+  // subject KC set at read time. A refactor that swaps the default back to the frozen read
+  // goes red here.
+  it('YUK-603: real default live-resolves a subject_live goal — zero frozen scope still biases', async () => {
+    await seedOverdueFixture();
+    const now = new Date();
+    await testDb()
+      .insert(knowledge)
+      .values([
+        {
+          id: 'seed:yuwen:root',
+          name: '语文',
+          domain: 'yuwen',
+          parent_id: null,
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        },
+        // the fixture tags q_b/q_d with 'k2' — give that id a live yuwen chain
+        {
+          id: 'k2',
+          name: 'k2',
+          domain: null,
+          parent_id: 'seed:yuwen:root',
+          created_at: now,
+          updated_at: now,
+          version: 0,
+        },
+      ]);
+    await testDb().insert(goal).values({
+      id: 'goal_live',
+      title: 'goal live',
+      subject_id: 'yuwen',
+      scope_knowledge_ids: [], // frozen [] — live resolution is the only path to the bias
+      scope_mode: 'subject_live',
+      sequence_hint: 0,
+      status: 'active',
+      source: 'manual',
+      source_ref: null,
+      created_at: NOW,
+      updated_at: NOW,
+    });
+
+    const biased = await getDue(); // NO deps — the real default path
     expect(biased.map((r) => r.id)).toEqual(['q_b', 'q_d', 'q_a', 'q_c']);
   });
 });

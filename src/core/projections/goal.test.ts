@@ -174,6 +174,63 @@ function goalSnapshot(over: Partial<GoalRowSnapshotT> = {}): GoalRowSnapshotT {
   };
 }
 
+// YUK-603 (v2 contract §5.3 projection 连线) — scope_mode is OPTIONAL in GoalRowSnapshot
+// (`.strict()` + a REQUIRED new key would reject every historical genesis payload at the
+// safeParse barrier → whole-goal fold loss on any re-fold). The fold must (a) accept legacy
+// payloads without the key and default the projected row to 'explicit', (b) carry an explicit
+// 'subject_live' through, (c) stamp the proposal-materialization branch 'explicit' (accept 恒
+// explicit).
+describe('foldGoal — scope_mode (YUK-603)', () => {
+  it('a legacy genesis payload WITHOUT scope_mode still folds, defaulting scope_mode=explicit', () => {
+    const legacy = goalSnapshot(); // helper does not set scope_mode — the historical shape
+    const row = foldGoal('goal_1', [genesis({ created_at: at(0), row: legacy })]);
+    expect(row).not.toBeNull();
+    expect(row?.scope_mode).toBe('explicit');
+    expect(row?.scope_knowledge_ids).toEqual(['k_a', 'k_b']);
+  });
+
+  it('a genesis payload WITH scope_mode=subject_live carries it through verbatim', () => {
+    const seed = goalSnapshot({
+      scope_mode: 'subject_live',
+      scope_knowledge_ids: [],
+      source: 'manual',
+      source_ref: null,
+    });
+    const row = foldGoal('goal_1', [genesis({ created_at: at(0), row: seed })]);
+    expect(row?.scope_mode).toBe('subject_live');
+    expect(row?.scope_knowledge_ids).toEqual([]);
+  });
+
+  it('proposal-materialized goals fold with scope_mode=explicit (accept 恒 explicit)', () => {
+    const propose = goalPropose({
+      created_at: at(0),
+      goalId: 'goal_1',
+      title: 'T',
+      scope: ['k_a'],
+    });
+    const accept = rateAccept({ created_at: at(1000), causedBy: propose.id, goalId: 'goal_1' });
+    const row = foldGoal('goal_1', [propose, accept]);
+    expect(row?.scope_mode).toBe('explicit');
+  });
+
+  it('status/scope updates preserve scope_mode (set-once like source/subject provenance)', () => {
+    const seed = goalSnapshot({
+      scope_mode: 'subject_live',
+      scope_knowledge_ids: [],
+      source: 'manual',
+      source_ref: null,
+    });
+    const row = foldGoal('goal_1', [
+      genesis({ created_at: at(0), row: seed }),
+      statusUpdate({ created_at: at(1000), goalId: 'goal_1', status: 'dormant' }),
+      scopeUpdate({ created_at: at(2000), goalId: 'goal_1', patch: { title: 'T2' } }),
+    ]);
+    expect(row?.scope_mode).toBe('subject_live');
+    expect(row?.status).toBe('dormant');
+    expect(row?.title).toBe('T2');
+  });
+});
+
 describe('foldGoal — proposal + accept chain', () => {
   it('projects a goal materialized from a goal_scope proposal accept (status=active, version=0)', () => {
     const propose = goalPropose({
@@ -226,7 +283,8 @@ describe('foldGoal — genesis seed', () => {
   it('seeds the full row from genesis verbatim (incl version)', () => {
     const snap = goalSnapshot({ status: 'done', version: 4, sequence_hint: 7 });
     const row = foldGoal('goal_1', [genesis({ created_at: at(0), row: snap })]);
-    expect(row).toEqual(snap);
+    // YUK-603 — a legacy snapshot has no scope_mode; the fold materializes the column default.
+    expect(row).toEqual({ ...snap, scope_mode: 'explicit' });
   });
 
   it('returns null when no event seeds/creates the goal', () => {

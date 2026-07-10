@@ -8,7 +8,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, goal, knowledge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { resetDb } from '../../../../tests/helpers/db';
 import {
@@ -365,5 +365,54 @@ describe('readLearnerStateProjection', () => {
   it('returns a cold projection on an empty DB (composition smoke, real readers)', async () => {
     const proj = await readLearnerStateProjection(db);
     expect(proj).toEqual(COLD_PROJECTION);
+  });
+
+  // YUK-603 (§8 test 5) — the UN-STUBBED default goal reader: a real subject_live goal row
+  // (frozen scope []) flows through listActiveGoalsWithResolvedScope's live subject
+  // resolution. This drives the real default (no listActiveGoalsFn injection anywhere in the
+  // projection path) so a swap back to the frozen read goes red here.
+  it('YUK-603: a subject_live goal surfaces via the real default reader (live-resolved scope path)', async () => {
+    const now = new Date();
+    await db.insert(knowledge).values([
+      {
+        id: 'seed:yuwen:root',
+        name: '语文',
+        domain: 'yuwen',
+        parent_id: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+      {
+        id: 'kc_ls',
+        name: '虚词',
+        domain: null,
+        parent_id: 'seed:yuwen:root',
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      },
+    ]);
+    await db.insert(goal).values({
+      id: 'g_ls',
+      title: '读透《史记》',
+      subject_id: 'yuwen',
+      scope_knowledge_ids: [], // frozen [] — the goal-strand read must live-resolve
+      scope_mode: 'subject_live',
+      sequence_hint: 0,
+      status: 'active',
+      source: 'manual',
+      source_ref: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const proj = await readLearnerStateProjection(db);
+    expect(proj.activeGoalTitle).toBe('读透《史记》');
+    // Live-resolved scope is non-empty ([kc_ls]) so the mastery leg RUNS; with no mastery
+    // rows it summarizes to null without throwing — the path itself is what this pins.
+    expect(proj.masterySummary).toBeNull();
+    expect(proj.meanTheta).toBeNull();
   });
 });

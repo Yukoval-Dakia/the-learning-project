@@ -170,8 +170,9 @@ describe('cold-start day-one e2e (upload-shaped KC → placement → profile)', 
     expect(start.sourcingNeeded).toBe(false);
 
     // Answered trail → the placement-done 起始档案 reads it back out through the SAME tier-2
-    // resolution (YUK-516): the tested KC surfaces with band fields, the subject root stays an
-    // honest untested row.
+    // resolution (YUK-516): the tested KC surfaces with band fields. YUK-603 (§5.4): the
+    // synthetic subject root is EXCLUDED from the subject KC set (structural anchor, not
+    // content), so it no longer surfaces as an untested profile row.
     await seedAnsweredTrail(start.sessionId, 'q-upload', kcId);
     const profileRes = await getProfile(profileReq('g1'));
     expect(profileRes.status).toBe(200);
@@ -191,10 +192,9 @@ describe('cold-start day-one e2e (upload-shaped KC → placement → profile)', 
     expect(tested.p_l).toBeLessThan(1);
     expect(tested.theta_se).toBeGreaterThan(0);
     const root = byId['seed:yuwen:root'];
-    expect(root).toBeDefined();
-    expect(root.tested).toBe(false);
+    expect(root).toBeUndefined(); // root excluded at the source (YUK-603 §5.4)
     expect(profile.testedCount).toBe(1);
-    expect(profile.totalKcs).toBeGreaterThanOrEqual(2);
+    expect(profile.totalKcs).toBeGreaterThanOrEqual(1);
   });
 
   it('honesty leg: roots alone serve no question — start reports sourcingNeeded instead of faking a probe', async () => {

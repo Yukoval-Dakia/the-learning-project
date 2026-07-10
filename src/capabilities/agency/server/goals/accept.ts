@@ -151,6 +151,10 @@ export async function acceptGoalScopeProposal(
         title,
         subject_id: subjectId,
         scope_knowledge_ids: scopeKnowledgeIds,
+        // YUK-603 — accept 恒 explicit: the proposal's scope is an evidence-first narrow
+        // selection the user confirmed in the inbox; it never live-derives. Mirrors the fold's
+        // proposal-materialization branch stamp (fold == row).
+        scope_mode: 'explicit',
         sequence_hint: sequenceHint,
         status: 'active',
         source: 'goal_scope_proposal',

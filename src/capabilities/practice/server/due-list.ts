@@ -18,7 +18,10 @@
 // YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
 // SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
 // only — never touches the FSRS due path, the returned set, counts, or due_at.
-import { type ActiveGoal, listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/capabilities/agency/server/goals/queries';
 // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items
 // so one busy subject can't dominate the page. batchResolveSubjectIds walks
@@ -49,7 +52,7 @@ import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
 
 export interface ReviewDueDeps {
-  // Defaults to listActiveGoals. The goals only ADD a soft re-rank of the
+  // Defaults to listActiveGoalsWithResolvedScope. The goals only ADD a soft re-rank of the
   // overdue items already selected by the FSRS due-ordering + limit — they
   // never change which items are returned (ND-5).
   listActiveGoalsFn?: ListActiveGoalsFn;
@@ -194,7 +197,8 @@ type ScheduledDueRow = {
 
 export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
   try {
-    const listGoals = deps.listActiveGoalsFn ?? listActiveGoals;
+    // YUK-603 — resolved read: subject_live goals live-derive their scope for the re-rank.
+    const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
     const url = new URL(req.url);
     const limitRaw = url.searchParams.get('limit');
     const limitParsed = limitRaw ? Number.parseInt(limitRaw, 10) : 20;

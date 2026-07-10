@@ -61,6 +61,19 @@ export async function getEffectiveDomain(db: Db | Tx, nodeId: string): Promise<s
  * not a 404.
  */
 export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promise<string[]> {
+  // YUK-603 (v2 contract §5.4) — canonicalize the PARAM once up front. The per-row compare
+  // below resolves each node's effective domain to its CANONICAL subject id, so comparing it
+  // against the raw param made every alias arg ('wenyan') miss everything. An unknown label
+  // canonicalizes to null → no node can match → [] (same shape as before, now by construction).
+  const canonical = resolveKnownSubjectId(subject);
+  if (canonical === null) return [];
+  // The synthetic seed root ('seed:<subject>:root', domain = the subject id itself) SELF-matches
+  // and used to leak into every resolution — day-one that made the "subject KC set" non-empty
+  // ([root]) and armed the goal scope-freeze bug. "科目的 KC 集" = content child KCs only; the
+  // root is a structural anchor. Exclusion is by ID PATTERN, not `parent_id IS NULL` — 3a
+  // runtime topic roots (newId + parent_id null) are genuine content and must stay.
+  const syntheticRootId = `seed:${canonical}:root`;
+
   const rows = await db
     .select({
       id: knowledge.id,
@@ -89,6 +102,7 @@ export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promi
 
   const matched: string[] = [];
   for (const row of rows) {
+    if (row.id === syntheticRootId) continue; // structural anchor, never content (§5.4)
     const domain = effectiveDomain(row.id);
     // Canonical bridge: a raw domain string maps to a subject id via the alias
     // table, so a `?subject=yuwen` tab matches any node whose domain ALIASES to
@@ -102,7 +116,7 @@ export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promi
     // the sample subject and was swept into its `?subject=` tab, conflating
     // "genuinely subject-tagged" with "untagged / unknown-domain". A null result
     // matches no subject.
-    if (resolveKnownSubjectId(domain) === subject) matched.push(row.id);
+    if (resolveKnownSubjectId(domain) === canonical) matched.push(row.id);
   }
   return matched;
 }

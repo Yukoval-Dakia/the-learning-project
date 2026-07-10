@@ -14,6 +14,7 @@
 
 import { and, asc, eq } from 'drizzle-orm';
 
+import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
@@ -39,11 +40,15 @@ type DbLike = Db | Tx;
 
 export type GoalStatus = 'active' | 'dormant' | 'done';
 
+export type GoalScopeMode = 'explicit' | 'subject_live';
+
 export interface InsertGoalInput {
   id: string;
   title: string;
   subject_id?: string | null;
   scope_knowledge_ids: string[];
+  /** YUK-603 — omitted ⇒ 'explicit' (mirrors the column default; the proposal-accept path). */
+  scope_mode?: GoalScopeMode;
   sequence_hint: number;
   status?: GoalStatus;
   source: string;
@@ -56,6 +61,7 @@ export interface ActiveGoal {
   title: string;
   subject_id: string | null;
   scope_knowledge_ids: string[];
+  scope_mode: GoalScopeMode;
   sequence_hint: number;
 }
 
@@ -66,6 +72,7 @@ export async function insertGoal(db: DbLike, input: InsertGoalInput): Promise<st
     title: input.title,
     subject_id: input.subject_id ?? null,
     scope_knowledge_ids: input.scope_knowledge_ids,
+    scope_mode: input.scope_mode ?? 'explicit',
     sequence_hint: input.sequence_hint,
     status: input.status ?? 'active',
     source: input.source,
@@ -230,6 +237,7 @@ export async function listActiveGoals(db: DbLike): Promise<ActiveGoal[]> {
       title: goal.title,
       subject_id: goal.subject_id,
       scope_knowledge_ids: goal.scope_knowledge_ids,
+      scope_mode: goal.scope_mode,
       sequence_hint: goal.sequence_hint,
     })
     .from(goal)
@@ -240,6 +248,33 @@ export async function listActiveGoals(db: DbLike): Promise<ActiveGoal[]> {
     title: r.title,
     subject_id: r.subject_id,
     scope_knowledge_ids: r.scope_knowledge_ids ?? [],
+    scope_mode: r.scope_mode,
     sequence_hint: r.sequence_hint,
   }));
+}
+
+/**
+ * YUK-603 (v2 contract §5.3 read path) — active goals with their EFFECTIVE scope:
+ * explicit → the frozen scope_knowledge_ids verbatim; subject_live → the subject's KC set
+ * re-derived at read time (effective-domain axis, synthetic root excluded at the source).
+ *
+ * This is the goal-strand readers' default (coach_daily / dreaming_nightly / due-list rerank /
+ * learner-state): they previously read the frozen column with NO live tier at all, so a subject
+ * goal's pinned scope silently blinded them. One resolve per DISTINCT subject (Map-deduped) —
+ * no caching subsystem (single-user, hundreds of nodes; see §9⑨ cost prerequisite).
+ */
+export async function listActiveGoalsWithResolvedScope(db: Db): Promise<ActiveGoal[]> {
+  const goals = await listActiveGoals(db);
+  const bySubject = new Map<string, string[]>();
+  for (const g of goals) {
+    if (g.scope_mode !== 'subject_live' || !g.subject_id) continue;
+    if (!bySubject.has(g.subject_id)) {
+      bySubject.set(g.subject_id, await resolveSubjectKnowledgeIds(db, g.subject_id));
+    }
+  }
+  return goals.map((g) =>
+    g.scope_mode === 'subject_live'
+      ? { ...g, scope_knowledge_ids: g.subject_id ? (bySubject.get(g.subject_id) ?? []) : [] }
+      : g,
+  );
 }

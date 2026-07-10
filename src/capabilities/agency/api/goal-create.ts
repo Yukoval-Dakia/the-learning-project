@@ -12,17 +12,20 @@
 // replace the proposal path — both call the single `insertGoal` write surface.
 //
 // COLD-START (YUK-473 live find): a day-one user declares a goal on an EMPTY tree
-// (only subject-root seeds — often a cross-subject goal or no subject picked), so the
-// resolved scope is legitimately empty/thin at entry. The goal is a north-star; its KC
-// scope GROWS as uploads populate the tree. We therefore do NOT reject an empty scope
-// (the original "require a resolvable scope" guard blocked the cold-start entry — the
-// very flow this endpoint exists for). Only a title is required. Downstream placement
-// must resolve scope dynamically (goal.scope_knowledge_ids OR, when empty, subject-
-// derived) so it picks up newly-uploaded KCs — tracked in YUK-481.
+// (only subject-root seeds — often a cross-subject goal or no subject picked). The goal
+// is a north-star; its KC scope GROWS as uploads populate the tree. We therefore do NOT
+// reject an empty scope (the original "require a resolvable scope" guard blocked the
+// cold-start entry — the very flow this endpoint exists for). Only a title is required.
+//
+// YUK-603 (v2 contract §5): a subject goal's scope is NEVER frozen at write time.
+// The old write-time resolveSubjectKnowledgeIds freeze looked "legitimately empty/thin"
+// but was actually NON-empty day-one — the synthetic seed root self-matches its own
+// domain — so placement tier-1 pinned to ['seed:<subj>:root'] permanently. The row now
+// carries scope_mode: 'explicit' (hand-picked frozen set is authoritative) vs
+// 'subject_live' (readers derive from subject_id at read time; frozen stays []).
 
 import { z } from 'zod';
 
-import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
@@ -74,16 +77,21 @@ export async function POST(req: Request): Promise<Response> {
     }
     const { title, subjectId, knowledgeIds: explicit } = parsed.data;
 
-    // Resolve the goal's KC scope: explicit set wins; else derive from the subject
-    // via the effective-domain axis (a question/KC's subject is a DERIVED join, never
-    // a column — subject 模型终版第 2 条). An empty resolved scope is ALLOWED — a
-    // cold-start day-one goal is a north-star declared on an empty tree; its scope
-    // grows as uploads populate KCs (see docblock + YUK-481). Only the title is
+    // Scope semantics (YUK-603, v2 contract §5.3 — three write branches, NO write-time freeze
+    // of a subject derivation):
+    //   1. explicit knowledgeIds → scope_mode='explicit', the set IS the frozen authority.
+    //   2. subjectId only        → scope_mode='subject_live', frozen stays [] — scope derives
+    //      from the subject at READ time (subject=view). Freezing the derivation here was the
+    //      armed live bug: day-one it resolved to ['seed:<subj>:root'] (the synthetic root
+    //      self-matches its own domain), pinning placement tier-1 to [root] forever and
+    //      blinding the goal-strand readers.
+    //   3. neither → scope_mode='explicit' + [] (a cross-subject north-star; nothing to derive).
+    // An empty frozen scope is ALLOWED (cold-start north-star, YUK-481); only the title is
     // required (enforced by the Body schema above).
-    let scopeKnowledgeIds = explicit ?? [];
-    if (scopeKnowledgeIds.length === 0 && subjectId) {
-      scopeKnowledgeIds = await resolveSubjectKnowledgeIds(db, subjectId);
-    }
+    const explicitScope = explicit ?? [];
+    const scopeMode: 'explicit' | 'subject_live' =
+      explicitScope.length === 0 && subjectId ? 'subject_live' : 'explicit';
+    const scopeKnowledgeIds = explicitScope;
 
     const id = newId();
     const now = new Date();
@@ -94,6 +102,7 @@ export async function POST(req: Request): Promise<Response> {
       title,
       subject_id: subjectId ?? null,
       scope_knowledge_ids: scopeKnowledgeIds,
+      scope_mode: scopeMode,
       sequence_hint: 0,
       status: 'active',
       source: 'manual',
@@ -135,6 +144,7 @@ export async function POST(req: Request): Promise<Response> {
           title,
           subject_id: subjectId ?? null,
           scope_knowledge_ids: scopeKnowledgeIds,
+          scope_mode: scopeMode,
           sequence_hint: 0,
           status: 'active',
           source: 'manual',
