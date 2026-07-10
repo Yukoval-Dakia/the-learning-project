@@ -1028,3 +1028,36 @@
     gap: var(--s-3);
   }
 }
+
+/* ── YUK-602 —「+ 新科目」inline 表单 + 通用模式微标（design doc 2026-07-11 §1.1/§1.2）── */
+.ob-new-subject {
+  border-style: dashed;
+  color: var(--ink-4);
+}
+.ob-new-subject-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+}
+.ob-new-subject-input {
+  font-size: var(--fs-meta);
+  padding: 4px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  width: 12em;
+}
+.ob-new-subject-err {
+  flex-basis: 100%;
+}
+.ob-chip-badge {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  margin-left: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  color: var(--ink-4);
+}
