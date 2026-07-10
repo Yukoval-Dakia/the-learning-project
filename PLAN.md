@@ -44,7 +44,7 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **docs PR 在飞：YUK-597 v2 implementation contract draft**（分支 `yuk-597-v2-implementation-contract`，docs-only → 免独立 review，CI 绿即可；**不 merge——等 owner 批准**「补四阻断 E2E 后再批准」）。此外**无 feature PR 在飞**（YUK-249 收官：#742 `b93ad862` + #743 均 merged 并已部署，2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout，现指 `77075a59`）。**待 owner 清理分支**：`yuk-249-yuwen-migration` · `yuk-249-rename-stragglers`（均本地+远端）（git-guard/classifier 挡删）。
+- **docs PR #748 在飞：YUK-597 v2 implementation contract draft**（分支 `yuk-597-v2-implementation-contract`，docs-only → 免独立 review，CI 绿即可；**不 merge——等 owner 批准**「补四阻断 E2E 后再批准」）。此外**无 feature PR 在飞**（YUK-249 收官：#742 `b93ad862` + #743 均 merged 并已部署，2026-07-09）。worktree 拓扑 = main + `tlp-deploy`（NAS 部署 checkout，现指 `77075a59`）。**待 owner 清理分支**：`yuk-249-yuwen-migration` · `yuk-249-rename-stragglers`（均本地+远端）（git-guard/classifier 挡删）。
 - **噪音/stale PR 待周期清**：audit-drift 周报 draft（#736/#734/#727/#711/#671/#653/#621/#600/#586/#578/#567/#555/#544）· dependabot 依赖 bump（#676-#680/#563/#564/#462/#366/#367）· 停滞 cursor draft（#590 YUK-494 worker bundle · #588 YUK-360 mem0 cost BLOCKED · #522 YUK-438 · #465/#466）。
 
 ## ✅ 最近已落（防遗落，下次别重做）
