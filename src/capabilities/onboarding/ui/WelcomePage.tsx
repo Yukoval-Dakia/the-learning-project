@@ -198,6 +198,7 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
                   <span
                     className="ob-chip-badge"
                     title="AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
+                    aria-label="通用模式：AI 以通用人格教此科目——编辑该科目任一配置后自动消失"
                   >
                     通用
                   </span>

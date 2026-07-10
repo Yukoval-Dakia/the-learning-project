@@ -9,10 +9,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { SUBJECTS_QUERY_KEY } from './useSubjects';
 
 // thin-create 201/200 payload（v2 §7 合同 + v3 §3.6：isGeneralFallback 派生恒 true）。
+// isGeneralFallback 与服务端 ThinCreatePayload 对齐为 boolean|null（review-763 P3：
+// 防类型漂移；本 hook 消费面只读 .id）。
 export interface CreatedSubject {
   id: string;
   displayName: string;
-  isGeneralFallback: boolean;
+  isGeneralFallback: boolean | null;
   revision: number;
   seedRootId: string;
 }
