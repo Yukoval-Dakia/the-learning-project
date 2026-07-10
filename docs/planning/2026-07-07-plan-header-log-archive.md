@@ -1,7 +1,7 @@
-# PLAN 头部日志归档 — 2026-06-23 ~ 2026-07-06
+# PLAN 头部日志归档 — 2026-06-23 起（滚动追加）
 
-> **来源**：`PLAN.md` 头部日志区（cockpit 头部的【更新】叙事段），2026-07-07 红线挑战审查 P2-cockpit REWRITE 裁决执行时滚存归档（看板体积纪律：PLAN.md 头部只留最新 1 条【更新】；超龄叙事段滚存留档）。
-> **日期范围**：2026-06-23（更新于戳）至 2026-07-06（方向 B 启动 / AI pipeline 批判五单 / ulw 四线波次 / YUK-377 cron 复审）。
+> **来源**：`PLAN.md` 头部日志区（cockpit 头部的【更新】叙事段），2026-07-07 红线挑战审查 P2-cockpit REWRITE 裁决执行时首次滚存归档，此后每轮头部换血时追加（看板体积纪律：PLAN.md 头部只留最新 1 条【更新】；超龄叙事段滚存留档）。
+> **日期范围**：2026-06-23（更新于戳）至 2026-07-10（YUK-597 设计线 v1 判词段）。
 > **保真声明**：以下为原文**逐字**滚存，未做有损压缩——P5（git 安全簇 / owner-merged 句 standing-grant 队列）、P9（模型路由修正段）、A5（dark-ship / flag 登记）三份 KEEP 裁决的证据锚点承重于此，不得删改。原始位置 = `PLAN.md` 早于 2026-07-07 的头部日志区。
 
 ---
@@ -33,3 +33,7 @@
 （滚存自 PLAN.md 头部，2026-07-10 YUK-597 设计线收线时归档，原文保真）
 
 > **【更新 2026-07-09 · YUK-249 收线：wenyan→yuwen 已上生产 + 金标验收】** #742（squash `b93ad862`，222 files：registry alias 脊柱〔旧 id wenyan 降级 alias〕+ registry-driven 首会 UI + drizzle 0062 数据迁移 + 机械 sweep）+ #743（Dockerfile:71 skills COPY + vitest.shared.ts:389 unit include——两处收尾 rg 范围外 straggler，后者曾致 12 tests 静默掉出 unit 套件）均 merged。独立 4-lens review 抓 1 真 P1：migration stmt 3 `subject_kind='n'` 死条件（executor 基于假前提「纠正」了正确裁决）→ 复核 `src/server/mastery/state.ts:76` 实字面量 `'ability_global'` 修回——空库 migration smoke 抓不到语义死 UPDATE，对抗复核补位。生产（OrbStack compose `tlp-deploy` @ `77075a59`）：0062 applied exit 0、DB 零 wenyan（`seed:yuwen:root|语文` 在位）、`/api/health` 200、`/welcome` Playwright 金标 = 学科倾向/学科视角 chips 均为 语文/数学/物理，无「文言文」顶级 chip、无「英语」幽灵；教学内容按裁决保留文言文语境（identity 迁、content 不动）。**YUK-394 RCA 修正 = OCR 额度耗尽（owner 确认「没额度了」）**——补额度前该 check 全 PR 必挂，勿重跑。owner 新方向：**科目允许用户手填 → 已注入 YUK-597**（连同 5 处暗桩），拍序「收完本 lane 就开设计线」。遗留：`yuk-249-yuwen-migration` 与 `yuk-249-rename-stragglers`（均本地+远端） 分支（git-guard/classifier 挡删）留 owner 清理。
+
+（滚存自 PLAN.md 头部，2026-07-10 YUK-597 v2 契约修订轮开 PR 时归档，原文保真）
+
+> **【更新 2026-07-10 · YUK-597 设计线收线：判词 = 臂 B + opaque id】** 对抗面板（`wf_eef6dfd1-94a`：2 侦察 + 3 设计席 LIGHT/FULL/SUBSTRATE + 3 对抗席 + Fable 综合）证伪原「LIGHT vs FULL」假分叉——KILL-1：派生轴 `resolveSubjectKnowledgeIds`（domain.ts:105）判据是内存 registry 自别名成员资格，未注册 custom id 恒空 → 纯字符串案「建了科目却按科取不到题」结构性死；FULL 的 admin 编辑器层则 live-consumer 存疑。owner 判词：**臂 B（subject_profile 入 DB 全案）+ opaque id `subj_<cuid2>`**（F1 警告已呈仍点 B，记录在案）。权威终稿 `docs/design/2026-07-10-yuk597-custom-subjects.md`；实施 5 单 YUK-598~602 已立（依赖序 598∥599 地基先行 → 600/601 → 602），YUK-602 = owner 原话「科目手填」落点（前置 UI design doc，UI Design Compliance）。
