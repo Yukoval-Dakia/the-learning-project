@@ -30,7 +30,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 
-import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
+import { listActiveGoalsWithResolvedScope } from '@/capabilities/agency/server/goals/queries';
 // PR #717 round-2 CodeRabbit fix #2 (YUK-574) — imports from src/core/ (RELOCATED
 // from knowledge/ui/mastery-band.ts; see the provenance note in that file). Pure
 // dependency-free band-derivation helpers, no cross-capability / cross-layer reach.
@@ -277,7 +277,10 @@ export async function readLearnerStateProjection(
   deps: ReadProjectionDeps = {},
 ): Promise<LearnerStateProjection> {
   const loadSummary = deps.loadCopilotSummaryFn ?? ((d: DbLike) => loadCopilotSummary(d));
-  const loadGoals = deps.listActiveGoalsFn ?? ((d: DbLike) => listActiveGoals(d));
+  // YUK-603 — resolved read. The default is only ever invoked with the outer Db (call site
+  // below); the DbLike dep shape stays for test fakes, hence the narrow cast.
+  const loadGoals =
+    deps.listActiveGoalsFn ?? ((d: DbLike) => listActiveGoalsWithResolvedScope(d as Db));
   const loadFailures =
     deps.getFailureAttemptsFn ??
     ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));

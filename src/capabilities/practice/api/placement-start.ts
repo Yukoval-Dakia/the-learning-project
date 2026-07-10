@@ -69,7 +69,11 @@ export async function POST(req: Request): Promise<Response> {
     let knowledgeIds = explicit ?? [];
     if (knowledgeIds.length === 0 && goalId) {
       const rows = await db
-        .select({ scope: goal.scope_knowledge_ids, subjectId: goal.subject_id })
+        .select({
+          scope: goal.scope_knowledge_ids,
+          subjectId: goal.subject_id,
+          scopeMode: goal.scope_mode,
+        })
         .from(goal)
         .where(eq(goal.id, goalId))
         .limit(1);
@@ -79,6 +83,7 @@ export async function POST(req: Request): Promise<Response> {
       knowledgeIds = await resolveGoalPlacementScope(db, {
         scope: goalRow?.scope ?? null,
         subjectId: goalRow?.subjectId ?? null,
+        scopeMode: goalRow?.scopeMode ?? 'explicit',
       });
     }
     if (knowledgeIds.length === 0) {

@@ -1379,6 +1379,16 @@ export const goal = pgTable(
     subject_id: text('subject_id'),
     // AI-inferred + user-confirmed knowledge nodes the goal covers.
     scope_knowledge_ids: jsonb('scope_knowledge_ids').$type<string[]>().notNull().default([]),
+    // YUK-603 — how scope_knowledge_ids is meant to be read:
+    //   'explicit'     → the frozen set above is the authoritative narrow scope (hand-picked
+    //                    KCs / an accepted proposal's evidence-first selection).
+    //   'subject_live' → scope derives from subject_id at READ time (subject=view); the frozen
+    //                    column stays [] and readers ignore it. A subject goal must never
+    //                    freeze its derivation — the write-time snapshot pinned the synthetic
+    //                    seed root and blinded placement tier-1 + the goal-strand readers.
+    scope_mode: text('scope_mode', { enum: ['explicit', 'subject_live'] })
+      .notNull()
+      .default('explicit'),
     // AI-internal sequencing hint; NOT a progress metric (ND-4).
     sequence_hint: integer('sequence_hint').notNull().default(0),
     // 'active' | 'dormant' | 'done'

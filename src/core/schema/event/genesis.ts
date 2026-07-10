@@ -115,6 +115,11 @@ export const GoalRowSnapshot = z
     title: z.string(),
     subject_id: z.string().nullable(), // nullable column (cross-subject goals)
     scope_knowledge_ids: z.array(z.string()), // jsonb string[], default [] at the table
+    // YUK-603 — OPTIONAL, not required: `.strict()` makes every key mandatory-by-presence, so a
+    // REQUIRED new key would reject every historical genesis payload (written before the column
+    // existed) at the safeParse barrier — any re-fold / flag-ON write-through would silently
+    // drop those goals. Absent ⇒ the fold defaults 'explicit' (mirrors the DB column default).
+    scope_mode: z.enum(['explicit', 'subject_live']).optional(),
     sequence_hint: z.number().int(), // AI-internal ordering, NOT progress (ND-4)
     status: z.enum(['active', 'dormant', 'done']),
     source: z.string(), // provenance, set-once

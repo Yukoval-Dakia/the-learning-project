@@ -442,6 +442,13 @@
       "when": 1783402060000,
       "tag": "0062_yuk249_wenyan_to_yuwen",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1783665262865,
+      "tag": "0063_yuk603_goal_scope_mode",
+      "breakpoints": true
     }
   ]
 }

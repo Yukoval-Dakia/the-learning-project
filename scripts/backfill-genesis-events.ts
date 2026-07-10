@@ -296,6 +296,9 @@ function goalRowToSnapshot(row: GoalRow): GoalRowSnapshotT {
     title: row.title,
     subject_id: row.subject_id,
     scope_knowledge_ids: row.scope_knowledge_ids ?? [],
+    // YUK-603 — snapshot the CURRENT scope_mode so a backfilled subject_live goal re-folds
+    // to subject_live (omitting it would fold to the 'explicit' default → parity drift).
+    scope_mode: row.scope_mode,
     sequence_hint: row.sequence_hint,
     status: row.status,
     source: row.source,

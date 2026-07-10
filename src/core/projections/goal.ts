@@ -154,7 +154,14 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         warnMalformed('experimental:genesis(row)', fe.id, seed.error);
         continue;
       }
-      row = { ...seed.data, scope_knowledge_ids: [...seed.data.scope_knowledge_ids] };
+      row = {
+        ...seed.data,
+        scope_knowledge_ids: [...seed.data.scope_knowledge_ids],
+        // YUK-603 — legacy genesis payloads predate scope_mode; default mirrors the DB column
+        // default so fold == row holds for pre-column goals. ALWAYS materialized (never left
+        // undefined) so the parity deep-diff compares a value on both sides.
+        scope_mode: seed.data.scope_mode ?? 'explicit',
+      };
       continue;
     }
 
@@ -185,6 +192,9 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         title: pc.data.title ?? '',
         subject_id: pc.data.subject_id ?? null,
         scope_knowledge_ids: [...(pc.data.scope_knowledge_ids ?? [])],
+        // YUK-603 — accept 恒 explicit: a proposal's scope is an evidence-first narrow
+        // selection the user confirmed; it never live-derives (v2 contract §5.3).
+        scope_mode: 'explicit',
         sequence_hint:
           typeof pc.data.sequence_hint === 'number' && Number.isFinite(pc.data.sequence_hint)
             ? pc.data.sequence_hint

@@ -125,6 +125,7 @@ async function liveGoal(id: string): Promise<GoalRowSnapshotT | null> {
     title: r.title,
     subject_id: r.subject_id,
     scope_knowledge_ids: r.scope_knowledge_ids ?? [],
+    scope_mode: r.scope_mode, // YUK-603 — NOT NULL column; fold materializes it too
     sequence_hint: r.sequence_hint,
     status: r.status,
     source: r.source,
