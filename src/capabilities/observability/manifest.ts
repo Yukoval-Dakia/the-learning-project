@@ -42,6 +42,23 @@ export const observabilityCapability = defineCapability({
         path: '/api/admin/subjects',
         load: () => import('./api/admin-subjects-create').then((m) => m.POST),
       },
+      // YUK-601 (v3.2 §3.5) — trait 管理读面三端点（编辑器/换绑选择器/rollback UI
+      // 的数据源；业务在 src/server/subjects/admin-read.ts）。
+      {
+        method: 'GET',
+        path: '/api/admin/subjects/[id]/traits',
+        load: () => import('./api/admin-subject-traits').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/admin/traits',
+        load: () => import('./api/admin-traits').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/admin/traits/[id]/journal',
+        load: () => import('./api/admin-trait-journal').then((m) => m.GET),
+      },
       {
         // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4) — calibration loop
         // admin reader. READ-ONLY: prediction_score LOG events + auto-minted
