@@ -12,6 +12,7 @@ import {
   knowledgeLabelsFor,
 } from '@/ui/components/RecordLanding';
 import { VisionTab, type VisionTabRouting } from '@/ui/components/VisionTab';
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { Btn } from '@/ui/primitives/Btn';
@@ -103,9 +104,11 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
       )
       .slice(0, 50);
   }, [allNodes, knowledgeFilter]);
+  // YUK-598 — 错因下拉行驱动（custom 科目的分类法只有 provider 行认识）。
+  const { subjects: subjectRows } = useSubjects();
   const causeOptions = useMemo(
-    () => causeOptionsForSelectedKnowledge(allNodes, selectedKnowledge),
-    [allNodes, selectedKnowledge],
+    () => causeOptionsForSelectedKnowledge(allNodes, selectedKnowledge, subjectRows),
+    [allNodes, selectedKnowledge, subjectRows],
   );
 
   useEffect(() => {

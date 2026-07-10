@@ -1,4 +1,7 @@
-import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
+// YUK-598 stale-const 收口（v2 §9①）：默认参从冻结常量 defaultSubjectProfile 改为
+// 每次调用求值的 resolveSubjectProfile()（活 registry 默认档）——owner 日后编辑
+// general trait 时，未显式传 profile 的任务 prompt 立即跟随。
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { type TaskKind, tasks } from './registry';
 
 export type AiTaskKind = TaskKind;
@@ -920,7 +923,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 
 export function getTaskSystemPrompt(
   task: AiTaskKind,
-  profile: SubjectProfile = defaultSubjectProfile,
+  profile: SubjectProfile = resolveSubjectProfile(),
 ): string {
   switch (task) {
     case 'AttributionTask':

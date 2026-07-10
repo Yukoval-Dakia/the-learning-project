@@ -49,38 +49,26 @@ import {
   TRAIT_PAYLOAD_SCHEMAS,
 } from '@/subjects/trait-schemas';
 import { desc, eq } from 'drizzle-orm';
+import { type TraitResolution, replaceSubjectTraitResolutions } from './resolution-cache';
+
+// 缓存与派生的权威在 resolution-cache.ts（db-free）；这里 re-export 维持既有
+// import 面（hydrate.db.test / 管理读面）不破。
+export {
+  getSubjectTraitResolutions,
+  isGeneralFallbackFor,
+  type TraitDegradation,
+  type TraitResolution,
+} from './resolution-cache';
 
 type Db = typeof defaultDb;
 
 const BUILTIN_ID_SET: ReadonlySet<string> = new Set<string>(BUILTIN_SUBJECT_IDS);
-
-export type TraitDegradation = 'journal_fallback' | 'code_seed' | null;
-
-// per (subject, kind) 的装配溯源——YUK-601 §3.5 管理读面（revision vs
-// effectiveRevision vs degraded）的数据源；D6 provenance 的同一事实。
-export interface TraitResolution {
-  kind: SubjectTraitKind;
-  traitId: string;
-  origin: 'builtin' | 'custom';
-  ownerSubjectId: string | null;
-  seedVersion: string | null;
-  liveRevision: number;
-  effective: TraitVersionComponent['effective'];
-  degraded: TraitDegradation;
-}
 
 export interface HydrationReport {
   hydrated: string[];
   builtinFloor: string[]; // custom trait 坏死收口回代码 profile 的 builtin 科目
   skipped: Array<{ subjectId: string; reason: string }>;
   removed: string[]; // reconcileCustomIds 摘除的 custom id
-}
-
-// 管理读面缓存（进程内，随每轮 hydrate 整体替换——换 Map 引用不改旧对象，
-// in-flight 任务已捕获引用天然稳定，v3 §5.1）。
-let traitResolutions = new Map<string, TraitResolution[]>();
-export function getSubjectTraitResolutions(): ReadonlyMap<string, TraitResolution[]> {
-  return traitResolutions;
 }
 
 function parseSeedSubjectFromTraitId(traitId: string): string | null {
@@ -230,7 +218,17 @@ export async function hydrateSubjectRegistryFromDb(
           // import-time 代码 profile——不是 last-good（暖轮里内存可能还持着上一轮
           // DB 装配），地板语义是确定性回代码（v3 §2.2 / §8-27）。
           const floor = subjectProfiles[row.id];
-          if (floor) registry.upsert(floor, [], { throwOnInvalid: false });
+          if (floor) {
+            registry.upsert(floor, [], {
+              throwOnInvalid: false,
+              // 地板态元数据同样确定性回 builtin 默认（general 结构性排除保持）。
+              meta: {
+                isBuiltin: true,
+                isSelectable: row.id !== 'general' && row.is_selectable,
+                retiredAt: row.retired_at,
+              },
+            });
+          }
           console.warn('[subjects] builtin subject fell back to import-time code profile', {
             subjectId: row.id,
             reason: dead,
@@ -267,6 +265,13 @@ export async function hydrateSubjectRegistryFromDb(
 
       const result = registry.upsert(profile, aliasesBySubject.get(row.id) ?? [], {
         throwOnInvalid: false, // 坏装配 skip+WARN 不炸进程（never-throws 矩阵）
+        // YUK-598 三集合元数据：DB 行是权威（general 的结构性排除也随行——
+        // reconcile 落 is_selectable=false）。
+        meta: {
+          isBuiltin: row.origin === 'builtin',
+          isSelectable: row.is_selectable,
+          retiredAt: row.retired_at,
+        },
       });
       if (result.valid) {
         report.hydrated.push(row.id);
@@ -295,7 +300,7 @@ export async function hydrateSubjectRegistryFromDb(
       }
     }
 
-    traitResolutions = nextResolutions; // 换引用不改旧对象（in-flight 稳定，v3 §5.1）
+    replaceSubjectTraitResolutions(nextResolutions); // 换引用不改旧对象（v3 §5.1）
     return report;
   } catch (err) {
     // 42P01（表未建）/ DB down / 任意异常：WARN + 现状即地板（四代码种子恒在）。
