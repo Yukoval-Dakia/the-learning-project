@@ -116,6 +116,8 @@ export const fastTestInclude = [
   // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
   // Same enumeration requirement as above (no src/server/ai/** unit glob).
   'src/server/ai/output-format.test.ts',
+  // YUK-607 — LLM JSON 修复带提取器。Pure no-DB: imports only ./json-extract (→ jsonrepair, pure JS).
+  'src/server/ai/json-extract.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
   'src/server/ai/pricing.test.ts',
   // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE

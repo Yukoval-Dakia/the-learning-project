@@ -51,6 +51,7 @@ import {
 } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
 import { event, knowledge, question, source_document } from '@/db/schema';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { writeEvent } from '@/server/events/queries';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -91,17 +92,17 @@ async function defaultRunTaskFn(
 }
 
 function parseQuizVerifyOutput(text: string): QuizVerificationResultT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseQuizVerifyOutput: no JSON object found in text');
-  }
-  let json: unknown;
+  // YUK-607 — 宽松提取（jsonrepair 修复带），与 quiz_gen parseOutput 同款；错误串格式不变。
+  let extracted: ReturnType<typeof parseJsonObjectLoose>;
   try {
-    json = JSON.parse(text.slice(start, end + 1));
+    extracted = parseJsonObjectLoose(text, 'parseQuizVerifyOutput');
   } catch (e) {
     throw new Error(`parseQuizVerifyOutput: JSON.parse failed: ${(e as Error).message}`);
   }
+  if (extracted === null) {
+    throw new Error('parseQuizVerifyOutput: no JSON object found in text');
+  }
+  const json: unknown = extracted.json;
   const parsed = QuizVerificationResult.safeParse(json);
   if (!parsed.success) {
     throw new Error(
@@ -244,6 +245,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       ? (row.metadata as Record<string, unknown>)
       : {};
   const parsedMeta = QuizGenMetadata.safeParse(metadataRaw.quiz_gen);
+  // YUK-607（PR #750 review round）— 生成输出经 jsonrepair 级修复救回的批：语法救回但
+  // 内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过非 strict Zod 门）。
+  // 该批晋级封顶 needs_review，留 owner /drafts 人审。
+  const parseRepaired = parsedMeta.success && parsedMeta.data.parse_repaired === true;
   if (!parsedMeta.success) {
     throw new Error(
       `runQuizVerify: question ${questionId} has source='quiz_gen' but no valid metadata.quiz_gen: ${parsedMeta.error.issues
@@ -452,7 +457,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               choices_md: row.choices_md,
               rubric_json: row.rubric_json,
             } satisfies TeachingQualityQuestion,
-            { runTaskFn, profile: { id: subjectProfile.id, full: subjectProfile } },
+            // YUK-606 — db 必须进 opts：runner 观测写（ai_task_runs / cost_ledger）读 ctx.db。
+            { runTaskFn, db, profile: { id: subjectProfile.id, full: subjectProfile } },
           )
         : Promise.resolve(undefined),
     ]);
@@ -488,7 +494,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // YUK-578 — teachingQualityOk joins as a further conjunct (peer of solveCheckOk, gated on the
     // same freeChecksPass). Vacuously true when short-circuited, so the promote result is identical
     // to evaluating it eagerly; a confident审题闸 fail flips promote to false → the else branch.
-    const promote = freeChecksPass && solveCheckOk && teachingQualityOk;
+    // YUK-607 review round — !parseRepaired 作第四合取：jsonrepair 级修复的行永不自动晋级
+    // （封顶 needs_review 落人审）。正白名单锚（parsed.overall==='pass' 经 freeChecksPass）
+    // 不变，RL1 红线维持。
+    const promote = freeChecksPass && solveCheckOk && teachingQualityOk && !parseRepaired;
     // verificationStatus + the success-path writeEvent (below) + the metadata
     // verification block only ever observe the 3 model-verdict values
     // (pass|needs_review|fail); the system-error class 'error' NEVER reaches this

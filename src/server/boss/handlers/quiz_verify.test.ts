@@ -996,3 +996,28 @@ describe('buildQuizVerifyHandler', () => {
     expect(await fsrsRowCount('question', 'qb')).toBe(0);
   });
 });
+
+// ---------- YUK-607（PR #750 review round）— parse_repaired 隔离门 ----------
+
+describe('runQuizVerify — parse_repaired 隔离（jsonrepair 级修复批永不自动晋级）', () => {
+  it('all-axes pass 但 metadata.parse_repaired=true → 封顶 needs_review、留 draft、零 FSRS enroll、标记保留', async () => {
+    await seedKnowledge('k_pr');
+    await seedDraftQuestion({
+      id: 'q_pr',
+      knowledgeId: 'k_pr',
+      meta: { ...BASE_META, parse_repaired: true },
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }));
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q_pr', runTaskFn });
+
+    expect(result.status).toBe('needs_review');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q_pr'));
+    expect(rows[0].draft_status).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k_pr')).toBe(0);
+    const meta = await readMeta('q_pr');
+    expect((meta?.verification as Record<string, unknown>)?.status).toBe('needs_review');
+    // 标记在 verify 写回后必须保留（owner /drafts 审核面可见成因）
+    expect(meta?.parse_repaired).toBe(true);
+  });
+});

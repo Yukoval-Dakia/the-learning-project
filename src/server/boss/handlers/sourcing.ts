@@ -39,6 +39,7 @@ import {
 } from '@/core/schema/sourcing';
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, question } from '@/db/schema';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   TAVILY_MCP_ALLOWED_TOOLS,
   TAVILY_MCP_SERVER_NAME,
@@ -173,17 +174,20 @@ export function matchesWhitelist(sourceUrl: string, whitelist: string[]): boolea
 }
 
 function parseOutput(text: string): SourcingTaskOutputT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('sourcing parseOutput: no JSON object found in text');
-  }
-  let json: unknown;
+  // YUK-607 — 宽松提取（jsonrepair 修复带），与 quiz_gen parseOutput 同款；错误串格式不变。
+  let extracted: ReturnType<typeof parseJsonObjectLoose>;
   try {
-    json = JSON.parse(text.slice(start, end + 1));
+    // riskyRepair:'reject'——sourcing 解析结果直接落库为题面，且 web 素材 ASCII 标点密度高
+    // （jsonrepair 静默重划字符串边界的高危形态），本 lane 又无 parse_repaired 隔离门：
+    // 只允许内容保真的确定性修复级，其余保持旧的响亮失败（pg-boss 重试语义不变）。
+    extracted = parseJsonObjectLoose(text, 'sourcing parseOutput', { riskyRepair: 'reject' });
   } catch (e) {
     throw new Error(`sourcing parseOutput: JSON.parse failed: ${(e as Error).message}`);
   }
+  if (extracted === null) {
+    throw new Error('sourcing parseOutput: no JSON object found in text');
+  }
+  const json: unknown = extracted.json;
   const parsed = SourcingTaskOutput.safeParse(json);
   if (!parsed.success) {
     throw new Error(
