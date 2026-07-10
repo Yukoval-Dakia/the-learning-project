@@ -352,6 +352,9 @@ export const fastTestInclude = [
   // v3 §8-13 零行为变化基线：assemble(decompose(p)) 与 4 个硬编码 profile
   // 逐字段 deep-equal。
   'src/subjects/trait-compose.test.ts',
+  // YUK-599 — SubjectRegistry 手术面（upsert/alias 抢占 throw/NFC/remove，
+  // 纯内存零 IO；v2-test-14 承接）。
+  'src/subjects/registry-upsert.test.ts',
   // M3 (YUK-317) — hub-mesh / rubric-validator.unit / tree.unit 三条 knowledge
   // unit 条目已随域迁入 src/capabilities/knowledge/（统一 *.unit.test.ts 命名），
   // 由约定 glob 接管。

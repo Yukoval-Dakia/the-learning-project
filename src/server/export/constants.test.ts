@@ -10,7 +10,12 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.13" (YUK-531 PR-3 misconception_reconciliation_log 入备份)', () => {
+  it('SCHEMA_VERSION is "4.14" (YUK-599 subject 控制面六表入备份)', () => {
+    // 4.13 → 4.14 (YUK-599 / YUK-597 v3 §6): NEW FK_ORDER tables ×6 — subject 控制面
+    // （subject / subject_trait / subject_trait_journal / subject_trait_binding /
+    // subject_control_journal / subject_name_claim）。owner 授权配置 + append-only 双
+    // journal（含公共全序 change_seq 列），authored data 非瞬态非派生 → 备份；
+    // subject_change_seq 序列不随行备份，restore 尾 setval 补号（archive.ts）。
     // 4.12 → 4.13 (YUK-531 A5 S4 / PR-3): NEW FK_ORDER table misconception_reconciliation_log
     // (异构误区边调和的 AUDIT / PROVENANCE 日志，peer of edge_reconciliation_log)。新表入
     // FK_ORDER 必 bump。misconception_edge 加 weight CHECK 是既有表约束 (非新表/列)，不 bump。
@@ -31,14 +36,14 @@ describe('export constants', () => {
     // (异构认知关系边，peer of knowledge_edge)。新表入 FK_ORDER 必 bump (per archive.ts
     // assertEveryTableIsBackedUpOrExcluded)。misconception 加 status/source/seen/evidence
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
-    expect(SCHEMA_VERSION).toBe('4.13');
+    expect(SCHEMA_VERSION).toBe('4.14');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 36 tables in topological order', () => {
+  it('FK_ORDER lists all 42 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -75,9 +80,34 @@ describe('export constants', () => {
     // 35 → 36 (YUK-531 A5 S4 / PR-3): added misconception_reconciliation_log — 异构误区边
     // 调和的 AUDIT / PROVENANCE 日志 (peer of edge_reconciliation_log); placed adjacent to
     // edge_reconciliation_log (reconciliation-log cluster), NOT at the end.
-    expect(FK_ORDER.length).toBe(36);
+    // 36 → 42 (YUK-599 / YUK-597 v3 §6): added subject 控制面六表（父先子后：subject →
+    // subject_trait → subject_trait_journal → subject_trait_binding →
+    // subject_control_journal → subject_name_claim），placed last as the newest
+    // additive cluster（loose text-ref 无 enforced FK，语义父子排序保持 restore 可读）。
+    expect(FK_ORDER.length).toBe(42);
     expect(FK_ORDER[0]).toBe('knowledge');
-    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('learner_axis_state');
+    expect(FK_ORDER[FK_ORDER.length - 1]).toBe('subject_name_claim');
+  });
+
+  it('FK_ORDER includes YUK-599 subject 控制面六表（authored 配置 + journal，承重非排除）', () => {
+    const six = [
+      'subject',
+      'subject_trait',
+      'subject_trait_journal',
+      'subject_trait_binding',
+      'subject_control_journal',
+      'subject_name_claim',
+    ] as const;
+    for (const t of six) {
+      expect(FK_ORDER).toContain(t);
+      expect(BACKUP_EXCLUDED_TABLES.has(t)).toBe(false);
+    }
+    // 语义父子序：trait 行先于引用它的 journal/binding；subject 行先于全部子面。
+    const idx = (t: string) => FK_ORDER.indexOf(t as never);
+    expect(idx('subject')).toBeLessThan(idx('subject_trait'));
+    expect(idx('subject_trait')).toBeLessThan(idx('subject_trait_journal'));
+    expect(idx('subject_trait')).toBeLessThan(idx('subject_trait_binding'));
+    expect(idx('subject')).toBeLessThan(idx('subject_control_journal'));
   });
 
   it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {
