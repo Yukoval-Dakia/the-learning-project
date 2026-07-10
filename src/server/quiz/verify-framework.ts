@@ -29,6 +29,8 @@
 // source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
 // solve_check" as a bug in THIS file; the consumer lives in the handler.
 import type { SourceTier } from '@/core/schema/provenance';
+import type { Db } from '@/db/client';
+import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 
 // ---------- check identifiers ----------
@@ -352,12 +354,13 @@ function answerCandidates(text: string, choices: readonly string[]): string[] {
 // triage. Each call site passes its own label; the solve_check call site's label reproduces the
 // PRE-EXISTING string byte-identically (no behavior change there).
 function extractJsonObject(text: string, label: string): unknown {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
+  // YUK-607 — 宽松提取（jsonrepair 修复带）。无 JSON 时的错误串与旧实现逐字节一致；解析失败
+  // 重抛原始 SyntaxError，故 solve-check 的错误串 byte-identical 契约（OCR PR #716）不变。
+  const extracted = parseJsonObjectLoose(text, label);
+  if (extracted === null) {
     throw new Error(`${label} output had no JSON object`);
   }
-  return JSON.parse(text.slice(start, end + 1));
+  return extracted.json;
 }
 
 /**
@@ -598,6 +601,10 @@ export interface TeachingQualityQuestion {
 
 export interface TeachingQualityOptions {
   runTaskFn: TeachingQualityRunTaskFn;
+  // YUK-606 — runner 的观测写（ai_task_runs / cost_ledger）读 ctx.db；此前 ctx 漏传 db，
+  // 该轴每次 run 的三笔观测写全炸并被 best-effort 吞掉（run 不落库、成本漏记）。
+  // 必填 + 强类型（review MINOR：any 只防漏传不防误传）。
+  db: Db;
   // the resolved subject profile, forwarded in ctx for provenance/logging; the prompt
   // itself is subject-neutral (pass-through, registry.ts) and does not consume it.
   profile: {
@@ -732,7 +739,8 @@ export async function runTeachingQualityCheck(
       // code-side ground truth for the distractor axis (do NOT trust the LLM to self-classify).
       is_choice: isChoice,
     };
-    const ctx = { subjectProfile: opts.profile.full };
+    // YUK-606 — db 进 ctx：与 solve_check 支路（:436）同款，runner 观测写依赖它。
+    const ctx = { db: opts.db, subjectProfile: opts.profile.full };
     const run = await opts.runTaskFn('TeachingQualityTask', input, ctx);
     recordRun(run);
     parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');

@@ -600,6 +600,7 @@ describe('runTeachingQualityCheck — mini golden set (parser + decision mapping
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('pass');
     expect(result.clarity.verdict).toBe('pass');
@@ -618,6 +619,7 @@ describe('runTeachingQualityCheck — mini golden set (parser + decision mapping
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('fail');
     expect(result.clarity.verdict).toBe('fail');
@@ -631,6 +633,7 @@ describe('runTeachingQualityCheck — mini golden set (parser + decision mapping
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('fail');
     expect(result.unique_answer.verdict).toBe('fail');
@@ -644,6 +647,7 @@ describe('runTeachingQualityCheck — mini golden set (parser + decision mapping
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('fail');
     expect(result.distractor_power.verdict).toBe('fail');
@@ -659,6 +663,7 @@ describe('runTeachingQualityCheck — mini golden set (parser + decision mapping
     const result = await runTeachingQualityCheck(openQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.distractor_power.verdict).toBe('skipped');
     expect(result.verdict).toBe('pass');
@@ -681,6 +686,7 @@ describe('runTeachingQualityCheck — mini golden set (parser + decision mapping
     const result = await runTeachingQualityCheck(withTolerance, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('pass');
     expect(result.unique_answer.verdict).toBe('pass');
@@ -697,6 +703,7 @@ describe('runTeachingQualityCheck — mini golden set (parser + decision mapping
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.distractor_power.verdict).toBe('skipped');
     expect(result.verdict).toBe('pass');
@@ -711,6 +718,7 @@ describe('runTeachingQualityCheck — conservative non-blocking behaviour (R2)',
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('unsupported');
     expect(teachingQualityBlocks(result)).toBe(false);
@@ -721,6 +729,7 @@ describe('runTeachingQualityCheck — conservative non-blocking behaviour (R2)',
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('unsupported');
     // OCR (PR #716) — extractJsonObject's shared parse-failure error must name the CALLER
@@ -739,6 +748,7 @@ describe('runTeachingQualityCheck — conservative non-blocking behaviour (R2)',
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.verdict).toBe('unsupported');
     expect(teachingQualityBlocks(result)).toBe(false);
@@ -753,8 +763,52 @@ describe('runTeachingQualityCheck — conservative non-blocking behaviour (R2)',
     const result = await runTeachingQualityCheck(choiceQuestionTQ, {
       runTaskFn,
       profile: fakeProfile,
+      db: fakeDb,
     });
     expect(result.task_run_ids).toEqual(['tr_tq']);
     expect(result.cost_usd).toBeCloseTo(0.004);
+  });
+});
+
+// ---------- YUK-606 / YUK-607 — runner ctx.db 线程 + 解析修复带 ----------
+
+describe('runTeachingQualityCheck — runner ctx.db 线程（YUK-606）', () => {
+  it('把调用方 Db 句柄透传进 runTaskFn ctx（runner 观测写 ai_task_runs/cost_ledger 读 ctx.db）', async () => {
+    const runTaskFn = vi.fn(async () => ({ text: teachingQualityOutput({}) }));
+    const sentinelDb = { sentinel: true } as never;
+    await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: sentinelDb,
+    });
+    const ctx = (runTaskFn.mock.calls[0] as unknown[])[2] as { db?: unknown };
+    expect(ctx.db).toBe(sentinelDb);
+  });
+});
+
+describe('解析修复带（YUK-607）— 字符串值内未转义引号不再阵亡', () => {
+  it('solve-check：solver 输出含未转义引号 → 修复后正常对账（不再降级 unsupported）', async () => {
+    // final_answer 之后的字段带未转义 ASCII 引号——spike 观测到的 mimo 失败类。
+    const malformed =
+      '{"reference_solution": {"expected_signals": ["s"], "final_answer": "公元前 202 年", "answer_equivalents": []}, "worked_solution_md": "题面问"哪一年"，直接对照史实。", "confidence": 0.9}';
+    expect(() => JSON.parse(malformed)).toThrow(); // 前提自证：严格解析确实失败
+    const runTaskFn = vi.fn(async () => ({ text: malformed }));
+    const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
+    expect(result.verdict).toBe('pass');
+    expect(result.compared_by).not.toBe('none');
+  });
+
+  it('teaching-quality：输出含未转义引号 → 修复后正常判轴（不再降级 unsupported）', async () => {
+    const malformed =
+      '{"clarity": {"verdict": "pass", "reason": "题干说"明确指向"无歧义"}, "unique_answer": {"verdict": "pass", "reason": "唯一"}, "distractor_power": {"verdict": "pass", "reason": "干扰项有效"}, "summary": "ok"}';
+    expect(() => JSON.parse(malformed)).toThrow();
+    const runTaskFn = vi.fn(async () => ({ text: malformed }));
+    const result = await runTeachingQualityCheck(choiceQuestionTQ, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
+    expect(result.verdict).toBe('pass');
+    expect(result.clarity.verdict).toBe('pass');
   });
 });

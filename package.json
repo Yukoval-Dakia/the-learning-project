@@ -98,6 +98,7 @@
     "drizzle-zod": "^0.7.1",
     "fflate": "^0.8.3",
     "hono": "^4.12.25",
+    "jsonrepair": "^3.15.0",
     "katex": "^0.17",
     "lucide-react": "^0.468.0",
     "mathjs": "^15.2.0",

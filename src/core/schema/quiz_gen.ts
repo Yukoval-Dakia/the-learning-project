@@ -37,7 +37,10 @@ export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
 export const QuizGenSourcePack = z.object({
   query_plan: z.array(z.string().min(1)),
   searched_at: z.string().min(1),
-  tool: z.literal('tavily'),
+  // YUK-607 — closed_book 跑法根本不挂检索，'none' 是诚实自报；旧 z.literal('tavily')
+  // 会把整批输出打死（spike 2026-07-10 实测 RC 批阵亡第二因）。'.tool' 无生产消费方，
+  // 纯 provenance 记录，放宽无下游影响。
+  tool: z.enum(['tavily', 'none']),
 });
 export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
 
@@ -104,6 +107,11 @@ export const QuizGenMetadata = z
     // Set by QuizGenTask handler on successful parse (Q3). 'ready' = generated,
     // pending verification.
     generation_status: z.literal('ready'),
+    // YUK-607（PR #750 review round）— 生成输出经【jsonrepair 级】修复带救回时置 true：
+    // 语法救回但内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过本
+    // schema 的 min(1) 门）。quiz_verify 晋级门据此封顶 needs_review（不自动 active）。
+    // 确定性修复级（引号/控制字符转义，内容保真）不置此标记。
+    parse_repaired: z.boolean().optional(),
     verification: QuizGenVerification.optional(),
     // YUK-216 S2 — tier 3 'material_grounded' only: the source_document row id the
     // generated questions are grounded in. question has no source_document_id column
