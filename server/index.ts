@@ -28,6 +28,25 @@ if (!Number.isInteger(parsedApiPort) || parsedApiPort <= 0) {
 const port = parsedApiPort;
 const app = buildHonoApp(capabilities);
 
+// YUK-599（v2 §4 / v3 §2.2）— hydrate-before-serve：serve 前把 DB 六表装配水合进
+// SubjectRegistry（custom 科目 + owner 编辑过的 builtin 装配在首个请求前就位）。
+// never-throws：表未建（42P01）/ DB down → hydrate 内部 WARN + 四代码种子地板，
+// 本函数恒 resolve——启动失败矩阵（v2 §4.4）不允许水合拖死 API 面。
+// db client 必须 loadEnv() 之后才 import（模块顶层读 DATABASE_URL）→ 动态 import。
+async function hydrateSubjectsBeforeServe(): Promise<void> {
+  try {
+    const [{ db }, { hydrateSubjectRegistryFromDb }] = await Promise.all([
+      import('@/db/client'),
+      import('@/server/subjects/hydrate'),
+    ]);
+    const report = await hydrateSubjectRegistryFromDb(db);
+    const skippedNote = report.skipped.length > 0 ? ` (skipped ${report.skipped.length})` : '';
+    console.log(`[rw:api] subjects hydrated: +${report.hydrated.length}${skippedNote}`);
+  } catch (err) {
+    console.warn('[rw:api] subject hydration failed — serving with code-seed floor', err);
+  }
+}
+
 // M5-T5b (YUK-321) — prod 静态面：RW_STATIC_DIR 指向 vite build 产物（web/dist）。
 // dev 不设此变量（Vite dev server 承担静态 + /api proxy）。serveStatic 未命中
 // 文件时 next() 放行 /api/*；catch-all GET 回 index.html（TanStack Router
@@ -38,13 +57,18 @@ if (process.env.RW_STATIC_DIR) {
   app.get('*', serveStatic({ root, path: 'index.html' }));
 }
 
-serve({ fetch: app.fetch, port }, (info) => {
-  const mounted = capabilities.flatMap((c) =>
-    (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
-  );
-  console.log(`[rw:api] hono listening on :${info.port}`);
-  console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
-});
+// esbuild CJS 禁 top-level await → async IIFE 形态（v2 §4 成文）；hydrate 先于
+// serve（启动日志序 = 「subjects hydrated」在「listening」之前，v2-test-8 断言）。
+void (async () => {
+  await hydrateSubjectsBeforeServe();
+  serve({ fetch: app.fetch, port }, (info) => {
+    const mounted = capabilities.flatMap((c) =>
+      (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
+    );
+    console.log(`[rw:api] hono listening on :${info.port}`);
+    console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
+  });
+})();
 
 // M5-T3 (YUK-321)：copilotTools 贡献制——启动期把各包声明的工具注册进 DomainTool
 // registry。失败不拖死 API 面（mcp-bridge 的 registerCoreTools 幂等兜底仍覆盖全集，
