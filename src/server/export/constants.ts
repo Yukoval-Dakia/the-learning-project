@@ -70,7 +70,15 @@
 // misconception-edge ring's AUDIT / PROVENANCE log (peer of edge_reconciliation_log).
 // NEW FK_ORDER table 必 bump：35 → 36 tables，4.12 → 4.13。（misconception_edge 加
 // weight CHECK 是既有表的约束，不是新表/新列，不 bump。）
-export const SCHEMA_VERSION = '4.13';
+// YUK-599 (YUK-597 v3 trait 合同 §6): additive subject 控制面六表 —— subject /
+// subject_trait / subject_trait_journal / subject_trait_binding /
+// subject_control_journal / subject_name_claim（owner 授权的科目配置 + append-only
+// 双 journal，authored data 丢了即灭失）→ 全部进 FK_ORDER 备份（父先子后；loose
+// text-ref 惯例无 enforced FK）。round-trip 覆盖两本 journal 的 change_seq 列——
+// **序列本身不随行备份**：restore 尾必须 setval('subject_change_seq', max+1)
+// （archive.ts restore tx 内），不补会撞已有 as-of 坐标。NEW FK_ORDER tables 必
+// bump：36 → 42 tables，4.13 → 4.14。
+export const SCHEMA_VERSION = '4.14';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -204,6 +212,17 @@ export const FK_ORDER = [
   // unconstrained; placed by the kc_typed_state/mastery_state identity cluster. NEW FK_ORDER
   // table → bump SCHEMA_VERSION (4.10 → 4.11).
   'learner_axis_state',
+  // YUK-599 (v3 trait 合同 §6): subject 控制面六表（父先子后——binding/journal 的
+  // subject_id/trait_id 是 loose text-ref，仍按语义父子排序保持 restore 可读）。
+  // authored 配置 + append-only journal（provenance/as-of 轴），非瞬态非派生 →
+  // FK_ORDER 非 BACKUP_EXCLUDED。change_seq 列随整行 dump/restore；序列另行
+  // setval（见 SCHEMA_VERSION 注记 + archive.ts restore 尾）。
+  'subject',
+  'subject_trait',
+  'subject_trait_journal',
+  'subject_trait_binding',
+  'subject_control_journal',
+  'subject_name_claim',
 ] as const;
 
 export type TableName = (typeof FK_ORDER)[number];

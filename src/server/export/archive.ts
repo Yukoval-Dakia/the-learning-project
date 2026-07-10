@@ -610,6 +610,17 @@ export async function restoreFromArchive({
         }
       }
 
+      // YUK-599 (v3 §6): subject_change_seq 序列不随行备份（pg dump 语义之外的手工
+      // 序列），restore 只回插了两本 journal 的 change_seq 列值——不补 setval 的话，
+      // 下一次控制面写会从旧序列位取号，撞已有 as-of 坐标（公共全序轴被污染）。
+      // GREATEST(max(两表), 0)+1 = 下一个可用号；setval 第三参 false = nextval 恰好
+      // 返回该值。在同一 restore tx 内执行，随整体成败原子回滚。
+      await tx.execute(
+        sql.raw(
+          `select setval('subject_change_seq', (select greatest(coalesce((select max(change_seq) from "subject_trait_journal"), 0), coalesce((select max(change_seq) from "subject_control_journal"), 0)) + 1), false)`,
+        ),
+      );
+
       // YUK-355: wipe + restore the mem0 collection (non-FK_ORDER). Restore must make
       // the target collection IDENTICAL to the archived one. We separate two questions:
       //   (i)  Should we PROCESS this collection at all? — yes iff the archive HAS the

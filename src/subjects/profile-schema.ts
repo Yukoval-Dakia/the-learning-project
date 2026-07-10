@@ -65,6 +65,13 @@ export const SubjectProfileSchema = z.object({
     teachingStyle: z.string().trim().min(1),
     checkQuestionPolicy: z.string().trim().min(1),
     learningIntentPolicy: z.string().trim().min(1),
+    // YUK-599 (v3 trait 合同 §2.1) — charter trait 的两个新节映回旧形状的落点。
+    // 显式不带六槽的 .min(1)：空串是合法初态（种子即空串），带 .min(1) 会让
+    // thin-create 与全部装配校验当场翻红（分歧有意，trait-compose.test 钉死）。
+    // 注入语义：methodology → copilot/note 教学 prompt（YUK-600 接线）；
+    // rubricGuidance → 仅四个作者化题目级 rubric 锚点（v3 §4.1，judge 读端零变化）。
+    methodology: z.string().default(''),
+    rubricGuidance: z.string().default(''),
   }),
   causeCategories: z.array(CauseCategoryDeclaration).min(1),
   renderConfig: RenderConfig,

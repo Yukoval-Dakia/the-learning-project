@@ -449,5 +449,45 @@
       "ref": "A4 inc-2 grid→SoT cut-over (YUK-436)",
       "expected_by": "2026-12-15"
     }
+  },
+  "subject_trait_journal.change_seq": {
+    "reason": "两本 journal 的公共全序坐标由 DB 端 DEFAULT nextval('subject_change_seq') 写入（drizzle .default(sql`nextval(...)`)，migration 0064）——审计只扫代码侧 INSERT/UPDATE 写点，看不见 DB default。非 stub：每次 journal insert 都实写；restore 尾另有 setval 补号（archive.ts）。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "audit-schema-writes 支持识别 DB-default 写路径（或 YUK-601 写面落显式 nextval 取值）",
+      "expected_by": "2027-01-15"
+    }
+  },
+  "subject_control_journal.change_seq": {
+    "reason": "两本 journal 的公共全序坐标由 DB 端 DEFAULT nextval('subject_change_seq') 写入（drizzle .default(sql`nextval(...)`)，migration 0064）——审计只扫代码侧 INSERT/UPDATE 写点，看不见 DB default。非 stub：每次 journal insert 都实写；restore 尾另有 setval 补号（archive.ts）。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "audit-schema-writes 支持识别 DB-default 写路径（或 YUK-601 写面落显式 nextval 取值）",
+      "expected_by": "2027-01-15"
+    }
+  },
+  "subject_trait_journal.source_trait_id": {
+    "reason": "journal 血统/回滚字段（v3 合同 §3.2/§3.3）：唯一写者 = YUK-601 的 fork/fork-and-edit 写面（journal rev-0 'fork_source' 行）。本单（YUK-599 地基）只建表 + 读侧（hydrate 降级链），写面按判词 C 排在 602 之后落。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-601 fork 端点落地（source_trait_id 随 fork_source 行实写）",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "subject_trait_journal.source_revision": {
+    "reason": "journal 血统/回滚字段（v3 合同 §3.2/§3.3）：唯一写者 = YUK-601 的 fork/fork-and-edit 写面（journal rev-0 'fork_source' 行）。本单（YUK-599 地基）只建表 + 读侧（hydrate 降级链），写面按判词 C 排在 602 之后落。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-601 fork 端点落地（source_revision 随 fork_source 行实写）",
+      "expected_by": "2026-09-30"
+    }
+  },
+  "subject_trait_journal.rolled_back_from": {
+    "reason": "journal 血统/回滚字段（v3 合同 §3.2/§3.3）：唯一写者 = YUK-601 的 rollback-forward 写面（action='rollback' 行）。本单（YUK-599 地基）只建表 + 读侧（hydrate 降级链），写面按判词 C 排在 602 之后落。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-601 rollback 端点落地（rolled_back_from 随 rollback 行实写）",
+      "expected_by": "2026-09-30"
+    }
   }
 }

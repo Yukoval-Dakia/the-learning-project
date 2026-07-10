@@ -11,6 +11,7 @@
 
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 import * as schema from '@/db/schema';
+import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
@@ -39,6 +40,17 @@ async function main(): Promise<void> {
     const seeded = await seedKnowledge(db);
     console.log(
       `[migrate] subject-root seed: +${seeded.inserted} inserted, ${seeded.skipped} existing`,
+    );
+
+    // YUK-599（v3 §6）：subject 控制面种子/升级单写者 = migrate init container
+    // （app/worker boot 只 read-hydrate）。幂等由「seed_version 相等整行硬跳过」
+    // 成立——重跑零副作用。失败同 seedKnowledge 纪律 fatal：四 builtin 行/绑定
+    // 缺席会让 thin-create/goal 防线（YUK-600）踩空，宁可 init container 红。
+    const traits = await reconcileBuiltinTraits(db);
+    console.log(
+      `[migrate] builtin trait reconcile: +${traits.insertedSubjects} subjects, ` +
+        `+${traits.insertedTraits} traits, ${traits.upgradedTraits} upgraded, ` +
+        `${traits.skippedTraits} up-to-date, ${traits.preservedTraits} owner-edited preserved`,
     );
   } finally {
     await sql.end({ timeout: 5 });

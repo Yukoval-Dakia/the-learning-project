@@ -12,8 +12,12 @@ import { createBoss, isQueueCreateRace } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
+import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
 
 export async function startBossWorker(db: Db): Promise<PgBoss> {
+  // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
+  // hydrate 内部 WARN + 代码种子地板，绝不挡 worker boot）。
+  await hydrateSubjectRegistryFromDb(db);
   // F-2 (YUK-185) / PR #232 review (FIX #6) — the brief regen handler calls the
   // LLM via runTask, which needs XIAOMI_API_KEY (resolveTaskProvider throws
   // otherwise, providers.ts:88). Surface a missing key at BOOT — not per-scope
@@ -78,6 +82,11 @@ export async function startBossWorker(db: Db): Promise<PgBoss> {
   // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标
   // （note_verify）先 ready，注册器再挂链式源。
   await registerCapabilityJobs(boss, db, capabilities);
+  // YUK-599（v2 §4.3 可见性 SLA）— worker ≤60s 解析到新装配：60s 周期全量
+  // reconcile（level-triggered 承重路径，判词 B）。unref 不阻退出；SIGTERM →
+  // installShutdownHandler → boss.stop() → 'stopped' → 显式清定时器（v2-test-9）。
+  const refresh = startSubjectRefresh(db, 60_000);
+  boss.once('stopped', () => refresh.stop());
   // YUK-576 §5.4 — boot-time stuck-run reconcile (PRIMARY trigger): the main
   // stuck cause is a process crash, so the restart converges >1h 'running'
   // ai_task_runs rows within seconds (the 1h threshold guards the previous
