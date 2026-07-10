@@ -338,6 +338,10 @@ export const fastTestInclude = [
   // YUK-288 — resolveKnownSubjectId (pure, no-DB): genuine alias/id hit vs the
   // default-profile over-match fix for the derived ?subject= axis.
   'src/subjects/resolve-known-subject-id.test.ts',
+  // YUK-610 — Dockerfile 运行时 skills COPY 覆盖断言（纯 fs：读 Dockerfile +
+  // 目录扫描，零 DB）。populateIsolatedSkills 走 readdirSync 非 import，漏拷
+  // 不进 tsc/esbuild 视野，这条断言是唯一构建期防线（_shared 漏拷生产事故）。
+  'src/subjects/skills-image-coverage.test.ts',
   // YUK-611 — skill 命名空间：rewrite helper unit + 真树静态撞名 audit（纯 fs，
   // 零 DB）。audit 是构建期防线：跨科 basename 重复 / frontmatter name 漂移即红。
   'src/subjects/skill-namespace.test.ts',
