@@ -54,14 +54,14 @@ describe('GET /api/subjects', () => {
       'schedulingHints',
       'judgeCapabilities',
     ]) {
-      expect(text, `server-only 字段 '${forbidden}' 泄漏进 /api/subjects`).not.toContain(
-        forbidden,
-      );
+      expect(text, `server-only 字段 '${forbidden}' 泄漏进 /api/subjects`).not.toContain(forbidden);
     }
   });
 
   it('isGeneralFallback 派生：无溯源 → false；全 general 种子绑定 → true', async () => {
-    let body = (await (await GET()).json()) as { subjects: Array<{ isGeneralFallback: unknown }> };
+    let body = (await (await GET()).json()) as {
+      subjects: Array<{ id: string; isGeneralFallback: unknown }>;
+    };
     for (const s of body.subjects) expect(s.isGeneralFallback).toBe(false);
 
     // 伪造 yuwen 的溯源为「六绑定全指向 general 种子」（thin-create 后的形状）。
