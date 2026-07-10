@@ -161,7 +161,7 @@ function goalSnapshot(over: Partial<GoalRowSnapshotT> = {}): GoalRowSnapshotT {
   return {
     id: 'goal_1',
     title: 'Master derivatives',
-    subject_id: 'subj_math',
+    subject_id: 'yuwen',
     scope_knowledge_ids: ['k_a', 'k_b'],
     sequence_hint: 0,
     status: 'active',
@@ -237,7 +237,7 @@ describe('foldGoal — proposal + accept chain', () => {
       created_at: at(0),
       goalId: 'goal_1',
       title: 'Master derivatives',
-      subjectId: 'subj_math',
+      subjectId: 'yuwen',
       scope: ['k_a', 'k_b'],
       sequenceHint: 3,
     });
@@ -246,7 +246,7 @@ describe('foldGoal — proposal + accept chain', () => {
     expect(row).not.toBeNull();
     expect(row?.id).toBe('goal_1');
     expect(row?.title).toBe('Master derivatives');
-    expect(row?.subject_id).toBe('subj_math');
+    expect(row?.subject_id).toBe('yuwen');
     expect(row?.scope_knowledge_ids).toEqual(['k_a', 'k_b']);
     expect(row?.sequence_hint).toBe(3);
     expect(row?.status).toBe('active');
@@ -322,7 +322,7 @@ describe('foldGoal — status/scope action events bump version', () => {
     expect(row?.title).toBe('New');
     expect(row?.sequence_hint).toBe(9);
     expect(row?.scope_knowledge_ids).toEqual(['k_a']); // not in patch → preserved
-    expect(row?.subject_id).toBe('subj_math'); // set-once provenance, never mutated
+    expect(row?.subject_id).toBe('yuwen'); // set-once provenance, never mutated
     expect(row?.version).toBe(1);
     expect(row?.updated_at.getTime()).toBe(at(5000).getTime());
   });
