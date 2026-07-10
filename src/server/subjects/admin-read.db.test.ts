@@ -52,6 +52,30 @@ describe('listAdminSubjects — 管理枚举（全量含 general）', () => {
     expect(rows.find((r) => r.id === 'general')?.isGeneralFallback).toBeNull();
   });
 
+  it('route keeps the R11 slim red line: exact key set, no full-blood profile fields', async () => {
+    // 取代旧 admin-subjects.unit.test.ts（unit 车道无 DB，扩容后 route 顶层 import db
+    // 必炸；键集断言随 §3.5 扩容更新，红线不变：绝不下发 promptFragments /
+    // noteTemplate / causeCategories）。
+    const { GET } = await import('@/capabilities/observability/api/admin-subjects');
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { subjects: Record<string, unknown>[] };
+    expect(body.subjects.length).toBeGreaterThan(0);
+    for (const row of body.subjects) {
+      expect(Object.keys(row).sort()).toEqual([
+        'capabilityCount',
+        'displayName',
+        'id',
+        'isGeneralFallback',
+        'notation',
+        'origin',
+        'retiredAt',
+        'subjectRevision',
+        'version',
+      ]);
+    }
+  });
+
   it('includes a thin-created custom subject with isGeneralFallback=true', async () => {
     const id = await createCustom();
     const row = (await listAdminSubjects(db)).find((r) => r.id === id);
