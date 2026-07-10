@@ -29,6 +29,8 @@ import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-
 import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import type { ProposalInboxRow } from '@/server/proposals/inbox';
+import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
+import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import { insertGoal } from './queries';
 
 export interface GoalScopeAcceptResult {
@@ -75,10 +77,21 @@ export async function acceptGoalScopeProposal(
       400,
     );
   }
-  const subjectId =
+  // YUK-600（阻断④防线步 1，accept 侧）：alias→canonical 归一；unknown →
+  // **null 回退 + warn**（proposal 不因打字错报废——与 goal-create 的 422 分岔
+  // 是有意差别：这里没有可回显的 client）。canonical 即 subjectId 变量本身，
+  // 全部下游（rate snapshot / insertGoal / fold）自动收口。
+  const rawSubjectId =
     typeof change.subject_id === 'string' && change.subject_id.length > 0
       ? change.subject_id
       : null;
+  const subjectId = rawSubjectId ? resolveKnownSubjectId(rawSubjectId) : null;
+  if (rawSubjectId && !subjectId) {
+    console.warn('[goal-accept] unknown subject in proposal — degrading to subject-less goal', {
+      proposalId,
+      rawSubjectId,
+    });
+  }
   const scopeKnowledgeIds = stringArray(change.scope_knowledge_ids);
   const sequenceHint =
     typeof change.sequence_hint === 'number' && Number.isFinite(change.sequence_hint)
@@ -140,6 +153,11 @@ export async function acceptGoalScopeProposal(
       anchor_event_id: proposalId,
       subject_kind: 'goal',
     });
+    // YUK-600（阻断④防线步 2）—— 与 goal-create 同构：两 writer 分岔前建根（幂等）。
+    if (subjectId) {
+      const profile = getDefaultSubjectRegistry().get(subjectId);
+      await ensureSubjectRoot(tx, subjectId, profile?.displayName ?? subjectId);
+    }
     // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
     //    ON  → the projection write-through folds (propose + rate) and writes the row;
     //    OFF → the imperative insertGoal stays the writer (current behavior).
