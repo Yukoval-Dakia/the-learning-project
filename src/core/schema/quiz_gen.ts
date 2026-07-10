@@ -107,6 +107,11 @@ export const QuizGenMetadata = z
     // Set by QuizGenTask handler on successful parse (Q3). 'ready' = generated,
     // pending verification.
     generation_status: z.literal('ready'),
+    // YUK-607（PR #750 review round）— 生成输出经【jsonrepair 级】修复带救回时置 true：
+    // 语法救回但内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过本
+    // schema 的 min(1) 门）。quiz_verify 晋级门据此封顶 needs_review（不自动 active）。
+    // 确定性修复级（引号/控制字符转义，内容保真）不置此标记。
+    parse_repaired: z.boolean().optional(),
     verification: QuizGenVerification.optional(),
     // YUK-216 S2 — tier 3 'material_grounded' only: the source_document row id the
     // generated questions are grounded in. question has no source_document_id column

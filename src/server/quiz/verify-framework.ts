@@ -29,6 +29,7 @@
 // source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
 // solve_check" as a bug in THIS file; the consumer lives in the handler.
 import type { SourceTier } from '@/core/schema/provenance';
+import type { Db } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { type JudgeAnswerParams, runSemanticJudge } from '@/server/ai/judges/question-contract';
 
@@ -601,9 +602,9 @@ export interface TeachingQualityQuestion {
 export interface TeachingQualityOptions {
   runTaskFn: TeachingQualityRunTaskFn;
   // YUK-606 — runner 的观测写（ai_task_runs / cost_ledger）读 ctx.db；此前 ctx 漏传 db，
-  // 该轴每次 run 的三笔观测写全炸并被 best-effort 吞掉（run 不落库、成本漏记）。必填防再犯。
-  // biome-ignore lint/suspicious/noExplicitAny: leaf forwards the caller's Db handle into runner ctx.
-  db: any;
+  // 该轴每次 run 的三笔观测写全炸并被 best-effort 吞掉（run 不落库、成本漏记）。
+  // 必填 + 强类型（review MINOR：any 只防漏传不防误传）。
+  db: Db;
   // the resolved subject profile, forwarded in ctx for provenance/logging; the prompt
   // itself is subject-neutral (pass-through, registry.ts) and does not consume it.
   profile: {

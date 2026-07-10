@@ -209,7 +209,7 @@ function assertGeneratedQuestionHasJudgeContract(q: QuizGenQuestionT): void {
   }
 }
 
-function parseOutput(text: string): QuizGenOutputT {
+function parseOutput(text: string): { parsed: QuizGenOutputT; parseRepaired: boolean } {
   // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
   // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。错误串格式与旧实现逐字节一致。
   let extracted: ReturnType<typeof parseJsonObjectLoose>;
@@ -231,7 +231,8 @@ function parseOutput(text: string): QuizGenOutputT {
   for (const q of parsed.data.questions) {
     assertGeneratedQuestionHasJudgeContract(q);
   }
-  return parsed.data;
+  // jsonrepair 级修复 = 内容完整性无法机证 → 上抛给 metadata（quiz_verify 晋级门隔离）。
+  return { parsed: parsed.data, parseRepaired: extracted.repaired === 'jsonrepair' };
 }
 
 // YUK-224 F1 (PR #314 round-1) — read-model passthrough, v1 self-contained.
@@ -529,7 +530,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       ...(subjectSkills ? { skills: subjectSkills } : {}),
     });
     taskResult = result;
-    const parsed = parseOutput(result.text);
+    const { parsed, parseRepaired } = parseOutput(result.text);
 
     // YUK-226 S2-5b F1 — when the 找题次序 PINNED a generation_method (step 3
     // material_grounded vs step 4 closed_book), the agent prompt instructs honouring it,
@@ -673,6 +674,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           ...(materialSourceDocumentId
             ? { material_source_document_id: materialSourceDocumentId }
             : {}),
+          // YUK-607 review round — jsonrepair 级修复的批整批标记；quiz_verify 据此封顶
+          // needs_review（内容完整性留 owner /drafts 人审）。
+          ...(parseRepaired ? { parse_repaired: true } : {}),
         };
         await tx.insert(question).values(
           withAnswerClass({

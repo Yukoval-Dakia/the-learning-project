@@ -177,7 +177,10 @@ function parseOutput(text: string): SourcingTaskOutputT {
   // YUK-607 — 宽松提取（jsonrepair 修复带），与 quiz_gen parseOutput 同款；错误串格式不变。
   let extracted: ReturnType<typeof parseJsonObjectLoose>;
   try {
-    extracted = parseJsonObjectLoose(text, 'sourcing parseOutput');
+    // riskyRepair:'reject'——sourcing 解析结果直接落库为题面，且 web 素材 ASCII 标点密度高
+    // （jsonrepair 静默重划字符串边界的高危形态），本 lane 又无 parse_repaired 隔离门：
+    // 只允许内容保真的确定性修复级，其余保持旧的响亮失败（pg-boss 重试语义不变）。
+    extracted = parseJsonObjectLoose(text, 'sourcing parseOutput', { riskyRepair: 'reject' });
   } catch (e) {
     throw new Error(`sourcing parseOutput: JSON.parse failed: ${(e as Error).message}`);
   }

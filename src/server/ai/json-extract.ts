@@ -21,6 +21,8 @@
 
 import { jsonrepair } from 'jsonrepair';
 
+import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
+
 // 确定性转义「内容引号」：一个未被反斜杠转义的 `"`，若其前一个非空白字符不是 {[,:
 // （不可能是 string 开引号）、后一个非空白字符也不是 ,}]: （不可能是 string 闭引号或
 // key 引号），则它必然是字符串值内部的内容引号 → 转义成 \"。合法 JSON 里结构引号
@@ -61,25 +63,59 @@ function escapeContentQuotes(slice: string): string {
   return out.join('');
 }
 
-function tryRepairLadder(slice: string): unknown {
+export type RepairLevel = false | 'deterministic' | 'jsonrepair';
+
+interface LadderHit {
+  json: unknown;
+  level: Exclude<RepairLevel, false>;
+}
+
+// 修复梯度（PR #750 独立 review MAJOR 后分级）：
+//   确定性级（内容保真可证明，只做转义、绝不重划字符串边界）：
+//     ① escapeContentQuotes（内容引号）
+//     ② 再叠 sanitizeJsonStringLiterals（字符串内裸控制字符，复用 orchestrator 状态机）
+//   jsonrepair 级（启发式；对 ASCII 标点毗邻引号的形态可能【静默重划字符串边界】——
+//   截断内容 + 伪造 key，且能过非 strict 的 Zod 门。review 已用真实 lib 复现）：
+//     ③ jsonrepair(原文)  ④ jsonrepair(确定性结果)
+// allowRisky=false 时只走确定性级——适用于「解析结果直接持久化且无下游隔离门」的站点。
+function tryRepairLadder(slice: string, allowRisky: boolean): LadderHit {
   const escaped = escapeContentQuotes(slice);
   try {
-    return JSON.parse(escaped);
+    return { json: JSON.parse(escaped), level: 'deterministic' };
   } catch {
     /* 下一级 */
+  }
+  const sanitized = sanitizeJsonStringLiterals(escaped);
+  try {
+    return { json: JSON.parse(sanitized), level: 'deterministic' };
+  } catch (deterministicErr) {
+    if (!allowRisky) throw deterministicErr;
   }
   try {
-    return JSON.parse(jsonrepair(slice));
+    return { json: JSON.parse(jsonrepair(slice)), level: 'jsonrepair' };
   } catch {
     /* 下一级 */
   }
-  return JSON.parse(jsonrepair(escaped)); // 最后一级失败则向上抛，由调用方包装
+  return { json: JSON.parse(jsonrepair(sanitized)), level: 'jsonrepair' }; // 失败向上抛，由调用方包装
 }
 
 export interface LooseJsonResult {
   json: unknown;
-  /** true = 严格解析失败、经 jsonrepair 修复后才成功（供调用点/日志区分） */
-  repaired: boolean;
+  /**
+   * false = 严格解析直接成功；'deterministic' = 仅经内容保真的确定性修复（引号/控制字符
+   * 转义），可与严格解析同等对待；'jsonrepair' = 经启发式修复——语法救回但内容完整性
+   * 无法机证（可能截断/重划字符串边界），**持久化内容的调用点必须做隔离**
+   * （quiz_gen → metadata.parse_repaired → quiz_verify 晋级封顶 needs_review）。
+   */
+  repaired: RepairLevel;
+}
+
+export interface ParseJsonLooseOpts {
+  /**
+   * 'reject' = 只允许确定性修复级，jsonrepair 级按不可修处理（重抛原始错误）。
+   * 用于解析结果直接落库、且下游没有 parse_repaired 隔离门的站点（sourcing）。
+   */
+  riskyRepair?: 'allow' | 'reject';
 }
 
 /**
@@ -88,7 +124,11 @@ export interface LooseJsonResult {
  * @returns null = 文本中没有 `{...}`；否则解析结果
  * @throws 严格解析与修复都失败时，抛出【严格解析的原始 SyntaxError】
  */
-export function parseJsonObjectLoose(text: string, label: string): LooseJsonResult | null {
+export function parseJsonObjectLoose(
+  text: string,
+  label: string,
+  opts: ParseJsonLooseOpts = {},
+): LooseJsonResult | null {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) return null;
@@ -96,11 +136,9 @@ export function parseJsonObjectLoose(text: string, label: string): LooseJsonResu
   try {
     return { json: JSON.parse(slice), repaired: false };
   } catch (strictErr) {
-    let repairedJson: unknown;
+    let hit: LadderHit;
     try {
-      // 修复梯度：①确定性内容引号转义（CJK 语境主失败类）→ ②jsonrepair 兜广谱
-      // （裸换行/智能引号/尾逗号等）→ ③两者叠加（引号 + 其它类并发时）。
-      repairedJson = tryRepairLadder(slice);
+      hit = tryRepairLadder(slice, (opts.riskyRepair ?? 'allow') === 'allow');
     } catch (repairErr) {
       // 不可修：留一段错误位置附近的有界片段（±120 字符）供诊断——原始输出不落库，
       // 没有这段 warn 时该失败类完全无法事后归因（spike 2026-07-10 教训）。
@@ -112,7 +150,9 @@ export function parseJsonObjectLoose(text: string, label: string): LooseJsonResu
       );
       throw strictErr;
     }
-    console.warn(`[json-extract] ${label}: repaired malformed LLM JSON (YUK-607 repair band)`);
-    return { json: repairedJson, repaired: true };
+    console.warn(
+      `[json-extract] ${label}: repaired malformed LLM JSON (level=${hit.level}, YUK-607 repair band)`,
+    );
+    return { json: hit.json, repaired: hit.level };
   }
 }

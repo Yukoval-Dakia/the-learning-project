@@ -29,7 +29,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     expect(() => JSON.parse(text)).toThrow();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose(text, 'site');
-    expect(r?.repaired).toBe(true);
+    expect(r?.repaired).toBe('deterministic');
     const j = r?.json as { questions: Array<{ kind: string; prompt_md: string }> };
     expect(j.questions[0].kind).toBe('reading_comprehension');
     expect(j.questions[0].prompt_md).toContain('论证要有力');
@@ -45,7 +45,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     expect(() => JSON.parse(text)).toThrow();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose(text, 'site');
-    expect(r?.repaired).toBe(true);
+    expect(r?.repaired).toBe('deterministic');
     const j = r?.json as {
       questions: Array<{ kind: string; reference_md: string; choices_md: string[] }>;
     };
@@ -60,7 +60,7 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     expect(() => JSON.parse(text)).toThrow();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose(text, 'site');
-    expect(r?.repaired).toBe(true);
+    expect(r?.repaired).toBe('deterministic'); // sanitizeJsonStringLiterals 级，内容保真
     const j = r?.json as { prompt_md: string; kind: string };
     expect(j.prompt_md).toContain('第一段材料');
     expect(j.prompt_md).toContain('第二段材料');
@@ -70,11 +70,48 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
   it('智能引号定界 → 修复成功', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = parseJsonObjectLoose('{“kind”: “translation”}', 'site');
-    expect(r?.repaired).toBe(true);
+    expect(r?.repaired).toBe('jsonrepair'); // 智能引号非 ASCII `"`，确定性层不触及
     expect((r?.json as { kind: string }).kind).toBe('translation');
   });
 
+  it('ASCII 标点毗邻引号（review MAJOR 复现形态）→ 如实落 jsonrepair 级；reject 模式重抛原始错误', () => {
+    // jsonrepair 对该形态会静默重划字符串边界（截断内容 + 伪造 key）——level 必须如实标
+    // 'jsonrepair' 供持久化站点隔离（quiz_gen → parse_repaired → verify 封顶 needs_review）；
+    // 无隔离门的站点（sourcing）用 riskyRepair:'reject' 保持响亮失败。
+    const text = '{"note": "set "A", not "B""}';
+    expect(() => JSON.parse(text)).toThrow();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseJsonObjectLoose(text, 'site');
+    expect(r?.repaired).toBe('jsonrepair');
+    let originalMessage = '';
+    try {
+      JSON.parse(text);
+    } catch (e) {
+      originalMessage = (e as Error).message;
+    }
+    expect(() => parseJsonObjectLoose(text, 'site', { riskyRepair: 'reject' })).toThrow(
+      originalMessage,
+    );
+  });
+
+  it('复合坏件（CJK 内容引号 + 尾逗号）→ 确定性层修引号、jsonrepair 收尾逗号，内容零丢失', () => {
+    // 强制走梯度末级：引号形态 jsonrepair(原文) 会翻车（Colon expected），尾逗号确定性层
+    // 不治——只有 jsonrepair(确定性结果) 能成。
+    const text =
+      '{"kind": "single_choice", "prompt_md": "语段通过引用古语"读书百遍，其义自见"进行说理，判断其论证方法。",}';
+    expect(() => JSON.parse(text)).toThrow();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseJsonObjectLoose(text, 'site');
+    expect(r?.repaired).toBe('jsonrepair');
+    const j = r?.json as { kind: string; prompt_md: string };
+    expect(j.kind).toBe('single_choice');
+    expect(j.prompt_md).toContain('读书百遍，其义自见');
+  });
+
   it('修复也救不回 → 重抛严格解析的【原始】错误（调用点错误串格式逐字节不变）', () => {
+    // 注意：本 fixture 钉在 jsonrepair@3.x 对 '{;}' 的拒绝行为上（今日实证 'Colon expected'）。
+    // 若未来升级使其可修，本断言会【响亮】变红（toThrow 失败），届时换一个双杀 fixture 即可
+    // ——不会静默放行（review MINOR 已知）。
     const hopeless = '{;}';
     let originalMessage = '';
     try {
