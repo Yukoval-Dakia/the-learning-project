@@ -6,8 +6,24 @@ import {
 import { z } from 'zod';
 
 export type SubjectId = string;
-export const KNOWN_SUBJECT_IDS = ['yuwen', 'math', 'physics'] as const;
-export type KnownSubjectId = (typeof KNOWN_SUBJECT_IDS)[number];
+
+// YUK-598（v2 §2.1）— 编译期字面 builtin 常量：**运行时零权威**（运行时集合 =
+// registry 三集合 API：getSelectableSubjectIds / getResolvableSubjectIds，DB 水合
+// 后含 custom）。这份列表只服务编译期兜底（SPA initialData 投影、seed 循环、
+// 测试 fixture）。general 有意不在此列（fallback 身份非候选科目，见 profile.ts）。
+export const BUILTIN_IDS = ['yuwen', 'math', 'physics'] as const;
+export type BuiltinId = (typeof BUILTIN_IDS)[number];
+
+/**
+ * @deprecated YUK-598 缓迁 re-export——新代码用 `BUILTIN_IDS`（编译期字面）或
+ * registry 的运行时三集合 API；此别名将随消费点清零而删。
+ */
+export const KNOWN_SUBJECT_IDS = BUILTIN_IDS;
+/**
+ * @deprecated YUK-598 放宽为 string（custom `subj_<cuid2>` 一等公民，v3 合同）；
+ * 需要 builtin 穷举语义的地方改用 `BuiltinId`。
+ */
+export type KnownSubjectId = string;
 
 export const SubjectQuestionKindSchema = z.enum([
   'single_choice',

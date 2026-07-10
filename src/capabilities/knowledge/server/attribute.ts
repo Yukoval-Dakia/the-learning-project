@@ -15,7 +15,9 @@ import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { getJudgeForAttempt, writeEvent } from '@/server/events/queries';
-import { type SubjectProfile, defaultSubjectProfile } from '@/subjects/profile';
+// YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
+// resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
+import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { writePermanentAiFailureLedger, writeRetryableAiFailureLedger } from './ai_failure_log';
@@ -34,7 +36,7 @@ export type AttributionOutput = z.infer<typeof AttributionOutputSchema>;
 
 export function parseAttributionOutput(
   text: string,
-  profile: SubjectProfile = defaultSubjectProfile,
+  profile: SubjectProfile = resolveSubjectProfile(),
 ): AttributionOutput {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -113,7 +115,7 @@ export async function runAttributionAndWriteJudgeEvent(
 ): Promise<AttributionOutcome> {
   // Profile resolution is IO-free; hoisted out of the try so it is in scope for
   // the LLM call, the post-LLM parse, and the judge write.
-  const profile = params.subjectProfile ?? defaultSubjectProfile;
+  const profile = params.subjectProfile ?? resolveSubjectProfile();
 
   // Round-6 fix #1: track the placeholder's visibility/verdict fields to inherit.
   let inheritedVisibility: {

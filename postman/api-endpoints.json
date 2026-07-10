@@ -147,7 +147,9 @@
         "bodyExample": {
           "title": "高中文言文",
           "subjectId": "yuwen",
-          "knowledgeIds": ["kc-1"]
+          "knowledgeIds": [
+            "kc-1"
+          ]
         },
         "notes": "冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；二者皆不可解析/空 scope → 400。title 必填。返回 {id,title,subjectId,scopeKnowledgeIds,status}"
       }
@@ -437,7 +439,9 @@
           "prompt_md": "下列句子中「而」字的用法是？",
           "reference_md": "《劝学》原文片段",
           "wrong_answer_md": "我认为是转折用法",
-          "knowledge_ids": ["kid_abc123"],
+          "knowledge_ids": [
+            "kid_abc123"
+          ],
           "cause": {
             "primary_category": "misunderstanding",
             "user_notes": "混淆了顺承与转折"
@@ -580,9 +584,16 @@
           "version": 0,
           "prompt_md": "新题目文本",
           "reference_md": "参考答案",
-          "choices_md": ["A", "B", "C", "D"],
+          "choices_md": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
           "difficulty": 3,
-          "knowledge_ids": ["kn_abc"],
+          "knowledge_ids": [
+            "kn_abc"
+          ],
           "kind": "short_answer",
           "draft_status": "active"
         },
@@ -745,7 +756,9 @@
         "contentType": "application/json",
         "bodyExample": {
           "goalId": null,
-          "knowledgeIds": ["kc-1"]
+          "knowledgeIds": [
+            "kc-1"
+          ]
         },
         "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}"
       }
@@ -760,7 +773,9 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "knowledgeIds": ["kc-1"],
+          "knowledgeIds": [
+            "kc-1"
+          ],
           "cap": 8,
           "seThreshold": null
         },
@@ -836,6 +851,19 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "READ-ONLY 聚合 experimental:judge_calibration_sample / _run_summary events（practice judge_calibration_sample job 的 report-only 观测行，kill switch JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF）。honesty rails：分层 n<MIN_N(5) 返回 insufficient_data 而非裸比率（S4）；same_lane_suspected 子集剔除出 headline 单列计数（MF5 lane 同源坍缩标记）；notes 携 agreement≠accuracy + same_lane 采样时点时效声明；recent_runs 区分 healthy-but-sparse 与 systematically-skipping（run summary）。需 x-internal-token。响应：{ total_samples, same_lane_suspected_count, headline, by_route, by_original_outcome, recent_samples, recent_runs, notes }"
+      }
+    ]
+  },
+  {
+    "path": "/api/subjects",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "learner 面 selectable 科目视图（YUK-598，SPA useSubjects 数据源）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 { subjects:[{ id, displayName, renderConfig{font_family,notation,code_highlight}, causeCategories:[{id,label}], isGeneralFallback }] }。selectable 视图：general 结构性排除、retired 状态性排除；custom 科目经 YUK-599 水合自动进列。isGeneralFallback = 派生布尔（六绑定全指向 general 种子 trait，v3 §2.3；badge 数据源）。server-only AI 合同字段（promptFragments/noteTemplate/grounding/judgePolicy/sourceWhitelist）绝不下发（unit 负测钉死）。需 x-internal-token"
       }
     ]
   }

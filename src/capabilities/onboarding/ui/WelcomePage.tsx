@@ -6,6 +6,7 @@
 // authoritative scopeKnowledgeIds come from that response, so the inline scope
 // hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices } from '@/ui/lib/subject';
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -15,13 +16,10 @@ import { ObSteps } from './ObSteps';
 import { createGoal } from './onboarding-api';
 import './onboarding.css';
 
-// YUK-249 — subject chips derive from the registry (KNOWN_SUBJECT_IDS ×
-// displayName) instead of a hardcoded list: the yuwen→yuwen rename flows through
-// automatically, and a subject with no profile (the old ghost `english` leaning)
-// no longer appears. `leanings` values are the canonical KNOWN ids — the YUK-480
-// query passthrough contract (leanings → placement ordering) is unchanged.
-const SUBJECTS = listSubjectChoices();
-const LEANINGS = listSubjectChoices();
+// YUK-249 → YUK-598：subject chips 曾是模块级 const（import 期快照，provider 水合
+// 后不更新——v2 §9① WelcomePage:23-24 点名的冻结 bug）。现移入组件体、行驱动
+// （useSubjects：DB selectable 视图，custom 科目即时进 chips；断网退化三 builtin）。
+// `leanings` 值仍是 canonical id——YUK-480 透传合同不变。
 const STAGES = ['初中', '高中', '大学', '自定义'] as const;
 const PACES = [
   { id: 'light', label: '轻', sub: '≈10 分钟 / 天' },
@@ -34,6 +32,10 @@ export interface WelcomePageProps {
 }
 
 export default function WelcomePage({ navigate }: WelcomePageProps) {
+  // YUK-598 — 组件体内取行（模块级冻结修复）；SUBJECTS/LEANINGS 同源。
+  const { subjects: subjectRows } = useSubjects();
+  const SUBJECTS = listSubjectChoices(subjectRows);
+  const LEANINGS = SUBJECTS;
   // 自述（轻 · 仅引导排序）。YUK-480：`leanings` + `pace` 现经 query 透传给 placement
   // 探针（leanings → 起始题排序偏好、pace → 探针题量），不入 goal/不落库（仅 placement
   // session 持有）；二者只影响排序/题量，绝不喂 θ̂/p(L)。`stage` 仍是显示态——stage→θ 先验

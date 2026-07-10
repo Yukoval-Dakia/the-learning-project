@@ -27,8 +27,9 @@
 
 import { getTree } from '@/capabilities/knowledge/ui/knowledge-api';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { apiJson } from '@/ui/lib/api';
-import { listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
+import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { CauseBadge, type CausePrimary } from '@/ui/primitives/CauseBadge';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -80,10 +81,14 @@ const SUBJECT_TONE: Record<string, Tone> = {
   math: 'info',
   physics: 'info',
 };
-function subjMeta(subject: string | null): { label: string; tone: Tone } {
+function subjMeta(
+  subject: string | null,
+  rows?: readonly SubjectRowLike[],
+): { label: string; tone: Tone } {
   if (!subject) return { label: '未分科', tone: 'neutral' };
   const id = resolveKnownSubjectId(subject) ?? subject;
-  return { label: subjectDisplayName(subject), tone: SUBJECT_TONE[id] ?? 'neutral' };
+  // YUK-598：label 行驱动；tone 本地 map-by-id，custom 恒 neutral（v2 接受的降级）。
+  return { label: subjectDisplayName(subject, rows), tone: SUBJECT_TONE[id] ?? 'neutral' };
 }
 
 // 科目筛选规范化：把「filter chip key」与「effective_domain」折叠到同一规范桶后比 KEY，
@@ -181,12 +186,14 @@ function FilterRow({
   );
 }
 
-// 科目 chip 从注册表派生（KNOWN_SUBJECT_IDS × displayName），不再硬编码：wenyan→yuwen
-// 改名自动流过，无 profile 的幽灵科目（旧 eng 英语 chip）不再出现——YUK-249 注册表驱动。
-const SUBJECT_OPTS: [string, string][] = [
-  ['all', '全部'],
-  ...listSubjectChoices().map((c): [string, string] => [c.id, c.label]),
-];
+// YUK-249 → YUK-598：科目 chip 曾是模块级 const（import 期快照冻结）；现由组件内
+// subjectOpts(rows) 行驱动（custom 即时进 chip；断网退化三 builtin）。
+function subjectOpts(rows?: readonly SubjectRowLike[]): [string, string][] {
+  return [
+    ['all', '全部'],
+    ...listSubjectChoices(rows).map((c): [string, string] => [c.id, c.label]),
+  ];
+}
 const STATE_OPTS: [string, string][] = [
   ['all', '全部'],
   ['待重学', '待重学'],
@@ -212,7 +219,8 @@ function MistakeCard({
   navigate: (to: string) => void;
 }) {
   const s = uiState(m);
-  const subj = subjMeta(subject);
+  const { subjects: subjectRows } = useSubjects(); // 同 key 去重，零额外请求
+  const subj = subjMeta(subject, subjectRows);
   return (
     <LoomCard pad className="mistake-card">
       <div className="mistake-top">
@@ -274,6 +282,9 @@ export interface MistakesPageProps {
 }
 
 export default function MistakesPage({ navigate }: MistakesPageProps) {
+  // YUK-598 — 科目 chip 行驱动（模块级冻结修复；provider selectable 视图）。
+  const { subjects: subjectRowsForOpts } = useSubjects();
+  const SUBJECT_OPTS = subjectOpts(subjectRowsForOpts);
   const [subject, setSubject] = useState('all');
   const [state, setState] = useState('all');
   const [attr, setAttr] = useState('all');

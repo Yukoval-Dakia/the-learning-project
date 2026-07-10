@@ -1,5 +1,5 @@
 import {
-  KNOWN_SUBJECT_IDS,
+  BUILTIN_IDS,
   resolveKnownSubjectId,
   resolveSubjectProfile,
   subjectProfiles,
@@ -18,8 +18,19 @@ export interface SubjectChoice {
   label: string;
 }
 
-export function listSubjectChoices(): SubjectChoice[] {
-  return KNOWN_SUBJECT_IDS.map((id) => ({
+// YUK-598 — provider 行的最小形状（useSubjects().subjects 可直接传入）。
+export interface SubjectRowLike {
+  id: string;
+  displayName: string;
+}
+
+// YUK-598 rows 参数化：传入 provider 行（DB selectable 视图，含 custom）即行驱动；
+// 省略/空数组 = 编译期 builtin 投影（断网/首帧/未 hook 化调用点的原行为，逐位不变）。
+export function listSubjectChoices(rows?: readonly SubjectRowLike[]): SubjectChoice[] {
+  if (rows && rows.length > 0) {
+    return rows.map((r) => ({ id: r.id, label: r.displayName }));
+  }
+  return BUILTIN_IDS.map((id) => ({
     id,
     label: subjectProfiles[id]?.displayName ?? id,
   }));
@@ -28,9 +39,11 @@ export function listSubjectChoices(): SubjectChoice[] {
 // Canonical display label for a raw domain / alias / profile id, registry-driven
 // and alias-aware (legacy `wenyan` → yuwen). Falls back to the raw string for an
 // unregistered value so callers never render an empty label.
-export function subjectDisplayName(subject: string): string {
+export function subjectDisplayName(subject: string, rows?: readonly SubjectRowLike[]): string {
   const id = resolveKnownSubjectId(subject) ?? subject;
-  return subjectProfiles[id]?.displayName ?? subject;
+  // provider 行优先（custom id 只有这里认识）；miss 再落编译期 builtin 快照。
+  const fromRows = rows?.find((r) => r.id === id || r.id === subject)?.displayName;
+  return fromRows ?? subjectProfiles[id]?.displayName ?? subject;
 }
 
 export interface SlimSubjectProfile {

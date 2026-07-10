@@ -35,7 +35,7 @@ import { notDraftPredicate } from '@/db/predicates';
 import { item_calibration, learning_item, question } from '@/db/schema';
 import { effectiveB } from '@/server/mastery/recalibration';
 import { getMasteryState, globalThetaForDomain } from '@/server/mastery/state';
-import { resolveSubjectProfile, subjectProfiles } from '@/subjects/profile';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
@@ -675,7 +675,10 @@ export async function assembleScanInput(db: Db): Promise<ScanInput> {
   const generationMethodBySubject: Record<string, 'material_grounded' | 'closed_book'> = {};
   for (const f of frontier) {
     if (!(f.subjectId in routePreferenceBySubject)) {
-      const profile = subjectProfiles[f.subjectId] ?? resolveSubjectProfile(f.subjectId);
+      // YUK-598 stale-const 收口（v2 §9①）：冻结常量 subjectProfiles 是 import 期
+      // 快照，水合后不更新——owner 编辑过的 builtin trait 在这条路上会被旧值遮蔽。
+      // 统一走活 registry resolve（miss → 中性 general，原兜底语义不变）。
+      const profile = resolveSubjectProfile(f.subjectId);
       routePreferenceBySubject[f.subjectId] = seedRoutePreference(profile);
       // review FINDING #3：保留 material vs closed_book 生成方法区分。
       const gm = seedGenerationMethod(profile);
