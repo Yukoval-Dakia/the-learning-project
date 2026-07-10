@@ -65,11 +65,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/web/dist ./web/dist
 COPY --from=builder /app/drizzle ./drizzle
-# quiz-gen Agent Skill assets — the runner (populateIsolatedSkills) reads
-# src/subjects/<id>/skills/ at runtime via readdirSync (not imported).
+# Agent Skill assets — the runner (populateIsolatedSkills) reads
+# src/subjects/<id>/skills/ at runtime via readdirSync (not imported), so a
+# missing COPY is a silent prod degradation (resolver falls back to prose).
+# Coverage is asserted by src/subjects/skills-image-coverage.test.ts (YUK-610).
 COPY --from=builder /app/src/subjects/math/skills ./src/subjects/math/skills
 COPY --from=builder /app/src/subjects/yuwen/skills ./src/subjects/yuwen/skills
 COPY --from=builder /app/src/subjects/physics/skills ./src/subjects/physics/skills
+COPY --from=builder /app/src/subjects/_shared/skills ./src/subjects/_shared/skills
 # sharp + 原生依赖 4 行（来自 sharpdeps 的 flat node_modules）
 COPY --from=sharpdeps /sharp/node_modules/sharp ./node_modules/sharp
 COPY --from=sharpdeps /sharp/node_modules/@img ./node_modules/@img
