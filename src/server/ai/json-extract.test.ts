@@ -94,9 +94,12 @@ describe('parseJsonObjectLoose (YUK-607 repair band)', () => {
     );
   });
 
-  it('复合坏件（CJK 内容引号 + 尾逗号）→ 确定性层修引号、jsonrepair 收尾逗号，内容零丢失', () => {
-    // 强制走梯度末级：引号形态 jsonrepair(原文) 会翻车（Colon expected），尾逗号确定性层
-    // 不治——只有 jsonrepair(确定性结果) 能成。
+  it('复合坏件（CJK 内容引号 + 尾逗号）→ 确定性两级全败后落 jsonrepair 级，内容零丢失', () => {
+    // 确定性级修引号后仍剩尾逗号（确定性层不治）→ 必然落 jsonrepair 级。复审实测
+    // jsonrepair@3.15.0 对本短化形状在梯度③（jsonrepair(原文)）即成且内容保真——真实
+    // spike 坏件（更长上下文）曾在③翻车走④；④是同标签防御兜底，不单独强制（强制它
+    // 需要更深地钉死 lib 行为，脆性不值）。本用例守的是：确定性级失败时如实落
+    // 'jsonrepair' 标签（触发隔离）且内容可保真。
     const text =
       '{"kind": "single_choice", "prompt_md": "语段通过引用古语"读书百遍，其义自见"进行说理，判断其论证方法。",}';
     expect(() => JSON.parse(text)).toThrow();
