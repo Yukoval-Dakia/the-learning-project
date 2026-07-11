@@ -25,6 +25,7 @@ interface SummaryBody {
     knowledge_count: number;
     goal_count: number;
   };
+  active_goal: { id: string; title: string } | null;
   active_sessions: Array<{
     id: string;
     status: string;
@@ -60,6 +61,8 @@ describe('GET /api/workbench/summary (shell)', () => {
       // 冷库无 active goal → 0（YUK-473 Slice 1 冷启动拦截信号）。
       goal_count: 0,
     });
+    // 冷库无 active goal → active_goal 为 null（YUK-476 起始画像卡片据此不渲染）。
+    expect(body.active_goal).toBeNull();
     expect(body.active_sessions).toEqual([]);
 
     expect(body.week_heat).toHaveLength(7);
@@ -154,6 +157,8 @@ describe('GET /api/workbench/summary (shell)', () => {
     expect(body.kpi.pending_attribution_count).toBe(0);
     // active goal g1 计入、done goal g2 排除 → 1（YUK-473 Slice 1）。
     expect(body.kpi.goal_count).toBe(1);
+    // active_goal = 当前 active goal（g1）；done goal g2 不作候选（YUK-476）。
+    expect(body.active_goal).toEqual({ id: 'g1', title: 'g1' });
 
     expect(body.active_sessions).toHaveLength(1);
     expect(body.active_sessions[0]).toMatchObject({
@@ -169,5 +174,29 @@ describe('GET /api/workbench/summary (shell)', () => {
     // 今日（BJT，末位元素）至少含 2 review event + 1 propose event。
     expect(body.week_heat).toHaveLength(7);
     expect(body.week_heat[6].count).toBeGreaterThanOrEqual(3);
+  });
+
+  it('active_goal 取最近创建的 active goal（多目标 + 确定性 tie-break）', async () => {
+    const db = testDb();
+    const base = new Date('2026-07-01T00:00:00Z');
+    // 三条 active goal，created_at 递增 → active_goal 应取最新（g_new）。
+    for (const [id, offsetMin] of [
+      ['g_old', 0],
+      ['g_mid', 10],
+      ['g_new', 20],
+    ] as const) {
+      await db.insert(goal).values({
+        id,
+        title: id,
+        status: 'active',
+        source: 'manual',
+        created_at: new Date(base.getTime() + offsetMin * 60_000),
+        updated_at: base,
+      });
+    }
+
+    const body = await fetchSummary();
+    expect(body.kpi.goal_count).toBe(3);
+    expect(body.active_goal).toEqual({ id: 'g_new', title: 'g_new' });
   });
 });

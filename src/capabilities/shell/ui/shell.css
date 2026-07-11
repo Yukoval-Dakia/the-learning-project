@@ -824,3 +824,75 @@
     transition: none;
   }
 }
+
+/* ── YUK-476 · /today 起始画像卡片（ProfileBand）──────────────────────────
+   band-only mini 带：coral 可能区间填充 + p_l 标记（恒 p_l，非 theta_hat）。软轨（低置信/
+   证据不足）淡化，「未经真实作答校准」。tokens 同 onboarding ob-band，紧凑档。 */
+.pf-lead {
+  margin: 0 0 var(--s-3);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+.pf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+.pf-band-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.pf-band-row {
+  display: grid;
+  grid-template-columns: minmax(0, 8em) 1fr;
+  align-items: center;
+  gap: var(--s-3);
+}
+.pf-band-name {
+  overflow: hidden;
+  font-size: 14px;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-band-track {
+  position: relative;
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--paper-sunk);
+}
+.pf-band-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--coral) 26%, transparent);
+}
+.pf-band-mark {
+  position: absolute;
+  top: -2px;
+  width: 8px;
+  height: 14px;
+  border: 2px solid var(--paper-raised);
+  border-radius: var(--r-pill);
+  background: var(--coral);
+  box-shadow: var(--shadow-1);
+  transform: translateX(-50%);
+}
+.pf-band-row.is-soft .pf-band-fill {
+  background: color-mix(in oklab, var(--ink-4) 20%, transparent);
+}
+.pf-band-row.is-soft .pf-band-mark {
+  background: var(--ink-3);
+}
+.pf-band-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+}

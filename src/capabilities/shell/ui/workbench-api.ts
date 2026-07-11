@@ -17,6 +17,8 @@ export interface WorkbenchSummary {
     // 冷启动信号（YUK-473 Slice 1）：active goal 数。TodayPage 在 0 时渲染冷开屏拦截。
     goal_count: number;
   };
+  // 当前 active goal（YUK-476）：/today 起始画像卡片据此取 per-KC profile。null = 无 active goal。
+  active_goal: { id: string; title: string } | null;
   active_sessions: Array<{
     id: string;
     status: string;

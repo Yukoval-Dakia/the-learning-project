@@ -26,6 +26,7 @@ import { useEffect, useState } from 'react';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { LoomHero } from './blocks/LoomHero';
+import { ProfileBand } from './blocks/ProfileBand';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
 import { WeekHeat } from './blocks/WeekHeat';
@@ -397,6 +398,10 @@ export default function TodayPage({ navigate }: TodayPageProps) {
               navigate={navigate}
               onPlaceholder={placeholder}
             />
+
+            {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
+                gate 在 active_goal 非 null（冷库 goal_count===0 已 early-return ColdStart）。 */}
+            {s.active_goal && <ProfileBand goal={s.active_goal} navigate={navigate} />}
 
             {threads.length > 0 && (
               <>
