@@ -29,6 +29,12 @@ export interface PlacementProfile {
   goalId: string;
   title: string;
   kcs: ProfileKc[];
+  /** YUK-614 — the weakest KCs by p(L) over the FULL evidenced set (before the surfaced-list
+   *  PROFILE_KC_LIMIT cap), for the /today card's weakest-first preview. Empty when no evidence. */
+  weakest?: ProfileKc[];
+  /** YUK-614 — count of KCs with real answer evidence (evidence_count>0) over the FULL set —
+   *  the honest "N 有证据" figure, never undercounted by truncation nor inflated by soft-layer. */
+  evidencedCount?: number;
   /** YUK-495 #41 — which σ the server display used: 'poly' = device re-derivation matches
    *  bit-for-bit; 'libm' = Math.exp (≤1-ULP off) → badge shows honest "preview". */
   sigma_mode?: 'poly' | 'libm';
