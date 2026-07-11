@@ -274,4 +274,45 @@ describe('GET /api/placement/profile', () => {
     const body = await res.json();
     expect(body.kcs[0].axis).toBeUndefined();
   });
+
+  it('YUK-614: weakest surfaces the true lowest-p(L) KC even when truncated out of kcs (>PROFILE_KC_LIMIT)', async () => {
+    const scope: string[] = [];
+    // 21 strong KCs (high evidence, high p(L)) — fill + exceed the 20-cap; sorted first by evidence.
+    for (let i = 0; i < 21; i++) {
+      const id = `kc_strong_${String(i).padStart(2, '0')}`;
+      await seedKnowledge(id, `强${i}`);
+      scope.push(id);
+      await seedMastery(id, {
+        evidence_count: 10,
+        success_count: 9,
+        fail_count: 1,
+        theta_precision: 2.0,
+      });
+    }
+    // The true weakest: lowest p(L) (0 success / 1 fail) but LOW evidence (1) → sorted LAST by
+    // evidence_count desc → truncated out of the surfaced kcs (top-20).
+    await seedKnowledge('kc_weak', '真最弱');
+    scope.push('kc_weak');
+    await seedMastery('kc_weak', {
+      evidence_count: 1,
+      success_count: 0,
+      fail_count: 1,
+      theta_precision: 1.0,
+    });
+
+    await seedGoal('g1', scope);
+    const res = await GET(req('g1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    // kcs capped at PROFILE_KC_LIMIT=20 (evidence-sorted) → the low-evidence weak KC is excluded.
+    expect(body.kcs).toHaveLength(20);
+    expect(body.kcs.map((k: { id: string }) => k.id)).not.toContain('kc_weak');
+
+    // but weakest (p(L) asc over the FULL evidenced set) leads with the true weakest.
+    expect(Array.isArray(body.weakest)).toBe(true);
+    expect(body.weakest[0].id).toBe('kc_weak');
+    const pls = body.weakest.map((k: { p_l: number }) => k.p_l);
+    expect([...pls]).toEqual([...pls].sort((a, b) => a - b));
+  });
 });
