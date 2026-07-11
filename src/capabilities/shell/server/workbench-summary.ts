@@ -12,7 +12,7 @@ import type { Db } from '@/db/client';
 import { event, goal, knowledge, learning_session } from '@/db/schema';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { type TodayProposalKpi, loadTodayProposalKpi } from '@/server/today/proposal-kpi';
-import { and, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 // 与旧 today 页一致的采样上限：KPI 是「今日量级」信号，不是精确总量。
 const KPI_SAMPLE_LIMIT = 200;
@@ -46,6 +46,9 @@ export interface WorkbenchSummary {
     // （goal/learning_item/mastery_state 三冷表之一），count active goals。
     goal_count: number;
   };
+  // 当前 active goal（最近创建的一条），供 /today 起始画像卡片（YUK-476）取
+  // per-KC profile。null → 无 active goal（冷库，/today 已拦截到 ColdStart）。
+  active_goal: { id: string; title: string } | null;
   active_sessions: WorkbenchSessionRow[];
   week_heat: WorkbenchHeatDay[];
 }
@@ -77,10 +80,19 @@ async function countKnowledge(db: Db): Promise<number> {
   return row?.count ?? 0;
 }
 
-// 冷启动信号（YUK-473 Slice 1）：active goal 数。0 → /today 渲染冷开屏拦截。
-async function countActiveGoals(db: Db): Promise<number> {
-  const [row] = await db.select({ c: count() }).from(goal).where(eq(goal.status, 'active'));
-  return row?.c ?? 0;
+// 冷启动信号（YUK-473 Slice 1）：active goal 数（0 → /today 渲染冷开屏拦截）+ 当前
+// active goal（YUK-476：/today 起始画像卡片取 per-KC profile 的锚）。单用户多数只有一条；
+// 多目标取 created_at 最新的一条为「当前」。一次查询同时得计数与首条。
+async function loadActiveGoalState(
+  db: Db,
+): Promise<{ count: number; active: { id: string; title: string } | null }> {
+  const rows = await db
+    .select({ id: goal.id, title: goal.title })
+    .from(goal)
+    .where(eq(goal.status, 'active'))
+    .orderBy(desc(goal.created_at));
+  const first = rows[0];
+  return { count: rows.length, active: first ? { id: first.id, title: first.title } : null };
 }
 
 async function listActiveSessions(db: Db): Promise<WorkbenchSessionRow[]> {
@@ -154,7 +166,7 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
     dueCount,
     pendingAttributionCount,
     knowledgeCount,
-    goalCount,
+    goalState,
     activeSessions,
     weekHeat,
   ] = await Promise.all([
@@ -162,7 +174,7 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
     countDue(),
     countPendingAttribution(db),
     countKnowledge(db),
-    countActiveGoals(db),
+    loadActiveGoalState(db),
     listActiveSessions(db),
     loadWeekHeat(db),
   ]);
@@ -172,8 +184,9 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
       due_count: dueCount,
       pending_attribution_count: pendingAttributionCount,
       knowledge_count: knowledgeCount,
-      goal_count: goalCount,
+      goal_count: goalState.count,
     },
+    active_goal: goalState.active,
     active_sessions: activeSessions,
     week_heat: weekHeat,
   };

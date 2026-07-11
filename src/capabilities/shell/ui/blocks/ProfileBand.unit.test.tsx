@@ -1,0 +1,131 @@
+// YUK-476 · ProfileBand（/today 起始画像卡片）render 覆盖。SSR（renderToString，node env，无
+// jsdom；CTA→navigate 交互路径手工验收）。QueryClient.setQueryData 喂缓存 → 组件零请求。
+// 核心回归锁：珊瑚带标记恒落 p_l（0..1 点估计），绝不 theta_hat（logit，可负/>1）——§9-1。
+
+import type { PlacementProfile, ProfileKc } from '@/capabilities/onboarding/ui/profile-api';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { renderToString } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+import { ProfileBand } from './ProfileBand';
+
+const GOAL = { id: 'g_demo', title: '高考文言文' };
+
+function kc(overrides: Partial<ProfileKc> & Pick<ProfileKc, 'id' | 'name'>): ProfileKc {
+  return {
+    tested: true,
+    evidence_count: 5,
+    theta_hat: 0.3,
+    theta_se: 0.4,
+    p_l: 0.6,
+    mastery_lo: 0.45,
+    mastery_hi: 0.78,
+    low_confidence: false,
+    success_count: 3,
+    fail_count: 2,
+    beta: 0.5,
+    ...overrides,
+  };
+}
+
+function profile(overrides: Partial<PlacementProfile> = {}): PlacementProfile {
+  const kcs = overrides.kcs ?? [];
+  return {
+    goalId: GOAL.id,
+    title: GOAL.title,
+    kcs,
+    evidenceCount: kcs.reduce((a, k) => a + (k.tested ? k.evidence_count : 0), 0),
+    testedCount: kcs.filter((k) => k.tested).length,
+    totalKcs: kcs.length,
+    ...overrides,
+  };
+}
+
+function render(data: PlacementProfile): string {
+  const qc = new QueryClient();
+  qc.setQueryData(['placement-profile', GOAL.id], data);
+  return renderToString(
+    <QueryClientProvider client={qc}>
+      <ProfileBand goal={GOAL} navigate={() => {}} />
+    </QueryClientProvider>,
+  );
+}
+
+describe('ProfileBand (/today 起始画像卡片)', () => {
+  it('places the band mark at p_l, never theta_hat (§9-1 scale-mix regression guard)', () => {
+    // theta_hat 2.5 是 logit（pct → 250%，出轨）；p_l 0.7 是 0..1 点估计（pct → 70%）。
+    const html = render(
+      profile({
+        kcs: [
+          kc({
+            id: 'k1',
+            name: '虚词·之',
+            theta_hat: 2.5,
+            p_l: 0.7,
+            mastery_lo: 0.5,
+            mastery_hi: 0.86,
+          }),
+        ],
+      }),
+    );
+    expect(html).toContain('left:70%'); // 标记落 p_l
+    expect(html).not.toContain('250%'); // 绝不落 theta_hat logit（出轨）
+  });
+
+  it('renders band-only preview + coverage + deep-read CTA when evidence exists (State C)', () => {
+    const html = render(
+      profile({
+        kcs: [
+          kc({ id: 'k1', name: '意动用法', p_l: 0.3 }),
+          kc({ id: 'k2', name: '古今异义', p_l: 0.55 }),
+        ],
+      }),
+    );
+    expect(html).toContain('查看完整画像');
+    // 判词7：覆盖表述用「个知识点有证据」，不把聚合说成「N 题」。
+    expect(html).toContain('2 / 2 个知识点有证据');
+    // band-only：卡片不露区间轴文字（那是深读面 ScreenProfile 的东西）。
+    expect(html).not.toContain('可能区间');
+  });
+
+  it('orders the preview weakest-first by p_l', () => {
+    const html = render(
+      profile({
+        kcs: [
+          kc({ id: 'strong', name: 'AAA强项', p_l: 0.9 }),
+          kc({ id: 'weak', name: 'ZZZ弱项', p_l: 0.2 }),
+        ],
+      }),
+    );
+    expect(html.indexOf('ZZZ弱项')).toBeLessThan(html.indexOf('AAA强项'));
+  });
+
+  it('shows a soft-prior lead when most preview KCs are low-confidence / thin (State C thin)', () => {
+    const html = render(
+      profile({
+        kcs: [
+          kc({ id: 'k1', name: '虚词', low_confidence: true, evidence_count: 2 }),
+          kc({ id: 'k2', name: '活用', low_confidence: true, evidence_count: 1 }),
+        ],
+      }),
+    );
+    expect(html).toContain('先验起点');
+  });
+
+  it('prompts practice when the goal has scope but zero evidence (State B)', () => {
+    const html = render(
+      profile({
+        kcs: [
+          kc({ id: 'u1', name: '虚词', tested: false, evidence_count: 0 }),
+          kc({ id: 'u2', name: '活用', tested: false, evidence_count: 0 }),
+        ],
+      }),
+    );
+    expect(html).toContain('去练习');
+    expect(html).not.toContain('查看完整画像');
+  });
+
+  it('prompts material ingestion when the knowledge tree is empty (State D)', () => {
+    const html = render(profile({ kcs: [], totalKcs: 0 }));
+    expect(html).toContain('录入材料');
+  });
+});
