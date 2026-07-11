@@ -171,6 +171,31 @@ describe('resetSubject — 只换绑，永不改共享 payload（§8-8）', () =
     const id = await createCustom();
     expect((await resetSubject(db, { subjectId: id, expectedRevision: 0 })).kind).toBe('noop');
   });
+
+  it('builtin reset：rename 漂移后回种子名 + root.name 同步 + 绑定回本科种子（review-765 P3）', async () => {
+    // yuwen 先改名再 reset：displayName 回种子「语文」、root.name 同步、绑定仍指
+    // trt_seed_yuwen_*（builtin 的种子是本科种子非 general）。
+    await renameSubject(db, { subjectId: 'yuwen', expectedRevision: 0, displayName: '古文' });
+    const result = await resetSubject(db, { subjectId: 'yuwen', expectedRevision: 1 });
+    expect(result).toMatchObject({ kind: 'ok', subjectRevision: 2 });
+    const row = await subjectRow('yuwen');
+    expect(row?.display_name).toBe('语文');
+    const root = (
+      await db
+        .select()
+        .from(knowledge)
+        .where(eq(knowledge.id, subjectRootId('yuwen')))
+    )[0];
+    // root 行在测试基线可能不存在（reconcile 不建根）——存在才断言名字。
+    if (root) expect(root.name).toBe('语文');
+    const bindings = await db
+      .select()
+      .from(subject_trait_binding)
+      .where(eq(subject_trait_binding.subject_id, 'yuwen'));
+    for (const b of bindings) {
+      expect(b.trait_id).toBe(`trt_seed_yuwen_${b.trait_kind}`);
+    }
+  });
 });
 
 describe('validateSubject — 无状态预检（§8-15）', () => {

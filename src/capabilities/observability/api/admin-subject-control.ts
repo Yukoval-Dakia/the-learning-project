@@ -106,10 +106,17 @@ export async function VALIDATE(req: Request, params: Record<string, string>): Pr
   try {
     const p = parseSubjectId(params);
     if (!p.ok) return p.response;
-    // 无 body 也合法（纯现状校验）。
+    // 无 body / 空 body 合法（纯现状校验）；**畸形** JSON 仍 400（review-765
+    // P3-2：与其余端点的 readJsonBody 纪律一致，不静默吞坏请求）。
     let overrides: Record<string, unknown> | undefined;
-    try {
-      const raw = (await req.json()) as unknown;
+    const rawText = await req.text();
+    if (rawText.trim().length > 0) {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(rawText);
+      } catch {
+        return Response.json({ error: 'request body must be valid JSON' }, { status: 400 });
+      }
       const parsed = ValidateBody.safeParse(raw);
       if (!parsed.success) {
         return Response.json(
@@ -118,8 +125,6 @@ export async function VALIDATE(req: Request, params: Record<string, string>): Pr
         );
       }
       overrides = parsed.data.traitPayloadOverrides;
-    } catch {
-      overrides = undefined;
     }
     const result = await validateSubject(db, p.id, overrides);
     if (result === null) {

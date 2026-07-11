@@ -214,6 +214,9 @@ export async function editSubjectTrait(
 
     // deep-equal no-op 预检（v3.2 owner R2-P2）：规范化后深等 → 200，零 fork 零
     // journal 零 bump——「保存未修改的表单」不得制造内容相同的空分叉。
+    // 序注（review-765 P3-1）：本实现 CAS 在 no-op 之前——陈旧 revision + 相同
+    // payload 返回 409-stale 而非 200-noop（no-op 只对「正编辑当前版本」成立，
+    // 陈旧页签先 refetch 再判等更诚实）。§3.1 字面未排 CAS 位置，此为实现裁量。
     if (isDeepStrictEqual(parsed.value, trait.payload)) {
       return { kind: 'noop', traitId: trait.id, revision: trait.revision };
     }
@@ -396,11 +399,22 @@ export async function rollbackTrait(
     if (isDeepStrictEqual(target.payload, trait.payload)) {
       return { kind: 'noop', traitId: trait.id, revision: trait.revision };
     }
-    // §3.1 全套校验：fan-out 装配（已退场 capability 由 validateProfile 抓 → 422，
-    // 不静默降级）。恢复范围 = payload + payload_schema_version（取目标行）；
-    // seed lineage 不动（rollback 是内容裁决非血统操作）。
+    // §3.1 全套校验（review-765 P2）：先 per-kind strict parse（写入即
+    // strict-parseable 不变式——hydrate 的 resolveTraitPayload 用同一 strict
+    // schema 读，两头对称，防「fan-out 放行、hydrate 拒收」的静默降级；跨代际
+    // upgrade-on-read 是 YUK-599 面的未实现项，目标行拒 parse 即 422 不静默），
+    // 再 fan-out 装配（已退场 capability 由 validateProfile 抓 → 422）。
+    // 恢复范围 = payload + payload_schema_version（取目标行）；seed lineage 不动
+    // （rollback 是内容裁决非血统操作）。
+    const reparsed = parsePayload(trait.trait_kind, target.payload);
+    if (!reparsed.ok) {
+      return {
+        kind: 'invalid',
+        message: `rollback target no longer parses against the current ${trait.trait_kind} schema: ${reparsed.message}`,
+      };
+    }
     const binders = await bindersOf(tx, trait.id);
-    const issues = await validateBinders(tx, binders, trait.trait_kind, target.payload);
+    const issues = await validateBinders(tx, binders, trait.trait_kind, reparsed.value);
     if (issues.length > 0) {
       return { kind: 'invalid', message: 'rollback target fails assembled validation', issues };
     }
@@ -408,7 +422,7 @@ export async function rollbackTrait(
     await tx
       .update(subject_trait)
       .set({
-        payload: target.payload,
+        payload: reparsed.value,
         payload_schema_version: target.payload_schema_version,
         revision: nextRevision,
         updated_at: now,
@@ -417,7 +431,7 @@ export async function rollbackTrait(
     await tx.insert(subject_trait_journal).values({
       trait_id: trait.id,
       revision: nextRevision,
-      payload: target.payload,
+      payload: reparsed.value,
       payload_schema_version: target.payload_schema_version,
       seed_version: trait.seed_version,
       action: 'rollback',

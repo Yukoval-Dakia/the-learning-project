@@ -156,6 +156,37 @@ describe('editSubjectTrait — 主写面（自动 COW，§8-26/25/6/3）', () =>
     expect(result).toMatchObject({ kind: 'stale', currentRevision: seed.revision, axis: 'trait' });
   });
 
+  it('CAS：expectedSubjectRevision 陈旧 → stale 走 subject 轴（§8-6，review-765 P3）', async () => {
+    const id = await createCustom();
+    const seed = await traitRow('trt_seed_general_charter');
+    const result = await editSubjectTrait(db, {
+      subjectId: id,
+      kind: 'charter',
+      expectedSubjectRevision: 9,
+      expectedTraitRevision: seed.revision,
+      payload: charterWith(seed.payload, 'x'),
+    });
+    expect(result).toMatchObject({ kind: 'stale', currentRevision: 0, axis: 'subject' });
+  });
+
+  it('共享写 fan-out 多科回显：两 custom 同绑 general 种子，坏 payload 逐科列出（§8-4）', async () => {
+    const a = await createCustom('化学');
+    const b = await createCustom('生物');
+    const seed = await traitRow('trt_seed_general_judge_policy');
+    const result = await editSharedTrait(db, {
+      traitId: seed.id,
+      expectedRevision: seed.revision,
+      payload: {
+        ...(seed.payload as Record<string, unknown>),
+        judgeCapabilities: ['judge_phantom_nope'],
+      },
+    });
+    expect(result.kind).toBe('invalid');
+    if (result.kind !== 'invalid') return;
+    const subjects = (result.issues ?? []).map((i) => i.subjectId);
+    expect(subjects).toEqual(expect.arrayContaining(['general', a, b]));
+  });
+
   it('fan-out 422：幻 judge id 过 strict parse 被装配校验拒，零残留（§8-3/4）', async () => {
     const id = await createCustom();
     const seed = await traitRow('trt_seed_general_judge_policy');
@@ -243,6 +274,16 @@ describe('editSharedTrait / rollback / reset-to-seed（§8-2/5/22）', () => {
       .from(subject_trait_journal)
       .where(eq(subject_trait_journal.trait_id, seed.id));
     expect(journal.at(-1)).toMatchObject({ action: 'rollback', rolled_back_from: 0, revision: 2 });
+  });
+
+  it('rollback：targetRevision 不在 journal → invalid（review-765 P3）', async () => {
+    const seed = await traitRow('trt_seed_general_charter');
+    const result = await rollbackTrait(db, {
+      traitId: seed.id,
+      expectedRevision: seed.revision,
+      targetRevision: 42,
+    });
+    expect(result.kind).toBe('invalid');
   });
 
   it('reset-to-seed：编辑过的种子恢复出厂 + seed_version 对齐；非种子行拒绝（§8-22）', async () => {
