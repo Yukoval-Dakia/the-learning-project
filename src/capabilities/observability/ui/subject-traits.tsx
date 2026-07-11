@@ -464,6 +464,7 @@ function TraitRow({
             setPanel(null);
             onDone();
           }}
+          onCancel={() => setPanel(null)}
         />
       )}
       {panel === 'rebind' && (
@@ -739,12 +740,14 @@ function ForkPanel({
   binding,
   onWriteError,
   onDone,
+  onCancel,
 }: {
   subjectId: string;
   subjectRevision: number;
   binding: TraitBindingRow;
   onWriteError: (err: unknown) => boolean;
   onDone: () => void;
+  onCancel: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const run = useMutation({
@@ -768,6 +771,9 @@ function ForkPanel({
           onClick={() => run.mutate()}
         >
           {run.isPending ? 'fork 中…' : '确认 fork'}
+        </button>
+        <button type="button" style={inlineBtnStyle} onClick={onCancel}>
+          取消
         </button>
       </p>
       {error && <p style={errStyle}>{error}</p>}
