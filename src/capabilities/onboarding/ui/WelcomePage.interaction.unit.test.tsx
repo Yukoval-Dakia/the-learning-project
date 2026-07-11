@@ -48,8 +48,8 @@ function renderWelcome() {
   );
 }
 
-// jsdom v27 在 vitest 默认 origin 下不挂 localStorage——注入内存实现（api.ts 的
-// getInternalToken 只用 getItem/setItem/removeItem）。
+// jsdom（v29，本仓 devDep）在 vitest 默认 origin 下不挂 localStorage——注入内存
+// 实现（api.ts 的 getInternalToken 只用 getItem/setItem/removeItem）。
 function memoryStorage(): Storage {
   const store = new Map<string, string>();
   return {

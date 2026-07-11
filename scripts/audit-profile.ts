@@ -140,13 +140,14 @@ export async function runDbCli(args: string[]): Promise<number> {
 export function main(): void {
   const args = process.argv.slice(2);
   if (args.includes('--db')) {
+    // process.exit（非 exitCode）——postgres 池无 idle_timeout，连接 socket 会
+    // 钉住事件循环，进程永不自然退出（review-769 HIGH；backfill-lost-attribution
+    // .ts:123 同结构先例）。
     runDbCli(args)
-      .then((rc) => {
-        process.exitCode = rc;
-      })
+      .then((rc) => process.exit(rc))
       .catch((err) => {
         console.error('[audit:profile --db] failed:', err);
-        process.exitCode = 1;
+        process.exit(1);
       });
   } else {
     process.exitCode = runCli(args);
