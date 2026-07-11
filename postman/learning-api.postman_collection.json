@@ -312,6 +312,40 @@
           "response": []
         },
         {
+          "name": "PATCH /api/admin/subjects/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "rename 科目（YUK-601 v3.2 §3.4）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 控制行 CAS + root.name 按 id 同步同事务 + journal 'rename'。撞 norm → 409（无 currentRevision）；CAS 陈旧 → 409 携 currentRevision。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedRevision\": 0,\n  \"displayName\": \"化学基础\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/admin/subjects",
           "request": {
             "method": "POST",
@@ -330,6 +364,358 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"displayName\": \"化学\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/subjects/:id/reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id", "reset"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "subject 级 reset：只换绑回种子（YUK-601 v3.2 §3.4）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 六绑定指回本科种子（custom→general）；永不改共享 payload；孤儿 fork 保留。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedRevision\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/subjects/:id/restore",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id/restore",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id", "restore"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "恢复退休科目（YUK-601 v3.2 §3.4）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 撞名（同名被新科占用）→ 409。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedRevision\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/subjects/:id/retire",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id/retire",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id", "retire"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "软退休（YUK-601 v3.2 §3.4）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** retired 仍 resolvable 不进 selectable/词表/nightly；general 不可 retire → 422。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedRevision\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/subjects/:id/traits/:kind/fork",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id/traits/:kind/fork",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id", "traits", ":kind", "fork"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "kind",
+                  "value": "REPLACE_kind"
+                }
+              ]
+            },
+            "description": "显式剥离 fork，不带编辑（YUK-601 v3.2 §3.3）\n\n**Path vars:** `:id`, `:kind` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** journal rev0 'fork_source' 携来源快照；general → 422（P1-1 锁定）。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedSubjectRevision\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/subjects/:id/validate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id/validate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id", "validate"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "无状态装配预检（YUK-601 v3.2 §3.4）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** assemble（可带 overrides）+ validateProfile，只回 issues 零落库。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"traitPayloadOverrides\": {\n    \"charter\": {}\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/traits/:id/reset-to-seed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/traits/:id/reset-to-seed",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "traits", ":id", "reset-to-seed"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "恢复出厂内容（trait 级全局显式动作，YUK-601 v3.2 §3.4）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 仅 seed_version 非空合法；覆写为当前代码种子 + fan-out 校验全绑定者。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedRevision\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/traits/:id/rollback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/traits/:id/rollback",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "traits", ":id", "rollback"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "rollback-forward（git-revert 语义，YUK-601 v3.2 §3.2）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 恢复 payload+payload_schema_version 为新 revision；seed lineage 不动；历史行永不改写。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedRevision\": 2,\n  \"targetRevision\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/admin/subjects/:id/traits/:kind",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id/traits/:kind",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id", "traits", ":kind"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "kind",
+                  "value": "REPLACE_kind"
+                }
+              ]
+            },
+            "description": "主写面：subject-scoped 编辑，自动 COW（YUK-601 v3.2 §3.1）\n\n**Path vars:** `:id`, `:kind` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** strict parse → deep-equal no-op 200 → 所有权判定：自有原地写+fan-out；非自有同事务 fork-and-edit。fan-out 失败 422 携 issues。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedSubjectRevision\": 0,\n  \"expectedTraitRevision\": 0,\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/admin/subjects/:id/traits/:kind/binding",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/subjects/:id/traits/:kind/binding",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "subjects", ":id", "traits", ":kind", "binding"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "kind",
+                  "value": "REPLACE_kind"
+                }
+              ]
+            },
+            "description": "换绑：「化学借数学的 rubric」载体（YUK-601 v3.2 §3.3）\n\n**Path vars:** `:id`, `:kind` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** target kind 匹配 + 装配校验本科 → 改绑定 + control journal 'rebind'；general → 422。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetTraitId\": \"trt_seed_math_judge_policy\",\n  \"expectedSubjectRevision\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/admin/traits/:id",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/traits/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "traits", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "显式共享写：影响全部绑定者（YUK-601 v3.2 §3.1）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 装配级 fan-out 校验全绑定科目，任一失败整体 422 回显。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedRevision\": 0,\n  \"payload\": {}\n}",
               "options": {
                 "raw": {
                   "language": "json"

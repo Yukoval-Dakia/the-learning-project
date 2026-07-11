@@ -186,6 +186,179 @@
     ]
   },
   {
+    "path": "/api/admin/subjects/:id",
+    "methods": [
+      {
+        "method": "PATCH",
+        "summary": "rename 科目（YUK-601 v3.2 §3.4）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedRevision": 0,
+          "displayName": "化学基础"
+        },
+        "notes": "控制行 CAS + root.name 按 id 同步同事务 + journal 'rename'。撞 norm → 409（无 currentRevision）；CAS 陈旧 → 409 携 currentRevision。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/retire",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "软退休（YUK-601 v3.2 §3.4）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedRevision": 0
+        },
+        "notes": "retired 仍 resolvable 不进 selectable/词表/nightly；general 不可 retire → 422。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/restore",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "恢复退休科目（YUK-601 v3.2 §3.4）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedRevision": 1
+        },
+        "notes": "撞名（同名被新科占用）→ 409。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/reset",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "subject 级 reset：只换绑回种子（YUK-601 v3.2 §3.4）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedRevision": 1
+        },
+        "notes": "六绑定指回本科种子（custom→general）；永不改共享 payload；孤儿 fork 保留。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/validate",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "无状态装配预检（YUK-601 v3.2 §3.4）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "traitPayloadOverrides": {
+            "charter": {}
+          }
+        },
+        "notes": "assemble（可带 overrides）+ validateProfile，只回 issues 零落库。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/traits/:kind",
+    "methods": [
+      {
+        "method": "PUT",
+        "summary": "主写面：subject-scoped 编辑，自动 COW（YUK-601 v3.2 §3.1）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedSubjectRevision": 0,
+          "expectedTraitRevision": 0,
+          "payload": {}
+        },
+        "notes": "strict parse → deep-equal no-op 200 → 所有权判定：自有原地写+fan-out；非自有同事务 fork-and-edit。fan-out 失败 422 携 issues。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/traits/:kind/fork",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "显式剥离 fork，不带编辑（YUK-601 v3.2 §3.3）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedSubjectRevision": 0
+        },
+        "notes": "journal rev0 'fork_source' 携来源快照；general → 422（P1-1 锁定）。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/subjects/:id/traits/:kind/binding",
+    "methods": [
+      {
+        "method": "PUT",
+        "summary": "换绑：「化学借数学的 rubric」载体（YUK-601 v3.2 §3.3）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "targetTraitId": "trt_seed_math_judge_policy",
+          "expectedSubjectRevision": 0
+        },
+        "notes": "target kind 匹配 + 装配校验本科 → 改绑定 + control journal 'rebind'；general → 422。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/traits/:id",
+    "methods": [
+      {
+        "method": "PUT",
+        "summary": "显式共享写：影响全部绑定者（YUK-601 v3.2 §3.1）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedRevision": 0,
+          "payload": {}
+        },
+        "notes": "装配级 fan-out 校验全绑定科目，任一失败整体 422 回显。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/traits/:id/rollback",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "rollback-forward（git-revert 语义，YUK-601 v3.2 §3.2）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedRevision": 2,
+          "targetRevision": 0
+        },
+        "notes": "恢复 payload+payload_schema_version 为新 revision；seed lineage 不动；历史行永不改写。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/traits/:id/reset-to-seed",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "恢复出厂内容（trait 级全局显式动作，YUK-601 v3.2 §3.4）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "expectedRevision": 1
+        },
+        "notes": "仅 seed_version 非空合法；覆写为当前代码种子 + fan-out 校验全绑定者。需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/agents/notes",
     "methods": [
       {
