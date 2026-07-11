@@ -142,6 +142,8 @@ Issue 描述的「空屏」需精确化（`TodayPage.tsx`）：
 - **`/today` 卡片（新建）**：一个 block，`LoomCard + SectionLabel + 连续 band 原语` 组合，挂在 `TodayPage` 的 `KpiRow`（`:393-399`）与 `今日之线`（`:401`）之间，gate 在 `active_goal`——**完全复刻 `OvernightDigestBand` 模式**（`TodayPage.tsx:234-311`）。**⚠️ 实现期更正**：两席都以为 `active.goalId` 已在 `TodayPage` scope 内——**是错的**（`active` 是动画 boolean；`WorkbenchSummary.kpi` 仅计数、无 goal id；也无 `GET /api/goals` list，只有 POST）。故给 `/api/workbench/summary` 增量返回 `active_goal{id,title}`（复用既有 goal 查询、无 migration），卡片据此 `getPlacementProfile(active_goal.id)`。是**摘要条**（testedCount/totalKcs + 最弱 2–3 个 KC 迷你带 + CTA），非 `/profile` 的复制。
 - **`/profile` 深读路由（复用，不重建）**：已建、已正确（标记=`p_l`）、已挂启用的 #41 校验层。卡片 CTA「查看完整画像」→ 之。
 
+> **⚠️ YUK-614 引入的 card↔page 分歧（已知、已跟踪）**：卡片的「最弱预览」用服务端 `weakest`（全集按 `p_l` 升序，越过 `PROFILE_KC_LIMIT=20` 截断——见 YUK-614）；而 `/profile` 深读面仍渲染 `kcs`（按 `evidence_count desc` 排序、cap 20）。故 >20 tested KC 的用户，卡片高亮的「真·最弱」（低证据、排第 21 名后）在深读面完整列表里可能**看不到**（只有「显示前 20 · 共 N」截断提示）。冷启目标（≤20 KC）无此分歧。真修 = 深读面也露全集 weakest（需动 kcs 契约），拆 **YUK-616** 跟踪；本设计接受此分歧待该单收口。
+
 **导航持久性**（OQ1，真 fork）：后端真相席主张「只留 deep-link、不进导航」，但卡片一旦 gate 掉（回到有活动的日子），这个有价值的已建面就**重新变孤儿**——而它的价值（看区间随证据收窄）恰恰**活过**那个 gate。原型保真席主张进导航。折中推荐：**给 `/profile` 一个轻量持久入口（卡片 CTA + 知识/练习面的一个入口），不是顶层 NAV tab**（顶层 tab 对一个 per-goal 诊断过重）。
 
 ### 触及文件（实现期，供参考）

@@ -29,6 +29,11 @@ import { resolveGoalPlacementScope } from '../server/placement-scope';
  * KCs; the probe only touched a handful, so cap the list to keep the reveal legible. */
 const PROFILE_KC_LIMIT = 20;
 
+/** YUK-614 — how many "weakest" KCs (lowest p(L)) the server surfaces for the /today card's
+ * preview. Computed over the FULL evidenced set BEFORE the PROFILE_KC_LIMIT cap, so a truly weak
+ * but low-evidence KC (ranked past #20 by evidence) still surfaces as weakest. */
+const WEAKEST_LIMIT = 5;
+
 export interface ProfileKc {
   id: string;
   name: string;
@@ -104,7 +109,9 @@ export async function GET(req: Request): Promise<Response> {
         goalId,
         title: g.title,
         kcs: [],
+        weakest: [],
         evidenceCount: 0,
+        evidencedCount: 0,
         testedCount: 0,
         totalKcs: 0,
       });
@@ -193,11 +200,25 @@ export async function GET(req: Request): Promise<Response> {
         a.id.localeCompare(b.id),
     );
 
+    // YUK-614 — KCs with real answer evidence (evidence_count>0), over the FULL set (before the
+    // PROFILE_KC_LIMIT cap). Drives both the /today card's weakest-first preview AND its honest
+    // coverage count — neither must be undercounted by the (evidence-sorted) truncation of kcs,
+    // nor inflated by KG-borrow soft-layer rows (evidence_count:0) that testedCount can include.
+    const evidencedKcs = kcs.filter((k) => k.tested && k.evidence_count > 0 && k.p_l !== undefined);
+    const evidencedCount = evidencedKcs.length;
+    // "weakest" preview: lowest p(L) first, over that full evidenced set — so a truly weak but
+    // low-evidence KC ranked past #20 by evidence still surfaces.
+    const weakest = [...evidencedKcs]
+      .sort((a, b) => (a.p_l ?? 1) - (b.p_l ?? 1))
+      .slice(0, WEAKEST_LIMIT);
+
     return Response.json({
       goalId,
       title: g.title,
       kcs: kcs.slice(0, PROFILE_KC_LIMIT),
+      weakest,
       evidenceCount,
+      evidencedCount,
       testedCount,
       totalKcs,
       // YUK-495 #41 — which σ the server display used: 'poly' (shared bit-exact polynomial,

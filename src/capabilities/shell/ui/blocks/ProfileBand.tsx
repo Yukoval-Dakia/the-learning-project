@@ -81,9 +81,12 @@ function ProfileBandBody({
   navigate: (to: string) => void;
 }) {
   const { totalKcs } = data;
-  // 有真实作答证据（evidence_count>0）的 tested KC——分支/预览/覆盖统一用它，避免与后端
-  // testedCount（可含 KG-borrow 的 evidence_count:0 软层行）分歧导致空 band 列表 + 假覆盖。
-  const evidenced = data.kcs.filter((k) => k.tested && (k.evidence_count ?? 0) > 0);
+  // YUK-614 — 预览与覆盖是服务端全量集派生的单一真相（server + client 同批部署，卡片只信端点）：
+  //  · weakest = 全集按 p_l 最弱 N（越过 PROFILE_KC_LIMIT 截断，真·最弱不漏）
+  //  · evidencedCount = 全集有证据 KC 数（footer 真实覆盖，不受截断欠数、不含软层零证据）
+  // 端点契约保证二者恒返回；空默认仅护一帧 stale 缓存（下次 refetch 自愈），不在客户端重算最弱。
+  const preview = (data.weakest ?? []).slice(0, PREVIEW_KC_LIMIT);
+  const evidencedCount = data.evidencedCount ?? 0;
 
   // State D — 空知识树（无可评估 KC）：先录入材料。永不落 ColdStart（本就在 goal>0 分支内，
   // 守 YUK-520 红线：workbench 子块的空态只 quiet-empty）。
@@ -99,8 +102,8 @@ function ProfileBandBody({
   }
 
   // State B — 有 scope 但无可展示证据（零 tested，或 tested 但都 evidence_count:0 软层）：
-  // 练几道点亮画像（placement probe dark-ship，练习是 live 证据源）。
-  if (evidenced.length === 0) {
+  // 练几道点亮画像（placement probe dark-ship，练习是 live 证据源）。preview 空 ⟺ 无有证据 KC。
+  if (preview.length === 0) {
     return (
       <div className="pf-empty">
         <p className="pf-lead">{`这个目标的 ${totalKcs} 个知识点还没有作答证据 —— 练几道，画像会随练习长出来。`}</p>
@@ -111,10 +114,7 @@ function ProfileBandBody({
     );
   }
 
-  // State C/E — 有证据：band-only 预览（最弱优先几条）+ 覆盖表述 + 深读入口。
-  const preview = [...evidenced]
-    .sort((a, b) => (a.p_l ?? 1) - (b.p_l ?? 1))
-    .slice(0, PREVIEW_KC_LIMIT);
+  // State C/E — 有证据：band-only 预览（服务端全集最弱 N，见上）+ 覆盖表述 + 深读入口。
   const softLead = preview.filter(isSoft).length > preview.length / 2;
   return (
     <>
@@ -125,7 +125,7 @@ function ProfileBandBody({
         ))}
       </div>
       <div className="pf-band-foot">
-        <span className="meta">{`${evidenced.length} / ${totalKcs} 个知识点有证据`}</span>
+        <span className="meta">{`${evidencedCount} / ${totalKcs} 个知识点有证据`}</span>
         <Btn
           size="sm"
           variant="secondary"

@@ -274,4 +274,76 @@ describe('GET /api/placement/profile', () => {
     const body = await res.json();
     expect(body.kcs[0].axis).toBeUndefined();
   });
+
+  it('YUK-614: weakest surfaces the true lowest-p(L) KC even when truncated out of kcs (>PROFILE_KC_LIMIT)', async () => {
+    const scope: string[] = [];
+    // 21 strong KCs (high evidence, high p(L)) — fill + exceed the 20-cap; sorted first by evidence.
+    for (let i = 0; i < 21; i++) {
+      const id = `kc_strong_${String(i).padStart(2, '0')}`;
+      await seedKnowledge(id, `强${i}`);
+      scope.push(id);
+      await seedMastery(id, {
+        evidence_count: 10,
+        success_count: 9,
+        fail_count: 1,
+        theta_precision: 2.0,
+      });
+    }
+    // The true weakest: lowest p(L) (0 success / 1 fail) but LOW evidence (1) → sorted LAST by
+    // evidence_count desc → truncated out of the surfaced kcs (top-20).
+    await seedKnowledge('kc_weak', '真最弱');
+    scope.push('kc_weak');
+    await seedMastery('kc_weak', {
+      evidence_count: 1,
+      success_count: 0,
+      fail_count: 1,
+      theta_precision: 1.0,
+    });
+
+    await seedGoal('g1', scope);
+    const res = await GET(req('g1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    // kcs capped at PROFILE_KC_LIMIT=20 (evidence-sorted) → the low-evidence weak KC is excluded.
+    expect(body.kcs).toHaveLength(20);
+    expect(body.kcs.map((k: { id: string }) => k.id)).not.toContain('kc_weak');
+
+    // but weakest (p(L) asc over the FULL evidenced set) leads with the true weakest.
+    expect(Array.isArray(body.weakest)).toBe(true);
+    expect(body.weakest[0].id).toBe('kc_weak');
+    expect(body.weakest).toHaveLength(5); // WEAKEST_LIMIT
+    const pls = body.weakest.map((k: { p_l: number }) => k.p_l);
+    expect([...pls]).toEqual([...pls].sort((a, b) => a - b));
+    // evidencedCount = full-set count of KCs with evidence (22 = 21 strong + 1 weak), NOT the
+    // truncated kcs length (20) — the honest coverage figure for the card footer.
+    expect(body.evidencedCount).toBe(22);
+  });
+
+  it('YUK-614: evidencedCount excludes zero-evidence rows (weakest too)', async () => {
+    await seedKnowledge('kc_ev', '有证据');
+    await seedKnowledge('kc_zero', '零证据软层'); // mastery_state row exists but evidence_count:0
+    await seedGoal('g1', ['kc_ev', 'kc_zero']);
+    await seedMastery('kc_ev', {
+      evidence_count: 3,
+      success_count: 1,
+      fail_count: 2,
+      theta_precision: 1.5,
+    });
+    await seedMastery('kc_zero', {
+      evidence_count: 0,
+      success_count: 0,
+      fail_count: 0,
+      theta_precision: 1.0,
+    });
+
+    const res = await GET(req('g1'));
+    const body = await res.json();
+    // testedCount counts any mastery_state row (both); evidencedCount only evidence_count>0.
+    expect(body.testedCount).toBe(2);
+    expect(body.evidencedCount).toBe(1);
+    // the zero-evidence KC must not appear in the weakest preview either.
+    expect(body.weakest).toHaveLength(1);
+    expect(body.weakest[0].id).toBe('kc_ev');
+  });
 });

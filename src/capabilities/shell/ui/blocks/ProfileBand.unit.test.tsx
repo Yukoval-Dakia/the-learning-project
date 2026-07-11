@@ -27,13 +27,22 @@ function kc(overrides: Partial<ProfileKc> & Pick<ProfileKc, 'id' | 'name'>): Pro
   };
 }
 
+// Build a realistic payload — mirror the server's full-set derivation of weakest / evidencedCount
+// (placement-profile.ts) so the card is tested against the true wire contract, not a stand-in.
+// overrides win (lets a test inject a weakest/evidencedCount that diverges from kcs on purpose).
 function profile(overrides: Partial<PlacementProfile> = {}): PlacementProfile {
   const kcs = overrides.kcs ?? [];
+  const evidenced = kcs.filter(
+    (k) => k.tested && (k.evidence_count ?? 0) > 0 && k.p_l !== undefined,
+  );
+  const weakest = [...evidenced].sort((a, b) => (a.p_l ?? 1) - (b.p_l ?? 1)).slice(0, 5);
   return {
     goalId: GOAL.id,
     title: GOAL.title,
     kcs,
+    weakest,
     evidenceCount: kcs.reduce((a, k) => a + (k.tested ? k.evidence_count : 0), 0),
+    evidencedCount: evidenced.length,
     testedCount: kcs.filter((k) => k.tested).length,
     totalKcs: kcs.length,
     ...overrides,
@@ -150,6 +159,24 @@ describe('ProfileBand (/today 起始画像卡片)', () => {
     );
     expect(html).toContain('left:100%');
     expect(html).not.toContain('left:140%');
+  });
+
+  it('surfaces server weakest even when that KC is truncated out of kcs (YUK-614)', () => {
+    // The true-weakest KC is NOT in kcs (server truncated it past PROFILE_KC_LIMIT) but the
+    // server put it in `weakest`; the card must show it, and the footer must use evidencedCount
+    // (full set), not the visible-kcs count.
+    const truncatedWeak = kc({ id: 'weak', name: '真最弱', p_l: 0.15 });
+    const html = render(
+      profile({
+        kcs: [kc({ id: 'v1', name: '可见强项', p_l: 0.88 })], // the surfaced (truncated) list
+        weakest: [truncatedWeak], // server's full-set weakest — not present in kcs
+        evidencedCount: 21, // full-set count, larger than kcs.length
+        totalKcs: 21,
+      }),
+    );
+    expect(html).toContain('真最弱');
+    expect(html).not.toContain('可见强项'); // preview is driven by weakest, not kcs
+    expect(html).toContain('21 / 21 个知识点有证据');
   });
 
   it('renders a non-negative band width on an inverted CI (mastery_hi < mastery_lo)', () => {
