@@ -14,11 +14,18 @@ export class ApiAuthError extends Error {
 export class ApiError extends Error {
   status: number;
   code: string | undefined;
-  constructor(message: string, status: number, code?: string) {
+  /**
+   * 响应 body 的结构化附加字段（error/message 之外的原样保留）。YUK-601（UI design
+   * doc v1.1 owner review P1）：CAS 409 携 currentRevision、fan-out 422 携 issues
+   * ——没有它们 UI 的 409 分流（stale refetch vs 撞名直出）实现不了。
+   */
+  details: Record<string, unknown>;
+  constructor(message: string, status: number, code?: string, details?: Record<string, unknown>) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.details = details ?? {};
   }
 }
 
@@ -53,14 +60,20 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   if (!res.ok) {
     let code: string | undefined;
     let message = `${res.status} ${res.statusText}`;
+    let details: Record<string, unknown> = {};
     try {
-      const body = (await res.clone().json()) as { error?: string; message?: string };
+      const body = (await res.clone().json()) as Record<string, unknown> & {
+        error?: string;
+        message?: string;
+      };
       if (body.error) code = body.error;
       if (body.message) message = body.message;
+      const { error: _e, message: _m, ...rest } = body;
+      details = rest;
     } catch {
       // ignore JSON parse errors; keep status-line message
     }
-    throw new ApiError(message, res.status, code);
+    throw new ApiError(message, res.status, code, details);
   }
   return res;
 }
