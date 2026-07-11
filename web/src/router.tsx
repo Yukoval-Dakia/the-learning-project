@@ -13,6 +13,7 @@ import {
   AdminFailuresSurface,
   AdminRunsSurface,
 } from '@/capabilities/observability/ui/observability';
+import { AdminSubjectTraitsSurface } from '@/capabilities/observability/ui/subject-traits';
 import { AdminSubjectsSurface } from '@/capabilities/observability/ui/subjects';
 import OnboardRecord from '@/capabilities/onboarding/ui/OnboardRecord';
 import ScreenPlacement from '@/capabilities/onboarding/ui/ScreenPlacement';
@@ -496,6 +497,20 @@ const adminSubjectsRoute = createRoute({
   component: AdminSubjectsRoute,
 });
 
+// YUK-601 — trait 编辑面 detail（TanStack $id 语法；capability 组件零路由库
+// import，param 由本 wrapper 读出后以 subjectId prop 注入——design doc v1.1 §0.3）。
+function AdminSubjectTraitsRoute() {
+  const router = useRouter();
+  const { id } = adminSubjectTraitsRoute.useParams();
+  return <AdminSubjectTraitsSurface subjectId={id} navigate={(to) => router.history.push(to)} />;
+}
+
+const adminSubjectTraitsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/subjects/$id',
+  component: AdminSubjectTraitsRoute,
+});
+
 // YUK-579 — 供题治理覆盖细目表（admin 第五页）。同四页套主 chrome（rootRoute → RootShell）。
 function AdminCoverageLatticeRoute() {
   const router = useRouter();
@@ -531,6 +546,7 @@ const routeTree = rootRoute.addChildren([
   adminCostRoute,
   adminFailuresRoute,
   adminSubjectsRoute,
+  adminSubjectTraitsRoute,
   adminCoverageLatticeRoute,
 ]);
 

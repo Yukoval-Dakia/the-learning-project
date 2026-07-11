@@ -223,6 +223,7 @@ export const observabilityCapability = defineCapability({
       { route: '/admin/cost' },
       { route: '/admin/failures' },
       { route: '/admin/subjects' },
+      { route: '/admin/subjects/$id' },
       { route: '/admin/coverage-lattice' },
     ],
   },

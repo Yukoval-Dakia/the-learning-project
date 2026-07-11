@@ -1,32 +1,17 @@
-// U7 (YUK-203) → M5-T4b (YUK-321) — read-only /admin/subjects surface
-// (Editable Profile Studio MVP)，迁 observability 包 + SPA 化。
+// U7 (YUK-203) → M5-T4b (YUK-321) → YUK-601 (UI design doc v1.1 §2.1) —
+// /admin/subjects 列表面扩列：数据源已随 §3.5 扩容（全量含 general 与 retired），
+// 列 = 名称 / id / origin / 通用模式 / version 组合串 / →detail 行链接。
 //
-// 数据面（M5-T4b 改造）：旧版是纯 RSC 直读 SubjectRegistry；SPA 无服务端渲染，
-// 改为 client 数据面——useQuery + apiJson('/api/admin/subjects')（T4 新建端点，
-// 服务端做同一 slim 投影）。渲染保持 SLIM, non-sensitive subset——id /
-// displayName / version / notation / capability count — NOT the full profile
-// blob（R11 over-exposure：promptFragments / noteTemplate / causeCategories
-// 细节绝不过线到 client）。
+// 数据面：useQuery + apiJson('/api/admin/subjects')。渲染保持 SLIM（R11：
+// promptFragments / noteTemplate / causeCategories 细节绝不过线到 client）。
 //
-// ── RL5 — admin WRITES are forbidden on the page route ──────────────────────────
-// This surface is READ-ONLY. Any FUTURE write to a SubjectProfile MUST go through
-// `/api/admin/*` (which inherits the `x-internal-token` middleware gate); it must
-// NOT be implemented as a page-side mutation outside that gate (spec §9a:379-384).
+// ── RL5 — 列表页零写按钮 ────────────────────────────────────────────────────────
+// This surface is READ-ONLY. 写动作全部集中 detail 页（/admin/subjects/$id），
+// 且一律经 /api/admin/*（x-internal-token gate）。design doc v1.1 §2.1 显式裁定
+// 「不在列表页放任何写按钮」。
 //
-// ── S3 — 读已走 /api/admin/* token gate ─────────────────────────────────────────
-// 旧版的 S3 警示（页面 RSC 渲染不受 middleware 保护）已随 SPA 化解除：本面的
-// 读取现在经 /api/admin/subjects，由 x-internal-token gate 服务端强制；SPA 的
-// TokenGate 仍只是 client-side localStorage render gate，不是服务端防线。
-//
-// ── RL4 — read-only is SCHEDULING, not field immutability ───────────────────────
-// There is no Studio write *entry point* yet — that is a scheduling decision, NOT a
-// policy that SubjectProfile fields are fixed/immutable. High-impact edits remain
-// "allowed but strongly gated" (spec §0); nothing here implies a field cannot change.
-//
-// 壳形态：admin 页套主 app chrome（RootShell），非独立壳——决策记录见
-// docs/design/2026-07-07-yuk579-coverage-lattice.md §6 + observability/AGENTS.md（loom
-// app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，owner 已收编；visual-gap.md
-// §5 决策点③ 收口）。
+// 壳形态：admin 页套主 app chrome（RootShell）——决策记录见
+// docs/design/2026-07-07-yuk579-coverage-lattice.md §6。
 
 import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
@@ -36,13 +21,15 @@ import { Stateful } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
 import type { CSSProperties } from 'react';
 
-// Slim, non-sensitive projection（字段对齐 api/admin-subjects.ts 的服务端投影；
-// R11 — no promptFragments / noteTemplate / causeCategories detail crosses to
-// the client）。
-interface SlimSubjectRow {
+// §3.5 管理枚举投影（字段对齐 api/admin-subjects.ts；R11 slim 红线不变）。
+export interface AdminSubjectRow {
   id: string;
   displayName: string;
-  version: string;
+  origin: 'builtin' | 'custom';
+  retiredAt: string | null;
+  isGeneralFallback: boolean | null;
+  version: string | null;
+  subjectRevision: number;
   notation: string | null;
   capabilityCount: number;
 }
@@ -50,7 +37,7 @@ interface SlimSubjectRow {
 export function AdminSubjectsSurface({ navigate }: { navigate: (to: string) => void }) {
   const q = useQuery({
     queryKey: ['admin-subjects'],
-    queryFn: () => apiJson<{ subjects: SlimSubjectRow[] }>('/api/admin/subjects'),
+    queryFn: () => apiJson<{ subjects: AdminSubjectRow[] }>('/api/admin/subjects'),
     refetchInterval: 60_000,
   });
   const rows = q.data?.subjects ?? [];
@@ -71,8 +58,8 @@ export function AdminSubjectsSurface({ navigate }: { navigate: (to: string) => v
     <main className="page wide">
       <PageHeader
         title="Subjects"
-        eyebrow="ADMIN · profile registry"
-        sub="已编译 SubjectProfile 的只读视图（id / 名称 / 版本 / notation / 能力数）。编辑入口尚未排期，写操作未来走 /api/admin/*。"
+        eyebrow="ADMIN · subject control plane"
+        sub="全量科目（含 general 与 retired）。行链接进 trait 编辑面；写动作全部在 detail 页经 /api/admin/*。"
       >
         <div style={linkRowStyle}>
           {link('/admin/runs', 'runs')}
@@ -97,27 +84,56 @@ export function AdminSubjectsSurface({ navigate }: { navigate: (to: string) => v
           <table style={tableStyle}>
             <thead>
               <tr>
-                <th style={thStyle}>id</th>
                 <th style={thStyle}>名称</th>
+                <th style={thStyle}>id</th>
+                <th style={thStyle}>origin</th>
+                <th style={thStyle}>通用模式</th>
                 <th style={thStyle}>版本</th>
-                <th style={thStyle}>notation</th>
-                <th style={thStyle}>能力数</th>
+                <th style={thStyle} aria-label="detail" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td style={tdStyle}>
-                    <code>{row.id}</code>
-                  </td>
-                  <td style={tdStyle}>{row.displayName}</td>
-                  <td style={tdStyle}>
-                    <Badge tone="neutral">{row.version}</Badge>
-                  </td>
-                  <td style={tdStyle}>{row.notation ?? <span className="meta">—</span>}</td>
-                  <td style={tdStyle}>{row.capabilityCount}</td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const retired = row.retiredAt !== null;
+                // origin 权威枚举只有 builtin|custom；general 徽标由 id 派生
+                // （owner review 一致性①）。
+                const isGeneral = row.id === 'general';
+                return (
+                  <tr key={row.id} style={retired ? retiredRowStyle : undefined}>
+                    <td style={tdStyle}>
+                      {row.displayName}
+                      {retired && (
+                        <span style={badgeGapStyle}>
+                          <Badge tone="neutral">retired</Badge>
+                        </span>
+                      )}
+                    </td>
+                    <td style={tdStyle}>
+                      <code style={monoSmallStyle}>{row.id}</code>
+                    </td>
+                    <td style={tdStyle}>
+                      <Badge tone="neutral">{isGeneral ? 'general' : row.origin}</Badge>
+                    </td>
+                    <td style={tdStyle}>
+                      {isGeneral ? (
+                        <span className="meta">—</span>
+                      ) : row.isGeneralFallback === true ? (
+                        <Badge tone="neutral">通用</Badge>
+                      ) : null}
+                    </td>
+                    <td style={tdStyle}>
+                      {row.version ? (
+                        <span style={monoSmallStyle} title={row.version}>
+                          {row.version.length > 40 ? `${row.version.slice(0, 40)}…` : row.version}
+                        </span>
+                      ) : (
+                        <span className="meta">—</span>
+                      )}
+                    </td>
+                    <td style={tdStyle}>{link(`/admin/subjects/${row.id}`, '→')}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Card>
@@ -156,6 +172,15 @@ const tdStyle: CSSProperties = {
   padding: '10px 10px 10px 0',
   verticalAlign: 'top',
   color: 'var(--ink-2)',
+};
+
+const retiredRowStyle: CSSProperties = { opacity: 0.55 };
+
+const badgeGapStyle: CSSProperties = { marginLeft: 6 };
+
+const monoSmallStyle: CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11.5,
 };
 
 const mutedTextStyle: CSSProperties = {
