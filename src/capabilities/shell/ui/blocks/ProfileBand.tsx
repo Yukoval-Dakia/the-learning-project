@@ -39,18 +39,11 @@ function isSoft(kc: ProfileKc): boolean {
   return Boolean(kc.low_confidence) || (kc.evidence_count ?? 0) < 3;
 }
 
-// 预览取「最弱优先」：tested KC 按 p_l 升序取前 N；未测不进预览（留给深读面完整列表）。
-function weakestTested(kcs: ProfileKc[]): ProfileKc[] {
-  return kcs
-    .filter((k) => k.tested && k.evidence_count > 0)
-    .sort((a, b) => (a.p_l ?? 1) - (b.p_l ?? 1))
-    .slice(0, PREVIEW_KC_LIMIT);
-}
-
-// 链式三元会被 OCR flag（项目规则）——用 if/else 算状态。
-function queryStatus(isLoading: boolean, isError: boolean): StatefulStatus {
-  if (isLoading) return 'loading';
-  if (isError) return 'error';
+// 链式三元会被 OCR flag（项目规则）——用 if/else 算状态。后台 refetch 失败但缓存仍有旧数据
+// 时，保留上一份好渲染（不让 error 覆盖可用数据）；仅在无数据可显时才 loading/error。
+function queryStatus(isLoading: boolean, isError: boolean, hasData: boolean): StatefulStatus {
+  if (isError && !hasData) return 'error';
+  if (isLoading && !hasData) return 'loading';
   return 'ok';
 }
 
@@ -63,7 +56,12 @@ function MiniBand({ kc }: { kc: ProfileKc }) {
   const hi = Math.max(rawLo, rawHi);
   const point = clamp01(kc.p_l, lo);
   return (
-    <div className={`pf-band-row${isSoft(kc) ? ' is-soft' : ''}`}>
+    <div
+      className={`pf-band-row${isSoft(kc) ? ' is-soft' : ''}`}
+      aria-label={`${kc.name}，可能掌握区间约 ${pct(lo)} 到 ${pct(hi)}（满分 100）${
+        isSoft(kc) ? '，先验初估' : ''
+      }`}
+    >
       <span className="pf-band-name">{kc.name}</span>
       <span className="pf-band-track" aria-hidden="true">
         <span className="pf-band-fill" style={{ left: `${pct(lo)}%`, width: `${pct(hi - lo)}%` }} />
@@ -82,7 +80,10 @@ function ProfileBandBody({
   goalId: string;
   navigate: (to: string) => void;
 }) {
-  const { testedCount, totalKcs } = data;
+  const { totalKcs } = data;
+  // 有真实作答证据（evidence_count>0）的 tested KC——分支/预览/覆盖统一用它，避免与后端
+  // testedCount（可含 KG-borrow 的 evidence_count:0 软层行）分歧导致空 band 列表 + 假覆盖。
+  const evidenced = data.kcs.filter((k) => k.tested && (k.evidence_count ?? 0) > 0);
 
   // State D — 空知识树（无可评估 KC）：先录入材料。永不落 ColdStart（本就在 goal>0 分支内，
   // 守 YUK-520 红线：workbench 子块的空态只 quiet-empty）。
@@ -97,8 +98,9 @@ function ProfileBandBody({
     );
   }
 
-  // State B — 有 scope 但零证据：练几道点亮画像（placement probe dark-ship，练习是 live 证据源）。
-  if (testedCount === 0) {
+  // State B — 有 scope 但无可展示证据（零 tested，或 tested 但都 evidence_count:0 软层）：
+  // 练几道点亮画像（placement probe dark-ship，练习是 live 证据源）。
+  if (evidenced.length === 0) {
     return (
       <div className="pf-empty">
         <p className="pf-lead">{`这个目标的 ${totalKcs} 个知识点还没有作答证据 —— 练几道，画像会随练习长出来。`}</p>
@@ -109,8 +111,10 @@ function ProfileBandBody({
     );
   }
 
-  // State C/E — 有证据：band-only 预览（最弱几条）+ 覆盖表述 + 深读入口。
-  const preview = weakestTested(data.kcs);
+  // State C/E — 有证据：band-only 预览（最弱优先几条）+ 覆盖表述 + 深读入口。
+  const preview = [...evidenced]
+    .sort((a, b) => (a.p_l ?? 1) - (b.p_l ?? 1))
+    .slice(0, PREVIEW_KC_LIMIT);
   const softLead = preview.filter(isSoft).length > preview.length / 2;
   return (
     <>
@@ -121,7 +125,7 @@ function ProfileBandBody({
         ))}
       </div>
       <div className="pf-band-foot">
-        <span className="meta">{`${testedCount} / ${totalKcs} 个知识点有证据`}</span>
+        <span className="meta">{`${evidenced.length} / ${totalKcs} 个知识点有证据`}</span>
         <Btn
           size="sm"
           variant="secondary"
@@ -157,7 +161,7 @@ export function ProfileBand({
           <div className="card-title">你的起始画像</div>
         </div>
         <Stateful
-          status={queryStatus(q.isLoading, q.isError)}
+          status={queryStatus(q.isLoading, q.isError, q.data !== undefined)}
           onRetry={() => void q.refetch()}
           errorText="起始画像暂不可用。"
           skeleton={<SkLines rows={3} />}

@@ -175,4 +175,28 @@ describe('GET /api/workbench/summary (shell)', () => {
     expect(body.week_heat).toHaveLength(7);
     expect(body.week_heat[6].count).toBeGreaterThanOrEqual(3);
   });
+
+  it('active_goal 取最近创建的 active goal（多目标 + 确定性 tie-break）', async () => {
+    const db = testDb();
+    const base = new Date('2026-07-01T00:00:00Z');
+    // 三条 active goal，created_at 递增 → active_goal 应取最新（g_new）。
+    for (const [id, offsetMin] of [
+      ['g_old', 0],
+      ['g_mid', 10],
+      ['g_new', 20],
+    ] as const) {
+      await db.insert(goal).values({
+        id,
+        title: id,
+        status: 'active',
+        source: 'manual',
+        created_at: new Date(base.getTime() + offsetMin * 60_000),
+        updated_at: base,
+      });
+    }
+
+    const body = await fetchSummary();
+    expect(body.kpi.goal_count).toBe(3);
+    expect(body.active_goal).toEqual({ id: 'g_new', title: 'g_new' });
+  });
 });

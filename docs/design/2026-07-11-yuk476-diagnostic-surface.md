@@ -180,7 +180,7 @@ Issue 描述的「空屏」需精确化（`TodayPage.tsx`）：
 | 态 | 判定（一次 GET） | 渲染 |
 |---|---|---|
 | **A 空库** | `kpi.goal_count === 0` | 不变——`TodayPage.tsx:370-372` 早返回 `ColdStart`；卡片不渲染（gate 需 goal）。`/profile` 无 goal → `EmptyState`，CTA 改指「去设定目标」→ `/welcome`（现为死胡同） |
-| **B 未定位** | goal 有、`testedCount===0` 且全 `tested:false` | 卡片/路由出 **CTA 态**：「先做定位，把先验换成证据」→ `/placement`；不倾倒 20 行未测 |
+| **B 未定位/薄** | goal 有、无 `evidence_count>0` 的 KC（零 tested，或 tested 但全 `evidence_count:0` 软层）| 卡片出 **CTA 态**：「练几道，画像会随练习长出来」→ `/practice`（placement probe dark-ship 是死路，练习才是 live 证据源——**实施更正**，原写 `/placement`）；不倾倒未测行。分支/预览/覆盖统一用 client 端 `evidence_count>0` 谓词，避免与后端 `testedCount` 分歧 |
 | **C 薄证据（day-one 常态）** | `0 < testedCount < totalKcs`，多数 `low_confidence` | lead banner「这还只是先验起点 — 练几轮，区间会收窄」；tested-first（服务端已排）；宽灰软轨带；未测折叠计数「{totalKcs−testedCount} 未测」；`totalKcs>20` 页脚披露「显示 20 / {totalKcs}」 |
 | **D 空知识树** | `scope.length===0` → `kcs:[], totalKcs:0`（`placement-profile.ts:101-111`） | 「还没有可评估的知识点 — 先录入材料」→ `/record`。**绝不回落 `ColdStart`**（守 YUK-520 红线，同 `OvernightDigestBand`） |
 | **E 已锐化（练后，愿景）** | 同组件，字段收窄驱动 | 带变窄+饱和，硬轨校准 chip 出现 |

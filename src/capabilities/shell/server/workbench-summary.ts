@@ -90,7 +90,8 @@ async function loadActiveGoalState(
     .select({ id: goal.id, title: goal.title })
     .from(goal)
     .where(eq(goal.status, 'active'))
-    .orderBy(desc(goal.created_at));
+    // id 降序作确定性 tie-break——同 created_at（同批种子/同秒创建）时选取稳定，不随 reload 漂移。
+    .orderBy(desc(goal.created_at), desc(goal.id));
   const first = rows[0];
   return { count: rows.length, active: first ? { id: first.id, title: first.title } : null };
 }

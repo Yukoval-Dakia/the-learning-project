@@ -128,4 +128,38 @@ describe('ProfileBand (/today 起始画像卡片)', () => {
     const html = render(profile({ kcs: [], totalKcs: 0 }));
     expect(html).toContain('录入材料');
   });
+
+  it('falls back to the practice prompt when tested KCs carry no evidence (empty-preview guard)', () => {
+    // KG-borrow 软层：tested:true 但 evidence_count:0 → 无可展示证据 → State B（不是空 band 列表）。
+    const html = render(
+      profile({
+        kcs: [kc({ id: 'k1', name: '虚词', tested: true, evidence_count: 0 })],
+        testedCount: 1,
+      }),
+    );
+    expect(html).toContain('去练习');
+    expect(html).not.toContain('查看完整画像');
+  });
+
+  it('clamps an out-of-range p_l into the track (never off-track)', () => {
+    // p_l 1.4（越界 logit-ish 脏值）→ 标记 clamp 到 100%，绝不产生 >100% 出轨位。
+    const html = render(
+      profile({
+        kcs: [kc({ id: 'k1', name: '越界', p_l: 1.4, mastery_lo: 0.6, mastery_hi: 0.99 })],
+      }),
+    );
+    expect(html).toContain('left:100%');
+    expect(html).not.toContain('left:140%');
+  });
+
+  it('renders a non-negative band width on an inverted CI (mastery_hi < mastery_lo)', () => {
+    // 退化投影 hi<lo：min/max 兜底 → 宽度非负（CSS 负宽会静默渲成 0，带消失）。
+    const html = render(
+      profile({
+        kcs: [kc({ id: 'k1', name: '退化', mastery_lo: 0.8, mastery_hi: 0.3, p_l: 0.5 })],
+      }),
+    );
+    expect(html).toContain('width:50%'); // lo=0.3→30%，hi=0.8→80%，width=50%
+    expect(html).not.toContain('width:-');
+  });
 });
