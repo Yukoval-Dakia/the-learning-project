@@ -196,6 +196,17 @@ export const observabilityCapability = defineCapability({
   },
   jobs: {
     handlers: [
+      // YUK-601 PR7 (v3.2 §7) — 夜间装配漂移审计（--strict：invalid → job failed
+      // 可见）。'25 4' 避撞既有夜链排期；fast 档纯 DB 无 LLM。
+      {
+        name: 'subject_profile_audit_nightly',
+        schedule: { cron: '25 4 * * *', tz: 'Asia/Shanghai' },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/subject_profile_audit_nightly').then(
+            (m) => m.buildSubjectProfileAuditNightlyHandler,
+          ),
+      },
       // YUK-576 §5 — stuck-in-running reconcile sweeper（辅触发；主触发是
       // start-worker.ts 的 boot-time sweep）。fast 档（无 DLQ）：sweep 幂等，
       // 掉一拍下轮 cron 重收敛（queue-config.ts fast 档既定语义）。06:40 取空闲

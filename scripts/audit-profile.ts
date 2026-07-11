@@ -117,8 +117,41 @@ export function runCli(args: string[] = process.argv.slice(2)): number {
   return result.valid ? 0 : 1;
 }
 
+// YUK-601 PR7 (v3.2 §7) — `--db` 模式：读 DB 活绑定逐科装配校验（与无参的
+// 编译期 registry 模式互补——抓共享 trait 编辑后的装配漂移 / deprecated judge
+// 存活装配）。默认 report-only（恒 exit 0）；`--strict` 才以 invalid 非零退出。
+// 动态 import：load-env 必须先于 @/db/client（backfill-genesis-events.ts 先例），
+// 且无 --db 时零 DB 依赖（pnpm test 的编译期路径不动）。
+export async function runDbCli(args: string[]): Promise<number> {
+  await import('./load-env');
+  const { db } = await import('@/db/client');
+  const { auditProfilesFromDb, formatDbProfileAuditReport } = await import(
+    '@/server/subjects/audit-profile-db'
+  );
+  const result = await auditProfilesFromDb(db);
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(formatDbProfileAuditReport(result));
+  }
+  return args.includes('--strict') && !result.valid ? 1 : 0;
+}
+
 export function main(): void {
-  process.exitCode = runCli();
+  const args = process.argv.slice(2);
+  if (args.includes('--db')) {
+    // process.exit（非 exitCode）——postgres 池无 idle_timeout，连接 socket 会
+    // 钉住事件循环，进程永不自然退出（review-769 HIGH；backfill-lost-attribution
+    // .ts:123 同结构先例）。
+    runDbCli(args)
+      .then((rc) => process.exit(rc))
+      .catch((err) => {
+        console.error('[audit:profile --db] failed:', err);
+        process.exit(1);
+      });
+  } else {
+    process.exitCode = runCli(args);
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
