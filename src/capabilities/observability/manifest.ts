@@ -59,6 +59,63 @@ export const observabilityCapability = defineCapability({
         path: '/api/admin/traits/[id]/journal',
         load: () => import('./api/admin-trait-journal').then((m) => m.GET),
       },
+      // YUK-601 (v3.2 §3.1-§3.4) — trait/控制行写面（全部写事务开头控制面
+      // advisory lock；业务在 src/server/subjects/{trait-write,subject-control-write}.ts）。
+      {
+        method: 'PUT',
+        path: '/api/admin/subjects/[id]/traits/[kind]',
+        load: () => import('./api/admin-subject-trait-write').then((m) => m.PUT),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/subjects/[id]/traits/[kind]/fork',
+        load: () => import('./api/admin-subject-trait-write').then((m) => m.FORK),
+      },
+      {
+        method: 'PUT',
+        path: '/api/admin/subjects/[id]/traits/[kind]/binding',
+        load: () => import('./api/admin-subject-trait-write').then((m) => m.BINDING),
+      },
+      {
+        method: 'PUT',
+        path: '/api/admin/traits/[id]',
+        load: () => import('./api/admin-trait-write').then((m) => m.PUT),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/traits/[id]/rollback',
+        load: () => import('./api/admin-trait-write').then((m) => m.ROLLBACK),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/traits/[id]/reset-to-seed',
+        load: () => import('./api/admin-trait-write').then((m) => m.RESET_TO_SEED),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/admin/subjects/[id]',
+        load: () => import('./api/admin-subject-control').then((m) => m.PATCH),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/subjects/[id]/retire',
+        load: () => import('./api/admin-subject-control').then((m) => m.RETIRE),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/subjects/[id]/restore',
+        load: () => import('./api/admin-subject-control').then((m) => m.RESTORE),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/subjects/[id]/reset',
+        load: () => import('./api/admin-subject-control').then((m) => m.RESET),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/subjects/[id]/validate',
+        load: () => import('./api/admin-subject-control').then((m) => m.VALIDATE),
+      },
       {
         // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4) — calibration loop
         // admin reader. READ-ONLY: prediction_score LOG events + auto-minted
