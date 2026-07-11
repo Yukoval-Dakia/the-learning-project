@@ -119,15 +119,21 @@ export function AdminSubjectTraitsSurface({
   const retired = header?.retiredAt != null;
 
   const invalidateAll = () => {
+    // 任一写成功即清 CAS 横幅（review-766 P3：refetch 后重放成功不该滞留横幅）。
+    setCasNotice(false);
     void queryClient.invalidateQueries({ queryKey: ['admin-subjects'] });
     void queryClient.invalidateQueries({ queryKey: ['admin-subject-traits', subjectId] });
+    // 前缀失效全部 journal（rollback 后未关的历史面板会缺新 revision——review-766 P2）。
+    void queryClient.invalidateQueries({ queryKey: ['admin-trait-journal'] });
+    void queryClient.invalidateQueries({ queryKey: ['admin-traits'] });
     void queryClient.invalidateQueries({ queryKey: ['subjects'] });
   };
   // CAS 409（携 currentRevision）→ 顶部条 + refetch；其余错误由调用处内联呈现。
+  // 顺序：先 invalidate（其中清横幅）再置横幅，防清掉自己。
   const onWriteError = (err: unknown): boolean => {
     if (isCasStale(err)) {
-      setCasNotice(true);
       invalidateAll();
+      setCasNotice(true);
       return true;
     }
     return false;
@@ -178,15 +184,19 @@ export function AdminSubjectTraitsSurface({
         </Card>
       )}
 
-      <ControlRow
-        subjectId={subjectId}
-        subjectRevision={subjectRevision}
-        isGeneral={isGeneral}
-        retired={retired}
-        isBuiltin={header?.origin === 'builtin'}
-        onWriteError={onWriteError}
-        onDone={invalidateAll}
-      />
+      {traitsQ.isSuccess && (
+        // 控制行 gate 在 traitsQ 成功后（review-766 P3：加载期 subjectRevision
+        // 回落 0 会让 rev-0 科目的写 pre-load 静默成功）。
+        <ControlRow
+          subjectId={subjectId}
+          subjectRevision={subjectRevision}
+          isGeneral={isGeneral}
+          retired={retired}
+          isBuiltin={header?.origin === 'builtin'}
+          onWriteError={onWriteError}
+          onDone={invalidateAll}
+        />
+      )}
 
       <Stateful
         status={traitsQ.isLoading ? 'loading' : traitsQ.isError ? 'error' : 'ok'}
@@ -364,7 +374,7 @@ function TraitRow({
   onWriteError: (err: unknown) => boolean;
   onDone: () => void;
 }) {
-  const [panel, setPanel] = useState<null | 'edit' | 'rebind' | 'journal'>(null);
+  const [panel, setPanel] = useState<null | 'edit' | 'fork' | 'rebind' | 'journal'>(null);
   // 自有判定与写门同式（trait ownership，v3.2）。
   const own =
     binding.traitId === `trt_seed_${subjectId}_${binding.kind}` ||
@@ -383,7 +393,8 @@ function TraitRow({
         {binding.seedVersion && <span style={mutedTextStyle}>seed {binding.seedVersion}</span>}
         <span style={mutedTextStyle}>rev {binding.revision}</span>
         {binding.degraded !== null && (
-          <Badge tone="again">
+          // 黄底徽标（doc §2.2；hard = 项目色板的黄档，review-766 P3 校正）。
+          <Badge tone="hard">
             {binding.degraded} · 实际在用 {String(binding.effectiveRevision)}
           </Badge>
         )}
@@ -398,16 +409,26 @@ function TraitRow({
           >
             编辑
           </button>
-          {!isGeneral && (
-            <button
-              type="button"
-              style={inlineBtnStyle}
-              title={isGeneral ? 'general 绑定结构性锁定（v3.2 §2.3）' : undefined}
-              onClick={() => setPanel(panel === 'rebind' ? null : 'rebind')}
-            >
-              换绑
-            </button>
-          )}
+          {/* fork/换绑对 general 渲染禁用态 + 锁定 title（doc §2.3 general 特殊态；
+              禁用是 UI 礼貌，422 写门才是红线）。 */}
+          <button
+            type="button"
+            style={inlineBtnStyle}
+            disabled={isGeneral}
+            title={isGeneral ? 'general 绑定结构性锁定（v3.2 §2.3）' : '剥离出本科副本，稍后再改'}
+            onClick={() => setPanel(panel === 'fork' ? null : 'fork')}
+          >
+            fork
+          </button>
+          <button
+            type="button"
+            style={inlineBtnStyle}
+            disabled={isGeneral}
+            title={isGeneral ? 'general 绑定结构性锁定（v3.2 §2.3）' : undefined}
+            onClick={() => setPanel(panel === 'rebind' ? null : 'rebind')}
+          >
+            换绑
+          </button>
           <button
             type="button"
             style={inlineBtnStyle}
@@ -433,6 +454,18 @@ function TraitRow({
           }}
         />
       )}
+      {panel === 'fork' && (
+        <ForkPanel
+          subjectId={subjectId}
+          subjectRevision={subjectRevision}
+          binding={binding}
+          onWriteError={onWriteError}
+          onDone={() => {
+            setPanel(null);
+            onDone();
+          }}
+        />
+      )}
       {panel === 'rebind' && (
         <RebindPanel
           subjectId={subjectId}
@@ -447,7 +480,16 @@ function TraitRow({
         />
       )}
       {panel === 'journal' && (
-        <JournalPanel binding={binding} onWriteError={onWriteError} onDone={onDone} />
+        <JournalPanel
+          binding={binding}
+          onWriteError={onWriteError}
+          onDone={() => {
+            // rollback 成功即关面板（review-766 P2）——重开时 refetch 拿到新 revision，
+            // 不会留着陈旧列表 + 全行「回滚到此」误导。
+            setPanel(null);
+            onDone();
+          }}
+        />
       )}
     </div>
   );
@@ -686,6 +728,50 @@ function ResetToSeedButton({
     <button type="button" style={inlineBtnStyle} onClick={() => setConfirming(true)}>
       恢复出厂
     </button>
+  );
+}
+
+// ---------- fork：显式剥离，不带编辑（§2.3 矩阵 fork 行，review-766 P1） ----------
+
+function ForkPanel({
+  subjectId,
+  subjectRevision,
+  binding,
+  onWriteError,
+  onDone,
+}: {
+  subjectId: string;
+  subjectRevision: number;
+  binding: TraitBindingRow;
+  onWriteError: (err: unknown) => boolean;
+  onDone: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const run = useMutation({
+    mutationFn: () =>
+      writeJson(`/api/admin/subjects/${subjectId}/traits/${binding.kind}/fork`, 'POST', {
+        expectedSubjectRevision: subjectRevision,
+      }),
+    onSuccess: onDone,
+    onError: (err) => {
+      if (!onWriteError(err)) setError(errText(err));
+    },
+  });
+  return (
+    <div style={panelStyle}>
+      <p style={noticeStyle}>
+        剥离后本科独立演化，不再跟随来源（{binding.traitId}）。确认 fork？
+        <button
+          type="button"
+          style={inlineBtnStyle}
+          disabled={run.isPending}
+          onClick={() => run.mutate()}
+        >
+          {run.isPending ? 'fork 中…' : '确认 fork'}
+        </button>
+      </p>
+      {error && <p style={errStyle}>{error}</p>}
+    </div>
   );
 }
 

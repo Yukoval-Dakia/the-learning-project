@@ -90,7 +90,7 @@ describe('AdminSubjectTraitsSurface — detail 页 SSR（YUK-601 §2.2）', () =
     expect(healthy).not.toContain('实际在用');
   });
 
-  it('general 特殊态：无换绑按钮、无 retire/reset、锁定说明在场（v3.2 §2.3 P1-1）', () => {
+  it('general 特殊态：fork/换绑禁用带锁定 title、无 retire/reset（v3.2 §2.3 P1-1）', () => {
     const html = render(
       'general',
       [
@@ -103,10 +103,18 @@ describe('AdminSubjectTraitsSurface — detail 页 SSR（YUK-601 §2.2）', () =
       ],
       [binding({ sharedBy: ['general'] })],
     );
+    // doc §2.3 general 特殊态 = 禁用 + 锁定 title（review-766 P3：非整枚隐藏）。
     expect(html).toContain('结构性锁定');
-    expect(html).not.toContain('>换绑<');
+    expect(html).toMatch(/disabled[^>]*>fork</);
+    expect(html).toMatch(/disabled[^>]*>换绑</);
     expect(html).not.toContain('>retire<');
     expect(html).not.toContain('>reset<');
+  });
+
+  it('非 general 行渲染可用的 fork 入口（doc §2.3 fork 行，review-766 P1）', () => {
+    const html = render('subj_x', [subjectRow({ id: 'subj_x' })], [binding()]);
+    expect(html).toMatch(/>fork</);
+    expect(html).not.toMatch(/disabled[^>]*>fork</);
   });
 
   it('retired 科目 header 挂 retired 徽标', () => {
