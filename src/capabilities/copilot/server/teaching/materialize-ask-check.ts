@@ -6,15 +6,11 @@
 // TeachingTurnTask composition — it is NEVER registered as a DomainTool and NEVER
 // added to COPILOT_TOOLS (R2: raw DB mutation is an AF §1.2 non-capability). The
 // caller decides the transaction; this fn only runs the INSERT + its
-// learning_item.knowledge_ids lookup (the clean just-the-INSERT span — the
-// corrective-failure counting via getActiveQuestionState is a post-commit read
-// OUTSIDE this fn, §10 weakest-spot #2).
+// learning_item.knowledge_ids lookup (the clean just-the-INSERT span).
 //
 // SINGLE-SESSION note (Cross-统合 §4.2): when called from the teaching-skill,
-// `sessionId` is the COPILOT session id, so metadata.session_id points at the
-// Copilot session — exactly what getActiveQuestionState queries (active-question.ts
-// metadata->>'session_id' = sessionId), so active-question resolution works
-// against the Copilot session with zero change to that reader.
+// `sessionId` is the COPILOT session id, so metadata.session_id records the
+// Copilot session as the question's provenance.
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
@@ -30,7 +26,7 @@ export interface MaterializeAskCheckParams {
   /**
    * The conversation session this question belongs to. Legacy route → the
    * teaching session id; Copilot teaching-skill → the Copilot session id.
-   * Stamped on metadata.session_id (the active-question reader's key).
+   * Stamped on metadata.session_id as the question's session provenance.
    */
   sessionId: string;
   /**
@@ -54,11 +50,11 @@ export interface MaterializedAskCheckQuestion {
  * byte-for-byte identical to the legacy inline INSERT (turn/route.ts) EXCEPT for the
  * intentional YUK-350 divergence below: this row now lands draft_status='draft'.
  *
- * YUK-350 (L2, RL2) — a teaching_check is CONTAINER-ONLY: it is read solely within its
- * teaching session via getActiveQuestionState (active-question.ts, keyed on
- * source + session_id, no draft filter), never selected by the general review pool
- * (every pool path excludes draft). Landing it 'draft' makes the container-only
- * contract explicit and pool-safe (NULL≡active would have made it ambiguously poolable).
+ * YUK-350 (L2, RL2) — a teaching_check is CONTAINER-ONLY: it belongs to its teaching
+ * session (metadata.session_id provenance, source='teaching_check') and is never
+ * selected by the general review pool (every pool path excludes draft). Landing it
+ * 'draft' makes the container-only contract explicit and pool-safe (NULL≡active would
+ * have made it ambiguously poolable).
  * No promote path is required by design. This is the SINGLE teaching_check INSERT site
  * (verified: no turn/route.ts and no other `source: 'teaching_check'` insert exists in
  * src/). Any future teaching_check writer MUST set draft_status='draft' — enforced by

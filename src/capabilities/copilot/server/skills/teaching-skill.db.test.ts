@@ -4,15 +4,13 @@
 //   - ask_check turns return a pendingQuestion (NOT yet persisted — the caller,
 //     runCopilotChat, wraps the question INSERT + reply event in one transaction
 //     for atomicity; PR #305 review comment #1).
-//   - getActiveQuestionState resolves against the Copilot session id once the
-//     caller completes the materialization.
+//   - the materialized question is stamped with the Copilot session id as provenance.
 //   - NO second learning_session row is created by the skill.
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getActiveQuestionState } from '@/capabilities/copilot/server/teaching/active-question';
 import { materializeAskCheckQuestion } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import { learning_item, learning_session, question } from '@/db/schema';
 import { Conversation } from '@/server/session';
@@ -142,10 +140,10 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
     expect(sessions[0].entrypoint).toBe('copilot');
   });
 
-  it('ask_check turn: caller can materialize question + verify active-question state', async () => {
+  it('ask_check turn: caller can materialize question stamped with the session id', async () => {
     // This test simulates what runCopilotChat does: take the pendingQuestion and
     // persist it via materializeAskCheckQuestion inside a transaction, then verify
-    // getActiveQuestionState resolves it against the Copilot session.
+    // the row is stamped with the Copilot session id.
     await seedLearningItem('li_skill_ask_mat');
     const sessionId = await seedCopilotSession();
     const runAgentTaskFn = vi.fn(async () => ({
@@ -202,12 +200,5 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
       learning_item_id: 'li_skill_ask_mat',
       session_id: sessionId,
     });
-
-    // getActiveQuestionState resolves it against the COPILOT session id (the reader
-    // keys purely on metadata.session_id — no learning_session.type filter). This is
-    // the container-read face: a draft teaching_check is still resolved here (no draft
-    // filter on the container path).
-    const active = await getActiveQuestionState(db, sessionId);
-    expect(active.active_question_id).toBe(mat.id);
   });
 });
