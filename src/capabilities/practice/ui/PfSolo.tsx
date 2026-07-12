@@ -9,6 +9,7 @@
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
+import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -21,6 +22,7 @@ import { createPortal } from 'react-dom';
 import { HintLadder } from './HintLadder';
 import { PfSrcBadge } from './PfStream';
 import type { PfToast } from './PracticeFacePage';
+import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import {
   type JudgePreview,
   type QuestionDetail,
@@ -29,6 +31,7 @@ import {
   fileAppeal,
   getAdvice,
   getQuestion,
+  getQuestionFull,
   submitReview,
 } from './practice-api';
 
@@ -141,6 +144,16 @@ export function PfSolo({
   // 的 effect 在新题就绪时 RESET（keyed on q?.id），保证 re-answer / next-item 都从干净的零点起算。
   // null = 题面尚未就绪（计时器未起）→ computeLatencyMs 返回 null → 略过 latency_ms（不发噪声）。
   const questionShownAtRef = useRef<number | null>(null);
+
+  // YUK-617 W1 — 反馈阶段才取本题的 attempt·review 历史（复用既有 /api/questions/:id 全聚合，
+  // ['question-detail'] key 与题详情面共享同形缓存；不动上面答题快路径的轻 query，不加冗余 route）。
+  // 显示的是本次作答**之前**的历史——正合「卡在同一误区」的信号意图。
+  const timelineQ = useQuery({
+    queryKey: ['question-detail', item.ref_id],
+    queryFn: () => getQuestionFull(item.ref_id),
+    enabled: preview !== null,
+  });
+  const timelineEvents = timelineQ.data ? toAttemptTimelineEvents(timelineQ.data.timeline) : [];
 
   const q = qQ.data ?? null;
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
@@ -422,6 +435,10 @@ export function PfSolo({
                 {q.reference_md}
               </div>
             )}
+
+            {/* YUK-617 W1 — 本题最近 attempt·review 历史（判定卡内、错因旁）。有历史才出，
+                首次作答无历史不渲染，避免 clutter。重复错因会自动标红（组件内 ×前缀 + again 色）。 */}
+            {timelineEvents.length > 0 && <AttemptTimeline events={timelineEvents} />}
 
             {/* YUK-432 — 客观题自动判分+自动评级：preview 回来已自动 commit（auto_rate:true），故
                 隐藏手动 again/hard/good 评级行；用户仍看到上面的判定反馈卡，按「下一项」推进。
