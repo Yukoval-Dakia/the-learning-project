@@ -164,6 +164,7 @@ export function AdminSubjectTraitsSurface({
           {link('/admin/cost', 'cost')}
           {link('/admin/failures', 'failures')}
           {link('/admin/coverage-lattice', 'coverage')}
+          {link('/admin/conjecture-scores', 'conjecture')}
         </div>
       </PageHeader>
 

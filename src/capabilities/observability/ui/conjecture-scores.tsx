@@ -121,15 +121,18 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
       {data && (
         <div className="kpi-strip">
           <Kpi label="predictions" value={scores.length} note="scored probes" />
+          {/* 空数据集时不把 0 渲成真测量值——dash + 无 verdict（诚实栏语义延伸）。 */}
           <Kpi
             label="mean Brier"
-            value={fmt(meanBrierModel)}
-            note={`baseline ${fmt(meanBrierBaseline)}`}
+            value={scores.length === 0 ? '—' : fmt(meanBrierModel)}
+            note={scores.length === 0 ? undefined : `baseline ${fmt(meanBrierBaseline)}`}
           />
           <Kpi
             label="mean skill"
-            value={fmt(meanSkill)}
-            note={meanSkill > 0 ? 'beats baseline' : 'below baseline'}
+            value={scores.length === 0 ? '—' : fmt(meanSkill)}
+            note={
+              scores.length === 0 ? undefined : meanSkill > 0 ? 'beats baseline' : 'below baseline'
+            }
           />
           <Kpi label="typed states" value={typed.length} note={`${openStates} open`} />
         </div>

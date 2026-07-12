@@ -251,6 +251,9 @@ function AdminLinks({ navigate }: AdminSurfaceProps) {
       <AdminLink to="/admin/coverage-lattice" navigate={navigate}>
         coverage
       </AdminLink>
+      <AdminLink to="/admin/conjecture-scores" navigate={navigate}>
+        conjecture
+      </AdminLink>
     </div>
   );
 }

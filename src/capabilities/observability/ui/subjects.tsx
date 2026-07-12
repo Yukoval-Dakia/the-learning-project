@@ -67,6 +67,7 @@ export function AdminSubjectsSurface({ navigate }: { navigate: (to: string) => v
           {link('/admin/failures', 'failures')}
           {link('/admin/subjects', 'subjects')}
           {link('/admin/coverage-lattice', 'coverage')}
+          {link('/admin/conjecture-scores', 'conjecture')}
         </div>
       </PageHeader>
 
