@@ -20,9 +20,9 @@ export type PlanAdjustmentT = z.infer<typeof PlanAdjustment>;
 // YUK-203 U4 / D5 — strategic review brief. Coach grows the flat
 // {count, estimated_minutes} proposal into the single attention prior handed
 // down to ReviewPlanTask (CO §6:621-622, no new artifact type). ALL new fields
-// are optional/defaulted so plans emitted before U4 (and re-parsed over the
-// 25-event coach-scan window in getLatestCoachPlan / parseCoachOutputSafely)
-// still parse unchanged. `count` / `estimated_minutes` stay required as today.
+// are optional/defaulted so plans emitted before U4 (and re-parsed by
+// parseCoachOutputSafely) still parse unchanged. `count` / `estimated_minutes`
+// stay required as today.
 //
 //   - knowledge_focus  — ranked knowledge_ids to prioritise (from due/weak +
 //     active-item attention pressure, D11①). Empty = no prior; ReviewPlanTask

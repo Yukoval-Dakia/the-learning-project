@@ -40,9 +40,8 @@ export interface ActiveQuestionState {
 /**
  * Cumulative per-outcome attempt totals for one question, over its whole
  * lifetime (no window). Plain db-taking helper — no ToolContext (PIN 7).
- * `failure` is a cumulative total feeding the N=3 (`TEACHING_CORRECTIVE_FAILURE_N`)
- * corrective trigger, so it must be monotonic — hence the unbounded reader, not
- * the windowed `getQuestionTimeline`.
+ * `failure` is a cumulative total feeding the corrective-redo trigger, so it must
+ * be monotonic — hence the unbounded reader, not the windowed `getQuestionTimeline`.
  */
 export async function countAttemptOutcomes(
   db: DbLike,
