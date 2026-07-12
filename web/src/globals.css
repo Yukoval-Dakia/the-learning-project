@@ -6596,7 +6596,12 @@ button.chip:hover {
 }
 .pd-actions {
   display: flex;
+  align-items: center;
   gap: var(--s-2);
+}
+.pd-error {
+  font-size: var(--fs-meta);
+  color: var(--again-ink);
 }
 button.chip.is-on {
   background: var(--coral-soft);
