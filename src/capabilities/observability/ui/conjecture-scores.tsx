@@ -95,10 +95,13 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
 
   const scores = data?.prediction_scores ?? [];
   const typed = data?.typed_states ?? [];
+  // mean Brier 是标准描述性聚合（Brier score 本就是逐条均值）——可展示，不附「beats baseline」判词。
   const meanBrierModel = mean(scores.map((s) => s.brier_model));
   const meanBrierBaseline = mean(scores.map((s) => s.brier_baseline));
-  const meanSkill = mean(scores.map((s) => s.skill_score_point));
   const openStates = typed.filter((t) => t.lifecycle === 'open').length;
+  // 诚实：skill_score_point 是**退化的单点值**（scoring.ts），把它逐条平均去下「beats baseline」判词 =
+  // 伪造那个被 DEFER 的窗口聚合（真·window BSS = 1 − mean(BS_m)/mean(BS_base)，Rust-owned + ADR-0046）。
+  // 故本页**不**在摘要下窗口级胜负判词——window skill 显式标「deferred」，逐条 skill 仅在表里原样列。
 
   return (
     <main className="page wide">
@@ -121,19 +124,14 @@ export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: stri
       {data && (
         <div className="kpi-strip">
           <Kpi label="predictions" value={scores.length} note="scored probes" />
-          {/* 空数据集时不把 0 渲成真测量值——dash + 无 verdict（诚实栏语义延伸）。 */}
+          {/* 描述性 mean Brier（越低越好，reader 自比 model vs baseline）；空数据集 dash，不把 0 当真值。 */}
           <Kpi
             label="mean Brier"
             value={scores.length === 0 ? '—' : fmt(meanBrierModel)}
             note={scores.length === 0 ? undefined : `baseline ${fmt(meanBrierBaseline)}`}
           />
-          <Kpi
-            label="mean skill"
-            value={scores.length === 0 ? '—' : fmt(meanSkill)}
-            note={
-              scores.length === 0 ? undefined : meanSkill > 0 ? 'beats baseline' : 'below baseline'
-            }
-          />
+          {/* window skill（真·beats-baseline 判词）DEFER 给 Rust window 聚合（ADR-0046）——本页不伪造。 */}
+          <Kpi label="window skill" value="deferred" note="window BSS · ADR-0046" />
           <Kpi label="typed states" value={typed.length} note={`${openStates} open`} />
         </div>
       )}

@@ -85,4 +85,17 @@ describe('AdminConjectureScoresSurface', () => {
     expect(html).toContain('predictions');
     expect(html).toContain('1 open'); // one open of two typed states
   });
+
+  it('never fabricates a window-level baseline verdict from point skill scores (honesty)', () => {
+    // Even with data, the "beats/below baseline" window claim must NOT be derived from
+    // averaging degenerate single-point skill_score_point — window BSS is DEFERRED (ADR-0046).
+    const html = render({
+      score_basis: 'single_point',
+      prediction_scores: [score(), score({ event_id: 'ev_s2', skill_score_point: 0.9 })],
+      typed_states: [],
+    });
+    expect(html).not.toContain('beats baseline');
+    expect(html).not.toContain('below baseline');
+    expect(html).toContain('deferred'); // window skill honestly marked deferred
+  });
 });
