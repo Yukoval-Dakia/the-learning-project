@@ -81,6 +81,7 @@ const NAV: Array<{ to: string; label: string }> = [
   { to: '/admin/failures', label: 'failures' },
   { to: '/admin/subjects', label: 'subjects' },
   { to: '/admin/coverage-lattice', label: 'coverage' },
+  { to: '/admin/conjecture-scores', label: 'conjecture' },
 ];
 
 function formatTime(value: string | null): string {
