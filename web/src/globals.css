@@ -6485,6 +6485,119 @@ button.chip:hover {
   border-color: var(--ink-5);
   color: var(--ink);
 }
+
+/* ── YUK-567 备课台 (prep-desk) conjecture panel — inline expand from 备课猜想 chip ── */
+.chip-toggle.is-open {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.chip-toggle .pd-chev {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.chip-toggle.is-open .pd-chev {
+  transform: rotate(180deg);
+}
+.prep-desk-expand {
+  margin-top: var(--s-3);
+}
+.prep-desk-empty {
+  padding: var(--s-2) 0;
+  color: var(--ink-4);
+  font-size: var(--fs-meta);
+}
+.prep-desk-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.prep-desk-card {
+  border-left: 3px solid var(--coral-line);
+}
+.pd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+.pd-eyebrow {
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+  letter-spacing: 0.02em;
+}
+.pd-claim {
+  margin: 0 0 var(--s-2);
+  line-height: 1.5;
+  color: var(--ink);
+}
+.pd-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.pd-recur {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.pd-tag {
+  padding: 2px var(--s-2);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+.pd-corrected {
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-color: var(--coral-line);
+}
+.pd-probe {
+  padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+}
+.pd-probe-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  font-size: var(--fs-meta);
+  color: var(--coral-ink);
+}
+.pd-probe-md {
+  font-family: var(--font-serif);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.pd-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin-bottom: var(--s-3);
+}
+.pd-ev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--s-2);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-pill);
+}
+.pd-actions {
+  display: flex;
+  gap: var(--s-2);
+}
 button.chip.is-on {
   background: var(--coral-soft);
   color: var(--coral-ink);
