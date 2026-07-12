@@ -167,7 +167,7 @@ Question (统一题库，single source of truth)
 
 - ~~generic `app/api/ai/[task]` 仅接受 `ReviewIntentTask`，由 `runTask()` 返回 JSON。~~ 已退场；ReviewIntentTask 走 `/api/review/intent`（practice 包 manifest 声明）。
 - SubjectProfile-driven task **不能**走 generic route；必须走领域 route / worker，由该入口解析并传入正确 `SubjectProfile`。
-- `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route，由领域 route 注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 走 `/api/knowledge/review`。
+- `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route/worker，由入口注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 现由 `knowledge_maintenance_nightly` cron in-process 调 `streamReviewTask`（YUK-617 撤了冗余的 `/api/knowledge/review` HTTP route）。
 - `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口，不通过 generic route 暴露。
 - 当前唯一实际 MCP server 是每次 review 请求内创建的本地 `loom` server；唯一 tool 是 `mcp__loom__write_proposal`，用于写 proposal event，不对外暴露 endpoint。
 - 破坏性操作（删题、合并节点、reparent、merge、archive）没有直接 write tool。AI 只能 propose；用户 accept route 再执行真实 mutation。

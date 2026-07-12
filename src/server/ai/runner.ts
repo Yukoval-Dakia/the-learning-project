@@ -208,7 +208,7 @@ export type StreamTaskCtx = RunTaskCtx & {
    * completion. Optional so non-HTTP callers (tests, background jobs) can omit
    * it; the ReadableStream `cancel` callback is the second, transport-level
    * trigger that also aborts. Threading a real signal from a route is the
-   * follow-up — see YUK-238 note where the route calls streamReviewTask.
+   * follow-up (YUK-238).
    */
   signal?: AbortSignal;
 };

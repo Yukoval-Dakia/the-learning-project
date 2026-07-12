@@ -45,9 +45,8 @@ zero install footprint (first run fetches it into the pnpm store).
 - **Mutating endpoints:** most non-GET requests write/delete data. `--no-folder`
   runs them all — don't point it at anything you care about. `_/import` wipes the
   DB; `_/export` and `assets`/`ingestion` uploads are multipart/binary.
-- **SSE endpoints** (`/api/copilot/chat`, `*/events`,
-  `/api/knowledge/review`) stream `text/event-stream`; Postman/Newman show the
-  chunked body but won't render incrementally in CI mode.
+- **SSE endpoints** (`/api/copilot/chat`, `*/events`) stream `text/event-stream`;
+  Postman/Newman show the chunked body but won't render incrementally in CI mode.
 
 ## Regenerating
 
