@@ -240,6 +240,12 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
   const status = statefulStatus(q.isLoading, q.isError);
   const d = q.data;
+  // If accepting/rejecting the last conjecture drops the count to 0, the 备课猜想
+  // toggle chip disappears (buildDigestChips gates on >0) — auto-collapse so the
+  // panel is never stranded open with no way to close it (CodeRabbit review-782).
+  useEffect(() => {
+    if (conjOpen && d?.new_conjectures_count === 0) setConjOpen(false);
+  }, [d?.new_conjectures_count, conjOpen]);
   const chips = d ? buildDigestChips(d) : [];
   const canDecide = !!d && (d.new_proposals_count > 0 || d.new_conjectures_count > 0);
   return (

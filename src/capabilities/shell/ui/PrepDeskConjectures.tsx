@@ -45,16 +45,26 @@ export function PrepDeskConjectures() {
     queryFn: getPrepDeskConjectures,
   });
   const [deciding, setDeciding] = useState<Record<string, boolean>>({});
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
   const conjectures = q.data?.conjectures ?? [];
 
   async function decide(id: string, decision: 'accept' | 'dismiss') {
     setDeciding((s) => ({ ...s, [id]: true }));
+    setFailed((s) => {
+      const next = { ...s };
+      delete next[id];
+      return next;
+    });
     try {
       await decideProposal(id, decision);
       // The conjecture leaves the pending set; refresh both the panel and the
       // /today 备课猜想 count chip that gates this panel's entry point.
       await qc.invalidateQueries({ queryKey: ['prep-desk-conjectures'] });
       await qc.invalidateQueries({ queryKey: ['overnight-digest'] });
+    } catch {
+      // A failed decision must NOT silently vanish (CodeRabbit review-782): keep
+      // the card and surface a retry affordance instead of an unhandled rejection.
+      setFailed((s) => ({ ...s, [id]: true }));
     } finally {
       setDeciding((s) => {
         const next = { ...s };
@@ -82,6 +92,7 @@ export function PrepDeskConjectures() {
                 key={c.id}
                 c={c}
                 deciding={!!deciding[c.id]}
+                failed={!!failed[c.id]}
                 onAccept={() => void decide(c.id, 'accept')}
                 onReject={() => void decide(c.id, 'dismiss')}
               />
@@ -96,11 +107,13 @@ export function PrepDeskConjectures() {
 function PrepDeskCard({
   c,
   deciding,
+  failed,
   onAccept,
   onReject,
 }: {
   c: PrepDeskConjectureWire;
   deciding: boolean;
+  failed: boolean;
   onAccept: () => void;
   onReject: () => void;
 }) {
@@ -160,6 +173,11 @@ function PrepDeskCard({
         <Btn size="sm" variant="ghost" disabled={deciding} onClick={onReject}>
           不太像
         </Btn>
+        {failed && (
+          <span className="pd-error" role="alert">
+            操作失败，请重试
+          </span>
+        )}
       </div>
     </LoomCard>
   );
