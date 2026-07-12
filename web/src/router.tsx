@@ -7,6 +7,7 @@ import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
 import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
+import { AdminConjectureScoresSurface } from '@/capabilities/observability/ui/conjecture-scores';
 import { AdminCoverageLatticeSurface } from '@/capabilities/observability/ui/coverage-lattice';
 import {
   AdminCostSurface,
@@ -523,6 +524,16 @@ const adminCoverageLatticeRoute = createRoute({
   component: AdminCoverageLatticeRoute,
 });
 
+function AdminConjectureScoresRoute() {
+  const router = useRouter();
+  return <AdminConjectureScoresSurface navigate={(to) => router.history.push(to)} />;
+}
+const adminConjectureScoresRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin/conjecture-scores',
+  component: AdminConjectureScoresRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   todayRoute,
@@ -548,6 +559,7 @@ const routeTree = rootRoute.addChildren([
   adminSubjectsRoute,
   adminSubjectTraitsRoute,
   adminCoverageLatticeRoute,
+  adminConjectureScoresRoute,
 ]);
 
 export const router = createRouter({ routeTree });

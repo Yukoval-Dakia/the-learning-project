@@ -42,6 +42,20 @@ export interface FrontierRailItem {
 
 export const getFrontier = () => apiJson<{ rows: FrontierRailItem[] }>('/api/knowledge/frontier');
 
+// YUK-617 mode-1 — per-KC FSRS due summary（GET /api/knowledge/review-due-summary，YUK-142 Slice 2
+// 已建、此前零消费者）。summary 键=knowledge_id，值={overdue, due_soon}。知识树行据此出「到期」徽标。
+export interface ReviewDueNodeSummary {
+  overdue: number;
+  due_soon: number;
+}
+export interface ReviewDueSummaryResponse {
+  now: string;
+  due_soon_window_hours: number;
+  summary: Record<string, ReviewDueNodeSummary>;
+}
+export const getReviewDueSummary = () =>
+  apiJson<ReviewDueSummaryResponse>('/api/knowledge/review-due-summary');
+
 // ── A5 S4 (YUK-531) per-KC 误区 funnel wire（「指向此点的误区」）─────────────
 // 后端 server/misconception-read.ts loadMisconceptionsForKc。两段：confirmed
 // (RT1 误区) + candidate (猜想/候选)。conf 是定性档（高/中/低），裸 weight/
