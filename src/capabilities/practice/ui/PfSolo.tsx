@@ -30,7 +30,6 @@ import {
   computeLatencyMs,
   fileAppeal,
   getAdvice,
-  getQuestion,
   getQuestionFull,
   submitReview,
 } from './practice-api';
@@ -118,9 +117,12 @@ export function PfSolo({
   onCommittedBack?: () => void;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
+  // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
+  // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
+  // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
   const qQ = useQuery({
-    queryKey: ['question', item.ref_id],
-    queryFn: () => getQuestion(item.ref_id),
+    queryKey: ['question-detail', item.ref_id],
+    queryFn: () => getQuestionFull(item.ref_id),
   });
   const [sel, setSel] = useState<number | null>(null);
   const [text, setText] = useState('');
@@ -145,17 +147,11 @@ export function PfSolo({
   // null = 题面尚未就绪（计时器未起）→ computeLatencyMs 返回 null → 略过 latency_ms（不发噪声）。
   const questionShownAtRef = useRef<number | null>(null);
 
-  // YUK-617 W1 — 反馈阶段才取本题的 attempt·review 历史（复用既有 /api/questions/:id 全聚合，
-  // ['question-detail'] key 与题详情面共享同形缓存；不动上面答题快路径的轻 query，不加冗余 route）。
-  // 显示的是本次作答**之前**的历史——正合「卡在同一误区」的信号意图。
-  const timelineQ = useQuery({
-    queryKey: ['question-detail', item.ref_id],
-    queryFn: () => getQuestionFull(item.ref_id),
-    enabled: preview !== null,
-  });
-  const timelineEvents = timelineQ.data ? toAttemptTimelineEvents(timelineQ.data.timeline) : [];
-
   const q = qQ.data ?? null;
+  // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
+  // 取自题面加载那刻 → 恒是本次作答**之前**的历史（不含刚提交的这次，客观题自动 commit 也不竞态），
+  // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
+  const timelineEvents = q ? toAttemptTimelineEvents(q.timeline) : [];
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
   const answerMd = isChoice && sel !== null ? (q?.choices_md?.[sel] ?? '') : text;
   const canSubmit = !judging && (isChoice ? sel !== null : text.trim().length > 0);
