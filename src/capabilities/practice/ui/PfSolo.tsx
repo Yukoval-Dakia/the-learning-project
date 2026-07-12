@@ -9,6 +9,7 @@
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
+import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -21,6 +22,7 @@ import { createPortal } from 'react-dom';
 import { HintLadder } from './HintLadder';
 import { PfSrcBadge } from './PfStream';
 import type { PfToast } from './PracticeFacePage';
+import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import {
   type JudgePreview,
   type QuestionDetail,
@@ -28,7 +30,7 @@ import {
   computeLatencyMs,
   fileAppeal,
   getAdvice,
-  getQuestion,
+  getQuestionFull,
   submitReview,
 } from './practice-api';
 
@@ -115,9 +117,12 @@ export function PfSolo({
   onCommittedBack?: () => void;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
+  // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
+  // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
+  // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
   const qQ = useQuery({
-    queryKey: ['question', item.ref_id],
-    queryFn: () => getQuestion(item.ref_id),
+    queryKey: ['question-detail', item.ref_id],
+    queryFn: () => getQuestionFull(item.ref_id),
   });
   const [sel, setSel] = useState<number | null>(null);
   const [text, setText] = useState('');
@@ -143,6 +148,10 @@ export function PfSolo({
   const questionShownAtRef = useRef<number | null>(null);
 
   const q = qQ.data ?? null;
+  // YUK-617 W1 — 本题 attempt·review 历史，从题面聚合 data.timeline 直接派生（同一份请求，无二次取）。
+  // 取自题面加载那刻 → 恒是本次作答**之前**的历史（不含刚提交的这次，客观题自动 commit 也不竞态），
+  // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
+  const timelineEvents = q ? toAttemptTimelineEvents(q.timeline) : [];
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
   const answerMd = isChoice && sel !== null ? (q?.choices_md?.[sel] ?? '') : text;
   const canSubmit = !judging && (isChoice ? sel !== null : text.trim().length > 0);
@@ -422,6 +431,10 @@ export function PfSolo({
                 {q.reference_md}
               </div>
             )}
+
+            {/* YUK-617 W1 — 本题最近 attempt·review 历史（判定卡内、错因旁）。有历史才出，
+                首次作答无历史不渲染，避免 clutter。重复错因会自动标红（组件内 ×前缀 + again 色）。 */}
+            {timelineEvents.length > 0 && <AttemptTimeline events={timelineEvents} />}
 
             {/* YUK-432 — 客观题自动判分+自动评级：preview 回来已自动 commit（auto_rate:true），故
                 隐藏手动 again/hard/good 评级行；用户仍看到上面的判定反馈卡，按「下一项」推进。
