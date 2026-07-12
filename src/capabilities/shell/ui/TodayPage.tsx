@@ -23,6 +23,7 @@ import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
+import { PrepDeskConjectures } from './PrepDeskConjectures';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { LoomHero } from './blocks/LoomHero';
@@ -233,6 +234,9 @@ function buildDigestChips(d: OvernightDigest): DigestChip[] {
 }
 
 function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
+  // YUK-567 — the 备课猜想 chip toggles an inline 备课台 conjecture panel (pull, not
+  // push): the team's prepared conjectures surface only when the owner opens them.
+  const [conjOpen, setConjOpen] = useState(false);
   const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
   const status = statefulStatus(q.isLoading, q.isError);
   const d = q.data;
@@ -285,12 +289,33 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
           {d?.has_overnight_activity && (
             <>
               <div className="digest-chips">
-                {chips.map((c) => (
-                  <span key={c.key} className="chip">
-                    <LoomIcon name={c.icon} size={14} /> {c.label} <b className="mono">{c.count}</b>
-                  </span>
-                ))}
+                {chips.map((c) =>
+                  c.key === 'conjectures' ? (
+                    // 备课猜想 chip → toggle the inline 备课台 panel (§3 pull-not-push).
+                    <button
+                      key={c.key}
+                      type="button"
+                      className={`chip chip-toggle${conjOpen ? ' is-open' : ''}`}
+                      onClick={() => setConjOpen((o) => !o)}
+                      aria-expanded={conjOpen}
+                    >
+                      <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
+                      <b className="mono">{c.count}</b>
+                      <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+                    </button>
+                  ) : (
+                    <span key={c.key} className="chip">
+                      <LoomIcon name={c.icon} size={14} /> {c.label}{' '}
+                      <b className="mono">{c.count}</b>
+                    </span>
+                  ),
+                )}
               </div>
+              {conjOpen && (
+                <div className="prep-desk-expand">
+                  <PrepDeskConjectures />
+                </div>
+              )}
               {canDecide && (
                 <div className="digest-foot">
                   <Btn
