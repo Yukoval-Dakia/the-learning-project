@@ -11,6 +11,7 @@
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+import { type SuggestionKind, SuggestionKindTag } from '@/ui/primitives/SuggestionKindTag';
 import { useState } from 'react';
 
 import {
@@ -138,6 +139,9 @@ export function ProposalCard({
           <LoomIcon name="sparkle" size={12} />
           AI · {p.actor_ref}
         </span>
+        {/* YUK-617 mode-1 — 修正类建议标签（suggestion_kind=corrective 不计接受率）。primitive 内部
+            对非 corrective 早返回 null，故 proactive/缺失不渲染。字段已在 wire（BaseProposal 顶层）。 */}
+        <SuggestionKindTag kind={p.payload.suggestion_kind as SuggestionKind | undefined} />
         {resolved && (
           <span className="badge tone-good resolved-stamp" style={{ marginLeft: 'auto' }}>
             <LoomIcon name="check" size={12} />

@@ -25,6 +25,7 @@ import {
   getEdgeProposals,
   getEdges,
   getFrontier,
+  getReviewDueSummary,
   getTree,
 } from './knowledge-api';
 
@@ -67,6 +68,9 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   });
   // A5 S2 (YUK-354)：learnable_frontier 横幅读模型。
   const frontierQ = useQuery({ queryKey: ['knowledge-frontier'], queryFn: getFrontier });
+  // YUK-617 mode-1 — per-KC FSRS 到期计数（YUK-142 Slice 2 读模型此前零消费者）。树行出「到期」徽标。
+  const dueQ = useQuery({ queryKey: ['knowledge-due-summary'], queryFn: getReviewDueSummary });
+  const dueSummary = dueQ.data?.summary ?? {};
 
   const nodes = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
   const edges = useMemo(() => edgesQ.data?.rows ?? [], [edgesQ.data]);
@@ -229,6 +233,13 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                     <span className="badge tone-info">
                       <LoomIcon name="link" size={11} />
                       {meshCount}
+                    </span>
+                  )}
+                  {/* YUK-617 mode-1 — 本 KC 到期复习卡数（overdue，含=now）。有到期才出，红色提醒。 */}
+                  {(dueSummary[n.id]?.overdue ?? 0) > 0 && (
+                    <span className="badge tone-again" title="到期待复习的知识卡数">
+                      <LoomIcon name="review" size={11} />
+                      到期 {dueSummary[n.id]?.overdue}
                     </span>
                   )}
                   <LoomIcon name="arrow" size={15} className="thread-arrow" />

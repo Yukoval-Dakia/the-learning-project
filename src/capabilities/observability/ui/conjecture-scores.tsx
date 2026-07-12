@@ -1,0 +1,327 @@
+// YUK-617 mode-1 — conjecture 预测评分只读观测面（admin 第六页）。
+//
+// 通电既有 GET /api/admin/conjecture-scores（conjecture-wire-spec §6 Q3 verdict-A 明确 specced
+// 「admin observe 面 mirror observability four-page」为 S4 交付物——route + 读模型早已落，UI 半从没建，
+// 消费路径一直是 curl+jq）。壳形态镜像 coverage-lattice（RootShell admin 页），非独立壳。
+//
+// 诚实栏（spec §6 S4）：prediction_scores 是 **single-point proper score**（brier/log_loss/skill_score_point
+// 逐条判分，NOT accuracy / NOT window mean）——header 显式声明 score_basis，避免误读成准确率或窗口均值。
+// typed_states 是 reconcile loop 自动铸的 confused-with-X 软轨结构态（provenance = evidence_event_ids）。
+
+import { apiJson } from '@/ui/lib/api';
+import { Badge } from '@/ui/primitives/Badge';
+import { Card } from '@/ui/primitives/Card';
+import { PageHeader } from '@/ui/primitives/PageHeader';
+import { Stateful } from '@/ui/primitives/Stateful';
+import { useQuery } from '@tanstack/react-query';
+import type { CSSProperties } from 'react';
+
+// 字段对齐 server/conjecture-scores.ts 的 ConjectureScoresRead。
+interface PredictionScoreRow {
+  event_id: string;
+  conjecture_event_id: string;
+  probe_result_event_id: string;
+  knowledge_id: string;
+  predicted_p: number;
+  baseline_p: number;
+  outcome: 0 | 1;
+  resolution: 'confirmed' | 'retired';
+  brier_model: number;
+  brier_baseline: number;
+  log_loss_model: number;
+  skill_score_point: number;
+  retrievability_at_judge: number | null;
+  created_at: string;
+}
+interface TypedStateRow {
+  id: string;
+  knowledge_id: string;
+  typed_state: 'confused-with-X';
+  confused_with_kc_id: string | null;
+  lifecycle: 'open' | 'resolved';
+  evidence_event_ids: string[];
+  last_evidence_at: string | null;
+  updated_at: string;
+}
+interface ConjectureScoresResponse {
+  score_basis: 'single_point';
+  prediction_scores: PredictionScoreRow[];
+  typed_states: TypedStateRow[];
+}
+
+const NAV: Array<{ to: string; label: string }> = [
+  { to: '/admin/runs', label: 'runs' },
+  { to: '/admin/cost', label: 'cost' },
+  { to: '/admin/failures', label: 'failures' },
+  { to: '/admin/subjects', label: 'subjects' },
+  { to: '/admin/coverage-lattice', label: 'coverage' },
+  { to: '/admin/conjecture-scores', label: 'conjecture' },
+];
+
+function formatTime(value: string | null): string {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString(undefined, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+const fmt = (n: number) => n.toFixed(3);
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: string) => void }) {
+  const q = useQuery({
+    queryKey: ['admin-conjecture-scores'],
+    queryFn: () => apiJson<ConjectureScoresResponse>('/api/admin/conjecture-scores'),
+  });
+  const data = q.data;
+
+  const link = (to: string, label: string) => (
+    <a
+      key={to}
+      href={to}
+      onClick={(e) => {
+        e.preventDefault();
+        navigate(to);
+      }}
+    >
+      {label}
+    </a>
+  );
+
+  const scores = data?.prediction_scores ?? [];
+  const typed = data?.typed_states ?? [];
+  const meanBrierModel = mean(scores.map((s) => s.brier_model));
+  const meanBrierBaseline = mean(scores.map((s) => s.brier_baseline));
+  const meanSkill = mean(scores.map((s) => s.skill_score_point));
+  const openStates = typed.filter((t) => t.lifecycle === 'open').length;
+
+  return (
+    <main className="page wide">
+      <PageHeader
+        title="Conjecture Scores"
+        eyebrow="ADMIN · conjecture wire"
+        sub="备课台预测 vs 真实作答的逐条 proper-score 校准锚 + reconcile 自动铸的 confused-with-X 软轨态。夜间 research_meeting reconcile 累积。"
+      >
+        <div style={linkRowStyle}>{NAV.map((n) => link(n.to, n.label))}</div>
+      </PageHeader>
+
+      {/* 诚实栏（spec §6 S4）：single-point proper score，别读成准确率/窗口均值。 */}
+      <div style={honestyRowStyle}>
+        <Badge tone="neutral">
+          score_basis = {data?.score_basis ?? 'single_point'} · single-point proper score · NOT
+          accuracy · NOT window mean
+        </Badge>
+      </div>
+
+      {data && (
+        <div className="kpi-strip">
+          <Kpi label="predictions" value={scores.length} note="scored probes" />
+          <Kpi
+            label="mean Brier"
+            value={fmt(meanBrierModel)}
+            note={`baseline ${fmt(meanBrierBaseline)}`}
+          />
+          <Kpi
+            label="mean skill"
+            value={fmt(meanSkill)}
+            note={meanSkill > 0 ? 'beats baseline' : 'below baseline'}
+          />
+          <Kpi label="typed states" value={typed.length} note={`${openStates} open`} />
+        </div>
+      )}
+
+      <Stateful
+        status={q.isLoading ? 'loading' : q.isError ? 'error' : 'ok'}
+        onRetry={() => void q.refetch()}
+        errorText="conjecture scores 加载失败。"
+        skeleton={
+          <Card pad="lg">
+            <p style={mutedTextStyle}>加载中...</p>
+          </Card>
+        }
+      >
+        {data && (
+          <>
+            <Card pad="lg">
+              <div style={sectionHeadStyle}>
+                <h2 style={sectionTitleStyle}>prediction scores</h2>
+                <Badge tone="neutral">{scores.length} 条</Badge>
+              </div>
+              {scores.length === 0 ? (
+                <p style={mutedTextStyle}>
+                  暂无预测评分（reconcile 尚未产出 prediction_score 事件）。
+                </p>
+              ) : (
+                <div style={tableWrapStyle}>
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>KC</th>
+                        <th style={thStyle}>p̂ vs base</th>
+                        <th style={thStyle}>outcome</th>
+                        <th style={thStyle}>resolution</th>
+                        <th style={thStyle}>Brier m/base</th>
+                        <th style={thStyle}>log-loss</th>
+                        <th style={thStyle}>skill</th>
+                        <th style={thStyle}>R@judge</th>
+                        <th style={thStyle}>when</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scores.map((s) => (
+                        <tr key={s.event_id}>
+                          <td style={tdStyle}>
+                            <code>{s.knowledge_id}</code>
+                          </td>
+                          <td style={tdStyle}>
+                            {fmt(s.predicted_p)}{' '}
+                            <span style={mutedInline}>/ {fmt(s.baseline_p)}</span>
+                          </td>
+                          <td style={tdStyle}>
+                            <Badge tone={s.outcome === 1 ? 'good' : 'again'}>
+                              {s.outcome === 1 ? '答对' : '答错'}
+                            </Badge>
+                          </td>
+                          <td style={tdStyle}>
+                            <Badge tone={s.resolution === 'confirmed' ? 'good' : 'neutral'}>
+                              {s.resolution}
+                            </Badge>
+                          </td>
+                          <td style={tdStyle}>
+                            {fmt(s.brier_model)}{' '}
+                            <span style={mutedInline}>/ {fmt(s.brier_baseline)}</span>
+                          </td>
+                          <td style={tdStyle}>{fmt(s.log_loss_model)}</td>
+                          <td style={tdStyle}>
+                            <span style={s.skill_score_point > 0 ? okMarkStyle : undefined}>
+                              {fmt(s.skill_score_point)}
+                            </span>
+                          </td>
+                          <td style={tdStyle}>
+                            {s.retrievability_at_judge === null
+                              ? '—'
+                              : fmt(s.retrievability_at_judge)}
+                          </td>
+                          <td style={tdStyle}>{formatTime(s.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+
+            <Card pad="lg">
+              <div style={sectionHeadStyle}>
+                <h2 style={sectionTitleStyle}>typed states · confused-with-X</h2>
+                <Badge tone="neutral">
+                  {openStates} open / {typed.length}
+                </Badge>
+              </div>
+              {typed.length === 0 ? (
+                <p style={mutedTextStyle}>暂无 confused-with-X 软轨态（reconcile 尚未铸出）。</p>
+              ) : (
+                <div style={tableWrapStyle}>
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>KC</th>
+                        <th style={thStyle}>confused with</th>
+                        <th style={thStyle}>lifecycle</th>
+                        <th style={thStyle}>evidence</th>
+                        <th style={thStyle}>last evidence</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {typed.map((t) => (
+                        <tr key={t.id}>
+                          <td style={tdStyle}>
+                            <code>{t.knowledge_id}</code>
+                          </td>
+                          <td style={tdStyle}>
+                            {t.confused_with_kc_id ? <code>{t.confused_with_kc_id}</code> : '—'}
+                          </td>
+                          <td style={tdStyle}>
+                            <Badge tone={t.lifecycle === 'open' ? 'coral' : 'good'}>
+                              {t.lifecycle}
+                            </Badge>
+                          </td>
+                          <td style={tdStyle}>{t.evidence_event_ids.length}</td>
+                          <td style={tdStyle}>{formatTime(t.last_evidence_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </>
+        )}
+      </Stateful>
+    </main>
+  );
+}
+
+function Kpi({ label, value, note }: { label: string; value: string | number; note?: string }) {
+  return (
+    <div className="kpi">
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-num">{value}</div>
+      {note && <div className="kpi-trend">{note}</div>}
+    </div>
+  );
+}
+
+// Style authority = sibling admin chrome（镜像 coverage-lattice.tsx inline tokens）。
+const linkRowStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 10,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-meta)',
+};
+const honestyRowStyle: CSSProperties = { margin: 'var(--s-2) 0 var(--s-3)' };
+const sectionHeadStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'space-between',
+  gap: 'var(--s-3)',
+  marginBottom: 'var(--s-3)',
+};
+const sectionTitleStyle: CSSProperties = {
+  margin: 0,
+  fontFamily: 'var(--font-serif)',
+  fontSize: 20,
+  fontWeight: 500,
+  letterSpacing: 'var(--ls-tight)',
+};
+const tableWrapStyle: CSSProperties = { overflowX: 'auto' };
+const tableStyle: CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 13 };
+const thStyle: CSSProperties = {
+  textAlign: 'left',
+  padding: '0 10px 8px 0',
+  color: 'var(--ink-4)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11.5,
+  fontWeight: 500,
+};
+const tdStyle: CSSProperties = {
+  borderTop: '1px solid var(--line-soft)',
+  padding: '10px 10px 10px 0',
+  verticalAlign: 'top',
+  color: 'var(--ink-2)',
+  fontFamily: 'var(--font-mono)',
+};
+const okMarkStyle: CSSProperties = { color: 'var(--good)', fontFamily: 'var(--font-mono)' };
+const mutedInline: CSSProperties = { color: 'var(--ink-4)' };
+const mutedTextStyle: CSSProperties = {
+  margin: 0,
+  color: 'var(--ink-3)',
+  fontSize: 13,
+  lineHeight: 1.55,
+};
