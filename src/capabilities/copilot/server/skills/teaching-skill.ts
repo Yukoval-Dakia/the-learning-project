@@ -9,8 +9,9 @@
 // SINGLE-SESSION model (Cross-统合 §3.1/§4.2): the turn lives ENTIRELY on the
 // Copilot `entrypoint='copilot'` session that runCopilotChat already resolved.
 // There is NO second teaching session. The ask_check question is stamped with
-// metadata.session_id = the Copilot session id (via materializeAskCheckQuestion),
-// so getActiveQuestionState + the accept-chip lineage key off the Copilot session.
+// metadata.session_id = the Copilot session id (via materializeAskCheckQuestion)
+// as session provenance; the accept-chip lineage keys off that same Copilot
+// session id (resolved via the event table, not the question stamp).
 //
 // The TeachingTurnTask call runs with allowedTools:[] → the SDK gets an empty
 // tool list + maxTurns:1 (registry.ts) → a single structured-JSON reply, never a
@@ -126,8 +127,8 @@ export async function runTeachingSkill(
     pendingQuestion = {
       structured_question: turn.structured_question,
       learningItemId,
-      // SINGLE-SESSION: stamp the Copilot session id so getActiveQuestionState
-      // + the accept-chip lineage resolve against the Copilot session.
+      // SINGLE-SESSION: stamp the Copilot session id as question provenance;
+      // the accept-chip lineage resolves against that same Copilot session.
       sessionId,
       fallbackPromptMd: turn.text_md,
     };
