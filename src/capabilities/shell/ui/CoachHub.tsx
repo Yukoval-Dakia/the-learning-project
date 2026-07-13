@@ -32,7 +32,6 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { CoachCalibrationView } from './CoachCalibrationView';
@@ -70,24 +69,22 @@ const CAUSE_LABELS: Record<string, string> = {
   other: '其它',
 };
 
-// Loom CoachKpi — animated count-up KPI (screen-coach.jsx L2-6).
-function CoachKpi({
+// Activity KPIs render their authoritative values directly; intermediate count-up
+// integers would be indistinguishable from real report facts.
+export function CoachKpi({
   label,
   value,
   unit,
   prefix,
-  active,
   decimals = 0,
 }: {
   label: string;
   value: number;
   unit?: string;
   prefix?: string;
-  active: boolean;
   decimals?: number;
 }) {
-  const v = useCountUp(value, { start: active, dur: 900, decimals });
-  const shown = decimals > 0 ? v.toFixed(decimals) : Math.round(v);
+  const shown = decimals > 0 ? value.toFixed(decimals) : Math.round(value);
   return (
     <div className="coach-kpi">
       <div className="coach-kpi-n serif tnum">
@@ -158,11 +155,6 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
 function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   const [days, setDays] = useState<Window>(7);
   const timeZone = browserTimeZone();
-  // Count-up animations: useCountUp(start: true) already animates 0→target on
-  // mount, and `key={days}` below remounts CoachReport on window change. The
-  // former rAF false→true toggle caused a one-frame final-value flash before
-  // replaying (CodeRabbit, PR #294).
-  const active = true;
 
   const q = useQuery({
     queryKey: ['weekly-review', days, timeZone],
@@ -212,9 +204,7 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
         }
         empty={<EmptyState icon="target" title="窗口内无数据" text="该时间窗内还没有复习记录。" />}
       >
-        {q.data ? (
-          <CoachReport key={days} data={q.data} active={active} navigate={navigate} />
-        ) : null}
+        {q.data ? <CoachReport key={days} data={q.data} navigate={navigate} /> : null}
       </Stateful>
     </>
   );
@@ -222,11 +212,9 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
 
 function CoachReport({
   data,
-  active,
   navigate,
 }: {
   data: WeeklyResponse;
-  active: boolean;
   navigate: (to: string) => void;
 }) {
   const { totals, ratings, daily, top_causes, top_knowledge } = data;
@@ -240,10 +228,10 @@ function CoachReport({
   return (
     <>
       <div className="coach-kpis stagger">
-        <CoachKpi label="reviews" value={totals.reviews} active={active} />
-        <CoachKpi label="正确率" value={correctRate} unit="%" active={active} />
-        <CoachKpi label="新增错题" value={totals.failures} active={active} />
-        <CoachKpi label="AI 成本" value={totals.cost_usd} prefix="$" active={active} decimals={3} />
+        <CoachKpi label="复习次数" value={totals.reviews} />
+        <CoachKpi label="正确率" value={correctRate} unit="%" />
+        <CoachKpi label="新增错题" value={totals.failures} />
+        <CoachKpi label="AI 成本" value={totals.cost_usd} prefix="$" decimals={3} />
       </div>
 
       <div className="coach-grid">
@@ -364,7 +352,7 @@ function CoachReport({
       <SectionLabel>失败排行 · 按知识点</SectionLabel>
       <LoomCard pad>
         {top_knowledge.length === 0 ? (
-          <p className="meta">窗口内无失败 attempt。</p>
+          <p className="meta">窗口内没有新增错题。</p>
         ) : (
           top_knowledge.map((k) => (
             <button

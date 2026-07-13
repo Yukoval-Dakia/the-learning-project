@@ -48,6 +48,7 @@ const BANNED: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   { label: 'internal session kind', pattern: /\breview_session\b/ },
   { label: 'internal decision verbs', pattern: /\baccept\s*\/\s*dismiss\b/i },
   { label: 'internal agent wording', pattern: /代理观察/ },
+  { label: 'raw Coach metric', pattern: /label\s*=\s*['"]reviews|无失败\s+attempt/i },
   { label: 'internal scope field', pattern: /scopeKnowledgeIds/ },
   { label: 'migration milestone', pattern: /\bM[45]\b/ },
   { label: 'legacy implementation', pattern: /旧栈|旧页/ },
