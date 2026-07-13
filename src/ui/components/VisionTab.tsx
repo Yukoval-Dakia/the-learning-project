@@ -17,7 +17,7 @@
 //     question_no — sits above the editable prompt textarea.
 
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
-import { RecordLanding } from '@/ui/components/RecordLanding';
+import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
@@ -200,7 +200,10 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // A8 (YUK-354): 成功着陆态。批量导入成功后不再硬跳 /mistakes，停在着陆视图
   // （收好了 N 道题 / 去向 / 下一步）。null = 仍在上传/审阅流程。
-  const [landing, setLanding] = useState<{ count: number } | null>(null);
+  const [landing, setLanding] = useState<{
+    count: number;
+    knowledge: { id: string; label: string }[];
+  } | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
   // bucketByBlockId[blockId] = primary block id of the merge bucket. Initially
   // every block points at itself. "合并到上一个块" rewrites this to the
@@ -468,7 +471,20 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['mistakes'] });
       const count = Array.isArray(data?.question_ids) ? data.question_ids.length : 0;
-      setLanding({ count });
+      const selectedKnowledgeIds = Array.from(
+        new Set(
+          groups
+            .filter((g) => !blockForms[g.primary.id]?.ignored)
+            .flatMap((g) => {
+              const form = blockForms[g.primary.id] ?? buildBlockForm(g.primary);
+              return form.knowledge_ids;
+            }),
+        ),
+      );
+      setLanding({
+        count,
+        knowledge: knowledgeLabelsFor(knowledgeQ.data?.rows ?? [], selectedKnowledgeIds),
+      });
     },
     onError: (err) => setErrorMessage(formatError(err)),
   });
@@ -561,16 +577,15 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   };
 
   if (landing) {
-    // A8 (YUK-354): 批量着陆。knowledge 去向：导入响应不带 knowledge_ids，诚实占位
-    // （knowledgeUnavailable），不编 —— 见 follow-up（wire 扩展 import 响应带回）。
+    // A8 (YUK-354): 批量着陆。知识点来自刚刚提交的表单快照，因此不依赖 import
+    // response 重复回传，也不会向用户暴露 wire/后端实现细节。
     // 「继续传」走 reset()（已含 setLanding(null)）回到上传面。
     return (
       <Card pad="lg" className="record-card">
         <RecordLanding
           count={landing.count}
           isBatch
-          knowledge={[]}
-          knowledgeUnavailable
+          knowledge={landing.knowledge}
           navigate={routing.navigate}
           onRecordAnother={reset}
         />
@@ -765,7 +780,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
             >
               {importMutation.isPending
                 ? '导入中…'
-                : `批量导入 · ${groups.filter((g) => !blockForms[g.primary.id]?.ignored).length} 道 → /mistakes`}
+                : `批量导入 · ${groups.filter((g) => !blockForms[g.primary.id]?.ignored).length} 道`}
             </Button>
           </div>
         </div>

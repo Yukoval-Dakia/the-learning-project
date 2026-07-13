@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import './note-reader.css';
 
-import { NoteBlockView, blockOutlineLabel } from './NoteBlocks';
+import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
 import { NoteEditor } from './NoteEditor';
 import {
   type BodyBlock,
@@ -326,7 +326,7 @@ export default function NoteReaderPage({
               interactive={note.interactive}
               blocks={blocks}
               navigate={navigate}
-              onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
+              onOpenQuestion={(questionId) => navigate(questionDetailHref(questionId))}
             />
           )}
         </article>
@@ -390,17 +390,12 @@ export default function NoteReaderPage({
             ) : (
               <div className="note-label-list">
                 {note.related_learning_items.map((it) => (
-                  <button
-                    type="button"
-                    key={it.id}
-                    className="note-label-row"
-                    onClick={() => say('学习项 surface 还在旧栈——M4/M5 收口后可跳转。')}
-                  >
+                  <div key={it.id} className="note-label-row">
                     <LoomIcon name="items" size={13} />
                     {/* de-wenyan: related-item rows carry no domain → neutral default. */}
                     <span>{it.title}</span>
-                    <span className="meta mono">{it.relation}</span>
-                  </button>
+                    <span className="meta">暂不提供详情页</span>
+                  </div>
                 ))}
               </div>
             )}
@@ -498,7 +493,7 @@ export function NoteDocBody({
   interactive: { html: string } | null;
   blocks: BodyBlock[];
   navigate: (to: string) => void;
-  onOpenQuestion: () => void;
+  onOpenQuestion: (questionId: string) => void;
 }) {
   if (type === 'interactive') {
     if (interactive) {

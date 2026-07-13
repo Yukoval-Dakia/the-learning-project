@@ -8,7 +8,11 @@
 
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { InteractiveArtifactDiscovery } from './KnowledgeDetailPage';
+import {
+  InteractiveArtifactDiscovery,
+  knowledgeBacklinkHref,
+  knowledgeReviewRequest,
+} from './KnowledgeDetailPage';
 import type { NoteSummary } from './knowledge-api';
 
 function artifact(overrides: Partial<NoteSummary> = {}): NoteSummary {
@@ -46,5 +50,20 @@ describe('InteractiveArtifactDiscovery', () => {
   it('renders nothing when there are no interactive artifacts (no empty block)', () => {
     const html = renderToString(<InteractiveArtifactDiscovery artifacts={[]} go={vi.fn()} />);
     expect(html).toBe('');
+  });
+});
+
+describe('knowledge surface action inventory', () => {
+  it('opens shipped note readers and leaves unsupported artifact types non-clickable', () => {
+    expect(knowledgeBacklinkHref('note_atomic', 'note_1', 'k_1')).toBe('/notes/note_1?entry=k_1');
+    expect(knowledgeBacklinkHref('note_hub', 'note_2', 'k_1')).toBe('/notes/note_2?entry=k_1');
+    expect(knowledgeBacklinkHref('interactive', 'art_1', 'k_1')).toBe('/notes/art_1?entry=k_1');
+    expect(knowledgeBacklinkHref('learning_item', 'li_1', 'k_1')).toBeNull();
+  });
+
+  it('hands point review to Copilot with the exact knowledge name', () => {
+    expect(knowledgeReviewRequest('判断句')).toBe(
+      '请围绕知识点「判断句」安排一次针对性复习，并先说明你准备怎么做。',
+    );
   });
 });
