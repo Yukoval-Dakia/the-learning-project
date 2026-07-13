@@ -171,8 +171,20 @@ describe('practice stream API', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       date: string;
-      items: Array<{ ref_id: string; source: string; status: string; position: number }>;
-      progress: { done: number; total: number };
+      items: Array<{
+        ref_id: string;
+        source: string;
+        status: string;
+        position: number;
+        estimated_minutes: number;
+      }>;
+      budget: { pace: string; minutes: number };
+      progress: {
+        done: number;
+        total: number;
+        estimated_total_minutes: number;
+        estimated_remaining_minutes: number;
+      };
       opening_line: string;
     };
     expect(body.date).toBe(TODAY);
@@ -180,7 +192,14 @@ describe('practice stream API', () => {
     expect(body.items[0].ref_id).toBe(qid);
     expect(body.items[0].source).toBe('decay');
     expect(body.items[0].status).toBe('pending');
-    expect(body.progress).toEqual({ done: 0, total: body.items.length });
+    expect(body.budget).toEqual({ pace: 'medium', minutes: 20 });
+    expect(body.items[0].estimated_minutes).toBe(2);
+    expect(body.progress).toEqual({
+      done: 0,
+      total: body.items.length,
+      estimated_total_minutes: 2,
+      estimated_remaining_minutes: 2,
+    });
 
     // 第二次 GET 读到的是同一份物化流（不重复 compose）。
     const res2 = await GET(getReq());

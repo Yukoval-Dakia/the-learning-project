@@ -35,13 +35,20 @@ export interface StreamItem {
   source: StreamSource;
   reasoning: string;
   status: StreamStatus;
+  estimated_minutes: number;
 }
 
 export interface StreamView {
   date: string;
   opening_line: string;
   items: StreamItem[];
-  progress: { done: number; total: number };
+  budget: { pace: 'light' | 'medium' | 'dense'; minutes: number };
+  progress: {
+    done: number;
+    total: number;
+    estimated_total_minutes: number;
+    estimated_remaining_minutes: number;
+  };
 }
 
 export const getStream = () => apiJson<StreamView>('/api/practice/stream?date=today');

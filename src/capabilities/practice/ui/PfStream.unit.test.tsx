@@ -34,6 +34,7 @@ function doneItem(overrides: Partial<StreamItem> = {}): StreamItem {
     // pre-YUK-551 code crashed on for an unknown source.
     reasoning: '前置你都拿下了，可以开这块新内容了。',
     status: 'done',
+    estimated_minutes: 2,
     ...overrides,
   };
 }
@@ -42,8 +43,16 @@ function streamOf(items: StreamItem[]): StreamView {
   return {
     date: '2026-07-03',
     opening_line: '今天的线。',
+    budget: { pace: 'medium', minutes: 20 },
     items,
-    progress: { done: items.filter((i) => i.status === 'done').length, total: items.length },
+    progress: {
+      done: items.filter((i) => i.status === 'done').length,
+      total: items.length,
+      estimated_total_minutes: items.reduce((sum, item) => sum + item.estimated_minutes, 0),
+      estimated_remaining_minutes: items
+        .filter((item) => item.status === 'pending' || item.status === 'in_progress')
+        .reduce((sum, item) => sum + item.estimated_minutes, 0),
+    },
   };
 }
 

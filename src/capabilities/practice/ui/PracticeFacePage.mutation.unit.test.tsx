@@ -56,6 +56,7 @@ function item(status: StreamStatus = 'pending'): StreamItem {
     source: 'decay',
     reasoning: '该复习了。',
     status,
+    estimated_minutes: 2,
   };
 }
 
@@ -64,8 +65,14 @@ function stream(status: StreamStatus = 'pending'): StreamView {
   return {
     date: '2026-07-13',
     opening_line: '今天先做这一题。',
+    budget: { pace: 'medium', minutes: 20 },
     items: [current],
-    progress: { done: status === 'done' ? 1 : 0, total: 1 },
+    progress: {
+      done: status === 'done' ? 1 : 0,
+      total: 1,
+      estimated_total_minutes: 2,
+      estimated_remaining_minutes: status === 'pending' || status === 'in_progress' ? 2 : 0,
+    },
   };
 }
 

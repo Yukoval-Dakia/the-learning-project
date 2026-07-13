@@ -10,6 +10,7 @@ import { z } from 'zod';
 // YUK-558 (spec Q6-A / M2)：prod sampler 种子化——选题决策可重构（同 seed + 同输入 ⇒ 同选集）。
 // seed 走 log-only（不进 DB 列，Q-d deferred）。两抽样事件（compose / rerank）各派生独立 seed。
 import { buildSeededSelectionRng } from '../server/selection-seed';
+import { estimateStreamItemMinutes } from '../server/stream-budget';
 import {
   advanceStreamItem,
   getStream,
@@ -66,7 +67,7 @@ export async function POST(req: Request): Promise<Response> {
     const added = await recomposeStream(db, date, {
       composeDeps: { rng: buildSeededSelectionRng(date, 'recompose', newId()) },
     });
-    const view = await getStream(db, date);
+    const view = await getStream(db, date, { enforceBudget: true });
     return Response.json({ added, ...view });
   } catch (err) {
     return errorResponse(err);
@@ -97,7 +98,9 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       rng: buildSeededSelectionRng(streamLocalDate(), 'rerank', params.id),
     });
     if (!row) throw new ApiError('not_found', `stream item ${params.id} not found`, 404);
-    return Response.json({ item: row });
+    return Response.json({
+      item: { ...row, estimated_minutes: estimateStreamItemMinutes(row.item_kind) },
+    });
   } catch (err) {
     return errorResponse(err);
   }

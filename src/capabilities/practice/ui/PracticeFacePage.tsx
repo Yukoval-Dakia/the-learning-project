@@ -56,6 +56,10 @@ function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamIte
     progress: {
       done: items.filter((item) => item.status === 'done').length,
       total: items.length,
+      estimated_total_minutes: items.reduce((sum, item) => sum + item.estimated_minutes, 0),
+      estimated_remaining_minutes: items
+        .filter((item) => item.status === 'pending' || item.status === 'in_progress')
+        .reduce((sum, item) => sum + item.estimated_minutes, 0),
     },
   };
 }

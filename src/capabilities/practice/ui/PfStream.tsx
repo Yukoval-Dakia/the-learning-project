@@ -127,7 +127,7 @@ export function PfStream({
   // current = 正在做的那项优先（中途退出回来还在原位），否则第一个待做。
   const currentItem = items.find((it) => it.status === 'in_progress') ?? pending[0] ?? null;
   const allDone = items.length > 0 && stream.progress.done === items.length;
-  const etaMin = pending.reduce((m, it) => m + (it.item_kind === 'paper' ? 10 : 2), 0);
+  const etaMin = stream.progress.estimated_remaining_minutes;
 
   const skip = (it: StreamItem) => {
     void updateItem(it, 'skipped', '跳过练习', async () => {
@@ -293,7 +293,9 @@ export function PfStream({
           <p className="pf-open-line">
             {allDone ? '都织完了——下面是今天的线头。' : stream.opening_line}
           </p>
-          <span className="pf-open-meta">composer · {stream.date}</span>
+          <span className="pf-open-meta">
+            composer · {stream.date} · 今日预算 {stream.budget.minutes} 分钟
+          </span>
         </div>
       </div>
 
