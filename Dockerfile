@@ -85,7 +85,14 @@ COPY --from=sdkdeps /sdk/node_modules/@modelcontextprotocol ./node_modules/@mode
 COPY --from=sqlitedeps /sqlite/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=sqlitedeps /sqlite/node_modules/bindings ./node_modules/bindings
 COPY --from=sqlitedeps /sqlite/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+# Claude Code refuses --dangerously-skip-permissions as root. Both the Hono app
+# and pg-boss worker use that mode through the Agent SDK, so the shipped runtime
+# must be non-root. Pre-create the worker's named-volume mountpoint with the
+# matching owner; docker-compose's mem0-init also repairs existing root-owned
+# volumes during upgrades.
+RUN mkdir -p /var/lib/mem0 && chown node:node /var/lib/mem0
 ENV API_PORT=8787 RW_STATIC_DIR=/app/web/dist
 # gate 选项 b：不设 RW_WORKER（worker 独立进程，compose worker 服务 command 覆盖跑 dist/worker.cjs）。
 EXPOSE 8787
+USER node
 CMD ["node", "dist/server.cjs"]
