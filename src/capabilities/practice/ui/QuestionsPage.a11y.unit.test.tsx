@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { QRow } from './QuestionsPage';
+import { QRow, questionRowAccessibleName } from './QuestionsPage';
 import type { QBankQuestion } from './practice-api';
 
 afterEach(cleanup);
@@ -45,5 +45,19 @@ describe('question row interaction semantics', () => {
     await userEvent.click(screen.getByRole('button', { name: '展开小题' }));
     expect(onToggle).toHaveBeenCalledTimes(1);
     expect(go).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a long prompt out of the row accessible name', () => {
+    const long = {
+      ...composite,
+      is_composite: false,
+      prompt_md: `这是一道很长的题目，${'后续材料不应全部进入可访问名称。'.repeat(20)}`,
+    };
+    const name = questionRowAccessibleName(long);
+
+    expect(name).toMatch(/^打开题目：这是一道很长的题目/);
+    expect(name).toContain('…');
+    expect(name.length).toBeLessThan(60);
+    expect(name).not.toContain(long.prompt_md);
   });
 });

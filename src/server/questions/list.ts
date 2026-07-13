@@ -19,7 +19,7 @@
 // OOM guard, NOT a business limit — it only bites when the tier/family in-memory
 // path must fetch the full WHERE-hit set (it cannot SQL-paginate, see A1b).
 
-import { type SQL, and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
 import {
@@ -64,7 +64,9 @@ function previewPrompt(promptMd: string): string {
   return `${promptMd.slice(0, PROMPT_PREVIEW_CHARS)}…`;
 }
 
-export type QuestionListSortBy = 'created_at' | 'source_tier';
+export type QuestionListSortBy = 'created_at' | 'source_tier' | 'difficulty';
+export type QuestionListSortDir = 'asc' | 'desc';
+export type QuestionListDraftStatus = 'all' | 'active' | 'draft';
 
 export interface ListQuestionsParams {
   // 任一匹配 → OR of `knowledge_ids @> [id]` (复用 sourcing-sequence:114 容器写法).
@@ -88,15 +90,19 @@ export interface ListQuestionsParams {
   // SQL axis (no in-memory degradation), symmetric with meta.ts's display-side fold.
   kind?: string;
   difficulty?: number; // 1-5
+  difficulties?: number[]; // repeated difficulty params; OR semantics.
   visualComplexity?: string; // nullable column: only filters when a value is passed.
+  search?: string; // prompt/id/knowledge-name substring.
   // A1b grounding axis (in-memory derive only — never SQL).
   sourceTier?: SourceTier[];
   sortBy?: QuestionListSortBy; // default 'created_at' (desc); 'source_tier' → comparator.
+  sortDir?: QuestionListSortDir; // default desc; ignored by source_tier ranking.
   // A1c variant families.
   groupByFamily?: boolean;
   expandRoot?: string;
   // draft exclusion (default false → draft 排除惯例).
   includeDrafts?: boolean;
+  draftStatus?: QuestionListDraftStatus;
   // YUK-409 题库面 enrichment opt-in. true → 回填 subject / knowledge_labels /
   // is_composite / children（loom screen-questions 所需的派生量）。只在默认 SQL-
   // 分页 flat 路径生效（题库 UI 唯一走的路径）；tier/family/OOM 路径与 copilot
@@ -160,6 +166,11 @@ export interface ListQuestionsResult {
   total: number; // count over the same filter set (post in-memory filter when tier-filtered).
   // true when CANDIDATE_CAP clipped the in-memory candidate set (OOM guard hit).
   truncated: boolean;
+  page: {
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  };
   computed_at_sec: number;
 }
 
@@ -251,11 +262,39 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
     // single-element set degenerates to an exact match.
     filters.push(inArray(question.kind, canonicalKindToPersistedForms(params.kind)));
   }
-  if (params.difficulty !== undefined) filters.push(eq(question.difficulty, params.difficulty));
+  const difficulties = params.difficulties?.length
+    ? [...new Set(params.difficulties)]
+    : params.difficulty !== undefined
+      ? [params.difficulty]
+      : [];
+  if (difficulties.length > 0) filters.push(inArray(question.difficulty, difficulties));
   if (params.visualComplexity !== undefined) {
     filters.push(eq(question.visual_complexity, params.visualComplexity));
   }
-  if (!params.includeDrafts) {
+  if (params.search?.trim()) {
+    const escaped = params.search.trim().replace(/[\\%_]/g, '\\$&');
+    const pattern = `%${escaped}%`;
+    filters.push(
+      or(
+        ilike(question.prompt_md, pattern),
+        ilike(question.id, pattern),
+        sql`EXISTS (
+          SELECT 1
+          FROM ${knowledge}
+          WHERE ${knowledge.id} IN (
+            SELECT jsonb_array_elements_text(${question.knowledge_ids})
+          )
+          AND ${knowledge.archived_at} IS NULL
+          AND ${knowledge.name} ILIKE ${pattern}
+        )`,
+      ) as SQL,
+    );
+  }
+  if (params.draftStatus === 'draft') {
+    filters.push(eq(question.draft_status, 'draft'));
+  } else if (params.draftStatus === 'active') {
+    filters.push(notDraftPredicate(question.draft_status));
+  } else if (params.draftStatus === undefined && !params.includeDrafts) {
     // draft 排除惯例 (sourcing-sequence:116 / due-list): nullable column must
     // carry the IS NULL branch, not a bare `<> 'draft'`.
     filters.push(notDraftPredicate(question.draft_status));
@@ -320,11 +359,24 @@ async function fetchCandidates(
   return { rows, truncated: false };
 }
 
-const emptyResult = (): ListQuestionsResult => ({
+function pageInfo(
+  total: number,
+  returned: number,
+  params: Pick<ListQuestionsParams, 'limit' | 'offset'>,
+): ListQuestionsResult['page'] {
+  return {
+    limit: params.limit,
+    offset: params.offset,
+    has_more: params.offset + returned < total,
+  };
+}
+
+const emptyResult = (params: ListQuestionsParams): ListQuestionsResult => ({
   items: [],
   families: null,
   total: 0,
   truncated: false,
+  page: pageInfo(0, 0, params),
   computed_at_sec: Math.floor(Date.now() / 1000),
 });
 
@@ -387,11 +439,16 @@ async function flatListSqlPaginated(
 ): Promise<ListQuestionsResult> {
   const where = filters.length > 0 ? and(...filters) : undefined;
 
+  const direction = params.sortDir === 'asc' ? asc : desc;
+  const orderBy =
+    params.sortBy === 'difficulty'
+      ? [direction(question.difficulty), desc(question.created_at), desc(question.id)]
+      : [direction(question.created_at), direction(question.id)];
+
   const rows = (await db
     .select(CANDIDATE_COLUMNS)
     .from(question)
-    // Newest-first default; id is the stable tiebreaker on equal created_at.
-    .orderBy(desc(question.created_at), desc(question.id))
+    .orderBy(...orderBy)
     .where(where)
     .limit(params.limit)
     .offset(params.offset)) as CandidateRow[];
@@ -411,6 +468,7 @@ async function flatListSqlPaginated(
     families: null,
     total: count,
     truncated: false,
+    page: pageInfo(count, items.length, params),
     computed_at_sec: computedAtSec,
   };
 }
@@ -530,6 +588,7 @@ function flatList(
     families: null,
     total,
     truncated,
+    page: pageInfo(total, page.length, params),
     computed_at_sec: computedAtSec,
   };
 }
@@ -591,6 +650,7 @@ function aggregateFamilies(
     families: page,
     total,
     truncated,
+    page: pageInfo(total, page.length, params),
     computed_at_sec: computedAtSec,
   };
 }
@@ -603,7 +663,7 @@ async function expandRootFamily(
 ): Promise<ListQuestionsResult> {
   const rootKey = params.expandRoot as string;
   const members = await loadFamilyMembers(db, rootKey, !params.includeDrafts);
-  if (members.length === 0) return { ...emptyResult(), computed_at_sec: computedAtSec };
+  if (members.length === 0) return { ...emptyResult(params), computed_at_sec: computedAtSec };
 
   const derived = members.map(deriveCandidate);
   // depth asc, created_at asc — the family-tree reading order.
@@ -621,6 +681,7 @@ async function expandRootFamily(
     families: null,
     total,
     truncated: false,
+    page: pageInfo(total, page.length, params),
     computed_at_sec: computedAtSec,
   };
 }

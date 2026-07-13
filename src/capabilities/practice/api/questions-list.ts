@@ -14,7 +14,12 @@ import { z } from 'zod';
 import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { type QuestionListSortBy, listQuestions } from '@/server/questions/list';
+import {
+  type QuestionListDraftStatus,
+  type QuestionListSortBy,
+  type QuestionListSortDir,
+  listQuestions,
+} from '@/server/questions/list';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -29,10 +34,13 @@ const ListQuerySchema = z
     subject: z.string().min(1).optional(),
     source: z.string().min(1).optional(),
     kind: z.string().min(1).optional(),
-    difficulty: z.coerce.number().int().min(1).max(5).optional(),
+    difficulty: z.array(z.coerce.number().int().min(1).max(5)).default([]),
     visual_complexity: z.string().min(1).optional(),
+    search: z.string().trim().min(1).max(200).optional(),
     source_tier: z.array(SourceTierSchema).default([]),
-    sort_by: z.enum(['created_at', 'source_tier']).optional(),
+    sort_by: z.enum(['created_at', 'source_tier', 'difficulty']).optional(),
+    sort_dir: z.enum(['asc', 'desc']).optional(),
+    status: z.enum(['all', 'active', 'draft']).optional(),
     group_by_family: z.boolean().default(false),
     expand_root: z.string().min(1).optional(),
     include_drafts: z.boolean().default(false),
@@ -69,10 +77,13 @@ export async function GET(req: Request): Promise<Response> {
       subject: sp.get('subject') ?? undefined,
       source: sp.get('source') ?? undefined,
       kind: sp.get('kind') ?? undefined,
-      difficulty: sp.get('difficulty') ?? undefined,
+      difficulty: sp.getAll('difficulty'),
       visual_complexity: sp.get('visual_complexity') ?? undefined,
+      search: sp.get('search') ?? undefined,
       source_tier: sp.getAll('source_tier'),
       sort_by: sp.get('sort_by') ?? undefined,
+      sort_dir: sp.get('sort_dir') ?? undefined,
+      status: sp.get('status') ?? undefined,
       group_by_family: parseBool(sp.get('group_by_family')),
       expand_root: sp.get('expand_root') ?? undefined,
       include_drafts: parseBool(sp.get('include_drafts')),
@@ -103,13 +114,16 @@ export async function GET(req: Request): Promise<Response> {
       subjectKnowledgeIds,
       source: q.source,
       kind: q.kind,
-      difficulty: q.difficulty,
+      difficulties: q.difficulty.length > 0 ? q.difficulty : undefined,
       visualComplexity: q.visual_complexity,
+      search: q.search,
       sourceTier: q.source_tier.length > 0 ? (q.source_tier as (1 | 2 | 3 | 4)[]) : undefined,
       sortBy: q.sort_by as QuestionListSortBy | undefined,
+      sortDir: q.sort_dir as QuestionListSortDir | undefined,
       groupByFamily: q.group_by_family,
       expandRoot: q.expand_root,
       includeDrafts: q.include_drafts,
+      draftStatus: q.status as QuestionListDraftStatus | undefined,
       enrich: q.enrich,
       limit,
       offset,

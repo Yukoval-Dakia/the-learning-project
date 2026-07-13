@@ -13,11 +13,10 @@
 //   • variant lineage glyph ◆◇▫ — 从真 root_question_id（null→母题◆ / 非 null→变体◇）+
 //     parent_question_id/part_index（小题▫）派生，不需后端新字段。
 //   • composite 大题展开 — 真后端 enrich.children（question_part 子行，part_index 序）。
-//   • 状态 tab（全部/正式/草稿）— 真 draft_status（NULL≡正式 / 'draft'≡草稿）；list
-//     默认排除草稿，故题库面请求 include_drafts=true 拉全集，client 按 draft_status 分。
-//   • 筛选策略 — API 支持的轴（subject/source/kind/difficulty）走 server-side 传参（filters
-//     变 → query key 变 → 重新 fetch）；search + 知识点多选走 client-side（同 DraftReviewPage
-//     的搜索约定，知识点是 enrich.knowledge_labels 的本地集合，无需再往返）。
+//   • 状态 tab（全部/正式/草稿）— 真 draft_status（NULL≡正式 / 'draft'≡草稿），随其它
+//     过滤、搜索、排序一起由 server 在分页前执行，避免只筛已加载页。
+//   • 分页策略 — 每次 20 条 progressive load；response.page.has_more + total 是唯一分页
+//     真相。subject/source/kind/difficulty/knowledge/search/status/sort 均跨页走 server。
 //   • 省略 attempts/review/mistakes/papers 微指示 — 后端 list 投影无这些聚合（detail 才有
 //     timeline/backlinks）；QIndicators 只渲 subject + 知识点 tags，微指示 DEFER（注释标明）。
 //   • ribbon「在复习队列」统计同因后端 list 无 review 聚合 → DEFER，ribbon 改渲「含变体」
@@ -32,8 +31,8 @@ import { Card } from '@/ui/primitives/Card';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { useQuery } from '@tanstack/react-query';
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import './questions.css';
 
 import { type QBankQuestion, getQuestionsList } from './practice-api';
@@ -119,6 +118,27 @@ function subjMeta(
 // 去 markdown/latex 标记符——仅用于搜索匹配（行 stem 渲染走 QInline 保留 latex）。
 function plainText(s: string): string {
   return (s || '').replace(/[*`$＿_]/g, '');
+}
+
+const QUESTION_PAGE_SIZE = 20;
+const ACCESSIBLE_PROMPT_CHARS = 36;
+
+export function questionRowAccessibleName(
+  q: Pick<QBankQuestion, 'prompt_md' | 'is_composite'>,
+  isChild = false,
+  subIndex?: number,
+): string {
+  const compact = plainText(q.prompt_md).replace(/\s+/g, ' ').trim();
+  const summary =
+    compact.length > ACCESSIBLE_PROMPT_CHARS
+      ? `${compact.slice(0, ACCESSIBLE_PROMPT_CHARS)}…`
+      : compact;
+  const kind = isChild
+    ? `小题${subIndex != null ? ` ${subIndex}` : ''}`
+    : q.is_composite
+      ? '大题'
+      : '题目';
+  return summary ? `打开${kind}：${summary}` : `打开${kind}`;
 }
 
 // created_at_sec（unix 秒）→ 日期标签（与 demo q.created 的 YYYY-MM-DD 同形）。
@@ -236,6 +256,7 @@ export function QRow({ q, go, subjectRows, expanded, onToggle, isChild, subIndex
         // biome-ignore lint/a11y/useSemanticElements: row contains rich block layout; sibling expand remains a native button
         role="button"
         tabIndex={0}
+        aria-label={questionRowAccessibleName(q, isChild, subIndex)}
         onClick={() => go(`/questions/${q.id}`)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -310,46 +331,95 @@ export interface QuestionsPageProps {
 export default function QuestionsPage({ navigate }: QuestionsPageProps) {
   // YUK-598 — 科目筛选行驱动（provider selectable 视图）。
   const { subjects: subjectRowsForFilter } = useSubjects();
-  // server-side 轴 state（变 → query key 变 → 重新 fetch）。题库面恒拉 include_drafts=true
-  // 取全集（状态 tab 在 client 按 draft_status 分），server 不带 difficulty（多选 pips 在 client 过）。
+  // 所有会改变结果集的轴都进入 server query key；分页前过滤/排序，避免只处理当前页。
   const [subject, setSubject] = useState('all');
   const [source, setSource] = useState('all');
   const [kind, setKind] = useState('all');
 
-  // client-side state（搜索 / 状态 tab / 难度多选 / 知识点多选 / 排序 / 展开集）。
   const [status, setStatus] = useState<StatusTab>('all');
   const [diffs, setDiffs] = useState<number[]>([]);
   const [labels, setLabels] = useState<string[]>([]);
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [sort, setSort] = useState<SortBy>('time');
   const [dir, setDir] = useState<SortDir>('desc');
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const [knownLabels, setKnownLabels] = useState<Record<string, string>>({});
 
-  // list query：server-side 轴入 query key。limit=200（后端封顶）。
-  const listQ = useQuery({
-    queryKey: ['questions-bank', subject, source, kind],
-    queryFn: () =>
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  const stableDiffs = useMemo(() => [...diffs].sort((a, b) => a - b), [diffs]);
+  const stableLabels = useMemo(() => [...labels].sort(), [labels]);
+
+  const listQ = useInfiniteQuery({
+    queryKey: [
+      'questions-bank',
+      subject,
+      source,
+      kind,
+      status,
+      stableDiffs,
+      stableLabels,
+      debouncedQuery,
+      sort,
+      dir,
+    ],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
       getQuestionsList({
         subject: subject === 'all' ? undefined : subject,
         source: source === 'all' ? undefined : source,
         kind: kind === 'all' ? undefined : kind,
+        status,
+        difficulties: stableDiffs,
+        knowledgeIds: stableLabels,
+        search: debouncedQuery || undefined,
+        sortBy: sort === 'diff' ? 'difficulty' : 'created_at',
+        sortDir: dir,
         includeDrafts: true,
-        limit: 200,
+        limit: QUESTION_PAGE_SIZE,
+        offset: pageParam,
       }),
+    getNextPageParam: (lastPage) =>
+      lastPage.page.has_more ? lastPage.page.offset + lastPage.items.length : undefined,
   });
 
-  const top = useMemo(() => listQ.data?.items ?? [], [listQ.data]);
+  const top = useMemo(() => listQ.data?.pages.flatMap((page) => page.items) ?? [], [listQ.data]);
+  const total = listQ.data?.pages[0]?.total ?? 0;
 
-  // 知识点全集（kchip 来源）——从当前 page 实际出现的 enrich.knowledge_labels 动态生成。
-  const allLabels = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const q of top) {
-      for (const k of q.knowledge_labels ?? []) if (!seen.has(k.id)) seen.set(k.id, k.name);
-      for (const c of q.children)
-        for (const k of c.knowledge_labels ?? []) if (!seen.has(k.id)) seen.set(k.id, k.name);
-    }
-    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  useEffect(() => {
+    if (top.length === 0) return;
+    setKnownLabels((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const q of top) {
+        for (const k of q.knowledge_labels ?? []) {
+          if (next[k.id] !== k.name) {
+            next[k.id] = k.name;
+            changed = true;
+          }
+        }
+        for (const child of q.children) {
+          for (const k of child.knowledge_labels ?? []) {
+            if (next[k.id] !== k.name) {
+              next[k.id] = k.name;
+              changed = true;
+            }
+          }
+        }
+      }
+      return changed ? next : current;
+    });
   }, [top]);
+
+  // 已见知识点在切换 server filter 后仍保留为可撤销 chip；选中后由 API 跨全库过滤。
+  const allLabels = useMemo(
+    () => Object.entries(knownLabels).map(([id, name]) => ({ id, name })),
+    [knownLabels],
+  );
 
   const toggleLabel = (id: string) =>
     setLabels((xs) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]));
@@ -372,40 +442,8 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     setQuery('');
     setSort('time');
     setDir('desc');
+    setOpen(new Set());
   };
-
-  // search（client，同 DraftReviewPage 约定）：题面预览 + 题号 + 知识点名；composite
-  // 也匹配任一子题（题面/题号）。useCallback 钉稳定身份，作 useMemo 的真实依赖（避免
-  // 内联闭包让 Biome 看不见 query 依赖）。
-  const matchQuery = useCallback(
-    (q: QBankQuestion): boolean => {
-      const needle = query.trim().toLowerCase();
-      if (!needle) return true;
-      const kLabels = (q.knowledge_labels ?? []).map((k) => k.name);
-      const hay = [plainText(q.prompt_md), q.id, ...kLabels].join(' ').toLowerCase();
-      const kids = q.children.some(
-        (c) => plainText(c.prompt_md).toLowerCase().includes(needle) || c.id.includes(needle),
-      );
-      return hay.includes(needle) || kids;
-    },
-    [query],
-  );
-
-  const filtered = useMemo(() => {
-    const out = top.filter(
-      (q) =>
-        (status === 'all' || (status === 'draft' ? isDraft(q) : !isDraft(q))) &&
-        (diffs.length === 0 || diffs.includes(q.difficulty)) &&
-        (labels.length === 0 ||
-          (q.knowledge_labels ?? []).some((k) => labels.includes(k.id)) ||
-          q.children.some((c) => (c.knowledge_labels ?? []).some((k) => labels.includes(k.id)))) &&
-        matchQuery(q),
-    );
-    return [...out].sort((a, b) => {
-      const v = sort === 'diff' ? a.difficulty - b.difficulty : a.created_at_sec - b.created_at_sec;
-      return dir === 'asc' ? v : -v;
-    });
-  }, [top, status, diffs, labels, sort, dir, matchQuery]);
 
   const activeFilters =
     (status !== 'all' ? 1 : 0) +
@@ -416,11 +454,8 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     (labels.length ? 1 : 0) +
     (query.trim() ? 1 : 0);
 
-  // ribbon 统计（对 top 全集）。childCount = 题库总小题数（含变体不计——variant 是顶层）。
+  // ribbon 的 total 来自 server 完整过滤集；其余三项明确标注“已加载”，不把 page 当全集。
   const childCount = useMemo(() => top.reduce((a, q) => a + q.children.length, 0), [top]);
-  const draftN = top.filter(isDraft).length;
-  const activeN = top.length - draftN;
-  // 「在复习队列」DEFER（后端 list 无 review 聚合）→ 改渲「含变体」（真 variant_depth>0 计数）。
   const variantN = top.filter((q) => q.variant_depth > 0).length;
 
   // 来源 / 题型 select 选项——铺真 enum 全集（select 是 server-side 轴，需可选未在 page 出现的值）。
@@ -433,10 +468,10 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     ...Object.entries(QKIND).map(([k, v]) => [k, v.label] as [string, string]),
   ];
 
-  const STATUS_TABS: Array<[StatusTab, string, number]> = [
-    ['all', '全部', top.length],
-    ['active', '正式', activeN],
-    ['draft', '草稿', draftN],
+  const STATUS_TABS: Array<[StatusTab, string]> = [
+    ['all', '全部'],
+    ['active', '正式'],
+    ['draft', '草稿'],
   ];
 
   return (
@@ -474,22 +509,22 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
           <div className="qb-ribbon">
             <div className="qb-stat">
               <span className="qb-stat-n tnum">
-                {top.length}
+                {total}
                 <span className="u">题（顶层）</span>
               </span>
-              <span className="qb-stat-l">含 {childCount} 道小题</span>
+              <span className="qb-stat-l">符合当前条件</span>
             </div>
             <div className="qb-stat">
-              <span className="qb-stat-n tnum">{activeN}</span>
-              <span className="qb-stat-l">正式</span>
+              <span className="qb-stat-n tnum">{top.length}</span>
+              <span className="qb-stat-l">已加载题目</span>
             </div>
             <div className="qb-stat accent">
-              <span className="qb-stat-n tnum">{draftN}</span>
-              <span className="qb-stat-l">草稿待审</span>
+              <span className="qb-stat-n tnum">{childCount}</span>
+              <span className="qb-stat-l">已加载小题</span>
             </div>
             <div className="qb-stat">
               <span className="qb-stat-n tnum">{variantN}</span>
-              <span className="qb-stat-l">AI 变体</span>
+              <span className="qb-stat-l">已加载变体</span>
             </div>
           </div>
 
@@ -498,6 +533,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
             <label className="qb-search">
               <LoomIcon name="search" size={16} />
               <input
+                aria-label="搜索题目"
                 placeholder="搜索题面文本、知识点、题号…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -551,7 +587,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
 
           {/* status tabs */}
           <div className="qb-tabs" role="tablist">
-            {STATUS_TABS.map(([s, l, n]) => (
+            {STATUS_TABS.map(([s, l]) => (
               <button
                 type="button"
                 key={s}
@@ -561,7 +597,6 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                 onClick={() => setStatus(s)}
               >
                 {l}
-                <span className="qb-tab-n">{n}</span>
               </button>
             ))}
           </div>
@@ -663,7 +698,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
           )}
 
           {/* list / empty states */}
-          {top.length === 0 ? (
+          {top.length === 0 && activeFilters === 0 ? (
             <Card pad="lg">
               <EmptyState
                 icon="quiz"
@@ -681,7 +716,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                 }
               />
             </Card>
-          ) : filtered.length === 0 ? (
+          ) : top.length === 0 ? (
             <Card pad="lg">
               <EmptyState
                 icon="search"
@@ -696,7 +731,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
             </Card>
           ) : (
             <Card className="qb-list" pad="default">
-              {filtered.map((q) => (
+              {top.map((q) => (
                 <Fragment key={q.id}>
                   <QRow
                     q={q}
@@ -723,9 +758,20 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
           )}
 
           <div className="qb-count">
-            <span className="meta">
-              显示 {filtered.length} / {top.length} 道顶层题目
+            <span className="meta" aria-live="polite">
+              已显示 {top.length} / {total} 道顶层题目
             </span>
+            {listQ.hasNextPage && (
+              <Btn
+                size="sm"
+                variant="secondary"
+                icon="arrow"
+                disabled={listQ.isFetchingNextPage}
+                onClick={() => void listQ.fetchNextPage()}
+              >
+                {listQ.isFetchingNextPage ? '加载中…' : '继续加载'}
+              </Btn>
+            )}
             {activeFilters > 0 && (
               <button type="button" className="qf2-reset" style={{ margin: 0 }} onClick={reset}>
                 <LoomIcon name="refresh" size={13} />
