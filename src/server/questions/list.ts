@@ -21,7 +21,7 @@
 
 import { type SQL, and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 
-import { batchResolveSubjectIds } from '@/capabilities/knowledge/server/subject-resolution';
+import { batchResolveSubjectDisplayIds } from '@/capabilities/knowledge/server/subject-resolution';
 import {
   type SourceTier,
   type SourceTierName,
@@ -515,9 +515,10 @@ async function enrichItems(
   // 用 childrenByParent 内的实例（就地写回，最终随顶层 it.children 返回）。
   const enrichTargets: QuestionListItem[] = [...items, ...[...childrenByParent.values()].flat()];
 
-  // 2. subject 派生（batchResolveSubjectIds：knowledge_ids[0] → effectiveDomain →
-  //    subject profile id；去重 parent-chain walk，page 量级一次解析）。
-  const subjectById = await batchResolveSubjectIds(
+  // 2. subject learner 投影：已注册 domain → canonical profile id；未配置但真实存在的
+  //    domain → raw key；无信号 → null。调度侧仍使用 batchResolveSubjectIds 的 general
+  //    fallback，本读面不能把未知学科伪装成“通用”。
+  const subjectById = await batchResolveSubjectDisplayIds(
     db,
     enrichTargets.map((it) => ({ id: it.id, knowledge_ids: it.knowledge_ids })),
   );

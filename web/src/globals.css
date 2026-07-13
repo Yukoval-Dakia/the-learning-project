@@ -6485,6 +6485,14 @@ button.chip:hover {
   border-color: var(--ink-5);
   color: var(--ink);
 }
+button.chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+button.chip:disabled:hover {
+  border-color: var(--line);
+  color: var(--ink-3);
+}
 
 /* ── YUK-567 备课台 (prep-desk) conjecture panel — inline expand from 备课猜想 chip ── */
 .chip-toggle.is-open {

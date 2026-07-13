@@ -1,5 +1,6 @@
 import {
   BUILTIN_IDS,
+  normalizeSubjectKey,
   resolveKnownSubjectId,
   resolveSubjectProfile,
   subjectProfiles,
@@ -16,23 +17,54 @@ import type { CSSProperties } from 'react';
 export interface SubjectChoice {
   id: string;
   label: string;
+  configurationStatus: SubjectConfigurationStatus;
 }
+
+export type SubjectConfigurationStatus = 'configured' | 'general-fallback' | 'unconfigured';
 
 // YUK-598 — provider 行的最小形状（useSubjects().subjects 可直接传入）。
 export interface SubjectRowLike {
   id: string;
   displayName: string;
+  aliases?: readonly string[];
+  configurationStatus?: SubjectConfigurationStatus;
 }
 
-// YUK-598 rows 参数化：传入 provider 行（DB selectable 视图，含 custom）即行驱动；
+function displayLabel(row: SubjectRowLike): string {
+  return row.configurationStatus === 'unconfigured'
+    ? `未配置学科 · ${row.displayName}`
+    : row.displayName;
+}
+
+export function subjectIdentityKey(
+  subject: string | null,
+  rows?: readonly SubjectRowLike[],
+): string | null {
+  if (!subject) return null;
+  const key = normalizeSubjectKey(subject);
+  const row = rows?.find(
+    (candidate) =>
+      normalizeSubjectKey(candidate.id) === key ||
+      candidate.aliases?.some((alias) => normalizeSubjectKey(alias) === key),
+  );
+  return row?.id ?? resolveKnownSubjectId(subject) ?? key;
+}
+
+// YUK-598 / YUK-628 rows 参数化：传入 provider 行（注册 profile + observed raw domain）
+// 即行驱动；消费者自行决定 unconfigured 行是可筛选还是只读禁选；
 // 省略/空数组 = 编译期 builtin 投影（断网/首帧/未 hook 化调用点的原行为，逐位不变）。
 export function listSubjectChoices(rows?: readonly SubjectRowLike[]): SubjectChoice[] {
   if (rows && rows.length > 0) {
-    return rows.map((r) => ({ id: r.id, label: r.displayName }));
+    return rows.map((r) => ({
+      id: r.id,
+      label: displayLabel(r),
+      configurationStatus: r.configurationStatus ?? 'configured',
+    }));
   }
   return BUILTIN_IDS.map((id) => ({
     id,
     label: subjectProfiles[id]?.displayName ?? id,
+    configurationStatus: 'configured',
   }));
 }
 
@@ -40,9 +72,14 @@ export function listSubjectChoices(rows?: readonly SubjectRowLike[]): SubjectCho
 // and alias-aware (legacy `wenyan` → yuwen). Falls back to the raw string for an
 // unregistered value so callers never render an empty label.
 export function subjectDisplayName(subject: string, rows?: readonly SubjectRowLike[]): string {
-  const id = resolveKnownSubjectId(subject) ?? subject;
+  const id = subjectIdentityKey(subject, rows) ?? subject;
   // provider 行优先（custom id 只有这里认识）；miss 再落编译期 builtin 快照。
-  const fromRows = rows?.find((r) => r.id === id || r.id === subject)?.displayName;
+  const matchedRow = rows?.find((r) => r.id === id);
+  const fromRows = matchedRow
+    ? matchedRow.configurationStatus === 'general-fallback'
+      ? `${matchedRow.displayName} · 通用模式`
+      : displayLabel(matchedRow)
+    : undefined;
   return fromRows ?? subjectProfiles[id]?.displayName ?? subject;
 }
 

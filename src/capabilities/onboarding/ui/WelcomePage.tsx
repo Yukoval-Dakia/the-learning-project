@@ -149,6 +149,12 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
                 type="button"
                 className={`chip${leanings.includes(l.id) ? ' is-on' : ''}`}
                 aria-pressed={leanings.includes(l.id)}
+                disabled={l.configurationStatus === 'unconfigured'}
+                title={
+                  l.configurationStatus === 'unconfigured'
+                    ? '该 domain 已在知识库出现，但尚未配置为可选学科'
+                    : undefined
+                }
                 onClick={() => togLean(l.id)}
               >
                 {leanings.includes(l.id) && <LoomIcon name="check" size={12} />}
@@ -216,6 +222,12 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
                 type="button"
                 className={`chip${subject === s.id ? ' is-on' : ''}`}
                 aria-pressed={subject === s.id}
+                disabled={s.configurationStatus === 'unconfigured'}
+                title={
+                  s.configurationStatus === 'unconfigured'
+                    ? '该 domain 已在知识库出现，但尚未配置为可选学科'
+                    : undefined
+                }
                 onClick={() => setSubject(subject === s.id ? null : s.id)}
               >
                 {subject === s.id && <LoomIcon name="check" size={12} />}
