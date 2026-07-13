@@ -61,6 +61,19 @@ export function normalizeMathDelimiters(md: string): string {
   return out;
 }
 
+/**
+ * Pandoc emits HTML instead of Markdown when a DOCX drawing carries explicit
+ * dimensions, and may wrap the tag across lines. Collapse the complete tag to
+ * one Markdown image reference before line-based segmentation so continuation
+ * attributes such as `style="width:..."` can never become question text.
+ */
+export function normalizeHtmlImageTags(md: string): string {
+  return md.replace(/<img\b[^>]*>/gi, (tag) => {
+    const src = /\bsrc\s*=\s*(["'])(.*?)\1/i.exec(tag);
+    return src ? `![](${src[2]})` : '';
+  });
+}
+
 // ---------- segmentation ----------
 
 function finalize(draft: DraftQuestion): StructuredQuestionT {
@@ -109,7 +122,7 @@ export function normalizeMediaPath(raw: string): string {
  * a media path has no dimensions in the manifest, it is KEPT (拿不准默认存).
  */
 export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
-  const md = normalizeMathDelimiters(input.markdown);
+  const md = normalizeHtmlImageTags(normalizeMathDelimiters(input.markdown));
   const lines = md.split('\n');
 
   // Build the tiny-image deny set from the manifest (§3.4 微小尺寸).

@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { normalizeMathDelimiters, segmentMarkdown } from './markdown-segment';
+import {
+  normalizeHtmlImageTags,
+  normalizeMathDelimiters,
+  segmentMarkdown,
+} from './markdown-segment';
 
 // Pure no-DB unit. Reads PRE-CONVERTED pandoc output (tests/fixtures/docx/*.md,
 // produced one-shot by docker pandoc from the self-authored docx) — the test
@@ -45,10 +49,32 @@ describe('segmentMarkdown — pandoc yuwen fixture', () => {
     expect(blocks[1].imagePaths).toEqual([]);
   });
 
+  it('does not leak multiline <img> attributes into the question prompt', () => {
+    expect(blocks[0].structured.prompt_text).not.toContain('style=');
+    expect(blocks[0].structured.prompt_text).not.toContain('<img');
+    expect(blocks[0].structured.prompt_text).not.toContain('/>');
+  });
+
   it('preserves the default blank (____) in the Q2 prompt', () => {
     // pandoc escapes the blank as \_\_\_\_; the prompt should still carry it.
     expect(blocks[1].structured.prompt_text).toMatch(/万物.*。/);
     expect(blocks[1].structured.prompt_text).toContain('_');
+  });
+});
+
+describe('normalizeHtmlImageTags', () => {
+  it('collapses a multiline pandoc image tag to one markdown image reference', () => {
+    expect(
+      normalizeHtmlImageTags(
+        '<img src="./media/image1.png"\nstyle="width:1.08in;height:1.08in" />',
+      ),
+    ).toBe('![](./media/image1.png)');
+  });
+
+  it('supports single-quoted src attributes', () => {
+    expect(normalizeHtmlImageTags("<img alt='图' src='media/image2.webp'>")).toBe(
+      '![](media/image2.webp)',
+    );
   });
 });
 
