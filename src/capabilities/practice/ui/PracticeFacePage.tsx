@@ -270,7 +270,6 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           setMode({ kind: 'list' });
           switchView('shelf');
         }}
-        addToast={addToast}
       />
     );
   } else {

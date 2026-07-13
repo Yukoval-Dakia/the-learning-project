@@ -1,9 +1,9 @@
 // M2 练习面 — 流视图（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-stream.jsx：§6.1 织线纵轨——
 // item 挂在线上、AI 开场白与第一人称理由陪练递题、已完成项收紧成织入的一行；
-// 跳过的留流尾可捡回；流尾点播 composer。点播生成（quiz-gen 异步链）M2 后端
-// 未接——composer 提交后 toast 告知（占位，M4 夜链/quiz 域接上后变真）。
+// 跳过的留流尾可捡回；流尾点播移交真实 Copilot tool loop，不在本地伪造成功态。
 
+import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -150,6 +150,12 @@ export function PfStream({
     } finally {
       setRecomposing(false);
     }
+  };
+  const handoffDemand = () => {
+    const request = demand.trim();
+    if (!request) return;
+    openCopilot(request);
+    setDemand('');
   };
 
   const row = (it: StreamItem) => {
@@ -375,33 +381,16 @@ export function PfStream({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                if (!demand.trim()) return;
-                // 点播生成链（quiz-gen 异步）M2 未接——见文件头注。
-                addToast(
-                  '点播收到——出题链路在 M4 接上后，这里会出现生成中的占位卷。',
-                  'info',
-                  'clock',
-                );
-                setDemand('');
+                handoffDemand();
               }
             }}
             aria-label="向 AI 点播"
           />
-          <IconBtn
-            icon="send"
-            size={16}
-            title="点播"
-            onClick={() => {
-              if (!demand.trim()) return;
-              addToast(
-                '点播收到——出题链路在 M4 接上后，这里会出现生成中的占位卷。',
-                'info',
-                'clock',
-              );
-              setDemand('');
-            }}
-          />
+          <IconBtn icon="send" size={16} title="交给 Copilot 点播" onClick={handoffDemand} />
         </div>
+        <p className="pf-ondemand-hint">
+          将在 Copilot 中执行；生成过程、失败与可运行卷链接都在那里显示。
+        </p>
       </div>
     </div>
   );

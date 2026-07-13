@@ -613,7 +613,12 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     openDrawer();
     const prefill = openRequest.prefill;
     clearRequest();
-    if (prefill) void send(prefill);
+    if (prefill) {
+      // A cross-surface handoff must never disappear while a prior turn is streaming. Keep it
+      // in the visible composer for the user to send next instead of letting send() early-return.
+      if (sendingRef.current) setInput(prefill);
+      else void send(prefill);
+    }
   }, [openRequest, openDrawer, clearRequest, send]);
 
   // YUK-577 — proactive-nudge bar at the top of the summary slot (② owner-approved落点, above

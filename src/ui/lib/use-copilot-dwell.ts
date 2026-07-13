@@ -65,6 +65,8 @@ export interface CopilotOpenRequest {
 
 interface CopilotOpenSignalStore {
   request: CopilotOpenRequest | null;
+  /** Open a free-form Copilot turn without fabricating a skill/entity context. */
+  openCopilot: (prefill?: string) => void;
   /** YUK-577 — publish a proactive-nudge open (headline as agent opening + session ambient). */
   openCopilotForNudge: (nudge: CopilotNudgeOpen) => void;
   // PR #305 fix — monotonically increasing counter that persists across
@@ -84,6 +86,11 @@ interface CopilotOpenSignalStore {
 export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
   request: null,
   nextSeq: 0,
+  openCopilot: (prefill) =>
+    set((s) => {
+      const seq = s.nextSeq + 1;
+      return { nextSeq: seq, request: { seq, prefill } };
+    }),
   openCopilotWith: (skillContext, prefill) =>
     set((s) => {
       const seq = s.nextSeq + 1;
@@ -101,6 +108,11 @@ export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
   // nextSeq is intentionally NOT reset on clearRequest — it must monotonically
   // increase so the Dock's lastHandledSeqRef never matches a future open.
 }));
+
+/** Open the global drawer as a normal free-form turn (no fake entity/skill ref). */
+export function openCopilot(prefill?: string): void {
+  useCopilotOpenSignal.getState().openCopilot(prefill);
+}
 
 /**
  * Cross-tree opener for the global CopilotDock, seeded with a skill context.
