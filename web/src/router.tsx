@@ -111,7 +111,7 @@ function RootShell() {
   const inboxCount = summaryQ.data?.proposals.total;
 
   // Copilot 开启：CopilotDock 自带的 in-flow trigger（data-testid
-  // copilot-drawer-trigger，调用其 dwell openDrawer）经 .shell-copilot-mount CSS
+  // copilot-drawer-trigger，调用其 explicit openDrawer）经 .shell-copilot-mount CSS
   // 隐藏（web/src/globals.css L5997-6000，原为本壳预留的 dead CSS）；侧栏 / topbar
   // 的 Copilot 按钮以编程方式点击该隐藏 trigger 走既有 dock-open 路径，不造新机制。
   const copilotMountRef = useRef<HTMLDivElement | null>(null);
@@ -176,7 +176,7 @@ function RootShell() {
         onOpenMobileNav={() => setMobileNavOpen(true)}
       />
 
-      {/* CopilotDock 根挂（保留既有实例 + dwell + navigate/pathname 接线）。
+      {/* CopilotDock 根挂（保留既有实例 + explicit-open + navigate/pathname 接线）。
           .shell-copilot-mount 隐藏其 in-flow trigger；drawer 本身 fixed 渲到根。 */}
       <div ref={copilotMountRef} className="shell-copilot-mount">
         <CopilotDock pathname={pathname} navigate={navigate} />

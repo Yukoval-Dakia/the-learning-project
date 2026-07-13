@@ -209,21 +209,15 @@ export interface CopilotDockProps {
 }
 
 export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
-  // YUK-577 — proactive-nudge state. `suppressAutoOpen` = 让位 (§3.8): a pending content-driven
-  // nudge stands the blind 30s dwell timer down (main path over保底).
+  // YUK-577 — proactive-nudge state. A pending nudge is rendered as a badge/bar; the drawer itself
+  // opens only after the user clicks it. The legacy blind dwell/revisit auto-open path is gone.
   const {
     nudges,
     dismiss: dismissNudge,
     markOpened,
     isMutating: nudgeMutating,
   } = useCopilotNudges();
-  const {
-    open,
-    openDrawer,
-    closeDrawer: closeDrawerDwell,
-  } = useCopilotDwell({
-    suppressAutoOpen: nudges.length > 0,
-  });
+  const { open, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
   const summaryQ = useQuery({
     queryKey: ['copilot-summary'],
     queryFn: () => apiJson<CopilotSummary>('/api/today/copilot-summary'),
