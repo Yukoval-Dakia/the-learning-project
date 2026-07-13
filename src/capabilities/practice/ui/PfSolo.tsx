@@ -598,7 +598,7 @@ function PfCoach({
           <p className="pfs-coach-note">
             一级一级加力，每阶更近一步；想直接看完整解也行（记为非独立完成）。会话不计入判分。
           </p>
-          <HintLadder open={open} question={question} />
+          <HintLadder open={open} question={question} onReturnToAnswer={onClose} />
         </div>
       </aside>
     </>,
