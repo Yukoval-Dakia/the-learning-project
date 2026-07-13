@@ -24,6 +24,10 @@
     "test:db": "vitest run --config vitest.db.config.ts",
     "test:db:watch": "vitest --config vitest.db.config.ts",
     "test:migration": "vitest run --config vitest.migration.config.ts",
+    "test:usability:static": "pnpm audit:learner-copy && vitest run --config vitest.unit.config.ts web/src/surface-inventory.unit.test.ts scripts/audit-learner-copy.unit.test.ts",
+    "test:usability:container": "pnpm rw:web:build && playwright test --config playwright.usability.config.ts",
+    "test:usability": "pnpm test:usability:static && pnpm test:usability:container",
+    "test:usability:install": "playwright install chromium",
     "smoke:local": "tsx scripts/smoke-local.ts",
     "api:smoke": "tsx scripts/api-smoke.ts",
     "gen:postman": "tsx scripts/gen-postman.ts",
@@ -121,6 +125,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@playwright/test": "1.61.0",
     "@tailwindcss/vite": "^4.3.0",
     "@testcontainers/postgresql": "^10.13.0",
     "@testing-library/react": "^16.3.2",

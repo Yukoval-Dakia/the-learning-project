@@ -452,7 +452,6 @@ function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => vo
 }
 
 export default function TodayPage({ navigate }: TodayPageProps) {
-  const [toast, setToast] = useState<string | null>(null);
   const now = new Date();
 
   const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });
@@ -464,11 +463,6 @@ export default function TodayPage({ navigate }: TodayPageProps) {
     // ColdStart 不渲染 notes；与服务端 cold_start 合同共用一个门，避免 UI 再推导空态。
     enabled: summaryQ.data?.cold_start.is_empty === false,
   });
-
-  const placeholder = (text: string) => {
-    setToast(text);
-    setTimeout(() => setToast(null), 5000);
-  };
 
   const summaryStatus: StatefulStatus = summaryQ.isLoading
     ? 'loading'
@@ -556,15 +550,6 @@ export default function TodayPage({ navigate }: TodayPageProps) {
             <WeekHeat heat={s.week_heat} />
           </LoomCard>
         </>
-      )}
-
-      {toast && (
-        <div className="pf-toasts" aria-live="polite">
-          <div className="pf-toast t-info">
-            <LoomIcon name="sparkle" size={15} className="ico" />
-            <span>{toast}</span>
-          </div>
-        </div>
       )}
     </main>
   );

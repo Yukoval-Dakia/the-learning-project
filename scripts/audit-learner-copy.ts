@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ROOT = process.cwd();
+const ALLOWLIST_PATH = 'scripts/audit-learner-copy-allowlist.json';
 
 // 只列学习者会直接看到的 surface。Admin/observability 保留诊断术语；API client、注释和
 // 标识符也不属于本审计范围。新增学习者 surface 时应显式加入这里。
@@ -86,6 +88,11 @@ const BANNED: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   },
   { label: 'internal profile heading', pattern: /per-KC|mastery_state|precision/i },
   { label: 'internal AI task kind', pattern: /\b[A-Z][A-Za-z]+Task\b/ },
+  {
+    label: 'disconnected action copy',
+    pattern: /暂未接线|尚未接线|暂未接通|尚未接通|占位(?:成功|动作)|(?:假|伪)成功/,
+  },
+  { label: 'dead placeholder action', pattern: /\b(?:const|let)\s+placeholder\s*=/ },
 ];
 
 export interface CopyViolation {
@@ -93,6 +100,17 @@ export interface CopyViolation {
   line: number;
   label: string;
   value: string;
+}
+
+export interface CopyAllowlistEntry {
+  file: string;
+  label: string;
+  valueIncludes: string;
+  reason: string;
+}
+
+interface CopyAllowlistFile {
+  entries: CopyAllowlistEntry[];
 }
 
 function visibleLiterals(text: string): Array<{ value: string; line: number }> {
@@ -125,29 +143,89 @@ function visibleLiterals(text: string): Array<{ value: string; line: number }> {
   return rows;
 }
 
-export function auditLearnerCopy(files: readonly string[] = LEARNER_COPY_FILES): CopyViolation[] {
+export function scanLearnerCopy(file: string, text: string): CopyViolation[] {
   const violations: CopyViolation[] = [];
-  for (const file of files) {
-    const absolute = path.join(ROOT, file);
-    const text = fs.readFileSync(absolute, 'utf8');
-    for (const literal of visibleLiterals(text)) {
-      for (const rule of BANNED) {
-        if (rule.pattern.test(literal.value)) {
-          violations.push({ file, line: literal.line, label: rule.label, value: literal.value });
-        }
+  for (const literal of visibleLiterals(text)) {
+    for (const rule of BANNED) {
+      if (rule.pattern.test(literal.value)) {
+        violations.push({ file, line: literal.line, label: rule.label, value: literal.value });
       }
     }
   }
   return violations;
 }
 
-const violations = auditLearnerCopy();
-if (violations.length > 0) {
-  console.error('Learner copy audit failed:');
-  for (const v of violations) {
-    console.error(`  ${v.file}:${v.line} [${v.label}] ${JSON.stringify(v.value)}`);
+export function validateCopyAllowlist(entries: readonly CopyAllowlistEntry[]): void {
+  for (const [index, entry] of entries.entries()) {
+    for (const key of ['file', 'label', 'valueIncludes', 'reason'] as const) {
+      if (typeof entry[key] !== 'string' || !entry[key].trim()) {
+        throw new Error(`learner-copy allowlist entry ${index} has empty ${key}`);
+      }
+    }
   }
-  process.exitCode = 1;
-} else {
-  console.log(`Learner copy audit passed (${LEARNER_COPY_FILES.length} surfaces).`);
 }
+
+export function readCopyAllowlist(file = ALLOWLIST_PATH): CopyAllowlistEntry[] {
+  const parsed = JSON.parse(fs.readFileSync(path.join(ROOT, file), 'utf8')) as CopyAllowlistFile;
+  if (!parsed || !Array.isArray(parsed.entries)) {
+    throw new Error(`${file} must contain an entries array`);
+  }
+  validateCopyAllowlist(parsed.entries);
+  return parsed.entries;
+}
+
+function allowlistMatches(violation: CopyViolation, entry: CopyAllowlistEntry): boolean {
+  return (
+    violation.file === entry.file &&
+    violation.label === entry.label &&
+    violation.value.includes(entry.valueIncludes)
+  );
+}
+
+export function applyCopyAllowlist(
+  violations: readonly CopyViolation[],
+  entries: readonly CopyAllowlistEntry[],
+): { violations: CopyViolation[]; staleEntries: CopyAllowlistEntry[] } {
+  validateCopyAllowlist(entries);
+  return {
+    violations: violations.filter(
+      (violation) => !entries.some((entry) => allowlistMatches(violation, entry)),
+    ),
+    staleEntries: entries.filter(
+      (entry) => !violations.some((violation) => allowlistMatches(violation, entry)),
+    ),
+  };
+}
+
+export function auditLearnerCopy(
+  files: readonly string[] = LEARNER_COPY_FILES,
+  allowlist: readonly CopyAllowlistEntry[] = readCopyAllowlist(),
+): { violations: CopyViolation[]; staleEntries: CopyAllowlistEntry[] } {
+  const found: CopyViolation[] = [];
+  for (const file of files) {
+    const absolute = path.join(ROOT, file);
+    const text = fs.readFileSync(absolute, 'utf8');
+    found.push(...scanLearnerCopy(file, text));
+  }
+  return applyCopyAllowlist(found, allowlist);
+}
+
+function run(): void {
+  const { violations, staleEntries } = auditLearnerCopy();
+  if (violations.length > 0 || staleEntries.length > 0) {
+    console.error('Learner copy audit failed:');
+    for (const v of violations) {
+      console.error(`  ${v.file}:${v.line} [${v.label}] ${JSON.stringify(v.value)}`);
+    }
+    for (const entry of staleEntries) {
+      console.error(
+        `  stale allowlist [${entry.label}] ${entry.file} contains ${JSON.stringify(entry.valueIncludes)}`,
+      );
+    }
+    process.exitCode = 1;
+  } else {
+    console.log(`Learner copy audit passed (${LEARNER_COPY_FILES.length} surfaces).`);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) run();
