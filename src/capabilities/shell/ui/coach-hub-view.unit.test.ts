@@ -40,10 +40,11 @@ describe('VIEW_QUERY', () => {
     }
   });
 
-  it('efficacy 串指向真实纵向读模型端点（非设计 mock 串）', () => {
-    expect(VIEW_QUERY.efficacy).toContain('/api/observability/effectiveness-trend');
-    expect(VIEW_QUERY.calibration).toContain('/api/observability/calibration-maturity');
-    expect(VIEW_QUERY.activity).toContain('/api/review/weekly');
+  it('只描述用户能理解的时间范围与判断，不暴露内部端点', () => {
+    expect(VIEW_QUERY.efficacy).toContain('长期变化');
+    expect(VIEW_QUERY.calibration).toContain('可信度');
+    expect(VIEW_QUERY.activity).toContain('7 / 30 / 90 天');
+    expect(Object.values(VIEW_QUERY).join(' ')).not.toContain('/api/');
   });
 });
 

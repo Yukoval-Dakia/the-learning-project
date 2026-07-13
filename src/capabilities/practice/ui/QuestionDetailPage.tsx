@@ -46,6 +46,7 @@ import {
   type QuestionFullDetail,
   deleteQuestion,
   getQuestionFull,
+  getQuestionKnowledgeOptions,
   patchQuestion,
 } from './practice-api';
 
@@ -70,10 +71,10 @@ function kindMeta(kind: string) {
 
 const QSOURCE: Record<string, { label: string; tone: Tone; icon: LoomIconName }> = {
   quiz_gen: { label: 'AI 生成', tone: 'coral', icon: 'sparkle' },
-  dreaming: { label: 'Dreaming', tone: 'coral', icon: 'sparkle' },
+  dreaming: { label: '夜间推理', tone: 'coral', icon: 'sparkle' },
   mistake_variant: { label: '错题变体', tone: 'coral', icon: 'sparkle' },
   copilot_authored: { label: 'Copilot 拟题', tone: 'coral', icon: 'sparkle' },
-  web_sourced: { label: 'web 采集', tone: 'info', icon: 'download' },
+  web_sourced: { label: '网络采集', tone: 'info', icon: 'download' },
   vision_single: { label: '拍照录入', tone: 'info', icon: 'camera' },
   vision_paper: { label: '拍照整卷', tone: 'info', icon: 'camera' },
   embedded: { label: '内嵌题', tone: 'info', icon: 'layers' },
@@ -199,7 +200,7 @@ function QFigure({ caption }: { caption: string }) {
       <div>
         <div className="qd-figure-cap">{caption}</div>
         {/* DEFER：figure 拖拽上传 / OCR 提取需 ingestion 接线，下一刀；此处仅展示。 */}
-        <div className="qd-figure-sub">figure · 拖入图片替换 · OCR 可提取（暂未接线）</div>
+        <div className="qd-figure-sub">题目配图</div>
       </div>
     </div>
   );
@@ -261,8 +262,8 @@ function DeleteModal({
   const deletable = !!counts && total === 0;
   const constraints = counts
     ? [
-        counts.attempts && { n: counts.attempts, label: '条作答记录（attempt 事件）' },
-        counts.fsrs_cards && { n: counts.fsrs_cards, label: '张 FSRS 复习卡' },
+        counts.attempts && { n: counts.attempts, label: '条作答记录' },
+        counts.fsrs_cards && { n: counts.fsrs_cards, label: '张复习卡' },
         counts.paper_refs && { n: counts.paper_refs, label: '份试卷引用此题' },
         counts.mistakes && { n: counts.mistakes, label: '条错题归因记录' },
       ].filter((c): c is { n: number; label: string } => !!c)
@@ -302,14 +303,14 @@ function DeleteModal({
             <>
               <p>此题没有任何关联记录，可以安全删除。</p>
               <div className="qb-modal-safe">
-                <LoomIcon name="check" size={15} />无 attempt / 复习卡 / 卷引用 / 错题
+                <LoomIcon name="check" size={15} />
+                无作答 / 复习卡 / 试卷引用 / 错题记录
               </div>
             </>
           ) : (
             <>
               <p>
-                此题已被系统其他部分引用，删除会一并影响下列记录。事件日志为只读，删除将
-                <strong>软删除题目并保留历史事件</strong>。
+                此题已被其他学习记录引用。删除后它不会再出现在题库中，但既有作答和复习历史会保留。
               </p>
               <div className="qb-constraints">
                 {constraints.map((c) => (
@@ -346,7 +347,7 @@ function DeleteModal({
             onClick={onConfirm}
           >
             <LoomIcon name="trash" size={15} />
-            {pending ? '删除中…' : deletable ? '删除' : '软删除并保留事件'}
+            {pending ? '删除中…' : deletable ? '删除' : '从题库移除'}
           </button>
         </div>
       </div>
@@ -369,29 +370,13 @@ function VariantFamily({
   if (family.members.length <= 1) {
     return (
       <Card pad="default">
-        <EmptyState
-          icon="sparkle"
-          title="尚无变体"
-          text="让 AI 基于此题或它的错因生成同型变体，形成变体家族。"
-          action={
-            // DEFER：需后端 quiz_gen variant trigger，下一刀。
-            <Btn
-              size="sm"
-              variant="primary"
-              icon="sparkle"
-              disabled
-              title="需后端变体生成接线，下一刀"
-            >
-              生成变体
-            </Btn>
-          }
-        />
+        <EmptyState icon="sparkle" title="尚无变体" text="目前还没有由这道题派生的变体。" />
       </Card>
     );
   }
   return (
     <Card pad="default">
-      {family.members.map((m) => {
+      {family.members.map((m, index) => {
         const variant = m.id !== family.root_question_id;
         const km = kindMeta(m.kind === 'question_part' ? selfKind : m.kind);
         return (
@@ -406,8 +391,7 @@ function VariantFamily({
               disabled={m.is_self}
               onClick={() => !m.is_self && go(`/questions/${m.id}`)}
             >
-              {/* family 投影无 stem，用 id + kind 标识（detail 投影只给成员 id/kind/depth）。 */}
-              <div className="qd-fam-t">{m.is_self ? '当前题' : `变体题 ${m.id.slice(-6)}`}</div>
+              <div className="qd-fam-t">{m.is_self ? '当前题' : `变体题 ${index + 1}`}</div>
             </button>
             <span className="badge tone-neutral" style={{ flex: 'none' }}>
               {km.label}
@@ -416,12 +400,6 @@ function VariantFamily({
           </div>
         );
       })}
-      <div style={{ marginTop: 'var(--s-3)', display: 'flex', justifyContent: 'center' }}>
-        {/* DEFER：再生成变体同样需后端 trigger。 */}
-        <Btn size="sm" variant="ghost" icon="sparkle" disabled title="需后端变体生成接线，下一刀">
-          再生成一个变体
-        </Btn>
-      </div>
     </Card>
   );
 }
@@ -445,10 +423,13 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const [saved, setSaved] = useState(false);
   const [editOptIdx, setEditOptIdx] = useState(-1);
   const [showAddChip, setShowAddChip] = useState(false);
-  const [chipDraft, setChipDraft] = useState('');
   const [del, setDel] = useState(false);
   const [delCounts, setDelCounts] = useState<QuestionAssociationCounts | null>(null);
   const [toasts, setToasts] = useState<QdToast[]>([]);
+  const knowledgeOptionsQ = useQuery({
+    queryKey: ['question-knowledge-options'],
+    queryFn: getQuestionKnowledgeOptions,
+  });
 
   const pushToast = useCallback((kind: 'good' | 'warn', text: string) => {
     const tid = `t${Date.now()}${Math.random()}`;
@@ -464,7 +445,6 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
     if (data) setDraft(draftFrom(data));
     setEditOptIdx(-1);
     setShowAddChip(false);
-    setChipDraft('');
   }, [data]);
 
   // dirty 判定：草稿与服务端值逐字段比对。
@@ -655,7 +635,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
 
       <div className="page-head">
         <div className="eyebrow">
-          QUESTION · {data.id} · {k.label} · {src.label}
+          题目详情 · {k.label} · {src.label}
         </div>
         <div className="page-head-row">
           <div className="qd-head-meta">
@@ -734,7 +714,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
           <div className="qd-sec">
             <div className="qd-sec-h">
               <LoomIcon name="quiz" size={14} />
-              {isComposite ? '阅读材料 / 题面 prompt' : '题面 stem'} · Markdown + LaTeX
+              {isComposite ? '阅读材料与题面' : '题面'}
             </div>
             <div className="qd-edit">
               <textarea
@@ -915,7 +895,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
             <div className="qd-sec">
               <div className="qd-sec-h">
                 <LoomIcon name="sparkle" size={14} />
-                变体家族 lineage
+                变体家族
               </div>
               <VariantFamily family={data.family} selfKind={data.kind} go={navigate} />
             </div>
@@ -996,11 +976,11 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                         cursor: 'pointer',
                       }}
                     >
-                      {labelName.get(kid) ?? kid}
+                      {labelName.get(kid) ?? '未命名知识点'}
                     </button>
                     <button
                       type="button"
-                      aria-label={`移除知识点 ${labelName.get(kid) ?? kid}`}
+                      aria-label={`移除知识点 ${labelName.get(kid) ?? '未命名知识点'}`}
                       onClick={() =>
                         edit({ knowledge_ids: draft.knowledge_ids.filter((x) => x !== kid) })
                       }
@@ -1018,33 +998,39 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                   </span>
                 ))}
                 {showAddChip ? (
-                  <input
+                  <select
                     className="qd-chip"
-                    // biome-ignore lint/a11y/noAutofocus: 点「添加」展开输入，focus 是预期（同选项编辑）
+                    // biome-ignore lint/a11y/noAutofocus: 点「添加」展开选择，focus 是预期。
                     autoFocus
-                    value={chipDraft}
-                    placeholder="知识点 id…"
-                    onChange={(e) => setChipDraft(e.target.value)}
-                    onBlur={() => {
-                      const v = chipDraft.trim();
-                      if (v && !draft.knowledge_ids.includes(v))
-                        edit({ knowledge_ids: [...draft.knowledge_ids, v] });
-                      setChipDraft('');
+                    value=""
+                    aria-label="选择要关联的知识点"
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      if (id && !draft.knowledge_ids.includes(id)) {
+                        edit({ knowledge_ids: [...draft.knowledge_ids, id] });
+                      }
                       setShowAddChip(false);
                     }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                      if (e.key === 'Escape') {
-                        setChipDraft('');
-                        setShowAddChip(false);
-                      }
-                    }}
+                    onBlur={() => setShowAddChip(false)}
                     style={{ minWidth: 100 }}
-                  />
+                  >
+                    <option value="">选择知识点…</option>
+                    {(knowledgeOptionsQ.data?.rows ?? [])
+                      .filter((option) => !draft.knowledge_ids.includes(option.id))
+                      .map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}
+                        </option>
+                      ))}
+                  </select>
                 ) : (
                   <button
                     type="button"
                     className="qd-chip qd-chip-add"
+                    disabled={knowledgeOptionsQ.isLoading || knowledgeOptionsQ.isError}
+                    title={
+                      knowledgeOptionsQ.isError ? '知识点列表加载失败，请刷新后重试' : undefined
+                    }
                     onClick={() => setShowAddChip(true)}
                   >
                     <LoomIcon name="plus" size={11} />
@@ -1137,8 +1123,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               className="meta"
               style={{ marginBottom: 'var(--s-3)', lineHeight: 'var(--lh-prose)' }}
             >
-              删除题目会跑一遍关联约束检查；若有作答 / 复习 / 卷引用 /
-              错题记录，将软删除并保留历史事件。
+              删除前会先核对相关记录；如果已有作答、复习、试卷或错题记录，既有学习历史仍会保留。
             </div>
             <Btn size="sm" variant="secondary" icon="trash" block onClick={openDelete}>
               删除题目…

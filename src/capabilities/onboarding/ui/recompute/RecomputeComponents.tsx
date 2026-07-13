@@ -10,9 +10,9 @@ import { type RcState, useRecompute } from './useRecompute';
 /** Offline chip — emphasise the pure on-device, no-network re-derivation. */
 export function RcOffline() {
   return (
-    <span className="rc-offline" title="纯设备端重导 · 无需联网">
+    <span className="rc-offline" title="只在此设备核对显示结果">
       <LoomIcon name="bolt" size={11} />
-      离线 · 本地
+      本地核对
     </span>
   );
 }
@@ -22,8 +22,8 @@ export function RcKcChip({ state, kind }: { state: RcState; kind: RcKcVerdict['k
   if (state === 'idle' || state === 'running') return null;
   if (kind === 'na') {
     return (
-      <span className="rc-chip rc-na" title="未测 —— 没有数字可重导">
-        无数字可验
+      <span className="rc-chip rc-na" title="还没有作答记录可供核对">
+        暂无记录
       </span>
     );
   }
@@ -31,7 +31,7 @@ export function RcKcChip({ state, kind }: { state: RcState; kind: RcKcVerdict['k
     return (
       <span className="rc-chip rc-x">
         <LoomIcon name="alert" size={11} />
-        重导不符
+        显示待同步
       </span>
     );
   }
@@ -39,7 +39,7 @@ export function RcKcChip({ state, kind }: { state: RcState; kind: RcKcVerdict['k
   return (
     <span className="rc-chip rc-ok">
       <LoomIcon name="check" size={11} />
-      {kind === 'preview' ? '已重导 · 预览' : '已重导'}
+      {kind === 'preview' ? '已初步核对' : '已核对'}
     </span>
   );
 }
@@ -74,26 +74,25 @@ export function RcVerify({
         <LoomIcon name={icon} size={18} />
       </span>
       <div className="rc-verify-text">
-        {state === 'running' && <div className="rc-verify-title">正在本设备重导画像…</div>}
+        {state === 'running' && <div className="rc-verify-title">正在核对学习画像…</div>}
 
         {state === 'match' && (
           <>
             <div className="rc-verify-title">
-              画像已在本设备重导 <span className="rc-tick">✓</span>
+              学习画像已核对 <span className="rc-tick">✓</span>
             </div>
             <div className="rc-verify-sub">
-              <b className="mono">{summary.testedCount}</b> 个知识点的显示数字 · 与服务端
-              <b>逐位相等</b>· <RcOffline />
+              <b className="mono">{summary.testedCount}</b> 个知识点的显示结果一致 · <RcOffline />
             </div>
           </>
         )}
 
         {state === 'preview' && (
           <>
-            <div className="rc-verify-title">已在本设备重导（预览）</div>
+            <div className="rc-verify-title">已完成初步核对</div>
             <div className="rc-verify-sub">
-              <b className="mono">{summary.testedCount}</b> 个知识点已从你的证据重导，显示一致 · σ
-              对齐后转<b>逐位校验</b> · <RcOffline />
+              <b className="mono">{summary.testedCount}</b>{' '}
+              个知识点的显示结果一致；记录增加后会继续核对 · <RcOffline />
             </div>
           </>
         )}
@@ -104,7 +103,7 @@ export function RcVerify({
               画像有 <b className="mono">{summary.driftCount}</b> 处显示不同步
             </div>
             <div className="rc-verify-sub">
-              等级与相对排序本身没问题，重算只读 —— 联网后会让这些项重新对账 · <RcOffline />
+              学习记录没有丢失；这些项的显示结果会在下次同步时重新核对 · <RcOffline />
             </div>
           </>
         )}
@@ -112,7 +111,7 @@ export function RcVerify({
       {resolved && (
         <div className="rc-verify-act">
           <button type="button" className="rc-detail-toggle" onClick={onToggleDetail}>
-            {detailOpen ? '收起明细' : '查看逐位明细'}
+            {detailOpen ? '收起明细' : '查看核对明细'}
           </button>
           <button type="button" className="rc-rerun" onClick={onRerun} title="再算一次">
             <LoomIcon name="refresh" size={14} />
@@ -130,10 +129,9 @@ export function RcLedgerTable({ verdicts }: { verdicts: RcKcVerdict[] }) {
     <div className="rc-ledger">
       <div className="rc-ledger-head">
         <span>知识点</span>
-        <span className="rc-num">账本 succ/fail · 锚</span>
-        <span className="rc-num">p̂ 点</span>
+        <span className="rc-num">答对 / 待巩固</span>
+        <span className="rc-num">当前判断</span>
         <span className="rc-num">可能区间</span>
-        <span className="rc-num">SE</span>
         <span className="rc-eq">核对</span>
       </div>
       {rows.map((v) => {
@@ -142,13 +140,12 @@ export function RcLedgerTable({ verdicts }: { verdicts: RcKcVerdict[] }) {
           <div key={v.id} className="rc-ledger-row">
             <span className="rc-ledger-name">{v.name}</span>
             <span className="rc-num mono">
-              {l.s}/{l.f} · {rcFmt(l.b)}
+              {l.s} / {l.f}
             </span>
-            <span className="rc-num mono">{rcFmt(l.p_l)}</span>
+            <span className="rc-num mono">{Math.round(l.p_l * 100)}%</span>
             <span className="rc-num mono">
-              {rcFmt(l.mastery_lo)}–{rcFmt(l.mastery_hi)}
+              {Math.round(l.mastery_lo * 100)}%–{Math.round(l.mastery_hi * 100)}%
             </span>
-            <span className="rc-num mono">{rcFmt(l.se)}</span>
             <span className="rc-eq">
               {v.kind === 'drift' ? (
                 <span className="rc-eq-x">
@@ -158,7 +155,7 @@ export function RcLedgerTable({ verdicts }: { verdicts: RcKcVerdict[] }) {
               ) : (
                 <span className="rc-eq-ok">
                   <LoomIcon name="check" size={12} />
-                  {v.kind === 'preview' ? '一致' : '逐位'}
+                  一致
                 </span>
               )}
             </span>
@@ -186,8 +183,8 @@ export function RcDriftDetail({
       <div className="rc-drift-table">
         <div className="rc-drift-col rc-drift-labels">
           <span className="rc-drift-h" />
-          <span>服务端显示</span>
-          <span>本设备重导</span>
+          <span>当前显示</span>
+          <span>本地核对</span>
         </div>
         {verdict.diffs.map((d) => (
           <div key={d.field} className="rc-drift-col">
@@ -198,8 +195,8 @@ export function RcDriftDetail({
         ))}
       </div>
       <p className="rc-drift-note">
-        只是<b>这一项的显示口径与本地重导没对上</b> —— 你的作答证据没有问题，其它 {otherCount}{' '}
-        个数字都逐位相等。重算只读，不会改动任何记录；联网后系统会让这一项重新对账。
+        只是<b>这一项的显示结果暂时不同步</b> —— 你的作答记录没有问题，其它 {otherCount}{' '}
+        个知识点显示一致。核对过程只读，不会改动任何记录；下次同步时会重新检查这一项。
       </p>
     </div>
   );
@@ -211,11 +208,9 @@ export function RcBoundaryNote() {
     <div className="rc-boundary">
       <LoomIcon name="lock" size={13} />
       <span>
-        重算<b>只读</b>，不改任何数据。它在本设备从你的 succ / fail / 难度锚，用与服务端
-        <b>同一份</b>
-        数学重导每个显示数字（p̂ 点 · 区间 · SE）并逐位核对。它<b>不</b>重跑整条管线 ——
-        不重算难度锚的库内聚合、不重跑 AI 判分。宽区间 / 低置信 / 未测是诚实的特性：verified ✓
-        表示「这个宽带本身可重导」，不表示「现在它更准了」。
+        核对过程<b>只读</b>，不会改动任何学习记录。它只检查当前显示是否能由已有作答得到，
+        不会重新判题或改写历史。区间较宽、依据不足或尚未作答都仍会如实显示；“已核对”只表示
+        显示一致，不表示系统对你的判断突然变得更准。
       </span>
     </div>
   );
@@ -250,8 +245,7 @@ export function RcDetailPanel({ summary }: { summary: RcSummary }) {
 export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
   // Own the verify state machine; settle on the REAL reconciliation outcome.
   const { state, run } = useRecompute({ auto: true, outcome: summary.overall });
-  const { dFirm, sFirm, dMedian, sMedian, total } = summary;
-  const medianMatch = Object.is(dMedian, sMedian);
+  const { dFirm, total } = summary;
 
   return (
     <div className={`rc-cal rc-state-${state}`}>
@@ -262,23 +256,18 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
         />
       </span>
       <div className="rc-cal-text">
-        {state === 'running' && <div className="rc-cal-title">正在本设备重导成熟度概览…</div>}
+        {state === 'running' && <div className="rc-cal-title">正在核对判断可靠度…</div>}
 
         {state === 'match' && (
           <>
             <div className="rc-cal-title">
-              成熟度概览已在本设备重导 <span className="rc-tick">✓</span>
+              判断可靠度已核对 <span className="rc-tick">✓</span>
             </div>
             <div className="rc-cal-sub">
-              <span className="mono">{total}</span> 个知识点的等级与 θ̂ SE 排序 · 与服务端
-              <b>逐位相等</b>
+              <span className="mono">{total}</span> 个知识点的显示结果一致
               <span className="rc-cal-figs">
                 <span className="rc-cal-fig">
-                  <b className="mono">firm {dFirm}</b>
-                  <LoomIcon name="check" size={11} />
-                </span>
-                <span className="rc-cal-fig">
-                  <b className="mono">中位 SE {rcFmt(dMedian ?? undefined)}</b>
+                  <b className="mono">判断较可信 {dFirm}</b>
                   <LoomIcon name="check" size={11} />
                 </span>
               </span>
@@ -293,15 +282,8 @@ export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
               概览有 <b className="mono">1</b> 处不同步
             </div>
             <div className="rc-cal-sub">
-              firm 计数：服务端显示 <b className="mono rc-drift-server">{sFirm}</b> · 本地重导{' '}
-              <b className="mono rc-drift-device">{dFirm}</b>
-              {medianMatch && (
-                <>
-                  {' '}
-                  · 中位 SE <b className="mono">{rcFmt(dMedian ?? undefined)}</b> 仍逐位相等
-                </>
-              )}
-              。只是显示口径未对齐 —— 等级与相对排序本身没问题，重算只读。 · <RcOffline />
+              学习记录没有丢失；概览会在下次同步时重新核对。核对过程只读，不会改动记录。 ·{' '}
+              <RcOffline />
             </div>
           </>
         )}

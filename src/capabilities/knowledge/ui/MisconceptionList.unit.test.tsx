@@ -60,8 +60,8 @@ describe('MisconceptionList', () => {
     const html = renderToString(
       <MisconceptionList items={[]} navigate={vi.fn()} onVeto={vi.fn()} />,
     );
-    expect(html).toContain('没有指向此点的误区');
-    expect(html).toContain('你在这点上没有顽固的错误信念');
+    expect(html).toContain('目前没有已记录的相关误区');
+    expect(html).toContain('这不代表已经排除');
     expect(html).not.toContain('kd-misc-card');
   });
 
@@ -97,7 +97,7 @@ describe('MisconceptionList', () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
-  it('renders a CONFIRMED misconception: label + belief + 复发中 status + 硬轨校准 + 置信 高 + 复现', () => {
+  it('renders a CONFIRMED misconception with a user-readable evidence source', () => {
     const html = renderToString(
       <MisconceptionList items={[confirmed()]} navigate={vi.fn()} onVeto={vi.fn()} />,
     );
@@ -105,7 +105,7 @@ describe('MisconceptionList', () => {
     expect(html).toContain('链式法则');
     expect(html).toContain('kd-misc-status');
     expect(html).toContain('复发中'); // active → 复发中
-    expect(html).toContain('硬轨校准'); // source hard chip
+    expect(html).toContain('作答中反复出现');
     expect(html).toContain('band-chip');
     expect(html).toContain('置信 高'); // qualitative band, NOT a probability
     expect(html).toContain('复现 4 次');
@@ -124,21 +124,21 @@ describe('MisconceptionList', () => {
     expect(html).toContain('置信 低');
   });
 
-  it('distinguishes a CANDIDATE: 猜想·候选 tag (not a status badge) + 软轨先验 + candidate card class', () => {
+  it('distinguishes a CANDIDATE with a provisional user-readable source', () => {
     const html = renderToString(
       <MisconceptionList items={[candidate()]} navigate={vi.fn()} onVeto={vi.fn()} />,
     );
     expect(html).toContain('猜想 · 候选'); // honest hypothesis label
     expect(html).toContain('kd-misc-tag-candidate');
     expect(html).toContain('kd-misc-card candidate'); // distinct provisional card class
-    expect(html).toContain('软轨先验'); // source soft chip
+    expect(html).toContain('AI 初步判断');
     expect(html).toContain('置信 低');
     expect(html).toContain('复现 2 次');
     expect(html).not.toContain('复发中'); // a candidate is NOT a tracked confirmed misconception
     expect(html).not.toContain('kd-misc-status'); // no confirmed-lifecycle status badge
   });
 
-  it('renders trace evidence event-回链 chips only when trace is open (DROPs mc.note — wire has none)', () => {
+  it('只在追溯展开后显示学习记录数量，并隐藏原始事件标识', () => {
     const closed = renderToString(
       <MisconceptionCardView
         mc={confirmed()}
@@ -149,7 +149,7 @@ describe('MisconceptionList', () => {
         onVerdictWrong={vi.fn()}
       />,
     );
-    expect(closed).not.toContain('依据 event');
+    expect(closed).not.toContain('条学习记录');
     expect(closed).not.toContain('evt_x');
 
     const open = renderToString(
@@ -162,10 +162,10 @@ describe('MisconceptionList', () => {
         onVerdictWrong={vi.fn()}
       />,
     );
-    expect(open).toContain('依据 event');
-    expect(open).toContain('evt_x');
-    expect(open).toContain('evt_y');
-    expect(open).toContain('class="evt"');
+    expect(open).toContain('2');
+    expect(open).toContain('条学习记录');
+    expect(open).not.toContain('evt_x');
+    expect(open).not.toContain('evt_y');
   });
 
   it('renders an honest trace note when a row has no event evidence (no fabricated note)', () => {
@@ -179,7 +179,7 @@ describe('MisconceptionList', () => {
         onVerdictWrong={vi.fn()}
       />,
     );
-    expect(open).toContain('暂无可回链的 event 依据');
+    expect(open).toContain('目前还没有可回看的学习记录');
   });
 
   it('renders the optimistic「已纠偏」card once a verdict is set (降权 message)', () => {
@@ -290,7 +290,7 @@ describe('MisconceptionList', () => {
     expect(html).toContain('kd-misc-error');
   });
 
-  it('E: dedupes duplicate evidence event ids in the trace (stable keys + no dup chip)', () => {
+  it('E: 去重学习记录后只显示数量，不显示原始事件标识', () => {
     const open = renderToString(
       <MisconceptionCardView
         mc={confirmed({ evidence: ['evt_dup', 'evt_dup', 'evt_other'] })}
@@ -301,8 +301,10 @@ describe('MisconceptionList', () => {
         onVerdictWrong={vi.fn()}
       />,
     );
-    expect((open.match(/evt_dup/g) ?? []).length).toBe(1); // duplicate collapsed
-    expect(open).toContain('evt_other');
+    expect(open).toContain('2');
+    expect(open).toContain('条学习记录');
+    expect(open).not.toContain('evt_dup');
+    expect(open).not.toContain('evt_other');
   });
 
   it('⑥ red line: no bare probability / % leaks through confirmed or candidate cards', () => {

@@ -370,7 +370,7 @@ export function PfStream({
       <div className="pf-ondemand">
         <div className="pf-ondemand-label">
           <LoomIcon name="send" size={13} />
-          点播 · ON_DEMAND
+          临时加练
         </div>
         <div className="composer">
           <textarea

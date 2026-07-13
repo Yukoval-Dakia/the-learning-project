@@ -108,7 +108,6 @@ function CalibrationBody({
   const agg = data.aggregate;
   const pct = Math.round(agg.pct_firm * 100);
   const median = agg.median_theta_se;
-  const medianStr = median != null ? median.toFixed(2) : '—';
   const total = Math.max(agg.total_kcs, 1); // 防 /0（rows.length>0 已保 total≥1，留作护栏）
   const maturity = summarizeMaturity(data);
 
@@ -125,15 +124,13 @@ function CalibrationBody({
               {pct}
               <span className="cal-meter-pct">%</span>
             </span>
-            <span className="cal-meter-cap meta">知识图 firm 占比</span>
+            <span className="cal-meter-cap meta">判断较可信的知识点</span>
           </div>
           <div className="cal-meter-side">
             <div className="cal-meter-line">
-              <b className="mono">{agg.firm_count}</b> / {agg.total_kcs} 知识点已可信
+              <b className="mono">{agg.firm_count}</b> / {agg.total_kcs} 个知识点判断较可信
             </div>
-            <div className="cal-meter-line meta">
-              中位 θ̂ SE <b className="mono">{medianStr}</b> · 越小越可信
-            </div>
+            <div className="cal-meter-line meta">判断越稳定，越适合用来安排后续复习。</div>
             <div className="cal-firmbar">
               <span
                 className="cal-firmbar-seg t-firm"
@@ -175,11 +172,11 @@ function CalibrationBody({
           </div>
           <div className="cal-stat is-firm">
             <span className="cal-stat-num mono">{agg.firm_count}</span>
-            <span className="cal-stat-lbl meta">可信 firm</span>
+            <span className="cal-stat-lbl meta">判断可信</span>
           </div>
           <div className="cal-stat is-cold">
             <span className="cal-stat-num mono">{agg.cold_start_count}</span>
-            <span className="cal-stat-lbl meta">冷启 cold-start</span>
+            <span className="cal-stat-lbl meta">尚无作答</span>
           </div>
           <div className="cal-stat is-blind">
             <span className="cal-stat-num mono">{counts.blind}</span>
@@ -200,7 +197,7 @@ function CalibrationBody({
                 冷启盲区 · <b className="mono">{blind.length}</b> 个知识点从没练过
               </div>
               <div className="cal-blind-sub meta">
-                evidence = 0 → θ̂ 一直停在冷启先验（se ≈ 1.00）。练它一次就能开始 firm up。
+                这些知识点还没有作答记录。练习一次后，系统才会开始形成判断。
               </div>
             </div>
           </div>
@@ -208,7 +205,6 @@ function CalibrationBody({
             {blind.map((k) => (
               <div key={k.knowledge_id} className="cal-blind-chip">
                 <span className="cal-blind-name">{k.name}</span>
-                {k.track && <span className="cal-blind-track meta">{k.track}</span>}
                 <span className="cal-blind-unknown mono">— 未知</span>
                 <Btn
                   size="sm"
@@ -227,16 +223,17 @@ function CalibrationBody({
       {/* C · θ̂ SE 分布 · 相对排序 */}
       <LoomCard pad className="cal-strip-card">
         <div className="cal-card-h">
-          <div className="card-title">θ̂ 标准误分布 · 相对排序</div>
+          <div className="card-title">判断可靠度 · 相对排序</div>
           <span className="meta">
-            每个点一个圆；越靠右标准误越小、越可信。慢热期只信这条相对次序（adr-0035），不读精确分数。
+            每个点代表一个知识点；越靠右表示依据更充分、判断更稳定。记录较少时只看相对顺序，
+            不读作精确分数。
           </span>
         </div>
         <div className="cal-strip">
           <div className="cal-strip-track">
             {median != null && (
               <span className="cal-strip-median" style={{ left: `${seToX(median)}%` }}>
-                <span className="cal-strip-median-lbl mono">中位 {medianStr}</span>
+                <span className="cal-strip-median-lbl">中间位置</span>
               </span>
             )}
             {dots.map((d) => (
@@ -244,16 +241,16 @@ function CalibrationBody({
                 key={d.knowledge_id}
                 className={`cal-dot is-${d.tier}`}
                 style={{ left: `${d.x}%`, bottom: `${14 + d.lane * 19}px` }}
-                title={`${d.name} · se ${d.display_se.toFixed(2)}${d.evidence_count === 0 ? ' · 冷启' : ''}`}
+                title={`${d.name} · ${d.evidence_count === 0 ? '尚无作答' : TIER_META[d.tier].label}`}
               >
                 <span className="cal-dot-lbl">{d.name}</span>
               </span>
             ))}
           </div>
           <div className="cal-strip-axis">
-            <span className="mono">se ≈ 1.00</span>
-            <span className="cal-strip-axis-mid meta">不可信 ← 相对排序 → 可信</span>
-            <span className="mono">se 低</span>
+            <span>依据较少</span>
+            <span className="cal-strip-axis-mid meta">判断较弱 ← 相对排序 → 判断较稳</span>
+            <span>依据较充分</span>
           </div>
         </div>
       </LoomCard>
@@ -261,7 +258,7 @@ function CalibrationBody({
       {/* D · 逐知识点成熟度 ledger */}
       <div className="cal-table-h">
         <div className="card-title">逐知识点成熟度</div>
-        <span className="meta mono">{rows.length} kcs · 点表头排序</span>
+        <span className="meta">{rows.length} 个知识点 · 可按表头排序</span>
       </div>
       <LoomCard className="cal-table-card">
         <table className="cal-table">
@@ -272,7 +269,6 @@ function CalibrationBody({
                   知识点{sortCaret(sort, 'name')}
                 </button>
               </th>
-              <th>track</th>
               <th className="num" aria-sort={ariaSortFor(sort, 'evidence')}>
                 <button type="button" className="cal-th-btn" onClick={() => onSort('evidence')}>
                   证据{sortCaret(sort, 'evidence')}
@@ -280,12 +276,12 @@ function CalibrationBody({
               </th>
               <th aria-sort={ariaSortFor(sort, 'se')}>
                 <button type="button" className="cal-th-btn" onClick={() => onSort('se')}>
-                  θ̂ SE · 可信度{sortCaret(sort, 'se')}
+                  判断可靠度{sortCaret(sort, 'se')}
                 </button>
               </th>
               <th aria-sort={ariaSortFor(sort, 'tier')}>
                 <button type="button" className="cal-th-btn" onClick={() => onSort('tier')}>
-                  成熟度{sortCaret(sort, 'tier')}
+                  判断阶段{sortCaret(sort, 'tier')}
                 </button>
               </th>
               <th>题目置信度</th>
@@ -300,8 +296,8 @@ function CalibrationBody({
         </table>
       </LoomCard>
       <p className="cal-foot meta">
-        口径：成熟度只表「可信 / 不可信 + 相对次序」。<b>题目置信度</b>仅在知识点 firm
-        后给出；证据不足时显示「— 数据不足」，绝不补一个看起来精确的分数。
+        这里的阶段只表达判断是否已有足够依据，以及知识点之间的相对顺序。<b>题目置信度</b>
+        只在依据充分后给出；证据不足时显示「— 数据不足」，不补一个看起来精确的分数。
       </p>
     </div>
   );
@@ -312,10 +308,7 @@ function CalLedgerRow({ k, navigate }: { k: CalRow; navigate: (to: string) => vo
   return (
     <tr className={`cal-row is-${k.tier}`}>
       <td>
-        <span className="cal-name">{k.name}</span> <code className="cal-id">{k.knowledge_id}</code>
-      </td>
-      <td>
-        {k.track ? <span className="cal-track">{k.track}</span> : <span className="meta">—</span>}
+        <span className="cal-name">{k.name}</span>
       </td>
       <td className="num mono">
         {k.evidence_count === 0 ? (
@@ -328,11 +321,7 @@ function CalLedgerRow({ k, navigate }: { k: CalRow; navigate: (to: string) => vo
       </td>
       <td>
         <div className="cal-se">
-          <span className="cal-se-num mono">
-            {/* 数字一律 derive display_se（cold-start 冠 ≈ 标先验）——不硬编码 '1.00'，
-                免 server prior 改了文本撒谎而 bar(seFillPct) 仍对（reviewer NIT）。 */}
-            {k.evidence_count === 0 ? `≈${k.display_se.toFixed(2)}` : k.display_se.toFixed(2)}
-          </span>
+          <span className="cal-se-num">{TIER_META[k.tier].label}</span>
           <span className="cal-se-bar">
             <span
               className={`cal-se-fill is-${k.tier}`}

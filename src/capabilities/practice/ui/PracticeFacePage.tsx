@@ -277,9 +277,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       <>
         <div className="page-head">
           <span className="eyebrow">
-            {view === 'shelf'
-              ? 'PRACTICE · 卷架 · papers · 待做 / 在做 / 已完成'
-              : 'PRACTICE · GET /api/practice/stream?date=today'}
+            {view === 'shelf' ? '练习卷 · 待做 / 在做 / 已完成' : '今日练习 · 按当前学习状态编排'}
           </span>
           <div className="pface-head-row">
             <h1 className="page-title">练习</h1>

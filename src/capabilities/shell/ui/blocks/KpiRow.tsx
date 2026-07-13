@@ -47,7 +47,6 @@ export function KpiRow({
   proposalsTotal,
   active,
   navigate,
-  onPlaceholder,
 }: {
   kpi: { due_count: number; pending_attribution_count: number; knowledge_count: number };
   // 第 4 卡数据源 /api/workbench/summary proposals.total（KPI 网格 4 列，第 4 列
@@ -55,7 +54,6 @@ export function KpiRow({
   proposalsTotal: number;
   active: boolean;
   navigate: (to: string) => void;
-  onPlaceholder: (text: string) => void;
 }) {
   const cards: Kpi[] = [
     {
@@ -63,7 +61,7 @@ export function KpiRow({
       label: '今日到期',
       icon: 'review',
       value: kpi.due_count,
-      sub: 'FSRS 排程的复习项',
+      sub: '按复习间隔排入的项目',
       onGo: () => navigate('/practice'),
     },
     {
@@ -72,7 +70,7 @@ export function KpiRow({
       icon: 'mistakes',
       value: kpi.pending_attribution_count,
       sub: '等待归因的学习记录',
-      onGo: () => onPlaceholder('错题本随 M5 收编后接通——归因入口暂在旧页。'),
+      onGo: () => navigate('/mistakes'),
     },
     {
       key: 'knowledge',

@@ -42,7 +42,8 @@ describe('FrontierRail', () => {
   it('renders the learnable-frontier head banner', () => {
     const html = renderToString(<FrontierRail items={[item()]} navigate={vi.fn()} />);
     expect(html).toContain('下一步，你学得动这些');
-    expect(html).toContain('learnable_frontier');
+    expect(html).toContain('所需基础已经具备');
+    expect(html).not.toContain('learnable_frontier');
     expect(html).toContain('frontier-card');
   });
 

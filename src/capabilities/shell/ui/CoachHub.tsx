@@ -102,24 +102,9 @@ function CoachKpi({
 // 三视图 lede（含 JSX，故不入 coach-hub-view.ts）。逐字 PORT 自设计 VIEW_LEDE：校准（横截面「多准」）
 // 与成效（纵向「涨没涨」）互文「正交」；活动量把「周报」收编为时间窗、不再当整个 Coach 的名字。
 const VIEW_LEDE: Record<CoachView, ReactNode> = {
-  activity: (
-    <span>
-      活动量答「我练了多少、对了几道」—— FSRS 复习的<b>活动报表</b>。「周报」就是这里的时间窗，
-      不再是整个 Coach 的名字。
-    </span>
-  ),
-  calibration: (
-    <span>
-      校准诊断答「我现在这块<b>会不会、多可信</b>」—— 横截面 θ̂/p(L) 点估计 + 置信。 和右边的成效趋势
-      <b>正交</b>：这一面看「准不准」。
-    </span>
-  ),
-  efficacy: (
-    <span>
-      成效趋势答「相比上次，<b>我涨了吗</b>」—— 纵向 delta、相对你自己的轨迹。 和左边的校准诊断
-      <b>正交</b>：这一面看「涨没涨」。
-    </span>
-  ),
+  activity: <span>这里汇总你在所选时间内练了多少、完成了多少，以及答题结果。</span>,
+  calibration: <span>这里看系统对各知识点掌握状态的判断有多可靠；依据不足时会明确标出。</span>,
+  efficacy: <span>这里比较你最近和过去的表现，只给方向，不把小样本变化说成精确进步。</span>,
 };
 
 // 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
@@ -137,11 +122,11 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
     <main className="page view coach-loom coachhub">
       <div className="page-head coachhub-head">
         <div className="eyebrow">
-          COACH · 复盘中枢 · <span className="mono">{VIEW_QUERY[view]}</span>
+          复盘 · <span>{VIEW_QUERY[view]}</span>
         </div>
         <div className="page-head-row">
           <h1 className="page-title serif">Coach 复盘中枢</h1>
-          <div className="coachhub-tabs" role="tablist" aria-label="三个正交视图">
+          <div className="coachhub-tabs" role="tablist" aria-label="复盘视图">
             {COACH_VIEWS.map((v) => (
               <button
                 key={v.id}

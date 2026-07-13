@@ -85,7 +85,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
     <main className="page wide knowledge-loom">
       <div className="page-head">
         <div className="eyebrow">
-          KNOWLEDGE · {nodes.length} nodes · {edges.length} edges (mesh)
+          知识网络 · {nodes.length} 个知识点 · {edges.length} 条关系
         </div>
         <div className="page-head-row">
           <h1 className="page-title serif">知识</h1>
@@ -201,9 +201,6 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                 >
                   {n.name}
                 </span>
-                {n.effective_domain && (
-                  <span className="chip chip-k mono">{n.effective_domain}</span>
-                )}
                 <span className={`badge tone-${cue.tone}`}>
                   <LoomIcon name={cue.icon as never} size={11} />
                   {cue.label}
@@ -213,7 +210,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                       在 know-end 内）：档 + 区间 + 来源 + 低置信，定性表达 p(L) 轴。前置
                       MasteryRing(tone 色环)保留——tone 颜色与 band 档正交（⑥ + 阶段4 红线）。 */}
                   <BandChip input={n} />
-                  <span className="meta mono">{n.evidence_count} ev</span>
+                  <span className="meta">{n.evidence_count} 条学习依据</span>
                   {meshCount > 0 && (
                     <span className="badge tone-info">
                       <LoomIcon name="link" size={11} />

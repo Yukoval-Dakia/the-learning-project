@@ -13,6 +13,7 @@ import { AgentNotesBoard } from '@/capabilities/agency/ui/AgentNotesBoard';
 import type { AgentNotesResponse } from '@/capabilities/agency/ui/types';
 import ColdStart from '@/capabilities/onboarding/ui/ColdStart';
 import { apiJson } from '@/ui/lib/api';
+import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -66,7 +67,7 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
       id: 'review',
       label: '复习',
       title: `${s.kpi.due_count} 个学习项到期`,
-      sub: 'FSRS 排程把它们排进了今天的队列。',
+      sub: '根据复习间隔，它们已进入今天的队列。',
       cta: '开始复习',
       badge: `${s.kpi.due_count} 项`,
       icon: 'review',
@@ -133,6 +134,37 @@ function fmtByCurrency(rows: CurrencySpend[]): string {
   return rows.map((r) => fmtSpend(r.cost, r.currency)).join(' · ');
 }
 
+function aiTaskLabel(taskKind: string): string {
+  const kind = taskKind.toLowerCase();
+  if (kind.includes('copilot')) return 'Copilot';
+  if (kind.includes('memory') || kind.includes('summary')) return '学习摘要';
+  if (kind.includes('vision') || kind.includes('structure') || kind.includes('block')) {
+    return '材料识别';
+  }
+  if (kind.includes('judge') || kind.includes('verify')) return '判题与核对';
+  if (kind.includes('knowledge') || kind.includes('attribution') || kind.includes('frontier')) {
+    return '知识整理';
+  }
+  if (kind.includes('note')) return '笔记整理';
+  if (
+    kind.includes('quiz') ||
+    kind.includes('question') ||
+    kind.includes('variant') ||
+    kind.includes('solution')
+  ) {
+    return '题目准备';
+  }
+  if (
+    kind.includes('coach') ||
+    kind.includes('review') ||
+    kind.includes('teaching') ||
+    kind.includes('learning')
+  ) {
+    return '学习辅导';
+  }
+  return '其他 AI 工作';
+}
+
 function CostRibbon() {
   const q = useQuery({
     queryKey: ['cost-today'],
@@ -170,14 +202,13 @@ function CostRibbon() {
             <div className="cost-tasks">
               {t.by_task.map((row) => (
                 <span key={row.task_kind} className="chip">
-                  <span className="mono">{row.task_kind}</span>{' '}
+                  <span>{aiTaskLabel(row.task_kind)}</span>{' '}
                   <b className="mono">{fmtByCurrency(row.by_currency)}</b>
                 </span>
               ))}
             </div>
-            <div className="cost-foot nowrap-meta mono">
-              tokens {(t.tokens_in / 1000).toFixed(1)}k in · {(t.tokens_out / 1000).toFixed(1)}k out
-              · {t.tool_calls} tool calls
+            <div className="cost-foot nowrap-meta">
+              共 {t.by_task.reduce((sum, row) => sum + row.calls, 0)} 次 AI 工作
             </div>
           </>
         )}
@@ -294,7 +325,8 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
                   tone="again"
                   title={dk.recent_error_messages.join('\n')}
                 >
-                  <LoomIcon name="alert" size={12} /> {dk.task_kind} 失败 {dk.error_count} 次
+                  <LoomIcon name="alert" size={12} /> {aiTaskLabel(dk.task_kind)}失败{' '}
+                  {dk.error_count} 次
                 </LoomBadge>
               ))}
             </div>
@@ -437,10 +469,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
 
   return (
     <main className="page wide today-page today-loom">
-      <LoomHero
-        navigate={navigate}
-        onCopilot={() => placeholder('Copilot 随 M5 收编后在新栈接通——当前请走旧页。')}
-      />
+      <LoomHero navigate={navigate} onCopilot={() => openCopilot()} />
 
       <Stateful
         status={summaryStatus}
@@ -459,7 +488,6 @@ export default function TodayPage({ navigate }: TodayPageProps) {
               proposalsTotal={s.proposals.total}
               active={active}
               navigate={navigate}
-              onPlaceholder={placeholder}
             />
 
             {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。

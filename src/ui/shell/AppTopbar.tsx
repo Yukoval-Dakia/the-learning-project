@@ -11,7 +11,7 @@
 
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { TITLES, activeFromPath, paramFromPath } from './nav-config';
+import { TITLES, activeFromPath, breadcrumbParamFromPath } from './nav-config';
 
 export interface AppTopbarProps {
   /** 当前路由 pathname（RootShell 经 useRouterState 注入）；驱动面包屑。 */
@@ -39,7 +39,7 @@ export function AppTopbar({
 }: AppTopbarProps) {
   const active = activeFromPath(pathname);
   const title = TITLES[active] || active || '今日';
-  const param = paramFromPath(pathname);
+  const param = breadcrumbParamFromPath(pathname);
 
   return (
     <header className="topbar">

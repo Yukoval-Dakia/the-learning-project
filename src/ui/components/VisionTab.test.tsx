@@ -195,12 +195,12 @@ describe('VisionTab buildBlockForm — seeding resilience', () => {
 describe('VisionTab TextLineCompletePanel — text-line UX', () => {
   // renderToString injects `<!-- -->` markers around interpolated values, so the
   // number and the 块 unit are not a contiguous substring — assert each piece.
-  it('renders 文本直抽完成 with the loaded block count', () => {
+  it('renders a user-readable document summary with the loaded question count', () => {
     const html = renderToString(<TextLineCompletePanel events={[]} blockCount={17} />);
-    expect(html).toContain('文本直抽');
-    expect(html).toContain('文本直抽完成');
+    expect(html).toContain('文档题目');
+    expect(html).toContain('文档内容已整理');
     expect(html).toContain('>17<');
-    expect(html).toContain(' 块');
+    expect(html).toContain(' 道');
     // It must NOT carry the misleading SSE-waiting framing.
     expect(html).not.toContain('等待事件');
     expect(html).not.toContain('SSE · ');
@@ -220,7 +220,7 @@ describe('VisionTab TextLineCompletePanel — text-line UX', () => {
       />,
     );
     expect(html).toContain('>5<');
-    expect(html).toContain(' 块');
+    expect(html).toContain(' 道');
   });
 });
 
@@ -249,8 +249,9 @@ describe('VisionTab SSETimeline — fallback warning render', () => {
         status="closed"
       />,
     );
-    expect(html).toContain('fell back to GLM structure');
-    expect(html).toContain('no sub-question split');
+    expect(html).toContain('部分内容使用了备用识别方式');
+    expect(html).toContain('建议重点复核');
+    expect(html).not.toContain('fell back to GLM structure');
   });
 
   it('omits the warning line when payload.warnings is absent/empty', () => {

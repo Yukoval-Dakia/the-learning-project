@@ -65,7 +65,7 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
             </span>
             <span className="an-head-titles">
               <span className="card-title">AI 之间的观察</span>
-              <span className="an-sub">agent 互留的协作信号 · 无需你裁决</span>
+              <span className="an-sub">AI 工作间互留的协作信号 · 无需你裁决</span>
             </span>
           </button>
           <span className="an-head-spacer" />
@@ -91,7 +91,7 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
         {status === 'loading' ? (
           <SkLines rows={2} />
         ) : status === 'error' ? (
-          <ErrorState text="无法读取 agent 观察信号。" onRetry={onRetry} compact />
+          <ErrorState text="无法读取 AI 观察信号。" onRetry={onRetry} compact />
         ) : open ? (
           <>
             <div className="an-feed">

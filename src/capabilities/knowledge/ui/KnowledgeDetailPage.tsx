@@ -210,11 +210,9 @@ export default function KnowledgeDetailPage({
             <div>
               <h1 className="page-title serif">{node.name}</h1>
               <div className="nowrap-meta" style={{ marginTop: 4 }}>
-                <span className="meta mono">{node.effective_domain ?? node.domain ?? '—'}</span>
                 {/* S10 (YUK-335 §3.9)：父节点不再做页头内联下划线文字链——层级关系
                     归入下方「邻居 · 按关系分组」Card 内首个 kd-rel-block（parent + children
                     同一处渲染），删去此处非 design-system 的内联链。 */}
-                <span className="dot-sep">·</span>
                 <span className={`decay-bucket tone-${db.tone}`}>
                   <LoomIcon name={db.icon as never} size={12} />
                   <span>衰减 · {db.label}</span>
@@ -223,7 +221,7 @@ export default function KnowledgeDetailPage({
                 {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 M{pct}%（⑥治理：绝不裸概率）。 */}
                 <BandChip input={node} />
                 <span className="dot-sep">·</span>
-                <span className="meta mono">{node.evidence_count} evidence</span>
+                <span className="meta">{node.evidence_count} 条学习依据</span>
               </div>
             </div>
           </div>
@@ -259,9 +257,7 @@ export default function KnowledgeDetailPage({
               seen 计数，绝不裸概率（⑥）。veto = Option A：candidate「判错了」→ live dismiss pending
               conjecture；confirmed「判错了」→ 仅乐观「已纠偏」本地态（confirmed-archive 延后 + PR-3
               promote flag OFF → confirmed 段 day-one 空）。 */}
-          <SectionLabel count={miscRows.length || null}>
-            指向此点的误区 · misconception
-          </SectionLabel>
+          <SectionLabel count={miscRows.length || null}>可能相关的误区</SectionLabel>
           <MisconceptionList
             items={miscRows}
             isLoading={miscQ.isLoading}
@@ -279,7 +275,7 @@ export default function KnowledgeDetailPage({
 
           {/* A5 S3 (YUK-354) — 迁移 + 诊断下钻：忠于冷启设计的诚实空态（borrowed-θ 软层
               dark-ship / CDM·IRT 无后端），不假造数字。 */}
-          <SectionLabel>迁移而来的掉握 · transfer credit</SectionLabel>
+          <SectionLabel>可能带动它的知识</SectionLabel>
           <TransferList />
 
           {/* DiagnosticDrill 自带折叠 header（「诊断下钻 · CDM/IRT」），不再叠 SectionLabel（OCR 双 header）。 */}
@@ -406,7 +402,7 @@ export default function KnowledgeDetailPage({
                   className="rel-row"
                   onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
                 >
-                  <span className="rel-kind mono">parent</span>
+                  <span className="rel-kind">上级</span>
                   {/* de-wenyan: parent_name carries no domain on the node-page
                       wire (only the page node itself has effective_domain), so
                       fall to the neutral default font rather than hardcode serif. */}
@@ -421,7 +417,7 @@ export default function KnowledgeDetailPage({
                   className="rel-row"
                   onClick={() => navigate(`/knowledge/${c.id}`)}
                 >
-                  <span className="rel-kind mono">child</span>
+                  <span className="rel-kind">下级</span>
                   {/* de-wenyan: NodePageChild carries no domain (see parent note). */}
                   <span>{c.name}</span>
                   {/* ⑥治理：子节点环去裸 pct（保 glance 环弧）。子节点行 BandChip 升级需扩
@@ -464,7 +460,7 @@ export default function KnowledgeDetailPage({
         </div>
 
         <div className="kd-side">
-          <SectionLabel>反向链接 · 按来源类型</SectionLabel>
+          <SectionLabel>关联内容 · 按来源分组</SectionLabel>
           <div className="card card-pad">
             {node.backlinks.length === 0 ? (
               <div className="quiet-empty">无反向链接</div>

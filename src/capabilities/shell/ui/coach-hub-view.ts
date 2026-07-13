@@ -33,9 +33,9 @@ export const COACH_VIEWS: readonly CoachViewTab[] = [
 
 // eyebrow 尾串（COACH · 复盘中枢 · <这串>）。设计 mock 的端点串替换成真实读模型端点。
 export const VIEW_QUERY: Record<CoachView, string> = {
-  activity: '活动量 · GET /api/review/weekly · 7/30/90d',
-  calibration: '校准诊断 · GET /api/observability/calibration-maturity · adr-0035',
-  efficacy: '成效趋势 · GET /api/observability/effectiveness-trend · 纵向 delta',
+  activity: '活动量 · 过去 7 / 30 / 90 天',
+  calibration: '校准诊断 · 当前判断与可信度',
+  efficacy: '成效趋势 · 相对自己的长期变化',
 };
 
 export function isCoachView(v: string | null | undefined): v is CoachView {

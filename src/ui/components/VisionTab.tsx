@@ -149,7 +149,7 @@ export function ExtractionProgressBar({ events }: { events: ProgressEvent[] }) {
         <div className="ingest-progress-track">
           <div className="ingest-progress-fill is-indeterminate" />
         </div>
-        <span className="ingest-progress-label meta">等待 worker…</span>
+        <span className="ingest-progress-label meta">正在准备识别…</span>
       </output>
     );
   }
@@ -163,11 +163,12 @@ export function ExtractionProgressBar({ events }: { events: ProgressEvent[] }) {
       <span className="ingest-progress-label meta">
         {p.stage === 'structure' ? (
           <>
-            结构化中 · <span className="mono">{p.done}</span> 页
+            正在整理题目结构 · <span className="mono">{p.done}</span> 页
           </>
         ) : (
           <>
-            OCR <span className="mono">{p.done}</span> / <span className="mono">{p.total}</span>
+            正在识别 <span className="mono">{p.done}</span> /{' '}
+            <span className="mono">{p.total}</span> 页
           </>
         )}
       </span>
@@ -637,8 +638,8 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
             )}
             <span className="hint">
               {mode === 'vision_single'
-                ? '单题直接走 Vision；不经 Tencent Mark Agent'
-                : 'JPEG / PNG / WebP · 单次最多 5 页 · 或上传 1 个 PDF（≤15 页）/ DOCX（≤20MB）· 抽取进度走 SSE'}
+                ? '适合拍下一道题后直接核对'
+                : '支持 JPEG / PNG / WebP（最多 5 页），或 1 个 PDF（≤15 页）/ DOCX（≤20MB）'}
             </span>
           </button>
           {files.length > 0 && (
@@ -691,15 +692,13 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
               (files[0] && isDocx(files[0])
                 ? '转换 DOCX…（解析题目 + 渲染存证页图）'
                 : '展开 PDF…（渲染每一页为图片）')}
-            {phase === 'uploading' && `上传 ${files.length} 张图到 R2 …`}
+            {phase === 'uploading' && `正在上传 ${files.length} 张图片…`}
             {phase === 'creating' &&
               (pdfPageCount != null
-                ? `已展开 ${pdfPageCount} 页 · 创建 ingestion session…`
-                : '创建 ingestion session…')}
+                ? `已展开 ${pdfPageCount} 页 · 正在准备识别…`
+                : '正在准备识别…')}
             {phase === 'extracting' &&
-              (ingestionLine === 'text'
-                ? '文本直抽（pandoc 切题，无需 worker）…'
-                : '触发抽取，等待 worker 推进度…')}
+              (ingestionLine === 'text' ? '正在整理文档中的题目…' : '正在识别题目，请稍候…')}
           </p>
           {/* Bug A: determinate per-page progress for the visual line (the text line
               is synchronous — no async job — so it shows the direct-completion panel
@@ -727,10 +726,12 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           ) : (
             <SSETimeline events={sse.events} status="closed" />
           )}
-          {blocksQ.isLoading && <p style={mutedStyle}>加载块…</p>}
-          {blocksQ.isError && <p style={errorStyle}>加载块失败：{formatError(blocksQ.error)}</p>}
+          {blocksQ.isLoading && <p style={mutedStyle}>正在加载识别结果…</p>}
+          {blocksQ.isError && (
+            <p style={errorStyle}>识别结果加载失败：{formatError(blocksQ.error)}</p>
+          )}
           {blocksQ.isSuccess && blocks.length === 0 && (
-            <p style={mutedStyle}>抽取完成但没有产出任何块；可能是 OCR 没有识别到题目。</p>
+            <p style={mutedStyle}>处理完成，但没有识别到题目。可以换一张更清晰的图片再试。</p>
           )}
           {groups.map((g) => (
             <BlockEditor
@@ -874,11 +875,11 @@ export function BlockEditor({
       }}
     >
       <div style={blockHeadStyle}>
-        <span style={blockIndexStyle}>#{primaryIndex + 1}</span>
+        <span style={blockIndexStyle}>第 {primaryIndex + 1} 题</span>
         <LayoutQualityBadge q={primary.layout_quality} />
-        <Badge tone="neutral">conf {(primary.extraction_confidence * 100).toFixed(0)}%</Badge>
+        <Badge tone="neutral">识别把握 {(primary.extraction_confidence * 100).toFixed(0)}%</Badge>
         <span style={metaStyle}>{formatRelTime(new Date(primary.created_at * 1000))}</span>
-        {followers.length > 0 && <Badge tone="info">merged · {followers.length + 1} blocks</Badge>}
+        {followers.length > 0 && <Badge tone="info">已合并 {followers.length + 1} 段</Badge>}
         {/* YUK-164 OC-5: AI prefill marker. info-blue tone = AI actor (round2a
             §1.3); the literal "AI 预填，可改" text is the non-color cue. Present
             only when the judge produced an observation for this block. */}
@@ -907,18 +908,18 @@ export function BlockEditor({
               size="sm"
               onClick={() => onRescue(primary, 2)}
               disabled={form.ignored || rescuing}
-              title="haiku rescue"
+              title="用更快的方式重新识别"
             >
-              {rescuing ? '…' : 'Tier 2'}
+              {rescuing ? '…' : '快速重识别'}
             </Button>
             <Button
               variant="coral"
               size="sm"
               onClick={() => onRescue(primary, 3)}
               disabled={form.ignored || rescuing}
-              title="sonnet rescue"
+              title="用更细致的方式重新识别"
             >
-              {rescuing ? '…' : 'Tier 3'}
+              {rescuing ? '…' : '深度重识别'}
             </Button>
           </>
         )}
@@ -928,7 +929,7 @@ export function BlockEditor({
             checked={form.ignored}
             onChange={(e) => setForm((cur) => ({ ...cur, ignored: e.target.checked }))}
           />
-          忽略本块
+          不导入这题
         </label>
       </div>
 
@@ -937,9 +938,9 @@ export function BlockEditor({
 
       {followers.length > 0 && (
         <div style={mergeStripStyle}>
-          {followers.map((f) => (
+          {followers.map((f, index) => (
             <span key={f.id} style={followerPillStyle}>
-              <code style={timelineCodeStyle}>{f.id.slice(0, 6)}</code>
+              <span>合并片段 {index + 2}</span>
               <button
                 type="button"
                 onClick={() => onSplitMerge(f.id)}
@@ -955,12 +956,12 @@ export function BlockEditor({
 
       {primary.structured && (
         <details style={{ marginTop: 'var(--s-3)' }}>
-          <summary style={metaStyle}>OCR structured 树（只读，调试）</summary>
+          <summary style={metaStyle}>查看识别到的题目结构</summary>
           <StructuredOutline node={primary.structured} />
         </details>
       )}
 
-      <FieldLabel>题面（OCR 已填，可改）</FieldLabel>
+      <FieldLabel>题面（已识别，可修改）</FieldLabel>
       <textarea
         value={form.prompt_md}
         onChange={(e) => setForm((cur) => ({ ...cur, prompt_md: e.target.value }))}
@@ -1164,11 +1165,16 @@ function BlockImagePreview({
 }
 
 function StructuredOutline({ node, depth = 0 }: { node: StructuredNode; depth?: number }) {
-  const headerBits = [node.role, node.question_no].filter(Boolean).join(' · ');
+  const roleLabel: Record<string, string> = {
+    stem: '题面',
+    sub: '小题',
+    standalone: '独立题目',
+  };
+  const headerBits = [roleLabel[node.role] ?? '题目', node.question_no].filter(Boolean).join(' · ');
   return (
     <ul style={{ ...structuredListStyle, marginLeft: depth === 0 ? 0 : 'var(--s-3)' }}>
       <li>
-        <span style={structuredHeaderStyle}>{headerBits || node.role}</span>
+        <span style={structuredHeaderStyle}>{headerBits}</span>
         <span style={structuredPromptStyle}>{node.prompt_text}</span>
         {node.options && node.options.length > 0 && (
           <ul style={{ ...structuredListStyle, marginTop: 2 }}>
@@ -1180,7 +1186,7 @@ function StructuredOutline({ node, depth = 0 }: { node: StructuredNode; depth?: 
           </ul>
         )}
         {node.answers && node.answers.length > 0 && (
-          <span style={structuredAnswerStyle}> · answer: {node.answers.join(', ')}</span>
+          <span style={structuredAnswerStyle}> · 参考答案：{node.answers.join(', ')}</span>
         )}
         {node.sub_questions &&
           node.sub_questions.length > 0 &&
@@ -1193,9 +1199,9 @@ function StructuredOutline({ node, depth = 0 }: { node: StructuredNode; depth?: 
 }
 
 function LayoutQualityBadge({ q }: { q: 'structured' | 'partial' | 'text_only' }) {
-  if (q === 'structured') return <Badge tone="good">structured</Badge>;
-  if (q === 'partial') return <Badge tone="hard">partial</Badge>;
-  return <Badge tone="hard">text_only</Badge>;
+  if (q === 'structured') return <Badge tone="good">已识别</Badge>;
+  if (q === 'partial') return <Badge tone="hard">建议复核</Badge>;
+  return <Badge tone="hard">仅识别到文字</Badge>;
 }
 
 // YUK-277: the text line (DOCX → pandoc segmentation) produces blocks
@@ -1224,17 +1230,16 @@ export function TextLineCompletePanel({
   return (
     <section className="sse-feed">
       <div className="head">
-        <h4>文本直抽</h4>
+        <h4>文档题目</h4>
         <span className="conn">
           <Icon name="spark" size={12} />
-          已完成 · {count} 块
+          已整理 · {count} 道
         </span>
       </div>
       <div className="sse-rows">
         <div className="sse-row success">
           <span className="t">✓</span>
-          <span className="msg">文本直抽完成（pandoc 切题，无 OCR / VLM 抽取）· {count} 块</span>
-          <code>direct</code>
+          <span className="msg">文档内容已整理，可以逐题核对 · {count} 道</span>
         </div>
       </div>
     </section>
@@ -1255,11 +1260,11 @@ export function SSETimeline({
         <h4>抽取进度</h4>
         <span className="conn">
           <span className="dot" />
-          SSE · {status}
+          {connectionStatusLabel(status)}
         </span>
       </div>
       <div className="sse-rows">
-        {events.map((e) => (
+        {events.map((e, index) => (
           <div
             key={e.event_id}
             className={[
@@ -1272,17 +1277,17 @@ export function SSETimeline({
               .filter(Boolean)
               .join(' ')}
           >
-            <span className="t">#{e.event_id}</span>
+            <span className="t">{index + 1}</span>
             <span className="msg">
-              <code>{e.event_type}</code>
+              {eventTypeLabel(e.event_type)}
               {e.payload.block_count !== undefined && (
-                <span className="meta"> · {String(e.payload.block_count)} blocks</span>
+                <span className="meta"> · {String(e.payload.block_count)} 道</span>
               )}
               {typeof e.payload.layout_quality === 'string' && (
-                <span className="meta"> · {e.payload.layout_quality}</span>
+                <span className="meta"> · {layoutQualityLabel(e.payload.layout_quality)}</span>
               )}
               {typeof e.payload.error_message === 'string' && (
-                <span className="record-error"> · {e.payload.error_message}</span>
+                <span className="record-error"> · 处理失败，请重试</span>
               )}
               {/* YUK-541 (ocr-vlm-fallback-ladder): the fallback ladder persists a
                   non-fatal degrade warning (e.g. "fell back to GLM structure") on
@@ -1293,21 +1298,16 @@ export function SSETimeline({
               {Array.isArray(e.payload.warnings) && e.payload.warnings.length > 0 && (
                 <span className="sse-warn">
                   {' · '}
-                  <Icon name="alert" size={12} />{' '}
-                  {(e.payload.warnings as unknown[])
-                    .filter((w): w is string => typeof w === 'string')
-                    .join('；')}
+                  <Icon name="alert" size={12} /> 部分内容使用了备用识别方式，建议重点复核
                 </span>
               )}
             </span>
-            <code>{eventShortId(e.event_type)}</code>
           </div>
         ))}
         {events.length === 0 && (
           <div className="sse-row">
             <span className="t">--</span>
-            <span className="msg muted">等待事件…</span>
-            <code>{status}</code>
+            <span className="msg muted">正在等待处理进度…</span>
           </div>
         )}
       </div>
@@ -1315,9 +1315,33 @@ export function SSETimeline({
   );
 }
 
-function eventShortId(eventType: string): string {
-  const parts = eventType.split('.');
-  return parts.at(-1) ?? eventType;
+function connectionStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    connecting: '连接中',
+    open: '处理中',
+    closed: '已结束',
+    error: '连接中断',
+  };
+  return labels[status] ?? '处理中';
+}
+
+function eventTypeLabel(eventType: string): string {
+  const labels: Record<string, string> = {
+    'ingestion.extraction_progress': '正在识别题目',
+    'ingestion.extraction_completed': '题目识别完成',
+    'ingestion.extraction_failed': '题目识别失败',
+    'ingestion.imported': '已加入题库',
+  };
+  return labels[eventType] ?? '处理进度已更新';
+}
+
+function layoutQualityLabel(quality: string): string {
+  const labels: Record<string, string> = {
+    structured: '结构完整',
+    partial: '部分内容需复核',
+    text_only: '仅识别到文字',
+  };
+  return labels[quality] ?? '请复核结果';
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {

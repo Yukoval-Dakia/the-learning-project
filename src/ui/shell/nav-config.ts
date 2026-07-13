@@ -125,3 +125,11 @@ export function paramFromPath(pathname: string): string | null {
   }
   return null;
 }
+
+/**
+ * 学习者明细页的路径尾通常是数据库标识，不应该出现在全局面包屑里。后台页仍保留
+ * 路径段，方便管理员辨认当前诊断面。
+ */
+export function breadcrumbParamFromPath(pathname: string): string | null {
+  return pathname.startsWith('/admin/') ? paramFromPath(pathname) : null;
+}

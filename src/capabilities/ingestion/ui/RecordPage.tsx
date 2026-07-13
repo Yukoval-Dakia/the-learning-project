@@ -57,7 +57,7 @@ export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageP
     <main className="page record-page">
       <PageHeader
         title="录入"
-        eyebrow="RECORD · attempts"
+        eyebrow="学习记录 · 手动或文件录入"
         sub="拍照、上传或手动录入，确认后收进题库并标记为错题。"
       />
 
@@ -271,7 +271,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
           className="field-input"
           value={knowledgeFilter}
           onChange={(e) => setKnowledgeFilter(e.target.value)}
-          placeholder="按名字 / domain 搜索"
+          placeholder="按知识点名称搜索"
         />
         {knowledgeQ.isLoading && <p className="record-note record-muted">正在加载知识点…</p>}
         {knowledgeQ.isError && (

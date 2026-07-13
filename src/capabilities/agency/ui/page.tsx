@@ -78,19 +78,19 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
       </button>
       <div className="page-head">
         <div className="eyebrow">
-          <span className="dot-sep">●</span>OBSERVE · experimental:agent_note
+          <span className="dot-sep">●</span>AI 协作观察 · 只读
         </div>
         <h1 className="page-title serif">AI 之间的观察</h1>
         <p className="page-lead">
-          各 AI task
-          给彼此留的观察信号：谁发现了什么、想让谁去补。你只读旁观，无需裁决；过期信号会自动消失。
+          各项 AI
+          工作给彼此留的观察：谁发现了什么、想让谁去补。你只读旁观，无需裁决；过期信号会自动消失。
         </p>
       </div>
 
       <Stateful
         status={state}
         onRetry={() => q.refetch()}
-        errorText="无法读取 agent 观察信号。"
+        errorText="无法读取 AI 观察信号。"
         skeleton={
           <LoomCard pad>
             <SkLines rows={4} />
@@ -101,7 +101,7 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
             icon="eye"
             title="暂无观察信号"
             text="AI 们目前没有互留新的观察。新的信号会在夜间推理与日常运行后出现。"
-            futureTag="即将接入：对话 agent 误解检测 · 录入 agent 切题反复"
+            futureTag="后续会补充：对话误解检测 · 录入切题反复"
           />
         }
       >
@@ -110,7 +110,7 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
             <div className="an-ov-stat">
               <span className="an-ov-n serif tnum">{all.length}</span>
               <span className="an-ov-lab">
-                活跃信号<span className="meta"> · 涉及 {agentsActive} 个 agent · 只读</span>
+                活跃信号<span className="meta"> · 涉及 {agentsActive} 项 AI 工作 · 只读</span>
               </span>
             </div>
             {unread > 0 && (

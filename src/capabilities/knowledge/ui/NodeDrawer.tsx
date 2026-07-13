@@ -82,11 +82,6 @@ function EdgeProposalRow({
           {nameOf(e.payload.proposed_change.from_knowledge_id)} →{' '}
           {nameOf(e.payload.proposed_change.to_knowledge_id)}
         </span>
-        {e.payload.proposed_change.weight != null && (
-          <span className="meta mono" style={{ marginLeft: 'auto' }}>
-            {Math.round(e.payload.proposed_change.weight * 100)}%
-          </span>
-        )}
       </div>
       <div className="edge-prop-acts">
         <Btn
@@ -210,7 +205,6 @@ export function NodeDrawer({
           <MasteryRing mastery={node.mastery} size={40} showNumber={false} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="drawer-title serif">{node.name}</div>
-            <div className="meta mono">{node.effective_domain ?? node.domain ?? '—'}</div>
           </div>
           <IconBtn icon="close" size={16} title="关闭" onClick={onClose} />
         </div>
@@ -226,7 +220,7 @@ export function NodeDrawer({
             </div>
             <div className="nm">
               <div className="nm-n serif">{node.evidence_count}</div>
-              <div className="nm-l meta">evidence</div>
+              <div className="nm-l meta">学习依据</div>
             </div>
             <div className="nm">
               <div className="nm-n">
@@ -235,7 +229,7 @@ export function NodeDrawer({
                   {cue.label}
                 </span>
               </div>
-              <div className="nm-l meta">decay</div>
+              <div className="nm-l meta">记忆状态</div>
             </div>
           </div>
 
@@ -243,7 +237,7 @@ export function NodeDrawer({
           <div className="drawer-sec">
             <div className="drawer-sec-h">
               <LoomIcon name="tree" size={14} />
-              层级 hierarchy
+              层级
             </div>
             {parent ? (
               <button
@@ -251,7 +245,7 @@ export function NodeDrawer({
                 className="rel-row"
                 onClick={() => go(`/knowledge/${parent.id}`)}
               >
-                <span className="rel-kind mono">parent</span>
+                <span className="rel-kind">上级</span>
                 {/* subject-driven from the neighbour's own effective_domain */}
                 <span {...subjectContentPropsForDomain(parent.effective_domain)}>
                   {parent.name}
@@ -259,7 +253,7 @@ export function NodeDrawer({
                 <LoomIcon name="arrow" size={13} />
               </button>
             ) : (
-              <div className="quiet-empty">根节点（无父）</div>
+              <div className="quiet-empty">这是顶层知识点</div>
             )}
             {children.map((c) => (
               <button
@@ -268,7 +262,7 @@ export function NodeDrawer({
                 className="rel-row indent"
                 onClick={() => go(`/knowledge/${c.id}`)}
               >
-                <span className="rel-kind mono">child</span>
+                <span className="rel-kind">下级</span>
                 <span {...subjectContentPropsForDomain(c.effective_domain)}>{c.name}</span>
                 {/* ⑥治理：抽屉子节点是 KnowledgeTreeNode（已带 band 字段）→ 直接 BandChip 给离散档
                     （设计源 screen-knowledge.jsx:250 子行即 BandChip）。详情页子行是 NodePageChild
@@ -281,9 +275,9 @@ export function NodeDrawer({
           <div className="drawer-sec">
             <div className="drawer-sec-h">
               <LoomIcon name="link" size={14} />
-              关系 typed edges
+              其他关系
             </div>
-            {rels.length === 0 && <div className="quiet-empty">暂无 typed 关系。</div>}
+            {rels.length === 0 && <div className="quiet-empty">暂无其他关系。</div>}
             {rels.map((e) => {
               const o = other(e);
               const c = REL_CUE[e.relation_type] ?? REL_CUE.related_to;
@@ -322,13 +316,13 @@ export function NodeDrawer({
             <div className="drawer-sec">
               <div className="drawer-sec-h">
                 <LoomIcon name="sparkle" size={14} />
-                AI 提议的边 · {props.length}
+                AI 提议的关系 · {props.length}
               </div>
               {props.map((p) => (
                 <EdgeProposalRow
                   key={p.id}
                   e={p}
-                  nameOf={(kid) => nodes.find((n) => n.id === kid)?.name ?? kid ?? '?'}
+                  nameOf={(kid) => nodes.find((n) => n.id === kid)?.name ?? '未命名知识点'}
                   onDecide={async (decision) => {
                     await decideEdgeProposal(p.id, decision);
                     // M4-T5 (YUK-318)：服务端 pending 过滤生效——invalidate 后
@@ -386,11 +380,11 @@ export function NodeDrawer({
               style={{ marginTop: 'var(--s-3)' }}
               onClick={() => createM.mutate()}
             >
-              建立 {REL_CUE[rel]?.label} 边
+              建立「{REL_CUE[rel]?.label}」关系
             </Btn>
             {createM.isError && (
               <div className="meta" style={{ color: 'var(--again-ink)', marginTop: 4 }}>
-                {(createM.error as Error).message}
+                关系建立失败，请重试。
               </div>
             )}
           </div>
@@ -398,7 +392,7 @@ export function NodeDrawer({
 
         <div className="drawer-foot">
           <Btn variant="primary" block iconEnd="arrow" onClick={() => go(`/knowledge/${node.id}`)}>
-            打开节点详情页
+            打开知识点详情
           </Btn>
         </div>
       </aside>

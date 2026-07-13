@@ -79,6 +79,14 @@ export interface QuestionDetail {
 export const getQuestion = (id: string) =>
   apiJson<QuestionDetail>(`/api/questions/${encodeURIComponent(id)}`);
 
+export interface QuestionKnowledgeOption {
+  id: string;
+  name: string;
+}
+
+export const getQuestionKnowledgeOptions = () =>
+  apiJson<{ rows: QuestionKnowledgeOption[] }>('/api/knowledge');
+
 // ── 题详情面 /questions/:id（YUK-413, loom screen-question-detail）─────────────
 // GET /api/questions/:id 的完整聚合（src/server/questions/detail.ts QuestionDetail）。
 // 上面那个薄 QuestionDetail 是 solve 链用的兼容子集；详情编辑面要全投影：

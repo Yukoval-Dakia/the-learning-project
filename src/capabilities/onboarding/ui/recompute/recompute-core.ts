@@ -58,10 +58,10 @@ export interface RcKcVerdict {
 }
 
 const FIELD_LABELS: Record<RcFieldDiff['field'], string> = {
-  p_l: 'p̂ 掌握点',
-  mastery_lo: '区间下界',
-  mastery_hi: '区间上界',
-  se: 'SE',
+  p_l: '当前判断',
+  mastery_lo: '可能区间起点',
+  mastery_hi: '可能区间终点',
+  se: '判断波动',
 };
 
 const round2 = (x: number) => Math.round(x * 100) / 100;

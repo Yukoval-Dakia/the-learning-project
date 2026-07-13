@@ -73,8 +73,8 @@ const STATUS_LABEL: Record<MisconceptionRow['status'], string> = {
 };
 
 const SOURCE_LABEL: Record<MisconceptionRow['source'], string> = {
-  hard: '硬轨校准',
-  soft: '软轨先验',
+  hard: '作答中反复出现',
+  soft: 'AI 初步判断',
 };
 
 /**
@@ -150,17 +150,10 @@ export function MisconceptionCardView({
       {trace && (
         <div className="kd-misc-trace">
           {evidence.length > 0 ? (
-            <>
-              依据 event：
-              {evidence.map((e) => (
-                <code key={e} className="evt">
-                  {e}
-                </code>
-              ))}
-            </>
+            <span>来自 {evidence.length} 条学习记录。</span>
           ) : (
             // wire 偏离①：无 mc.note；evidence 为空时诚实标，绝不编造依据。
-            <span>暂无可回链的 event 依据。</span>
+            <span>目前还没有可回看的学习记录。</span>
           )}
         </div>
       )}
@@ -268,7 +261,11 @@ export function MisconceptionList({
     return <p className="quiet-empty">正在看有没有指向此点的误区…</p>;
   }
   if (items.length === 0) {
-    return <p className="quiet-empty">没有指向此点的误区 —— 你在这点上没有顽固的错误信念。</p>;
+    return (
+      <p className="quiet-empty">
+        目前没有已记录的相关误区；这不代表已经排除，只是证据还没有形成。
+      </p>
+    );
   }
   return (
     <>
