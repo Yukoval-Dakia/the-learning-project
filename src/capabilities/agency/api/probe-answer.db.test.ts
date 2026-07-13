@@ -120,6 +120,21 @@ async function answer(probeQuestionId: string, answer_md: string): Promise<Respo
   );
 }
 
+async function answerWithImages(
+  probeQuestionId: string,
+  answer_md: string,
+  answer_image_refs: string[],
+): Promise<Response> {
+  return POST(
+    new Request(`http://localhost/api/conjecture/probe/${probeQuestionId}/answer`, {
+      method: 'POST',
+      body: JSON.stringify({ answer_md, answer_image_refs }),
+      headers: { 'content-type': 'application/json' },
+    }),
+    { id: probeQuestionId },
+  );
+}
+
 async function probeResultEvents(probeQuestionId: string) {
   return testDb()
     .select()
@@ -143,6 +158,35 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     await resetDb();
     await seedKnowledge();
     mockInvoke.mockReset();
+  });
+
+  // YUK-567 slice-2 — probes are served with judge_kind_override='multimodal_direct'
+  // (an IMAGE_CONSUMING route), so a photo / photo-only answer is graded (not 422'd)
+  // and the student image refs thread through to the judge invoke.
+  it('photo-only answer grades via the vision route + threads student images', async () => {
+    const probeId = await serveProbe();
+    mockInvoke.mockResolvedValue(invokeResult('correct'));
+
+    const res = await answerWithImages(probeId, '', ['asset_hand1']);
+    expect(res.status).toBe(200); // NOT 422 — multimodal_direct consumes the photo
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ status: 'retired', outcome: 1, resolution: 'retired' });
+    // the uploaded answer image rode through to the judge as student_image_refs.
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({ student_image_refs: ['asset_hand1'] }),
+    );
+    // Provenance: the photo answer's asset refs are recorded on the probe_result event
+    // (not just fed to the judge), so the team can later see what was submitted.
+    const events = await probeResultEvents(probeId);
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toMatchObject({ answer_md: '', answer_image_refs: ['asset_hand1'] });
+  });
+
+  it('rejects an empty answer (no text AND no image) with 400', async () => {
+    const probeId = await serveProbe();
+    const res = await answerWithImages(probeId, '', []);
+    expect(res.status).toBe(400);
+    expect(mockInvoke).not.toHaveBeenCalled();
   });
 
   it('judge incorrect → outcome=0 → confirmed + ONE probe_result event, no FSRS (ND-5)', async () => {

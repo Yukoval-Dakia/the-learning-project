@@ -24,6 +24,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import { PrepDeskConjectures } from './PrepDeskConjectures';
+import { ProbeAnswers } from './ProbeAnswers';
 import { AiChangesStrip } from './blocks/AiChangesStrip';
 import { KpiRow } from './blocks/KpiRow';
 import { LoomHero } from './blocks/LoomHero';
@@ -31,6 +32,7 @@ import { ProfileBand } from './blocks/ProfileBand';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
 import { WeekHeat } from './blocks/WeekHeat';
+import { getActiveProbes } from './probe-answer-api';
 import {
   type OvernightDigest,
   type WorkbenchSummary,
@@ -237,7 +239,13 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   // YUK-567 — the 备课猜想 chip toggles an inline 备课台 conjecture panel (pull, not
   // push): the team's prepared conjectures surface only when the owner opens them.
   const [conjOpen, setConjOpen] = useState(false);
+  // YUK-567 slice-2 — 待你试做 probe queue: its own query (shared ['prep-desk-probes']
+  // key with ProbeAnswers → react-query dedupes), independent of overnight activity so a
+  // served probe is always reachable.
+  const [probeOpen, setProbeOpen] = useState(false);
   const q = useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
+  const probesQ = useQuery({ queryKey: ['prep-desk-probes'], queryFn: getActiveProbes });
+  const activeProbes = probesQ.data?.probes ?? [];
   const status = statefulStatus(q.isLoading, q.isError);
   const d = q.data;
   // If accepting/rejecting the last conjecture drops the count to 0, the 备课猜想
@@ -246,6 +254,10 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
   useEffect(() => {
     if (conjOpen && d?.new_conjectures_count === 0) setConjOpen(false);
   }, [d?.new_conjectures_count, conjOpen]);
+  useEffect(() => {
+    // Auto-collapse when the last probe is answered (mirrors the conjecture panel).
+    if (probeOpen && activeProbes.length === 0) setProbeOpen(false);
+  }, [activeProbes.length, probeOpen]);
   const chips = d ? buildDigestChips(d) : [];
   const canDecide = !!d && (d.new_proposals_count > 0 || d.new_conjectures_count > 0);
   return (
@@ -338,6 +350,28 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
           )}
         </Stateful>
       </LoomCard>
+      {activeProbes.length > 0 && (
+        <div className="probe-queue">
+          {/* 待你试做 —— served probes to answer. Chip driven by the probes query
+              (not the overnight digest), so it's reachable even after the 备课猜想 panel
+              auto-collapses. Answering the last one auto-collapses this too. */}
+          <button
+            type="button"
+            className={`chip chip-toggle${probeOpen ? ' is-open' : ''}`}
+            onClick={() => setProbeOpen((o) => !o)}
+            aria-expanded={probeOpen}
+          >
+            <LoomIcon name="quiz" size={14} /> 待你试做{' '}
+            <b className="mono">{activeProbes.length}</b>
+            <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+          </button>
+          {probeOpen && (
+            <div className="prep-desk-expand">
+              <ProbeAnswers />
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
