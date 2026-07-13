@@ -56,6 +56,15 @@ FROM node:24-bookworm-slim AS sqlitedeps
 WORKDIR /sqlite
 RUN npm install --omit=dev --no-audit --no-fund better-sqlite3@^12.6.2
 
+# Stage 2.8: keep PDFium external to the server CJS bundle and ship its WASM
+# beside the package. Bundling its ESM entry rewrites import.meta.url to an
+# undefined shim, so the first PDF/DOCX evidence render crashes before loading
+# pdfium.wasm. A flat npm install lets Node resolve the package's CJS export,
+# whose __dirname-based WASM lookup remains valid in the runner (YUK-636).
+FROM node:24-bookworm-slim AS pdfiumdeps
+WORKDIR /pdfium
+RUN npm install --omit=dev --no-audit --no-fund @hyzyla/pdfium@2.1.13
+
 FROM base AS runner
 ENV NODE_ENV=production
 # 文档转换链 + sharp 运行库 —— apt 两层逐字沿旧 runner。
@@ -85,6 +94,9 @@ COPY --from=sdkdeps /sdk/node_modules/@modelcontextprotocol ./node_modules/@mode
 COPY --from=sqlitedeps /sqlite/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=sqlitedeps /sqlite/node_modules/bindings ./node_modules/bindings
 COPY --from=sqlitedeps /sqlite/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+# PDFium JS + sibling pdfium.wasm, from the flat external-package stage (YUK-636)
+COPY --from=pdfiumdeps /pdfium/node_modules/@hyzyla/pdfium ./node_modules/@hyzyla/pdfium
+RUN test -s node_modules/@hyzyla/pdfium/dist/pdfium.wasm
 # Claude Code refuses --dangerously-skip-permissions as root. Both the Hono app
 # and pg-boss worker use that mode through the Agent SDK, so the shipped runtime
 # must be non-root. Pre-create the worker's named-volume mountpoint with the
