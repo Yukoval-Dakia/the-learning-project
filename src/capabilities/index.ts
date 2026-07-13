@@ -9,6 +9,7 @@ import { ingestionCapability } from './ingestion/manifest';
 import { knowledgeCapability } from './knowledge/manifest';
 import { notesCapability } from './notes/manifest';
 import { observabilityCapability } from './observability/manifest';
+import { onboardingCapability } from './onboarding/manifest';
 import { practiceCapability } from './practice/manifest';
 import { shellCapability } from './shell/manifest';
 
@@ -20,5 +21,6 @@ export const capabilities: CapabilityManifest[] = [
   notesCapability,
   copilotCapability,
   observabilityCapability,
+  onboardingCapability,
   shellCapability,
 ];

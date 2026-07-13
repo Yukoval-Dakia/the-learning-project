@@ -1,4 +1,5 @@
 import { defineCapability } from '@/kernel/manifest';
+import { uiPagesFor } from '@/kernel/ui-surfaces';
 
 export const ingestionCapability = defineCapability({
   name: 'ingestion',
@@ -104,7 +105,7 @@ export const ingestionCapability = defineCapability({
     kinds: [{ kind: 'block_merge' }, { kind: 'image_candidate' }],
   },
   // M1-T6：录入面（学习记录 mode 按 D11 不迁）。
-  ui: { pages: [{ route: '/record' }] },
+  ui: { pages: uiPagesFor('ingestion') },
   // M5-T3 (YUK-321) — copilot 工具归属声明。D11 已裁 record 渐废（裁决 d）：
   // 两工具等价平移不删；record 域退役时随本声明一并摘除（查 spec §1 D11 行）。
   copilotTools: {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TITLES, activeFromPath, breadcrumbParamFromPath } from './nav-config';
+import { activeFromPath, breadcrumbParamFromPath, titleFromPath } from './nav-config';
 
 describe('breadcrumbParamFromPath', () => {
   it('不把学习者明细页的数据库标识放进全局面包屑', () => {
@@ -10,13 +10,14 @@ describe('breadcrumbParamFromPath', () => {
   });
 
   it('保留后台诊断面的路径段', () => {
-    expect(breadcrumbParamFromPath('/admin/runs')).toBe('runs');
+    expect(breadcrumbParamFromPath('/admin/subjects/math')).toBe('math');
+    expect(breadcrumbParamFromPath('/admin/runs')).toBeNull();
   });
 });
 
 describe('event detail navigation metadata', () => {
   it('uses a human-readable topbar title for event detail', () => {
     expect(activeFromPath('/events/evt_1')).toBe('events');
-    expect(TITLES.events).toBe('事件证据');
+    expect(titleFromPath('/events/evt_1')).toBe('事件证据');
   });
 });

@@ -29,6 +29,7 @@ import CoachHub from '@/capabilities/shell/ui/CoachHub';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
 import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import { getWorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
+import { surfacePath } from '@/kernel/ui-surfaces';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette } from '@/ui/shell/CommandPalette';
@@ -200,9 +201,8 @@ function RootShell() {
         <CopilotDock pathname={pathname} navigate={navigate} />
       </div>
 
-      {/* S14 (YUK-335) — ⌘K 命令面板，消费 S13 铺好的 paletteOpen seam（⌘K toggle
-          + searchbox 点击都 set paletteOpen）。组件 fixed 渲到根（scrim 全屏）；
-          页面组复用 nav-config，知识节点走 /api/knowledge fetch。 */}
+      {/* S14/YUK-329 — ⌘K 命令面板消费 paletteOpen seam。组件 fixed 渲到根；
+          页面组投影 shipped surface inventory，知识节点走 /api/knowledge fetch。 */}
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
@@ -218,9 +218,9 @@ const rootRoute = createRootRoute({ component: RootShell });
 // 该页仍在路由表）。
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/',
+  path: surfacePath('root'),
   beforeLoad: () => {
-    throw redirect({ to: '/today' });
+    throw redirect({ to: surfacePath('today') });
   },
 });
 
@@ -232,7 +232,7 @@ function TodayRoute() {
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/today',
+  path: surfacePath('today'),
   component: TodayRoute,
 });
 
@@ -248,7 +248,7 @@ function WelcomeRoute() {
 
 const welcomeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/welcome',
+  path: surfacePath('welcome'),
   component: WelcomeRoute,
 });
 
@@ -259,7 +259,7 @@ function OnboardingUploadRoute() {
 
 const onboardingUploadRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/onboarding/upload',
+  path: surfacePath('onboarding-upload'),
   component: OnboardingUploadRoute,
 });
 
@@ -270,7 +270,7 @@ function PlacementRoute() {
 
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/placement',
+  path: surfacePath('placement'),
   component: PlacementRoute,
 });
 
@@ -283,7 +283,7 @@ function ProfileRoute() {
 
 const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/profile',
+  path: surfacePath('profile'),
   component: ProfileRoute,
 });
 
@@ -294,7 +294,7 @@ function InboxRoute() {
 
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/inbox',
+  path: surfacePath('inbox'),
   component: InboxRoute,
 });
 
@@ -308,7 +308,7 @@ function MistakesRoute() {
 
 const mistakesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/mistakes',
+  path: surfacePath('mistakes'),
   component: MistakesRoute,
 });
 
@@ -319,7 +319,7 @@ function AgentNotesRoute() {
 
 const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/agent-notes',
+  path: surfacePath('agent-notes'),
   component: AgentNotesRoute,
 });
 
@@ -337,7 +337,7 @@ function EventDetailRouteC() {
 
 const eventDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/events/$id',
+  path: surfacePath('event-detail'),
   component: EventDetailRouteC,
 });
 
@@ -364,7 +364,7 @@ function RecordRoute() {
 
 const recordRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/record',
+  path: surfacePath('record'),
   component: RecordRoute,
 });
 
@@ -390,7 +390,7 @@ function PracticeRoute() {
 
 const practiceRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/practice',
+  path: surfacePath('practice'),
   component: PracticeRoute,
 });
 
@@ -404,7 +404,7 @@ function DraftReviewRoute() {
 
 const draftsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/drafts',
+  path: surfacePath('drafts'),
   component: DraftReviewRoute,
 });
 
@@ -420,7 +420,7 @@ function QuestionsRoute() {
 
 const questionsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/questions',
+  path: surfacePath('questions'),
   component: QuestionsRoute,
 });
 
@@ -432,7 +432,7 @@ function QuestionDetailRouteC() {
 
 const questionDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/questions/$id',
+  path: surfacePath('question-detail'),
   component: QuestionDetailRouteC,
 });
 
@@ -444,7 +444,7 @@ function KnowledgeIndexRoute() {
 
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/knowledge',
+  path: surfacePath('knowledge'),
   component: KnowledgeIndexRoute,
 });
 
@@ -456,7 +456,7 @@ function KnowledgeDetailRouteC() {
 
 const knowledgeDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/knowledge/$id',
+  path: surfacePath('knowledge-detail'),
   component: KnowledgeDetailRouteC,
 });
 
@@ -469,7 +469,7 @@ function NoteReaderRouteC() {
 
 const noteReaderRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/notes/$id',
+  path: surfacePath('note-detail'),
   component: NoteReaderRouteC,
 });
 
@@ -484,7 +484,7 @@ function CoachRoute() {
 
 const coachRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/coach',
+  path: surfacePath('coach'),
   component: CoachRoute,
 });
 
@@ -495,7 +495,7 @@ function AdminRunsRoute() {
 
 const adminRunsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/runs',
+  path: surfacePath('admin-runs'),
   component: AdminRunsRoute,
 });
 
@@ -506,7 +506,7 @@ function AdminCostRoute() {
 
 const adminCostRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/cost',
+  path: surfacePath('admin-cost'),
   component: AdminCostRoute,
 });
 
@@ -517,7 +517,7 @@ function AdminFailuresRoute() {
 
 const adminFailuresRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/failures',
+  path: surfacePath('admin-failures'),
   component: AdminFailuresRoute,
 });
 
@@ -528,7 +528,7 @@ function AdminSubjectsRoute() {
 
 const adminSubjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/subjects',
+  path: surfacePath('admin-subjects'),
   component: AdminSubjectsRoute,
 });
 
@@ -542,7 +542,7 @@ function AdminSubjectTraitsRoute() {
 
 const adminSubjectTraitsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/subjects/$id',
+  path: surfacePath('admin-subject-detail'),
   component: AdminSubjectTraitsRoute,
 });
 
@@ -554,7 +554,7 @@ function AdminCoverageLatticeRoute() {
 
 const adminCoverageLatticeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/coverage-lattice',
+  path: surfacePath('admin-coverage-lattice'),
   component: AdminCoverageLatticeRoute,
 });
 
@@ -564,7 +564,7 @@ function AdminConjectureScoresRoute() {
 }
 const adminConjectureScoresRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/conjecture-scores',
+  path: surfacePath('admin-conjecture-scores'),
   component: AdminConjectureScoresRoute,
 });
 

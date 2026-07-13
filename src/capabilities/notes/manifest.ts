@@ -1,4 +1,5 @@
 import { defineCapability } from '@/kernel/manifest';
+import { uiPagesFor } from '@/kernel/ui-surfaces';
 
 // M3-T1 (YUK-317)：notes 包骨架。routes 在 T4（API 上 Hono）逐条填充——
 // 9 条：notes/[id] GET + artifacts/[id]/{body-blocks,sections/[sectionId],
@@ -121,9 +122,5 @@ export const notesCapability = defineCapability({
   proposals: {
     kinds: [{ kind: 'note_update' }],
   },
-  // M4-T6 (YUK-319)：工作台「AI 改动 · 近 24h」块归属 notes 域（数据源
-  // /api/artifacts/ai-changes/recent + per-event undo 链）。
-  ui: {
-    todayBlocks: ['ai-changes-strip'],
-  },
+  ui: { pages: uiPagesFor('notes') },
 });

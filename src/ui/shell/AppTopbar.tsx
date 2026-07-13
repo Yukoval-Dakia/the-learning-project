@@ -3,7 +3,7 @@
 // 设计源 docs/design/loom-refresh/project/app.jsx 的 <header className="topbar">
 // 块：移动 menu 按钮、桌面 rail 折叠 toggle、`Loom / TITLE / param` 面包屑、
 // spacer、⌘K searchbox、Copilot IconBtn。面包屑 title/param 由 pathname 经
-// activeFromPath / paramFromPath 派生（设计 parseRoute 等价物）。
+// titleFromPath / breadcrumbParamFromPath 派生（设计 parseRoute 等价物）。
 //
 // 路由耦合只经 prop（pathname）—— 不 import 路由库。.topbar / .crumbs /
 // .searchbox / .menu-btn / .icon-btn / .rail-toggle / .topbar-spacer 均在
@@ -11,7 +11,7 @@
 
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { TITLES, activeFromPath, breadcrumbParamFromPath } from './nav-config';
+import { COMMAND_PALETTE_PLACEHOLDER, breadcrumbParamFromPath, titleFromPath } from './nav-config';
 
 export interface AppTopbarProps {
   /** 当前路由 pathname（RootShell 经 useRouterState 注入）；驱动面包屑。 */
@@ -37,8 +37,7 @@ export function AppTopbar({
   onOpenPalette,
   onOpenCopilot,
 }: AppTopbarProps) {
-  const active = activeFromPath(pathname);
-  const title = TITLES[active] || active || '今日';
+  const title = titleFromPath(pathname);
   const param = breadcrumbParamFromPath(pathname);
 
   return (
@@ -77,7 +76,7 @@ export function AppTopbar({
           开命令面板。S14 建 CommandPalette 后接 RootShell paletteOpen。 */}
       <button type="button" className="searchbox" onClick={onOpenPalette} aria-label="搜索（⌘K）">
         <LoomIcon name="search" size={15} />
-        <span>搜索卡片、节点、错题…</span>
+        <span>{COMMAND_PALETTE_PLACEHOLDER}</span>
         <kbd>⌘K</kbd>
       </button>
       <IconBtn

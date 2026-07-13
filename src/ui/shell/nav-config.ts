@@ -1,30 +1,16 @@
-// S13 (YUK-335 批次丙) — SPA 根壳 nav 配置。
+// YUK-329 — shell navigation projection。
 //
-// 设计源 docs/design/loom-refresh/project/app.jsx 的 NAV / MOBILE_NAV / TITLES /
-// parseRoute。设计稿 9 项 nav（today/practice/record · inbox/mistakes/questions/
-// items/knowledge）是 hash 路由 demo；这里只登记 **真实存在的 SPA 路由**（见
-// web/src/router.tsx routeTree），避免死链 / 假入口（owner 红线：不 fabricate）。
-//
-// 取舍裁断（task S13 决策点）：
-//   • mistakes / questions / items —— **省略（方案 a）**。SPA 无这三条路由（M5
-//     teardown 后仅旧栈残留，新栈未接通）。渲为 placeholder（方案 b）会造死链 /
-//     假入口，与 nav「点了就到」的语义相悖；省略更干净。三面随后续 M 在 SPA
-//     接通后回填本配置即可。
-//   • agent-notes（AI 观察）/ coach —— **加入**。二者是真实 SPA 面
-//     （/agent-notes /coach），补足设计「整理」叙事的观察 / 周报入口。
-//
-// 路由耦合只经调用方注入的 navigate / pathname —— 本文件不 import 任何路由库
-// （SPA 是 TanStack Router，shell 组件经 prop 注入；不 import next/navigation）。
+// 页面路径、标题、active 归属、nav/search 可见性来自 kernel 的 UI_SURFACES；本文件
+// 只保留 LoomIcon 这种纯视觉映射与 section flattening，避免再造一份路由表。
 
+import { UI_SURFACES, matchUiSurface } from '@/kernel/ui-surfaces';
 import type { LoomIconName } from '@/ui/primitives/LoomIcon';
 
 /** 单条侧栏 nav 项。 */
 export interface NavItem {
-  /** 稳定 id；也是 activeFromPath 匹配的 active-key。 */
   id: string;
   label: string;
   icon: LoomIconName;
-  /** 该项指向的具体 SPA 路由（navigate 推入）。 */
   path: string;
 }
 
@@ -39,99 +25,109 @@ export function isSection(entry: NavEntry): entry is NavSection {
   return 'section' in entry;
 }
 
-// 侧栏 nav —— 设计两段（织造 / 整理），只含真实 SPA 路由。
-export const NAV: NavEntry[] = [
-  { section: '织造' },
-  { id: 'today', label: '今日', icon: 'today', path: '/today' },
-  { id: 'practice', label: '练习', icon: 'layers', path: '/practice' },
-  { id: 'record', label: '录入', icon: 'record', path: '/record' },
-  { section: '整理' },
-  { id: 'inbox', label: '收件箱', icon: 'inbox', path: '/inbox' },
-  // YUK-409 — 题库面（loom screen-questions，真 SPA 路由 /questions）。设计 NAV 原
-  // 列「questions」一项，S13 时因 SPA 无该路由而省略；此刻接通后回填。
-  { id: 'questions', label: '题库', icon: 'quiz', path: '/questions' },
-  // inc-4b (YUK-403) — owner manual gate 草稿审核面（真 SPA 路由 /drafts）。
-  { id: 'drafts', label: '草稿审核', icon: 'review', path: '/drafts' },
-  { id: 'knowledge', label: '知识', icon: 'knowledge', path: '/knowledge' },
-  // agent-notes / coach 是真实 SPA 面，补足设计「整理」段的观察 / 周报入口。
-  { id: 'agent-notes', label: 'AI 观察', icon: 'eye', path: '/agent-notes' },
-  { id: 'coach', label: 'Coach', icon: 'teach', path: '/coach' },
-];
-
-/** 移动底栏：≤5 核心入口；`__more` 开侧栏 drawer 而非导航。 */
-export const MOBILE_NAV: NavItem[] = [
-  { id: 'today', label: '今日', icon: 'today', path: '/today' },
-  { id: 'practice', label: '练习', icon: 'layers', path: '/practice' },
-  { id: 'record', label: '录入', icon: 'record', path: '/record' },
-  { id: 'knowledge', label: '知识', icon: 'knowledge', path: '/knowledge' },
-  { id: '__more', label: '更多', icon: 'menu', path: '' },
-];
-
-/** topbar 面包屑标题，按 active id / 路由 base 索引（设计 app.jsx TITLES）。 */
-export const TITLES: Record<string, string> = {
-  today: '今日',
-  practice: '练习',
-  record: '录入',
-  inbox: '收件箱',
-  questions: '题库',
-  drafts: '草稿审核',
-  knowledge: '知识',
-  notes: '笔记',
-  events: '事件证据',
-  'agent-notes': 'AI 观察',
-  coach: 'Coach',
-  admin: 'Admin',
+const SURFACE_ICONS: Record<string, LoomIconName> = {
+  today: 'today',
+  practice: 'layers',
+  record: 'record',
+  inbox: 'inbox',
+  mistakes: 'mistakes',
+  questions: 'quiz',
+  drafts: 'review',
+  knowledge: 'knowledge',
+  'agent-notes': 'eye',
+  coach: 'teach',
+  'admin-runs': 'settings',
+  'admin-cost': 'hash',
+  'admin-failures': 'alert',
+  'admin-subjects': 'knowledge',
+  'admin-coverage-lattice': 'layers',
+  'admin-conjecture-scores': 'sparkle',
 };
 
-// 按最长前缀优先排序：/knowledge/$id 仍归 knowledge active，但 /notes/* 与
-// /admin/* 各自命中自己的 base。每元组是 [pathPrefix, activeId]；activeId 同时
-// 是 TITLES 的 key。
-const PATH_ACTIVE: Array<[string, string]> = [
-  ['/today', 'today'],
-  ['/practice', 'practice'],
-  ['/record', 'record'],
-  ['/inbox', 'inbox'],
-  ['/questions', 'questions'],
-  ['/drafts', 'drafts'],
-  ['/knowledge', 'knowledge'],
-  ['/notes', 'notes'],
-  ['/events', 'events'],
-  ['/agent-notes', 'agent-notes'],
-  ['/coach', 'coach'],
-  ['/admin', 'admin'],
-];
+function iconFor(id: string): LoomIconName {
+  return SURFACE_ICONS[id] ?? 'arrow';
+}
 
-/**
- * pathname → active nav id（设计 app.jsx 的 navActive=base 等价物）。无 surface
- * 命中时返回 ''（侧栏无高亮，例如未登记 nav 的明细路由仍能显示）。命中的 id
- * 同时是 TITLES 面包屑 key。
- */
+const navSurfaces = UI_SURFACES.filter((surface) => 'nav' in surface && surface.nav).sort(
+  (left, right) => {
+    if (!('nav' in left) || !left.nav || !('nav' in right) || !right.nav) return 0;
+    const sectionOrder =
+      left.nav.section === right.nav.section ? 0 : left.nav.section === '织造' ? -1 : 1;
+    return sectionOrder || left.nav.order - right.nav.order;
+  },
+);
+
+/** 侧栏 nav：section 与 item 均投影自 shipped surface inventory。 */
+export const NAV: NavEntry[] = [];
+let lastSection = '';
+for (const surface of navSurfaces) {
+  if (!('nav' in surface) || !surface.nav) continue;
+  if (surface.nav.section !== lastSection) {
+    lastSection = surface.nav.section;
+    NAV.push({ section: lastSection });
+  }
+  NAV.push({
+    id: surface.id,
+    label: surface.title,
+    icon: iconFor(surface.id),
+    path: surface.route,
+  });
+}
+
+/** 移动底栏：inventory 中声明 mobileOrder 的四个核心入口 + “更多”。 */
+export const MOBILE_NAV: NavItem[] = UI_SURFACES.flatMap((surface) => {
+  if (!('nav' in surface) || !surface.nav || !('mobileOrder' in surface.nav)) return [];
+  return [
+    {
+      id: surface.id,
+      label: surface.title,
+      icon: iconFor(surface.id),
+      path: surface.route,
+      order: surface.nav.mobileOrder,
+    },
+  ];
+})
+  .sort((left, right) => left.order - right.order)
+  .map(({ order: _order, ...item }) => item);
+MOBILE_NAV.push({ id: '__more', label: '更多', icon: 'menu', path: '' });
+
+export interface SearchPageItem extends NavItem {
+  keywords: string;
+}
+
+/** 命令面板可直达的静态页面；动态详情不会生成无 id 的假入口。 */
+export const SEARCH_PAGE_ITEMS: SearchPageItem[] = UI_SURFACES.flatMap((surface) => {
+  if (!('search' in surface) || !surface.search) return [];
+  return [
+    {
+      id: surface.id,
+      label: surface.search.label,
+      icon: iconFor(surface.id),
+      path: surface.route,
+      keywords: 'keywords' in surface.search ? surface.search.keywords : '',
+    },
+  ];
+});
+
+/** 搜索框可见承诺；与 CommandPalette 的实际两类 index 同源复用。 */
+export const COMMAND_PALETTE_PLACEHOLDER = '搜索页面和知识节点…';
+
+/** pathname → active nav key。未知路径返回空串，绝不伪装成“今日”。 */
 export function activeFromPath(pathname: string): string {
-  for (const [prefix, id] of PATH_ACTIVE) {
-    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return id;
-  }
-  return '';
+  return matchUiSurface(pathname)?.surface.activeId ?? '';
+}
+
+/** pathname → 当前 surface 的具体面包屑标题。 */
+export function titleFromPath(pathname: string): string {
+  return matchUiSurface(pathname)?.surface.title ?? '未知页面';
 }
 
 /**
- * 抽取面包屑 `param` 段（设计 parseRoute().param）：匹配 base 之后的路径尾，
- * 用于明细路由（/knowledge/$id、/notes/$id、/admin/runs）渲染 mono 尾 crumb。
- * 路由是 bare index（无明细段）时返回 null。
- */
-export function paramFromPath(pathname: string): string | null {
-  for (const [prefix] of PATH_ACTIVE) {
-    if (pathname.startsWith(`${prefix}/`)) {
-      const tail = pathname.slice(prefix.length + 1);
-      return tail.length > 0 ? tail : null;
-    }
-  }
-  return null;
-}
-
-/**
- * 学习者明细页的路径尾通常是数据库标识，不应该出现在全局面包屑里。后台页仍保留
- * 路径段，方便管理员辨认当前诊断面。
+ * 仅 inventory 明确允许的后台动态详情显示参数。学习者题目/KC/笔记/事件 id 不进入
+ * 全局面包屑；静态 admin 页面已有自己的具体 title，也不再显示英文路径段。
  */
 export function breadcrumbParamFromPath(pathname: string): string | null {
-  return pathname.startsWith('/admin/') ? paramFromPath(pathname) : null;
+  const match = matchUiSurface(pathname);
+  if (!match || !('showParam' in match.surface) || !match.surface.showParam) return null;
+  return Object.values(match.params)[0] ?? null;
 }

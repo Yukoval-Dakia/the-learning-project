@@ -1,4 +1,5 @@
 import { defineCapability } from '@/kernel/manifest';
+import { uiPagesFor } from '@/kernel/ui-surfaces';
 
 // M5-T4 (YUK-321) — observability 包：AI 运行可观测性（admin 四页数据面）+
 // 今日成本条。核心实现 server/ai-observability.ts（纯 drizzle，整体迁自
@@ -233,15 +234,5 @@ export const observabilityCapability = defineCapability({
   // 壳形态：admin 页套主 app chrome（RootShell）——见 docs/design/2026-07-07-yuk579-coverage-
   // lattice.md §6 决策记录（loom app.jsx 的「separate shell」原型已被 SPA 单一 RootShell 取代，
   // owner 已收编）。
-  ui: {
-    pages: [
-      { route: '/admin/runs' },
-      { route: '/admin/cost' },
-      { route: '/admin/failures' },
-      { route: '/admin/subjects' },
-      { route: '/admin/subjects/$id' },
-      { route: '/admin/coverage-lattice' },
-      { route: '/admin/conjecture-scores' },
-    ],
-  },
+  ui: { pages: uiPagesFor('observability') },
 });

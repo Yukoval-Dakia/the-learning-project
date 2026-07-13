@@ -1,4 +1,5 @@
 import { defineCapability } from '@/kernel/manifest';
+import { uiPagesFor } from '@/kernel/ui-surfaces';
 
 export const agencyCapability = defineCapability({
   name: 'agency',
@@ -129,7 +130,7 @@ export const agencyCapability = defineCapability({
       { kind: 'conjecture' },
     ],
   },
-  ui: { pages: [{ route: '/agent-notes' }], todayBlocks: ['agent-notes-board'] },
+  ui: { pages: uiPagesFor('agency') },
   // M5-T3 (YUK-321) — copilot 工具归属声明（learning_item 上下文读 1 + 生命周期提议 4）。
   copilotTools: {
     tools: [

@@ -89,8 +89,8 @@ export interface CapabilityManifest {
   proposals?: { kinds: ProposalKindDecl[] };
   /** 本包贡献的 Copilot 工具（M5-T3 第一实例）：组合期查全局唯一，挂载由组合根聚合器收集 */
   copilotTools?: { tools: CopilotToolDecl[] };
-  /** 本包的 UI 面：页面路由 + today/工作台贡献块标识 */
-  ui?: { pages?: UiPageDecl[]; todayBlocks?: string[] };
+  /** 本包拥有的 shipped SPA 页面；路径统一来自 ui-surfaces inventory。 */
+  ui?: { pages?: UiPageDecl[] };
 }
 
 /** identity helper — 只为类型推断与调用点可读性。 */
@@ -98,7 +98,7 @@ export function defineCapability(manifest: CapabilityManifest): CapabilityManife
   return manifest;
 }
 
-/** 组合期校验：包名、event action、API 路由、job 名、proposal kind、copilot 工具名声明全局唯一，冲突即抛错。 */
+/** 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错。 */
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
   for (const cap of capabilities) {
@@ -158,6 +158,16 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
         );
       }
       copilotToolOwners.set(tool.name, cap.name);
+    }
+  }
+  const uiPageOwners = new Map<string, string>();
+  for (const cap of capabilities) {
+    for (const page of cap.ui?.pages ?? []) {
+      const owner = uiPageOwners.get(page.route);
+      if (owner !== undefined) {
+        throw new Error(`ui page '${page.route}' declared by both '${owner}' and '${cap.name}'`);
+      }
+      uiPageOwners.set(page.route, cap.name);
     }
   }
 }
