@@ -80,7 +80,7 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
       id: 'inbox',
       label: '裁决',
       title: `${s.proposals.total} 条 AI 提议待审`,
-      sub: '逐条 accept / dismiss，每次裁决写入一条事件。',
+      sub: '逐条查看，再决定采用或暂不采用。',
       cta: '去收件箱',
       badge: `${s.proposals.total} 条`,
       icon: 'inbox',
@@ -134,7 +134,7 @@ function fmtByCurrency(rows: CurrencySpend[]): string {
   return rows.map((r) => fmtSpend(r.cost, r.currency)).join(' · ');
 }
 
-function aiTaskLabel(taskKind: string): string {
+export function aiTaskLabel(taskKind: string): string {
   const kind = taskKind.toLowerCase();
   if (kind.includes('copilot')) return 'Copilot';
   if (kind.includes('memory') || kind.includes('summary')) return '学习摘要';
@@ -163,6 +163,29 @@ function aiTaskLabel(taskKind: string): string {
     return '学习辅导';
   }
   return '其他 AI 工作';
+}
+
+export function learnerFailureSummary(messages: readonly string[]): string {
+  const detail = messages.join(' ');
+  if (/timeout|timed out|deadline exceeded/i.test(detail)) {
+    return 'AI 处理超时，任务没有完成。';
+  }
+  if (/rate.?limit|too many requests|\b429\b/i.test(detail)) {
+    return 'AI 服务当前繁忙，任务没有完成。';
+  }
+  if (/unauthori[sz]ed|forbidden|invalid api.?key|\b(?:401|403)\b/i.test(detail)) {
+    return 'AI 服务连接配置异常，任务没有完成。';
+  }
+  if (/network|fetch failed|econn|socket|tls/i.test(detail)) {
+    return 'AI 服务连接中断，任务没有完成。';
+  }
+  if (/process exited|exit code|terminated|killed|signal/i.test(detail)) {
+    return 'AI 运行环境中断，任务没有完成。';
+  }
+  if (/parse|invalid json|structured output/i.test(detail)) {
+    return 'AI 返回的内容无法读取，任务没有完成。';
+  }
+  return 'AI 运行失败；技术详情已保留在管理页。';
 }
 
 function CostRibbon() {
@@ -262,7 +285,7 @@ function buildDigestChips(d: OvernightDigest): DigestChip[] {
       count: d.new_conjectures_count,
     });
   if (d.agent_notes_count > 0)
-    chips.push({ key: 'agent_notes', icon: 'eye', label: '代理观察', count: d.agent_notes_count });
+    chips.push({ key: 'agent_notes', icon: 'eye', label: 'AI 观察', count: d.agent_notes_count });
   return chips;
 }
 
@@ -323,7 +346,7 @@ function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
                 <LoomBadge
                   key={dk.task_kind}
                   tone="again"
-                  title={dk.recent_error_messages.join('\n')}
+                  title={learnerFailureSummary(dk.recent_error_messages)}
                 >
                   <LoomIcon name="alert" size={12} /> {aiTaskLabel(dk.task_kind)}失败{' '}
                   {dk.error_count} 次

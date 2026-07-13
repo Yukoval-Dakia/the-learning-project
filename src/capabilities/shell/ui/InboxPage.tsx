@@ -335,8 +335,8 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         <div className="eyebrow">INBOX · AI 提议 · 按出手强度分流</div>
         <h1 className="page-title serif">收件箱</h1>
         <p className="page-lead">
-          AI 提议按「可逆性 × 后果」分三档：A 安全可逆的已替你做了（窗口内可撤）、B 真裁决项逐条
-          accept / dismiss、C 纯状态变更已移出队列。
+          AI 提议会按影响自动分流：安全可撤的建议已替你处理，需要判断的留在这里，提醒类信息归入 AI
+          观察。
         </p>
       </header>
 

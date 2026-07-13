@@ -35,7 +35,7 @@ export function SessionsStrip({
         </span>
         <div className="card-title">进行中的会话</div>
         <span className="meta" style={{ marginLeft: 'auto' }}>
-          review_session
+          {sessions.length > 0 ? `共 ${sessions.length} 个` : '复习安排'}
         </span>
       </div>
       {sessions.length === 0 ? (
