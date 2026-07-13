@@ -29,8 +29,12 @@ export interface SegmentInput {
 }
 
 // 题号行: 行首 N. — pandoc escapes leading numbers as `N\.` to avoid ordered-list
-// promotion. Match both `1. ` and `1\. `.
-const QUESTION_LEADING = /^\s*(\d{1,3})\\?\.\s+(.*)$/;
+// promotion. Matches `1. text`, `1\. text`, AND a bare `8\.` line where pandoc split
+// the number onto its own line and put the prompt on the NEXT line (observed on real
+// 学科网 papers — Q8/Q13/Q23 otherwise merged into their predecessor); the prompt then
+// flows in from the following line(s). `\d{1,3}` keeps 4-digit years (a stray `1991.`)
+// from being mistaken for a question number.
+const QUESTION_LEADING = /^\s*(\d{1,3})\\?\.(?:\s+(.*))?$/;
 // 选项行: A. / B\. etc.
 const OPTION_LINE = /^\s*([A-D])\\?\.\s+(.*)$/;
 // 嵌图: markdown form ![alt](media/...) AND pandoc's <img src="media/..."> HTML
@@ -126,7 +130,16 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
     const q = QUESTION_LEADING.exec(line);
     if (q) {
       if (cur) drafts.push(cur);
-      cur = { questionNo: q[1], promptLines: [q[2]], options: [], imagePaths: [] };
+      // q[2] is undefined for a bare `N\.` line (prompt lives on the next line);
+      // start with no prompt line so the following line(s) fill it via the
+      // non-question fall-through below.
+      const firstLine = q[2];
+      cur = {
+        questionNo: q[1],
+        promptLines: firstLine ? [firstLine] : [],
+        options: [],
+        imagePaths: [],
+      };
       continue;
     }
     // Before the first question: header region — drop images, ignore prose.
