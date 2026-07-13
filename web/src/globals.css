@@ -6603,6 +6603,138 @@ button.chip:hover {
   font-size: var(--fs-meta);
   color: var(--again-ink);
 }
+
+/* ── YUK-567 slice-2 · 待你试做 probe 作答区 ── */
+.probe-queue,
+.probe-answers {
+  margin-top: var(--s-3);
+}
+.pa-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.pa-card {
+  border-left: 3px solid var(--line);
+}
+.pa-probe {
+  margin-bottom: var(--s-3);
+}
+.pa-probe-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  font-size: var(--fs-meta);
+  color: var(--info-ink);
+}
+.pa-probe-md {
+  font-family: var(--font-serif);
+  line-height: 1.5;
+  color: var(--ink);
+}
+.pa-answer {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--s-2);
+  margin-bottom: var(--s-2);
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  resize: vertical;
+}
+.pa-answer:focus {
+  outline: none;
+  border-color: var(--ink-5);
+}
+.pa-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+.pa-thumb {
+  position: relative;
+  display: inline-flex;
+}
+.pa-thumb img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+}
+.pa-thumb-sk {
+  width: 56px;
+  height: 56px;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+}
+.pa-thumb-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--paper);
+  background: var(--ink);
+  border: none;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.pa-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.pa-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px var(--s-2);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+.pa-upload:hover {
+  color: var(--ink);
+  border-color: var(--ink-5);
+}
+.pa-error {
+  font-size: var(--fs-meta);
+  color: var(--again-ink);
+}
+.pa-verdict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+}
+.pa-verdict-txt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pa-verdict-retired {
+  color: var(--good-ink);
+  background: var(--good-soft);
+}
+.pa-verdict-confirmed {
+  color: var(--info-ink);
+  background: var(--info-soft);
+}
 button.chip.is-on {
   background: var(--coral-soft);
   color: var(--coral-ink);

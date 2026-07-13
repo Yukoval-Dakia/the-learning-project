@@ -48,17 +48,30 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
+import {
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  resolveQuestionJudgeRoute,
+} from '@/server/judge/route-resolve';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { answerProbe, peekExistingProbeResult } from '../server/conjecture/probe-lifecycle';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
-const AnswerBody = z.object({
-  // owner's answer to the probe prompt (markdown). Required + non-empty: an empty
-  // answer carries no signal and cannot be graded.
-  answer_md: z.string().trim().min(1).max(10_000),
-});
+const AnswerBody = z
+  .object({
+    // owner's answer to the probe prompt (markdown). MAY be empty when a photo
+    // answer is attached (photo-only, mirroring submit.ts / answer-draft).
+    answer_md: z.string().trim().max(10_000).default(''),
+    // handwriting/photo answer refs (uploaded via POST /api/assets). A photo-only
+    // answer is judgeable only by an image-consuming route (gated in POST below).
+    answer_image_refs: z.array(z.string()).default([]),
+  })
+  // "has any answer" = text OR image (submit.ts F4): an empty text + empty image set
+  // carries no signal and cannot be graded.
+  .refine((b) => b.answer_md.length > 0 || b.answer_image_refs.length > 0, {
+    message: 'answer_md or answer_image_refs is required — an empty answer carries no signal',
+  });
 
 /**
  * Map the judge's coarse_outcome onto the probe lifecycle's (outcome, resolution)
@@ -104,7 +117,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         400,
       );
     }
-    const { answer_md: answerMd } = parsed.data;
+    const { answer_md: answerMd, answer_image_refs: answerImageRefs } = parsed.data;
 
     // Load the probe question row. Only `source='mind_probe'` rows are answerable
     // here — a non-probe question id is a 409 (this endpoint is conjecture-probe
@@ -177,10 +190,28 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       db,
       probe.knowledge_ids ?? [],
     );
+    // Photo-only gate (mirrors submit.ts F4): a photo-only answer is judgeable ONLY
+    // by an image-consuming route (steps / multimodal_direct). On a text-only route
+    // the empty answer_md would be graded as wrong and poison the n=1 anchor — so
+    // fail-closed 422 (no probe_result written; the probe stays served, re-answerable).
+    // NOTE: serveProbeOnce stamps judge_kind_override='multimodal_direct' on every probe,
+    // so in practice this gate never fires — it's defense-in-depth if that policy changes.
+    const photoOnly = answerMd.length === 0 && answerImageRefs.length > 0;
+    if (photoOnly) {
+      const route = resolveQuestionJudgeRoute(probe, subjectProfile);
+      if (!IMAGE_CONSUMING_JUDGE_ROUTES.has(route)) {
+        throw new ApiError(
+          'unsupported_judge_route',
+          `photo-only answer but probe ${probeQuestionId} routes to text-only judge '${route}' (fail-closed: probe stays active)`,
+          422,
+        );
+      }
+    }
     const invoked = await createDefaultJudgeInvoker().invoke({
       db,
       question: probe,
       answer_md: answerMd,
+      student_image_refs: answerImageRefs,
       subjectProfile,
     });
     const judgeResult = invoked.result;
@@ -202,6 +233,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       outcome: mapped.outcome,
       resolution: mapped.resolution,
       answer_md: answerMd,
+      answer_image_refs: answerImageRefs,
     });
 
     // The response reports the RECORDED outcome/resolution (from answerProbe),

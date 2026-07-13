@@ -147,6 +147,12 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
         reference_md: referenceMd,
         knowledge_ids: [knowledgeId],
         difficulty,
+        // YUK-567 slice-2 — probes are answered with TEXT and/or IMAGE (handwriting /
+        // photo). Force the multimodal_direct route so a photo (incl. photo-only) answer
+        // is graded by the vision judge — a text route would 422 a photo-only answer
+        // (submit.ts F4). It grades text-only answers too (its ONLY unsupported case is
+        // "no answer text AND no images"), so this is strictly more capable, not narrower.
+        judge_kind_override: 'multimodal_direct',
         source: PROBE_QUESTION_SOURCE,
         // Provenance: trace the probe question back to its conjecture event.
         source_ref: conjectureProposalId,
@@ -184,6 +190,8 @@ export interface AnswerProbeParams {
   retrievabilityAtJudge?: number | null;
   /** Provenance — the answer text that was graded. */
   answer_md?: string | null;
+  /** Provenance — the answer image refs (asset ids) that were graded (photo answers). */
+  answer_image_refs?: string[];
   now?: Date;
 }
 
@@ -212,6 +220,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
   const now = params.now ?? new Date();
   const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
+  const answerImageRefs = params.answer_image_refs ?? [];
 
   return db.transaction(async (tx) => {
     // Serialize concurrent answers on the SAME probe so the check-existing + write is
@@ -305,6 +314,9 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         resolution,
         retrievability_at_judge: retrievabilityAtJudge,
         answer_md: answerMd,
+        // Provenance for a photo answer: the team can later see WHAT was submitted for
+        // a confirmed probe ("教研团据此备练"), not just the text (evidence-first).
+        answer_image_refs: answerImageRefs,
       },
       caused_by_event_id: conjectureEventId,
       created_at: now,

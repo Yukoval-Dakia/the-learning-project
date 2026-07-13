@@ -61,6 +61,13 @@ export const shellCapability = defineCapability({
         path: '/api/prep-desk/conjectures',
         load: () => import('./api/prep-desk-conjectures').then((m) => m.GET),
       },
+      // YUK-567 slice-2 — 备课台「待你试做」队列：≤3 served-but-unanswered mind_probe
+      // 读模型（anti-guilt 无校准数字）。作答走 /api/conjecture/probe/[id]/answer。
+      {
+        method: 'GET',
+        path: '/api/prep-desk/probes',
+        load: () => import('./api/prep-desk-probes').then((m) => m.GET),
+      },
     ],
   },
   // M4-T6 (YUK-319)：工作台 + 收件箱两 surface；todayBlocks 是工作台自有块
