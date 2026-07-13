@@ -3,6 +3,10 @@
 // helper just throws ApiAuthError when the token is missing or rejected.
 
 export const TOKEN_STORAGE_KEY = 'loom_internal_token';
+const AUTH_REQUIRED_MESSAGE = '访问令牌已失效，请重新输入。';
+
+type AuthInvalidationListener = (message: string) => void;
+const authInvalidationListeners = new Set<AuthInvalidationListener>();
 
 export class ApiAuthError extends Error {
   constructor(message: string) {
@@ -39,9 +43,31 @@ export function setInternalToken(token: string): void {
   window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
 }
 
-export function clearInternalToken(): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+export function subscribeAuthInvalidation(listener: AuthInvalidationListener): () => void {
+  authInvalidationListeners.add(listener);
+  return () => authInvalidationListeners.delete(listener);
+}
+
+export function clearInternalToken(message = AUTH_REQUIRED_MESSAGE): void {
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+  }
+  for (const listener of authInvalidationListeners) listener(message);
+}
+
+/** 验证候选 token，不写 localStorage；只有 200 后 TokenGate 才持久化并进入应用。 */
+export async function validateInternalToken(token: string): Promise<void> {
+  const trimmed = token.trim();
+  if (!trimmed) throw new ApiAuthError('请输入访问令牌。');
+  const res = await fetch('/api/auth/check', {
+    method: 'GET',
+    headers: { 'x-internal-token': trimmed },
+    cache: 'no-store',
+  });
+  if (res.status === 401) throw new ApiAuthError('访问令牌无效，请重新输入。');
+  if (!res.ok) {
+    throw new ApiError('暂时无法验证访问令牌，请稍后重试。', res.status);
+  }
 }
 
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
@@ -54,7 +80,7 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   }
   const res = await fetch(input, { ...init, headers });
   if (res.status === 401) {
-    clearInternalToken();
+    clearInternalToken('访问令牌无效，请重新输入。');
     throw new ApiAuthError('token 无效或已过期');
   }
   if (!res.ok) {
