@@ -10440,6 +10440,8 @@ button.seg-sm {
 /* ---- segmented window control (7/30/90), screens.css seg model ---- */
 .coach-loom .seg {
   display: inline-flex;
+  min-width: 0;
+  margin: 0;
   background: var(--paper-sunk);
   border: 1px solid var(--line);
   border-radius: var(--r-2);
@@ -10681,6 +10683,25 @@ button.seg-sm {
   }
   .coach-loom .coach-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .coach-loom .stack-chart {
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    padding-bottom: var(--s-2);
+  }
+  .coach-loom .stack-col {
+    flex: 0 0 34px;
+  }
+  .coach-loom .fail-row {
+    gap: var(--s-2);
+  }
+  .coach-loom .fail-name {
+    width: min(36vw, 120px);
+    overflow-wrap: anywhere;
   }
 }
 
@@ -13995,12 +14016,18 @@ button.seg-sm {
    ════════════════════════════════════════════════════════════════════════════ */
 
 /* ── 复盘中枢 · 三视图分段切换 ─────────────────────────────────────────────── */
+.coachhub {
+  width: 100%;
+  min-width: 0;
+}
 .coachhub-switch {
   display: flex;
   margin-bottom: var(--s-4);
 }
 .coachhub-tabs {
   display: inline-flex;
+  box-sizing: border-box;
+  max-width: 100%;
   background: var(--paper-sunk);
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
@@ -14020,6 +14047,7 @@ button.seg-sm {
   padding: 8px 16px;
   border-radius: var(--r-pill);
   transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  min-width: 0;
 }
 .coachhub-tab .ico {
   color: var(--ink-4);
@@ -14035,6 +14063,11 @@ button.seg-sm {
 }
 .coachhub-tab.on .ico {
   color: var(--coral);
+}
+.coachhub-tab:focus-visible,
+.cal-th-btn:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
 }
 @media (max-width: 720px) {
   .coachhub-switch {
@@ -14062,6 +14095,11 @@ button.seg-sm {
   margin-bottom: var(--s-5);
   flex-wrap: wrap;
 }
+.coachhub-panel {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
 .coachhub .coach-kpi-l {
   letter-spacing: var(--ls-wide);
 }
@@ -14076,6 +14114,9 @@ button.seg-sm {
 .cal {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 /* A · firm-up 概览 */
 .cal-overview {
@@ -14251,6 +14292,7 @@ button.seg-sm {
   /* 窄屏 / 长知识点名兜底（CodeRabbit）：去掉整 chip 的 nowrap + min-width:0，让 flex 子项
      可缩、名称可截断，整颗 chip 不再横向溢出容器。「— 未知」标签仍各自 nowrap 不拆字。 */
   min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
@@ -14279,6 +14321,9 @@ button.seg-sm {
 }
 .cal-blind-chip .btn {
   margin-left: 2px;
+}
+.cal-blind-more {
+  margin-top: var(--s-3);
 }
 /* C · θ̂ SE 分布带 */
 .cal-strip-card {
@@ -14391,10 +14436,24 @@ button.seg-sm {
   font-size: var(--fs-h5);
 }
 .cal-table-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.cal-table-scroll {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
 }
 .cal-table {
   width: 100%;
+  min-width: 720px;
   border-collapse: collapse;
   font-size: var(--fs-caption);
 }
@@ -14521,6 +14580,11 @@ button.seg-sm {
 .cal-foot b {
   color: var(--ink-2);
 }
+.cal-table-empty {
+  margin: 0;
+  padding: var(--s-4);
+  line-height: var(--lh-snug);
+}
 @media (max-width: 880px) {
   .cal-overview {
     grid-template-columns: 1fr;
@@ -14538,6 +14602,64 @@ button.seg-sm {
     border-right: 0;
     border-bottom: 1px solid var(--line);
     padding-bottom: var(--s-3);
+  }
+}
+
+@media (max-width: 640px) {
+  .coachhub-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .coachhub-tab {
+    width: 100%;
+    gap: 4px;
+    font-size: var(--fs-meta);
+    padding-inline: 4px;
+  }
+  .coachhub-tab .ico {
+    flex: none;
+  }
+  .cal-stats {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-2);
+  }
+  .cal-stat {
+    min-width: 0;
+    padding: var(--s-3);
+  }
+  .cal-blind-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cal-blind-chip {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    border-radius: var(--r-2);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+  }
+  .cal-blind-name {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+  .cal-blind-unknown {
+    grid-column: 1;
+  }
+  .cal-blind-chip .btn {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+    margin-left: var(--s-2);
+  }
+  .cal-table-h {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .coachhub .rc-cal {
+    align-items: flex-start;
   }
 }
 
@@ -15223,5 +15345,15 @@ button.seg-sm {
 @media (max-width: 640px) {
   .eff-row-viz {
     width: 100%;
+  }
+  .eff-subj,
+  .eff-row {
+    padding: var(--s-3);
+  }
+  .eff-subj-name,
+  .eff-moved-name,
+  .eff-row-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }

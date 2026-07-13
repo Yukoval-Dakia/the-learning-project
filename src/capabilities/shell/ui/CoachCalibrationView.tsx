@@ -93,6 +93,7 @@ function CalibrationBody({
   navigate: (to: string) => void;
 }) {
   const [sort, setSort] = useState<CalSort>({ key: 'se', dir: 1 }); // 默认按 θ̂ SE 升序 → 最可信在上
+  const [showAllBlind, setShowAllBlind] = useState(false);
   const rows = toCalRows(data.rows);
   // 双源但同定义（OCR）：meter 大数字 + firm_count 用 server `agg`（权威横截面聚合）；firmbar
   // 的 firm/warming/blind 三段用 client `calCounts(rows)`（agg 不带 warming/blind 细分，必须
@@ -102,6 +103,8 @@ function CalibrationBody({
   const counts = calCounts(rows);
   const blind = rows.filter((r) => r.tier === 'blind');
   const sorted = calSorted(rows, sort);
+  const diagnosed = sorted.filter((row) => row.evidence_count > 0);
+  const visibleBlind = showAllBlind ? blind : blind.slice(0, 6);
   const dots = calDots(rows);
   const onSort = (key: CalSort['key']) => setSort((s) => nextSort(s, key));
 
@@ -202,7 +205,7 @@ function CalibrationBody({
             </div>
           </div>
           <div className="cal-blind-list">
-            {blind.map((k) => (
+            {visibleBlind.map((k) => (
               <div key={k.knowledge_id} className="cal-blind-chip">
                 <span className="cal-blind-name">{k.name}</span>
                 <span className="cal-blind-unknown mono">— 未知</span>
@@ -217,6 +220,17 @@ function CalibrationBody({
               </div>
             ))}
           </div>
+          {blind.length > 6 && (
+            <Btn
+              size="sm"
+              variant="quiet"
+              className="cal-blind-more"
+              aria-expanded={showAllBlind}
+              onClick={() => setShowAllBlind((current) => !current)}
+            >
+              {showAllBlind ? '收起盲区列表' : `显示全部 ${blind.length} 个盲区`}
+            </Btn>
+          )}
         </LoomCard>
       )}
 
@@ -257,43 +271,51 @@ function CalibrationBody({
 
       {/* D · 逐知识点成熟度 ledger */}
       <div className="cal-table-h">
-        <div className="card-title">逐知识点成熟度</div>
-        <span className="meta">{rows.length} 个知识点 · 可按表头排序</span>
+        <div className="card-title">有作答记录的知识点</div>
+        <span className="meta">{diagnosed.length} 个知识点 · 可按表头排序</span>
       </div>
       <LoomCard className="cal-table-card">
-        <table className="cal-table">
-          <thead>
-            <tr>
-              <th aria-sort={ariaSortFor(sort, 'name')}>
-                <button type="button" className="cal-th-btn" onClick={() => onSort('name')}>
-                  知识点{sortCaret(sort, 'name')}
-                </button>
-              </th>
-              <th className="num" aria-sort={ariaSortFor(sort, 'evidence')}>
-                <button type="button" className="cal-th-btn" onClick={() => onSort('evidence')}>
-                  证据{sortCaret(sort, 'evidence')}
-                </button>
-              </th>
-              <th aria-sort={ariaSortFor(sort, 'se')}>
-                <button type="button" className="cal-th-btn" onClick={() => onSort('se')}>
-                  判断可靠度{sortCaret(sort, 'se')}
-                </button>
-              </th>
-              <th aria-sort={ariaSortFor(sort, 'tier')}>
-                <button type="button" className="cal-th-btn" onClick={() => onSort('tier')}>
-                  判断阶段{sortCaret(sort, 'tier')}
-                </button>
-              </th>
-              <th>题目置信度</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((k) => (
-              <CalLedgerRow key={k.knowledge_id} k={k} navigate={navigate} />
-            ))}
-          </tbody>
-        </table>
+        {diagnosed.length === 0 ? (
+          <p className="cal-table-empty meta">
+            还没有带作答证据的知识点；上面的盲区不冒充已诊断结果。
+          </p>
+        ) : (
+          <section className="cal-table-scroll" aria-label="有作答记录的知识点表格，可横向滚动">
+            <table className="cal-table">
+              <thead>
+                <tr>
+                  <th aria-sort={ariaSortFor(sort, 'name')}>
+                    <button type="button" className="cal-th-btn" onClick={() => onSort('name')}>
+                      知识点{sortCaret(sort, 'name')}
+                    </button>
+                  </th>
+                  <th className="num" aria-sort={ariaSortFor(sort, 'evidence')}>
+                    <button type="button" className="cal-th-btn" onClick={() => onSort('evidence')}>
+                      证据{sortCaret(sort, 'evidence')}
+                    </button>
+                  </th>
+                  <th aria-sort={ariaSortFor(sort, 'se')}>
+                    <button type="button" className="cal-th-btn" onClick={() => onSort('se')}>
+                      判断可靠度{sortCaret(sort, 'se')}
+                    </button>
+                  </th>
+                  <th aria-sort={ariaSortFor(sort, 'tier')}>
+                    <button type="button" className="cal-th-btn" onClick={() => onSort('tier')}>
+                      判断阶段{sortCaret(sort, 'tier')}
+                    </button>
+                  </th>
+                  <th>题目置信度</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {diagnosed.map((k) => (
+                  <CalLedgerRow key={k.knowledge_id} k={k} navigate={navigate} />
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
       </LoomCard>
       <p className="cal-foot meta">
         这里的阶段只表达判断是否已有足够依据，以及知识点之间的相对顺序。<b>题目置信度</b>

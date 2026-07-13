@@ -33,7 +33,7 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { CoachCalibrationView } from './CoachCalibrationView';
 import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
@@ -108,11 +108,36 @@ const VIEW_LEDE: Record<CoachView, ReactNode> = {
 // 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
 export default function CoachHub({ navigate }: { navigate: (to: string) => void }) {
   const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
+  const tabRefs = useRef<Record<CoachView, HTMLButtonElement | null>>({
+    activity: null,
+    calibration: null,
+    efficacy: null,
+  });
+  const selectView = (next: CoachView, focus = false) => {
+    setView(next);
+    if (focus) tabRefs.current[next]?.focus();
+  };
+  const onViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: CoachView) => {
+    const index = COACH_VIEWS.findIndex((candidate) => candidate.id === current);
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      nextIndex = (index - 1 + COACH_VIEWS.length) % COACH_VIEWS.length;
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      nextIndex = (index + 1) % COACH_VIEWS.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = COACH_VIEWS.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    selectView(COACH_VIEWS[nextIndex].id, true);
+  };
   // hubGo：把姊妹面跳转改写成切 tab（calibration / efficacy / coach → setView，不离场），其余真实路由
   // 透传 navigate。设计 screen-coach-hub.jsx hubGo 的等价物（同屏切换、校准 ⟂ 成效不离场）。
   const hubGo = (to: string) => {
-    if (to === 'calibration') setView('calibration');
-    else if (to === 'efficacy' || to === 'coach') setView('efficacy');
+    if (to === 'calibration') selectView('calibration');
+    else if (to === 'efficacy' || to === 'coach') selectView('efficacy');
     else navigate(to);
   };
 
@@ -128,11 +153,18 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
             {COACH_VIEWS.map((v) => (
               <button
                 key={v.id}
+                ref={(node) => {
+                  tabRefs.current[v.id] = node;
+                }}
+                id={`coach-tab-${v.id}`}
                 type="button"
                 role="tab"
                 aria-selected={view === v.id}
+                aria-controls={`coach-panel-${v.id}`}
+                tabIndex={view === v.id ? 0 : -1}
                 className={view === v.id ? 'coachhub-tab on' : 'coachhub-tab'}
-                onClick={() => setView(v.id)}
+                onClick={() => selectView(v.id)}
+                onKeyDown={(event) => onViewKeyDown(event, v.id)}
               >
                 <LoomIcon name={v.icon} size={15} />
                 {v.label}
@@ -143,9 +175,16 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
         <p className="page-lead">{VIEW_LEDE[view]}</p>
       </div>
 
-      {view === 'activity' && <CoachActivityView navigate={hubGo} />}
-      {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
-      {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
+      <section
+        id={`coach-panel-${view}`}
+        role="tabpanel"
+        aria-labelledby={`coach-tab-${view}`}
+        className="coachhub-panel"
+      >
+        {view === 'activity' && <CoachActivityView navigate={hubGo} />}
+        {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
+        {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
+      </section>
     </main>
   );
 }
@@ -176,20 +215,19 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   return (
     <>
       <div className="coachhub-subhead">
-        <div className="seg" role="tablist" aria-label="时间窗 · 周报">
+        <fieldset className="seg" aria-label="时间窗 · 周报">
           {WINDOW_OPTIONS.map((opt) => (
             <button
               key={opt.days}
               type="button"
-              role="tab"
-              aria-selected={days === opt.days}
+              aria-pressed={days === opt.days}
               className={days === opt.days ? 'on' : ''}
               onClick={() => setDays(opt.days)}
             >
               {opt.label}
             </button>
           ))}
-        </div>
+        </fieldset>
         <span className="meta">「周报」= 近 {days} 天的活动量，不是整个 Coach。</span>
       </div>
 
