@@ -452,14 +452,8 @@ function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => vo
 }
 
 export default function TodayPage({ navigate }: TodayPageProps) {
-  const [active, setActive] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const now = new Date();
-
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setActive(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
 
   const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });
   // queryKey 与 /agent-notes 全量页（['agent-notes','full']，limit=50）分档，
@@ -506,12 +500,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
                 （cold_start=false）渲染，空夜态永不落 ColdStart。 */}
             <OvernightDigestBand navigate={navigate} />
 
-            <KpiRow
-              kpi={s.kpi}
-              proposalsTotal={s.proposals.total}
-              active={active}
-              navigate={navigate}
-            />
+            <KpiRow kpi={s.kpi} proposalsTotal={s.proposals.total} navigate={navigate} />
 
             {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}
