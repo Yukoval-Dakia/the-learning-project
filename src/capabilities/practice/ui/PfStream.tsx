@@ -14,8 +14,8 @@ import type { PfToast } from './PracticeFacePage';
 import {
   type StreamItem,
   type StreamSource,
+  type StreamStatus,
   type StreamView,
-  advanceStreamItem,
   recomposeStream,
 } from './practice-api';
 
@@ -97,13 +97,20 @@ export function PfStream({
   error,
   openItem,
   refresh,
+  updateItem,
   addToast,
 }: {
   stream: StreamView | null;
   loading: boolean;
   error: Error | null;
   openItem: (item: StreamItem) => void;
-  refresh: () => void;
+  refresh: () => Promise<StreamView | null>;
+  updateItem: (
+    item: StreamItem,
+    status: StreamStatus,
+    action: string,
+    onConfirmed: (confirmed: StreamItem) => void | Promise<void>,
+  ) => void | Promise<void>;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
   const [demand, setDemand] = useState('');
@@ -122,13 +129,15 @@ export function PfStream({
   const allDone = items.length > 0 && stream.progress.done === items.length;
   const etaMin = pending.reduce((m, it) => m + (it.item_kind === 'paper' ? 10 : 2), 0);
 
-  const skip = async (it: StreamItem) => {
-    await advanceStreamItem(it.id, 'skipped').catch(() => {});
-    refresh();
+  const skip = (it: StreamItem) => {
+    void updateItem(it, 'skipped', '跳过练习', async () => {
+      await refresh();
+    });
   };
-  const unskip = async (it: StreamItem) => {
-    await advanceStreamItem(it.id, 'pending').catch(() => {});
-    refresh();
+  const unskip = (it: StreamItem) => {
+    void updateItem(it, 'pending', '恢复练习', async () => {
+      await refresh();
+    });
   };
   const recompose = async () => {
     setRecomposing(true);
@@ -188,9 +197,15 @@ export function PfStream({
         // 可聚焦容器的正确 ARIA 形态。
         role="button"
         tabIndex={0}
-        onClick={() => openItem(it)}
+        onClick={() => {
+          if (isSkipped) unskip(it);
+          else openItem(it);
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') openItem(it);
+          if (e.key === 'Enter') {
+            if (isSkipped) unskip(it);
+            else openItem(it);
+          }
         }}
       >
         <div className="pf-item-top">

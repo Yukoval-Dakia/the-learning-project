@@ -51,7 +51,8 @@ const noopProps = {
   loading: false,
   error: null,
   openItem: () => {},
-  refresh: () => {},
+  refresh: async () => null,
+  updateItem: () => {},
   addToast: () => {},
 };
 
