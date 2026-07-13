@@ -52,6 +52,30 @@ describe('segmentMarkdown — pandoc yuwen fixture', () => {
   });
 });
 
+describe('segmentMarkdown — bare question-number line (学科网: pandoc splits N. from its prompt)', () => {
+  // Some 学科网 papers render a question number on its OWN line, with the prompt on
+  // the next line ("8\\.\n第⑭段..."). The bare "N\\." line must still open a new
+  // block — otherwise the question silently merges into its predecessor (observed
+  // in a real 高中语文 paper: Q8/Q13/Q23 all merged upward).
+  const markdown = [
+    '7\\. 从细节描写的角度，赏析第⑤段画线句的表达效果。',
+    '8\\.',
+    '第⑭段画线句的对话描写，请赏析这种写法的表达效果。',
+    '9\\. 分析文章以“沉默挂掉电话”来收尾的作用。',
+  ].join('\n');
+  const blocks = segmentMarkdown({ markdown, media: [] });
+
+  it('opens a separate block for a bare "N\\." line', () => {
+    expect(blocks.map((b) => b.structured.question_no)).toEqual(['7', '8', '9']);
+  });
+
+  it("takes the following line as the bare question's prompt (not leaked into the previous)", () => {
+    const byNo = new Map(blocks.map((b) => [b.structured.question_no, b.structured.prompt_text]));
+    expect(byNo.get('8')).toBe('第⑭段画线句的对话描写，请赏析这种写法的表达效果。');
+    expect(byNo.get('7')).not.toContain('第⑭段');
+  });
+});
+
 describe('segmentMarkdown — noise filter', () => {
   it('drops images appearing before the first question (header logo)', () => {
     const input = {
