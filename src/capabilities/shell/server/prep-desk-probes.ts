@@ -12,17 +12,19 @@
 // they accepted the conjecture; the 作答区 shows the neutral probe question, not a
 // "we think you're wrong about X" primer.
 
+import {
+  MAX_CONCURRENT_ACTIVE_PROBES,
+  PROBE_QUESTION_SOURCE,
+  PROBE_RESULT_ACTION,
+} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
-// = probe-lifecycle.ts PROBE_QUESTION_SOURCE (kept literal to avoid a cross-capability
-// import; the source string is a stable question/event contract).
-const MIND_PROBE_SOURCE = 'mind_probe';
-const PROBE_RESULT_ACTION = 'experimental:probe_result';
-
-/** Felt cap on the 待你试做 queue — mirrors MAX_CONCURRENT_ACTIVE_PROBES. */
-export const ACTIVE_PROBES_MAX = 3;
+// Single-source the probe contract (source string / result action / cap) from
+// probe-lifecycle — no literal drift (CodeRabbit review-784). The 备课台 read model is
+// already agency-conjecture-coupled by concept, so this is a sanctioned dependency.
+export const ACTIVE_PROBES_MAX = MAX_CONCURRENT_ACTIVE_PROBES;
 
 export interface ActiveProbe {
   /** The mind_probe question id — target of POST /api/conjecture/probe/[id]/answer. */
@@ -51,7 +53,7 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
     .from(question)
     .where(
       and(
-        eq(question.source, MIND_PROBE_SOURCE),
+        eq(question.source, PROBE_QUESTION_SOURCE),
         sql`NOT EXISTS (
           SELECT 1 FROM ${event}
           WHERE ${event.subject_kind} = 'question'

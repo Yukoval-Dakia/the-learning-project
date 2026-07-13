@@ -71,14 +71,13 @@ function ProbeAnswerCard({ probe }: { probe: PrepDeskProbeWire }) {
     if (!files || files.length === 0) return;
     setUploading(true);
     setError(null);
-    try {
-      const uploaded = await Promise.all(Array.from(files).map((f) => uploadAsset(f)));
-      setImageRefs((refs) => [...refs, ...uploaded.map((a) => a.id)]);
-    } catch {
-      setError('图片上传失败，请重试');
-    } finally {
-      setUploading(false);
-    }
+    // allSettled (not all): a single failed upload must NOT discard the images that
+    // already succeeded in the same batch (CodeRabbit review-784).
+    const results = await Promise.allSettled(Array.from(files).map((f) => uploadAsset(f)));
+    const uploadedIds = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.id] : []));
+    if (uploadedIds.length > 0) setImageRefs((refs) => [...refs, ...uploadedIds]);
+    if (uploadedIds.length < results.length) setError('部分图片上传失败，请重试');
+    setUploading(false);
   }
 
   async function onSubmit() {
@@ -149,11 +148,14 @@ function ProbeAnswerCard({ probe }: { probe: PrepDeskProbeWire }) {
           )}
           <div className="pa-actions">
             <label className="pa-upload">
+              {/* Visually hidden but kept in the a11y tree + tab order (NOT `hidden`),
+                  so keyboard users can focus it (via the label) and open the picker
+                  with Space/Enter (CodeRabbit review-784 a11y). */}
               <input
                 type="file"
                 accept="image/*"
                 multiple
-                hidden
+                className="pa-file-input"
                 onChange={(e) => {
                   void onFiles(e.target.files);
                   e.target.value = '';

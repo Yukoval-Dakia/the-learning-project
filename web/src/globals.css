@@ -6710,6 +6710,24 @@ button.chip:hover {
   color: var(--ink);
   border-color: var(--ink-5);
 }
+.pa-upload:focus-within {
+  color: var(--ink);
+  border-color: var(--ink-5);
+  outline: 2px solid var(--ink-5);
+  outline-offset: 1px;
+}
+/* Visually hidden but focusable + in the a11y tree (keyboard file-picker access). */
+.pa-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .pa-error {
   font-size: var(--fs-meta);
   color: var(--again-ink);

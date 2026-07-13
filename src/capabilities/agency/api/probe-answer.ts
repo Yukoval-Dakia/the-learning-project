@@ -65,7 +65,7 @@ const AnswerBody = z
     answer_md: z.string().trim().max(10_000).default(''),
     // handwriting/photo answer refs (uploaded via POST /api/assets). A photo-only
     // answer is judgeable only by an image-consuming route (gated in POST below).
-    answer_image_refs: z.array(z.string()).default([]),
+    answer_image_refs: z.array(z.string()).max(20).default([]),
   })
   // "has any answer" = text OR image (submit.ts F4): an empty text + empty image set
   // carries no signal and cannot be graded.

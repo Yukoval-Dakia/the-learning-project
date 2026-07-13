@@ -59,7 +59,7 @@ export const PROBE_QUESTION_SOURCE = 'mind_probe' as const;
 export const MAX_CONCURRENT_ACTIVE_PROBES = 3;
 
 /** Canonical single outcome event — loose escape hatch, NEVER reserved (§2.2). */
-const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
+export const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
 
 // A fixed key for the transaction-scoped advisory lock that serializes serves.
 // All probe serves contend on this single key so the count-read + insert critical
