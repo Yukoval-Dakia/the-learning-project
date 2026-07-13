@@ -61,6 +61,9 @@ export function PrepDeskConjectures() {
       // /today 备课猜想 count chip that gates this panel's entry point.
       await qc.invalidateQueries({ queryKey: ['prep-desk-conjectures'] });
       await qc.invalidateQueries({ queryKey: ['overnight-digest'] });
+      // Accepting a conjecture serves a probe → refresh the 待你试做 queue so the new
+      // probe appears without a manual reload (codex review-784).
+      await qc.invalidateQueries({ queryKey: ['prep-desk-probes'] });
     } catch {
       // A failed decision must NOT silently vanish (CodeRabbit review-782): keep
       // the card and surface a retry affordance instead of an unhandled rejection.
