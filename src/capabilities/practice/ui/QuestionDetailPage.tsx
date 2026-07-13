@@ -719,6 +719,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
             <div className="qd-edit">
               <textarea
                 className="qd-textarea"
+                aria-label="题面"
                 value={draft.prompt_md}
                 onChange={(e) => edit({ prompt_md: e.target.value })}
                 rows={isComposite ? 5 : 4}
@@ -775,6 +776,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                       <button
                         type="button"
                         className="qd-opt-key"
+                        aria-pressed={correct}
                         // 点字母设正确答案：只替换 reference_md 前导答案键 token，保留参考正文
                         // （后端 choices_md 无正确标记，DEFER 注释；M2 修：旧实现覆盖全文丢正文）。
                         onClick={() =>
@@ -841,6 +843,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               </div>
               <textarea
                 className="qd-textarea"
+                aria-label="参考答案"
                 value={draft.reference_md}
                 onChange={(e) => edit({ reference_md: e.target.value })}
                 rows={2}
@@ -932,6 +935,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                     type="button"
                     key={s}
                     className={draft.draft_status === s ? 'on' : ''}
+                    aria-pressed={draft.draft_status === s}
                     onClick={() => edit({ draft_status: s })}
                   >
                     {l}
@@ -947,6 +951,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                     type="button"
                     key={d}
                     className={draft.difficulty === d ? 'on' : ''}
+                    aria-pressed={draft.difficulty === d}
                     onClick={() => edit({ difficulty: d })}
                   >
                     {d}

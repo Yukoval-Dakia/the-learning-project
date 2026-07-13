@@ -134,3 +134,24 @@ describe('CreateSubjectChip — 交互（jsdom）', () => {
     expect(screen.getByLabelText('新科目名')).toBeDefined();
   });
 });
+
+describe('WelcomePage — 选择状态语义', () => {
+  it('announces the selected stage and pace through aria-pressed', async () => {
+    const { fn } = mockFetch(createdResponse);
+    vi.stubGlobal('fetch', fn);
+    renderWelcome();
+
+    const medium = screen.getByRole('button', { name: /适中/ });
+    expect(medium.getAttribute('aria-pressed')).toBe('true');
+
+    const highSchool = screen.getByRole('button', { name: '高中' });
+    expect(highSchool.getAttribute('aria-pressed')).toBe('false');
+    await userEvent.click(highSchool);
+    expect(highSchool.getAttribute('aria-pressed')).toBe('true');
+
+    const light = screen.getByRole('button', { name: /轻.*10 分钟/ });
+    await userEvent.click(light);
+    expect(light.getAttribute('aria-pressed')).toBe('true');
+    expect(medium.getAttribute('aria-pressed')).toBe('false');
+  });
+});

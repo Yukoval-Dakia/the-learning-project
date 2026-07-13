@@ -33,6 +33,7 @@ import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette } from '@/ui/shell/CommandPalette';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
+import { ShellMain } from '@/ui/shell/ShellMain';
 import { useQuery } from '@tanstack/react-query';
 import {
   Outlet,
@@ -76,6 +77,10 @@ function RootShell() {
   // 点击都 set 它。
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileLayout, setMobileLayout] = useState(
+    () =>
+      typeof window !== 'undefined' && window.matchMedia?.('(max-width: 720px)').matches === true,
+  );
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
@@ -84,6 +89,17 @@ function RootShell() {
   useEffect(() => {
     setTheme(readSavedTheme());
   }, []);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 720px)');
+    const sync = () => setMobileLayout(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+  useEffect(() => {
+    if (!mobileLayout) setMobileNavOpen(false);
+  }, [mobileLayout]);
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     try {
@@ -152,6 +168,7 @@ function RootShell() {
         pathname={pathname}
         navigate={navigate}
         mobileOpen={mobileNavOpen}
+        mobileLayout={mobileLayout}
         onOpenCopilot={openCopilot}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
@@ -159,7 +176,7 @@ function RootShell() {
         inboxCount={inboxCount}
       />
 
-      <div className="main">
+      <ShellMain blockedByModal={mobileNavOpen}>
         <AppTopbar
           pathname={pathname}
           onOpenMobileNav={() => setMobileNavOpen(true)}
@@ -169,7 +186,7 @@ function RootShell() {
           onOpenCopilot={openCopilot}
         />
         <Outlet />
-      </div>
+      </ShellMain>
 
       <MobileTabBar
         pathname={pathname}

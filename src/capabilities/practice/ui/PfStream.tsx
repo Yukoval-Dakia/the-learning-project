@@ -196,24 +196,7 @@ export function PfStream({
     // 散题/卷卡的可读锚点名（reasoning 派生，见 anchorFromReasoning 注释）。
     const anchor = anchorFromReasoning(it.reasoning);
     const inner = (
-      <div
-        className="pf-item"
-        // biome-ignore lint/a11y/useSemanticElements: 行卡片内嵌套了真按钮
-        // （CTA + 跳过），native <button> 不允许嵌套交互元素；div+role 是
-        // 可聚焦容器的正确 ARIA 形态。
-        role="button"
-        tabIndex={0}
-        onClick={() => {
-          if (isSkipped) unskip(it);
-          else openItem(it);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            if (isSkipped) unskip(it);
-            else openItem(it);
-          }
-        }}
-      >
+      <div className="pf-item">
         <div className="pf-item-top">
           <PfSrcBadge source={it.source} />
           {/* 散题卡知识点锚点（设计 pface.css L52 pf-item-kp，15px/600）——给每张卡

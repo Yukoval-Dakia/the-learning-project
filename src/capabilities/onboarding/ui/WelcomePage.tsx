@@ -120,46 +120,67 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
             </span>
             <span className="ob-field-opt">· 轻引导，可跳过</span>
           </div>
-          <div className="ob-pick">
+          <fieldset
+            className="ob-pick"
+            aria-label="学习阶段"
+            style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+          >
             {STAGES.map((s) => (
               <button
                 key={s}
                 type="button"
                 className={`ob-pick-btn${stage === s ? ' is-on' : ''}`}
+                aria-pressed={stage === s}
                 onClick={() => setStage(s)}
               >
                 <div className="ob-pick-l">{s}</div>
               </button>
             ))}
-          </div>
+          </fieldset>
           <div className="ob-field-hint">学科倾向（可多选 · 仅用于排序起始题，不限制目标）：</div>
-          <div className="ob-subjects" style={{ marginTop: 8 }}>
+          <fieldset
+            className="ob-subjects"
+            aria-label="学科倾向"
+            style={{ border: 0, padding: 0, margin: '8px 0 0', minWidth: 0 }}
+          >
             {LEANINGS.map((l) => (
               <button
                 key={l.id}
                 type="button"
                 className={`chip${leanings.includes(l.id) ? ' is-on' : ''}`}
+                aria-pressed={leanings.includes(l.id)}
                 onClick={() => togLean(l.id)}
               >
                 {leanings.includes(l.id) && <LoomIcon name="check" size={12} />}
                 {l.label}
               </button>
             ))}
-          </div>
+          </fieldset>
           <div className="ob-field-hint">每天大概投入：</div>
-          <div className="ob-pick" style={{ marginTop: 8, gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <fieldset
+            className="ob-pick"
+            aria-label="每日投入"
+            style={{
+              border: 0,
+              padding: 0,
+              margin: '8px 0 0',
+              minWidth: 0,
+              gridTemplateColumns: 'repeat(3, 1fr)',
+            }}
+          >
             {PACES.map((p) => (
               <button
                 key={p.id}
                 type="button"
                 className={`ob-pick-btn${pace === p.id ? ' is-on' : ''}`}
+                aria-pressed={pace === p.id}
                 onClick={() => setPace(p.id)}
               >
                 <div className="ob-pick-l">{p.label}</div>
                 <div className="ob-pick-s">{p.sub}</div>
               </button>
             ))}
-          </div>
+          </fieldset>
         </div>
 
         {/* 目标 · 核心 */}
@@ -183,13 +204,18 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
               />
             </div>
           </div>
-          <div className="ob-subjects">
+          <fieldset
+            className="ob-subjects"
+            aria-label="目标学科视角"
+            style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+          >
             <span className="ob-subjects-lbl">学科视角（可选）：</span>
             {SUBJECTS.map((s) => (
               <button
                 key={s.id}
                 type="button"
                 className={`chip${subject === s.id ? ' is-on' : ''}`}
+                aria-pressed={subject === s.id}
                 onClick={() => setSubject(subject === s.id ? null : s.id)}
               >
                 {subject === s.id && <LoomIcon name="check" size={12} />}
@@ -206,7 +232,7 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
               </button>
             ))}
             <CreateSubjectChip onCreated={(id) => setSubject(id)} />
-          </div>
+          </fieldset>
           {goalReady && err === false && (
             <div className="ob-scope-note">
               <LoomIcon name="knowledge" size={13} />

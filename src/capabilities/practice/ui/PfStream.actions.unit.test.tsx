@@ -24,6 +24,28 @@ const stream: StreamView = {
   },
 };
 
+const pendingStream: StreamView = {
+  ...stream,
+  items: [
+    {
+      id: 'stream_item_1',
+      position: 0,
+      item_kind: 'question',
+      ref_id: 'question_1',
+      source: 'new_check',
+      reasoning: '检查今天的掌握情况。',
+      status: 'pending',
+      estimated_minutes: 2,
+    },
+  ],
+  progress: {
+    done: 0,
+    total: 1,
+    estimated_total_minutes: 2,
+    estimated_remaining_minutes: 2,
+  },
+};
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -51,5 +73,29 @@ describe('PfStream on-demand handoff (YUK-626)', () => {
     expect(openCopilotMock).toHaveBeenCalledWith('来份判断句专项卷');
     expect((input as HTMLTextAreaElement).value).toBe('');
     expect(addToast).not.toHaveBeenCalled();
+  });
+});
+
+describe('PfStream item semantics', () => {
+  it('keeps the card static and exposes its actions as native buttons', async () => {
+    const openItem = vi.fn();
+    const { container } = render(
+      <PfStream
+        stream={pendingStream}
+        loading={false}
+        error={null}
+        openItem={openItem}
+        refresh={async () => null}
+        updateItem={() => {}}
+        addToast={() => {}}
+      />,
+    );
+
+    const card = container.querySelector('.pf-item');
+    expect(card?.getAttribute('role')).toBeNull();
+    expect(card?.getAttribute('tabindex')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '开始作答' }));
+    expect(openItem).toHaveBeenCalledWith(pendingStream.items[0]);
+    expect(screen.getByRole('button', { name: /跳过/ })).toBeTruthy();
   });
 });

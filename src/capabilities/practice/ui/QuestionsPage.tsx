@@ -223,72 +223,76 @@ interface QRowProps {
   subIndex?: number;
 }
 
-function QRow({ q, go, subjectRows, expanded, onToggle, isChild, subIndex }: QRowProps) {
+export function QRow({ q, go, subjectRows, expanded, onToggle, isChild, subIndex }: QRowProps) {
   const isComposite = q.is_composite;
   const lineage = lineageOf(q);
   const glyphCls = lineage === 'variant' ? ' is-variant' : lineage === 'part' ? ' is-part' : '';
   const glyph = lineage === 'variant' ? '◇' : lineage === 'part' ? '▫' : '◆';
   return (
-    <div
-      className={`qb-row${isChild ? ' is-child' : ''}`}
-      // biome-ignore lint/a11y/useSemanticElements: 行内嵌套展开 <button>，<button> 不可含 interactive 子元素；div+role 是正确 ARIA 形态（同 DraftReviewPage 先例）
-      role="button"
-      tabIndex={0}
-      onClick={() => go(`/questions/${q.id}`)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          go(`/questions/${q.id}`);
-        }
-      }}
-    >
-      <div className="qb-rail">
-        {isComposite ? (
-          <button
-            type="button"
-            className={`qb-expand${expanded ? ' open' : ''}`}
-            title={expanded ? '收起小题' : '展开小题'}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle?.();
-            }}
-          >
-            <LoomIcon name="arrow" size={13} />
-          </button>
-        ) : isChild ? (
-          <span className="qb-subidx">{subIndex}</span>
-        ) : (
-          <span
-            className={`qb-glyph${glyphCls}`}
-            title={lineage === 'variant' ? 'AI 变体' : '母题'}
-          >
-            {glyph}
-          </span>
-        )}
-      </div>
-
-      <div className="qb-main">
-        <div className="qb-stem">
-          {isComposite && (
-            <span className="qb-ktag" style={{ marginRight: 6, verticalAlign: 1 }}>
-              <LoomIcon name="layers" size={11} />
-              大题 · {q.children.length} 小题
+    <div className="qb-row-shell">
+      <div
+        className={`qb-row${isChild ? ' is-child' : ''}`}
+        // 行本身与“展开小题”是并列控件，避免 role=button 内再嵌套 button。
+        // biome-ignore lint/a11y/useSemanticElements: row contains rich block layout; sibling expand remains a native button
+        role="button"
+        tabIndex={0}
+        onClick={() => go(`/questions/${q.id}`)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            go(`/questions/${q.id}`);
+          }
+        }}
+      >
+        <div className="qb-rail">
+          {isComposite ? (
+            <span className="qb-expand-slot" aria-hidden="true" />
+          ) : isChild ? (
+            <span className="qb-subidx">{subIndex}</span>
+          ) : (
+            <span
+              className={`qb-glyph${glyphCls}`}
+              title={lineage === 'variant' ? 'AI 变体' : '母题'}
+            >
+              {glyph}
             </span>
           )}
-          <QInline text={q.prompt_md} />
         </div>
-        <QIndicators q={q} subjectRows={subjectRows} />
-      </div>
 
-      <div className="qb-aside">
-        <QKindBadge kind={q.kind} />
-        <QDiffPips d={q.difficulty} />
-        <QSourceTag source={q.source} />
-        <span className="qb-time">
-          {isDraft(q) && <span className="qb-draftdot" style={{ marginRight: 4 }} />}
-          {dateLabel(q.created_at_sec)}
-        </span>
+        <div className="qb-main">
+          <div className="qb-stem">
+            {isComposite && (
+              <span className="qb-ktag" style={{ marginRight: 6, verticalAlign: 1 }}>
+                <LoomIcon name="layers" size={11} />
+                大题 · {q.children.length} 小题
+              </span>
+            )}
+            <QInline text={q.prompt_md} />
+          </div>
+          <QIndicators q={q} subjectRows={subjectRows} />
+        </div>
+
+        <div className="qb-aside">
+          <QKindBadge kind={q.kind} />
+          <QDiffPips d={q.difficulty} />
+          <QSourceTag source={q.source} />
+          <span className="qb-time">
+            {isDraft(q) && <span className="qb-draftdot" style={{ marginRight: 4 }} />}
+            {dateLabel(q.created_at_sec)}
+          </span>
+        </div>
       </div>
+      {isComposite && (
+        <button
+          type="button"
+          className={`qb-expand qb-expand-action${expanded ? ' open' : ''}`}
+          aria-label={expanded ? '收起小题' : '展开小题'}
+          aria-expanded={expanded}
+          onClick={() => onToggle?.()}
+        >
+          <LoomIcon name="arrow" size={13} />
+        </button>
+      )}
     </div>
   );
 }
@@ -515,6 +519,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                 <button
                   type="button"
                   className={sort === 'time' ? 'on' : ''}
+                  aria-pressed={sort === 'time'}
                   onClick={() => setSort('time')}
                 >
                   <LoomIcon name="clock" size={13} />
@@ -523,6 +528,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                 <button
                   type="button"
                   className={sort === 'diff' ? 'on' : ''}
+                  aria-pressed={sort === 'diff'}
                   onClick={() => setSort('diff')}
                 >
                   <LoomIcon name="bolt" size={13} />
@@ -575,6 +581,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                     type="button"
                     key={s}
                     className={subject === s ? 'on' : ''}
+                    aria-pressed={subject === s}
                     onClick={() => setSubject(s)}
                   >
                     {l}
@@ -585,7 +592,11 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
             <span className="qb-filter-div" />
             <div className="qf2">
               <span className="qf2-l">来源</span>
-              <select value={source} onChange={(e) => setSource(e.target.value)}>
+              <select
+                aria-label="按来源筛选"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+              >
                 {SOURCE_OPTIONS.map(([k, l]) => (
                   <option key={k} value={k}>
                     {l}
@@ -595,7 +606,11 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
             </div>
             <div className="qf2">
               <span className="qf2-l">题型</span>
-              <select value={kind} onChange={(e) => setKind(e.target.value)}>
+              <select
+                aria-label="按题型筛选"
+                value={kind}
+                onChange={(e) => setKind(e.target.value)}
+              >
                 {KIND_OPTIONS.map(([k, l]) => (
                   <option key={k} value={k}>
                     {l}
@@ -611,6 +626,8 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                     type="button"
                     key={d}
                     className={`qf2-pip${diffs.includes(d) ? ' on' : ''}`}
+                    aria-label={`难度 ${d}`}
+                    aria-pressed={diffs.includes(d)}
                     onClick={() => toggleDiff(d)}
                   >
                     {d}
@@ -635,6 +652,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                   type="button"
                   key={k.id}
                   className={`kchip${labels.includes(k.id) ? ' on' : ''}`}
+                  aria-pressed={labels.includes(k.id)}
                   onClick={() => toggleLabel(k.id)}
                 >
                   {labels.includes(k.id) && <LoomIcon name="check" size={11} />}
