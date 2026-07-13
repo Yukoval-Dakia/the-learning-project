@@ -38,9 +38,10 @@ import { type ReactNode, useState } from 'react';
 import { CoachCalibrationView } from './CoachCalibrationView';
 import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
+import { browserTimeZone, weeklyReviewPath } from './coach-weekly';
 
 interface WeeklyResponse {
-  window: { days: number; from: number; to: number };
+  window: { days: number; from: number; to: number; time_zone: string };
   totals: { reviews: number; failures: number; cost_usd: number };
   ratings: { again: number; hard: number; good: number; easy: number };
   daily: Array<{ date: string; count: number; correct: number }>;
@@ -156,6 +157,7 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
 // page-head 让给复盘中枢壳；时间窗 seg 下沉到 coachhub-subhead（设计 CoachActivity 形态）。
 function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   const [days, setDays] = useState<Window>(7);
+  const timeZone = browserTimeZone();
   // Count-up animations: useCountUp(start: true) already animates 0→target on
   // mount, and `key={days}` below remounts CoachReport on window change. The
   // former rAF false→true toggle caused a one-frame final-value flash before
@@ -163,8 +165,8 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   const active = true;
 
   const q = useQuery({
-    queryKey: ['weekly-review', days],
-    queryFn: () => apiJson<WeeklyResponse>(`/api/review/weekly?days=${days}`),
+    queryKey: ['weekly-review', days, timeZone],
+    queryFn: () => apiJson<WeeklyResponse>(weeklyReviewPath(days, timeZone)),
   });
 
   // Empty only when the window has NO signal at all — a failure-only window
