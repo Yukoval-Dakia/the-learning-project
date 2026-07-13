@@ -192,7 +192,7 @@ function CostRibbon() {
 // （不整文件 PORT）。富叙事缕（MasteryBand / 团队复盘 / 追溯 / narrative_threads）二期补。
 //
 // 红线（YUK-520 ②⑤）：空夜态（has_overnight_activity===false）是一等态，与加载中/失败显式可
-// 区分，**绝不落回 ColdStart**——本带是 workbench 块的子组件（仅在 goal_count>0 渲染），其空夜
+// 区分，**绝不落回 ColdStart**——本带是 workbench 块的子组件（仅在非空证据态渲染），其空夜
 // 分支只渲染 quiet-empty，永不触发冷开屏。additive 叠加，不动既有 hero/今日之线/双列/热力。
 
 // 链式三元会被 OCR flag（项目规则禁嵌套/链式三元）——用 if/else 函数算状态。
@@ -412,9 +412,8 @@ export default function TodayPage({ navigate }: TodayPageProps) {
   const notesQ = useQuery({
     queryKey: ['agent-notes', 'board'],
     queryFn: () => apiJson<AgentNotesResponse>('/api/agents/notes?limit=20'),
-    // OCR #551: skip in cold-start (goal_count===0) — the ColdStart view never renders
-    // notes, so the fetch would be wasted. Gated on the same summary the cold intercept reads.
-    enabled: summaryQ.data?.kpi.goal_count !== 0,
+    // ColdStart 不渲染 notes；与服务端 cold_start 合同共用一个门，避免 UI 再推导空态。
+    enabled: summaryQ.data?.cold_start.is_empty === false,
   });
 
   const placeholder = (text: string) => {
@@ -430,10 +429,9 @@ export default function TodayPage({ navigate }: TodayPageProps) {
   const s = summaryQ.data;
   const threads = s ? deriveThreads(s) : [];
 
-  // 冷启动拦截（YUK-473 Slice 1）：summary 已加载且无 active goal → 渲染冷开屏
-  // hero（ColdStart），而非工作台。仅在数据 present 时分支——loading / error 仍
-  // 走下面的 Stateful（不在三冷表为空时误判加载中/失败态为冷启动）。
-  if (s && s.kpi.goal_count === 0) {
+  // YUK-621：冷启动只认服务端聚合后的「所有学习证据皆空」。没有 active goal
+  // 仍可正常查看题库、复习、历史与提议；loading / error 继续走 Stateful。
+  if (s?.cold_start.is_empty) {
     return <ColdStart navigate={navigate} />;
   }
 
@@ -453,7 +451,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
         {s && (
           <>
             {/* YUK-520 (A1) — 最小交班缕：workbench 块首位（今日之线 layer ①）。仅在非冷启
-                （goal_count>0，冷启已 early-return ColdStart）渲染，空夜态永不落 ColdStart。 */}
+                （cold_start=false）渲染，空夜态永不落 ColdStart。 */}
             <OvernightDigestBand navigate={navigate} />
 
             <KpiRow
@@ -465,7 +463,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
             />
 
             {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
-                gate 在 active_goal 非 null（冷库 goal_count===0 已 early-return ColdStart）。 */}
+                无 active goal 时只省略画像，不影响其余工作台。 */}
             {s.active_goal && <ProfileBand goal={s.active_goal} navigate={navigate} />}
 
             {threads.length > 0 && (
