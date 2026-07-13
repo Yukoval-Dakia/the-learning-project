@@ -16,7 +16,8 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
-import { AgentNoteCard } from './AgentNoteCard';
+import { AgentNoteGroupCard } from './AgentNoteGroupCard';
+import { groupAgentNotes } from './derive';
 import { agentMeta, signalMeta } from './meta';
 import type { BoardAgentNote } from './types';
 import { useAgentReads } from './useAgentReads';
@@ -45,13 +46,14 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
     );
   }
 
-  const latest = notes[0];
+  const groups = groupAgentNotes(notes);
+  const latest = groups[0]?.latest;
   const unread = unreadCount(notes);
-  const visible = notes.slice(0, COMPACT_CAP);
+  const visible = groups.slice(0, COMPACT_CAP);
 
   return (
     <div className="an-scope">
-      <SectionLabel count={`${notes.length} 条`}>AI 观察</SectionLabel>
+      <SectionLabel count={`${groups.length} 组 · ${notes.length} 条`}>AI 观察</SectionLabel>
       <LoomCard pad className={`an-board${open ? ' is-open' : ''}`}>
         <div className="an-head">
           <button
@@ -95,11 +97,11 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
         ) : open ? (
           <>
             <div className="an-feed">
-              {visible.map((n) => (
-                <AgentNoteCard
-                  key={n.id}
-                  note={n}
-                  unread={isUnread(n)}
+              {visible.map((group) => (
+                <AgentNoteGroupCard
+                  key={group.key}
+                  group={group}
+                  unread={group.notes.some((note) => isUnread(note))}
                   now={now}
                   onNavigate={onNavigate}
                 />
@@ -107,13 +109,13 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
             </div>
             <div className="an-foot">
               <span className="meta">只读旁观 · 过期信号自动消失</span>
-              {notes.length > COMPACT_CAP && (
+              {groups.length > COMPACT_CAP && (
                 <button
                   type="button"
                   className="an-foot-link"
                   onClick={() => onNavigate('/agent-notes')}
                 >
-                  还有 {notes.length - COMPACT_CAP} 条 · 看全部
+                  还有 {groups.length - COMPACT_CAP} 组 · 看全部
                   <LoomIcon name="arrow" size={13} />
                 </button>
               )}
@@ -124,7 +126,7 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
               )}
             </div>
           </>
-        ) : (
+        ) : latest ? (
           <button type="button" className="an-peek" onClick={toggleOpen}>
             <LoomIcon name="dots" size={14} className="meta" />
             <span className="an-peek-txt">
@@ -135,7 +137,7 @@ export function AgentNotesBoard({ notes, status, now, onRetry, onNavigate }: Age
             </span>
             <span className="meta">· {formatRelTime(latest.created_at, now)}</span>
           </button>
-        )}
+        ) : null}
       </LoomCard>
     </div>
   );

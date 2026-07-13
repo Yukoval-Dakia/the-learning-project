@@ -1,6 +1,17 @@
 import { type ReactElement, isValidElement } from 'react';
 import { describe, expect, it } from 'vitest';
-import { anInlineMd, dayGroupOf, deriveTtl, isFresh, resolveEvidence } from './derive';
+import {
+  agentNoteGroupSummary,
+  agentNoteRunLabel,
+  anInlineMd,
+  dayGroupOf,
+  deriveTtl,
+  groupAgentNotes,
+  humanAgentNoteSummary,
+  isFresh,
+  resolveEvidence,
+} from './derive';
+import type { BoardAgentNote } from './types';
 
 const NOW = new Date('2026-06-08T12:00:00.000Z');
 
@@ -101,15 +112,25 @@ describe('anInlineMd', () => {
 describe('resolveEvidence', () => {
   it('navigates an event ref to /events/:id', () => {
     const ev = resolveEvidence({ refs: [{ kind: 'event', id: 'evt_9' }] });
-    expect(ev).toEqual({ label: 'evt_9', href: '/events/evt_9', kind: 'event' });
+    expect(ev).toEqual({ label: '事件证据', href: '/events/evt_9', kind: 'event' });
   });
-  it('renders a non-event ref with no href', () => {
+  it('renders an unsupported ref with a safe label and no href', () => {
     const ev = resolveEvidence({ refs: [{ kind: 'note', id: 'note_judge' }] });
-    expect(ev).toEqual({ label: 'note_judge', href: null, kind: 'note' });
+    expect(ev).toEqual({ label: '相关证据', href: null, kind: 'note' });
+  });
+  it('navigates labelled knowledge without exposing its raw id', () => {
+    const ev = resolveEvidence({
+      refs: [{ kind: 'knowledge', id: 'spike:math:erci-tuxiang', label: '二次函数' }],
+    });
+    expect(ev).toEqual({
+      label: '二次函数',
+      href: '/knowledge/spike%3Amath%3Aerci-tuxiang',
+      kind: 'knowledge',
+    });
   });
   it('falls back to caused_by_event_id when refs is empty', () => {
     const ev = resolveEvidence({ refs: [], caused_by_event_id: 'evt_trigger' });
-    expect(ev).toEqual({ label: 'evt_trigger', href: '/events/evt_trigger', kind: 'event' });
+    expect(ev).toEqual({ label: '事件证据', href: '/events/evt_trigger', kind: 'event' });
   });
   it('returns null when there is no ref and no caused_by_event_id', () => {
     expect(resolveEvidence({ refs: [] })).toBeNull();
@@ -119,6 +140,104 @@ describe('resolveEvidence', () => {
       refs: [{ kind: 'event', id: 'evt_primary' }],
       caused_by_event_id: 'evt_fallback',
     });
-    expect(ev?.label).toBe('evt_primary');
+    expect(ev?.href).toBe('/events/evt_primary');
+  });
+});
+
+function boardNote(overrides: Partial<BoardAgentNote> = {}): BoardAgentNote {
+  return {
+    id: 'note_1',
+    created_at: '2026-07-13T08:00:00Z',
+    target_agents: ['coach'],
+    source_task_kind: 'quiz_verify',
+    source_task_run_id: 'run_1',
+    refs: [
+      {
+        kind: 'knowledge',
+        id: 'spike:math:erci-tuxiang',
+        label: '二次函数·图像与性质',
+        resolution_state: 'open',
+        usable_question_count: 0,
+      },
+    ],
+    summary_md:
+      'Generated question abcdefghijklmnopqrstuv did not enter the review pool (verification needs_review).',
+    signal_kind: 'question_pool_gap',
+    confidence: 0.8,
+    caused_by_event_id: 'evt_1',
+    ...overrides,
+  };
+}
+
+describe('agent-note learner grouping', () => {
+  it('collapses repeated signals by knowledge point and preserves every real run', () => {
+    const notes = [
+      boardNote(),
+      boardNote({
+        id: 'note_2',
+        source_task_run_id: 'run_2',
+        created_at: '2026-07-13T09:00:00Z',
+        caused_by_event_id: 'evt_2',
+      }),
+      boardNote({
+        id: 'note_3',
+        source_task_run_id: 'run_3',
+        created_at: '2026-07-13T10:00:00Z',
+        caused_by_event_id: 'evt_3',
+      }),
+    ];
+
+    const groups = groupAgentNotes(notes);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      run_count: 3,
+      resolution_state: 'open',
+      attention: 'medium',
+    });
+    expect(groups[0].notes.map((note) => note.id)).toEqual(['note_3', 'note_2', 'note_1']);
+    expect(agentNoteGroupSummary(groups[0])).toBe(
+      '3 次候选题校验没有进入题池，这个知识点目前仍缺可用练习。',
+    );
+  });
+
+  it('marks a historical group resolved when the read model finds usable questions', () => {
+    const groups = groupAgentNotes([
+      boardNote({
+        refs: [
+          {
+            kind: 'knowledge',
+            id: 'spike:math:erci-tuxiang',
+            label: '二次函数·图像与性质',
+            resolution_state: 'resolved',
+            usable_question_count: 4,
+          },
+        ],
+      }),
+    ]);
+    expect(groups[0].resolution_state).toBe('resolved');
+    expect(groups[0].attention).toBe('resolved');
+    expect(agentNoteGroupSummary(groups[0])).toContain('当前已有 4 道可用练习');
+  });
+
+  it('translates stored machine templates and run outcomes without leaking ids', () => {
+    const note = boardNote();
+    const text = humanAgentNoteSummary(note, 'open');
+    expect(text).toBe('有候选题未通过校验，这个知识点仍需要补充可用练习。');
+    expect(text).not.toMatch(/Generated|needs_review|abcdefghijkl|spike:/);
+    expect(agentNoteRunLabel(note)).toBe('等待人工复核');
+    expect(
+      agentNoteRunLabel(boardNote({ summary_md: 'Generated question x (verification failed).' })),
+    ).toBe('未通过校验');
+  });
+
+  it('groups subject-less observations by a shared run instead of merging unrelated runs', () => {
+    const groups = groupAgentNotes([
+      boardNote({ id: 'a', refs: [], signal_kind: 'quality', source_task_run_id: 'same' }),
+      boardNote({ id: 'b', refs: [], signal_kind: 'quality', source_task_run_id: 'same' }),
+      boardNote({ id: 'c', refs: [], signal_kind: 'quality', source_task_run_id: 'other' }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.run_count).sort()).toEqual([1, 1]);
+    expect(groups.map((group) => group.notes.length).sort()).toEqual([1, 2]);
   });
 });
