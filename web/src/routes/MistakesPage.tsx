@@ -17,7 +17,7 @@
 // ② inline 事件链展开（loom .event-chain / expander）：本页无事件 list query → DROP 展开。
 //    事件链 footer 保留可读文案但 render 为 disabled——/events route 尚未登记 SPA，不 ship
 //    已知 404 导航（graceful defer，同 ProposalCard EvidenceChip：无 route 即 disabled +
-//    去 affordance）。/events 登记后撤 disabled + 补 onClick(`/events/{id}`)。
+//    去 affordance）。YUK-325 已登记 /events/$id，事件链重新成为真实可达入口。
 // ③ 归因 badge：复用 CauseBadge primitive（user/agent/pending/conf 全覆盖，语义等价 loom
 //    AttributionBadge），不照搬 loom 简化版——避免双套归因展示漂移。
 // ④ 知识点 chip：knowledge_ids → 经 getTree fan-out 白话化为节点名（present-if-available；
@@ -265,14 +265,16 @@ function MistakeCard({
         />
       </div>
 
-      {/* footer：事件链（inline 展开按 §4 DROP；/events/{id} route 尚未登记 SPA）。
-          GRACEFUL DEFER：不 ship 已知 404 导航——同 ProposalCard EvidenceChip 先例
-          （src/.../ProposalCard.tsx：route 缺失时 disabled + 去掉「查看 →」affordance），
-          保留可读文案，撤掉点击穿透与 `→` 触发暗示。/events 登记后再补 onClick。 */}
+      {/* footer：事件链（inline 展开按 §4 DROP；统一去 /events/$id 看完整因果链）。 */}
       <div className="mistake-foot">
-        <button type="button" className="mistake-evlink" title={`事件 events:${m.id}`} disabled>
+        <button
+          type="button"
+          className="mistake-evlink"
+          title="查看这次作答的事件证据"
+          onClick={() => navigate(`/events/${encodeURIComponent(m.id)}`)}
+        >
           <LoomIcon name="clock" size={13} />
-          事件链
+          查看事件链
         </button>
       </div>
     </LoomCard>

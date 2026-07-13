@@ -11052,6 +11052,16 @@ button.seg-sm {
 .events-loom .raw-toggle:hover {
   background: rgba(0, 0, 0, 0.05);
 }
+.events-loom details.raw-toggle {
+  display: block;
+  width: 100%;
+}
+.events-loom details.raw-toggle > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
 .events-loom .raw-payload {
   margin-top: var(--s-3);
   font-size: 12px;

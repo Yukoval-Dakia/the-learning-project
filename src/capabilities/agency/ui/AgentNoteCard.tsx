@@ -70,7 +70,7 @@ export function AgentNoteCard({ note, unread, now, onNavigate }: AgentNoteCardPr
                 onClick={() => onNavigate(evidence.href as string)}
               >
                 <LoomIcon name="link" size={12} />
-                {evidence.label} →
+                {evidence.kind === 'event' ? '查看事件证据' : evidence.label} →
               </button>
             ) : (
               <span className="an-evi-static">

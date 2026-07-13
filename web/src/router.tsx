@@ -7,6 +7,7 @@ import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
 import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
+import EventDetailPage from '@/capabilities/observability/ui/EventDetailPage';
 import { AdminConjectureScoresSurface } from '@/capabilities/observability/ui/conjecture-scores';
 import { AdminCoverageLatticeSurface } from '@/capabilities/observability/ui/coverage-lattice';
 import {
@@ -296,8 +297,6 @@ const mistakesRoute = createRoute({
 
 function AgentNotesRoute() {
   const router = useRouter();
-  // history.push 绕开 TanStack 的字面量路由类型——agent-notes 卡片的证据链接
-  // 指向 /events、/knowledge/* 等尚未在 SPA 登记的 surface（M3/M4 落地前 404 属预期）。
   return <AgentNotesPage navigate={(to) => router.history.push(to)} />;
 }
 
@@ -305,6 +304,24 @@ const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/agent-notes',
   component: AgentNotesRoute,
+});
+
+function EventDetailRouteC() {
+  const router = useRouter();
+  const { id } = eventDetailRoute.useParams();
+  return (
+    <EventDetailPage
+      id={id}
+      navigate={(to) => router.history.push(to)}
+      onBack={() => router.history.back()}
+    />
+  );
+}
+
+const eventDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/events/$id',
+  component: EventDetailRouteC,
 });
 
 // M1-T6 (YUK-314) — 录入面。query 读写直接走 window.location + history.replace：
@@ -544,6 +561,7 @@ const routeTree = rootRoute.addChildren([
   inboxRoute,
   mistakesRoute,
   agentNotesRoute,
+  eventDetailRoute,
   recordRoute,
   practiceRoute,
   draftsRoute,

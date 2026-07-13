@@ -25,6 +25,7 @@ export const LEARNER_COPY_FILES = [
   'src/capabilities/agency/ui/AgentNotesBoard.tsx',
   'src/capabilities/agency/ui/AgentNoteCard.tsx',
   'src/capabilities/agency/ui/meta.ts',
+  'src/capabilities/observability/ui/EventDetailPage.tsx',
   'src/capabilities/knowledge/ui/KnowledgePage.tsx',
   'src/capabilities/knowledge/ui/NodeDrawer.tsx',
   'src/capabilities/knowledge/ui/FrontierRail.tsx',

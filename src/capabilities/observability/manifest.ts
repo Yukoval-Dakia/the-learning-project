@@ -169,6 +169,11 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/backup-import').then((m) => m.POST),
       },
       {
+        method: 'GET',
+        path: '/api/events/[id]',
+        load: () => import('./api/event-detail').then((m) => m.GET),
+      },
+      {
         method: 'POST',
         path: '/api/events/[id]/correct',
         load: () => import('./api/event-correct').then((m) => m.POST),
