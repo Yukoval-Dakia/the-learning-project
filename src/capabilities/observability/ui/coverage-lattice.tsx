@@ -75,6 +75,41 @@ interface CoverageLatticeResponse {
   };
 }
 
+export type CoverageScanState = 'scanning' | 'failed' | 'unscanned' | 'healthy' | 'degraded';
+
+export function classifyCoverageScanState({
+  activeKcs,
+  totalGaps,
+  isFetching,
+  isError,
+}: {
+  activeKcs: number;
+  totalGaps: number;
+  isFetching: boolean;
+  isError: boolean;
+}): CoverageScanState {
+  if (isError) return 'failed';
+  if (isFetching) return 'scanning';
+  if (activeKcs === 0) return 'unscanned';
+  return totalGaps > 0 ? 'degraded' : 'healthy';
+}
+
+export function coverageScanStateLabel(state: CoverageScanState): string {
+  if (state === 'scanning') return 'scanning';
+  if (state === 'failed') return 'scan failed';
+  if (state === 'unscanned') return 'not scanned';
+  if (state === 'degraded') return 'gaps found';
+  return 'clear';
+}
+
+function coverageScanStateTone(state: CoverageScanState): BadgeTone {
+  if (state === 'failed') return 'again';
+  if (state === 'scanning') return 'info';
+  if (state === 'healthy') return 'good';
+  if (state === 'degraded') return 'coral';
+  return 'neutral';
+}
+
 const NAV: Array<{ to: string; label: string }> = [
   { to: '/admin/runs', label: 'runs' },
   { to: '/admin/cost', label: 'cost' },
@@ -178,6 +213,12 @@ export function AdminCoverageLatticeSurface({ navigate }: { navigate: (to: strin
     queryFn: () => apiJson<CoverageLatticeResponse>('/api/admin/coverage-lattice'),
   });
   const data = q.data;
+  const scanState = classifyCoverageScanState({
+    activeKcs: data?.totals.activeKcs ?? 0,
+    totalGaps: data?.totals.totalGaps ?? 0,
+    isFetching: q.isFetching,
+    isError: q.isError,
+  });
 
   const link = (to: string, label: string) => (
     <a
@@ -220,22 +261,34 @@ export function AdminCoverageLatticeSurface({ navigate }: { navigate: (to: strin
           <Kpi
             label="active KCs"
             value={data.totals.activeKcs}
-            note={`${data.subjects.length} subjects`}
+            note={
+              scanState === 'unscanned'
+                ? 'no active-goal scope'
+                : `${data.subjects.length} subjects`
+            }
           />
           <Kpi
             label="KCs with gaps"
             value={data.totals.kcsWithGaps}
-            note={data.totals.kcsWithGaps ? 'needs supply' : 'clear'}
+            note={
+              scanState === 'unscanned'
+                ? 'not evaluated'
+                : data.totals.kcsWithGaps
+                  ? 'needs supply'
+                  : 'clear'
+            }
           />
           <Kpi
             label="gaps"
             value={data.totals.totalGaps}
-            note={gapKindSummary(data.totals.gapsByKind)}
+            note={
+              scanState === 'unscanned' ? 'not scanned' : gapKindSummary(data.totals.gapsByKind)
+            }
           />
           <Kpi
             label="scan"
             value={`${data.scan_ms}ms`}
-            note={`live · ${formatTime(data.generated_at)}`}
+            note={`${coverageScanStateLabel(scanState)} · ${formatTime(data.generated_at)}`}
           />
         </div>
       )}
@@ -252,8 +305,14 @@ export function AdminCoverageLatticeSurface({ navigate }: { navigate: (to: strin
       >
         {data && data.subjects.length === 0 && (
           <Card pad="lg">
-            <Badge tone="good">no active KCs</Badge>
-            <p style={mutedTextStyle}>当前无 active-goal 知识点可扫。</p>
+            <Badge tone={coverageScanStateTone(scanState)}>
+              {coverageScanStateLabel(scanState)}
+            </Badge>
+            <p style={mutedTextStyle}>
+              {scanState === 'unscanned'
+                ? '当前没有 active-goal 知识点范围；本次未评估覆盖度，不能据此判定为健康。'
+                : '当前扫描范围内没有可展示的知识点。'}
+            </p>
           </Card>
         )}
         {data?.subjects.map((subject) => (
