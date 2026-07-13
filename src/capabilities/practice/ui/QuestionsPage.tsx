@@ -442,7 +442,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
   return (
     <div className="page view">
       <div className="page-head">
-        <div className="eyebrow">QUESTIONS · question 全集 · 含变体 / 大题-小题 / 各录入来源</div>
+        <div className="eyebrow">题目总览 · 含变体、大题与各类录入来源</div>
         <div className="page-head-row">
           <h1 className="page-title serif">题库</h1>
           <div className="hero-cta">

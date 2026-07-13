@@ -204,9 +204,7 @@ export function PfStream({
               非 fabricate；无 label 时省略，不伪造锚点）。 */}
           {it.item_kind === 'question' && anchor && <span className="pf-item-kp">{anchor}</span>}
           <span className="pf-item-kind mono">
-            <span className="src-q">
-              {it.item_kind} · {it.ref_id.slice(0, 12)}
-            </span>
+            <span className="src-q">{it.item_kind === 'paper' ? '整卷练习' : '单题练习'}</span>
           </span>
         </div>
         {it.item_kind === 'paper' && (
@@ -283,7 +281,7 @@ export function PfStream({
             {allDone ? '都织完了——下面是今天的线头。' : stream.opening_line}
           </p>
           <span className="pf-open-meta">
-            composer · {stream.date} · 今日预算 {stream.budget.minutes} 分钟
+            今日练习 · {stream.date} · 预算 {stream.budget.minutes} 分钟
           </span>
         </div>
       </div>
@@ -333,7 +331,7 @@ export function PfStream({
           </span>
           <div>
             <p className="pf-close-line">今天的线都织完了——回头看哪根还松，随时叫我补。</p>
-            <span className="pf-close-meta">coach · 收尾</span>
+            <span className="pf-close-meta">今日小结 · 已完成</span>
           </div>
         </div>
       )}

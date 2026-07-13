@@ -46,6 +46,17 @@ const pendingStream: StreamView = {
   },
 };
 
+const completedStream: StreamView = {
+  ...pendingStream,
+  items: [{ ...pendingStream.items[0], status: 'done' }],
+  progress: {
+    done: 1,
+    total: 1,
+    estimated_total_minutes: 2,
+    estimated_remaining_minutes: 0,
+  },
+};
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -97,5 +108,26 @@ describe('PfStream item semantics', () => {
     await userEvent.click(screen.getByRole('button', { name: '开始作答' }));
     expect(openItem).toHaveBeenCalledWith(pendingStream.items[0]);
     expect(screen.getByRole('button', { name: /跳过/ })).toBeTruthy();
+    expect(card?.textContent).toContain('单题练习');
+    expect(card?.textContent).not.toContain('question_1');
+    expect(card?.textContent).not.toMatch(/\bquestion\b/i);
+    expect(screen.getByText(/今日练习 · 2026-07-13 · 预算 20 分钟/)).toBeTruthy();
+  });
+
+  it('uses learner-facing copy for the completed-stream summary', () => {
+    render(
+      <PfStream
+        stream={completedStream}
+        loading={false}
+        error={null}
+        openItem={() => {}}
+        refresh={async () => null}
+        updateItem={() => {}}
+        addToast={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('今日小结 · 已完成')).toBeTruthy();
+    expect(screen.queryByText(/\b(?:composer|coach)\b/i)).toBeNull();
   });
 });
