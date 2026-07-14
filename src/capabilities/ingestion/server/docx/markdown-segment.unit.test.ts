@@ -109,6 +109,45 @@ describe('segmentMarkdown — bare question-number line (学科网: pandoc split
     expect(outlined[0].structured.prompt_text).toContain('2\\.\n题干内部的第二点提示');
     expect(outlined[1].structured.prompt_text).toBe('第二道顶层题。');
   });
+
+  it('accepts a bare top-level question after a numbering gap', () => {
+    const gapped = segmentMarkdown({
+      markdown: [
+        '12\\. 上一节最后一道题。',
+        '15\\.',
+        '下一节从第十五题继续。',
+        '16\\. 第十六题。',
+      ].join('\n'),
+      media: [],
+    });
+
+    expect(gapped.map((block) => block.structured.question_no)).toEqual(['12', '15', '16']);
+    expect(gapped[1].structured.prompt_text).toBe('下一节从第十五题继续。');
+  });
+
+  it('does not let a distant same-number line override the real bare boundary', () => {
+    const repeatedInsidePrompt = segmentMarkdown({
+      markdown: [
+        '7\\. 第七题。',
+        '8\\.',
+        '第八题第一行题干。',
+        '第八题第二行题干。',
+        '8. 题干内部恰好重复了同号编号。',
+        '9\\. 第九题。',
+      ].join('\n'),
+      media: [],
+    });
+
+    expect(repeatedInsidePrompt.map((block) => block.structured.question_no)).toEqual([
+      '7',
+      '8',
+      '9',
+    ]);
+    expect(repeatedInsidePrompt[1].structured.prompt_text).toContain('第八题第一行题干。');
+    expect(repeatedInsidePrompt[1].structured.prompt_text).toContain(
+      '8. 题干内部恰好重复了同号编号。',
+    );
+  });
 });
 
 describe('segmentMarkdown — noise filter', () => {
