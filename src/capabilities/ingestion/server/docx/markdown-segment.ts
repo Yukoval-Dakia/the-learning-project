@@ -44,10 +44,13 @@ const IMG_HTML = /<img\s+[^>]*src="([^"]+)"/;
 
 interface DraftQuestion {
   questionNo: string;
+  startedFromBare: boolean;
   promptLines: string[];
   options: Array<{ label: string; text: string }>;
   imagePaths: string[];
 }
+
+const BARE_DUPLICATE_LOOKAHEAD_LINES = 2;
 
 function isBareQuestionBoundary(
   lines: readonly string[],
@@ -58,19 +61,21 @@ function isBareQuestionBoundary(
   const candidate = Number(candidateQuestionNo);
   const current = currentQuestionNo == null ? null : Number(currentQuestionNo);
 
-  // A bare marker has no textual evidence of being a top-level question. Only
-  // let it continue the established top-level sequence (or start at Q1).
-  if (current == null ? candidate !== 1 : candidate !== current + 1) return false;
+  // A bare marker has no textual evidence of being a top-level question. It
+  // must move numbering forward (or start at Q1), but gaps are valid when a
+  // section omits questions or continues at a later number.
+  if (current == null ? candidate !== 1 : candidate <= current) return false;
 
-  // If the same number appears again before a later question number, prefer the
-  // later marker. This keeps a sequential-looking outline item inside Q1 when
-  // the real Q2 marker follows it, while still accepting `7. ... / 8. / prompt`.
-  for (let index = lineIndex + 1; index < lines.length; index += 1) {
+  // A nearby same-number marker is stronger evidence that this bare line is an
+  // outline item and the later texted marker is the real question. Keep this
+  // lookahead deliberately short: scanning the whole remaining question would
+  // let a distant same-number sub-item override a valid bare boundary.
+  const lookaheadEnd = Math.min(lines.length, lineIndex + BARE_DUPLICATE_LOOKAHEAD_LINES + 1);
+  for (let index = lineIndex + 1; index < lookaheadEnd; index += 1) {
     const next = QUESTION_LEADING.exec(lines[index]);
     if (!next) continue;
     const nextQuestionNo = Number(next[1]);
     if (nextQuestionNo === candidate) return false;
-    if (nextQuestionNo > candidate) break;
   }
 
   return true;
@@ -156,6 +161,13 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
   for (const [lineIndex, line] of lines.entries()) {
     const q = QUESTION_LEADING.exec(line);
     if (q) {
+      // Once a bare marker has opened a question, a later line that repeats the
+      // same number belongs to that question's body rather than opening a
+      // duplicate top-level block.
+      if (cur?.startedFromBare && cur.questionNo === q[1]) {
+        cur.promptLines.push(line);
+        continue;
+      }
       const firstLine = q[2];
       if (!firstLine && !isBareQuestionBoundary(lines, lineIndex, cur?.questionNo ?? null, q[1])) {
         if (cur) cur.promptLines.push(line);
@@ -167,6 +179,7 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
       // non-question fall-through below.
       cur = {
         questionNo: q[1],
+        startedFromBare: !firstLine,
         promptLines: firstLine ? [firstLine] : [],
         options: [],
         imagePaths: [],
