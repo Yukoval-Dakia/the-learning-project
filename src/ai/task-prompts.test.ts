@@ -261,6 +261,7 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('tavily_extract');
       // canonical kinds, no subject-only leakage.
       expect(prompt).toMatch(/\bchoice\b/);
+      expect(prompt).toMatch(/\bderivation\b/);
       expect(prompt).not.toMatch(/\bsingle_choice\b/);
       expect(prompt).not.toMatch(/\bword_problem\b/);
     }
@@ -296,6 +297,7 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('一道');
       // canonical kinds, no subject-only leakage.
       expect(prompt).toMatch(/\bchoice\b/);
+      expect(prompt).toMatch(/\bderivation\b/);
       expect(prompt).not.toMatch(/\bsingle_choice\b/);
       expect(prompt).not.toMatch(/\bword_problem\b/);
     }

@@ -483,6 +483,12 @@ function buildQueryOptions(
     // `|| 1` fallback is preserved (a 0 override or 0 registry value both floor to
     // 1). undefined-guard: non-durable callers keep def.budget.maxIterations verbatim.
     maxTurns: (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
+    // AI_PROVIDER_EFFORT（YUK-365 家族补充旋钮，2026-07-10 评测轮引入）— env-gated 直通
+    // SDK Options.effort（sdk.d.ts:1593，'low'|'medium'|'high'|'xhigh'|'max'）。不设 = 完全
+    // 不写 key（SDK/模型默认），零行为变化；仅对支持 effort 的模型生效（如 sonnet-5/opus-4.6+）。
+    ...(process.env.AI_PROVIDER_EFFORT
+      ? { effort: process.env.AI_PROVIDER_EFFORT as 'low' | 'medium' | 'high' | 'xhigh' | 'max' }
+      : {}),
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     persistSession: false,

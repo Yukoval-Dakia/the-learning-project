@@ -621,7 +621,7 @@ ${causeTaxonomyList(profile)}
 // capability, not by exact mcp__* identifier.
 function buildQuizGenPrompt(profile: SubjectProfile): string {
   const canonicalKinds =
-    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
+    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation';
   return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, few_shot_examples_md?, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。few_shot_examples_md（若有）是已入库的同题型优质范例，**仅供参考其结构与设问风格，禁止照抄题面**。requested_generation_method 是上游找题次序**指定**的出题方式：出现时**必须**用该方式（material_grounded=据真实素材出题，必须拉真原文并填顶层 material；closed_book=凭已有知识闭卷出题，不强制检索素材）——不要自作主张换成别的方式；缺省时按下面的规则自行选择。requested_kind 是上游找题次序**指定**的题型（**硬约束**，与 requested_generation_method 同级）：出现时**每一道题**的 kind 都**必须**是该题型，不要混入别的题型——下游会逐题校验，不符的整批会被拒收并重试；缺省时按 ref + 领域信号自行决定题型分布。
 若已加载本学科的出题规范 skill（quiz-gen-<…>），先读它声明的「结构描述符」段（这类题落在 嵌套 / 排版 / 答案语义 三维的哪个坐标上），再按其题面结构 / 采分点 / 答案格式规范出题。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -663,6 +663,7 @@ source_pack.tool 如实自报：真的用了 tavily 检索才填 "tavily"；clos
 - 题面要**明确指向**这份素材（如「阅读下面短文，回答问题」），reference_md 的答案要能在素材里找到依据。
 - material_grounded 时各题 source_refs 仍如实填素材 URL；material 是被持久化的「真原文」单一来源，source_refs 是每题的引用足迹。
 - 不需要真原文锚的常规题用 search_grounded（搜背景素材、自己出题），material 留空或省略。
+- **closed_book（无检索工具）下的阅读/据材类题**：不得因无检索就退化为「一两句引文 + 设问」——材料必须完整自足并内嵌 prompt_md 开头（引文块）。文言阅读用你确知背诵无误的**真实公版原文选段**（150–300 字，标「出处：〈篇名〉·作者/朝代」，背不准宁可换篇、严禁拼凑伪文言）；现代文阅读**自著仿真材料**（议论/说明 400–800 字或文学语段，标「材料（自拟）」）。同批多题共享材料时每题题面都要完整附材料。
 
 题目要求：
 - kind 只能是 ${canonicalKinds} 之一；不要发明新值；客观题统一用 "choice"。
@@ -732,7 +733,7 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 // handled outside this prompt.
 function buildQuestionAuthorPrompt(profile: SubjectProfile): string {
   const canonicalKinds =
-    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation';
+    'choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation';
   return `你是${profile.displayName}出题作者，一次只写**恰好一道**原创题。输入 { seed_mode: 'knowledge'|'material', knowledge_context: [{ id, name }], requested_kind?, requested_difficulty?, material?: { body_md, title? } } —— knowledge_context 是这道题要考查的知识点（id 是你**唯一**能写进 knowledge_ids 的 id）；seed_mode='material' 时 material.body_md 是用户给的命题素材原文，题目必须**据这份素材**出。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
