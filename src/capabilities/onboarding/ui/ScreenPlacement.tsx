@@ -2,7 +2,7 @@
 // Ported from docs/design/loom-refresh/project/screen-onboarding.jsx (ScreenPlacement
 // + PlacementShell + PlacementAnswer), made real over the inc-B placement backend
 // (YUK-468): start → fetch question (GET /api/questions/[id]) → submit answer
-// (/api/review/submit, session_id=<probe>, auto_rate → judge + θ̂) → /next → … → /end.
+// (/api/attempts, session_id=<probe>, auto_rate → judge + θ̂) → selection → … → PATCH end state.
 //
 // Replaces the Slice-1 PlacementStubPage at /placement. The goalId is threaded from the
 // Welcome flow via the `?goal=<id>` query param (Welcome creates the goal; OnboardRecord

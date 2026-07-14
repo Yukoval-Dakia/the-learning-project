@@ -132,10 +132,12 @@ describe('EventDetailPage', () => {
 
   it('submits a real correction contract and keeps the reason until success', async () => {
     const posts: unknown[] = [];
+    const postUrls: string[] = [];
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === 'POST') {
+          postUrls.push(String(input));
           posts.push(JSON.parse(String(init.body)));
           return Response.json({ correction_event_id: 'evt_correction' });
         }
@@ -158,5 +160,6 @@ describe('EventDetailPage', () => {
         affected_refs: [{ kind: 'question', id: 'q1' }],
       },
     ]);
+    expect(postUrls).toEqual(['/api/events/evt_focus/corrections']);
   });
 });

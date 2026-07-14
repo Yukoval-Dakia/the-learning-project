@@ -26,6 +26,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryState } from '@/server/mastery/state';
 import { loadPlacementSessionForUpdate } from '@/server/session/placement';
@@ -47,7 +48,10 @@ const NextBody = z.object({
   seThreshold: z.number().positive().nullable().optional(),
 });
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createPlacementQuestionSelection(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id } = params;
 
@@ -167,4 +171,12 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await createPlacementQuestionSelection(req, params);
+  return deprecatedRouteResponse(
+    response,
+    `/api/placement-sessions/${params.id}/question-selections`,
+  );
 }

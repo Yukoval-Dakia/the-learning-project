@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
@@ -38,7 +39,7 @@ const StartBody = z.object({
   pace: z.enum(['light', 'medium', 'dense']).optional(),
 });
 
-export async function POST(req: Request): Promise<Response> {
+export async function createPlacementSession(req: Request): Promise<Response> {
   try {
     // Dark-ship gate: the whole placement entrypoint is unreachable until the flag flips.
     if (!PLACEMENT_PROBE_ENABLED) {
@@ -135,4 +136,8 @@ export async function POST(req: Request): Promise<Response> {
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request): Promise<Response> {
+  return deprecatedRouteResponse(await createPlacementSession(req), '/api/placement-sessions');
 }

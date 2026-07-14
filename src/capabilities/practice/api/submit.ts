@@ -44,7 +44,7 @@ import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
@@ -841,7 +841,7 @@ async function persistSubmit(
 // Route — compose the three phases and shape the wire response.
 // ============================================================================
 
-export async function POST(req: Request): Promise<Response> {
+export async function createAttempt(req: Request): Promise<Response> {
   try {
     const validated = await validateSubmit(req);
     const judged = await judgeSubmit(validated);
@@ -898,4 +898,8 @@ export async function POST(req: Request): Promise<Response> {
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request): Promise<Response> {
+  return deprecatedRouteResponse(await createAttempt(req), '/api/attempts');
 }

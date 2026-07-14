@@ -14,6 +14,7 @@ import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import { Artifact } from '@/core/schema/index';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { eq } from 'drizzle-orm';
 
@@ -30,7 +31,10 @@ const SubmitBody = z.object({
   latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
 });
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createPaperSubmission(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id: paperArtifactId } = params;
     const raw = await req.json().catch(() => null);
@@ -105,4 +109,16 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const body = (await req
+    .clone()
+    .json()
+    .catch(() => null)) as { session_id?: unknown } | null;
+  const successor =
+    typeof body?.session_id === 'string' && body.session_id.length > 0
+      ? `/api/review-sessions/${body.session_id}/submissions`
+      : '/api/review-sessions';
+  return deprecatedRouteResponse(await createPaperSubmission(req, params), successor);
 }

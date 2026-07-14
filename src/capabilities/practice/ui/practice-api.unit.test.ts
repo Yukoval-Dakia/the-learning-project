@@ -9,7 +9,13 @@
 // No-DB unit partition（不 import db/postgres/drizzle）；纯函数，无 DOM 依赖。
 
 import { describe, expect, it } from 'vitest';
-import { buildDraftListQuery, buildQuestionsListQuery, computeLatencyMs } from './practice-api';
+import {
+  buildDraftListQuery,
+  buildPaperAnswerDraftBody,
+  buildPaperSubmissionBody,
+  buildQuestionsListQuery,
+  computeLatencyMs,
+} from './practice-api';
 
 describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
   it('shownAt 为 null → 返回 null（计时器未起 / 题面未就绪，不发噪声）', () => {
@@ -102,5 +108,32 @@ describe('buildQuestionsListQuery — 题库跨页过滤契约 (YUK-412)', () =>
 
   it('drops invalid page numbers before the request leaves the browser', () => {
     expect(buildQuestionsListQuery({ limit: 0, offset: -1 })).toBe('enrich=true');
+  });
+});
+
+describe('paper write resource bodies (YUK-644)', () => {
+  const input = {
+    session_id: 'review_1',
+    question_id: 'q1',
+    part_ref: null,
+    answer_md: '我的答案',
+  };
+
+  it('maps autosave text to the answer-draft content field', () => {
+    expect(buildPaperAnswerDraftBody('paper_1', input)).toEqual({
+      paper_id: 'paper_1',
+      question_id: 'q1',
+      part_ref: null,
+      content_md: '我的答案',
+    });
+  });
+
+  it('keeps final submission text in answer_md', () => {
+    expect(buildPaperSubmissionBody('paper_1', input)).toEqual({
+      paper_id: 'paper_1',
+      question_id: 'q1',
+      part_ref: null,
+      answer_md: '我的答案',
+    });
   });
 });

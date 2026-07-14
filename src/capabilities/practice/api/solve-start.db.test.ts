@@ -68,4 +68,19 @@ describe('POST /api/questions/[id]/solve', () => {
     const res = await POST(new Request('http://t/x', { method: 'POST' }), { id: 'nope' });
     expect(res.status).toBe(404);
   });
+
+  it('rejects an invalid regenerate flag instead of silently ignoring it', async () => {
+    const { createSolveSession } = await import('./solve-start');
+    const res = await createSolveSession(
+      new Request('http://t/x', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ regenerate: 'yes' }),
+      }),
+      { id: 'question-id' },
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: 'validation_error' });
+  });
 });

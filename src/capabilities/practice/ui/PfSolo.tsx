@@ -4,7 +4,7 @@
 // 分级提示，不直接给答案）。
 //
 // 数据流（两段式）：作答 → POST /api/review/advice（判分预览，不写事件）→
-// 反馈卡 + 评级三档（默认=建议）→「确认评级 · 下一项」→ POST /api/review/submit
+// 反馈卡 + 评级三档（默认=建议）→「确认评级 · 下一项」→ POST /api/attempts
 // （judge_result_v2 复用预览判分，不重跑 judge；事件 + FSRS + 判定锚点落库）。
 // 不服判：提交重判 = 先 submit（当前评级生效）拿锚点 judge_event_id → appeal
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。

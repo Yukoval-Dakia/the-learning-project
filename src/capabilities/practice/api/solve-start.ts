@@ -7,16 +7,31 @@ import { z } from 'zod';
 
 import { SolveError, startSolveSession } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 const Body = z.object({ regenerate: z.boolean().optional() }).nullable();
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createSolveSession(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id } = params;
     const raw = await req.json().catch(() => null);
     const parsed = Body.safeParse(raw);
-    const regenerate = parsed.success && parsed.data ? parsed.data.regenerate : undefined;
+    if (!parsed.success) {
+      return errorResponse(
+        new ApiError(
+          'validation_error',
+          parsed.error.issues
+            .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+            .join('; '),
+          400,
+        ),
+      );
+    }
+    const regenerate = parsed.data ? parsed.data.regenerate : undefined;
 
     const result = await startSolveSession({ db, questionId: id, regenerate });
 
@@ -31,4 +46,8 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  return deprecatedRouteResponse(await createSolveSession(req, params), '/api/solve-sessions');
 }

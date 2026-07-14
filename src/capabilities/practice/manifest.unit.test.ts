@@ -45,4 +45,39 @@ describe('practice manifest API resources', () => {
     expect(keys.has('POST /api/practice')).toBe(true);
     expect(keys.has('GET /api/practice/[id]')).toBe(true);
   });
+
+  it('declares session state and attempt resources alongside command aliases', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const keys = new Set(routes.map((route) => `${route.method} ${route.path}`));
+
+    for (const key of [
+      'POST /api/attempts',
+      'POST /api/appeals',
+      'PATCH /api/review-sessions/[id]',
+      'POST /api/review-sessions/[id]/answer-drafts',
+      'POST /api/review-sessions/[id]/submissions',
+      'POST /api/placement-sessions',
+      'POST /api/placement-sessions/[id]/question-selections',
+      'PATCH /api/placement-sessions/[id]',
+      'POST /api/solve-sessions',
+      'POST /api/solve-sessions/[sid]/hint-requests',
+      'POST /api/solve-sessions/[sid]/submissions',
+    ]) {
+      expect(keys.has(key), key).toBe(true);
+    }
+
+    for (const key of [
+      'POST /api/review/submit',
+      'POST /api/review/appeal',
+      'POST /api/review/sessions/[id]/pause',
+      'POST /api/review/sessions/[id]/resume',
+      'POST /api/review/sessions/[id]/end',
+      'POST /api/review/sessions/[id]/reopen',
+      'POST /api/placement/start',
+      'POST /api/placement/[id]/next',
+      'POST /api/placement/[id]/end',
+    ]) {
+      expect(keys.has(key), key).toBe(true);
+    }
+  });
 });

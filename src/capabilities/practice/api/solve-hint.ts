@@ -6,23 +6,52 @@
 import { z } from 'zod';
 
 import { SolveError, planSolveHint } from '@/capabilities/practice/server/solve-session';
+import { newId } from '@/core/ids';
 import { MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
+import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 const Body = z
   .object({ hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0) })
   .nullable();
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createHintRequest(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id, sid } = params;
     const raw = await req.json().catch(() => null);
     const parsed = Body.safeParse(raw);
-    const hintIndex = parsed.success && parsed.data ? parsed.data.hint_index : 0;
+    if (!parsed.success) {
+      return errorResponse(
+        new ApiError(
+          'validation_error',
+          parsed.error.issues
+            .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+            .join('; '),
+          400,
+        ),
+      );
+    }
+    const hintIndex = parsed.data ? parsed.data.hint_index : 0;
 
     const hint = await planSolveHint({ db, sessionId: sid, hintIndex, expectedQuestionId: id });
-    return Response.json({ text_md: hint.text_md });
+    const hintRequestId = newId();
+    await writeEvent(db, {
+      id: hintRequestId,
+      session_id: sid,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:hint_request',
+      subject_kind: 'question',
+      subject_id: id,
+      outcome: 'success',
+      payload: { hint_index: hintIndex },
+    });
+    return Response.json({ hint_request_id: hintRequestId, text_md: hint.text_md });
   } catch (err) {
     if (err instanceof SolveError) {
       if (err.code === 'session_not_found' || err.code === 'question_not_found') {
@@ -37,4 +66,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await createHintRequest(req, params);
+  return deprecatedRouteResponse(response, `/api/solve-sessions/${params.sid}/hint-requests`);
 }
