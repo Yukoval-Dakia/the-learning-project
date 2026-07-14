@@ -1,15 +1,8 @@
-import { z } from 'zod';
-
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { Review } from '@/server/session';
+import { CreateReviewSessionBody } from './contracts';
 import { createPaperReviewSession } from './paper-session-create';
-
-const CreateReviewSessionBody = z
-  .object({
-    paper_id: z.string().min(1).optional(),
-  })
-  .strict();
 
 export async function POST(req: Request): Promise<Response> {
   try {

@@ -5,7 +5,14 @@
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-import type { CapabilityManifest, RouteHandler } from '@/kernel/manifest';
+import {
+  ApiRouteContractError,
+  type CapabilityManifest,
+  type RouteHandler,
+  assertApiRouteSuccessStatus,
+  validateComposition,
+} from '@/kernel/manifest';
+import { generateOpenApiDocument } from '@/kernel/openapi';
 import { Hono } from 'hono';
 
 /** Next 风格 '[id]' 段 → Hono ':id'。M0 无参路由用不到，转换器先行 + 单测钉住。 */
@@ -25,6 +32,9 @@ function tokenMatches(header: string | undefined, secret: string | undefined): b
 }
 
 export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
+  // Manifest is both the mount inventory and the API contract source. Validate at
+  // boot as well as in CI so a bad operationId/path/status declaration fails closed.
+  validateComposition(capabilities);
   const app = new Hono();
 
   app.use('/api/*', async (c, next) => {
@@ -40,6 +50,7 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   // 因而 200 本身就是「当前 x-internal-token 已通过服务端比较」的证据；
   // 不借业务读接口验 token，避免认证门与 workbench/subjects 可用性耦合。
   app.get('/api/auth/check', (c) => c.json({ ok: true }));
+  app.get('/api/openapi.json', (c) => c.json(generateOpenApiDocument(capabilities)));
 
   for (const cap of capabilities) {
     for (const route of cap.api?.routes ?? []) {
@@ -50,7 +61,15 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
       app.on(route.method, toHonoPath(route.path), async (c) => {
         cached ??= load();
         // M1 (YUK-314)：路径参数透传——Hono 的 :id 捕获以 Record 形式交给 handler。
-        return (await cached)(c.req.raw, c.req.param());
+        const response = await (await cached)(c.req.raw, c.req.param());
+        try {
+          assertApiRouteSuccessStatus(route, response);
+          return response;
+        } catch (err) {
+          if (!(err instanceof ApiRouteContractError)) throw err;
+          console.error(err.message);
+          return c.json({ error: 'route_contract_violation' }, 500);
+        }
       });
     }
   }

@@ -5,6 +5,8 @@
 // spec 反框架护栏）。manifest 是声明元数据 + 组合期校验，不是运行时插件
 // 总线；组合根见 src/capabilities/index.ts（静态、类型检查）。
 
+import { type ZodTypeAny, z } from 'zod';
+
 /**
  * Web 标准 handler。M1 (YUK-314) 起带路径参数：server 组合根（server/app.ts）
  * 把 Hono 的 c.req.param() 透传为第二实参；无参路由的 handler 忽略它即可
@@ -12,9 +14,43 @@
  */
 export type RouteHandler = (req: Request, params: Record<string, string>) => Promise<Response>;
 
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+export interface ApiRequestSchemaDecl {
+  /** 路径参数必须是 Zod object，且 key 与 `[param]` 段完全一致。 */
+  params?: ZodTypeAny;
+  query?: ZodTypeAny;
+  body?: ZodTypeAny;
+}
+
+export interface CursorPaginationDecl {
+  kind: 'cursor';
+  defaultLimit: number;
+  maxLimit: number;
+}
+
+export type ApiPaginationDecl = 'none' | CursorPaginationDecl;
+
+export interface ApiDeprecationDecl {
+  successor: string;
+  /** RFC 9745 Structured Field Date，例如 `@1783987200`。 */
+  since?: string;
+  /** RFC 1123 HTTP-date；只有获批删除日期后才声明。 */
+  sunset?: string;
+}
+
 export interface ApiRouteDecl {
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  method: HttpMethod;
   path: string; // 形如 '/api/agents/notes'
+  /** OpenAPI operationId；一旦声明即受全局唯一性校验。 */
+  operationId?: string;
+  request?: ApiRequestSchemaDecl;
+  /** HTTP status → response body schema。错误响应可渐进补齐。 */
+  responses?: Partial<Record<number, ZodTypeAny>>;
+  /** 允许幂等创建等 route 声明多个成功状态（例如 200/201）。 */
+  successStatus?: number | readonly number[];
+  pagination?: ApiPaginationDecl;
+  deprecation?: ApiDeprecationDecl;
   /**
    * 懒加载 handler 引用（M0，REV 2 D19）：声明为 thunk 保证 manifest 维持纯元数据——
    * composition.unit.test 导入 manifest 时不会拉进 @/db/client 等运行时依赖，
@@ -98,6 +134,103 @@ export function defineCapability(manifest: CapabilityManifest): CapabilityManife
   return manifest;
 }
 
+export function apiRouteKey(route: Pick<ApiRouteDecl, 'method' | 'path'>): string {
+  return `${route.method} ${route.path}`;
+}
+
+export function apiSuccessStatuses(route: ApiRouteDecl): number[] {
+  if (route.successStatus === undefined) return [];
+  return typeof route.successStatus === 'number' ? [route.successStatus] : [...route.successStatus];
+}
+
+export class ApiRouteContractError extends Error {
+  override name = 'ApiRouteContractError';
+}
+
+function pathParamNames(path: string): string[] {
+  return [...path.matchAll(/\[([^\]]+)\]/g)].map((match) => match[1]);
+}
+
+function schemaObjectKeys(schema: ZodTypeAny): string[] | null {
+  return schema instanceof z.ZodObject ? Object.keys(schema.shape) : null;
+}
+
+function validateApiRouteContract(route: ApiRouteDecl): void {
+  const key = apiRouteKey(route);
+  if (route.operationId !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(route.operationId)) {
+    throw new Error(`api route '${key}' has invalid operationId '${route.operationId}'`);
+  }
+  const pathParams = pathParamNames(route.path).sort();
+  const paramsSchema = route.request?.params;
+
+  if (paramsSchema !== undefined) {
+    const schemaParams = schemaObjectKeys(paramsSchema);
+    if (schemaParams === null) {
+      throw new Error(`api route '${key}' request.params must be a Zod object`);
+    }
+    if (schemaParams.sort().join(',') !== pathParams.join(',')) {
+      throw new Error(
+        `api route '${key}' path params [${pathParams.join(',')}] do not match request.params [${schemaParams.join(',')}]`,
+      );
+    }
+  } else if (route.operationId !== undefined && pathParams.length > 0) {
+    throw new Error(`api route '${key}' declares operationId but no request.params schema`);
+  }
+
+  const successStatuses = apiSuccessStatuses(route);
+  for (const status of successStatuses) {
+    if (!Number.isInteger(status) || status < 200 || status > 299) {
+      throw new Error(`api route '${key}' has invalid success status ${status}`);
+    }
+    if (route.responses?.[status] === undefined) {
+      throw new Error(`api route '${key}' success status ${status} has no response schema`);
+    }
+  }
+
+  for (const rawStatus of Object.keys(route.responses ?? {})) {
+    const status = Number(rawStatus);
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      throw new Error(`api route '${key}' has invalid response status ${rawStatus}`);
+    }
+  }
+
+  if (route.pagination !== undefined && route.method !== 'GET') {
+    throw new Error(`api route '${key}' declares pagination on a non-GET route`);
+  }
+  if (route.pagination !== undefined && route.pagination !== 'none') {
+    const { defaultLimit, maxLimit } = route.pagination;
+    if (
+      !Number.isInteger(defaultLimit) ||
+      !Number.isInteger(maxLimit) ||
+      defaultLimit <= 0 ||
+      maxLimit < defaultLimit
+    ) {
+      throw new Error(`api route '${key}' has invalid cursor pagination limits`);
+    }
+    const queryKeys = route.request?.query ? schemaObjectKeys(route.request.query) : null;
+    if (queryKeys === null || !queryKeys.includes('cursor') || !queryKeys.includes('limit')) {
+      throw new Error(
+        `api route '${key}' cursor pagination requires request.query cursor and limit fields`,
+      );
+    }
+  }
+
+  if (route.deprecation !== undefined && !route.deprecation.successor.startsWith('/api/')) {
+    throw new Error(`api route '${key}' deprecation successor must start with /api/`);
+  }
+}
+
+/** Runtime guard for the success status declared by a migrated handler contract. */
+export function assertApiRouteSuccessStatus(route: ApiRouteDecl, response: Response): void {
+  if (!response.ok || route.successStatus === undefined) return;
+  const allowed = apiSuccessStatuses(route);
+  if (!allowed.includes(response.status)) {
+    throw new ApiRouteContractError(
+      `api route '${apiRouteKey(route)}' returned ${response.status}; declared success status is ${allowed.join('/')}`,
+    );
+  }
+}
+
 /** 组合期校验：包名及各类声明（含 UI page）全局唯一，冲突即抛错。 */
 export function validateComposition(capabilities: CapabilityManifest[]): void {
   const names = new Set<string>();
@@ -115,15 +248,34 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
       actionOwner.set(action, cap.name);
     }
   }
-  const routeOwner = new Map<string, string>();
+  const routeOwner = new Map<string, string>([
+    ['GET /api/health', 'builtin'],
+    ['GET /api/auth/check', 'builtin'],
+    ['GET /api/openapi.json', 'builtin'],
+  ]);
+  const operationOwner = new Map<string, string>([
+    ['getHealth', 'GET /api/health'],
+    ['checkAuth', 'GET /api/auth/check'],
+    ['getOpenApiDocument', 'GET /api/openapi.json'],
+  ]);
   for (const cap of capabilities) {
     for (const route of cap.api?.routes ?? []) {
-      const key = `${route.method} ${route.path}`;
+      const key = apiRouteKey(route);
       const owner = routeOwner.get(key);
       if (owner !== undefined) {
         throw new Error(`api route '${key}' declared by both '${owner}' and '${cap.name}'`);
       }
       routeOwner.set(key, cap.name);
+      validateApiRouteContract(route);
+      if (route.operationId !== undefined) {
+        const operationRoute = operationOwner.get(route.operationId);
+        if (operationRoute !== undefined) {
+          throw new Error(
+            `api operationId '${route.operationId}' declared by both '${operationRoute}' and '${key}'`,
+          );
+        }
+        operationOwner.set(route.operationId, key);
+      }
     }
   }
   const jobOwner = new Map<string, string>();

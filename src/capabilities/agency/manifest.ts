@@ -1,5 +1,7 @@
+import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import { CreateGoalBody, GoalSchema } from './api/goal-contracts';
 
 export const agencyCapability = defineCapability({
   name: 'agency',
@@ -21,11 +23,19 @@ export const agencyCapability = defineCapability({
         // proposal-materialize 路径并存（同走 insertGoal 单写面）。给 placement 探针供 scope。
         method: 'POST',
         path: '/api/goals',
+        operationId: 'createGoal',
+        request: { body: CreateGoalBody },
+        responses: { 201: GoalSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/goal-create').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/goals/[id]',
+        operationId: 'getGoal',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: GoalSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/goal-create').then((m) => m.GET),
       },
       {
