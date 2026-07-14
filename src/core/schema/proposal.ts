@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ActivityRef } from './activity';
 import { QuestionKind } from './business';
 import { CauseCategory } from './cause';
 import { RelationTypeSchema } from './event/blocks';
@@ -78,6 +79,70 @@ export const aiProposalKinds = [
 
 export const AiProposalKind = z.enum(aiProposalKinds);
 export type AiProposalKindT = z.infer<typeof AiProposalKind>;
+
+// YUK-645 — canonical proposal-decision resource. The public vocabulary is
+// deliberately smaller than the legacy route vocabulary:
+//   reject / veto -> dismiss (compatibility adapters)
+//   retract       -> an L3 correction event
+// accept/reverse/change_type/dismiss remain immutable rate events. The
+// proposal id + normalized decision is the retry identity; a same-decision
+// replay returns the existing event, while a different terminal decision is a
+// conflict.
+export const ProposalDecision = z.enum(['accept', 'reverse', 'change_type', 'dismiss', 'retract']);
+export type ProposalDecisionT = z.infer<typeof ProposalDecision>;
+
+export const ProposalDecisionInput = z
+  .object({
+    decision: ProposalDecision,
+    new_relation_type: RelationTypeSchema.optional(),
+    user_note: z.string().max(2000).optional(),
+    reason_md: z.string().trim().min(1).max(2000).optional(),
+    affected_refs: z.array(ActivityRef).min(1).optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.decision === 'change_type' && !data.new_relation_type) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'change_type requires new_relation_type',
+        path: ['new_relation_type'],
+      });
+    }
+    if (data.decision !== 'change_type' && data.new_relation_type) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'new_relation_type is only valid for change_type',
+        path: ['new_relation_type'],
+      });
+    }
+    if (data.decision !== 'retract' && (data.reason_md || data.affected_refs)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'reason_md and affected_refs are only valid for retract',
+        path: ['decision'],
+      });
+    }
+    if (data.decision === 'retract' && data.user_note) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'user_note is not valid for retract; use reason_md',
+        path: ['user_note'],
+      });
+    }
+  });
+export type ProposalDecisionInputT = z.infer<typeof ProposalDecisionInput>;
+
+export const ProposalDecisionResource = z.object({
+  proposal_id: z.string().min(1),
+  proposal_kind: AiProposalKind,
+  decision: ProposalDecision,
+  decision_event_id: z.string().min(1),
+  proposal_status: z.enum(['pending', 'accepted', 'dismissed', 'stale', 'rubric_rejected']),
+  created: z.boolean(),
+  idempotent: z.boolean(),
+  result: z.unknown().nullable(),
+});
+export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>;
 
 // M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
 // actions.ts）为这 16 个 kind 实现了 accept applier；只有 defer / archive /

@@ -5,6 +5,7 @@
 
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
 import { z } from 'zod';
@@ -26,6 +27,15 @@ const DecideBody = z
   });
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await handleLegacyDecision(req, params);
+  const successor = `/api/proposals/${encodeURIComponent(params.id ?? '')}/decisions`;
+  return deprecatedRouteResponse(response, successor);
+}
+
+async function handleLegacyDecision(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id } = params;
     if (!id) {
