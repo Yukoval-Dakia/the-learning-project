@@ -95,6 +95,19 @@ describe('Ingestion.enqueueExtraction', () => {
     await cleanup(sessionId, sourceDocId);
   });
 
+  it('binds canonical extraction dispatch to the operation singleton window', async () => {
+    const { sessionId, sourceDocId } = await makeSession('uploaded');
+    const operationId = `ingop_${createId()}`;
+    const boss = mockBoss();
+    await enqueueExtraction({ db, boss, sessionId, operationId });
+    expect(boss.send).toHaveBeenCalledWith(
+      'tencent_ocr_extract',
+      { sessionId, operationId },
+      { singletonKey: operationId, singletonSeconds: 24 * 60 * 60 },
+    );
+    await cleanup(sessionId, sourceDocId);
+  });
+
   it('rejects from extracting (409)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
     await expect(enqueueExtraction({ db, boss: mockBoss(), sessionId })).rejects.toBeInstanceOf(
