@@ -1,0 +1,261 @@
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.overrides". See https://pnpm.io/settings for the new home of each setting.
+[spike] KCs ensured: spike:yuwen:cilei-huoyong, spike:yuwen:lunshu-lunzheng, spike:math:erci-dingdian
+[spike:gen] yuwen-huoyong (文言文实词·词类活用) count=3 kind=translation ...
+[spike:gen] yuwen-huoyong -> ready questions=[dkkw2kah1y8l3gukg106feuc, x9t1mywfj62nydfkr8jek8on, tnawx7gfj05ygtk53vudcrxz] (43s)
+[spike:gen] yuwen-lunzheng (现代文阅读·论证方法辨析) count=3 kind=(free) ...
+[spike:gen] yuwen-lunzheng FAILED: parseOutput: JSON.parse failed: Expected ',' or '}' after property value in JSON at position 75 (line 1 column 76)
+[spike:gen] math-dingdian (二次函数·顶点式与最值) count=3 kind=calculation ...
+[spike:gen] math-dingdian -> ready questions=[qlef3wx94lf3lhue3qi4wtpk, ta4n69r1zwtnk1p8fdoajooi, vdnwaz5ldpkdohkn4mh8v1ww] (52s)
+[spike:verify] 6 quiz_gen questions in DB
+[runTask] writeAiTaskRunStarted failed {
+  task_run_id: 'jbwubunrzpokaz3sltxstt85',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeAiTaskRunStarted (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:107:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:581:11)
+      at runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:20)
+      at Object.runTaskFn (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:85:5)
+      at runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:28)
+      at runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:446:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeCostLedger failed {
+  task_run_id: 'jbwubunrzpokaz3sltxstt85',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeCostLedger (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:81:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:715:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeAiTaskRunFinished success failed {
+  task_run_id: 'jbwubunrzpokaz3sltxstt85',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'update')
+      at writeAiTaskRunFinished (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:135:6)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:740:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] task_run_stuck_in_running {
+  event: 'task_run_stuck_in_running',
+  task_run_id: 'jbwubunrzpokaz3sltxstt85',
+  kind: 'TeachingQualityTask',
+  intended_status: 'success',
+  err: "Cannot read properties of undefined (reading 'update')"
+}
+[spike:verify] dkkw2kah1y8l3gukg106feuc -> verified overall=pass (54s)
+[runTask] writeAiTaskRunStarted failed {
+  task_run_id: 'vlzucc98vmq8v77sh5gvtvb5',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeAiTaskRunStarted (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:107:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:581:11)
+      at runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:20)
+      at Object.runTaskFn (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:85:5)
+      at runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:28)
+      at runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:446:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeCostLedger failed {
+  task_run_id: 'vlzucc98vmq8v77sh5gvtvb5',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeCostLedger (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:81:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:715:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeAiTaskRunFinished success failed {
+  task_run_id: 'vlzucc98vmq8v77sh5gvtvb5',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'update')
+      at writeAiTaskRunFinished (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:135:6)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:740:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] task_run_stuck_in_running {
+  event: 'task_run_stuck_in_running',
+  task_run_id: 'vlzucc98vmq8v77sh5gvtvb5',
+  kind: 'TeachingQualityTask',
+  intended_status: 'success',
+  err: "Cannot read properties of undefined (reading 'update')"
+}
+[spike:verify] qlef3wx94lf3lhue3qi4wtpk -> verified overall=pass (43s)
+[spike:verify] ta4n69r1zwtnk1p8fdoajooi -> needs_review overall=needs_review (21s)
+[runTask] writeAiTaskRunStarted failed {
+  task_run_id: 't9xwcg5b4zgdf4k6wrre9nn7',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeAiTaskRunStarted (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:107:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:581:11)
+      at runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:20)
+      at Object.runTaskFn (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:85:5)
+      at runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:28)
+      at runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:446:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeCostLedger failed {
+  task_run_id: 't9xwcg5b4zgdf4k6wrre9nn7',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeCostLedger (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:81:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:715:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeAiTaskRunFinished success failed {
+  task_run_id: 't9xwcg5b4zgdf4k6wrre9nn7',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'update')
+      at writeAiTaskRunFinished (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:135:6)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:740:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] task_run_stuck_in_running {
+  event: 'task_run_stuck_in_running',
+  task_run_id: 't9xwcg5b4zgdf4k6wrre9nn7',
+  kind: 'TeachingQualityTask',
+  intended_status: 'success',
+  err: "Cannot read properties of undefined (reading 'update')"
+}
+[spike:verify] tnawx7gfj05ygtk53vudcrxz -> verified overall=pass (36s)
+[runTask] writeAiTaskRunStarted failed {
+  task_run_id: 'xe7ip3xqb69r8swz7q2wep9x',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeAiTaskRunStarted (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:107:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:581:11)
+      at runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:20)
+      at Object.runTaskFn (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:85:5)
+      at runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:28)
+      at runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:446:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeCostLedger failed {
+  task_run_id: 'xe7ip3xqb69r8swz7q2wep9x',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeCostLedger (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:81:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:715:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeAiTaskRunFinished success failed {
+  task_run_id: 'xe7ip3xqb69r8swz7q2wep9x',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'update')
+      at writeAiTaskRunFinished (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:135:6)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:740:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] task_run_stuck_in_running {
+  event: 'task_run_stuck_in_running',
+  task_run_id: 'xe7ip3xqb69r8swz7q2wep9x',
+  kind: 'TeachingQualityTask',
+  intended_status: 'success',
+  err: "Cannot read properties of undefined (reading 'update')"
+}
+[spike:verify] vdnwaz5ldpkdohkn4mh8v1ww -> verified overall=pass (47s)
+[runTask] writeAiTaskRunStarted failed {
+  task_run_id: 'pj2c5mtzrnt08t8gwlfv5r62',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeAiTaskRunStarted (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:107:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:581:11)
+      at runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:20)
+      at Object.runTaskFn (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:85:5)
+      at runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:28)
+      at runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:446:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeCostLedger failed {
+  task_run_id: 'pj2c5mtzrnt08t8gwlfv5r62',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'insert')
+      at writeCostLedger (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:81:12)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:715:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] writeAiTaskRunFinished success failed {
+  task_run_id: 'pj2c5mtzrnt08t8gwlfv5r62',
+  kind: 'TeachingQualityTask',
+  err: TypeError: Cannot read properties of undefined (reading 'update')
+      at writeAiTaskRunFinished (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/log.ts:135:6)
+      at runTaskAttempt (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:740:11)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async runTask (/Users/yuqi/yukoval-projects/the-learning-project/src/server/ai/runner.ts:809:14)
+      at async runTeachingQualityCheck (/Users/yuqi/yukoval-projects/the-learning-project/src/server/quiz/verify-framework.ts:736:17)
+      at async Promise.all (index 1)
+      at async runQuizVerify (/Users/yuqi/yukoval-projects/the-learning-project/src/server/boss/handlers/quiz_verify.ts:428:43)
+      at async phaseVerify (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:149:21)
+      at async main (/Users/yuqi/yukoval-projects/the-learning-project/scripts/dev/question-supply-spike.ts:276:46)
+}
+[runTask] task_run_stuck_in_running {
+  event: 'task_run_stuck_in_running',
+  task_run_id: 'pj2c5mtzrnt08t8gwlfv5r62',
+  kind: 'TeachingQualityTask',
+  intended_status: 'success',
+  err: "Cannot read properties of undefined (reading 'update')"
+}
+[spike:verify] x9t1mywfj62nydfkr8jek8on -> verified overall=pass (74s)
+[spike:report] written -> scratchpad/question-supply-spike-report.md (6 questions)

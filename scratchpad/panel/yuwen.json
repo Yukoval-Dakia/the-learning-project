@@ -1,0 +1,478 @@
+{
+ "subject": "yuwen",
+ "question_count": 10,
+ "questions": [
+  {
+   "id": "cqonvlypugr0bt3g1cxbmndi",
+   "kind": "reading",
+   "difficulty": 3,
+   "prompt_md": "阅读下面《劝学》选段，回答问题：\n\n“积土成山，风雨兴焉；积水成渊，蛟龙生焉；积善成德，而神明自得，圣心备焉。故不积跬步，无以至千里；不积小流，无以成江海。骐骥一跃，不能十步；驽马十驾，功在不舍。锲而舍之，朽木不折；锲而不舍，金石可镂。”\n\n(1) 解释下列词语：①“跬步”；②“锲而不舍”中的“锲”。\n(2) 这段文字前后运用了大量对比（如“骐骥一跃”与“驽马十驾”、“锲而舍之”与“锲而不舍”），请说明这种对比论证想要说明的核心道理是什么，并指出其与前文“积土成山”“积水成渊”等比喻在论证逻辑上的联系。",
+   "reference_md": "①“跬步”指半步（古时称跨出一脚为“跬”，跨出两脚为“步”），泛指一小步；②“锲”意为“雕刻”。\n\n作者通过“骐骥一跃，不能十步”与“驽马十驾，功在不舍”的对比，说明天资的高低（骐骥/驽马）并非决定学习成败的关键，坚持不懈才是关键；又以“锲而舍之，朽木不折”与“锲而不舍，金石可镂”对比，进一步强调持之以恒的重要性——只要坚持，再坚硬的东西也能雕刻穿透，反之再脆弱的木头也刻不断。这与前文“积土成山”“积水成渊”等比喻在逻辑上一脉相承：都是在论证学习是一个由小到大、由少到多、依靠积累和坚持才能成就的过程，对比论证从反面强化了“积累与坚持”这一比喻论证已经确立的道理，二者相辅相成、层层递进。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "实词释义准确，对比论证核心道理及与比喻论证的逻辑联系说明清楚"
+     }
+    ],
+    "keywords": [
+     "跬步",
+     "半步",
+     "锲",
+     "雕刻",
+     "坚持不懈",
+     "积累"
+    ],
+    "required_points": [
+     "跬步=半步/一小步",
+     "锲=雕刻",
+     "指出对比论证强调坚持不懈（而非天资）的重要性",
+     "说明与前文积累类比喻在逻辑上是递进/呼应关系"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "①跬步：半步，泛指一小步/极短的距离；②锲：用刀雕刻。这两组对比（骐骥一跃/驽马十驾，锲而舍之/锲而不舍）共同论证的核心道理是：学习的成败关键不在先天资质的优劣，而在于是否坚持不懈、持之以恒；它与前文“积土成山”“积水成渊”等比喻在逻辑上是递进关系——前面说明‘积累’是成功的基础，这里进一步说明‘坚持（不舍）’是实现积累的必要条件，二者合起来构成“积累+坚持”的完整论证。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "e5a9wqhxp2kmf5w96tc1nd7m",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "《劝学》中“蚓无爪牙之利，筋骨之强，上食埃土，下饮黄泉，用心一也”一段，其中“蚓无爪牙之利，筋骨之强”是文言文中的什么特殊句式？请说明判断依据，并翻译这一句。",
+   "reference_md": "这是定语后置句。正常语序应为“蚓无利之爪牙，强之筋骨”，即定语“利”“强”本应放在中心词“爪牙”“筋骨”之前，句中却置于中心词之后，并借助结构助词“之”将定语后置，是典型的“中心词+之+定语”式定语后置。\n\n译文：蚯蚓没有锋利的爪牙，没有强健的筋骨（却能上食黄土、下饮泉水），是因为它用心专一啊。\n\n采分点：①准确判断为定语后置句；②能说明判断依据（“之”字标志、中心词与修饰语顺序颠倒、正常语序还原）；③译文基本准确，体现“爪牙锋利”“筋骨强健”之意。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "是否正确判断句式类型、给出判断依据并译文准确"
+     }
+    ],
+    "keywords": [
+     "定语后置",
+     "之",
+     "爪牙",
+     "筋骨"
+    ],
+    "required_points": [
+     "判断为定语后置句",
+     "说明“之”作为定语后置标志及正常语序",
+     "给出准确译文，含爪牙锋利、筋骨强健之意"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.90) — conservative pass",
+     "solver_answer": "定语后置句（'蚓无爪牙之利，筋骨之强'即'蚓无利之爪牙，强之筋骨'，正常语序为'蚓无利爪牙、强筋骨'；'之'是定语后置的标志词）。翻译：蚯蚓没有锋利的爪牙，没有强健的筋骨。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "f0li1slfnscq6m5728wlfjdb",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "《劝学》中「假舆马者，非利足也，而致千里；假舟楫者，非能水也，而绝江河」，句中两个「假」字的意义是：",
+   "reference_md": "B（凭借、借助）\n\n解析：「假」在此处是动词，意为“凭借、借助”，与现代汉语“假期”“虚假”等义无关。全句意为“借助车马的人，并非脚走得快，却能到达千里之外；借助舟船的人，并非善于游泳，却能横渡江河”，强调“善假于物”的学习方法论——君子并非天赋异禀，而是善于借助外物弥补自身局限。",
+   "choices_md": [
+    "假期，闲暇的时间",
+    "凭借、借助",
+    "虚假，不真实",
+    "假如，如果"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"凭借、借助\" disagrees with reference \"B（凭借、借助）\n\n解析：「假」在此处是动词，意为“凭借、借助”，与现代汉语“假期”“虚假”等义无关。全句意为“借助车马的人，并非脚走得快，却能到达千里之外；借助舟船的人，并非善于游泳，却能横渡江河”，强调“善假于物”的学习方法论——君子并非天赋异禀，而是善于借助外物弥补自身局限。\" (normaliz",
+     "solver_answer": "凭借、借助"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "j2er1luz9frpl0xhpprklzfm",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "从文言句式角度看，「蚓无爪牙之利，筋骨之强，上食埃土，下饮黄泉，用心一也」中「爪牙之利，筋骨之强」属于哪一种特殊句式？",
+   "reference_md": "C（定语后置句）\n\n解析：正常语序应为“利之爪牙，强之筋骨”，即定语“利”“强”本应放在中心词“爪牙”“筋骨”之前，这里却借助结构助词「之」将定语移至中心词之后，构成“中心词+之+定语”的定语后置格式，是文言文常见的句式之一，用来强调蚯蚓“爪牙不利、筋骨不强”这一表面弱势，与后文“用心一也”的专一形成对比论证。",
+   "choices_md": [
+    "判断句",
+    "宾语前置句",
+    "定语后置句",
+    "状语后置句（介宾短语后置）"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"定语后置句\" disagrees with reference \"C（定语后置句）\n\n解析：正常语序应为“利之爪牙，强之筋骨”，即定语“利”“强”本应放在中心词“爪牙”“筋骨”之前，这里却借助结构助词「之」将定语移至中心词之后，构成“中心词+之+定语”的定语后置格式，是文言文常见的句式之一，用来强调蚯蚓“爪牙不利、筋骨不强”这一表面弱势，与后文“用心一也”的专一形成对",
+     "solver_answer": "定语后置句"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "j90yj7rewpbhmh0ve504zjna",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "下列四句中，句式与其余三项不同的一项是：\n\nA. 青，取之于蓝，而青于蓝。\n\nB. 冰，水为之，而寒于水。\n\nC. 君子博学而日参省乎己。\n\nD. 蚓无爪牙之利，筋骨之强。",
+   "reference_md": "正确答案：D\n\n解析：A、B、C 三句都是介词结构后置句（状语后置）——现代汉语语序应把“于蓝”“于水”“乎己”这类介宾短语提到谓语前作状语，如“青于蓝”即“于蓝青”（比蓝更青）、“寒于水”即“于水寒”、“日参省乎己”即“日乎己参省”。\n\nD 句“蚓无爪牙之利，筋骨之强”是定语后置句：“之”是定语后置的标志，正常语序应为“蚓无利之爪牙，强之筋骨”，即“没有锋利的爪牙、强健的筋骨”。因此 D 项句式类型与其他三项（介词结构后置）不同。",
+   "choices_md": [
+    "A. 青，取之于蓝，而青于蓝。",
+    "B. 冰，水为之，而寒于水。",
+    "C. 君子博学而日参省乎己。",
+    "D. 蚓无爪牙之利，筋骨之强。"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"D\" disagrees with reference \"正确答案：D\n\n解析：A、B、C 三句都是介词结构后置句（状语后置）——现代汉语语序应把“于蓝”“于水”“乎己”这类介宾短语提到谓语前作状语，如“青于蓝”即“于蓝青”（比蓝更青）、“寒于水”即“于水寒”、“日参省乎己”即“日乎己参省”。\n\nD 句“蚓无爪牙之利，筋骨之强”是定语后置句：“之”是定语后置的标志，正",
+     "solver_answer": "D"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "t6x5bsi7r7x44vifvb4jwdrz",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "下列对《劝学》中相关文言现象的解说，不正确的一项是：\n\nA.《劝学》篇名中的“劝”意为“劝勉、鼓励”，与成语“惩恶劝善”中的“劝”用法相同，均非现代汉语“劝阻、劝说”之义。\n\nB.“假舟楫者，非能水也，而绝江河”中的“绝”意为“横渡”。\n\nC.“君子生非异也，善假于物也”中“生”同“性”，指人的资质、禀赋。\n\nD.“锲而舍之，朽木不折”与“锲而不舍，金石可镂”两句中的“锲”意义不同：前者指“停止”，后者指“雕刻”。",
+   "reference_md": "正确答案：D\n\n解析：D 项对“锲”字的解释是错的。两处“锲”字意义相同，均作动词，意为“用刀刻”；真正表示“停止”之意的是“舍”字（“舍之”即放弃、停止），并非“锲”。原文“锲而舍之，朽木不折；锲而不舍，金石可镂”正是以同一个“锲”（刻）字贯穿两句，通过“舍”与“不舍”的对比说明坚持与否的结果差异，D 项把“锲”“舍”二字的含义张冠李戴。\n\nA、B、C 三项均符合课文注释与通行训诂：劝＝劝勉；绝＝横渡（渡过）；生＝通“性”，指天赋、资质。",
+   "choices_md": [
+    "A.《劝学》篇名中的“劝”意为“劝勉、鼓励”，与成语“惩恶劝善”中的“劝”用法相同，均非现代汉语“劝阻、劝说”之义。",
+    "B.“假舟楫者，非能水也，而绝江河”中的“绝”意为“横渡”。",
+    "C.“君子生非异也，善假于物也”中“生”同“性”，指人的资质、禀赋。",
+    "D.“锲而舍之，朽木不折”与“锲而不舍，金石可镂”两句中的“锲”意义不同：前者指“停止”，后者指“雕刻”。"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"D\" disagrees with reference \"正确答案：D\n\n解析：D 项对“锲”字的解释是错的。两处“锲”字意义相同，均作动词，意为“用刀刻”；真正表示“停止”之意的是“舍”字（“舍之”即放弃、停止），并非“锲”。原文“锲而舍之，朽木不折；锲而不舍，金石可镂”正是以同一个“锲”（刻）字贯穿两句，通过“舍”与“不舍”的对比说明坚持与否的结果差异，D 项把“",
+     "solver_answer": "D"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "u8r2n7q73e9ljkf3ouxuv4z1",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "《劝学》中有一句：“君子博学而日参省乎己，则知明而行无过矣。”\n\n请指出句中“日”字的词性活用现象，说明其语法功能，并把这句话翻译成现代汉语。",
+   "reference_md": "“日”本为名词（“太阳／每天”之义的名词性成分），在此句中位于动词“参省”之前，充当状语，属于名词作状语的用法，意为“每天”。\n\n译文：君子广泛地学习并且每天对自己进行检验、省察，那么他就会智慧明达，并且行为没有过错了。\n\n采分点：①指出“日”是名词作状语（词类活用类型判断准确）；②说明其语法功能是修饰动词“参省”、译为“每天”；③句意翻译基本准确，“知明而行无过”译出“智慧明达、行为无过失”之意。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "是否准确指出名词作状语现象并给出合理译文"
+     }
+    ],
+    "keywords": [
+     "名词作状语",
+     "每天",
+     "君子",
+     "知明而行无过"
+    ],
+    "required_points": [
+     "指出“日”是名词活用作状语",
+     "说明修饰动词、译为“每天”",
+     "给出全句大意翻译，含“知明而行无过”之意"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.97) — conservative pass",
+     "solver_answer": "“日”是名词用作状语，意为“每天”，修饰动词“参省”，表示动作按日、经常性地发生；全句译为：君子广泛地学习，并且每天对自己检查反省，那么他就会智慧明达，而且行为不会有过错了。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "vzj8j9i6u7mv380vr7gxg13z",
+   "kind": "translation",
+   "difficulty": 3,
+   "prompt_md": "请将下面出自《劝学》的句子翻译成现代汉语，并指出其中的特殊句式类型（说明其结构特点）。\n\n> 蚓无爪牙之利，筋骨之强，用心一也。",
+   "reference_md": "参考译文：蚯蚓没有锋利的爪牙，也没有强健的筋骨，（却能上食埃土，下饮黄泉，这是因为）用心专一啊。\n\n要点：\n1. “之利”“之强”是定语后置句式，正常语序应为“利之爪牙”“强之筋骨”，即“锋利的爪牙”“强健的筋骨”，“之”是定语后置的标志词，不译或译为“的”。\n2. “一”是数词活用为形容词，意为“专一”。\n3. 全句是判断句（“……也”表判断），强调蚯蚓能有所成就的原因在于用心专一，而非条件优越。\n4. 需体现出与下文（螃蟹“用心躁也”）形成对比论证的语境理解。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "译文体现定语后置的正确还原，且点明句式与“一”的活用"
+     }
+    ],
+    "keywords": [
+     "定语后置",
+     "之",
+     "一",
+     "专一",
+     "判断句"
+    ],
+    "required_points": [
+     "之利/之强为定语后置",
+     "一=专一（数词作形容词）",
+     "也表判断句式"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "翻译：蚯蚓没有锋利的爪牙，强健的筋骨，（却能上食泥土，下饮地下水，）是因为用心专一啊。句式：①定语后置句——'爪牙之利''筋骨之强'，'之'是定语后置的标志，正常语序应为'利之爪牙''强之筋骨'（即'利爪牙''强筋骨'），中心词'爪牙''筋骨'的定语'利''强'后置；②判断句——句末语气词'也'表判断（说明原因），'用心一也'即'（是）用心专一（的缘故）啊'。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "x5z2hor9qduxdrfbrjd5xscq",
+   "kind": "translation",
+   "difficulty": 3,
+   "prompt_md": "请将下面出自《劝学》的句子翻译成现代汉语，并简要说明其中加点词的意思和所用的特殊句式。\n\n> 假舆马者，非利足也，而致千里；假舟楫者，非能水也，而绝江河。",
+   "reference_md": "参考译文：借助车马的人，并不是脚走得快，却能到达千里之外；借助船桨的人，并不是善于游水，却能横渡江河。\n\n要点：\n1. “假”意为“借助、利用”，非“假的”。\n2. “利足”指脚走得快（“利”作使动/形容词，形容善于行走）。\n3. “致”意为“到达”。\n4. “绝”意为“横渡、渡过”。\n5. “非利足也”“非能水也”是否定判断句式，用“非……也”表示对某种情况的否定判断，凸显“善假于物”的观点，而非人本身能力超群。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "译文准确传达“借助外物达成远超自身能力的效果”这一层意思，且实词释义正确"
+     }
+    ],
+    "keywords": [
+     "假",
+     "致",
+     "绝",
+     "非...也"
+    ],
+    "required_points": [
+     "假=借助",
+     "致=到达/达到",
+     "绝=横渡",
+     "非...也是否定判断句式"
+    ]
+   },
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "fail"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=partial, confidence=0.85) — conservative pass",
+     "solver_answer": "借助车马的人，并不是脚走得快，但却能到达千里之外；借助船桨（船只）的人，并不善于游水，但却能横渡江河。（君子的本性跟一般人没有差别，只是他们善于借助外物罢了。）"
+    },
+    "teaching_quality": {
+     "clarity": "fail",
+     "verdict": "fail",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "yjhq8q1p10woedfd886ywpdw",
+   "kind": "reading",
+   "difficulty": 3,
+   "prompt_md": "阅读下面《劝学》选段，回答问题：\n\n“君子曰：学不可以已。……假舟楫者，非能水也，而绝江河。君子生非异也，善假于物也。”\n\n(1) 解释加点词的含义：①“假舟楫者”中的“假”；②“而绝江河”中的“绝”。\n(2) 这一段用“假舆马”“假舟楫”两个例子来论证什么道理？请结合原文简要说明其论证方式（比喻论证还是类比论证，为什么）。",
+   "reference_md": "①“假”意为“凭借、借助”；②“绝”意为“横渡、渡过”。\n\n本段借“假舆马者”“假舟楫者”两个日常生活中的例子，说明人借助外物（车马、舟楫）可以突破自身能力的局限（“非利足也”“非能水也”却能“致千里”“绝江河”），从而类比论证“君子生非异也，善假于物也”——君子之所以能超越常人，并非天赋异禀，而在于善于借助外物（学习、外部条件）来弥补自身不足。这是一种类比论证（或称比喻论证），即以具体可感的生活现象类推到抽象的求学道理，使论证生动易懂。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "实词释义准确，论证方式判断及理由合理"
+     }
+    ],
+    "keywords": [
+     "假",
+     "凭借",
+     "绝",
+     "横渡",
+     "类比论证",
+     "善假于物"
+    ],
+    "required_points": [
+     "假=凭借/借助",
+     "绝=横渡/渡过",
+     "指出运用类比（或比喻）论证",
+     "说明借外物弥补自身不足以致千里、绝江河，类比君子善假于物"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.85) — conservative pass",
+     "solver_answer": "①假：凭借、利用；②绝：横渡、渡过。这两个例子通过‘凭借车马/舟楫可以致千里、绝江河’这一生活常见事例作比喻，论证‘君子生非异也，善假于物也’——人的资质本无差异，关键在于善于借助外物（如学习）来弥补自身不足、成就更大的目标。因喻体（乘车船渡水）与本体（学习提升自身）本质不同、只是在‘借助外物达成目标’这一点上相似，故属于比喻论证，而非同类事物的类比论证。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  }
+ ]
+}

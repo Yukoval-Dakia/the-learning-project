@@ -1,0 +1,253 @@
+{
+ "subject": "shengwu",
+ "question_count": 6,
+ "questions": [
+  {
+   "id": "b58uajlrph5fyoybotiecywq",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "关于真核细胞有氧呼吸三个阶段发生场所的说法，正确的是：",
+   "reference_md": "C\n\n解析：有氧呼吸第一阶段（糖酵解，葡萄糖分解为丙酮酸）发生在细胞质基质；第二阶段（丙酮酸氧化分解、三羧酸循环）发生在线粒体基质；第三阶段（[H]与O2结合生成水，释放大量能量）发生在线粒体内膜。三个阶段依次经历细胞质基质→线粒体基质→线粒体内膜，而不是全部集中在线粒体内。",
+   "choices_md": [
+    "A. 三个阶段都发生在线粒体基质中",
+    "B. 第一阶段在线粒体内膜，第二、三阶段在细胞质基质",
+    "C. 第一阶段在细胞质基质，第二阶段在线粒体基质，第三阶段在线粒体内膜",
+    "D. 三个阶段都发生在细胞质基质中"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "C"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "h408msryx98ehcgww0xw4ti0",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "有氧呼吸第三阶段（[H]与O₂结合生成水，并释放大量ATP）的场所是：",
+   "reference_md": "线粒体内膜\n解析：有氧呼吸分三个阶段：第一阶段（葡萄糖分解为丙酮酸）在细胞质基质中进行；第二阶段（丙酮酸与水反应生成二氧化碳和[H]）在线粒体基质中进行；第三阶段（[H]与氧结合生成水并释放大量能量）依赖线粒体内膜上的电子传递链（呼吸链），因此发生在线粒体内膜。",
+   "choices_md": [
+    "细胞质基质",
+    "线粒体外膜",
+    "线粒体基质",
+    "线粒体内膜"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "线粒体内膜"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "l8stl2xh057gqocuilyt5g91",
+   "kind": "short_answer",
+   "difficulty": 4,
+   "prompt_md": "同样1mol葡萄糖，经有氧呼吸彻底氧化分解可以产生的ATP数量远多于经无氧呼吸（酒精发酵或乳酸发酵）产生的ATP数量。请从反应物氧化程度（电子最终归宿）的角度，解释这一差异产生的根本原因，并指出无氧呼吸条件下细胞不能获得更多能量的限制因素是什么。",
+   "reference_md": "参考要点：\n1. 根本原因在于葡萄糖中储存的化学能（电子）在有氧呼吸中被彻底释放，而在无氧呼吸中只被部分释放。有氧呼吸中，糖酵解和丙酮酸氧化分解过程中脱下的高能电子（NADH、FADH2携带）经电子传递链传递给最终电子受体O2，逐步释放大量自由能并偶联合成大量ATP（氧化磷酸化）；无氧呼吸中没有外源电子受体（O2），丙酮酸或其衍生物（如乙醛）本身充当电子受体，被NADH还原为乳酸或乙醇，NADH中蕴含的电子能量没有被逐级释放利用，只能通过糖酵解阶段的底物水平磷酸化获得少量ATP（净2分子ATP/葡萄糖）。\n2. 限制因素：缺少一个能量势更低、能持续接受电子的最终电子受体（O2），使电子传递链无法运转，氧化磷酸化无法进行，因此绝大部分葡萄糖中的化学能仍保留在乳酸或酒精分子中未被释放利用。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "需说明电子传递链/氧化磷酸化在无氧条件下无法进行的原因，以及能量仍留存于产物分子中"
+     }
+    ],
+    "keywords": [],
+    "required_points": [
+     "有氧呼吸中电子经电子传递链传给O2并偶联氧化磷酸化产生大量ATP",
+     "无氧呼吸缺乏最终电子受体O2，只能靠底物水平磷酸化获得少量ATP",
+     "无氧呼吸中丙酮酸/乙醛充当电子受体被还原为乳酸或乙醇，大部分化学能仍留在产物中未释放"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "根本原因：有氧呼吸中葡萄糖被彻底氧化为CO2（碳达到最高氧化态），电子经NADH/FADH2传递链最终交给氧这一强氧化剂，逐级释放能量并大量合成ATP（氧化磷酸化）；而无氧呼吸中葡萄糖只被部分氧化（丙酮酸→乳酸或酒精），电子无法交给氧，只能转移给丙酮酸/乙醛自身以再生NAD+，绝大部分化学能仍留在最终产物中未被利用，因此ATP产量远少。限制因素：细胞内缺乏可利用的氧作为最终电子受体，导致不能进行电"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "n49do1iibgskjyi1cxipi1dy",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "某同学将酵母菌分别置于富氧和缺氧条件下培养一段时间，检测培养液中的产物。下列描述最符合实际的是：",
+   "reference_md": "B\n\n解析：酵母菌是兼性厌氧生物。在富氧条件下进行有氧呼吸，最终产物是CO2和H2O，并释放较多能量；在缺氧条件下进行无氧呼吸（酒精发酵），葡萄糖分解为酒精和CO2，释放较少能量，且不消耗O2、不产生H2O。选项B正确概括了两种条件下产物的差异（有氧：CO2+H2O；缺氧：酒精+CO2）。人和高等动物细胞缺氧时进行的是乳酸发酵，产物为乳酸，不产生CO2，这与酵母菌的酒精发酵不同，不能混淆。",
+   "choices_md": [
+    "A. 富氧和缺氧条件下产物完全相同，只是速率不同",
+    "B. 富氧条件下产物为CO2和H2O，缺氧条件下产物为酒精和CO2",
+    "C. 富氧条件下产物为乳酸，缺氧条件下产物为CO2和H2O",
+    "D. 无论富氧还是缺氧，酵母菌都只产生CO2和H2O"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "B"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "nm3rdd822wt2vk1tfdxqbw9w",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "人体细胞在剧烈运动时，肌肉细胞会同时进行有氧呼吸和无氧呼吸（生成乳酸）。请说明：(1) 有氧呼吸的三个阶段分别发生在细胞的什么部位；(2) 其中哪一阶段产生的CO2最多，哪一阶段消耗O2；(3) 无氧呼吸（乳酸发酵）的产物中是否有CO2产生，并说明原因。",
+   "reference_md": "参考要点：\n1. 有氧呼吸三阶段：第一阶段（糖酵解）发生在细胞质基质，第二阶段（丙酮酸氧化分解，即三羧酸循环）发生在线粒体基质，第三阶段（电子传递链，氧化磷酸化）发生在线粒体内膜。\n2. CO2主要在第二阶段（线粒体基质，丙酮酸彻底氧化分解）产生；O2的消耗发生在第三阶段，作为电子传递链末端的电子受体，与H+结合生成水。\n3. 乳酸发酵（无氧呼吸）不产生CO2，因为丙酮酸直接被还原为乳酸（NADH将其还原），没有脱羧反应放出CO2；这与酒精发酵不同，酒精发酵中丙酮酸先脱羧生成CO2和乙醛，再被还原为乙醇。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "三阶段场所、CO2产生阶段、O2消耗阶段、乳酸发酵是否产CO2及原因均需答对"
+     }
+    ],
+    "keywords": [],
+    "required_points": [
+     "细胞质基质—线粒体基质—线粒体内膜三阶段场所",
+     "CO2主要在第二阶段（线粒体基质）产生",
+     "O2在第三阶段被消耗作为最终电子受体",
+     "乳酸发酵不产生CO2，丙酮酸直接被还原为乳酸而非脱羧"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "(1)第一阶段：细胞质基质；第二阶段：线粒体基质；第三阶段：线粒体内膜。(2)第二阶段产生CO2最多；第三阶段消耗O2。(3)乳酸发酵不产生CO2，因为丙酮酸直接被[H]还原生成乳酸，没有脱羧放出CO2的步骤。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "w7znuzz7tfa859hasaig4qwy",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "人体成熟红细胞在无氧条件下进行无氧呼吸时，丙酮酸被分解的最终产物是：",
+   "reference_md": "乳酸\n解析：人体（动物）细胞无氧呼吸时，丙酮酸在细胞质基质中被还原为乳酸，此过程不产生二氧化碳，区别于酵母菌等产生酒精和二氧化碳的无氧呼吸类型。",
+   "choices_md": [
+    "乳酸",
+    "酒精和二氧化碳",
+    "水和二氧化碳",
+    "乙酸"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "乳酸"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  }
+ ]
+}

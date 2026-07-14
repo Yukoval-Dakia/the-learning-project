@@ -1,0 +1,746 @@
+{
+ "reviews": {
+  "yuwen": {
+   "questions": [
+    {
+     "id": "cqonvlypugr0bt3g1cxbmndi",
+     "subject_correct": "correct",
+     "correctness_note": "跬步=半步、锲=雕刻均符合通行注释；对比论证（骐骥/驽马、锲而舍之/不舍）核心指向坚持而非天资，与前文积累类比喻逻辑一脉相承的表述准确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 5,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "e5a9wqhxp2kmf5w96tc1nd7m",
+     "subject_correct": "correct",
+     "correctness_note": "定语后置句判断准确，“之”作标志词说明、语序还原、译文均符合通行教材解读。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "f0li1slfnscq6m5728wlfjdb",
+     "subject_correct": "correct",
+     "correctness_note": "「假」在“假舆马”“假舟楫”中均为动词“凭借、借助”，答案B及解析准确，无学科错误。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": "engine solve_check 判 fail 是字符串比对 bug：solver 答案\"凭借、借助\"与 reference 开头\"B（凭借、借助）\"内容完全一致，只是缺字母标签，并非真实语义分歧；该题被误判 draft_status=draft、promoted=false，实际内容正确应可晋级——建议复核 choice 题型 solve_check 的比对逻辑（应先提取答案要点再比对，而非整段字符串匹配含解析的 reference_md）。"
+    },
+    {
+     "id": "j2er1luz9frpl0xhpprklzfm",
+     "subject_correct": "correct",
+     "correctness_note": "“爪牙之利，筋骨之强”确为定语后置（中心词+之+定语），答案C及解析符合学科规范。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": "同一 bug 模式：solver 答案\"定语后置句\"与 reference 首句\"C（定语后置句）\"内容一致，engine 仍判 fail 并压至 draft，属机检误伤而非题目本身问题。"
+    },
+    {
+     "id": "j90yj7rewpbhmh0ve504zjna",
+     "subject_correct": "correct",
+     "correctness_note": "A/B/C 均为状语后置（于蓝/于水/乎己），D为定语后置，四选一识别不同句式类型正确，是较好的辨析题。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": "solver 答案\"D\"与参考答案字母一致，engine 仍判 fail（比对了含长解析的整段 reference_md 导致字符串不匹配），属同一机检 bug，题目本身正确应晋级。"
+    },
+    {
+     "id": "t6x5bsi7r7x44vifvb4jwdrz",
+     "subject_correct": "correct",
+     "correctness_note": "验算：“锲而舍之”“锲而不舍”两处“锲”均为“刻”，“舍”才表停止，D项张冠李戴、确为错误项，A/B/C（劝=劝勉、绝=横渡、生通性）均符合通行注释，答案D正确。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 5,
+     "overall": "good",
+     "engine_disagreement": "solver 答案\"D\"与参考答案一致，engine 仍判 fail，同上述字符串比对 bug，非题目本身缺陷。"
+    },
+    {
+     "id": "u8r2n7q73e9ljkf3ouxuv4z1",
+     "subject_correct": "correct",
+     "correctness_note": "“日”在“日参省乎己”中确为名词作状语，译“每天”，修饰动词“参省”，判断及译文均准确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "vzj8j9i6u7mv380vr7gxg13z",
+     "subject_correct": "correct",
+     "correctness_note": "定语后置（之利/之强）、“一”数词活用为形容词“专一”、“也”表判断，三点判断及译文均准确，与螃蟹对比语境呼应合理。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "x5z2hor9qduxdrfbrjd5xscq",
+     "subject_correct": "correct",
+     "correctness_note": "假=借助、致=到达、绝=横渡、非…也为否定判断句，学科内容本身准确；但题干要求解释“加点词”，而 prompt_md 引用原句时并未用任何标记（着重号/下划线/加粗）标出具体是哪几个字，学生无法确定“加点”对象，存在自足性缺陷。",
+     "clarity": 2,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "flawed",
+     "engine_disagreement": null
+    },
+    {
+     "id": "yjhq8q1p10woedfd886ywpdw",
+     "subject_correct": "questionable",
+     "correctness_note": "实词释义（假=凭借、绝=横渡）准确；但论证方式判断把“比喻论证”与“类比论证”混为一谈（“类比论证（或称比喻论证）”），这两者在修辞学/高中语文教学中是有区别的概念——类比论证要求本体喻体属同类事物类推，比喻论证则允许异类打比方；“乘车船渡水”与“君子善假于物”本质不同类，严格说应属比喻论证而非类比论证，reference 的等同表述不够严谨，engine 的 solver 也在自己的答案里明确倾向“比喻论证而非类比论证”，与参考口径存在术语层面的实际分歧。",
+     "clarity": 3,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "flawed",
+     "engine_disagreement": "engine solve_check 判 pass（outcome=correct, 0.85），但 solver_answer 原文明确写“故属于比喻论证，而非同类事物的类比论证”，与 reference 的“类比论证（或称比喻论证）”存在术语层面的实质分歧，不应被判定为无争议的 pass；建议至少标为 partial/questionable。"
+    }
+   ],
+   "subject": "语文（高中·文言文《劝学》专题）",
+   "summary": "本科10题均出自《劝学》，实词/虚词释义、词类活用、特殊句式（定语后置、状语后置、判断句）判断在学科事实层面基本准确，无硬伤性知识错误；核心问题不在内容正误，而在两处：一是 x5z2 题引用「加点词」但原文未做任何标记，构成自足性缺陷；二是 yjhq8 题在“比喻论证”与“类比论证”之间的表述不够严谨，与真实修辞学区分及 solver 自身作答存在术语分歧。此外发现一个跨题的引擎侧系统性 bug：f0li1/j2er1/j90yj7/t6x5b 四道选择题的 solve_check 疑似把 solver 的简短答案（仅答案要点或字母）与包含完整解析文字的 reference_md 做整段字符串比对，导致内容完全正确的题目被误判 fail 并压在 draft_status=draft、promoted=false，属机检误伤而非题目质量问题，建议工程侧复核该比对逻辑。其余6题（跬步/锲、定语后置、日字活用、假舆马翻译判断句式等）质量良好，可直接入库。",
+   "systemic_issues": [
+    "choice 题型的 solve_check 疑似对 solver 简短答案与含完整解析的 reference_md 做整段字符串比对，导致 f0li1/j2er1/j90yj7/t6x5b 四题被误判 fail 并停在 draft，属机检 bug 而非题目缺陷，建议复核比对逻辑（应先抽取答案要点/字母再比对）",
+    "部分“翻译+解释加点词”题型（如 x5z2）在 prompt_md 中未对目标字词做任何标记（着重号/加粗/下划线），题干自足性不足",
+    "个别参考答案在“比喻论证”与“类比论证”两个不同修辞概念之间用词不严谨（“类比论证（或称比喻论证）”），存在混淆真实学科区分的风险，建议命题时明确二者判别标准（本体喻体是否同类）"
+   ]
+  },
+  "math": {
+   "questions": [
+    {
+     "id": "d6tr3ed525bcscqxy330xlkb",
+     "subject_correct": "correct",
+     "correctness_note": "a<0(开口向下)与Δ=b²-4ac>0(两不同实根)判断正确；开口向下时两根之间y>0、两根之外y<0，符合二次函数图像与x轴交点性质，推导无误。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "onmwf11iwlmb6tpbmh5l9zfp",
+     "subject_correct": "correct",
+     "correctness_note": "配方y=(x-2)²-1，对称轴x=2，开口向上；区间[0,2]全部位于对称轴左侧(含临界点)，单调递减，选B验算无误。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "qsecm5x3ekchw5o1nlxak1iz",
+     "subject_correct": "correct",
+     "correctness_note": "对称轴x=-b/2a=1验算正确；a=-2<0开口向下；f(1)=-2+4-3=-1为最大值，选项A正确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "r51q9rej5tu1ylhumpnq9lva",
+     "subject_correct": "correct",
+     "correctness_note": "销量250-5x，w=(x-20)(250-5x)=-5x²+350x-5000验算正确；顶点x=35，w(35)=-5(35)²+350·35-5000=1125，且x=35在30≤x≤50约束内，答案正确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "swugkgw82o72yls56v9yl3ca",
+     "subject_correct": "correct",
+     "correctness_note": "设y=a(x+1)(x-3)代入C(1,-8)得-4a=-8→a=2，展开得2x²-4x-6验算正确；对称轴x=1恰为两根中点，顶点(1,-8)与C重合验算正确；a=2>0存在最小值-8。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "vf941ox6v2z23pioe3sn6vv2",
+     "subject_correct": "correct",
+     "correctness_note": "配方y=-2(x-1)²+1验算正确(-2[(x-1)²-1]-1=-2(x-1)²+2-1=-2(x-1)²+1)；顶点(1,1)、a<0取最大值1、增区间(-∞,1]减区间[1,+∞)均正确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "wsc7hg4zow8cwu2fhsdad3si",
+     "subject_correct": "correct",
+     "correctness_note": "对称轴x=-4/(2·-2)=1，顶点纵坐标f(1)=-2+4+1=3验算正确；a<0取最大值3无最小值，单调区间划分正确。与本卷vf941ox6...题几乎同模板（仅常数项不同），内容高度重复。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 2,
+     "overall": "usable",
+     "engine_disagreement": null
+    },
+    {
+     "id": "xpekdq7pe894ijvzgeypyg1n",
+     "subject_correct": "correct",
+     "correctness_note": "顶点(0,4)代入(4,0)得16a+4=0→a=-1/4验算正确；水位上涨2米后令-1/4x²+4=2解得x=±2√2，宽度4√2米验算正确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "za8u5gbs8ne1pe99nddr7u9p",
+     "subject_correct": "correct",
+     "correctness_note": "顶点式y=-2(x+1)²+5中a=-2<0开口向下，顶点(-1,5)，对称轴x=-1，选项B正确，各干扰项错误点（开口方向/顶点符号/轴与顶点混淆）设置合理。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "zi6bp1c4pnlbmctzq6t5bbb5",
+     "subject_correct": "correct",
+     "correctness_note": "Δ=(-2)²-4·1·m=4-4m>0解得m<1，选项A数学上完全正确；engine的solve_check判定失败，比对文本显示是把reference_md全文（含解析说明）当作字符串去匹配求解器只给出的\"A. m<1\"简短答案，属于字符串比对逻辑误判，不是学科错误。",
+     "clarity": 4,
+     "difficulty_fit": "too_easy",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": "engine 判 solve_check=fail 并拦截(draft_status=draft)不合理：数学推导本身正确(Δ>0是两不同交点的充要条件，4-4m>0⇒m<1)，reference答案A正确；fail原因是求解器回答\"A. m<1\"与reference_md全文(含解析长文本)做字符串比对不匹配，这是比对口径问题而非答案错误，建议放行入池并复核该比对逻辑是否误伤其它题目。"
+    }
+   ],
+   "subject": "math",
+   "summary": "本科10题全部聚焦\"二次函数（图像/性质/应用）\"这一单一大主题，经逐题手工验算，数学内容全部正确，无wrong/questionable题目；解析规范、干扰项设置合理，应用题（利润最大化、拱桥）情境真实且计算无误。唯一值得关注的是zi6bp1c4pnlbmctzq6t5bbb5一题：数学答案(m<1)完全正确，但引擎solve_check误判为fail并拦截入库，疑似字符串比对逻辑把长解析文本当作匹配目标所致，建议复核该题并放行、同时排查该比对逻辑是否会误伤其它题目。整体质量可用，但题目覆盖面过窄，多题（尤其vf941ox6...与wsc7hg4z...）几乎是同一模板换系数，诊断价值边际递减。",
+   "systemic_issues": [
+    "10题中8题重复聚焦二次函数图像性质(对称轴/顶点/最值/单调性)这一同一知识点，题型模板高度相似(如vf941ox6v2z23pioe3sn6vv2与wsc7hg4zow8cwu2fhsdad3si几乎只是常数项不同的同一题)，对定位学生具体薄弱点的边际诊断价值随重复递减，建议后续批次分散到函数的其他考点(如与不等式/方程结合、含参讨论、图像变换等)。",
+    "engine solve_check 疑似存在比对口径问题：zi6bp1c4pnlbmctzq6t5bbb5 一题求解器给出正确简短答案\"A. m<1\"，却被判定与reference_md（含长篇解析说明）字符串不匹配而fail，导致本应正确入池的题被错误拦截为draft，建议复核该比对逻辑是否只应比对答案结论而非全文。"
+   ]
+  },
+  "physics": {
+   "questions": [
+    {
+     "id": "b1twkn9mkj8ovohf3lmj5ulg",
+     "subject_correct": "correct",
+     "correctness_note": "a=g sinθ 完全正确：斜面方向仅重力分量做净力，N 不参与（垂直方向合力为零仅用于求 N，本题无摩擦不需要），边界检验 θ→90°→a→g、θ→0→a→0 均自洽。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": "engine solve_check 判 fail，但 solver_answer 'A（a = g sinθ）' 与 reference 结论字面一致，无任何分歧——像是文本比对/裁判逻辑的假阴性，导致本应可入池的题被压在 draft_status=draft。建议复核 solve_check 判定链路。"
+    },
+    {
+     "id": "f0oi2923xxbgow11j645ks1a",
+     "subject_correct": "correct",
+     "correctness_note": "N=m(g+a)=60×12=720N，牛顿第二定律代入正确，超重方向判断（加速上升→视重增大）符合物理直觉。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": "同上：solver_answer 'C. 720 N' 与 reference 逐字一致，engine 仍判 solve_check fail 并压在 draft——同一类假阴性模式。"
+    },
+    {
+     "id": "f5k08zf0g2j5ivcjmvi34lsw",
+     "subject_correct": "correct",
+     "correctness_note": "竖直方向 N=mg−Fsin37°=80−24=56N；f=μN=14N；水平方向 Fcos37°−f=ma→32−14=18=8a→a=2.25 m/s²。三步链路及数值均验算通过。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 5,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "icnih28vpj9f8onmws3nrpbg",
+     "subject_correct": "wrong",
+     "correctness_note": "第(3)问定性结论有误。设 a₀=F/(m1+m2) 为光滑情形加速度，有摩擦时 a=a₀−μg（正确）。但隔离 B：T−μm2g=m2a → T=m2a+μm2g=m2(a₀−μg)+μm2g=m2a₀——两项恰好抵消，张力 T 与光滑情形完全相等，并非参考答案所称的'T 也减小'。参考答案的推理（'a 减小，且额外减去 μm2g，所以 T 也减小'）把两个相反效应误当同向叠加，逻辑及结论均站不住；engine 侧的 solver_answer 也只是含糊猜测'一般……T也减小'而未做代数化简，同样是错的。第(1)(2)问（整体法 a=F/(m1+m2)、隔离法 T=m2F/(m1+m2)、内力必须隔离物体求解的说明）本身正确。",
+     "clarity": 4,
+     "difficulty_fit": "too_hard",
+     "diagnostic_value": 3,
+     "overall": "flawed",
+     "engine_disagreement": "engine 判 solve_check pass 并已 promoted=true/draft_status=active（SemanticJudge 因 outcome=partial confidence=0.85 保守放行），但第(3)问定性结论存在真实物理错误，不应放行——'partial 分歧即保守 pass' 的策略对开放性/定性推理题会漏掉真错误，这道题就是实例，建议撤下 active 状态并修正参考答案第(3)问结论（应为'a 减小，T 不变'）。"
+    },
+    {
+     "id": "misi0mkv6itjdtt52iopcfaa",
+     "subject_correct": "correct",
+     "correctness_note": "两阶段均取向上为正、N−mg=ma：阶段一 a>0→N=m(g+a)超重；阶段二加速度方向转为向下（减速上升）→N=m(g−a)失重。推导及结论均正确，且明确区分视重与真实重力。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "mw7fsrctrqrd77arbdby1cjd",
+     "subject_correct": "correct",
+     "correctness_note": "隔离法：对A T=mAa，对B mBg−T=mBa，联立 a=mBg/(mA+mB)=20/5=4 m/s²，T=mAa=12N；代回校验 mBg−T=20−12=8=mBa=8 一致。",
+     "clarity": 5,
+     "difficulty_fit": "too_easy",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "spras90yaksuniryihza39bu",
+     "subject_correct": "correct",
+     "correctness_note": "整体 a=F/(m1+m2)=20/5=4 m/s²；隔离B：T=m2a=8N；隔离A校验 F−T=20−8=12=m1a=12 一致，选项B正确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": "solver_answer 'B. 8 N' 与 reference 结论完全一致，engine 仍判 solve_check fail 并压在 draft——与另外三道题同一类假阴性。"
+    },
+    {
+     "id": "zhrgcv3s5c28wru192zogwhc",
+     "subject_correct": "correct",
+     "correctness_note": "由静止示数 mg=500N 得 m=50kg；加速上升 N=m(g+a)=50×12=600N，超重方向正确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": "solver_answer '600 N' 与 reference 结论一致，engine 仍判 solve_check fail 并压在 draft——同一类假阴性，与其余三题合计 4/8 题受此影响。"
+    }
+   ],
+   "subject": "physics",
+   "summary": "8 题中 7 题学科正确、题干自足、隔离体/牛顿第二定律推导规范；唯一硬伤是 icnih28vpj9f8onmws3nrpbg 第(3)问定性结论错误（应为\"a减小、T不变\"而非参考答案所称\"T也减小\"，可用代数严格证伪），且该题已被 engine 判 pass 并 promoted=true 进入活跃池，需要撤下修正。另一个突出问题是 engine 的 solve_check 轴存在系统性假阴性：4 道题（b1twkn9mkj8ovohf3lmj5ulg、f0oi2923xxbgow11j645ks1a、spras90yaksuniryihza39bu、zhrgcv3s5c28wru192zogwhc）里 solver_answer 与 reference 结论逐字一致，却仍被判 fail 并卡在 draft_status=draft，这些题本可直接入池却被引擎误拦。此外题库主题高度集中——电梯视重/超重失重（3题）与连接体绳张力（3题）占了 8 题里的 6 题，其余高中牛顿定律子专题（斜面+摩擦组合、圆周运动等）覆盖为零。",
+   "systemic_issues": [
+    "engine solve_check 轴对'solver_answer 与 reference 结论字面一致'的情形仍判 fail（4/8 题命中），像是文本比对或 SemanticJudge 判定链路的假阴性 bug，导致本可直接入池的题被错误压在 draft_status=draft——建议排查 solve_check 的比对逻辑。",
+    "SemanticJudge 'outcome=partial → 保守 pass' 的策略对开放式/定性推理多问题会漏掉真错误：icnih28vpj9f8onmws3nrpbg 第(3)问的物理结论本身是错的，但因为整体判定是'partial'而被保守放行并已 promoted，说明该策略在多子问、含定性判断的题型上不够可靠。",
+    "题库主题严重集中：8 题里 3 题是电梯视重/超重失重变体（f0oi2923xxbgow11j645ks1a、misi0mkv6itjdtt52iopcfaa、zhrgcv3s5c28wru192zogwhc），3 题是绳张力/连接体变体（icnih28vpj9f8onmws3nrpbg、mw7fsrctrqrd77arbdby1cjd、spras90yaksuniryihza39bu），诊断覆盖面窄，建议扩充斜面+摩擦组合、圆周运动、动量/能量等子专题的生成配额。"
+   ]
+  },
+  "yingyu": {
+   "questions": [
+    {
+     "id": "be9bs0cpg6xlel0caedtxq9q",
+     "subject_correct": "correct",
+     "correctness_note": "限制性/非限制性从句划分、标点规则(逗号)、‘去掉后核心意思是否改变’的判断均符合标准英语语法规范，例句(The students who passed…／My father, who is a doctor,…)选用得当。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "gr3gzeulby5vf341z8tutevc",
+     "subject_correct": "correct",
+     "correctness_note": "‘the days (which/that) we spent together’中 days 是 spent 的宾语，必须用关系代词 which/that 而非关系副词 when，答案 which 正确；when 因缺少宾语会导致句子不完整，解析论证准确。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": "engine solve_check 判 fail 但 reason 字段里贴出的‘reference’文本其实就是 solver 的答案 which 本身（字符串截断/比对逻辑有误），并非真实语法分歧——solver 答案 which 与参考答案完全一致，应判 pass 并 promote，当前 draft_status=draft 是引擎误拦。"
+    },
+    {
+     "id": "pdm0h0yu3ky1maa0oublkyvc",
+     "subject_correct": "correct",
+     "correctness_note": "‘the old house whose roof’——whose 表所属关系，先行词为物也可用 whose，which/who/that 均不能直接表所属，解析正确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "pm1h5afcngp66dmfddmn0kse",
+     "subject_correct": "correct",
+     "correctness_note": "‘the man whose car was stolen’——whose 表所属(his car)，who/whom 只能作人称主宾语、which 只能指物，解析正确，答案 whose 无误。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "usable",
+     "engine_disagreement": null
+    },
+    {
+     "id": "q0q6rm83rdln5i0doyb3ghpi",
+     "subject_correct": "correct",
+     "correctness_note": "逐句核验：A句‘My grandmother, that raised…’非限制性从句用 that 违反语法(非限制性从句不能用 that，只能 who/which)——错误项；B句限制性从句用 that 指人合法；C句‘介词+which’结构合法；D句非限制性从句用 who 合法。故 A 为唯一错误句，与参考答案一致。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": "engine solve_check 判 fail，但 reason 字段显示 solver 答案‘A（My grandmother, that raised…）’与被截断显示的‘reference’文本内容本质相同（同一句子、同一选项 A），判定失败疑似字符串比对/截断 bug 而非真实分歧——应判 pass 并 promote，当前 draft_status=draft 是引擎误拦。"
+    },
+    {
+     "id": "to5cprup6hgalsqgd6lhv8uw",
+     "subject_correct": "correct",
+     "correctness_note": "(1)限制性从句中 that/which 可互换成立；(2)非限制性从句不可用 that 替换 who/which，规则表述准确；(3)所属关系用 whose 及例句(I met a writer whose novels…)恰当。三点论证均符合英语语法规范。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    }
+   ],
+   "subject": "yingyu (英语·定语从句)",
+   "summary": "本科 6 题全部聚焦定语从句（限制性/非限制性划分、关系代词 vs 关系副词、whose 所属关系），学科内容全部核验正确，无一道 wrong 或 questionable。两道被引擎拦截为 draft 的选择题（gr3gzeulby5vf341z8tutevc、q0q6rm83rdln5i0doyb3ghpi）经复核答案完全正确，engine 的 solve_check 判定为误拦——审查员与引擎在这两题上产生分歧，建议人工复核后放行入池。整体难度标注基本与实际难度相符，短答题（限制性/非限制性对比）诊断价值中等，选择题诊断价值较高（精准定位 whose/which/that/when 混用的经典错误点）。",
+   "systemic_issues": [
+    "引擎 solve_check 存在字符串比对/截断 bug：至少两题（gr3gzeulby5vf341z8tutevc、q0q6rm83rdln5i0doyb3ghpi）solver 答案与参考答案实质一致，却因 reason 字段截断/格式不对齐被误判 fail 并拦截为 draft，建议排查 solve_check 的文本归一化逻辑。",
+    "题库内容重叠：pdm0h0yu3ky1maa0oublkyvc 与 pm1h5afcngp66dmfddmn0kse 两题结构几乎同构（均为‘先行词+whose+部件名词+ was damaged/stolen’单选 whose），考察同一知识点，建议后续出题时增加变体多样性，避免同类型重复占用练习池配额。",
+    "选择题 choices_md 仅提供裸数组，未显式带 A/B/C/D 标签，而 reference_md/engine 的判词习惯用字母引用选项（如‘B. which’），存在标签风格不一致的隐患，虽未造成本轮实际判分错误，建议统一渲染/标注规范。"
+   ]
+  },
+  "huaxue": {
+   "questions": [
+    {
+     "id": "h0e06jps22ie7qi68pmxu8kj",
+     "subject_correct": "questionable",
+     "correctness_note": "选项答案C本身正确（KMnO4分解确为氧化还原反应）。但解析称其为\"同种元素部分被氧化、部分被还原的歧化型反应\"——这是错误的机理归类：核算化合价，Mn由+7→+6（K2MnO4）和+7→+4（MnO2），两条路径都是降价，Mn全程只被还原，从未被氧化；真正被氧化的是O（-2→0，生成O2）。歧化反应的定义要求同一元素在同一反应中既升价又降价，本反应中Mn不满足这一定义，正确归类应是\"分子内氧化还原反应\"（同一分子内不同元素分别升价降价），而非歧化。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "usable",
+     "engine_disagreement": "engine 的 solve_check/teaching_quality 都只核对最终答案字母\"C\"是否匹配，未捕获解析文本里\"歧化型反应\"这一机理分类错误。该题目前 draft_status=active 已入池，但解析里的错误定性会给学生传递错误的歧化反应判据，建议标记复核并修正解析措辞（删除\"歧化型反应\"表述或改为\"分子内氧化还原反应\"），而非直接维持 pass 放行。"
+    },
+    {
+     "id": "hg16p0njycogfemd2agfiqkc",
+     "subject_correct": "correct",
+     "correctness_note": "氧化剂FeCl3、还原剂Fe，化合价变化（Fe:0→+2被氧化；Fe3+:+3→+2被还原）、氧化产物与还原产物同为FeCl2的判断均正确，电子守恒核对（1个Fe失2电子，2个Fe3+各得1电子）无误，是氧化还原反应里\"氧化产物=还原产物\"这一特殊情形的经典例子，表述规范。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 5,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "ja8ta8espiqzporeo5oc6xu1",
+     "subject_correct": "wrong",
+     "correctness_note": "题干给出的反应\"3Cl2+6NaOH(冷、稀)=5NaCl+NaClO3+3H2O\"条件标注与真实化学事实矛盾：按人教版及通用无机化学事实，冷、稀NaOH与Cl2反应生成的是次氯酸钠（Cl2+2NaOH=NaCl+NaClO+H2O，工业制漂白液/粉的原理），而生成NaClO3（氯酸钠）的反应需要热、浓的NaOH条件（3Cl2+6NaOH(热、浓)=5NaCl+NaClO3+3H2O）。题干把NaClO3产物挂在\"冷、稀\"条件下是条件与产物错配，属于事实性错误，会误导学生记错反应条件。后续关于歧化反应本身的电子转移分析（5个Cl降价、1个Cl升价、电子数守恒）是正确的，问题出在反应条件标注这个前提上。",
+     "clarity": 2,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 2,
+     "overall": "broken",
+     "engine_disagreement": null
+    },
+    {
+     "id": "kw5yqktrpp12i0nw4tffvv81",
+     "subject_correct": "correct",
+     "correctness_note": "FeCl3是氧化剂（Fe3+由+3→+2被还原）、Fe是还原剂（0→+2被氧化），选项A正确，其余选项（B反了、C/D否认存在化合价变化）均为合理干扰项，解析与判断一致。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "lfudg8qtnm5kiqo0xmggfych",
+     "subject_correct": "correct",
+     "correctness_note": "Zn由0→+2被氧化作还原剂，Cu2+由+2→0被还原作氧化剂，属于金属置换反应中最基础的氧化还原判断，判断依据（化合价升降方向）表述准确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "tljeb2y4cu8z5stcnny9tzpg",
+     "subject_correct": "questionable",
+     "correctness_note": "最终选择②为正确答案没有问题（①③④确实都无化合价变化，非氧化还原反应；②中Cl由+5→-1被还原、O由-2→0被氧化，存在化合价升降，是氧化还原反应）。但解析把②定性为\"歧化反应\"是错误的：歧化反应要求同一元素在反应中同时升价和降价，而这里Cl只降价（+5→-1，被还原）、O只升价（-2→0，被氧化），是两种不同元素分别升降，正确归类是\"分子内氧化还原反应\"而非歧化反应。此定性错误与另一题（h0e06jps22ie7qi68pmxu8kj）同源，是可复现的系统性术语误用。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 2,
+     "overall": "flawed",
+     "engine_disagreement": null
+    }
+   ],
+   "subject": "高中化学（氧化还原反应专题，6题）",
+   "summary": "本科6题围绕\\\"氧化还原反应判断/氧化剂还原剂识别/歧化-归中特殊类型\\\"这一知识点组织，整体覆盖面合理、难度梯度（2-3级）适中，标准的FeCl3+Fe、Zn+CuSO4两题（hg16p0njycogfemd2agfiqkc、kw5yqktrpp12i0nw4tffvv81、lfudg8qtnm5kiqo0xmggfych）事实与解析均规范可直接入库。但存在两类需要人工介入的问题：一是引擎已经拦下的ja8ta8espiqzporeo5oc6xu1题干条件与化学事实错配（冷稀NaOH实际生成NaClO而非题干所写NaClO3，NaClO3需热浓条件），属于broken级错误，engine判定正确不应保留；二是两道形式上\\\"pass/active\\\"的题（h0e06jps22ie7qi68pmxu8kj、tljeb2y4cu8z5stcnny9tzpg）虽然最终选择答案正确，但解析里把\\\"分子内氧化还原反应\\\"（不同元素分别升降价）误称为\\\"歧化反应\\\"（同一元素同时升降价），这是engine只核对答案字母未能捕获的、可复现的机理分类错误，其中h0e06jps22ie7qi68pmxu8kj已经在池子里(active)，建议追加复核修正解析措辞。",
+   "systemic_issues": [
+    "至少两题（h0e06jps22ie7qi68pmxu8kj、tljeb2y4cu8z5stcnny9tzpg）把\"分子内氧化还原反应\"（同一反应中不同元素分别升价、降价）误判/误称为\"歧化反应\"（要求同一元素同时升价与降价）。这是可复现的化学术语误用模式，建议在解析生成/校验规则里加入\"歧化 vs 分子内氧化还原\"的元素同一性判据。",
+    "引擎的 solve_check/teaching_quality 轴目前只核对最终答案字母是否匹配，对解析正文中的机理分类错误（如歧化误用）没有检测能力，导致含错误解析的题目仍被判定 pass 并 active 入池（h0e06jps22ie7qi68pmxu8kj）。",
+    "反应条件（冷/稀 vs 热/浓）与产物的错配（ja8ta8espiqzporeo5oc6xu1：题干把NaClO3产物错误挂在\"冷、稀\"条件下）说明生成环节在编造/嫁接同类反应方程式时容易混淆不同条件对应的产物分布；该题已被 engine 的 grounding 轴拦下（draft/fail），是值得强化的正例规则。"
+   ]
+  },
+  "shengwu": {
+   "subject": "生物（细胞呼吸）",
+   "summary": "本次6题聚焦细胞呼吸（有氧呼吸三阶段场所、能量释放机制、无氧呼吸产物差异）这一高中生物核心考点，学科内容整体准确、参考答案与解析无事实性错误，rubric要点设置到位，两道简答题（电子传递链/氧化磷酸化论证、三阶段综合应用）诊断价值突出。存在的问题集中在格式一致性（部分选择题选项缺少字母标签）和一处措辞精度问题（红细胞无氧呼吸的条件表述可能诱导因果误导），均未达到需要拦截的程度，引擎放行判断均可认同。",
+   "systemic_issues": [
+    "选择题格式不统一：Q2(h408msryx98ehcgww0xw4ti0)与Q6(w7znuzz7tfa859hasaig4qwy)的choices_md缺少A/B/C/D字母前缀，与Q1、Q4格式不一致，建议统一命题模板",
+    "个别简答题（Q3、Q5）引入超出人教版新教材标准表述范围的术语（电子传递链、氧化磷酸化），虽科学正确但需注意是否匹配目标学生的课标覆盖面",
+    "涉及成熟红细胞呼吸方式的题目（Q6）前提措辞需注意不要暗示呼吸方式随氧气条件切换，红细胞因无线粒体是恒定无氧呼吸，命题时应更精确地锚定这一因果关系"
+   ],
+   "questions": [
+    {
+     "id": "b58uajlrph5fyoybotiecywq",
+     "subject_correct": "correct",
+     "correctness_note": "有氧呼吸三阶段场所标准表述：第一阶段细胞质基质，第二阶段线粒体基质，第三阶段线粒体内膜。答案C与解析一致，符合人教版教材。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null,
+     "format_issues": []
+    },
+    {
+     "id": "h408msryx98ehcgww0xw4ti0",
+     "subject_correct": "correct",
+     "correctness_note": "第三阶段[H]与O2结合生成水、释放大量ATP的场所确为线粒体内膜（电子传递链/呼吸链所在），学科事实正确。",
+     "clarity": 3,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "usable",
+     "engine_disagreement": null,
+     "format_issues": [
+      "choices_md 缺少 A/B/C/D 等选项标签（与同批次Q1、Q4的带字母选项格式不一致），学生/前端展示时不便于指代作答，建议统一加标签"
+     ]
+    },
+    {
+     "id": "l8stl2xh057gqocuilyt5g91",
+     "subject_correct": "correct",
+     "correctness_note": "核心论证正确：有氧呼吸中电子经电子传递链传给O2、偶联氧化磷酸化产生大量ATP；无氧呼吸缺乏最终电子受体，只能靠底物水平磷酸化产2分子ATP，能量仍留存在乳酸/酒精中。solver与参考答案要点一致。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 5,
+     "overall": "good",
+     "engine_disagreement": null,
+     "format_issues": []
+    },
+    {
+     "id": "n49do1iibgskjyi1cxipi1dy",
+     "subject_correct": "correct",
+     "correctness_note": "酵母菌为兼性厌氧生物，富氧时有氧呼吸产CO2+H2O，缺氧时酒精发酵产酒精+CO2；B选项及解析准确，且正确区分酵母菌酒精发酵与动物细胞乳酸发酵，避免常见混淆。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null,
+     "format_issues": []
+    },
+    {
+     "id": "nm3rdd822wt2vk1tfdxqbw9w",
+     "subject_correct": "correct",
+     "correctness_note": "三阶段场所、CO2产生阶段（第二阶段线粒体基质丙酮酸脱羧）、O2消耗阶段（第三阶段电子传递链末端受体）、乳酸发酵不产CO2（丙酮酸直接被还原而非先脱羧）均符合学科事实，rubric要点覆盖完整。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 5,
+     "overall": "good",
+     "engine_disagreement": null,
+     "format_issues": []
+    },
+    {
+     "id": "w7znuzz7tfa859hasaig4qwy",
+     "subject_correct": "questionable",
+     "correctness_note": "答案本身（乳酸）正确——人体成熟红细胞无线粒体，只能进行乳酸发酵，不产生CO2。但题干措辞“在无氧条件下进行无氧呼吸”隐含成熟红细胞的呼吸方式取决于氧气条件，这是学科上的常见误导：成熟红细胞因缺乏线粒体，无论富氧缺氧都恒定只能无氧呼吸（乳酸发酵），并非“无氧条件下才无氧呼吸”。题干前提表述存在轻微失准风险，可能强化学生的错误因果关联。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "usable",
+     "engine_disagreement": null,
+     "format_issues": [
+      "choices_md 同样缺少 A/B/C/D 选项标签，格式与Q1/Q4不统一"
+     ]
+    }
+   ]
+  },
+  "lishi": {
+   "questions": [
+    {
+     "id": "bb0dtuw5orn919qi2xmbbin7",
+     "subject_correct": "correct",
+     "correctness_note": "标准教材表述：辛亥革命推翻清朝统治、结束君主专制、建立亚洲第一个资产阶级共和国（中华民国），B/C/D 三个干扰项分别在反帝反封建任务未竟、民国政局动荡、社会主义制度确立于1956年三大改造等史实上均可证伪，答案A及解析无误。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": "engine solve_check 判 fail 是误判：solver_answer 只回了字母 'A'，reference_md 字段把答案字母和完整解析文本拼在一起做字符串比对，导致哪怕 solver 选对了字母也因为没有复述整段解析文字而判不一致。这是比对逻辑的系统性缺陷，不是内容错误，Q1/Q2/Q3 三题都因这同一个 bug 被拦下，engine 应放行而非拦为 draft。"
+    },
+    {
+     "id": "hq3qge5j6jexyflou0juw8ca",
+     "subject_correct": "correct",
+     "correctness_note": "1911年5月清政府颁布铁路干线国有化政策，将粤汉、川汉铁路收归国有并抵押给四国银行团，直接引发四川保路运动，清廷调鄂军入川致武汉防务空虚，为10月10日武昌起义提供直接契机——这是通行的高中历史因果链表述，答案与解析均准确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": "同 Q1，engine solve_check 的 fail 是字符串比对口径问题（solver 答案是选项文字复述而非逐字匹配 reference_md 里连解析都算进去的长字符串），并非史实错误，engine 应放行。"
+    },
+    {
+     "id": "pssaom8q2qzcq2b2cc5ltbij",
+     "subject_correct": "correct",
+     "correctness_note": "南京临时政府成立时革命党财政拮据、军事力量薄弱（南方各省新军多观望或倒戈），袁世凯凭借北洋新军实力及列强、部分立宪派支持在南北议和中占主导，孙中山以清帝退位换取让位——这是学界与教材公认的解释框架，答案与解析准确，其余三个干扰项（袁为同盟会成员、孙中山主动放弃理念、列强直接出兵扶植）均与史实不符，具有恰当的辨析力。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": "同 Q1/Q2，engine solve_check 的 fail 同属字符串比对口径问题（把整段解析文字当作要精确匹配的'reference'字符串），非史实错误，engine 应放行。"
+    },
+    {
+     "id": "vcdu205l4ulp1chg41nzuxma",
+     "subject_correct": "correct",
+     "correctness_note": "武昌起义（1911年10月10日）作为辛亥革命全面爆发的标志是教材共识，其余三个选项（戊戌变法1898、甲午战争1894-95、五四运动1919）在时间顺序和性质上均明显区别于此题指向的事件，答案A及解析准确无误。",
+     "clarity": 5,
+     "difficulty_fit": "too_easy",
+     "diagnostic_value": 2,
+     "overall": "usable",
+     "engine_disagreement": null
+    }
+   ],
+   "subject": "lishi",
+   "summary": "四题均围绕辛亥革命主题，史实核查全部通过，答案、解析、干扰项设计均符合高中历史教学规范，无学科性错误。真正的问题出在引擎侧：Q1-Q3 的 solve_check 因为 reference_md 字段把'答案字母'和'完整解析长文本'拼在一起当比对基准，导致 solver 只答字母或复述选项文字时被误判为'不一致'而拦为 draft_status=draft，这是比对口径 bug 而非题目质量问题，三题都应可正常入池。Q4 相对基础，属于纯记忆型题目，难度虚高感不强但诊断价值偏低，可用但非精品。systemic_issues 已记录该 solve_check 字符串比对缺陷，建议改成'仅比对答案字母/选项文本'而非整段解析。",
+   "systemic_issues": [
+    "solve_check 的比对逻辑把 reference_md 整个字段（答案字母+完整解析长文本）当作要精确匹配的基准字符串，导致 solver 只回答字母或选项原文时被误判为'不一致'而错误拦截，本次4题里3题因此被误判 fail、错误留在 draft_status=draft——这是本轮最大的系统性问题，建议 engine 侧把 solve_check 的匹配目标从 reference_md 整段文本改为拆分出的'标准答案字母/选项文本'字段。",
+    "四题均聚焦辛亥革命同一子专题（意义、导火索、让位原因、爆发标志），题库多样性不足，若批量入库建议扩展辛亥革命之外的知识点覆盖面，避免同一考点反复出题挤占练习池。"
+   ]
+  },
+  "dili": {
+   "subject": "dili",
+   "summary": "本科4题全部为气压带风带/地中海气候相关选择题，学科内容全部正确（无 wrong/questionable），核心知识点扎实、解析规范。但发现一个系统性数据格式缺陷：4题中有2题（fadkfbbm4ithe8ijymosgp1i、svqixuxh5fhdr0c4jxkv4idj）的 choices_md 缺失 A/B/C/D 选项字母前缀（与另外2题格式不一致），导致引擎 solve_check 做字符串比对时误判为 fail 并把本应合格的题目错误拦截为 draft——这是格式一致性问题而非学科错误，建议先修复格式统一性再重跑机检，而非维持人工拦截状态。",
+   "systemic_issues": [
+    "choices_md 选项字母前缀（A./B./C./D.）在题目间不一致：Q1、Q3有前缀，Q2、Q4无前缀，导致引擎 solve_check 对无前缀题目的答案比对失真，产生假阴性 fail 从而错误拦截入池",
+    "本科4题主题高度集中于同一知识簇（地中海气候+气压带风带成因/移动），缺乏气候类型对比、区域案例迁移等更广谱的诊断覆盖，长期看诊断颗粒度会偏窄"
+   ],
+   "questions": [
+    {
+     "id": "cex5q24jua1urcl9phkh4y7x",
+     "subject_correct": "correct",
+     "correctness_note": "地中海气候「夏干冬雨、最冷月均温>0℃」是高中地理教材标准表述；干扰项区分正确：热带草原气候干湿季但常年高温无「地中海式温和」特征，温带海洋性气候无干季，温带季风气候雨热同期与题干相反。答案B无误。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 3,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "fadkfbbm4ithe8ijymosgp1i",
+     "subject_correct": "correct",
+     "correctness_note": "地中海气候夏干冬雨成因——夏季副高控制下沉气流、冬季西风带控制带来降水，气压带风带随季节交替控制——是气压带风带单元的标准教学内容，解析与参考答案表述准确无误。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "usable",
+     "engine_disagreement": "engine 把此题判为 solve_check fail 从而拦截（draft_status=draft），但内容学科上正确：solver 回答的「B（夏季受副热带高气压带…冬季受西风带…交替）」在语义上与 reference_md 第二段描述完全一致，只是 choices_md 本题缺失 A/B/C/D 字母前缀（对比同卷 Q1/Q3 都有前缀），导致自动字符串匹配把「带字母的答案」与「纯文本参考」判为不一致——这是数据格式缺陷造成的假阴性，不是学科错误。建议补全 choices_md 的选项字母前缀后重跑 solve_check，再放行入池，而非维持人工拦截状态。",
+     "format_issues": [
+      "choices_md 缺少 A/B/C/D 选项字母前缀（同卷Q1、Q3均有），格式不统一且疑似导致引擎误判"
+     ]
+    },
+    {
+     "id": "kxkodxow0drhqc9hwmbdzwgc",
+     "subject_correct": "correct",
+     "correctness_note": "副热带高气压带是三圈环流中的「动力性高压」——高空气流因地转偏向力在30°附近堆积辐合下沉形成，区别于极地高压的冷却下沉机制，是高中地理大气环流单元的标准结论，答案C及解析均准确。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "svqixuxh5fhdr0c4jxkv4idj",
+     "subject_correct": "correct",
+     "correctness_note": "气压带风带随太阳直射点季节移动、大致「夏半年北移、冬半年南移」是教材定论，也是解释地中海气候/热带草原气候成因的关键机制，选项及解析表述准确。",
+     "clarity": 4,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "usable",
+     "engine_disagreement": "与Q2同款问题：engine 判 solve_check fail 从而未晋级（draft_status=draft），但 solver 答案「B」内容与 reference_md 描述的「夏半年北移、冬半年南移」语义完全一致，学科上无误。根源同样是本题 choices_md 缺失字母前缀，导致机检字符串匹配假阴性，而非题目本身有问题。建议修复格式后重判，而非维持拦截。",
+     "format_issues": [
+      "choices_md 缺少 A/B/C/D 选项字母前缀，与Q1、Q3 格式不一致，疑似导致引擎误判为 fail"
+     ]
+    }
+   ]
+  },
+  "zhengzhi": {
+   "subject": "zhengzhi",
+   "summary": "本科 4 题中 3 题（e4mhdzr27xeeqjiz7cgvlk6y、l8wkwr9lxha3m3l2n3gyclro、zfdkv3ul99kphw1anmhrxolq）学科表述准确、参考答案与教材规范一致，可直接入库；选择题 wpu4iseezi4tdqxb1fr2ya7z 的正确项用词不够精确（用\"基础性\"代替应有的\"决定性\"，与 Q1 题干本身用词自相矛盾），且三个干扰项均为极端/稻草人式表述，学生可凭排除法蒙对而无需真正掌握\"市场失灵—政府调控\"的边界知识，诊断价值偏低——engine 已判 teaching_quality fail 并拦下（draft_status=draft），与我的判断一致，无需覆盖引擎决定。",
+   "questions": [
+    {
+     "id": "e4mhdzr27xeeqjiz7cgvlk6y",
+     "subject_correct": "correct",
+     "correctness_note": "市场调节三机制（价格/供求/竞争）与三大局限性（自发性/盲目性/滞后性）+ 市场失灵领域列举均符合人教版必修2《经济与社会》标准表述，逻辑链完整，无事实错误。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "l8wkwr9lxha3m3l2n3gyclro",
+     "subject_correct": "correct",
+     "correctness_note": "经济/法律/行政三类宏观调控手段定义及所配举例（存款准备金率、《反垄断法》、突发事件应急调配指令）均准确，且正确指出以经济、法律手段为主、行政手段为辅，符合教材规范。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    },
+    {
+     "id": "wpu4iseezi4tdqxb1fr2ya7z",
+     "subject_correct": "questionable",
+     "correctness_note": "标注为正确答案的选项用「市场调节是基础性的」，但现行教材（十八届三中全会后）明确表述为市场对资源配置起「决定性作用」，「基础性作用」是2013年前的旧提法，二者在政治学科中是被严格区分的高频考点；本题把旧提法当正确答案，且与同科目 Q1 题干中「市场在资源配置中起决定性作用」的表述直接冲突，存在学科用词不严谨甚至误导学生记混新旧提法的风险。此外「政府调控只在市场失灵领域发挥作用」也把政府职能范围窄化（政府还承担市场监管、公共服务等，不限于弥补市场失灵）。",
+     "clarity": 4,
+     "difficulty_fit": "too_easy",
+     "diagnostic_value": 2,
+     "overall": "flawed",
+     "engine_disagreement": null
+    },
+    {
+     "id": "zfdkv3ul99kphw1anmhrxolq",
+     "subject_correct": "correct",
+     "correctness_note": "存款准备金率、基准利率均为货币政策工具，是国家运用经济杠杆间接调节经济运行的手段，归类为「经济手段」准确无误；解析对法律手段/行政手段/市场自发调节的区分也正确，干扰项设计合理（不像 wpu4 题那样是稻草人）。",
+     "clarity": 5,
+     "difficulty_fit": "fits",
+     "diagnostic_value": 4,
+     "overall": "good",
+     "engine_disagreement": null
+    }
+   ],
+   "systemic_issues": [
+    "选择题干扰项设计不均衡：wpu4iseezi4tdqxb1fr2ya7z 的三个干扰项均为极端稻草人表述（「完全让位」「主导全部环节」「相互对立不能并存」），学生可无需学科知识仅凭常识排除，拉低诊断价值；同类题 zfdkv3ul99kphw1anmhrxolq 的干扰项设计（法律/行政/市场自发调节）则合理，说明本科生成质量在「干扰项区分度」这一维度不稳定，值得在后续 prompt/rubric 里补一条「干扰项须为同类可信选项、避免极端化」的硬约束。",
+    "新旧提法混淆风险：「市场基础性作用」（旧）vs「市场决定性作用」（十八届三中全会后现行提法）是政治学科高频易混点，生成题目及参考答案中出现新旧提法不一致（本科内部 Q1 与 wpu4 即互相矛盾），建议在知识库/grounding 阶段显式标注该提法的时效版本，避免带旧提法进正确答案。"
+   ]
+  }
+ },
+ "format": {
+  "summary": "审查基于 /Users/yuqi/yukoval-projects/the-learning-project/scratchpad/panel/format-audit.json，覆盖 9 学科 22 个 KC×kind cell、58 道已产出题目 + 4 条 gen_failures。所有 finding 均逐条对照原始 JSON 字段核验（choices_letter_prefixed / hint_kinds / canonical / difficulty / gen_failures.error），未做超出数据范围的推测。",
+  "findings": [
+   {
+    "area": "kind-collapse (single/multiple_choice → choice)",
+    "severity": "major",
+    "detail": "全部 10 个 choice 类 cell 的 canonical 均为 'choice'，hint_kinds 恒为 ['single_choice','multiple_choice']；questions[].kind 也只落 'choice'，单选/多选子类型在持久化后完全丢失。下游三处受影响均可从数据结构直接验证：判分路由无法仅凭 kind 决定'取单选字母'还是'取字母集合'比对规则（需额外靠答案字段形状旁推，脆弱）；UI 渲染无法仅凭 kind 决定 radio 还是 checkbox 控件；评测/校准类脚本（如 audit:calibration 一类按 kind 分组统计）会把单选与多选混算成同一桶，稀释两种作答格式各自的难度/区分度信号。"
+   },
+   {
+    "area": "choice 格式·选项字母双写风险",
+    "severity": "major",
+    "detail": "6/58 题在 prompt_head 正文里直接嵌入了 'A. ... B. ... C. ...' 选项文本（onmwf11iwlmb6tpbmh5l9zfp、za8u5gbs8ne1pe99nddr7u9p、j90yj7rewpbhmh0ve504zjna、t6x5bsi7r7x44vifvb4jwdrz、f0oi2923xxbgow11j645ks1a、spras90yaksuniryihza39bu），与题目结构化的 choices 字段重复。其中前 4 题同时 choices_letter_prefixed=true，即选项文字已经带字母前缀又被写进 prompt 正文——若 UI 对 choices 数组渲染时再套一层 A/B/C/D 标号，会出现选项文本在页面上重复出现两次（一次在题干里、一次在选项区）的双写。"
+   },
+   {
+    "area": "choice 格式·letter-prefix 约定不一致",
+    "severity": "minor",
+    "detail": "choices_letter_prefixed 在同一 KC×kind cell 内部并不统一：huaxue choice（h0e06jps=true, kw5yqktrpp=true, lfudg8qtnm5=false, tljeb2y4cu8z=false）、shengwu choice（b58=true, h408msryx=false, n49do1iib=true, w7znuzz=false）、lishi choice（bb0=true, hq3qge5=false, pssaom8q=false, vcdu205=true）、yuwen choice（f0li1slf=false, j2er1luz=false, j90yj7re=true, t6x5bsi7=true）、dili choice（cex5q24=true, fadkfbbm=false, kxkodxow=true, svqixuxh=false）——5/9 学科的 choice cell 内部同时混有前缀/不前缀两种写法，同一 kind 下 UI 需要同时兼容两种选项文本形态。"
+   },
+   {
+    "area": "覆盖缺口·zero-produced cell",
+    "severity": "major",
+    "detail": "3 个 cell produced=0：math derivation(spike:math:erci-tuxiang, hint_kinds=proof)、lishi short_answer(spike:lishi:xinhai-geming)、dili short_answer(spike:dili:daqi-huanliu)。均可与 gen_failures 一一对应：math 是 quiz_gen 钉了 kind='proof' 但 agent 产出 kind='short_answer' 被拒；lishi/dili 都是 parseOutput schema invalid（'Expected array, received null'），即模型输出的数组字段为 null 导致整批校验失败。"
+   },
+   {
+    "area": "覆盖缺口·zhengzhi choice 产量腰斩",
+    "severity": "minor",
+    "detail": "zhengzhi choice cell produced=2，是全部 9 个学科 choice cell 里唯一非 4 的（其余全部=4，除已知 zero-produced 的三个 short_answer/derivation cell 外）。对应 gen_failures 中 zhengzhi 唯一一条失败为 'JSON.parse failed: ... at position 713'，与产量减半的表现一致（疑似输出在中途被截断，只解析出部分题目）。"
+   },
+   {
+    "area": "gen_failures 失败类分布",
+    "severity": "info",
+    "detail": "4 条 gen_failures 里 3 条是结构化输出格式类故障（2 条 'Expected array, received null' 的 schema-invalid，1 条 JSON.parse 语法错误），仅 1 条是内容类不匹配（kind 钉 proof 但产出 short_answer）。即当前失败面主要是生成侧结构化输出稳定性问题，不是学科内容质量问题。"
+   },
+   {
+    "area": "difficulty 分布偏窄",
+    "severity": "minor",
+    "detail": "58 题 difficulty 直方图：2→22 题(38%)，3→33 题(57%)，4→3 题(5%，分别为 fadkfbbm4ithe8ijymosgp1i/dili、l8stl2xh057gqocuilyt5g91/shengwu、mw7fsrctrqrd77arbdby1cjd/physics)，1 和 5 均为 0。全部 9 个学科产出题目无一落在最易(1)或最难(5)档，整体聚集在 2-3 中段。"
+   },
+   {
+    "area": "short_answer 类 rubric 可判分性",
+    "severity": "info",
+    "detail": "has_rubric 字段与 kind 严格一一对应（全部 58 题内无例外）：choice 全部 has_rubric=false，short_answer/computation/derivation/translation/reading 全部 has_rubric=true。未发现同 kind 内 rubric 缺失/不一致的样本。"
+   },
+   {
+    "area": "translation/reading 材料自足性",
+    "severity": "info",
+    "detail": "抽查到的 translation（vzj8j9i6u7mv380vr7gxg13z、x5z2hor9qduxdrfbrjd5xscq）与 reading（cqonvlypugr0bt3g1cxbmndi、yjhq8q1p10woedfd886ywpdw）四题的 prompt_head 均直接引用/嵌入原文片段（《劝学》选段或整句），未依赖外部材料，格式上自足。"
+   }
+  ],
+  "kind_collapse_impact": "数据证实 single_choice/multiple_choice 在持久化层被无差别塌缩为 canonical='choice'（全部 10 个 choice cell 一致），子类型信息只残留在生成期 hint_kinds 字段、未落进 questions.kind。三个消费面因此均存在可验证的风险敞口而非假设性风险：(1) 评测/校准归因——按 kind 分组的统计脚本会把单选与多选混合计算，稀释两类作答格式各自应有的难度/区分度信号；(2) 判分路由——引擎若只读 kind='choice' 无法直接决定\"精确匹配单字母\"还是\"精确匹配字母集合\"两种判分逻辑，必须靠答案字段形状旁路推断，一旦该旁路缺失或有 bug，多选题可能被单选逻辑误判（如漏选/多选未按集合比对）；(3) UI 渲染——kind 无法单独决定该用 radio（单选，互斥）还是 checkbox（多选，非互斥）控件，若前端也退化成仅按 canonical 分支，多选题可能被渲染成只能选一项的 radio，直接阻断正确作答路径。三处风险的共同根因是同一处：canonical 塌缩发生在持久化/交付边界之前，没有把子类型下传。"
+ }
+}

@@ -1,0 +1,158 @@
+{
+ "subject": "dili",
+ "question_count": 4,
+ "questions": [
+  {
+   "id": "cex5q24jua1urcl9phkh4y7x",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "某地气候资料显示：全年温和，最冷月均温在0℃以上；降水集中在冬季，夏季炎热干燥少雨，年降水量数百毫米。该气候类型最可能是：",
+   "reference_md": "B. 地中海气候\n\n解析：地中海气候的典型特征是「夏季受副热带高气压带控制，炎热干燥；冬季受西风带控制，温和多雨」，即「夏干冬雨」，与题干「冬雨夏干、最冷月均温高于0℃」完全吻合。热带草原气候是「一年分干湿两季」但气温更高、无明显冬夏温差意义上的差别；温带海洋性气候全年温和湿润、降水分配均匀，无明显干季；温带季风气候则是「雨热同期」（夏季高温多雨），与题干降水规律相反。",
+   "choices_md": [
+    "A. 热带草原气候",
+    "B. 地中海气候",
+    "C. 温带海洋性气候",
+    "D. 温带季风气候"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "B. 地中海气候"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "fadkfbbm4ithe8ijymosgp1i",
+   "kind": "choice",
+   "difficulty": 4,
+   "prompt_md": "地中海气候（如意大利南部）呈现“夏季炎热干燥、冬季温和多雨”的显著特征，其形成的主要原因是：",
+   "reference_md": "夏季受副热带高气压带（下沉气流）控制，冬季受西风带（盛行西风带来的湿润气流）控制，气压带风带随季节南北移动导致该地区交替受两种系统控制。\n\n解析：夏季太阳直射点北移，副热带高气压带随之北移并控制该地区，盛行下沉气流，天气炎热干燥；冬季太阳直射点南移，副高南退，西风带北进控制该地区，带来暖湿气流形成降水，因而冬季温和多雨。这正是气压带、风带季节移动对气候类型形成的典型影响案例。",
+   "choices_md": [
+    "常年受赤道低气压带控制，对流旺盛",
+    "夏季受副热带高气压带控制、冬季受西风带控制，二者随季节交替",
+    "常年受信风带控制，风向稳定少变",
+    "地形抬升作用使该地降水集中在夏季"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"B（夏季受副热带高气压带控制、冬季受西风带控制，二者随季节交替）\" disagrees with reference \"夏季受副热带高气压带（下沉气流）控制，冬季受西风带（盛行西风带来的湿润气流）控制，气压带风带随季节南北移动导致该地区交替受两种系统控制。\n\n解析：夏季太阳直射点北移，副热带高气压带随之北移并控制该地区，盛行下沉气流，天气炎热干燥；冬季太阳直射点南移，",
+     "solver_answer": "B（夏季受副热带高气压带控制、冬季受西风带控制，二者随季节交替）"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "kxkodxow0drhqc9hwmbdzwgc",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "下列关于全球三圈环流中「副热带高气压带」成因的表述，最准确的是：",
+   "reference_md": "C. 高空气流在副热带上空堆积下沉形成动力性高压\n\n解析：赤道地区空气受热上升，在高空向两极方向流动，由于地转偏向力的作用，气流在南北纬30°附近偏转为西风，产生动力辐合下沉，堆积增压，形成副热带高气压带；这是「动力成因」而非地面受热或冷却直接导致，也不同于极地高压的冷却下沉机制。",
+   "choices_md": [
+    "A. 该地区终年寒冷，空气冷却收缩下沉形成",
+    "B. 赤道低压带的空气直接在此处下沉入海",
+    "C. 高空气流在副热带上空堆积下沉形成动力性高压",
+    "D. 副热带地区地表植被稀少，反射太阳辐射强导致降温下沉"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "C"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "svqixuxh5fhdr0c4jxkv4idj",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "下列关于全球气压带、风带随季节移动规律的描述，正确的是：",
+   "reference_md": "气压带、风带随太阳直射点的季节移动而南北移动，大致表现为夏半年北移、冬半年南移。\n\n解析：太阳直射点随季节在南北回归线之间往返移动，导致地表受热带随之偏移，气压带和风带整体随之作季节性位移（北半球夏季偏北，冬季偏南），这是解释地中海气候（夏干冬雨）、热带草原气候（干湿季交替）等成因的关键机制。",
+   "choices_md": [
+    "气压带、风带位置常年固定不变，仅强度随季节变化",
+    "气压带、风带随太阳直射点移动，大致表现为夏半年北移、冬半年南移",
+    "气压带、风带只在北半球移动，南半球保持不动",
+    "气压带、风带的移动方向与太阳直射点移动方向相反"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"B\" disagrees with reference \"气压带、风带随太阳直射点的季节移动而南北移动，大致表现为夏半年北移、冬半年南移。\n\n解析：太阳直射点随季节在南北回归线之间往返移动，导致地表受热带随之偏移，气压带和风带整体随之作季节性位移（北半球夏季偏北，冬季偏南），这是解释地中海气候（夏干冬雨）、热带草原气候（干湿季交替）等成因的关键机制。\" (normal",
+     "solver_answer": "B"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  }
+ ]
+}

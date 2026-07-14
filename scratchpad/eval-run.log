@@ -1,0 +1,135 @@
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.overrides". See https://pnpm.io/settings for the new home of each setting.
+[spike] KCs ensured: 9 subjects → 33 (subject×kind) cells
+[spike:gen] yuwen-single_choice (文言文·《劝学》实词与句式) count=2 kind=single_choice ...
+[spike:gen] yuwen-single_choice -> ready questions=[t6x5bsi7r7x44vifvb4jwdrz, j90yj7rewpbhmh0ve504zjna] (46s)
+[spike:gen] yuwen-multiple_choice (文言文·《劝学》实词与句式) count=2 kind=multiple_choice ...
+[spike:gen] yuwen-multiple_choice -> ready questions=[f0li1slfnscq6m5728wlfjdb, j2er1luz9frpl0xhpprklzfm] (29s)
+[spike:gen] yuwen-short_answer (文言文·《劝学》实词与句式) count=2 kind=short_answer ...
+[spike:gen] yuwen-short_answer -> ready questions=[u8r2n7q73e9ljkf3ouxuv4z1, e5a9wqhxp2kmf5w96tc1nd7m] (25s)
+[spike:gen] yuwen-translation (文言文·《劝学》实词与句式) count=2 kind=translation ...
+[spike:gen] yuwen-translation -> ready questions=[x5z2hor9qduxdrfbrjd5xscq, vzj8j9i6u7mv380vr7gxg13z] (32s)
+[spike:gen] yuwen-reading_comprehension (文言文·《劝学》实词与句式) count=2 kind=reading_comprehension ...
+[spike:gen] yuwen-reading_comprehension -> ready questions=[yjhq8q1p10woedfd886ywpdw, cqonvlypugr0bt3g1cxbmndi] (42s)
+[spike:gen] math-single_choice (二次函数·图像与性质) count=2 kind=single_choice ...
+[spike:gen] math-single_choice -> ready questions=[za8u5gbs8ne1pe99nddr7u9p, onmwf11iwlmb6tpbmh5l9zfp] (22s)
+[spike:gen] math-multiple_choice (二次函数·图像与性质) count=2 kind=multiple_choice ...
+[spike:gen] math-multiple_choice -> ready questions=[qsecm5x3ekchw5o1nlxak1iz, zi6bp1c4pnlbmctzq6t5bbb5] (21s)
+[spike:gen] math-short_answer (二次函数·图像与性质) count=2 kind=short_answer ...
+[spike:gen] math-short_answer -> ready questions=[wsc7hg4zow8cwu2fhsdad3si, d6tr3ed525bcscqxy330xlkb] (30s)
+[spike:gen] math-calculation (二次函数·图像与性质) count=2 kind=calculation ...
+[spike:gen] math-calculation -> ready questions=[vf941ox6v2z23pioe3sn6vv2, swugkgw82o72yls56v9yl3ca] (29s)
+[spike:gen] math-proof (二次函数·图像与性质) count=2 kind=proof ...
+[spike:gen] math-proof FAILED: quiz_gen pinned kind='proof' but agent produced question of kind 'short_answer'
+[spike:gen] math-word_problem (二次函数·图像与性质) count=2 kind=word_problem ...
+[spike:gen] math-word_problem -> ready questions=[xpekdq7pe894ijvzgeypyg1n, r51q9rej5tu1ylhumpnq9lva] (44s)
+[spike:gen] physics-single_choice (牛顿运动定律·应用) count=2 kind=single_choice ...
+[spike:gen] physics-single_choice -> ready questions=[f0oi2923xxbgow11j645ks1a, spras90yaksuniryihza39bu] (27s)
+[spike:gen] physics-multiple_choice (牛顿运动定律·应用) count=2 kind=multiple_choice ...
+[spike:gen] physics-multiple_choice -> ready questions=[b1twkn9mkj8ovohf3lmj5ulg, zhrgcv3s5c28wru192zogwhc] (21s)
+[spike:gen] physics-short_answer (牛顿运动定律·应用) count=2 kind=short_answer ...
+[spike:gen] physics-short_answer -> ready questions=[misi0mkv6itjdtt52iopcfaa, icnih28vpj9f8onmws3nrpbg] (44s)
+[spike:gen] physics-calculation (牛顿运动定律·应用) count=2 kind=calculation ...
+[spike:gen] physics-calculation -> ready questions=[f5k08zf0g2j5ivcjmvi34lsw, mw7fsrctrqrd77arbdby1cjd] (34s)
+[spike:gen] yingyu-single_choice (英语·定语从句) count=2 kind=single_choice ...
+[spike:gen] yingyu-single_choice -> ready questions=[pdm0h0yu3ky1maa0oublkyvc, q0q6rm83rdln5i0doyb3ghpi] (18s)
+[spike:gen] yingyu-multiple_choice (英语·定语从句) count=2 kind=multiple_choice ...
+[spike:gen] yingyu-multiple_choice -> ready questions=[pm1h5afcngp66dmfddmn0kse, gr3gzeulby5vf341z8tutevc] (24s)
+[spike:gen] yingyu-short_answer (英语·定语从句) count=2 kind=short_answer ...
+[spike:gen] yingyu-short_answer -> ready questions=[be9bs0cpg6xlel0caedtxq9q, to5cprup6hgalsqgd6lhv8uw] (28s)
+[spike:gen] huaxue-single_choice (化学·氧化还原反应) count=2 kind=single_choice ...
+[spike:gen] huaxue-single_choice -> ready questions=[lfudg8qtnm5kiqo0xmggfych, tljeb2y4cu8z5stcnny9tzpg] (17s)
+[spike:gen] huaxue-multiple_choice (化学·氧化还原反应) count=2 kind=multiple_choice ...
+[spike:gen] huaxue-multiple_choice -> ready questions=[kw5yqktrpp12i0nw4tffvv81, h0e06jps22ie7qi68pmxu8kj] (19s)
+[spike:gen] huaxue-short_answer (化学·氧化还原反应) count=2 kind=short_answer ...
+[spike:gen] huaxue-short_answer -> ready questions=[hg16p0njycogfemd2agfiqkc, ja8ta8espiqzporeo5oc6xu1] (27s)
+[spike:gen] shengwu-single_choice (生物·细胞呼吸) count=2 kind=single_choice ...
+[spike:gen] shengwu-single_choice -> ready questions=[w7znuzz7tfa859hasaig4qwy, h408msryx98ehcgww0xw4ti0] (11s)
+[spike:gen] shengwu-multiple_choice (生物·细胞呼吸) count=2 kind=multiple_choice ...
+[spike:gen] shengwu-multiple_choice -> ready questions=[b58uajlrph5fyoybotiecywq, n49do1iibgskjyi1cxipi1dy] (16s)
+[spike:gen] shengwu-short_answer (生物·细胞呼吸) count=2 kind=short_answer ...
+[spike:gen] shengwu-short_answer -> ready questions=[nm3rdd822wt2vk1tfdxqbw9w, l8stl2xh057gqocuilyt5g91] (27s)
+[spike:gen] lishi-single_choice (历史·辛亥革命) count=2 kind=single_choice ...
+[spike:gen] lishi-single_choice -> ready questions=[bb0dtuw5orn919qi2xmbbin7, vcdu205l4ulp1chg41nzuxma] (19s)
+[spike:gen] lishi-multiple_choice (历史·辛亥革命) count=2 kind=multiple_choice ...
+[spike:gen] lishi-multiple_choice -> ready questions=[hq3qge5j6jexyflou0juw8ca, pssaom8q2qzcq2b2cc5ltbij] (20s)
+[spike:gen] lishi-short_answer (历史·辛亥革命) count=2 kind=short_answer ...
+[json-extract] quiz_gen parseOutput: repaired malformed LLM JSON (level=deterministic, YUK-607 repair band)
+[spike:gen] lishi-short_answer FAILED: parseOutput: schema invalid: Expected array, received null; Expected array, received null; Required
+[spike:gen] dili-single_choice (地理·大气环流与气候类型) count=2 kind=single_choice ...
+[spike:gen] dili-single_choice -> ready questions=[svqixuxh5fhdr0c4jxkv4idj, fadkfbbm4ithe8ijymosgp1i] (24s)
+[spike:gen] dili-multiple_choice (地理·大气环流与气候类型) count=2 kind=multiple_choice ...
+[spike:gen] dili-multiple_choice -> ready questions=[kxkodxow0drhqc9hwmbdzwgc, cex5q24jua1urcl9phkh4y7x] (22s)
+[spike:gen] dili-short_answer (地理·大气环流与气候类型) count=2 kind=short_answer ...
+[spike:gen] dili-short_answer FAILED: parseOutput: schema invalid: Expected array, received null; Expected array, received null
+[spike:gen] zhengzhi-single_choice (政治·市场经济与宏观调控) count=2 kind=single_choice ...
+[json-extract] quiz_gen parseOutput: UNREPAIRABLE (strict: Expected ',' or '}' after property value in JSON at position 713 (line 1 column 714); repair: Unexpected character "," at position 1191); snippet@713: "题设问文字虽写\\\"自发性\\\"，但结合选项辨析训练学生区分三种局限性的能力，正确选项对应的是盲目性的典型表现，需注意二者常被混淆，做题时应抓住\\\"逐利违规\\\"对应自发性、\\\"跟风扩产\\\"对应盲目性、\\\"事后调整\\\"对应滞后性这一区分标准）。\"],\"difficulty\":2,\"knowledge_ids\":[\"spike:zhengzhi:shichang-jingji\"],\"source_refs\":[]},{\"kind\":\"choice\",\"prompt_md\":\"为应对经"
+[spike:gen] zhengzhi-single_choice FAILED: parseOutput: JSON.parse failed: Expected ',' or '}' after property value in JSON at position 713 (line 1 column 714)
+[spike:gen] zhengzhi-multiple_choice (政治·市场经济与宏观调控) count=2 kind=multiple_choice ...
+[spike:gen] zhengzhi-multiple_choice -> ready questions=[wpu4iseezi4tdqxb1fr2ya7z, zfdkv3ul99kphw1anmhrxolq] (17s)
+[spike:gen] zhengzhi-short_answer (政治·市场经济与宏观调控) count=2 kind=short_answer ...
+[spike:gen] zhengzhi-short_answer -> ready questions=[e4mhdzr27xeeqjiz7cgvlk6y, l8wkwr9lxha3m3l2n3gyclro] (27s)
+[spike:verify] 58 quiz_gen questions in DB
+[spike:verify] b1twkn9mkj8ovohf3lmj5ulg -> needs_review overall=pass (21s)
+[spike:verify] b58uajlrph5fyoybotiecywq -> verified overall=pass (26s)
+[spike:verify] bb0dtuw5orn919qi2xmbbin7 -> needs_review overall=pass (23s)
+[json-extract] parseQuizVerifyOutput: repaired malformed LLM JSON (level=deterministic, YUK-607 repair band)
+[spike:verify] be9bs0cpg6xlel0caedtxq9q -> verified overall=pass (51s)
+[spike:verify] cex5q24jua1urcl9phkh4y7x -> verified overall=pass (22s)
+[spike:verify] cqonvlypugr0bt3g1cxbmndi -> verified overall=pass (52s)
+[spike:verify] d6tr3ed525bcscqxy330xlkb -> verified overall=pass (30s)
+[spike:verify] e4mhdzr27xeeqjiz7cgvlk6y -> verified overall=pass (43s)
+[spike:verify] e5a9wqhxp2kmf5w96tc1nd7m -> verified overall=pass (37s)
+[spike:verify] f0li1slfnscq6m5728wlfjdb -> needs_review overall=pass (29s)
+[spike:verify] f0oi2923xxbgow11j645ks1a -> needs_review overall=pass (17s)
+[spike:verify] f5k08zf0g2j5ivcjmvi34lsw -> verified overall=pass (30s)
+[spike:verify] fadkfbbm4ithe8ijymosgp1i -> needs_review overall=pass (25s)
+[spike:verify] gr3gzeulby5vf341z8tutevc -> needs_review overall=pass (32s)
+[spike:verify] h0e06jps22ie7qi68pmxu8kj -> verified overall=pass (29s)
+[spike:verify] h408msryx98ehcgww0xw4ti0 -> verified overall=pass (19s)
+[spike:verify] hg16p0njycogfemd2agfiqkc -> verified overall=pass (52s)
+[spike:verify] hq3qge5j6jexyflou0juw8ca -> needs_review overall=pass (27s)
+[json-extract] solve-check: SolutionGenerateTask: repaired malformed LLM JSON (level=deterministic, YUK-607 repair band)
+[spike:verify] icnih28vpj9f8onmws3nrpbg -> verified overall=pass (64s)
+[spike:verify] j2er1luz9frpl0xhpprklzfm -> needs_review overall=pass (33s)
+[spike:verify] j90yj7rewpbhmh0ve504zjna -> needs_review overall=pass (31s)
+[json-extract] parseQuizVerifyOutput: repaired malformed LLM JSON (level=deterministic, YUK-607 repair band)
+[spike:verify] ja8ta8espiqzporeo5oc6xu1 -> failed overall=fail (21s)
+[spike:verify] kw5yqktrpp12i0nw4tffvv81 -> verified overall=pass (19s)
+[spike:verify] kxkodxow0drhqc9hwmbdzwgc -> verified overall=pass (22s)
+[spike:verify] l8stl2xh057gqocuilyt5g91 -> verified overall=pass (56s)
+[spike:verify] l8wkwr9lxha3m3l2n3gyclro -> verified overall=pass (44s)
+[spike:verify] lfudg8qtnm5kiqo0xmggfych -> verified overall=pass (20s)
+[spike:verify] misi0mkv6itjdtt52iopcfaa -> verified overall=pass (34s)
+[json-extract] solve-check: SolutionGenerateTask: repaired malformed LLM JSON (level=deterministic, YUK-607 repair band)
+[spike:verify] mw7fsrctrqrd77arbdby1cjd -> verified overall=pass (33s)
+[spike:verify] n49do1iibgskjyi1cxipi1dy -> verified overall=pass (20s)
+[spike:verify] nm3rdd822wt2vk1tfdxqbw9w -> verified overall=pass (40s)
+[spike:verify] onmwf11iwlmb6tpbmh5l9zfp -> verified overall=pass (18s)
+[spike:verify] pdm0h0yu3ky1maa0oublkyvc -> verified overall=pass (21s)
+[spike:verify] pm1h5afcngp66dmfddmn0kse -> verified overall=pass (20s)
+[spike:verify] pssaom8q2qzcq2b2cc5ltbij -> needs_review overall=pass (23s)
+[spike:verify] q0q6rm83rdln5i0doyb3ghpi -> needs_review overall=pass (26s)
+[spike:verify] qsecm5x3ekchw5o1nlxak1iz -> verified overall=pass (18s)
+[spike:verify] r51q9rej5tu1ylhumpnq9lva -> verified overall=pass (32s)
+[spike:verify] spras90yaksuniryihza39bu -> needs_review overall=pass (24s)
+[spike:verify] svqixuxh5fhdr0c4jxkv4idj -> needs_review overall=pass (20s)
+[spike:verify] swugkgw82o72yls56v9yl3ca -> verified overall=pass (34s)
+[spike:verify] t6x5bsi7r7x44vifvb4jwdrz -> needs_review overall=pass (35s)
+[spike:verify] tljeb2y4cu8z5stcnny9tzpg -> needs_review overall=needs_review (21s)
+[spike:verify] to5cprup6hgalsqgd6lhv8uw -> verified overall=pass (37s)
+[spike:verify] u8r2n7q73e9ljkf3ouxuv4z1 -> verified overall=pass (45s)
+[spike:verify] vcdu205l4ulp1chg41nzuxma -> verified overall=pass (18s)
+[spike:verify] vf941ox6v2z23pioe3sn6vv2 -> verified overall=pass (29s)
+[spike:verify] vzj8j9i6u7mv380vr7gxg13z -> verified overall=pass (48s)
+[spike:verify] w7znuzz7tfa859hasaig4qwy -> verified overall=pass (20s)
+[spike:verify] wpu4iseezi4tdqxb1fr2ya7z -> needs_review overall=pass (24s)
+[spike:verify] wsc7hg4zow8cwu2fhsdad3si -> verified overall=pass (34s)
+[spike:verify] x5z2hor9qduxdrfbrjd5xscq -> needs_review overall=pass (54s)
+[spike:verify] xpekdq7pe894ijvzgeypyg1n -> verified overall=pass (35s)
+[spike:verify] yjhq8q1p10woedfd886ywpdw -> verified overall=pass (57s)
+[spike:verify] za8u5gbs8ne1pe99nddr7u9p -> verified overall=pass (21s)
+[spike:verify] zfdkv3ul99kphw1anmhrxolq -> verified overall=pass (20s)
+[spike:verify] zhrgcv3s5c28wru192zogwhc -> needs_review overall=pass (16s)
+[spike:verify] zi6bp1c4pnlbmctzq6t5bbb5 -> needs_review overall=pass (14s)
+[spike:report] written -> scratchpad/question-supply-spike-report.md (58 questions)
+[spike:export] written -> scratchpad/question-supply-eval.json (58 questions, 4 gen failures)

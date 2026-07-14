@@ -1,0 +1,252 @@
+{
+ "subject": "yingyu",
+ "question_count": 6,
+ "questions": [
+  {
+   "id": "be9bs0cpg6xlel0caedtxq9q",
+   "kind": "short_answer",
+   "difficulty": 2,
+   "prompt_md": "英语定语从句（relative clause）分为限制性（restrictive）和非限制性（non-restrictive）两类。请用你自己的话回答：\n1. 这两类定语从句在意义上和标点上各有什么特点？\n2. 分别举一个英文例句说明：一个是限制性定语从句，一个是非限制性定语从句。\n3. 如果把你举的非限制性定语从句去掉，句子的核心意思会不会受影响？为什么限制性定语从句去掉后意思会受影响？",
+   "reference_md": "参考要点：\n- 限制性定语从句：对先行词起限定/区分作用，说明是\"哪一个\"，与主句之间**不用逗号**隔开，例如：The students who passed the exam were rewarded.（只奖励通过考试的那些学生，去掉从句后指代范围变得不清楚，意思改变）\n- 非限制性定语从句：只是对先行词做补充说明，先行词本身指代已经明确，从句与主句之间**用逗号**隔开，例如：My father, who is a doctor, works in Beijing.（父亲的身份已经唯一确定，从句只是附加信息，去掉后句子主干意思不变）\n- 核心区分点：限制性从句提供的是\"确定所指对象\"必需的信息，去掉会改变或模糊句子原意；非限制性从句提供的是附加信息，去掉不影响句子的核心事实判断。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "是否准确说明限制性与非限制性从句在意义和标点上的区别，并给出恰当例句"
+     }
+    ],
+    "required_points": [
+     "限制性从句无逗号、起限定作用，去掉后意思改变",
+     "非限制性从句有逗号、起补充说明作用，去掉后核心意思不变",
+     "给出一个限制性例句",
+     "给出一个非限制性例句"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.85) — conservative pass",
+     "solver_answer": "限制性定语从句无逗号、紧跟先行词，起限定作用，去掉会改变句意（如 The students who study hard will pass the exam）；非限制性定语从句有逗号隔开，只作补充说明，去掉不影响核心意思（如 My father, who is a doctor, works in Beijing）。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "gr3gzeulby5vf341z8tutevc",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "选择正确的关系词填空，并判断考察的语法点：\n\nI'll never forget the days **____** we spent together in college.\n\n（我永远不会忘记我们大学一起度过的那些日子。）",
+   "reference_md": "B. which（that 也可接受，但选项中未给出则选 which）\n\n解析：这是定语从句中最常见的易错点——关系代词 vs 关系副词的选择。判断依据是看先行词在从句中充当什么成分：把从句还原成完整句子 “We spent the days together in college”，days 在这里是动词 spent 的宾语（度过“那些日子”），因此从句缺的是一个宾语成分，必须用关系代词 which/that 充当宾语，而不能用关系副词 when（when 只能替代时间状语，不能做宾语）。若误选 when，句子会变成 “we spent together in college [在那些日子里]”，spent 后没有宾语，句子不完整。这与 “I still remember the day when we first met” 形成对比——后者 met 不及物，the day 是时间状语，此时才用 when。",
+   "choices_md": [
+    "when",
+    "which",
+    "why",
+    "whom"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"which\" disagrees with reference \"B. which（that 也可接受，但选项中未给出则选 which）\n\n解析：这是定语从句中最常见的易错点——关系代词 vs 关系副词的选择。判断依据是看先行词在从句中充当什么成分：把从句还原成完整句子 “We spent the days together in college”，days 在这里是",
+     "solver_answer": "which"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "pdm0h0yu3ky1maa0oublkyvc",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "选择最恰当的关系词填空：\n\nThe old house ___ roof was damaged in the storm has finally been repaired.",
+   "reference_md": "whose\n\n解析：先行词 the old house 是物，但从句中关系词在从句里作定语，修饰 roof（即“房子的屋顶”），表示所属关系，此时无论先行词是人还是物都应使用 whose。which/that 不能直接表所属关系（除非写成 the roof of which），who 只能指人，因此排除其余选项。",
+   "choices_md": [
+    "whose",
+    "which",
+    "who",
+    "that"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "whose"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "pm1h5afcngp66dmfddmn0kse",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "选择正确的关系词填空：\n\nThe man **____** car was stolen yesterday reported it to the police.\n\n（那个车子昨天被偷的男人向警方报了案。）",
+   "reference_md": "B. whose\n\n解析：先行词 the man 是人，从句中 car 与 man 之间是所属关系（man's car），需要用关系代词 whose 表示所属，相当于连接两句：The man reported it to the police. + His car was stolen yesterday. who/whom 只能指代人本身做主语或宾语，不能表示所属；which 只能指物。因此只有 whose 能把“他的车”这一所属关系接入定语从句。",
+   "choices_md": [
+    "who",
+    "whose",
+    "which",
+    "whom"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "whose"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "q0q6rm83rdln5i0doyb3ghpi",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "选出下列哪一句的关系代词使用是错误的（其余三句均正确）：",
+   "reference_md": "My grandmother, that raised five children alone, is the strongest person I know.\n\n解析：本句中逗号隔开的是非限制性定语从句，先行词 my grandmother 指人。非限制性定语从句**不能**使用 that，只能用 who/whom。其余三句分别正确使用了限制性从句中的 that（可指人或物）、介词+which 结构、以及非限制性从句中正确使用 who，均符合语法规则。",
+   "choices_md": [
+    "My grandmother, that raised five children alone, is the strongest person I know.",
+    "The email that I sent yesterday has not been answered yet.",
+    "This is the laboratory in which the experiment was conducted.",
+    "My grandmother, who raised five children alone, is the strongest person I know."
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"A（My grandmother, that raised five children alone, is the strongest person I know.）\" disagrees with reference \"My grandmother, that raised five children alone, is the strongest person I",
+     "solver_answer": "A（My grandmother, that raised five children alone, is the strongest person I know.）"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "to5cprup6hgalsqgd6lhv8uw",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "阅读下面两个英文句子：\n(1) The house that/which stands on the corner was built in 1920.\n(2) My grandmother, who taught English for thirty years, still reads every day.\n\n请回答：\n1. 句(1)中的关系代词能否换成 that 或者 which？为什么都可以？\n2. 句(2)中，能否把 who 换成 that？请说明理由。\n3. 如果先行词指的是\"物主关系\"（即先行词与从句里的名词是所属关系），一般用哪个关系代词？请另造一个包含该关系代词的英文例句。",
+   "reference_md": "参考要点：\n1. 句(1)是限制性定语从句，先行词 house 是物，在限制性从句中 that 和 which 通常可以互换（英式英语里 which 更常见，美式口语也常用 that），意思不变。\n2. 句(2)是非限制性定语从句（有逗号隔开），**不能**用 that 替换 who/which——英语语法规则里 that 一般不用于引导非限制性定语从句。\n3. 表示所属关系时用关系代词 whose（相当于 his/her/its/their），例如：I met a writer whose novels have been translated into ten languages.（whose novels 表示\"这位作家的小说\"）",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "是否正确判断限制性从句中 that/which 可互换、非限制性从句不能用 that、whose 表所属关系并给出合理例句"
+     }
+    ],
+    "required_points": [
+     "句(1)限制性从句中 that 和 which 可互换",
+     "句(2)非限制性从句不能用 that 替换 who",
+     "所属关系用 whose",
+     "给出包含 whose 的合理例句"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "1. 能，both that/which 均可，因为the house是物，在限定性定语从句中作主语，两者均可指物且可互换；2. 不能换成that，因为该句是非限定性定语从句（有逗号），that不能用于非限定性定语从句，只能用who/which；3. 用whose，例：I have a friend whose father is a famous doctor."
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  }
+ ]
+}

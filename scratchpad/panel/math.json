@@ -1,0 +1,442 @@
+{
+ "subject": "math",
+ "question_count": 10,
+ "questions": [
+  {
+   "id": "d6tr3ed525bcscqxy330xlkb",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "已知二次函数 $y=ax^{2}+bx+c$（$a\\neq0$）的图像开口向下，且与 $x$ 轴恰有两个不同的交点，设两交点的横坐标为 $x_1<x_2$。\n\n(1) 判断 $a$ 的符号，并说明判别式 $\\Delta=b^{2}-4ac$ 与 0 的大小关系，分别说明理由；\n\n(2) 结合图像分析：当 $x$ 取何范围时 $y>0$？请说明理由（可用 $x_1,x_2$ 表示结果）。",
+   "reference_md": "参考答案：\n\n(1) 图像开口向下，说明 $a<0$。与 $x$ 轴有两个不同交点，说明方程 $ax^{2}+bx+c=0$ 有两个不相等的实数根，因此判别式 $\\Delta=b^{2}-4ac>0$。\n\n(2) 因为开口向下，图像在两交点 $x_1,x_2$ 之间位于 $x$ 轴上方（函数值为正），在两交点之外位于 $x$ 轴下方或与轴相交（函数值为负或零）。所以 $y>0$ 当且仅当 $x_1<x<x_2$；当 $x=x_1$ 或 $x=x_2$ 时 $y=0$；当 $x<x_1$ 或 $x>x_2$ 时 $y<0$。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "正确判断 a 的符号与判别式符号，并正确给出 y>0 的取值范围及理由"
+     }
+    ],
+    "keywords": [],
+    "required_points": [
+     "a<0（开口向下）",
+     "Δ=b²-4ac>0（两个不同实根）",
+     "y>0 的范围是 x1<x<x2",
+     "开口向下时两根之间函数值为正、两根之外为负"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=unsupported, confidence=0.00) — conservative pass",
+     "solver_answer": "(1) a<0，Δ>0；(2) 当 x1<x<x2 时 y>0"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "onmwf11iwlmb6tpbmh5l9zfp",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "抛物线 $y = x^2 - 4x + 3$ 在区间 $[0, 2]$ 上的单调性是：\n\nA. 单调递增\nB. 单调递减\nC. 先减后增\nD. 先增后减",
+   "reference_md": "B\n\n解析：将 $y=x^2-4x+3$ 配方为顶点式：$y=(x-2)^2-1$，得对称轴为 $x=2$，顶点为 $(2,-1)$，且开口向上（$a=1>0$）。开口向上的抛物线在对称轴左侧（即 $x<2$）单调递减，在对称轴右侧单调递增。区间 $[0,2]$ 整体落在对称轴左侧（含对称轴处的临界点），故函数在该区间上单调递减。若误认为顶点在区间内部或对称轴计算错误（如误算为 $x=-2$），会错选 C 或 D。",
+   "choices_md": [
+    "A. 单调递增",
+    "B. 单调递减",
+    "C. 先减后增",
+    "D. 先增后减"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "B"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "qsecm5x3ekchw5o1nlxak1iz",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "已知二次函数 $y=-2x^{2}+4x-3$，判断该函数图象的对称轴、开口方向及最值情况。",
+   "reference_md": "A. 对称轴为 $x=1$，开口向下，有最大值 $-1$\n\n解析：对称轴 $x=-\\dfrac{b}{2a}=-\\dfrac{4}{2\\times(-2)}=1$；因 $a=-2<0$，图象开口向下，函数在对称轴处取得最大值 $f(1)=-2(1)^2+4(1)-3=-1$。",
+   "choices_md": [
+    "A. 对称轴为 $x=1$，开口向下，有最大值 $-1$",
+    "B. 对称轴为 $x=-1$，开口向上，有最小值 $-1$",
+    "C. 对称轴为 $x=1$，开口向下，有最大值 $1$",
+    "D. 对称轴为 $x=1$，开口向上，有最小值 $-1$"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "A"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "r51q9rej5tu1ylhumpnq9lva",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_md": "某文具店销售一种计算器，进价为每台 20 元。市场调研显示：当售价定为每台 30 元时，每天可售出 100 台；若售价每提高 1 元，每天销量将减少 5 台（假设该规律持续有效）。设该计算器的售价为 $x$ 元/台（$x\\ge 30$）。\n\n(1) 求该文具店每天销售这种计算器获得的利润 $w$（元）关于售价 $x$（元）的函数关系式，并说明这是哪种函数；\n\n(2) 当售价定为多少元时，每天获得的利润最大？最大利润是多少元？",
+   "reference_md": "(1) $w=-5x^{2}+350x-5000$（$x\\ge30$），是二次函数。\n\n(2) 当售价为 35 元/台时，每天利润最大，最大利润为 1125 元。\n\n解析：\n(1) 每天销量为 $100-5(x-30)=250-5x$（台），每台利润为 $(x-20)$ 元，故\n$w=(x-20)(250-5x)=-5x^{2}+350x-5000$，这是关于 $x$ 的二次函数。\n(2) 配方：$w=-5(x^{2}-70x)-5000=-5\\left[(x-35)^{2}-1225\\right]-5000=-5(x-35)^{2}+1125$。\n因为二次项系数 $-5<0$，抛物线开口向下，故当 $x=35$ 时 $w$ 取得最大值 1125 元。且 $x=35$ 满足 $x\\ge30$ 及销量非负（$250-5x\\ge0\\Rightarrow x\\le50$）的约束，故此时利润最大为 1125 元。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "能正确建立利润与售价的二次函数关系并用配方法或顶点公式求出最大利润"
+     }
+    ],
+    "required_points": [
+     "销量表达式为250-5x",
+     "w=(x-20)(250-5x)=-5x^2+350x-5000",
+     "配方得顶点(35,1125)",
+     "结论：售价35元时利润最大，最大利润1125元"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "w=-5x²+350x-5000（30≤x≤50，二次函数）；当售价定为35元/台时，每天利润最大，最大利润为1125元"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "swugkgw82o72yls56v9yl3ca",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_md": "已知某二次函数的图像与 $x$ 轴交于点 $A(-1,0)$ 和 $B(3,0)$，且图像经过点 $C(1,-8)$。\n\n(1) 求该二次函数的解析式（化为一般式）；\n(2) 求该函数图像的顶点坐标，并说明该点与点 $C$ 之间的关系；\n(3) 判断该函数是否存在最小值，若存在求出该值。",
+   "reference_md": "**求解过程：**\n\n(1) 由于图像与 $x$ 轴交点为 $-1$ 和 $3$，可设交点式 $y=a(x+1)(x-3)$。\n代入 $C(1,-8)$：$a(1+1)(1-3)=a\\cdot2\\cdot(-2)=-4a=-8$，解得 $a=2$。\n所以 $y=2(x+1)(x-3)=2x^2-4x-6$。\n\n(2) 对称轴 $x=-\\dfrac{b}{2a}=-\\dfrac{-4}{2\\times2}=1$，代入求顶点纵坐标：\n$y=2(1)^2-4(1)-6=2-4-6=-8$。\n顶点坐标为 $(1,-8)$，恰好与点 $C(1,-8)$ 重合——因为 $x=1$ 正是两根 $-1$ 与 $3$ 的中点，对称轴必过此中点，而 $C$ 又落在该竖线上且在图像上，故 $C$ 即为顶点。\n\n(3) 因为 $a=2>0$，抛物线开口向上，函数存在最小值，最小值为 $y_{min}=-8$（在 $x=1$ 处取得），无最大值。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "解析式求解、顶点计算与最值判断是否全部正确且说明合理"
+     }
+    ],
+    "required_points": [
+     "设交点式y=a(x+1)(x-3)并代入C求出a=2",
+     "一般式y=2x^2-4x-6",
+     "顶点坐标(1,-8)，指出其与两根中点/点C的关系",
+     "a>0开口向上，存在最小值-8，无最大值"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=partial, confidence=0.85) — conservative pass",
+     "solver_answer": "y=2x²-4x-6；顶点坐标为(1,-8)，即顶点就是点C；函数存在最小值，最小值为-8（在x=1时取得）"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "vf941ox6v2z23pioe3sn6vv2",
+   "kind": "computation",
+   "difficulty": 2,
+   "prompt_md": "已知二次函数 $y=-2x^2+4x-1$。\n\n(1) 用配方法将其化为顶点式，写出顶点坐标与对称轴方程；\n(2) 判断该函数在 $x\\in\\mathbb{R}$ 上是否存在最大值或最小值，求出该值；\n(3) 写出函数的单调增区间和单调减区间。",
+   "reference_md": "**配方过程：**\n$$y=-2x^2+4x-1=-2(x^2-2x)-1=-2[(x-1)^2-1]-1=-2(x-1)^2+1$$\n\n(1) 顶点式为 $y=-2(x-1)^2+1$，顶点坐标为 $(1,1)$，对称轴方程为 $x=1$。\n\n(2) 因为二次项系数 $a=-2<0$，抛物线开口向下，所以函数存在最大值，当 $x=1$ 时取得最大值 $y_{max}=1$，无最小值。\n\n(3) 由开口向下、对称轴 $x=1$ 可知：函数在 $(-\\infty,1]$ 上单调递增，在 $[1,+\\infty)$ 上单调递减。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "配方结果、顶点、对称轴、最值与单调区间是否全部正确"
+     }
+    ],
+    "required_points": [
+     "配方得到 y=-2(x-1)^2+1",
+     "顶点坐标(1,1)，对称轴x=1",
+     "开口向下，存在最大值1（无最小值）",
+     "增区间(-∞,1]，减区间[1,+∞)"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.97) — conservative pass",
+     "solver_answer": "顶点式 y=-2(x-1)²+1，顶点(1,1)，对称轴x=1；当x=1时取最大值1，无最小值；增区间(-∞,1]，减区间[1,+∞)"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "wsc7hg4zow8cwu2fhsdad3si",
+   "kind": "short_answer",
+   "difficulty": 2,
+   "prompt_md": "已知二次函数 $y=-2x^{2}+4x+1$。\n\n(1) 求该函数图像的对称轴方程和顶点坐标；\n\n(2) 判断函数有最大值还是最小值，并求出该值；\n\n(3) 写出函数的单调递增区间和单调递减区间，并说明理由。",
+   "reference_md": "参考答案：\n\n(1) 由 $y=ax^{2}+bx+c$ 中 $a=-2,\\,b=4,\\,c=1$，对称轴为 $x=-\\dfrac{b}{2a}=-\\dfrac{4}{2\\times(-2)}=1$；代入原式得顶点纵坐标 $y=-2(1)^{2}+4(1)+1=3$，故顶点坐标为 $(1,3)$。\n\n(2) 因为 $a=-2<0$，图像开口向下，顶点是图像最高点，所以函数在 $x=1$ 处取得最大值，最大值为 $3$，没有最小值。\n\n(3) 开口向下的抛物线以对称轴为界，左侧递增、右侧递减：单调递增区间为 $(-\\infty,1]$，单调递减区间为 $[1,+\\infty)$。理由是二次函数图像关于对称轴 $x=1$ 对称，且 $a<0$ 时离对称轴越远函数值越小。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "对称轴、顶点、最值、单调区间均正确且推导合理"
+     }
+    ],
+    "keywords": [],
+    "required_points": [
+     "对称轴 x=1（用 -b/2a 求出）",
+     "顶点坐标 (1,3)",
+     "因 a=-2<0 开口向下，有最大值 3，无最小值",
+     "单调递增区间 (-∞,1]，单调递减区间 [1,+∞)"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "对称轴 x=1，顶点 (1,3)；函数有最大值，最大值为 3；单调递增区间为 (-∞,1]，单调递减区间为 [1,+∞)"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "xpekdq7pe894ijvzgeypyg1n",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_md": "某公园计划在人工湖上修建一座拱桥，桥洞的形状可以看作抛物线的一部分。经测量，桥洞的跨度（桥洞与水面两交点之间的距离）为 8 米，拱高（桥洞最高点到水面的竖直距离）为 4 米。以桥洞与水面两个交点连线的中点为原点 $O$，水面所在直线为 $x$ 轴，过 $O$ 且垂直于水面的直线为 $y$ 轴，建立平面直角坐标系（单位：米）。\n\n(1) 求该抛物线的解析式；\n\n(2) 若某次汛期水位比原来上涨了 2 米，求此时桥洞下方水面的宽度（即水面与抛物线两交点之间的距离），结果保留根号。",
+   "reference_md": "(1) $y=-\\dfrac{1}{4}x^{2}+4$\n\n(2) 桥洞下方水面宽度为 $4\\sqrt{2}$ 米，约 5.66 米。\n\n解析：\n(1) 由跨度 8 米知抛物线与 $x$ 轴的两个交点为 $(-4,0)$、$(4,0)$，拱高 4 米即抛物线的顶点为 $(0,4)$，由对称性设 $y=ax^{2}+4$。代入 $(4,0)$：$16a+4=0\\Rightarrow a=-\\dfrac14$，故 $y=-\\dfrac14x^{2}+4$。\n(2) 原水面对应 $y=0$（$x$ 轴），水位上涨 2 米后新的水面线为 $y=2$。令 $-\\dfrac14x^{2}+4=2$，得 $x^{2}=8$，$x=\\pm2\\sqrt{2}$。故水面宽度为 $2\\sqrt2-(-2\\sqrt2)=4\\sqrt2$ 米。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "能正确建立抛物线解析式并正确求出水位上涨后的水面宽度"
+     }
+    ],
+    "required_points": [
+     "顶点为(0,4)，与x轴交点为(±4,0)，得y=-1/4x^2+4",
+     "上涨2米后水面对应y=2",
+     "解出x=±2√2",
+     "最终宽度为4√2米"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "(1) y=-1/4x^2+4（-4≤x≤4）；(2) 水面宽度为4√2米"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "za8u5gbs8ne1pe99nddr7u9p",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "已知二次函数 $y = -2(x+1)^2 + 5$，下列关于其图像与性质的说法中，正确的是：\n\nA. 图像开口向上，顶点坐标为 $(-1, 5)$\nB. 图像开口向下，顶点坐标为 $(-1, 5)$\nC. 图像开口向下，顶点坐标为 $(1, 5)$\nD. 图像开口向下，对称轴为直线 $x = 5$",
+   "reference_md": "B\n\n解析：函数已写成顶点式 $y = a(x-h)^2 + k$，此处 $a=-2, h=-1, k=5$。因为 $a=-2<0$，图像开口向下；顶点坐标为 $(h,k)=(-1,5)$；对称轴为直线 $x=h=-1$。选项 A 开口方向错，C 顶点横坐标符号弄反（误把 $x+1$ 看成 $x-1$ 导致 $h$ 取反），D 把对称轴与顶点纵坐标混淆。",
+   "choices_md": [
+    "A. 图像开口向上，顶点坐标为 $(-1, 5)$",
+    "B. 图像开口向下，顶点坐标为 $(-1, 5)$",
+    "C. 图像开口向下，顶点坐标为 $(1, 5)$",
+    "D. 图像开口向下，对称轴为直线 $x = 5$"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "B"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "zi6bp1c4pnlbmctzq6t5bbb5",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "若二次函数 $y=x^{2}-2x+m$ 的图象与 $x$ 轴恰有两个不同的交点，求 $m$ 的取值范围。",
+   "reference_md": "A. $m<1$\n\n解析：图象与 $x$ 轴有两个不同交点等价于对应一元二次方程 $x^{2}-2x+m=0$ 有两个不相等实根，即判别式 $\\Delta=b^{2}-4ac=(-2)^{2}-4\\times1\\times m=4-4m>0$，解得 $m<1$。",
+   "choices_md": [
+    "A. $m<1$",
+    "B. $m>1$",
+    "C. $m\\le 1$",
+    "D. $m\\ge 1$"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"A. m<1\" disagrees with reference \"A. $m<1$\n\n解析：图象与 $x$ 轴有两个不同交点等价于对应一元二次方程 $x^{2}-2x+m=0$ 有两个不相等实根，即判别式 $\\Delta=b^{2}-4ac=(-2)^{2}-4\\times1\\times m=4-4m>0$，解得 $m<1$。\" (normalized)",
+     "solver_answer": "A. m<1"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  }
+ ]
+}

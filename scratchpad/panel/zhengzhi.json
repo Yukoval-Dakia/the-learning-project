@@ -1,0 +1,189 @@
+{
+ "subject": "zhengzhi",
+ "question_count": 4,
+ "questions": [
+  {
+   "id": "e4mhdzr27xeeqjiz7cgvlk6y",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "简答题：我国实行社会主义市场经济体制，既强调“市场在资源配置中起决定性作用”，又要求“更好发挥政府作用”。请结合市场调节的局限性，说明这两者为什么需要结合、缺一不可。",
+   "reference_md": "参考要点：\n1. 市场通过价格机制、供求机制、竞争机制引导资金、劳动力等生产要素流向效益较好的领域，能够灵活、及时地反映资源稀缺程度和供求变化，从而提高资源配置效率，这是市场发挥决定性作用的依据。\n2. 但市场调节存在固有局限性：自发性（容易导致唯利是图、损害公共利益）、盲目性（经营者信息不完全，易造成生产结构失衡、资源浪费）、滞后性（价格和供求信号存在时滞，易引发经济波动，如产能过剩或短缺）。\n3. 市场在外部性、公共产品供给、自然垄断、收入分配公平、宏观经济总量平衡（如通胀、失业）等方面存在“市场失灵”，单靠市场无法解决。\n4. 因此需要政府运用经济、法律、行政等手段进行宏观调控，弥补市场失灵、维护市场秩序、促进社会公平和经济稳定运行，二者相互补充，缺一不可。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "是否准确说明市场决定性作用的依据与市场调节局限性，并给出政府作用的必要性"
+     }
+    ],
+    "keywords": [
+     "价格机制",
+     "自发性",
+     "盲目性",
+     "滞后性",
+     "市场失灵",
+     "宏观调控"
+    ],
+    "required_points": [
+     "市场通过价格/供求/竞争机制提高资源配置效率",
+     "市场调节存在自发性、盲目性、滞后性等局限",
+     "政府宏观调控弥补市场失灵、维护公平与经济稳定"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=unsupported, confidence=0.00) — conservative pass",
+     "solver_answer": "市场调节虽然能有效配置资源、提高效率，但存在自发性、盲目性和滞后性等局限，且在公共产品供给、外部性、收入分配等方面存在'市场失灵'，无法完全依靠市场自身解决。因此必须由政府发挥宏观调控、市场监管、公共服务等作用来弥补市场调节的不足；同时政府作用也要以尊重市场规律为前提，不能取代市场对资源配置的决定性作用。二者相互补充、缺一不可，才能既保证效率又弥补市场失灵、实现资源合理配置与社会公平。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "l8wkwr9lxha3m3l2n3gyclro",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "简答题：我国宏观调控综合运用哪几类主要手段？请分别举一个具体例子说明经济手段、法律手段、行政手段在实际调控中的运用。",
+   "reference_md": "参考要点：\n1. 经济手段：国家通过财政政策（如调整税率、发行国债、财政支出安排）和货币政策（如调整存款准备金率、基准利率、公开市场操作）间接调节经济运行。例：中央银行下调存款准备金率以增加市场货币供应、刺激投资和消费。\n2. 法律手段：国家运用经济法律法规规范市场主体行为、维护市场秩序。例：制定并实施《反垄断法》，规制企业滥用市场支配地位、维护公平竞争。\n3. 行政手段：国家通过行政命令、指令、规划等直接干预经济活动，具有强制性和即时性，多用于应急或特殊情形。例：突发公共卫生事件期间，政府直接下达应急物资统一调配指令。\n4. 我国宏观调控以经济手段和法律手段为主，行政手段为辅，三者相互配合使用。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "是否准确列举三类调控手段并各配以恰当例证"
+     }
+    ],
+    "keywords": [
+     "经济手段",
+     "法律手段",
+     "行政手段",
+     "财政政策",
+     "货币政策"
+    ],
+    "required_points": [
+     "经济手段：财政政策/货币政策及具体举例",
+     "法律手段：制定运用经济法律法规及具体举例",
+     "行政手段：行政命令/指令性措施及具体举例"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.95) — conservative pass",
+     "solver_answer": "我国宏观调控主要综合运用经济手段、法律手段、行政手段三类。经济手段如中央银行调整存款准备金率/利率或政府实施减税降费以调节货币供给和企业投资；法律手段如国家制定并实施《中华人民共和国反垄断法》，通过立法规范市场竞争秩序；行政手段如政府在特殊时期（如疫情期间）对重要民生商品发布临时性行政限价令或对高耗能、高污染企业下达责令停产整顿的行政指令。三种手段需综合运用、协调配合，以经济手段为主，法律手段为保"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "wpu4iseezi4tdqxb1fr2ya7z",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "我国社会主义市场经济体制的显著优势之一，是能够将市场在资源配置中的作用与政府作用有机结合起来。下列对二者关系的表述，最准确的是：",
+   "reference_md": "市场调节是基础性的，政府调控只在市场失灵领域发挥作用，二者不可相互替代\n\n解析：社会主义市场经济体制的核心是使市场在资源配置中起决定性作用，同时更好发挥政府作用。市场调节存在自发性、盲目性、滞后性等固有缺陷（即“市场失灵”），如公共产品供给不足、外部性问题、收入分配差距扩大等，这些领域需要政府通过宏观调控（经济手段、法律手段、行政手段）加以弥补。二者不是相互替代、相互对立的关系，而是功能互补、有机结合的关系。",
+   "choices_md": [
+    "市场调节是基础性的，政府调控只在市场失灵领域发挥作用，二者不可相互替代",
+    "市场调节应完全让位于政府计划，以避免生产的盲目性和自发性",
+    "政府调控应主导资源配置的全部环节，市场只起辅助性、次要性作用",
+    "市场调节和政府调控是两种相互对立、不能并存的资源配置方式"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "fail"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "市场调节是基础性的，政府调控只在市场失灵领域发挥作用，二者不可相互替代"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "fail",
+     "unique_answer": "pass",
+     "distractor_power": "fail"
+    }
+   }
+  },
+  {
+   "id": "zfdkv3ul99kphw1anmhrxolq",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "某年，为应对经济运行中出现的通货膨胀压力，中国人民银行连续多次上调存款准备金率，并适度提高基准利率。这一举措属于国家宏观调控手段中的：",
+   "reference_md": "经济手段\n\n解析：存款准备金率、利率等属于货币政策工具，是国家运用价格、税收、信贷等经济杠杆间接调节经济运行的方式，属于宏观调控的经济手段。法律手段是通过制定和运用经济法律法规规范市场主体行为；行政手段是运用行政命令、指标、规定等直接进行调节，具有直接性、迅速性但也容易出现“一刀切”问题；市场自发调节并非国家宏观调控手段，而是市场机制本身的作用方式。三种宏观调控手段中，经济手段通常是主要手段，因其更能尊重价值规律、发挥市场主体的自主性。",
+   "choices_md": [
+    "经济手段",
+    "法律手段",
+    "行政手段",
+    "市场自发调节手段"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "经济手段"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  }
+ ]
+}

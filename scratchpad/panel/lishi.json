@@ -1,0 +1,158 @@
+{
+ "subject": "lishi",
+ "question_count": 4,
+ "questions": [
+  {
+   "id": "bb0dtuw5orn919qi2xmbbin7",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "关于辛亥革命的历史意义，下列表述最准确的一项是：",
+   "reference_md": "A. 辛亥革命推翻了清王朝的统治，结束了中国两千多年的君主专制制度，建立了亚洲第一个资产阶级共和国——中华民国\n\n解析：辛亥革命的核心历史意义在于终结帝制、建立共和政体，但它并未彻底完成反帝反封建的任务（B错），民国建立后政局长期动荡、军阀混战，并未实现民主政治的稳定运行（C错），且辛亥革命建立的是资产阶级共和国而非社会主义制度（D错，中国社会主义制度确立于1956年三大改造完成后）。",
+   "choices_md": [
+    "A. 辛亥革命推翻了清王朝的统治，结束了中国两千多年的君主专制制度，建立了亚洲第一个资产阶级共和国",
+    "B. 辛亥革命彻底完成了反帝反封建的革命任务",
+    "C. 辛亥革命使中国迅速实现了民主政治的长期稳定运行",
+    "D. 辛亥革命直接在中国建立起了社会主义制度"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"A\" disagrees with reference \"A. 辛亥革命推翻了清王朝的统治，结束了中国两千多年的君主专制制度，建立了亚洲第一个资产阶级共和国——中华民国\n\n解析：辛亥革命的核心历史意义在于终结帝制、建立共和政体，但它并未彻底完成反帝反封建的任务（B错），民国建立后政局长期动荡、军阀混战，并未实现民主政治的稳定运行（C错），且辛亥革命建立的是资产阶级共和",
+     "solver_answer": "A"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "hq3qge5j6jexyflou0juw8ca",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "1911年10月10日爆发的武昌起义，直接导火索是清政府在同年出台的哪一项政策，激化了民众（尤其是川、鄂等省绅商）的不满？",
+   "reference_md": "铁路干线国有化政策（即“铁路国有”，将原本商办的粤汉、川汉铁路收归国有并转让给外国银行团），引发保路运动，为武昌起义提供了直接契机。\n解析：1911年5月清政府宣布“铁路国有”，四川保路运动随之爆发，清廷调湖北新军入川镇压，武汉防务空虚，革命党人趁机于10月10日发动起义，史称武昌起义，是辛亥革命的开端。",
+   "choices_md": [
+    "推行“铁路国有”政策，激起保路运动",
+    "颁布《钦定宪法大纲》",
+    "签订《辛丑条约》",
+    "设立责任内阁但仍以皇族为主"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"A（推行“铁路国有”政策，激起保路运动）\" disagrees with reference \"铁路干线国有化政策（即“铁路国有”，将原本商办的粤汉、川汉铁路收归国有并转让给外国银行团），引发保路运动，为武昌起义提供了直接契机。\n解析：1911年5月清政府宣布“铁路国有”，四川保路运动随之爆发，清廷调湖北新军入川镇压，武汉防务空虚，革命党人趁机于10月10日发动起义，",
+     "solver_answer": "A（推行“铁路国有”政策，激起保路运动）"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "pssaom8q2qzcq2b2cc5ltbij",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "1912年孙中山在南京就任中华民国临时大总统后不久即辞职，将职位让与袁世凯，这一结果最主要是由当时哪一现实政治力量对比决定的？",
+   "reference_md": "革命党人掌握的军事和财政力量薄弱，而袁世凯手握北洋新军且获得列强与部分立宪派支持，革命党为尽快推翻清朝、避免南北分裂和内战，被迫以“清帝退位”换取让位于袁世凯。\n解析：南京临时政府成立时财政拮据、军事力量有限，袁世凯凭借北洋军实力和与列强的联系，在南北议和中占据主导；孙中山提出“清帝退位、袁世凯拥护共和”即让位的条件，最终促成清朝灭亡但也埋下了此后北洋军阀专权的隐患。",
+   "choices_md": [
+    "革命党军事、财政实力不足，袁世凯掌握北洋军并获列强支持",
+    "袁世凯是同盟会成员，众望所归",
+    "孙中山主动放弃共和理念",
+    "列强直接出兵扶植袁世凯上台"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"A：革命党军事、财政实力不足，袁世凯掌握北洋军并获列强支持\" disagrees with reference \"革命党人掌握的军事和财政力量薄弱，而袁世凯手握北洋新军且获得列强与部分立宪派支持，革命党为尽快推翻清朝、避免南北分裂和内战，被迫以“清帝退位”换取让位于袁世凯。\n解析：南京临时政府成立时财政拮据、军事力量有限，袁世凯凭借北洋军实力和与列强的联系，在南北议和",
+     "solver_answer": "A：革命党军事、财政实力不足，袁世凯掌握北洋军并获列强支持"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "vcdu205l4ulp1chg41nzuxma",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "1911年10月10日，成为辛亥革命爆发标志的事件是：",
+   "reference_md": "A. 武昌起义\n\n解析：1911年10月10日，湖北新军中受革命党人影响的士兵在武昌发动兵变，占领武昌并成立湖北军政府，史称武昌起义，各省随即纷纷宣布独立响应，这一事件通常被视为辛亥革命全面爆发的标志。戊戌变法（1898年）与甲午中日战争（1894—1895年）均早于辛亥革命，五四运动（1919年）则发生在辛亥革命之后，二者与武昌起义的因果关系不同。",
+   "choices_md": [
+    "A. 武昌起义",
+    "B. 戊戌变法",
+    "C. 甲午中日战争",
+    "D. 五四运动"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "A. 武昌起义"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  }
+ ]
+}

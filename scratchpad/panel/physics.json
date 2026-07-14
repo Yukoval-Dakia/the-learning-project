@@ -1,0 +1,368 @@
+{
+ "subject": "physics",
+ "question_count": 8,
+ "questions": [
+  {
+   "id": "b1twkn9mkj8ovohf3lmj5ulg",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "质量为 $m$ 的物块置于倾角为 $\\theta$ 的光滑斜面上，斜面固定不动。物块由静止释放，沿斜面下滑。取重力加速度为 $g$，斜面与物块间无摩擦。物块沿斜面方向的加速度大小为：",
+   "reference_md": "正确选项：$a=g\\sin\\theta$\n\n解析：以物块为研究对象，受重力 $mg$（竖直向下）与斜面法向支持力 $N$（垂直斜面）。沿斜面方向（取下滑为正）只有重力沿该方向的分量 $mg\\sin\\theta$ 做功/产生加速度，垂直斜面方向合力为零（$N=mg\\cos\\theta$，用于求摩擦力时才需要，但本题无摩擦）。由牛顿第二定律沿斜面方向：$mg\\sin\\theta=ma$，解得 $a=g\\sin\\theta$。量纲核对：$g\\sin\\theta$ 单位为 $\\mathrm{m/s^2}$，与加速度量纲一致。当 $\\theta\\to90^\\circ$ 时 $a\\to g$（自由落体），当 $\\theta\\to0$ 时 $a\\to0$（水平面上不下滑），符合物理直觉。",
+   "choices_md": [
+    "$a=g\\sin\\theta$",
+    "$a=g\\cos\\theta$",
+    "$a=g\\tan\\theta$",
+    "$a=g$（与 $\\theta$ 无关）"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"A（a = g sinθ）\" disagrees with reference \"正确选项：$a=g\\sin\\theta$\n\n解析：以物块为研究对象，受重力 $mg$（竖直向下）与斜面法向支持力 $N$（垂直斜面）。沿斜面方向（取下滑为正）只有重力沿该方向的分量 $mg\\sin\\theta$ 做功/产生加速度，垂直斜面方向合力为零（$N=mg\\cos\\theta$，用",
+     "solver_answer": "A（a = g sinθ）"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "f0oi2923xxbgow11j645ks1a",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "质量为60 kg的乘客站在电梯内的体重秤上。电梯做匀加速上升运动，加速度大小为2 m/s²，重力加速度取g=10 m/s²。此时体重秤的示数（乘客对秤的压力，即视重）最接近下列哪个值？\n\nA. 480 N\nB. 600 N\nC. 720 N\nD. 840 N",
+   "reference_md": "正确选项：C. 720 N\n\n解析：对乘客受力分析，竖直方向受重力mg（方向向下）和秤的支持力N（方向向上）。电梯匀加速上升，乘客加速度方向也向上，大小为a=2 m/s²。\n\n由牛顿第二定律，取向上为正方向：\nN − mg = ma\nN = m(g + a) = 60 × (10 + 2) = 720 N\n\n由牛顿第三定律，乘客对秤的压力（视重）与秤对乘客的支持力N大小相等，故示数为720 N。可见加速上升时视重大于实际重力（600 N），这是超重现象。",
+   "choices_md": [
+    "480 N",
+    "600 N",
+    "720 N",
+    "840 N"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"C. 720 N\" disagrees with reference \"正确选项：C. 720 N\n\n解析：对乘客受力分析，竖直方向受重力mg（方向向下）和秤的支持力N（方向向上）。电梯匀加速上升，乘客加速度方向也向上，大小为a=2 m/s²。\n\n由牛顿第二定律，取向上为正方向：\nN − mg = ma\nN = m(g + a) = 60 × (10 + 2) = 7",
+     "solver_answer": "C. 720 N"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "f5k08zf0g2j5ivcjmvi34lsw",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_md": "质量为 8 kg 的物体静止放置在水平地面上，物体与地面间的动摩擦因数 μ = 0.25。现用大小为 40 N、方向与水平方向成 37° 角斜向上的拉力 F 拉动该物体，使其沿水平方向做直线运动。（取 g = 10 m/s²，sin37° = 0.6，cos37° = 0.8）\n\n(1) 求物体运动过程中受到的摩擦力大小；\n(2) 求物体的加速度大小。",
+   "reference_md": "a = 2.25 m/s²，摩擦力 f = 14 N\n\n解析：\n1) 竖直方向物体无加速度，由牛顿第二定律（竖直方向合力为零）：N + F sin37° = mg，得 N = mg − F sin37° = 8×10 − 40×0.6 = 80 − 24 = 56 N。\n2) 摩擦力由滑动摩擦定律 f = μN = 0.25×56 = 14 N（方向与运动方向相反）。\n3) 水平方向应用牛顿第二定律：F cos37° − f = ma，即 40×0.8 − 14 = 32 − 14 = 18 N = 8 kg × a，解得 a = 18/8 = 2.25 m/s²。\n\n关键点：斜向上的拉力会分担一部分重力，使地面对物体的支持力（进而是摩擦力）小于 mg，这是本题区别于水平拉力问题的核心。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 0.6,
+      "descriptor": "最终加速度数值正确（2.25 m/s²）且单位正确"
+     },
+     {
+      "name": "method",
+      "weight": 0.4,
+      "descriptor": "能正确写出竖直方向力平衡求法向力、再用滑动摩擦定律求摩擦力、最后用牛顿第二定律求加速度的完整推导链路"
+     }
+    ],
+    "keywords": [
+     "牛顿第二定律",
+     "法向力",
+     "滑动摩擦力",
+     "分力"
+    ],
+    "required_points": [
+     "竖直方向：N = mg − F sin37° 求出法向力 N = 56 N",
+     "摩擦力 f = μN = 14 N",
+     "水平方向：F cos37° − f = ma 求出 a = 2.25 m/s²"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=partial, confidence=0.90) — conservative pass",
+     "solver_answer": "摩擦力 f = 14 N；加速度 a = 2.25 m/s²"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "icnih28vpj9f8onmws3nrpbg",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "在光滑水平桌面上，物块 A（质量 $m_1$）与物块 B（质量 $m_2$）用一根轻质不可伸长的细绳相连，A 在前、B 在后。现用水平方向的拉力 $F$ 拉物块 A，使系统沿绳方向做匀加速直线运动。\n\n(1) 用牛顿第二定律推导整个系统的加速度 $a$ 的表达式；\n\n(2) 用隔离法求绳中张力 $T$ 的表达式，并说明为什么必须对单个物体（而不是整体）进行受力分析才能求出内力 $T$；\n\n(3) 若桌面并非光滑，A、B 与桌面间的动摩擦因数均为 $\\mu$，定性说明此时 $a$ 和 $T$ 会如何变化（不要求给出具体数值表达式，只需说明变化趋势及原因）。",
+   "reference_md": "参考答案：\n\n**(1) 整体法求加速度**\n\n将 A、B 视为一个整体，系统所受外力只有水平拉力 $F$（绳的张力 $T$ 是系统内力，整体法中相互抵消，不出现在整体方程里）。桌面光滑，无摩擦力。\n\n由牛顿第二定律：$F = (m_1+m_2)a$\n\n解得：$a = \\dfrac{F}{m_1+m_2}$\n\n**(2) 隔离法求张力 $T$**\n\n单独取物块 B 为研究对象：B 只受绳的拉力 $T$（水平方向，指向 A 一侧），由牛顿第二定律：\n\n$T = m_2 a = \\dfrac{m_2 F}{m_1+m_2}$\n\n（也可隔离 A 验证：A 受 $F$ 和绳的反作用力 $T'$，$F - T' = m_1 a$，代入同样得到一致结果，$T'=T$ 由牛顿第三定律。）\n\n**为什么必须隔离**：张力 $T$ 是系统内部两物体之间的相互作用力（绳对 A、绳对 B 的力互为牛顿第三定律作用力对），对整体列方程时内力成对抵消、不出现在方程中，因此整体法只能求出系统的共同加速度 $a$，无法求出内力 $T$；只有把某一个物体单独隔离出来，将 $T$ 作为该物体受到的外力代入牛顿第二定律，才能解出 $T$。\n\n**(3) 有摩擦时的定性分析**\n\n此时整体在水平方向除 $F$ 外还多了摩擦阻力 $f = \\mu(m_1+m_2)g$（方向与运动方向相反）。整体方程变为 $F - \\mu(m_1+m_2)g = (m_1+m_2)a$，故加速度 $a$ 比光滑情形减小。\n\n对 B 隔离分析：B 受绳的张力 $T$（向前）和摩擦力 $\\mu m_2 g$（向后），方程为 $T - \\mu m_2 g = m_2 a$。由于 $a$ 减小，且这里额外减去了 $\\mu m_2 g$，所以 $T$ 比光滑情形也减小。总体结论：摩擦力使系统加速度减小，也使绳中张力减小，因为摩擦力分担了一部分需要绳传递的净驱动力。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "整体法与隔离法方程正确，张力推导正确，摩擦定性分析方向正确并给出物理原因"
+     }
+    ],
+    "required_points": [
+     "整体法：F=(m1+m2)a，得a=F/(m1+m2)",
+     "隔离B（或A）：T=m2·a=m2F/(m1+m2)",
+     "说明张力是内力，整体法中抵消，必须隔离单个物体才能求出",
+     "解释为何隔离法有效：把内力视为该物体所受外力代入牛顿第二定律",
+     "有摩擦时：a减小，T也减小，且说明原因（摩擦力分担驱动力/减少了净合力）"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=partial, confidence=0.85) — conservative pass",
+     "solver_answer": "a=F/(m1+m2)；T=m2F/(m1+m2)（隔离B物块所得，与隔离A物块F-T=m1a联立结果一致）；粗糙时a减小为[F-μ(m1+m2)g]/(m1+m2)，T的变化需由T'=m2a'+μm2g具体判断，一般随F远大于摩擦力时T也减小"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "misi0mkv6itjdtt52iopcfaa",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "一个人站在电梯内的体重计上，人的质量为 $m$，当地重力加速度为 $g$。电梯先以加速度 $a$（$0<a<g$）匀加速上升，随后又以同样大小的加速度 $a$ 匀减速上升（即加速度方向向下）。\n\n请分别写出这两个阶段体重计示数 $N$ 的表达式，并说明其物理意义（即体重计示数与人的真实重力 $mg$ 相比是偏大还是偏小），要求写出完整的受力分析和牛顿第二定律推导过程。",
+   "reference_md": "参考答案：\n\n**阶段一（匀加速上升，加速度方向向上，取向上为正方向）**\n\n对人受力分析：竖直方向受重力 $mg$（向下）和体重计对人的支持力 $N$（向上，大小等于示数，由牛顿第三定律）。\n\n由牛顿第二定律：$N - mg = ma$\n\n解得：$N = m(g+a)$\n\n此时 $N > mg$，即体重计示数大于人的真实重力，人处于超重状态。\n\n**阶段二（匀减速上升，加速度方向向下，仍取向上为正方向，此时加速度为 $-a$）**\n\n同理：$N - mg = m(-a) = -ma$\n\n解得：$N = m(g-a)$\n\n此时 $N < mg$，即体重计示数小于人的真实重力，人处于失重状态。\n\n**物理意义**：体重计示数 $N$ 反映的是人受到的支持力（视重），而不是人的真实重力 $mg$（真实重力恒定，取决于 $m$ 和 $g$，不随运动状态改变）。当物体具有向上的加速度分量时超重（$N>mg$），具有向下的加速度分量时失重（$N<mg$）；若 $a=g$ 且方向向下（自由落体），则 $N=0$，完全失重。本题的关键是牛顿第二定律 $F_{合}=ma$ 中合力方向与加速度方向一致，而示数变化的根源在于支持力 $N$ 随加速度改变，重力 $mg$ 本身不变。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "两阶段受力分析与牛顿第二定律方程正确，结论超重/失重判断正确"
+     }
+    ],
+    "required_points": [
+     "受力分析：重力mg向下，支持力N向上",
+     "牛顿第二定律方程 N-ma=ma 或 N=m(g+a)/N=m(g-a) 形式正确",
+     "阶段一 N=m(g+a)，N>mg，超重",
+     "阶段二 N=m(g-a)，N<mg，失重",
+     "说明视重N与真实重力mg的区别：真实重力不变，示数随加速度变化"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=partial, confidence=0.90) — conservative pass",
+     "solver_answer": "加速上升阶段：N₁=m(g+a)，大于mg，即超重；减速上升（加速度向下）阶段：N₂=m(g-a)，小于mg，即失重。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "mw7fsrctrqrd77arbdby1cjd",
+   "kind": "computation",
+   "difficulty": 4,
+   "prompt_md": "如图所示的连接体系统：质量 m_A = 3 kg 的滑块 A 放在水平桌面上，桌面与滑块间光滑（摩擦忽略不计）。滑块 A 通过一根轻质不可伸长的细绳，绕过桌边一个质量、摩擦均可忽略的定滑轮，与质量 m_B = 2 kg 的物块 B 相连，B 悬挂在桌边竖直下垂。释放系统后 A、B 一起由静止开始运动。（取 g = 10 m/s²）\n\n(1) 求系统运动的加速度大小；\n(2) 求绳中张力的大小。",
+   "reference_md": "a = 4 m/s²，T = 12 N\n\n解析：\n设绳不可伸长、滑轮光滑，A 与 B 的加速度大小相等，记为 a；绳中张力大小处处相等，记为 T。\n对 A（水平方向，桌面光滑无摩擦）应用牛顿第二定律：T = m_A a。\n对 B（竖直方向，受重力 m_B g 向下、张力 T 向上）应用牛顿第二定律：m_B g − T = m_B a。\n将两式相加消去 T：m_B g = (m_A + m_B) a，解得 a = m_B g / (m_A + m_B) = (2×10)/(3+2) = 20/5 = 4 m/s²。\n代入 T = m_A a = 3×4 = 12 N。\n校验：对 B 代入验证 m_B g − T = 20 − 12 = 8 N = m_B a = 2×4 = 8 N，两边相等，结果自洽。\n\n关键点：本题是牛顿第二定律对连接体（隔离体法）的典型应用——分别对 A、B 隔离受力分析，用绳的约束（等大小加速度、等大小张力）联立求解，而不能把系统当整体直接套用 F=ma（因为重力 m_B g 不是作用在整个系统上的水平外力）。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 0.6,
+      "descriptor": "加速度 a = 4 m/s² 与张力 T = 12 N 均正确"
+     },
+     {
+      "name": "method",
+      "weight": 0.4,
+      "descriptor": "采用隔离体法分别对 A、B 列牛顿第二定律方程，并利用绳的约束条件（等加速度、等张力）联立求解，而非对系统整体错误地代入外力"
+     }
+    ],
+    "keywords": [
+     "牛顿第二定律",
+     "隔离体法",
+     "连接体",
+     "绳的约束"
+    ],
+    "required_points": [
+     "对 A：T = m_A a（水平方向，桌面光滑）",
+     "对 B：m_B g − T = m_B a（竖直方向）",
+     "联立消去 T 解得 a = m_B g/(m_A+m_B) = 4 m/s²，再代回求 T = 12 N"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=partial, confidence=0.90) — conservative pass",
+     "solver_answer": "a = 4 m/s²，T = 12 N"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "spras90yaksuniryihza39bu",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "在光滑水平面上，质量m₁=3 kg的物块A和质量m₂=2 kg的物块B用一根轻绳（不可伸长、质量不计）相连，B在后，A在前。现对A施加水平拉力F=20 N，方向沿绳方向使系统一起加速运动。求连接A、B两物块的绳中张力T的大小。\n\nA. 4 N\nB. 8 N\nC. 12 N\nD. 20 N",
+   "reference_md": "正确选项：B. 8 N\n\n解析：将A、B看作整体系统，总质量M=m₁+m�2=3+2=5 kg，水平面光滑（无摩擦），外力只有F。\n由牛顿第二定律对整体：\na = F / M = 20 / 5 = 4 m/s²\n\n再单独分析B（B只受绳的拉力T，其余方向无摩擦力）：\nT = m2 × a = 2 × 4 = 8 N\n\n验证：对A分析，A受F（向前）和绳的反作用力T（向后，大小相等方向相反，由牛顿第三定律），\nF − T = m1 × a → 20 − 8 = 3 × 4 = 12，等式成立（20−8=12），说明结果自洽。",
+   "choices_md": [
+    "4 N",
+    "8 N",
+    "12 N",
+    "20 N"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"B. 8 N\" disagrees with reference \"正确选项：B. 8 N\n\n解析：将A、B看作整体系统，总质量M=m₁+m�2=3+2=5 kg，水平面光滑（无摩擦），外力只有F。\n由牛顿第二定律对整体：\na = F / M = 20 / 5 = 4 m/s²\n\n再单独分析B（B只受绳的拉力T，其余方向无摩擦力）：\nT = m2 × a = 2 × ",
+     "solver_answer": "B. 8 N"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "zhrgcv3s5c28wru192zogwhc",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "一人站在电梯内的体重计上，静止时体重计示数为 $500\\,\\mathrm{N}$。电梯突然以加速度 $a=2\\,\\mathrm{m/s^2}$ 竖直向上做加速运动（重力加速度取 $g=10\\,\\mathrm{m/s^2}$）。此时体重计的示数最接近：",
+   "reference_md": "正确选项：$600\\,\\mathrm{N}$\n\n解析：设人的质量为 $m$，由静止时示数得 $mg=500\\,\\mathrm{N}$，故 $m=50\\,\\mathrm{kg}$。电梯向上加速运动时，人受重力 $mg$（向下）和体重计支持力 $N$（向上，其反作用力即体重计示数），取竖直向上为正方向，由牛顿第二定律：$N-mg=ma$，即 $N=m(g+a)=50\\times(10+2)=600\\,\\mathrm{N}$。此为“超重”现象：支持力大于重力，体重计示数大于物体实际重力。若电梯改为向上减速（即加速度方向向下），则应为“失重”，示数小于 $500\\,\\mathrm{N}$，二者不可混淆方向判据。",
+   "choices_md": [
+    "$600\\,\\mathrm{N}$",
+    "$500\\,\\mathrm{N}$",
+    "$400\\,\\mathrm{N}$",
+    "$100\\,\\mathrm{N}$"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": false,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "fail",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "fail",
+     "reason": "solver answer \"600 N\" disagrees with reference \"正确选项：$600\\,\\mathrm{N}$\n\n解析：设人的质量为 $m$，由静止时示数得 $mg=500\\,\\mathrm{N}$，故 $m=50\\,\\mathrm{kg}$。电梯向上加速运动时，人受重力 $mg$（向下）和体重计支持力 $N$（向上，其反作用力即体重计示数），取竖直向上为正方向，由牛",
+     "solver_answer": "600 N"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  }
+ ]
+}

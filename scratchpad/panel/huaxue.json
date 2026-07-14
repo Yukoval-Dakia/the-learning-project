@@ -1,0 +1,238 @@
+{
+ "subject": "huaxue",
+ "question_count": 6,
+ "questions": [
+  {
+   "id": "h0e06jps22ie7qi68pmxu8kj",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "下列四个反应中，属于氧化还原反应的是：",
+   "reference_md": "C. $2KMnO_4 \\xrightarrow{\\Delta} K_2MnO_4 + MnO_2 + O_2\\uparrow$\n\n解析：判断氧化还原反应的关键是反应前后是否存在元素化合价的升降。A 是碳酸钙分解，属于分解反应但各元素化合价均未变化（Ca 仍为 +2，C 仍为 +4，O 仍为 -2），不是氧化还原反应；B、D 均为复分解反应，参与反应的各元素化合价始终不变，都不是氧化还原反应。C 中 Mn 元素由 $KMnO_4$ 中的 +7 价，一部分降低到 $K_2MnO_4$ 中的 +6 价，一部分降低到 $MnO_2$ 中的 +4 价；O 元素由 -2 价升高到 $O_2$ 中的 0 价，存在化合价升降，属于氧化还原反应（且是同种元素部分被氧化、部分被还原的歧化型反应）。",
+   "choices_md": [
+    "A. $CaCO_3 \\xrightarrow{\\Delta} CaO + CO_2\\uparrow$",
+    "B. $NaOH + HCl = NaCl + H_2O$",
+    "C. $2KMnO_4 \\xrightarrow{\\Delta} K_2MnO_4 + MnO_2 + O_2\\uparrow$",
+    "D. $BaCl_2 + Na_2SO_4 = BaSO_4\\downarrow + 2NaCl$"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "C"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "hg16p0njycogfemd2agfiqkc",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "已知反应：2FeCl₃ + Fe = 3FeCl₂（铁粉加入氯化铁溶液中发生的反应）。请回答：\n1. 指出该反应中的氧化剂和还原剂分别是什么；\n2. 说明反应中各元素化合价的变化（写出变化前后的化合价）；\n3. 判断该反应的氧化产物和还原产物是否为同一物质，并说明理由。",
+   "reference_md": "1. 氧化剂：FeCl₃（提供Fe³⁺）；还原剂：Fe（单质铁）。\n2. 单质Fe中Fe的化合价为0，反应后变为FeCl₂中的+2价，化合价升高，被氧化；FeCl₃中Fe的化合价为+3，反应后变为FeCl₂中的+2价，化合价降低，被还原。氯元素化合价始终为-1，未参与氧化还原（不是变价元素）。\n3. 氧化产物与还原产物是同一种物质，都是FeCl₂：一部分FeCl₂来自单质Fe被氧化（提供电子生成），另一部分FeCl₂来自FeCl₃中Fe³⁺被还原（得到电子生成），二者产物形式相同但生成路径不同，这是氧化还原反应中'归中反应'之外的一种特殊情形（氧化产物=还原产物）。\n简要电子守恒核对：1个Fe原子失去2个电子（0→+2），2个Fe³⁺各得1个电子（+3→+2，共得2个电子），电子转移数目相等，守恒成立。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "正确识别氧化剂还原剂、化合价变化方向、氧化产物与还原产物关系"
+     }
+    ],
+    "required_points": [
+     "FeCl₃是氧化剂，Fe是还原剂",
+     "单质Fe的化合价由0升高到+2，被氧化",
+     "FeCl₃中Fe³⁺的化合价由+3降低到+2，被还原",
+     "氧化产物和还原产物都是FeCl₂（同一种物质）"
+    ]
+   },
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "SemanticJudge did not confidently disagree (outcome=correct, confidence=0.97) — conservative pass",
+     "solver_answer": "氧化剂：FeCl₃（其中Fe为+3价）；还原剂：Fe（0价）。反应中Fe由0价→+2价（升高，被氧化），Fe由+3价→+2价（降低，被还原），Cl始终为-1价不变。氧化产物和还原产物是同一物质，都是FeCl₂：3molFeCl₂中1mol由还原剂Fe被氧化生成（氧化产物），2mol由氧化剂FeCl₃被还原生成（还原产物），二者化学式相同，故判定为同一物质。"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "skipped"
+    }
+   }
+  },
+  {
+   "id": "ja8ta8espiqzporeo5oc6xu1",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_md": "已知反应：3Cl₂ + 6NaOH(冷、稀) = 5NaCl + NaClO₃ + 3H₂O。请回答：\n1. 判断该反应是否属于氧化还原反应，并说明判断依据；\n2. 找出反应中化合价发生变化的元素，写出变化前后的化合价；\n3. 说明该反应属于氧化还原反应中的哪一类特殊类型（提示：同一元素既被氧化又被还原），并简述理由。",
+   "reference_md": "1. 该反应属于氧化还原反应，判断依据是反应前后存在元素化合价的升降（若元素化合价均未变化，则不是氧化还原反应）。\n2. 反应中化合价发生变化的元素是氯（Cl）。反应前Cl₂中Cl的化合价为0；反应后一部分Cl变为NaCl中的-1价（化合价降低，被还原），另一部分Cl变为NaClO₃中的+5价（化合价升高，被氧化）。钠、氧、氢元素化合价始终不变，未参与氧化还原。\n3. 该反应属于歧化反应（自身氧化还原反应）：同一种元素（氯）在同一反应中，一部分原子被氧化、另一部分原子被还原，即氧化剂和还原剂是同一种物质（Cl₂）。按得失电子数目配平可知：5个Cl原子由0价降为-1价（各得1个电子，共得5个电子），1个Cl原子由0价升为+5价（失5个电子），电子转移数目相等，符合电子守恒。",
+   "choices_md": null,
+   "rubric_json": {
+    "criteria": [
+     {
+      "name": "correctness",
+      "weight": 1,
+      "descriptor": "正确判断反应类型、化合价变化及归属为歧化反应并给出电子守恒说明"
+     }
+    ],
+    "required_points": [
+     "该反应是氧化还原反应，因为氯元素化合价发生了变化",
+     "Cl₂中氯元素化合价由0变为NaCl中的-1价（被还原）和NaClO₃中的+5价（被氧化）",
+     "该反应属于歧化反应，氧化剂和还原剂是同一物质Cl₂",
+     "得失电子数目相等（5个电子转移），符合电子守恒"
+    ]
+   },
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "fail",
+    "promoted": false,
+    "axes": {
+     "grounding": "fail",
+     "knowledge_hit": "pass",
+     "copy_safety": "original"
+    },
+    "solve_check": {
+     "verdict": null,
+     "reason": "",
+     "solver_answer": ""
+    },
+    "teaching_quality": {}
+   }
+  },
+  {
+   "id": "kw5yqktrpp12i0nw4tffvv81",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "在反应 $2FeCl_3 + Fe = 3FeCl_2$ 中，下列说法正确的是：",
+   "reference_md": "A. $FeCl_3$ 是氧化剂，Fe 是还原剂\n\n解析：反应中 Fe 单质的化合价由 0 价升高到 +2 价，被氧化，Fe 作还原剂；$FeCl_3$ 中的 $Fe^{3+}$ 由 +3 价降低到 +2 价，被还原，$FeCl_3$ 作氧化剂。该反应存在明显的化合价升降，属于氧化还原反应，且发生了电子转移（Fe 失去 2 个电子，2 个 $Fe^{3+}$ 各得到 1 个电子）。",
+   "choices_md": [
+    "A. $FeCl_3$ 是氧化剂，Fe 是还原剂",
+    "B. $FeCl_3$ 是还原剂，Fe 是氧化剂",
+    "C. 该反应不属于氧化还原反应",
+    "D. 反应中没有元素化合价发生变化"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "A"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "lfudg8qtnm5kiqo0xmggfych",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_md": "反应 Zn + CuSO₄ = ZnSO₄ + Cu 中，下列说法正确的是：",
+   "reference_md": "Zn是还原剂，Cu²⁺是氧化剂\n解析：反应中Zn由0价升高到+2价，失去电子，被氧化，作还原剂；Cu²⁺由+2价降低到0价，得到电子，被还原，作氧化剂。判断氧化剂/还原剂的关键是看元素化合价的升降方向：化合价升高的物质失电子作还原剂，化合价降低的物质得电子作氧化剂。",
+   "choices_md": [
+    "Zn是还原剂，Cu²⁺是氧化剂",
+    "Zn是氧化剂，Cu²⁺是还原剂",
+    "Zn²⁺是还原剂，Cu是氧化剂",
+    "该反应不属于氧化还原反应"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "active",
+    "parse_repaired": false,
+    "overall": "pass",
+    "promoted": true,
+    "axes": {
+     "grounding": "pass",
+     "knowledge_hit": "pass",
+     "copy_safety": "original",
+     "solve_check": "pass",
+     "teaching_quality": "pass"
+    },
+    "solve_check": {
+     "verdict": "pass",
+     "reason": "solver answer matches the question reference (normalized)",
+     "solver_answer": "A"
+    },
+    "teaching_quality": {
+     "clarity": "pass",
+     "verdict": "pass",
+     "unique_answer": "pass",
+     "distractor_power": "pass"
+    }
+   }
+  },
+  {
+   "id": "tljeb2y4cu8z5stcnny9tzpg",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_md": "下列四个反应中，属于氧化还原反应的是：\n① NaOH + HCl = NaCl + H₂O\n② 2KClO₃ →(MnO₂催化,Δ) 2KCl + 3O₂↑\n③ BaCl₂ + Na₂SO₄ = BaSO₄↓ + 2NaCl\n④ CaCO₃ →(Δ) CaO + CO₂↑",
+   "reference_md": "②\n解析：判断是否为氧化还原反应，关键看反应前后是否有元素化合价发生变化。①是中和反应，各元素化合价均未变化，非氧化还原反应；②中Cl由KClO₃中的+5价变为KCl中的-1价（降低），O由-2价变为O₂中的0价（升高），存在化合价升降，属于氧化还原反应（歧化反应）；③是复分解反应（沉淀生成），无化合价变化；④是碳酸钙的分解，Ca、C、O各元素化合价前后均未改变，属于非氧化还原反应的分解反应。",
+   "choices_md": [
+    "①",
+    "②",
+    "③",
+    "④"
+   ],
+   "rubric_json": null,
+   "engine": {
+    "draft_status": "draft",
+    "parse_repaired": false,
+    "overall": "needs_review",
+    "promoted": false,
+    "axes": {
+     "grounding": "unclear",
+     "knowledge_hit": "pass",
+     "copy_safety": "original"
+    },
+    "solve_check": {
+     "verdict": null,
+     "reason": "",
+     "solver_answer": ""
+    },
+    "teaching_quality": {}
+   }
+  }
+ ]
+}

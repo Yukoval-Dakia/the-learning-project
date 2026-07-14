@@ -1,0 +1,960 @@
+{
+ "cells": [
+  {
+   "subject": "yuwen",
+   "kcId": "spike:yuwen:quanxue",
+   "name": "文言文·《劝学》实词与句式",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "yuwen",
+   "kcId": "spike:yuwen:quanxue",
+   "name": "文言文·《劝学》实词与句式",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "yuwen",
+   "kcId": "spike:yuwen:quanxue",
+   "name": "文言文·《劝学》实词与句式",
+   "canonical": "translation",
+   "hint_kinds": [
+    "translation"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "yuwen",
+   "kcId": "spike:yuwen:quanxue",
+   "name": "文言文·《劝学》实词与句式",
+   "canonical": "reading",
+   "hint_kinds": [
+    "reading_comprehension"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "math",
+   "kcId": "spike:math:erci-tuxiang",
+   "name": "二次函数·图像与性质",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "math",
+   "kcId": "spike:math:erci-tuxiang",
+   "name": "二次函数·图像与性质",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "math",
+   "kcId": "spike:math:erci-tuxiang",
+   "name": "二次函数·图像与性质",
+   "canonical": "computation",
+   "hint_kinds": [
+    "calculation",
+    "word_problem"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "math",
+   "kcId": "spike:math:erci-tuxiang",
+   "name": "二次函数·图像与性质",
+   "canonical": "derivation",
+   "hint_kinds": [
+    "proof"
+   ],
+   "produced": 0
+  },
+  {
+   "subject": "physics",
+   "kcId": "spike:physics:niudun-yingyong",
+   "name": "牛顿运动定律·应用",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "physics",
+   "kcId": "spike:physics:niudun-yingyong",
+   "name": "牛顿运动定律·应用",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "physics",
+   "kcId": "spike:physics:niudun-yingyong",
+   "name": "牛顿运动定律·应用",
+   "canonical": "computation",
+   "hint_kinds": [
+    "calculation"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "yingyu",
+   "kcId": "spike:yingyu:dingyu-congju",
+   "name": "英语·定语从句",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "yingyu",
+   "kcId": "spike:yingyu:dingyu-congju",
+   "name": "英语·定语从句",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "huaxue",
+   "kcId": "spike:huaxue:yanghua-huanyuan",
+   "name": "化学·氧化还原反应",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "huaxue",
+   "kcId": "spike:huaxue:yanghua-huanyuan",
+   "name": "化学·氧化还原反应",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "shengwu",
+   "kcId": "spike:shengwu:xibao-huxi",
+   "name": "生物·细胞呼吸",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "shengwu",
+   "kcId": "spike:shengwu:xibao-huxi",
+   "name": "生物·细胞呼吸",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "lishi",
+   "kcId": "spike:lishi:xinhai-geming",
+   "name": "历史·辛亥革命",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "lishi",
+   "kcId": "spike:lishi:xinhai-geming",
+   "name": "历史·辛亥革命",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 0
+  },
+  {
+   "subject": "dili",
+   "kcId": "spike:dili:daqi-huanliu",
+   "name": "地理·大气环流与气候类型",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 4
+  },
+  {
+   "subject": "dili",
+   "kcId": "spike:dili:daqi-huanliu",
+   "name": "地理·大气环流与气候类型",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 0
+  },
+  {
+   "subject": "zhengzhi",
+   "kcId": "spike:zhengzhi:shichang-jingji",
+   "name": "政治·市场经济与宏观调控",
+   "canonical": "choice",
+   "hint_kinds": [
+    "single_choice",
+    "multiple_choice"
+   ],
+   "produced": 2
+  },
+  {
+   "subject": "zhengzhi",
+   "kcId": "spike:zhengzhi:shichang-jingji",
+   "name": "政治·市场经济与宏观调控",
+   "canonical": "short_answer",
+   "hint_kinds": [
+    "short_answer"
+   ],
+   "produced": 2
+  }
+ ],
+ "gen_failures": [
+  {
+   "ref_id": "spike:math:erci-tuxiang",
+   "error": "quiz_gen pinned kind='proof' but agent produced question of kind 'short_answer'"
+  },
+  {
+   "ref_id": "spike:dili:daqi-huanliu",
+   "error": "parseOutput: schema invalid: Expected array, received null; Expected array, received null"
+  },
+  {
+   "ref_id": "spike:lishi:xinhai-geming",
+   "error": "parseOutput: schema invalid: Expected array, received null; Expected array, received null; Required"
+  },
+  {
+   "ref_id": "spike:zhengzhi:shichang-jingji",
+   "error": "parseOutput: JSON.parse failed: Expected ',' or '}' after property value in JSON at position 713 (line 1 column 714)"
+  }
+ ],
+ "questions": [
+  {
+   "id": "b1twkn9mkj8ovohf3lmj5ulg",
+   "subject": "physics",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "质量为 $m$ 的物块置于倾角为 $\\theta$ 的光滑斜面上，斜面固定不动。物块由静止释放，沿斜面下滑。取重力加速度为 $g$，斜面与物块间无摩擦。物块沿斜面方向的加速度大小为：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "正确选项：$a=g\\sin\\theta$\n\n解析：以物块为研究对象，受重力 $mg$（竖直向下）与斜面法向支持力 $N$（垂直斜面）。沿斜面方向（取下滑为正）只",
+   "engine_status": "draft"
+  },
+  {
+   "id": "b58uajlrph5fyoybotiecywq",
+   "subject": "shengwu",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "关于真核细胞有氧呼吸三个阶段发生场所的说法，正确的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "C\n\n解析：有氧呼吸第一阶段（糖酵解，葡萄糖分解为丙酮酸）发生在细胞质基质；第二阶段（丙酮酸氧化分解、三羧酸循环）发生在线粒体基质；第三阶段（[H]与O2结合生",
+   "engine_status": "active"
+  },
+  {
+   "id": "bb0dtuw5orn919qi2xmbbin7",
+   "subject": "lishi",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "关于辛亥革命的历史意义，下列表述最准确的一项是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "A. 辛亥革命推翻了清王朝的统治，结束了中国两千多年的君主专制制度，建立了亚洲第一个资产阶级共和国——中华民国\n\n解析：辛亥革命的核心历史意义在于终结帝制、建立",
+   "engine_status": "draft"
+  },
+  {
+   "id": "be9bs0cpg6xlel0caedtxq9q",
+   "subject": "yingyu",
+   "kind": "short_answer",
+   "difficulty": 2,
+   "prompt_head": "英语定语从句（relative clause）分为限制性（restrictive）和非限制性（non-restrictive）两类。请用你自己的话回答：\n1. 这两类定语从句在意义上和标点上各有什么特点？\n2. 分别举一个英文例句说明：一个",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考要点：\n- 限制性定语从句：对先行词起限定/区分作用，说明是\"哪一个\"，与主句之间**不用逗号**隔开，例如：The students who passed",
+   "engine_status": "active"
+  },
+  {
+   "id": "cex5q24jua1urcl9phkh4y7x",
+   "subject": "dili",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "某地气候资料显示：全年温和，最冷月均温在0℃以上；降水集中在冬季，夏季炎热干燥少雨，年降水量数百毫米。该气候类型最可能是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "B. 地中海气候\n\n解析：地中海气候的典型特征是「夏季受副热带高气压带控制，炎热干燥；冬季受西风带控制，温和多雨」，即「夏干冬雨」，与题干「冬雨夏干、最冷月均温",
+   "engine_status": "active"
+  },
+  {
+   "id": "cqonvlypugr0bt3g1cxbmndi",
+   "subject": "yuwen",
+   "kind": "reading",
+   "difficulty": 3,
+   "prompt_head": "阅读下面《劝学》选段，回答问题：\n\n“积土成山，风雨兴焉；积水成渊，蛟龙生焉；积善成德，而神明自得，圣心备焉。故不积跬步，无以至千里；不积小流，无以成江海。骐骥一跃，不能十步；驽马十驾，功在不舍。锲而舍之，朽木不折；锲而不舍，金石可镂。”\n",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "①“跬步”指半步（古时称跨出一脚为“跬”，跨出两脚为“步”），泛指一小步；②“锲”意为“雕刻”。\n\n作者通过“骐骥一跃，不能十步”与“驽马十驾，功在不舍”的对比",
+   "engine_status": "active"
+  },
+  {
+   "id": "d6tr3ed525bcscqxy330xlkb",
+   "subject": "math",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "已知二次函数 $y=ax^{2}+bx+c$（$a\\neq0$）的图像开口向下，且与 $x$ 轴恰有两个不同的交点，设两交点的横坐标为 $x_1<x_2$。\n\n(1) 判断 $a$ 的符号，并说明判别式 $\\Delta=b^{2}-4ac$",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考答案：\n\n(1) 图像开口向下，说明 $a<0$。与 $x$ 轴有两个不同交点，说明方程 $ax^{2}+bx+c=0$ 有两个不相等的实数根，因此判别式 ",
+   "engine_status": "active"
+  },
+  {
+   "id": "e4mhdzr27xeeqjiz7cgvlk6y",
+   "subject": "zhengzhi",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "简答题：我国实行社会主义市场经济体制，既强调“市场在资源配置中起决定性作用”，又要求“更好发挥政府作用”。请结合市场调节的局限性，说明这两者为什么需要结合、缺一不可。",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考要点：\n1. 市场通过价格机制、供求机制、竞争机制引导资金、劳动力等生产要素流向效益较好的领域，能够灵活、及时地反映资源稀缺程度和供求变化，从而提高资源配置",
+   "engine_status": "active"
+  },
+  {
+   "id": "e5a9wqhxp2kmf5w96tc1nd7m",
+   "subject": "yuwen",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "《劝学》中“蚓无爪牙之利，筋骨之强，上食埃土，下饮黄泉，用心一也”一段，其中“蚓无爪牙之利，筋骨之强”是文言文中的什么特殊句式？请说明判断依据，并翻译这一句。",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "这是定语后置句。正常语序应为“蚓无利之爪牙，强之筋骨”，即定语“利”“强”本应放在中心词“爪牙”“筋骨”之前，句中却置于中心词之后，并借助结构助词“之”将定语后",
+   "engine_status": "active"
+  },
+  {
+   "id": "f0li1slfnscq6m5728wlfjdb",
+   "subject": "yuwen",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "《劝学》中「假舆马者，非利足也，而致千里；假舟楫者，非能水也，而绝江河」，句中两个「假」字的意义是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "B（凭借、借助）\n\n解析：「假」在此处是动词，意为“凭借、借助”，与现代汉语“假期”“虚假”等义无关。全句意为“借助车马的人，并非脚走得快，却能到达千里之外；借",
+   "engine_status": "draft"
+  },
+  {
+   "id": "f0oi2923xxbgow11j645ks1a",
+   "subject": "physics",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "质量为60 kg的乘客站在电梯内的体重秤上。电梯做匀加速上升运动，加速度大小为2 m/s²，重力加速度取g=10 m/s²。此时体重秤的示数（乘客对秤的压力，即视重）最接近下列哪个值？\n\nA. 480 N\nB. 600 N\nC. 720 N",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "正确选项：C. 720 N\n\n解析：对乘客受力分析，竖直方向受重力mg（方向向下）和秤的支持力N（方向向上）。电梯匀加速上升，乘客加速度方向也向上，大小为a=2",
+   "engine_status": "draft"
+  },
+  {
+   "id": "f5k08zf0g2j5ivcjmvi34lsw",
+   "subject": "physics",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_head": "质量为 8 kg 的物体静止放置在水平地面上，物体与地面间的动摩擦因数 μ = 0.25。现用大小为 40 N、方向与水平方向成 37° 角斜向上的拉力 F 拉动该物体，使其沿水平方向做直线运动。（取 g = 10 m/s²，sin37° ",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "a = 2.25 m/s²，摩擦力 f = 14 N\n\n解析：\n1) 竖直方向物体无加速度，由牛顿第二定律（竖直方向合力为零）：N + F sin37° = m",
+   "engine_status": "active"
+  },
+  {
+   "id": "fadkfbbm4ithe8ijymosgp1i",
+   "subject": "dili",
+   "kind": "choice",
+   "difficulty": 4,
+   "prompt_head": "地中海气候（如意大利南部）呈现“夏季炎热干燥、冬季温和多雨”的显著特征，其形成的主要原因是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "夏季受副热带高气压带（下沉气流）控制，冬季受西风带（盛行西风带来的湿润气流）控制，气压带风带随季节南北移动导致该地区交替受两种系统控制。\n\n解析：夏季太阳直射点",
+   "engine_status": "draft"
+  },
+  {
+   "id": "gr3gzeulby5vf341z8tutevc",
+   "subject": "yingyu",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "选择正确的关系词填空，并判断考察的语法点：\n\nI'll never forget the days **____** we spent together in college.\n\n（我永远不会忘记我们大学一起度过的那些日子。）",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "B. which（that 也可接受，但选项中未给出则选 which）\n\n解析：这是定语从句中最常见的易错点——关系代词 vs 关系副词的选择。判断依据是看先行",
+   "engine_status": "draft"
+  },
+  {
+   "id": "h0e06jps22ie7qi68pmxu8kj",
+   "subject": "huaxue",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "下列四个反应中，属于氧化还原反应的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "C. $2KMnO_4 \\xrightarrow{\\Delta} K_2MnO_4 + MnO_2 + O_2\\uparrow$\n\n解析：判断氧化还原反应的关键",
+   "engine_status": "active"
+  },
+  {
+   "id": "h408msryx98ehcgww0xw4ti0",
+   "subject": "shengwu",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "有氧呼吸第三阶段（[H]与O₂结合生成水，并释放大量ATP）的场所是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "线粒体内膜\n解析：有氧呼吸分三个阶段：第一阶段（葡萄糖分解为丙酮酸）在细胞质基质中进行；第二阶段（丙酮酸与水反应生成二氧化碳和[H]）在线粒体基质中进行；第三阶",
+   "engine_status": "active"
+  },
+  {
+   "id": "hg16p0njycogfemd2agfiqkc",
+   "subject": "huaxue",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "已知反应：2FeCl₃ + Fe = 3FeCl₂（铁粉加入氯化铁溶液中发生的反应）。请回答：\n1. 指出该反应中的氧化剂和还原剂分别是什么；\n2. 说明反应中各元素化合价的变化（写出变化前后的化合价）；\n3. 判断该反应的氧化产物和还原产",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "1. 氧化剂：FeCl₃（提供Fe³⁺）；还原剂：Fe（单质铁）。\n2. 单质Fe中Fe的化合价为0，反应后变为FeCl₂中的+2价，化合价升高，被氧化；FeC",
+   "engine_status": "active"
+  },
+  {
+   "id": "hq3qge5j6jexyflou0juw8ca",
+   "subject": "lishi",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "1911年10月10日爆发的武昌起义，直接导火索是清政府在同年出台的哪一项政策，激化了民众（尤其是川、鄂等省绅商）的不满？",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "铁路干线国有化政策（即“铁路国有”，将原本商办的粤汉、川汉铁路收归国有并转让给外国银行团），引发保路运动，为武昌起义提供了直接契机。\n解析：1911年5月清政府",
+   "engine_status": "draft"
+  },
+  {
+   "id": "icnih28vpj9f8onmws3nrpbg",
+   "subject": "physics",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "在光滑水平桌面上，物块 A（质量 $m_1$）与物块 B（质量 $m_2$）用一根轻质不可伸长的细绳相连，A 在前、B 在后。现用水平方向的拉力 $F$ 拉物块 A，使系统沿绳方向做匀加速直线运动。\n\n(1) 用牛顿第二定律推导整个系统的加",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考答案：\n\n**(1) 整体法求加速度**\n\n将 A、B 视为一个整体，系统所受外力只有水平拉力 $F$（绳的张力 $T$ 是系统内力，整体法中相互抵消，不出",
+   "engine_status": "active"
+  },
+  {
+   "id": "j2er1luz9frpl0xhpprklzfm",
+   "subject": "yuwen",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "从文言句式角度看，「蚓无爪牙之利，筋骨之强，上食埃土，下饮黄泉，用心一也」中「爪牙之利，筋骨之强」属于哪一种特殊句式？",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "C（定语后置句）\n\n解析：正常语序应为“利之爪牙，强之筋骨”，即定语“利”“强”本应放在中心词“爪牙”“筋骨”之前，这里却借助结构助词「之」将定语移至中心词之后",
+   "engine_status": "draft"
+  },
+  {
+   "id": "j90yj7rewpbhmh0ve504zjna",
+   "subject": "yuwen",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "下列四句中，句式与其余三项不同的一项是：\n\nA. 青，取之于蓝，而青于蓝。\n\nB. 冰，水为之，而寒于水。\n\nC. 君子博学而日参省乎己。\n\nD. 蚓无爪牙之利，筋骨之强。",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "正确答案：D\n\n解析：A、B、C 三句都是介词结构后置句（状语后置）——现代汉语语序应把“于蓝”“于水”“乎己”这类介宾短语提到谓语前作状语，如“青于蓝”即“于",
+   "engine_status": "draft"
+  },
+  {
+   "id": "ja8ta8espiqzporeo5oc6xu1",
+   "subject": "huaxue",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "已知反应：3Cl₂ + 6NaOH(冷、稀) = 5NaCl + NaClO₃ + 3H₂O。请回答：\n1. 判断该反应是否属于氧化还原反应，并说明判断依据；\n2. 找出反应中化合价发生变化的元素，写出变化前后的化合价；\n3. 说明该反应属",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "1. 该反应属于氧化还原反应，判断依据是反应前后存在元素化合价的升降（若元素化合价均未变化，则不是氧化还原反应）。\n2. 反应中化合价发生变化的元素是氯（Cl）",
+   "engine_status": "draft"
+  },
+  {
+   "id": "kw5yqktrpp12i0nw4tffvv81",
+   "subject": "huaxue",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "在反应 $2FeCl_3 + Fe = 3FeCl_2$ 中，下列说法正确的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "A. $FeCl_3$ 是氧化剂，Fe 是还原剂\n\n解析：反应中 Fe 单质的化合价由 0 价升高到 +2 价，被氧化，Fe 作还原剂；$FeCl_3$ 中的 ",
+   "engine_status": "active"
+  },
+  {
+   "id": "kxkodxow0drhqc9hwmbdzwgc",
+   "subject": "dili",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "下列关于全球三圈环流中「副热带高气压带」成因的表述，最准确的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "C. 高空气流在副热带上空堆积下沉形成动力性高压\n\n解析：赤道地区空气受热上升，在高空向两极方向流动，由于地转偏向力的作用，气流在南北纬30°附近偏转为西风，产",
+   "engine_status": "active"
+  },
+  {
+   "id": "l8stl2xh057gqocuilyt5g91",
+   "subject": "shengwu",
+   "kind": "short_answer",
+   "difficulty": 4,
+   "prompt_head": "同样1mol葡萄糖，经有氧呼吸彻底氧化分解可以产生的ATP数量远多于经无氧呼吸（酒精发酵或乳酸发酵）产生的ATP数量。请从反应物氧化程度（电子最终归宿）的角度，解释这一差异产生的根本原因，并指出无氧呼吸条件下细胞不能获得更多能量的限制因素是",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考要点：\n1. 根本原因在于葡萄糖中储存的化学能（电子）在有氧呼吸中被彻底释放，而在无氧呼吸中只被部分释放。有氧呼吸中，糖酵解和丙酮酸氧化分解过程中脱下的高能",
+   "engine_status": "active"
+  },
+  {
+   "id": "l8wkwr9lxha3m3l2n3gyclro",
+   "subject": "zhengzhi",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "简答题：我国宏观调控综合运用哪几类主要手段？请分别举一个具体例子说明经济手段、法律手段、行政手段在实际调控中的运用。",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考要点：\n1. 经济手段：国家通过财政政策（如调整税率、发行国债、财政支出安排）和货币政策（如调整存款准备金率、基准利率、公开市场操作）间接调节经济运行。例：",
+   "engine_status": "active"
+  },
+  {
+   "id": "lfudg8qtnm5kiqo0xmggfych",
+   "subject": "huaxue",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "反应 Zn + CuSO₄ = ZnSO₄ + Cu 中，下列说法正确的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "Zn是还原剂，Cu²⁺是氧化剂\n解析：反应中Zn由0价升高到+2价，失去电子，被氧化，作还原剂；Cu²⁺由+2价降低到0价，得到电子，被还原，作氧化剂。判断氧化",
+   "engine_status": "active"
+  },
+  {
+   "id": "misi0mkv6itjdtt52iopcfaa",
+   "subject": "physics",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "一个人站在电梯内的体重计上，人的质量为 $m$，当地重力加速度为 $g$。电梯先以加速度 $a$（$0<a<g$）匀加速上升，随后又以同样大小的加速度 $a$ 匀减速上升（即加速度方向向下）。\n\n请分别写出这两个阶段体重计示数 $N$ 的表",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考答案：\n\n**阶段一（匀加速上升，加速度方向向上，取向上为正方向）**\n\n对人受力分析：竖直方向受重力 $mg$（向下）和体重计对人的支持力 $N$（向上，",
+   "engine_status": "active"
+  },
+  {
+   "id": "mw7fsrctrqrd77arbdby1cjd",
+   "subject": "physics",
+   "kind": "computation",
+   "difficulty": 4,
+   "prompt_head": "如图所示的连接体系统：质量 m_A = 3 kg 的滑块 A 放在水平桌面上，桌面与滑块间光滑（摩擦忽略不计）。滑块 A 通过一根轻质不可伸长的细绳，绕过桌边一个质量、摩擦均可忽略的定滑轮，与质量 m_B = 2 kg 的物块 B 相连，B",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "a = 4 m/s²，T = 12 N\n\n解析：\n设绳不可伸长、滑轮光滑，A 与 B 的加速度大小相等，记为 a；绳中张力大小处处相等，记为 T。\n对 A（水平",
+   "engine_status": "active"
+  },
+  {
+   "id": "n49do1iibgskjyi1cxipi1dy",
+   "subject": "shengwu",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "某同学将酵母菌分别置于富氧和缺氧条件下培养一段时间，检测培养液中的产物。下列描述最符合实际的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "B\n\n解析：酵母菌是兼性厌氧生物。在富氧条件下进行有氧呼吸，最终产物是CO2和H2O，并释放较多能量；在缺氧条件下进行无氧呼吸（酒精发酵），葡萄糖分解为酒精和C",
+   "engine_status": "active"
+  },
+  {
+   "id": "nm3rdd822wt2vk1tfdxqbw9w",
+   "subject": "shengwu",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "人体细胞在剧烈运动时，肌肉细胞会同时进行有氧呼吸和无氧呼吸（生成乳酸）。请说明：(1) 有氧呼吸的三个阶段分别发生在细胞的什么部位；(2) 其中哪一阶段产生的CO2最多，哪一阶段消耗O2；(3) 无氧呼吸（乳酸发酵）的产物中是否有CO2产生",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考要点：\n1. 有氧呼吸三阶段：第一阶段（糖酵解）发生在细胞质基质，第二阶段（丙酮酸氧化分解，即三羧酸循环）发生在线粒体基质，第三阶段（电子传递链，氧化磷酸化",
+   "engine_status": "active"
+  },
+  {
+   "id": "onmwf11iwlmb6tpbmh5l9zfp",
+   "subject": "math",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "抛物线 $y = x^2 - 4x + 3$ 在区间 $[0, 2]$ 上的单调性是：\n\nA. 单调递增\nB. 单调递减\nC. 先减后增\nD. 先增后减",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "B\n\n解析：将 $y=x^2-4x+3$ 配方为顶点式：$y=(x-2)^2-1$，得对称轴为 $x=2$，顶点为 $(2,-1)$，且开口向上（$a=1>0$",
+   "engine_status": "active"
+  },
+  {
+   "id": "pdm0h0yu3ky1maa0oublkyvc",
+   "subject": "yingyu",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "选择最恰当的关系词填空：\n\nThe old house ___ roof was damaged in the storm has finally been repaired.",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "whose\n\n解析：先行词 the old house 是物，但从句中关系词在从句里作定语，修饰 roof（即“房子的屋顶”），表示所属关系，此时无论先行词是人",
+   "engine_status": "active"
+  },
+  {
+   "id": "pm1h5afcngp66dmfddmn0kse",
+   "subject": "yingyu",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "选择正确的关系词填空：\n\nThe man **____** car was stolen yesterday reported it to the police.\n\n（那个车子昨天被偷的男人向警方报了案。）",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "B. whose\n\n解析：先行词 the man 是人，从句中 car 与 man 之间是所属关系（man's car），需要用关系代词 whose 表示所属，",
+   "engine_status": "active"
+  },
+  {
+   "id": "pssaom8q2qzcq2b2cc5ltbij",
+   "subject": "lishi",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "1912年孙中山在南京就任中华民国临时大总统后不久即辞职，将职位让与袁世凯，这一结果最主要是由当时哪一现实政治力量对比决定的？",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "革命党人掌握的军事和财政力量薄弱，而袁世凯手握北洋新军且获得列强与部分立宪派支持，革命党为尽快推翻清朝、避免南北分裂和内战，被迫以“清帝退位”换取让位于袁世凯。",
+   "engine_status": "draft"
+  },
+  {
+   "id": "q0q6rm83rdln5i0doyb3ghpi",
+   "subject": "yingyu",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "选出下列哪一句的关系代词使用是错误的（其余三句均正确）：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "My grandmother, that raised five children alone, is the strongest person I know.",
+   "engine_status": "draft"
+  },
+  {
+   "id": "qsecm5x3ekchw5o1nlxak1iz",
+   "subject": "math",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "已知二次函数 $y=-2x^{2}+4x-3$，判断该函数图象的对称轴、开口方向及最值情况。",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "A. 对称轴为 $x=1$，开口向下，有最大值 $-1$\n\n解析：对称轴 $x=-\\dfrac{b}{2a}=-\\dfrac{4}{2\\times(-2)}=1",
+   "engine_status": "active"
+  },
+  {
+   "id": "r51q9rej5tu1ylhumpnq9lva",
+   "subject": "math",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_head": "某文具店销售一种计算器，进价为每台 20 元。市场调研显示：当售价定为每台 30 元时，每天可售出 100 台；若售价每提高 1 元，每天销量将减少 5 台（假设该规律持续有效）。设该计算器的售价为 $x$ 元/台（$x\\ge 30$）。\n",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "(1) $w=-5x^{2}+350x-5000$（$x\\ge30$），是二次函数。\n\n(2) 当售价为 35 元/台时，每天利润最大，最大利润为 1125 元",
+   "engine_status": "active"
+  },
+  {
+   "id": "spras90yaksuniryihza39bu",
+   "subject": "physics",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "在光滑水平面上，质量m₁=3 kg的物块A和质量m₂=2 kg的物块B用一根轻绳（不可伸长、质量不计）相连，B在后，A在前。现对A施加水平拉力F=20 N，方向沿绳方向使系统一起加速运动。求连接A、B两物块的绳中张力T的大小。\n\nA. 4 ",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "正确选项：B. 8 N\n\n解析：将A、B看作整体系统，总质量M=m₁+m�2=3+2=5 kg，水平面光滑（无摩擦），外力只有F。\n由牛顿第二定律对整体：\na ",
+   "engine_status": "draft"
+  },
+  {
+   "id": "svqixuxh5fhdr0c4jxkv4idj",
+   "subject": "dili",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "下列关于全球气压带、风带随季节移动规律的描述，正确的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "气压带、风带随太阳直射点的季节移动而南北移动，大致表现为夏半年北移、冬半年南移。\n\n解析：太阳直射点随季节在南北回归线之间往返移动，导致地表受热带随之偏移，气压",
+   "engine_status": "draft"
+  },
+  {
+   "id": "swugkgw82o72yls56v9yl3ca",
+   "subject": "math",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_head": "已知某二次函数的图像与 $x$ 轴交于点 $A(-1,0)$ 和 $B(3,0)$，且图像经过点 $C(1,-8)$。\n\n(1) 求该二次函数的解析式（化为一般式）；\n(2) 求该函数图像的顶点坐标，并说明该点与点 $C$ 之间的关系；\n(",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "**求解过程：**\n\n(1) 由于图像与 $x$ 轴交点为 $-1$ 和 $3$，可设交点式 $y=a(x+1)(x-3)$。\n代入 $C(1,-8)$：$a(",
+   "engine_status": "active"
+  },
+  {
+   "id": "t6x5bsi7r7x44vifvb4jwdrz",
+   "subject": "yuwen",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "下列对《劝学》中相关文言现象的解说，不正确的一项是：\n\nA.《劝学》篇名中的“劝”意为“劝勉、鼓励”，与成语“惩恶劝善”中的“劝”用法相同，均非现代汉语“劝阻、劝说”之义。\n\nB.“假舟楫者，非能水也，而绝江河”中的“绝”意为“横渡”。\n\n",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "正确答案：D\n\n解析：D 项对“锲”字的解释是错的。两处“锲”字意义相同，均作动词，意为“用刀刻”；真正表示“停止”之意的是“舍”字（“舍之”即放弃、停止），并",
+   "engine_status": "draft"
+  },
+  {
+   "id": "tljeb2y4cu8z5stcnny9tzpg",
+   "subject": "huaxue",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "下列四个反应中，属于氧化还原反应的是：\n① NaOH + HCl = NaCl + H₂O\n② 2KClO₃ →(MnO₂催化,Δ) 2KCl + 3O₂↑\n③ BaCl₂ + Na₂SO₄ = BaSO₄↓ + 2NaCl\n④ CaCO₃",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "②\n解析：判断是否为氧化还原反应，关键看反应前后是否有元素化合价发生变化。①是中和反应，各元素化合价均未变化，非氧化还原反应；②中Cl由KClO₃中的+5价变为",
+   "engine_status": "draft"
+  },
+  {
+   "id": "to5cprup6hgalsqgd6lhv8uw",
+   "subject": "yingyu",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "阅读下面两个英文句子：\n(1) The house that/which stands on the corner was built in 1920.\n(2) My grandmother, who taught English for ",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考要点：\n1. 句(1)是限制性定语从句，先行词 house 是物，在限制性从句中 that 和 which 通常可以互换（英式英语里 which 更常见，美",
+   "engine_status": "active"
+  },
+  {
+   "id": "u8r2n7q73e9ljkf3ouxuv4z1",
+   "subject": "yuwen",
+   "kind": "short_answer",
+   "difficulty": 3,
+   "prompt_head": "《劝学》中有一句：“君子博学而日参省乎己，则知明而行无过矣。”\n\n请指出句中“日”字的词性活用现象，说明其语法功能，并把这句话翻译成现代汉语。",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "“日”本为名词（“太阳／每天”之义的名词性成分），在此句中位于动词“参省”之前，充当状语，属于名词作状语的用法，意为“每天”。\n\n译文：君子广泛地学习并且每天对",
+   "engine_status": "active"
+  },
+  {
+   "id": "vcdu205l4ulp1chg41nzuxma",
+   "subject": "lishi",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "1911年10月10日，成为辛亥革命爆发标志的事件是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "A. 武昌起义\n\n解析：1911年10月10日，湖北新军中受革命党人影响的士兵在武昌发动兵变，占领武昌并成立湖北军政府，史称武昌起义，各省随即纷纷宣布独立响应，",
+   "engine_status": "active"
+  },
+  {
+   "id": "vf941ox6v2z23pioe3sn6vv2",
+   "subject": "math",
+   "kind": "computation",
+   "difficulty": 2,
+   "prompt_head": "已知二次函数 $y=-2x^2+4x-1$。\n\n(1) 用配方法将其化为顶点式，写出顶点坐标与对称轴方程；\n(2) 判断该函数在 $x\\in\\mathbb{R}$ 上是否存在最大值或最小值，求出该值；\n(3) 写出函数的单调增区间和单调减区",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "**配方过程：**\n$$y=-2x^2+4x-1=-2(x^2-2x)-1=-2[(x-1)^2-1]-1=-2(x-1)^2+1$$\n\n(1) 顶点式为 $y",
+   "engine_status": "active"
+  },
+  {
+   "id": "vzj8j9i6u7mv380vr7gxg13z",
+   "subject": "yuwen",
+   "kind": "translation",
+   "difficulty": 3,
+   "prompt_head": "请将下面出自《劝学》的句子翻译成现代汉语，并指出其中的特殊句式类型（说明其结构特点）。\n\n> 蚓无爪牙之利，筋骨之强，用心一也。",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考译文：蚯蚓没有锋利的爪牙，也没有强健的筋骨，（却能上食埃土，下饮黄泉，这是因为）用心专一啊。\n\n要点：\n1. “之利”“之强”是定语后置句式，正常语序应为“",
+   "engine_status": "active"
+  },
+  {
+   "id": "w7znuzz7tfa859hasaig4qwy",
+   "subject": "shengwu",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "人体成熟红细胞在无氧条件下进行无氧呼吸时，丙酮酸被分解的最终产物是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "乳酸\n解析：人体（动物）细胞无氧呼吸时，丙酮酸在细胞质基质中被还原为乳酸，此过程不产生二氧化碳，区别于酵母菌等产生酒精和二氧化碳的无氧呼吸类型。",
+   "engine_status": "active"
+  },
+  {
+   "id": "wpu4iseezi4tdqxb1fr2ya7z",
+   "subject": "zhengzhi",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "我国社会主义市场经济体制的显著优势之一，是能够将市场在资源配置中的作用与政府作用有机结合起来。下列对二者关系的表述，最准确的是：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "市场调节是基础性的，政府调控只在市场失灵领域发挥作用，二者不可相互替代\n\n解析：社会主义市场经济体制的核心是使市场在资源配置中起决定性作用，同时更好发挥政府作用",
+   "engine_status": "draft"
+  },
+  {
+   "id": "wsc7hg4zow8cwu2fhsdad3si",
+   "subject": "math",
+   "kind": "short_answer",
+   "difficulty": 2,
+   "prompt_head": "已知二次函数 $y=-2x^{2}+4x+1$。\n\n(1) 求该函数图像的对称轴方程和顶点坐标；\n\n(2) 判断函数有最大值还是最小值，并求出该值；\n\n(3) 写出函数的单调递增区间和单调递减区间，并说明理由。",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考答案：\n\n(1) 由 $y=ax^{2}+bx+c$ 中 $a=-2,\\,b=4,\\,c=1$，对称轴为 $x=-\\dfrac{b}{2a}=-\\dfrac",
+   "engine_status": "active"
+  },
+  {
+   "id": "x5z2hor9qduxdrfbrjd5xscq",
+   "subject": "yuwen",
+   "kind": "translation",
+   "difficulty": 3,
+   "prompt_head": "请将下面出自《劝学》的句子翻译成现代汉语，并简要说明其中加点词的意思和所用的特殊句式。\n\n> 假舆马者，非利足也，而致千里；假舟楫者，非能水也，而绝江河。",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "参考译文：借助车马的人，并不是脚走得快，却能到达千里之外；借助船桨的人，并不是善于游水，却能横渡江河。\n\n要点：\n1. “假”意为“借助、利用”，非“假的”。\n",
+   "engine_status": "draft"
+  },
+  {
+   "id": "xpekdq7pe894ijvzgeypyg1n",
+   "subject": "math",
+   "kind": "computation",
+   "difficulty": 3,
+   "prompt_head": "某公园计划在人工湖上修建一座拱桥，桥洞的形状可以看作抛物线的一部分。经测量，桥洞的跨度（桥洞与水面两交点之间的距离）为 8 米，拱高（桥洞最高点到水面的竖直距离）为 4 米。以桥洞与水面两个交点连线的中点为原点 $O$，水面所在直线为 $x",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "(1) $y=-\\dfrac{1}{4}x^{2}+4$\n\n(2) 桥洞下方水面宽度为 $4\\sqrt{2}$ 米，约 5.66 米。\n\n解析：\n(1) 由跨度",
+   "engine_status": "active"
+  },
+  {
+   "id": "yjhq8q1p10woedfd886ywpdw",
+   "subject": "yuwen",
+   "kind": "reading",
+   "difficulty": 3,
+   "prompt_head": "阅读下面《劝学》选段，回答问题：\n\n“君子曰：学不可以已。……假舟楫者，非能水也，而绝江河。君子生非异也，善假于物也。”\n\n(1) 解释加点词的含义：①“假舟楫者”中的“假”；②“而绝江河”中的“绝”。\n(2) 这一段用“假舆马”“假舟楫”",
+   "n_choices": 0,
+   "choices_letter_prefixed": false,
+   "has_rubric": true,
+   "ref_head": "①“假”意为“凭借、借助”；②“绝”意为“横渡、渡过”。\n\n本段借“假舆马者”“假舟楫者”两个日常生活中的例子，说明人借助外物（车马、舟楫）可以突破自身能力的局",
+   "engine_status": "active"
+  },
+  {
+   "id": "za8u5gbs8ne1pe99nddr7u9p",
+   "subject": "math",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "已知二次函数 $y = -2(x+1)^2 + 5$，下列关于其图像与性质的说法中，正确的是：\n\nA. 图像开口向上，顶点坐标为 $(-1, 5)$\nB. 图像开口向下，顶点坐标为 $(-1, 5)$\nC. 图像开口向下，顶点坐标为 $(1",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "B\n\n解析：函数已写成顶点式 $y = a(x-h)^2 + k$，此处 $a=-2, h=-1, k=5$。因为 $a=-2<0$，图像开口向下；顶点坐标为 ",
+   "engine_status": "active"
+  },
+  {
+   "id": "zfdkv3ul99kphw1anmhrxolq",
+   "subject": "zhengzhi",
+   "kind": "choice",
+   "difficulty": 2,
+   "prompt_head": "某年，为应对经济运行中出现的通货膨胀压力，中国人民银行连续多次上调存款准备金率，并适度提高基准利率。这一举措属于国家宏观调控手段中的：",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "经济手段\n\n解析：存款准备金率、利率等属于货币政策工具，是国家运用价格、税收、信贷等经济杠杆间接调节经济运行的方式，属于宏观调控的经济手段。法律手段是通过制定和",
+   "engine_status": "active"
+  },
+  {
+   "id": "zhrgcv3s5c28wru192zogwhc",
+   "subject": "physics",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "一人站在电梯内的体重计上，静止时体重计示数为 $500\\,\\mathrm{N}$。电梯突然以加速度 $a=2\\,\\mathrm{m/s^2}$ 竖直向上做加速运动（重力加速度取 $g=10\\,\\mathrm{m/s^2}$）。此时体重计的示",
+   "n_choices": 4,
+   "choices_letter_prefixed": false,
+   "has_rubric": false,
+   "ref_head": "正确选项：$600\\,\\mathrm{N}$\n\n解析：设人的质量为 $m$，由静止时示数得 $mg=500\\,\\mathrm{N}$，故 $m=50\\,\\mat",
+   "engine_status": "draft"
+  },
+  {
+   "id": "zi6bp1c4pnlbmctzq6t5bbb5",
+   "subject": "math",
+   "kind": "choice",
+   "difficulty": 3,
+   "prompt_head": "若二次函数 $y=x^{2}-2x+m$ 的图象与 $x$ 轴恰有两个不同的交点，求 $m$ 的取值范围。",
+   "n_choices": 4,
+   "choices_letter_prefixed": true,
+   "has_rubric": false,
+   "ref_head": "A. $m<1$\n\n解析：图象与 $x$ 轴有两个不同交点等价于对应一元二次方程 $x^{2}-2x+m=0$ 有两个不相等实根，即判别式 $\\Delta=b^",
+   "engine_status": "draft"
+  }
+ ]
+}
