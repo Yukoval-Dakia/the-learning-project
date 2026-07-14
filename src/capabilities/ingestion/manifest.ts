@@ -6,8 +6,8 @@ export const ingestionCapability = defineCapability({
   description:
     '录入：任何题目进系统的通道（拍照/PDF/DOCX/手输 → 原图留存 → OCR/VLM 三层提取 → 切块 → 标注 → 入库）。错题是题目的标记不是通道（D11）。',
   api: {
-    // M1-T4 (YUK-314)：13 个 route 文件 / 14 条 method+path 声明，全部带 load
-    // 懒加载 thunk（manifest 保持纯元数据，unit 分区不拉 db）。[id] 段由
+    // M1-T4 (YUK-314)：所有 route 声明均带 load 懒加载 thunk（manifest 保持纯元数据，
+    // unit 分区不拉 db）。[id] 段由
     // server/app.ts 的 toHonoPath 转为 :id 并把捕获参数透传 handler 第二实参。
     routes: [
       {
@@ -41,6 +41,16 @@ export const ingestionCapability = defineCapability({
         method: 'GET',
         path: '/api/ingestion/[id]/events',
         load: () => import('./api/events').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/ingestion-sessions/[id]/operations',
+        load: () => import('./api/operations').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/ingestion-operations/[id]',
+        load: () => import('./api/operations').then((m) => m.GET),
       },
       {
         method: 'POST',
@@ -94,6 +104,16 @@ export const ingestionCapability = defineCapability({
         method: 'GET',
         path: '/api/mistakes',
         load: () => import('./api/mistakes').then((m) => m.GET),
+      },
+    ],
+  },
+  jobs: {
+    handlers: [
+      {
+        name: 'ingestion_operation',
+        queue: 'agent',
+        load: () =>
+          import('./jobs/ingestion_operation').then((m) => m.buildIngestionOperationHandler),
       },
     ],
   },

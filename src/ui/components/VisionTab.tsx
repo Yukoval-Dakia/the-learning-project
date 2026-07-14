@@ -6,8 +6,8 @@
 // 1c.2.C added (this file):
 //   - Per-block image preview via /api/assets/[id]/content (blob URL) with
 //     SVG bbox overlay per page_span.
-//   - Tier 2 / Tier 3 rescue buttons per block, calling
-//     /api/ingestion/[id]/rescue and invalidating the blocks query.
+//   - Tier 2 / Tier 3 rescue buttons per block, creating a canonical ingestion
+//     operation and invalidating the blocks query after its terminal result.
 //   - Cross-page block merge: each block past the first can be merged into
 //     the previous bucket; followers render as a compact pill, the primary
 //     keeps the editor; at import time we concatenate source_block_ids /
@@ -23,6 +23,7 @@ import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
+import { runIngestionOperation, startIngestionOperation } from '@/ui/lib/ingestion-operations';
 import {
   type ProgressEvent,
   derivePhaseFromEvents,
@@ -358,7 +359,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
         method: 'POST',
         body: JSON.stringify({ entrypoint: mode, asset_ids: ids }),
       });
-      await apiJson(`/api/ingestion/${session.session.id}/extract`, { method: 'POST' });
+      await startIngestionOperation(session.session.id, { kind: 'extract' });
       return session.session.id;
     },
     onSuccess: (id) => {
@@ -459,13 +460,11 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           };
         });
       if (importable.length === 0) throw new Error('至少保留一个块导入');
-      return apiJson<{ question_ids: string[]; mistake_ids: string[]; record_ids: string[] }>(
-        `/api/ingestion/${sessionId}/import`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ blocks: importable }),
-        },
-      );
+      return runIngestionOperation<{
+        question_ids: string[];
+        mistake_ids: string[];
+        record_ids: string[];
+      }>(sessionId, { kind: 'import', input: { blocks: importable } });
     },
     // A8 (YUK-354): 进着陆态而非硬跳 /mistakes。count = question_ids.length（三数组
     // 等长=题数）。保留 mistakes 失活，着陆「去看错题本」跳过去时数据已是新的。
@@ -494,13 +493,13 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     mutationFn: async (vars: { block: BlockRow; tier: 2 | 3 }) => {
       if (!sessionId) throw new Error('no session');
       const page = vars.block.page_spans[0]?.page_index ?? 0;
-      return apiJson(`/api/ingestion/${sessionId}/rescue`, {
-        method: 'POST',
-        body: JSON.stringify({
+      return runIngestionOperation(sessionId, {
+        kind: 'rescue',
+        input: {
           block_id: vars.block.id,
           page,
           tier: vars.tier,
-        }),
+        },
       });
     },
     onSuccess: () => {

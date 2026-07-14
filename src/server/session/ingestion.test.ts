@@ -95,6 +95,34 @@ describe('Ingestion.enqueueExtraction', () => {
     await cleanup(sessionId, sourceDocId);
   });
 
+  it('binds canonical extraction dispatch to the operation singleton window', async () => {
+    const { sessionId, sourceDocId } = await makeSession('uploaded');
+    const operationId = `ingop_${createId()}`;
+    const boss = mockBoss();
+    await enqueueExtraction({ db, boss, sessionId, operationId });
+    expect(boss.send).toHaveBeenCalledWith(
+      'tencent_ocr_extract',
+      { sessionId, operationId },
+      { singletonKey: operationId, singletonSeconds: 24 * 60 * 60 },
+    );
+    await cleanup(sessionId, sourceDocId);
+  });
+
+  it('commits queued when canonical singleton replay reports an existing job', async () => {
+    const { sessionId, sourceDocId } = await makeSession('uploaded');
+    const operationId = `ingop_${createId()}`;
+    const boss = {
+      send: vi.fn(async () => null),
+    } as unknown as Parameters<typeof enqueueExtraction>[0]['boss'];
+
+    await expect(enqueueExtraction({ db, boss, sessionId, operationId })).resolves.toEqual({
+      jobId: null,
+    });
+    const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
+    expect(rows[0].status).toBe('queued');
+    await cleanup(sessionId, sourceDocId);
+  });
+
   it('rejects from extracting (409)', async () => {
     const { sessionId, sourceDocId } = await makeSession('extracting');
     await expect(enqueueExtraction({ db, boss: mockBoss(), sessionId })).rejects.toBeInstanceOf(
