@@ -74,6 +74,41 @@ describe('segmentMarkdown — bare question-number line (学科网: pandoc split
     expect(byNo.get('8')).toBe('第⑭段画线句的对话描写，请赏析这种写法的表达效果。');
     expect(byNo.get('7')).not.toContain('第⑭段');
   });
+
+  it('keeps bare numbered outlines inside the current question', () => {
+    const outlined = segmentMarkdown({
+      markdown: [
+        '7\\. 请从两个方面概括文章内容。',
+        '1\\.',
+        '第一个方面的作答提示',
+        '2\\.',
+        '第二个方面的作答提示',
+        '8\\. 下一道顶层题。',
+      ].join('\n'),
+      media: [],
+    });
+
+    expect(outlined.map((block) => block.structured.question_no)).toEqual(['7', '8']);
+    expect(outlined[0].structured.prompt_text).toContain('1\\.\n第一个方面的作答提示');
+    expect(outlined[0].structured.prompt_text).toContain('2\\.\n第二个方面的作答提示');
+  });
+
+  it('prefers a later same-number top-level marker over a sequential-looking outline item', () => {
+    const outlined = segmentMarkdown({
+      markdown: [
+        '1\\. 第一题题干。',
+        '2\\.',
+        '题干内部的第二点提示',
+        '2\\. 第二道顶层题。',
+        '3\\. 第三道顶层题。',
+      ].join('\n'),
+      media: [],
+    });
+
+    expect(outlined.map((block) => block.structured.question_no)).toEqual(['1', '2', '3']);
+    expect(outlined[0].structured.prompt_text).toContain('2\\.\n题干内部的第二点提示');
+    expect(outlined[1].structured.prompt_text).toBe('第二道顶层题。');
+  });
 });
 
 describe('segmentMarkdown — noise filter', () => {

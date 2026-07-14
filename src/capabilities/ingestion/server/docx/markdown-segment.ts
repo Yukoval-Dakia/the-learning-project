@@ -49,6 +49,33 @@ interface DraftQuestion {
   imagePaths: string[];
 }
 
+function isBareQuestionBoundary(
+  lines: readonly string[],
+  lineIndex: number,
+  currentQuestionNo: string | null,
+  candidateQuestionNo: string,
+): boolean {
+  const candidate = Number(candidateQuestionNo);
+  const current = currentQuestionNo == null ? null : Number(currentQuestionNo);
+
+  // A bare marker has no textual evidence of being a top-level question. Only
+  // let it continue the established top-level sequence (or start at Q1).
+  if (current == null ? candidate !== 1 : candidate !== current + 1) return false;
+
+  // If the same number appears again before a later question number, prefer the
+  // later marker. This keeps a sequential-looking outline item inside Q1 when
+  // the real Q2 marker follows it, while still accepting `7. ... / 8. / prompt`.
+  for (let index = lineIndex + 1; index < lines.length; index += 1) {
+    const next = QUESTION_LEADING.exec(lines[index]);
+    if (!next) continue;
+    const nextQuestionNo = Number(next[1]);
+    if (nextQuestionNo === candidate) return false;
+    if (nextQuestionNo > candidate) break;
+  }
+
+  return true;
+}
+
 // ---------- math delimiter normalization (§3.3) ----------
 
 /**
@@ -126,14 +153,18 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
   const drafts: DraftQuestion[] = [];
   let cur: DraftQuestion | null = null;
 
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     const q = QUESTION_LEADING.exec(line);
     if (q) {
+      const firstLine = q[2];
+      if (!firstLine && !isBareQuestionBoundary(lines, lineIndex, cur?.questionNo ?? null, q[1])) {
+        if (cur) cur.promptLines.push(line);
+        continue;
+      }
       if (cur) drafts.push(cur);
       // q[2] is undefined for a bare `N\.` line (prompt lives on the next line);
       // start with no prompt line so the following line(s) fill it via the
       // non-question fall-through below.
-      const firstLine = q[2];
       cur = {
         questionNo: q[1],
         promptLines: firstLine ? [firstLine] : [],
