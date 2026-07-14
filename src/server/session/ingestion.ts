@@ -93,7 +93,7 @@ export type EnqueueExtractionParams = {
  */
 export async function enqueueExtraction(
   params: EnqueueExtractionParams,
-): Promise<{ jobId: string }> {
+): Promise<{ jobId: string | null }> {
   return params.db.transaction(async (tx) => {
     const current = await loadSessionForUpdate(tx, params.sessionId);
     if (!current) {
@@ -133,9 +133,12 @@ export async function enqueueExtraction(
           },
         )
       : await params.boss.send('tencent_ocr_extract', { sessionId: params.sessionId });
-    if (!jobId) {
+    if (!jobId && !params.operationId) {
       throw new Error('Ingestion.enqueueExtraction: boss.send returned no jobId');
     }
+    // Canonical operation crash-recovery may replay the same singleton dispatch.
+    // pg-boss returns null when that operation job already exists in the throttle
+    // window; commit `queued` so the existing job (or its delayed retry) can run.
     return { jobId };
   });
 }
