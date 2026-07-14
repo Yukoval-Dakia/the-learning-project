@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
@@ -17,10 +17,10 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         updated_at: learning_session.updated_at,
       })
       .from(learning_session)
-      .where(eq(learning_session.id, params.id))
+      .where(and(eq(learning_session.id, params.id), eq(learning_session.type, 'review')))
       .limit(1);
     const session = rows[0];
-    if (!session || session.type !== 'review') {
+    if (!session) {
       throw new ApiError('not_found', `review session ${params.id} not found`, 404);
     }
     return Response.json(session);
