@@ -29,8 +29,12 @@ export interface SegmentInput {
 }
 
 // 题号行: 行首 N. — pandoc escapes leading numbers as `N\.` to avoid ordered-list
-// promotion. Match both `1. ` and `1\. `.
-const QUESTION_LEADING = /^\s*(\d{1,3})\\?\.\s+(.*)$/;
+// promotion. Matches `1. text`, `1\. text`, AND a bare `8\.` line where pandoc split
+// the number onto its own line and put the prompt on the NEXT line (observed on real
+// 学科网 papers — Q8/Q13/Q23 otherwise merged into their predecessor); the prompt then
+// flows in from the following line(s). `\d{1,3}` keeps 4-digit years (a stray `1991.`)
+// from being mistaken for a question number.
+const QUESTION_LEADING = /^\s*(\d{1,3})\\?\.(?:\s+(.*))?$/;
 // 选项行: A. / B\. etc.
 const OPTION_LINE = /^\s*([A-D])\\?\.\s+(.*)$/;
 // 嵌图: markdown form ![alt](media/...) AND pandoc's <img src="media/..."> HTML
@@ -40,9 +44,41 @@ const IMG_HTML = /<img\s+[^>]*src="([^"]+)"/;
 
 interface DraftQuestion {
   questionNo: string;
+  startedFromBare: boolean;
   promptLines: string[];
   options: Array<{ label: string; text: string }>;
   imagePaths: string[];
+}
+
+const BARE_DUPLICATE_LOOKAHEAD_LINES = 2;
+
+function isBareQuestionBoundary(
+  lines: readonly string[],
+  lineIndex: number,
+  currentQuestionNo: string | null,
+  candidateQuestionNo: string,
+): boolean {
+  const candidate = Number(candidateQuestionNo);
+  const current = currentQuestionNo == null ? null : Number(currentQuestionNo);
+
+  // A bare marker has no textual evidence of being a top-level question. It
+  // must move numbering forward (or start at Q1), but gaps are valid when a
+  // section omits questions or continues at a later number.
+  if (current == null ? candidate !== 1 : candidate <= current) return false;
+
+  // A nearby same-number marker is stronger evidence that this bare line is an
+  // outline item and the later texted marker is the real question. Keep this
+  // lookahead deliberately short: scanning the whole remaining question would
+  // let a distant same-number sub-item override a valid bare boundary.
+  const lookaheadEnd = Math.min(lines.length, lineIndex + BARE_DUPLICATE_LOOKAHEAD_LINES + 1);
+  for (let index = lineIndex + 1; index < lookaheadEnd; index += 1) {
+    const next = QUESTION_LEADING.exec(lines[index]);
+    if (!next) continue;
+    const nextQuestionNo = Number(next[1]);
+    if (nextQuestionNo === candidate) return false;
+  }
+
+  return true;
 }
 
 // ---------- math delimiter normalization (§3.3) ----------
@@ -135,11 +171,32 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
   const drafts: DraftQuestion[] = [];
   let cur: DraftQuestion | null = null;
 
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     const q = QUESTION_LEADING.exec(line);
     if (q) {
+      // Once a bare marker has opened a question, a later line that repeats the
+      // same number belongs to that question's body rather than opening a
+      // duplicate top-level block.
+      if (cur?.startedFromBare && cur.questionNo === q[1]) {
+        cur.promptLines.push(line);
+        continue;
+      }
+      const firstLine = q[2];
+      if (!firstLine && !isBareQuestionBoundary(lines, lineIndex, cur?.questionNo ?? null, q[1])) {
+        if (cur) cur.promptLines.push(line);
+        continue;
+      }
       if (cur) drafts.push(cur);
-      cur = { questionNo: q[1], promptLines: [q[2]], options: [], imagePaths: [] };
+      // q[2] is undefined for a bare `N\.` line (prompt lives on the next line);
+      // start with no prompt line so the following line(s) fill it via the
+      // non-question fall-through below.
+      cur = {
+        questionNo: q[1],
+        startedFromBare: !firstLine,
+        promptLines: firstLine ? [firstLine] : [],
+        options: [],
+        imagePaths: [],
+      };
       continue;
     }
     // Before the first question: header region — drop images, ignore prose.
