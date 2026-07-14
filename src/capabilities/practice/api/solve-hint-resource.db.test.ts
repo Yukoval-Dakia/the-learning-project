@@ -85,4 +85,20 @@ describe('hint-request resource', () => {
       payload: { hint_index: 1 },
     });
   });
+
+  it('rejects an invalid hint index instead of silently using the default', async () => {
+    const { createHintRequest } = await import('./solve-hint');
+
+    const response = await createHintRequest(
+      new Request('http://localhost/api/hints', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hint_index: 'first' }),
+      }),
+      { id: 'question-id', sid: 'session-id' },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: 'validation_error' });
+  });
 });

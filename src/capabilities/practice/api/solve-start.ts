@@ -20,7 +20,18 @@ export async function createSolveSession(
     const { id } = params;
     const raw = await req.json().catch(() => null);
     const parsed = Body.safeParse(raw);
-    const regenerate = parsed.success && parsed.data ? parsed.data.regenerate : undefined;
+    if (!parsed.success) {
+      return errorResponse(
+        new ApiError(
+          'validation_error',
+          parsed.error.issues
+            .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+            .join('; '),
+          400,
+        ),
+      );
+    }
+    const regenerate = parsed.data ? parsed.data.regenerate : undefined;
 
     const result = await startSolveSession({ db, questionId: id, regenerate });
 

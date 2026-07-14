@@ -25,7 +25,18 @@ export async function createHintRequest(
     const { id, sid } = params;
     const raw = await req.json().catch(() => null);
     const parsed = Body.safeParse(raw);
-    const hintIndex = parsed.success && parsed.data ? parsed.data.hint_index : 0;
+    if (!parsed.success) {
+      return errorResponse(
+        new ApiError(
+          'validation_error',
+          parsed.error.issues
+            .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+            .join('; '),
+          400,
+        ),
+      );
+    }
+    const hintIndex = parsed.data ? parsed.data.hint_index : 0;
 
     const hint = await planSolveHint({ db, sessionId: sid, hintIndex, expectedQuestionId: id });
     const hintRequestId = newId();
