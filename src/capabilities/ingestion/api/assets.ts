@@ -1,6 +1,7 @@
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
+import { resourceResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getR2 } from '@/server/r2';
 
@@ -26,7 +27,13 @@ export async function POST(req: Request): Promise<Response> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const row = await persistImageAsset(db, getR2(), { bytes, mime: file.type });
 
-    return Response.json({ asset: row }, { status: 201 });
+    return resourceResponse(
+      { asset: row },
+      {
+        outcome: 'created',
+        location: `/api/assets/${encodeURIComponent(row.id)}/content`,
+      },
+    );
   } catch (err) {
     return errorResponse(err);
   }

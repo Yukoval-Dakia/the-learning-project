@@ -1,7 +1,7 @@
 import { REJUDGE_SINGLETON_SECONDS } from '@/capabilities/practice/jobs/rejudge-config';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
-import { deprecatedRouteResponse } from '@/kernel/http';
+import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -76,6 +76,14 @@ export async function createAppeal(req: Request) {
   }
 
   return Response.json({ appeal_event_id: appealEventId });
+}
+
+export async function createAppealResource(req: Request): Promise<Response> {
+  return canonicalResourceResponse(await createAppeal(req), {
+    outcome: 'created',
+    location: (body) =>
+      `/api/events/${encodeURIComponent((body as { appeal_event_id: string }).appeal_event_id)}`,
+  });
 }
 
 export async function POST(req: Request): Promise<Response> {

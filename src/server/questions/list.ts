@@ -19,7 +19,7 @@
 // OOM guard, NOT a business limit — it only bites when the tier/family in-memory
 // path must fetch the full WHERE-hit set (it cannot SQL-paginate, see A1b).
 
-import { type SQL, and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
 import { batchResolveSubjectDisplayIds } from '@/capabilities/knowledge/server/subject-resolution';
 import {
@@ -31,6 +31,7 @@ import {
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { knowledge, question } from '@/db/schema';
+import { ApiError } from '@/server/http/errors';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
 // Truncation threshold for list-item `prompt_md` (detail page serves the full
@@ -110,6 +111,7 @@ export interface ListQuestionsParams {
   enrich?: boolean;
   limit: number; // clamp 1..200
   offset: number; // >= 0
+  cursor?: string;
 }
 
 export interface QuestionListItem {
@@ -170,6 +172,7 @@ export interface ListQuestionsResult {
     limit: number;
     offset: number;
     has_more: boolean;
+    next_cursor: string | null;
   };
   computed_at_sec: number;
 }
@@ -363,11 +366,14 @@ function pageInfo(
   total: number,
   returned: number,
   params: Pick<ListQuestionsParams, 'limit' | 'offset'>,
+  nextCursor: string | null = null,
+  hasMore: boolean = params.offset + returned < total,
 ): ListQuestionsResult['page'] {
   return {
     limit: params.limit,
     offset: params.offset,
-    has_more: params.offset + returned < total,
+    has_more: hasMore,
+    next_cursor: nextCursor,
   };
 }
 
@@ -426,6 +432,94 @@ export async function listQuestions(
   return flatList(derived, params, truncated, computedAtSec);
 }
 
+interface QuestionCursor {
+  mode: 'created_at' | 'difficulty';
+  direction: QuestionListSortDir;
+  createdAt: Date;
+  id: string;
+  difficulty?: number;
+}
+
+function encodeQuestionCursor(
+  row: CandidateRow,
+  mode: QuestionCursor['mode'],
+  direction: QuestionListSortDir,
+): string {
+  return Buffer.from(
+    JSON.stringify({
+      mode,
+      direction,
+      created_at: row.created_at.toISOString(),
+      id: row.id,
+      ...(mode === 'difficulty' ? { difficulty: row.difficulty } : {}),
+    }),
+  ).toString('base64url');
+}
+
+function decodeQuestionCursor(
+  cursor: string,
+  mode: QuestionCursor['mode'],
+  direction: QuestionListSortDir,
+): QuestionCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      mode?: unknown;
+      direction?: unknown;
+      created_at?: unknown;
+      id?: unknown;
+      difficulty?: unknown;
+    };
+    if (
+      parsed.mode !== mode ||
+      parsed.direction !== direction ||
+      typeof parsed.created_at !== 'string' ||
+      typeof parsed.id !== 'string' ||
+      (mode === 'difficulty' && typeof parsed.difficulty !== 'number')
+    ) {
+      throw new Error('cursor does not match the requested sort');
+    }
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) throw new Error('invalid created_at');
+    return {
+      mode,
+      direction,
+      createdAt,
+      id: parsed.id,
+      ...(mode === 'difficulty' ? { difficulty: parsed.difficulty as number } : {}),
+    };
+  } catch (err) {
+    throw new ApiError('invalid_cursor', `invalid question cursor: ${(err as Error).message}`, 400);
+  }
+}
+
+function questionCursorFilter(cursor: QuestionCursor): SQL {
+  const createdTie = or(
+    lt(question.created_at, cursor.createdAt),
+    and(eq(question.created_at, cursor.createdAt), lt(question.id, cursor.id)),
+  ) as SQL;
+  if (cursor.mode === 'difficulty') {
+    const difficulty = cursor.difficulty as number;
+    return (
+      cursor.direction === 'asc'
+        ? or(
+            gt(question.difficulty, difficulty),
+            and(eq(question.difficulty, difficulty), createdTie),
+          )
+        : or(
+            lt(question.difficulty, difficulty),
+            and(eq(question.difficulty, difficulty), createdTie),
+          )
+    ) as SQL;
+  }
+  if (cursor.direction === 'asc') {
+    return or(
+      gt(question.created_at, cursor.createdAt),
+      and(eq(question.created_at, cursor.createdAt), gt(question.id, cursor.id)),
+    ) as SQL;
+  }
+  return createdTie;
+}
+
 // ── A1a: plain default list — SQL-paginated created_at DESC (no in-memory cap) ──
 // The tier is still a DERIVED projection (deriveSourceTier per returned row), but
 // because no tier filter/sort is requested we never need the full WHERE-hit set:
@@ -437,26 +531,38 @@ async function flatListSqlPaginated(
   params: ListQuestionsParams,
   computedAtSec: number,
 ): Promise<ListQuestionsResult> {
-  const where = filters.length > 0 ? and(...filters) : undefined;
-
   const direction = params.sortDir === 'asc' ? asc : desc;
+  const cursorDirection = params.sortDir === 'asc' ? 'asc' : 'desc';
+  const cursorMode = params.sortBy === 'difficulty' ? 'difficulty' : 'created_at';
+  const cursor = params.cursor
+    ? decodeQuestionCursor(params.cursor, cursorMode, cursorDirection)
+    : null;
+  const cursorFilter = cursor ? questionCursorFilter(cursor) : null;
+  const whereParts = cursorFilter ? [...filters, cursorFilter] : filters;
+  const where = whereParts.length > 0 ? and(...whereParts) : undefined;
   const orderBy =
     params.sortBy === 'difficulty'
       ? [direction(question.difficulty), desc(question.created_at), desc(question.id)]
       : [direction(question.created_at), direction(question.id)];
 
-  const rows = (await db
+  const fetchedRows = (await db
     .select(CANDIDATE_COLUMNS)
     .from(question)
     .orderBy(...orderBy)
     .where(where)
-    .limit(params.limit)
-    .offset(params.offset)) as CandidateRow[];
+    .limit(params.limit + 1)
+    .offset(params.cursor ? 0 : params.offset)) as CandidateRow[];
+
+  const hasMore = fetchedRows.length > params.limit;
+  const rows = hasMore ? fetchedRows.slice(0, params.limit) : fetchedRows;
+  const nextCursor = hasMore
+    ? encodeQuestionCursor(rows[rows.length - 1], cursorMode, cursorDirection)
+    : null;
 
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(question)
-    .where(where);
+    .where(filters.length > 0 ? and(...filters) : undefined);
 
   let items = rows.map((row) => toListItem(deriveCandidate(row)));
   // YUK-409 — 题库面 enrichment：subject / knowledge_labels / 大题小题展开。仅本
@@ -468,7 +574,7 @@ async function flatListSqlPaginated(
     families: null,
     total: count,
     truncated: false,
-    page: pageInfo(count, items.length, params),
+    page: pageInfo(count, items.length, params, nextCursor, hasMore),
     computed_at_sec: computedAtSec,
   };
 }

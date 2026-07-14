@@ -18,9 +18,14 @@ import { z } from 'zod';
 
 import { createId } from '@paralleldrive/cuid2';
 
-import { createKnowledgeEdge, listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
+import {
+  createKnowledgeEdge,
+  getKnowledgeEdgeById,
+  listKnowledgeEdgesPage,
+} from '@/capabilities/knowledge/server/edges';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
+import { collectionPayload, resourceResponse } from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
@@ -32,6 +37,8 @@ const QuerySchema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true'),
+  limit: z.coerce.number().int().positive().max(500).default(500),
+  cursor: z.string().min(1).optional(),
 });
 
 const BodySchema = z.object({
@@ -57,13 +64,31 @@ export async function GET(req: Request): Promise<Response> {
         .join('; ');
       throw new ApiError('validation_error', message, 400);
     }
-    const rows = await listKnowledgeEdges(db, {
+    const page = await listKnowledgeEdgesPage(db, {
       from: parsed.data.from,
       to: parsed.data.to,
       relation_type: parsed.data.relation_type,
       includeArchived: parsed.data.include_archived,
+      limit: parsed.data.limit,
+      cursor: parsed.data.cursor,
     });
-    return Response.json({ rows });
+    return Response.json(
+      collectionPayload(
+        page.rows,
+        { limit: parsed.data.limit, next_cursor: page.next_cursor },
+        page,
+      ),
+    );
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+export async function getEdge(_req: Request, params: Record<string, string>): Promise<Response> {
+  try {
+    const edge = await getKnowledgeEdgeById(db, params.id);
+    if (!edge) throw new ApiError('not_found', `knowledge edge ${params.id} not found`, 404);
+    return Response.json(edge);
   } catch (err) {
     return errorResponse(err);
   }
@@ -117,7 +142,13 @@ export async function POST(req: Request): Promise<Response> {
       });
       return edgeId;
     });
-    return Response.json({ id }, { status: 201 });
+    return resourceResponse(
+      { id },
+      {
+        outcome: 'created',
+        location: `/api/knowledge/edges/${encodeURIComponent(id)}`,
+      },
+    );
   } catch (err) {
     return errorResponse(err);
   }

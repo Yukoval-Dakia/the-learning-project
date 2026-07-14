@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { type SQL, and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_record } from '@/db/schema';
@@ -124,12 +124,24 @@ export async function listLearningRecords(
     conditions.push(inArray(learning_record.processing_status, filter.processing_status));
   }
   if (filter.since) conditions.push(gte(learning_record.created_at, filter.since));
+  if (filter.before_created_at && filter.before_id) {
+    const cursorFilter = or(
+      lt(learning_record.created_at, filter.before_created_at),
+      and(
+        eq(learning_record.created_at, filter.before_created_at),
+        lt(learning_record.id, filter.before_id),
+      ),
+    );
+    if (cursorFilter) conditions.push(cursorFilter);
+  }
 
   const base = db.select().from(learning_record);
   const query =
     conditions.length > 0
-      ? base.where(and(...conditions)).orderBy(desc(learning_record.created_at))
-      : base.orderBy(desc(learning_record.created_at));
+      ? base
+          .where(and(...conditions))
+          .orderBy(desc(learning_record.created_at), desc(learning_record.id))
+      : base.orderBy(desc(learning_record.created_at), desc(learning_record.id));
   return await query.limit(filter.limit ?? 50);
 }
 

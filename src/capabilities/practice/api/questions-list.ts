@@ -13,9 +13,11 @@ import { z } from 'zod';
 
 import { resolveSubjectKnowledgeIds } from '@/capabilities/knowledge/server/domain';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
 import {
+  type QuestionFamily,
   type QuestionListDraftStatus,
+  type QuestionListItem,
   type QuestionListSortBy,
   type QuestionListSortDir,
   listQuestions,
@@ -50,6 +52,7 @@ const ListQuerySchema = z
     enrich: z.boolean().default(false),
     limit: z.coerce.number().int().default(DEFAULT_LIMIT),
     offset: z.coerce.number().int().min(0).default(0),
+    cursor: z.string().min(1).optional(),
   })
   // Path modes are mutually exclusive; combining them is ambiguous → reject (400)
   // rather than silently picking a precedence (plan §A1c).
@@ -90,6 +93,7 @@ export async function GET(req: Request): Promise<Response> {
       enrich: parseBool(sp.get('enrich')),
       limit: sp.get('limit') ?? undefined,
       offset: sp.get('offset') ?? undefined,
+      cursor: sp.get('cursor') ?? undefined,
     });
     if (!parsed.success) {
       throw new ApiError(
@@ -99,6 +103,23 @@ export async function GET(req: Request): Promise<Response> {
       );
     }
     const q = parsed.data;
+
+    if (q.cursor && sp.has('offset')) {
+      throw new ApiError('invalid_cursor', 'cursor and offset are mutually exclusive', 400);
+    }
+    if (
+      q.cursor &&
+      (q.group_by_family ||
+        q.expand_root !== undefined ||
+        q.source_tier.length > 0 ||
+        q.sort_by === 'source_tier')
+    ) {
+      throw new ApiError(
+        'invalid_cursor',
+        'cursor pagination is available for flat created_at/difficulty question lists',
+        400,
+      );
+    }
 
     const limit = Math.min(Math.max(q.limit, 1), MAX_LIMIT);
     const offset = Math.max(q.offset, 0);
@@ -127,9 +148,17 @@ export async function GET(req: Request): Promise<Response> {
       enrich: q.enrich,
       limit,
       offset,
+      cursor: q.cursor,
     });
 
-    return Response.json(result);
+    const data: Array<QuestionFamily | QuestionListItem> = result.families ?? result.items;
+    return Response.json(
+      collectionPayload<QuestionFamily | QuestionListItem, typeof result>(
+        data,
+        result.page,
+        result,
+      ),
+    );
   } catch (err) {
     return errorResponse(err);
   }

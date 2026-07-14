@@ -12,7 +12,8 @@ import { readPaperSections } from '@/capabilities/practice/server/paper-sections
 import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_session } from '@/db/schema';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { ApiError } from '@/kernel/http';
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared knowledge name resolver (used by practice-read + paper-detail)
@@ -136,6 +137,40 @@ export interface PracticePaperItem {
 
 export interface PracticeListResult {
   papers: PracticePaperItem[];
+  next_cursor: string | null;
+}
+
+interface PracticeListOptions {
+  limit?: number;
+  cursor?: string;
+}
+
+interface PaperCursor {
+  createdAt: Date;
+  id: string;
+}
+
+function encodePaperCursor(row: typeof artifact.$inferSelect): string {
+  return Buffer.from(
+    JSON.stringify({ created_at: row.created_at.toISOString(), id: row.id }),
+  ).toString('base64url');
+}
+
+function decodePaperCursor(cursor: string): PaperCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      created_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.created_at !== 'string' || typeof parsed.id !== 'string') {
+      throw new Error('missing created_at or id');
+    }
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) throw new Error('invalid created_at');
+    return { createdAt, id: parsed.id };
+  } catch (err) {
+    throw new ApiError('invalid_cursor', `invalid paper cursor: ${(err as Error).message}`, 400);
+  }
 }
 
 /**
@@ -147,23 +182,38 @@ export interface PracticeListResult {
  * The UI splits 今日 / 往日 and applies the source-tab filter client-side over
  * the returned `source` field (Map §C2 / critic #4).
  */
-export async function getPracticeList(db: Db | Tx): Promise<PracticeListResult> {
+export async function getPracticeList(
+  db: Db | Tx,
+  options: PracticeListOptions = {},
+): Promise<PracticeListResult> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const cursor = options.cursor ? decodePaperCursor(options.cursor) : null;
   // 1) Paper artifacts (the widened intent_source provenances).
   //    YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth source
   //    (ingest→practice bridge); must stay in lock-step with the start-session
   //    whitelist in paper-intent-sources.ts (§Step 1).
-  const paperRows = await db
+  const paperWhere = and(
+    eq(artifact.type, 'tool_quiz'),
+    inArray(artifact.intent_source, [...PAPER_INTENT_SOURCES]),
+    cursor
+      ? (or(
+          lt(artifact.created_at, cursor.createdAt),
+          and(eq(artifact.created_at, cursor.createdAt), lt(artifact.id, cursor.id)),
+        ) as NonNullable<ReturnType<typeof or>>)
+      : undefined,
+  );
+  const fetchedPaperRows = await db
     .select()
     .from(artifact)
-    .where(
-      and(
-        eq(artifact.type, 'tool_quiz'),
-        inArray(artifact.intent_source, [...PAPER_INTENT_SOURCES]),
-      ),
-    )
-    .orderBy(desc(artifact.created_at));
+    .where(paperWhere)
+    .orderBy(desc(artifact.created_at), desc(artifact.id))
+    .limit(limit + 1);
 
-  if (paperRows.length === 0) return { papers: [] };
+  const hasMore = fetchedPaperRows.length > limit;
+  const paperRows = hasMore ? fetchedPaperRows.slice(0, limit) : fetchedPaperRows;
+  const lastPaper = paperRows.at(-1);
+  const nextCursor = hasMore && lastPaper ? encodePaperCursor(lastPaper) : null;
+  if (paperRows.length === 0) return { papers: [], next_cursor: null };
   const paperIds = paperRows.map((r) => r.id);
 
   // 2) Linked review sessions (learning_session.artifact_id → paper). Take the
@@ -351,5 +401,5 @@ export async function getPracticeList(db: Db | Tx): Promise<PracticeListResult> 
     };
   });
 
-  return { papers };
+  return { papers, next_cursor: nextCursor };
 }

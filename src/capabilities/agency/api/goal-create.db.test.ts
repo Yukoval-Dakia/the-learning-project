@@ -11,7 +11,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
-import { POST as createGoal } from './goal-create';
+import { POST as createGoal, GET as getGoal } from './goal-create';
 
 const db = testDb();
 
@@ -42,11 +42,18 @@ describe('POST /api/goals (at-entry goal-create)', () => {
   it('creates a goal from an explicit knowledgeIds scope (source=manual)', async () => {
     await seedKnowledge('kc1', 'yuwen');
     const res = await createGoal(jsonReq({ title: 'G', knowledgeIds: ['kc1'] }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.id).toBeTruthy();
     expect(body.scopeKnowledgeIds).toEqual(['kc1']);
     expect(body.status).toBe('active');
+    expect(res.headers.get('Location')).toBe(`/api/goals/${body.id}`);
+
+    const detail = await getGoal(new Request(`http://localhost/api/goals/${body.id}`), {
+      id: body.id,
+    });
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({ id: body.id, title: 'G', status: 'active' });
 
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
     expect(rows).toHaveLength(1);
@@ -62,7 +69,7 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     await seedKnowledge('kc1', 'yuwen');
     await seedKnowledge('kc2', null); // untagged → not in subject either way
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'yuwen' }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.subjectId).toBe('yuwen');
     expect(body.scopeKnowledgeIds).toEqual([]); // no write-time freeze
@@ -80,7 +87,7 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     // permanently sourcingNeeded. Post-fix the row must be scope_mode=subject_live + [].
     await seedKnowledge('seed:yuwen:root', 'yuwen');
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'yuwen' }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = await res.json();
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
     expect(rows[0].scope_knowledge_ids).toEqual([]); // NOT ['seed:yuwen:root']
@@ -103,7 +110,7 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     // Day-one: empty tree, cross-subject or no subject — the goal is a north-star whose
     // scope grows from uploads (YUK-481). Must NOT be rejected (was the cold-start blocker).
     const res = await createGoal(jsonReq({ title: 'G' }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.scopeKnowledgeIds).toEqual([]);
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
@@ -126,7 +133,7 @@ describe('POST /api/goals (at-entry goal-create)', () => {
   it('YUK-600：alias 归一——subjectId=wenyan 落库/响应均为 canonical yuwen 且 subject_live', async () => {
     await seedKnowledge('kc1', 'yuwen');
     const res = await createGoal(jsonReq({ title: 'G', subjectId: 'wenyan' }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.subjectId).toBe('yuwen'); // canonical，非 raw
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
@@ -139,7 +146,7 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     // gap in GoalRowSnapshot / fold / goalLiveRowToSnapshot would make THIS create throw.
     await seedKnowledge('kc1', 'yuwen');
     const offRes = await createGoal(jsonReq({ title: 'G-off', subjectId: 'yuwen' }));
-    expect(offRes.status).toBe(200);
+    expect(offRes.status).toBe(201);
 
     // ON path: projectGoal write-through folds the genesis and writes the row — the projected
     // row must carry the same scope_mode the imperative writer would have written.
@@ -147,7 +154,7 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     process.env.PROJECTION_IS_WRITER_GOAL = '1';
     try {
       const onRes = await createGoal(jsonReq({ title: 'G-on', subjectId: 'yuwen' }));
-      expect(onRes.status).toBe(200);
+      expect(onRes.status).toBe(201);
       const onBody = await onRes.json();
       const rows = await db.select().from(goal).where(eq(goal.id, onBody.id));
       expect(rows).toHaveLength(1);

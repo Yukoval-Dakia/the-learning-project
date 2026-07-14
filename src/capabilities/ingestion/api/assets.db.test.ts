@@ -53,6 +53,7 @@ describe('POST /api/assets', () => {
     expect(body.asset.mime_type).toBe('image/png');
     expect(body.asset.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(body.asset.byte_size).toBe(4);
+    expect(res.headers.get('Location')).toBe(`/api/assets/${body.asset.id}/content`);
     // R2 should have the object
     expect(r2._store.has(body.asset.storage_key)).toBe(true);
     // DB row exists

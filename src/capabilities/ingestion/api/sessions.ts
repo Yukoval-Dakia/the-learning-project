@@ -4,9 +4,14 @@ import { MAX_PDF_PAGES } from '@/core/limits';
 import { IngestionEntrypoint } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { event, learning_session, question_block, source_asset } from '@/db/schema';
+import {
+  canonicalResourceResponse,
+  collectionPayload,
+  deprecatedRouteResponse,
+} from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Ingestion } from '@/server/session';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 
 const DEFAULT_LIMIT = 20;
 const MIN_LIMIT = 1;
@@ -17,9 +22,8 @@ const MAX_LIMIT = 100;
  * surface (YUK-164 #2). The AutoEnrolledPanel sits on /record with no session
  * context, so it needs a list to pick which past ingestion to inspect.
  *
- * Returns newest-first (created_at desc), capped at `limit` (clamped 1..100;
- * keyset/cursor pagination is overkill for a single-user low-volume tool — add
- * `before=<iso>` later if volume ever grows). Filters to type='ingestion'
+ * Returns newest-first (created_at desc, id desc), capped at `limit` (clamped
+ * 1..100) with a stable keyset cursor. Filters to type='ingestion'
  * sessions that have ≥1 block (a freshly-extracted session with 0 observations is
  * still a valid pick — we do NOT filter on observation_count, only block_count>0,
  * so the observe-empty state stays visible).
@@ -39,6 +43,7 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
     const limit = clampLimit(url.searchParams.get('limit'));
+    const cursor = decodeCursor(url.searchParams.get('cursor'));
 
     // 1) latest ingestion sessions that have ≥1 block (newest first, capped at
     //    limit). The "has a block" predicate is pushed into SQL as an EXISTS
@@ -59,14 +64,33 @@ export async function GET(req: Request): Promise<Response> {
         and(
           eq(learning_session.type, 'ingestion'),
           sql`exists (select 1 from ${question_block} where ${question_block.ingestion_session_id} = ${learning_session.id})`,
+          cursor
+            ? or(
+                lt(learning_session.created_at, cursor.createdAt),
+                and(
+                  eq(learning_session.created_at, cursor.createdAt),
+                  lt(learning_session.id, cursor.id),
+                ),
+              )
+            : undefined,
         ),
       )
-      .orderBy(desc(learning_session.created_at))
-      .limit(limit);
+      .orderBy(desc(learning_session.created_at), desc(learning_session.id))
+      .limit(limit + 1);
 
-    const sessionIds = sessions.map((s) => s.id);
+    const hasMore = sessions.length > limit;
+    const pageSessions = hasMore ? sessions.slice(0, limit) : sessions;
+    const lastSession = pageSessions.at(-1);
+    const nextCursor =
+      hasMore && lastSession
+        ? encodeCursor({ createdAt: lastSession.created_at, id: lastSession.id })
+        : null;
+
+    const sessionIds = pageSessions.map((s) => s.id);
     if (sessionIds.length === 0) {
-      return Response.json({ rows: [] });
+      return Response.json(
+        collectionPayload([], { limit, next_cursor: null }, { rows: [], next_cursor: null }),
+      );
     }
 
     // 2) blocks grouped by session: total count + auto_enrolled count.
@@ -109,7 +133,7 @@ export async function GET(req: Request): Promise<Response> {
     // would drop valid older rows already squeezed out of the limit). We do NOT
     // filter on observation_count: a freshly-extracted session with 0 observations
     // is a valid pick whose observe-empty state we want to surface.
-    const rows = sessions.map((s) => {
+    const rows = pageSessions.map((s) => {
       const agg = blockBySid.get(s.id);
       return {
         id: s.id,
@@ -124,9 +148,43 @@ export async function GET(req: Request): Promise<Response> {
       };
     });
 
-    return Response.json({ rows });
+    return Response.json(
+      collectionPayload(
+        rows,
+        { limit, next_cursor: nextCursor },
+        { rows, next_cursor: nextCursor },
+      ),
+    );
   } catch (err) {
     return errorResponse(err);
+  }
+}
+
+interface SessionCursor {
+  createdAt: Date;
+  id: string;
+}
+
+function encodeCursor(cursor: SessionCursor): string {
+  return Buffer.from(
+    JSON.stringify({ created_at: cursor.createdAt.toISOString(), id: cursor.id }),
+  ).toString('base64url');
+}
+
+function decodeCursor(raw: string | null): SessionCursor | null {
+  if (raw == null) return null;
+
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as {
+      created_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.created_at !== 'string' || typeof parsed.id !== 'string') throw new Error();
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime()) || parsed.id.length === 0) throw new Error();
+    return { createdAt, id: parsed.id };
+  } catch {
+    throw new ApiError('invalid_cursor', 'cursor is invalid', 400);
   }
 }
 
@@ -200,4 +258,23 @@ export async function POST(req: Request): Promise<Response> {
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+/** Canonical POST /api/ingestion-sessions resource contract. */
+export async function createIngestionSessionResource(req: Request): Promise<Response> {
+  return canonicalResourceResponse(await POST(req), {
+    outcome: 'created',
+    location: (body) => {
+      const sessionId = (body as { session: { id: string } }).session.id;
+      return `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`;
+    },
+  });
+}
+
+export async function legacyListIngestionSessions(req: Request): Promise<Response> {
+  return deprecatedRouteResponse(await GET(req), '/api/ingestion-sessions');
+}
+
+export async function legacyCreateIngestionSession(req: Request): Promise<Response> {
+  return deprecatedRouteResponse(await POST(req), '/api/ingestion-sessions');
 }

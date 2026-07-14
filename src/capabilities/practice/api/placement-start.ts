@@ -15,7 +15,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
-import { deprecatedRouteResponse } from '@/kernel/http';
+import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Placement } from '@/server/session';
 import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
@@ -136,6 +136,14 @@ export async function createPlacementSession(req: Request): Promise<Response> {
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function createPlacementSessionResource(req: Request): Promise<Response> {
+  return canonicalResourceResponse(await createPlacementSession(req), {
+    outcome: 'created',
+    location: (body) =>
+      `/api/placement-sessions/${encodeURIComponent((body as { sessionId: string }).sessionId)}`,
+  });
 }
 
 export async function POST(req: Request): Promise<Response> {

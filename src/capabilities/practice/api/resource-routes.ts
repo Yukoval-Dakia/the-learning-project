@@ -1,4 +1,4 @@
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
 import { createAnswerDraft } from './paper-answer-route';
 import { createPaperSubmission } from './paper-submit-route';
 import { createHintRequest } from './solve-hint';
@@ -44,9 +44,18 @@ export async function createSolveSessionResource(req: Request): Promise<Response
   try {
     const body = await readJsonObject(req);
     const questionId = requiredId(body, 'question_id');
-    return createSolveSession(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
-      id: questionId,
-    });
+    return canonicalResourceResponse(
+      await createSolveSession(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
+        id: questionId,
+      }),
+      {
+        outcome: 'created',
+        location: (responseBody) =>
+          `/api/solve-sessions/${encodeURIComponent(
+            (responseBody as { session_id: string }).session_id,
+          )}`,
+      },
+    );
   } catch (err) {
     return errorResponse(err);
   }
@@ -59,10 +68,19 @@ export async function createHintRequestResource(
   try {
     const body = await readJsonObject(req);
     const questionId = requiredId(body, 'question_id');
-    return createHintRequest(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
-      id: questionId,
-      sid: params.sid,
-    });
+    return canonicalResourceResponse(
+      await createHintRequest(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
+        id: questionId,
+        sid: params.sid,
+      }),
+      {
+        outcome: 'created',
+        location: (responseBody) =>
+          `/api/events/${encodeURIComponent(
+            (responseBody as { hint_request_id: string }).hint_request_id,
+          )}`,
+      },
+    );
   } catch (err) {
     return errorResponse(err);
   }
@@ -75,10 +93,19 @@ export async function createSolveSubmissionResource(
   try {
     const body = await readJsonObject(req);
     const questionId = requiredId(body, 'question_id');
-    return createSolveSubmission(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
-      id: questionId,
-      sid: params.sid,
-    });
+    return canonicalResourceResponse(
+      await createSolveSubmission(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
+        id: questionId,
+        sid: params.sid,
+      }),
+      {
+        outcome: 'created',
+        location: (responseBody) =>
+          `/api/events/${encodeURIComponent(
+            (responseBody as { attempt_event_id: string }).attempt_event_id,
+          )}`,
+      },
+    );
   } catch (err) {
     return errorResponse(err);
   }
@@ -91,12 +118,22 @@ export async function createPaperAnswerDraftResource(
   try {
     const body = await readJsonObject(req);
     const paperId = requiredId(body, 'paper_id');
-    return createAnswerDraft(
-      forwardedJsonRequest(req, {
-        ...withoutField(body, 'paper_id'),
-        session_id: params.id,
-      }),
-      { id: paperId },
+    return canonicalResourceResponse(
+      await createAnswerDraft(
+        forwardedJsonRequest(req, {
+          ...withoutField(body, 'paper_id'),
+          session_id: params.id,
+        }),
+        { id: paperId },
+      ),
+      {
+        outcome: (responseBody) =>
+          (responseBody as { created: boolean }).created ? 'created' : 'existing',
+        location: (responseBody) =>
+          `/api/review-sessions/${encodeURIComponent(params.id)}/answer-drafts/${encodeURIComponent(
+            (responseBody as { answer_id: string }).answer_id,
+          )}`,
+      },
     );
   } catch (err) {
     return errorResponse(err);
@@ -110,12 +147,21 @@ export async function createPaperSubmissionResource(
   try {
     const body = await readJsonObject(req);
     const paperId = requiredId(body, 'paper_id');
-    return createPaperSubmission(
-      forwardedJsonRequest(req, {
-        ...withoutField(body, 'paper_id'),
-        session_id: params.id,
-      }),
-      { id: paperId },
+    return canonicalResourceResponse(
+      await createPaperSubmission(
+        forwardedJsonRequest(req, {
+          ...withoutField(body, 'paper_id'),
+          session_id: params.id,
+        }),
+        { id: paperId },
+      ),
+      {
+        outcome: 'created',
+        location: (responseBody) =>
+          `/api/events/${encodeURIComponent(
+            (responseBody as { attempt_event_id: string }).attempt_event_id,
+          )}`,
+      },
     );
   } catch (err) {
     return errorResponse(err);

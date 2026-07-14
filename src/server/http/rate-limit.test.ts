@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from './errors';
+import { ApiError, errorResponse } from './errors';
 import { __resetRateLimitForTests, checkRateLimit } from './rate-limit';
 
 describe('checkRateLimit', () => {
@@ -37,6 +37,7 @@ describe('checkRateLimit', () => {
     const apiErr = thrown as ApiError;
     expect(apiErr.status).toBe(429);
     expect(apiErr.code).toBe('rate_limited');
+    expect(errorResponse(apiErr).headers.get('Retry-After')).toBe('1');
   });
 
   it('recovers after the window rolls past the oldest hits', () => {
