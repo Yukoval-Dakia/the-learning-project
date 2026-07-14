@@ -43,9 +43,9 @@ export function SolveTutorPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/questions/${questionId}/solve`, {
+      const res = await apiFetch('/api/solve-sessions', {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: JSON.stringify({ question_id: questionId }),
       });
       const body = (await res.json()) as { session_id: string };
       setSessionId(body.session_id);
@@ -61,10 +61,13 @@ export function SolveTutorPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/questions/${questionId}/solve/${sessionId}/hint`, {
-        method: 'POST',
-        body: JSON.stringify({ hint_index: hints.length }),
-      });
+      const res = await apiFetch(
+        `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ question_id: questionId, hint_index: hints.length }),
+        },
+      );
       const body = (await res.json()) as { text_md: string };
       setHints((h) => [...h, body.text_md]);
     } catch (e) {
@@ -79,10 +82,13 @@ export function SolveTutorPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/questions/${questionId}/solve/${sessionId}/submit`, {
-        method: 'POST',
-        body: JSON.stringify({ student_final_answer_text: answer }),
-      });
+      const res = await apiFetch(
+        `/api/solve-sessions/${encodeURIComponent(sessionId)}/submissions`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ question_id: questionId, student_final_answer_text: answer }),
+        },
+      );
       setResult((await res.json()) as JudgeResponse);
     } catch (e) {
       setError(e instanceof Error ? e.message : '提交失败');

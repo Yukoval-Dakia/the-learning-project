@@ -179,6 +179,11 @@ export const observabilityCapability = defineCapability({
         path: '/api/events/[id]/correct',
         load: () => import('./api/event-correct').then((m) => m.POST),
       },
+      {
+        method: 'POST',
+        path: '/api/events/[id]/corrections',
+        load: () => import('./api/event-correct').then((m) => m.createCorrection),
+      },
       // YUK-310 — 通用异步 job tracker：caller-agnostic SSE。把 ingestion 的
       // per-domain /api/ingestion/[id]/events 提升为 /api/jobs/[kind]/[id]/events，
       // kind→business_table、id→business_id；copilot_run 是首个消费者。job_events

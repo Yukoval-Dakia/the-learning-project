@@ -42,6 +42,21 @@ export const PLACEMENT_PROBE_ENABLED = process.env.PLACEMENT_PROBE_ENABLED === '
 
 const SESSION_TABLE = 'learning_session' as const;
 
+export type PlacementSessionStatus = 'started' | 'completed' | 'abandoned';
+
+export type PlacementSessionTransition = {
+  previousStatus: PlacementSessionStatus;
+  status: PlacementSessionStatus;
+  changed: boolean;
+  allowedStatuses: PlacementSessionStatus[];
+};
+
+const PLACEMENT_ALLOWED_TARGETS: Record<PlacementSessionStatus, PlacementSessionStatus[]> = {
+  started: ['completed', 'abandoned'],
+  completed: [],
+  abandoned: [],
+};
+
 // Row-lock the placement session for the duration of the surrounding tx (FOR UPDATE). Returns
 // the status AND the server-side scope (scope_knowledge_ids) captured at start. Exported so the
 // /next route can serialize concurrent POSTs on the same probe (two concurrent /next must not
@@ -165,40 +180,7 @@ export async function startPlacementSession(
  * hits a termination condition (count cap or SE convergence — placement-termination.ts).
  */
 export async function completePlacementSession(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const current = await loadPlacementSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError(
-        'not_found',
-        `learning_session ${sessionId} (type=placement) not found`,
-        404,
-      );
-    }
-    assertFromState(
-      current.status,
-      ['started'] as const,
-      sessionId,
-      'Placement.completePlacementSession',
-    );
-
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: 'completed',
-        ended_at: now,
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'placement.completed',
-      payload: {},
-    });
-  });
+  await applyPlacementSessionTransition(db, sessionId, 'completed', false);
 }
 
 // ---------- abandonPlacementSession ----------
@@ -215,7 +197,16 @@ export async function completePlacementSession(db: Db, sessionId: string): Promi
  * landing the go-live prerequisite ahead of the flag flip.
  */
 export async function abandonPlacementSession(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
+  await applyPlacementSessionTransition(db, sessionId, 'abandoned', false);
+}
+
+async function applyPlacementSessionTransition(
+  db: Db,
+  sessionId: string,
+  target: Exclude<PlacementSessionStatus, 'started'>,
+  idempotent: boolean,
+): Promise<PlacementSessionTransition> {
+  return db.transaction(async (tx) => {
     const current = await loadPlacementSessionForUpdate(tx, sessionId);
     if (!current) {
       throw new ApiError(
@@ -224,18 +215,28 @@ export async function abandonPlacementSession(db: Db, sessionId: string): Promis
         404,
       );
     }
+
+    const previousStatus = current.status as PlacementSessionStatus;
+    if (previousStatus === target && idempotent) {
+      return {
+        previousStatus,
+        status: target,
+        changed: false,
+        allowedStatuses: PLACEMENT_ALLOWED_TARGETS[target],
+      };
+    }
     assertFromState(
       current.status,
       ['started'] as const,
       sessionId,
-      'Placement.abandonPlacementSession',
+      `Placement.transitionPlacementSession(${target})`,
     );
 
     const now = new Date();
     await tx
       .update(learning_session)
       .set({
-        status: 'abandoned',
+        status: target,
         ended_at: now,
         updated_at: now,
         version: sql`${learning_session.version} + 1`,
@@ -245,8 +246,24 @@ export async function abandonPlacementSession(db: Db, sessionId: string): Promis
     await writeJobEvent(tx, {
       business_table: SESSION_TABLE,
       business_id: sessionId,
-      event_type: 'placement.abandoned',
+      event_type: `placement.${target}`,
       payload: {},
     });
+
+    return {
+      previousStatus,
+      status: target,
+      changed: true,
+      allowedStatuses: PLACEMENT_ALLOWED_TARGETS[target],
+    };
   });
+}
+
+/** Idempotent target-state transition used by PATCH /api/placement-sessions/:id. */
+export async function transitionPlacementSession(
+  db: Db,
+  sessionId: string,
+  target: Exclude<PlacementSessionStatus, 'started'>,
+): Promise<PlacementSessionTransition> {
+  return applyPlacementSessionTransition(db, sessionId, target, true);
 }

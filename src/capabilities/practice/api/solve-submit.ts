@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
 import { MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -28,7 +29,10 @@ const Body = z.object({
   final_hint_level: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
 });
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createSolveSubmission(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id, sid } = params;
     const raw = await req.json().catch(() => null);
@@ -82,4 +86,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await createSolveSubmission(req, params);
+  return deprecatedRouteResponse(response, `/api/solve-sessions/${params.sid}/submissions`);
 }

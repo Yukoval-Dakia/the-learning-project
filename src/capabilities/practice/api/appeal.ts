@@ -1,6 +1,7 @@
 import { REJUDGE_SINGLETON_SECONDS } from '@/capabilities/practice/jobs/rejudge-config';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -25,7 +26,7 @@ const AppealRequestSchema = z.object({
  *
  * Auth: middleware enforces `x-internal-token` on all `/api/*` except /health.
  */
-export async function POST(req: Request) {
+export async function createAppeal(req: Request) {
   let body: unknown;
   try {
     body = await req.json();
@@ -75,4 +76,8 @@ export async function POST(req: Request) {
   }
 
   return Response.json({ appeal_event_id: appealEventId });
+}
+
+export async function POST(req: Request): Promise<Response> {
+  return deprecatedRouteResponse(await createAppeal(req), '/api/appeals');
 }

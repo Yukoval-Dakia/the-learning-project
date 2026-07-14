@@ -12,6 +12,7 @@ export const practiceCapability = defineCapability({
     actions: [
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
+      'experimental:hint_request',
     ],
   },
   api: {
@@ -23,6 +24,11 @@ export const practiceCapability = defineCapability({
         method: 'POST',
         path: '/api/review/submit',
         load: () => import('./api/submit').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/attempts',
+        load: () => import('./api/submit').then((m) => m.createAttempt),
       },
       {
         method: 'GET',
@@ -46,6 +52,11 @@ export const practiceCapability = defineCapability({
       },
       {
         method: 'POST',
+        path: '/api/appeals',
+        load: () => import('./api/appeal').then((m) => m.createAppeal),
+      },
+      {
+        method: 'POST',
         path: '/api/review/sessions',
         load: () => import('./api/legacy-review-sessions').then((m) => m.POST),
       },
@@ -58,6 +69,21 @@ export const practiceCapability = defineCapability({
         method: 'GET',
         path: '/api/review-sessions/[id]',
         load: () => import('./api/review-session-detail').then((m) => m.GET),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/review-sessions/[id]',
+        load: () => import('./api/review-session-detail').then((m) => m.PATCH),
+      },
+      {
+        method: 'POST',
+        path: '/api/review-sessions/[id]/answer-drafts',
+        load: () => import('./api/resource-routes').then((m) => m.createPaperAnswerDraftResource),
+      },
+      {
+        method: 'POST',
+        path: '/api/review-sessions/[id]/submissions',
+        load: () => import('./api/resource-routes').then((m) => m.createPaperSubmissionResource),
       },
       {
         method: 'POST',
@@ -81,7 +107,7 @@ export const practiceCapability = defineCapability({
       },
       // YUK-468 cold-start inc-B — placement probe 会话 API (dark-ship, gated on
       // PLACEMENT_PROBE_ENABLED). start → first question; [id]/next → terminate-check + next
-      // question; [id]/end → complete/abandon. Answers go through /api/review/submit with the
+      // question; [id]/end → complete/abandon. Answers now go through /api/attempts with the
       // probe's session_id (shared judge + θ̂ path, no separate placement submit).
       {
         method: 'POST',
@@ -97,6 +123,21 @@ export const practiceCapability = defineCapability({
         method: 'POST',
         path: '/api/placement/[id]/end',
         load: () => import('./api/placement-end').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/placement-sessions',
+        load: () => import('./api/placement-start').then((m) => m.createPlacementSession),
+      },
+      {
+        method: 'POST',
+        path: '/api/placement-sessions/[id]/question-selections',
+        load: () => import('./api/placement-next').then((m) => m.createPlacementQuestionSelection),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/placement-sessions/[id]',
+        load: () => import('./api/placement-session-detail').then((m) => m.PATCH),
       },
       // YUK-473 Slice 4 — placement-done 起始档案读：GET ?goal=<id> → per-KC mastery over
       // the goal scope (getMasteryProjection SoT; untested in-scope KCs → tested:false).
@@ -198,6 +239,21 @@ export const practiceCapability = defineCapability({
         method: 'POST',
         path: '/api/questions/[id]/solve/[sid]/hint',
         load: () => import('./api/solve-hint').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/solve-sessions',
+        load: () => import('./api/resource-routes').then((m) => m.createSolveSessionResource),
+      },
+      {
+        method: 'POST',
+        path: '/api/solve-sessions/[sid]/hint-requests',
+        load: () => import('./api/resource-routes').then((m) => m.createHintRequestResource),
+      },
+      {
+        method: 'POST',
+        path: '/api/solve-sessions/[sid]/submissions',
+        load: () => import('./api/resource-routes').then((m) => m.createSolveSubmissionResource),
       },
       // M5-T5a (YUK-321) — 题库 CRUD（D16 出 M2 范围，留旧栈至 M5 收口——
       // vite.config M2 注释——现收编）。

@@ -1,6 +1,6 @@
 // Onboarding ③ · placement probe API client (YUK-473 Slice 3).
 // Wraps the inc-B placement backend (YUK-468): start → next → end, plus a probe
-// answer submit that threads session_id=<probeId> into the SHARED /api/review/submit
+// answer submit that threads session_id=<probeId> into the shared /api/attempts resource
 // (which runs judge + θ̂ + FSRS — there is NO separate placement submit). The probe's
 // answer trail is keyed by that session_id (placement-next.ts counts events WHERE
 // session_id=<probe>), so it MUST be sent or /next can't advance/terminate.
@@ -33,7 +33,7 @@ export interface PlacementSelfReport {
 }
 
 export const startPlacement = (goalId: string, selfReport: PlacementSelfReport = {}) =>
-  apiJson<PlacementStartResult>('/api/placement/start', {
+  apiJson<PlacementStartResult>('/api/placement-sessions', {
     method: 'POST',
     body: JSON.stringify({
       goalId,
@@ -56,14 +56,17 @@ export type PlacementNextResult =
     };
 
 export const placementNext = (sessionId: string) =>
-  apiJson<PlacementNextResult>(`/api/placement/${encodeURIComponent(sessionId)}/next`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
+  apiJson<PlacementNextResult>(
+    `/api/placement-sessions/${encodeURIComponent(sessionId)}/question-selections`,
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+  );
 
 export const placementEnd = (sessionId: string, status: 'completed' | 'abandoned' = 'completed') =>
-  apiJson(`/api/placement/${encodeURIComponent(sessionId)}/end`, {
-    method: 'POST',
+  apiJson(`/api/placement-sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
     body: JSON.stringify({ status }),
   });
 
@@ -82,7 +85,7 @@ export interface SubmitProbeAnswerInput {
 // (design: 答完统一反馈, 先别急着看对错) — we ignore the response body except for error
 // handling. `rating:'good'` is a placeholder the server overrides under auto_rate.
 export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
-  apiJson('/api/review/submit', {
+  apiJson('/api/attempts', {
     method: 'POST',
     body: JSON.stringify({
       question_id: input.questionId,

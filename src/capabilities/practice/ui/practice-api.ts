@@ -344,24 +344,27 @@ export const submitReview = (input: {
   // 服务端 submit schema 接受它并映射成事件 payload 的 duration_ms（submit.ts:72/531，**无需后端改动**）。
   // null/省略 → server 略过 duration_ms（向后兼容旧 caller）。墙钟含 idle，是已知噪声源（见 computeLatencyMs）。
   latency_ms?: number | null;
-}) => apiJson<SubmitResult>('/api/review/submit', { method: 'POST', body: JSON.stringify(input) });
+}) => apiJson<SubmitResult>('/api/attempts', { method: 'POST', body: JSON.stringify(input) });
 
 export const fileAppeal = (judgeEventId: string, reasonMd: string) =>
-  apiJson<{ appeal_event_id: string }>('/api/review/appeal', {
+  apiJson<{ appeal_event_id: string }>('/api/appeals', {
     method: 'POST',
     body: JSON.stringify({ judge_event_id: judgeEventId, reason_md: reasonMd }),
   });
 
 export const solveStart = (questionId: string) =>
-  apiJson<{ session_id: string }>(`/api/questions/${encodeURIComponent(questionId)}/solve`, {
+  apiJson<{ session_id: string }>('/api/solve-sessions', {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ question_id: questionId }),
   });
 
 export const solveHint = (questionId: string, sessionId: string, hintIndex: number) =>
   apiJson<{ text_md: string }>(
-    `/api/questions/${encodeURIComponent(questionId)}/solve/${encodeURIComponent(sessionId)}/hint`,
-    { method: 'POST', body: JSON.stringify({ hint_index: hintIndex }) },
+    `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ question_id: questionId, hint_index: hintIndex }),
+    },
   );
 
 // ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────
@@ -516,28 +519,47 @@ export interface PaperDetail {
 export const getPaperDetail = (artifactId: string) =>
   apiJson<PaperDetail>(`/api/papers/${encodeURIComponent(artifactId)}`);
 
-export const savePaperAnswer = (
-  artifactId: string,
-  input: { session_id: string; question_id: string; part_ref: string | null; answer_md: string },
-) =>
-  apiJson(`/api/practice/${encodeURIComponent(artifactId)}/answer`, {
+type PaperWriteInput = {
+  session_id: string;
+  question_id: string;
+  part_ref: string | null;
+  answer_md: string;
+};
+
+export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteInput) {
+  return {
+    paper_id: artifactId,
+    question_id: input.question_id,
+    part_ref: input.part_ref,
+    content_md: input.answer_md,
+  };
+}
+
+export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteInput) {
+  return {
+    paper_id: artifactId,
+    question_id: input.question_id,
+    part_ref: input.part_ref,
+    answer_md: input.answer_md,
+  };
+}
+
+export const savePaperAnswer = (artifactId: string, input: PaperWriteInput) =>
+  apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/answer-drafts`, {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify(buildPaperAnswerDraftBody(artifactId, input)),
   });
 
-export const submitPaperSlot = (
-  artifactId: string,
-  input: { session_id: string; question_id: string; part_ref: string | null; answer_md: string },
-) =>
-  apiJson(`/api/practice/${encodeURIComponent(artifactId)}/submit`, {
+export const submitPaperSlot = (artifactId: string, input: PaperWriteInput) =>
+  apiJson(`/api/review-sessions/${encodeURIComponent(input.session_id)}/submissions`, {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify(buildPaperSubmissionBody(artifactId, input)),
   });
 
 export const endPaperSession = (sessionId: string) =>
-  apiJson(`/api/review/sessions/${encodeURIComponent(sessionId)}/end`, {
-    method: 'POST',
-    body: JSON.stringify({}),
+  apiJson(`/api/review-sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'completed' }),
   });
 
 // ── 草稿审核池（owner manual gate, YUK-402/403 inc-4） ─────────────

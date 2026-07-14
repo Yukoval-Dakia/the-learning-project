@@ -6,6 +6,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Placement } from '@/server/session';
 
@@ -46,6 +47,7 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
 }
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  let response: Response;
   try {
     const { id } = params;
     const body = await parseBody(req);
@@ -54,8 +56,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     } else {
       await Placement.abandonPlacementSession(db, id);
     }
-    return Response.json({ ok: true, status: body.status });
+    response = Response.json({ ok: true, status: body.status });
   } catch (err) {
-    return errorResponse(err);
+    response = errorResponse(err);
   }
+  return deprecatedRouteResponse(response, `/api/placement-sessions/${params.id}`);
 }

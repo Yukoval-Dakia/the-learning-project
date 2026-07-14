@@ -3,15 +3,18 @@
 // /review?session=<id> when the target session was orphan-cron abandoned.
 
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { errorResponse } from '@/server/http/errors';
 import { Review } from '@/server/session';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
+  let response: Response;
   try {
     const { id } = params;
     await Review.reopenAbandonedReviewSession(db, id);
-    return Response.json({ ok: true, status: 'started' });
+    response = Response.json({ ok: true, status: 'started' });
   } catch (err) {
-    return errorResponse(err);
+    response = errorResponse(err);
   }
+  return deprecatedRouteResponse(response, `/api/review-sessions/${params.id}`);
 }

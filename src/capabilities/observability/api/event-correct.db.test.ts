@@ -2,7 +2,7 @@ import { event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST } from './event-correct';
+import { POST, createCorrection } from './event-correct';
 
 async function seedAttempt(id = 'evt_target'): Promise<void> {
   await testDb()
@@ -31,6 +31,17 @@ async function seedAttempt(id = 'evt_target'): Promise<void> {
 async function correctEvent(id: string, body: unknown): Promise<Response> {
   return POST(
     new Request(`http://localhost/api/events/${id}/correct`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
+    }),
+    { id },
+  );
+}
+
+async function createCorrectionResource(id: string, body: unknown): Promise<Response> {
+  return createCorrection(
+    new Request(`http://localhost/api/events/${id}/corrections`, {
       method: 'POST',
       body: JSON.stringify(body),
       headers: { 'content-type': 'application/json' },
@@ -119,6 +130,27 @@ describe('POST /api/events/[id]/correct', () => {
     expect(rows[0].subject_id).toBe('evt_target');
     expect(rows[0].caused_by_event_id).toBe('evt_target');
     expect(rows[0].payload).toMatchObject(VALID_RETRACT_BODY);
+    expect(res.headers.get('deprecation')).toBe('@1783987200');
+    expect(res.headers.get('link')).toBe(
+      '</api/events/evt_target/corrections>; rel="successor-version"',
+    );
+  });
+
+  it('exposes the same audit-chain write through the correction collection', async () => {
+    await seedAttempt();
+
+    const res = await createCorrectionResource('evt_target', VALID_RETRACT_BODY);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('deprecation')).toBeNull();
+    const body = (await res.json()) as { correction_event_id: string };
+    const rows = await testDb().select().from(event).where(eq(event.id, body.correction_event_id));
+    expect(rows[0]).toMatchObject({
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'evt_target',
+      caused_by_event_id: 'evt_target',
+    });
   });
 
   it('writes supersede correction with replacement_event_id', async () => {

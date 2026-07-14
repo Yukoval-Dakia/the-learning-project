@@ -1,6 +1,6 @@
 // Phase 1d — pg-boss handler for SessionSummaryTask.
 //
-// Enqueued by the `/api/review/sessions/[id]/end` route after a review session
+// Enqueued by canonical `PATCH /api/review-sessions/[id]` and its legacy `/end` alias
 // transitions to completed. Picks the job up async so the LLM call doesn't
 // block the close request (and survives the page being closed mid-flight).
 
