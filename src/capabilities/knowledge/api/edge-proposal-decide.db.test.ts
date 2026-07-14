@@ -90,6 +90,10 @@ describe('POST /api/knowledge/edges/proposals/[id]', () => {
 
     const res = await decide(proposeId, { decision: 'accept' });
     expect(res.status).toBe(200);
+    expect(res.headers.get('Deprecation')).toBe('@1783987200');
+    expect(res.headers.get('Link')).toBe(
+      `</api/proposals/${proposeId}/decisions>; rel="successor-version"`,
+    );
     const body = (await res.json()) as {
       rate_event_id: string;
       generate_event_id: string | null;

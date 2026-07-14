@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { aiProposalKinds, parseAiProposalPayload, resolveSuggestionKind } from './proposal';
+import {
+  ProposalDecisionInput,
+  aiProposalKinds,
+  parseAiProposalPayload,
+  resolveSuggestionKind,
+} from './proposal';
 
 const base = {
   target: { subject_kind: 'event', subject_id: 'target_1' },
@@ -9,6 +14,40 @@ const base = {
   rollback_plan: { action: 'write correction event' },
   cooldown_key: 'proposal:test',
 } as const;
+
+describe('ProposalDecisionInput', () => {
+  it('accepts the canonical vocabulary and rejects legacy aliases', () => {
+    for (const decision of ['accept', 'reverse', 'dismiss', 'retract'] as const) {
+      expect(ProposalDecisionInput.safeParse({ decision }).success).toBe(true);
+    }
+    expect(
+      ProposalDecisionInput.safeParse({
+        decision: 'change_type',
+        new_relation_type: 'related_to',
+      }).success,
+    ).toBe(true);
+    expect(ProposalDecisionInput.safeParse({ decision: 'reject' }).success).toBe(false);
+    expect(ProposalDecisionInput.safeParse({ decision: 'veto' }).success).toBe(false);
+  });
+
+  it('keeps decision-specific options on their own lane', () => {
+    expect(ProposalDecisionInput.safeParse({ decision: 'change_type' }).success).toBe(false);
+    expect(
+      ProposalDecisionInput.safeParse({ decision: 'accept', new_relation_type: 'related_to' })
+        .success,
+    ).toBe(false);
+    expect(
+      ProposalDecisionInput.safeParse({ decision: 'accept', reason_md: 'not a correction' })
+        .success,
+    ).toBe(false);
+    expect(
+      ProposalDecisionInput.safeParse({ decision: 'retract', reason_md: '判断有误' }).success,
+    ).toBe(true);
+    expect(
+      ProposalDecisionInput.safeParse({ decision: 'retract', user_note: 'wrong lane' }).success,
+    ).toBe(false);
+  });
+});
 
 describe('AiProposalPayload', () => {
   it('round-trips all proposal kinds through the union', () => {

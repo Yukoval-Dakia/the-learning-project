@@ -23,6 +23,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { dismissAiProposal } from '@/server/proposals/actions';
 import { getProposalInboxRow } from '@/server/proposals/inbox';
@@ -30,6 +31,12 @@ import { getProposalInboxRow } from '@/server/proposals/inbox';
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await handleLegacyVeto(params);
+  const successor = `/api/proposals/${encodeURIComponent(params.id ?? '')}/decisions`;
+  return deprecatedRouteResponse(response, successor);
+}
+
+async function handleLegacyVeto(params: Record<string, string>): Promise<Response> {
   try {
     const parsed = ParamsSchema.safeParse(params);
     if (!parsed.success) {

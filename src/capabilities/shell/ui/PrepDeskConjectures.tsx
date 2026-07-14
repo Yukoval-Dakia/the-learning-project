@@ -14,7 +14,7 @@
 //   §4 tripwire — probe_md framed as "the question the team is about to ask", NEVER
 //       a flippable flashcard front/back.
 //   §3 ND-5 — accept = acknowledge direction ("对，往这个方向想"), NOT "加进复习";
-//       accept/reject route through the existing /api/proposals/[id]/decide pipeline.
+//       accept/reject route through the canonical /api/proposals/[id]/decisions pipeline.
 //
 // Slice-1 scope: pending card + accept / reject. EDIT (owner rewrites the claim) is
 // deferred — the decide route does not yet thread `corrected_payload`, and the mem0

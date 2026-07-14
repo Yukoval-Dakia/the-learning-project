@@ -35,6 +35,11 @@ export const shellCapability = defineCapability({
       },
       {
         method: 'POST',
+        path: '/api/proposals/[id]/decisions',
+        load: () => import('./api/proposal-decisions').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
         path: '/api/proposals/[id]/decide',
         load: () => import('./api/proposal-decide').then((m) => m.POST),
       },

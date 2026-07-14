@@ -120,6 +120,8 @@ describe('POST /api/knowledge/proposals/[id]', () => {
 
     const res = await decide('p1', { decision: 'accept' });
     expect(res.status).toBe(200);
+    expect(res.headers.get('Deprecation')).toBe('@1783987200');
+    expect(res.headers.get('Link')).toBe('</api/proposals/p1/decisions>; rel="successor-version"');
     const body = (await res.json()) as { kind: string };
     expect(body.kind).toBe('propose_new_applied');
 
