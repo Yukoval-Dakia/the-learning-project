@@ -4,7 +4,7 @@
 //   1. Derived judgement visibility (§4.9): 可见 = visible_to_user !== false ||
 //      session completed. NEVER mutated, no reveal event — visibility is purely
 //      derived at read time. The Coach read NEVER gates on visible_to_user.
-//   2. The GET /api/practice aggregation (§4.10 Q8/Q9): paper artifact + its
+//   2. The GET /api/papers aggregation (§4.10 Q8/Q9): paper artifact + its
 //      linked review session + derived pos / right-wrong / gen / source.
 
 import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
@@ -72,7 +72,7 @@ export function isJudgementVisibleToCoach(): boolean {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GET /api/practice aggregation (§4.10)
+// GET /api/papers aggregation (§4.10)
 // ────────────────────────────────────────────────────────────────────────────
 
 // 往日 source-filter provenance mapping (critic #4). The UI tab filter is a pure

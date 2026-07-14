@@ -31,3 +31,18 @@ describe('practice manifest jobs', () => {
     expect(dupes).toHaveLength(1);
   });
 });
+
+describe('practice manifest API resources', () => {
+  it('declares canonical paper and review-session resources alongside legacy aliases', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const keys = new Set(routes.map((route) => `${route.method} ${route.path}`));
+
+    expect(keys.has('GET /api/papers')).toBe(true);
+    expect(keys.has('GET /api/papers/[id]')).toBe(true);
+    expect(keys.has('POST /api/review-sessions')).toBe(true);
+    expect(keys.has('GET /api/review-sessions/[id]')).toBe(true);
+    expect(keys.has('GET /api/practice')).toBe(true);
+    expect(keys.has('POST /api/practice')).toBe(true);
+    expect(keys.has('GET /api/practice/[id]')).toBe(true);
+  });
+});

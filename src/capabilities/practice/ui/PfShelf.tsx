@@ -1,7 +1,7 @@
 // M2 练习面 — 卷架（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-shelf.jsx：卷的持久收藏与复盘。
 // 三区（待做 / 在做 / 已完成·可复盘）× 来源筛选；唯一写操作 = 从待做/在做卷发起
-// 作答。数据 = GET /api/practice（papers + session 状态 + 分布），分区在前端做。
+// 作答。数据 = GET /api/papers（papers + session 状态 + 分布），分区在前端做。
 
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
