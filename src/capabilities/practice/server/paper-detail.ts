@@ -1,4 +1,4 @@
-// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/practice/[id] server logic.
+// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/papers/[id] server logic.
 //
 // Discovered plan gap (UI lane integration): the four practice endpoints
 // returned zero question-face content, making the answering page impossible to

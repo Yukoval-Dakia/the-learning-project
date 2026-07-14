@@ -4,9 +4,10 @@
 //   1. Derived judgement visibility (§4.9): 可见 = visible_to_user !== false ||
 //      session completed. NEVER mutated, no reveal event — visibility is purely
 //      derived at read time. The Coach read NEVER gates on visible_to_user.
-//   2. The GET /api/practice aggregation (§4.10 Q8/Q9): paper artifact + its
+//   2. The GET /api/papers aggregation (§4.10 Q8/Q9): paper artifact + its
 //      linked review session + derived pos / right-wrong / gen / source.
 
+import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/server/paper-intent-sources';
 import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
@@ -72,7 +73,7 @@ export function isJudgementVisibleToCoach(): boolean {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GET /api/practice aggregation (§4.10)
+// GET /api/papers aggregation (§4.10)
 // ────────────────────────────────────────────────────────────────────────────
 
 // 往日 source-filter provenance mapping (critic #4). The UI tab filter is a pure
@@ -150,19 +151,14 @@ export async function getPracticeList(db: Db | Tx): Promise<PracticeListResult> 
   // 1) Paper artifacts (the widened intent_source provenances).
   //    YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth source
   //    (ingest→practice bridge); must stay in lock-step with the start-session
-  //    whitelist in src/capabilities/practice/api/papers-list.ts (§Step 1).
+  //    whitelist in paper-intent-sources.ts (§Step 1).
   const paperRows = await db
     .select()
     .from(artifact)
     .where(
       and(
         eq(artifact.type, 'tool_quiz'),
-        inArray(artifact.intent_source, [
-          'review_plan',
-          'quiz_gen',
-          'embedded_check',
-          'ingestion_paper',
-        ]),
+        inArray(artifact.intent_source, [...PAPER_INTENT_SOURCES]),
       ),
     )
     .orderBy(desc(artifact.created_at));

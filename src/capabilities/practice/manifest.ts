@@ -47,7 +47,17 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/review/sessions',
-        load: () => import('./api/sessions').then((m) => m.POST),
+        load: () => import('./api/legacy-review-sessions').then((m) => m.POST),
+      },
+      {
+        method: 'POST',
+        path: '/api/review-sessions',
+        load: () => import('./api/review-sessions').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/review-sessions/[id]',
+        load: () => import('./api/review-session-detail').then((m) => m.GET),
       },
       {
         method: 'POST',
@@ -124,14 +134,24 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/practice',
-        load: () => import('./api/papers-list').then((m) => m.GET),
+        load: () => import('./api/legacy-practice').then((m) => m.GET),
       },
       {
         // 开卷：start a review session bound to a paper artifact（M2-T6 补登：
         // handler 随 P2a 已迁入 papers-list.ts，manifest 此前漏了 POST 条目）。
         method: 'POST',
         path: '/api/practice',
-        load: () => import('./api/papers-list').then((m) => m.POST),
+        load: () => import('./api/legacy-practice').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/papers',
+        load: () => import('./api/papers-list').then((m) => m.GET),
+      },
+      {
+        method: 'GET',
+        path: '/api/papers/[id]',
+        load: () => import('./api/paper-detail-route').then((m) => m.GET),
       },
       {
         // M2 流编排器（YUK-316）。静态段 'stream' 在 Hono 中优先于 :id 匹配。
@@ -152,7 +172,7 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/practice/[id]',
-        load: () => import('./api/paper-detail-route').then((m) => m.GET),
+        load: () => import('./api/legacy-paper-detail').then((m) => m.GET),
       },
       {
         method: 'POST',
