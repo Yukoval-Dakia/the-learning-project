@@ -1,4 +1,4 @@
-// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/practice/[id] route DB tests.
+// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/papers/[id] route DB tests.
 //
 // Covers:
 //   1. Full render payload: paper meta + sections + question faces + null slot state

@@ -1,4 +1,4 @@
-// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/practice/[id]: full answering-page
+// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/papers/[id]: full answering-page
 // payload for one paper artifact.（P2a 迁入包；M2-T7 起仅由 Hono manifest 挂载。）
 //
 // Returns: paper meta + ordered sections + per-slot question face + live draft

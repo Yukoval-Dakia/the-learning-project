@@ -1,5 +1,5 @@
 // M2 练习面（YUK-316）— ui 数据层：练习面各视图对真 API 的调用与 wire 类型。
-// 路由宿主（dev）：/api/practice、/api/review 经 vite proxy → Hono(:8787)；
+// 路由宿主（dev）：/api/papers、/api/review-sessions、/api/practice 经 vite proxy → Hono(:8787)；
 // /api/questions/*（题面读 + solve 链）整体留旧栈 proxy——solve 链的旧壳是
 // shim、handler 同为包内代码（quiz 域 D16 出 M2 范围，M5 收口）。
 
@@ -468,12 +468,12 @@ export interface PaperListItem {
   created_at: string;
 }
 
-export const getPapers = () => apiJson<{ papers: PaperListItem[] }>('/api/practice');
+export const getPapers = () => apiJson<{ papers: PaperListItem[] }>('/api/papers');
 
 export const startPaperSession = (artifactId: string) =>
-  apiJson<{ session_id: string }>('/api/practice', {
+  apiJson<{ session_id: string }>('/api/review-sessions', {
     method: 'POST',
-    body: JSON.stringify({ artifact_id: artifactId }),
+    body: JSON.stringify({ paper_id: artifactId }),
   });
 
 export interface PaperSlot {
@@ -514,7 +514,7 @@ export interface PaperDetail {
 }
 
 export const getPaperDetail = (artifactId: string) =>
-  apiJson<PaperDetail>(`/api/practice/${encodeURIComponent(artifactId)}`);
+  apiJson<PaperDetail>(`/api/papers/${encodeURIComponent(artifactId)}`);
 
 export const savePaperAnswer = (
   artifactId: string,
