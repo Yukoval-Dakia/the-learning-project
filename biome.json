@@ -27,6 +27,8 @@
       ".next",
       ".remember",
       ".playwright-mcp",
+      "test-results",
+      "playwright-report",
       "next-env.d.ts"
     ]
   },

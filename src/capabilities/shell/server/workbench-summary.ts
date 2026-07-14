@@ -9,10 +9,21 @@
 
 import { handleReviewDue } from '@/capabilities/practice/server/due-list';
 import type { Db } from '@/db/client';
-import { event, goal, knowledge, learning_session } from '@/db/schema';
+import {
+  artifact,
+  event,
+  goal,
+  knowledge,
+  learning_session,
+  practice_stream_item,
+  question,
+  source_asset,
+  source_document,
+} from '@/db/schema';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { type TodayProposalKpi, loadTodayProposalKpi } from '@/server/today/proposal-kpi';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { type ColdStartState, buildColdStartState } from './cold-start-state';
 
 // 与旧 today 页一致的采样上限：KPI 是「今日量级」信号，不是精确总量。
 const KPI_SAMPLE_LIMIT = 200;
@@ -41,13 +52,12 @@ export interface WorkbenchSummary {
     due_count: number;
     pending_attribution_count: number;
     knowledge_count: number;
-    // 冷启动信号（YUK-473 Slice 1）：active goal 数。0 → /today 拦截到冷开屏
-    // （ColdStart hero），> 0 → 正常工作台。goal 是 cold-start openable 的锚
-    // （goal/learning_item/mastery_state 三冷表之一），count active goals。
+    // active goal 数只服务画像和 KPI；冷启动由 cold_start 证据合同独立裁定。
     goal_count: number;
   };
+  cold_start: ColdStartState;
   // 当前 active goal（最近创建的一条），供 /today 起始画像卡片（YUK-476）取
-  // per-KC profile。null → 无 active goal（冷库，/today 已拦截到 ColdStart）。
+  // per-KC profile。null 只表示没有当前目标，不代表冷启动。
   active_goal: { id: string; title: string } | null;
   active_sessions: WorkbenchSessionRow[];
   week_heat: WorkbenchHeatDay[];
@@ -80,8 +90,47 @@ async function countKnowledge(db: Db): Promise<number> {
   return row?.count ?? 0;
 }
 
-// 冷启动信号（YUK-473 Slice 1）：active goal 数（0 → /today 渲染冷开屏拦截）+ 当前
-// active goal（YUK-476：/today 起始画像卡片取 per-KC profile 的锚）。单用户多数只有一条；
+interface PersistedColdStartPresence extends Record<string, unknown> {
+  goal_history: boolean;
+  question: boolean;
+  source_material: boolean;
+  artifact: boolean;
+  practice_stream: boolean;
+  learning_session: boolean;
+  user_event: boolean;
+}
+
+async function loadPersistedColdStartPresence(db: Db): Promise<PersistedColdStartPresence> {
+  // EXISTS 保持常量级读取：这里只需要知道是否有证据，不应为了冷启动判定扫描
+  // 会持续增长的 event / practice_stream_item 全表求精确 count。
+  const rows = await db.execute<PersistedColdStartPresence>(sql`
+    select
+      exists(select 1 from ${goal}) as goal_history,
+      exists(select 1 from ${question}) as question,
+      (
+        exists(select 1 from ${source_document})
+        or exists(select 1 from ${source_asset})
+      ) as source_material,
+      exists(select 1 from ${artifact} where ${artifact.archived_at} is null) as artifact,
+      exists(select 1 from ${practice_stream_item}) as practice_stream,
+      exists(select 1 from ${learning_session}) as learning_session,
+      exists(select 1 from ${event} where ${event.actor_kind} = 'user') as user_event
+  `);
+  const row = [...rows][0];
+  return (
+    row ?? {
+      goal_history: false,
+      question: false,
+      source_material: false,
+      artifact: false,
+      practice_stream: false,
+      learning_session: false,
+      user_event: false,
+    }
+  );
+}
+
+// active goal 状态只服务 KPI 与画像卡片，不参与冷启动裁决。单用户多数只有一条；
 // 多目标取 created_at 最新的一条为「当前」。一次查询同时得计数与首条。
 async function loadActiveGoalState(
   db: Db,
@@ -170,6 +219,7 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
     goalState,
     activeSessions,
     weekHeat,
+    persistedPresence,
   ] = await Promise.all([
     loadTodayProposalKpi(db),
     countDue(),
@@ -178,7 +228,22 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
     loadActiveGoalState(db),
     listActiveSessions(db),
     loadWeekHeat(db),
+    loadPersistedColdStartPresence(db),
   ]);
+  const coldStart = buildColdStartState({
+    active_goal: goalState.count > 0,
+    goal_history: persistedPresence.goal_history,
+    knowledge: knowledgeCount > 0,
+    question: persistedPresence.question,
+    source_material: persistedPresence.source_material,
+    artifact: persistedPresence.artifact,
+    review_due: dueCount > 0,
+    pending_attribution: pendingAttributionCount > 0,
+    practice_stream: persistedPresence.practice_stream,
+    proposal: proposals.total > 0,
+    learning_session: persistedPresence.learning_session,
+    user_event: persistedPresence.user_event,
+  });
   return {
     proposals,
     kpi: {
@@ -187,6 +252,7 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
       knowledge_count: knowledgeCount,
       goal_count: goalState.count,
     },
+    cold_start: coldStart,
     active_goal: goalState.active,
     active_sessions: activeSessions,
     week_heat: weekHeat,

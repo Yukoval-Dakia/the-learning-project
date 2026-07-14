@@ -9,7 +9,6 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import type { PfToast } from './PracticeFacePage';
 import { type PaperSlot, getPaperDetail } from './practice-api';
 
 type Verdict = 'good' | 'hard' | 'again';
@@ -33,22 +32,19 @@ function summaryByWrong(wrongish: number, total: number): string {
   return '这张卷错得有点多——不是坏事，正好把没织牢的线都暴露出来了。错题我都记了账，之后的流会围绕它们重排。';
 }
 
-function PfrQRow({
+export function PfrQRow({
   n,
   slot,
   appealable,
-  addToast,
 }: {
   n: number;
   slot: PaperSlot;
   appealable: boolean;
-  addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
   const sub = slot.slot_state.submission;
   const visible = sub && 'visible_to_user' in sub && sub.visible_to_user === true ? sub : null;
   const verdict: Verdict | null = visible ? verdictOf(visible.outcome) : null;
   const [open, setOpen] = useState(verdict !== 'good');
-  const [appealed, setAppealed] = useState(false);
   const v = verdict ? V_META[verdict] : null;
 
   return (
@@ -99,34 +95,11 @@ function PfrQRow({
               {visible.reference_md}
             </div>
           )}
-          {appealable &&
-            verdict !== null &&
-            verdict !== 'good' &&
-            (appealed ? (
-              <span className="badge tone-info" style={{ alignSelf: 'flex-start' }}>
-                <span className="dot pulse" />
-                重判中 · 结果回来会提醒你
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="pfs-appeal-link"
-                style={{ alignSelf: 'flex-start' }}
-                onClick={() => {
-                  // 复盘侧申诉：卷题的判定锚点（judge event）由 paper-submit 写，
-                  // 但 detail 读路径目前不回传 judge event id —— M2 用占位提示，
-                  // 锚点透出随 M4 工作台回执链一起补（见 plan T4 注）。
-                  setAppealed(true);
-                  addToast(
-                    '复盘侧申诉入口将在判定锚点透出后接通——先用散题反馈卡上的不服判。',
-                    'info',
-                    'alert',
-                  );
-                }}
-              >
-                不服判？附理由重判
-              </button>
-            ))}
+          {appealable && verdict !== null && verdict !== 'good' && (
+            <div className="quiet-empty" style={{ padding: 0, alignSelf: 'flex-start' }}>
+              此处暂不能直接重判；需要申诉时，请从散题反馈卡提交理由。
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -136,11 +109,9 @@ function PfrQRow({
 export function PfRetro({
   artifactId,
   onBack,
-  addToast,
 }: {
   artifactId: string;
   onBack: () => void;
-  addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
   const detailQ = useQuery({
     queryKey: ['paper', artifactId, 'retro'],
@@ -226,13 +197,7 @@ export function PfRetro({
 
       <div className="pfr-list">
         {slots.map((s, i) => (
-          <PfrQRow
-            key={`${s.question_id}-${s.part_ref ?? ''}`}
-            n={i + 1}
-            slot={s}
-            appealable
-            addToast={addToast}
-          />
+          <PfrQRow key={`${s.question_id}-${s.part_ref ?? ''}`} n={i + 1} slot={s} appealable />
         ))}
       </div>
 

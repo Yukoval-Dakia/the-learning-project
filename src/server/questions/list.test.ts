@@ -533,6 +533,16 @@ describe('listQuestions', () => {
       expect(res.items[0].knowledge_labels).toEqual([{ id: k, name: `node ${k}` }]);
     });
 
+    it('preserves an unconfigured raw domain instead of presenting it as general', async () => {
+      const k = await seedKnowledge(newId(), { domain: 'yingyu' });
+      await seedQuestion({ knowledge_ids: [k] });
+
+      const res = await listQuestions(testDb(), { enrich: true, limit: 50, offset: 0 });
+      expect(res.items).toHaveLength(1);
+      expect(res.items[0].subject).toBe('yingyu');
+      expect(res.items[0].subject).not.toBe('general');
+    });
+
     it('attaches ordered composite children (question_part rows) when enriched', async () => {
       const parent = await seedQuestion({ kind: 'reading', prompt_md: '大题材料' });
       // 乱序插入，断言 enrich 按 part_index 升序还原。

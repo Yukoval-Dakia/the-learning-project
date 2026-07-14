@@ -28,7 +28,7 @@ export function BandChipView({
   labels?: readonly string[];
   unknownLabel?: string;
 }) {
-  const sourceLabel = view.source === 'soft' ? '软轨先验' : '硬轨校准';
+  const sourceLabel = view.source === 'soft' ? '初步判断' : '作答校准';
   const lowSuffix = view.lowConf ? ' · 低置信' : '';
   const bandLabel = view.unknown ? unknownLabel : labels[view.band];
 

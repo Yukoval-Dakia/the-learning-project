@@ -5,8 +5,9 @@
 // note_long 区分，一条笔记可挂多个知识点」：primary atomic 整篇 inline，
 // 其余 link rows）+ 邻居按关系分组（层级先行）；侧栏反链按来源类型分组 +
 // 活动时间线。「标注笔记」区后端无读路径——M3 空态挂账（pre-flight 偏离③）。
-// 「复习此点」「AI 起草」属 M4 点播链——占位 toast。
+// 「复习此点」把明确请求交给现有 Copilot；没有已交付 write path 的 AI 起草不展示假入口。
 
+import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -46,9 +47,9 @@ const DECAY_BUCKET_META: Record<
 };
 
 const NOTE_KIND_LABEL: Record<string, string> = {
-  note_atomic: '其它 atomic 笔记',
-  note_hub: 'hub 笔记',
-  note_long: 'long 长文',
+  note_atomic: '短笔记',
+  note_hub: '汇总笔记',
+  note_long: '长文笔记',
 };
 
 function noteKindShort(type: string): string {
@@ -119,12 +120,22 @@ export function InteractiveArtifactDiscovery({
 }
 
 const BL_META: Record<string, { label: string; icon: string }> = {
-  question: { label: '题目', icon: 'quiz' },
-  note: { label: '笔记', icon: 'doc' },
+  note_atomic: { label: '知识笔记', icon: 'doc' },
+  note_hub: { label: '汇总笔记', icon: 'doc' },
+  note_long: { label: '长文笔记', icon: 'doc' },
+  interactive: { label: '互动内容', icon: 'sparkle' },
   learning_item: { label: '学习项', icon: 'items' },
-  mistake: { label: '错题', icon: 'mistakes' },
-  session: { label: '会话', icon: 'history' },
 };
+
+export function knowledgeBacklinkHref(fromType: string, artifactId: string, entryId: string) {
+  return fromType === 'interactive' || fromType.startsWith('note_')
+    ? `/notes/${artifactId}?entry=${entryId}`
+    : null;
+}
+
+export function knowledgeReviewRequest(name: string) {
+  return `请围绕知识点「${name}」安排一次针对性复习，并先说明你准备怎么做。`;
+}
 
 export default function KnowledgeDetailPage({
   id,
@@ -133,7 +144,6 @@ export default function KnowledgeDetailPage({
   id: string;
   navigate: (to: string) => void;
 }) {
-  const [toast, setToast] = useState<string | null>(null);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const queryClient = useQueryClient();
   const pageQ = useQuery({ queryKey: ['knowledge-node', id], queryFn: () => getNodePage(id) });
@@ -149,11 +159,6 @@ export default function KnowledgeDetailPage({
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: ['knowledge-misconceptions', id] }),
   });
-
-  const placeholder = (text: string) => {
-    setToast(text);
-    setTimeout(() => setToast(null), 5000);
-  };
 
   // S12 (YUK-335 批次乙 review)：凡从本知识节点上下文跳 note，都带 ?entry=<node.id>，
   // 让 NoteReader 读 ?entry（NoteReaderPage:51）后触发入口 banner / strip .is-here /
@@ -205,11 +210,9 @@ export default function KnowledgeDetailPage({
             <div>
               <h1 className="page-title serif">{node.name}</h1>
               <div className="nowrap-meta" style={{ marginTop: 4 }}>
-                <span className="meta mono">{node.effective_domain ?? node.domain ?? '—'}</span>
                 {/* S10 (YUK-335 §3.9)：父节点不再做页头内联下划线文字链——层级关系
                     归入下方「邻居 · 按关系分组」Card 内首个 kd-rel-block（parent + children
                     同一处渲染），删去此处非 design-system 的内联链。 */}
-                <span className="dot-sep">·</span>
                 <span className={`decay-bucket tone-${db.tone}`}>
                   <LoomIcon name={db.icon as never} size={12} />
                   <span>衰减 · {db.label}</span>
@@ -218,7 +221,7 @@ export default function KnowledgeDetailPage({
                 {/* A5 S1 (YUK-354) — 离散档 BandChip 替代裸 M{pct}%（⑥治理：绝不裸概率）。 */}
                 <BandChip input={node} />
                 <span className="dot-sep">·</span>
-                <span className="meta mono">{node.evidence_count} evidence</span>
+                <span className="meta">{node.evidence_count} 条学习依据</span>
               </div>
             </div>
           </div>
@@ -226,9 +229,7 @@ export default function KnowledgeDetailPage({
             <Btn
               variant="secondary"
               icon="review"
-              onClick={() =>
-                placeholder('点播复习进流——M4 点播 quiz-gen 链收口后接通，先在练习面等今日流。')
-              }
+              onClick={() => openCopilot(knowledgeReviewRequest(node.name))}
             >
               复习此点
             </Btn>
@@ -256,9 +257,7 @@ export default function KnowledgeDetailPage({
               seen 计数，绝不裸概率（⑥）。veto = Option A：candidate「判错了」→ live dismiss pending
               conjecture；confirmed「判错了」→ 仅乐观「已纠偏」本地态（confirmed-archive 延后 + PR-3
               promote flag OFF → confirmed 段 day-one 空）。 */}
-          <SectionLabel count={miscRows.length || null}>
-            指向此点的误区 · misconception
-          </SectionLabel>
+          <SectionLabel count={miscRows.length || null}>可能相关的误区</SectionLabel>
           <MisconceptionList
             items={miscRows}
             isLoading={miscQ.isLoading}
@@ -276,7 +275,7 @@ export default function KnowledgeDetailPage({
 
           {/* A5 S3 (YUK-354) — 迁移 + 诊断下钻：忠于冷启设计的诚实空态（borrowed-θ 软层
               dark-ship / CDM·IRT 无后端），不假造数字。 */}
-          <SectionLabel>迁移而来的掉握 · transfer credit</SectionLabel>
+          <SectionLabel>可能带动它的知识</SectionLabel>
           <TransferList />
 
           {/* DiagnosticDrill 自带折叠 header（「诊断下钻 · CDM/IRT」），不再叠 SectionLabel（OCR 双 header）。 */}
@@ -285,8 +284,7 @@ export default function KnowledgeDetailPage({
           <SectionLabel>笔记</SectionLabel>
           <div className="kd-note-hint meta">
             <LoomIcon name="link" size={12} />
-            knowledge_id 是笔记上的标签 · 笔记按 note_atomic / note_hub / note_long
-            区分，一条笔记可挂多个知识点
+            一篇笔记可以关联多个知识点；从这里打开时，会保留当前知识点作为阅读入口。
           </div>
 
           {!primary && otherNotes.length === 0 ? (
@@ -294,17 +292,7 @@ export default function KnowledgeDetailPage({
               <EmptyState
                 icon="doc"
                 title="还没有带此标签的笔记"
-                text="撰写一条笔记并打上该知识点标签，或让 AI 从相关 evidence 起草。"
-                action={
-                  <Btn
-                    size="sm"
-                    variant="primary"
-                    icon="sparkle"
-                    onClick={() => placeholder('AI 起草随 M4 点播链接通。')}
-                  >
-                    AI 起草
-                  </Btn>
-                }
+                text="可以在笔记编辑器中关联这个知识点；这里暂不提供自动起草。"
               />
             </div>
           ) : (
@@ -314,7 +302,7 @@ export default function KnowledgeDetailPage({
                   <div className="kd-primary-head">
                     <span className="note-kind-tag note-kind-atomic">
                       <LoomIcon name="doc" size={12} />
-                      primary · note_atomic
+                      主笔记
                     </span>
                     <span className="kd-primary-title serif">{primary.title}</span>
                     <span
@@ -363,9 +351,9 @@ export default function KnowledgeDetailPage({
                 <div key={kind} className="kd-note-group">
                   <div className="kd-note-group-h">
                     <span className={`note-kind-tag note-kind-${noteKindShort(kind)}`}>
-                      {noteKindShort(kind)}
+                      {NOTE_KIND_LABEL[kind] ?? '笔记'}
                     </span>
-                    {NOTE_KIND_LABEL[kind] ?? kind} · {arr.length}
+                    {arr.length} 篇
                   </div>
                   {arr.map((nt) => (
                     <NoteLinkRow
@@ -394,10 +382,6 @@ export default function KnowledgeDetailPage({
             </>
           )}
 
-          {/* 标注笔记：后端读路径 M3 不存在（pre-flight 偏离③），空态挂账 M4/M5。 */}
-          <SectionLabel>标注笔记</SectionLabel>
-          <div className="quiet-empty">无标注（标注链路随工作台收口）</div>
-
           {/* S10 (YUK-335 §3.9 + 批次乙 review)：层级 + typed 关系作为 sibling
               kd-rel-block 并入同一个 Card（设计源 screen-knowledge-detail.jsx:152-165，
               非图谱侧抽屉 screen-knowledge.jsx 的 drawer-sec）。层级块用 kd-rel-h
@@ -418,7 +402,7 @@ export default function KnowledgeDetailPage({
                   className="rel-row"
                   onClick={() => node.parent_id && navigate(`/knowledge/${node.parent_id}`)}
                 >
-                  <span className="rel-kind mono">parent</span>
+                  <span className="rel-kind">上级</span>
                   {/* de-wenyan: parent_name carries no domain on the node-page
                       wire (only the page node itself has effective_domain), so
                       fall to the neutral default font rather than hardcode serif. */}
@@ -433,7 +417,7 @@ export default function KnowledgeDetailPage({
                   className="rel-row"
                   onClick={() => navigate(`/knowledge/${c.id}`)}
                 >
-                  <span className="rel-kind mono">child</span>
+                  <span className="rel-kind">下级</span>
                   {/* de-wenyan: NodePageChild carries no domain (see parent note). */}
                   <span>{c.name}</span>
                   {/* ⑥治理：子节点环去裸 pct（保 glance 环弧）。子节点行 BandChip 升级需扩
@@ -476,7 +460,7 @@ export default function KnowledgeDetailPage({
         </div>
 
         <div className="kd-side">
-          <SectionLabel>反向链接 · 按来源类型</SectionLabel>
+          <SectionLabel>关联内容 · 按来源分组</SectionLabel>
           <div className="card card-pad">
             {node.backlinks.length === 0 ? (
               <div className="quiet-empty">无反向链接</div>
@@ -489,24 +473,33 @@ export default function KnowledgeDetailPage({
                       <LoomIcon name={(BL_META[t]?.icon ?? 'note') as never} size={12} />
                       {BL_META[t]?.label ?? t} · {arr.length}
                     </div>
-                    {arr.map((b) => (
-                      <button
-                        type="button"
-                        key={`${b.from_artifact_id}-${b.from_block_id}`}
-                        className="bl-row"
-                        onClick={() => {
-                          if (t === 'note') navigate(noteHref(b.from_artifact_id));
-                          else
-                            placeholder('该来源的 surface 还在旧栈/后续里程碑——M5 收口后可跳转。');
-                        }}
-                      >
-                        <span className="bl-row-main">
+                    {arr.map((b) => {
+                      const href = knowledgeBacklinkHref(t, b.from_artifact_id, id);
+                      const rowKey = `${b.from_artifact_id}-${b.from_block_id}`;
+                      const body = (
+                        <span key={`${rowKey}-body`} className="bl-row-main">
                           <span className="bl-row-t">{b.from_title}</span>
-                          <span className="bl-row-m meta mono">{b.from_type}</span>
+                          <span className="bl-row-m meta">
+                            {href ? '打开内容' : '当前没有可打开的详情页'}
+                          </span>
                         </span>
-                        <LoomIcon name="arrow" size={12} className="thread-arrow" />
-                      </button>
-                    ))}
+                      );
+                      return href ? (
+                        <button
+                          type="button"
+                          key={rowKey}
+                          className="bl-row"
+                          onClick={() => navigate(href)}
+                        >
+                          {body}
+                          <LoomIcon name="arrow" size={12} className="thread-arrow" />
+                        </button>
+                      ) : (
+                        <div key={rowKey} className="bl-row">
+                          {body}
+                        </div>
+                      );
+                    })}
                   </div>
                 ))
             )}
@@ -584,15 +577,6 @@ export default function KnowledgeDetailPage({
           </div>
         </div>
       </div>
-
-      {toast && (
-        <div className="pf-toasts" aria-live="polite">
-          <div className="pf-toast t-info">
-            <LoomIcon name="sparkle" size={15} className="ico" />
-            <span>{toast}</span>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

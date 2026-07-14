@@ -25,15 +25,15 @@ describe('BandChip', () => {
     expect(html).toContain('band-chip');
     expect(html).toContain('src-hard');
     expect(html).toContain('稳固'); // point band for 0.7
-    // title carries the real interval (成长–精熟 for lo=0.5/hi=0.85) + 硬轨校准.
+    // title carries the real interval (成长–精熟 for lo=0.5/hi=0.85) + user-readable source.
     expect(html).toContain('区间 成长–精熟');
-    expect(html).toContain('硬轨校准');
+    expect(html).toContain('作答校准');
   });
 
   it('marks soft source (prior) when there is no calibration evidence', () => {
     const html = renderToString(<BandChip input={input({ evidence_count: 0 })} />);
     expect(html).toContain('src-soft');
-    expect(html).toContain('软轨先验');
+    expect(html).toContain('初步判断');
   });
 
   it('shows the low-confidence marker + is-low class when low_confidence', () => {
@@ -81,7 +81,7 @@ describe('BandChipView (custom labels)', () => {
     const html = renderToString(<BandChipView view={view} labels={diffBands} />);
     expect(html).toContain('偏难'); // difficulty band 2
     expect(html).not.toContain('稳固'); // never the mastery label for the difficulty axis
-    expect(html).toContain('硬轨校准');
+    expect(html).toContain('作答校准');
   });
 
   it('renders the explicit unknown label + soft/low-conf for a neutral-β difficulty axis', () => {

@@ -32,9 +32,9 @@
 import { createId } from '@paralleldrive/cuid2';
 
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
 import { emitEvent } from '@/kernel/events';
-import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 
@@ -88,6 +88,25 @@ export interface AgentNote {
   // the evidence fallback when refs[] is empty (YUK-294); readAgentNotes readers
   // benefit too. Optional — a note may have no triggering event.
   caused_by_event_id?: string;
+}
+
+export type AgentNoteReferenceState = 'open' | 'resolved' | 'unknown';
+
+/**
+ * Additive read-model context for the learner-facing observation board.
+ *
+ * The write protocol remains `{ kind, id }`. Labels and current resolution are
+ * derived at read time so historical events stay immutable and every raw ref
+ * remains available for audit navigation without becoming learner-facing copy.
+ */
+export interface AgentNoteBoardRef extends AgentNoteRef {
+  label: string;
+  resolution_state: AgentNoteReferenceState;
+  usable_question_count?: number;
+}
+
+export interface AgentNoteBoardRow extends Omit<AgentNote, 'refs'> {
+  refs: AgentNoteBoardRef[];
 }
 
 /**
@@ -262,4 +281,117 @@ export async function readAllAgentNotes(
     .limit(limit);
 
   return rows.map(rowToAgentNote);
+}
+
+/**
+ * Learner-facing board projection for agent notes.
+ *
+ * Knowledge and question references receive a human label and a current
+ * resolution state. A historical question-pool-gap is considered resolved once
+ * the referenced knowledge point has at least one usable question
+ * (`draft_status IS DISTINCT FROM 'draft'`). The original note and ref ids are
+ * neither changed nor discarded; this is an additive read projection only.
+ */
+export async function readAgentNoteBoardRows(
+  db: DbLike,
+  opts: ReadAllAgentNotesOpts,
+): Promise<AgentNoteBoardRow[]> {
+  const notes = await readAllAgentNotes(db, opts);
+  if (notes.length === 0) return [];
+
+  const knowledgeIds = Array.from(
+    new Set(
+      notes.flatMap((note) =>
+        note.refs.filter((ref) => ref.kind === 'knowledge').map((ref) => ref.id),
+      ),
+    ),
+  );
+  const questionIds = Array.from(
+    new Set(
+      notes.flatMap((note) =>
+        note.refs.filter((ref) => ref.kind === 'question').map((ref) => ref.id),
+      ),
+    ),
+  );
+
+  const knowledgeRows =
+    knowledgeIds.length > 0
+      ? await db
+          .select({ id: knowledge.id, name: knowledge.name })
+          .from(knowledge)
+          .where(inArray(knowledge.id, knowledgeIds))
+      : [];
+  const knowledgeNames = new Map(knowledgeRows.map((row) => [row.id, row.name]));
+
+  const usableQuestionCounts = new Map<string, number>();
+  if (knowledgeIds.length > 0) {
+    const questionRows = await db
+      .select({ knowledge_ids: question.knowledge_ids, draft_status: question.draft_status })
+      .from(question)
+      .where(
+        or(
+          ...knowledgeIds.map(
+            (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+          ),
+        ),
+      );
+    for (const row of questionRows) {
+      if (row.draft_status === 'draft') continue;
+      for (const id of row.knowledge_ids) {
+        if (!knowledgeNames.has(id)) continue;
+        usableQuestionCounts.set(id, (usableQuestionCounts.get(id) ?? 0) + 1);
+      }
+    }
+  }
+
+  const questionRows =
+    questionIds.length > 0
+      ? await db
+          .select({
+            id: question.id,
+            prompt_md: question.prompt_md,
+            draft_status: question.draft_status,
+          })
+          .from(question)
+          .where(inArray(question.id, questionIds))
+      : [];
+  const questionContext = new Map(questionRows.map((row) => [row.id, row]));
+
+  return notes.map((note) => ({
+    ...note,
+    refs: note.refs.map((ref): AgentNoteBoardRef => {
+      if (ref.kind === 'knowledge') {
+        const usableCount = usableQuestionCounts.get(ref.id) ?? 0;
+        return {
+          ...ref,
+          label: knowledgeNames.get(ref.id) ?? '未命名知识点',
+          resolution_state: knowledgeNames.has(ref.id)
+            ? usableCount > 0
+              ? 'resolved'
+              : 'open'
+            : 'unknown',
+          usable_question_count: usableCount,
+        };
+      }
+      if (ref.kind === 'question') {
+        const context = questionContext.get(ref.id);
+        return {
+          ...ref,
+          label: context?.prompt_md.trim().slice(0, 48) || '相关题目',
+          resolution_state: context
+            ? context.draft_status === 'draft'
+              ? 'open'
+              : 'resolved'
+            : 'unknown',
+        };
+      }
+      if (ref.kind === 'event') {
+        return { ...ref, label: '事件证据', resolution_state: 'unknown' };
+      }
+      if (ref.kind === 'note' || ref.kind === 'artifact') {
+        return { ...ref, label: '相关笔记', resolution_state: 'unknown' };
+      }
+      return { ...ref, label: '相关证据', resolution_state: 'unknown' };
+    }),
+  }));
 }

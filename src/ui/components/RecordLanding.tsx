@@ -13,8 +13,8 @@
 // 数据现实（诚实优先）：录入响应给的是「计数 + id」，不带 title / 树路径 / 块数。所以
 //   - 产出回执 = 计数（手填 1 / 批量 question_ids.length）。
 //   - 「进了哪棵树」树路径响应没有 → 本期不做树路径（设计源那段是 mock）。
-//   - 「挂到哪些知识点」手填可真实列（selectedKnowledge → label）；批量响应不带
-//     knowledge_ids → 诚实占位（knowledgeUnavailable），不编。
+//   - 「挂到哪些知识点」从用户刚刚确认并提交的本地表单快照映射，不依赖 import
+//     响应重复回传 knowledge_ids。
 
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -43,13 +43,8 @@ export interface RecordLandingProps {
   count: number;
   /** true = 批量拍试卷导入；false = 单条手填。影响文案与「继续传 / 再录一份」措辞。 */
   isBatch: boolean;
-  /** 用户为这批题挂的知识点（手填可真实列；批量传 []）。 */
+  /** 用户为这批题挂的知识点（来自刚提交的表单快照）。 */
   knowledge: RecordLandingKnowledge[];
-  /**
-   * true = 知识点去向不可得（批量导入响应不带 knowledge_ids），渲染诚实占位而非空列表。
-   * 见 follow-up：wire 扩展批量 import 响应带回 knowledge_ids 后可去掉占位。
-   */
-  knowledgeUnavailable?: boolean;
   /** SPA 跳转（去练 /practice · 去看知识点 /knowledge/:id · 去错题本 /mistakes · 回今日 /today）。 */
   navigate: (to: string) => void;
   /** 「再录一份 / 继续传」：重置回录入表单（停留在录入面，不离页）。 */
@@ -60,7 +55,6 @@ export function RecordLanding({
   count,
   isBatch,
   knowledge,
-  knowledgeUnavailable = false,
   navigate,
   onRecordAnother,
 }: RecordLandingProps) {
@@ -109,9 +103,7 @@ export function RecordLanding({
             <LoomIcon name="knowledge" size={13} />
             挂到了哪些知识点
           </div>
-          {knowledgeUnavailable ? (
-            <p className="ing-exit-empty">导入响应未带知识点 id，wire 扩展后补。</p>
-          ) : knowledge.length === 0 ? (
+          {knowledge.length === 0 ? (
             <p className="ing-exit-empty">这次没有挂知识点。</p>
           ) : (
             <div className="ing-node-list">

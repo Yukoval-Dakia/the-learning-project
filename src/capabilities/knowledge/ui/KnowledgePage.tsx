@@ -3,7 +3,7 @@
 // 树/图谱 seg 双视图（「树是骨架（parent/child），mesh 是 5 类 typed 关系。
 // 点节点看详情抽屉；图可平移缩放。」）+ AI 提议横幅 + know-node 树行
 //（MasteryRing + decay 非颜色 Badge + evidence/mesh 计数）+ NodeDrawer。
-// 「新建节点」「集中审批」后端属 M4 工作台/收件箱——占位 toast（M2 先例）。
+// 「集中审批」进入现有收件箱；没有已交付 write path 的「新建节点」不展示假入口。
 // wrapper 带 .knowledge-loom：树类（know-node 族）在 globals.css 按该 scope
 // 落地（collision scoping），SPA 页复用同一 scope；M5 样式收编时统一。
 
@@ -33,6 +33,8 @@ export interface KnowledgePageProps {
   navigate: (to: string) => void;
 }
 
+export const KNOWLEDGE_INBOX_HREF = '/inbox';
+
 // 树行排序：父子邻接（DFS），根在前——设计稿树视图按 depth 缩进。
 function dfsOrder(nodes: KnowledgeTreeNode[]): Array<KnowledgeTreeNode & { depth: number }> {
   const byParent = new Map<string | null, KnowledgeTreeNode[]>();
@@ -58,7 +60,6 @@ function dfsOrder(nodes: KnowledgeTreeNode[]): Array<KnowledgeTreeNode & { depth
 export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
   const edgesQ = useQuery({ queryKey: ['knowledge-edges'], queryFn: getEdges });
@@ -80,16 +81,11 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   const frontierItems = frontierQ.data?.rows ?? [];
   const ordered = useMemo(() => dfsOrder(nodes), [nodes]);
 
-  const placeholder = (text: string) => {
-    setToast(text);
-    setTimeout(() => setToast(null), 5000);
-  };
-
   return (
     <main className="page wide knowledge-loom">
       <div className="page-head">
         <div className="eyebrow">
-          KNOWLEDGE · {nodes.length} nodes · {edges.length} edges (mesh)
+          知识网络 · {nodes.length} 个知识点 · {edges.length} 条关系
         </div>
         <div className="page-head-row">
           <h1 className="page-title serif">知识</h1>
@@ -115,19 +111,10 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                 图谱
               </button>
             </div>
-            <Btn
-              variant="primary"
-              icon="plus"
-              onClick={() =>
-                placeholder('新建节点随 M4 工作台/提议链收口——当前节点由录入与 AI 提议生长。')
-              }
-            >
-              新建节点
-            </Btn>
           </div>
         </div>
         <p className="page-lead">
-          树是骨架（parent/child），mesh 是 5 类 typed 关系。点节点看详情抽屉；图可平移缩放。
+          按层级或关系图浏览知识点；选择节点可以查看掌握状态、证据和关联内容。
         </p>
       </div>
 
@@ -161,15 +148,13 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
           </span>
           <div style={{ flex: 1, minWidth: 180 }}>
             <div style={{ fontWeight: 500 }}>AI 提议了 {edgeProposals.length} 条新关系</div>
-            <div className="meta">
-              来自夜间 Dreaming + Maintenance · 选中节点后在抽屉内 accept / reverse / dismiss
-            </div>
+            <div className="meta">来自夜间整理 · 可在收件箱统一确认或忽略</div>
           </div>
           <Btn
             size="sm"
             variant="secondary"
             iconEnd="arrow"
-            onClick={() => placeholder('集中审批进收件箱——M4 工作台收口后接通。')}
+            onClick={() => navigate(KNOWLEDGE_INBOX_HREF)}
           >
             集中审批
           </Btn>
@@ -216,9 +201,6 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                 >
                   {n.name}
                 </span>
-                {n.effective_domain && (
-                  <span className="chip chip-k mono">{n.effective_domain}</span>
-                )}
                 <span className={`badge tone-${cue.tone}`}>
                   <LoomIcon name={cue.icon as never} size={11} />
                   {cue.label}
@@ -228,7 +210,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                       在 know-end 内）：档 + 区间 + 来源 + 低置信，定性表达 p(L) 轴。前置
                       MasteryRing(tone 色环)保留——tone 颜色与 band 档正交（⑥ + 阶段4 红线）。 */}
                   <BandChip input={n} />
-                  <span className="meta mono">{n.evidence_count} ev</span>
+                  <span className="meta">{n.evidence_count} 条学习依据</span>
                   {meshCount > 0 && (
                     <span className="badge tone-info">
                       <LoomIcon name="link" size={11} />
@@ -261,15 +243,6 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
         onClose={() => setPicked(null)}
         go={navigate}
       />
-
-      {toast && (
-        <div className="pf-toasts" aria-live="polite">
-          <div className="pf-toast t-info">
-            <LoomIcon name="sparkle" size={15} className="ico" />
-            <span>{toast}</span>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

@@ -31,9 +31,9 @@ describe('NodeComposite', () => {
     const html = renderToString(<NodeComposite input={input()} />);
     expect(html).toContain('kd-composite');
     expect(html).toContain('稳固'); // composite p(L) band for mastery 0.7
-    expect(html).toContain('三维折叠为单标量');
-    expect(html).toContain('展开三维'); // collapsed toggle label
-    expect(html).not.toContain('收起三维');
+    expect(html).toContain('综合掌握状态');
+    expect(html).toContain('展开判断依据');
+    expect(html).not.toContain('收起判断依据');
   });
 
   it('shows the cold-start note when evidence is thin', () => {
@@ -64,16 +64,18 @@ describe('TransferList (honest empty state)', () => {
   it('renders the no-transfer empty state (borrowed-θ dark-ship) without fabricating sources', () => {
     const html = renderToString(<TransferList />);
     expect(html).toContain('quiet-empty');
-    expect(html).toContain('暂无可识别的迁移来源');
+    expect(html).toContain('没有足够证据判断它受哪些知识点带动');
   });
 });
 
 describe('DiagnosticDrill (honest empty state)', () => {
-  it('renders the collapsed CDM/IRT bar with the evidence-insufficient subtitle', () => {
+  it('renders a user-readable evidence-insufficient diagnostic bar', () => {
     const html = renderToString(<DiagnosticDrill />);
     expect(html).toContain('kd-diag');
-    expect(html).toContain('CDM 属性画像 / IRT 区分度');
-    expect(html).toContain('证据不足，慢热期暂不出诊断');
+    expect(html).toContain('进一步诊断');
+    expect(html).toContain('作答证据还少');
+    expect(html).not.toContain('CDM');
+    expect(html).not.toContain('IRT');
     // collapsed → the fake-precision body is not rendered yet, and no numbers leak.
     expect(html).not.toContain('%');
   });

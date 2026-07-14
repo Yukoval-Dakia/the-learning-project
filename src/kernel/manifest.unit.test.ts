@@ -129,4 +129,13 @@ describe('validateComposition', () => {
     const a: CapabilityManifest = { name: 'a', description: 'a' };
     expect(() => validateComposition([a])).not.toThrow();
   });
+
+  it('rejects one UI page declared by two capabilities', () => {
+    expect(() =>
+      validateComposition([
+        base({ name: 'a', ui: { pages: [{ route: '/shared' }] } }),
+        base({ name: 'b', ui: { pages: [{ route: '/shared' }] } }),
+      ]),
+    ).toThrow(/ui page '\/shared' declared by both 'a' and 'b'/);
+  });
 });

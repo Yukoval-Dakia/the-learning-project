@@ -55,11 +55,11 @@ export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageP
 
   return (
     <main className="page record-page">
-      <PageHeader title="录入" eyebrow="RECORD · attempts" sub="错题进入 /mistakes。">
-        <Button variant="ghost" icon="cog">
-          设置
-        </Button>
-      </PageHeader>
+      <PageHeader
+        title="录入"
+        eyebrow="学习记录 · 手动或文件录入"
+        sub="拍照、上传或手动录入，确认后收进题库并标记为错题。"
+      />
 
       <TabBar items={MODE_TABS} active={mode} onSelect={(id) => setMode(id as ModeTab)} />
 
@@ -271,7 +271,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
           className="field-input"
           value={knowledgeFilter}
           onChange={(e) => setKnowledgeFilter(e.target.value)}
-          placeholder="按名字 / domain 搜索"
+          placeholder="按知识点名称搜索"
         />
         {knowledgeQ.isLoading && <p className="record-note record-muted">正在加载知识点…</p>}
         {knowledgeQ.isError && (
@@ -346,7 +346,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
       )}
       <div className="hero-cta">
         <Btn variant="primary" icon="check" onClick={() => submitM.mutate()} disabled={!canSubmit}>
-          {submitM.isPending ? '提交中…' : '提交 → /mistakes'}
+          {submitM.isPending ? '提交中…' : '提交错题'}
         </Btn>
       </div>
     </Card>

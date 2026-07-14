@@ -32,9 +32,11 @@ import { solveHint, solveStart } from './practice-api';
 export function HintLadder({
   open,
   question,
+  onReturnToAnswer,
 }: {
   open: boolean;
   question: QuestionDetail;
+  onReturnToAnswer?: () => void;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   // 已揭示的最高 hint 阶索引（-1 = 尚未要任何提示）。H0-H4 走 hint，H5 由 revealedFull 单独管。
@@ -98,6 +100,11 @@ export function HintLadder({
     setConfirmFull(false);
     setRevealedFull(true);
     setReached(FULL_STAGE_INDEX);
+  };
+
+  const returnToAnswer = () => {
+    setReturned(true);
+    onReturnToAnswer?.();
   };
 
   if (returned) {
@@ -206,7 +213,7 @@ export function HintLadder({
                 直接看完整解
               </button>
             )}
-            <button type="button" className="ladder-escape" onClick={() => setReturned(true)}>
+            <button type="button" className="ladder-escape" onClick={returnToAnswer}>
               <LoomIcon name="undo" size={14} />
               我自己来
             </button>
@@ -268,7 +275,7 @@ export function HintLadder({
                 完整解暂不可用
               </button>
             )}
-            <button type="button" className="ladder-escape" onClick={() => setReturned(true)}>
+            <button type="button" className="ladder-escape" onClick={returnToAnswer}>
               <LoomIcon name="undo" size={14} />
               我自己来 · 交还控制
             </button>
@@ -288,7 +295,7 @@ export function HintLadder({
             <button
               type="button"
               className="ladder-escape"
-              onClick={() => setReturned(true)}
+              onClick={returnToAnswer}
               style={{ marginLeft: 0 }}
             >
               <LoomIcon name="undo" size={14} />

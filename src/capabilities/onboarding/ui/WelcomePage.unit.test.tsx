@@ -15,7 +15,9 @@ function subj(overrides: Partial<ApiSubject> & Pick<ApiSubject, 'id' | 'displayN
   return {
     renderConfig: { font_family: 'sans', notation: null, code_highlight: null },
     causeCategories: [],
+    aliases: [],
     isGeneralFallback: false,
+    configurationStatus: 'configured',
     ...overrides,
   };
 }
@@ -54,6 +56,19 @@ describe('WelcomePage — 通用模式 badge（YUK-602 §1.2）', () => {
   it('null flag (general 防御位) never renders a badge', () => {
     const html = renderWelcome([subj({ id: 'subj_g', displayName: 'X', isGeneralFallback: null })]);
     expect(html.split('ob-chip-badge').length - 1).toBe(0);
+  });
+
+  it('observed but unconfigured domains are visible and disabled in both pickers', () => {
+    const html = renderWelcome([
+      subj({
+        id: 'yingyu',
+        displayName: 'yingyu',
+        isGeneralFallback: null,
+        configurationStatus: 'unconfigured',
+      }),
+    ]);
+    expect(html.match(/未配置学科 · yingyu/g)).toHaveLength(2);
+    expect(html.match(/该 domain 已在知识库出现，但尚未配置为可选学科/g)).toHaveLength(2);
   });
 });
 

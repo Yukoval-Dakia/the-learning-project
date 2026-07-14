@@ -23,17 +23,17 @@ export interface TierMeta {
 export const TIER_META: Record<'A' | 'B' | 'C', TierMeta> = {
   A: {
     label: '自动应用',
-    sub: '安全可逆 · 已静默应用 · 撤销窗口内一键回退',
+    sub: '安全可撤 · 已自动采用 · 可在期限内撤销',
     tone: 'good',
   },
   B: {
     label: '待你裁决',
-    sub: '真裁决项 · 逐条 accept / dismiss · 每次写一条事件',
+    sub: '需要你判断 · 逐条查看并作决定',
     tone: 'coral',
   },
   C: {
     label: '已自动处理',
-    sub: '纯状态变更 · 不占裁决队列 · 可在旁观面回看',
+    sub: '提醒类信息 · 已归入 AI 观察',
     tone: 'neutral',
   },
 };

@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import './note-reader.css';
 
-import { NoteBlockView, blockOutlineLabel } from './NoteBlocks';
+import { NoteBlockView, blockOutlineLabel, questionDetailHref } from './NoteBlocks';
 import { NoteEditor } from './NoteEditor';
 import {
   type BodyBlock,
@@ -28,6 +28,17 @@ import {
   saveBodyBlocks,
   undoAiChange,
 } from './notes-api';
+
+const NOTE_TYPE_LABEL: Record<string, string> = {
+  note_atomic: '短笔记',
+  note_hub: '汇总笔记',
+  note_long: '长文笔记',
+  interactive: '互动内容',
+};
+
+function changeActorLabel(actorRef: string): string {
+  return actorRef === 'user' || actorRef.startsWith('user:') ? '你' : 'AI';
+}
 
 export default function NoteReaderPage({
   id,
@@ -188,7 +199,6 @@ export default function NoteReaderPage({
           <LoomIcon name="arrowL" size={14} />
           {entryLabel ? '返回知识点' : '知识'}
         </button>
-        <span className="meta mono note-id-pill">/notes/{note.id}</span>
         <span className="topbar-spacer" />
         <IconBtn
           icon="panelLeft"
@@ -244,7 +254,7 @@ export default function NoteReaderPage({
           <nav className="note-outline">
             <div className="note-rail-h">
               <LoomIcon name="panelLeft" size={14} />
-              大纲 · block tree
+              大纲
             </div>
             {shown.map((b, i) => (
               <button
@@ -288,12 +298,14 @@ export default function NoteReaderPage({
             {note.title}
           </h1>
           <div className="nowrap-meta" style={{ marginBottom: 'var(--s-5)' }}>
-            <span className="note-kind-tag note-kind-atomic">{note.type}</span>
+            <span className="note-kind-tag note-kind-atomic">
+              {NOTE_TYPE_LABEL[note.type] ?? '笔记'}
+            </span>
             <span className={`verify-badge ${verified ? 'verified' : 'draft'}`}>
               <LoomIcon name={verified ? 'check' : 'sparkle'} size={11} />
               {verified ? '已校验' : '草稿'}
             </span>
-            <span className="meta mono">v{note.version}</span>
+            <span className="meta">第 {note.version} 版</span>
           </div>
 
           {/* S12 (YUK-335)：入口 strip（设计 :221，.note-entries-strip + .entry-pill，
@@ -326,7 +338,7 @@ export default function NoteReaderPage({
               interactive={note.interactive}
               blocks={blocks}
               navigate={navigate}
-              onOpenQuestion={() => say('题库面随 M5 收口——引用块先提供题面预览。')}
+              onOpenQuestion={(questionId) => navigate(questionDetailHref(questionId))}
             />
           )}
         </article>
@@ -346,10 +358,10 @@ export default function NoteReaderPage({
             </div>
             <div className="note-prop-row">
               <span className="meta">版本</span>
-              <span className="mono tnum">v{note.version}</span>
+              <span className="tnum">第 {note.version} 版</span>
             </div>
             <div className="note-prop-row">
-              <span className="meta">块数</span>
+              <span className="meta">内容段</span>
               <span className="mono tnum">{blocks.length}</span>
             </div>
           </div>
@@ -357,7 +369,7 @@ export default function NoteReaderPage({
           <div className="drawer-sec">
             <div className="drawer-sec-h">
               <LoomIcon name="link" size={13} />
-              被这些 knowledge 标签命中 · {note.labels.length}
+              关联知识点 · {note.labels.length}
             </div>
             <div className="note-label-list">
               {note.labels.map((l) => (
@@ -367,7 +379,6 @@ export default function NoteReaderPage({
                   className={`note-label-row${entryMatch?.id === l.id ? ' is-entry' : ''}`}
                   onClick={() => navigate(`/knowledge/${l.id}`)}
                 >
-                  <span className="chip chip-k mono">{l.id.slice(0, 10)}</span>
                   {/* de-wenyan: label rows carry no domain on the wire → neutral
                       default font (subject-driven is a follow-up). */}
                   <span>{l.name}</span>
@@ -386,21 +397,16 @@ export default function NoteReaderPage({
               相关学习项 · {note.related_learning_items.length}
             </div>
             {note.related_learning_items.length === 0 ? (
-              <div className="meta">暂无共享标签的学习项</div>
+              <div className="meta">暂无关联相同知识点的学习项</div>
             ) : (
               <div className="note-label-list">
                 {note.related_learning_items.map((it) => (
-                  <button
-                    type="button"
-                    key={it.id}
-                    className="note-label-row"
-                    onClick={() => say('学习项 surface 还在旧栈——M4/M5 收口后可跳转。')}
-                  >
+                  <div key={it.id} className="note-label-row">
                     <LoomIcon name="items" size={13} />
                     {/* de-wenyan: related-item rows carry no domain → neutral default. */}
                     <span>{it.title}</span>
-                    <span className="meta mono">{it.relation}</span>
-                  </button>
+                    <span className="meta">暂不提供详情页</span>
+                  </div>
                 ))}
               </div>
             )}
@@ -417,12 +423,10 @@ export default function NoteReaderPage({
                   <span className="note-ver-dot" />
                   <div className="note-ver-body">
                     <div className="note-ver-top">
-                      <span className="mono note-ver-v">
-                        v{c.previous_artifact_version}→v{c.next_artifact_version}
-                      </span>
-                      <span className="adm-actor mono">
+                      <span className="note-ver-v">第 {c.next_artifact_version} 版</span>
+                      <span className="adm-actor">
                         <LoomIcon name="sparkle" size={11} />
-                        {c.actor_ref}
+                        {changeActorLabel(c.actor_ref)}
                       </span>
                       <span className="meta" style={{ marginLeft: 'auto' }}>
                         {new Date(c.created_at).toLocaleString('zh-CN', {
@@ -434,7 +438,7 @@ export default function NoteReaderPage({
                       </span>
                     </div>
                     <div className="note-ver-note meta">
-                      {c.ops_count} ops · {c.new_blocks} 新块
+                      更新 {c.ops_count} 处 · 新增 {c.new_blocks} 段
                       {c.undone ? (
                         <span className="badge tone-neutral" style={{ marginLeft: 8 }}>
                           已还原
@@ -498,7 +502,7 @@ export function NoteDocBody({
   interactive: { html: string } | null;
   blocks: BodyBlock[];
   navigate: (to: string) => void;
-  onOpenQuestion: () => void;
+  onOpenQuestion: (questionId: string) => void;
 }) {
   if (type === 'interactive') {
     if (interactive) {

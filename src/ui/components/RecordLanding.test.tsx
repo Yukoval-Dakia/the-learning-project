@@ -52,13 +52,15 @@ describe('RecordLanding', () => {
     expect(html).toContain('去出题');
   });
 
-  it('renders the batch variant with an honest knowledge placeholder, not a fabricated list', () => {
+  it('renders the batch variant with the knowledge confirmed in the submitted forms', () => {
     const html = renderToString(
       <RecordLanding
         count={4}
         isBatch
-        knowledge={[]}
-        knowledgeUnavailable
+        knowledge={[
+          { id: 'k1', label: '判断句' },
+          { id: 'k3', label: '通假字' },
+        ]}
         navigate={noop}
         onRecordAnother={noop}
       />,
@@ -66,7 +68,8 @@ describe('RecordLanding', () => {
     expect(html).toContain('4 道题');
     // batch → "继续传"
     expect(html).toContain('继续传');
-    // honest placeholder for the missing knowledge_ids wire
-    expect(html).toContain('导入响应未带知识点 id');
+    expect(html).toContain('判断句');
+    expect(html).toContain('通假字');
+    expect(html).not.toContain('wire');
   });
 });

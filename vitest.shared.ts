@@ -68,6 +68,9 @@ export const fastTestInclude = [
   // M1 (YUK-314) — ingestion 19 条 allowlist 条目已随簇迁入 capabilities，由约定 glob 接管。
   'server/**/*.unit.test.ts',
   'web/**/*.unit.test.ts',
+  // YUK-624：Vite 壳层同样有 React 交互测试；漏掉 .tsx 会让文件落入 DB
+  // 分区而非 unit car，定向 `vitest --config vitest.unit` 还会静默零收集。
+  'web/**/*.unit.test.tsx',
   'scripts/**/*.test.ts',
   // YUK-263 — pure (no-DB) unit for the globalThis pool-cache HMR guard in
   // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is

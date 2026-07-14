@@ -6,7 +6,7 @@
 //   • chat     — message list + tool-use cards + composer
 //
 // RTL slide-in (from the right). ESC + outside-click close. Open state is
-// controlled by the parent (dwell hook flips it). The primitive intentionally
+// controlled by the parent (explicit user/signal open only). The primitive intentionally
 // does no data fetching — keeps T-D3/A reusable.
 
 'use client';

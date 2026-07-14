@@ -6,7 +6,7 @@
 import { replaceSubjectTraitResolutions } from '@/server/subjects/resolution-cache';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GET } from './subjects-list';
+import { buildSubjectsList } from './subjects-list';
 
 afterEach(() => {
   replaceSubjectTraitResolutions(new Map());
@@ -14,14 +14,14 @@ afterEach(() => {
 
 describe('GET /api/subjects', () => {
   it('selectable 视图：三 builtin 在列、general 结构性排除、字段集精确', async () => {
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { subjects: Record<string, unknown>[] };
-    const ids = body.subjects.map((s) => s.id).sort();
+    const subjects = buildSubjectsList([]) as unknown as Record<string, unknown>[];
+    const ids = subjects.map((s) => s.id).sort();
     expect(ids).toEqual(['math', 'physics', 'yuwen']);
-    for (const row of body.subjects) {
+    for (const row of subjects) {
       expect(Object.keys(row).sort()).toEqual([
+        'aliases',
         'causeCategories',
+        'configurationStatus',
         'displayName',
         'id',
         'isGeneralFallback',
@@ -41,8 +41,7 @@ describe('GET /api/subjects', () => {
   });
 
   it('server-only AI 合同字段绝不下发（负测 = 合同）', async () => {
-    const res = await GET();
-    const text = JSON.stringify(await res.json());
+    const text = JSON.stringify(buildSubjectsList([]));
     for (const forbidden of [
       'promptFragments',
       'noteTemplate',
@@ -59,10 +58,8 @@ describe('GET /api/subjects', () => {
   });
 
   it('isGeneralFallback 派生：无溯源 → false；全 general 种子绑定 → true', async () => {
-    let body = (await (await GET()).json()) as {
-      subjects: Array<{ id: string; isGeneralFallback: unknown }>;
-    };
-    for (const s of body.subjects) expect(s.isGeneralFallback).toBe(false);
+    let subjects = buildSubjectsList([]);
+    for (const s of subjects) expect(s.isGeneralFallback).toBe(false);
 
     // 伪造 yuwen 的溯源为「六绑定全指向 general 种子」（thin-create 后的形状）。
     replaceSubjectTraitResolutions(
@@ -82,11 +79,24 @@ describe('GET /api/subjects', () => {
         ],
       ]),
     );
-    body = (await (await GET()).json()) as {
-      subjects: Array<{ id: string; isGeneralFallback: unknown }>;
-    };
-    const byId = new Map(body.subjects.map((s) => [s.id, s.isGeneralFallback]));
+    subjects = buildSubjectsList([]);
+    const byId = new Map(subjects.map((s) => [s.id, s.isGeneralFallback]));
     expect(byId.get('yuwen')).toBe(true);
     expect(byId.get('math')).toBe(false);
+    expect(subjects.find((s) => s.id === 'yuwen')?.configurationStatus).toBe('general-fallback');
+  });
+
+  it('unknown observed domains stay visible and explicitly unconfigured without duplicating aliases', () => {
+    const subjects = buildSubjectsList([' yingyu ', 'YINGYU', 'wenyan', 'math']);
+    const yingyu = subjects.find((s) => s.id === 'yingyu');
+    expect(yingyu).toMatchObject({
+      id: 'yingyu',
+      displayName: 'yingyu',
+      aliases: [],
+      isGeneralFallback: null,
+      configurationStatus: 'unconfigured',
+    });
+    expect(subjects.filter((s) => s.id === 'yingyu')).toHaveLength(1);
+    expect(subjects.filter((s) => s.id === 'yuwen')).toHaveLength(1);
   });
 });

@@ -59,6 +59,22 @@ services:
       retries: 3
       start_period: 15s
 
+  # YUK-625 — older releases ran the shared image as root, so an existing
+  # mem0data volume may contain root-owned history.db. The runtime image now
+  # runs as `node` (Claude Code refuses bypassPermissions as root); repair the
+  # one persistent write mount before the worker starts. New volumes already
+  # inherit node ownership from the image, making this idempotent.
+  mem0-init:
+    image: the-learning-project-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "0:0"
+    command: ["sh", "-c", "chown -R node:node /var/lib/mem0"]
+    volumes:
+      - mem0data:/var/lib/mem0
+    restart: "no"
+
   worker:
     # Same image as `app` — esbuild bundles scripts/worker.ts to dist/worker.cjs.
     # Runs pg-boss queues + crons:
@@ -87,6 +103,8 @@ services:
       postgres:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      mem0-init:
         condition: service_completed_successfully
     networks:
       - internal

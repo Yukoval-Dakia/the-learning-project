@@ -10,7 +10,13 @@ export interface BoardAgentNote {
   target_agents: string[];
   source_task_kind: string;
   source_task_run_id?: string;
-  refs: Array<{ kind: string; id: string }>;
+  refs: Array<{
+    kind: string;
+    id: string;
+    label?: string;
+    resolution_state?: 'open' | 'resolved' | 'unknown';
+    usable_question_count?: number;
+  }>;
   summary_md: string;
   signal_kind: string;
   confidence?: number;

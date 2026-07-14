@@ -15,6 +15,7 @@
 // server/index.ts 的 RW_WORKER=1 进程内 worker 共用。本文件只剩独立进程
 // 专属纪律：process-level last-resort handlers + shutdown 安装。
 
+import { assertAgentSdkRuntimeUser } from '@/server/ai/runtime-preflight';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { loadEnv } from '../server/env';
 
@@ -28,6 +29,7 @@ import { loadEnv } from '../server/env';
 // environment / docker-compose-injected values always win (prod container env is
 // unaffected). Dynamic-import the db client + boss modules below so this runs first.
 loadEnv();
+assertAgentSdkRuntimeUser();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — the worker reads the
 // SAME flag env as the API; stop-the-world flipping keeps the two vectors consistent).
 warnFlipOrder();

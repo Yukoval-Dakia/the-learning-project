@@ -36,6 +36,10 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   });
 
   app.get('/api/health', (c) => c.json({ ok: true }));
+  // YUK-624：TokenGate 的轻量验证端点。它位于 /api/* middleware 之后，
+  // 因而 200 本身就是「当前 x-internal-token 已通过服务端比较」的证据；
+  // 不借业务读接口验 token，避免认证门与 workbench/subjects 可用性耦合。
+  app.get('/api/auth/check', (c) => c.json({ ok: true }));
 
   for (const cap of capabilities) {
     for (const route of cap.api?.routes ?? []) {

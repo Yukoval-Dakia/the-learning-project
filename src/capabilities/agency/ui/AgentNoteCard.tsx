@@ -7,7 +7,7 @@
 import { formatRelTime } from '@/ui/lib/utils';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { Fragment } from 'react';
-import { anInlineMd, deriveTtl, resolveEvidence } from './derive';
+import { anInlineMd, deriveTtl, humanAgentNoteSummary, resolveEvidence } from './derive';
 import { agentMeta, signalMeta } from './meta';
 import type { BoardAgentNote } from './types';
 
@@ -24,6 +24,7 @@ export function AgentNoteCard({ note, unread, now, onNavigate }: AgentNoteCardPr
   const tos = note.target_agents.map((id) => ({ id, meta: agentMeta(id) }));
   const ttl = deriveTtl(note.expires_at, now);
   const evidence = resolveEvidence(note);
+  const summary = humanAgentNoteSummary(note, note.refs[0]?.resolution_state ?? 'unknown');
 
   return (
     <div className="an-note" data-unread={unread ? '1' : '0'}>
@@ -52,7 +53,7 @@ export function AgentNoteCard({ note, unread, now, onNavigate }: AgentNoteCardPr
           <span className={`an-sig tone-chip-${sig.tone}`}>{sig.label}</span>
         </div>
 
-        <div className="an-body">{anInlineMd(note.summary_md)}</div>
+        <div className="an-body">{anInlineMd(summary)}</div>
 
         <div className="an-meta">
           {note.confidence != null && (
@@ -70,7 +71,14 @@ export function AgentNoteCard({ note, unread, now, onNavigate }: AgentNoteCardPr
                 onClick={() => onNavigate(evidence.href as string)}
               >
                 <LoomIcon name="link" size={12} />
-                {evidence.label} →
+                {evidence.kind === 'event'
+                  ? '查看事件证据'
+                  : evidence.kind === 'knowledge'
+                    ? '查看知识点'
+                    : evidence.kind === 'question'
+                      ? '查看相关题目'
+                      : evidence.label}{' '}
+                →
               </button>
             ) : (
               <span className="an-evi-static">

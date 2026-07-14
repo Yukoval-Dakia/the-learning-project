@@ -5,6 +5,7 @@
 // 仍可独立运行（两者共用 startBossWorker 配方，队列层面共存无冲突）。
 
 import { capabilities } from '@/capabilities';
+import { assertAgentSdkRuntimeUser } from '@/server/ai/runtime-preflight';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -12,6 +13,7 @@ import { buildHonoApp } from './app';
 import { loadEnv } from './env';
 
 loadEnv();
+assertAgentSdkRuntimeUser();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
 

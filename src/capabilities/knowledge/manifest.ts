@@ -1,4 +1,5 @@
 import { defineCapability } from '@/kernel/manifest';
+import { uiPagesFor } from '@/kernel/ui-surfaces';
 
 // M3-T1 (YUK-317)：knowledge 包骨架。routes 在 T4（API 上 Hono）逐条填充——
 // 8 条：/api/knowledge（树快照）/[id]（节点页）/proposals /proposals/[id]
@@ -251,4 +252,5 @@ export const knowledgeCapability = defineCapability({
       },
     ],
   },
+  ui: { pages: uiPagesFor('knowledge') },
 });

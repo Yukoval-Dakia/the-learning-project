@@ -37,9 +37,7 @@ export function NodeComposite({ input }: NodeCompositeProps) {
       <div className="kd-composite-main">
         <div className="kd-composite-head">
           <span className="kd-composite-band">{compBand}</span>
-          <span className="kd-composite-cap">
-            三维折叠为单标量 · R 记忆 · p(L) 掌握 · difficulty 难度
-          </span>
+          <span className="kd-composite-cap">综合掌握状态 · 记忆保持 / 理解程度 / 题目难度</span>
         </div>
         <BandChipView view={comp} />
 
@@ -57,7 +55,7 @@ export function NodeComposite({ input }: NodeCompositeProps) {
           onClick={() => setOpen((o) => !o)}
         >
           <LoomIcon name="chevronDown" size={14} />
-          {open ? '收起三维' : '展开三维 · R 记忆 / p(L) 掌握 / difficulty 难度'}
+          {open ? '收起判断依据' : '展开判断依据'}
         </button>
 
         {open && (
@@ -82,7 +80,7 @@ export function NodeComposite({ input }: NodeCompositeProps) {
 // borrowed-θ 软层 dark-ship（flag 默认 OFF）→ 当前无 transfer 项可识别。接 borrowed-θ
 // 是 flag-gated future（后续片 / flag 翻转后），本片不假造迁移来源。
 export function TransferList() {
-  return <div className="quiet-empty">暂无可识别的迁移来源。</div>;
+  return <div className="quiet-empty">目前还没有足够证据判断它受哪些知识点带动。</div>;
 }
 
 // ── diagnostic drill-down (CDM 属性画像 / IRT 区分度) — 诚实空态 ──
@@ -102,8 +100,8 @@ export function DiagnosticDrill() {
           <LoomIcon name="graph" size={17} />
         </span>
         <span>
-          <span className="kd-diag-t">诊断下钻 · CDM 属性画像 / IRT 区分度</span>
-          <span className="kd-diag-s">证据不足，慢热期暂不出诊断</span>
+          <span className="kd-diag-t">进一步诊断</span>
+          <span className="kd-diag-s">作答证据还少，暂不作更细判断</span>
         </span>
         <LoomIcon name="chevronDown" size={18} className="kd-diag-chev" />
       </button>
@@ -111,8 +109,7 @@ export function DiagnosticDrill() {
         <div className="kd-diag-body">
           <div className="kd-diag-empty">
             <LoomIcon name="eye" size={16} />
-            证据不足 / 低置信 —— 软轨指标（a / c / CDM /
-            KT）还没热起来，这里不显示假精度。练几道就会逐步出现。
+            目前没有足够作答证据支持更细的判断。继续练习后，这里会逐步补充；现在不显示看似精确的猜测。
           </div>
         </div>
       )}

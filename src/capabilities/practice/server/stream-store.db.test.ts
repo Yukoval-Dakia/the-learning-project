@@ -5,11 +5,13 @@
 // 增量重排走纯统计 sampler（不调 LLM），rng 注入 seeded 确定化 Poisson 抽样。
 
 import {
+  artifact,
   event,
   item_calibration,
   knowledge,
   knowledge_edge,
   learning_item,
+  learning_session,
   mastery_state,
   material_fsrs_state,
   mistake_variant,
@@ -187,6 +189,37 @@ async function rowsForDate(date: string) {
     .orderBy(asc(practice_stream_item.position));
 }
 
+async function seedPlacementPace(pace: 'light' | 'medium' | 'dense'): Promise<void> {
+  await testDb().insert(learning_session).values({
+    id: createId(),
+    type: 'placement',
+    status: 'completed',
+    placement_pace: pace,
+  });
+}
+
+async function seedReadyPaper(id: string): Promise<void> {
+  const now = new Date();
+  await testDb()
+    .insert(artifact)
+    .values({
+      id,
+      type: 'tool_quiz',
+      title: `预算测试卷 ${id}`,
+      knowledge_ids: [],
+      intent_source: 'quiz_gen',
+      source: 'ai_generated',
+      tool_kind: 'quiz_gen',
+      tool_state: { question_ids: [] } as never,
+      generation_status: 'ready',
+      verification_status: 'not_required',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+}
+
 describe('streamLocalDate — 用户本地日（Asia/Shanghai）单一真相源（FINDING 4，Codex）', () => {
   it('UTC 容器边界：21:30 UTC = 次日 05:30 Asia/Shanghai → 返回**次日**（不是 UTC 当日）', () => {
     // 模拟夜间 cron `'30 5 * * *', tz: 'Asia/Shanghai'` 在 UTC 容器里触发的瞬间：
@@ -230,25 +263,87 @@ describe('Task 9 夜间预产 composeNightly（YUK-361 Phase 4）', () => {
     for (const r of rows) expect(r.added_by).toBe('composer_nightly');
   });
 
-  // YUK-349 / ADR-0037 H8 (due-must-review) — due is a HARD constraint: ALL due items must
-  // reach the stream; the engine may reorder/de-emphasize but never DROP. Regression guard
-  // for the DUE_INPUT_LIMIT 10→200 fix (the old cap dropped due #11+ before the engine).
-  it('due-must-review invariant: ALL due items reach the stream, not capped at 10', async () => {
+  it('collects the full due input, then medium budget keeps the earliest 10 and defers the tail', async () => {
     const ids: string[] = [];
     for (let i = 0; i < 12; i++) {
       // distinct positive offsets → 12 distinct overdue items (> the old cap of 10).
       ids.push(await seedDueQuestion({ dueOffsetMs: (i + 1) * 3600_000 }));
     }
 
-    await composeNightly(testDb(), TODAY, {
-      policy: { policy: 'softmax_mfi' },
-      composeDeps: { rng: RNG_ALWAYS_SELECT },
-    });
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    expect(inputs.dueItems).toHaveLength(12);
+    expect(inputs.dailyBudgetMinutes).toBe(20);
 
-    const streamRefs = new Set((await rowsForDate(TODAY)).map((r) => r.ref_id));
-    // Every due item present — none dropped by the input cap (capacityGuard protects due
-    // from truncation, so all 12 survive past any soft capacity too).
-    for (const id of ids) expect(streamRefs.has(id)).toBe(true);
+    await composeNightly(testDb(), TODAY, { policy: { policy: 'legacy' } });
+
+    const rows = await rowsForDate(TODAY);
+    expect(rows).toHaveLength(10);
+    // due-list 以 due_at ASC 排序；最后 seed 的两道最 overdue，不能被尾部较新的 due 挤掉。
+    expect(rows.map((row) => row.ref_id)).toContain(ids[11]);
+    expect(rows.map((row) => row.ref_id)).toContain(ids[10]);
+  });
+
+  it.each([
+    ['light', 10, 5],
+    ['medium', 20, 10],
+    ['dense', 40, 20],
+  ] as const)(
+    '%s pace: %i-minute budget materializes at most %i due questions',
+    async (pace, minutes, count) => {
+      await seedPlacementPace(pace);
+      for (let i = 0; i < 25; i++) {
+        await seedDueQuestion({ dueOffsetMs: (i + 1) * 60_000 });
+      }
+
+      await composeNightly(testDb(), TODAY, { policy: { policy: 'legacy' } });
+      const view = await getStream(testDb(), TODAY);
+
+      expect(view.budget).toEqual({ pace, minutes });
+      expect(view.items).toHaveLength(count);
+      expect(view.progress.estimated_total_minutes).toBe(minutes);
+      expect(view.items.every((item) => item.estimated_minutes === 2)).toBe(true);
+    },
+  );
+
+  it('paper mix uses the same server estimate and never exceeds the medium budget', async () => {
+    for (let i = 0; i < 3; i++) await seedDueQuestion({ dueOffsetMs: (i + 1) * 60_000 });
+    await seedReadyPaper('paper-budget-a');
+    await seedReadyPaper('paper-budget-b');
+
+    await composeNightly(testDb(), TODAY, { policy: { policy: 'legacy' } });
+    const view = await getStream(testDb(), TODAY);
+
+    expect(view.budget).toEqual({ pace: 'medium', minutes: 20 });
+    expect(view.items.filter((item) => item.item_kind === 'question')).toHaveLength(3);
+    expect(view.items.filter((item) => item.item_kind === 'paper')).toHaveLength(1);
+    expect(view.progress.estimated_total_minutes).toBe(16);
+    expect(view.progress.estimated_total_minutes).toBeLessThanOrEqual(view.budget.minutes);
+  });
+
+  it('today read immediately trims a pre-fix over-budget pending tail but preserves in-progress', async () => {
+    await testDb()
+      .insert(practice_stream_item)
+      .values(
+        Array.from({ length: 15 }, (_, index) => ({
+          id: createId(),
+          date: TODAY,
+          position: index + 1,
+          item_kind: 'question' as const,
+          ref_id: `legacy-over-budget-${index}`,
+          source: 'decay' as const,
+          status: index === 0 ? ('in_progress' as const) : ('pending' as const),
+          reasoning: 'legacy fixture',
+          added_by: 'composer_nightly' as const,
+          signals: {},
+        })),
+      );
+
+    const view = await getStream(testDb(), TODAY, { composeIfEmpty: true });
+
+    expect(view.items).toHaveLength(10);
+    expect(view.items[0].status).toBe('in_progress');
+    expect(view.items.filter((item) => item.status === 'pending')).toHaveLength(9);
+    expect(view.progress.estimated_total_minutes).toBe(20);
   });
 
   it('幂等：composeNightly 跑两次不 double-compose（第二次 no-op，added=0、行数不变）', async () => {

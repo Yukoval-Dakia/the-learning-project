@@ -7,6 +7,7 @@
 
 import type { ReactNode } from 'react';
 import { createElement } from 'react';
+import type { BoardAgentNote } from './types';
 
 // created_at arrives over JSON as an ISO string but is a Date in-process; accept
 // both and coerce, mirroring formatRelTime's tolerance.
@@ -67,6 +68,132 @@ export function dayGroupOf(createdAt: DateLike, now: Date): DayGroupInfo {
   return { group: 'earlier', label: '更早' };
 }
 
+export type AgentNoteGroupState = 'open' | 'resolved' | 'unknown';
+export type AgentNoteAttention = 'high' | 'medium' | 'resolved';
+
+export interface AgentNoteGroup {
+  key: string;
+  notes: BoardAgentNote[];
+  latest: BoardAgentNote;
+  primary_ref: BoardAgentNote['refs'][number] | null;
+  resolution_state: AgentNoteGroupState;
+  attention: AgentNoteAttention;
+  run_count: number;
+  expires_at?: string;
+}
+
+function noteGroupKey(note: BoardAgentNote): string {
+  const primary = note.refs[0];
+  if (primary) return `${note.signal_kind}|${primary.kind}|${primary.id}`;
+  if (note.source_task_run_id) return `${note.signal_kind}|run|${note.source_task_run_id}`;
+  if (note.caused_by_event_id) return `${note.signal_kind}|event|${note.caused_by_event_id}`;
+  return `${note.signal_kind}|note|${note.id}`;
+}
+
+function groupState(notes: BoardAgentNote[]): AgentNoteGroupState {
+  const states = notes.flatMap((note) => note.refs.map((ref) => ref.resolution_state));
+  if (states.includes('open')) return 'open';
+  if (states.length > 0 && states.every((state) => state === 'resolved')) return 'resolved';
+  return 'unknown';
+}
+
+function groupAttention(notes: BoardAgentNote[], state: AgentNoteGroupState): AgentNoteAttention {
+  if (state === 'resolved') return 'resolved';
+  const hasHardFailure = notes.some((note) =>
+    /verification\s+failed|校验失败/i.test(note.summary_md),
+  );
+  const maxConfidence = Math.max(...notes.map((note) => note.confidence ?? 0));
+  return hasHardFailure || notes.length >= 4 || maxConfidence >= 0.9 ? 'high' : 'medium';
+}
+
+/**
+ * Collapse repeated observations by signal + primary subject while preserving
+ * every underlying run for expandable audit evidence. Notes without a subject
+ * are grouped by their real run id (or triggering event) instead.
+ */
+export function groupAgentNotes(notes: BoardAgentNote[]): AgentNoteGroup[] {
+  const sorted = [...notes].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+  const buckets = new Map<string, BoardAgentNote[]>();
+  for (const note of sorted) {
+    const key = noteGroupKey(note);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(note);
+    else buckets.set(key, [note]);
+  }
+
+  return [...buckets.entries()].map(([key, items]) => {
+    const latest = items[0];
+    const state = groupState(items);
+    const expiries = items
+      .flatMap((note) => (note.expires_at ? [note.expires_at] : []))
+      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    const runs = new Set(
+      items.map((note) => note.source_task_run_id ?? note.caused_by_event_id ?? note.id),
+    );
+    return {
+      key,
+      notes: items,
+      latest,
+      primary_ref: latest.refs[0] ?? null,
+      resolution_state: state,
+      attention: groupAttention(items, state),
+      run_count: runs.size,
+      ...(expiries[0] ? { expires_at: expiries[0] } : {}),
+    };
+  });
+}
+
+/** Keep stored machine templates out of learner copy without mutating history. */
+export function humanAgentNoteSummary(
+  note: Pick<BoardAgentNote, 'signal_kind' | 'summary_md'>,
+  state: AgentNoteGroupState = 'unknown',
+): string {
+  if (note.signal_kind === 'question_pool_gap') {
+    return state === 'resolved'
+      ? '先前有候选题未通过校验；这个知识点现在已有可用练习。'
+      : '有候选题未通过校验，这个知识点仍需要补充可用练习。';
+  }
+
+  const latinCount = (note.summary_md.match(/[A-Za-z]/g) ?? []).length;
+  const hanCount = (note.summary_md.match(/[\u3400-\u9fff]/g) ?? []).length;
+  if (latinCount > hanCount * 2 && latinCount > 16) {
+    return 'AI 留下了一条协作观察；展开后可查看发生时间与真实证据。';
+  }
+
+  const cleaned = note.summary_md
+    .replace(/spike:[\w:-]+/gi, '相关知识点')
+    .replace(/\b[a-z0-9]{20,}\b/gi, '相关记录')
+    .replace(/\b[A-Z][A-Za-z]+Task\b/g, 'AI 工作')
+    .replace(/\b(?:needs_review|verification|failed)\b/gi, '待复核')
+    .trim();
+  return cleaned || 'AI 留下了一条协作观察。';
+}
+
+export function agentNoteGroupSummary(group: AgentNoteGroup): string {
+  if (group.latest.signal_kind !== 'question_pool_gap') {
+    return humanAgentNoteSummary(group.latest, group.resolution_state);
+  }
+
+  const usableCount = Math.max(
+    ...group.notes.flatMap((note) => note.refs.map((ref) => ref.usable_question_count ?? 0)),
+  );
+  if (group.resolution_state === 'resolved') {
+    return `${group.run_count} 次候选题校验没有进入题池；当前已有 ${usableCount} 道可用练习，历史记录仍可追溯。`;
+  }
+  return `${group.run_count} 次候选题校验没有进入题池，这个知识点目前仍缺可用练习。`;
+}
+
+export function agentNoteRunLabel(
+  note: Pick<BoardAgentNote, 'signal_kind' | 'summary_md'>,
+): string {
+  if (/verification\s+failed|校验失败/i.test(note.summary_md)) return '未通过校验';
+  if (/needs_review|待复核/i.test(note.summary_md)) return '等待人工复核';
+  if (note.signal_kind === 'question_pool_gap') return '未进入可用题池';
+  return '已记录';
+}
+
 // Light inline markdown: **bold** and `code` only (notes are 1–2 sentences).
 // Returns ReactNodes; does NOT pull in a markdown library. Unclosed tokens are
 // left as plain text (the regex only matches balanced pairs).
@@ -103,7 +230,7 @@ export interface EvidenceRef {
 // Minimal note shape resolveEvidence needs — refs[] plus the event-column
 // fallback. Keeps the helper decoupled from the full AgentNote import.
 export interface EvidenceSource {
-  refs: Array<{ kind: string; id: string }>;
+  refs: Array<{ kind: string; id: string; label?: string }>;
   caused_by_event_id?: string;
 }
 
@@ -117,14 +244,32 @@ export function resolveEvidence(note: EvidenceSource): EvidenceRef | null {
   const first = note.refs[0];
   if (first) {
     if (first.kind === 'event') {
-      return { label: first.id, href: `/events/${first.id}`, kind: 'event' };
+      return {
+        label: first.label ?? '事件证据',
+        href: `/events/${encodeURIComponent(first.id)}`,
+        kind: 'event',
+      };
     }
-    return { label: first.id, href: null, kind: first.kind };
+    if (first.kind === 'knowledge') {
+      return {
+        label: first.label ?? '相关知识点',
+        href: `/knowledge/${encodeURIComponent(first.id)}`,
+        kind: 'knowledge',
+      };
+    }
+    if (first.kind === 'question') {
+      return {
+        label: first.label ?? '相关题目',
+        href: `/questions/${encodeURIComponent(first.id)}`,
+        kind: 'question',
+      };
+    }
+    return { label: first.label ?? '相关证据', href: null, kind: first.kind };
   }
   if (note.caused_by_event_id) {
     return {
-      label: note.caused_by_event_id,
-      href: `/events/${note.caused_by_event_id}`,
+      label: '事件证据',
+      href: `/events/${encodeURIComponent(note.caused_by_event_id)}`,
       kind: 'event',
     };
   }
