@@ -1,15 +1,11 @@
 import { and, eq } from 'drizzle-orm';
-import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { Review } from '@/server/session';
+import { UpdateReviewSessionBody } from './contracts';
 import { enqueueReviewSessionSummary } from './session-end';
-
-const PatchBody = z.object({
-  status: z.enum(['started', 'paused', 'completed', 'abandoned']),
-});
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -43,7 +39,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    const parsed = PatchBody.safeParse(raw);
+    const parsed = UpdateReviewSessionBody.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

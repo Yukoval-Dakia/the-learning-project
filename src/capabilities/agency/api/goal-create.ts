@@ -24,8 +24,6 @@
 // carries scope_mode: 'explicit' (hand-picked frozen set is authoritative) vs
 // 'subject_live' (readers derive from subject_id at read time; frozen stays []).
 
-import { z } from 'zod';
-
 import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
@@ -46,20 +44,7 @@ import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import { eq } from 'drizzle-orm';
 import { insertGoal } from '../server/goals/queries';
-
-const Body = z.object({
-  /** human-readable goal title (required). */
-  title: z.string().min(1),
-  /** subject profile id. Sets goal.subject_id AND (when knowledgeIds is omitted)
-   * derives the scope via the effective-domain axis. subject=view: no root node. */
-  subjectId: z.string().min(1).nullable().optional(),
-  /** explicit goal-subgraph KC set; wins over subjectId-derived scope. */
-  knowledgeIds: z.array(z.string().min(1)).optional(),
-  // sequence_hint is AI-internal (ND-4: NOT a progress metric) and set by the
-  // proposal path; the manual entry path defaults it to 0 and does not expose it
-  // until a caller needs it (YAGNI — avoids surfacing an internal field on the
-  // public entry API).
-});
+import { CreateGoalBody } from './goal-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -80,7 +65,7 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       throw new ApiError('validation_error', 'request body must be valid JSON', 400);
     }
-    const parsed = Body.safeParse(raw);
+    const parsed = CreateGoalBody.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

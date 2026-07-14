@@ -1,5 +1,6 @@
 import { aiProposalKinds } from '@/core/schema/proposal';
 import { validateComposition } from '@/kernel/manifest';
+import { generateOpenApiDocument } from '@/kernel/openapi';
 import { describe, expect, it } from 'vitest';
 import { capabilities } from './index';
 
@@ -14,6 +15,21 @@ const LEGACY_TOMBSTONE_KINDS = ['record_links', 'record_promotion'];
 describe('composition root', () => {
   it('passes composition validation', () => {
     expect(() => validateComposition(capabilities)).not.toThrow();
+  });
+
+  it('generates one OpenAPI operation for every manifest route', () => {
+    const document = generateOpenApiDocument(capabilities) as {
+      paths: Record<string, Record<string, unknown>>;
+    };
+    const generatedOperations = Object.values(document.paths).reduce(
+      (count, path) => count + Object.keys(path).length,
+      0,
+    );
+    const manifestRoutes = capabilities.reduce(
+      (count, capability) => count + (capability.api?.routes.length ?? 0),
+      0,
+    );
+    expect(generatedOperations).toBe(manifestRoutes + 3);
   });
 
   it('includes the agency capability', () => {

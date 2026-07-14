@@ -1,7 +1,3 @@
-import { z } from 'zod';
-
-import { MAX_PDF_PAGES } from '@/core/limits';
-import { IngestionEntrypoint } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { event, learning_session, question_block, source_asset } from '@/db/schema';
 import {
@@ -12,6 +8,7 @@ import {
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Ingestion } from '@/server/session';
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { CreateIngestionSessionBody } from './contracts';
 
 const DEFAULT_LIMIT = 20;
 const MIN_LIMIT = 1;
@@ -199,11 +196,6 @@ function clampLimit(raw: string | null): number {
 // exactly that many. Importing the const keeps the two caps provably equal
 // (YUK-250). The downstream pipeline is length-driven (tencent_ocr_extract loops
 // assetIds.length; page_index scales), so raising the ceiling is safe.
-const Body = z.object({
-  entrypoint: IngestionEntrypoint,
-  asset_ids: z.array(z.string().min(1)).min(1).max(MAX_PDF_PAGES),
-});
-
 /**
  * POST /api/ingestion —— 创建 ingestion session（status='uploaded'）。
  *
@@ -219,7 +211,7 @@ const Body = z.object({
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = CreateIngestionSessionBody.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

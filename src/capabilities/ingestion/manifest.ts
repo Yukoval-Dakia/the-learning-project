@@ -1,5 +1,18 @@
+import {
+  API_ERROR_RESPONSES,
+  ApiIdParamsSchema,
+  CursorQuerySchema,
+  collectionResponseSchema,
+} from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import {
+  CreateIngestionSessionBody,
+  IngestionOperationSchema,
+  IngestionSessionResponseSchema,
+  IngestionSessionSchema,
+} from './api/contracts';
+import { IngestionOperationRequest } from './api/operation-schema';
 
 export const ingestionCapability = defineCapability({
   name: 'ingestion',
@@ -13,26 +26,44 @@ export const ingestionCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/ingestion',
+        deprecation: { successor: '/api/ingestion-sessions' },
         load: () => import('./api/sessions').then((m) => m.legacyListIngestionSessions),
       },
       {
         method: 'POST',
         path: '/api/ingestion',
+        deprecation: { successor: '/api/ingestion-sessions' },
         load: () => import('./api/sessions').then((m) => m.legacyCreateIngestionSession),
       },
       {
         method: 'GET',
         path: '/api/ingestion-sessions',
+        operationId: 'listIngestionSessions',
+        request: { query: CursorQuerySchema },
+        responses: {
+          200: collectionResponseSchema(IngestionSessionSchema),
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 20, maxLimit: 100 },
         load: () => import('./api/sessions').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/ingestion-sessions',
+        operationId: 'createIngestionSession',
+        request: { body: CreateIngestionSessionBody },
+        responses: { 201: IngestionSessionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/sessions').then((m) => m.createIngestionSessionResource),
       },
       {
         method: 'GET',
         path: '/api/ingestion-sessions/[id]',
+        operationId: 'getIngestionSession',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: IngestionSessionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/session-detail').then((m) => m.GET),
       },
       {
@@ -60,11 +91,23 @@ export const ingestionCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/ingestion-sessions/[id]/operations',
+        operationId: 'createIngestionOperation',
+        request: { params: ApiIdParamsSchema, body: IngestionOperationRequest },
+        responses: {
+          200: IngestionOperationSchema,
+          202: IngestionOperationSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 202],
         load: () => import('./api/operations').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/ingestion-operations/[id]',
+        operationId: 'getIngestionOperation',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: IngestionOperationSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/operations').then((m) => m.GET),
       },
       {

@@ -1,5 +1,12 @@
+import { ProposalDecisionInput } from '@/core/schema/proposal';
+import {
+  API_ERROR_RESPONSES,
+  ApiIdParamsSchema,
+  collectionResponseSchema,
+} from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import { z } from 'zod';
 
 // M4-T5 (YUK-319/YUK-318)：shell 包——跨域工作台壳层。提议收件箱三路由源自
 // 旧 Next app/api/proposals/* 等价平移（accept+dismiss 合并为单 decide 端点，
@@ -24,6 +31,21 @@ export const shellCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/proposals',
+        operationId: 'listProposals',
+        request: {
+          query: z.object({
+            status: z.string().optional(),
+            kind: z.string().optional(),
+            limit: z.coerce.number().int().positive().optional(),
+            cursor: z.string().min(1).optional(),
+          }),
+        },
+        responses: {
+          200: collectionResponseSchema(z.object({ id: z.string() }).passthrough()),
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 200, maxLimit: 500 },
         load: () => import('./api/proposals-list').then((m) => m.GET),
       },
       // YUK-521 (A4 强度轴) — A 档 auto-applied 卡 + 当前裁决熔断快照只读读模型。
@@ -36,6 +58,14 @@ export const shellCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/proposals/[id]/decisions',
+        operationId: 'createProposalDecision',
+        request: { params: ApiIdParamsSchema, body: ProposalDecisionInput },
+        responses: {
+          200: z.object({ decision_event_id: z.string(), created: z.boolean() }).passthrough(),
+          201: z.object({ decision_event_id: z.string(), created: z.boolean() }).passthrough(),
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
         load: () => import('./api/proposal-decisions').then((m) => m.POST),
       },
       {
