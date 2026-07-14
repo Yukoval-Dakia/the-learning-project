@@ -7,11 +7,15 @@ import { z } from 'zod';
 
 import { SolveError, startSolveSession } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
 const Body = z.object({ regenerate: z.boolean().optional() }).nullable();
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createSolveSession(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id } = params;
     const raw = await req.json().catch(() => null);
@@ -31,4 +35,8 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  return deprecatedRouteResponse(await createSolveSession(req, params), '/api/solve-sessions');
 }

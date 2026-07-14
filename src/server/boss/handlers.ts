@@ -120,7 +120,7 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     { tz: 'Asia/Shanghai' },
   );
 
-  // Phase 1d: SessionSummaryTask — enqueued by /api/review/sessions/[id]/end
+  // Phase 1d: SessionSummaryTask — enqueued by review-session completion
   // after a review session transitions to completed. async so the LLM call
   // doesn't block the close request.
   await createJobQueue(boss, 'session_summary', EXPIRE_LLM);

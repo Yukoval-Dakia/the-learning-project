@@ -5,7 +5,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { autosaveAnswerDraft } from '../server/answer-draft';
 
 const AutosaveBody = z.object({
@@ -17,7 +17,10 @@ const AutosaveBody = z.object({
   image_refs: z.array(z.string()).default([]),
 });
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createAnswerDraft(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id: paperArtifactId } = params;
     const raw = await req.json().catch(() => null);
@@ -42,4 +45,16 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const body = (await req
+    .clone()
+    .json()
+    .catch(() => null)) as { session_id?: unknown } | null;
+  const successor =
+    typeof body?.session_id === 'string' && body.session_id.length > 0
+      ? `/api/review-sessions/${body.session_id}/answer-drafts`
+      : '/api/review-sessions';
+  return deprecatedRouteResponse(await createAnswerDraft(req, params), successor);
 }

@@ -259,7 +259,7 @@ function CorrectionControls({
   const mutation = useMutation({
     mutationFn: (correctionKind: 'retract' | 'mark_wrong' | 'restore') =>
       apiJson<{ correction_event_id: string }>(
-        `/api/events/${encodeURIComponent(event.id)}/correct`,
+        `/api/events/${encodeURIComponent(event.id)}/corrections`,
         {
           method: 'POST',
           body: JSON.stringify({

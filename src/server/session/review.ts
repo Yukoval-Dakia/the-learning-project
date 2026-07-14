@@ -44,6 +44,131 @@ async function loadReviewSessionForUpdate(
   return { status: row.status };
 }
 
+export type ReviewSessionStatus = 'started' | 'paused' | 'completed' | 'abandoned';
+
+export type ReviewSessionTransition = {
+  previousStatus: ReviewSessionStatus;
+  status: ReviewSessionStatus;
+  changed: boolean;
+  allowedStatuses: ReviewSessionStatus[];
+};
+
+const REVIEW_ALLOWED_TARGETS: Record<ReviewSessionStatus, ReviewSessionStatus[]> = {
+  started: ['paused', 'completed', 'abandoned'],
+  paused: ['started', 'completed', 'abandoned'],
+  completed: [],
+  abandoned: ['started'],
+};
+
+type ReviewTransitionOptions = {
+  allowedFrom: ReviewSessionStatus[];
+  idempotent: boolean;
+};
+
+async function applyReviewSessionTransition(
+  db: Db,
+  sessionId: string,
+  target: ReviewSessionStatus,
+  options: ReviewTransitionOptions,
+): Promise<ReviewSessionTransition> {
+  return db.transaction(async (tx) => {
+    const current = await loadReviewSessionForUpdate(tx, sessionId);
+    if (!current) {
+      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
+    }
+
+    const previousStatus = current.status as ReviewSessionStatus;
+    if (previousStatus === target && options.idempotent) {
+      return {
+        previousStatus,
+        status: target,
+        changed: false,
+        allowedStatuses: REVIEW_ALLOWED_TARGETS[target] ?? [],
+      };
+    }
+    assertFromState(
+      current.status,
+      options.allowedFrom,
+      sessionId,
+      `Review.transitionReviewSession(${target})`,
+    );
+
+    const now = new Date();
+    if (target === 'started' && previousStatus === 'abandoned') {
+      await tx
+        .update(learning_session)
+        .set({
+          status: target,
+          started_at: now,
+          ended_at: null,
+          updated_at: now,
+          version: sql`${learning_session.version} + 1`,
+        })
+        .where(eq(learning_session.id, sessionId));
+    } else if (target === 'completed' || target === 'abandoned') {
+      await tx
+        .update(learning_session)
+        .set({
+          status: target,
+          ended_at: now,
+          updated_at: now,
+          version: sql`${learning_session.version} + 1`,
+        })
+        .where(eq(learning_session.id, sessionId));
+    } else {
+      await tx
+        .update(learning_session)
+        .set({
+          status: target,
+          updated_at: now,
+          version: sql`${learning_session.version} + 1`,
+        })
+        .where(eq(learning_session.id, sessionId));
+    }
+
+    const eventType =
+      target === 'started'
+        ? previousStatus === 'abandoned'
+          ? 'review.reopened'
+          : 'review.resumed'
+        : `review.${target}`;
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: sessionId,
+      event_type: eventType,
+      payload: {},
+    });
+
+    return {
+      previousStatus,
+      status: target,
+      changed: true,
+      allowedStatuses: REVIEW_ALLOWED_TARGETS[target],
+    };
+  });
+}
+
+/**
+ * Idempotently move a review session to a target state for the canonical PATCH route.
+ * Replaying the same target returns changed=false and emits no duplicate job event.
+ */
+export async function transitionReviewSession(
+  db: Db,
+  sessionId: string,
+  target: ReviewSessionStatus,
+): Promise<ReviewSessionTransition> {
+  const allowedFrom: Record<ReviewSessionStatus, ReviewSessionStatus[]> = {
+    started: ['paused', 'abandoned'],
+    paused: ['started'],
+    completed: ['started', 'paused'],
+    abandoned: ['started', 'paused'],
+  };
+  return applyReviewSessionTransition(db, sessionId, target, {
+    allowedFrom: allowedFrom[target],
+    idempotent: true,
+  });
+}
+
 // ---------- startReviewSession ----------
 
 export type StartReviewSessionParams = {
@@ -110,38 +235,9 @@ export async function startReviewSession(
  * started → completed. Sets ended_at = now and bumps version.
  */
 export async function completeReviewSession(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const current = await loadReviewSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
-    }
-    // YUK-57: completion is allowed from both started AND paused. A paused
-    // session that pagehide-fired sendBeacon-end OR cron-sweeps closes via
-    // this path; user can also click "complete" from the paused UI.
-    assertFromState(
-      current.status,
-      ['started', 'paused'] as const,
-      sessionId,
-      'Review.completeReviewSession',
-    );
-
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: 'completed',
-        ended_at: now,
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'review.completed',
-      payload: {},
-    });
+  await applyReviewSessionTransition(db, sessionId, 'completed', {
+    allowedFrom: ['started', 'paused'],
+    idempotent: false,
   });
 }
 
@@ -155,37 +251,9 @@ export async function completeReviewSession(db: Db, sessionId: string): Promise<
  * already written stay chained.
  */
 export async function abandonReviewSession(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const current = await loadReviewSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
-    }
-    // YUK-57: abandon allowed from started AND paused. Orphan cron (6h)
-    // sweeps both; this fn is the single transition point.
-    assertFromState(
-      current.status,
-      ['started', 'paused'] as const,
-      sessionId,
-      'Review.abandonReviewSession',
-    );
-
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: 'abandoned',
-        ended_at: now,
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'review.abandoned',
-      payload: {},
-    });
+  await applyReviewSessionTransition(db, sessionId, 'abandoned', {
+    allowedFrom: ['started', 'paused'],
+    idempotent: false,
   });
 }
 
@@ -200,29 +268,9 @@ export async function abandonReviewSession(db: Db, sessionId: string): Promise<v
  * client-side); orphan cron still abandons paused sessions older than 6h.
  */
 export async function pauseReviewSession(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const current = await loadReviewSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
-    }
-    assertFromState(current.status, ['started'] as const, sessionId, 'Review.pauseReviewSession');
-
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: 'paused',
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'review.paused',
-      payload: {},
-    });
+  await applyReviewSessionTransition(db, sessionId, 'paused', {
+    allowedFrom: ['started'],
+    idempotent: false,
   });
 }
 
@@ -234,29 +282,9 @@ export async function pauseReviewSession(db: Db, sessionId: string): Promise<voi
  * during paused too).
  */
 export async function resumeReviewSession(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const current = await loadReviewSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
-    }
-    assertFromState(current.status, ['paused'] as const, sessionId, 'Review.resumeReviewSession');
-
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: 'started',
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'review.resumed',
-      payload: {},
-    });
+  await applyReviewSessionTransition(db, sessionId, 'started', {
+    allowedFrom: ['paused'],
+    idempotent: false,
   });
 }
 
@@ -269,35 +297,8 @@ export async function resumeReviewSession(db: Db, sessionId: string): Promise<vo
  * chained by session_id.
  */
 export async function reopenAbandonedReviewSession(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const current = await loadReviewSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError('not_found', `learning_session ${sessionId} (type=review) not found`, 404);
-    }
-    assertFromState(
-      current.status,
-      ['abandoned'] as const,
-      sessionId,
-      'Review.reopenAbandonedReviewSession',
-    );
-
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: 'started',
-        started_at: now,
-        ended_at: null,
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'review.reopened',
-      payload: {},
-    });
+  await applyReviewSessionTransition(db, sessionId, 'started', {
+    allowedFrom: ['abandoned'],
+    idempotent: false,
   });
 }

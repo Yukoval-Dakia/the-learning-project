@@ -6,6 +6,7 @@
 import { z } from 'zod';
 
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -45,7 +46,19 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
   return { status: 'completed' };
 }
 
+export async function enqueueReviewSessionSummary(sessionId: string): Promise<void> {
+  // Best-effort: closing the session succeeds even when pg-boss is unavailable.
+  if (!shouldEnqueueBackgroundJobs()) return;
+  try {
+    const boss = await getStartedBoss();
+    await boss.send('session_summary', { session_id: sessionId });
+  } catch (err) {
+    console.warn(`session_summary enqueue failed for ${sessionId}:`, err);
+  }
+}
+
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  let response: Response;
   try {
     const { id } = params;
     const body = await parseBody(req);
@@ -60,19 +73,13 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       // testcontainer's connection pool past max_connections, tipping over
       // src/server/boss/client.test.ts. The summary handler is covered by its
       // own unit test (src/server/session/summary.test.ts).
-      if (shouldEnqueueBackgroundJobs()) {
-        try {
-          const boss = await getStartedBoss();
-          await boss.send('session_summary', { session_id: id });
-        } catch (err) {
-          console.warn(`session_summary enqueue failed for ${id}:`, err);
-        }
-      }
+      await enqueueReviewSessionSummary(id);
     } else {
       await Review.abandonReviewSession(db, id);
     }
-    return Response.json({ ok: true, status: body.status });
+    response = Response.json({ ok: true, status: body.status });
   } catch (err) {
-    return errorResponse(err);
+    response = errorResponse(err);
   }
+  return deprecatedRouteResponse(response, `/api/review-sessions/${params.id}`);
 }

@@ -5,6 +5,7 @@
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { getEventById, writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { z } from 'zod';
@@ -35,7 +36,10 @@ const CorrectBody = z
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+export async function createCorrection(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const parsedParams = ParamsSchema.safeParse(params);
     if (!parsedParams.success) {
@@ -77,4 +81,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await createCorrection(req, params);
+  return deprecatedRouteResponse(response, `/api/events/${params.id}/corrections`);
 }
