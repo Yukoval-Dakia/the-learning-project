@@ -29,6 +29,7 @@ import {
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
@@ -41,7 +42,7 @@ import { Ingestion } from '@/server/session';
 // graph. The capture-outcome / cause / kind semantics are unchanged.
 import { ImportBody } from './import-schema';
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+async function executePOST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const sessionId = params.id;
     const raw = await req.json().catch(() => null);
@@ -557,4 +558,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const successor = `/api/ingestion-sessions/${encodeURIComponent(params.id ?? '')}/operations`;
+  return deprecatedRouteResponse(await executePOST(req, params), successor);
 }

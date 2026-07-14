@@ -28,6 +28,7 @@ import { subscribe } from '@/server/events/sse_router';
  *   - echo_jobs          src/server/boss/handlers/echo.ts
  *   - question_block     src/capabilities/ingestion/server/block-structured-edit.ts
  *   - learning_session   src/server/session/{tutor,review,conversation}.ts (SESSION_TABLE)
+ *   - ingestion_operation src/capabilities/ingestion/server/operation-store.ts
  * 新增 writeJobEvent 写入新 business_table 时，必须在此同步追加，否则该流会 400。
  */
 const ALLOWED_BUSINESS_TABLES = new Set<string>([
@@ -36,6 +37,7 @@ const ALLOWED_BUSINESS_TABLES = new Set<string>([
   'echo_jobs',
   'question_block',
   'learning_session',
+  'ingestion_operation',
 ]);
 
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {

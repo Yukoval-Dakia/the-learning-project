@@ -13,6 +13,7 @@ import {
   parseGlmLayoutResponse,
   renderGlmHint,
 } from '@/capabilities/ingestion/server/glm_ocr_parser';
+import { writeIngestionOperationEvent } from '@/capabilities/ingestion/server/operation-store';
 import {
   type StructureResult,
   StructureTaskError,
@@ -61,7 +62,7 @@ function bboxCenterPosition(bbox: { x: number; y: number; width: number; height:
   return `${row}-${col}`;
 }
 
-export type TencentOcrJobData = { sessionId: string };
+export type TencentOcrJobData = { sessionId: string; operationId?: string };
 
 const TASK_KIND = 'tencent_ocr_extract';
 
@@ -102,9 +103,38 @@ export function buildTencentOcrHandler(
 ): (jobs: Job<TencentOcrJobData>[]) => Promise<void> {
   return async (jobs) => {
     for (const job of jobs) {
-      await processOneOcrJob(deps, job.data.sessionId, job.id);
+      try {
+        await processOneOcrJob(deps, job.data.sessionId, job.id, job.data.operationId);
+      } catch (err) {
+        await emitOperationFailureSafely(deps.db, job.data.operationId);
+        throw err;
+      }
     }
   };
+}
+
+async function emitOperationEventSafely(
+  db: Db,
+  operationId: string | undefined,
+  eventType: 'operation.running' | 'operation.completed' | 'operation.failed',
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!operationId) return;
+  try {
+    await writeIngestionOperationEvent(db, { operationId, eventType, payload });
+  } catch (err) {
+    console.error('[tencent_ocr_extract] operation event emit failed', {
+      operationId,
+      eventType,
+      err,
+    });
+  }
+}
+
+async function emitOperationFailureSafely(db: Db, operationId: string | undefined): Promise<void> {
+  await emitOperationEventSafely(db, operationId, 'operation.failed', {
+    error: { code: 'extraction_failed', message: 'Extraction failed', status: 500 },
+  });
 }
 
 /**
@@ -130,6 +160,7 @@ async function processOneOcrJob(
   deps: TencentOcrDeps,
   sessionId: string,
   bossJobId: string,
+  operationId?: string,
 ): Promise<void> {
   const glmOcr = deps.glmOcrFn ?? runGlmLayoutParsing;
   const submit = deps.submitFn ?? submitOcrJob;
@@ -165,6 +196,7 @@ async function processOneOcrJob(
       new PermanentError(`session ${sessionId} has no source_asset_ids`),
       engine,
     );
+    await emitOperationFailureSafely(deps.db, operationId);
     return; // already failed, don't rethrow
   }
   const assetById = new Map<string, typeof source_asset.$inferSelect>();
@@ -179,6 +211,7 @@ async function processOneOcrJob(
         new PermanentError(`source_asset ${id} not found`),
         engine,
       );
+      await emitOperationFailureSafely(deps.db, operationId);
       return;
     }
     assetById.set(id, asset);
@@ -186,6 +219,9 @@ async function processOneOcrJob(
 
   // 2. markExtractionStarted
   await deps.db.transaction((tx) => Ingestion.markExtractionStarted(tx, sessionId));
+  await emitOperationEventSafely(deps.db, operationId, 'operation.running', {
+    pg_boss_job_id: bossJobId,
+  });
 
   // YUK-253: GLM bills per synchronous layout_parsing request. Keep counters
   // outside the try so a later page/crop/VLM failure can still log consumed usage.
@@ -486,7 +522,7 @@ async function processOneOcrJob(
       throw new PermanentError('structure produced 0 questions');
     }
 
-    await deps.db.transaction((tx) =>
+    const extractionResult = await deps.db.transaction((tx) =>
       Ingestion.applyExtractionResult(tx, {
         sessionId,
         sourceDocumentId,
@@ -570,6 +606,10 @@ async function processOneOcrJob(
     } catch (err) {
       console.error('[tencent_ocr_extract] failed to enqueue copilot_nudge_evaluate', err);
     }
+
+    await emitOperationEventSafely(deps.db, operationId, 'operation.completed', {
+      result: { session_id: sessionId, status: extractionResult.status },
+    });
   } catch (err) {
     await markFailedAndLogCost(deps, sessionId, bossJobId, err, engine, {
       promptTokens: glmPromptTokens,

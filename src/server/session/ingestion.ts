@@ -27,6 +27,7 @@ import { assertFromState } from './guards';
 // commitImport) write NO domain event — reconsider in Phase 1d.
 
 const SESSION_TABLE = 'ingestion_session' as const;
+const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
 // job_events business_table label kept as 'ingestion_session' for SSE replay
 // continuity (old job_events rows already carry that label). Renaming would
 // require migration; deferred to Phase 1d if/when a session-type-agnostic
@@ -68,6 +69,8 @@ export type EnqueueExtractionParams = {
   db: Db;
   boss: PgBoss;
   sessionId: string;
+  /** Canonical ingestion operation handle; legacy callers omit it unchanged. */
+  operationId?: string;
 };
 
 /**
@@ -90,7 +93,7 @@ export type EnqueueExtractionParams = {
  */
 export async function enqueueExtraction(
   params: EnqueueExtractionParams,
-): Promise<{ jobId: string }> {
+): Promise<{ jobId: string | null }> {
   return params.db.transaction(async (tx) => {
     const current = await loadSessionForUpdate(tx, params.sessionId);
     if (!current) {
@@ -117,12 +120,25 @@ export async function enqueueExtraction(
 
     // boss.send within tx is fine; pg-boss writes to pgboss.* tables which
     // commit atomically with our INSERT.
-    const jobId = await params.boss.send('tencent_ocr_extract', {
-      sessionId: params.sessionId,
-    });
-    if (!jobId) {
+    const jobId = params.operationId
+      ? await params.boss.send(
+          'tencent_ocr_extract',
+          { sessionId: params.sessionId, operationId: params.operationId },
+          {
+            // pg-boss standard queues only dedupe singletonKey when a throttle
+            // window is present. This closes the operation-reservation → send
+            // crash gap without changing legacy extraction dispatches.
+            singletonKey: params.operationId,
+            singletonSeconds: OPERATION_DISPATCH_SINGLETON_SECONDS,
+          },
+        )
+      : await params.boss.send('tencent_ocr_extract', { sessionId: params.sessionId });
+    if (!jobId && !params.operationId) {
       throw new Error('Ingestion.enqueueExtraction: boss.send returned no jobId');
     }
+    // Canonical operation crash-recovery may replay the same singleton dispatch.
+    // pg-boss returns null when that operation job already exists in the throttle
+    // window; commit `queued` so the existing job (or its delayed retry) can run.
     return { jobId };
   });
 }

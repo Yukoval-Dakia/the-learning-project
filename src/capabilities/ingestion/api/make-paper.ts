@@ -10,36 +10,15 @@
 // thin shell's scope). Idempotent on sessionId via the module's advisory lock.
 
 import { and, eq } from 'drizzle-orm';
-import { z } from 'zod';
 
 import { createIngestionPaper } from '@/capabilities/ingestion/server/make-paper';
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
+import { MakePaperBody } from './operation-schema';
 
-const MakePaperBody = z.object({
-  // Optional explicit override of which imported questions to package. When
-  // ABSENT (undefined), the module reverse-queries the session's imported
-  // questions (default full-set). An EXPLICIT empty array is rejected: F3
-  // (PR #309 round-3, YUK-214) — `question_ids: []` is an explicit empty
-  // selection, NOT "select all", so it must 400 rather than silently fall
-  // through to the full-set path. `.min(1)` enforces this at the schema layer;
-  // `.optional()` keeps the omitted/undefined default-full-set path.
-  question_ids: z
-    .array(z.string().min(1))
-    .min(1)
-    // F2 (PR #309 round-4, YUK-214) — reject duplicate ids at the schema layer
-    // too (defense in depth; the service is the authoritative boundary). Two
-    // assignments sharing a question_id collapse onto one slot key and de-dupe
-    // total_slots, scrambling client state. Same reject-not-silently-dedupe style
-    // as the explicit-empty-array guard (F3 round-3).
-    .refine((ids) => new Set(ids).size === ids.length, {
-      message: 'must not contain duplicate question_ids',
-    })
-    .optional(),
-});
-
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+async function executePOST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const sessionId = params.id;
     // F2 (PR #309 round-2, YUK-214) — distinguish a TRULY-EMPTY body (no override
@@ -97,4 +76,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const successor = `/api/ingestion-sessions/${encodeURIComponent(params.id ?? '')}/operations`;
+  return deprecatedRouteResponse(await executePOST(req, params), successor);
 }

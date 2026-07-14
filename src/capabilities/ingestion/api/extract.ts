@@ -1,4 +1,5 @@
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Ingestion } from '@/server/session';
@@ -12,7 +13,7 @@ import { Ingestion } from '@/server/session';
  *
  * 实际抽取由 worker 进程的 tencent_ocr_extract handler 完成（Step 9）。
  */
-export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
+async function executePOST(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const sessionId = params.id;
     if (!sessionId) {
@@ -28,4 +29,9 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const successor = `/api/ingestion-sessions/${encodeURIComponent(params.id ?? '')}/operations`;
+  return deprecatedRouteResponse(await executePOST(req, params), successor);
 }

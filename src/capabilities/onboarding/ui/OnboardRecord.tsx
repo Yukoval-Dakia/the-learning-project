@@ -2,7 +2,7 @@
 // Ported from docs/design/loom-refresh/project/screen-onboarding.jsx (OnboardRecord
 // + ObIngest), made real: the prototype mocked ingestion with a setInterval; this
 // drives the LIVE upload→extract pipeline (uploadAsset / expandPdf / expandDocx →
-// POST /api/ingestion → /extract → useIngestionSSE), styled as the prototype's
+// POST /api/ingestion → ingestion operation(kind=extract) → useIngestionSSE), styled as the prototype's
 // friendly progress rows. Replaces the Slice-1 UploadStubPage at /onboarding/upload.
 //
 // THIN骨架 (owner 2026-06-21 "Slice 2 收在上传屏接自动入池骨架"): this screen does
@@ -19,6 +19,7 @@
 
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
+import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
 import { latestProgress } from '@/ui/lib/ingestion-phase';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { Btn } from '@/ui/primitives/Btn';
@@ -248,7 +249,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
         method: 'POST',
         body: JSON.stringify({ entrypoint: 'vision_paper', asset_ids: assetIds }),
       });
-      await apiJson(`/api/ingestion/${session.session.id}/extract`, { method: 'POST' });
+      await startIngestionOperation(session.session.id, { kind: 'extract' });
       if (!mountedRef.current) return;
       setSessionId(session.session.id);
       setPhase('extracting');
