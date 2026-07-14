@@ -1,5 +1,6 @@
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { buildHonoApp, toHonoPath } from './app';
 
 const fakeCapability: CapabilityManifest = {
@@ -20,6 +21,14 @@ const fakeCapability: CapabilityManifest = {
       },
       // 纯元数据路由（无 load）——不被挂载。
       { method: 'POST', path: '/api/fake/meta-only' },
+      {
+        method: 'POST',
+        path: '/api/fake/bad-contract',
+        operationId: 'createFakeWithBadContract',
+        successStatus: 201,
+        responses: { 201: z.object({ ok: z.boolean() }) },
+        load: async () => async () => Response.json({ ok: true }),
+      },
     ],
   },
 };
@@ -69,6 +78,36 @@ describe('buildHonoApp', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: 'fake' });
+  });
+
+  it('serves the generated OpenAPI document behind token auth', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability]);
+    expect((await app.request('/api/openapi.json')).status).toBe(401);
+    const response = await app.request('/api/openapi.json', {
+      headers: { 'x-internal-token': 'test-token' },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      openapi: '3.0.3',
+      paths: {
+        '/api/fake': { get: { 'x-contract-status': 'legacy' } },
+        '/api/fake/bad-contract': {
+          post: { operationId: 'createFakeWithBadContract', 'x-contract-status': 'declared' },
+        },
+      },
+    });
+  });
+
+  it('returns a JSON 500 when a handler violates its declared success status', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability]);
+    const response = await app.request('/api/fake/bad-contract', {
+      method: 'POST',
+      headers: { 'x-internal-token': 'test-token' },
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'route_contract_violation' });
   });
 
   it('passes path params through to the handler (M1 param route)', async () => {

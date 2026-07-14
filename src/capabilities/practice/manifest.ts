@@ -1,5 +1,19 @@
+import {
+  API_ERROR_RESPONSES,
+  ApiIdParamsSchema,
+  CursorQuerySchema,
+  collectionResponseSchema,
+} from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import { z } from 'zod';
+import {
+  CreateReviewSessionBody,
+  ReviewSessionCreatedSchema,
+  ReviewSessionSchema,
+  ReviewSessionTransitionSchema,
+  UpdateReviewSessionBody,
+} from './api/contracts';
 
 export const practiceCapability = defineCapability({
   name: 'practice',
@@ -63,16 +77,32 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/review-sessions',
+        operationId: 'createReviewSession',
+        request: { body: CreateReviewSessionBody },
+        responses: {
+          200: ReviewSessionCreatedSchema,
+          201: ReviewSessionCreatedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
         load: () => import('./api/review-sessions').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/review-sessions/[id]',
+        operationId: 'getReviewSession',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: ReviewSessionSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/review-session-detail').then((m) => m.GET),
       },
       {
         method: 'PATCH',
         path: '/api/review-sessions/[id]',
+        operationId: 'updateReviewSession',
+        request: { params: ApiIdParamsSchema, body: UpdateReviewSessionBody },
+        responses: { 200: ReviewSessionTransitionSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/review-session-detail').then((m) => m.PATCH),
       },
       {
@@ -185,6 +215,7 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/practice',
+        deprecation: { successor: '/api/papers' },
         load: () => import('./api/legacy-practice').then((m) => m.GET),
       },
       {
@@ -192,16 +223,32 @@ export const practiceCapability = defineCapability({
         // handler 随 P2a 已迁入 papers-list.ts，manifest 此前漏了 POST 条目）。
         method: 'POST',
         path: '/api/practice',
+        deprecation: { successor: '/api/review-sessions' },
         load: () => import('./api/legacy-practice').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/papers',
+        operationId: 'listPapers',
+        request: { query: CursorQuerySchema },
+        responses: {
+          200: collectionResponseSchema(z.object({ id: z.string() }).passthrough()),
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
         load: () => import('./api/papers-list').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/papers/[id]',
+        operationId: 'getPaper',
+        request: { params: ApiIdParamsSchema },
+        responses: {
+          200: z.object({ paper: z.unknown().optional() }).passthrough(),
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
         load: () => import('./api/paper-detail-route').then((m) => m.GET),
       },
       {
