@@ -121,7 +121,15 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       });
       // 202 Accepted — run handle 回给客户端用于订阅；非 SSE（durable 面与同步
       // SSE 面是两条返回契约）。
-      return Response.json({ run_id: runId, session_id: sessionId }, { status: 202 });
+      return Response.json(
+        { run_id: runId, session_id: sessionId },
+        {
+          status: 202,
+          headers: {
+            Location: `/api/jobs/copilot_run/${encodeURIComponent(runId)}/events`,
+          },
+        },
+      );
     } catch (err) {
       // YUK-364 (F2) — enqueue 链路失败补偿。若 user_ask + QUEUED 已 commit 但
       // boss.send（或之后任一步）throw，job 没投递 → user_ask 成 phantom

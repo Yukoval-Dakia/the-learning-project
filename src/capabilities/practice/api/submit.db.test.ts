@@ -42,7 +42,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
-import { POST } from './submit';
+import { POST, createAttemptResource } from './submit';
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: vi.fn(),
@@ -110,6 +110,18 @@ describe('POST /api/review/submit', () => {
   beforeEach(async () => {
     await resetDb();
     vi.mocked(runTask).mockReset();
+  });
+
+  it('canonical attempt creation returns 201 with the review event Location', async () => {
+    await seedQuestion('q1');
+
+    const response = await createAttemptResource(
+      submitReq({ mistake_id: 'q1', rating: 'good', latency_ms: 5000 }),
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { review_event: { id: string } };
+    expect(response.headers.get('Location')).toBe(`/api/events/${body.review_event.id}`);
   });
 
   it('first review (no prior fsrs_state) → writes review event + upserts material_fsrs_state', async () => {

@@ -21,11 +21,12 @@
 //     No terminal event ⇒ 'unverified' (未验过 raw draft).
 //   - reason: payload.summary_md when present (the model's驳回理由), else null.
 
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
+import { ApiError } from '@/server/http/errors';
 
 type DbLike = Db | Tx;
 
@@ -87,6 +88,7 @@ export interface DraftReviewListOpts {
   kind?: string;
   limit?: number;
   offset?: number;
+  cursor?: string;
 }
 
 export interface DraftReviewListPage {
@@ -95,6 +97,39 @@ export interface DraftReviewListPage {
   offset: number;
   total: number;
   truncated: boolean;
+  next_cursor: string | null;
+}
+
+interface DraftReviewCursor {
+  createdAt: Date;
+  id: string;
+}
+
+function encodeDraftReviewCursor(row: { created_at: Date; id: string }): string {
+  return Buffer.from(
+    JSON.stringify({ created_at: row.created_at.toISOString(), id: row.id }),
+  ).toString('base64url');
+}
+
+function decodeDraftReviewCursor(cursor: string): DraftReviewCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      created_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.created_at !== 'string' || typeof parsed.id !== 'string') {
+      throw new Error('missing created_at or id');
+    }
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) throw new Error('invalid created_at');
+    return { createdAt, id: parsed.id };
+  } catch (err) {
+    throw new ApiError(
+      'invalid_cursor',
+      `invalid draft review cursor: ${(err as Error).message}`,
+      400,
+    );
+  }
 }
 
 function normalizeLimit(limit: number | undefined): number {
@@ -222,6 +257,7 @@ export async function listDraftReview(
 ): Promise<DraftReviewListPage> {
   const limit = normalizeLimit(opts.limit);
   const offset = Math.max(0, Math.trunc(opts.offset ?? 0));
+  const cursor = opts.cursor ? decodeDraftReviewCursor(opts.cursor) : null;
 
   const conditions = [
     eq(question.draft_status, 'draft'),
@@ -230,9 +266,17 @@ export async function listDraftReview(
   ];
   if (opts.source) conditions.push(eq(question.source, opts.source));
   if (opts.kind) conditions.push(eq(question.kind, opts.kind));
+  const countWhere = and(...conditions);
+  if (cursor) {
+    const cursorFilter = or(
+      lt(question.created_at, cursor.createdAt),
+      and(eq(question.created_at, cursor.createdAt), lt(question.id, cursor.id)),
+    );
+    if (cursorFilter) conditions.push(cursorFilter);
+  }
   const where = and(...conditions);
 
-  const rows = await db
+  const fetchedRows = await db
     .select({
       id: question.id,
       prompt_md: question.prompt_md,
@@ -245,13 +289,17 @@ export async function listDraftReview(
     .from(question)
     .where(where)
     .orderBy(desc(question.created_at), desc(question.id))
-    .limit(limit)
-    .offset(offset);
+    .limit(limit + 1)
+    .offset(cursor ? 0 : offset);
+  const hasMore = fetchedRows.length > limit;
+  const rows = hasMore ? fetchedRows.slice(0, limit) : fetchedRows;
+  const last = rows.at(-1);
+  const nextCursor = hasMore && last ? encodeDraftReviewCursor(last) : null;
 
   const totalRows = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(question)
-    .where(where);
+    .where(countWhere);
   const total = totalRows[0]?.count ?? 0;
 
   // Fetch the latest TERMINAL (outcome != 'error') verify event per draft in one
@@ -313,7 +361,8 @@ export async function listDraftReview(
     limit,
     offset,
     total,
-    truncated: total > offset + rows.length,
+    truncated: hasMore,
+    next_cursor: nextCursor,
   };
 }
 

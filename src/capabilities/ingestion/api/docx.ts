@@ -81,7 +81,12 @@ export async function POST(req: Request): Promise<Response> {
       await Ingestion.enqueueExtraction({ db, boss, sessionId });
       return Response.json(
         { session_id: sessionId, line, page_count: evidence.pageCount },
-        { status: 201 },
+        {
+          status: 201,
+          headers: {
+            Location: `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
+          },
+        },
       );
     }
 
@@ -138,7 +143,12 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json(
       { session_id: sessionId, line, page_count: evidence.pageCount },
-      { status: 201 },
+      {
+        status: 201,
+        headers: {
+          Location: `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
+        },
+      },
     );
   } catch (err) {
     return errorResponse(err);

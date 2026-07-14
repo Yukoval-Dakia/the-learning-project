@@ -44,6 +44,7 @@ describe('POST /api/ingestion/pdf', () => {
     const body = (await res.json()) as { asset_ids: string[]; page_count: number };
     expect(body.page_count).toBe(2);
     expect(body.asset_ids).toHaveLength(2);
+    expect(res.headers.get('Location')).toBe(`/api/assets/${body.asset_ids[0]}/content`);
 
     const db = testDb();
     const rows = await db

@@ -164,6 +164,27 @@ describe('getTraitJournal — append-only 历史（倒序，无 payload）', () 
     expect(typeof journal[0]?.changeSeq).toBe('number');
     expect(journal[0]?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(journal[0]).not.toHaveProperty('payload');
+
+    const response = await journalRoute(
+      new Request('http://x/api/admin/traits/trt_seed_general_charter/journal?limit=1'),
+      { id: 'trt_seed_general_charter' },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: unknown[];
+      journal: unknown[];
+      page: { limit: number; next_cursor: string | null };
+    };
+    expect(body.data).toEqual(body.journal);
+    expect(body.page).toEqual({ limit: 1, next_cursor: null });
+  });
+
+  it('rejects an invalid journal cursor', async () => {
+    const response = await journalRoute(
+      new Request('http://x/api/admin/traits/trt_seed_general_charter/journal?cursor=not-a-cursor'),
+      { id: 'trt_seed_general_charter' },
+    );
+    expect(response.status).toBe(400);
   });
 
   it('returns null for an unknown trait; route maps it to 404', async () => {

@@ -56,11 +56,12 @@ function mkReq(query = ''): Request {
 }
 
 interface ListBody {
+  data: Array<{ id: string; source_tier: { tier: number; name: string } }>;
   items: Array<{ id: string; source_tier: { tier: number; name: string } }>;
   families: Array<{ root_question_id: string; variant_count: number }> | null;
   total: number;
   truncated: boolean;
-  page: { limit: number; offset: number; has_more: boolean };
+  page: { limit: number; offset: number; has_more: boolean; next_cursor: string | null };
   computed_at_sec: number;
 }
 
@@ -133,11 +134,39 @@ describe('GET /api/questions', () => {
     const first = (await (await GET(mkReq('?limit=10&offset=0'))).json()) as ListBody;
     expect(first.total).toBe(25);
     expect(first.items).toHaveLength(10);
-    expect(first.page).toEqual({ limit: 10, offset: 0, has_more: true });
+    expect(first.page).toMatchObject({ limit: 10, offset: 0, has_more: true });
+    expect(first.page.next_cursor).toBeTruthy();
+    expect(first.data).toEqual(first.items);
 
     const last = (await (await GET(mkReq('?limit=10&offset=20'))).json()) as ListBody;
     expect(last.items).toHaveLength(5);
-    expect(last.page).toEqual({ limit: 10, offset: 20, has_more: false });
+    expect(last.page).toEqual({
+      limit: 10,
+      offset: 20,
+      has_more: false,
+      next_cursor: null,
+    });
+  });
+
+  it('cursor pagination uses id as the stable created_at tie-breaker', async () => {
+    const createdAt = new Date('2026-05-01T00:00:00Z');
+    for (const id of ['question_a', 'question_b', 'question_c']) {
+      await seedQuestion({ id, created_at: createdAt });
+    }
+
+    const first = (await (await GET(mkReq('?limit=2'))).json()) as ListBody;
+    expect(first.data.map((item) => item.id)).toEqual(['question_c', 'question_b']);
+
+    const second = (await (
+      await GET(mkReq(`?limit=2&cursor=${encodeURIComponent(first.page.next_cursor ?? '')}`))
+    ).json()) as ListBody;
+    expect(second.data.map((item) => item.id)).toEqual(['question_a']);
+    expect(second.page.next_cursor).toBeNull();
+  });
+
+  it('rejects invalid and offset-mixed cursors', async () => {
+    expect((await GET(mkReq('?cursor=not-a-cursor'))).status).toBe(400);
+    expect((await GET(mkReq('?cursor=not-a-cursor&offset=1'))).status).toBe(400);
   });
 
   it('applies repeated difficulty and status filters before pagination', async () => {

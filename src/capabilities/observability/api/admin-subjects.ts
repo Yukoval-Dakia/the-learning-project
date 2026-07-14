@@ -7,6 +7,7 @@
 // 写操作仍必须走 /api/admin/*（RL5）。
 
 import { db } from '@/db/client';
+import { ApiError } from '@/kernel/http';
 import { errorResponse } from '@/server/http/errors';
 import { listAdminSubjects } from '@/server/subjects/admin-read';
 
@@ -14,6 +15,17 @@ export async function GET(): Promise<Response> {
   try {
     const subjects = await listAdminSubjects(db);
     return Response.json({ subjects });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+export async function getSubject(_req: Request, params: Record<string, string>): Promise<Response> {
+  try {
+    const subjects = await listAdminSubjects(db);
+    const subject = subjects.find((candidate) => candidate.id === params.id);
+    if (!subject) throw new ApiError('not_found', `subject ${params.id} not found`, 404);
+    return Response.json(subject);
   } catch (err) {
     return errorResponse(err);
   }

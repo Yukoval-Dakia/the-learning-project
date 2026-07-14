@@ -152,7 +152,11 @@ describe('canonical review-session resources', () => {
     expect(papers.status).toBe(200);
     expect(papers.headers.get('deprecation')).toBe('@1783987200');
     expect(papers.headers.get('link')).toBe('</api/papers>; rel="successor-version"');
-    await expect(papers.json()).resolves.toEqual({ papers: [] });
+    await expect(papers.json()).resolves.toMatchObject({
+      data: [],
+      papers: [],
+      page: { limit: 50, next_cursor: null },
+    });
 
     const session = await legacyReviewSessionPost(
       new Request('http://localhost/api/review/sessions', { method: 'POST' }),

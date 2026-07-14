@@ -44,7 +44,12 @@ import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
-import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
+import {
+  ApiError,
+  canonicalResourceResponse,
+  deprecatedRouteResponse,
+  errorResponse,
+} from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
@@ -898,6 +903,16 @@ export async function createAttempt(req: Request): Promise<Response> {
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function createAttemptResource(req: Request): Promise<Response> {
+  return canonicalResourceResponse(await createAttempt(req), {
+    outcome: 'created',
+    location: (body) =>
+      `/api/events/${encodeURIComponent(
+        (body as { review_event: { id: string } }).review_event.id,
+      )}`,
+  });
 }
 
 export async function POST(req: Request): Promise<Response> {

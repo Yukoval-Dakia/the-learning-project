@@ -95,13 +95,17 @@ describe('GET /api/proposals (shell)', () => {
     const res = await listProposals(listRequest());
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
+      data: Array<{ id: string; kind: string; status: string }>;
       rows: Array<{ id: string; kind: string; status: string }>;
       next_cursor: string | null;
+      page: { limit: number; next_cursor: string | null };
     };
+    expect(body.data).toEqual(body.rows);
     expect(body.rows.map((r) => r.id)).toContain('edge_p1');
     const row = body.rows.find((r) => r.id === 'edge_p1');
     expect(row).toMatchObject({ kind: 'knowledge_edge', status: 'pending' });
     expect(body.next_cursor).toBeNull();
+    expect(body.page).toEqual({ limit: 200, next_cursor: null });
   });
 
   it('filters by status; accepted proposals leave the pending view (YUK-318)', async () => {

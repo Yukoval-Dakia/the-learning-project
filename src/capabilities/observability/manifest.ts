@@ -43,6 +43,11 @@ export const observabilityCapability = defineCapability({
         path: '/api/admin/subjects',
         load: () => import('./api/admin-subjects-create').then((m) => m.POST),
       },
+      {
+        method: 'GET',
+        path: '/api/admin/subjects/[id]',
+        load: () => import('./api/admin-subjects').then((m) => m.getSubject),
+      },
       // YUK-601 (v3.2 §3.5) — trait 管理读面三端点（编辑器/换绑选择器/rollback UI
       // 的数据源；业务在 src/server/subjects/admin-read.ts）。
       {
@@ -182,7 +187,7 @@ export const observabilityCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/events/[id]/corrections',
-        load: () => import('./api/event-correct').then((m) => m.createCorrection),
+        load: () => import('./api/event-correct').then((m) => m.createCorrectionResource),
       },
       // YUK-310 — 通用异步 job tracker：caller-agnostic SSE。把 ingestion 的
       // per-domain /api/ingestion/[id]/events 提升为 /api/jobs/[kind]/[id]/events，

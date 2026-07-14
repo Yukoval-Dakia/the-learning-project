@@ -14,7 +14,8 @@ import {
   source_document,
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET, POST } from './sessions';
+import { GET as getSessionDetail } from './session-detail';
+import { GET, POST, createIngestionSessionResource } from './sessions';
 
 async function insertAsset(db: ReturnType<typeof testDb>, id: string, storageKey: string) {
   await db.insert(source_asset).values({
@@ -80,6 +81,24 @@ describe('POST /api/ingestion', () => {
       .where(eq(source_document.id, body.session.source_document_id));
     expect(docs).toHaveLength(1);
     expect(docs[0].source_asset_ids).toEqual(['asset_1', 'asset_2']);
+  });
+
+  it('canonical create returns 201 with a readable Location', async () => {
+    const db = testDb();
+    await insertAsset(db, 'asset_1', 'sk_1');
+
+    const created = await createIngestionSessionResource(postBody());
+    expect(created.status).toBe(201);
+    const location = created.headers.get('Location');
+    expect(location).toMatch(/^\/api\/ingestion-sessions\/[\w-]+$/);
+
+    const detail = await getSessionDetail(new Request(`http://localhost${location}`), {
+      id: location?.split('/').at(-1) ?? '',
+    });
+    expect(detail.status).toBe(200);
+    const body = (await detail.json()) as { session: { id: string; status: string } };
+    expect(body.session.id).toBe(location?.split('/').at(-1));
+    expect(body.session.status).toBe('uploaded');
   });
 
   it('unknown asset_id → 400 with missing id, no session insert', async () => {
@@ -238,6 +257,13 @@ interface SessionRow {
   created_at: number;
 }
 
+interface SessionListBody {
+  data: SessionRow[];
+  rows: SessionRow[];
+  page: { limit: number; next_cursor: string | null };
+  next_cursor: string | null;
+}
+
 describe('GET /api/ingestion', () => {
   beforeEach(async () => {
     await resetDb();
@@ -246,8 +272,10 @@ describe('GET /api/ingestion', () => {
   it('empty DB → { rows: [] }', async () => {
     const res = await getSessions();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: SessionRow[] };
+    const body = (await res.json()) as SessionListBody;
     expect(body.rows).toEqual([]);
+    expect(body.data).toEqual([]);
+    expect(body.page).toEqual({ limit: 20, next_cursor: null });
   });
 
   it('returns sessions newest-first, only those with ≥1 block', async () => {
@@ -263,6 +291,30 @@ describe('GET /api/ingestion', () => {
     const res = await getSessions();
     const body = (await res.json()) as { rows: SessionRow[] };
     expect(body.rows.map((r) => r.id)).toEqual(['new', 'old']);
+  });
+
+  it('cursor pagination is stable when sessions share created_at', async () => {
+    const createdAt = new Date('2026-05-10T00:00:00Z');
+    for (const id of ['session_a', 'session_b', 'session_c']) {
+      await seedIngestionSession({ id, created_at: createdAt });
+      await seedBlock({ id: `${id}_block`, session_id: id });
+    }
+
+    const first = (await (await getSessions('?limit=2')).json()) as SessionListBody;
+    expect(first.data.map((row) => row.id)).toEqual(['session_c', 'session_b']);
+    expect(first.page.next_cursor).toBeTruthy();
+
+    const second = (await (
+      await getSessions(`?limit=2&cursor=${encodeURIComponent(first.page.next_cursor ?? '')}`)
+    ).json()) as SessionListBody;
+    expect(second.data.map((row) => row.id)).toEqual(['session_a']);
+    expect(second.page.next_cursor).toBeNull();
+  });
+
+  it('rejects an invalid cursor', async () => {
+    const response = await getSessions('?cursor=not-a-cursor');
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_cursor' });
   });
 
   it('newest block-less sessions do not crowd an older with-block session out of the limit', async () => {

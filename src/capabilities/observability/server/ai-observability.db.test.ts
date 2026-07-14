@@ -102,6 +102,30 @@ describe('AI observability admin read model', () => {
       total: 3,
       truncated: true,
     });
+    expect(page.next_cursor).toBeTruthy();
+  });
+
+  it('cursor pagination uses id as the stable started_at tie-breaker', async () => {
+    for (const id of ['run_a', 'run_b', 'run_c']) {
+      await seedRun({ id, started_at: BASE });
+    }
+
+    const first = await listAdminRunsPage(db, { limit: 2 });
+    expect(first.rows.map((row) => row.id)).toEqual(['run_c', 'run_b']);
+
+    const second = await listAdminRunsPage(db, {
+      limit: 2,
+      cursor: first.next_cursor ?? undefined,
+    });
+    expect(second.rows.map((row) => row.id)).toEqual(['run_a']);
+    expect(second.next_cursor).toBeNull();
+  });
+
+  it('rejects an invalid admin-run cursor', async () => {
+    await expect(listAdminRunsPage(db, { cursor: 'not-a-cursor' })).rejects.toMatchObject({
+      code: 'invalid_cursor',
+      status: 400,
+    });
   });
 
   it('returns a single run timeline with pg-boss job id and tool calls in time order', async () => {

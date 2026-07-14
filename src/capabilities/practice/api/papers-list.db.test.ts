@@ -9,7 +9,7 @@ import { artifact, event, knowledge, question } from '@/db/schema';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST as answerPost } from './paper-answer-route';
+import { GET as answerGet, POST as answerPost } from './paper-answer-route';
 import { POST as submitPost } from './paper-submit-route';
 import { GET, POST } from './papers-list';
 
@@ -31,9 +31,14 @@ async function seedQuestion(id: string, reference: string) {
   });
 }
 
-async function seedPaper(id: string, intentSource: string, questionIds: string[]) {
+async function seedPaper(
+  id: string,
+  intentSource: string,
+  questionIds: string[],
+  createdAt = new Date(),
+) {
   const db = testDb();
-  const now = new Date();
+  const now = createdAt;
   await db.insert(artifact).values({
     id,
     type: 'tool_quiz',
@@ -117,6 +122,42 @@ describe('GET /api/practice', () => {
     expect(byId.get('p_coach')?.session).toBeNull();
   });
 
+  it('returns the canonical envelope and paginates equal timestamps by artifact id', async () => {
+    await seedQuestion('q1', 'true');
+    const createdAt = new Date('2026-05-01T00:00:00Z');
+    for (const id of ['paper_a', 'paper_b', 'paper_c']) {
+      await seedPaper(id, 'review_plan', ['q1'], createdAt);
+    }
+
+    const firstResponse = await GET(
+      new Request('http://localhost/api/papers?limit=2', { method: 'GET' }),
+    );
+    const first = (await firstResponse.json()) as {
+      data: Array<{ artifact_id: string }>;
+      papers: Array<{ artifact_id: string }>;
+      page: { limit: number; next_cursor: string | null };
+    };
+    expect(first.data).toEqual(first.papers);
+    expect(first.data.map((paper) => paper.artifact_id)).toEqual(['paper_c', 'paper_b']);
+
+    const secondResponse = await GET(
+      new Request(
+        `http://localhost/api/papers?limit=2&cursor=${encodeURIComponent(first.page.next_cursor ?? '')}`,
+        { method: 'GET' },
+      ),
+    );
+    const second = (await secondResponse.json()) as typeof first;
+    expect(second.data.map((paper) => paper.artifact_id)).toEqual(['paper_a']);
+    expect(second.page.next_cursor).toBeNull();
+  });
+
+  it('rejects an invalid paper cursor', async () => {
+    const response = await GET(
+      new Request('http://localhost/api/papers?cursor=not-a-cursor', { method: 'GET' }),
+    );
+    expect(response.status).toBe(400);
+  });
+
   it('full flow: start session → autosave draft → submit slot → list reflects pos/right', async () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', 'review_plan', ['q1']);
@@ -146,6 +187,18 @@ describe('GET /api/practice', () => {
       { id: 'p1' },
     );
     expect(ansRes.status).toBe(200);
+    const { answer_id: answerId } = (await ansRes.json()) as { answer_id: string };
+    const draft = await answerGet(
+      new Request(`http://localhost/api/review-sessions/${session_id}/answer-drafts/${answerId}`),
+      { id: session_id, answerId },
+    );
+    expect(draft.status).toBe(200);
+    expect(await draft.json()).toMatchObject({
+      id: answerId,
+      session_id,
+      question_id: 'q1',
+      content_md: 'true',
+    });
 
     // submit the slot (correct → right)
     const subRes = await submitPost(

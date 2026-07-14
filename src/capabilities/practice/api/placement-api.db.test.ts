@@ -26,7 +26,7 @@ vi.mock('@/server/session/placement', async (importOriginal) => {
 
 import { POST as endPlacement } from './placement-end';
 import { POST as nextPlacement } from './placement-next';
-import { POST as startPlacement } from './placement-start';
+import { createPlacementSessionResource, POST as startPlacement } from './placement-start';
 
 const db = testDb();
 
@@ -102,6 +102,16 @@ describe('placement API flow', () => {
     expect(body.sessionId).toBeTruthy();
     expect(body.question?.questionId).toBe('q-easy');
     expect(body.sourcingNeeded).toBe(false);
+  });
+
+  it('canonical start returns 201 with a placement-session Location', async () => {
+    await seedKnowledge('kc1');
+    await seedQuestion('q1', ['kc1'], 3);
+
+    const response = await createPlacementSessionResource(jsonReq({ knowledgeIds: ['kc1'] }));
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { sessionId: string };
+    expect(response.headers.get('Location')).toBe(`/api/placement-sessions/${body.sessionId}`);
   });
 
   it('start resolves the KC scope from a goal when knowledgeIds is omitted', async () => {

@@ -116,12 +116,12 @@ export async function assertSessionMutable(
  *   On INSERT, a concurrent first-autosave that committed between SELECT and
  *   INSERT raises 23505; we catch it and re-read the live draft.
  *
- * @returns the id of the live draft row.
+ * @returns the id of the live draft row and whether this call created it.
  */
 export async function autosaveAnswerDraft(
   db: DbLike,
   input: AutosaveAnswerDraftInput,
-): Promise<{ answerId: string }> {
+): Promise<{ answerId: string; created: boolean }> {
   // Validate session↔paper binding and mutable status before any write.
   if (input.paperArtifactId) {
     await assertSessionMutable(db, input.sessionId, input.paperArtifactId);
@@ -159,7 +159,7 @@ export async function autosaveAnswerDraft(
         autosaved_at: now,
       })
       .where(and(eq(answer.id, existing[0].id), isNull(answer.submitted_at)));
-    return { answerId: existing[0].id };
+    return { answerId: existing[0].id, created: false };
   }
 
   // INSERT path: a concurrent first-autosave on the same slot may race here and
@@ -184,7 +184,7 @@ export async function autosaveAnswerDraft(
       event_id: null,
       autosaved_at: now,
     });
-    return { answerId };
+    return { answerId, created: true };
   } catch (err) {
     if (!isPgUniqueViolation(err)) throw err;
     // Another concurrent autosave won the race — re-read its live draft.
@@ -205,7 +205,7 @@ export async function autosaveAnswerDraft(
       // Re-throw the original error so the caller can handle the conflict.
       throw err;
     }
-    return { answerId: winner[0].id };
+    return { answerId: winner[0].id, created: false };
   }
 }
 

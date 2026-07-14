@@ -13,7 +13,7 @@
 // named fns; raw `db.insert(knowledge_edge)` outside this module is forbidden.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
@@ -45,35 +45,102 @@ export interface ListKnowledgeEdgesFilter {
   relation_type?: string;
   /** Include soft-deleted edges (archived_at NOT NULL). Default: false. */
   includeArchived?: boolean;
+  limit?: number;
+  cursor?: string;
 }
 
 const LIST_LIMIT = 500;
 
-export async function listKnowledgeEdges(
+interface KnowledgeEdgeCursor {
+  createdAt: Date;
+  id: string;
+}
+
+function encodeKnowledgeEdgeCursor(row: typeof knowledge_edge.$inferSelect): string {
+  return Buffer.from(
+    JSON.stringify({ created_at: row.created_at.toISOString(), id: row.id }),
+  ).toString('base64url');
+}
+
+function decodeKnowledgeEdgeCursor(cursor: string): KnowledgeEdgeCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      created_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.created_at !== 'string' || typeof parsed.id !== 'string') {
+      throw new Error('missing created_at or id');
+    }
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) throw new Error('invalid created_at');
+    return { createdAt, id: parsed.id };
+  } catch (err) {
+    throw new ApiError(
+      'invalid_cursor',
+      `invalid knowledge edge cursor: ${(err as Error).message}`,
+      400,
+    );
+  }
+}
+
+function projectKnowledgeEdge(row: typeof knowledge_edge.$inferSelect): KnowledgeEdgeRow {
+  return {
+    id: row.id,
+    from_knowledge_id: row.from_knowledge_id,
+    to_knowledge_id: row.to_knowledge_id,
+    relation_type: row.relation_type as RelationTypeSchemaT,
+    weight: row.weight,
+    created_by: row.created_by,
+    reasoning: row.reasoning,
+    created_at: row.created_at,
+    archived_at: row.archived_at,
+  };
+}
+
+export interface KnowledgeEdgePage {
+  rows: KnowledgeEdgeRow[];
+  next_cursor: string | null;
+}
+
+export async function listKnowledgeEdgesPage(
   db: DbLike,
   filter: ListKnowledgeEdgesFilter = {},
-): Promise<KnowledgeEdgeRow[]> {
+): Promise<KnowledgeEdgePage> {
+  const limit = Math.min(Math.max(filter.limit ?? LIST_LIMIT, 1), LIST_LIMIT);
+  const cursor = filter.cursor ? decodeKnowledgeEdgeCursor(filter.cursor) : null;
   const conditions = [];
   if (filter.from) conditions.push(eq(knowledge_edge.from_knowledge_id, filter.from));
   if (filter.to) conditions.push(eq(knowledge_edge.to_knowledge_id, filter.to));
   if (filter.relation_type) conditions.push(eq(knowledge_edge.relation_type, filter.relation_type));
   if (!filter.includeArchived) conditions.push(isNull(knowledge_edge.archived_at));
+  if (cursor) {
+    conditions.push(
+      or(
+        lt(knowledge_edge.created_at, cursor.createdAt),
+        and(eq(knowledge_edge.created_at, cursor.createdAt), lt(knowledge_edge.id, cursor.id)),
+      ) as NonNullable<ReturnType<typeof or>>,
+    );
+  }
 
   const baseQuery = db.select().from(knowledge_edge);
   const filtered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
-  const rows = await filtered.orderBy(desc(knowledge_edge.created_at)).limit(LIST_LIMIT);
+  const fetched = await filtered
+    .orderBy(desc(knowledge_edge.created_at), desc(knowledge_edge.id))
+    .limit(limit + 1);
+  const hasMore = fetched.length > limit;
+  const rows = hasMore ? fetched.slice(0, limit) : fetched;
+  const last = rows.at(-1);
+  return {
+    rows: rows.map(projectKnowledgeEdge),
+    next_cursor: hasMore && last ? encodeKnowledgeEdgeCursor(last) : null,
+  };
+}
 
-  return rows.map((r) => ({
-    id: r.id,
-    from_knowledge_id: r.from_knowledge_id,
-    to_knowledge_id: r.to_knowledge_id,
-    relation_type: r.relation_type as RelationTypeSchemaT,
-    weight: r.weight,
-    created_by: r.created_by,
-    reasoning: r.reasoning,
-    created_at: r.created_at,
-    archived_at: r.archived_at,
-  }));
+export async function listKnowledgeEdges(
+  db: DbLike,
+  filter: ListKnowledgeEdgesFilter = {},
+): Promise<KnowledgeEdgeRow[]> {
+  return (await listKnowledgeEdgesPage(db, filter)).rows;
 }
 
 /**

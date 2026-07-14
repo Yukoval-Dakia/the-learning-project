@@ -107,13 +107,17 @@ describe('GET /api/review/drafts', () => {
     const res = await listDrafts(listReq());
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
+      data: Array<{ id: string; verify_status: string }>;
       rows: Array<{ id: string; verify_status: string }>;
       total: number;
       truncated: boolean;
+      page: { limit: number; next_cursor: string | null };
     };
     expect(body.total).toBe(1);
     expect(body.rows.map((r) => r.id)).toEqual([d]);
     expect(body.rows[0].verify_status).toBe('unverified');
+    expect(body.data).toEqual(body.rows);
+    expect(body.page).toEqual({ limit: 50, next_cursor: null });
     expect(typeof body.truncated).toBe('boolean');
   });
 
@@ -145,6 +149,32 @@ describe('GET /api/review/drafts', () => {
   it('rejects a negative offset with 400', async () => {
     const res = await listDrafts(listReq('?offset=-1'));
     expect(res.status).toBe(400);
+  });
+
+  it('cursor pagination is stable for equal created_at values', async () => {
+    const createdAt = new Date('2026-05-01T00:00:00Z');
+    for (const id of ['draft_a', 'draft_b', 'draft_c']) {
+      await seedQuestion({ id, draft_status: 'draft', created_at: createdAt });
+    }
+
+    const first = (await (await listDrafts(listReq('?limit=2'))).json()) as {
+      data: Array<{ id: string }>;
+      page: { next_cursor: string | null };
+    };
+    expect(first.data.map((row) => row.id)).toEqual(['draft_c', 'draft_b']);
+
+    const second = (await (
+      await listDrafts(
+        listReq(`?limit=2&cursor=${encodeURIComponent(first.page.next_cursor ?? '')}`),
+      )
+    ).json()) as typeof first;
+    expect(second.data.map((row) => row.id)).toEqual(['draft_a']);
+    expect(second.page.next_cursor).toBeNull();
+  });
+
+  it('rejects invalid and offset-mixed cursors', async () => {
+    expect((await listDrafts(listReq('?cursor=not-a-cursor'))).status).toBe(400);
+    expect((await listDrafts(listReq('?cursor=not-a-cursor&offset=1'))).status).toBe(400);
   });
 });
 

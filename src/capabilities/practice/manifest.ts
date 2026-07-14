@@ -28,7 +28,7 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/attempts',
-        load: () => import('./api/submit').then((m) => m.createAttempt),
+        load: () => import('./api/submit').then((m) => m.createAttemptResource),
       },
       {
         method: 'GET',
@@ -53,7 +53,7 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/appeals',
-        load: () => import('./api/appeal').then((m) => m.createAppeal),
+        load: () => import('./api/appeal').then((m) => m.createAppealResource),
       },
       {
         method: 'POST',
@@ -79,6 +79,11 @@ export const practiceCapability = defineCapability({
         method: 'POST',
         path: '/api/review-sessions/[id]/answer-drafts',
         load: () => import('./api/resource-routes').then((m) => m.createPaperAnswerDraftResource),
+      },
+      {
+        method: 'GET',
+        path: '/api/review-sessions/[id]/answer-drafts/[answerId]',
+        load: () => import('./api/paper-answer-route').then((m) => m.GET),
       },
       {
         method: 'POST',
@@ -127,12 +132,17 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/placement-sessions',
-        load: () => import('./api/placement-start').then((m) => m.createPlacementSession),
+        load: () => import('./api/placement-start').then((m) => m.createPlacementSessionResource),
       },
       {
         method: 'POST',
         path: '/api/placement-sessions/[id]/question-selections',
         load: () => import('./api/placement-next').then((m) => m.createPlacementQuestionSelection),
+      },
+      {
+        method: 'GET',
+        path: '/api/placement-sessions/[id]',
+        load: () => import('./api/placement-session-detail').then((m) => m.GET),
       },
       {
         method: 'PATCH',
@@ -244,6 +254,11 @@ export const practiceCapability = defineCapability({
         method: 'POST',
         path: '/api/solve-sessions',
         load: () => import('./api/resource-routes').then((m) => m.createSolveSessionResource),
+      },
+      {
+        method: 'GET',
+        path: '/api/solve-sessions/[sid]',
+        load: () => import('./api/solve-session-detail').then((m) => m.GET),
       },
       {
         method: 'POST',

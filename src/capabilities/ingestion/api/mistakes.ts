@@ -11,11 +11,12 @@ import {
 import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
+import { collectionPayload, resourceResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { listMistakeProjectionRows } from '@/server/records/mistakes';
+import { listMistakeProjectionPage } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { and, inArray, isNull } from 'drizzle-orm';
@@ -223,11 +224,17 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    return Response.json({
-      question_id: questionId,
-      mistake_id: mistakeId,
-      record_id: recordId,
-    });
+    return resourceResponse(
+      {
+        question_id: questionId,
+        mistake_id: mistakeId,
+        record_id: recordId,
+      },
+      {
+        outcome: 'created',
+        location: `/api/events/${encodeURIComponent(mistakeId)}`,
+      },
+    );
   } catch (err) {
     return errorResponse(err);
   }
@@ -258,6 +265,7 @@ const GetQuerySchema = z.object({
       message: 'since must be an ISO-8601 timestamp',
     }),
   question_id: z.string().min(1).optional(),
+  cursor: z.string().min(1).optional(),
 });
 
 const DEFAULT_LIMIT = 50;
@@ -282,9 +290,16 @@ export async function GET(req: Request): Promise<Response> {
     const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
     const questionIds = parsed.data.question_id ? [parsed.data.question_id] : undefined;
 
-    const rows = await listMistakeProjectionRows(db, { limit, since, questionIds });
+    const page = await listMistakeProjectionPage(db, {
+      limit,
+      since,
+      questionIds,
+      cursor: parsed.data.cursor,
+    });
 
-    return Response.json({ rows });
+    return Response.json(
+      collectionPayload(page.rows, { limit, next_cursor: page.next_cursor }, page),
+    );
   } catch (err) {
     return errorResponse(err);
   }

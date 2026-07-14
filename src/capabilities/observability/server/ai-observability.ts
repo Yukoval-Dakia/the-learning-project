@@ -1,6 +1,7 @@
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
-import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { ApiError } from '@/kernel/http';
+import { and, asc, desc, eq, gte, inArray, lt, or, sql } from 'drizzle-orm';
 
 type DbLike = Db | Tx;
 
@@ -10,6 +11,7 @@ export interface AdminRunListOpts {
   limit?: number;
   status?: AdminRunStatus;
   taskKind?: string;
+  cursor?: string;
 }
 
 export interface AdminRunListRow {
@@ -35,6 +37,7 @@ export interface AdminRunListRow {
 export interface AdminRunListPage {
   rows: AdminRunListRow[];
   limit: number;
+  next_cursor: string | null;
   total: number;
   truncated: boolean;
 }
@@ -107,6 +110,38 @@ export interface AdminFailureCluster {
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const FAILURE_PREFIX_LENGTH = 80;
+
+interface AdminRunCursor {
+  startedAt: Date;
+  id: string;
+}
+
+function encodeAdminRunCursor(row: typeof ai_task_runs.$inferSelect): string {
+  return Buffer.from(
+    JSON.stringify({ started_at: row.started_at.toISOString(), id: row.id }),
+  ).toString('base64url');
+}
+
+function decodeAdminRunCursor(cursor: string): AdminRunCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      started_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.started_at !== 'string' || typeof parsed.id !== 'string') {
+      throw new Error('missing started_at or id');
+    }
+    const startedAt = new Date(parsed.started_at);
+    if (Number.isNaN(startedAt.getTime())) throw new Error('invalid started_at');
+    return { startedAt, id: parsed.id };
+  } catch (err) {
+    throw new ApiError(
+      'invalid_cursor',
+      `invalid admin run cursor: ${(err as Error).message}`,
+      400,
+    );
+  }
+}
 
 function normalizeLimit(limit: number | undefined, fallback = DEFAULT_LIMIT): number {
   if (!Number.isFinite(limit) || !limit || limit <= 0) return fallback;
@@ -210,20 +245,36 @@ export async function listAdminRunsPage(
   const conditions = [];
   if (opts.status) conditions.push(eq(ai_task_runs.status, opts.status));
   if (opts.taskKind) conditions.push(eq(ai_task_runs.task_kind, opts.taskKind));
+  if (opts.cursor) {
+    const cursor = decodeAdminRunCursor(opts.cursor);
+    conditions.push(
+      or(
+        lt(ai_task_runs.started_at, cursor.startedAt),
+        and(eq(ai_task_runs.started_at, cursor.startedAt), lt(ai_task_runs.id, cursor.id)),
+      ) as NonNullable<ReturnType<typeof or>>,
+    );
+  }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const limit = normalizeLimit(opts.limit);
 
-  const rows = await db
+  const fetchedRows = await db
     .select()
     .from(ai_task_runs)
     .where(where)
     .orderBy(desc(ai_task_runs.started_at), desc(ai_task_runs.id))
-    .limit(limit);
+    .limit(limit + 1);
+  const hasMore = fetchedRows.length > limit;
+  const rows = hasMore ? fetchedRows.slice(0, limit) : fetchedRows;
+  const lastRow = rows.at(-1);
+  const nextCursor = hasMore && lastRow ? encodeAdminRunCursor(lastRow) : null;
 
+  const countConditions = [];
+  if (opts.status) countConditions.push(eq(ai_task_runs.status, opts.status));
+  if (opts.taskKind) countConditions.push(eq(ai_task_runs.task_kind, opts.taskKind));
   const totalRows = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(ai_task_runs)
-    .where(where);
+    .where(countConditions.length > 0 ? and(...countConditions) : undefined);
   const total = totalRows[0]?.count ?? rows.length;
 
   const runIds = rows.map((row) => row.id);
@@ -235,8 +286,9 @@ export async function listAdminRunsPage(
       projectRun(row, ledgerByRun.get(row.id) ?? [], toolCounts.get(row.id) ?? 0),
     ),
     limit,
+    next_cursor: nextCursor,
     total,
-    truncated: total > rows.length,
+    truncated: hasMore,
   };
 }
 

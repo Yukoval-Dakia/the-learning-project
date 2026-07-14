@@ -98,6 +98,7 @@ describe('POST /api/ingestion/docx', () => {
     const res = await POST(docxRequest('yuwen-text.docx'));
     expect(res.status).toBe(201);
     const body = (await res.json()) as { session_id: string; line: string; page_count: number };
+    expect(res.headers.get('Location')).toBe(`/api/ingestion-sessions/${body.session_id}`);
     expect(body.line).toBe('text');
     expect(body.page_count).toBe(2); // REAL_PDF is 2 pages
 
@@ -184,6 +185,7 @@ describe('POST /api/ingestion/docx', () => {
     const res = await POST(docxRequest('math-mathtype.docx'));
     expect(res.status).toBe(201);
     const body = (await res.json()) as { session_id: string; line: string; page_count: number };
+    expect(res.headers.get('Location')).toBe(`/api/ingestion-sessions/${body.session_id}`);
     expect(body.line).toBe('visual');
     expect(body.page_count).toBe(2);
 

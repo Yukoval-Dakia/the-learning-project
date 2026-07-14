@@ -13,12 +13,27 @@ export const ingestionCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/ingestion',
-        load: () => import('./api/sessions').then((m) => m.GET),
+        load: () => import('./api/sessions').then((m) => m.legacyListIngestionSessions),
       },
       {
         method: 'POST',
         path: '/api/ingestion',
-        load: () => import('./api/sessions').then((m) => m.POST),
+        load: () => import('./api/sessions').then((m) => m.legacyCreateIngestionSession),
+      },
+      {
+        method: 'GET',
+        path: '/api/ingestion-sessions',
+        load: () => import('./api/sessions').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/ingestion-sessions',
+        load: () => import('./api/sessions').then((m) => m.createIngestionSessionResource),
+      },
+      {
+        method: 'GET',
+        path: '/api/ingestion-sessions/[id]',
+        load: () => import('./api/session-detail').then((m) => m.GET),
       },
       {
         method: 'POST',

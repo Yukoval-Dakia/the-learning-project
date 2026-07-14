@@ -30,7 +30,7 @@ import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 // YUK-471 W2 — goal projection seam. The MANUAL at-entry path has NO proposal chain, so the
 // only originating event is a genesis seed: the tx always writes the genesis event + the
@@ -60,6 +60,17 @@ const Body = z.object({
   // until a caller needs it (YAGNI — avoids surfacing an internal field on the
   // public entry API).
 });
+
+export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
+  try {
+    const rows = await db.select().from(goal).where(eq(goal.id, params.id)).limit(1);
+    const row = rows[0];
+    if (!row) throw new ApiError('not_found', `goal ${params.id} not found`, 404);
+    return Response.json(row);
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -178,13 +189,16 @@ export async function POST(req: Request): Promise<Response> {
       }
     });
 
-    return Response.json({
-      id,
-      title,
-      subjectId: subjectId ?? null,
-      scopeKnowledgeIds,
-      status: 'active',
-    });
+    return resourceResponse(
+      {
+        id,
+        title,
+        subjectId: subjectId ?? null,
+        scopeKnowledgeIds,
+        status: 'active',
+      },
+      { outcome: 'created', location: `/api/goals/${encodeURIComponent(id)}` },
+    );
   } catch (err) {
     return errorResponse(err);
   }

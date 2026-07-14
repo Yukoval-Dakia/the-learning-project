@@ -2,7 +2,7 @@ import { event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST, createCorrection } from './event-correct';
+import { POST, createCorrectionResource as createCorrection } from './event-correct';
 
 async function seedAttempt(id = 'evt_target'): Promise<void> {
   await testDb()
@@ -141,9 +141,10 @@ describe('POST /api/events/[id]/correct', () => {
 
     const res = await createCorrectionResource('evt_target', VALID_RETRACT_BODY);
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     expect(res.headers.get('deprecation')).toBeNull();
     const body = (await res.json()) as { correction_event_id: string };
+    expect(res.headers.get('Location')).toBe(`/api/events/${body.correction_event_id}`);
     const rows = await testDb().select().from(event).where(eq(event.id, body.correction_event_id));
     expect(rows[0]).toMatchObject({
       action: 'correct',

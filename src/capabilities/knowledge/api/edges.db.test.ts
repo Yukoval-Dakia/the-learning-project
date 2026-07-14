@@ -5,7 +5,7 @@ import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET, POST } from './edges';
+import { GET, POST, getEdge } from './edges';
 
 const KNOWLEDGE_BASE = {
   domain: 'yuwen',
@@ -55,8 +55,14 @@ describe('GET /api/knowledge/edges', () => {
   it('returns empty rows when no edges exist', async () => {
     const res = await getEdges();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: unknown[] };
+    const body = (await res.json()) as {
+      data: unknown[];
+      rows: unknown[];
+      page: { limit: number; next_cursor: string | null };
+    };
     expect(body.rows).toEqual([]);
+    expect(body.data).toEqual([]);
+    expect(body.page).toEqual({ limit: 500, next_cursor: null });
   });
 
   it('returns all edges desc by created_at', async () => {
@@ -120,6 +126,49 @@ describe('GET /api/knowledge/edges', () => {
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0].relation_type).toBe('prerequisite');
   });
+
+  it('cursor pagination is stable for equal created_at values', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2', 'k3', 'k4']);
+    const createdAt = new Date('2026-05-01T00:00:00Z');
+    const ids = await Promise.all([
+      createKnowledgeEdge(db, {
+        from_knowledge_id: 'k1',
+        to_knowledge_id: 'k2',
+        relation_type: 'related_to',
+        created_at: createdAt,
+      }),
+      createKnowledgeEdge(db, {
+        from_knowledge_id: 'k2',
+        to_knowledge_id: 'k3',
+        relation_type: 'related_to',
+        created_at: createdAt,
+      }),
+      createKnowledgeEdge(db, {
+        from_knowledge_id: 'k3',
+        to_knowledge_id: 'k4',
+        relation_type: 'related_to',
+        created_at: createdAt,
+      }),
+    ]);
+    const expected = [...ids].sort().reverse();
+
+    const first = (await (await getEdges('limit=2')).json()) as {
+      data: Array<{ id: string }>;
+      page: { next_cursor: string | null };
+    };
+    expect(first.data.map((edge) => edge.id)).toEqual(expected.slice(0, 2));
+
+    const second = (await (
+      await getEdges(`limit=2&cursor=${encodeURIComponent(first.page.next_cursor ?? '')}`)
+    ).json()) as typeof first;
+    expect(second.data.map((edge) => edge.id)).toEqual(expected.slice(2));
+    expect(second.page.next_cursor).toBeNull();
+  });
+
+  it('rejects an invalid cursor', async () => {
+    expect((await getEdges('cursor=not-a-cursor')).status).toBe(400);
+  });
 });
 
 describe('POST /api/knowledge/edges', () => {
@@ -137,6 +186,13 @@ describe('POST /api/knowledge/edges', () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string };
     expect(body.id).toBeTruthy();
+    expect(res.headers.get('Location')).toBe(`/api/knowledge/edges/${body.id}`);
+
+    const detail = await getEdge(new Request(`http://localhost/api/knowledge/edges/${body.id}`), {
+      id: body.id,
+    });
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({ id: body.id, relation_type: 'prerequisite' });
   });
 
   it('accepts experimental:* relation_type', async () => {
