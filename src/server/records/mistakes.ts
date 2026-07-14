@@ -4,21 +4,49 @@ import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttempts } from '@/server/events/queries';
+import { ApiError } from '@/server/http/errors';
 import { listLearningRecords } from './queries';
 
 export interface ListMistakeProjectionFilter {
   limit: number;
   since?: Date;
   questionIds?: string[];
+  cursor?: string;
 }
 
-export async function listMistakeProjectionRows(db: Db, filter: ListMistakeProjectionFilter) {
-  const records = await listLearningRecords(db, {
-    kind: ['mistake'],
-    question_id: filter.questionIds?.[0],
-    since: filter.since,
-    limit: filter.limit,
-  });
+interface MistakeCursor {
+  createdAt: Date;
+  id: string;
+}
+
+function encodeMistakeCursor(record: { created_at: Date; id: string }): string {
+  return Buffer.from(
+    JSON.stringify({ created_at: record.created_at.toISOString(), id: record.id }),
+  ).toString('base64url');
+}
+
+function decodeMistakeCursor(cursor: string): MistakeCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      created_at?: unknown;
+      id?: unknown;
+    };
+    if (typeof parsed.created_at !== 'string' || typeof parsed.id !== 'string') {
+      throw new Error('missing created_at or id');
+    }
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) throw new Error('invalid created_at');
+    return { createdAt, id: parsed.id };
+  } catch (err) {
+    throw new ApiError('invalid_cursor', `invalid mistake cursor: ${(err as Error).message}`, 400);
+  }
+}
+
+async function projectMistakeRecords(
+  db: Db,
+  records: Awaited<ReturnType<typeof listLearningRecords>>,
+  filter: ListMistakeProjectionFilter,
+) {
   if (records.length === 0) return [];
 
   const attemptIds = new Set(
@@ -72,4 +100,27 @@ export async function listMistakeProjectionRows(db: Db, filter: ListMistakeProje
       },
     ];
   });
+}
+
+export async function listMistakeProjectionPage(db: Db, filter: ListMistakeProjectionFilter) {
+  const cursor = filter.cursor ? decodeMistakeCursor(filter.cursor) : null;
+  const fetchedRecords = await listLearningRecords(db, {
+    kind: ['mistake'],
+    question_id: filter.questionIds?.[0],
+    since: filter.since,
+    before_created_at: cursor?.createdAt,
+    before_id: cursor?.id,
+    limit: filter.limit + 1,
+  });
+  const hasMore = fetchedRecords.length > filter.limit;
+  const records = hasMore ? fetchedRecords.slice(0, filter.limit) : fetchedRecords;
+  const last = records.at(-1);
+  return {
+    rows: await projectMistakeRecords(db, records, filter),
+    next_cursor: hasMore && last ? encodeMistakeCursor(last) : null,
+  };
+}
+
+export async function listMistakeProjectionRows(db: Db, filter: ListMistakeProjectionFilter) {
+  return (await listMistakeProjectionPage(db, filter)).rows;
 }

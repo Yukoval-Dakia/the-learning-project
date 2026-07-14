@@ -3,7 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST } from './appeal';
+import { POST, createAppealResource } from './appeal';
 
 async function seedJudgeEvent(): Promise<string> {
   const id = createId();
@@ -62,6 +62,17 @@ describe('POST /api/review/appeal', () => {
       .from(event)
       .where(and(eq(event.action, 'experimental:proposal'), eq(event.actor_ref, 'appeal')));
     expect(proposals).toHaveLength(0);
+  });
+
+  it('canonical appeal creation returns 201 with the event Location', async () => {
+    const judgeEventId = await seedJudgeEvent();
+    const response = await createAppealResource(
+      makeReq({ judge_event_id: judgeEventId, reason_md: '需要重判' }),
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { appeal_event_id: string };
+    expect(response.headers.get('Location')).toBe(`/api/events/${body.appeal_event_id}`);
   });
 
   it('returns 404 when judge_event_id not found', async () => {

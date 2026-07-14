@@ -2,11 +2,15 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { job_events } from '@/db/schema';
-import { Placement, Review } from '@/server/session';
+import { Placement, Review, Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { PATCH as patchPlacementSession } from './placement-session-detail';
+import {
+  GET as getPlacementSession,
+  PATCH as patchPlacementSession,
+} from './placement-session-detail';
 import { PATCH as patchReviewSession } from './review-session-detail';
 import { POST as legacyPause } from './session-pause';
+import { GET as getSolveSession } from './solve-session-detail';
 
 function patchRequest(path: string, status: string): Request {
   return new Request(`http://localhost${path}`, {
@@ -65,6 +69,52 @@ describe('canonical review and placement session state', () => {
       .from(job_events)
       .where(eq(job_events.business_id, sessionId));
     expect(events.filter((event) => event.event_type === 'placement.completed')).toHaveLength(1);
+  });
+
+  it('exposes readable placement and solve session resources', async () => {
+    const placement = await Placement.startPlacementSession(testDb(), {
+      knowledgeIds: ['k1'],
+    });
+    const solve = await Tutor.startTutorSession(testDb(), { questionId: 'question_1' });
+
+    const placementResponse = await getPlacementSession(
+      new Request(`http://localhost/api/placement-sessions/${placement.sessionId}`),
+      { id: placement.sessionId },
+    );
+    expect(placementResponse.status).toBe(200);
+    expect(await placementResponse.json()).toMatchObject({
+      id: placement.sessionId,
+      type: 'placement',
+      status: 'started',
+    });
+
+    const solveResponse = await getSolveSession(
+      new Request(`http://localhost/api/solve-sessions/${solve.sessionId}`),
+      { sid: solve.sessionId },
+    );
+    expect(solveResponse.status).toBe(200);
+    expect(await solveResponse.json()).toMatchObject({
+      id: solve.sessionId,
+      type: 'tutor',
+      question_id: 'question_1',
+    });
+  });
+
+  it('returns 404 for unknown placement and solve sessions', async () => {
+    expect(
+      (
+        await getPlacementSession(new Request('http://localhost/api/placement-sessions/missing'), {
+          id: 'missing',
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await getSolveSession(new Request('http://localhost/api/solve-sessions/missing'), {
+          sid: 'missing',
+        })
+      ).status,
+    ).toBe(404);
   });
 
   it('marks legacy command paths as deprecated without changing their body', async () => {

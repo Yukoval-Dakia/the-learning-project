@@ -24,6 +24,11 @@ export const agencyCapability = defineCapability({
         load: () => import('./api/goal-create').then((m) => m.POST),
       },
       {
+        method: 'GET',
+        path: '/api/goals/[id]',
+        load: () => import('./api/goal-create').then((m) => m.GET),
+      },
+      {
         // conjecture-wire #13 (YUK-538 ⑬ / spec §6 S3) — probe answer route.
         // Isolated from the attempt/FSRS write path: judge routes via
         // defaultJudgeKindForQuestion → capability registry resolveJudge →

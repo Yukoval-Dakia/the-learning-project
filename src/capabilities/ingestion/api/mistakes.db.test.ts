@@ -112,7 +112,7 @@ describe('POST /api/mistakes', () => {
 
   it('inserts question + attempt event + record on valid body (no propose event)', async () => {
     const res = await postMistake(validBody());
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = (await res.json()) as {
       question_id: string;
       mistake_id: string;
@@ -121,6 +121,7 @@ describe('POST /api/mistakes', () => {
     expect(body.question_id).toBeTruthy();
     expect(body.mistake_id).toBeTruthy();
     expect(body.record_id).toBeTruthy();
+    expect(res.headers.get('Location')).toBe(`/api/events/${body.mistake_id}`);
     // Lane D (YUK-482): the response no longer carries a `propose_task` field —
     // recording a mistake records + attributes (错因/mastery) but never proposes a KC.
     expect('propose_task' in body).toBe(false);
@@ -158,7 +159,7 @@ describe('POST /api/mistakes', () => {
     // schema.ts no longer exports `mistake` — the assertion lives implicit in
     // typecheck. Just verify the event was written without error.
     const res = await postMistake(validBody({ cause: null }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
   });
 
   it('rejects unknown prompt_image_refs asset id', async () => {
@@ -202,7 +203,7 @@ describe('POST /api/mistakes', () => {
     const res = await postMistake(
       validBody({ prompt_image_refs: ['asset_p'], wrong_answer_image_refs: ['asset_w'] }),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = (await res.json()) as { question_id: string; mistake_id: string };
 
     const { eq } = await import('drizzle-orm');
@@ -222,7 +223,7 @@ describe('POST /api/mistakes', () => {
   // attribution (PERFORMANCE-axis 错因), but must NOT propose a new KC.
   it('records the failure + attribution-eligible, but writes no propose event (cause null)', async () => {
     const res = await postMistake(validBody({ cause: null }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     await new Promise((r) => setTimeout(r, 50));
 
     const db = testDb();
@@ -250,7 +251,7 @@ describe('POST /api/mistakes', () => {
     await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'k1'));
 
     const res = await postMistake(validBody({ cause: null }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     await new Promise((r) => setTimeout(r, 50));
 
     const proposeEvents = await db
@@ -269,7 +270,7 @@ describe('POST /api/mistakes', () => {
     const res = await postMistake(
       validBody({ cause: { primary_category: 'memory', user_notes: null } }),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     await new Promise((r) => setTimeout(r, 50));
     expect(vi.mocked(runAttributionAndWriteJudgeEvent)).not.toHaveBeenCalled();
 
@@ -290,7 +291,7 @@ describe('POST /api/mistakes', () => {
         cause: { primary_category: 'carelessness', user_notes: '看错题号了' },
       }),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = (await res.json()) as { mistake_id: string };
 
     const userCauseRows = await db
@@ -340,7 +341,7 @@ describe('POST /api/mistakes', () => {
         cause: { primary_category: 'unit_error', user_notes: '单位换算错' },
       }),
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const body = (await res.json()) as { mistake_id: string };
 
     const userCauseRows = await db
@@ -362,7 +363,7 @@ describe('POST /api/mistakes', () => {
     const db = testDb();
     const { eq } = await import('drizzle-orm');
     const res = await postMistake(validBody({ cause: null }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     const userCauseRows = await db
       .select()
       .from(event)
@@ -565,6 +566,17 @@ describe('GET /api/mistakes', () => {
     const res = await getMistakes();
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
+      data: Array<{
+        id: string;
+        record_id: string;
+        question_id: string;
+        prompt_md: string;
+        wrong_answer_md: string;
+        knowledge_ids: string[];
+        cause: { primary_category: string; user_notes: string | null } | null;
+        correction_state: { state: string; terminal_state: string };
+        created_at: number;
+      }>;
       rows: Array<{
         id: string;
         record_id: string;
@@ -576,7 +588,10 @@ describe('GET /api/mistakes', () => {
         correction_state: { state: string; terminal_state: string };
         created_at: number;
       }>;
+      page: { limit: number; next_cursor: string | null };
     };
+    expect(body.data).toEqual(body.rows);
+    expect(body.page).toEqual({ limit: 50, next_cursor: null });
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0].id).toBe('a1');
     expect(body.rows[0].record_id).toBe('lr_a1');
@@ -744,6 +759,30 @@ describe('GET /api/mistakes', () => {
     const res = await getMistakes('limit=2');
     const body = (await res.json()) as { rows: unknown[] };
     expect(body.rows).toHaveLength(2);
+  });
+
+  it('cursor pagination is stable for equal record timestamps', async () => {
+    const createdAt = new Date('2026-05-01T00:00:00Z');
+    for (const id of ['a', 'b', 'c']) {
+      await seedQuestion(`q_${id}`, `p_${id}`, createdAt);
+      await seedAttempt({ id, question_id: `q_${id}`, created_at: createdAt });
+    }
+
+    const first = (await (await getMistakes('limit=2')).json()) as {
+      data: Array<{ id: string }>;
+      page: { next_cursor: string | null };
+    };
+    expect(first.data.map((row) => row.id)).toEqual(['c', 'b']);
+
+    const second = (await (
+      await getMistakes(`limit=2&cursor=${encodeURIComponent(first.page.next_cursor ?? '')}`)
+    ).json()) as typeof first;
+    expect(second.data.map((row) => row.id)).toEqual(['a']);
+    expect(second.page.next_cursor).toBeNull();
+  });
+
+  it('400s on an invalid cursor', async () => {
+    expect((await getMistakes('cursor=not-a-cursor')).status).toBe(400);
   });
 
   it('400s on invalid since', async () => {

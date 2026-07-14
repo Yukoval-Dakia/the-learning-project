@@ -38,15 +38,17 @@ async function capturedBody(mock: ReturnType<typeof vi.fn>): Promise<Record<stri
 describe('canonical practice resource adapters', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    for (const mock of [
-      mocks.createAnswerDraft,
-      mocks.createPaperSubmission,
-      mocks.createHintRequest,
-      mocks.createSolveSession,
-      mocks.createSolveSubmission,
-    ]) {
-      mock.mockResolvedValue(Response.json({ ok: true }));
-    }
+    mocks.createAnswerDraft.mockResolvedValue(
+      Response.json({ answer_id: 'answer_1', created: true }),
+    );
+    mocks.createPaperSubmission.mockResolvedValue(
+      Response.json({ attempt_event_id: 'paper_attempt_1' }),
+    );
+    mocks.createHintRequest.mockResolvedValue(Response.json({ hint_request_id: 'hint_1' }));
+    mocks.createSolveSession.mockResolvedValue(Response.json({ session_id: 'solve_1' }));
+    mocks.createSolveSubmission.mockResolvedValue(
+      Response.json({ attempt_event_id: 'solve_attempt_1' }),
+    );
   });
 
   it('binds solve session creation to question_id', async () => {
@@ -54,16 +56,20 @@ describe('canonical practice resource adapters', () => {
       jsonRequest({ question_id: 'q1', regenerate: true }),
     );
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(201);
+    expect(response.headers.get('Location')).toBe('/api/solve-sessions/solve_1');
     expect(mocks.createSolveSession.mock.calls[0]?.[1]).toEqual({ id: 'q1' });
     expect(await capturedBody(mocks.createSolveSession)).toEqual({ regenerate: true });
   });
 
   it('binds hint and solve submissions to the solve session resource', async () => {
-    await createHintRequestResource(jsonRequest({ question_id: 'q1', hint_index: 2 }), {
-      sid: 'solve_1',
-    });
-    await createSolveSubmissionResource(
+    const hint = await createHintRequestResource(
+      jsonRequest({ question_id: 'q1', hint_index: 2 }),
+      {
+        sid: 'solve_1',
+      },
+    );
+    const submission = await createSolveSubmissionResource(
       jsonRequest({ question_id: 'q1', student_final_answer_text: '42' }),
       { sid: 'solve_1' },
     );
@@ -77,14 +83,18 @@ describe('canonical practice resource adapters', () => {
     expect(await capturedBody(mocks.createSolveSubmission)).toEqual({
       student_final_answer_text: '42',
     });
+    expect(hint.status).toBe(201);
+    expect(hint.headers.get('Location')).toBe('/api/events/hint_1');
+    expect(submission.status).toBe(201);
+    expect(submission.headers.get('Location')).toBe('/api/events/solve_attempt_1');
   });
 
   it('uses the review session path as the authority for paper writes', async () => {
-    await createPaperAnswerDraftResource(
+    const draft = await createPaperAnswerDraftResource(
       jsonRequest({ paper_id: 'paper_1', question_id: 'q1', content_md: 'draft' }),
       { id: 'review_1' },
     );
-    await createPaperSubmissionResource(
+    const submission = await createPaperSubmissionResource(
       jsonRequest({ paper_id: 'paper_1', question_id: 'q1', answer_md: 'answer' }),
       { id: 'review_1' },
     );
@@ -101,6 +111,28 @@ describe('canonical practice resource adapters', () => {
       answer_md: 'answer',
       session_id: 'review_1',
     });
+    expect(draft.status).toBe(201);
+    expect(draft.headers.get('Location')).toBe(
+      '/api/review-sessions/review_1/answer-drafts/answer_1',
+    );
+    expect(submission.status).toBe(201);
+    expect(submission.headers.get('Location')).toBe('/api/events/paper_attempt_1');
+  });
+
+  it('returns 200 for an idempotently updated answer draft', async () => {
+    mocks.createAnswerDraft.mockResolvedValue(
+      Response.json({ answer_id: 'answer_1', created: false }),
+    );
+
+    const response = await createPaperAnswerDraftResource(
+      jsonRequest({ paper_id: 'paper_1', question_id: 'q1', content_md: 'updated' }),
+      { id: 'review_1' },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Location')).toBe(
+      '/api/review-sessions/review_1/answer-drafts/answer_1',
+    );
   });
 
   it('rejects missing resource identifiers before forwarding', async () => {

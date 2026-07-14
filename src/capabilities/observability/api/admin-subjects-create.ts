@@ -6,6 +6,7 @@
 // client 不参与 id/root/claim/绑定任何构造（YUK-602 onboarding UI 只调这里）。
 
 import { db } from '@/db/client';
+import { resourceResponse } from '@/kernel/http';
 import { errorResponse } from '@/server/http/errors';
 import { thinCreateSubject } from '@/server/subjects/thin-create';
 import { z } from 'zod';
@@ -27,9 +28,15 @@ export async function POST(req: Request): Promise<Response> {
     const result = await thinCreateSubject(db, parsed.data.displayName);
     switch (result.kind) {
       case 'created':
-        return Response.json(result.payload, { status: 201 });
+        return resourceResponse(result.payload, {
+          outcome: 'created',
+          location: `/api/admin/subjects/${encodeURIComponent(result.payload.id)}`,
+        });
       case 'replayed':
-        return Response.json(result.payload, { status: 200 });
+        return resourceResponse(result.payload, {
+          outcome: 'existing',
+          location: `/api/admin/subjects/${encodeURIComponent(result.payload.id)}`,
+        });
       case 'invalid':
         return Response.json({ error: result.message }, { status: 400 });
       case 'name_conflict':

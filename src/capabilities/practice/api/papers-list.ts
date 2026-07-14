@@ -12,13 +12,29 @@ import { z } from 'zod';
 
 import { getPracticeList } from '@/capabilities/practice/server/practice-read';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
 import { createPaperReviewSession } from './paper-session-create';
 
-export async function GET(_req?: Request): Promise<Response> {
+function parseLimit(value: string | null): number {
+  if (value === null) return 50;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new ApiError('validation_error', `invalid limit: ${value}`, 400);
+  }
+  return Math.min(parsed, 200);
+}
+
+export async function GET(req?: Request): Promise<Response> {
   try {
-    const result = await getPracticeList(db);
-    return Response.json(result);
+    const url = new URL(req?.url ?? 'http://localhost/api/papers');
+    const limit = parseLimit(url.searchParams.get('limit'));
+    const result = await getPracticeList(db, {
+      limit,
+      cursor: url.searchParams.get('cursor') ?? undefined,
+    });
+    return Response.json(
+      collectionPayload(result.papers, { limit, next_cursor: result.next_cursor }, result),
+    );
   } catch (err) {
     return errorResponse(err);
   }

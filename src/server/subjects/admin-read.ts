@@ -18,6 +18,7 @@
 
 import type { Db } from '@/db/client';
 import { subject, subject_trait, subject_trait_binding, subject_trait_journal } from '@/db/schema';
+import { ApiError } from '@/server/http/errors';
 import {
   type TraitDegradation,
   getSubjectTraitResolutions,
@@ -26,7 +27,7 @@ import {
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import type { TraitVersionComponent } from '@/subjects/trait-compose';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
-import { asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 
 export interface AdminSubjectListRow {
   id: string;
@@ -224,6 +225,54 @@ export interface TraitJournalRow {
  * 是 owner 点名后的 follow-up）；rollback 提交只需 targetRevision。
  */
 export async function getTraitJournal(db: Db, traitId: string): Promise<TraitJournalRow[] | null> {
+  const allRows: TraitJournalRow[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await getTraitJournalPage(db, traitId, { limit: 200, cursor });
+    if (!page) return null;
+    allRows.push(...page.rows);
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor);
+  return allRows;
+}
+
+interface TraitJournalCursor {
+  traitId: string;
+  revision: number;
+}
+
+function encodeTraitJournalCursor(traitId: string, revision: number): string {
+  return Buffer.from(JSON.stringify({ trait_id: traitId, revision })).toString('base64url');
+}
+
+function decodeTraitJournalCursor(cursor: string, traitId: string): TraitJournalCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      trait_id?: unknown;
+      revision?: unknown;
+    };
+    if (
+      parsed.trait_id !== traitId ||
+      typeof parsed.revision !== 'number' ||
+      !Number.isInteger(parsed.revision)
+    ) {
+      throw new Error('cursor does not match the trait journal');
+    }
+    return { traitId, revision: parsed.revision };
+  } catch (err) {
+    throw new ApiError(
+      'invalid_cursor',
+      `invalid trait journal cursor: ${(err as Error).message}`,
+      400,
+    );
+  }
+}
+
+export async function getTraitJournalPage(
+  db: Db,
+  traitId: string,
+  options: { limit: number; cursor?: string },
+): Promise<{ rows: TraitJournalRow[]; next_cursor: string | null } | null> {
   const exists = await db
     .select({ id: subject_trait.id })
     .from(subject_trait)
@@ -231,7 +280,10 @@ export async function getTraitJournal(db: Db, traitId: string): Promise<TraitJou
     .limit(1);
   if (exists.length === 0) return null;
 
-  const rows = await db
+  const cursor = options.cursor ? decodeTraitJournalCursor(options.cursor, traitId) : null;
+  const limit = Math.min(Math.max(options.limit, 1), 200);
+
+  const fetchedRows = await db
     .select({
       revision: subject_trait_journal.revision,
       action: subject_trait_journal.action,
@@ -245,8 +297,23 @@ export async function getTraitJournal(db: Db, traitId: string): Promise<TraitJou
       createdAt: subject_trait_journal.created_at,
     })
     .from(subject_trait_journal)
-    .where(eq(subject_trait_journal.trait_id, traitId))
-    .orderBy(asc(subject_trait_journal.revision));
+    .where(
+      cursor
+        ? and(
+            eq(subject_trait_journal.trait_id, traitId),
+            lt(subject_trait_journal.revision, cursor.revision),
+          )
+        : eq(subject_trait_journal.trait_id, traitId),
+    )
+    .orderBy(desc(subject_trait_journal.revision))
+    .limit(limit + 1);
 
-  return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })).reverse();
+  const hasMore = fetchedRows.length > limit;
+  const rows = hasMore ? fetchedRows.slice(0, limit) : fetchedRows;
+  const last = rows.at(-1);
+
+  return {
+    rows: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    next_cursor: hasMore && last ? encodeTraitJournalCursor(traitId, last.revision) : null,
+  };
 }

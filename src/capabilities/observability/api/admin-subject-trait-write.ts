@@ -5,6 +5,7 @@
 // 业务在 src/server/subjects/trait-write.ts；写成功后 post-commit 重水合上架。
 
 import { db } from '@/db/client';
+import { canonicalResourceResponse } from '@/kernel/http';
 import { errorResponse } from '@/server/http/errors';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import {
@@ -64,7 +65,12 @@ export async function PUT(req: Request, params: Record<string, string>): Promise
       payload: parsed.data.payload,
     });
     if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
-    return traitResultResponse(result);
+    const response = traitResultResponse(result);
+    if (result.kind !== 'ok' && result.kind !== 'noop') return response;
+    return canonicalResourceResponse(response, {
+      outcome: result.kind === 'ok' && result.forked ? 'created' : 'existing',
+      location: `/api/admin/traits/${encodeURIComponent(result.traitId)}/journal`,
+    });
   } catch (err) {
     return errorResponse(err);
   }
@@ -88,7 +94,12 @@ export async function FORK(req: Request, params: Record<string, string>): Promis
       expectedSubjectRevision: parsed.data.expectedSubjectRevision,
     });
     if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
-    return traitResultResponse(result);
+    const response = traitResultResponse(result);
+    if (result.kind !== 'ok' && result.kind !== 'noop') return response;
+    return canonicalResourceResponse(response, {
+      outcome: result.kind === 'ok' && result.forked ? 'created' : 'existing',
+      location: `/api/admin/traits/${encodeURIComponent(result.traitId)}/journal`,
+    });
   } catch (err) {
     return errorResponse(err);
   }

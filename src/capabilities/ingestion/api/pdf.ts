@@ -67,7 +67,15 @@ export async function POST(req: Request): Promise<Response> {
       assetIds.push(row.id);
     }
 
-    return Response.json({ asset_ids: assetIds, page_count: pages.length }, { status: 201 });
+    const headers = new Headers();
+    headers.set('Location', `/api/assets/${encodeURIComponent(assetIds[0])}/content`);
+    for (const assetId of assetIds) {
+      headers.append('Link', `</api/assets/${encodeURIComponent(assetId)}/content>; rel="item"`);
+    }
+    return Response.json(
+      { asset_ids: assetIds, page_count: pages.length },
+      { status: 201, headers },
+    );
   } catch (err) {
     return errorResponse(err);
   }

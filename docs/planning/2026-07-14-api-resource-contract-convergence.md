@@ -181,6 +181,46 @@ Canonical 可增长集合：
 - 翻页期间新写入不得导致重复或永久跳过旧行；
 - offset 仅作为旧路径兼容，不在新 canonical route 扩散。
 
+### Phase 5 落地清单（YUK-646）
+
+本轮按 manifest 全量核对 collection/create handler，并按“资源创建、异步受理、命令/投影”分类，
+不以 `POST` 本身推断 `201`：
+
+| 类别 | 已落地契约 |
+|---|---|
+| 同步创建 | goal、asset、mistake event、review/placement/solve session、answer draft、submission/attempt/appeal/hint request、knowledge edge、event correction、admin subject/trait、PDF page assets、DOCX ingestion session 返回 `201 + Location` |
+| 幂等复用 | review session、admin subject、既有 answer draft 等可识别 replay 路径返回 `200 +` 同一 `Location` |
+| 异步受理 | ingestion operation 与 durable Copilot run 返回 `202 +` operation/job `Location` |
+| 批量创建 | PDF 以首个 page asset 作为 `Location`，并为全部 page asset 返回 `Link: rel="item"`；DOCX 的批量页证据封装在 ingestion session 下，`Location` 指向 session |
+| 命令/目标状态替换 | proposal decision、session transition、retract/undo、calibration anchors、trait binding、restore/import 等不虚构新资源，保持 `200`；后续 URI 迁移由对应 phase/manifest 元数据表达 |
+
+所有新增 `Location` 均由契约测试读回；错误边界固定为 `400/401/404/409/422/429/5xx`，
+其中 `429` 保留 `Retry-After`。共享 helper 在 `src/kernel/http.ts`，错误 header 透传在
+`src/server/http/errors.ts`。
+
+可增长、需要跨页遍历的 JSON 集合已提供 `limit + cursor`、稳定复合排序键与迁移期兼容字段：
+
+| Route | 稳定键 | 兼容字段 |
+|---|---|---|
+| `GET /api/questions` | 现有排序轴 + 全部 tie-break key | 原 question list 字段 |
+| `GET /api/papers` | `(created_at,id)` | `papers` |
+| `GET /api/ingestion-sessions` | `(created_at,id)` | `rows` |
+| `GET /api/proposals` | 既有 proposal cursor | 原 proposal list 字段 |
+| `GET /api/admin/runs` | `(started_at,id)` | `runs` |
+| `GET /api/knowledge/edges` | `(created_at,id)` | `edges` |
+| `GET /api/mistakes` | `(created_at,id)` | `rows` |
+| `GET /api/review/drafts` | `(question.created_at,question.id)` | `rows`、legacy offset |
+| `GET /api/admin/traits/:id/journal` | `(revision)`（trait id 绑定在 cursor） | `journal` |
+
+上述响应统一增量提供 `{data,page:{limit,next_cursor}}`；非法 cursor 返回 `400`，同时使用 offset
+和 cursor 的兼容路径返回 `400`。`GET /api/jobs/:kind/:id/events` 是 SSE 事件流，继续以
+`Last-Event-ID` 作为流式 cursor，不强行套 JSON envelope。
+
+其余 manifest 读面显式归为不分页投影：配置 registry（subjects/traits）、单资源内聚合
+（note page、correction state、knowledge tree/node）、固定时间窗/last-N feed（AI changes、Copilot
+turns、agent notes）、有硬上限的 typeahead/备课卡，以及 workbench/admin/calibration 等汇总报表。
+这些端点不承诺集合遍历；若未来改为可遍历历史，必须先切换 cursor contract，不能继续扩大裸数组。
+
 ## 9. Deprecation 与删除门槛
 
 1. canonical route 与兼容 alias 同一 PR 上线；

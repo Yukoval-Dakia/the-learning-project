@@ -105,6 +105,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     const res = await post({ user_message: '讲讲这道题', triggered_by: 'chat', durable: true });
 
     expect(res.status).toBe(202);
+    expect(res.headers.get('Location')).toBe('/api/jobs/copilot_run/copilot_user_ask_RID/events');
     expect(res.headers.get('Content-Type') ?? '').toContain('application/json');
     expect(await res.json()).toEqual({ run_id: 'copilot_user_ask_RID', session_id: 'sess_1' });
     // user_ask 写入 = run handle。

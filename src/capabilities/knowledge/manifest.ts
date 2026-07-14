@@ -40,6 +40,11 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./api/edges').then((m) => m.POST),
       },
       {
+        method: 'GET',
+        path: '/api/knowledge/edges/[id]',
+        load: () => import('./api/edges').then((m) => m.getEdge),
+      },
+      {
         method: 'POST',
         path: '/api/knowledge/edges/proposals/[id]',
         load: () => import('./api/edge-proposal-decide').then((m) => m.POST),

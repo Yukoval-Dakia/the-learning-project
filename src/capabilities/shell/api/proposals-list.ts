@@ -5,7 +5,7 @@
 
 import { type AiProposalPayloadT, aiProposalKinds } from '@/core/schema/proposal';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/server/http/errors';
+import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
 import { type ProposalStatus, listProposalInboxPage } from '@/server/proposals/inbox';
 
 // P5.4 / YUK-143 (RB-8) — 'rubric_rejected' is queryable so the folded /
@@ -46,13 +46,16 @@ function parseKind(value: string | null): AiProposalPayloadT['kind'] | undefined
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
+    const limit = parseLimit(url.searchParams.get('limit'));
     const page = await listProposalInboxPage(db, {
       status: parseStatus(url.searchParams.get('status')),
       kind: parseKind(url.searchParams.get('kind')),
-      limit: parseLimit(url.searchParams.get('limit')),
+      limit,
       cursor: url.searchParams.get('cursor') ?? undefined,
     });
-    return Response.json(page);
+    return Response.json(
+      collectionPayload(page.rows, { limit, next_cursor: page.next_cursor }, page),
+    );
   } catch (err) {
     return errorResponse(err);
   }

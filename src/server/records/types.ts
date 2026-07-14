@@ -55,6 +55,8 @@ export interface ListLearningRecordsFilter {
   activity_kind?: string;
   processing_status?: Array<'raw' | 'linked' | 'actioned' | 'archived'>;
   since?: Date;
+  before_created_at?: Date;
+  before_id?: string;
   limit?: number;
   include_archived?: boolean;
 }

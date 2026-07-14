@@ -58,10 +58,12 @@ export function checkRateLimit(now: number = Date.now()): void {
   if (firstFresh > 0) hits.splice(0, firstFresh);
 
   if (hits.length >= max) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((hits[0] + windowMs - now) / 1000));
     throw new ApiError(
       'rate_limited',
       `AI request rate limit exceeded: max ${max} requests per ${windowMs}ms`,
       429,
+      { 'Retry-After': String(retryAfterSeconds) },
     );
   }
 

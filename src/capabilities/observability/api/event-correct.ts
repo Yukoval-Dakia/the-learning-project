@@ -5,7 +5,7 @@
 import { newId } from '@/core/ids';
 import { ActivityRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
-import { deprecatedRouteResponse } from '@/kernel/http';
+import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
 import { getEventById, writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { z } from 'zod';
@@ -81,6 +81,19 @@ export async function createCorrection(
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function createCorrectionResource(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  return canonicalResourceResponse(await createCorrection(req, params), {
+    outcome: 'created',
+    location: (body) =>
+      `/api/events/${encodeURIComponent(
+        (body as { correction_event_id: string }).correction_event_id,
+      )}`,
+  });
 }
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
