@@ -64,10 +64,10 @@ export type StartReviewSessionParams = {
  *   events with session_id=<this id> through writeEvent.
  */
 export async function startReviewSession(
-  db: Db,
+  db: Db | Tx,
   params: StartReviewSessionParams = {},
 ): Promise<{ sessionId: string }> {
-  return db.transaction(async (tx) => {
+  const create = async (tx: Tx): Promise<{ sessionId: string }> => {
     const sessionId = createId();
     const now = new Date();
     await tx.insert(learning_session).values({
@@ -96,7 +96,12 @@ export async function startReviewSession(
     });
 
     return { sessionId };
-  });
+  };
+
+  // Reuse a caller-owned transaction when present so higher-level idempotency
+  // locks cover both the lookup and this insert/event pair.
+  if (!('$client' in db)) return create(db);
+  return db.transaction(create);
 }
 
 // ---------- completeReviewSession ----------

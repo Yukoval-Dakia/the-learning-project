@@ -24,7 +24,11 @@ export async function POST(req: Request): Promise<Response> {
     }
     const parsed = CreateReviewSessionBody.safeParse(raw);
     if (!parsed.success) {
-      throw new ApiError('validation_error', 'body must contain an optional paper_id', 400);
+      throw new ApiError(
+        'validation_error',
+        parsed.error.issues.map((issue) => issue.message).join('; '),
+        400,
+      );
     }
 
     const result = parsed.data.paper_id

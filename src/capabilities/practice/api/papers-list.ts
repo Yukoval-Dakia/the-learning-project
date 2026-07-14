@@ -15,7 +15,7 @@ import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createPaperReviewSession } from './paper-session-create';
 
-export async function GET(): Promise<Response> {
+export async function GET(_req?: Request): Promise<Response> {
   try {
     const result = await getPracticeList(db);
     return Response.json(result);
