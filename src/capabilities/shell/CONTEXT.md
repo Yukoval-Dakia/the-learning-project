@@ -7,9 +7,10 @@ src/server/proposals/actions.ts 瘦壳。
 
 - api/proposals-list.ts — GET /api/proposals（旧 app/api/proposals 等价平移 +
   kind query 增量；kind 过滤是路由层页内 post-filter，inbox 读模型不感知 kind）
-- api/proposal-decide.ts — POST /api/proposals/[id]/decide（旧 accept+dismiss
-  合并；decision 必填四值 'accept'|'reverse'|'change_type'|'dismiss'）
-- api/proposal-retract.ts — POST /api/proposals/[id]/retract（等价平移）
+- api/proposal-decisions.ts — POST /api/proposals/[id]/decisions（统一不可变
+  decision 资源；同决策幂等复用，冲突决策 409，retract 写 correction event）
+- api/proposal-decide.ts + api/proposal-retract.ts — 旧决策路径兼容层（保留原
+  payload/status，返回 Deprecation + successor Link）
 - server/workbench-summary.ts + api/workbench-summary.ts —
   GET /api/workbench/summary：today 重生聚合（新端点，设计自由）。
   proposals KPI（loadTodayProposalKpi）/ due_count（内部 Request 调 practice

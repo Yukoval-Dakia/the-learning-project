@@ -24,11 +24,11 @@ const CONJ = {
   proposed_at: '2026-07-12T00:00:00.000Z',
 };
 
-// GET /api/prep-desk/conjectures → the seeded card; POST …/decide → `decideStatus`.
+// GET /api/prep-desk/conjectures → the seeded card; POST …/decisions → `decideStatus`.
 function mockFetch(decideStatus: number) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (init?.method === 'POST' && url.includes('/decide')) {
+    if (init?.method === 'POST' && url.includes('/decisions')) {
       return new Response(JSON.stringify({ ok: decideStatus < 400 }), { status: decideStatus });
     }
     return Response.json({ conjectures: [CONJ] });
@@ -76,7 +76,7 @@ describe('PrepDeskConjectures — decide error handling (jsdom)', () => {
     // Card renders from the mocked GET.
     await screen.findByText('你把链式法则当成两个导数相乘');
 
-    // Accept fails (POST decide → 500 → apiJson throws → caught).
+    // Accept fails (POST decisions → 500 → apiJson throws → caught).
     await user.click(screen.getByRole('button', { name: '对，往这个方向想' }));
 
     // Error is surfaced (not swallowed), and the card is NOT lost.

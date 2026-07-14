@@ -99,6 +99,10 @@ describe('POST /api/knowledge/misconceptions/[id]/veto', () => {
 
     const res = await veto(id);
     expect(res.status).toBe(200);
+    expect(res.headers.get('Deprecation')).toBe('@1783987200');
+    expect(res.headers.get('Link')).toBe(
+      `</api/proposals/${id}/decisions>; rel="successor-version"`,
+    );
     const body = (await res.json()) as { kind: string };
     expect(body.kind).toBe('dismissed');
 

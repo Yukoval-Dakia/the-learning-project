@@ -5,7 +5,10 @@
 // question_draft / question_edit 按同一 tone 语系补全（hard=节奏类、neutral=归档、
 // coral=内容生成/修订类），icon 取自 LoomIcon 既有名。
 
-import { acceptSupportedProposalKinds } from '@/core/schema/proposal';
+import {
+  type ProposalDecisionResourceT,
+  acceptSupportedProposalKinds,
+} from '@/core/schema/proposal';
 import { apiJson } from '@/ui/lib/api';
 
 // ── kind 元数据（agency meta.ts 同形态：fallback-safe，绝不 throw） ──
@@ -116,17 +119,20 @@ export const decideProposal = (
   decision: ProposalDecision,
   opts: { newRelationType?: string; userNote?: string } = {},
 ) =>
-  apiJson(`/api/proposals/${encodeURIComponent(id)}/decide`, {
+  apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(id)}/decisions`, {
     method: 'POST',
     body: JSON.stringify({
       decision,
       ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
       ...(opts.userNote ? { user_note: opts.userNote } : {}),
     }),
-  });
+  }).then((resource) => resource.result);
 
 export const retractProposal = (id: string) =>
-  apiJson(`/api/proposals/${encodeURIComponent(id)}/retract`, { method: 'POST' });
+  apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(id)}/decisions`, {
+    method: 'POST',
+    body: JSON.stringify({ decision: 'retract' }),
+  }).then((resource) => resource.result);
 
 // ── A4 强度轴 (YUK-521)：A 档 auto-applied 读模型 wire 类型 + caller ──
 // server 契约见 @/server/proposals/auto-applied-read（AutoAppliedDigest，锁步）。

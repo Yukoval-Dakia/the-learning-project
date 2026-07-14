@@ -2,6 +2,7 @@
 // 路由宿主（dev）：/api/knowledge、/api/proposals 经 vite proxy → Hono(:8787)。
 // M4-T5 (YUK-318)：边提议读已从 /api/events 裸查换源到统一收件箱。
 
+import type { ProposalDecisionResourceT } from '@/core/schema/proposal';
 import { apiJson } from '@/ui/lib/api';
 
 // ── 树快照（loadTreeSnapshot wire：knowledge 行 + mastery 视图 join） ──
@@ -89,9 +90,10 @@ export const getMisconceptions = (id: string) =>
 // segment==='candidate' 调它）。Option A：confirmed(RT1 误区) archive 是延后 soft-track 后端
 // slice —— UI 对 confirmed 行只渲乐观「已纠偏」本地态、绝不打此端点。
 export const vetoMisconception = (id: string) =>
-  apiJson<{ kind: string }>(`/api/knowledge/misconceptions/${encodeURIComponent(id)}/veto`, {
+  apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(id)}/decisions`, {
     method: 'POST',
-  });
+    body: JSON.stringify({ decision: 'dismiss' }),
+  }).then((resource) => resource.result);
 
 // ── 边 ──────────────────────────────────────────────────────────
 export interface KnowledgeEdgeRow {
@@ -207,10 +209,10 @@ export const getNodePage = (id: string) =>
 
 // ── 提议（节点 propose 决断 + 边提议读/决断） ────────────────────
 export const decideNodeProposal = (id: string, decision: 'accept' | 'reject') =>
-  apiJson(`/api/knowledge/proposals/${encodeURIComponent(id)}`, {
+  apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(id)}/decisions`, {
     method: 'POST',
-    body: JSON.stringify({ decision }),
-  });
+    body: JSON.stringify({ decision: decision === 'reject' ? 'dismiss' : decision }),
+  }).then((resource) => resource.result);
 
 // 边提议（M4-T5 / YUK-318：统一收件箱投影。旧 /api/events 裸查不感知决策，
 // 已决提议会复返、靠客户端 decided 集合补救；新源服务端按 status=pending
@@ -239,10 +241,10 @@ export const decideEdgeProposal = (
   decision: 'accept' | 'reverse' | 'change_type' | 'dismiss',
   newRelationType?: string,
 ) =>
-  apiJson(`/api/knowledge/edges/proposals/${encodeURIComponent(eventId)}`, {
+  apiJson<ProposalDecisionResourceT>(`/api/proposals/${encodeURIComponent(eventId)}/decisions`, {
     method: 'POST',
     body: JSON.stringify({
       decision,
       ...(newRelationType ? { new_relation_type: newRelationType } : {}),
     }),
-  });
+  }).then((resource) => resource.result);

@@ -4,6 +4,7 @@
 
 import { ActivityRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { retractAiProposal } from '@/server/proposals/actions';
 import { z } from 'zod';
@@ -14,6 +15,15 @@ const RetractBody = z.object({
 });
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await handleLegacyRetract(req, params);
+  const successor = `/api/proposals/${encodeURIComponent(params.id ?? '')}/decisions`;
+  return deprecatedRouteResponse(response, successor);
+}
+
+async function handleLegacyRetract(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id } = params;
     if (!id) {

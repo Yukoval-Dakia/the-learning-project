@@ -24,6 +24,7 @@ import { z } from 'zod';
 
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
+import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { decideKnowledgeEdgeProposal } from '@/server/proposals/actions';
 
@@ -34,6 +35,15 @@ const DecisionBody = z.object({
 });
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const response = await handleLegacyEdgeDecision(req, params);
+  const successor = `/api/proposals/${encodeURIComponent(params.id ?? '')}/decisions`;
+  return deprecatedRouteResponse(response, successor);
+}
+
+async function handleLegacyEdgeDecision(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
   try {
     const { id: proposeEventId } = params;
     const raw = await req.json().catch(() => null);
