@@ -8,6 +8,7 @@
 
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import { questionDetailHref } from './NoteBlocks';
 import { NoteDocBody } from './NoteReaderPage';
 import type { BodyBlock } from './notes-api';
 
@@ -86,5 +87,37 @@ describe('NoteDocBody (NoteReader interactive wiring)', () => {
     expect(html).toContain('导数的定义');
     expect(html).not.toContain('空笔记');
     expect(html).not.toContain('note-interactive-frame');
+  });
+});
+
+describe('note surface action inventory', () => {
+  it('maps a question reference to the shipped question detail route', () => {
+    expect(questionDetailHref('q/with space')).toBe('/questions/q%2Fwith%20space');
+  });
+
+  it('renders question references as real actions without exposing raw ids', () => {
+    const html = renderToString(
+      <NoteDocBody
+        type="note_atomic"
+        title="判断句"
+        interactive={null}
+        blocks={[
+          {
+            type: 'questionRefBlock',
+            attrs: {
+              id: 'bq',
+              question_id: 'question_internal_123',
+              prompt_preview: '判断下列句式',
+            },
+          },
+        ]}
+        navigate={vi.fn()}
+        onOpenQuestion={vi.fn()}
+      />,
+    );
+    expect(html).toContain('<button');
+    expect(html).toContain('题目引用');
+    expect(html).not.toContain('question_internal_123');
+    expect(html).not.toContain('旧栈');
   });
 });

@@ -9,8 +9,10 @@
 //   R2 variant 穿插散题段中（decay 主轴每 2 道插 1 变式，剩余追加段尾）
 //   R3 卷置于散题之后；new_check 永远收尾
 //   R4 同 questionId 去重（decay 先到先得）
-//   R5 容量护栏两层：warn 水位只告知（warned），max 硬顶截断（truncated）
+//   R5 容量护栏两层：分钟预算先保到期前缀再填其余；item max 仍作事故硬顶
 //   R6 position 从 1 连续；R7 reasoning 模板非空（M4 夜链 AI 化后替换模板）
+
+import { fitStreamToTimeBudget } from './stream-budget';
 
 export interface ComposerInputs {
   /** YYYY-MM-DD（本地日由 API 层裁定） */
@@ -35,6 +37,8 @@ export interface ComposerInputs {
   }>;
   /** 容量护栏（两层语义：warn 零干预只告知；max 防事故硬顶） */
   capacity?: { warn?: number; max?: number };
+  /** YUK-622：用户 daily pace 映射出的分钟预算；缺省仅供旧测试/显式 DI 保持旧行为。 */
+  dailyBudgetMinutes?: number;
 }
 
 export interface StreamPlanItem {
@@ -142,13 +146,14 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   }));
 
   const all = [...solo, ...papers, ...tail, ...frontierTail];
-  const truncated = all.length > max;
-  const kept = truncated ? all.slice(0, max) : all;
+  const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes);
+  const overItemMax = budgeted.kept.length > max;
+  const kept = overItemMax ? budgeted.kept.slice(0, max) : budgeted.kept;
 
   return {
     date: inputs.date,
     items: kept.map((d, i) => ({ ...d, position: i + 1 })),
-    truncated,
-    warned: all.length > warn,
+    truncated: budgeted.truncated || overItemMax,
+    warned: all.length > warn || budgeted.truncated,
   };
 }

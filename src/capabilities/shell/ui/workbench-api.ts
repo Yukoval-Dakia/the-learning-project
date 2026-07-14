@@ -14,10 +14,27 @@ export interface WorkbenchSummary {
     due_count: number;
     pending_attribution_count: number;
     knowledge_count: number;
-    // 冷启动信号（YUK-473 Slice 1）：active goal 数。TodayPage 在 0 时渲染冷开屏拦截。
+    // active goal 数只服务 KPI / profile，不再作为冷启动判据。
     goal_count: number;
   };
-  // 当前 active goal（YUK-476）：/today 起始画像卡片据此取 per-KC profile。null = 无 active goal。
+  cold_start: {
+    is_empty: boolean;
+    evidence: {
+      active_goal: boolean;
+      goal_history: boolean;
+      knowledge: boolean;
+      question: boolean;
+      source_material: boolean;
+      artifact: boolean;
+      review_due: boolean;
+      pending_attribution: boolean;
+      practice_stream: boolean;
+      proposal: boolean;
+      learning_session: boolean;
+      user_event: boolean;
+    };
+  };
+  // 当前 active goal（YUK-476）：null 只表示没有当前目标，不代表用户没有学习数据。
   active_goal: { id: string; title: string } | null;
   active_sessions: Array<{
     id: string;

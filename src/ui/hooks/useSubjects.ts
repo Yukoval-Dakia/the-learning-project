@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 export interface ApiSubject {
   id: string;
   displayName: string;
+  aliases: string[];
   renderConfig: {
     font_family: string;
     notation: string | null;
@@ -27,6 +28,7 @@ export interface ApiSubject {
   // 派生布尔（v3 §2.3）：科目仍整套沿用 general 默认配置（「通用模式」badge 数据源，
   // YUK-602 消费）。builtin 恒 false；general 不在列（防御性 null 类型保留）。
   isGeneralFallback: boolean | null;
+  configurationStatus: 'configured' | 'general-fallback' | 'unconfigured';
 }
 
 export const SUBJECTS_QUERY_KEY = ['subjects'] as const;
@@ -40,6 +42,7 @@ function builtinProjection(): ApiSubject[] {
       {
         id: p.id,
         displayName: p.displayName,
+        aliases: [],
         renderConfig: {
           font_family: p.renderConfig.font_family,
           notation: p.renderConfig.notation,
@@ -47,6 +50,7 @@ function builtinProjection(): ApiSubject[] {
         },
         causeCategories: p.causeCategories.map((c) => ({ id: c.id, label: c.label })),
         isGeneralFallback: false,
+        configurationStatus: 'configured',
       },
     ];
   });

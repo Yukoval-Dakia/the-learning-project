@@ -10,13 +10,14 @@
 // Single-shot per page load; computed at request time (no view). Acceptable for
 // single-user scale where the window is bounded and the event table is small.
 
-import { and, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/server/events/cause-policy';
 import { getFailureAttempts } from '@/server/events/queries';
-import { errorResponse } from '@/server/http/errors';
+import { ApiError, errorResponse } from '@/server/http/errors';
+import { buildCalendarReportWindow, localDateKey, resolveReportTimeZone } from './weekly-window';
 
 const MAX_DAYS = 90;
 const DEFAULT_DAYS = 7;
@@ -30,7 +31,16 @@ export async function GET(req: Request): Promise<Response> {
       Math.max(Number.isNaN(parsedDays) ? DEFAULT_DAYS : parsedDays, 1),
       MAX_DAYS,
     );
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    let timeZone: string;
+    try {
+      timeZone = resolveReportTimeZone(url.searchParams.get('timezone'));
+    } catch {
+      throw new ApiError('invalid_timezone', 'timezone must be a valid IANA time zone');
+    }
+    const now = new Date();
+    const reportWindow = buildCalendarReportWindow(now, days, timeZone);
+    const cutoff = reportWindow.from;
+    const inWindow = and(gte(event.created_at, cutoff), lte(event.created_at, now));
 
     // 1) Review events in window — for rating distribution + daily trend.
     const reviews = await db
@@ -41,13 +51,7 @@ export async function GET(req: Request): Promise<Response> {
         created_at: event.created_at,
       })
       .from(event)
-      .where(
-        and(
-          eq(event.action, 'review'),
-          eq(event.subject_kind, 'question'),
-          gte(event.created_at, cutoff),
-        ),
-      );
+      .where(and(eq(event.action, 'review'), eq(event.subject_kind, 'question'), inWindow));
 
     // 2) Failure attempts in window — for top struggling knowledge_ids + cause.
     const failures = await db
@@ -61,7 +65,7 @@ export async function GET(req: Request): Promise<Response> {
           eq(event.action, 'attempt'),
           eq(event.subject_kind, 'question'),
           eq(event.outcome, 'failure'),
-          gte(event.created_at, cutoff),
+          inWindow,
         ),
       );
 
@@ -69,11 +73,12 @@ export async function GET(req: Request): Promise<Response> {
     const costRows = await db
       .select({ sum: sql<number>`COALESCE(SUM(${event.cost_micro_usd}), 0)::bigint` })
       .from(event)
-      .where(gte(event.created_at, cutoff));
+      .where(inWindow);
     const totalCostMicroUsd = Number(costRows[0]?.sum ?? 0);
 
     // 4) Effective causes from in-window failure attempts.
     const failureIds = failures.map((f) => f.id);
+    const failureIdSet = new Set(failureIds);
     const causeCounts = new Map<string, number>();
     if (failureIds.length > 0) {
       const activeFailures = await getFailureAttempts(db, {
@@ -81,6 +86,7 @@ export async function GET(req: Request): Promise<Response> {
         limit: Math.max(failureIds.length * 2, 100),
       });
       for (const failure of activeFailures) {
+        if (!failureIdSet.has(failure.attempt_event_id)) continue;
         const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
         if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
       }
@@ -97,16 +103,14 @@ export async function GET(req: Request): Promise<Response> {
       if (rating && rating in ratingCounts) ratingCounts[rating] += 1;
     }
 
-    // 6) Daily trend buckets (UTC day boundaries — single-user tool, no TZ
-    //    correction; client can re-bucket if cross-TZ ever matters).
+    // 6) Daily trend buckets use the learner's calendar days. A seven-day report
+    //    includes today plus the six preceding local dates, including across DST.
     const dailyMap = new Map<string, { date: string; count: number; correct: number }>();
-    for (let i = 0; i < days; i++) {
-      const d = new Date(cutoff.getTime() + i * 86400_000);
-      const key = d.toISOString().slice(0, 10);
+    for (const key of reportWindow.dateKeys) {
       dailyMap.set(key, { date: key, count: 0, correct: 0 });
     }
     for (const r of reviews) {
-      const key = r.created_at.toISOString().slice(0, 10);
+      const key = localDateKey(r.created_at, timeZone);
       const bucket = dailyMap.get(key);
       if (bucket) {
         bucket.count += 1;
@@ -147,7 +151,8 @@ export async function GET(req: Request): Promise<Response> {
       window: {
         days,
         from: Math.floor(cutoff.getTime() / 1000),
-        to: Math.floor(Date.now() / 1000),
+        to: Math.floor(now.getTime() / 1000),
+        time_zone: timeZone,
       },
       totals: {
         reviews: reviews.length,

@@ -16,7 +16,11 @@
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import type { Db } from '@/db/client';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import {
+  normalizeSubjectKey,
+  resolveKnownSubjectId,
+  resolveSubjectProfile,
+} from '@/subjects/profile';
 
 // T-CS / YUK-168 — batch-resolve each row's learning-subject id from its first
 // knowledge id, deduplicating the parent-chain walk. A naive per-row resolve
@@ -68,4 +72,46 @@ export async function batchResolveSubjectIds(
     out.set(row.id, (firstId && firstIdToSubjectId.get(firstId)) || defaultSubjectId);
   }
   return out;
+}
+
+/**
+ * Learner-facing projection of the same bridge. Unlike scheduling, a question list must never
+ * turn an unknown-but-real domain into `general`: preserve the registered canonical id, else the
+ * normalized raw domain, and use null only when no subject signal can be resolved.
+ */
+export async function batchResolveSubjectDisplayIds(
+  db: Db,
+  rows: Array<{ id: string; knowledge_ids: string[] }>,
+): Promise<Map<string, string | null>> {
+  const firstIdToSubjectId = new Map<string, string | null>();
+  const uniqueFirstIds = [...new Set(rows.flatMap((row) => row.knowledge_ids[0] ?? []))];
+
+  if (uniqueFirstIds.length > 0) {
+    const domains = await Promise.all(
+      uniqueFirstIds.map((kid) =>
+        getEffectiveDomain(db, kid).catch((error) => {
+          console.warn(
+            `[batchResolveSubjectDisplayIds] getEffectiveDomain failed for knowledge_id=${kid}; displaying unassigned: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return null;
+        }),
+      ),
+    );
+    uniqueFirstIds.forEach((kid, index) => {
+      const domain = domains[index];
+      firstIdToSubjectId.set(
+        kid,
+        resolveKnownSubjectId(domain) ?? (domain ? normalizeSubjectKey(domain) : null),
+      );
+    });
+  }
+
+  return new Map(
+    rows.map((row) => {
+      const firstId = row.knowledge_ids[0];
+      return [row.id, firstId ? (firstIdToSubjectId.get(firstId) ?? null) : null];
+    }),
+  );
 }

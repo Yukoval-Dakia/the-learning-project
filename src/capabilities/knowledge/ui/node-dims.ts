@@ -110,7 +110,7 @@ function hardPointBand(band: MasteryBandIdx): MasteryBandView {
 function buildRetentionDim(retrievability: number | null): NodeDimView {
   const base = {
     key: 'R' as const,
-    label: '记忆留存 R',
+    label: '记忆保持',
     labels: A5_BANDS,
     unknownLabel: UNKNOWN_BAND_LABEL,
   };
@@ -124,7 +124,7 @@ function buildRetentionDim(retrievability: number | null): NodeDimView {
   return {
     ...base,
     view: hardPointBand(masteryBandIdx(retrievability)),
-    note: 'FSRS 可提取性 · 会随时间衰减，到期该复习。',
+    note: '会随时间逐渐遗忘；到期时适合复习。',
   };
 }
 
@@ -133,11 +133,11 @@ function buildMasteryDim(mastery: MasteryBandInput | null): NodeDimView {
   const view = mastery == null ? masteryBandUnknown() : masteryBandView(mastery);
   return {
     key: 'pL',
-    label: '掌握诊断 p(L)',
+    label: '理解程度',
     labels: A5_BANDS,
     unknownLabel: UNKNOWN_BAND_LABEL,
     view,
-    note: 'PFA σ(θ̂) · 由你的真实作答校准。',
+    note: '根据你的真实作答逐步校准。',
   };
 }
 
@@ -146,7 +146,7 @@ function buildMasteryDim(mastery: MasteryBandInput | null): NodeDimView {
 function buildDifficultyDim(beta: number | null): NodeDimView {
   const base = {
     key: 'diff' as const,
-    label: '题目难度 difficulty',
+    label: '题目难度',
     labels: DIFFICULTY_BANDS,
     unknownLabel: UNKNOWN_BAND_LABEL,
   };
@@ -160,19 +160,19 @@ function buildDifficultyDim(beta: number | null): NodeDimView {
       // 复用 masteryBandUnknown()（同 buildRetentionDim/buildMasteryDim，OCR 一致性）——
       // 它正是 { unknown:true, source:'soft', lowConf:true }。
       view: masteryBandUnknown(),
-      note: '难度锚落在中性区或还没标定 —— 暂用先验，练几道会 firm up。',
+      note: '目前还无法稳定判断难度；再练几道后会更明确。',
     };
   }
   return {
     ...base,
     view: hardPointBand(difficultyBandIdx(beta)),
-    note: '题目锚难度（hard 轨校准中位数 · 绝对尺度，无区间）。',
+    note: '根据相关题目的作答情况判断。',
   };
 }
 
 function buildColdNote(evidenceCount: number): string | null {
   if (evidenceCount >= COLD_NOTE_MAX_EVIDENCE) return null;
-  return `这点真实作答还少（${evidenceCount} 次）—— 下面的档大半是模型先验，不是你练出来的。慢热期只看相对排序，绝对值别太当真。`;
+  return `这点真实作答还少（${evidenceCount} 次）—— 当前状态主要来自初步判断，还不是稳定结论。先看相对强弱，继续练习后会更可靠。`;
 }
 
 /**

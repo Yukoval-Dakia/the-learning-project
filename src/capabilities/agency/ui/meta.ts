@@ -57,9 +57,9 @@ export const SIGNAL_META: Record<string, SignalMeta> = {
 // Fallback-safe lookups. Unknown kind → raw kind as label + neutral defaults,
 // so an unrecognised agent/signal still renders (never blank, never throws).
 export function agentMeta(kind: string): AgentMeta {
-  return AGENT_META[kind] ?? { label: kind, icon: 'sparkle' };
+  return AGENT_META[kind] ?? { label: '其他 AI 工作', icon: 'sparkle' };
 }
 
 export function signalMeta(kind: string): SignalMeta {
-  return SIGNAL_META[kind] ?? { label: kind, tone: 'neutral' };
+  return SIGNAL_META[kind] ?? { label: '其他信号', tone: 'neutral' };
 }

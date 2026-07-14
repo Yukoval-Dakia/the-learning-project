@@ -1,4 +1,5 @@
 import { defineCapability } from '@/kernel/manifest';
+import { uiPagesFor } from '@/kernel/ui-surfaces';
 
 // M4-T5 (YUK-319/YUK-318)：shell 包——跨域工作台壳层。提议收件箱三路由源自
 // 旧 Next app/api/proposals/* 等价平移（accept+dismiss 合并为单 decide 端点，
@@ -70,19 +71,5 @@ export const shellCapability = defineCapability({
       },
     ],
   },
-  // M4-T6 (YUK-319)：工作台 + 收件箱两 surface；todayBlocks 是工作台自有块
-  //（agency 的 agent-notes-board、notes 的 ai-changes-strip 各自声明）。
-  // M5-T4b (YUK-321)：+/coach（spec §3.6「Coach 周报 keep · 归工作台/复盘面」）；
-  // +cost-ribbon todayBlock（CostRibbon 接通 /api/cost/today，observability 端点）。
-  ui: {
-    pages: [{ route: '/today' }, { route: '/inbox' }, { route: '/coach' }],
-    todayBlocks: [
-      'loom-hero',
-      'kpi-row',
-      'sessions-strip',
-      'proposal-strip',
-      'cost-ribbon',
-      'week-heat',
-    ],
-  },
+  ui: { pages: uiPagesFor('shell') },
 });

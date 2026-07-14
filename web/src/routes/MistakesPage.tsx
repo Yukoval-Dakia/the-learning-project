@@ -17,7 +17,7 @@
 // ② inline 事件链展开（loom .event-chain / expander）：本页无事件 list query → DROP 展开。
 //    事件链 footer 保留可读文案但 render 为 disabled——/events route 尚未登记 SPA，不 ship
 //    已知 404 导航（graceful defer，同 ProposalCard EvidenceChip：无 route 即 disabled +
-//    去 affordance）。/events 登记后撤 disabled + 补 onClick(`/events/{id}`)。
+//    去 affordance）。YUK-325 已登记 /events/$id，事件链重新成为真实可达入口。
 // ③ 归因 badge：复用 CauseBadge primitive（user/agent/pending/conf 全覆盖，语义等价 loom
 //    AttributionBadge），不照搬 loom 简化版——避免双套归因展示漂移。
 // ④ 知识点 chip：knowledge_ids → 经 getTree fan-out 白话化为节点名（present-if-available；
@@ -29,7 +29,12 @@ import { getTree } from '@/capabilities/knowledge/ui/knowledge-api';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { apiJson } from '@/ui/lib/api';
-import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
+import {
+  type SubjectRowLike,
+  listSubjectChoices,
+  subjectDisplayName,
+  subjectIdentityKey,
+} from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { CauseBadge, type CausePrimary } from '@/ui/primitives/CauseBadge';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -91,18 +96,8 @@ function subjMeta(
   return { label: subjectDisplayName(subject, rows), tone: SUBJECT_TONE[id] ?? 'neutral' };
 }
 
-// 科目筛选规范化：把「filter chip key」与「effective_domain」折叠到同一规范桶后比 KEY，
-// 不比 label。旧码比 subjMeta(...).label——靠 wenyan/yuwen 共享「语文」标签碰巧对上，但
-// physics(物理) 等无对应 chip 的科目会被静默错筛（label 永不等任一 chip label，等价于
-// 「永远不显示」而非「正确地不匹配」）。SUBJECT_OPTS chip key 是 KNOWN 规范 id（yuwen/
-// math/physics），effective_domain 是原始 domain（旧 alias wenyan、general、未登记值…）。
-// resolveKnownSubjectId 天然 alias-aware：wenyan/yuwen 同归 yuwen 桶，未登记 / general
-// 归 null（只在「全部」下现，不错配任一科目 chip）——YUK-249 注册表驱动，弃硬编码别名表。
-function subjectKey(subject: string | null): string | null {
-  if (!subject) return null;
-  return resolveKnownSubjectId(subject);
-}
-
+// 科目筛选规范化由 subjectIdentityKey 统一处理：builtin alias、运行时 custom alias、
+// observed raw domain 都折叠到 provider 行的稳定 id 后比 KEY，不比展示 label。
 // loom 状态轴。投影无显式「已纠正/待重学」枚举——按 correction_state.terminal_state 派生：
 // retracted/marked_wrong（原 attempt 已被纠正事件推翻）→ 已纠正；cause 仍 null（归因未落）
 // → 归因中…；其余（active 等）→ 待重学。
@@ -265,14 +260,16 @@ function MistakeCard({
         />
       </div>
 
-      {/* footer：事件链（inline 展开按 §4 DROP；/events/{id} route 尚未登记 SPA）。
-          GRACEFUL DEFER：不 ship 已知 404 导航——同 ProposalCard EvidenceChip 先例
-          （src/.../ProposalCard.tsx：route 缺失时 disabled + 去掉「查看 →」affordance），
-          保留可读文案，撤掉点击穿透与 `→` 触发暗示。/events 登记后再补 onClick。 */}
+      {/* footer：事件链（inline 展开按 §4 DROP；统一去 /events/$id 看完整因果链）。 */}
       <div className="mistake-foot">
-        <button type="button" className="mistake-evlink" title={`事件 events:${m.id}`} disabled>
+        <button
+          type="button"
+          className="mistake-evlink"
+          title="查看这次作答的事件证据"
+          onClick={() => navigate(`/events/${encodeURIComponent(m.id)}`)}
+        >
           <LoomIcon name="clock" size={13} />
-          事件链
+          查看事件链
         </button>
       </div>
     </LoomCard>
@@ -327,10 +324,10 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
           subject,
           ui: uiState(m),
           attr: attrOf(m),
-          skey: subjectKey(subject),
+          skey: subjectIdentityKey(subject, subjectRowsForOpts),
         };
       }),
-    [rows, subjectOf],
+    [rows, subjectOf, subjectRowsForOpts],
   );
 
   const pending = derived.filter((d) => d.m.cause === null).length;
@@ -352,9 +349,10 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
     return () => clearInterval(h);
   }, [pending]);
 
-  // 科目筛选比规范键（subjectKey → resolveKnownSubjectId），不比 label——见 subjectKey 注释。
+  // 科目筛选比稳定身份键（subjectIdentityKey），不比展示 label。
   // shown 保留 derived 条目（含预算 subject），卡片渲染直接复用，不再重算 subjectOf。
-  const subjectFilterKey = subject === 'all' ? null : subjectKey(subject);
+  const subjectFilterKey =
+    subject === 'all' ? null : subjectIdentityKey(subject, subjectRowsForOpts);
   const shown = derived.filter((d) => {
     if (subjectFilterKey !== null && d.skey !== subjectFilterKey) return false;
     if (state !== 'all' && d.ui !== state) return false;

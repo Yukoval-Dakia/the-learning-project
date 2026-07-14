@@ -1,9 +1,9 @@
 // M2 练习面 — 流视图（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-stream.jsx：§6.1 织线纵轨——
 // item 挂在线上、AI 开场白与第一人称理由陪练递题、已完成项收紧成织入的一行；
-// 跳过的留流尾可捡回；流尾点播 composer。点播生成（quiz-gen 异步链）M2 后端
-// 未接——composer 提交后 toast 告知（占位，M4 夜链/quiz 域接上后变真）。
+// 跳过的留流尾可捡回；流尾点播移交真实 Copilot tool loop，不在本地伪造成功态。
 
+import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -14,8 +14,8 @@ import type { PfToast } from './PracticeFacePage';
 import {
   type StreamItem,
   type StreamSource,
+  type StreamStatus,
   type StreamView,
-  advanceStreamItem,
   recomposeStream,
 } from './practice-api';
 
@@ -97,13 +97,20 @@ export function PfStream({
   error,
   openItem,
   refresh,
+  updateItem,
   addToast,
 }: {
   stream: StreamView | null;
   loading: boolean;
   error: Error | null;
   openItem: (item: StreamItem) => void;
-  refresh: () => void;
+  refresh: () => Promise<StreamView | null>;
+  updateItem: (
+    item: StreamItem,
+    status: StreamStatus,
+    action: string,
+    onConfirmed: (confirmed: StreamItem) => void | Promise<void>,
+  ) => void | Promise<void>;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
   const [demand, setDemand] = useState('');
@@ -120,15 +127,17 @@ export function PfStream({
   // current = 正在做的那项优先（中途退出回来还在原位），否则第一个待做。
   const currentItem = items.find((it) => it.status === 'in_progress') ?? pending[0] ?? null;
   const allDone = items.length > 0 && stream.progress.done === items.length;
-  const etaMin = pending.reduce((m, it) => m + (it.item_kind === 'paper' ? 10 : 2), 0);
+  const etaMin = stream.progress.estimated_remaining_minutes;
 
-  const skip = async (it: StreamItem) => {
-    await advanceStreamItem(it.id, 'skipped').catch(() => {});
-    refresh();
+  const skip = (it: StreamItem) => {
+    void updateItem(it, 'skipped', '跳过练习', async () => {
+      await refresh();
+    });
   };
-  const unskip = async (it: StreamItem) => {
-    await advanceStreamItem(it.id, 'pending').catch(() => {});
-    refresh();
+  const unskip = (it: StreamItem) => {
+    void updateItem(it, 'pending', '恢复练习', async () => {
+      await refresh();
+    });
   };
   const recompose = async () => {
     setRecomposing(true);
@@ -141,6 +150,12 @@ export function PfStream({
     } finally {
       setRecomposing(false);
     }
+  };
+  const handoffDemand = () => {
+    const request = demand.trim();
+    if (!request) return;
+    openCopilot(request);
+    setDemand('');
   };
 
   const row = (it: StreamItem) => {
@@ -181,18 +196,7 @@ export function PfStream({
     // 散题/卷卡的可读锚点名（reasoning 派生，见 anchorFromReasoning 注释）。
     const anchor = anchorFromReasoning(it.reasoning);
     const inner = (
-      <div
-        className="pf-item"
-        // biome-ignore lint/a11y/useSemanticElements: 行卡片内嵌套了真按钮
-        // （CTA + 跳过），native <button> 不允许嵌套交互元素；div+role 是
-        // 可聚焦容器的正确 ARIA 形态。
-        role="button"
-        tabIndex={0}
-        onClick={() => openItem(it)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') openItem(it);
-        }}
-      >
+      <div className="pf-item">
         <div className="pf-item-top">
           <PfSrcBadge source={it.source} />
           {/* 散题卡知识点锚点（设计 pface.css L52 pf-item-kp，15px/600）——给每张卡
@@ -200,9 +204,7 @@ export function PfStream({
               非 fabricate；无 label 时省略，不伪造锚点）。 */}
           {it.item_kind === 'question' && anchor && <span className="pf-item-kp">{anchor}</span>}
           <span className="pf-item-kind mono">
-            <span className="src-q">
-              {it.item_kind} · {it.ref_id.slice(0, 12)}
-            </span>
+            <span className="src-q">{it.item_kind === 'paper' ? '整卷练习' : '单题练习'}</span>
           </span>
         </div>
         {it.item_kind === 'paper' && (
@@ -278,7 +280,9 @@ export function PfStream({
           <p className="pf-open-line">
             {allDone ? '都织完了——下面是今天的线头。' : stream.opening_line}
           </p>
-          <span className="pf-open-meta">composer · {stream.date}</span>
+          <span className="pf-open-meta">
+            今日练习 · {stream.date} · 预算 {stream.budget.minutes} 分钟
+          </span>
         </div>
       </div>
 
@@ -327,7 +331,7 @@ export function PfStream({
           </span>
           <div>
             <p className="pf-close-line">今天的线都织完了——回头看哪根还松，随时叫我补。</p>
-            <span className="pf-close-meta">coach · 收尾</span>
+            <span className="pf-close-meta">今日小结 · 已完成</span>
           </div>
         </div>
       )}
@@ -347,7 +351,7 @@ export function PfStream({
       <div className="pf-ondemand">
         <div className="pf-ondemand-label">
           <LoomIcon name="send" size={13} />
-          点播 · ON_DEMAND
+          临时加练
         </div>
         <div className="composer">
           <textarea
@@ -358,33 +362,16 @@ export function PfStream({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                if (!demand.trim()) return;
-                // 点播生成链（quiz-gen 异步）M2 未接——见文件头注。
-                addToast(
-                  '点播收到——出题链路在 M4 接上后，这里会出现生成中的占位卷。',
-                  'info',
-                  'clock',
-                );
-                setDemand('');
+                handoffDemand();
               }
             }}
             aria-label="向 AI 点播"
           />
-          <IconBtn
-            icon="send"
-            size={16}
-            title="点播"
-            onClick={() => {
-              if (!demand.trim()) return;
-              addToast(
-                '点播收到——出题链路在 M4 接上后，这里会出现生成中的占位卷。',
-                'info',
-                'clock',
-              );
-              setDemand('');
-            }}
-          />
+          <IconBtn icon="send" size={16} title="交给 Copilot 点播" onClick={handoffDemand} />
         </div>
+        <p className="pf-ondemand-hint">
+          将在 Copilot 中执行；生成过程、失败与可运行卷链接都在那里显示。
+        </p>
       </div>
     </div>
   );

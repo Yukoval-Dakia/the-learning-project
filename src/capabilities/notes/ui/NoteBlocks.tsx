@@ -2,8 +2,8 @@
 // 设计基准 docs/design/loom-refresh/project/note-editor.jsx（NoteBlock 8 块型）。
 // 真实块模型 = semanticBlock（kind 4 型）+ crossLinkBlock + questionRefBlock：
 // - check kind（D6 内嵌自测）渲染灰色墓碑占位，不提供交互；
-// - questionRefBlock（pre-flight B 用户增量）= 题面预览 + kind 徽章的纯引用块，
-//   无作答判分；跳转随 quiz 域 M5 收口（占位 toast 由调用方传入）。
+// - questionRefBlock（pre-flight B 用户增量）= 题面预览 + 类型徽章的纯引用块，
+//   无作答判分；点击进入现有题目详情页。
 
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { useQuery } from '@tanstack/react-query';
@@ -21,6 +21,10 @@ const KIND_ICON: Record<Exclude<SemanticKind, 'check'>, string> = {
   example: 'list',
   pitfall: 'alert',
 };
+
+export function questionDetailHref(questionId: string): string {
+  return `/questions/${encodeURIComponent(questionId)}`;
+}
 
 export function blockText(b: BodyBlock): string {
   return b.attrs?.source_markdown ?? '';
@@ -40,19 +44,20 @@ export function QuestionRefBlock({
   block: BodyBlock;
   onOpen?: (questionId: string) => void;
 }) {
+  const questionId = block.attrs?.question_id;
   return (
     <div className="nb-qref">
       <div className="nb-qref-head">
         <LoomIcon name="quiz" size={14} />
-        <span className="nb-qref-tag mono">question ref</span>
-        <span className="meta mono">{block.attrs?.question_id?.slice(0, 12)}</span>
+        <span className="nb-qref-tag">题目引用</span>
       </div>
       {/* de-wenyan: BodyBlock carries no subject domain → neutral default font
           (subject-driven question-ref preview is a follow-up). */}
       <button
         type="button"
         className="nb-qref-body"
-        onClick={() => block.attrs?.question_id && onOpen?.(block.attrs.question_id)}
+        disabled={!questionId}
+        onClick={() => questionId && onOpen?.(questionId)}
       >
         {block.attrs?.prompt_preview ?? '（题面预览缺失）'}
       </button>

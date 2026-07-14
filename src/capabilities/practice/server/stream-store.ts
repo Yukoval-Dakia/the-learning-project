@@ -18,6 +18,7 @@ import {
   event,
   knowledge,
   learning_item,
+  learning_session,
   material_fsrs_state,
   mistake_variant,
   practice_stream_item,
@@ -26,7 +27,7 @@ import {
 import { ApiError } from '@/server/http/errors';
 // YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from '@/server/question-supply/refill';
-import { and, asc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 
 import { notDraftPredicate } from '@/db/predicates';
 
@@ -58,6 +59,13 @@ import {
   statisticalWeights,
   variantReasoning,
 } from './softmax-selection';
+import {
+  type DailyPracticePace,
+  dailyPracticeBudgetMinutes,
+  estimateStreamItemMinutes,
+  fitStreamToTimeBudget,
+  normalizeDailyPracticePace,
+} from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 
 export type StreamItemRow = typeof practice_stream_item.$inferSelect;
@@ -93,6 +101,19 @@ type DbLike = Db | Tx;
 const DUE_INPUT_LIMIT = 200;
 const VARIANT_WINDOW_DAYS = 7;
 
+export async function resolveDailyPracticeBudget(
+  db: DbLike,
+): Promise<{ pace: DailyPracticePace; minutes: number }> {
+  const [latest] = await db
+    .select({ pace: learning_session.placement_pace })
+    .from(learning_session)
+    .where(and(eq(learning_session.type, 'placement'), isNotNull(learning_session.placement_pace)))
+    .orderBy(desc(learning_session.created_at), desc(learning_session.id))
+    .limit(1);
+  const pace = normalizeDailyPracticePace(latest?.pace);
+  return { pace, minutes: dailyPracticeBudgetMinutes(pace) };
+}
+
 async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, string>> {
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return new Map();
@@ -107,6 +128,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'
   //   （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
   //   notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
+
+  const dailyBudget = await resolveDailyPracticeBudget(db);
 
   // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
   const dueRes = await handleReviewDue(
@@ -236,6 +259,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   return {
     date,
+    dailyBudgetMinutes: dailyBudget.minutes,
     dueItems: dueRows.map((r) => ({
       questionId: r.question_id,
       knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
@@ -600,8 +624,50 @@ export interface StreamView {
     source: StreamItemRow['source'];
     reasoning: string;
     status: StreamItemStatus;
+    estimated_minutes: number;
   }>;
-  progress: { done: number; total: number };
+  budget: { pace: DailyPracticePace; minutes: number };
+  progress: {
+    done: number;
+    total: number;
+    estimated_total_minutes: number;
+    estimated_remaining_minutes: number;
+  };
+}
+
+async function trimStoredPendingItemsToBudget(
+  db: Db,
+  date: string,
+  budgetMinutes: number,
+): Promise<StreamItemRow[]> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+    const current = await tx
+      .select()
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.date, date))
+      .orderBy(asc(practice_stream_item.position));
+
+    const frozen = current.filter((row) => row.status !== 'pending');
+    const frozenMinutes = frozen.reduce(
+      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+      0,
+    );
+    const pending = current.filter((row) => row.status === 'pending');
+    const remaining = Math.max(0, budgetMinutes - frozenMinutes);
+    const keptPending = remaining === 0 ? [] : fitStreamToTimeBudget(pending, remaining).kept;
+    const keptIds = new Set(keptPending.map((row) => row.id));
+    const deleteIds = pending.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
+    if (deleteIds.length > 0) {
+      await tx.delete(practice_stream_item).where(inArray(practice_stream_item.id, deleteIds));
+    }
+
+    return tx
+      .select()
+      .from(practice_stream_item)
+      .where(eq(practice_stream_item.date, date))
+      .orderBy(asc(practice_stream_item.position));
+  });
 }
 
 /**
@@ -620,6 +686,8 @@ export async function getStream(
     composeDeps?: ComposeSoftmaxDeps;
     /** 容量注入（DI，仅测试用——收紧 max 测 π_i<1 / capacityGuard slice）。production 省略。 */
     capacity?: ComposerInputs['capacity'];
+    /** YUK-622：收敛修复前已物化的超预算 pending 尾；today 读路径随 composeIfEmpty 自动启用。 */
+    enforceBudget?: boolean;
     /** YUK-474 — refill DI（测试注 fake dispatch 捕获、不打真 pg-boss）。production 省略 →
      *  refillActiveLearningPools 走默认 demandToSupplyTarget + dispatchSupplyTarget。 */
     refillDeps?: RefillDeps;
@@ -663,7 +731,23 @@ export async function getStream(
       .orderBy(asc(practice_stream_item.position));
   }
 
+  const budget = await resolveDailyPracticeBudget(db);
+  const storedMinutes = rows.reduce(
+    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+    0,
+  );
+  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && storedMinutes > budget.minutes) {
+    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes);
+  }
+
   const done = rows.filter((r) => r.status === 'done').length;
+  const estimatedTotalMinutes = rows.reduce(
+    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+    0,
+  );
+  const estimatedRemainingMinutes = rows
+    .filter((row) => row.status === 'pending' || row.status === 'in_progress')
+    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
   return {
     date,
     // M2 模板开场白；M4 由 composer_nightly 写 AI 开场白（随流持久化）。
@@ -679,8 +763,15 @@ export async function getStream(
       source: r.source,
       reasoning: r.reasoning,
       status: r.status,
+      estimated_minutes: estimateStreamItemMinutes(r.item_kind),
     })),
-    progress: { done, total: rows.length },
+    budget,
+    progress: {
+      done,
+      total: rows.length,
+      estimated_total_minutes: estimatedTotalMinutes,
+      estimated_remaining_minutes: estimatedRemainingMinutes,
+    },
   };
 }
 

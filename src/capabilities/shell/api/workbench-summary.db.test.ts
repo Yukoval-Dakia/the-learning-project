@@ -25,6 +25,23 @@ interface SummaryBody {
     knowledge_count: number;
     goal_count: number;
   };
+  cold_start: {
+    is_empty: boolean;
+    evidence: {
+      active_goal: boolean;
+      goal_history: boolean;
+      knowledge: boolean;
+      question: boolean;
+      source_material: boolean;
+      artifact: boolean;
+      review_due: boolean;
+      pending_attribution: boolean;
+      practice_stream: boolean;
+      proposal: boolean;
+      learning_session: boolean;
+      user_event: boolean;
+    };
+  };
   active_goal: { id: string; title: string } | null;
   active_sessions: Array<{
     id: string;
@@ -58,10 +75,25 @@ describe('GET /api/workbench/summary (shell)', () => {
       due_count: 0,
       pending_attribution_count: 0,
       knowledge_count: 0,
-      // 冷库无 active goal → 0（YUK-473 Slice 1 冷启动拦截信号）。
       goal_count: 0,
     });
-    // 冷库无 active goal → active_goal 为 null（YUK-476 起始画像卡片据此不渲染）。
+    expect(body.cold_start).toEqual({
+      is_empty: true,
+      evidence: {
+        active_goal: false,
+        goal_history: false,
+        knowledge: false,
+        question: false,
+        source_material: false,
+        artifact: false,
+        review_due: false,
+        pending_attribution: false,
+        practice_stream: false,
+        proposal: false,
+        learning_session: false,
+        user_event: false,
+      },
+    });
     expect(body.active_goal).toBeNull();
     expect(body.active_sessions).toEqual([]);
 
@@ -157,6 +189,17 @@ describe('GET /api/workbench/summary (shell)', () => {
     expect(body.kpi.pending_attribution_count).toBe(0);
     // active goal g1 计入、done goal g2 排除 → 1（YUK-473 Slice 1）。
     expect(body.kpi.goal_count).toBe(1);
+    expect(body.cold_start).toMatchObject({
+      is_empty: false,
+      evidence: {
+        active_goal: true,
+        goal_history: true,
+        knowledge: true,
+        proposal: true,
+        learning_session: true,
+        user_event: true,
+      },
+    });
     // active_goal = 当前 active goal（g1）；done goal g2 不作候选（YUK-476）。
     expect(body.active_goal).toEqual({ id: 'g1', title: 'g1' });
 
@@ -174,6 +217,65 @@ describe('GET /api/workbench/summary (shell)', () => {
     // 今日（BJT，末位元素）至少含 2 review event + 1 propose event。
     expect(body.week_heat).toHaveLength(7);
     expect(body.week_heat[6].count).toBeGreaterThanOrEqual(3);
+  });
+
+  it('没有 active goal 但已有知识证据时仍返回正常工作台', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_existing',
+      name: '已有知识点',
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      ...KNOWLEDGE_BASE,
+    });
+
+    const body = await fetchSummary();
+
+    expect(body.kpi.goal_count).toBe(0);
+    expect(body.active_goal).toBeNull();
+    expect(body.cold_start.is_empty).toBe(false);
+    expect(body.cold_start.evidence.knowledge).toBe(true);
+  });
+
+  it('只有历史 goal 时退出冷启动，但不伪造当前 active goal', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(goal).values({
+      id: 'g_done',
+      title: '已完成目标',
+      status: 'done',
+      source: 'manual',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const body = await fetchSummary();
+
+    expect(body.kpi.goal_count).toBe(0);
+    expect(body.active_goal).toBeNull();
+    expect(body.cold_start.is_empty).toBe(false);
+    expect(body.cold_start.evidence.goal_history).toBe(true);
+  });
+
+  it('后台事件本身不冒充用户学习证据', async () => {
+    const db = testDb();
+    await db.insert(event).values({
+      id: 'evt_cron_only',
+      actor_kind: 'cron',
+      actor_ref: 'health_scan',
+      action: 'experimental:health_scan',
+      subject_kind: 'query',
+      subject_id: 'health_scan',
+      payload: {},
+    });
+
+    const body = await fetchSummary();
+
+    expect(body.cold_start.is_empty).toBe(true);
+    expect(body.cold_start.evidence.user_event).toBe(false);
+    expect(body.week_heat[6].count).toBeGreaterThanOrEqual(1);
   });
 
   it('active_goal 取最近创建的 active goal（多目标 + 确定性 tie-break）', async () => {

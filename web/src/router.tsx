@@ -7,6 +7,7 @@ import RecordPage from '@/capabilities/ingestion/ui/RecordPage';
 import KnowledgeDetailPage from '@/capabilities/knowledge/ui/KnowledgeDetailPage';
 import KnowledgePage from '@/capabilities/knowledge/ui/KnowledgePage';
 import NoteReaderPage from '@/capabilities/notes/ui/NoteReaderPage';
+import EventDetailPage from '@/capabilities/observability/ui/EventDetailPage';
 import { AdminConjectureScoresSurface } from '@/capabilities/observability/ui/conjecture-scores';
 import { AdminCoverageLatticeSurface } from '@/capabilities/observability/ui/coverage-lattice';
 import {
@@ -28,10 +29,12 @@ import CoachHub from '@/capabilities/shell/ui/CoachHub';
 import InboxPage from '@/capabilities/shell/ui/InboxPage';
 import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import { getWorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
+import { surfacePath } from '@/kernel/ui-surfaces';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette } from '@/ui/shell/CommandPalette';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
+import { ShellMain } from '@/ui/shell/ShellMain';
 import { useQuery } from '@tanstack/react-query';
 import {
   Outlet,
@@ -75,6 +78,10 @@ function RootShell() {
   // 点击都 set 它。
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileLayout, setMobileLayout] = useState(
+    () =>
+      typeof window !== 'undefined' && window.matchMedia?.('(max-width: 720px)').matches === true,
+  );
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
@@ -83,6 +90,17 @@ function RootShell() {
   useEffect(() => {
     setTheme(readSavedTheme());
   }, []);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 720px)');
+    const sync = () => setMobileLayout(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+  useEffect(() => {
+    if (!mobileLayout) setMobileNavOpen(false);
+  }, [mobileLayout]);
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     try {
@@ -111,7 +129,7 @@ function RootShell() {
   const inboxCount = summaryQ.data?.proposals.total;
 
   // Copilot 开启：CopilotDock 自带的 in-flow trigger（data-testid
-  // copilot-drawer-trigger，调用其 dwell openDrawer）经 .shell-copilot-mount CSS
+  // copilot-drawer-trigger，调用其 explicit openDrawer）经 .shell-copilot-mount CSS
   // 隐藏（web/src/globals.css L5997-6000，原为本壳预留的 dead CSS）；侧栏 / topbar
   // 的 Copilot 按钮以编程方式点击该隐藏 trigger 走既有 dock-open 路径，不造新机制。
   const copilotMountRef = useRef<HTMLDivElement | null>(null);
@@ -151,6 +169,7 @@ function RootShell() {
         pathname={pathname}
         navigate={navigate}
         mobileOpen={mobileNavOpen}
+        mobileLayout={mobileLayout}
         onOpenCopilot={openCopilot}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
@@ -158,7 +177,7 @@ function RootShell() {
         inboxCount={inboxCount}
       />
 
-      <div className="main">
+      <ShellMain blockedByModal={mobileNavOpen}>
         <AppTopbar
           pathname={pathname}
           onOpenMobileNav={() => setMobileNavOpen(true)}
@@ -168,7 +187,7 @@ function RootShell() {
           onOpenCopilot={openCopilot}
         />
         <Outlet />
-      </div>
+      </ShellMain>
 
       <MobileTabBar
         pathname={pathname}
@@ -176,15 +195,14 @@ function RootShell() {
         onOpenMobileNav={() => setMobileNavOpen(true)}
       />
 
-      {/* CopilotDock 根挂（保留既有实例 + dwell + navigate/pathname 接线）。
+      {/* CopilotDock 根挂（保留既有实例 + explicit-open + navigate/pathname 接线）。
           .shell-copilot-mount 隐藏其 in-flow trigger；drawer 本身 fixed 渲到根。 */}
       <div ref={copilotMountRef} className="shell-copilot-mount">
         <CopilotDock pathname={pathname} navigate={navigate} />
       </div>
 
-      {/* S14 (YUK-335) — ⌘K 命令面板，消费 S13 铺好的 paletteOpen seam（⌘K toggle
-          + searchbox 点击都 set paletteOpen）。组件 fixed 渲到根（scrim 全屏）；
-          页面组复用 nav-config，知识节点走 /api/knowledge fetch。 */}
+      {/* S14/YUK-329 — ⌘K 命令面板消费 paletteOpen seam。组件 fixed 渲到根；
+          页面组投影 shipped surface inventory，知识节点走 /api/knowledge fetch。 */}
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
@@ -200,9 +218,9 @@ const rootRoute = createRootRoute({ component: RootShell });
 // 该页仍在路由表）。
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/',
+  path: surfacePath('root'),
   beforeLoad: () => {
-    throw redirect({ to: '/today' });
+    throw redirect({ to: surfacePath('today') });
   },
 });
 
@@ -214,7 +232,7 @@ function TodayRoute() {
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/today',
+  path: surfacePath('today'),
   component: TodayRoute,
 });
 
@@ -230,7 +248,7 @@ function WelcomeRoute() {
 
 const welcomeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/welcome',
+  path: surfacePath('welcome'),
   component: WelcomeRoute,
 });
 
@@ -241,7 +259,7 @@ function OnboardingUploadRoute() {
 
 const onboardingUploadRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/onboarding/upload',
+  path: surfacePath('onboarding-upload'),
   component: OnboardingUploadRoute,
 });
 
@@ -252,7 +270,7 @@ function PlacementRoute() {
 
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/placement',
+  path: surfacePath('placement'),
   component: PlacementRoute,
 });
 
@@ -265,7 +283,7 @@ function ProfileRoute() {
 
 const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/profile',
+  path: surfacePath('profile'),
   component: ProfileRoute,
 });
 
@@ -276,7 +294,7 @@ function InboxRoute() {
 
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/inbox',
+  path: surfacePath('inbox'),
   component: InboxRoute,
 });
 
@@ -290,21 +308,37 @@ function MistakesRoute() {
 
 const mistakesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/mistakes',
+  path: surfacePath('mistakes'),
   component: MistakesRoute,
 });
 
 function AgentNotesRoute() {
   const router = useRouter();
-  // history.push 绕开 TanStack 的字面量路由类型——agent-notes 卡片的证据链接
-  // 指向 /events、/knowledge/* 等尚未在 SPA 登记的 surface（M3/M4 落地前 404 属预期）。
   return <AgentNotesPage navigate={(to) => router.history.push(to)} />;
 }
 
 const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/agent-notes',
+  path: surfacePath('agent-notes'),
   component: AgentNotesRoute,
+});
+
+function EventDetailRouteC() {
+  const router = useRouter();
+  const { id } = eventDetailRoute.useParams();
+  return (
+    <EventDetailPage
+      id={id}
+      navigate={(to) => router.history.push(to)}
+      onBack={() => router.history.back()}
+    />
+  );
+}
+
+const eventDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: surfacePath('event-detail'),
+  component: EventDetailRouteC,
 });
 
 // M1-T6 (YUK-314) — 录入面。query 读写直接走 window.location + history.replace：
@@ -330,7 +364,7 @@ function RecordRoute() {
 
 const recordRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/record',
+  path: surfacePath('record'),
   component: RecordRoute,
 });
 
@@ -356,7 +390,7 @@ function PracticeRoute() {
 
 const practiceRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/practice',
+  path: surfacePath('practice'),
   component: PracticeRoute,
 });
 
@@ -370,7 +404,7 @@ function DraftReviewRoute() {
 
 const draftsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/drafts',
+  path: surfacePath('drafts'),
   component: DraftReviewRoute,
 });
 
@@ -386,7 +420,7 @@ function QuestionsRoute() {
 
 const questionsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/questions',
+  path: surfacePath('questions'),
   component: QuestionsRoute,
 });
 
@@ -398,7 +432,7 @@ function QuestionDetailRouteC() {
 
 const questionDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/questions/$id',
+  path: surfacePath('question-detail'),
   component: QuestionDetailRouteC,
 });
 
@@ -410,7 +444,7 @@ function KnowledgeIndexRoute() {
 
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/knowledge',
+  path: surfacePath('knowledge'),
   component: KnowledgeIndexRoute,
 });
 
@@ -422,7 +456,7 @@ function KnowledgeDetailRouteC() {
 
 const knowledgeDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/knowledge/$id',
+  path: surfacePath('knowledge-detail'),
   component: KnowledgeDetailRouteC,
 });
 
@@ -435,7 +469,7 @@ function NoteReaderRouteC() {
 
 const noteReaderRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/notes/$id',
+  path: surfacePath('note-detail'),
   component: NoteReaderRouteC,
 });
 
@@ -450,7 +484,7 @@ function CoachRoute() {
 
 const coachRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/coach',
+  path: surfacePath('coach'),
   component: CoachRoute,
 });
 
@@ -461,7 +495,7 @@ function AdminRunsRoute() {
 
 const adminRunsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/runs',
+  path: surfacePath('admin-runs'),
   component: AdminRunsRoute,
 });
 
@@ -472,7 +506,7 @@ function AdminCostRoute() {
 
 const adminCostRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/cost',
+  path: surfacePath('admin-cost'),
   component: AdminCostRoute,
 });
 
@@ -483,7 +517,7 @@ function AdminFailuresRoute() {
 
 const adminFailuresRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/failures',
+  path: surfacePath('admin-failures'),
   component: AdminFailuresRoute,
 });
 
@@ -494,7 +528,7 @@ function AdminSubjectsRoute() {
 
 const adminSubjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/subjects',
+  path: surfacePath('admin-subjects'),
   component: AdminSubjectsRoute,
 });
 
@@ -508,7 +542,7 @@ function AdminSubjectTraitsRoute() {
 
 const adminSubjectTraitsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/subjects/$id',
+  path: surfacePath('admin-subject-detail'),
   component: AdminSubjectTraitsRoute,
 });
 
@@ -520,7 +554,7 @@ function AdminCoverageLatticeRoute() {
 
 const adminCoverageLatticeRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/coverage-lattice',
+  path: surfacePath('admin-coverage-lattice'),
   component: AdminCoverageLatticeRoute,
 });
 
@@ -530,7 +564,7 @@ function AdminConjectureScoresRoute() {
 }
 const adminConjectureScoresRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/admin/conjecture-scores',
+  path: surfacePath('admin-conjecture-scores'),
   component: AdminConjectureScoresRoute,
 });
 
@@ -544,6 +578,7 @@ const routeTree = rootRoute.addChildren([
   inboxRoute,
   mistakesRoute,
   agentNotesRoute,
+  eventDetailRoute,
   recordRoute,
   practiceRoute,
   draftsRoute,

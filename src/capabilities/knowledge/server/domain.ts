@@ -1,6 +1,6 @@
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { resolveKnownSubjectId } from '@/subjects/profile';
+import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
 import { eq, isNull } from 'drizzle-orm';
 
 const MAX_DEPTH = 32; // 防 cycle
@@ -42,8 +42,8 @@ export async function getEffectiveDomain(db: Db | Tx, nodeId: string): Promise<s
 }
 
 /**
- * Forward map: subject profile id → the set of active knowledge node ids whose
- * effective domain resolves to that subject. This is the derived-axis primitive
+ * Forward map: registered subject profile id OR an observed raw domain → the set of active
+ * knowledge node ids whose effective domain matches that identity. This is the derived-axis primitive
  * behind `GET /api/questions?subject=` (YUK-288): a question's subject is a
  * DERIVED join through `question.knowledge_ids → knowledge.(effective)domain →
  * resolveSubjectProfile.id`, never a column on `question` (subject 模型终版第 2 条
@@ -63,16 +63,18 @@ export async function getEffectiveDomain(db: Db | Tx, nodeId: string): Promise<s
 export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promise<string[]> {
   // YUK-603 (v2 contract §5.4) — canonicalize the PARAM once up front. The per-row compare
   // below resolves each node's effective domain to its CANONICAL subject id, so comparing it
-  // against the raw param made every alias arg ('wenyan') miss everything. An unknown label
-  // canonicalizes to null → no node can match → [] (same shape as before, now by construction).
+  // against the raw param made every alias arg ('wenyan') miss everything. YUK-628：如果请求
+  // 的是注册表尚不认识、但知识树真实拥有的 domain，则保留规范化 raw key 做精确匹配；
+  // 它是诚实读轴，不会把该 domain 注册成 profile。
   const canonical = resolveKnownSubjectId(subject);
-  if (canonical === null) return [];
+  const rawKey = normalizeSubjectKey(subject);
+  if (!rawKey) return [];
   // The synthetic seed root ('seed:<subject>:root', domain = the subject id itself) SELF-matches
   // and used to leak into every resolution — day-one that made the "subject KC set" non-empty
   // ([root]) and armed the goal scope-freeze bug. "科目的 KC 集" = content child KCs only; the
   // root is a structural anchor. Exclusion is by ID PATTERN, not `parent_id IS NULL` — 3a
   // runtime topic roots (newId + parent_id null) are genuine content and must stay.
-  const syntheticRootId = `seed:${canonical}:root`;
+  const syntheticRootId = `seed:${canonical ?? rawKey}:root`;
 
   const rows = await db
     .select({
@@ -109,14 +111,16 @@ export async function resolveSubjectKnowledgeIds(db: Db, subject: string): Promi
     // that profile (legacy wenyan / classical_chinese → yuwen) — alias-aware
     // where the bare-equality precedent (tagging.ts:122) is not.
     //
-    // YUK-288 over-match fix: we use resolveKnownSubjectId (NOT resolveSubjectProfile),
-    // which returns null for a null effective domain OR an unrecognised string
-    // instead of falling back to the DEFAULT profile. Without this, every
-    // untagged-up-the-whole-chain node and every unknown-domain node resolved to
-    // the sample subject and was swept into its `?subject=` tab, conflating
-    // "genuinely subject-tagged" with "untagged / unknown-domain". A null result
-    // matches no subject.
-    if (resolveKnownSubjectId(domain) === canonical) matched.push(row.id);
+    // YUK-288 over-match fix: known subjects compare through resolveKnownSubjectId (NOT
+    // resolveSubjectProfile), so null/unknown domains never fall into the DEFAULT profile.
+    // YUK-628 adds a separate exact-raw branch only when the requested identity itself is
+    // unregistered. Thus `?subject=yuwen` cannot sweep unknown nodes, while
+    // `?subject=yingyu` can honestly select nodes whose real domain is exactly yingyu.
+    if (canonical !== null) {
+      if (resolveKnownSubjectId(domain) === canonical) matched.push(row.id);
+    } else if (domain !== null && normalizeSubjectKey(domain) === rawKey) {
+      matched.push(row.id);
+    }
   }
   return matched;
 }

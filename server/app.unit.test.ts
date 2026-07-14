@@ -42,6 +42,18 @@ describe('buildHonoApp', () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it('serves /api/auth/check only after token validation', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability]);
+
+    expect((await app.request('/api/auth/check')).status).toBe(401);
+    const valid = await app.request('/api/auth/check', {
+      headers: { 'x-internal-token': 'test-token' },
+    });
+    expect(valid.status).toBe(200);
+    expect(await valid.json()).toEqual({ ok: true });
+  });
+
   it('rejects a mounted route without the token', async () => {
     vi.stubEnv('INTERNAL_TOKEN', 'test-token');
     const app = buildHonoApp([fakeCapability]);

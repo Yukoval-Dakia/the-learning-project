@@ -197,7 +197,7 @@ function ProfileBody({
       <p className="ob-prof-narr ob-rise">{narrative}</p>
       <div className="ob-prof-honest ob-rise">
         <LoomIcon name="alert" size={13} />
-        基于 {testedCount} 个知识点的<b style={{ margin: '0 3px' }}>初步信念</b> ·
+        基于 {testedCount} 个知识点的<b style={{ margin: '0 3px' }}>初步判断</b> ·
         多数还需更多练习确认，下面把不确定一并摆出来
       </div>
 
@@ -234,7 +234,7 @@ function ProfileBody({
           </span>
           <span>
             <i style={{ background: 'var(--coral)', width: 8, height: 14, borderRadius: 6 }} />
-            标记 = 当前最可能值 p(L)
+            标记 = 当前最可能的位置
           </span>
           <span>
             <i style={{ background: 'color-mix(in oklab, var(--ink-4) 20%, transparent)' }} />
@@ -265,7 +265,7 @@ function ProfileShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="page ob-prof">
       <div className="page-head">
-        <div className="eyebrow">PROFILE · per-KC mastery_state · SE = 1/√precision</div>
+        <div className="eyebrow">起始画像 · 当前掌握判断</div>
         <ObSteps active="profile" />
         <div className="page-head-row">
           <h1 className="page-title serif">我们现在怎么看你</h1>
@@ -338,9 +338,7 @@ function KcRow({
       <div className="ob-kc-conf">
         {verdict && <RcKcChip state={rcState} kind={verdict.kind} />}
         <span className={`ob-conf-pill t-${conf}`}>{CONF_LABEL[conf]}</span>
-        <span className="ob-kc-ev">
-          {untested ? '0 题' : `${kc.evidence_count} 题 · SE ${(kc.theta_se ?? 0).toFixed(2)}`}
-        </span>
+        <span className="ob-kc-ev">{untested ? '0 题' : `${kc.evidence_count} 题记录`}</span>
       </div>
     </div>
   );

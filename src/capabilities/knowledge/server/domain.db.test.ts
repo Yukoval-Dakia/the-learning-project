@@ -134,4 +134,17 @@ describe('resolveSubjectKnowledgeIds (synthetic-root exclusion + canonicalizatio
       .values({ id: 'kc1', name: 'k', domain: 'yuwen', parent_id: null, ...base });
     expect(await resolveSubjectKnowledgeIds(db, 'no_such_subject')).toEqual([]);
   });
+
+  it('an observed unconfigured domain resolves by exact normalized raw identity', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values([
+      { id: 'english-root', name: 'English', domain: 'YINGYU', parent_id: null, ...base },
+      { id: 'english-child', name: 'Grammar', domain: null, parent_id: 'english-root', ...base },
+      { id: 'nearby', name: 'Other', domain: 'yingyu-extra', parent_id: null, ...base },
+      { id: 'untagged', name: 'None', domain: null, parent_id: null, ...base },
+    ]);
+    expect(new Set(await resolveSubjectKnowledgeIds(db, ' yingyu '))).toEqual(
+      new Set(['english-root', 'english-child']),
+    );
+  });
 });

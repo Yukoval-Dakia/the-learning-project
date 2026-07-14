@@ -26,6 +26,8 @@ export interface AppSidebarProps {
   navigate: (to: string) => void;
   /** 移动端 drawer 是否打开（加 `.open`）。 */
   mobileOpen: boolean;
+  /** 当前是否处在移动端布局；关闭的离屏 rail 必须退出读屏与 Tab 顺序。 */
+  mobileLayout: boolean;
   /** 打开 Copilot dock（RootShell 接到 CopilotDock 的隐藏 trigger）。 */
   onOpenCopilot: () => void;
   /** 当前主题（'light' | 'dark'）；驱动 sun/moon 图标。 */
@@ -42,6 +44,7 @@ export function AppSidebar({
   pathname,
   navigate,
   mobileOpen,
+  mobileLayout,
   onOpenCopilot,
   theme,
   onToggleTheme,
@@ -51,8 +54,8 @@ export function AppSidebar({
   const active = activeFromPath(pathname);
 
   // 作为移动 drawer 打开时，trap focus 在 rail 内 + Esc 关闭（a11y）。桌面端是
-  // 常驻 rail（mobileOpen 恒 false）时 inert。Esc 经与 scrim / nav 点击同一 close
-  // 路径关闭。
+  // 常驻 rail（mobileOpen 恒 false）时仍可交互。Esc 经与 scrim / nav 点击同一
+  // close 路径关闭。
   const sidebarRef = useRef<HTMLElement | null>(null);
   const close = useCallback(() => onNavigated?.(), [onNavigated]);
   useFocusTrap(mobileOpen, close, sidebarRef);
@@ -65,7 +68,15 @@ export function AppSidebar({
   const themeIcon: LoomIconName = theme === 'light' ? 'moon' : 'sun';
 
   return (
-    <aside ref={sidebarRef} className={`sidebar${mobileOpen ? ' open' : ''}`}>
+    <aside
+      ref={sidebarRef}
+      className={`sidebar${mobileOpen ? ' open' : ''}`}
+      inert={mobileLayout && !mobileOpen}
+      aria-hidden={mobileLayout && !mobileOpen ? true : undefined}
+      role={mobileLayout && mobileOpen ? 'dialog' : undefined}
+      aria-modal={mobileLayout && mobileOpen ? true : undefined}
+      aria-label={mobileLayout && mobileOpen ? '主导航' : undefined}
+    >
       {/* brand 点击 → /today（SPA 默认面；区别于 M5 拆除旧壳回退 /mistakes）。 */}
       <button type="button" className="brand" onClick={() => go('/today')}>
         <span className="brand-mark">

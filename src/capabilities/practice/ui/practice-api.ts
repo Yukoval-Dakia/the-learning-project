@@ -35,13 +35,20 @@ export interface StreamItem {
   source: StreamSource;
   reasoning: string;
   status: StreamStatus;
+  estimated_minutes: number;
 }
 
 export interface StreamView {
   date: string;
   opening_line: string;
   items: StreamItem[];
-  progress: { done: number; total: number };
+  budget: { pace: 'light' | 'medium' | 'dense'; minutes: number };
+  progress: {
+    done: number;
+    total: number;
+    estimated_total_minutes: number;
+    estimated_remaining_minutes: number;
+  };
 }
 
 export const getStream = () => apiJson<StreamView>('/api/practice/stream?date=today');
@@ -71,6 +78,14 @@ export interface QuestionDetail {
 
 export const getQuestion = (id: string) =>
   apiJson<QuestionDetail>(`/api/questions/${encodeURIComponent(id)}`);
+
+export interface QuestionKnowledgeOption {
+  id: string;
+  name: string;
+}
+
+export const getQuestionKnowledgeOptions = () =>
+  apiJson<{ rows: QuestionKnowledgeOption[] }>('/api/knowledge');
 
 // ── 题详情面 /questions/:id（YUK-413, loom screen-question-detail）─────────────
 // GET /api/questions/:id 的完整聚合（src/server/questions/detail.ts QuestionDetail）。
@@ -390,6 +405,11 @@ export interface QBankListResult {
   families: unknown | null; // 题库面不走 group_by_family，恒 null。
   total: number;
   truncated: boolean;
+  page: {
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  };
   computed_at_sec: number;
 }
 
@@ -398,27 +418,42 @@ export interface QBankListFilters {
   subject?: string;
   source?: string;
   kind?: string; // canonical QuestionKind（choice/reading/computation...）。
-  difficulty?: number; // 1-5
+  difficulties?: number[]; // repeated 1-5, OR semantics.
   knowledgeIds?: string[];
   includeDrafts?: boolean; // 题库面默认 true（状态 tab 需草稿全集 → client 按 draft_status 分）。
+  status?: 'all' | 'active' | 'draft';
+  search?: string;
+  sortBy?: 'created_at' | 'difficulty';
+  sortDir?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }
 
-export const getQuestionsList = (filters: QBankListFilters = {}) => {
+export function buildQuestionsListQuery(filters: QBankListFilters = {}): string {
   const sp = new URLSearchParams();
   // 题库 UI 唯一走默认 flat list 路径 → 总带 enrich=true 拉 subject/labels/children。
   sp.set('enrich', 'true');
   if (filters.subject) sp.set('subject', filters.subject);
   if (filters.source) sp.set('source', filters.source);
   if (filters.kind) sp.set('kind', filters.kind);
-  if (filters.difficulty != null) sp.set('difficulty', String(filters.difficulty));
+  for (const d of filters.difficulties ?? []) sp.append('difficulty', String(d));
   for (const k of filters.knowledgeIds ?? []) sp.append('knowledge_id', k);
   if (filters.includeDrafts) sp.set('include_drafts', 'true');
-  if (filters.limit != null) sp.set('limit', String(filters.limit));
-  if (filters.offset != null) sp.set('offset', String(filters.offset));
-  return apiJson<QBankListResult>(`/api/questions?${sp.toString()}`);
-};
+  if (filters.status) sp.set('status', filters.status);
+  if (filters.search?.trim()) sp.set('search', filters.search.trim());
+  if (filters.sortBy) sp.set('sort_by', filters.sortBy);
+  if (filters.sortDir) sp.set('sort_dir', filters.sortDir);
+  if (filters.limit != null && Number.isFinite(filters.limit) && filters.limit > 0) {
+    sp.set('limit', String(Math.trunc(filters.limit)));
+  }
+  if (filters.offset != null && Number.isFinite(filters.offset) && filters.offset >= 0) {
+    sp.set('offset', String(Math.trunc(filters.offset)));
+  }
+  return sp.toString();
+}
+
+export const getQuestionsList = (filters: QBankListFilters = {}) =>
+  apiJson<QBankListResult>(`/api/questions?${buildQuestionsListQuery(filters)}`);
 
 // ── 卷（papers list / detail / 草稿 / 逐题提交 / 会话） ─────────
 export interface PaperListItem {

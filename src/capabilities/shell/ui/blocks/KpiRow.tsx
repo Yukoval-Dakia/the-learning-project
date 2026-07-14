@@ -4,7 +4,6 @@
 
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
-import { useCountUp } from '@/ui/primitives/useCountUp';
 
 interface Kpi {
   key: string;
@@ -15,8 +14,7 @@ interface Kpi {
   onGo: () => void;
 }
 
-function KpiCard({ kpi, active }: { kpi: Kpi; active: boolean }) {
-  const v = useCountUp(kpi.value, { start: active, dur: 1000 });
+function KpiCard({ kpi }: { kpi: Kpi }) {
   return (
     <LoomCard
       pad
@@ -35,7 +33,7 @@ function KpiCard({ kpi, active }: { kpi: Kpi; active: boolean }) {
         <LoomIcon name={kpi.icon} size={14} />
         {kpi.label}
       </div>
-      <div className="kpi-val tnum">{Math.round(v)}</div>
+      <div className="kpi-val tnum">{kpi.value}</div>
       <div className="kpi-foot kpi-sub">{kpi.sub}</div>
       <LoomIcon name="arrow" size={15} className="kpi-go" />
     </LoomCard>
@@ -45,17 +43,13 @@ function KpiCard({ kpi, active }: { kpi: Kpi; active: boolean }) {
 export function KpiRow({
   kpi,
   proposalsTotal,
-  active,
   navigate,
-  onPlaceholder,
 }: {
   kpi: { due_count: number; pending_attribution_count: number; knowledge_count: number };
   // 第 4 卡数据源 /api/workbench/summary proposals.total（KPI 网格 4 列，第 4 列
   // 原恒空——「AI 提议·待审」最高优先级信号从 KPI 层缺席，audit §3.2 HIGH）。
   proposalsTotal: number;
-  active: boolean;
   navigate: (to: string) => void;
-  onPlaceholder: (text: string) => void;
 }) {
   const cards: Kpi[] = [
     {
@@ -63,7 +57,7 @@ export function KpiRow({
       label: '今日到期',
       icon: 'review',
       value: kpi.due_count,
-      sub: 'FSRS 排程的复习项',
+      sub: '按复习间隔排入的项目',
       onGo: () => navigate('/practice'),
     },
     {
@@ -72,7 +66,7 @@ export function KpiRow({
       icon: 'mistakes',
       value: kpi.pending_attribution_count,
       sub: '等待归因的学习记录',
-      onGo: () => onPlaceholder('错题本随 M5 收编后接通——归因入口暂在旧页。'),
+      onGo: () => navigate('/mistakes'),
     },
     {
       key: 'knowledge',
@@ -94,7 +88,7 @@ export function KpiRow({
   return (
     <div className="kpi-row stagger" style={{ marginTop: 'var(--s-5)' }}>
       {cards.map((k) => (
-        <KpiCard key={k.key} kpi={k} active={active} />
+        <KpiCard key={k.key} kpi={k} />
       ))}
     </div>
   );

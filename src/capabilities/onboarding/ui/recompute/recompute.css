@@ -240,7 +240,7 @@
 .rc-ledger-head,
 .rc-ledger-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 54px minmax(0, 0.9fr) 50px 64px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 72px minmax(0, 0.9fr) 64px;
   gap: var(--s-2);
   align-items: center;
   padding: 6px 4px;

@@ -19,8 +19,8 @@ import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { AgentNoteCard } from './AgentNoteCard';
-import { dayGroupOf } from './derive';
+import { AgentNoteGroupCard } from './AgentNoteGroupCard';
+import { type AgentNoteGroup, dayGroupOf, groupAgentNotes } from './derive';
 import { SIGNAL_META, signalMeta } from './meta';
 import type { AgentNotesResponse, BoardAgentNote } from './types';
 import { useAgentReads } from './useAgentReads';
@@ -55,19 +55,21 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
   const signalOrder = [...known, ...unknown];
 
   const notes = filter === 'all' ? all : all.filter((n) => n.signal_kind === filter);
+  const allGroups = groupAgentNotes(all);
+  const noteGroups = groupAgentNotes(notes);
   const unread = unreadCount(all);
   const agentsActive = new Set(all.flatMap((n) => [n.source_task_kind, ...n.target_agents])).size;
 
   // Group by real local calendar day (newest-first; today / 昨天 / 更早).
-  const groups: Array<{ label: string; items: BoardAgentNote[] }> = [];
-  for (const n of notes) {
-    const { label } = dayGroupOf(n.created_at, now);
+  const groups: Array<{ label: string; items: AgentNoteGroup[] }> = [];
+  for (const group of noteGroups) {
+    const { label } = dayGroupOf(group.latest.created_at, now);
     let g = groups.find((x) => x.label === label);
     if (!g) {
       g = { label, items: [] };
       groups.push(g);
     }
-    g.items.push(n);
+    g.items.push(group);
   }
 
   return (
@@ -78,19 +80,19 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
       </button>
       <div className="page-head">
         <div className="eyebrow">
-          <span className="dot-sep">●</span>OBSERVE · experimental:agent_note
+          <span className="dot-sep">●</span>AI 协作观察 · 只读
         </div>
         <h1 className="page-title serif">AI 之间的观察</h1>
         <p className="page-lead">
-          各 AI task
-          给彼此留的观察信号：谁发现了什么、想让谁去补。你只读旁观，无需裁决；过期信号会自动消失。
+          各项 AI
+          工作给彼此留的观察：谁发现了什么、想让谁去补。你只读旁观，无需裁决；过期信号会自动消失。
         </p>
       </div>
 
       <Stateful
         status={state}
         onRetry={() => q.refetch()}
-        errorText="无法读取 agent 观察信号。"
+        errorText="无法读取 AI 观察信号。"
         skeleton={
           <LoomCard pad>
             <SkLines rows={4} />
@@ -101,7 +103,11 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
             icon="eye"
             title="暂无观察信号"
             text="AI 们目前没有互留新的观察。新的信号会在夜间推理与日常运行后出现。"
-            futureTag="即将接入：对话 agent 误解检测 · 录入 agent 切题反复"
+            action={
+              <Btn variant="secondary" icon="quiz" onClick={() => navigate('/practice')}>
+                开始练习
+              </Btn>
+            }
           />
         }
       >
@@ -110,7 +116,11 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
             <div className="an-ov-stat">
               <span className="an-ov-n serif tnum">{all.length}</span>
               <span className="an-ov-lab">
-                活跃信号<span className="meta"> · 涉及 {agentsActive} 个 agent · 只读</span>
+                活跃观察
+                <span className="meta">
+                  {' '}
+                  · 聚合为 {allGroups.length} 个主题 · 涉及 {agentsActive} 项 AI 工作
+                </span>
               </span>
             </div>
             {unread > 0 && (
@@ -142,18 +152,19 @@ export default function AgentNotesPage({ navigate }: { navigate: (to: string) =>
               );
             })}
           </div>
+          <p className="meta an-overview-note">重复观察已合并；已过期信号会自动隐藏。</p>
         </LoomCard>
 
         {groups.map((g) => (
           <div key={g.label}>
-            <SectionLabel count={`${g.items.length} 条`}>{g.label}</SectionLabel>
+            <SectionLabel count={`${g.items.length} 组`}>{g.label}</SectionLabel>
             <LoomCard pad>
-              <div className="an-feed">
-                {g.items.map((n) => (
-                  <AgentNoteCard
-                    key={n.id}
-                    note={n}
-                    unread={isUnread(n)}
+              <div className="an-group-feed">
+                {g.items.map((group) => (
+                  <AgentNoteGroupCard
+                    key={group.key}
+                    group={group}
+                    unread={group.notes.some((note) => isUnread(note))}
                     now={now}
                     onNavigate={(route) => navigate(route)}
                   />

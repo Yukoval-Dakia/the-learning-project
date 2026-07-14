@@ -32,15 +32,15 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { useCountUp } from '@/ui/primitives/useCountUp';
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useRef, useState } from 'react';
 import { CoachCalibrationView } from './CoachCalibrationView';
 import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
+import { browserTimeZone, weeklyReviewPath } from './coach-weekly';
 
 interface WeeklyResponse {
-  window: { days: number; from: number; to: number };
+  window: { days: number; from: number; to: number; time_zone: string };
   totals: { reviews: number; failures: number; cost_usd: number };
   ratings: { again: number; hard: number; good: number; easy: number };
   daily: Array<{ date: string; count: number; correct: number }>;
@@ -69,24 +69,22 @@ const CAUSE_LABELS: Record<string, string> = {
   other: '其它',
 };
 
-// Loom CoachKpi — animated count-up KPI (screen-coach.jsx L2-6).
-function CoachKpi({
+// Activity KPIs render their authoritative values directly; intermediate count-up
+// integers would be indistinguishable from real report facts.
+export function CoachKpi({
   label,
   value,
   unit,
   prefix,
-  active,
   decimals = 0,
 }: {
   label: string;
   value: number;
   unit?: string;
   prefix?: string;
-  active: boolean;
   decimals?: number;
 }) {
-  const v = useCountUp(value, { start: active, dur: 900, decimals });
-  const shown = decimals > 0 ? v.toFixed(decimals) : Math.round(v);
+  const shown = decimals > 0 ? value.toFixed(decimals) : Math.round(value);
   return (
     <div className="coach-kpi">
       <div className="coach-kpi-n serif tnum">
@@ -102,34 +100,44 @@ function CoachKpi({
 // 三视图 lede（含 JSX，故不入 coach-hub-view.ts）。逐字 PORT 自设计 VIEW_LEDE：校准（横截面「多准」）
 // 与成效（纵向「涨没涨」）互文「正交」；活动量把「周报」收编为时间窗、不再当整个 Coach 的名字。
 const VIEW_LEDE: Record<CoachView, ReactNode> = {
-  activity: (
-    <span>
-      活动量答「我练了多少、对了几道」—— FSRS 复习的<b>活动报表</b>。「周报」就是这里的时间窗，
-      不再是整个 Coach 的名字。
-    </span>
-  ),
-  calibration: (
-    <span>
-      校准诊断答「我现在这块<b>会不会、多可信</b>」—— 横截面 θ̂/p(L) 点估计 + 置信。 和右边的成效趋势
-      <b>正交</b>：这一面看「准不准」。
-    </span>
-  ),
-  efficacy: (
-    <span>
-      成效趋势答「相比上次，<b>我涨了吗</b>」—— 纵向 delta、相对你自己的轨迹。 和左边的校准诊断
-      <b>正交</b>：这一面看「涨没涨」。
-    </span>
-  ),
+  activity: <span>这里汇总你在所选时间内练了多少、完成了多少，以及答题结果。</span>,
+  calibration: <span>这里看系统对各知识点掌握状态的判断有多可靠；依据不足时会明确标出。</span>,
+  efficacy: <span>这里比较你最近和过去的表现，只给方向，不把小样本变化说成精确进步。</span>,
 };
 
 // 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
 export default function CoachHub({ navigate }: { navigate: (to: string) => void }) {
   const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
+  const tabRefs = useRef<Record<CoachView, HTMLButtonElement | null>>({
+    activity: null,
+    calibration: null,
+    efficacy: null,
+  });
+  const selectView = (next: CoachView, focus = false) => {
+    setView(next);
+    if (focus) tabRefs.current[next]?.focus();
+  };
+  const onViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: CoachView) => {
+    const index = COACH_VIEWS.findIndex((candidate) => candidate.id === current);
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      nextIndex = (index - 1 + COACH_VIEWS.length) % COACH_VIEWS.length;
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      nextIndex = (index + 1) % COACH_VIEWS.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = COACH_VIEWS.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    selectView(COACH_VIEWS[nextIndex].id, true);
+  };
   // hubGo：把姊妹面跳转改写成切 tab（calibration / efficacy / coach → setView，不离场），其余真实路由
   // 透传 navigate。设计 screen-coach-hub.jsx hubGo 的等价物（同屏切换、校准 ⟂ 成效不离场）。
   const hubGo = (to: string) => {
-    if (to === 'calibration') setView('calibration');
-    else if (to === 'efficacy' || to === 'coach') setView('efficacy');
+    if (to === 'calibration') selectView('calibration');
+    else if (to === 'efficacy' || to === 'coach') selectView('efficacy');
     else navigate(to);
   };
 
@@ -137,19 +145,26 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
     <main className="page view coach-loom coachhub">
       <div className="page-head coachhub-head">
         <div className="eyebrow">
-          COACH · 复盘中枢 · <span className="mono">{VIEW_QUERY[view]}</span>
+          复盘 · <span>{VIEW_QUERY[view]}</span>
         </div>
         <div className="page-head-row">
           <h1 className="page-title serif">Coach 复盘中枢</h1>
-          <div className="coachhub-tabs" role="tablist" aria-label="三个正交视图">
+          <div className="coachhub-tabs" role="tablist" aria-label="复盘视图">
             {COACH_VIEWS.map((v) => (
               <button
                 key={v.id}
+                ref={(node) => {
+                  tabRefs.current[v.id] = node;
+                }}
+                id={`coach-tab-${v.id}`}
                 type="button"
                 role="tab"
                 aria-selected={view === v.id}
+                aria-controls={`coach-panel-${v.id}`}
+                tabIndex={view === v.id ? 0 : -1}
                 className={view === v.id ? 'coachhub-tab on' : 'coachhub-tab'}
-                onClick={() => setView(v.id)}
+                onClick={() => selectView(v.id)}
+                onKeyDown={(event) => onViewKeyDown(event, v.id)}
               >
                 <LoomIcon name={v.icon} size={15} />
                 {v.label}
@@ -160,9 +175,16 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
         <p className="page-lead">{VIEW_LEDE[view]}</p>
       </div>
 
-      {view === 'activity' && <CoachActivityView navigate={hubGo} />}
-      {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
-      {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
+      <section
+        id={`coach-panel-${view}`}
+        role="tabpanel"
+        aria-labelledby={`coach-tab-${view}`}
+        className="coachhub-panel"
+      >
+        {view === 'activity' && <CoachActivityView navigate={hubGo} />}
+        {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
+        {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
+      </section>
     </main>
   );
 }
@@ -171,15 +193,11 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
 // page-head 让给复盘中枢壳；时间窗 seg 下沉到 coachhub-subhead（设计 CoachActivity 形态）。
 function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   const [days, setDays] = useState<Window>(7);
-  // Count-up animations: useCountUp(start: true) already animates 0→target on
-  // mount, and `key={days}` below remounts CoachReport on window change. The
-  // former rAF false→true toggle caused a one-frame final-value flash before
-  // replaying (CodeRabbit, PR #294).
-  const active = true;
+  const timeZone = browserTimeZone();
 
   const q = useQuery({
-    queryKey: ['weekly-review', days],
-    queryFn: () => apiJson<WeeklyResponse>(`/api/review/weekly?days=${days}`),
+    queryKey: ['weekly-review', days, timeZone],
+    queryFn: () => apiJson<WeeklyResponse>(weeklyReviewPath(days, timeZone)),
   });
 
   // Empty only when the window has NO signal at all — a failure-only window
@@ -197,20 +215,19 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   return (
     <>
       <div className="coachhub-subhead">
-        <div className="seg" role="tablist" aria-label="时间窗 · 周报">
+        <fieldset className="seg" aria-label="时间窗 · 周报">
           {WINDOW_OPTIONS.map((opt) => (
             <button
               key={opt.days}
               type="button"
-              role="tab"
-              aria-selected={days === opt.days}
+              aria-pressed={days === opt.days}
               className={days === opt.days ? 'on' : ''}
               onClick={() => setDays(opt.days)}
             >
               {opt.label}
             </button>
           ))}
-        </div>
+        </fieldset>
         <span className="meta">「周报」= 近 {days} 天的活动量，不是整个 Coach。</span>
       </div>
 
@@ -225,9 +242,7 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
         }
         empty={<EmptyState icon="target" title="窗口内无数据" text="该时间窗内还没有复习记录。" />}
       >
-        {q.data ? (
-          <CoachReport key={days} data={q.data} active={active} navigate={navigate} />
-        ) : null}
+        {q.data ? <CoachReport key={days} data={q.data} navigate={navigate} /> : null}
       </Stateful>
     </>
   );
@@ -235,11 +250,9 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
 
 function CoachReport({
   data,
-  active,
   navigate,
 }: {
   data: WeeklyResponse;
-  active: boolean;
   navigate: (to: string) => void;
 }) {
   const { totals, ratings, daily, top_causes, top_knowledge } = data;
@@ -253,10 +266,10 @@ function CoachReport({
   return (
     <>
       <div className="coach-kpis stagger">
-        <CoachKpi label="reviews" value={totals.reviews} active={active} />
-        <CoachKpi label="正确率" value={correctRate} unit="%" active={active} />
-        <CoachKpi label="新增错题" value={totals.failures} active={active} />
-        <CoachKpi label="AI 成本" value={totals.cost_usd} prefix="$" active={active} decimals={3} />
+        <CoachKpi label="复习次数" value={totals.reviews} />
+        <CoachKpi label="正确率" value={correctRate} unit="%" />
+        <CoachKpi label="新增错题" value={totals.failures} />
+        <CoachKpi label="AI 成本" value={totals.cost_usd} prefix="$" decimals={3} />
       </div>
 
       <div className="coach-grid">
@@ -377,7 +390,7 @@ function CoachReport({
       <SectionLabel>失败排行 · 按知识点</SectionLabel>
       <LoomCard pad>
         {top_knowledge.length === 0 ? (
-          <p className="meta">窗口内无失败 attempt。</p>
+          <p className="meta">窗口内没有新增错题。</p>
         ) : (
           top_knowledge.map((k) => (
             <button

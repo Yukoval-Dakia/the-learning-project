@@ -280,6 +280,12 @@
   display: flex;
   flex-direction: column;
 }
+.qb-row-shell {
+  position: relative;
+}
+.qb-row-shell:last-child .qb-row {
+  border-bottom: 0;
+}
 .qb-row {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 184px;
@@ -345,6 +351,16 @@
 }
 .qb-expand.open .ico {
   transform: rotate(90deg);
+}
+.qb-expand-slot {
+  width: 22px;
+  height: 22px;
+}
+.qb-expand-action {
+  position: absolute;
+  top: calc(var(--s-4) + 1px);
+  left: var(--s-4);
+  z-index: 2;
 }
 .qb-subidx {
   font-family: var(--font-mono);

@@ -4,12 +4,10 @@
 // paletteIndex）：搜索框 + 分组结果 + ↑↓/↵/esc + 点击 + scrim 关 + 选中可见滚动。
 // 设计稿 index 用 window.DATA mock（页面 / 知识 / 题库 / 错题 / 学习项）；这里
 // 换 **真 SPA 数据**：
-//   • 页面组 → 复用 nav-config 的 NAV（与侧栏 / 移动栏同一真理源，不另立漂移的
-//     页面表）；route 用 NAV 项的真实 SPA path（/today 等）。
+//   • 页面组 → 投影 shipped inventory 的 search 声明；可含不进侧栏但需要直达的
+//     `/mistakes`，不会为动态详情捏造缺 id 的入口。
 //   • 知识节点组 → open 时 fetch /api/knowledge（getTree，经 apiJson + x-internal-
 //     token），title=name route=/knowledge/${id}。
-//   • 题库 / 错题 / 学习项 → **省略**（与 S13 nav 同裁断：SPA 无这三条路由，索引
-//     它们会造死链 / 假入口，owner 红线不 fabricate）。后续 M 在 SPA 接通后回填。
 //
 // 路由耦合只经调用方注入的 navigate prop（RootShell 经 router.history.push）——
 // 本组件不 import 任何路由库。.cmdk-* 样式由 globals.css（§App shell 端口，
@@ -20,7 +18,7 @@ import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { useQuery } from '@tanstack/react-query';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { NAV, isSection } from './nav-config';
+import { COMMAND_PALETTE_PLACEHOLDER, SEARCH_PAGE_ITEMS } from './nav-config';
 
 export interface CommandPaletteProps {
   /** 是否打开（RootShell 持 paletteOpen state；⌘K toggle / searchbox 点击驱动）。 */
@@ -43,24 +41,17 @@ interface PaletteRow {
 
 const PER_GROUP = 5; // 设计 command-palette.jsx:41，每组结果上限。
 
-// 页面组：复用 nav-config 的 NAV 真理源（跳过分组标题行）。route = NAV 项真实
-// SPA path；meta 显示该 path（设计用 "/" + id，这里用真路径更准）。flatMap +
-// isSection 正向 guard 让 TS 收窄到 NavItem（! 否定 guard 在 filter 不传播窄化）。
+// 页面组投影自 shipped inventory 的 search 声明；包括不进侧栏但需要直达的错题本，
+// 不包括缺少实体 id 的动态详情页。
 function pageRows(): PaletteRow[] {
-  return NAV.flatMap((entry) =>
-    isSection(entry)
-      ? []
-      : [
-          {
-            group: '页面',
-            icon: entry.icon,
-            title: entry.label,
-            meta: entry.path,
-            route: entry.path,
-            hay: `${entry.label} ${entry.id} ${entry.path}`,
-          },
-        ],
-  );
+  return SEARCH_PAGE_ITEMS.map((entry) => ({
+    group: '页面',
+    icon: entry.icon,
+    title: entry.label,
+    meta: entry.path,
+    route: entry.path,
+    hay: `${entry.label} ${entry.id} ${entry.path} ${entry.keywords}`,
+  }));
 }
 
 // 知识节点组：真 /api/knowledge 行 → 结果。title=name，route=/knowledge/${id}。
@@ -217,7 +208,7 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="搜索卡片、节点、错题…"
+            placeholder={COMMAND_PALETTE_PLACEHOLDER}
             aria-label="搜索"
           />
           <kbd>esc</kbd>

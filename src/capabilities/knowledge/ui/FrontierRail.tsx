@@ -104,7 +104,7 @@ export function FrontierRail({
         <div>
           <h3 className="frontier-title">下一步，你学得动这些</h3>
           <div className="frontier-sub">
-            learnable_frontier · 前置都满足了 · 这是<b>建议</b>不是必经路，随时忽略
+            所需基础已经具备 · 这是<b>建议</b>，不是必经路，随时可以忽略
           </div>
         </div>
       </div>

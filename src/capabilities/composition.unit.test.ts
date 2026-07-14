@@ -32,6 +32,10 @@ describe('composition root', () => {
     expect(capabilities.map((c) => c.name)).toContain('observability');
   });
 
+  it('includes the shipped onboarding capability', () => {
+    expect(capabilities.map((c) => c.name)).toContain('onboarding');
+  });
+
   // YUK-579 — coverage-lattice 第五面 API + ui.page 由 observability 独家声明。
   it('observability owns GET /api/admin/coverage-lattice and its ui.page (YUK-579)', () => {
     const routeOwners = capabilities.filter((c) =>

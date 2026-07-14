@@ -9,7 +9,7 @@
 // No-DB unit partition（不 import db/postgres/drizzle）；纯函数，无 DOM 依赖。
 
 import { describe, expect, it } from 'vitest';
-import { buildDraftListQuery, computeLatencyMs } from './practice-api';
+import { buildDraftListQuery, buildQuestionsListQuery, computeLatencyMs } from './practice-api';
 
 describe('computeLatencyMs — solo 路径 RT capture (YUK-433)', () => {
   it('shownAt 为 null → 返回 null（计时器未起 / 题面未就绪，不发噪声）', () => {
@@ -77,5 +77,30 @@ describe('buildDraftListQuery — getDrafts 负值防御 (YUK-408)', () => {
     expect(buildDraftListQuery({ source: 'import', kind: 'mcq', limit: -1 })).toBe(
       'source=import&kind=mcq',
     );
+  });
+});
+
+describe('buildQuestionsListQuery — 题库跨页过滤契约 (YUK-412)', () => {
+  it('serializes repeated filters, server sort, status, and pagination', () => {
+    expect(
+      buildQuestionsListQuery({
+        subject: 'yuwen',
+        difficulties: [2, 4],
+        knowledgeIds: ['k1', 'k2'],
+        status: 'draft',
+        search: '  劝学  ',
+        sortBy: 'difficulty',
+        sortDir: 'asc',
+        includeDrafts: true,
+        limit: 20,
+        offset: 40,
+      }),
+    ).toBe(
+      'enrich=true&subject=yuwen&difficulty=2&difficulty=4&knowledge_id=k1&knowledge_id=k2&include_drafts=true&status=draft&search=%E5%8A%9D%E5%AD%A6&sort_by=difficulty&sort_dir=asc&limit=20&offset=40',
+    );
+  });
+
+  it('drops invalid page numbers before the request leaves the browser', () => {
+    expect(buildQuestionsListQuery({ limit: 0, offset: -1 })).toBe('enrich=true');
   });
 });

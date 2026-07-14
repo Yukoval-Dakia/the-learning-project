@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { readAllAgentNotes } from '../server/notes';
+import { readAgentNoteBoardRows } from '../server/notes';
 
 const QuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).optional(),
@@ -25,7 +25,7 @@ export async function GET(req: Request): Promise<Response> {
         400,
       );
     }
-    const rows = await readAllAgentNotes(db, { now: new Date(), limit: parsed.data.limit });
+    const rows = await readAgentNoteBoardRows(db, { now: new Date(), limit: parsed.data.limit });
     return Response.json({ rows });
   } catch (err) {
     return errorResponse(err);

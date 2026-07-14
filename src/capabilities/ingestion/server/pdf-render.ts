@@ -10,16 +10,17 @@ import { ApiError } from '@/server/http/errors';
 // way so build:worker stays untouched.
 //
 // Library: @hyzyla/pdfium (MIT, zero system deps — PDFium compiled to WASM and
-// bundled in the npm package). We call the default ESM `PDFiumLibrary.init()`
-// with NO options, so in Node the vendor module loads its WASM from the sibling
-// dist/pdfium.wasm via `new URL("pdfium.wasm", import.meta.url)` at runtime.
+// bundled in the npm package). We call `PDFiumLibrary.init()` with NO options,
+// so the externalized Node/CJS package loads its WASM from sibling
+// dist/pdfium.wasm via __dirname at runtime.
 // (The base64-embedded variant is the SEPARATE `@hyzyla/pdfium/browser/base64`
-// entry, which this code does NOT use.) Because the wasm is a real on-disk file
-// reached through import.meta.url, '@hyzyla/pdfium' MUST stay in
-// next.config.ts `serverExternalPackages` — otherwise webpack inlines the JS,
-// import.meta.url breaks, and @vercel/nft never copies pdfium.wasm into the
-// standalone build shipped to the NAS container (the first PDF upload would
-// then 500). See next.config.ts for the full rationale.
+// entry, which this code does NOT use.) Because the wasm is a real on-disk file,
+// '@hyzyla/pdfium' MUST stay external in package.json's build:server command and
+// the Docker runner MUST copy the package (including dist/pdfium.wasm). If
+// esbuild inlines the ESM entry into the CJS server bundle, import.meta.url is
+// rewritten to an undefined shim and the first PDF/DOCX upload fails before the
+// WASM can load. The external CJS export instead resolves the sibling WASM from
+// its own __dirname.
 //
 // Each page renders to a raw BGRA bitmap which we pipe into the existing
 // `sharp` dependency to encode lossless PNG (matches the image/png asset

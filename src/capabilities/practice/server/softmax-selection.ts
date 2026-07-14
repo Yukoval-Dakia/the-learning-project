@@ -44,6 +44,7 @@ import {
 } from './candidate-signals';
 import { DEFAULT_TEMPERATURE, type SelectionPolicyConfig } from './selection-constants';
 import { type WeightedCandidate, sampleByWeight } from './selection-sampler';
+import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
 import {
   type ComposerInputs,
   type StreamPlan,
@@ -248,14 +249,18 @@ export async function composeSoftmaxStream(
 
   // ① 到期项（L1 确定性）——presence + due_at ASC 序原样透传，NEVER sampled/reordered。
   const dueItems = inputs.dueItems.filter((d) => !seen.has(d.questionId) && seen.add(d.questionId));
-  const dueDrafts: Omit<StreamPlanItem, 'position'>[] = dueItems.map((d) => ({
+  const allDueDrafts: Omit<StreamPlanItem, 'position'>[] = dueItems.map((d) => ({
     item_kind: 'question',
     ref_id: d.questionId,
     source: 'decay',
     reasoning: dueReasoning(d.knowledgeLabel),
     // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
   }));
-  // 到期项的 L1 真相序（dedup 后，due_at ASC）——assertL3Invariants 据此校验 plan 里
+  // YUK-622：时间预算优先保留最早到期前缀，超预算到期题确定性延后。没有 budget 的显式
+  // DI/旧单测仍保留历史「全部 due presence」行为。
+  const dueDrafts = fitStreamToTimeBudget(allDueDrafts, inputs.dailyBudgetMinutes).kept;
+
+  // 到期项的 L1 真相序（预算筛选后仍保持 due_at ASC）——assertL3Invariants 据此校验 plan 里
   //   due 子序列**顺序**与 L1 一致（铁律②不止 presence，还含 intra-day 序）。
   const dueRefOrder = dueDrafts.map((d) => d.ref_id);
   const dueRefSet = new Set(dueRefOrder);
@@ -316,10 +321,25 @@ export async function composeSoftmaxStream(
   //   ——它们是原题重背，确定性透传（same question re-shown），从信号收集结果里切出来。
   //   collectCandidateSignals 已给它们 recallLocked:true 且 mfiScore/diagnosticScore
   //   恒 undefined；这里把它们从 weighted 池剔除，单独确定性纳入。
-  const recallLocked = signals.filter((s) => s.refKind === 'question' && s.recallLocked === true);
+  const allRecallLocked = signals.filter(
+    (s) => s.refKind === 'question' && s.recallLocked === true,
+  );
+  const dueMinutes = dueDrafts.reduce(
+    (sum, item) => sum + estimateStreamItemMinutes(item.item_kind),
+    0,
+  );
+  const remainingAfterDue =
+    inputs.dailyBudgetMinutes === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, inputs.dailyBudgetMinutes - dueMinutes);
+  const recallLimit = Number.isFinite(remainingAfterDue)
+    ? Math.floor(remainingAfterDue / estimateStreamItemMinutes('question'))
+    : allRecallLocked.length;
+  const recallLocked = allRecallLocked.slice(0, recallLimit);
   const recallLockedRefs = new Set(recallLocked.map((s) => s.refId));
+  const allRecallLockedRefs = new Set(allRecallLocked.map((s) => s.refId));
   const samplable = signals.filter(
-    (s) => s.refKind === 'question' && !recallLockedRefs.has(s.refId),
+    (s) => s.refKind === 'question' && !allRecallLockedRefs.has(s.refId),
   );
 
   // signalByRef：所有非到期题的信号快照（含 recall-locked），物化进 StreamPlanItem.signals。
@@ -341,13 +361,26 @@ export async function composeSoftmaxStream(
   //    hard-present 同样先扣。
   const fixedCount = dueDrafts.length + recallLocked.length;
   const nonDueBudget = Math.max(0, max - fixedCount);
+  const fixedMinutes = fixedCount * estimateStreamItemMinutes('question');
+  const timeQuestionBudget =
+    inputs.dailyBudgetMinutes === undefined
+      ? nonDueBudget
+      : Math.max(
+          0,
+          Math.floor(
+            (inputs.dailyBudgetMinutes - fixedMinutes) / estimateStreamItemMinutes('question'),
+          ),
+        );
 
   // FINDING 5：caller-supplied config.targetCount（实验/下采样旋钮）此前被忽略——sampler
   //   恒用 nonDueBudget。修复：config.targetCount 在场时取 min(config.targetCount, nonDueBudget)
   //   ——既尊重 caller 的下采样意图，又让容量（nonDueBudget）仍作上界（不会因 caller 传大值
   //   而突破容量）。缺省（undefined）→ 仍用 nonDueBudget（原行为）。
+  const boundedNonDueBudget = Math.min(nonDueBudget, timeQuestionBudget);
   const effectiveTarget =
-    config.targetCount !== undefined ? Math.min(config.targetCount, nonDueBudget) : nonDueBudget;
+    config.targetCount !== undefined
+      ? Math.min(config.targetCount, boundedNonDueBudget)
+      : boundedNonDueBudget;
 
   // ── softmax 主路 + L1 fallback：拿到 WeightedCandidate[]（LLM 权重 OR 统计权重）。
   let fallback: FallbackLevel = 'none';
@@ -432,8 +465,21 @@ export async function composeSoftmaxStream(
     .filter((s) => roleByRef.get(s.refId) === 'frontier')
     .map((s) => s.refId);
   const frontierProtectedRefs = new Set(frontierSampledRefs.slice(0, frontierQuota));
-  const { kept, truncated } = capacityGuard(
-    assembled,
+  const budgeted = fitStreamToTimeBudget(assembled, inputs.dailyBudgetMinutes);
+  const budgetedRefs = new Set(budgeted.kept.map((item) => item.ref_id));
+  const droppedSampled = sampled.some((item) => !budgetedRefs.has(item.refId));
+  if (droppedSampled) {
+    // Poisson IPPS 的 realized count 可高于 target。硬时间预算必须裁切，但裁切后的真实边际
+    // inclusion probability 不再等于抽样前 pi。整轮不写 observation，比写错 IPW 资产诚实。
+    sampledInclusion.clear();
+    console.warn('[softmax-selection] time budget trimmed sampled items; skip pi observations', {
+      budgetMinutes: inputs.dailyBudgetMinutes,
+      sampled: sampled.length,
+      keptSampled: sampled.filter((item) => budgetedRefs.has(item.refId)).length,
+    });
+  }
+  const capacityResult = capacityGuard(
+    budgeted.kept,
     dueRefSet,
     sampledRefs,
     frontierProtectedRefs,
@@ -442,9 +488,9 @@ export async function composeSoftmaxStream(
 
   const plan: StreamPlan = {
     date: inputs.date,
-    items: kept.map((d, i) => ({ ...d, position: i + 1 })),
-    truncated,
-    warned: assembled.length > warn,
+    items: capacityResult.kept.map((d, i) => ({ ...d, position: i + 1 })),
+    truncated: budgeted.truncated || capacityResult.truncated,
+    warned: assembled.length > warn || budgeted.truncated,
   };
 
   // ── L3 守门断言（presence + due-ORDER / recall）——assemble 后校验，违例即 bug，
