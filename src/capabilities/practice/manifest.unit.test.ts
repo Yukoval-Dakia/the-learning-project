@@ -201,4 +201,36 @@ describe('practice manifest API resources', () => {
       ]),
     );
   });
+
+  it('publishes practice stream read, recompose and item-update contracts', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['GET /api/practice/stream', 'getPracticeStream'],
+      ['POST /api/practice/stream/recompose', 'recomposePracticeStream'],
+      ['PATCH /api/practice/stream/items/[id]', 'updatePracticeStreamItem'],
+    ]);
+
+    const declared = routes.filter((route) => expected.has(`${route.method} ${route.path}`));
+    expect(declared).toHaveLength(expected.size);
+    for (const route of declared) {
+      const key = `${route.method} ${route.path}`;
+      expect(route.operationId, key).toBe(expected.get(key));
+    }
+
+    const document = generateOpenApiDocument([practiceCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    expect(document.paths['/api/practice/stream'].get).toMatchObject({
+      'x-pagination': 'none',
+    });
+    expect(document.paths['/api/practice/stream'].get.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'date', in: 'query' })]),
+    );
+    expect(document.paths['/api/practice/stream/recompose'].post.requestBody).toMatchObject({
+      required: false,
+    });
+    expect(document.paths['/api/practice/stream/items/{id}'].patch.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'id', in: 'path', required: true })]),
+    );
+  });
 });
