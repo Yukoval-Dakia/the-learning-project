@@ -1,5 +1,15 @@
+import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import {
+  EventCorrectionBodySchema,
+  EventCorrectionResponseSchema,
+  EventDetailResponseSchema,
+  EventParamsSchema,
+  JobEventHeadersSchema,
+  JobEventParamsSchema,
+  JobEventStreamResponseSchema,
+} from './api/event-contracts';
 
 // M5-T4 (YUK-321) — observability 包：AI 运行可观测性（admin 四页数据面）+
 // 今日成本条。核心实现 server/ai-observability.ts（纯 drizzle，整体迁自
@@ -177,16 +187,29 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/events/[id]',
+        operationId: 'getEvent',
+        request: { params: EventParamsSchema },
+        responses: { 200: EventDetailResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/event-detail').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/events/[id]/correct',
+        operationId: 'createEventCorrectionLegacy',
+        request: { params: EventParamsSchema, body: EventCorrectionBodySchema },
+        responses: { 200: EventCorrectionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/events/[id]/corrections', since: '@1783987200' },
         load: () => import('./api/event-correct').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/events/[id]/corrections',
+        operationId: 'createEventCorrection',
+        request: { params: EventParamsSchema, body: EventCorrectionBodySchema },
+        responses: { 201: EventCorrectionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/event-correct').then((m) => m.createCorrectionResource),
       },
       // YUK-310 — 通用异步 job tracker：caller-agnostic SSE。把 ingestion 的
@@ -197,6 +220,15 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/jobs/[kind]/[id]/events',
+        operationId: 'streamJobEvents',
+        request: { params: JobEventParamsSchema, headers: JobEventHeadersSchema },
+        responses: {
+          200: JobEventStreamResponseSchema,
+          400: ApiErrorResponseSchema,
+          401: ApiErrorResponseSchema,
+        },
+        responseMediaTypes: { 200: 'text/event-stream' },
+        successStatus: 200,
         load: () => import('./api/job-events').then((m) => m.GET),
       },
       // YUK-579 — 供题治理覆盖细目表（coverage lattice）只读观测面。读模型

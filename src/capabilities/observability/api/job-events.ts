@@ -1,6 +1,7 @@
 import { db } from '@/db/client';
 import { computeReplay } from '@/server/events/sse_replay';
 import { subscribe } from '@/server/events/sse_router';
+import { JOB_EVENT_KIND_SET } from './event-contracts';
 
 /**
  * GET /api/jobs/[kind]/[id]/events —— 通用异步 job tracker SSE 流（YUK-310）。
@@ -31,15 +32,6 @@ import { subscribe } from '@/server/events/sse_router';
  *   - ingestion_operation src/capabilities/ingestion/server/operation-store.ts
  * 新增 writeJobEvent 写入新 business_table 时，必须在此同步追加，否则该流会 400。
  */
-const ALLOWED_BUSINESS_TABLES = new Set<string>([
-  'ingestion_session',
-  'copilot_run',
-  'echo_jobs',
-  'question_block',
-  'learning_session',
-  'ingestion_operation',
-]);
-
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
   const businessTable = params.kind;
   const businessId = params.id;
@@ -54,7 +46,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
   }
 
   // GUARD（F3）：未知 business_table 直接 400，禁止订阅任意表的事件流。
-  if (!ALLOWED_BUSINESS_TABLES.has(businessTable)) {
+  if (!JOB_EVENT_KIND_SET.has(businessTable)) {
     return new Response(JSON.stringify({ error: 'unknown kind' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
