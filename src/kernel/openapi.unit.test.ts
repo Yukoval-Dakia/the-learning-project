@@ -25,6 +25,7 @@ describe('generateOpenApiDocument', () => {
                 200: z.object({ id: z.string(), created: z.literal(false) }),
                 201: z.object({ id: z.string(), created: z.literal(true) }),
               },
+              responseMediaTypes: { 200: 'text/event-stream' },
               deprecation: { successor: '/api/widget-revisions', since: '@1783987200' },
             },
             {
@@ -62,6 +63,10 @@ describe('generateOpenApiDocument', () => {
     );
     expect(create.requestBody).toBeDefined();
     expect(create.responses).toHaveProperty('201');
+    expect(create.responses).toMatchObject({
+      200: { content: { 'text/event-stream': expect.any(Object) } },
+      201: { content: { 'application/json': expect.any(Object) } },
+    });
 
     expect(document.paths['/api/widgets'].get['x-pagination']).toEqual({
       kind: 'cursor',

@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { NUDGE_ACTION } from '../server/nudge-triggers';
+import { CopilotNudgeCompanionResponseSchema, CopilotNudgesResponseSchema } from './contracts';
 import { GET, dismissPOST, openedPOST } from './nudges';
 
 const NOW = Date.now();
@@ -40,7 +41,7 @@ async function seedNudge(opts: {
 
 async function getNudgeIds(): Promise<string[]> {
   const res = await GET();
-  const body = (await res.json()) as { nudges: Array<{ id: string }> };
+  const body = CopilotNudgesResponseSchema.parse(await res.json());
   return body.nudges.map((n) => n.id);
 }
 
@@ -100,6 +101,10 @@ describe('POST /api/copilot/nudges/[id]/{dismiss,opened}', () => {
     const id = await seedNudge({});
     const res = await dismissPOST(new Request('http://x'), { id });
     expect(res.status).toBe(200);
+    expect(CopilotNudgeCompanionResponseSchema.parse(await res.json())).toMatchObject({
+      ok: true,
+      event_id: expect.any(String),
+    });
     const rows = await testDb()
       .select()
       .from(event)
@@ -110,7 +115,11 @@ describe('POST /api/copilot/nudges/[id]/{dismiss,opened}', () => {
 
   it('opened writes an opened event anchored to the nudge', async () => {
     const id = await seedNudge({});
-    await openedPOST(new Request('http://x'), { id });
+    const res = await openedPOST(new Request('http://x'), { id });
+    expect(CopilotNudgeCompanionResponseSchema.parse(await res.json())).toMatchObject({
+      ok: true,
+      event_id: expect.any(String),
+    });
     const rows = await testDb()
       .select()
       .from(event)
@@ -135,6 +144,11 @@ describe('POST /api/copilot/nudges/[id]/{dismiss,opened}', () => {
     const r2 = await openedPOST(new Request('http://x'), { id });
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200); // dedup returns ok, not an error
+    expect(CopilotNudgeCompanionResponseSchema.parse(await r1.json())).toHaveProperty('event_id');
+    expect(CopilotNudgeCompanionResponseSchema.parse(await r2.json())).toEqual({
+      ok: true,
+      deduped: true,
+    });
     const rows = await testDb()
       .select()
       .from(event)
