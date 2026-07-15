@@ -1,11 +1,11 @@
 import {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
+  CorrectArtifactEvent,
   NoteSection,
   NoteVerificationResult,
-} from '@/core/schema/business';
-import { CorrectArtifactEvent } from '@/core/schema/event';
-import { SubjectProfileSchema } from '@/subjects/profile-schema';
+  SubjectProfileSchema,
+} from '@/kernel/capability-contract-schemas';
 import { z } from 'zod';
 
 export const NoteIdParamsSchema = z.object({ id: z.string().trim().min(1) });
