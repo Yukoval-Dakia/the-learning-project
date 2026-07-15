@@ -3,19 +3,13 @@
 // Request an escalating Socratic hint for an active solve session. Reuses the
 // teaching orchestrator's TeachingTurnTask, seeded with the worked solution, to
 // return the minimal next step WITHOUT revealing the full solution (spec §3.2).
-import { z } from 'zod';
-
 import { SolveError, planSolveHint } from '@/capabilities/practice/server/solve-session';
 import { newId } from '@/core/ids';
-import { MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-
-const Body = z
-  .object({ hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0) })
-  .nullable();
+import { HintRequestBodySchema } from './question-solve-contracts';
 
 export async function createHintRequest(
   req: Request,
@@ -24,7 +18,7 @@ export async function createHintRequest(
   try {
     const { id, sid } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = HintRequestBodySchema.safeParse(raw);
     if (!parsed.success) {
       return errorResponse(
         new ApiError(

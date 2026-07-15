@@ -15,10 +15,7 @@
 // Auth is enforced upstream by middleware (x-internal-token); the handlers mirror
 // the sibling notes/learning-items routes (zod, 404 on missing, errorResponse).
 
-import { z } from 'zod';
-
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/server/validate';
-import { QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { loadQuestionDetail } from '@/server/questions/detail';
@@ -29,26 +26,7 @@ import {
   editQuestion,
   hasAnyAssociation,
 } from '@/server/questions/write';
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
-
-// ── PATCH body (YUK-281) ─────────────────────────────────────────────────────
-// Editable surface only. Bloodline fields (variant_depth / root_question_id /
-// parent_variant_id / parent_question_id / part_index) are explicitly forbidden
-// — we reject the WHOLE request (rather than silently dropping them) so a UI bug
-// that tries to mutate lineage fails loudly. Enums reuse the core schema.
-const PatchBody = z
-  .object({
-    version: z.number().int().min(0),
-    prompt_md: z.string().min(1).optional(),
-    reference_md: z.string().nullable().optional(),
-    choices_md: z.array(z.string().min(1)).nullable().optional(),
-    difficulty: z.number().int().min(1).max(5).optional(),
-    knowledge_ids: z.array(z.string().min(1)).optional(),
-    kind: QuestionKind.optional(),
-    draft_status: z.enum(['draft', 'active']).nullable().optional(),
-  })
-  .strict(); // unknown keys (incl. bloodline) → zod error
+import { QuestionParamsSchema, UpdateQuestionBodySchema } from './question-solve-contracts';
 
 // Distinct, friendlier error when a bloodline field is the offender.
 function rejectBloodlineKeys(raw: unknown): void {
@@ -82,7 +60,7 @@ function parseTimelineLimit(raw: string | null): number {
 
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsed = ParamsSchema.safeParse(params);
+    const parsed = QuestionParamsSchema.safeParse(params);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'question id is required', 400);
     }
@@ -102,7 +80,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
 // ── PATCH — edit the question-bank editable surface (YUK-281) ─────────────────
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = ParamsSchema.safeParse(params);
+    const parsedParams = QuestionParamsSchema.safeParse(params);
     if (!parsedParams.success) {
       throw new ApiError('validation_error', 'question id is required', 400);
     }
@@ -112,7 +90,7 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
     // Loud bloodline rejection BEFORE the generic .strict() error so the message
     // names the lineage fields explicitly.
     rejectBloodlineKeys(raw);
-    const parsed = PatchBody.safeParse(raw);
+    const parsed = UpdateQuestionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
@@ -179,7 +157,7 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
 //   2. `?confirm=true`     → soft-archive (re-draft) + cascade parts + event.
 export async function DELETE(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = ParamsSchema.safeParse(params);
+    const parsedParams = QuestionParamsSchema.safeParse(params);
     if (!parsedParams.success) {
       throw new ApiError('validation_error', 'question id is required', 400);
     }
