@@ -3,6 +3,7 @@
 // Covers: salience sort + cap-at-3, the confidence-never-leaks invariant, and route
 // registration on the shell manifest.
 
+import { PrepDeskConjecturesResponseSchema } from '@/capabilities/shell/api/contracts';
 import { shellCapability } from '@/capabilities/shell/manifest';
 import { loadPrepDeskConjectures } from '@/capabilities/shell/server/prep-desk';
 import { writeAiProposal } from '@/server/proposals/writer';
@@ -57,6 +58,7 @@ describe('loadPrepDeskConjectures', () => {
     await seed({ claim: 'x', confidence: 0.99, recurrence_count: 2 });
 
     const out = await loadPrepDeskConjectures(testDb());
+    expect(() => PrepDeskConjecturesResponseSchema.parse(out)).not.toThrow();
 
     expect(out.conjectures.map((c) => c.claim)).toEqual(['hi', 'mid', 'x']);
   });

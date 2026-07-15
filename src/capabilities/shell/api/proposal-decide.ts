@@ -3,28 +3,11 @@
 // 走 dismissAiProposal，其余三值走 acceptAiProposal（旧 AcceptBody 的
 // optional decision 缺省语义由显式 'accept' 承担）；superRefine 约束照旧。
 
-import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
-import { z } from 'zod';
-
-const DecideBody = z
-  .object({
-    decision: z.enum(['accept', 'reverse', 'change_type', 'dismiss']),
-    new_relation_type: RelationTypeSchema.optional(),
-    user_note: z.string().max(2000).optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.decision === 'change_type' && !data.new_relation_type) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'change_type requires new_relation_type',
-        path: ['new_relation_type'],
-      });
-    }
-  });
+import { LegacyProposalDecisionBodySchema } from './contracts';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   const response = await handleLegacyDecision(req, params);
@@ -42,7 +25,7 @@ async function handleLegacyDecision(
       throw new ApiError('validation_error', 'proposal id is required', 400);
     }
     const raw = await req.json().catch(() => ({}));
-    const parsed = DecideBody.safeParse(raw);
+    const parsed = LegacyProposalDecisionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

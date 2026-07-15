@@ -1,6 +1,7 @@
 import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { SubjectListResponseSchema } from './contracts';
 import { GET } from './subjects-list';
 
 describe('GET /api/subjects observed-domain inventory', () => {
@@ -35,6 +36,7 @@ describe('GET /api/subjects observed-domain inventory', () => {
     const body = (await response.json()) as {
       subjects: Array<{ id: string; configurationStatus: string }>;
     };
+    expect(() => SubjectListResponseSchema.parse(body)).not.toThrow();
     expect(body.subjects).toContainEqual(
       expect.objectContaining({ id: 'yingyu', configurationStatus: 'unconfigured' }),
     );

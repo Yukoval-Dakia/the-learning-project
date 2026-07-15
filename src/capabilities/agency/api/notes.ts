@@ -2,20 +2,15 @@
 // 外壳 app/api/agents/notes/route.ts 仅 re-export；行为与迁移前完全等价
 //（原 app/api/agents/notes/route.ts @ YUK-294）。
 
-import { z } from 'zod';
-
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { readAgentNoteBoardRows } from '../server/notes';
-
-const QuerySchema = z.object({
-  limit: z.coerce.number().int().positive().max(200).optional(),
-});
+import { AgentNotesQuerySchema } from './contracts';
 
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
-    const parsed = QuerySchema.safeParse({
+    const parsed = AgentNotesQuerySchema.safeParse({
       limit: url.searchParams.get('limit') ?? undefined,
     });
     if (!parsed.success) {
