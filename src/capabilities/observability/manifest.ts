@@ -49,6 +49,14 @@ import {
   CreatedAdminSubjectResponseSchema,
 } from './api/subject-contracts';
 import {
+  AdminSubjectCasBodySchema,
+  AdminSubjectControlParamsSchema,
+  AdminSubjectControlResponseSchema,
+  RenameAdminSubjectBodySchema,
+  ValidateAdminSubjectBodySchema,
+  ValidateAdminSubjectResponseSchema,
+} from './api/subject-control-contracts';
+import {
   AdminSubjectTraitParamsSchema,
   AdminTraitWriteParamsSchema,
   EditAdminTraitBodySchema,
@@ -240,26 +248,50 @@ export const observabilityCapability = defineCapability({
       {
         method: 'PATCH',
         path: '/api/admin/subjects/[id]',
+        operationId: 'updateAdminSubject',
+        request: { params: AdminSubjectControlParamsSchema, body: RenameAdminSubjectBodySchema },
+        responses: { 200: AdminSubjectControlResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subject-control').then((m) => m.PATCH),
       },
       {
         method: 'POST',
         path: '/api/admin/subjects/[id]/retire',
+        operationId: 'retireAdminSubject',
+        request: { params: AdminSubjectControlParamsSchema, body: AdminSubjectCasBodySchema },
+        responses: { 200: AdminSubjectControlResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subject-control').then((m) => m.RETIRE),
       },
       {
         method: 'POST',
         path: '/api/admin/subjects/[id]/restore',
+        operationId: 'restoreAdminSubject',
+        request: { params: AdminSubjectControlParamsSchema, body: AdminSubjectCasBodySchema },
+        responses: { 200: AdminSubjectControlResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subject-control').then((m) => m.RESTORE),
       },
       {
         method: 'POST',
         path: '/api/admin/subjects/[id]/reset',
+        operationId: 'resetAdminSubject',
+        request: { params: AdminSubjectControlParamsSchema, body: AdminSubjectCasBodySchema },
+        responses: { 200: AdminSubjectControlResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subject-control').then((m) => m.RESET),
       },
       {
         method: 'POST',
         path: '/api/admin/subjects/[id]/validate',
+        operationId: 'validateAdminSubject',
+        request: {
+          params: AdminSubjectControlParamsSchema,
+          body: ValidateAdminSubjectBodySchema,
+          bodyRequired: false,
+        },
+        responses: { 200: ValidateAdminSubjectResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subject-control').then((m) => m.VALIDATE),
       },
       {
