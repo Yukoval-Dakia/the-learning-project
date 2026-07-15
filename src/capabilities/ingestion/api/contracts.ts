@@ -8,6 +8,7 @@ import {
   PageSpan,
   StructuredQuestion,
 } from '@/kernel/capability-contract-schemas';
+import { MultipartFilePartSchema } from '@/kernel/http-contracts';
 
 export const CreateIngestionSessionBody = z.object({
   entrypoint: IngestionEntrypoint,
@@ -36,10 +37,8 @@ export const IngestionOperationSchema = z
   })
   .passthrough();
 
-/** OpenAPI 3 multipart file parts are represented as binary strings on the wire. */
-export const MultipartFileUploadSchema = z
-  .object({ file: z.string().base64().describe('Binary file upload') })
-  .passthrough();
+/** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
+export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
 
 export const PdfExpansionResponseSchema = z.object({
   asset_ids: z.array(z.string()).min(1).max(MAX_PDF_PAGES),

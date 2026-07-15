@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { MultipartFilePartSchema } from './http-contracts';
 import type { CapabilityManifest } from './manifest';
 import { generateOpenApiDocument } from './openapi';
 
@@ -19,7 +20,7 @@ describe('generateOpenApiDocument', () => {
                 params: z.object({ id: z.string() }),
                 query: z.object({ dry_run: z.boolean().optional() }),
                 headers: z.object({ 'X-Request-ID': z.string().optional() }),
-                body: z.object({ file: z.string().base64() }),
+                body: z.object({ file: MultipartFilePartSchema }),
                 bodyMediaType: 'multipart/form-data',
                 bodyRequired: false,
               },

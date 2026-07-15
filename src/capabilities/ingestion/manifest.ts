@@ -133,7 +133,12 @@ export const ingestionCapability = defineCapability({
         path: '/api/ingestion/[id]/events',
         operationId: 'streamIngestionSessionEvents',
         request: { params: ApiIdParamsSchema, headers: IngestionEventsHeadersSchema },
-        responses: { 200: IngestionEventStreamResponseSchema, ...API_ERROR_RESPONSES },
+        // Replay/setup occurs inside ReadableStream.start(), after the 200 Response exists.
+        // Only auth middleware can still produce a pre-stream JSON error here.
+        responses: {
+          200: IngestionEventStreamResponseSchema,
+          401: ApiErrorResponseSchema,
+        },
         responseMediaTypes: { 200: 'text/event-stream' },
         successStatus: 200,
         load: () => import('./api/events').then((m) => m.GET),

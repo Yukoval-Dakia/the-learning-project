@@ -1,5 +1,6 @@
 import type { ZodTypeAny } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { OPENAPI_BINARY_FILE_DESCRIPTION } from './http-contracts';
 import {
   type ApiPaginationDecl,
   type ApiRouteDecl,
@@ -11,12 +12,20 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
-function toJsonSchema(schema: ZodTypeAny, options: { binaryBase64?: boolean } = {}): JsonObject {
+function toJsonSchema(schema: ZodTypeAny, options: { binaryFiles?: boolean } = {}): JsonObject {
   return zodToJsonSchema(schema, {
     target: 'openApi3',
     $refStrategy: 'none',
     effectStrategy: 'input',
-    ...(options.binaryBase64 ? { base64Strategy: 'format:binary' as const } : {}),
+    ...(options.binaryFiles
+      ? {
+          postProcess: (jsonSchema) =>
+            typeof jsonSchema === 'object' &&
+            jsonSchema?.description === OPENAPI_BINARY_FILE_DESCRIPTION
+              ? { ...jsonSchema, type: 'string' as const, format: 'binary' }
+              : jsonSchema,
+        }
+      : {}),
   }) as JsonObject;
 }
 
@@ -114,7 +123,7 @@ function openApiOperation(
       content: {
         [mediaType]: {
           schema: toJsonSchema(route.request.body, {
-            binaryBase64: mediaType === 'multipart/form-data',
+            binaryFiles: mediaType === 'multipart/form-data',
           }),
         },
       },
