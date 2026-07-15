@@ -7,8 +7,6 @@
 //
 // Distinct from /api/review/submit (single-question FSRS流, untouched).
 
-import { z } from 'zod';
-
 import { resolveSlotAssignment } from '@/capabilities/practice/server/paper-sections';
 import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import { Artifact } from '@/core/schema/index';
@@ -17,19 +15,7 @@ import { artifact } from '@/db/schema';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { eq } from 'drizzle-orm';
-
-const SubmitBody = z.object({
-  session_id: z.string().min(1),
-  question_id: z.string().min(1),
-  part_ref: z.string().min(1).nullable().optional(),
-  answer_md: z.string(),
-  image_refs: z.array(z.string()).default([]),
-  // YUK-448 — wall-clock RT (ms) from slot reveal to submit. Mirrors the solo
-  // /api/review/submit body (submit.ts:73). Stricter than the read-side
-  // AttemptOnQuestion schema (.min(0).max(1h) vs bare int) — write-side validation
-  // tightening only; absent = no RT data (0 is a real measurement).
-  latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
-});
+import { LegacyPaperSubmissionBodySchema } from './paper-contracts';
 
 export async function createPaperSubmission(
   req: Request,
@@ -38,7 +24,7 @@ export async function createPaperSubmission(
   try {
     const { id: paperArtifactId } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = SubmitBody.safeParse(raw);
+    const parsed = LegacyPaperSubmissionBodySchema.safeParse(raw);
     if (!parsed.success) {
       const message = parsed.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)
