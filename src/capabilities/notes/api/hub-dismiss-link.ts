@@ -19,31 +19,21 @@
 // (append-only history) but the immediate-removal patch is a no-op (the child is
 // already gone) so no second body_blocks mutation happens.
 
-import { z } from 'zod';
-
+import { DismissHubLinkBodySchema, HubIdParamsSchema } from '@/capabilities/notes/api/contracts';
 import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
-
-const BodySchema = z
-  .object({
-    suppressed_artifact_id: z.string().trim().min(1),
-    relation: z.enum(['subtopic', 'prerequisite', 'derived_from', 'contrasts_with']).optional(),
-  })
-  .strict();
-
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = ParamsSchema.safeParse(params);
+    const parsedParams = HubIdParamsSchema.safeParse(params);
     if (!parsedParams.success) {
       throw new ApiError('validation_error', 'hub id is required', 400);
     }
     const hubId = parsedParams.data.id;
 
     const rawBody = await req.json().catch(() => null);
-    const parsedBody = BodySchema.safeParse(rawBody);
+    const parsedBody = DismissHubLinkBodySchema.safeParse(rawBody);
     if (!parsedBody.success) {
       throw new ApiError(
         'validation_error',

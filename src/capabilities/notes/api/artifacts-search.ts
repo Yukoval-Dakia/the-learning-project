@@ -8,17 +8,11 @@
 // elsewhere (Lane-0 write-through on save), never here.
 
 import { and, desc, eq, ilike, inArray, isNull, ne } from 'drizzle-orm';
-import { z } from 'zod';
 
+import { ArtifactSearchQuerySchema } from '@/capabilities/notes/api/contracts';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
-
-const QuerySchema = z.object({
-  q: z.string().trim().min(1).max(200),
-  exclude: z.string().trim().min(1).optional(),
-  limit: z.coerce.number().int().positive().max(25).optional(),
-});
 
 // ADR-0033 D1 (YUK-306) — closed allowlist of cross-linkable artifact types.
 // type='interactive' is OPAQUE to the note block-tree mesh: it must never be
@@ -36,7 +30,7 @@ function escapeLike(value: string): string {
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
-    const parsed = QuerySchema.safeParse({
+    const parsed = ArtifactSearchQuerySchema.safeParse({
       q: url.searchParams.get('q') ?? '',
       exclude: url.searchParams.get('exclude') ?? undefined,
       limit: url.searchParams.get('limit') ?? undefined,

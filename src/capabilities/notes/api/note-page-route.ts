@@ -6,17 +6,14 @@
 // enforced upstream by middleware (x-internal-token); the handler mirrors the
 // sibling artifact routes' shape (zod params, 404 on missing, errorResponse).
 
-import { z } from 'zod';
-
+import { NoteIdParamsSchema } from '@/capabilities/notes/api/contracts';
 import { loadNotePage } from '@/capabilities/notes/server/note-page';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
-
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsed = ParamsSchema.safeParse(params);
+    const parsed = NoteIdParamsSchema.safeParse(params);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'note id is required', 400);
     }

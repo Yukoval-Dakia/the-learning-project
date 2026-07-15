@@ -2,6 +2,8 @@ import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-block
 import { artifact, artifact_block_ref, event } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+
+import { EditArtifactBodyBlocksResponseSchema } from '@/capabilities/notes/api/contracts';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH } from './body-blocks-route';
 
@@ -82,7 +84,7 @@ describe('PATCH /api/artifacts/[id]/body-blocks', () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { artifact_version: number; body_blocks: unknown };
+    const body = EditArtifactBodyBlocksResponseSchema.parse(await res.json());
     expect(body.artifact_version).toBe(1);
     expect(body.body_blocks).toMatchObject(next);
 

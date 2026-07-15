@@ -1,3 +1,7 @@
+import {
+  ArtifactCorrectionStateResponseSchema,
+  CreateArtifactCorrectionResponseSchema,
+} from '@/capabilities/notes/api/contracts';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { artifact } from '@/db/schema';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
@@ -95,7 +99,7 @@ describe('POST /api/artifacts/[id]/correct', () => {
       reason_md: 'This whole atomic misstates the rule.',
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { correction_event_id: string };
+    const body = CreateArtifactCorrectionResponseSchema.parse(await res.json());
     expect(body.correction_event_id).toBeTypeOf('string');
 
     const state = await getArtifactCorrectionState(testDb(), 'artifact_42');
@@ -233,11 +237,7 @@ describe('GET /api/artifacts/[id]/correct', () => {
 
     const res = await getCorrect('artifact_42');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      artifact_id: string;
-      whole: { state: string };
-      blocks: Record<string, { state: string }>;
-    };
+    const body = ArtifactCorrectionStateResponseSchema.parse(await res.json());
     expect(body.artifact_id).toBe('artifact_42');
     expect(body.whole.state).toBe('active');
     expect(body.blocks).toEqual({});
