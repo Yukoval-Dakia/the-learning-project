@@ -6,6 +6,7 @@ import {
   answerProbe,
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -36,6 +37,7 @@ describe('loadActiveProbes', () => {
     const p2 = await serve('probe B', new Date('2026-07-13T00:00:02Z'));
 
     const { probes } = await loadActiveProbes(testDb());
+    expect(() => PrepDeskProbesResponseSchema.parse({ probes })).not.toThrow();
     expect(probes.map((p) => p.probe_question_id)).toEqual([p2, p1]); // newest first
     expect(probes[0]).toMatchObject({ prompt_md: 'probe B', knowledge_id: 'kn_x' });
   });

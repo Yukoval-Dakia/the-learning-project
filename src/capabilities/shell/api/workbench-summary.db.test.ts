@@ -6,6 +6,7 @@ import { event, goal, knowledge, learning_session } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { WorkbenchSummaryResponseSchema } from './contracts';
 import { GET as getWorkbenchSummary } from './workbench-summary';
 
 const KNOWLEDGE_BASE = {
@@ -58,7 +59,9 @@ interface SummaryBody {
 async function fetchSummary(): Promise<SummaryBody> {
   const res = await getWorkbenchSummary();
   expect(res.status).toBe(200);
-  return (await res.json()) as SummaryBody;
+  const body = (await res.json()) as SummaryBody;
+  expect(() => WorkbenchSummaryResponseSchema.parse(body)).not.toThrow();
+  return body;
 }
 
 describe('GET /api/workbench/summary (shell)', () => {

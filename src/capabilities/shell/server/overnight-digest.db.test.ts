@@ -1,3 +1,4 @@
+import { OvernightDigestResponseSchema } from '@/capabilities/shell/api/contracts';
 // YUK-520 (A1) — overnight-digest 读模型 db 测（DB 装配端到端）。纯函数边界覆盖（窗口算 /
 // runs 分组 / has_overnight_activity 五源）在 no-DB unit 车道（overnight-digest-summary.unit.test.ts）。
 // 本文件证：五个夜间事实源各自被窗口正确收/排，proposals 与 conjectures 不重叠，空夜显式信号。
@@ -73,6 +74,7 @@ describe('loadOvernightDigest read model', () => {
 
   it('安静夜：零事实 → has_overnight_activity=false + 全零计数 + 窗口存在', async () => {
     const d = await loadOvernightDigest(db, NOW);
+    expect(() => OvernightDigestResponseSchema.parse(d)).not.toThrow();
     expect(d.has_overnight_activity).toBe(false);
     expect(d.runs).toEqual([]);
     expect(d.note_changes_count).toBe(0);

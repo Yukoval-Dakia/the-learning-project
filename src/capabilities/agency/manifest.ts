@@ -1,6 +1,13 @@
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import {
+  AgentNotesQuerySchema,
+  AgentNotesResponseSchema,
+  ProbeAnswerBodySchema,
+  ProbeAnswerParamsSchema,
+  ProbeAnswerResponseSchema,
+} from './api/contracts';
 import { CreateGoalBody, GoalSchema } from './api/goal-contracts';
 
 export const agencyCapability = defineCapability({
@@ -14,6 +21,10 @@ export const agencyCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/agents/notes',
+        operationId: 'listAgentNotes',
+        request: { query: AgentNotesQuerySchema },
+        responses: { 200: AgentNotesResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         // M0 (YUK-313)：懒加载 thunk——manifest 保持纯元数据（unit 分区不拉 db），
         // server 组合根挂载时才解析 handler。
         load: () => import('./api/notes').then((m) => m.GET),
@@ -46,6 +57,10 @@ export const agencyCapability = defineCapability({
         // experimental:probe_result event (ND-5). A5-a outcome→resolution split.
         method: 'POST',
         path: '/api/conjecture/probe/[id]/answer',
+        operationId: 'answerConjectureProbe',
+        request: { params: ProbeAnswerParamsSchema, body: ProbeAnswerBodySchema },
+        responses: { 200: ProbeAnswerResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/probe-answer').then((m) => m.POST),
       },
     ],

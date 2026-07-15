@@ -53,25 +53,8 @@ import {
   resolveQuestionJudgeRoute,
 } from '@/server/judge/route-resolve';
 import { eq } from 'drizzle-orm';
-import { z } from 'zod';
 import { answerProbe, peekExistingProbeResult } from '../server/conjecture/probe-lifecycle';
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
-
-const AnswerBody = z
-  .object({
-    // owner's answer to the probe prompt (markdown). MAY be empty when a photo
-    // answer is attached (photo-only, mirroring submit.ts / answer-draft).
-    answer_md: z.string().trim().max(10_000).default(''),
-    // handwriting/photo answer refs (uploaded via POST /api/assets). A photo-only
-    // answer is judgeable only by an image-consuming route (gated in POST below).
-    answer_image_refs: z.array(z.string()).max(20).default([]),
-  })
-  // "has any answer" = text OR image (submit.ts F4): an empty text + empty image set
-  // carries no signal and cannot be graded.
-  .refine((b) => b.answer_md.length > 0 || b.answer_image_refs.length > 0, {
-    message: 'answer_md or answer_image_refs is required — an empty answer carries no signal',
-  });
+import { ProbeAnswerBodySchema, ProbeAnswerParamsSchema } from './contracts';
 
 /**
  * Map the judge's coarse_outcome onto the probe lifecycle's (outcome, resolution)
@@ -99,7 +82,7 @@ function mapOutcome(
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = ParamsSchema.safeParse(params);
+    const parsedParams = ProbeAnswerParamsSchema.safeParse(params);
     if (!parsedParams.success) {
       throw new ApiError('validation_error', 'probe question id is required', 400);
     }
@@ -109,7 +92,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     // request (→ 400 below), NOT a 500. This is request-validation gating, not a
     // swallowed error — safeParse(null) produces a clear validation failure.
     const raw = await req.json().catch(() => null);
-    const parsed = AnswerBody.safeParse(raw);
+    const parsed = ProbeAnswerBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
