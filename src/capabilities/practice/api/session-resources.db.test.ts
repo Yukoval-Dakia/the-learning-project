@@ -5,6 +5,10 @@ import { job_events } from '@/db/schema';
 import { Placement, Review, Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
+  PlacementSessionResponseSchema,
+  PlacementSessionTransitionResponseSchema,
+} from './placement-contracts';
+import {
   GET as getPlacementSession,
   PATCH as patchPlacementSession,
 } from './placement-session-detail';
@@ -61,8 +65,12 @@ describe('canonical review and placement session state', () => {
 
     const first = await patchPlacementSession(patchRequest(path, 'completed'), { id: sessionId });
     const replay = await patchPlacementSession(patchRequest(path, 'completed'), { id: sessionId });
-    expect(await first.json()).toMatchObject({ status: 'completed', changed: true });
-    expect(await replay.json()).toMatchObject({ status: 'completed', changed: false });
+    const firstBody = await first.json();
+    const replayBody = await replay.json();
+    expect(firstBody).toMatchObject({ status: 'completed', changed: true });
+    expect(replayBody).toMatchObject({ status: 'completed', changed: false });
+    expect(PlacementSessionTransitionResponseSchema.safeParse(firstBody).success).toBe(true);
+    expect(PlacementSessionTransitionResponseSchema.safeParse(replayBody).success).toBe(true);
 
     const events = await testDb()
       .select()
@@ -82,11 +90,13 @@ describe('canonical review and placement session state', () => {
       { id: placement.sessionId },
     );
     expect(placementResponse.status).toBe(200);
-    expect(await placementResponse.json()).toMatchObject({
+    const placementBody = await placementResponse.json();
+    expect(placementBody).toMatchObject({
       id: placement.sessionId,
       type: 'placement',
       status: 'started',
     });
+    expect(PlacementSessionResponseSchema.safeParse(placementBody).success).toBe(true);
 
     const solveResponse = await getSolveSession(
       new Request(`http://localhost/api/solve-sessions/${solve.sessionId}`),

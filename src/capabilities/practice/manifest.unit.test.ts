@@ -158,4 +158,47 @@ describe('practice manifest API resources', () => {
       'x-successor': '/api/review-sessions/[id]',
     });
   });
+
+  it('publishes placement session, selection and profile contracts', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['POST /api/placement/start', 'createPlacementSessionLegacy'],
+      ['POST /api/placement/[id]/next', 'createPlacementQuestionSelectionLegacy'],
+      ['POST /api/placement/[id]/end', 'endPlacementSessionLegacy'],
+      ['POST /api/placement-sessions', 'createPlacementSession'],
+      ['POST /api/placement-sessions/[id]/question-selections', 'createPlacementQuestionSelection'],
+      ['GET /api/placement-sessions/[id]', 'getPlacementSession'],
+      ['PATCH /api/placement-sessions/[id]', 'updatePlacementSession'],
+      ['GET /api/placement/profile', 'getPlacementProfile'],
+    ]);
+
+    const declared = routes.filter((route) => expected.has(`${route.method} ${route.path}`));
+    expect(declared).toHaveLength(expected.size);
+    for (const route of declared) {
+      const key = `${route.method} ${route.path}`;
+      expect(route.operationId, key).toBe(expected.get(key));
+    }
+
+    const document = generateOpenApiDocument([practiceCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    expect(document.paths['/api/placement/start'].post).toMatchObject({
+      deprecated: true,
+      'x-successor': '/api/placement-sessions',
+    });
+    expect(document.paths['/api/placement/{id}/next'].post.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'id', in: 'path', required: true })]),
+    );
+    expect(document.paths['/api/placement/{id}/end'].post.requestBody).toMatchObject({
+      required: false,
+    });
+    expect(document.paths['/api/placement-sessions'].post.responses).toEqual(
+      expect.objectContaining({ 201: expect.any(Object) }),
+    );
+    expect(document.paths['/api/placement/profile'].get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'goal', in: 'query', required: true }),
+      ]),
+    );
+  });
 });
