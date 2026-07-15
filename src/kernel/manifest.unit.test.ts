@@ -232,6 +232,34 @@ describe('validateComposition', () => {
     ).toThrow(/requires request.query cursor and limit/);
   });
 
+  it('accepts refined cursor query schemas while checking their object fields', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          api: {
+            routes: [
+              {
+                method: 'GET',
+                path: '/api/a',
+                request: {
+                  query: z
+                    .object({
+                      cursor: z.string().optional(),
+                      limit: z.coerce.number().int().positive().optional(),
+                      mode: z.string().optional(),
+                    })
+                    .refine((query) => !(query.cursor && query.mode === 'all')),
+                },
+                pagination: { kind: 'cursor', defaultLimit: 20, maxLimit: 100 },
+              },
+            ],
+          },
+        }),
+      ]),
+    ).not.toThrow();
+  });
+
   it('checks successful handler responses against the declared status set', () => {
     const route = {
       method: 'POST' as const,
