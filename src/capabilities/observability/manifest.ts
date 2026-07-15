@@ -2,6 +2,17 @@ import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contr
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
+  AdminCostQuerySchema,
+  AdminCostResponseSchema,
+  AdminFailuresQuerySchema,
+  AdminFailuresResponseSchema,
+  AdminRunDetailResponseSchema,
+  AdminRunParamsSchema,
+  AdminRunsQuerySchema,
+  AdminRunsResponseSchema,
+  CostTodayResponseSchema,
+} from './api/admin-observability-contracts';
+import {
   BackupArchiveBodySchema,
   BackupExportErrorSchema,
   BackupExportQuerySchema,
@@ -31,21 +42,40 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/admin/runs',
+        operationId: 'listAdminRuns',
+        request: { query: AdminRunsQuerySchema },
+        responses: { 200: AdminRunsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
         load: () => import('./api/admin-runs').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/admin/runs/[id]',
+        operationId: 'getAdminRun',
+        request: { params: AdminRunParamsSchema },
+        responses: { 200: AdminRunDetailResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-run-detail').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/admin/cost',
+        operationId: 'getAdminCost',
+        request: { query: AdminCostQuerySchema },
+        responses: { 200: AdminCostResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/admin-cost').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/admin/failures',
+        operationId: 'listAdminFailureClusters',
+        request: { query: AdminFailuresQuerySchema },
+        responses: { 200: AdminFailuresResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/admin-failures').then((m) => m.GET),
       },
       {
@@ -160,6 +190,10 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/cost/today',
+        operationId: 'getTodayCost',
+        responses: { 200: CostTodayResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/cost-today').then((m) => m.GET),
       },
       // YUK-348 (B1) — per-KC mastery-calibration firm-up 只读观测面。读模型
