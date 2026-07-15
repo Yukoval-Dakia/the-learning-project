@@ -83,3 +83,41 @@ describe('observability backup archive contracts', () => {
     });
   });
 });
+
+describe('observability admin read contracts', () => {
+  it('publishes run pagination plus cost and failure filters', () => {
+    const routes = observabilityCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['GET /api/admin/runs', 'listAdminRuns'],
+      ['GET /api/admin/runs/[id]', 'getAdminRun'],
+      ['GET /api/admin/cost', 'getAdminCost'],
+      ['GET /api/admin/failures', 'listAdminFailureClusters'],
+      ['GET /api/cost/today', 'getTodayCost'],
+    ]);
+    for (const [key, operationId] of expected) {
+      const route = routes.find((candidate) => `${candidate.method} ${candidate.path}` === key);
+      expect(route?.operationId, key).toBe(operationId);
+    }
+
+    const document = generateOpenApiDocument([observabilityCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    expect(document.paths['/api/admin/runs'].get).toMatchObject({
+      'x-pagination': { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
+      parameters: expect.arrayContaining([
+        expect.objectContaining({ name: 'limit', in: 'query' }),
+        expect.objectContaining({ name: 'status', in: 'query' }),
+        expect.objectContaining({ name: 'cursor', in: 'query' }),
+      ]),
+    });
+    expect(document.paths['/api/admin/runs/{id}'].get.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'id', in: 'path', required: true })]),
+    );
+    expect(document.paths['/api/admin/cost'].get.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'days', in: 'query' })]),
+    );
+    expect(document.paths['/api/admin/failures'].get.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'limit', in: 'query' })]),
+    );
+  });
+});
