@@ -12,6 +12,7 @@ import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
 import { POST } from './calibration-anchors';
+import { FixedAnchorResponseSchema } from './review-planning-contracts';
 
 function makeReq(body: unknown): Request {
   return new Request('http://t/api/practice/calibration/anchors', {
@@ -45,7 +46,9 @@ describe('POST /api/practice/calibration/anchors', () => {
       ]),
     );
     expect(res.status).toBe(200);
-    const json = (await res.json()) as {
+    const raw = await res.json();
+    expect(() => FixedAnchorResponseSchema.parse(raw)).not.toThrow();
+    const json = raw as {
       anchors: Array<{ question_id: string; bucket: string; b: number }>;
     };
     expect(json.anchors).toEqual([

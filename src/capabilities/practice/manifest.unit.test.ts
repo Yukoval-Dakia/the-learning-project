@@ -233,4 +233,50 @@ describe('practice manifest API resources', () => {
       expect.arrayContaining([expect.objectContaining({ name: 'id', in: 'path', required: true })]),
     );
   });
+
+  it('publishes review planning, reporting and calibration contracts', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['GET /api/review/due', 'listDueReviews'],
+      ['POST /api/review/advice', 'previewReviewAdvice'],
+      ['GET /api/review/weekly', 'getWeeklyReviewReport'],
+      ['POST /api/practice/calibration/anchors', 'setPracticeCalibrationAnchors'],
+    ]);
+
+    const declared = routes.filter((route) => expected.has(`${route.method} ${route.path}`));
+    expect(declared).toHaveLength(expected.size);
+    for (const route of declared) {
+      const key = `${route.method} ${route.path}`;
+      expect(route.operationId, key).toBe(expected.get(key));
+    }
+
+    const document = generateOpenApiDocument([practiceCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    expect(document.paths['/api/review/due'].get).toMatchObject({
+      'x-pagination': 'none',
+    });
+    expect(document.paths['/api/review/due'].get.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'limit', in: 'query' })]),
+    );
+    expect(document.paths['/api/review/advice'].post.requestBody).toMatchObject({
+      required: true,
+    });
+    const adviceResponse = document.paths['/api/review/advice'].post.responses as Record<
+      string,
+      { content: Record<string, { schema: Record<string, unknown> }> }
+    >;
+    expect(adviceResponse['200'].content['application/json'].schema).toMatchObject({
+      properties: { judge: { type: 'object' } },
+    });
+    expect(document.paths['/api/review/weekly'].get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'days', in: 'query' }),
+        expect.objectContaining({ name: 'timezone', in: 'query' }),
+      ]),
+    );
+    expect(document.paths['/api/practice/calibration/anchors'].post.requestBody).toMatchObject({
+      required: true,
+    });
+  });
 });

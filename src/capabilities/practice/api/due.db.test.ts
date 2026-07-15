@@ -9,6 +9,7 @@ import { event, material_fsrs_state, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './due';
+import { ReviewDueResponseSchema } from './review-planning-contracts';
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
@@ -222,7 +223,9 @@ describe('GET /api/review/due', () => {
 
     const res = await getReview();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    const json = await res.json();
+    expect(() => ReviewDueResponseSchema.parse(json)).not.toThrow();
+    const body = json as {
       rows: Array<{
         id: string;
         question_id: string;

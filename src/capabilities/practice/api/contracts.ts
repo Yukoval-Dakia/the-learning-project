@@ -38,7 +38,7 @@ export const CreateAttemptBodySchema = z.union(
 
 export type CreateAttemptBody = z.infer<typeof CreateAttemptBodySchema>;
 
-const FsrsStateWireSchema = z
+export const FsrsStateWireSchema = z
   .object({
     due: z.string().datetime(),
     stability: z.number(),
@@ -53,14 +53,14 @@ const FsrsStateWireSchema = z
   })
   .passthrough();
 
-const AttemptCorrectionStepSchema = z.object({
+export const AttemptCorrectionStepSchema = z.object({
   event_id: z.string(),
   state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded']),
   correction_event_id: z.string().nullable(),
   replacement_event_id: z.string().nullable(),
 });
 
-const AttemptCorrectionStateSchema = z.object({
+export const AttemptCorrectionStateSchema = z.object({
   original_event_id: z.string(),
   state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded', 'missing', 'cycle']),
   terminal_state: z.enum(['active', 'retracted', 'marked_wrong', 'missing', 'cycle']),

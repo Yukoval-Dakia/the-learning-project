@@ -11,7 +11,7 @@ export {
   QuestionKind,
 } from '@/core/schema/business';
 export { ActivityRef } from '@/core/schema/activity';
-export { JudgeResultV2 } from '@/core/schema/capability';
+export { CoarseOutcome, JudgeResultV2, ScoreMeaning } from '@/core/schema/capability';
 export { CorrectArtifactEvent } from '@/core/schema/event';
 export { NudgeKind } from '@/core/schema/event/nudge-events';
 export { SuggestionKind } from '@/core/schema/event/known';

@@ -17,22 +17,10 @@
 //
 // Auth：/api/* internal-token 中间件由组合根（server/app.ts）统一施加，本 handler 无需再校验。
 
-import { z } from 'zod';
-
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { ANCHOR_BUCKETS, type AnchorBucket, setFixedAnchors } from '@/server/mastery/fixed-anchor';
-
-const AnchorEntrySchema = z.object({
-  question_id: z.string().min(1, 'question_id is required'),
-  // 粗分桶（owner-fixed 五档，非 raw logit）——bucket→logit 由 module const 固定。
-  bucket: z.enum(ANCHOR_BUCKETS as [AnchorBucket, ...AnchorBucket[]]),
-});
-
-const BodySchema = z
-  .array(AnchorEntrySchema)
-  .min(1, 'at least one anchor entry is required')
-  .max(64, 'too many anchor entries in one request');
+import { setFixedAnchors } from '@/server/mastery/fixed-anchor';
+import { FixedAnchorBodySchema } from './review-planning-contracts';
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -43,7 +31,7 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('validation_error', 'request body must be valid JSON', 400);
     }
 
-    const parsed = BodySchema.safeParse(raw);
+    const parsed = FixedAnchorBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
