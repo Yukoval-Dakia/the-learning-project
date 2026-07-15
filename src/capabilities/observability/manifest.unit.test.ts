@@ -121,3 +121,22 @@ describe('observability admin read contracts', () => {
     );
   });
 });
+
+describe('observability diagnostic read contracts', () => {
+  it('declares the five non-paginated diagnostic surfaces', () => {
+    const routes = observabilityCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['GET /api/admin/conjecture-scores', 'getConjectureScores'],
+      ['GET /api/admin/judge-calibration', 'getJudgeCalibration'],
+      ['GET /api/admin/coverage-lattice', 'getCoverageLattice'],
+      ['GET /api/observability/calibration-maturity', 'getCalibrationMaturity'],
+      ['GET /api/observability/effectiveness-trend', 'getEffectivenessTrend'],
+    ]);
+    for (const [key, operationId] of expected) {
+      const route = routes.find((candidate) => `${candidate.method} ${candidate.path}` === key);
+      expect(route?.operationId, key).toBe(operationId);
+      expect(route?.pagination, key).toBe('none');
+      expect(route?.responses?.[200], key).toBeDefined();
+    }
+  });
+});
