@@ -4,6 +4,7 @@
 // knowledge FSRS subject, the window boundary (far-future cards excluded), and
 // the empty case.
 
+import { KnowledgeReviewDueSummaryResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { material_fsrs_state } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -60,7 +61,9 @@ describe('GET /api/knowledge/review-due-summary', () => {
   it('returns an empty summary when nothing is due', async () => {
     const res = await getSummary();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as SummaryBody;
+    const json = await res.json();
+    KnowledgeReviewDueSummaryResponseSchema.parse(json);
+    const body = json as SummaryBody;
     expect(body.summary).toEqual({});
     expect(body.due_soon_window_hours).toBe(24);
     expect(typeof body.now).toBe('string');

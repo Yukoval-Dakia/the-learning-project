@@ -1,3 +1,4 @@
+import { LegacyKnowledgeProposalDecisionBodySchema } from '@/capabilities/knowledge/api/contracts';
 import { acceptProposal, dismissProposal } from '@/capabilities/knowledge/server/proposals';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
@@ -15,11 +16,12 @@ async function handleLegacyKnowledgeDecision(
 ): Promise<Response> {
   try {
     const { id } = params;
-    const body = (await req.json().catch(() => ({}))) as { decision?: string };
-
-    if (body.decision !== 'accept' && body.decision !== 'reject') {
+    const raw = await req.json().catch(() => null);
+    const parsed = LegacyKnowledgeProposalDecisionBodySchema.safeParse(raw);
+    if (!parsed.success) {
       throw new ApiError('invalid_decision', 'decision must be accept or reject', 400);
     }
+    const body = parsed.data;
 
     if (body.decision === 'accept') {
       const result = await acceptProposal(db, id);

@@ -2,6 +2,7 @@
 // writes a rate event + (for accept-class decisions) inserts the edge + writes
 // a generate event, all in one transaction.
 
+import { LegacyKnowledgeEdgeDecisionResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { newId } from '@/core/ids';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -94,7 +95,9 @@ describe('POST /api/knowledge/edges/proposals/[id]', () => {
     expect(res.headers.get('Link')).toBe(
       `</api/proposals/${proposeId}/decisions>; rel="successor-version"`,
     );
-    const body = (await res.json()) as {
+    const json = await res.json();
+    LegacyKnowledgeEdgeDecisionResponseSchema.parse(json);
+    const body = json as {
       rate_event_id: string;
       generate_event_id: string | null;
       edge_id: string | null;

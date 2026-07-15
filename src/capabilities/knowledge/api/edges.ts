@@ -14,50 +14,28 @@
 // Writes go through `src/server/knowledge/edges.ts` (single-owner per ADR-0005).
 // `relation_type` lock comes from Lane B `RelationTypeSchema`.
 
-import { z } from 'zod';
-
 import { createId } from '@paralleldrive/cuid2';
 
+import {
+  CreateKnowledgeEdgeBodySchema,
+  KnowledgeEdgeQuerySchema,
+} from '@/capabilities/knowledge/api/contracts';
 import {
   createKnowledgeEdge,
   getKnowledgeEdgeById,
   listKnowledgeEdgesPage,
 } from '@/capabilities/knowledge/server/edges';
-import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-
-const QuerySchema = z.object({
-  from: z.string().min(1).optional(),
-  to: z.string().min(1).optional(),
-  relation_type: z.string().min(1).optional(),
-  include_archived: z
-    .string()
-    .optional()
-    .transform((v) => v === 'true'),
-  limit: z.coerce.number().int().positive().max(500).default(500),
-  cursor: z.string().min(1).optional(),
-});
-
-const BodySchema = z.object({
-  from_knowledge_id: z.string().min(1, 'from_knowledge_id is required'),
-  to_knowledge_id: z.string().min(1, 'to_knowledge_id is required'),
-  relation_type: RelationTypeSchema,
-  weight: z.number().min(0).max(1).optional(),
-  // created_by is no longer accepted from the request — a manual edge create is fixed to the
-  // {user, self} actor so the stored created_by matches the fold (YUK-471). Any client-sent
-  // created_by is ignored (Zod strips unknown keys).
-  reasoning: z.string().nullable().optional(),
-});
 
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
     const raw: Record<string, string> = {};
     for (const [key, value] of url.searchParams.entries()) raw[key] = value;
-    const parsed = QuerySchema.safeParse(raw);
+    const parsed = KnowledgeEdgeQuerySchema.safeParse(raw);
     if (!parsed.success) {
       const message = parsed.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)
@@ -97,7 +75,7 @@ export async function getEdge(_req: Request, params: Record<string, string>): Pr
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    const parsed = BodySchema.safeParse(raw);
+    const parsed = CreateKnowledgeEdgeBodySchema.safeParse(raw);
     if (!parsed.success) {
       const message = parsed.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)

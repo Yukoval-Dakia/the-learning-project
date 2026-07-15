@@ -3,6 +3,7 @@
 // PROPOSE (cold-start proposed/non-live prereq edges → low-confidence suggestions), plus
 // the disjointness guards (live-covered KCs and self-mastered KCs never appear as propose).
 
+import { KnowledgeFrontierResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { knowledge, knowledge_edge, mastery_state } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { createId } from '@paralleldrive/cuid2';
@@ -128,6 +129,7 @@ describe('loadFrontierRail (A5 S2, YUK-354)', () => {
     await setMastered('p2');
 
     const rail = await loadFrontierRail(testDb());
+    KnowledgeFrontierResponseSchema.parse({ rows: rail });
     expect(rail).toHaveLength(1);
     const item = rail[0];
     expect(item.kid).toBe('F');

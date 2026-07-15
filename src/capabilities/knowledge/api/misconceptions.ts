@@ -6,17 +6,14 @@
 //          no write path. Empty KC → { rows: [] } (honest empty, never zero-filled).
 //   → 400 missing / blank id.
 
-import { z } from 'zod';
-
+import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { loadMisconceptionsForKc } from '@/capabilities/knowledge/server/misconception-read';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
-
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsed = ParamsSchema.safeParse(params);
+    const parsed = KnowledgeIdParamsSchema.safeParse(params);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'knowledge id is required', 400);
     }

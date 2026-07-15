@@ -20,19 +20,11 @@
 // subject_kind='knowledge_edge'). Chain: rate.caused_by = propose.id,
 // generate.caused_by = propose.id, generate.payload.propose_event_id = propose.id.
 
-import { z } from 'zod';
-
-import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { LegacyKnowledgeEdgeDecisionBodySchema } from '@/capabilities/knowledge/api/contracts';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { decideKnowledgeEdgeProposal } from '@/server/proposals/actions';
-
-const DecisionBody = z.object({
-  decision: z.enum(['accept', 'reverse', 'change_type', 'dismiss']),
-  new_relation_type: RelationTypeSchema.optional(),
-  user_note: z.string().max(2000).optional(),
-});
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   const response = await handleLegacyEdgeDecision(req, params);
@@ -47,7 +39,7 @@ async function handleLegacyEdgeDecision(
   try {
     const { id: proposeEventId } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = DecisionBody.safeParse(raw);
+    const parsed = LegacyKnowledgeEdgeDecisionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
@@ -56,10 +48,6 @@ async function handleLegacyEdgeDecision(
       );
     }
     const { decision, new_relation_type, user_note } = parsed.data;
-
-    if (decision === 'change_type' && !new_relation_type) {
-      throw new ApiError('validation_error', 'change_type requires new_relation_type', 400);
-    }
 
     const result = await decideKnowledgeEdgeProposal(db, proposeEventId, {
       decision,

@@ -6,6 +6,7 @@
 // zero-filled); the ⑥ conf-strip invariant (no raw weight/confidence keys nor seeded
 // numbers on the wire); manifest route registration.
 
+import { KnowledgeMisconceptionListResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { knowledgeCapability } from '@/capabilities/knowledge/manifest';
 import { misconception, misconception_edge } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
@@ -115,6 +116,7 @@ describe('loadMisconceptionsForKc (A5 S4, YUK-531)', () => {
     });
 
     const rows = await loadMisconceptionsForKc(testDb(), 'kc_target');
+    KnowledgeMisconceptionListResponseSchema.parse({ rows });
     expect(rows).toHaveLength(1);
     const [r] = rows;
     expect(r.id).toBe('mc_1');

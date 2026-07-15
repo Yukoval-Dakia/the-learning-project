@@ -9,17 +9,14 @@
 // snapshot scan + `/api/mistakes?limit=200` scan with one server-side aggregate
 // (loadKnowledgeNodePage). Read-only; no write path.
 
-import { z } from 'zod';
-
+import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { loadKnowledgeNodePage } from '@/capabilities/knowledge/server/node-page';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
-
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsed = ParamsSchema.safeParse(params);
+    const parsed = KnowledgeIdParamsSchema.safeParse(params);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'knowledge id is required', 400);
     }
