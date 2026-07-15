@@ -34,6 +34,20 @@ import {
   PaperSubmissionResponseSchema,
 } from './api/paper-contracts';
 import {
+  CreatePlacementQuestionSelectionBodySchema,
+  CreatePlacementSessionBodySchema,
+  EndPlacementSessionBodySchema,
+  LegacyPlacementSessionTransitionResponseSchema,
+  PlacementProfileQuerySchema,
+  PlacementProfileResponseSchema,
+  PlacementQuestionSelectionResponseSchema,
+  PlacementSessionCreatedSchema,
+  PlacementSessionParamsSchema,
+  PlacementSessionResponseSchema,
+  PlacementSessionTransitionResponseSchema,
+  UpdatePlacementSessionBodySchema,
+} from './api/placement-contracts';
+import {
   CreateHintRequestBodySchema,
   CreateSolveSessionBodySchema,
   CreateSolveSubmissionBodySchema,
@@ -252,36 +266,86 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/placement/start',
+        operationId: 'createPlacementSessionLegacy',
+        request: { body: CreatePlacementSessionBodySchema },
+        responses: { 200: PlacementSessionCreatedSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/placement-sessions', since: '@1783987200' },
         load: () => import('./api/placement-start').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/placement/[id]/next',
+        operationId: 'createPlacementQuestionSelectionLegacy',
+        request: {
+          params: PlacementSessionParamsSchema,
+          body: CreatePlacementQuestionSelectionBodySchema,
+        },
+        responses: { 200: PlacementQuestionSelectionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: {
+          successor: '/api/placement-sessions/[id]/question-selections',
+          since: '@1783987200',
+        },
         load: () => import('./api/placement-next').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/placement/[id]/end',
+        operationId: 'endPlacementSessionLegacy',
+        request: {
+          params: PlacementSessionParamsSchema,
+          body: EndPlacementSessionBodySchema,
+          bodyRequired: false,
+        },
+        responses: {
+          200: LegacyPlacementSessionTransitionResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        deprecation: { successor: '/api/placement-sessions/[id]', since: '@1783987200' },
         load: () => import('./api/placement-end').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/placement-sessions',
+        operationId: 'createPlacementSession',
+        request: { body: CreatePlacementSessionBodySchema },
+        responses: { 201: PlacementSessionCreatedSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/placement-start').then((m) => m.createPlacementSessionResource),
       },
       {
         method: 'POST',
         path: '/api/placement-sessions/[id]/question-selections',
+        operationId: 'createPlacementQuestionSelection',
+        request: {
+          params: PlacementSessionParamsSchema,
+          body: CreatePlacementQuestionSelectionBodySchema,
+        },
+        responses: { 200: PlacementQuestionSelectionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/placement-next').then((m) => m.createPlacementQuestionSelection),
       },
       {
         method: 'GET',
         path: '/api/placement-sessions/[id]',
+        operationId: 'getPlacementSession',
+        request: { params: PlacementSessionParamsSchema },
+        responses: { 200: PlacementSessionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/placement-session-detail').then((m) => m.GET),
       },
       {
         method: 'PATCH',
         path: '/api/placement-sessions/[id]',
+        operationId: 'updatePlacementSession',
+        request: {
+          params: PlacementSessionParamsSchema,
+          body: UpdatePlacementSessionBodySchema,
+        },
+        responses: { 200: PlacementSessionTransitionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/placement-session-detail').then((m) => m.PATCH),
       },
       // YUK-473 Slice 4 — placement-done 起始档案读：GET ?goal=<id> → per-KC mastery over
@@ -290,6 +354,10 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/placement/profile',
+        operationId: 'getPlacementProfile',
+        request: { query: PlacementProfileQuerySchema },
+        responses: { 200: PlacementProfileResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/placement-profile').then((m) => m.GET),
       },
       // YUK-402 inc-4a — owner manual gate (draft 池审核面)后端。list draft pool +

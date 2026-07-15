@@ -3,22 +3,17 @@
 // Closes a placement probe: status='completed' (hit a termination condition) or 'abandoned'
 // (walked away). Mirrors the review session-end handler (sendBeacon-tolerant body parse).
 
-import { z } from 'zod';
-
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { Placement } from '@/server/session';
+import { type EndPlacementSessionBody, EndPlacementSessionBodySchema } from './placement-contracts';
 
-const EndBody = z.object({
-  status: z.enum(['completed', 'abandoned']).default('completed'),
-});
-
-async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
+async function parseBody(req: Request): Promise<EndPlacementSessionBody> {
   const contentType = req.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
     const raw = await req.json().catch(() => ({}));
-    const parsed = EndBody.safeParse(raw);
+    const parsed = EndPlacementSessionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
@@ -32,7 +27,7 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
   const text = await req.text().catch(() => '');
   if (text.length > 0) {
     try {
-      const parsed = EndBody.safeParse(JSON.parse(text));
+      const parsed = EndPlacementSessionBodySchema.safeParse(JSON.parse(text));
       if (parsed.success) return parsed.data;
     } catch {
       // fall through to default

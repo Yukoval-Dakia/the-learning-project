@@ -24,6 +24,11 @@ vi.mock('@/server/session/placement', async (importOriginal) => {
   };
 });
 
+import {
+  LegacyPlacementSessionTransitionResponseSchema,
+  PlacementQuestionSelectionResponseSchema,
+  PlacementSessionCreatedSchema,
+} from './placement-contracts';
 import { POST as endPlacement } from './placement-end';
 import { POST as nextPlacement } from './placement-next';
 import { createPlacementSessionResource, POST as startPlacement } from './placement-start';
@@ -91,6 +96,27 @@ async function seedAnswer(sessionId: string, questionId: string): Promise<void> 
 }
 
 describe('placement API flow', () => {
+  it('keeps start, selection and end responses inside the declared contracts', async () => {
+    await seedKnowledge('kc1');
+    await seedQuestion('q1', ['kc1'], 3);
+
+    const startResponse = await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }));
+    const start = PlacementSessionCreatedSchema.parse(await startResponse.json());
+    expect(start.question?.questionId).toBe('q1');
+
+    const selectionResponse = await nextPlacement(jsonReq({}), { id: start.sessionId });
+    expect(
+      PlacementQuestionSelectionResponseSchema.safeParse(await selectionResponse.json()).success,
+    ).toBe(true);
+
+    const endResponse = await endPlacement(jsonReq({ status: 'completed' }), {
+      id: start.sessionId,
+    });
+    expect(
+      LegacyPlacementSessionTransitionResponseSchema.safeParse(await endResponse.json()).success,
+    ).toBe(true);
+  });
+
   it('start (flag on) creates a started session + returns the max-info first question', async () => {
     await seedKnowledge('kc1');
     await seedQuestion('q-easy', ['kc1'], 3); // b≈0 → wins at cold θ̂=0

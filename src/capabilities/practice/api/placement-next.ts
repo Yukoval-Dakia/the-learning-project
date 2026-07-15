@@ -22,8 +22,6 @@
 // param survives only as an optional override (e.g. inc-E prereq-walk widening); when omitted,
 // the persisted scope is authoritative.
 
-import { z } from 'zod';
-
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { deprecatedRouteResponse } from '@/kernel/http';
@@ -33,20 +31,7 @@ import { loadPlacementSessionForUpdate } from '@/server/session/placement';
 import { and, eq, inArray } from 'drizzle-orm';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
 import { capForPace, evaluatePlacementTermination } from '../server/placement-termination';
-
-const NextBody = z.object({
-  /** OPTIONAL client override of the probe's KC scope (YUK-470). The authoritative scope is
-   * persisted server-side at /start (scope_knowledge_ids) and read under the row lock; this is
-   * only an override for callers that legitimately need to widen/narrow (e.g. inc-E prereq
-   * walk). Omit it and the server-side scope wins — the route no longer trusts the client to
-   * re-send the scope every call. */
-  knowledgeIds: z.array(z.string().min(1)).min(1).optional(),
-  /** hard count cap override; defaults to PLACEMENT_DEFAULT_CAP (§6 Q1 = 8). Upper-bounded so
-   * the anti-fatigue ceiling can't be trivially disabled by a buggy/oversized client value. */
-  cap: z.number().int().min(1).max(50).optional(),
-  /** optional θ SE early-stop threshold; null/omitted → cap-only termination. */
-  seThreshold: z.number().positive().nullable().optional(),
-});
+import { CreatePlacementQuestionSelectionBodySchema } from './placement-contracts';
 
 export async function createPlacementQuestionSelection(
   req: Request,
@@ -61,7 +46,7 @@ export async function createPlacementQuestionSelection(
     } catch {
       throw new ApiError('validation_error', 'request body must be valid JSON', 400);
     }
-    const parsed = NextBody.safeParse(raw);
+    const parsed = CreatePlacementQuestionSelectionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

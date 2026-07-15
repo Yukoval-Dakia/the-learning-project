@@ -19,11 +19,12 @@ import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
 import { readLearnerAxisStates } from '@/server/calibration/axis-writer';
-import { type DayOnePrior, loadDayOnePriors } from '@/server/coldstart/propagate-priors';
+import { loadDayOnePriors } from '@/server/coldstart/propagate-priors';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { eq, inArray } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from '../server/placement-scope';
+import type { PlacementProfileKc, TestedPlacementProfileKc } from './placement-contracts';
 
 /** How many in-scope KCs the profile surfaces (tested first). A broad goal can scope many
  * KCs; the probe only touched a handful, so cap the list to keep the reveal legible. */
@@ -33,43 +34,6 @@ const PROFILE_KC_LIMIT = 20;
  * preview. Computed over the FULL evidenced set BEFORE the PROFILE_KC_LIMIT cap, so a truly weak
  * but low-evidence KC (ranked past #20 by evidence) still surfaces as weakest. */
 const WEAKEST_LIMIT = 5;
-
-export interface ProfileKc {
-  id: string;
-  name: string;
-  tested: boolean;
-  evidence_count: number;
-  /** present only when tested (a mastery_state row exists). */
-  theta_hat?: number;
-  theta_precision?: number;
-  theta_se?: number;
-  p_l?: number;
-  mastery_lo?: number;
-  mastery_hi?: number;
-  low_confidence?: boolean;
-  // YUK-495 #41 — raw evidence so the client can RE-DERIVE the band bit-for-bit
-  // (deriveProfileKc: pfaLogit(beta,γ,ρ,succ,fail) → σ([logit±se])). Present only when tested.
-  success_count?: number;
-  fail_count?: number;
-  beta?: number;
-  // YUK-445 (A11) — the caution / speed-accuracy axis (orthogonal to θ̂), present only when the
-  // learner_axis_state batch has written a descriptor for this KC. boundary_a = response
-  // caution, ter = non-decision baseline (s), drift_v = evidence-accumulation speed (NULL in the
-  // adaptive flow — confounded; only filled on a non-adaptive probe-set). A DESCRIPTOR — these
-  // do NOT feed θ̂/p(L)/scheduling.
-  axis?: {
-    drift_v: number | null;
-    boundary_a: number | null;
-    ter: number | null;
-    n_obs: number;
-    provenance: string;
-  };
-  // YUK-513 #123 / inc-E — DARK day-one (n=0) propagated mastery prior over the prereq
-  // sub-DAG (deterministic, user-independent: see loadDayOnePriors). Present only when
-  // DAY_ONE_PRIOR_ENABLED && the native binding is loadable; otherwise the field is
-  // OMITTED and this response is byte-identical to today. No UI consumer until PR-3.
-  day_one_prior?: DayOnePrior;
-}
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -135,7 +99,7 @@ export async function GET(req: Request): Promise<Response> {
     ]);
     const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
 
-    const kcs: ProfileKc[] = scope.map((id) => {
+    const kcs: PlacementProfileKc[] = scope.map((id) => {
       const m = proj.get(id);
       const name = nameById.get(id) ?? id;
       // YUK-445 (A11) — axis descriptor is independent of mastery: a KC may have an axis row
@@ -154,12 +118,12 @@ export async function GET(req: Request): Promise<Response> {
       // never added (byte-identical-off).
       const dop = dayOnePriors?.get(id);
       if (!m) {
-        const row: ProfileKc = { id, name, tested: false, evidence_count: 0 };
+        const row: PlacementProfileKc = { id, name, tested: false, evidence_count: 0 };
         if (axis) row.axis = axis;
         if (dop) row.day_one_prior = dop;
         return row;
       }
-      const row: ProfileKc = {
+      const row: PlacementProfileKc = {
         id,
         name,
         tested: true,
@@ -204,7 +168,9 @@ export async function GET(req: Request): Promise<Response> {
     // PROFILE_KC_LIMIT cap). Drives both the /today card's weakest-first preview AND its honest
     // coverage count — neither must be undercounted by the (evidence-sorted) truncation of kcs,
     // nor inflated by KG-borrow soft-layer rows (evidence_count:0) that testedCount can include.
-    const evidencedKcs = kcs.filter((k) => k.tested && k.evidence_count > 0 && k.p_l !== undefined);
+    const evidencedKcs = kcs.filter(
+      (k): k is TestedPlacementProfileKc => k.tested && k.evidence_count > 0 && k.p_l !== undefined,
+    );
     const evidencedCount = evidencedKcs.length;
     // "weakest" preview: lowest p(L) first, over that full evidenced set — so a truly weak but
     // low-evidence KC ranked past #20 by evidence still surfaces.
