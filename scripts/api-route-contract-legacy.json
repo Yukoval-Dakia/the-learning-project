@@ -1,7 +1,1 @@
-{
-  "PATCH /api/admin/subjects/[id]": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/subjects/[id]/reset": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/subjects/[id]/restore": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/subjects/[id]/retire": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/subjects/[id]/validate": "Legacy route; declare request and response schemas when this surface is migrated."
-}
+{}
