@@ -1,11 +1,5 @@
 {
-  "GET /api/admin/subjects": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "GET /api/admin/subjects/[id]": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "GET /api/admin/subjects/[id]/traits": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "GET /api/admin/traits": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "GET /api/admin/traits/[id]/journal": "Legacy route; declare request and response schemas when this surface is migrated.",
   "PATCH /api/admin/subjects/[id]": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/subjects": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects/[id]/reset": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects/[id]/restore": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects/[id]/retire": "Legacy route; declare request and response schemas when this surface is migrated.",

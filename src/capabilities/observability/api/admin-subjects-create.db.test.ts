@@ -5,6 +5,7 @@ import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-trai
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getSubject } from './admin-subjects';
 import { POST } from './admin-subjects-create';
+import { AdminSubjectSchema, CreatedAdminSubjectResponseSchema } from './subject-contracts';
 
 const db = testDb();
 
@@ -26,17 +27,21 @@ describe('POST /api/admin/subjects resource contract', () => {
   it('returns 201 for create, 200 for replay, and a readable Location', async () => {
     const created = await POST(createRequest('化学'));
     expect(created.status).toBe(201);
-    const body = (await created.json()) as { id: string };
+    const body = CreatedAdminSubjectResponseSchema.parse(await created.json());
     expect(created.headers.get('Location')).toBe(`/api/admin/subjects/${body.id}`);
 
     const detail = await getSubject(new Request(`http://localhost/api/admin/subjects/${body.id}`), {
       id: body.id,
     });
     expect(detail.status).toBe(200);
-    expect(await detail.json()).toMatchObject({ id: body.id, displayName: '化学' });
+    expect(AdminSubjectSchema.parse(await detail.json())).toMatchObject({
+      id: body.id,
+      displayName: '化学',
+    });
 
     const replayed = await POST(createRequest(' 化学 '));
     expect(replayed.status).toBe(200);
     expect(replayed.headers.get('Location')).toBe(`/api/admin/subjects/${body.id}`);
+    expect(CreatedAdminSubjectResponseSchema.parse(await replayed.json())).toEqual(body);
   });
 });
