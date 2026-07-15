@@ -3,52 +3,25 @@
 // [id] 由 toHonoPath 转 :id 捕获后以 Record 透传。
 
 import { newId } from '@/core/ids';
-import { ActivityRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
 import { getEventById, writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { z } from 'zod';
-
-const CorrectBody = z
-  .object({
-    correction_kind: z.enum(['supersede', 'retract', 'mark_wrong', 'restore']),
-    replacement_event_id: z.string().min(1).optional(),
-    reason_md: z.string().trim().min(1).max(2000),
-    affected_refs: z.array(ActivityRef).min(1),
-  })
-  .superRefine((data, ctx) => {
-    if (data.correction_kind === 'supersede' && !data.replacement_event_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "replacement_event_id is required when correction_kind='supersede'",
-        path: ['replacement_event_id'],
-      });
-    }
-    if (data.correction_kind !== 'supersede' && data.replacement_event_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "replacement_event_id is only allowed when correction_kind='supersede'",
-        path: ['replacement_event_id'],
-      });
-    }
-  });
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
+import { EventCorrectionBodySchema, EventParamsSchema } from './event-contracts';
 
 export async function createCorrection(
   req: Request,
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const parsedParams = ParamsSchema.safeParse(params);
+    const parsedParams = EventParamsSchema.safeParse(params);
     if (!parsedParams.success) {
       throw new ApiError('validation_error', 'event id is required', 400);
     }
     const targetEventId = parsedParams.data.id;
 
     const raw = await req.json().catch(() => null);
-    const parsed = CorrectBody.safeParse(raw);
+    const parsed = EventCorrectionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

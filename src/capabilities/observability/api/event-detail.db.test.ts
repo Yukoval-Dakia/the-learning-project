@@ -1,6 +1,7 @@
 import { event } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { EventDetailResponseSchema } from './event-contracts';
 import { GET } from './event-detail';
 
 async function seedEvent({
@@ -78,7 +79,9 @@ describe('GET /api/events/[id]', () => {
 
     const response = await getEvent('evt_attempt');
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
+    const json = await response.json();
+    expect(() => EventDetailResponseSchema.parse(json)).not.toThrow();
+    const body = json as {
       event: { id: string; action: string; correction_status: { state: string } };
       correction_status: { state: string };
       chain: { caused_by: unknown; caused_events: Array<{ id: string }>; corrections: unknown[] };

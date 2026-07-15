@@ -4,6 +4,7 @@ import { _clearSubscribersForTests, broadcast } from '@/server/events/sse_router
 import { writeJobEvent } from '@/server/events/writer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { JobEventStreamResponseSchema } from './event-contracts';
 import { GET } from './job-events';
 
 // Parsed SSE frame: `id: N\ndata: {...}\n\n`.
@@ -76,6 +77,7 @@ async function collectFrames(
   } catch {
     // already torn down
   }
+  expect(() => JobEventStreamResponseSchema.parse(buffer)).not.toThrow();
   return parseFrames(buffer);
 }
 
