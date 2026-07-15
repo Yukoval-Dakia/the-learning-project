@@ -20,6 +20,14 @@ import {
   UpdateReviewSessionBody,
 } from './api/contracts';
 import {
+  DraftForceEnableBodySchema,
+  DraftModerationParamsSchema,
+  DraftPromotionResponseSchema,
+  DraftReviewDetailResponseSchema,
+  DraftReviewListQuerySchema,
+  DraftReviewListResponseSchema,
+} from './api/draft-moderation-contracts';
+import {
   CreateLegacyPaperReviewSessionBodySchema,
   CreatePaperAnswerDraftBodySchema,
   CreatePaperSubmissionBodySchema,
@@ -398,22 +406,39 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/review/drafts',
+        operationId: 'listReviewDrafts',
+        request: { query: DraftReviewListQuerySchema },
+        responses: { 200: DraftReviewListResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
         load: () => import('./api/review-drafts-list').then((m) => m.GET),
       },
       // YUK-403 inc-4b — full-text draft preview (loom preview pane data source).
       {
         method: 'GET',
         path: '/api/review/drafts/[id]',
+        operationId: 'getReviewDraft',
+        request: { params: DraftModerationParamsSchema },
+        responses: { 200: DraftReviewDetailResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/review-draft-detail').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/review/drafts/[id]/enable',
+        operationId: 'enableReviewDraft',
+        request: { params: DraftModerationParamsSchema },
+        responses: { 200: DraftPromotionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/review-draft-enable').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/review/drafts/[id]/force-enable',
+        operationId: 'forceEnableReviewDraft',
+        request: { params: DraftModerationParamsSchema, body: DraftForceEnableBodySchema },
+        responses: { 200: DraftPromotionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/review-draft-force-enable').then((m) => m.POST),
       },
       {

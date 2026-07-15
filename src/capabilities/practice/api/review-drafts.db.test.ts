@@ -25,6 +25,11 @@ vi.mock('@/server/quiz/verify-and-promote', () => ({
   verifyAndPromote: (...args: unknown[]) => verifyAndPromoteMock(...args),
 }));
 
+import {
+  DraftPromotionResponseSchema,
+  DraftReviewDetailResponseSchema,
+  DraftReviewListResponseSchema,
+} from './draft-moderation-contracts';
 import { GET as draftDetail } from './review-draft-detail';
 import { POST as enableDraft } from './review-draft-enable';
 import { POST as forceEnableDraft } from './review-draft-force-enable';
@@ -106,7 +111,9 @@ describe('GET /api/review/drafts', () => {
 
     const res = await listDrafts(listReq());
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    const json = await res.json();
+    expect(() => DraftReviewListResponseSchema.parse(json)).not.toThrow();
+    const body = json as {
       data: Array<{ id: string; verify_status: string }>;
       rows: Array<{ id: string; verify_status: string }>;
       total: number;
@@ -192,7 +199,9 @@ describe('POST /api/review/drafts/[id]/enable', () => {
     });
     const res = await enableDraft(actionReq('q1', 'enable'), { id: 'q1' });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
+    const json = await res.json();
+    expect(() => DraftPromotionResponseSchema.parse(json)).not.toThrow();
+    const body = json as Record<string, unknown>;
     expect(body.promoted).toBe(true);
     expect(body.status).toBe('verified');
     expect(body.verify_event_id).toBe('ev-1');
@@ -268,7 +277,9 @@ describe('POST /api/review/drafts/[id]/force-enable (override, real path)', () =
       id: qid,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
+    const json = await res.json();
+    expect(() => DraftPromotionResponseSchema.parse(json)).not.toThrow();
+    const body = json as Record<string, unknown>;
     expect(body.promoted).toBe(true);
     expect(body.verify_event_id).toBeTruthy();
 
@@ -370,7 +381,9 @@ describe('GET /api/review/drafts/[id]', () => {
     });
     const res = await draftDetail(detailReq(qid), { id: qid });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
+    const json = await res.json();
+    expect(() => DraftReviewDetailResponseSchema.parse(json)).not.toThrow();
+    const body = json as Record<string, unknown>;
     expect(body.id).toBe(qid);
     expect(body.kind).toBe('mcq');
     expect(body.difficulty).toBe(4);
