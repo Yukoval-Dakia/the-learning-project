@@ -193,6 +193,35 @@ describe('validateComposition', () => {
     ).toThrow(/success status 200 has no response schema/);
   });
 
+  it('accepts per-status response media types and rejects invalid declarations', () => {
+    const route = (responseMediaTypes: Record<number, string>) =>
+      base({
+        name: 'a',
+        api: {
+          routes: [
+            {
+              method: 'POST',
+              path: '/api/a',
+              operationId: 'createA',
+              successStatus: [200, 202],
+              responses: { 200: z.string(), 202: z.object({ id: z.string() }) },
+              responseMediaTypes,
+            },
+          ],
+        },
+      });
+
+    expect(() =>
+      validateComposition([route({ 200: 'text/event-stream', 202: 'application/json' })]),
+    ).not.toThrow();
+    expect(() => validateComposition([route({ 200: 'not-a-media-type' })])).toThrow(
+      /invalid response media type/,
+    );
+    expect(() => validateComposition([route({ 201: 'application/json' })])).toThrow(
+      /status 201 has no response schema/,
+    );
+  });
+
   it('rejects invalid cursor pagination declarations', () => {
     expect(() =>
       validateComposition([

@@ -1,5 +1,19 @@
+import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
+import {
+  AcceptTeachingChipBodySchema,
+  AcceptTeachingChipResponseSchema,
+  CopilotChatRequest,
+  CopilotChatStreamResponseSchema,
+  CopilotDurableRunResponseSchema,
+  CopilotNudgeCompanionResponseSchema,
+  CopilotNudgesResponseSchema,
+  CopilotRouteIdParamsSchema,
+  CopilotSummaryResponseSchema,
+  CopilotTurnsQuerySchema,
+  CopilotTurnsResponseSchema,
+} from './api/contracts';
 
 // M5-T3 (YUK-321) — copilot 包：D14 单人格对话面（D13 权限继承框架内）。
 // 统一记忆读取面 = server/chat.ts 既有 ambient context 装配 + server/turns.ts
@@ -28,37 +42,73 @@ export const copilotCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/copilot/chat',
+        operationId: 'runCopilotChat',
+        request: { body: CopilotChatRequest },
+        responses: {
+          200: CopilotChatStreamResponseSchema,
+          202: CopilotDurableRunResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        responseMediaTypes: { 200: 'text/event-stream' },
+        successStatus: [200, 202],
         load: () => import('./api/chat').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/copilot/turns',
+        operationId: 'listCopilotTurns',
+        request: { query: CopilotTurnsQuerySchema },
+        responses: { 200: CopilotTurnsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/turns').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/today/copilot-summary',
+        operationId: 'getTodayCopilotSummary',
+        responses: { 200: CopilotSummaryResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/copilot-summary').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/teaching-sessions/[id]/accept-chip',
+        operationId: 'acceptTeachingSessionChip',
+        request: {
+          params: CopilotRouteIdParamsSchema,
+          body: AcceptTeachingChipBodySchema,
+        },
+        responses: { 200: AcceptTeachingChipResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/accept-chip').then((m) => m.POST),
       },
       // YUK-577 — 主动开口 nudge 面：读（排 shadow/过期/已处置 + 静默窗 backstop）+ 处置（× / 看看）。
       {
         method: 'GET',
         path: '/api/copilot/nudges',
+        operationId: 'listCopilotNudges',
+        responses: { 200: CopilotNudgesResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/nudges').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/copilot/nudges/[id]/dismiss',
+        operationId: 'dismissCopilotNudge',
+        request: { params: CopilotRouteIdParamsSchema },
+        responses: { 200: CopilotNudgeCompanionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/nudges').then((m) => m.dismissPOST),
       },
       {
         method: 'POST',
         path: '/api/copilot/nudges/[id]/opened',
+        operationId: 'markCopilotNudgeOpened',
+        request: { params: CopilotRouteIdParamsSchema },
+        responses: { 200: CopilotNudgeCompanionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/nudges').then((m) => m.openedPOST),
       },
     ],

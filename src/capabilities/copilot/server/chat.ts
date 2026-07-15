@@ -100,93 +100,14 @@ import { Conversation } from '@/server/session';
 // (teaching/solve/quiz) service-call paths do NOT.
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import {
+  CopilotChatRequest,
+  type CopilotChatRequestT,
+  type CopilotChatTriggerKind,
+  type CopilotSkillContextT,
+} from './chat-contracts';
 
-export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
-export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
-
-// AF S4 / YUK-203 U6 — the surface-merge behavior-pack selector. A `skill_context`
-// turn routes runCopilotChat to a teaching/solve behavior pack (a prompt/context
-// pack, NEVER a different tool surface — R5: skill ≠ surface). The behavior packs
-// compose TeachingTurnTask at the SERVICE layer; they do not add tools to COPILOT_TOOLS.
-//
-// YUK-284 (C1) — naming de-overload: these kinds name SERVICE-layer behavior packs
-// (TS orchestration), NOT knowledge-layer Agent Skills (SKILL.md). The `skill`
-// JSON field name on the wire envelope is intentionally KEPT (the Dock + replay
-// persistence depend on it); only the kinds-集合 constant/type identifiers are
-// renamed to stop using "skill" for the service编排.
-//
-// FORWARD-COMPAT NOTE: `skill_context` is the U6-temporary seed of AF S2b's
-// `CurrentUserContext.active_ref` (agent-framework-design §1.4). When S2b lands
-// the full `active_ref` envelope, this field is subsumed by it — both the `skill`
-// discriminator and the `ref` shape are deliberately minimal so the migration is
-// additive. The `ref` shape `{ kind, id }` mirrors `leave_agent_note`'s ref
-// vocabulary (AF §4 `refs: Array<{kind, id}>`) for consistency.
-// YUK-262 — `quiz` added as a third value (was a behavior pack pre-C3).
-//
-// YUK-284 (C3) — TWO kinds-集合, semantically layered:
-//   • COPILOT_SKILL_CONTEXT_KINDS — the WIRE layer: every skill_context.skill value
-//     the route may still receive. Stays ['teaching','solve','quiz'] for backward
-//     compat: chip quiz still seeds skill_context:{skill:'quiz'} (#348), and a
-//     persisted-old solve reply (#solve) must still parse on replay. Used by the
-//     z.enum below so CopilotChatRequest.parse never rejects these wire values.
-//   • COPILOT_BEHAVIOR_PACK_KINDS — the BEHAVIOR-PACK layer: the kinds that are真
-//     LLM/service behavior packs dispatched in chat.ts. C3 收敛为 ['teaching'] only —
-//     solve was extracted to an independent service (chat.ts no longer routes it).
-//     ADR-0031 / YUK-304 (lane B): quiz's C-form service-action intercept is
-//     RETIRED — a quiz turn (chip or free-text) is a deliberate free-form
-//     CopilotTask turn; the model orchestrates 出题/组卷 via its tools.
-export const COPILOT_SKILL_CONTEXT_KINDS = ['teaching', 'solve', 'quiz'] as const;
-export type CopilotSkillContextKind = (typeof COPILOT_SKILL_CONTEXT_KINDS)[number];
-export const COPILOT_BEHAVIOR_PACK_KINDS = ['teaching'] as const;
-export type CopilotBehaviorPackKind = (typeof COPILOT_BEHAVIOR_PACK_KINDS)[number];
-
-export const CopilotSkillContext = z.object({
-  // Wire-wide enum (向后兼容 chip quiz + 旧 solve replay); the SERVER classifies which
-  // value is a behavior pack vs a service-action vs a降级-fallthrough.
-  skill: z.enum(COPILOT_SKILL_CONTEXT_KINDS),
-  ref: z.object({
-    kind: z.string().min(1).max(40),
-    id: z.string().min(1).max(120),
-  }),
-});
-export type CopilotSkillContextT = z.infer<typeof CopilotSkillContext>;
-
-export const CopilotChatRequest = z.object({
-  user_message: z.string().min(1).max(4000),
-  triggered_by: z.enum(COPILOT_CHAT_TRIGGER_KINDS),
-  /**
-   * Optional identifier for chip-driven flows, e.g. 'out_3_variants'.
-   * Stored on the chip-trigger event so downstream can analyse usage.
-   */
-  chip_kind: z.string().min(1).max(80).optional(),
-  // AF S4 / YUK-203 U6 — optional skill selector. Absent → unchanged free-form
-  // Copilot behavior. Present → routes to the teaching/solve skill (§4.4).
-  skill_context: CopilotSkillContext.optional(),
-  // YUK-267 (C2) — optional ambient context: where the user currently is. Rides
-  // ONLY on the per-run input (防循环 ②: never written to any turn payload, never
-  // replayed). `route` is the Dock's current page path; `focused_entity` is the
-  // in-scope entity (e.g. the active knowledge node), when one exists.
-  ambient_context: z
-    .object({
-      route: z.string().min(1).max(200),
-      focused_entity: z
-        .object({
-          kind: z.string().min(1).max(40),
-          id: z.string().min(1).max(120),
-        })
-        .optional(),
-    })
-    .optional(),
-  // YUK-364 (ADR-0041 endurance W1 L2) — durable run 开关。absent（默认）→ 同步面
-  // inline streamTaskCollecting 不动（短活，byte-identical）。true → route dispatch
-  // 写 user_ask（= run handle / checkpoint_id）后 boss.send('copilot_run')，返回
-  // { run_id }，run 在 worker 进程跑、进度落 job_events、SSE 经 computeReplay 重连。
-  // 判定阈值 v1 = 显式标记（最粗、最不误伤短活）；先粗、实测后调（needsToolCall /
-  // 预估多步的启发式留后续 lane）。
-  durable: z.boolean().optional(),
-});
-
-export type CopilotChatRequestT = z.infer<typeof CopilotChatRequest>;
+export * from './chat-contracts';
 
 // AF S4 / YUK-203 U6 — structured carrier for a skill turn (teaching ask_check /
 // explain / end). Rides as an ADDITIVE optional field on CopilotChatResult so
