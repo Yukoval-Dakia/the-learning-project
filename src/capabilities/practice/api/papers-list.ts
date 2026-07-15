@@ -8,11 +8,10 @@
 // getPracticeList) so the route module only exports recognized handlers
 // (next build / YUK-67).
 
-import { z } from 'zod';
-
 import { getPracticeList } from '@/capabilities/practice/server/practice-read';
 import { db } from '@/db/client';
 import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
+import { CreateLegacyPaperReviewSessionBodySchema } from './paper-contracts';
 import { createPaperReviewSession } from './paper-session-create';
 
 function parseLimit(value: string | null): number {
@@ -40,14 +39,10 @@ export async function GET(req?: Request): Promise<Response> {
   }
 }
 
-const StartBody = z.object({
-  artifact_id: z.string().min(1),
-});
-
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    const parsed = StartBody.safeParse(raw);
+    const parsed = CreateLegacyPaperReviewSessionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'artifact_id is required', 400);
     }

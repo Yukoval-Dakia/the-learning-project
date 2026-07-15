@@ -3,7 +3,7 @@
 // sendBeacon sends Content-Type: text/plain by default; we accept any body and
 // only parse if Content-Type is JSON, defaulting to status='completed'.
 
-import { z } from 'zod';
+import type { z } from 'zod';
 
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
@@ -11,16 +11,13 @@ import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { Review } from '@/server/session';
+import { EndReviewSessionBodySchema } from './contracts';
 
-const EndBody = z.object({
-  status: z.enum(['completed', 'abandoned']).default('completed'),
-});
-
-async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
+async function parseBody(req: Request): Promise<z.infer<typeof EndReviewSessionBodySchema>> {
   const contentType = req.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
     const raw = await req.json().catch(() => ({}));
-    const parsed = EndBody.safeParse(raw);
+    const parsed = EndReviewSessionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
@@ -37,7 +34,7 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndBody>> {
   if (text.length > 0) {
     try {
       const json = JSON.parse(text);
-      const parsed = EndBody.safeParse(json);
+      const parsed = EndReviewSessionBodySchema.safeParse(json);
       if (parsed.success) return parsed.data;
     } catch {
       // fall through to default

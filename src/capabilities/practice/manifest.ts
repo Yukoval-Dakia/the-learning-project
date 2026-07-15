@@ -3,23 +3,24 @@ import {
   ApiErrorResponseSchema,
   ApiIdParamsSchema,
   CursorQuerySchema,
-  collectionResponseSchema,
 } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
-import { z } from 'zod';
 import {
   AppealResponseSchema,
   AttemptResponseSchema,
   CreateAppealBodySchema,
   CreateAttemptBodySchema,
   CreateReviewSessionBody,
+  EndReviewSessionBodySchema,
+  LegacyReviewSessionTransitionResponseSchema,
   ReviewSessionCreatedSchema,
   ReviewSessionSchema,
   ReviewSessionTransitionSchema,
   UpdateReviewSessionBody,
 } from './api/contracts';
 import {
+  CreateLegacyPaperReviewSessionBodySchema,
   CreatePaperAnswerDraftBodySchema,
   CreatePaperSubmissionBodySchema,
   LegacyPaperAnswerDraftBodySchema,
@@ -28,6 +29,7 @@ import {
   PaperAnswerDraftParamsSchema,
   PaperAnswerDraftSchema,
   PaperDetailResponseSchema,
+  PaperListResponseSchema,
   PaperParamsSchema,
   PaperSubmissionResponseSchema,
 } from './api/paper-contracts';
@@ -130,6 +132,11 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/review/sessions',
+        operationId: 'createReviewSessionLegacy',
+        request: { body: CreateReviewSessionBody, bodyRequired: false },
+        responses: { 200: ReviewSessionCreatedSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/review-sessions', since: '@1783987200' },
         load: () => import('./api/legacy-review-sessions').then((m) => m.POST),
       },
       {
@@ -197,21 +204,45 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/review/sessions/[id]/pause',
+        operationId: 'pauseReviewSessionLegacy',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: LegacyReviewSessionTransitionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/review-sessions/[id]', since: '@1783987200' },
         load: () => import('./api/session-pause').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/review/sessions/[id]/resume',
+        operationId: 'resumeReviewSessionLegacy',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: LegacyReviewSessionTransitionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/review-sessions/[id]', since: '@1783987200' },
         load: () => import('./api/session-resume').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/review/sessions/[id]/end',
+        operationId: 'endReviewSessionLegacy',
+        request: {
+          params: ApiIdParamsSchema,
+          body: EndReviewSessionBodySchema,
+          bodyRequired: false,
+        },
+        responses: { 200: LegacyReviewSessionTransitionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/review-sessions/[id]', since: '@1783987200' },
         load: () => import('./api/session-end').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/review/sessions/[id]/reopen',
+        operationId: 'reopenReviewSessionLegacy',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: LegacyReviewSessionTransitionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/review-sessions/[id]', since: '@1783987200' },
         load: () => import('./api/session-reopen').then((m) => m.POST),
       },
       // YUK-468 cold-start inc-B — placement probe 会话 API (dark-ship, gated on
@@ -289,7 +320,12 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/practice',
-        deprecation: { successor: '/api/papers' },
+        operationId: 'listPapersLegacy',
+        request: { query: CursorQuerySchema },
+        responses: { 200: PaperListResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
+        deprecation: { successor: '/api/papers', since: '@1783987200' },
         load: () => import('./api/legacy-practice').then((m) => m.GET),
       },
       {
@@ -297,7 +333,11 @@ export const practiceCapability = defineCapability({
         // handler 随 P2a 已迁入 papers-list.ts，manifest 此前漏了 POST 条目）。
         method: 'POST',
         path: '/api/practice',
-        deprecation: { successor: '/api/review-sessions' },
+        operationId: 'createPaperReviewSessionLegacy',
+        request: { body: CreateLegacyPaperReviewSessionBodySchema },
+        responses: { 200: ReviewSessionCreatedSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/review-sessions', since: '@1783987200' },
         load: () => import('./api/legacy-practice').then((m) => m.POST),
       },
       {
@@ -306,7 +346,7 @@ export const practiceCapability = defineCapability({
         operationId: 'listPapers',
         request: { query: CursorQuerySchema },
         responses: {
-          200: collectionResponseSchema(z.object({ id: z.string() }).passthrough()),
+          200: PaperListResponseSchema,
           ...API_ERROR_RESPONSES,
         },
         successStatus: 200,

@@ -123,6 +123,15 @@ export const ReviewSessionStatus = z.enum(['started', 'paused', 'completed', 'ab
 
 export const UpdateReviewSessionBody = z.object({ status: ReviewSessionStatus });
 
+export const EndReviewSessionBodySchema = z.object({
+  status: z.enum(['completed', 'abandoned']).default('completed'),
+});
+
+export const LegacyReviewSessionTransitionResponseSchema = z.object({
+  ok: z.literal(true),
+  status: ReviewSessionStatus,
+});
+
 export const ReviewSessionCreatedSchema = z.object({ session_id: z.string() });
 
 export const ReviewSessionSchema = z

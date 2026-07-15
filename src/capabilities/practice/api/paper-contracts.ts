@@ -1,6 +1,40 @@
 import { z } from 'zod';
 
+import { ApiPageSchema } from '@/kernel/http-contracts';
+
 export const PaperParamsSchema = z.object({ id: z.string().min(1) });
+
+export const CreateLegacyPaperReviewSessionBodySchema = z.object({
+  artifact_id: z.string().min(1),
+});
+
+export const PaperListItemSchema = z.object({
+  artifact_id: z.string(),
+  title: z.string(),
+  source: z.enum(['coach', 'custom', 'note', 'other']),
+  intent_source: z.string(),
+  generation_status: z.string(),
+  knowledge_ids: z.array(z.string()),
+  knowledge: z.array(z.object({ id: z.string(), name: z.string() })),
+  total_slots: z.number().int().nonnegative(),
+  session: z
+    .object({
+      id: z.string(),
+      status: z.string(),
+      pos: z.number().int().nonnegative(),
+      right: z.number().int().nonnegative(),
+      wrong: z.number().int().nonnegative(),
+    })
+    .nullable(),
+  created_at: z.string().datetime(),
+});
+
+export const PaperListResponseSchema = z.object({
+  data: z.array(PaperListItemSchema),
+  page: ApiPageSchema,
+  papers: z.array(PaperListItemSchema),
+  next_cursor: z.string().nullable(),
+});
 
 export const PaperAnswerDraftParamsSchema = z.object({
   id: z.string().min(1),
