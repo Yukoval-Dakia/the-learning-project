@@ -11,8 +11,6 @@
 // so no placement session is ever created and the live paths are untouched (the flag's only
 // effect). Flipping it on is the cold-start first-session go-live decision.
 
-import { z } from 'zod';
-
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
@@ -22,22 +20,7 @@ import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
 import { eq } from 'drizzle-orm';
 import { resolveGoalPlacementScope } from '../server/placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
-
-const StartBody = z.object({
-  /** the goal whose scope_knowledge_ids scope this probe (KC set resolved from the goal row). */
-  goalId: z.string().min(1).nullable().optional(),
-  /** explicit goal-subgraph KC set (effective-domain derived); overrides goalId resolution. */
-  knowledgeIds: z.array(z.string().min(1)).optional(),
-  // YUK-480 — onboarding self-report transport (Welcome screen → placement). Both are ORDERING/
-  // amount-only and NEVER feed θ̂/p(L)/FSRS (§3 red line 4); owner-supplied fixed inputs, n=1
-  // admissible (§0.2 cat 1/2). Optional → a probe started without a self-report behaves exactly
-  // as before (no preference / default cap).
-  /** self-reported subject leanings (effective-domain subject ids) → PREFER leaning-subject
-   * questions in selection order (placement-select preferKnowledgeIds). */
-  leanings: z.array(z.string().min(1)).optional(),
-  /** self-reported daily pace → probe count cap (capForPace), read by /next. */
-  pace: z.enum(['light', 'medium', 'dense']).optional(),
-});
+import { CreatePlacementSessionBodySchema } from './placement-contracts';
 
 export async function createPlacementSession(req: Request): Promise<Response> {
   try {
@@ -52,7 +35,7 @@ export async function createPlacementSession(req: Request): Promise<Response> {
     } catch {
       throw new ApiError('validation_error', 'request body must be valid JSON', 400);
     }
-    const parsed = StartBody.safeParse(raw);
+    const parsed = CreatePlacementSessionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

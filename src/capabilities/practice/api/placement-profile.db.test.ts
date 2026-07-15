@@ -10,6 +10,7 @@ import { upsertLearnerAxisState } from '@/server/calibration/axis-writer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
+import { PlacementProfileResponseSchema } from './placement-contracts';
 import { GET } from './placement-profile';
 
 const db = testDb();
@@ -99,6 +100,7 @@ describe('GET /api/placement/profile', () => {
     expect(body.evidenceCount).toBe(0);
     expect(body.testedCount).toBe(0);
     expect(body.totalKcs).toBe(0);
+    expect(PlacementProfileResponseSchema.safeParse(body).success).toBe(true);
   });
 
   it('projects per-KC mastery; tested first, untested in-scope KCs surface as tested:false', async () => {
@@ -140,6 +142,7 @@ describe('GET /api/placement/profile', () => {
     // testedCount = KCs with a mastery_state row (kc1); totalKcs = full in-scope set (kc1+kc2).
     expect(body.testedCount).toBe(1);
     expect(body.totalKcs).toBe(2);
+    expect(PlacementProfileResponseSchema.safeParse(body).success).toBe(true);
   });
 
   // YUK-445 (A11) — the EZ-diffusion axis descriptor is the read-out surface: when the nightly
