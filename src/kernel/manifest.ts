@@ -20,7 +20,12 @@ export interface ApiRequestSchemaDecl {
   /** 路径参数必须是 Zod object，且 key 与 `[param]` 段完全一致。 */
   params?: ZodTypeAny;
   query?: ZodTypeAny;
+  headers?: ZodTypeAny;
   body?: ZodTypeAny;
+  /** 缺省为 application/json；multipart 上传等真实非 JSON body 必须显式声明。 */
+  bodyMediaType?: string;
+  /** body 存在时缺省为 true；允许声明接受空 body 的兼容 route。 */
+  bodyRequired?: boolean;
 }
 
 export interface CursorPaginationDecl {
@@ -152,6 +157,10 @@ export function apiResponseMediaType(route: ApiRouteDecl, status: number): strin
   return route.responseMediaTypes?.[status] ?? 'application/json';
 }
 
+export function apiRequestBodyMediaType(route: ApiRouteDecl): string {
+  return route.request?.bodyMediaType ?? 'application/json';
+}
+
 export class ApiRouteContractError extends Error {
   override name = 'ApiRouteContractError';
 }
@@ -188,6 +197,28 @@ function validateApiRouteContract(route: ApiRouteDecl): void {
     throw new Error(`api route '${key}' declares operationId but no request.params schema`);
   }
 
+  if (route.request?.headers !== undefined && schemaObjectKeys(route.request.headers) === null) {
+    throw new Error(`api route '${key}' request.headers must be a Zod object`);
+  }
+  if (route.request?.bodyMediaType !== undefined) {
+    if (route.request.body === undefined) {
+      throw new Error(`api route '${key}' declares request body media type but no body schema`);
+    }
+    if (!isMediaType(route.request.bodyMediaType)) {
+      throw new Error(
+        `api route '${key}' has invalid request body media type '${route.request.bodyMediaType}'`,
+      );
+    }
+  }
+  if (route.request?.bodyRequired !== undefined) {
+    if (route.request.body === undefined) {
+      throw new Error(`api route '${key}' declares bodyRequired but no body schema`);
+    }
+    if (typeof route.request.bodyRequired !== 'boolean') {
+      throw new Error(`api route '${key}' bodyRequired must be boolean`);
+    }
+  }
+
   const successStatuses = apiSuccessStatuses(route);
   for (const status of successStatuses) {
     if (!Number.isInteger(status) || status < 200 || status > 299) {
@@ -218,7 +249,7 @@ function validateApiRouteContract(route: ApiRouteDecl): void {
     if (status === 204) {
       throw new Error(`api route '${key}' cannot declare a response media type for status 204`);
     }
-    if (typeof mediaType !== 'string' || !/^[^\s/]+\/[^\s/]+$/.test(mediaType)) {
+    if (!isMediaType(mediaType)) {
       throw new Error(`api route '${key}' has invalid response media type '${mediaType}'`);
     }
   }
@@ -247,6 +278,10 @@ function validateApiRouteContract(route: ApiRouteDecl): void {
   if (route.deprecation !== undefined && !route.deprecation.successor.startsWith('/api/')) {
     throw new Error(`api route '${key}' deprecation successor must start with /api/`);
   }
+}
+
+function isMediaType(value: unknown): value is string {
+  return typeof value === 'string' && /^[^\s/]+\/[^\s/]+$/.test(value);
 }
 
 /** Runtime guard for the success status declared by a migrated handler contract. */

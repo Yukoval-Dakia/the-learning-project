@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
+  type ApiRouteDecl,
   type CapabilityManifest,
   assertApiRouteSuccessStatus,
   defineCapability,
@@ -220,6 +221,64 @@ describe('validateComposition', () => {
     expect(() => validateComposition([route({ 201: 'application/json' })])).toThrow(
       /status 201 has no response schema/,
     );
+  });
+
+  it('accepts request body media types and optional bodies, and validates their declarations', () => {
+    const route = (request: ApiRouteDecl['request']) =>
+      base({
+        name: 'a',
+        api: {
+          routes: [
+            {
+              method: 'POST',
+              path: '/api/a',
+              operationId: 'createA',
+              request,
+              successStatus: 200,
+              responses: { 200: z.object({ ok: z.boolean() }) },
+            },
+          ],
+        },
+      });
+
+    expect(() =>
+      validateComposition([
+        route({
+          body: z.object({ file: z.string() }),
+          bodyMediaType: 'multipart/form-data',
+          bodyRequired: false,
+        }),
+      ]),
+    ).not.toThrow();
+    expect(() => validateComposition([route({ bodyMediaType: 'multipart/form-data' })])).toThrow(
+      /no body schema/,
+    );
+    expect(() =>
+      validateComposition([route({ body: z.string(), bodyMediaType: 'not-a-media-type' })]),
+    ).toThrow(/invalid request body media type/);
+    expect(() => validateComposition([route({ bodyRequired: false })])).toThrow(/no body schema/);
+  });
+
+  it('requires request header declarations to use a Zod object', () => {
+    expect(() =>
+      validateComposition([
+        base({
+          name: 'a',
+          api: {
+            routes: [
+              {
+                method: 'GET',
+                path: '/api/a',
+                operationId: 'getA',
+                request: { headers: z.string() },
+                successStatus: 200,
+                responses: { 200: z.string() },
+              },
+            ],
+          },
+        }),
+      ]),
+    ).toThrow(/request.headers must be a Zod object/);
   });
 
   it('rejects invalid cursor pagination declarations', () => {
