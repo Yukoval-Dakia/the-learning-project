@@ -51,7 +51,8 @@ export const QuestionListEntrySchema = z.union([
 export const QuestionListResponseSchema = collectionResponseSchema(QuestionListEntrySchema);
 
 export const QuestionDetailQuerySchema = z.object({
-  timeline_limit: z.coerce.number().int().min(1).max(50).optional(),
+  // The detail reader accepts larger values and clamps them to 50.
+  timeline_limit: z.coerce.number().int().min(1).optional(),
 });
 
 export const QuestionDetailResponseSchema = z
@@ -85,10 +86,20 @@ export const UpdateQuestionResponseSchema = z.object({
   event_id: z.string().optional(),
 });
 
-export const DeleteQuestionQuerySchema = z.object({
-  confirm: z.literal('true').optional(),
-  version: z.coerce.number().int().nonnegative().optional(),
-});
+export const DeleteQuestionQuerySchema = z
+  .object({
+    confirm: z.literal('true').optional(),
+    version: z.coerce.number().int().nonnegative().optional(),
+  })
+  .superRefine((query, ctx) => {
+    if (query.confirm === 'true' && query.version === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'confirm=true requires version',
+        path: ['version'],
+      });
+    }
+  });
 
 export const DeleteQuestionResponseSchema = z
   .object({
