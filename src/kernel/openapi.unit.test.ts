@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { MultipartFilePartSchema } from './http-contracts';
+import { BinaryResponseSchema, MultipartFilePartSchema } from './http-contracts';
 import type { CapabilityManifest } from './manifest';
 import { generateOpenApiDocument } from './openapi';
 
@@ -43,6 +43,15 @@ describe('generateOpenApiDocument', () => {
               responses: { 200: z.object({ data: z.array(z.unknown()) }) },
               pagination: { kind: 'cursor', defaultLimit: 20, maxLimit: 100 },
             },
+            {
+              method: 'GET',
+              path: '/api/widgets/[id]/content',
+              operationId: 'getWidgetContent',
+              request: { params: z.object({ id: z.string() }) },
+              successStatus: 200,
+              responses: { 200: BinaryResponseSchema },
+              responseMediaTypes: { 200: 'image/*' },
+            },
             { method: 'GET', path: '/api/legacy' },
           ],
         },
@@ -84,6 +93,13 @@ describe('generateOpenApiDocument', () => {
       kind: 'cursor',
       defaultLimit: 20,
       maxLimit: 100,
+    });
+    expect(document.paths['/api/widgets/{id}/content'].get.responses).toMatchObject({
+      200: {
+        content: {
+          'image/*': { schema: { type: 'string', format: 'binary' } },
+        },
+      },
     });
     expect(document.paths['/api/legacy'].get).toMatchObject({
       'x-contract-status': 'legacy',
