@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { DismissHubLinkResponseSchema } from '@/capabilities/notes/api/contracts';
 import { runHubAutoSyncNightly } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
 import { db } from '@/db/client';
@@ -160,7 +161,7 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       id: 'hub1',
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { removed: boolean; suppress_event_id: string };
+    const body = DismissHubLinkResponseSchema.parse(await res.json());
     expect(body.removed).toBe(true);
 
     const hub = await loadHub('hub1');
@@ -197,7 +198,7 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       id: 'hub1',
     });
     expect(res2.status).toBe(200);
-    const body2 = (await res2.json()) as { removed: boolean };
+    const body2 = DismissHubLinkResponseSchema.parse(await res2.json());
     // Second dismiss: child already gone → no second body_blocks mutation.
     expect(body2.removed).toBe(false);
 

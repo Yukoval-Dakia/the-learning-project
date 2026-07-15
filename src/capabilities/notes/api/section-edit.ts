@@ -1,20 +1,13 @@
-import { z } from 'zod';
-
+import { EditArtifactSectionBodySchema } from '@/capabilities/notes/api/contracts';
 import { editArtifactSection } from '@/capabilities/notes/server/sections';
 import { db } from '@/db/client';
 import { errorResponse } from '@/server/http/errors';
-
-const PatchBody = z.object({
-  artifact_version: z.number().int().min(0),
-  section_version: z.number().int().min(0),
-  body_md: z.string().max(50_000),
-});
 
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id, sectionId } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = PatchBody.safeParse(raw);
+    const parsed = EditArtifactSectionBodySchema.safeParse(raw);
     if (!parsed.success) {
       return Response.json(
         {

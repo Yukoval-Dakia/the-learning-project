@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { ArtifactBacklinksResponseSchema } from '@/capabilities/notes/api/contracts';
 import { newId } from '@/core/ids';
 import { artifact, artifact_block_ref, learning_item } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -139,7 +140,7 @@ interface PanelRow {
 }
 
 async function readRows(res: Response): Promise<PanelRow[]> {
-  const body = (await res.json()) as { artifact_id: string; rows: PanelRow[] };
+  const body = ArtifactBacklinksResponseSchema.parse(await res.json());
   return body.rows;
 }
 

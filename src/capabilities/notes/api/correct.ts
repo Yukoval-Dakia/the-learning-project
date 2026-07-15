@@ -1,7 +1,7 @@
+import { CorrectArtifactBodySchema } from '@/capabilities/notes/api/contracts';
 import { bodyBlocksContainId } from '@/capabilities/notes/server/body-blocks';
 import { enqueueMarkWrongNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { newId } from '@/core/ids';
-import { CorrectArtifactEvent } from '@/core/schema/event';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { getArtifactCorrectionState } from '@/server/events/artifact-corrections';
@@ -45,24 +45,13 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     const rawBody = await req.json().catch(() => null);
-    // Construct the full event shape and let the existing zod (including
-    // superRefine for supersede ↔ replacement_artifact_id) validate. This keeps
-    // body validation aligned with the canonical CorrectArtifactEvent contract.
-    const parsed = CorrectArtifactEvent.safeParse({
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'correct',
-      subject_kind: 'artifact',
-      subject_id: artifactId,
-      outcome: 'success',
-      payload: rawBody,
-    });
+    // The route contract derives this payload shape from CorrectArtifactEvent
+    // and carries the same supersede cross-field refinement.
+    const parsed = CorrectArtifactBodySchema.safeParse(rawBody);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
-        parsed.error.issues
-          .map((i) => `${i.path.filter((p) => p !== 'payload').join('.')}: ${i.message}`)
-          .join('; '),
+        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
         400,
       );
     }
@@ -72,7 +61,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       throw new ApiError('not_found', `artifact ${artifactId} not found`, 404);
     }
 
-    const { correction_kind, block_id, replacement_artifact_id } = parsed.data.payload;
+    const { correction_kind, block_id, replacement_artifact_id } = parsed.data;
 
     if (block_id !== undefined) {
       if (!bodyBlocksContainId(target.body_blocks, block_id)) {
@@ -110,7 +99,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       subject_kind: 'artifact',
       subject_id: artifactId,
       outcome: 'success',
-      payload: parsed.data.payload,
+      payload: parsed.data,
       created_at: new Date(),
     });
 
@@ -119,7 +108,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         db,
         artifactId,
         blockId: block_id,
-        reasonMd: parsed.data.payload.reason_md,
+        reasonMd: parsed.data.reason_md,
         triggerEventId: correctionEventId,
       });
     }

@@ -1,21 +1,14 @@
-import { z } from 'zod';
-
+import { EditArtifactBodyBlocksBodySchema } from '@/capabilities/notes/api/contracts';
 import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
-import { ArtifactBodyBlocks } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-
-const PatchBody = z.object({
-  artifact_version: z.number().int().nonnegative(),
-  body_blocks: ArtifactBodyBlocks,
-});
 
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const { id: artifactId } = params;
     if (!artifactId) throw new ApiError('validation_error', 'artifact id is required', 400);
     const rawBody = await req.json().catch(() => null);
-    const parsed = PatchBody.safeParse(rawBody);
+    const parsed = EditArtifactBodyBlocksBodySchema.safeParse(rawBody);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
