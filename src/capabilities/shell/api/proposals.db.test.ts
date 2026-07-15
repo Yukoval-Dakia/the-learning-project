@@ -8,6 +8,10 @@ import { writeAiProposal } from '@/server/proposals/writer';
 import { and, eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import {
+  LegacyProposalDecisionResponseSchema,
+  LegacyProposalRetractResponseSchema,
+} from './contracts';
 import { POST as decideProposal } from './proposal-decide';
 import { POST as retractProposal } from './proposal-retract';
 import { GET as listProposals } from './proposals-list';
@@ -202,7 +206,7 @@ describe('POST /api/proposals/[id]/decide (shell)', () => {
     expect(res.headers.get('Link')).toBe(
       '</api/proposals/edge_p1/decisions>; rel="successor-version"',
     );
-    const body = (await res.json()) as { kind: string };
+    const body = LegacyProposalDecisionResponseSchema.parse(await res.json());
     expect(body.kind).toBe('knowledge_edge');
 
     const db = testDb();
@@ -285,7 +289,7 @@ describe('POST /api/proposals/[id]/retract (shell)', () => {
     expect(res.headers.get('Link')).toBe(
       '</api/proposals/edge_p1/decisions>; rel="successor-version"',
     );
-    const body = (await res.json()) as { kind: string };
+    const body = LegacyProposalRetractResponseSchema.parse(await res.json());
     expect(body.kind).toBe('retracted');
 
     const db = testDb();

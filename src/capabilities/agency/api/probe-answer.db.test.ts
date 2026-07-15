@@ -24,6 +24,7 @@ import { newId } from '@/core/ids';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeAiProposal } from '@/server/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { ProbeAnswerResponseSchema } from './contracts';
 import { POST } from './probe-answer';
 
 // ── Judge invoker mock ─────────────────────────────────────────────────────────
@@ -169,7 +170,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
     const res = await answerWithImages(probeId, '', ['asset_hand1']);
     expect(res.status).toBe(200); // NOT 422 — multimodal_direct consumes the photo
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = ProbeAnswerResponseSchema.parse(await res.json());
     expect(body).toMatchObject({ status: 'retired', outcome: 1, resolution: 'retired' });
     // the uploaded answer image rode through to the judge as student_image_refs.
     expect(mockInvoke).toHaveBeenCalledWith(
@@ -383,5 +384,5 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 });
 
 async function resJson(res: Response): Promise<Record<string, unknown>> {
-  return (await res.json()) as Record<string, unknown>;
+  return ProbeAnswerResponseSchema.parse(await res.json());
 }

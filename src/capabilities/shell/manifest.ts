@@ -7,6 +7,18 @@ import {
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import { z } from 'zod';
+import {
+  AutoAppliedProposalDigestSchema,
+  LegacyProposalDecisionBodySchema,
+  LegacyProposalDecisionResponseSchema,
+  LegacyProposalRetractBodySchema,
+  LegacyProposalRetractResponseSchema,
+  OvernightDigestResponseSchema,
+  PrepDeskConjecturesResponseSchema,
+  PrepDeskProbesResponseSchema,
+  SubjectListResponseSchema,
+  WorkbenchSummaryResponseSchema,
+} from './api/contracts';
 
 // M4-T5 (YUK-319/YUK-318)：shell 包——跨域工作台壳层。提议收件箱三路由源自
 // 旧 Next app/api/proposals/* 等价平移（accept+dismiss 合并为单 decide 端点，
@@ -26,6 +38,9 @@ export const shellCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/subjects',
+        operationId: 'listSubjects',
+        responses: { 200: SubjectListResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/subjects-list').then((m) => m.GET),
       },
       {
@@ -53,6 +68,9 @@ export const shellCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/proposals/auto-applied',
+        operationId: 'getAutoAppliedProposals',
+        responses: { 200: AutoAppliedProposalDigestSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/proposals-auto-applied').then((m) => m.GET),
       },
       {
@@ -71,16 +89,35 @@ export const shellCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/proposals/[id]/decide',
+        operationId: 'decideProposalLegacy',
+        request: { params: ApiIdParamsSchema, body: LegacyProposalDecisionBodySchema },
+        responses: { 200: LegacyProposalDecisionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: {
+          successor: '/api/proposals/[id]/decisions',
+          since: '@1783987200',
+        },
         load: () => import('./api/proposal-decide').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/proposals/[id]/retract',
+        operationId: 'retractProposalLegacy',
+        request: { params: ApiIdParamsSchema, body: LegacyProposalRetractBodySchema },
+        responses: { 200: LegacyProposalRetractResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: {
+          successor: '/api/proposals/[id]/decisions',
+          since: '@1783987200',
+        },
         load: () => import('./api/proposal-retract').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/workbench/summary',
+        operationId: 'getWorkbenchSummary',
+        responses: { 200: WorkbenchSummaryResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/workbench-summary').then((m) => m.GET),
       },
       // YUK-520 (A1 夜窗 digest) — 昨夜窗 digest 只读读模型（5 夜间事实源聚合 +
@@ -88,6 +125,9 @@ export const shellCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/workbench/overnight-digest',
+        operationId: 'getOvernightDigest',
+        responses: { 200: OvernightDigestResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/overnight-digest').then((m) => m.GET),
       },
       // YUK-406 / YUK-440 (教研团 Phase 0 / U4 备课台) — top ≤3 pending conjecture
@@ -95,6 +135,9 @@ export const shellCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/prep-desk/conjectures',
+        operationId: 'listPrepDeskConjectures',
+        responses: { 200: PrepDeskConjecturesResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/prep-desk-conjectures').then((m) => m.GET),
       },
       // YUK-567 slice-2 — 备课台「待你试做」队列：≤3 served-but-unanswered mind_probe
@@ -102,6 +145,9 @@ export const shellCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/prep-desk/probes',
+        operationId: 'listPrepDeskProbes',
+        responses: { 200: PrepDeskProbesResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/prep-desk-probes').then((m) => m.GET),
       },
     ],

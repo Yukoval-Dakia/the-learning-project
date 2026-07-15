@@ -4,6 +4,7 @@ import { knowledge, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeAgentNote } from '../server/notes';
+import { AgentNotesResponseSchema } from './contracts';
 import { GET } from './notes';
 
 async function getNotes(qs = ''): Promise<Response> {
@@ -37,6 +38,7 @@ describe('GET /api/agents/notes', () => {
     const res = await getNotes();
     expect(res.status).toBe(200);
     const body = (await res.json()) as { rows: Array<{ summary_md: string }> };
+    expect(() => AgentNotesResponseSchema.parse(body)).not.toThrow();
     expect(body.rows.map((r) => r.summary_md)).toEqual(['second', 'first']);
   });
 
