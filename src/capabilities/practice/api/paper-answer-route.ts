@@ -2,23 +2,13 @@
 // draft (upsert the live draft for the slot). `id` is the paper artifact id.
 // The answering page calls this as the user types / advances between slots.
 
-import { z } from 'zod';
-
 import { and, eq } from 'drizzle-orm';
 
 import { db } from '@/db/client';
 import { answer } from '@/db/schema';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { autosaveAnswerDraft } from '../server/answer-draft';
-
-const AutosaveBody = z.object({
-  session_id: z.string().min(1),
-  question_id: z.string().min(1),
-  part_ref: z.string().min(1).nullable().optional(),
-  input_kind: z.enum(['text', 'option', 'image', 'voice']).default('text'),
-  content_md: z.string().default(''),
-  image_refs: z.array(z.string()).default([]),
-});
+import { LegacyPaperAnswerDraftBodySchema } from './paper-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -56,7 +46,7 @@ export async function createAnswerDraft(
   try {
     const { id: paperArtifactId } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = AutosaveBody.safeParse(raw);
+    const parsed = LegacyPaperAnswerDraftBodySchema.safeParse(raw);
     if (!parsed.success) {
       const message = parsed.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)

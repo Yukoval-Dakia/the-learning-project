@@ -10,6 +10,11 @@ import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as answerGet, POST as answerPost } from './paper-answer-route';
+import {
+  PaperAnswerDraftCreatedSchema,
+  PaperAnswerDraftSchema,
+  PaperSubmissionResponseSchema,
+} from './paper-contracts';
 import { POST as submitPost } from './paper-submit-route';
 import { GET, POST } from './papers-list';
 
@@ -187,13 +192,13 @@ describe('GET /api/practice', () => {
       { id: 'p1' },
     );
     expect(ansRes.status).toBe(200);
-    const { answer_id: answerId } = (await ansRes.json()) as { answer_id: string };
+    const { answer_id: answerId } = PaperAnswerDraftCreatedSchema.parse(await ansRes.json());
     const draft = await answerGet(
       new Request(`http://localhost/api/review-sessions/${session_id}/answer-drafts/${answerId}`),
       { id: session_id, answerId },
     );
     expect(draft.status).toBe(200);
-    expect(await draft.json()).toMatchObject({
+    expect(PaperAnswerDraftSchema.parse(await draft.json())).toMatchObject({
       id: answerId,
       session_id,
       question_id: 'q1',
@@ -210,12 +215,8 @@ describe('GET /api/practice', () => {
       { id: 'p1' },
     );
     expect(subRes.status).toBe(200);
-    const sub = (await subRes.json()) as {
-      attempt_event_id: string;
-      judge_event_id: string;
-      visible_to_user: boolean;
-      coarse_outcome: string;
-    };
+    const sub = PaperSubmissionResponseSchema.parse(await subRes.json());
+    if (!sub.visible_to_user) throw new Error('expected visible paper submission');
     expect(sub.coarse_outcome).toBe('correct');
     expect(sub.visible_to_user).toBe(true);
     expect(sub.attempt_event_id).toBeTruthy();
@@ -350,8 +351,9 @@ describe('GET /api/practice', () => {
       { id: 'p_buffered' },
     );
     expect(subRes.status).toBe(200);
-    const body = (await subRes.json()) as Record<string, unknown>;
+    const body = PaperSubmissionResponseSchema.parse(await subRes.json());
     expect(body.visible_to_user).toBe(false);
+    if (body.visible_to_user) throw new Error('expected buffered paper submission');
     expect(body.feedback_buffered).toBe(true);
     // Server gate: coarse_outcome and score must be structurally absent.
     expect('coarse_outcome' in body).toBe(false);

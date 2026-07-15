@@ -20,6 +20,18 @@ import {
   UpdateReviewSessionBody,
 } from './api/contracts';
 import {
+  CreatePaperAnswerDraftBodySchema,
+  CreatePaperSubmissionBodySchema,
+  LegacyPaperAnswerDraftBodySchema,
+  LegacyPaperSubmissionBodySchema,
+  PaperAnswerDraftCreatedSchema,
+  PaperAnswerDraftParamsSchema,
+  PaperAnswerDraftSchema,
+  PaperDetailResponseSchema,
+  PaperParamsSchema,
+  PaperSubmissionResponseSchema,
+} from './api/paper-contracts';
+import {
   CreateHintRequestBodySchema,
   CreateSolveSessionBodySchema,
   CreateSolveSubmissionBodySchema,
@@ -154,16 +166,32 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/review-sessions/[id]/answer-drafts',
+        operationId: 'createPaperAnswerDraft',
+        request: { params: ApiIdParamsSchema, body: CreatePaperAnswerDraftBodySchema },
+        responses: {
+          200: PaperAnswerDraftCreatedSchema,
+          201: PaperAnswerDraftCreatedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
         load: () => import('./api/resource-routes').then((m) => m.createPaperAnswerDraftResource),
       },
       {
         method: 'GET',
         path: '/api/review-sessions/[id]/answer-drafts/[answerId]',
+        operationId: 'getPaperAnswerDraft',
+        request: { params: PaperAnswerDraftParamsSchema },
+        responses: { 200: PaperAnswerDraftSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/paper-answer-route').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/review-sessions/[id]/submissions',
+        operationId: 'createPaperSubmission',
+        request: { params: ApiIdParamsSchema, body: CreatePaperSubmissionBodySchema },
+        responses: { 201: PaperSubmissionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/resource-routes').then((m) => m.createPaperSubmissionResource),
       },
       {
@@ -291,7 +319,7 @@ export const practiceCapability = defineCapability({
         operationId: 'getPaper',
         request: { params: ApiIdParamsSchema },
         responses: {
-          200: z.object({ paper: z.unknown().optional() }).passthrough(),
+          200: PaperDetailResponseSchema,
           ...API_ERROR_RESPONSES,
         },
         successStatus: 200,
@@ -316,16 +344,37 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/practice/[id]',
+        operationId: 'getPaperLegacy',
+        request: { params: PaperParamsSchema },
+        responses: { 200: PaperDetailResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/papers/[id]', since: '@1783987200' },
         load: () => import('./api/legacy-paper-detail').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/practice/[id]/submit',
+        operationId: 'createPaperSubmissionLegacy',
+        request: { params: PaperParamsSchema, body: LegacyPaperSubmissionBodySchema },
+        responses: { 200: PaperSubmissionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: {
+          successor: '/api/review-sessions/[id]/submissions',
+          since: '@1783987200',
+        },
         load: () => import('./api/paper-submit-route').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/practice/[id]/answer',
+        operationId: 'createPaperAnswerDraftLegacy',
+        request: { params: PaperParamsSchema, body: LegacyPaperAnswerDraftBodySchema },
+        responses: { 200: PaperAnswerDraftCreatedSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: {
+          successor: '/api/review-sessions/[id]/answer-drafts',
+          since: '@1783987200',
+        },
         load: () => import('./api/paper-answer-route').then((m) => m.POST),
       },
       {

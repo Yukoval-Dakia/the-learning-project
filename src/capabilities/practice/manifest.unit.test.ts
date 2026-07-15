@@ -1,3 +1,4 @@
+import { generateOpenApiDocument } from '@/kernel/openapi';
 import { describe, expect, it } from 'vitest';
 import { practiceCapability } from './manifest';
 
@@ -79,5 +80,43 @@ describe('practice manifest API resources', () => {
     ]) {
       expect(keys.has(key), key).toBe(true);
     }
+  });
+
+  it('publishes paper write contracts with real path params, statuses and successors', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['POST /api/review-sessions/[id]/answer-drafts', 'createPaperAnswerDraft'],
+      ['GET /api/review-sessions/[id]/answer-drafts/[answerId]', 'getPaperAnswerDraft'],
+      ['POST /api/review-sessions/[id]/submissions', 'createPaperSubmission'],
+      ['GET /api/practice/[id]', 'getPaperLegacy'],
+      ['POST /api/practice/[id]/answer', 'createPaperAnswerDraftLegacy'],
+      ['POST /api/practice/[id]/submit', 'createPaperSubmissionLegacy'],
+    ]);
+
+    const declared = routes.filter((route) => expected.has(`${route.method} ${route.path}`));
+    expect(declared).toHaveLength(expected.size);
+    for (const route of declared) {
+      const key = `${route.method} ${route.path}`;
+      expect(route.operationId, key).toBe(expected.get(key));
+    }
+
+    const document = generateOpenApiDocument([practiceCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    const draftCreate = document.paths['/api/review-sessions/{id}/answer-drafts'].post;
+    expect(draftCreate.responses).toEqual(
+      expect.objectContaining({ 200: expect.any(Object), 201: expect.any(Object) }),
+    );
+    const draftRead = document.paths['/api/review-sessions/{id}/answer-drafts/{answerId}'].get;
+    expect(draftRead.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'id', in: 'path', required: true }),
+        expect.objectContaining({ name: 'answerId', in: 'path', required: true }),
+      ]),
+    );
+    expect(document.paths['/api/practice/{id}'].get).toMatchObject({
+      deprecated: true,
+      'x-successor': '/api/papers/[id]',
+    });
   });
 });

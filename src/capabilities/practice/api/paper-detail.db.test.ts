@@ -23,6 +23,7 @@ import { Review } from '@/server/session';
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { PaperDetailResponseSchema } from './paper-contracts';
 import { GET } from './paper-detail-route';
 
 async function seedQuestion(id: string, reference: string, kind = 'true_false') {
@@ -126,26 +127,7 @@ describe('GET /api/practice/[id]', () => {
     const res = await GET(req, ctx);
     expect(res.status).toBe(200);
 
-    const body = (await res.json()) as {
-      artifact_id: string;
-      title: string;
-      generation_status: string;
-      intent_source: string;
-      session: null;
-      sections: Array<{
-        section_index: number;
-        knowledge_focus: string[];
-        feedback_policy: string;
-        slots: Array<{
-          question_id: string;
-          part_ref: null;
-          section_index: number;
-          question: { id: string; kind: string; prompt_md: string };
-          slot_state: { draft: null; submission: null };
-        }>;
-      }>;
-      is_flat_fallback: boolean;
-    };
+    const body = PaperDetailResponseSchema.parse(await res.json());
 
     expect(body.artifact_id).toBe('p1');
     expect(body.generation_status).toBe('ready');
@@ -222,35 +204,7 @@ describe('GET /api/practice/[id]', () => {
 
     const [req, ctx] = makeRequest('p1');
     const res = await GET(req, ctx);
-    const body = (await res.json()) as {
-      session: { id: string; status: string; pos: number; right: number; wrong: number } | null;
-      sections: Array<{
-        slots: Array<{
-          question_id: string;
-          slot_state: {
-            draft: null;
-            submission:
-              | null
-              | {
-                  submitted: true;
-                  visible_to_user: true;
-                  outcome: string;
-                  score: number | null;
-                  answer_md: string;
-                  answer_image_refs: string[];
-                  reference_md: string | null;
-                }
-              | {
-                  submitted: true;
-                  visible_to_user: false;
-                  feedback_buffered: true;
-                  answer_md: string;
-                  answer_image_refs: string[];
-                };
-          };
-        }>;
-      }>;
-    };
+    const body = PaperDetailResponseSchema.parse(await res.json());
 
     expect(body.session?.pos).toBe(1);
     expect(body.session?.right).toBe(1);
@@ -258,15 +212,10 @@ describe('GET /api/practice/[id]', () => {
 
     const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
     expect(slot?.slot_state.draft).toBeNull(); // draft cleared after freeze
-    const sub = slot?.slot_state.submission as {
-      submitted: true;
-      visible_to_user: true;
-      outcome: string;
-      answer_md: string;
-      reference_md: string | null;
-    } | null;
+    const sub = slot?.slot_state.submission;
     expect(sub?.submitted).toBe(true);
     expect(sub?.visible_to_user).toBe(true);
+    if (!sub || !sub.visible_to_user) throw new Error('expected visible submission state');
     // fix #2: outcome is coarse_outcome from judge payload ('correct'), not
     // the judge event's own outcome field ('success').
     expect(sub?.outcome).toBe('correct');
@@ -294,30 +243,13 @@ describe('GET /api/practice/[id]', () => {
 
     const [req, ctx] = makeRequest('p1');
     const res = await GET(req, ctx);
-    const body = (await res.json()) as {
-      sections: Array<{
-        slots: Array<{
-          question_id: string;
-          slot_state: {
-            submission: {
-              submitted?: boolean;
-              visible_to_user?: boolean;
-              feedback_buffered?: boolean;
-              answer_md?: string;
-              answer_image_refs?: string[];
-              outcome?: string;
-              score?: number | null;
-              reference_md?: string | null;
-            } | null;
-          };
-        }>;
-      }>;
-    };
+    const body = PaperDetailResponseSchema.parse(await res.json());
 
     const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
     const sub = slot?.slot_state.submission;
     expect(sub?.submitted).toBe(true);
     expect(sub?.visible_to_user).toBe(false);
+    if (!sub || sub.visible_to_user) throw new Error('expected buffered submission state');
     expect(sub?.feedback_buffered).toBe(true);
     // User's own answer is always echoed back (safe even in buffered variant).
     expect(sub?.answer_md).toBe('my buffered answer');
@@ -357,30 +289,14 @@ describe('GET /api/practice/[id]', () => {
 
     const [req, ctx] = makeRequest('p1');
     const res = await GET(req, ctx);
-    const body = (await res.json()) as {
-      sections: Array<{
-        slots: Array<{
-          question_id: string;
-          slot_state: {
-            submission: {
-              submitted?: boolean;
-              visible_to_user?: boolean;
-              outcome?: string;
-              answer_md?: string;
-              answer_image_refs?: string[];
-              reference_md?: string | null;
-              feedback_buffered?: boolean;
-            } | null;
-          };
-        }>;
-      }>;
-    };
+    const body = PaperDetailResponseSchema.parse(await res.json());
 
     const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
     const sub = slot?.slot_state.submission;
     // Completed session reveals buffered feedback.
     expect(sub?.submitted).toBe(true);
     expect(sub?.visible_to_user).toBe(true);
+    if (!sub || !sub.visible_to_user) throw new Error('expected revealed submission state');
     // fix #2: coarse_outcome from judge payload ('correct') not event.outcome ('success').
     expect(sub?.outcome).toBe('correct');
     expect('feedback_buffered' in (sub ?? {})).toBe(false);

@@ -14,6 +14,7 @@ vi.mock('./solve-hint', () => ({ createHintRequest: mocks.createHintRequest }));
 vi.mock('./solve-start', () => ({ createSolveSession: mocks.createSolveSession }));
 vi.mock('./solve-submit', () => ({ createSolveSubmission: mocks.createSolveSubmission }));
 
+import { PaperAnswerDraftCreatedSchema, PaperSubmissionResponseSchema } from './paper-contracts';
 import {
   createHintRequestResource,
   createPaperAnswerDraftResource,
@@ -42,7 +43,14 @@ describe('canonical practice resource adapters', () => {
       Response.json({ answer_id: 'answer_1', created: true }),
     );
     mocks.createPaperSubmission.mockResolvedValue(
-      Response.json({ attempt_event_id: 'paper_attempt_1' }),
+      Response.json({
+        attempt_event_id: 'paper_attempt_1',
+        judge_event_id: 'paper_judge_1',
+        answer_id: 'answer_1',
+        visible_to_user: true,
+        coarse_outcome: 'correct',
+        score: 1,
+      }),
     );
     mocks.createHintRequest.mockResolvedValue(Response.json({ hint_request_id: 'hint_1' }));
     mocks.createSolveSession.mockResolvedValue(Response.json({ session_id: 'solve_1' }));
@@ -103,12 +111,15 @@ describe('canonical practice resource adapters', () => {
     expect(await capturedBody(mocks.createAnswerDraft)).toEqual({
       question_id: 'q1',
       content_md: 'draft',
+      input_kind: 'text',
+      image_refs: [],
       session_id: 'review_1',
     });
     expect(mocks.createPaperSubmission.mock.calls[0]?.[1]).toEqual({ id: 'paper_1' });
     expect(await capturedBody(mocks.createPaperSubmission)).toEqual({
       question_id: 'q1',
       answer_md: 'answer',
+      image_refs: [],
       session_id: 'review_1',
     });
     expect(draft.status).toBe(201);
@@ -117,6 +128,8 @@ describe('canonical practice resource adapters', () => {
     );
     expect(submission.status).toBe(201);
     expect(submission.headers.get('Location')).toBe('/api/events/paper_attempt_1');
+    expect(PaperAnswerDraftCreatedSchema.parse(await draft.json()).created).toBe(true);
+    expect(PaperSubmissionResponseSchema.parse(await submission.json()).visible_to_user).toBe(true);
   });
 
   it('returns 200 for an idempotently updated answer draft', async () => {
