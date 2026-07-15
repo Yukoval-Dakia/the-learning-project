@@ -4,6 +4,7 @@ import { event, knowledge, learning_record, question, source_asset } from '@/db/
 import { writeEvent } from '@/server/events/queries';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { CreateMistakeResponseSchema, MistakeListResponseSchema } from './contracts';
 import { GET, POST } from './mistakes';
 
 // Mock the AI background tasks so tests don't call Anthropic.
@@ -113,11 +114,8 @@ describe('POST /api/mistakes', () => {
   it('inserts question + attempt event + record on valid body (no propose event)', async () => {
     const res = await postMistake(validBody());
     expect(res.status).toBe(201);
-    const body = (await res.json()) as {
-      question_id: string;
-      mistake_id: string;
-      record_id: string;
-    };
+    const body = CreateMistakeResponseSchema.parse(await res.json());
+    expect(res.headers.get('content-type')).toContain('application/json');
     expect(body.question_id).toBeTruthy();
     expect(body.mistake_id).toBeTruthy();
     expect(body.record_id).toBeTruthy();
@@ -565,31 +563,8 @@ describe('GET /api/mistakes', () => {
 
     const res = await getMistakes();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      data: Array<{
-        id: string;
-        record_id: string;
-        question_id: string;
-        prompt_md: string;
-        wrong_answer_md: string;
-        knowledge_ids: string[];
-        cause: { primary_category: string; user_notes: string | null } | null;
-        correction_state: { state: string; terminal_state: string };
-        created_at: number;
-      }>;
-      rows: Array<{
-        id: string;
-        record_id: string;
-        question_id: string;
-        prompt_md: string;
-        wrong_answer_md: string;
-        knowledge_ids: string[];
-        cause: { primary_category: string; user_notes: string | null } | null;
-        correction_state: { state: string; terminal_state: string };
-        created_at: number;
-      }>;
-      page: { limit: number; next_cursor: string | null };
-    };
+    const body = MistakeListResponseSchema.parse(await res.json());
+    expect(res.headers.get('content-type')).toContain('application/json');
     expect(body.data).toEqual(body.rows);
     expect(body.page).toEqual({ limit: 50, next_cursor: null });
     expect(body.rows).toHaveLength(1);

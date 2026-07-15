@@ -56,6 +56,7 @@ describe('GET /api/assets/[id]/content', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/png');
     expect(res.headers.get('content-length')).toBe(String(fakeBytes.byteLength));
+    expect(res.headers.get('cache-control')).toBe('private, max-age=60');
     const out = new Uint8Array(await res.arrayBuffer());
     expect(out).toEqual(fakeBytes);
   });

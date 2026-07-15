@@ -1,14 +1,20 @@
 import { z } from 'zod';
 
 import {
+  CauseCategory,
   FigureRef,
   IngestionEntrypoint,
   MAX_PDF_PAGES,
   MistakeEnrollOutcome,
   PageSpan,
+  QuestionKind,
   StructuredQuestion,
 } from '@/kernel/capability-contract-schemas';
-import { MultipartFilePartSchema } from '@/kernel/http-contracts';
+import {
+  ApiPageSchema,
+  BinaryResponseSchema,
+  MultipartFilePartSchema,
+} from '@/kernel/http-contracts';
 
 export const CreateIngestionSessionBody = z.object({
   entrypoint: IngestionEntrypoint,
@@ -39,6 +45,110 @@ export const IngestionOperationSchema = z
 
 /** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
 export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
+
+export const SourceAssetSchema = z
+  .object({
+    id: z.string(),
+    kind: z.string(),
+    storage_key: z.string(),
+    mime_type: z.string(),
+    byte_size: z.number().int().nonnegative(),
+    sha256: z.string(),
+    width: z.number().int().nullable(),
+    height: z.number().int().nullable(),
+    provenance: z.record(z.unknown()),
+    created_at: z.string().datetime(),
+  })
+  .passthrough();
+
+export const AssetUploadResponseSchema = z.object({ asset: SourceAssetSchema });
+export const AssetDeleteResponseSchema = z.object({ ok: z.literal(true) });
+export const AssetContentResponseSchema = BinaryResponseSchema;
+
+export const CreateMistakeBodySchema = z.object({
+  prompt_md: z.string().min(1, 'prompt_md is required'),
+  reference_md: z.string().nullable(),
+  wrong_answer_md: z.string().min(1, 'wrong_answer_md is required'),
+  // This route has no independent subject signal, so at least one knowledge id stays required.
+  knowledge_ids: z.array(z.string().min(1)).min(1, 'at least one knowledge_id is required'),
+  cause: z
+    .object({
+      primary_category: CauseCategory,
+      user_notes: z.string().nullable(),
+    })
+    .nullable(),
+  difficulty: z.number().int().min(1).max(5),
+  question_kind: QuestionKind,
+  prompt_image_refs: z.array(z.string().min(1)).default([]),
+  wrong_answer_image_refs: z.array(z.string().min(1)).default([]),
+});
+
+export const MistakeListQuerySchema = z.object({
+  limit: z
+    .string()
+    .optional()
+    .refine((value) => value === undefined || /^\d+$/.test(value), {
+      message: 'limit must be a positive integer',
+    }),
+  since: z
+    .string()
+    .optional()
+    .refine((value) => value === undefined || !Number.isNaN(new Date(value).getTime()), {
+      message: 'since must be an ISO-8601 timestamp',
+    }),
+  question_id: z.string().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+});
+
+export const CreateMistakeResponseSchema = z.object({
+  question_id: z.string(),
+  mistake_id: z.string(),
+  record_id: z.string(),
+});
+
+const MistakeCorrectionStepSchema = z.object({
+  event_id: z.string(),
+  state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded']),
+  correction_event_id: z.string().nullable(),
+  replacement_event_id: z.string().nullable(),
+});
+
+const MistakeCorrectionStateSchema = z.object({
+  original_event_id: z.string(),
+  state: z.enum(['active', 'retracted', 'marked_wrong', 'superseded', 'missing', 'cycle']),
+  terminal_state: z.enum(['active', 'retracted', 'marked_wrong', 'missing', 'cycle']),
+  effective_event_id: z.string().nullable(),
+  correction_event_id: z.string().nullable(),
+  replacement_event_id: z.string().nullable(),
+  chain: z.array(MistakeCorrectionStepSchema),
+});
+
+export const MistakeProjectionSchema = z.object({
+  id: z.string(),
+  record_id: z.string(),
+  question_id: z.string(),
+  prompt_md: z.string(),
+  wrong_answer_md: z.string(),
+  knowledge_ids: z.array(z.string()),
+  cause: z
+    .object({
+      source: z.enum(['agent', 'user']),
+      primary_category: CauseCategory,
+      secondary_categories: z.array(CauseCategory),
+      user_notes: z.string().nullable(),
+      confidence: z.number().min(0).max(1).nullable(),
+    })
+    .nullable(),
+  correction_state: MistakeCorrectionStateSchema,
+  created_at: z.number().int().nonnegative(),
+});
+
+export const MistakeListResponseSchema = z.object({
+  data: z.array(MistakeProjectionSchema),
+  rows: z.array(MistakeProjectionSchema),
+  page: ApiPageSchema,
+  next_cursor: z.string().nullable(),
+});
 
 export const PdfExpansionResponseSchema = z.object({
   asset_ids: z.array(z.string()).min(1).max(MAX_PDF_PAGES),

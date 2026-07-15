@@ -1,8 +1,11 @@
 import { z } from 'zod';
 
-/** Marker used by OpenAPI generation for a real multipart File part. */
-export const OPENAPI_BINARY_FILE_DESCRIPTION = 'Binary file upload';
-export const MultipartFilePartSchema = z.instanceof(File).describe(OPENAPI_BINARY_FILE_DESCRIPTION);
+/** Marker used by OpenAPI generation for a real binary request part or response body. */
+export const OPENAPI_BINARY_CONTENT_DESCRIPTION = 'Binary HTTP content';
+export const MultipartFilePartSchema = z
+  .instanceof(File)
+  .describe(OPENAPI_BINARY_CONTENT_DESCRIPTION);
+export const BinaryResponseSchema = z.string().describe(OPENAPI_BINARY_CONTENT_DESCRIPTION);
 
 export const ApiErrorResponseSchema = z
   .object({
