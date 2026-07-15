@@ -5,6 +5,12 @@
 import { GET as subjectTraitsRoute } from '@/capabilities/observability/api/admin-subject-traits';
 import { GET as journalRoute } from '@/capabilities/observability/api/admin-trait-journal';
 import { GET as traitsRoute } from '@/capabilities/observability/api/admin-traits';
+import {
+  AdminSubjectTraitsResponseSchema,
+  AdminSubjectsResponseSchema,
+  AdminTraitJournalResponseSchema,
+  AdminTraitsResponseSchema,
+} from '@/capabilities/observability/api/subject-contracts';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -59,7 +65,7 @@ describe('listAdminSubjects — 管理枚举（全量含 general）', () => {
     const { GET } = await import('@/capabilities/observability/api/admin-subjects');
     const res = await GET();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { subjects: Record<string, unknown>[] };
+    const body = AdminSubjectsResponseSchema.parse(await res.json());
     expect(body.subjects.length).toBeGreaterThan(0);
     for (const row of body.subjects) {
       expect(Object.keys(row).sort()).toEqual([
@@ -111,6 +117,13 @@ describe('getAdminSubjectTraits — 六绑定读面', () => {
       // general 种子被 general 自身 + 新 custom 同时绑定 → 波及面两科起步。
       expect(b.sharedBy).toEqual(expect.arrayContaining(['general', id]));
     }
+
+    const response = await subjectTraitsRoute(
+      new Request(`http://x/api/admin/subjects/${id}/traits`),
+      { id },
+    );
+    expect(response.status).toBe(200);
+    expect(AdminSubjectTraitsResponseSchema.parse(await response.json()).bindings).toHaveLength(6);
   });
 
   it('returns null for an unknown subject; route maps it to 404', async () => {
@@ -150,7 +163,7 @@ describe('listAdminTraits — 跨科目录（换绑选择器）', () => {
     );
     const ok = await traitsRoute(new Request('http://x/api/admin/traits?kind=charter'));
     expect(ok.status).toBe(200);
-    const body = (await ok.json()) as { traits: unknown[] };
+    const body = AdminTraitsResponseSchema.parse(await ok.json());
     expect(body.traits.length).toBeGreaterThanOrEqual(4);
   });
 });
@@ -170,11 +183,7 @@ describe('getTraitJournal — append-only 历史（倒序，无 payload）', () 
       { id: 'trt_seed_general_charter' },
     );
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      data: unknown[];
-      journal: unknown[];
-      page: { limit: number; next_cursor: string | null };
-    };
+    const body = AdminTraitJournalResponseSchema.parse(await response.json());
     expect(body.data).toEqual(body.journal);
     expect(body.page).toEqual({ limit: 1, next_cursor: null });
   });
