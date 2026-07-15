@@ -10,12 +10,11 @@
 // non-soft-archived drafts may be force-promoted). Auth is enforced upstream by the
 // /api/* internal-token middleware.
 
-import { z } from 'zod';
-
 import { db } from '@/db/client';
 import type { RunTaskFn } from '@/server/boss/handlers/quiz_verify';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
+import { DraftForceEnableBodySchema } from './draft-moderation-contracts';
 
 // The override branch never consults runTaskFn (no AI on force-enable), but the gate
 // signature requires it; a throwing stub makes any accidental dispatch loud rather
@@ -23,8 +22,6 @@ import { verifyAndPromote } from '@/server/quiz/verify-and-promote';
 const noRunTask: RunTaskFn = async () => {
   throw new Error('force-enable must not dispatch a verify task (override skips AI)');
 };
-
-const Body = z.object({ reason: z.string().trim().min(1) });
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -34,7 +31,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = DraftForceEnableBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'reason is required (non-empty)', 400);
     }

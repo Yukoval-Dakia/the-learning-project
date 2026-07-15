@@ -17,8 +17,6 @@
   "GET /api/jobs/[kind]/[id]/events": "Legacy route; declare request and response schemas when this surface is migrated.",
   "GET /api/observability/calibration-maturity": "Legacy route; declare request and response schemas when this surface is migrated.",
   "GET /api/observability/effectiveness-trend": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "GET /api/review/drafts": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "GET /api/review/drafts/[id]": "Legacy route; declare request and response schemas when this surface is migrated.",
   "PATCH /api/admin/subjects/[id]": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/_/import": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects": "Legacy route; declare request and response schemas when this surface is migrated.",
@@ -31,8 +29,6 @@
   "POST /api/admin/traits/[id]/rollback": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/events/[id]/correct": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/events/[id]/corrections": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/review/drafts/[id]/enable": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/review/drafts/[id]/force-enable": "Legacy route; declare request and response schemas when this surface is migrated.",
   "PUT /api/admin/subjects/[id]/traits/[kind]": "Legacy route; declare request and response schemas when this surface is migrated.",
   "PUT /api/admin/subjects/[id]/traits/[kind]/binding": "Legacy route; declare request and response schemas when this surface is migrated.",
   "PUT /api/admin/traits/[id]": "Legacy route; declare request and response schemas when this surface is migrated."

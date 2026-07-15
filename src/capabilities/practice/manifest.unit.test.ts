@@ -279,4 +279,48 @@ describe('practice manifest API resources', () => {
       required: true,
     });
   });
+
+  it('publishes review draft moderation contracts', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['GET /api/review/drafts', 'listReviewDrafts'],
+      ['GET /api/review/drafts/[id]', 'getReviewDraft'],
+      ['POST /api/review/drafts/[id]/enable', 'enableReviewDraft'],
+      ['POST /api/review/drafts/[id]/force-enable', 'forceEnableReviewDraft'],
+    ]);
+
+    const declared = routes.filter((route) => expected.has(`${route.method} ${route.path}`));
+    expect(declared).toHaveLength(expected.size);
+    for (const route of declared) {
+      const key = `${route.method} ${route.path}`;
+      expect(route.operationId, key).toBe(expected.get(key));
+    }
+
+    const document = generateOpenApiDocument([practiceCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    expect(document.paths['/api/review/drafts'].get).toMatchObject({
+      'x-pagination': { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
+    });
+    expect(document.paths['/api/review/drafts'].get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'cursor', in: 'query' }),
+        expect.objectContaining({ name: 'offset', in: 'query' }),
+      ]),
+    );
+    for (const operation of [
+      document.paths['/api/review/drafts/{id}'].get,
+      document.paths['/api/review/drafts/{id}/enable'].post,
+      document.paths['/api/review/drafts/{id}/force-enable'].post,
+    ]) {
+      expect(operation.parameters).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'id', in: 'path', required: true }),
+        ]),
+      );
+    }
+    expect(document.paths['/api/review/drafts/{id}/force-enable'].post.requestBody).toMatchObject({
+      required: true,
+    });
+  });
 });
