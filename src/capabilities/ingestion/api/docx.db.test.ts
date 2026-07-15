@@ -9,6 +9,7 @@ import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
+import { DocxIngestionResponseSchema } from './contracts';
 
 // db partition. Real Postgres for source_document / learning_session /
 // question_block / job_events / event; R2 mocked in-memory; boss mocked; the
@@ -97,7 +98,8 @@ describe('POST /api/ingestion/docx', () => {
     injectTextConverter();
     const res = await POST(docxRequest('yuwen-text.docx'));
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { session_id: string; line: string; page_count: number };
+    const body = DocxIngestionResponseSchema.parse(await res.json());
+    expect(res.headers.get('content-type')).toContain('application/json');
     expect(res.headers.get('Location')).toBe(`/api/ingestion-sessions/${body.session_id}`);
     expect(body.line).toBe('text');
     expect(body.page_count).toBe(2); // REAL_PDF is 2 pages
@@ -184,7 +186,7 @@ describe('POST /api/ingestion/docx', () => {
     injectVisualConverter();
     const res = await POST(docxRequest('math-mathtype.docx'));
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { session_id: string; line: string; page_count: number };
+    const body = DocxIngestionResponseSchema.parse(await res.json());
     expect(res.headers.get('Location')).toBe(`/api/ingestion-sessions/${body.session_id}`);
     expect(body.line).toBe('visual');
     expect(body.page_count).toBe(2);

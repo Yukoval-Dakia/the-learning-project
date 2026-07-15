@@ -7,6 +7,7 @@ import { event, learning_session, question_block } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './blocks';
+import { IngestionBlocksResponseSchema } from './contracts';
 
 async function seedSession(id: string): Promise<void> {
   const db = testDb();
@@ -85,7 +86,8 @@ describe('GET /api/ingestion/[id]/blocks', () => {
     await seedSession('sess1');
     const res = await getBlocks('sess1');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: unknown[] };
+    const body = IngestionBlocksResponseSchema.parse(await res.json());
+    expect(res.headers.get('content-type')).toContain('application/json');
     expect(body.rows).toEqual([]);
   });
 

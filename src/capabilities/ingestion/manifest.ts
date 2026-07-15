@@ -1,5 +1,6 @@
 import {
   API_ERROR_RESPONSES,
+  ApiErrorResponseSchema,
   ApiIdParamsSchema,
   CursorQuerySchema,
   collectionResponseSchema,
@@ -8,11 +9,24 @@ import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   CreateIngestionSessionBody,
+  DocxIngestionResponseSchema,
+  IngestionBlocksResponseSchema,
+  IngestionEventStreamResponseSchema,
+  IngestionEventsHeadersSchema,
   IngestionOperationSchema,
   IngestionSessionResponseSchema,
   IngestionSessionSchema,
+  LegacyExtractionResponseSchema,
+  LegacyImportResponseSchema,
+  LegacyMakePaperResponseSchema,
+  LegacyRescueResponseSchema,
+  MultipartFileUploadSchema,
+  PdfExpansionResponseSchema,
+  RevertAutoEnrolledBlockBodySchema,
+  RevertAutoEnrolledBlockResponseSchema,
 } from './api/contracts';
-import { IngestionOperationRequest } from './api/operation-schema';
+import { ImportBody } from './api/import-schema';
+import { IngestionOperationRequest, MakePaperBody, RescueBody } from './api/operation-schema';
 
 export const ingestionCapability = defineCapability({
   name: 'ingestion',
@@ -26,12 +40,24 @@ export const ingestionCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/ingestion',
+        operationId: 'listLegacyIngestionSessions',
+        request: { query: CursorQuerySchema },
+        responses: {
+          200: collectionResponseSchema(IngestionSessionSchema),
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 20, maxLimit: 100 },
         deprecation: { successor: '/api/ingestion-sessions' },
         load: () => import('./api/sessions').then((m) => m.legacyListIngestionSessions),
       },
       {
         method: 'POST',
         path: '/api/ingestion',
+        operationId: 'createLegacyIngestionSession',
+        request: { body: CreateIngestionSessionBody },
+        responses: { 200: IngestionSessionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         deprecation: { successor: '/api/ingestion-sessions' },
         load: () => import('./api/sessions').then((m) => m.legacyCreateIngestionSession),
       },
@@ -69,16 +95,35 @@ export const ingestionCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/ingestion/pdf',
+        operationId: 'expandIngestionPdf',
+        request: {
+          body: MultipartFileUploadSchema,
+          bodyMediaType: 'multipart/form-data',
+        },
+        responses: { 201: PdfExpansionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/pdf').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/ingestion/docx',
+        operationId: 'createIngestionFromDocx',
+        request: {
+          body: MultipartFileUploadSchema,
+          bodyMediaType: 'multipart/form-data',
+        },
+        responses: { 201: DocxIngestionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/docx').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/ingestion/[id]/blocks',
+        operationId: 'listIngestionSessionBlocks',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: IngestionBlocksResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/blocks').then((m) => m.GET),
       },
       {
@@ -86,6 +131,16 @@ export const ingestionCapability = defineCapability({
         // （src/ui/lib/sse.ts 从不使用 EventSource），token gate 无需任何豁免。
         method: 'GET',
         path: '/api/ingestion/[id]/events',
+        operationId: 'streamIngestionSessionEvents',
+        request: { params: ApiIdParamsSchema, headers: IngestionEventsHeadersSchema },
+        // Replay/setup occurs inside ReadableStream.start(), after the 200 Response exists.
+        // Only auth middleware can still produce a pre-stream JSON error here.
+        responses: {
+          200: IngestionEventStreamResponseSchema,
+          401: ApiErrorResponseSchema,
+        },
+        responseMediaTypes: { 200: 'text/event-stream' },
+        successStatus: 200,
         load: () => import('./api/events').then((m) => m.GET),
       },
       {
@@ -113,26 +168,58 @@ export const ingestionCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/ingestion/[id]/extract',
+        operationId: 'extractLegacyIngestionSession',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: LegacyExtractionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
         load: () => import('./api/extract').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/ingestion/[id]/import',
+        operationId: 'importLegacyIngestionSession',
+        request: { params: ApiIdParamsSchema, body: ImportBody },
+        responses: { 200: LegacyImportResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
         load: () => import('./api/import').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/ingestion/[id]/make-paper',
+        operationId: 'createLegacyIngestionPaper',
+        request: {
+          params: ApiIdParamsSchema,
+          body: MakePaperBody,
+          bodyRequired: false,
+        },
+        responses: { 200: LegacyMakePaperResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
         load: () => import('./api/make-paper').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/ingestion/[id]/rescue',
+        operationId: 'rescueLegacyIngestionBlock',
+        request: { params: ApiIdParamsSchema, body: RescueBody },
+        responses: {
+          200: LegacyRescueResponseSchema,
+          501: ApiErrorResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
         load: () => import('./api/rescue').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/ingestion/[id]/revert',
+        operationId: 'revertAutoEnrolledIngestionBlock',
+        request: { params: ApiIdParamsSchema, body: RevertAutoEnrolledBlockBodySchema },
+        responses: { 200: RevertAutoEnrolledBlockResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/revert').then((m) => m.POST),
       },
       {
