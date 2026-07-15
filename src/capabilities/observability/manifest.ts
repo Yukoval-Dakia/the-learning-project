@@ -48,6 +48,17 @@ import {
   CreateAdminSubjectBodySchema,
   CreatedAdminSubjectResponseSchema,
 } from './api/subject-contracts';
+import {
+  AdminSubjectTraitParamsSchema,
+  AdminTraitWriteParamsSchema,
+  EditAdminTraitBodySchema,
+  EditSubjectTraitBodySchema,
+  ForkSubjectTraitBodySchema,
+  RebindSubjectTraitBodySchema,
+  ResetAdminTraitBodySchema,
+  RollbackAdminTraitBodySchema,
+  TraitWriteResponseSchema,
+} from './api/trait-write-contracts';
 
 // M5-T4 (YUK-321) — observability 包：AI 运行可观测性（admin 四页数据面）+
 // 今日成本条。核心实现 server/ai-observability.ts（纯 drizzle，整体迁自
@@ -167,31 +178,63 @@ export const observabilityCapability = defineCapability({
       {
         method: 'PUT',
         path: '/api/admin/subjects/[id]/traits/[kind]',
+        operationId: 'updateAdminSubjectTrait',
+        request: { params: AdminSubjectTraitParamsSchema, body: EditSubjectTraitBodySchema },
+        responses: {
+          200: TraitWriteResponseSchema,
+          201: TraitWriteResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
         load: () => import('./api/admin-subject-trait-write').then((m) => m.PUT),
       },
       {
         method: 'POST',
         path: '/api/admin/subjects/[id]/traits/[kind]/fork',
+        operationId: 'forkAdminSubjectTrait',
+        request: { params: AdminSubjectTraitParamsSchema, body: ForkSubjectTraitBodySchema },
+        responses: {
+          200: TraitWriteResponseSchema,
+          201: TraitWriteResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
         load: () => import('./api/admin-subject-trait-write').then((m) => m.FORK),
       },
       {
         method: 'PUT',
         path: '/api/admin/subjects/[id]/traits/[kind]/binding',
+        operationId: 'replaceAdminSubjectTraitBinding',
+        request: { params: AdminSubjectTraitParamsSchema, body: RebindSubjectTraitBodySchema },
+        responses: { 200: TraitWriteResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subject-trait-write').then((m) => m.BINDING),
       },
       {
         method: 'PUT',
         path: '/api/admin/traits/[id]',
+        operationId: 'updateAdminTrait',
+        request: { params: AdminTraitWriteParamsSchema, body: EditAdminTraitBodySchema },
+        responses: { 200: TraitWriteResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-trait-write').then((m) => m.PUT),
       },
       {
         method: 'POST',
         path: '/api/admin/traits/[id]/rollback',
+        operationId: 'rollbackAdminTrait',
+        request: { params: AdminTraitWriteParamsSchema, body: RollbackAdminTraitBodySchema },
+        responses: { 200: TraitWriteResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-trait-write').then((m) => m.ROLLBACK),
       },
       {
         method: 'POST',
         path: '/api/admin/traits/[id]/reset-to-seed',
+        operationId: 'resetAdminTraitToSeed',
+        request: { params: AdminTraitWriteParamsSchema, body: ResetAdminTraitBodySchema },
+        responses: { 200: TraitWriteResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-trait-write').then((m) => m.RESET_TO_SEED),
       },
       {
