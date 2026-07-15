@@ -48,3 +48,38 @@ describe('observability event operation contracts', () => {
     expect(jobResponses['200'].content).toHaveProperty('text/event-stream');
   });
 });
+
+describe('observability backup archive contracts', () => {
+  it('publishes raw ZIP import and export media types', () => {
+    const document = generateOpenApiDocument([observabilityCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+
+    const exportArchive = document.paths['/api/_/export'].get;
+    expect(exportArchive).toMatchObject({
+      operationId: 'exportBackupArchive',
+      'x-pagination': 'none',
+      parameters: [expect.objectContaining({ name: 'include_assets', in: 'query' })],
+      responses: {
+        200: {
+          content: {
+            'application/zip': { schema: { type: 'string', format: 'binary' } },
+          },
+        },
+      },
+    });
+
+    const importArchive = document.paths['/api/_/import'].post;
+    expect(importArchive).toMatchObject({
+      operationId: 'importBackupArchive',
+      parameters: [expect.objectContaining({ name: 'confirm', in: 'query', required: true })],
+      requestBody: {
+        required: true,
+        content: {
+          'application/zip': { schema: { type: 'string', format: 'binary' } },
+        },
+      },
+      responses: { 200: { content: { 'application/json': expect.any(Object) } } },
+    });
+  });
+});

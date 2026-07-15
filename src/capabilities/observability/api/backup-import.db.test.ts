@@ -3,6 +3,7 @@ import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
+import { BackupImportResponseSchema } from './backup-contracts';
 import { POST } from './backup-import';
 
 // Inject in-memory R2 for all tests
@@ -221,11 +222,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
       console.error('unexpected response:', JSON.stringify(body));
     }
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      ok: boolean;
-      stats: Record<string, { deleted: number; inserted: number }>;
-      assets_uploaded: number;
-    };
+    const body = BackupImportResponseSchema.parse(await res.json());
     expect(body.ok).toBe(true);
     expect(body.stats.knowledge.inserted).toBe(1);
   });

@@ -1,5 +1,4 @@
 {
-  "GET /api/_/export": "Legacy route; declare request and response schemas when this surface is migrated.",
   "GET /api/admin/conjecture-scores": "Legacy route; declare request and response schemas when this surface is migrated.",
   "GET /api/admin/cost": "Legacy route; declare request and response schemas when this surface is migrated.",
   "GET /api/admin/coverage-lattice": "Legacy route; declare request and response schemas when this surface is migrated.",
@@ -16,7 +15,6 @@
   "GET /api/observability/calibration-maturity": "Legacy route; declare request and response schemas when this surface is migrated.",
   "GET /api/observability/effectiveness-trend": "Legacy route; declare request and response schemas when this surface is migrated.",
   "PATCH /api/admin/subjects/[id]": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/_/import": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects/[id]/reset": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects/[id]/restore": "Legacy route; declare request and response schemas when this surface is migrated.",
