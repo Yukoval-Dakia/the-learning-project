@@ -4,17 +4,19 @@ import {
   type ApiPaginationDecl,
   type ApiRouteDecl,
   type CapabilityManifest,
+  apiRequestBodyMediaType,
   apiResponseMediaType,
   apiSuccessStatuses,
 } from './manifest';
 
 type JsonObject = Record<string, unknown>;
 
-function toJsonSchema(schema: ZodTypeAny): JsonObject {
+function toJsonSchema(schema: ZodTypeAny, options: { binaryBase64?: boolean } = {}): JsonObject {
   return zodToJsonSchema(schema, {
     target: 'openApi3',
     $refStrategy: 'none',
     effectStrategy: 'input',
+    ...(options.binaryBase64 ? { base64Strategy: 'format:binary' as const } : {}),
   }) as JsonObject;
 }
 
@@ -22,7 +24,7 @@ function toOpenApiPath(path: string): string {
   return path.replace(/\[([^\]]+)\]/g, '{$1}');
 }
 
-function schemaParameters(schema: ZodTypeAny, location: 'path' | 'query'): JsonObject[] {
+function schemaParameters(schema: ZodTypeAny, location: 'path' | 'query' | 'header'): JsonObject[] {
   const json = toJsonSchema(schema);
   const properties = (json.properties ?? {}) as Record<string, JsonObject>;
   const required = new Set(Array.isArray(json.required) ? (json.required as string[]) : []);
@@ -95,6 +97,7 @@ function openApiOperation(
   const parameters = [
     ...(route.request?.params ? schemaParameters(route.request.params, 'path') : []),
     ...(route.request?.query ? schemaParameters(route.request.query, 'query') : []),
+    ...(route.request?.headers ? schemaParameters(route.request.headers, 'header') : []),
   ];
   const operation: JsonObject = {
     operationId: route.operationId ?? fallbackOperationId(capability, route, routeIndex),
@@ -105,9 +108,16 @@ function openApiOperation(
   };
   if (parameters.length > 0) operation.parameters = parameters;
   if (route.request?.body) {
+    const mediaType = apiRequestBodyMediaType(route);
     operation.requestBody = {
-      required: true,
-      content: { 'application/json': { schema: toJsonSchema(route.request.body) } },
+      required: route.request.bodyRequired ?? true,
+      content: {
+        [mediaType]: {
+          schema: toJsonSchema(route.request.body, {
+            binaryBase64: mediaType === 'multipart/form-data',
+          }),
+        },
+      },
     };
   }
   if (route.pagination !== undefined) {

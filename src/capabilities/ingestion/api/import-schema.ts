@@ -13,8 +13,7 @@
  */
 import { z } from 'zod';
 
-import { PageSpan } from '@/core/schema';
-import { CauseCategory, QuestionKind } from '@/core/schema/business';
+import { CauseCategory, PageSpan, QuestionKind } from '@/kernel/capability-contract-schemas';
 
 // T-OC slice 1 (YUK-145, OC-3): the capture outcome is a SIGNAL, not hardcoded.
 // See ADR-0024 + docs/superpowers/plans/2026-05-30-yuk145-toc-slice1-lane.md.

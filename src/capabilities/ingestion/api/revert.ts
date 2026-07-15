@@ -5,22 +5,16 @@
 // clears the block's imported_* links (the question row is kept). The OC-5
 // "AI auto-enrolled N items" surface calls this. Block-scoped (the path [id] is
 // the session for routing; the revert target is the body's block_id).
-import { z } from 'zod';
-
 import { revertAutoEnrolledBlock } from '@/capabilities/ingestion/server/revert-auto-enroll';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-
-const Body = z.object({
-  block_id: z.string().min(1),
-  reason_md: z.string().max(2000).optional(),
-});
+import { RevertAutoEnrolledBlockBodySchema } from './contracts';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const sessionId = params.id;
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = RevertAutoEnrolledBlockBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

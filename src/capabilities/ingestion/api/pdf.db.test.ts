@@ -7,6 +7,7 @@ import { inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
+import { PdfExpansionResponseSchema } from './contracts';
 import { POST } from './pdf';
 
 // db partition — imports tests/helpers/db + memR2 (R2 mocked, but real Postgres
@@ -41,7 +42,8 @@ describe('POST /api/ingestion/pdf', () => {
   it('expands a 2-page PDF → 2 content-addressed image assets', async () => {
     const res = await POST(postRequest(pdfFile('sample-2page.pdf')));
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { asset_ids: string[]; page_count: number };
+    const body = PdfExpansionResponseSchema.parse(await res.json());
+    expect(res.headers.get('content-type')).toContain('application/json');
     expect(body.page_count).toBe(2);
     expect(body.asset_ids).toHaveLength(2);
     expect(res.headers.get('Location')).toBe(`/api/assets/${body.asset_ids[0]}/content`);

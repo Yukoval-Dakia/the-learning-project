@@ -18,7 +18,10 @@ describe('generateOpenApiDocument', () => {
               request: {
                 params: z.object({ id: z.string() }),
                 query: z.object({ dry_run: z.boolean().optional() }),
-                body: z.object({ title: z.string() }),
+                headers: z.object({ 'X-Request-ID': z.string().optional() }),
+                body: z.object({ file: z.string().base64() }),
+                bodyMediaType: 'multipart/form-data',
+                bodyRequired: false,
               },
               successStatus: [200, 201],
               responses: {
@@ -59,9 +62,17 @@ describe('generateOpenApiDocument', () => {
       expect.arrayContaining([
         expect.objectContaining({ name: 'id', in: 'path', required: true }),
         expect.objectContaining({ name: 'dry_run', in: 'query', required: false }),
+        expect.objectContaining({ name: 'X-Request-ID', in: 'header', required: false }),
       ]),
     );
-    expect(create.requestBody).toBeDefined();
+    expect(create.requestBody).toMatchObject({
+      required: false,
+      content: {
+        'multipart/form-data': {
+          schema: { properties: { file: { type: 'string', format: 'binary' } } },
+        },
+      },
+    });
     expect(create.responses).toHaveProperty('201');
     expect(create.responses).toMatchObject({
       200: { content: { 'text/event-stream': expect.any(Object) } },
