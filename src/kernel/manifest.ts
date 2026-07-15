@@ -47,6 +47,11 @@ export interface ApiRouteDecl {
   request?: ApiRequestSchemaDecl;
   /** HTTP status → response body schema。错误响应可渐进补齐。 */
   responses?: Partial<Record<number, ZodTypeAny>>;
+  /**
+   * HTTP status → response media type。缺省为 application/json；仅在真实响应
+   * 使用其他表示时声明（例如 Copilot inline 200 = text/event-stream）。
+   */
+  responseMediaTypes?: Partial<Record<number, string>>;
   /** 允许幂等创建等 route 声明多个成功状态（例如 200/201）。 */
   successStatus?: number | readonly number[];
   pagination?: ApiPaginationDecl;
@@ -143,6 +148,10 @@ export function apiSuccessStatuses(route: ApiRouteDecl): number[] {
   return typeof route.successStatus === 'number' ? [route.successStatus] : [...route.successStatus];
 }
 
+export function apiResponseMediaType(route: ApiRouteDecl, status: number): string {
+  return route.responseMediaTypes?.[status] ?? 'application/json';
+}
+
 export class ApiRouteContractError extends Error {
   override name = 'ApiRouteContractError';
 }
@@ -193,6 +202,24 @@ function validateApiRouteContract(route: ApiRouteDecl): void {
     const status = Number(rawStatus);
     if (!Number.isInteger(status) || status < 100 || status > 599) {
       throw new Error(`api route '${key}' has invalid response status ${rawStatus}`);
+    }
+  }
+
+  for (const [rawStatus, mediaType] of Object.entries(route.responseMediaTypes ?? {})) {
+    const status = Number(rawStatus);
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      throw new Error(`api route '${key}' has invalid response media type status ${rawStatus}`);
+    }
+    if (route.responses?.[status] === undefined) {
+      throw new Error(
+        `api route '${key}' response media type status ${status} has no response schema`,
+      );
+    }
+    if (status === 204) {
+      throw new Error(`api route '${key}' cannot declare a response media type for status 204`);
+    }
+    if (typeof mediaType !== 'string' || !/^[^\s/]+\/[^\s/]+$/.test(mediaType)) {
+      throw new Error(`api route '${key}' has invalid response media type '${mediaType}'`);
     }
   }
 

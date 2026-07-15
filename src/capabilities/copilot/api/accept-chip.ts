@@ -29,29 +29,16 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
+import type { z } from 'zod';
 
-import { SuggestionKind } from '@/core/schema/event/known';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
+import type { SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { acceptAiProposal } from '@/server/proposals/actions';
 import { Conversation } from '@/server/session';
-
-const Body = z.object({
-  suggestion_kind: SuggestionKind,
-  chip_label: z.string().min(1).max(200),
-  // Optional — when omitted we resolve it per ADR-0011 §2.1 from the session's
-  // latest agent teach_message (explain for proactive, tool_use for corrective).
-  source_event_id: z.string().optional(),
-  target_tool: z.string().optional(),
-  target_args: z.record(z.string(), z.unknown()).optional(),
-  // When the chip materializes a proposal accept (e.g. a corrective
-  // propose_variant chip), the proposal id to run through acceptAiProposal so
-  // §5.1's KPI gate applies on the proposal-signal side.
-  proposal_id: z.string().optional(),
-});
+import { AcceptTeachingChipBodySchema, CopilotRouteIdParamsSchema } from './contracts';
 
 // ADR-0011 §2.1 — a chip's source_event_id may only anchor to an agent
 // teach_message in the same session (explain / tool_use shape). Both the
@@ -132,9 +119,9 @@ async function isValidAnchorEvent(sessionId: string, eventId: string): Promise<b
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const { id: sessionId } = z.object({ id: z.string().min(1) }).parse(params);
+    const { id: sessionId } = CopilotRouteIdParamsSchema.parse(params);
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = AcceptTeachingChipBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

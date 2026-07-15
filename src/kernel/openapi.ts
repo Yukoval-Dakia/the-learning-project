@@ -4,6 +4,7 @@ import {
   type ApiPaginationDecl,
   type ApiRouteDecl,
   type CapabilityManifest,
+  apiResponseMediaType,
   apiSuccessStatuses,
 } from './manifest';
 
@@ -60,7 +61,7 @@ function openApiResponses(route: ApiRouteDecl): JsonObject {
       const response: JsonObject = { description: responseDescription(status, successStatuses) };
       if (status !== 204 && schema !== undefined) {
         response.content = {
-          'application/json': { schema: toJsonSchema(schema) },
+          [apiResponseMediaType(route, status)]: { schema: toJsonSchema(schema) },
         };
       }
       return [statusText, response];

@@ -15,13 +15,13 @@ import { event } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { and, eq, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import { loadActiveNudges } from '../server/nudge-read';
 import {
   NUDGE_ACTION,
   NUDGE_DISMISSED_ACTION,
   NUDGE_OPENED_ACTION,
 } from '../server/nudge-triggers';
+import { CopilotRouteIdParamsSchema } from './contracts';
 
 export async function GET(): Promise<Response> {
   try {
@@ -48,7 +48,7 @@ async function writeNudgeCompanion(
   action: typeof NUDGE_DISMISSED_ACTION | typeof NUDGE_OPENED_ACTION,
 ): Promise<Response> {
   try {
-    const { id: nudgeId } = z.object({ id: z.string().min(1) }).parse(params);
+    const { id: nudgeId } = CopilotRouteIdParamsSchema.parse(params);
 
     const exists = await db
       .select({ one: sql<number>`1` })

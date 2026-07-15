@@ -44,6 +44,7 @@ vi.mock('@/server/session', () => ({
 }));
 
 import { POST } from '@/capabilities/copilot/api/chat';
+import { CopilotDurableRunResponseSchema } from '@/capabilities/copilot/api/contracts';
 
 const post = (body: unknown) =>
   POST(
@@ -107,7 +108,10 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.status).toBe(202);
     expect(res.headers.get('Location')).toBe('/api/jobs/copilot_run/copilot_user_ask_RID/events');
     expect(res.headers.get('Content-Type') ?? '').toContain('application/json');
-    expect(await res.json()).toEqual({ run_id: 'copilot_user_ask_RID', session_id: 'sess_1' });
+    expect(CopilotDurableRunResponseSchema.parse(await res.json())).toEqual({
+      run_id: 'copilot_user_ask_RID',
+      session_id: 'sess_1',
+    });
     // user_ask 写入 = run handle。
     expect(writeUserAskMock).toHaveBeenCalledWith(
       {},
