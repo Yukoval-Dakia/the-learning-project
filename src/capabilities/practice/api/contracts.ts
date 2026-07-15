@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ActivityRef, FsrsRating, JudgeResultV2 } from '@/kernel/capability-contract-schemas';
 
-export const CreateAttemptBodySchema = z.object({
+const CreateAttemptBodyBaseSchema = z.object({
   activity_ref: ActivityRef.optional(),
   question_id: z.string().min(1).optional(),
   mistake_id: z.string().min(1).optional(),
@@ -17,6 +17,24 @@ export const CreateAttemptBodySchema = z.object({
   stream_item_id: z.string().min(1).nullable().optional(),
   part_ref: z.string().min(1).nullable().optional(),
 });
+
+// The compatibility surface accepts three identity forms, but at least one is required.
+// A union keeps that invariant visible as OpenAPI `anyOf` instead of hiding it in a refine.
+export const CreateAttemptBodySchema = z.union(
+  [
+    CreateAttemptBodyBaseSchema.extend({ activity_ref: ActivityRef }),
+    CreateAttemptBodyBaseSchema.extend({ question_id: z.string().min(1) }),
+    CreateAttemptBodyBaseSchema.extend({ mistake_id: z.string().min(1) }),
+  ],
+  {
+    errorMap: (issue, context) => ({
+      message:
+        issue.code === z.ZodIssueCode.invalid_union
+          ? 'activity_ref, question_id, or mistake_id is required'
+          : context.defaultError,
+    }),
+  },
+);
 
 export type CreateAttemptBody = z.infer<typeof CreateAttemptBodySchema>;
 
