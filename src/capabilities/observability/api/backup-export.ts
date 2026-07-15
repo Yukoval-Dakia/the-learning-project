@@ -4,10 +4,14 @@
 import { db } from '@/db/client';
 import { buildBackupArchive } from '@/server/export/archive';
 import { getR2 } from '@/server/r2';
+import { BackupExportQuerySchema } from './backup-contracts';
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const includeAssets = url.searchParams.get('include_assets') === '1';
+  const query = BackupExportQuerySchema.parse({
+    include_assets: url.searchParams.get('include_assets') ?? undefined,
+  });
+  const includeAssets = query.include_assets === '1';
 
   const result = await buildBackupArchive({ db, r2: getR2(), includeAssets });
 

@@ -2,6 +2,13 @@ import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contr
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
+  BackupArchiveBodySchema,
+  BackupExportErrorSchema,
+  BackupExportQuerySchema,
+  BackupImportQuerySchema,
+  BackupImportResponseSchema,
+} from './api/backup-contracts';
+import {
   EventCorrectionBodySchema,
   EventCorrectionResponseSchema,
   EventDetailResponseSchema,
@@ -177,11 +184,35 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/_/export',
+        operationId: 'exportBackupArchive',
+        request: { query: BackupExportQuerySchema },
+        responses: {
+          200: BackupArchiveBodySchema,
+          400: BackupExportErrorSchema,
+          401: ApiErrorResponseSchema,
+          500: ApiErrorResponseSchema,
+        },
+        responseMediaTypes: { 200: 'application/zip' },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/backup-export').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/_/import',
+        operationId: 'importBackupArchive',
+        request: {
+          query: BackupImportQuerySchema,
+          body: BackupArchiveBodySchema,
+          bodyMediaType: 'application/zip',
+        },
+        responses: {
+          200: BackupImportResponseSchema,
+          400: ApiErrorResponseSchema,
+          401: ApiErrorResponseSchema,
+          500: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
         load: () => import('./api/backup-import').then((m) => m.POST),
       },
       {

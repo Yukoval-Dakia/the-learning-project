@@ -126,7 +126,7 @@ function openApiOperation(
       content: {
         [mediaType]: {
           schema: toJsonSchema(route.request.body, {
-            binaryFiles: mediaType === 'multipart/form-data',
+            binaryFiles: mediaType !== 'application/json',
           }),
         },
       },

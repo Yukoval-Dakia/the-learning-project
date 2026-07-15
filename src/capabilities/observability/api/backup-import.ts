@@ -4,10 +4,12 @@
 import { db } from '@/db/client';
 import { restoreFromArchive } from '@/server/export/archive';
 import { getR2 } from '@/server/r2';
+import { BackupImportQuerySchema } from './backup-contracts';
 
 export async function POST(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  if (url.searchParams.get('confirm') !== 'wipe-and-reload') {
+  const query = BackupImportQuerySchema.safeParse({ confirm: url.searchParams.get('confirm') });
+  if (!query.success) {
     return Response.json(
       {
         error: 'confirm_required',
