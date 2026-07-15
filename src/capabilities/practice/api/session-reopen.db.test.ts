@@ -3,6 +3,7 @@ import { Review } from '@/server/session';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { LegacyReviewSessionTransitionResponseSchema } from './contracts';
 import { POST } from './session-reopen';
 
 function req(id: string) {
@@ -23,7 +24,7 @@ describe('POST /api/review/sessions/[id]/reopen', () => {
     await Review.abandonReviewSession(testDb(), sessionId);
     const res = await POST(req(sessionId), paramsFor(sessionId));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = LegacyReviewSessionTransitionResponseSchema.parse(await res.json());
     expect(body).toMatchObject({ ok: true, status: 'started' });
 
     const rows = await testDb()

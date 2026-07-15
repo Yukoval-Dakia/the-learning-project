@@ -119,4 +119,43 @@ describe('practice manifest API resources', () => {
       'x-successor': '/api/papers/[id]',
     });
   });
+
+  it('publishes paper collection and review-session lifecycle compatibility contracts', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['GET /api/practice', 'listPapersLegacy'],
+      ['POST /api/practice', 'createPaperReviewSessionLegacy'],
+      ['POST /api/review/sessions', 'createReviewSessionLegacy'],
+      ['POST /api/review/sessions/[id]/pause', 'pauseReviewSessionLegacy'],
+      ['POST /api/review/sessions/[id]/resume', 'resumeReviewSessionLegacy'],
+      ['POST /api/review/sessions/[id]/end', 'endReviewSessionLegacy'],
+      ['POST /api/review/sessions/[id]/reopen', 'reopenReviewSessionLegacy'],
+    ]);
+
+    const declared = routes.filter((route) => expected.has(`${route.method} ${route.path}`));
+    expect(declared).toHaveLength(expected.size);
+    for (const route of declared) {
+      const key = `${route.method} ${route.path}`;
+      expect(route.operationId, key).toBe(expected.get(key));
+      expect(route.deprecation?.successor, key).toBeTruthy();
+    }
+
+    const document = generateOpenApiDocument([practiceCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    expect(document.paths['/api/practice'].get).toMatchObject({
+      deprecated: true,
+      'x-successor': '/api/papers',
+      'x-pagination': { kind: 'cursor', defaultLimit: 50, maxLimit: 200 },
+    });
+    const end = document.paths['/api/review/sessions/{id}/end'].post;
+    expect(end.requestBody).toMatchObject({ required: false });
+    expect(end.parameters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'id', in: 'path', required: true })]),
+    );
+    expect(end).toMatchObject({
+      deprecated: true,
+      'x-successor': '/api/review-sessions/[id]',
+    });
+  });
 });

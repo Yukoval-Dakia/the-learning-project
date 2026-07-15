@@ -13,6 +13,7 @@ import { GET as answerGet, POST as answerPost } from './paper-answer-route';
 import {
   PaperAnswerDraftCreatedSchema,
   PaperAnswerDraftSchema,
+  PaperListResponseSchema,
   PaperSubmissionResponseSchema,
 } from './paper-contracts';
 import { POST as submitPost } from './paper-submit-route';
@@ -137,11 +138,7 @@ describe('GET /api/practice', () => {
     const firstResponse = await GET(
       new Request('http://localhost/api/papers?limit=2', { method: 'GET' }),
     );
-    const first = (await firstResponse.json()) as {
-      data: Array<{ artifact_id: string }>;
-      papers: Array<{ artifact_id: string }>;
-      page: { limit: number; next_cursor: string | null };
-    };
+    const first = PaperListResponseSchema.parse(await firstResponse.json());
     expect(first.data).toEqual(first.papers);
     expect(first.data.map((paper) => paper.artifact_id)).toEqual(['paper_c', 'paper_b']);
 
@@ -151,7 +148,7 @@ describe('GET /api/practice', () => {
         { method: 'GET' },
       ),
     );
-    const second = (await secondResponse.json()) as typeof first;
+    const second = PaperListResponseSchema.parse(await secondResponse.json());
     expect(second.data.map((paper) => paper.artifact_id)).toEqual(['paper_a']);
     expect(second.page.next_cursor).toBeNull();
   });

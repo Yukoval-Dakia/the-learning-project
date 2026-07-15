@@ -5,6 +5,7 @@ import { Review } from '@/server/session';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { LegacyReviewSessionTransitionResponseSchema } from './contracts';
 import { POST } from './session-resume';
 
 function jsonReq(id: string) {
@@ -27,7 +28,7 @@ describe('POST /api/review/sessions/[id]/resume', () => {
     await Review.pauseReviewSession(testDb(), sessionId);
     const res = await POST(jsonReq(sessionId), paramsFor(sessionId));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = LegacyReviewSessionTransitionResponseSchema.parse(await res.json());
     expect(body).toMatchObject({ ok: true, status: 'started' });
 
     const db = testDb();

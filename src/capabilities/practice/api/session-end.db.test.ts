@@ -5,6 +5,7 @@ import { Review } from '@/server/session';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { LegacyReviewSessionTransitionResponseSchema } from './contracts';
 import { POST } from './session-end';
 
 function jsonReq(id: string, body: unknown) {
@@ -37,6 +38,10 @@ describe('POST /api/review/sessions/[id]/end', () => {
     const { sessionId } = await Review.startReviewSession(testDb());
     const res = await POST(jsonReq(sessionId, {}), paramsFor(sessionId));
     expect(res.status).toBe(200);
+    expect(LegacyReviewSessionTransitionResponseSchema.parse(await res.json())).toEqual({
+      ok: true,
+      status: 'completed',
+    });
 
     const db = testDb();
     const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
@@ -48,6 +53,10 @@ describe('POST /api/review/sessions/[id]/end', () => {
     const { sessionId } = await Review.startReviewSession(testDb());
     const res = await POST(jsonReq(sessionId, { status: 'abandoned' }), paramsFor(sessionId));
     expect(res.status).toBe(200);
+    expect(LegacyReviewSessionTransitionResponseSchema.parse(await res.json())).toEqual({
+      ok: true,
+      status: 'abandoned',
+    });
 
     const db = testDb();
     const rows = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
