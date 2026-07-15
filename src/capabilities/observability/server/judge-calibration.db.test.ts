@@ -8,6 +8,7 @@ import { event } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { JudgeCalibrationResponseSchema } from '../api/diagnostic-contracts';
 import { JUDGE_CALIBRATION_MIN_N, loadJudgeCalibrationStats } from './judge-calibration';
 
 interface SampleSeed {
@@ -129,6 +130,7 @@ describe('loadJudgeCalibrationStats', () => {
     await seedSample({ agreed: false, bitAgreed: true });
     await seedSample({ agreed: false, bitAgreed: false });
     const stats = await loadJudgeCalibrationStats(testDb());
+    JudgeCalibrationResponseSchema.parse(JSON.parse(JSON.stringify(stats)));
     expect(stats.headline).toEqual({
       status: 'ok',
       n: 6,

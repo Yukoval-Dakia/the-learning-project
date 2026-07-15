@@ -1,6 +1,7 @@
 import { item_calibration, knowledge, mastery_state, question } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { CalibrationMaturityResponseSchema } from '../api/diagnostic-contracts';
 import {
   COLD_START_EVIDENCE_FLOOR,
   COLD_START_PRECISION_CEILING,
@@ -105,7 +106,9 @@ describe('calibration-maturity read model', () => {
     // cold: never attempted (no mastery_state row at all — LEFT JOIN)
     await seedKc('k_never', '从未作答');
 
-    const { rows } = await loadCalibrationMaturity(db);
+    const result = await loadCalibrationMaturity(db);
+    CalibrationMaturityResponseSchema.parse(JSON.parse(JSON.stringify(result)));
+    const { rows } = result;
     const byId = new Map(rows.map((r) => [r.knowledge_id, r]));
 
     expect(byId.get('k_firm')?.cold_start).toBe(false);

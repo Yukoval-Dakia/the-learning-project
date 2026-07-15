@@ -12,6 +12,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { z } from 'zod';
 
 import { db } from '@/db/client';
 import { event, item_calibration, knowledge, learning_item, question } from '@/db/schema';
@@ -20,6 +21,7 @@ import { SUPPLY_DISPATCH_COOLDOWN_DAYS } from '@/server/question-supply/dispatch
 import { targetFingerprint } from '@/server/question-supply/target-discovery';
 import { resetDb } from '../../../../tests/helpers/db';
 import { GET } from './coverage-lattice';
+import { CoverageLatticeResponseSchema } from './diagnostic-contracts';
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
@@ -90,36 +92,12 @@ async function seedNearThetaCalibration(questionId: string) {
   });
 }
 
-type LatticeBody = {
-  subjects: Array<{
-    subjectId: string;
-    kcs: Array<{
-      knowledgeId: string;
-      usableCount: number;
-      depthMet: boolean;
-      hasHighTier: boolean | null;
-      hasNearThetaAnchor: boolean | null;
-      formatDiverse: boolean | null;
-      gapKinds: string[];
-      gaps: Array<{
-        gapKind: string;
-        fingerprint: string;
-        scaffold: boolean;
-        lastActivity: unknown;
-      }>;
-    }>;
-  }>;
-  totals: { activeKcs: number; kcsWithGaps: number; totalGaps: number };
-  coverage_depth_threshold: number;
-  cooldown_days: number;
-  scope_note: string;
-  scan_ms: number;
-};
+type LatticeBody = z.infer<typeof CoverageLatticeResponseSchema>;
 
 async function getBody(): Promise<LatticeBody> {
   const res = await GET();
   expect(res.status).toBe(200);
-  return (await res.json()) as LatticeBody;
+  return CoverageLatticeResponseSchema.parse(await res.json());
 }
 
 function findRow(body: LatticeBody, kid: string) {

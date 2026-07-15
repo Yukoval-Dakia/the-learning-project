@@ -20,6 +20,13 @@ import {
   BackupImportResponseSchema,
 } from './api/backup-contracts';
 import {
+  CalibrationMaturityResponseSchema,
+  ConjectureScoresResponseSchema,
+  CoverageLatticeResponseSchema,
+  EffectivenessTrendResponseSchema,
+  JudgeCalibrationResponseSchema,
+} from './api/diagnostic-contracts';
+import {
   EventCorrectionBodySchema,
   EventCorrectionResponseSchema,
   EventDetailResponseSchema,
@@ -176,6 +183,10 @@ export const observabilityCapability = defineCapability({
         // brier/log_loss/skill_score, NOT «accuracy» nor a window mean).
         method: 'GET',
         path: '/api/admin/conjecture-scores',
+        operationId: 'getConjectureScores',
+        responses: { 200: ConjectureScoresResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/conjecture-scores').then((m) => m.GET),
       },
       {
@@ -185,6 +196,10 @@ export const observabilityCapability = defineCapability({
         // agreement≠accuracy + same_lane 时效双 note、recent_runs mass-skip 自曝。
         method: 'GET',
         path: '/api/admin/judge-calibration',
+        operationId: 'getJudgeCalibration',
+        responses: { 200: JudgeCalibrationResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/judge-calibration').then((m) => m.GET),
       },
       {
@@ -202,6 +217,10 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/observability/calibration-maturity',
+        operationId: 'getCalibrationMaturity',
+        responses: { 200: CalibrationMaturityResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/calibration-maturity').then((m) => m.GET),
       },
       // YUK-519 (A7 成效趋势面) — per-KC / per-subject 纵向成效趋势只读观测面。读模型
@@ -210,6 +229,10 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/observability/effectiveness-trend',
+        operationId: 'getEffectivenessTrend',
+        responses: { 200: EffectivenessTrendResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/effectiveness-trend').then((m) => m.GET),
       },
       // M5-T5a (YUK-321) — 内核运维面收编：备份恢复（spec keep 行，路径沿旧
@@ -303,6 +326,10 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/admin/coverage-lattice',
+        operationId: 'getCoverageLattice',
+        responses: { 200: CoverageLatticeResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/coverage-lattice').then((m) => m.GET),
       },
     ],
