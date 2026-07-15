@@ -4,6 +4,7 @@
 // a single rate(dismiss) event + leaves the per-KC funnel); the dismiss is idempotent (a second
 // veto returns idempotent with no duplicate rate event); an unknown id → 404.
 
+import { LegacyKnowledgeMisconceptionVetoResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
@@ -103,7 +104,9 @@ describe('POST /api/knowledge/misconceptions/[id]/veto', () => {
     expect(res.headers.get('Link')).toBe(
       `</api/proposals/${id}/decisions>; rel="successor-version"`,
     );
-    const body = (await res.json()) as { kind: string };
+    const json = await res.json();
+    LegacyKnowledgeMisconceptionVetoResponseSchema.parse(json);
+    const body = json as { kind: string };
     expect(body.kind).toBe('dismissed');
 
     // a single rate(dismiss) event is written, caused_by the proposal

@@ -1,5 +1,6 @@
 // Phase 1c.1 Step 9.I — proposals/[id]/route.test rewritten for event-based proposals.
 
+import { LegacyKnowledgeProposalDecisionResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { event, knowledge } from '@/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -122,7 +123,9 @@ describe('POST /api/knowledge/proposals/[id]', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Deprecation')).toBe('@1783987200');
     expect(res.headers.get('Link')).toBe('</api/proposals/p1/decisions>; rel="successor-version"');
-    const body = (await res.json()) as { kind: string };
+    const json = await res.json();
+    LegacyKnowledgeProposalDecisionResponseSchema.parse(json);
+    const body = json as { kind: string };
     expect(body.kind).toBe('propose_new_applied');
 
     const db = testDb();

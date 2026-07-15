@@ -1,5 +1,6 @@
 // Phase 1c.1 Step 9.C — `/api/knowledge/proposals` over the event stream.
 
+import { LegacyKnowledgeProposalListResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { event, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -140,7 +141,9 @@ describe('GET /api/knowledge/proposals', () => {
 
     const res = await getProposals();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    const json = await res.json();
+    LegacyKnowledgeProposalListResponseSchema.parse(json);
+    const body = json as {
       rows: Array<{
         id: string;
         kind: string;

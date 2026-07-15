@@ -1,3 +1,4 @@
+import { KnowledgeTreeResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -54,7 +55,9 @@ describe('GET /api/knowledge', () => {
 
     const res = await getKnowledge();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { rows: Array<{ id: string; effective_domain: string }> };
+    const json = await res.json();
+    KnowledgeTreeResponseSchema.parse(json);
+    const body = json as { rows: Array<{ id: string; effective_domain: string }> };
     expect(body.rows).toHaveLength(2);
     const k1 = body.rows.find((r) => r.id === 'k1');
     const k2 = body.rows.find((r) => r.id === 'k2');
