@@ -3,8 +3,10 @@ import { Review } from '@/server/session';
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { GET as legacyPracticeGet } from './legacy-practice';
+import { ReviewSessionCreatedSchema } from './contracts';
+import { GET as legacyPracticeGet, POST as legacyPracticePost } from './legacy-practice';
 import { POST as legacyReviewSessionPost } from './legacy-review-sessions';
+import { PaperListResponseSchema } from './paper-contracts';
 import { GET } from './review-session-detail';
 import { POST } from './review-sessions';
 
@@ -46,7 +48,7 @@ describe('canonical review-session resources', () => {
   it('creates an unbound review session with 201 and a resolvable Location', async () => {
     const created = await POST(createRequest());
     expect(created.status).toBe(201);
-    const body = (await created.json()) as { session_id: string };
+    const body = ReviewSessionCreatedSchema.parse(await created.json());
     expect(created.headers.get('location')).toBe(`/api/review-sessions/${body.session_id}`);
 
     const detail = await GET(
@@ -67,12 +69,12 @@ describe('canonical review-session resources', () => {
 
     const first = await POST(createRequest({ paper_id: 'paper_1' }));
     expect(first.status).toBe(201);
-    const firstBody = (await first.json()) as { session_id: string };
+    const firstBody = ReviewSessionCreatedSchema.parse(await first.json());
     expect(first.headers.get('location')).toBe(`/api/review-sessions/${firstBody.session_id}`);
 
     const second = await POST(createRequest({ paper_id: 'paper_1' }));
     expect(second.status).toBe(200);
-    const secondBody = (await second.json()) as { session_id: string };
+    const secondBody = ReviewSessionCreatedSchema.parse(await second.json());
     expect(secondBody.session_id).toBe(firstBody.session_id);
     expect(second.headers.get('location')).toBe(first.headers.get('location'));
   });
@@ -152,7 +154,7 @@ describe('canonical review-session resources', () => {
     expect(papers.status).toBe(200);
     expect(papers.headers.get('deprecation')).toBe('@1783987200');
     expect(papers.headers.get('link')).toBe('</api/papers>; rel="successor-version"');
-    await expect(papers.json()).resolves.toMatchObject({
+    expect(PaperListResponseSchema.parse(await papers.json())).toMatchObject({
       data: [],
       papers: [],
       page: { limit: 50, next_cursor: null },
@@ -164,7 +166,7 @@ describe('canonical review-session resources', () => {
     expect(session.status).toBe(200);
     expect(session.headers.get('deprecation')).toBe('@1783987200');
     expect(session.headers.get('link')).toBe('</api/review-sessions>; rel="successor-version"');
-    const sessionBody = (await session.json()) as { session_id: string };
+    const sessionBody = ReviewSessionCreatedSchema.parse(await session.json());
     expect(session.headers.get('location')).toBe(`/api/review-sessions/${sessionBody.session_id}`);
   });
 
@@ -173,7 +175,7 @@ describe('canonical review-session resources', () => {
 
     const session = await legacyReviewSessionPost(createRequest({ paper_id: 'paper_legacy' }));
     expect(session.status).toBe(200);
-    const body = (await session.json()) as { session_id: string };
+    const body = ReviewSessionCreatedSchema.parse(await session.json());
 
     const detail = await GET(
       new Request(`http://localhost/api/review-sessions/${body.session_id}`),
@@ -183,5 +185,27 @@ describe('canonical review-session resources', () => {
       id: body.session_id,
       paper_id: 'paper_legacy',
     });
+  });
+
+  it('keeps legacy paper-session creation on artifact_id while advertising review sessions', async () => {
+    await seedPaper('paper_practice_legacy');
+
+    const response = await legacyPracticePost(
+      new Request('http://localhost/api/practice', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ artifact_id: 'paper_practice_legacy' }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('deprecation')).toBe('@1783987200');
+    expect(response.headers.get('link')).toBe('</api/review-sessions>; rel="successor-version"');
+    const body = ReviewSessionCreatedSchema.parse(await response.json());
+    const rows = await testDb()
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, body.session_id));
+    expect(rows[0]?.artifact_id).toBe('paper_practice_legacy');
   });
 });
