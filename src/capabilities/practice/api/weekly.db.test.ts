@@ -1,6 +1,7 @@
 import { event } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { ReviewWeeklyResponseSchema } from './review-planning-contracts';
 import { GET } from './weekly';
 import { localDateKey } from './weekly-window';
 
@@ -110,7 +111,9 @@ describe('GET /api/review/weekly', () => {
     });
 
     const res = await GET(new Request('http://localhost/api/review/weekly'));
-    const body = (await res.json()) as { top_causes: Array<{ category: string; count: number }> };
+    const json = await res.json();
+    expect(() => ReviewWeeklyResponseSchema.parse(json)).not.toThrow();
+    const body = json as { top_causes: Array<{ category: string; count: number }> };
 
     expect(body.top_causes).toEqual([{ category: 'memory', count: 1 }]);
   });

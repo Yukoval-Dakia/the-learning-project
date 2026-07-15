@@ -13,6 +13,7 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 // every other test in the repo creates alongside failure attempts.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { POST } from './advice';
+import { ReviewAdviceResponseSchema } from './review-planning-contracts';
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
@@ -64,7 +65,9 @@ describe('POST /api/review/advice', () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    const json = await res.json();
+    expect(() => ReviewAdviceResponseSchema.parse(json)).not.toThrow();
+    const body = json as {
       question_id: string;
       judge: {
         route: string;
