@@ -1,6 +1,10 @@
 import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
 import type { ZodType } from 'zod';
 import { createAnswerDraft } from './paper-answer-route';
+import {
+  CreatePaperAnswerDraftBodySchema,
+  CreatePaperSubmissionBodySchema,
+} from './paper-contracts';
 import { createPaperSubmission } from './paper-submit-route';
 import {
   CreateHintRequestBodySchema,
@@ -26,22 +30,6 @@ async function parseJsonBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
   return parsed.data;
 }
 
-async function readJsonObject(req: Request): Promise<JsonObject> {
-  const raw = await req.json().catch(() => null);
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new ApiError('validation_error', 'request body must be a JSON object', 400);
-  }
-  return raw as JsonObject;
-}
-
-function requiredId(body: JsonObject, field: string): string {
-  const value = body[field];
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new ApiError('validation_error', `${field} is required`, 400);
-  }
-  return value;
-}
-
 function forwardedJsonRequest(req: Request, body: JsonObject): Request {
   const headers = new Headers(req.headers);
   headers.set('content-type', 'application/json');
@@ -51,12 +39,6 @@ function forwardedJsonRequest(req: Request, body: JsonObject): Request {
     headers,
     body: JSON.stringify(body),
   });
-}
-
-function withoutField(body: JsonObject, field: string): JsonObject {
-  const forwarded = { ...body };
-  delete forwarded[field];
-  return forwarded;
 }
 
 export async function createSolveSessionResource(req: Request): Promise<Response> {
@@ -139,12 +121,14 @@ export async function createPaperAnswerDraftResource(
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const body = await readJsonObject(req);
-    const paperId = requiredId(body, 'paper_id');
+    const { paper_id: paperId, ...body } = await parseJsonBody(
+      req,
+      CreatePaperAnswerDraftBodySchema,
+    );
     return canonicalResourceResponse(
       await createAnswerDraft(
         forwardedJsonRequest(req, {
-          ...withoutField(body, 'paper_id'),
+          ...body,
           session_id: params.id,
         }),
         { id: paperId },
@@ -168,12 +152,14 @@ export async function createPaperSubmissionResource(
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const body = await readJsonObject(req);
-    const paperId = requiredId(body, 'paper_id');
+    const { paper_id: paperId, ...body } = await parseJsonBody(
+      req,
+      CreatePaperSubmissionBodySchema,
+    );
     return canonicalResourceResponse(
       await createPaperSubmission(
         forwardedJsonRequest(req, {
-          ...withoutField(body, 'paper_id'),
+          ...body,
           session_id: params.id,
         }),
         { id: paperId },
