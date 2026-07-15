@@ -9,6 +9,10 @@ import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import { z } from 'zod';
 import {
+  AppealResponseSchema,
+  AttemptResponseSchema,
+  CreateAppealBodySchema,
+  CreateAttemptBodySchema,
   CreateReviewSessionBody,
   ReviewSessionCreatedSchema,
   ReviewSessionSchema,
@@ -61,11 +65,20 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/review/submit',
+        operationId: 'createReviewAttemptLegacy',
+        request: { body: CreateAttemptBodySchema },
+        responses: { 200: AttemptResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/attempts', since: '@1783987200' },
         load: () => import('./api/submit').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/attempts',
+        operationId: 'createAttempt',
+        request: { body: CreateAttemptBodySchema },
+        responses: { 201: AttemptResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/submit').then((m) => m.createAttemptResource),
       },
       {
@@ -86,11 +99,20 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/review/appeal',
+        operationId: 'createReviewAppealLegacy',
+        request: { body: CreateAppealBodySchema },
+        responses: { 200: AppealResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        deprecation: { successor: '/api/appeals', since: '@1783987200' },
         load: () => import('./api/appeal').then((m) => m.POST),
       },
       {
         method: 'POST',
         path: '/api/appeals',
+        operationId: 'createAppeal',
+        request: { body: CreateAppealBodySchema },
+        responses: { 201: AppealResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/appeal').then((m) => m.createAppealResource),
       },
       {

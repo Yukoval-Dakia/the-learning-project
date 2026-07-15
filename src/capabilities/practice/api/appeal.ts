@@ -7,14 +7,7 @@ import { writeEvent } from '@/server/events/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { z } from 'zod';
-
-const AppealRequestSchema = z.object({
-  /** The judge event being appealed (must exist + action='judge'). */
-  judge_event_id: z.string().min(1),
-  /** Learner-provided objection. D15: 申诉 = 请 AI 带用户理由重判。 */
-  reason_md: z.string().max(2000).optional(),
-});
+import { CreateAppealBodySchema } from './contracts';
 
 /**
  * M2 (YUK-316, D15) — 申诉自动重判链入口。
@@ -33,7 +26,7 @@ export async function createAppeal(req: Request) {
   } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 });
   }
-  const parsed = AppealRequestSchema.safeParse(body);
+  const parsed = CreateAppealBodySchema.safeParse(body);
   if (!parsed.success) {
     return Response.json({ error: 'invalid_body', issues: parsed.error.issues }, { status: 400 });
   }
