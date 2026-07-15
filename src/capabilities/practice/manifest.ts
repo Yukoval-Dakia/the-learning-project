@@ -70,6 +70,14 @@ import {
   UpdateQuestionBodySchema,
   UpdateQuestionResponseSchema,
 } from './api/question-solve-contracts';
+import {
+  PracticeStreamItemUpdatedResponseSchema,
+  PracticeStreamQuerySchema,
+  PracticeStreamRecomposedResponseSchema,
+  PracticeStreamResponseSchema,
+  RecomposePracticeStreamBodySchema,
+  UpdatePracticeStreamItemBodySchema,
+} from './api/stream-contracts';
 
 export const practiceCapability = defineCapability({
   name: 'practice',
@@ -437,16 +445,29 @@ export const practiceCapability = defineCapability({
         // M2 流编排器（YUK-316）。静态段 'stream' 在 Hono 中优先于 :id 匹配。
         method: 'GET',
         path: '/api/practice/stream',
+        operationId: 'getPracticeStream',
+        request: { query: PracticeStreamQuerySchema },
+        responses: { 200: PracticeStreamResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/stream').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/practice/stream/recompose',
+        operationId: 'recomposePracticeStream',
+        request: { body: RecomposePracticeStreamBodySchema, bodyRequired: false },
+        responses: { 200: PracticeStreamRecomposedResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/stream').then((m) => m.POST),
       },
       {
         method: 'PATCH',
         path: '/api/practice/stream/items/[id]',
+        operationId: 'updatePracticeStreamItem',
+        request: { params: ApiIdParamsSchema, body: UpdatePracticeStreamItemBodySchema },
+        responses: { 200: PracticeStreamItemUpdatedResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/stream').then((m) => m.PATCH),
       },
       {

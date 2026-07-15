@@ -30,6 +30,11 @@ vi.mock('@/server/ai/runner', () => ({
 }));
 
 import { GET, PATCH, POST } from './stream';
+import {
+  PracticeStreamItemUpdatedResponseSchema,
+  PracticeStreamRecomposedResponseSchema,
+  PracticeStreamResponseSchema,
+} from './stream-contracts';
 
 const TODAY = streamLocalDate();
 
@@ -187,6 +192,7 @@ describe('practice stream API', () => {
       };
       opening_line: string;
     };
+    PracticeStreamResponseSchema.parse(body);
     expect(body.date).toBe(TODAY);
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.items[0].ref_id).toBe(qid);
@@ -249,7 +255,9 @@ describe('practice stream API', () => {
         { id: itemId },
       );
 
-    expect((await patch('in_progress')).status).toBe(200);
+    const inProgress = await patch('in_progress');
+    expect(inProgress.status).toBe(200);
+    PracticeStreamItemUpdatedResponseSchema.parse(await inProgress.json());
     expect((await patch('done')).status).toBe(200);
     // done → pending 非法
     const illegal = await patch('pending');
@@ -292,6 +300,7 @@ describe('practice stream API', () => {
       added: number;
       items: Array<{ ref_id: string; status: string }>;
     };
+    PracticeStreamRecomposedResponseSchema.parse(body);
     // done 行保留；同 ref 不重复排入（date+ref 唯一）
     const sameRef = body.items.filter((i) => i.ref_id === qid);
     expect(sameRef).toHaveLength(1);

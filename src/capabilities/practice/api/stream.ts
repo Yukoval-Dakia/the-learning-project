@@ -5,7 +5,6 @@
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { z } from 'zod';
 
 // YUK-558 (spec Q6-A / M2)：prod sampler 种子化——选题决策可重构（同 seed + 同输入 ⇒ 同选集）。
 // seed 走 log-only（不进 DB 列，Q-d deferred）。两抽样事件（compose / rerank）各派生独立 seed。
@@ -17,6 +16,11 @@ import {
   recomposeStream,
   streamLocalDate,
 } from '../server/stream-store';
+import {
+  PracticeStreamCalendarDateSchema,
+  RecomposePracticeStreamBodySchema,
+  UpdatePracticeStreamItemBodySchema,
+} from './stream-contracts';
 
 /**
  * 'today' / 缺省 → 用户本地日（Asia/Shanghai，FINDING 4）。读路径与夜间预产 job 共用
@@ -25,10 +29,11 @@ import {
  */
 function resolveDate(raw: string | null): string {
   if (raw && raw !== 'today') {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const parsed = PracticeStreamCalendarDateSchema.safeParse(raw);
+    if (!parsed.success) {
       throw new ApiError('validation_error', `invalid date: ${raw}`, 400);
     }
-    return raw;
+    return parsed.data;
   }
   return streamLocalDate();
 }
@@ -50,12 +55,10 @@ export async function GET(req: Request): Promise<Response> {
   }
 }
 
-const RecomposeBody = z.object({ date: z.string().optional() });
-
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => ({}));
-    const parsed = RecomposeBody.safeParse(raw);
+    const parsed = RecomposePracticeStreamBodySchema.safeParse(raw);
     if (!parsed.success) throw new ApiError('validation_error', 'invalid body', 400);
     const date = resolveDate(parsed.data.date ?? null);
     // YUK-558（C9+C10③）：recompose 事件种子化（独立 eventKind，与 lazy compose / nightly 各派生
@@ -74,14 +77,10 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 
-const AdvanceBody = z.object({
-  status: z.enum(['pending', 'in_progress', 'done', 'skipped']),
-});
-
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    const parsed = AdvanceBody.safeParse(raw);
+    const parsed = UpdatePracticeStreamItemBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',
