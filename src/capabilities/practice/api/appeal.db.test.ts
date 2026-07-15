@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST, createAppealResource } from './appeal';
+import { AppealResponseSchema } from './contracts';
 
 async function seedJudgeEvent(): Promise<string> {
   const id = createId();
@@ -71,7 +72,8 @@ describe('POST /api/review/appeal', () => {
     );
 
     expect(response.status).toBe(201);
-    const body = (await response.json()) as { appeal_event_id: string };
+    const body = AppealResponseSchema.parse(await response.json());
+    expect(response.headers.get('content-type')).toContain('application/json');
     expect(response.headers.get('Location')).toBe(`/api/events/${body.appeal_event_id}`);
   });
 
