@@ -5,13 +5,11 @@
 import { db } from '@/db/client';
 import { getEventById, getEventChain } from '@/server/events/queries';
 import { ApiError, errorResponse } from '@/server/http/errors';
-import { z } from 'zod';
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
+import { EventParamsSchema } from './event-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsed = ParamsSchema.safeParse(params);
+    const parsed = EventParamsSchema.safeParse(params);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'event id is required', 400);
     }
