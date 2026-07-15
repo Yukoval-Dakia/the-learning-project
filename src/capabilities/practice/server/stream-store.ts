@@ -6,7 +6,7 @@
 //     跨学科 round-robin + goal 软偏置全部复用现行为；旧 /api/review/due 不删。
 //   - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
 //     attempt 的变体（变体轮换的「错题跟练」信号）。
-//   - newCheckItems：active learning_item 的 knowledge_ids 中尚无 FSRS 状态行的
+//   - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
 //     知识点（= 学了还没检验），各取一道未排入的题。
 //   - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
 //
@@ -31,7 +31,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 
 import { notDraftPredicate } from '@/db/predicates';
 
-import { QuestionKind } from '@/core/schema/business';
+import { LearningItemOpenStatus, QuestionKind } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import {
   type CandidateInput,
@@ -171,11 +171,11 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
             ),
           );
 
-  // 3. 新学待检 — active 学习项的知识点里没有 FSRS 状态行的。
+  // 3. 新学待检 — 尚未开始或正在学习的学习项，其知识点里没有 FSRS 状态行的。
   const items = await db
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
-    .where(inArray(learning_item.status, ['active', 'in_progress']));
+    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
   const candidateKids = [...new Set(items.flatMap((i) => i.knowledge_ids))];
   let newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   if (candidateKids.length > 0) {

@@ -2,7 +2,17 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ConjectureDraft } from './business';
+import { ConjectureDraft, LearningItemOpenStatus, LearningItemStatus } from './business';
+
+describe('LearningItemStatus', () => {
+  it('keeps practice/supply open statuses inside the canonical lifecycle enum', () => {
+    expect(LearningItemOpenStatus.options).toEqual(['pending', 'in_progress']);
+    expect(
+      LearningItemOpenStatus.options.every((status) => LearningItemStatus.options.includes(status)),
+    ).toBe(true);
+    expect(LearningItemStatus.options).not.toContain('active');
+  });
+});
 
 describe('ConjectureDraft', () => {
   const valid = {

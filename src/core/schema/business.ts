@@ -98,6 +98,11 @@ export const LearningItemStatus = z.enum([
   'archived',
 ]);
 
+// A learning item is open to practice/supply while it has not started yet or is actively being
+// worked. Keep this subset next to the full lifecycle enum so consumers cannot invent statuses
+// (YUK-604: three readers used the non-existent `active` literal and skipped every genesis row).
+export const LearningItemOpenStatus = z.enum(['pending', 'in_progress']);
+
 export const LearningRecordKind = z.enum([
   'mistake',
   'worked_example',

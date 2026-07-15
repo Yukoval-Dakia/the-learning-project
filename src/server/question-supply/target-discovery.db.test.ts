@@ -35,15 +35,18 @@ async function seedKnowledge(id: string, domain = 'yuwen') {
     .onConflictDoNothing();
 }
 
-async function seedActiveLearningItem(knowledgeIds: string[]) {
+async function seedOpenLearningItem(
+  knowledgeIds: string[],
+  status: 'pending' | 'in_progress' = 'pending',
+) {
   const now = new Date();
   await db.insert(learning_item).values({
     id: createId(),
     source: 'test',
-    title: 'active item',
+    title: 'open item',
     content: '',
     knowledge_ids: knowledgeIds,
-    status: 'active',
+    status,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -115,10 +118,10 @@ describe('discoverSupplyTargets — frontier zero questions', () => {
     await resetDb();
   });
 
-  it('emits a frontier_zero supply target for an active learning item KC with zero questions', async () => {
+  it('emits a frontier_zero target for a genesis pending learning item KC', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     // ZERO questions.
 
     const targets = await discoverSupplyTargets(db);
@@ -149,7 +152,7 @@ describe('discoverSupplyTargets — higher-tier requirement + suppression', () =
   it('an accepted/manual question satisfies the higher-tier requirement and suppresses source_quality', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     // TWO accepted/manual questions (both promoted, non-draft) so the KC is at/above
     // the coverage-depth threshold (2 usable questions) — isolates source_quality from
@@ -172,7 +175,7 @@ describe('discoverSupplyTargets — higher-tier requirement + suppression', () =
   it('a KC whose only question is a draft still emits a frontier/coverage target (draft is not coverage)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     // ONLY an unverified/rejected draft (web_sourced, not yet promoted).
     await seedQuestion([kid], {
@@ -202,7 +205,7 @@ describe('discoverSupplyTargets — higher-tier requirement + suppression', () =
   it('only low-tier (llm-only) questions → emits a higher-tier source_quality target', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     // Only a low-tier generated quiz_gen question (difficulty 3 → b≈0 ≈ theta_hat 0 → near,
     // suppresses the diagnostic gap so we isolate source_quality).
     await seedQuestion([kid], {
@@ -229,7 +232,7 @@ describe('discoverSupplyTargets — FINDING #6: enrolled-but-thin KC still scann
   it('a KC with 1 enrolled (promoted) question + an FSRS row STILL emits a coverage target (below threshold)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     // One promoted, high-tier question — but the KC is "enrolled" (has an FSRS row).
     await seedQuestion([kid], { source: 'manual', kind: 'short_answer', difficulty: 3 });
     await seedKnowledgeFsrsState(kid); // first enrollment — used to drop it from the scan.
@@ -247,7 +250,7 @@ describe('discoverSupplyTargets — FINDING #6: enrolled-but-thin KC still scann
   it('an enrolled KC at/above coverage depth (2 usable) does NOT emit a coverage gap', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     await seedQuestion([kid], { source: 'manual', kind: 'short_answer', difficulty: 3 });
     await seedQuestion([kid], { source: 'manual', kind: 'short_answer', difficulty: 3 });
     await seedKnowledgeFsrsState(kid);
@@ -271,7 +274,7 @@ describe('discoverSupplyTargets — FINDING #4: band gating uses effectiveB (b_c
   it('b_anchor near theta_hat suppresses the diagnostic gap (effectiveB falls back to b_anchor)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     const q1 = await seedQuestion([kid], { source: 'manual', kind: 'short_answer', difficulty: 3 });
     await seedQuestion([kid], { source: 'manual', kind: 'short_answer', difficulty: 3 });
     // b NULL but b_anchor = 0 (= theta_hat cold-start) → effectiveB = 0 → 'near' band.
@@ -288,7 +291,7 @@ describe('discoverSupplyTargets — FINDING #4: band gating uses effectiveB (b_c
   it('b_calib (recalibrated) far from theta_hat → no near anchor → diagnostic fires', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     const q1 = await seedQuestion([kid], { source: 'manual', kind: 'short_answer', difficulty: 3 });
     await seedQuestion([kid], { source: 'manual', kind: 'short_answer', difficulty: 3 });
     // b_anchor=0 (would be near) BUT b_calib=3 wins (far above near window) → no near anchor.
@@ -313,7 +316,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
   it('dispatches a frontier_zero target to the sourcing queue and logs an experimental:question_supply event', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     const targets = await discoverSupplyTargets(db);
     const frontierTarget = targets.find((t) => t.gapKind === 'frontier_zero');
@@ -368,7 +371,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
   it('SKIPS a second dispatch of the same unsatisfied fingerprint within the cooldown window (no second enqueue)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     const targets = await discoverSupplyTargets(db);
     const frontierTarget = targets.find((t) => t.gapKind === 'frontier_zero');
@@ -418,7 +421,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
   it('cooldownDays=0 disables cooldown → same fingerprint re-dispatches', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     const targets = await discoverSupplyTargets(db);
     const frontierTarget = targets.find((t) => t.gapKind === 'frontier_zero');
@@ -490,7 +493,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
   it('does NOT auto-dispatch a sourcing_web target when Tavily is unavailable (falls to manual)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     const targets = await discoverSupplyTargets(db);
     const frontierTarget = targets.find((t) => t.gapKind === 'frontier_zero');

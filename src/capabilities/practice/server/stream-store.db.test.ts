@@ -1067,12 +1067,12 @@ describe('Task 9 作答后有界增量重排 reRankAfterAnswer（YUK-361 Phase 4
 });
 
 // F1（YUK-350，P1 draft 泄漏）— collectComposerInputs 的 new_check 分支必须排除 draft 题。
-// 场景：active learning_item 的 KC 尚无 material_fsrs_state（= 学了还没检验），new_check
+// 场景：genesis pending learning_item 的 KC 尚无 material_fsrs_state（= 尚未检验），new_check
 //   会为该 KC 取一道题。若该 KC 下唯一的题是 draft（embedded/teaching container-only），
 //   旧实现（无 draft 过滤）会把它选成 new_check 候选 → 经 materializeStream 暴露成
 //   practice_stream_item(source='new_check')。修复后 draft 不入候选，new_check 为空。
 describe('F1（YUK-350）— new_check 候选排除 draft 题', () => {
-  /** active learning_item，挂一个尚无 material_fsrs_state 的 KC（触发 new_check）。 */
+  /** 真实 genesis 状态 pending，挂一个尚无 material_fsrs_state 的 KC（触发 new_check）。 */
   async function seedUntrackedKcLearningItem(kc: string): Promise<void> {
     const now = new Date();
     await testDb()
@@ -1083,7 +1083,7 @@ describe('F1（YUK-350）— new_check 候选排除 draft 题', () => {
         title: '学习项',
         content: '',
         knowledge_ids: [kc],
-        status: 'active',
+        status: 'pending',
         created_at: now,
         updated_at: now,
         version: 0,

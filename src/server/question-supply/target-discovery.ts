@@ -17,8 +17,8 @@
 // DB 测试只验「真实 DB 行 → 加载成正确输入 → 目标」的端到端。
 //
 // 数据源（全部复用既有 reader，零新查询子系统）：
-//   - 活跃目标 + learning_item.knowledge_ids：listActiveLearningItemKnowledge（mirror stream-store.ts:137-141）
-//   - 前沿/新检知识点：active learning item 的 KC 里**没有 material_fsrs_state 行**者
+//   - 开放目标 + learning_item.knowledge_ids：pending/in_progress learning item（mirror stream-store）
+//   - 前沿/新检知识点：open learning item 的 KC 里**没有 material_fsrs_state 行**者
 //     （= 从未被调度 = 新知/前沿，mirror stream-store.ts:144-156「新学待检」语义）。
 //   - mastery_state.theta_hat/theta_precision：getMasteryState（src/server/mastery/state.ts）。
 //   - 现有题按 knowledge_id + kind + difficulty band + source tier 分组：本模块的 loadQuestionPool。
@@ -28,6 +28,7 @@
 
 import { getEffectiveDomain } from '@/capabilities/knowledge/server/domain';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
+import { LearningItemOpenStatus } from '@/core/schema/business';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
@@ -130,9 +131,9 @@ export interface PoolQuestion {
 }
 
 /**
- * 一个 active-goal KC 的扫描输入（review FINDING #6：不再限「前沿/未入册」，覆盖全部 active-goal
- * KC，含已入册但 thin 者）。命名保留 `Frontier` 是历史包袱（最初只扫前沿）；语义现在是「待扫的
- * active-goal KC」。frontier/coverage 缺口由扫描器据可用题数 < 阈值判定，不靠 FSRS 入册态。
+ * 一个 open-goal KC 的扫描输入（review FINDING #6：不再限「前沿/未入册」，覆盖全部 open-goal
+ * KC，含已入册但 thin 者）。命名保留 `Frontier` 是历史包袱（最初只扫前沿）；frontier/coverage
+ * 缺口由扫描器据可用题数 < 阈值判定，不靠 FSRS 入册态。
  */
 export interface FrontierKnowledgeInput {
   knowledgeId: string;
@@ -296,7 +297,7 @@ const OBJECTIVE_KINDS = new Set<QuestionKindT>(['choice', 'true_false', 'fill_bl
 // exact（defaultJudgeKindForQuestion：choice/true_false → exact，无 rubric 依赖），是最稳的客观题型。
 const R3_CALIBRATION_KIND: QuestionKindT = 'choice';
 
-// review FINDING #1/#6：覆盖深度阈值——一个 active-goal KC 的**可用（non-draft）**题数 < 此值
+// review FINDING #1/#6：覆盖深度阈值——一个 open-goal KC 的**可用（non-draft）**题数 < 此值
 // 即「前沿/覆盖不足」，R1 发一个 frontier/coverage 目标（架构 doc §Scanner Rules 1「fewer than
 // 2 active questions」）。draft 已在 loadQuestionPool 过滤掉，故这里数的就是可用题。
 // YUK-579: exported so the coverage-lattice read model discloses the threshold to the UI
@@ -317,7 +318,7 @@ export const COVERAGE_DEPTH_THRESHOLD = 2;
  *   R3 diagnostic       : 某 KC **没有近-θ̂ 题**（无题 effectiveB 落 'near' band）→ 一个 calibrationCandidate 目标（band=near）。
  *   R4 format_diversity : 某 KC **只有 recall 题** → 一个 application/transfer 目标。
  *
- * review FINDING #6：触发面 = **全部 active-goal KC**（不再因「首次 FSRS 入册」而停扫）。零题 KC 只产
+ * review FINDING #6：触发面 = **全部 open-goal KC**（不再因「首次 FSRS 入册」而停扫）。零题 KC 只产
  * R1（无池可分析 tier/band/kind）；有题但仍 thin（< 阈值）的 KC 既产 R1（补深度）也走 R2-R4（补质量/
  * 诊断/题型）；题数 ≥ 阈值的 KC 跳过 R1，仍走 R2-R4（这些规则是结构性缺口，自限不洪泛）。
  */
@@ -543,12 +544,12 @@ export function seedGenerationMethod(
 }
 
 /**
- * 加载待扫的 active-goal KC：active learning item（status IN ['active','in_progress']）的全部 KC。
+ * 加载待扫的 open-goal KC：pending/in_progress learning item 的全部 KC。
  *
  * review FINDING #6 修正——**删除「无 material_fsrs_state 行才算前沿」的闸**。旧实现把一个 KC 在
  * **首次** source_verify/quiz_verify 晋升题（写入第一条 material_fsrs_state 行）后立刻踢出扫描面，
  * 于是一个只入册了 1 道题的 thin KC 再也不被扫——即使它仍需补深度/补客观锚/补题型。现在扫**全部**
- * active-goal KC，让覆盖深度阈值（R1 < COVERAGE_DEPTH_THRESHOLD 可用题）与 R2/R3/R4 的结构性缺口
+ * open-goal KC，让覆盖深度阈值（R1 < COVERAGE_DEPTH_THRESHOLD 可用题）与 R2/R3/R4 的结构性缺口
  * 判定来决定发不发目标（这些规则自限：题数够 + 质量够 + 有近-θ̂ 锚 + 题型多样 → 零目标，不洪泛）。
  *
  * 每个 KC 配上 mastery_state 的 θ̂/precision/evidence（冷启兜底）+ 经 getEffectiveDomain 派生的
@@ -558,7 +559,7 @@ async function loadFrontierKnowledge(db: Db): Promise<FrontierKnowledgeInput[]> 
   const items = await db
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
-    .where(inArray(learning_item.status, ['active', 'in_progress']));
+    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
   const candidateKids = [...new Set(items.flatMap((i) => i.knowledge_ids ?? []))];
   if (candidateKids.length === 0) return [];
 
@@ -595,8 +596,8 @@ async function loadFrontierKnowledge(db: Db): Promise<FrontierKnowledgeInput[]> 
 }
 
 /**
- * 加载现有**可用**题池里挂了任一 active-goal KC 的题 + 它们的 effectiveB（= b_calib ?? b_anchor ?? b）。
- * 只取与 active-goal KC 相关的题（按 KC 过滤，非全库扫描）。
+ * 加载现有**可用**题池里挂了任一 open-goal KC 的题 + 它们的 effectiveB（= b_calib ?? b_anchor ?? b）。
+ * 只取与 open-goal KC 相关的题（按 KC 过滤，非全库扫描）。
  *
  * review FINDING #1——**过滤掉 draft_status='draft'**：草稿（未验证/被拒）不是可用 item，不该被当作
  * 已覆盖而压制 R1/R2。复用共享 draft-exclusion 三值逻辑安全谓词 notDraftPredicate（@/db/predicates：
