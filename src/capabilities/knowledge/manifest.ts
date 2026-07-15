@@ -1,3 +1,24 @@
+import {
+  CreateKnowledgeEdgeBodySchema,
+  CreateKnowledgeEdgeResponseSchema,
+  KnowledgeEdgeCollectionResponseSchema,
+  KnowledgeEdgeQuerySchema,
+  KnowledgeEdgeSchema,
+  KnowledgeFrontierResponseSchema,
+  KnowledgeIdParamsSchema,
+  KnowledgeMisconceptionListResponseSchema,
+  KnowledgeNodePageResponseSchema,
+  KnowledgeReviewDueSummaryResponseSchema,
+  KnowledgeTreeResponseSchema,
+  LegacyKnowledgeEdgeDecisionBodySchema,
+  LegacyKnowledgeEdgeDecisionResponseSchema,
+  LegacyKnowledgeMisconceptionVetoResponseSchema,
+  LegacyKnowledgeProposalDecisionBodySchema,
+  LegacyKnowledgeProposalDecisionResponseSchema,
+  LegacyKnowledgeProposalListResponseSchema,
+  LegacyKnowledgeProposalQuerySchema,
+} from '@/capabilities/knowledge/api/contracts';
+import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 
@@ -17,41 +38,98 @@ export const knowledgeCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/knowledge',
+        operationId: 'getKnowledgeTreeSnapshot',
+        responses: { 200: KnowledgeTreeResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/tree').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/knowledge/proposals',
+        operationId: 'listKnowledgeProposalsLegacy',
+        request: { query: LegacyKnowledgeProposalQuerySchema },
+        responses: { 200: LegacyKnowledgeProposalListResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/proposals-list').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/knowledge/proposals/[id]',
+        operationId: 'decideKnowledgeProposalLegacy',
+        request: {
+          params: KnowledgeIdParamsSchema,
+          body: LegacyKnowledgeProposalDecisionBodySchema,
+        },
+        responses: {
+          200: LegacyKnowledgeProposalDecisionResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        deprecation: {
+          since: '@1783987200',
+          successor: '/api/proposals/[id]/decisions',
+        },
         load: () => import('./api/proposal-decide').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/knowledge/edges',
+        operationId: 'listKnowledgeEdges',
+        request: { query: KnowledgeEdgeQuerySchema },
+        responses: { 200: KnowledgeEdgeCollectionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 500, maxLimit: 500 },
         load: () => import('./api/edges').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/knowledge/edges',
+        operationId: 'createKnowledgeEdge',
+        request: { body: CreateKnowledgeEdgeBodySchema },
+        responses: { 201: CreateKnowledgeEdgeResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
         load: () => import('./api/edges').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/knowledge/edges/[id]',
+        operationId: 'getKnowledgeEdge',
+        request: { params: KnowledgeIdParamsSchema },
+        responses: { 200: KnowledgeEdgeSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/edges').then((m) => m.getEdge),
       },
       {
         method: 'POST',
         path: '/api/knowledge/edges/proposals/[id]',
+        operationId: 'decideKnowledgeEdgeProposalLegacy',
+        request: {
+          params: KnowledgeIdParamsSchema,
+          body: LegacyKnowledgeEdgeDecisionBodySchema,
+        },
+        responses: {
+          200: LegacyKnowledgeEdgeDecisionResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        deprecation: {
+          since: '@1783987200',
+          successor: '/api/proposals/[id]/decisions',
+        },
         load: () => import('./api/edge-proposal-decide').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/knowledge/review-due-summary',
+        operationId: 'getKnowledgeReviewDueSummary',
+        responses: {
+          200: KnowledgeReviewDueSummaryResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/review-due-summary').then((m) => m.GET),
       },
       {
@@ -59,11 +137,19 @@ export const knowledgeCapability = defineCapability({
         // 须在 :id catch-all 之前匹配（同 proposals/edges/review*）。
         method: 'GET',
         path: '/api/knowledge/frontier',
+        operationId: 'listKnowledgeFrontier',
+        responses: { 200: KnowledgeFrontierResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/frontier').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/knowledge/[id]',
+        operationId: 'getKnowledgeNode',
+        request: { params: KnowledgeIdParamsSchema },
+        responses: { 200: KnowledgeNodePageResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/node-page-route').then((m) => m.GET),
       },
       {
@@ -71,6 +157,14 @@ export const knowledgeCapability = defineCapability({
         // （:id/misconceptions），与 frontier(3 段)/[id](3 段) 无段数碰撞，顺序无关。
         method: 'GET',
         path: '/api/knowledge/[id]/misconceptions',
+        operationId: 'listKnowledgeNodeMisconceptions',
+        request: { params: KnowledgeIdParamsSchema },
+        responses: {
+          200: KnowledgeMisconceptionListResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/misconceptions').then((m) => m.GET),
       },
       {
@@ -79,6 +173,17 @@ export const knowledgeCapability = defineCapability({
         // 与 proposals/edges 同样静态优先。Option A：仅 candidate 段 live，confirmed archive 延后。
         method: 'POST',
         path: '/api/knowledge/misconceptions/[id]/veto',
+        operationId: 'vetoKnowledgeMisconceptionLegacy',
+        request: { params: KnowledgeIdParamsSchema },
+        responses: {
+          200: LegacyKnowledgeMisconceptionVetoResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 200,
+        deprecation: {
+          since: '@1783987200',
+          successor: '/api/proposals/[id]/decisions',
+        },
         load: () => import('./api/misconception-veto').then((m) => m.POST),
       },
     ],

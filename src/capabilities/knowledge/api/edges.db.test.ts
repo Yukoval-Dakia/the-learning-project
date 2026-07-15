@@ -1,3 +1,8 @@
+import {
+  CreateKnowledgeEdgeResponseSchema,
+  KnowledgeEdgeCollectionResponseSchema,
+  KnowledgeEdgeSchema,
+} from '@/capabilities/knowledge/api/contracts';
 import { createKnowledgeEdge } from '@/capabilities/knowledge/server/edges';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
@@ -55,7 +60,9 @@ describe('GET /api/knowledge/edges', () => {
   it('returns empty rows when no edges exist', async () => {
     const res = await getEdges();
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    const json = await res.json();
+    KnowledgeEdgeCollectionResponseSchema.parse(json);
+    const body = json as {
       data: unknown[];
       rows: unknown[];
       page: { limit: number; next_cursor: string | null };
@@ -184,7 +191,9 @@ describe('POST /api/knowledge/edges', () => {
       relation_type: 'prerequisite',
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string };
+    const json = await res.json();
+    CreateKnowledgeEdgeResponseSchema.parse(json);
+    const body = json as { id: string };
     expect(body.id).toBeTruthy();
     expect(res.headers.get('Location')).toBe(`/api/knowledge/edges/${body.id}`);
 
@@ -192,7 +201,9 @@ describe('POST /api/knowledge/edges', () => {
       id: body.id,
     });
     expect(detail.status).toBe(200);
-    expect(await detail.json()).toMatchObject({ id: body.id, relation_type: 'prerequisite' });
+    const detailJson = await detail.json();
+    KnowledgeEdgeSchema.parse(detailJson);
+    expect(detailJson).toMatchObject({ id: body.id, relation_type: 'prerequisite' });
   });
 
   it('accepts experimental:* relation_type', async () => {

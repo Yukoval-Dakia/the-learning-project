@@ -20,15 +20,12 @@
 // Mirrors api/proposal-decide.ts (ParamsSchema + ApiError + errorResponse). No body needed:
 // the path id + the implicit dismiss verb fully specify the action (the user's「判错了」).
 
-import { z } from 'zod';
-
+import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { dismissAiProposal } from '@/server/proposals/actions';
 import { getProposalInboxRow } from '@/server/proposals/inbox';
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   const response = await handleLegacyVeto(params);
@@ -38,7 +35,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
 
 async function handleLegacyVeto(params: Record<string, string>): Promise<Response> {
   try {
-    const parsed = ParamsSchema.safeParse(params);
+    const parsed = KnowledgeIdParamsSchema.safeParse(params);
     if (!parsed.success) {
       throw new ApiError('validation_error', 'misconception candidate id is required', 400);
     }

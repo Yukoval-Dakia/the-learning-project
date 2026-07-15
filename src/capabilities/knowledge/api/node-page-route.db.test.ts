@@ -3,6 +3,7 @@
 // Verifies the single-node endpoint: 404 for unknown / archived nodes,
 // 200 with aggregated page data for valid nodes.
 
+import { KnowledgeNodePageResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { artifact, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -67,7 +68,9 @@ describe('GET /api/knowledge/[id]', () => {
     });
     const res = await getNode('k1');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    const json = await res.json();
+    KnowledgeNodePageResponseSchema.parse(json);
+    const body = json as {
       id: string;
       name: string;
       primary_atomic: unknown;
