@@ -35,6 +35,19 @@ import {
   JobEventParamsSchema,
   JobEventStreamResponseSchema,
 } from './api/event-contracts';
+import {
+  AdminSubjectParamsSchema,
+  AdminSubjectSchema,
+  AdminSubjectTraitsResponseSchema,
+  AdminSubjectsResponseSchema,
+  AdminTraitJournalQuerySchema,
+  AdminTraitJournalResponseSchema,
+  AdminTraitParamsSchema,
+  AdminTraitsQuerySchema,
+  AdminTraitsResponseSchema,
+  CreateAdminSubjectBodySchema,
+  CreatedAdminSubjectResponseSchema,
+} from './api/subject-contracts';
 
 // M5-T4 (YUK-321) — observability 包：AI 运行可观测性（admin 四页数据面）+
 // 今日成本条。核心实现 server/ai-observability.ts（纯 drizzle，整体迁自
@@ -88,6 +101,10 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/admin/subjects',
+        operationId: 'listAdminSubjects',
+        responses: { 200: AdminSubjectsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/admin-subjects').then((m) => m.GET),
       },
       // YUK-600 (v3 §3.6) — thin-create：科目创建唯一入口（五步事务 + 幂等回放 +
@@ -95,11 +112,23 @@ export const observabilityCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/admin/subjects',
+        operationId: 'createAdminSubject',
+        request: { body: CreateAdminSubjectBodySchema },
+        responses: {
+          200: CreatedAdminSubjectResponseSchema,
+          201: CreatedAdminSubjectResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
         load: () => import('./api/admin-subjects-create').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/admin/subjects/[id]',
+        operationId: 'getAdminSubject',
+        request: { params: AdminSubjectParamsSchema },
+        responses: { 200: AdminSubjectSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subjects').then((m) => m.getSubject),
       },
       // YUK-601 (v3.2 §3.5) — trait 管理读面三端点（编辑器/换绑选择器/rollback UI
@@ -107,16 +136,30 @@ export const observabilityCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/admin/subjects/[id]/traits',
+        operationId: 'getAdminSubjectTraits',
+        request: { params: AdminSubjectParamsSchema },
+        responses: { 200: AdminSubjectTraitsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/admin-subject-traits').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/admin/traits',
+        operationId: 'listAdminTraits',
+        request: { query: AdminTraitsQuerySchema },
+        responses: { 200: AdminTraitsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/admin-traits').then((m) => m.GET),
       },
       {
         method: 'GET',
         path: '/api/admin/traits/[id]/journal',
+        operationId: 'listAdminTraitJournal',
+        request: { params: AdminTraitParamsSchema, query: AdminTraitJournalQuerySchema },
+        responses: { 200: AdminTraitJournalResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: { kind: 'cursor', defaultLimit: 100, maxLimit: 200 },
         load: () => import('./api/admin-trait-journal').then((m) => m.GET),
       },
       // YUK-601 (v3.2 §3.1-§3.4) — trait/控制行写面（全部写事务开头控制面
