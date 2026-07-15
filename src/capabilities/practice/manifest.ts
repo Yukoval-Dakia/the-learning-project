@@ -71,6 +71,16 @@ import {
   UpdateQuestionResponseSchema,
 } from './api/question-solve-contracts';
 import {
+  FixedAnchorBodySchema,
+  FixedAnchorResponseSchema,
+  ReviewAdviceBodySchema,
+  ReviewAdviceResponseSchema,
+  ReviewDueQuerySchema,
+  ReviewDueResponseSchema,
+  ReviewWeeklyQuerySchema,
+  ReviewWeeklyResponseSchema,
+} from './api/review-planning-contracts';
+import {
   PracticeStreamItemUpdatedResponseSchema,
   PracticeStreamQuerySchema,
   PracticeStreamRecomposedResponseSchema,
@@ -120,16 +130,29 @@ export const practiceCapability = defineCapability({
       {
         method: 'GET',
         path: '/api/review/due',
+        operationId: 'listDueReviews',
+        request: { query: ReviewDueQuerySchema },
+        responses: { 200: ReviewDueResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
         load: () => import('./api/due').then((m) => m.GET),
       },
       {
         method: 'POST',
         path: '/api/review/advice',
+        operationId: 'previewReviewAdvice',
+        request: { body: ReviewAdviceBodySchema },
+        responses: { 200: ReviewAdviceResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/advice').then((m) => m.POST),
       },
       {
         method: 'GET',
         path: '/api/review/weekly',
+        operationId: 'getWeeklyReviewReport',
+        request: { query: ReviewWeeklyQuerySchema },
+        responses: { 200: ReviewWeeklyResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/weekly').then((m) => m.GET),
       },
       {
@@ -636,6 +659,10 @@ export const practiceCapability = defineCapability({
       {
         method: 'POST',
         path: '/api/practice/calibration/anchors',
+        operationId: 'setPracticeCalibrationAnchors',
+        request: { body: FixedAnchorBodySchema },
+        responses: { 200: FixedAnchorResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
         load: () => import('./api/calibration-anchors').then((m) => m.POST),
       },
     ],

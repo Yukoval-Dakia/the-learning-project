@@ -11,31 +11,22 @@
 // scan from limit:1 to a recent-attempt window so a user who labelled an
 // older failure isn't silently masked by a label-less re-failure.
 
-import { z } from 'zod';
-
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
-import { ActivityRef } from '@/core/schema/activity';
 import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { createDefaultJudgeInvoker } from '@/server/judge/invoker';
 import { eq } from 'drizzle-orm';
-
-const AdviceBody = z.object({
-  activity_ref: ActivityRef.optional(),
-  question_id: z.string().min(1).optional(),
-  mistake_id: z.string().min(1).optional(),
-  response_md: z.string(),
-});
+import { ReviewAdviceBodySchema } from './review-planning-contracts';
 
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    const parsed = AdviceBody.safeParse(raw);
+    const parsed = ReviewAdviceBodySchema.safeParse(raw);
     if (!parsed.success) {
       const message = parsed.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)
