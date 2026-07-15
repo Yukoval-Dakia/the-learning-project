@@ -1,9 +1,13 @@
 # API 资源契约收敛计划
 
-> 状态：执行中
+> 状态：已完成（YUK-642～YUK-668；最终收口 YUK-668 / PR #820）
 > 总单：[YUK-641](https://linear.app/yukoval-studios/issue/YUK-641)
 > 基线：`origin/main@47fdff208095cc515fa2ef253a2d260b5eda4341`
 > 范围：Hono capability manifests、对应 handler、shipped Vite SPA caller 与契约测试
+
+完成态：152/152 条 manifest route 已声明 operationId、request/response、成功状态与适用的分页契约；
+legacy contract allowlist 为 0；生成的 OpenAPI 含 143 个 path。仍保留的兼容 alias 继续遵守本计划的
+Deprecation/调用证据/Sunset 门槛，不因契约清零而无证据删除。
 
 ## 1. 结论
 
@@ -84,7 +88,7 @@ Loom 当前 API 已有可靠的资源型基础，但整体仍是“内部业务 
 
 ## 6. 分阶段执行
 
-### Phase 1 — papers / review-sessions（YUK-642，当前）
+### Phase 1 — papers / review-sessions（YUK-642，已完成）
 
 交付：
 
@@ -251,16 +255,18 @@ turns、agent notes）、有硬上限的 typeahead/备课卡，以及 workbench/
 - `Location` 指向不可读取的假资源；
 - 旧路径存在未知外部调用且没有兼容证据。
 
-## 11. Issue 图
+## 11. Issue 图与完成态
 
 ```text
 YUK-641 API 收敛总单
-├── YUK-642 papers/review-sessions（In Progress）
-├── YUK-645 proposal decisions（blocked by YUK-642）
-├── YUK-643 ingestion operations
-├── YUK-644 session transitions/attempts（blocked by YUK-642）
-├── YUK-646 status/Location/cursor（blocked by YUK-642）
-└── YUK-647 manifest/OpenAPI（blocked by YUK-642）
+├── YUK-642 papers/review-sessions（Done）
+├── YUK-645 proposal decisions（Done）
+├── YUK-643 ingestion operations（Done）
+├── YUK-644 session transitions/attempts（Done）
+├── YUK-646 status/Location/cursor（Done）
+├── YUK-647 manifest/OpenAPI（Done）
+└── YUK-648～YUK-668 capability contract allowlist 清零（Done）
 ```
 
-Phase 1 先建立兼容 helper、状态码和测试配方；后续 phase 复用该迁移模式，不复制业务逻辑。
+各 phase 已复用同一兼容 helper、状态码和测试配方，没有复制领域业务逻辑。后续工作只在出现真实
+调用证据与获批 Sunset 时删除 alias，或在新增 route 时保持 audit 的 0-legacy 门禁。
