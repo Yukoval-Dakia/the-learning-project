@@ -52,6 +52,17 @@ describe('generateOpenApiDocument', () => {
               responses: { 200: BinaryResponseSchema },
               responseMediaTypes: { 200: 'image/*' },
             },
+            {
+              method: 'POST',
+              path: '/api/widgets/import',
+              operationId: 'importWidgets',
+              request: {
+                body: BinaryResponseSchema,
+                bodyMediaType: 'application/zip',
+              },
+              successStatus: 200,
+              responses: { 200: z.object({ ok: z.boolean() }) },
+            },
             { method: 'GET', path: '/api/legacy' },
           ],
         },
@@ -99,6 +110,11 @@ describe('generateOpenApiDocument', () => {
         content: {
           'image/*': { schema: { type: 'string', format: 'binary' } },
         },
+      },
+    });
+    expect(document.paths['/api/widgets/import'].post.requestBody).toMatchObject({
+      content: {
+        'application/zip': { schema: { type: 'string', format: 'binary' } },
       },
     });
     expect(document.paths['/api/legacy'].get).toMatchObject({
