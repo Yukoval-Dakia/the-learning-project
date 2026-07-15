@@ -5,7 +5,7 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 路由/job/proposal/tool/ui 归属声明（21 条 API 路由 + 2 proposal kinds + 2 copilot tools） |
+| `manifest.ts` | 路由/job/proposal/tool/ui 归属声明（21 条 API 路由全部有 contract + 2 proposal kinds + 2 copilot tools） |
 | `api/contracts.ts` | ingestion session、multipart 上传、blocks、SSE 与兼容动作的 wire schema |
 | `api/*.ts` | sessions / pdf / docx / blocks / events / extract / import / make-paper / rescue / revert / assets / mistakes |
 | `server/` | 抽取核心：Tencent/GLM OCR client、parser、structure、vision rescue、auto-enroll、tagging、session 守卫 |

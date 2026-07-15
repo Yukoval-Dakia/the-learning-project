@@ -2,13 +2,11 @@
 // Task 9 拆）。唯一非机械点：the old after() pattern 改写为 fire-and-forget（见 POST 内注释）。
 
 import { createId } from '@paralleldrive/cuid2';
-import { z } from 'zod';
 
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
 } from '@/capabilities/knowledge/server/subject-profile';
-import { type Cause, CauseCategory, QuestionKind } from '@/core/schema/business';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { collectionPayload, resourceResponse } from '@/kernel/http';
@@ -20,27 +18,7 @@ import { listMistakeProjectionPage } from '@/server/records/mistakes';
 import { createLearningRecord } from '@/server/records/queries';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { and, inArray, isNull } from 'drizzle-orm';
-
-const Body = z.object({
-  prompt_md: z.string().min(1, 'prompt_md is required'),
-  reference_md: z.string().nullable(),
-  wrong_answer_md: z.string().min(1, 'wrong_answer_md is required'),
-  // ≥1 required: /api/mistakes carries no subject signal (no session, no subject param, and an
-  // empty array has no ids to derive a subject from), so the unified `tagKnowledge` cannot resolve
-  // a PROPOSE parent / D1 subject filter. Manual mistakes stay ids-required; auto-tagging a manual
-  // mistake is a YUK-489 follow-up that needs a request-level subject signal first.
-  knowledge_ids: z.array(z.string().min(1)).min(1, 'at least one knowledge_id is required'),
-  cause: z
-    .object({
-      primary_category: CauseCategory,
-      user_notes: z.string().nullable(),
-    })
-    .nullable(),
-  difficulty: z.number().int().min(1).max(5),
-  question_kind: QuestionKind,
-  prompt_image_refs: z.array(z.string().min(1)).default([]),
-  wrong_answer_image_refs: z.array(z.string().min(1)).default([]),
-});
+import { CreateMistakeBodySchema, MistakeListQuerySchema } from './contracts';
 
 async function assertAssetsExist(
   ids: string[],
@@ -61,7 +39,7 @@ async function assertAssetsExist(
 export async function POST(req: Request): Promise<Response> {
   try {
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = CreateMistakeBodySchema.safeParse(raw);
     if (!parsed.success) {
       const message = parsed.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)
@@ -251,23 +229,6 @@ export async function POST(req: Request): Promise<Response> {
 //   - since: ISO-8601 timestamp (created_at >= since)
 //   - question_id: restrict to one question's failure attempts
 
-const GetQuerySchema = z.object({
-  limit: z
-    .string()
-    .optional()
-    .refine((s) => s === undefined || /^\d+$/.test(s), {
-      message: 'limit must be a positive integer',
-    }),
-  since: z
-    .string()
-    .optional()
-    .refine((s) => s === undefined || !Number.isNaN(new Date(s).getTime()), {
-      message: 'since must be an ISO-8601 timestamp',
-    }),
-  question_id: z.string().min(1).optional(),
-  cursor: z.string().min(1).optional(),
-});
-
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
@@ -276,7 +237,7 @@ export async function GET(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const raw: Record<string, string> = {};
     for (const [key, value] of url.searchParams.entries()) raw[key] = value;
-    const parsed = GetQuerySchema.safeParse(raw);
+    const parsed = MistakeListQuerySchema.safeParse(raw);
     if (!parsed.success) {
       const message = parsed.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)

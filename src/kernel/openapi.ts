@@ -1,6 +1,6 @@
 import type { ZodTypeAny } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { OPENAPI_BINARY_FILE_DESCRIPTION } from './http-contracts';
+import { OPENAPI_BINARY_CONTENT_DESCRIPTION } from './http-contracts';
 import {
   type ApiPaginationDecl,
   type ApiRouteDecl,
@@ -21,7 +21,7 @@ function toJsonSchema(schema: ZodTypeAny, options: { binaryFiles?: boolean } = {
       ? {
           postProcess: (jsonSchema) =>
             typeof jsonSchema === 'object' &&
-            jsonSchema?.description === OPENAPI_BINARY_FILE_DESCRIPTION
+            jsonSchema?.description === OPENAPI_BINARY_CONTENT_DESCRIPTION
               ? { ...jsonSchema, type: 'string' as const, format: 'binary' }
               : jsonSchema,
         }
@@ -71,8 +71,11 @@ function openApiResponses(route: ApiRouteDecl): JsonObject {
       const status = Number(statusText);
       const response: JsonObject = { description: responseDescription(status, successStatuses) };
       if (status !== 204 && schema !== undefined) {
+        const mediaType = apiResponseMediaType(route, status);
         response.content = {
-          [apiResponseMediaType(route, status)]: { schema: toJsonSchema(schema) },
+          [mediaType]: {
+            schema: toJsonSchema(schema, { binaryFiles: mediaType !== 'application/json' }),
+          },
         };
       }
       return [statusText, response];

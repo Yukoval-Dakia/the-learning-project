@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { POST } from './assets';
+import { AssetUploadResponseSchema } from './contracts';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
@@ -39,15 +40,8 @@ describe('POST /api/assets', () => {
     const file = pngFile();
     const res = await POST(postRequest(makeFormData(file)));
     expect(res.status).toBe(201);
-    const body = (await res.json()) as {
-      asset: {
-        id: string;
-        storage_key: string;
-        mime_type: string;
-        sha256: string;
-        byte_size: number;
-      };
-    };
+    const body = AssetUploadResponseSchema.parse(await res.json());
+    expect(res.headers.get('content-type')).toContain('application/json');
     expect(body.asset.id).toBeTruthy();
     expect(body.asset.storage_key).toMatch(/^assets\/[0-9a-f]{64}$/);
     expect(body.asset.mime_type).toBe('image/png');
@@ -95,7 +89,7 @@ describe('POST /api/assets', () => {
       fd.set('file', new File([new Uint8Array(4)], 'img', { type: mime }));
       const res = await POST(postRequest(fd));
       expect(res.status).toBe(201);
-      const body = (await res.json()) as { asset: { mime_type: string } };
+      const body = AssetUploadResponseSchema.parse(await res.json());
       expect(body.asset.mime_type).toBe(mime);
     }
   });
