@@ -30,16 +30,13 @@
 //   persistSubmit (knowledge-set resolution + FSRS txn + event write + refine
 //   trigger). POST composes the phases and shapes the wire response.
 
-import { z } from 'zod';
-
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/server/subject-profile';
 import { emitMasteryProgressSignal } from '@/capabilities/notes/server/mastery-progress-signal';
 import { enqueueMasteryNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import { notesForKnowledge } from '@/capabilities/notes/server/notes-read';
 import { newId } from '@/core/ids';
-import { ActivityRef } from '@/core/schema/activity';
-import { FsrsRating, JudgeKind as JudgeKindZ } from '@/core/schema/business';
-import { JudgeResultV2, type JudgeResultV2T } from '@/core/schema/capability';
+import { JudgeKind as JudgeKindZ } from '@/core/schema/business';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import { db } from '@/db/client';
@@ -72,57 +69,10 @@ import { activeEffectiveTruth } from '../server/effective-truth';
 import { scheduleReview } from '../server/fsrs';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
 import { judgeResultToRatingAdvice } from '../server/rating-advisor';
+import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
 
-// New callers send `activity_ref`. `question_id` and `mistake_id` are accepted
-// only as compatibility inputs while the storage/policy layer remains backed by
-// question rows.
-const SubmitBody = z.object({
-  activity_ref: ActivityRef.optional(),
-  question_id: z.string().min(1).optional(),
-  mistake_id: z.string().min(1).optional(),
-  rating: FsrsRating,
-  response_md: z.string().nullable().optional(),
-  latency_ms: z.number().int().min(0).max(3_600_000).nullable().optional(),
-  // ADR-0013 — optional review session id; UI passes the session created on
-  // /review mount. server falls back to null when absent for backwards compat.
-  session_id: z.string().min(1).nullable().optional(),
-  // ADR-0012 — review events feed the derived knowledge_mastery view.
-  referenced_knowledge_ids: z.array(z.string().min(1)).default([]),
-  // YUK-215 — handwriting-photo answer refs. Threaded into the judge invoker so
-  // a photographed answer is judged on what was written, and frozen into the
-  // review event payload (evidence trail). Named `answer_image_refs` to match
-  // the event-payload convention (paper attempt payload uses the same key);
-  // the paper submit route's body uses `image_refs` — distinct layers, not a
-  // conflict (Cross-统合 F-16). Default [] → old callers unchanged.
-  answer_image_refs: z.array(z.string()).default([]),
-  // YUK-56 — when true, the judge runs and its suggested rating (mapped from
-  // coarse_outcome) overrides `rating`. Requires `response_md` non-empty.
-  // Rejects with 422 when the judge returns coarse_outcome='unsupported'.
-  auto_rate: z.boolean().default(false),
-  // YUK-98 (T-RA, 2026-05-27) — optional client-supplied judge result. When the
-  // UI has already run a judge in the prior /judge step it can submit the
-  // result back here so the advisory derivation (rating-advisor.ts) gets a
-  // trace and the event payload retains `judge_advice` for later analysis.
-  // Old clients that don't send this field still work — advisor stays silent.
-  // The route NEVER auto-commits the advisory rating: `body.rating` remains
-  // the source-of-truth (advisor is informational; user override wins per
-  // YUK-98 driver §1.1).
-  judge_result_v2: JudgeResultV2.optional(),
-  // YUK-372 L2 — 被答 practice_stream_item.id（π_i 直 join 判别子）。流作答（PfSolo）传被答
-  // slot id；散题/复习等非流作答省略 → undefined → recordDifficultyCalibrationLabel 内 skip
-  // （红线 #2：无 slot id 不退回 (date, ref) 近似）。optional+nullable → 旧 client 不传 → 无 π_i
-  // 标签，向后兼容。
-  stream_item_id: z.string().min(1).nullable().optional(),
-  // YUK-212 + YUK-484(B) — StructuredQuestion.id of the sub-node being submitted.
-  // When present, the judge is narrowed to that single sub (passage-preserving)
-  // and the judge event is stamped with sub_ref. Back-compat: absent (every
-  // atomic single-question submit) → no-op (whole-row judging, no sub_ref). This
-  // is the structured-jsonb axis id, NOT a question_part id.
-  part_ref: z.string().min(1).nullable().optional(),
-});
-
-type Rating = z.infer<typeof FsrsRating>;
-type SubmitBodyT = z.infer<typeof SubmitBody>;
+type Rating = CreateAttemptBody['rating'];
+type SubmitBodyT = CreateAttemptBody;
 type QuestionRow = typeof question.$inferSelect;
 
 // F4 (PR #309 round-2, YUK-215) — the image-consuming judge routes set is now
@@ -144,7 +94,7 @@ interface ValidatedSubmit {
 
 async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
   const raw = await req.json().catch(() => null);
-  const parsed = SubmitBody.safeParse(raw);
+  const parsed = CreateAttemptBodySchema.safeParse(raw);
   if (!parsed.success) {
     const message = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new ApiError('validation_error', message, 400);

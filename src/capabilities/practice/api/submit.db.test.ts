@@ -42,6 +42,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 // YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
+import { AttemptResponseSchema } from './contracts';
 import { POST, createAttemptResource } from './submit';
 
 vi.mock('@/server/ai/runner', () => ({
@@ -120,7 +121,8 @@ describe('POST /api/review/submit', () => {
     );
 
     expect(response.status).toBe(201);
-    const body = (await response.json()) as { review_event: { id: string } };
+    const body = AttemptResponseSchema.parse(await response.json());
+    expect(response.headers.get('content-type')).toContain('application/json');
     expect(response.headers.get('Location')).toBe(`/api/events/${body.review_event.id}`);
   });
 
@@ -129,16 +131,7 @@ describe('POST /api/review/submit', () => {
 
     const res = await POST(submitReq({ mistake_id: 'q1', rating: 'good', latency_ms: 5000 }));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      next_due_at: number;
-      new_state: { reps: number; scheduled_days: number };
-      review_event: {
-        id: string;
-        rating: string;
-        latency_ms: number | null;
-        correction_state: { state: string; terminal_state: string };
-      };
-    };
+    const body = AttemptResponseSchema.parse(await res.json());
 
     expect(typeof body.next_due_at).toBe('number');
     expect(body.next_due_at).toBeGreaterThan(0);
@@ -655,7 +648,9 @@ describe('POST /api/review/submit', () => {
         }),
       );
       expect(res.status).toBe(200);
-      const body = (await res.json()) as {
+      const rawBody = await res.json();
+      expect(AttemptResponseSchema.safeParse(rawBody).success).toBe(true);
+      const body = rawBody as {
         review_event: { rating: string };
         judge: {
           route: string;
