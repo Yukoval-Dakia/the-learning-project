@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
-import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
+import { AdminSubjectParamsSchema } from './subject-contracts';
 
 const RevisionSchema = z.number().int().nonnegative();
 
-export const AdminSubjectControlParamsSchema = z.object({ id: z.string().trim().min(1) });
+export const AdminSubjectControlParamsSchema = AdminSubjectParamsSchema;
 
 export const RenameAdminSubjectBodySchema = z.object({
   expectedRevision: RevisionSchema,
@@ -17,7 +17,17 @@ export const AdminSubjectCasBodySchema = z.object({
 
 export const ValidateAdminSubjectBodySchema = z.object({
   // The preflight endpoint intentionally accepts invalid candidates so it can report errors.
-  traitPayloadOverrides: z.record(z.enum(SUBJECT_TRAIT_KINDS), z.unknown()).optional(),
+  // Spell out optional keys because zod-to-json-schema makes enum-keyed records exhaustive.
+  traitPayloadOverrides: z
+    .object({
+      charter: z.unknown().optional(),
+      judge_policy: z.unknown().optional(),
+      cause_taxonomy: z.unknown().optional(),
+      source_policy: z.unknown().optional(),
+      render_theme: z.unknown().optional(),
+      scheduling: z.unknown().optional(),
+    })
+    .optional(),
 });
 
 export const AdminSubjectControlResponseSchema = z.object({

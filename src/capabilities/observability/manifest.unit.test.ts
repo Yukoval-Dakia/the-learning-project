@@ -140,3 +140,37 @@ describe('observability diagnostic read contracts', () => {
     }
   });
 });
+
+describe('observability subject control contracts', () => {
+  it('publishes all control operations and keeps validation overrides partial', () => {
+    const routes = observabilityCapability.api?.routes ?? [];
+    const expected = new Map([
+      ['PATCH /api/admin/subjects/[id]', 'updateAdminSubject'],
+      ['POST /api/admin/subjects/[id]/retire', 'retireAdminSubject'],
+      ['POST /api/admin/subjects/[id]/restore', 'restoreAdminSubject'],
+      ['POST /api/admin/subjects/[id]/reset', 'resetAdminSubject'],
+      ['POST /api/admin/subjects/[id]/validate', 'validateAdminSubject'],
+    ]);
+    for (const [key, operationId] of expected) {
+      const route = routes.find((candidate) => `${candidate.method} ${candidate.path}` === key);
+      expect(route?.operationId, key).toBe(operationId);
+      expect(route?.responses?.[200], key).toBeDefined();
+    }
+
+    const document = generateOpenApiDocument([observabilityCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    const validate = document.paths['/api/admin/subjects/{id}/validate'].post;
+    expect(validate.requestBody).toMatchObject({ required: false });
+    const requestBody = validate.requestBody as {
+      content: {
+        'application/json': {
+          schema: { properties: { traitPayloadOverrides: { required?: string[] } } };
+        };
+      };
+    };
+    expect(
+      requestBody.content['application/json'].schema.properties.traitPayloadOverrides.required,
+    ).toBeUndefined();
+  });
+});
