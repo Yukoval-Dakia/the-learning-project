@@ -3,11 +3,5 @@
   "POST /api/admin/subjects/[id]/reset": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects/[id]/restore": "Legacy route; declare request and response schemas when this surface is migrated.",
   "POST /api/admin/subjects/[id]/retire": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/subjects/[id]/traits/[kind]/fork": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/subjects/[id]/validate": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/traits/[id]/reset-to-seed": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "POST /api/admin/traits/[id]/rollback": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "PUT /api/admin/subjects/[id]/traits/[kind]": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "PUT /api/admin/subjects/[id]/traits/[kind]/binding": "Legacy route; declare request and response schemas when this surface is migrated.",
-  "PUT /api/admin/traits/[id]": "Legacy route; declare request and response schemas when this surface is migrated."
+  "POST /api/admin/subjects/[id]/validate": "Legacy route; declare request and response schemas when this surface is migrated."
 }
