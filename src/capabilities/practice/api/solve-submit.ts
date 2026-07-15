@@ -7,27 +7,13 @@
 // session to judged, reveals the worked solution, and enrolls a mistake on a low
 // score. On failure, enqueues attribution_followup (gated by the shared
 // shouldEnqueueBackgroundJobs(), getStartedBoss).
-import { z } from 'zod';
-
 import { SolveError, submitSolveAttempt } from '@/capabilities/practice/server/solve-session';
-import { MAX_HINT_INDEX } from '@/core/schema/event/known';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { ApiError, errorResponse } from '@/server/http/errors';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-
-const Body = z.object({
-  student_text_steps: z.array(z.string()).optional(),
-  student_final_answer_text: z.string().optional(),
-  student_image_refs: z.array(z.string()).optional(),
-  // YUK-352 — hint 留痕 (client-reported count of escalating hints used on this
-  // question before submit; written onto the attempt payload). Optional → absent =
-  // byte-identical legacy submit. Capped at MAX_HINT_INDEX (shared with the hint
-  // route + the durable payload bound) so a client cannot persist a garbage count.
-  hints_used: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
-  final_hint_level: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
-});
+import { SolveSubmissionBodySchema } from './question-solve-contracts';
 
 export async function createSolveSubmission(
   req: Request,
@@ -36,7 +22,7 @@ export async function createSolveSubmission(
   try {
     const { id, sid } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = SolveSubmissionBodySchema.safeParse(raw);
     if (!parsed.success) {
       throw new ApiError(
         'validation_error',

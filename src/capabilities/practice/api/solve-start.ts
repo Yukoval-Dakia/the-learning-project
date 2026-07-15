@@ -3,14 +3,11 @@
 // Start a solve session on a question. If rubric_json.reference_solution is
 // missing, lazily generate it (spec §3.2). Creates learning_session(type='tutor',
 // status='active'). Returns { session_id, generated }.
-import { z } from 'zod';
-
 import { SolveError, startSolveSession } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { deprecatedRouteResponse } from '@/kernel/http';
 import { ApiError, errorResponse } from '@/server/http/errors';
-
-const Body = z.object({ regenerate: z.boolean().optional() }).nullable();
+import { StartSolveBodySchema } from './question-solve-contracts';
 
 export async function createSolveSession(
   req: Request,
@@ -19,7 +16,7 @@ export async function createSolveSession(
   try {
     const { id } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = Body.safeParse(raw);
+    const parsed = StartSolveBodySchema.safeParse(raw);
     if (!parsed.success) {
       return errorResponse(
         new ApiError(

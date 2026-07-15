@@ -1,11 +1,30 @@
 import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
+import type { ZodType } from 'zod';
 import { createAnswerDraft } from './paper-answer-route';
 import { createPaperSubmission } from './paper-submit-route';
+import {
+  CreateHintRequestBodySchema,
+  CreateSolveSessionBodySchema,
+  CreateSolveSubmissionBodySchema,
+} from './question-solve-contracts';
 import { createHintRequest } from './solve-hint';
 import { createSolveSession } from './solve-start';
 import { createSolveSubmission } from './solve-submit';
 
 type JsonObject = Record<string, unknown>;
+
+async function parseJsonBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
+  const raw = await req.json().catch(() => null);
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+      400,
+    );
+  }
+  return parsed.data;
+}
 
 async function readJsonObject(req: Request): Promise<JsonObject> {
   const raw = await req.json().catch(() => null);
@@ -42,12 +61,12 @@ function withoutField(body: JsonObject, field: string): JsonObject {
 
 export async function createSolveSessionResource(req: Request): Promise<Response> {
   try {
-    const body = await readJsonObject(req);
-    const questionId = requiredId(body, 'question_id');
+    const { question_id: questionId, ...body } = await parseJsonBody(
+      req,
+      CreateSolveSessionBodySchema,
+    );
     return canonicalResourceResponse(
-      await createSolveSession(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
-        id: questionId,
-      }),
+      await createSolveSession(forwardedJsonRequest(req, body), { id: questionId }),
       {
         outcome: 'created',
         location: (responseBody) =>
@@ -66,10 +85,12 @@ export async function createHintRequestResource(
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const body = await readJsonObject(req);
-    const questionId = requiredId(body, 'question_id');
+    const { question_id: questionId, ...body } = await parseJsonBody(
+      req,
+      CreateHintRequestBodySchema,
+    );
     return canonicalResourceResponse(
-      await createHintRequest(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
+      await createHintRequest(forwardedJsonRequest(req, body), {
         id: questionId,
         sid: params.sid,
       }),
@@ -91,10 +112,12 @@ export async function createSolveSubmissionResource(
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const body = await readJsonObject(req);
-    const questionId = requiredId(body, 'question_id');
+    const { question_id: questionId, ...body } = await parseJsonBody(
+      req,
+      CreateSolveSubmissionBodySchema,
+    );
     return canonicalResourceResponse(
-      await createSolveSubmission(forwardedJsonRequest(req, withoutField(body, 'question_id')), {
+      await createSolveSubmission(forwardedJsonRequest(req, body), {
         id: questionId,
         sid: params.sid,
       }),
