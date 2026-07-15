@@ -2,6 +2,7 @@ import { MASTERY_PROGRESS_ACTION } from '@/capabilities/notes/server/mastery-pro
 import { event, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { EffectivenessTrendResponseSchema } from '../api/diagnostic-contracts';
 import { loadEffectivenessTrend } from './effectiveness-trend';
 // NB: pure `summarizeTrend` / `rollupSubjectDirection` confidence-ladder + boundary
 // coverage lives in the no-DB unit lane (effectiveness-trend-summary.unit.test.ts).
@@ -110,7 +111,9 @@ describe('loadEffectivenessTrend read model', () => {
       theta_delta: null,
     });
 
-    const { series } = await loadEffectivenessTrend(db);
+    const result = await loadEffectivenessTrend(db);
+    EffectivenessTrendResponseSchema.parse(JSON.parse(JSON.stringify(result)));
+    const { series } = result;
     expect(series).toHaveLength(1);
     const s = series[0];
     expect(s.knowledge_id).toBe('k_rise');
