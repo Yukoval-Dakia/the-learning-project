@@ -5,6 +5,8 @@
 
 import { artifact, knowledge } from '@/db/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
+
+import { NotePageResponseSchema } from '@/capabilities/notes/api/contracts';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './note-page-route';
 
@@ -103,12 +105,7 @@ describe('GET /api/notes/[id]', () => {
 
     const res = await getNote('note_zhi');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      id: string;
-      labels: Array<{ id: string; name: string }>;
-      sections: Array<{ id: string; kind: string }>;
-      subject_profile: { id: string; displayName: string };
-    };
+    const body = NotePageResponseSchema.parse(await res.json());
     expect(body.id).toBe('note_zhi');
     expect(body.labels).toEqual([{ id: 'k_zhi', name: '之 · 用法' }]);
     expect(body.sections).toEqual([expect.objectContaining({ id: 'b1', kind: 'definition' })]);

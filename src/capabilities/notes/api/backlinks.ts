@@ -24,8 +24,8 @@
 // (`extractCrossLinkSnippet`), so the panel can show where the link lives.
 
 import { eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
 
+import { ArtifactIdParamsSchema } from '@/capabilities/notes/api/contracts';
 import {
   listBacklinks,
   resolveOwningLearningItemIds,
@@ -38,8 +38,6 @@ import { ApiError, errorResponse } from '@/server/http/errors';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
 const SNIPPET_MAX_LENGTH = 120;
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
 export interface BacklinkPanelRow {
   from_artifact_id: string;
@@ -56,7 +54,7 @@ export interface BacklinkPanelRow {
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = ParamsSchema.safeParse(params);
+    const parsedParams = ArtifactIdParamsSchema.safeParse(params);
     if (!parsedParams.success) {
       throw new ApiError('validation_error', 'artifact id is required', 400);
     }

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { EditingHeartbeatResponseSchema } from '@/capabilities/notes/api/contracts';
+
 // YUK-358 决定6 (ADR-0040) — the dwell note_refine trigger is RETIRED. This route
 // is now a pure presence write: POST heartbeat records editing/idle presence and
 // must NOT enqueue any note_refine job. Unit test mocks the presence primitive +
@@ -44,7 +46,7 @@ describe('POST /api/editing-session/heartbeat (决定6 dwell retired)', () => {
     const res = await POST(req({ artifact_id: 'art_1', status: 'editing' }));
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true });
+    expect(EditingHeartbeatResponseSchema.parse(await res.json())).toEqual({ ok: true });
     expect(recordEditingHeartbeat).toHaveBeenCalledTimes(1);
     expect(recordEditingHeartbeat).toHaveBeenCalledWith({
       artifactId: 'art_1',

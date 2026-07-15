@@ -5,6 +5,8 @@ import {
 import { artifact, event, learning_item } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+
+import { EditArtifactSectionResponseSchema } from '@/capabilities/notes/api/contracts';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH } from './section-edit';
 
@@ -107,18 +109,7 @@ describe('PATCH /api/artifacts/[id]/sections/[sectionId]', () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      artifact_id: string;
-      artifact_version: number;
-      section: {
-        id: string;
-        body_md: string;
-        version: number;
-        user_verified: boolean;
-        source_tier: string;
-      };
-      event_id: string;
-    };
+    const body = EditArtifactSectionResponseSchema.parse(await res.json());
     expect(body).toMatchObject({
       artifact_id: 'a1',
       artifact_version: 1,

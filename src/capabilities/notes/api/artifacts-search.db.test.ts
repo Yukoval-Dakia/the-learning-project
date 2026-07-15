@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { ArtifactSearchResponseSchema } from '@/capabilities/notes/api/contracts';
 import { artifact } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET } from './artifacts-search';
@@ -47,7 +48,7 @@ function searchReq(query: string): Request {
 }
 
 async function readRows(res: Response): Promise<{ id: string; title: string; type: string }[]> {
-  const body = (await res.json()) as { rows: { id: string; title: string; type: string }[] };
+  const body = ArtifactSearchResponseSchema.parse(await res.json());
   return body.rows;
 }
 
