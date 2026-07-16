@@ -67,6 +67,22 @@ describe('selectPedagogyCandidates', () => {
     ]);
   });
 
+  it('does not restore worked examples for a secure but low-precision state', () => {
+    const result = selectPedagogyCandidates({
+      theta_band: 'secure',
+      precision_band: 'low',
+      misconception_present: false,
+      kc_is_rule_based: true,
+    });
+
+    expect(result.candidate_ids).toContain('completion_problem');
+    expect(result.candidate_ids).not.toContain('worked_example');
+    expect(result.excluded).toContainEqual({
+      method_id: 'worked_example',
+      reason: 'contraindicated',
+    });
+  });
+
   it('is deterministic and rejects state keys outside the four allowed signals', () => {
     const state = {
       theta_band: 'developing' as const,

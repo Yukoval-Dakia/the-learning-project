@@ -42,11 +42,14 @@ function codeLines(text: string): Array<{ line: number; value: string }> {
   const rows: Array<{ line: number; value: string }> = [];
   let offset = 0;
   for (const [index, rawLine] of text.split('\n').entries()) {
-    let value = '';
-    for (let cursor = 0; cursor < rawLine.length; cursor += 1) {
-      if (commentMask[offset + cursor] === 0) value += rawLine[cursor];
+    const segments: string[] = [];
+    let segmentStart = 0;
+    for (let cursor = 0; cursor <= rawLine.length; cursor += 1) {
+      if (cursor < rawLine.length && commentMask[offset + cursor] === 0) continue;
+      if (segmentStart < cursor) segments.push(rawLine.slice(segmentStart, cursor));
+      segmentStart = cursor + 1;
     }
-    const trimmed = value.trim();
+    const trimmed = segments.join('').trim();
     if (trimmed) rows.push({ line: index + 1, value: trimmed });
     offset += rawLine.length + 1;
   }

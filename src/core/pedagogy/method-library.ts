@@ -104,7 +104,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
     label: '示范例题',
     intent: '先展示一份带关键决策说明的完整解法。',
     indicated_when: [{ theta_band: ['novice'] }, { precision_band: ['low'] }],
-    contraindicated_when: [],
+    contraindicated_when: [{ theta_band: ['secure'] }],
     evidence_refs: ['worked_example_effect', 'expertise_reversal'],
   },
   {
