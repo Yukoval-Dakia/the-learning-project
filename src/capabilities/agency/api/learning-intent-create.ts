@@ -49,18 +49,20 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
         const database = deps.database ?? db;
         // UI disables repeat submits, but the API also reuses an already-pending
         // proposal for the same topic. This avoids another paid outline run after
-        // a reload or request retry. A malformed legacy proposal is ignored and a
-        // fresh one is produced rather than returning an invalid public contract.
+        // a reload or request retry. Scan ALL same-topic pending rows and restore
+        // the first that still satisfies the public contract; a malformed legacy
+        // row is skipped individually (not the whole dedup) so one bad row can't
+        // force a fresh paid run when a valid same-topic proposal already exists.
         const pending = await listProposalInboxRows(database, {
           status: 'pending',
           kind: 'learning_item',
         });
         const cooldownKey = `learning_item:intent:${parsed.data.topic}`;
-        const existing = pending.find((row) => row.payload.cooldown_key === cooldownKey);
-        if (existing) {
+        for (const candidate of pending) {
+          if (candidate.payload.cooldown_key !== cooldownKey) continue;
           const restored = LearningIntentProposalResponseSchema.safeParse({
-            proposal_id: existing.id,
-            ...existing.payload.proposed_change,
+            proposal_id: candidate.id,
+            ...candidate.payload.proposed_change,
           });
           if (restored.success) return Response.json(restored.data);
         }
@@ -73,8 +75,16 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
         return Response.json(proposal);
       } catch (err) {
         if (err instanceof LearningIntentError) {
+          // topic_not_found = requested topic isn't in the tree (client-correctable → 422).
+          // llm_parse_failed / invalid_atomic_knowledge_id are upstream AI-quality faults,
+          // not server bugs → 502 so monitoring doesn't page on model hiccups. Anything
+          // else (e.g. proposal_not_found, never thrown on the create path) → 500.
           const status =
-            err.code === 'topic_not_found' || err.code === 'topic_no_children' ? 422 : 500;
+            err.code === 'topic_not_found'
+              ? 422
+              : err.code === 'llm_parse_failed' || err.code === 'invalid_atomic_knowledge_id'
+                ? 502
+                : 500;
           return Response.json({ error: err.code, message: err.message }, { status });
         }
         throw err;

@@ -1,5 +1,6 @@
 import { event } from '@/db/schema';
 import { getProposalInboxRow } from '@/server/proposals/inbox';
+import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -97,5 +98,66 @@ describe('POST /api/learning-intents', () => {
     expect(malformed.status).toBe(400);
     expect(runTaskFn).not.toHaveBeenCalled();
     expect(await db.select().from(event)).toHaveLength(0);
+  });
+
+  it('maps LLM-quality failures to 502, not a server 500', async () => {
+    // Unparseable outline → planLearningIntent throws llm_parse_failed, an upstream
+    // AI-quality fault rather than a server bug (YUK-681 P3-2).
+    const runTaskFn = vi.fn(async () => ({
+      text: 'not a JSON outline at all',
+      task_run_id: 'run_bad_outline',
+      cost_usd: 0.0009,
+    }));
+    const handler = buildCreateLearningIntentHandler({ database: db, runTaskFn });
+
+    const res = await handler(request({ topic: '线性代数' }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: 'llm_parse_failed' });
+    expect(await db.select().from(event)).toHaveLength(0);
+  });
+
+  it('reuses a valid same-topic proposal even when a malformed one ranks first (YUK-681 P3-1)', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root_comb', name: '组合数学', domain: 'math' },
+          children: [{ temp_id: 'counting', name: '计数原理', domain: 'math' }],
+        },
+        hub: { title: '组合数学主线', summary_md: '从计数原理入门。' },
+        atomics: [
+          { knowledge_id: 'counting', title: '计数原理', one_line_intent: '掌握加法乘法原理。' },
+        ],
+        longs: [],
+      }),
+      task_run_id: 'run_comb_1',
+      cost_usd: 0.001,
+    }));
+    const handler = buildCreateLearningIntentHandler({ database: db, runTaskFn });
+
+    // 1st: no same-topic proposal exists → one fresh paid run produces a valid one.
+    const first = await handler(request({ topic: '组合数学' }));
+    expect(first.status).toBe(200);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+
+    // Now plant a malformed same-topic pending row (empty atomics fails the public response
+    // contract) with a NEWER created_at, so the inbox's `desc(created_at)` ranking places it
+    // FIRST — ahead of the valid one. The old `.find` stopped at this first (malformed) row,
+    // failed safeParse, and did another paid run; the new loop skips it and restores the valid.
+    await writeLearningItemProposal(db, {
+      topic: '组合数学',
+      reason_md: 'malformed legacy row',
+      evidence_refs: [],
+      knowledge_node: { kind: 'absent' },
+      hub: { title: '组合数学', summary_md: '占位' },
+      atomics: [],
+      cost_usd: 0,
+      created_at: new Date(Date.now() + 60_000),
+    });
+
+    // 2nd: malformed ranks first, but the valid same-topic proposal is still restored
+    // WITHOUT another paid run (runTaskFn stays at 1; old code would reach 2).
+    const second = await handler(request({ topic: '组合数学' }));
+    expect(second.status).toBe(200);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 });
