@@ -1,4 +1,4 @@
-# Mac-local production override (untracked, NOT for NAS). Publishes app + postgres to the host
+# Mac-local production override (tracked; NOT for NAS). Publishes app + postgres to the host
 # and EXCLUDES cloudflared (no public tunnel — local-only). Use by naming services explicitly:
 #   docker compose -f docker-compose.yml -f docker-compose.mac.yml up -d --build migrate app worker postgres
 # Reach the app at http://localhost:8787 ; host DB access (flip migrations) at localhost:5433.
@@ -13,11 +13,24 @@ services:
     # Rollback any entity = remove its line + recreate app/worker; the double-write never stopped
     # (events keep flowing), so the imperative OFF path resumes with zero data loss.
     environment:
+      # YUK-571 go-live state. Keep these non-secret flags in the tracked production
+      # override: a deploy from a fresh/temp main checkout must not silently fall
+      # back to the code defaults just because the local .env file was not copied.
+      # NOTE compose `environment:` outranks env_file — .env can no longer toggle these.
+      # Turn OFF = remove the line (or set "false") + recreate app/worker, same rollback
+      # pattern as the PROJECTION_* flags above. Keep values lowercase "true"
+      # (placement parses case-sensitively; auto-enroll doesn't — don't "prettify").
+      PLACEMENT_PROBE_ENABLED: "true"
+      WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
       PROJECTION_IS_WRITER: "1"
       PROJECTION_IS_WRITER_ARTIFACT: "1"
       PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
   worker:
     environment:
+      # Mirror app exactly; ingestion enrollment runs in the worker, while the
+      # placement entrypoint runs in app. Repeating both makes process parity explicit.
+      PLACEMENT_PROBE_ENABLED: "true"
+      WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
       PROJECTION_IS_WRITER: "1"
       PROJECTION_IS_WRITER_ARTIFACT: "1"
       PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
