@@ -31,15 +31,15 @@ async function seedKnowledge(id: string, domain = 'yuwen') {
     .onConflictDoNothing();
 }
 
-async function seedActiveLearningItem(knowledgeIds: string[]) {
+async function seedOpenLearningItem(knowledgeIds: string[]) {
   const now = new Date();
   await db.insert(learning_item).values({
     id: createId(),
     source: 'test',
-    title: 'active item',
+    title: 'open item',
     content: '',
     knowledge_ids: knowledgeIds,
-    status: 'active',
+    status: 'pending',
     created_at: now,
     updated_at: now,
     version: 0,
@@ -80,7 +80,7 @@ describe('runQuestionSupplyNightly', () => {
   it('dispatches a frontier_zero target to the sourcing queue and tallies it as dispatched', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     // ZERO active questions → frontier_zero gap.
 
     const enqueued: Array<{ queue: string; data: Record<string, unknown> }> = [];
@@ -113,7 +113,7 @@ describe('runQuestionSupplyNightly', () => {
   it('SKIPS re-dispatch of the same unsatisfied fingerprint on a second nightly run (cooldown)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     const enqueued: Array<{ queue: string }> = [];
     const enqueue: EnqueueFn = async (queue) => {
@@ -148,7 +148,7 @@ describe('runQuestionSupplyNightly', () => {
     const kids = [createId(), createId(), createId()];
     for (const kid of kids) {
       await seedKnowledge(kid);
-      await seedActiveLearningItem([kid]);
+      await seedOpenLearningItem([kid]);
     }
 
     const enqueued: Array<{ queue: string }> = [];
@@ -180,8 +180,8 @@ describe('runQuestionSupplyNightly', () => {
     const kidB = createId();
     await seedKnowledge(kidA);
     await seedKnowledge(kidB);
-    await seedActiveLearningItem([kidA]);
-    await seedActiveLearningItem([kidB]);
+    await seedOpenLearningItem([kidA]);
+    await seedOpenLearningItem([kidB]);
 
     let calls = 0;
     const succeeded: string[] = [];

@@ -39,15 +39,15 @@ async function seedKnowledge(id: string, domain = 'yuwen') {
     .onConflictDoNothing();
 }
 
-async function seedActiveLearningItem(knowledgeIds: string[]) {
+async function seedOpenLearningItem(knowledgeIds: string[]) {
   const now = new Date();
   await db.insert(learning_item).values({
     id: createId(),
     source: 'test',
-    title: 'active item',
+    title: 'open item',
     content: '',
     knowledge_ids: knowledgeIds,
-    status: 'active',
+    status: 'pending',
     created_at: now,
     updated_at: now,
     version: 0,
@@ -112,7 +112,7 @@ describe('GET /api/admin/coverage-lattice (YUK-579)', () => {
   it('empty-pool KC → usableCount 0, three axes null, frontier_zero gap (scaffold)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     const body = await getBody();
     const row = findRow(body, kid);
@@ -129,7 +129,7 @@ describe('GET /api/admin/coverage-lattice (YUK-579)', () => {
   it('low-tier single-question KC → source_quality + diagnostic gaps (honest booleans off scanner)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     // 1 question, low acquisition tier (quiz_gen generated), no calibration → no near-θ anchor.
     await seedQuestion([kid], { source: 'quiz_gen', kind: 'choice' });
 
@@ -145,7 +145,7 @@ describe('GET /api/admin/coverage-lattice (YUK-579)', () => {
   it('covered KC (2 high-tier near-θ questions) → no frontier/source/diagnostic gaps', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     const q1 = await seedQuestion([kid], { source: 'manual', kind: 'choice' });
     const q2 = await seedQuestion([kid], { source: 'manual', kind: 'choice' });
     await seedNearThetaCalibration(q1);
@@ -167,8 +167,8 @@ describe('GET /api/admin/coverage-lattice (YUK-579)', () => {
     const b = createId();
     await seedKnowledge(a);
     await seedKnowledge(b);
-    await seedActiveLearningItem([a]);
-    await seedActiveLearningItem([b]);
+    await seedOpenLearningItem([a]);
+    await seedOpenLearningItem([b]);
     await seedQuestion([b], { source: 'quiz_gen' });
 
     const body = await getBody();
@@ -187,7 +187,7 @@ describe('GET /api/admin/coverage-lattice (YUK-579)', () => {
   it('MF1 activity join — a matching dispatched event annotates the gap in-cooldown', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
 
     // frontier_zero for an empty KC uses fixed scaffold coords (kind='any'/band='near'/tier2).
     const fp = targetFingerprint({
@@ -221,7 +221,7 @@ describe('GET /api/admin/coverage-lattice (YUK-579)', () => {
   it('READ-ONLY — GET writes nothing (event + question counts unchanged)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     await seedQuestion([kid], { source: 'quiz_gen' });
 
     const beforeEvents = (await db.select().from(event)).length;
