@@ -1,5 +1,6 @@
 import { event } from '@/db/schema';
 import { getProposalInboxRow } from '@/server/proposals/inbox';
+import { writeLearningItemProposal } from '@/server/proposals/producers';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -97,5 +98,63 @@ describe('POST /api/learning-intents', () => {
     expect(malformed.status).toBe(400);
     expect(runTaskFn).not.toHaveBeenCalled();
     expect(await db.select().from(event)).toHaveLength(0);
+  });
+
+  it('maps LLM-quality failures to 502, not a server 500', async () => {
+    // Unparseable outline → planLearningIntent throws llm_parse_failed, an upstream
+    // AI-quality fault rather than a server bug (YUK-681 P3-2).
+    const runTaskFn = vi.fn(async () => ({
+      text: 'not a JSON outline at all',
+      task_run_id: 'run_bad_outline',
+      cost_usd: 0.0009,
+    }));
+    const handler = buildCreateLearningIntentHandler({ database: db, runTaskFn });
+
+    const res = await handler(request({ topic: '线性代数' }));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: 'llm_parse_failed' });
+    expect(await db.select().from(event)).toHaveLength(0);
+  });
+
+  it('reuses a valid same-topic proposal even when a malformed one exists (YUK-681 P3-1)', async () => {
+    // Pre-existing malformed same-topic pending row (empty atomics fails the public
+    // response contract), created earlier than any valid one.
+    await writeLearningItemProposal(db, {
+      topic: '组合数学',
+      reason_md: 'malformed legacy row',
+      evidence_refs: [],
+      knowledge_node: { kind: 'absent' },
+      hub: { title: '组合数学', summary_md: '占位' },
+      atomics: [],
+      cost_usd: 0,
+      created_at: new Date(Date.now() - 60_000),
+    });
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root_comb', name: '组合数学', domain: 'math' },
+          children: [{ temp_id: 'counting', name: '计数原理', domain: 'math' }],
+        },
+        hub: { title: '组合数学主线', summary_md: '从计数原理入门。' },
+        atomics: [
+          { knowledge_id: 'counting', title: '计数原理', one_line_intent: '掌握加法乘法原理。' },
+        ],
+        longs: [],
+      }),
+      task_run_id: 'run_comb_1',
+      cost_usd: 0.001,
+    }));
+    const handler = buildCreateLearningIntentHandler({ database: db, runTaskFn });
+
+    // 1st: only the malformed row exists → it is skipped and a fresh proposal is produced.
+    const first = await handler(request({ topic: '组合数学' }));
+    expect(first.status).toBe(200);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+
+    // 2nd: malformed row still present, but a valid same-topic proposal now exists → it is
+    // restored without another paid run. Old `.find` would stop at the malformed row and re-run.
+    const second = await handler(request({ topic: '组合数学' }));
+    expect(second.status).toBe(200);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
   });
 });
