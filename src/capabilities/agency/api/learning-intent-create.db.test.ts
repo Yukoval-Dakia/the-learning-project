@@ -116,19 +116,7 @@ describe('POST /api/learning-intents', () => {
     expect(await db.select().from(event)).toHaveLength(0);
   });
 
-  it('reuses a valid same-topic proposal even when a malformed one exists (YUK-681 P3-1)', async () => {
-    // Pre-existing malformed same-topic pending row (empty atomics fails the public
-    // response contract), created earlier than any valid one.
-    await writeLearningItemProposal(db, {
-      topic: '组合数学',
-      reason_md: 'malformed legacy row',
-      evidence_refs: [],
-      knowledge_node: { kind: 'absent' },
-      hub: { title: '组合数学', summary_md: '占位' },
-      atomics: [],
-      cost_usd: 0,
-      created_at: new Date(Date.now() - 60_000),
-    });
+  it('reuses a valid same-topic proposal even when a malformed one ranks first (YUK-681 P3-1)', async () => {
     const runTaskFn = vi.fn(async () => ({
       text: JSON.stringify({
         knowledge: {
@@ -146,13 +134,28 @@ describe('POST /api/learning-intents', () => {
     }));
     const handler = buildCreateLearningIntentHandler({ database: db, runTaskFn });
 
-    // 1st: only the malformed row exists → it is skipped and a fresh proposal is produced.
+    // 1st: no same-topic proposal exists → one fresh paid run produces a valid one.
     const first = await handler(request({ topic: '组合数学' }));
     expect(first.status).toBe(200);
     expect(runTaskFn).toHaveBeenCalledTimes(1);
 
-    // 2nd: malformed row still present, but a valid same-topic proposal now exists → it is
-    // restored without another paid run. Old `.find` would stop at the malformed row and re-run.
+    // Now plant a malformed same-topic pending row (empty atomics fails the public response
+    // contract) with a NEWER created_at, so the inbox's `desc(created_at)` ranking places it
+    // FIRST — ahead of the valid one. The old `.find` stopped at this first (malformed) row,
+    // failed safeParse, and did another paid run; the new loop skips it and restores the valid.
+    await writeLearningItemProposal(db, {
+      topic: '组合数学',
+      reason_md: 'malformed legacy row',
+      evidence_refs: [],
+      knowledge_node: { kind: 'absent' },
+      hub: { title: '组合数学', summary_md: '占位' },
+      atomics: [],
+      cost_usd: 0,
+      created_at: new Date(Date.now() + 60_000),
+    });
+
+    // 2nd: malformed ranks first, but the valid same-topic proposal is still restored
+    // WITHOUT another paid run (runTaskFn stays at 1; old code would reach 2).
     const second = await handler(request({ topic: '组合数学' }));
     expect(second.status).toBe(200);
     expect(runTaskFn).toHaveBeenCalledTimes(1);
