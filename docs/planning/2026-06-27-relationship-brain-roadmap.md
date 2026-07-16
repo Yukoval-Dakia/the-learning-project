@@ -4,6 +4,14 @@
 > 路线图按 owner 四原则排序：**felt-first（备课台 pull）→ foundation-trust-first（conjecture 问责先于规划/教学法）→ cold-start-first → defer-flip-not-build**。
 > 三脑 = 感官之上的 meta 层：**关系脑（Phase 0，信任上游）/ 规划脑（Phase 2）/ 教学法脑（Phase 3，最依赖 judge，最后）**。
 
+> **2026-07-16 对账修正**：下文保留 2026-06-27 的执行基线，但其中“无 issue / PR 未
+> push / UI 未落 / review_plan 未退役”的判断已经过时。当前 YUK-505（规划脑）与
+> YUK-506（教学法脑）均已存在；关系脑 felt UI + probe + reconcile 已在，B3 默认
+> softmax stream + frontier + review_plan 退役也已在。YUK-506 的无依赖安全脊柱已启动。
+> YUK-505 接运行时前须先解决一个新漂移：六月四角色 panel 与七月 YUK-572 已落地的
+> “单脑 director + 至多一个 conditional scout”反 swarm 契约冲突。详见
+> `docs/audit/2026-07-16-drift.md`。
+
 ---
 
 ## 1. 现状快照
@@ -16,13 +24,13 @@
 | | A4 grid-Bayes θ / A9 LLM step-grading | YUK-436 / YUK-438 | **IN-FLIGHT** | — |
 | | A5 graph-Laplacian / A6 prereq 传播 | YUK-441 / YUK-442 | **Backlog（已解锁）** | ⚠️ 依赖 YUK-344 已 Done → 静默解锁 |
 | | A7/A8/A10–A15 + A1 精修簇 | YUK-437/443/444/445/446/447/439 等 | **DESIGN** | — |
-| **关系脑·定性半（A13 conjecture engine）** | Phase 0 conjecture + 例会 job + 备课台 | **YUK-406** | **IN-FLIGHT（PR-1 worktree `tlp-wt-a13`，未 push）** | ⚠️ Linear=Todo，应 In Progress |
-| | A13 prediction-grounding + typed KC ledger | **YUK-440** | **IN-FLIGHT（PR-1 引用，未 push）** | ⚠️ Linear=Backlog，应 In Progress |
+| **关系脑·定性半（A13 conjecture engine）** | Phase 0 conjecture + 例会 job + 备课台 | **YUK-406** | **CODE-LIVE / ACCEPTANCE IN-FLIGHT** | felt UI、probe、reconcile 均在；保留两周产品验收 |
+| | A13 prediction-grounding + typed KC ledger | **YUK-440** | **CODE-LIVE** | prediction-score + typed-ledger 已在 |
 | | 错因 catalog + retrieve-rerank L1 | YUK-454 / YUK-462 | **LIVE（rerank dark，soft-track）** | — |
-| **规划脑·B3** | daily-stream merge engine（retire `review_plan`） | **YUK-349** | **IN-FLIGHT（~13d）** | ⚠️ `/api/review/plan` 仍注册，retire 未落；核对 code 再排期 |
-| **规划脑·panel** | 单 Opus 审议 panel（SELECT-not-fuse） | **无 issue**（doc only） | **DESIGN** | 🚩 **tripwire ③ 缺 issue/expected_by** |
+| **规划脑·B3** | daily-stream merge engine（retire `review_plan`） | **YUK-349** | **CODE-LIVE / CLOSEOUT IN-FLIGHT** | default softmax、frontier、nightly compose、retire 均在 |
+| **规划脑·panel** | 单 Opus 审议 panel（SELECT-not-fuse） | **YUK-505** | **BACKLOG / DESIGN AMENDMENT NEEDED** | ⚠️ 与 YUK-572 anti-swarm runtime 冲突 |
 | | cross-provider de-bias panel | YUK-416 | **DEFERRED**（等第 2 frontier lane） | — |
-| **教学法脑** | 8-method palette + `policy()` + B5 verify | **无 issue**（capstone §0） | **DESIGN（零代码，`src/core/pedagogy/` 不存在）** | 🚩 **tripwire ③ 缺 issue/expected_by** |
+| **教学法脑** | 8-method palette + `policy()` + B5 verify | **YUK-506** | **IN PROGRESS（安全脊柱）** | panel-SELECT / B5 接线仍 deferred |
 | | B5 unified verify contract（Verifier Router） | YUK-350 | **IN-FLIGHT（W0 done）** | — |
 | **支持·备课台** | felt-core anti-guilt surface | YUK-406 | **LIVE shell**（需 conjecture ≤3 reframe） | — |
 | **支持·proposal/drafts** | proposal-as-event + /drafts 池 | YUK-403 | **LIVE**（PR #455） | — |
@@ -34,7 +42,7 @@
 | **冷启链** | goal/onboarding/seed/placement/auto-promote | YUK-472/473/477/468/475/479 | **LIVE** | U upload YUK-478 IP；P4/self-desc/scope YUK-476/480/481 Backlog |
 | **ADR-0046** | 确定性数值核 = Rust SoT（θ/PFA/scoring）；`scorePrediction`→flip Rust-owned + deferred | — | merged | Rust beachhead YUK-493 Done；同构核 YUK-495 IN-FLIGHT |
 
-**净 drift 结论**：① YUK-406/440 状态滞后（push PR-1 后自动修正）；② YUK-349 retire 未落，排 Phase 2 前必须 code-核对；③ **规划脑 panel + 教学法脑 都无 Linear issue → 直接违反 tripwire ③**（本路线图第 5 节强制开单）；④ YUK-344 Done 已解锁 A5/A6（旧 doc 仍当 pending gate，作废）。
+**2026-07-16 净 drift 结论**：① YUK-406/440 与 YUK-349 的承重代码已在，剩产品验收 / ticket closeout；② YUK-505/YUK-506 已补齐 expected_by；③ YUK-505 的 runtime 形态须先对齐 YUK-572 anti-swarm 契约；④ YUK-506 安全脊柱可独立实施；⑤ YUK-344 Done 已解锁 A5/A6。
 
 ---
 
@@ -96,21 +104,21 @@ Lane C:  U5 → U6 ─┐                      │            │  → PR → ow
 - **依赖**：B1（YUK-348 Done）——**唯一硬 blocker 已清**。
 - **gate**：`test:db`（merge 正确性 + due-must-review 不变量）+ 退役 `review_plan` 的 route/coach 引用全清 + `gen:postman` 对账。
 - **expected_by**：**2026-07-18**。
-- **ulw-就绪度**：✅ **最 ulw-ready 的 later-organ 交付物**。设计锁定、substrate 在场、blocker 已清。**唯一前置：先 code-核对 YUK-349 ~13d In-Progress 的真实落点**（`/api/review/plan` 仍注册 → retire 未落），跑 `writing-plans` pass 后即可 ulw。可作为第一轮 ulw 的**独立第 4 lane**（与 P0 的 A/B/C 三 lane 并行，无 conjecture 依赖）。
+- **ulw-就绪度**：✅ **承重代码已落**。2026-07-16 对账确认 `/api/review/plan` 已退役，default softmax、frontier、nightly compose 与 deterministic fallback 均在；当前只需完成 YUK-349 产品验收与 ticket closeout，不应再启动重复实现 lane。
 
 ### P2 — 规划脑·deliberative panel（单 Opus，SELECT-not-fuse）
 - **目标**：从「单引擎组流」升级到「教研团审议」——A(巩固)‖B(前沿) prompt-prior diversity、devil's-advocate critic 攻 leading draft、组长 SELECT-not-fuse（非融合）、single-round N=2、确定性 gate（仅 B1↔practice 冲突 / B3 结构变更 / cycle 重写时触发）、`PLANNING_PANEL_BUDGET.maxAgentCalls=4`、三层渐进披露、OAuth-down→降级单 planner（绝不假 dissent）。挂在 `research_meeting_nightly`/`coach_weekly` 内。
 - **交付物**：slice G 清单（budget+gate / 注册 `planning_panel`+`planning_critic`+`planning_judge` agents + 只读 allowlist / `runPlanningPanel` / deliberation payload + degrade / 3 层披露 / seam 测试）。SDK 原生 subagent（per `feedback_agent_impl_sdk_native`，实现前查 SDK docs）。
-- **Linear**：🚩 **无 issue → 必须开单**（建议挂 YUK-405，见第 5 节）。YUK-416（de-bias）是 deferred 变体，**非本 panel 的 gate**。
+- **Linear**：YUK-505（Backlog，expected_by 2026-08-22）。YUK-416（de-bias）是 deferred 变体，**非本 panel 的 gate**。
 - **依赖**：① B3 落地（panel trigger gate 键 off B3 结构变更信号 + 读 B3 frontier/mastery）；② Phase 0 conjecture（capstone §2 喂 conjecture 进规划输入）。
 - **gate**：seam 测试 + 确定性 gate 单测（panel 只在指定条件 fire）+ degrade 路径测试 + budget cap 断言。
 - **expected_by**：**panel MVP 2026-08-22；规划脑 organ-complete 2026-08-31**。
-- **ulw-就绪度**：⚠️ **scaffolding 可建 / value 须等**。slice G 具体可建，但应在 **B3 落地后 + Phase 0 conjecture 后** 起 lane。按 defer-flip：wire it live + behind 确定性 gate，defer the act 到 gated weeks。
+- **ulw-就绪度**：⚠️ B3 + Phase 0 的代码前置已在，但 runtime 设计须先 amendment：YUK-572 已把例会钉成“单脑 director + ≤1 scout”，不能直接把旧 slice G 的 A/B/critic/judge fan-out 塞进同一 job。先裁定独立 gated planning job 或 director 内的单脑规划模式，再 wire live。
 
 ### P3 — 教学法脑（palette + `policy()` + 3 locks + panel-SELECT step）〔最依赖 judge，最后〕
 - **目标**：方法选择审议——append 到规划 panel 的一步（**非新系统/非并行 panel**）：三段 ① 确定性 `policy()` 按 type 收窄合法候选（`misconception_present`→`more_drill` 进不了候选），仅键 `θ̂ band / precision band / misconception_present / kc_is_rule_based`；② panel 在候选内 SELECT（A/B 提议、devil's-advocate 攻 `contraindicated_when`、组长 SELECT-not-fuse）；③ B5 verify 拦禁忌；方法标注落 `draft_status` proposal 进备课台，参数化 `teaching-skill.ts`/`resolveNoteSkill`。
 - **交付物**：8-method 闭枚 palette `src/core/pedagogy/method-library.ts`（`worked_example`/`completion_problem`/`open_problem`/`contrasting_cases`/`refutation`/`interleaving`/`reconstruction`/`socratic`，每个 `indicated_when`/`contraindicated_when` StateGuard + `evidence_refs`）。**v1 不学 efficacy**（n=1 under-fed；schema 锁未来 method×bucket Beta）。**3 个机械 anti-learning-styles 锁 = v1 红线 gate**：① type lock（StateGuard 只键 state）② 新 `audit:no-learning-styles` CI denylist 接进 `pnpm test` ③ unit lock。
-- **Linear**：🚩 **无 issue → 必须开单**（建议挂 YUK-405，见第 5 节）。
+- **Linear**：YUK-506（In Progress，expected_by 2026-09-30）。
 - **依赖**（三，全脑需全到）：① 规划 panel 存在（教学法是其续步）；② **misconception 信号可信**——conjecture engine（YUK-406/440）firm-up + misconception promotion 成熟，否则 R-PREC 永久塌进保守集（「always worked_example」= kill line → 回落 `teaching-skill.ts` turn-KIND only）；③ B5 verify（YUK-350，plan-then-generate + Verifier Router）。
 - **gate**：`policy()` 确定性单测 + `audit:no-learning-styles` denylist + palette StateGuard 单测 + B5 禁忌拦截测试。
 - **expected_by**：**全脑 2026-09-30**；**确定性 `policy()`+palette+3 locks 安全脊柱可早落 ~2026-08-29（并行，无 judge 依赖）**。
@@ -151,13 +159,13 @@ B1/item_calibration (YUK-348) ✅ DONE
    │   │                     │
    │   └── conjecture 喂输入 ┤
    ▼                         ▼
-[P2] 规划脑 deliberative PANEL (单Opus; 无issue→开单) ── exp 08-22 / organ 08-31
+[P2] 规划脑 deliberative PANEL (YUK-505; runtime amendment needed) ── exp 08-22 / organ 08-31
    (gate: B3 落地 + Phase-0 conjecture; 非 gated on YUK-416)
    │                                   │
    │                                   └──► goal entity (YUK-143, IN-FLIGHT, 独立长杆)
    │                                            └──► [P4b] Auto-Quest (YUK-419) ── exp 10-31
    ▼
-[P3] 教学法脑 (palette+policy()+3locks+panel-SELECT; 无issue→开单) ── exp 09-30
+[P3] 教学法脑 (YUK-506; palette+policy()+3locks→panel-SELECT) ── exp 09-30
    (gate: panel 存在 + misconception 可信 + B5 verify YUK-350)
    │           ▲
    │           └── B5 verify Router (YUK-350, IN-FLIGHT, W0 done) ── 独立长杆
@@ -179,7 +187,7 @@ B1/item_calibration (YUK-348) ✅ DONE
 
 ## 5. tripwire 看板（expected_by + defer-flip + harness）
 
-> vision §12 tripwire ③：**规划脑 + 教学法脑 必须带 expected_by，否则「demo 成功把惊艳永久挤出 roadmap」**。两者当前**都无 Linear issue** → 第一轮 ulw 前 owner 必须开单。
+> vision §12 tripwire ③：**规划脑 + 教学法脑 必须带 expected_by，否则「demo 成功把惊艳永久挤出 roadmap」**。YUK-505 / YUK-506 已于 2026-06-27 补齐该 tripwire。
 
 ### expected_by 表（grounded dates，基线 2026-06-27）
 
@@ -189,15 +197,15 @@ B1/item_calibration (YUK-348) ✅ DONE
 | A13 typed-ledger loop（U5–U8） | YUK-440 | **2026-07-18** | — |
 | 2-week alive/kill 窗 | YUK-406 验收 | **2026-07-11 → 2026-07-25** | 跑在 live felt loop，backend-only 不启动 |
 | 规划脑 B3 | YUK-349 | **2026-07-18** | — |
-| **规划脑 panel MVP** | 🚩 **开新单（挂 YUK-405）** | **2026-08-22** | organ-complete 08-31 |
-| **教学法脑（全脑）** | 🚩 **开新单（挂 YUK-405）** | **2026-09-30** | 安全脊柱可早落 ~08-29 |
+| **规划脑 panel MVP** | YUK-505 | **2026-08-22** | organ-complete 08-31；先做 runtime amendment |
+| **教学法脑（全脑）** | YUK-506 | **2026-09-30** | 安全脊柱 2026-07-16 启动 |
 | Reflection-Tree | YUK-418 | **2026-09-19** | — |
 | Auto-Quest | YUK-419 | **2026-10-31** | — |
 | Reconstruction（生成式 method） | YUK-407 | **palette entry 09-30 / 生成式 ~11** | 日志红线 = NOW |
 
-**🚩 两个必开 Linear issue（第一轮 ulw 前，per capture gate + tripwire ③）**：
-1. **规划脑 deliberative-panel MVP**——仅活在 `docs/superpowers/specs/2026-06-18-jiaoyantuan-deliberative-panel-design.md`（slice G）。YUK-416=deferred de-bias 变体、YUK-349=只 B3 半。**真正构成「规划脑」的单 Opus panel 无单 = 无法挂 expected_by = tripwire ③ 破。** 开 Phase-2 panel issue 挂 YUK-405，`expected_by 2026-08-22`（panel doc 决策 F.5「现开 epic vs 等 B3」——B3 现可执行，故现开）。
-2. **教学法脑**——capstone §0 定义，**零 YUK-XXX**。tripwire ③ 显式点名 Pedagogy 须带 expected_by → 不存在 issue = 必破。开 Phase-3 pedagogy issue 挂 YUK-405，`expected_by 2026-09-30`，scope 含 v1 红线（`audit:no-learning-styles` gate + 3 机械锁）。
+**Linear tripwire 已修复（2026-06-27）**：
+1. **YUK-505** 承接规划脑 deliberative-panel MVP，expected_by 2026-08-22。
+2. **YUK-506** 承接教学法脑，expected_by 2026-09-30；安全脊柱先行。
 
 ### defer-flip 项（build-now / flip-later + flip harness）
 
@@ -220,7 +228,7 @@ B1/item_calibration (YUK-348) ✅ DONE
 ### 第一轮 ulw（NOW 前沿）—— 交给 ulw 的具体内容
 **owner 前置动作（非 ulw）**：
 1. **push PR-1**（`tlp-wt-a13` `6b55aecf` → 开 PR `Refs YUK-406 / Refs YUK-440`）——翻 YUK-406/440 为 In Progress。
-2. **开两个 Linear issue**（规划脑 panel `exp 08-22` + 教学法脑 `exp 09-30`，挂 YUK-405）——满足 tripwire ③。
+2. ~~开两个 Linear issue~~——已完成：YUK-505 / YUK-506 均挂 YUK-405 并带 expected_by。
 3. **预先 `git worktree add` 4 条 lane worktree**（per `feedback_omc_isolation_actually_manual`），worker prompt 第一动作强制 `pwd + git toplevel + branch` verify cwd（per `feedback_worker_first_action_verify_cwd`）。
 
 **ulw 4 条并行 lane（每条独立 worktree + branch）**：
