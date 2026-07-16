@@ -47,6 +47,24 @@ export const DEFAULT_SELECTION_POLICY: SelectionPolicyConfig['policy'] = 'softma
 export const DEFAULT_TEMPERATURE = 0.25;
 
 /**
+ * B3 mem0 learner-prior 最多注入 5 条（ADR-0037 H5 / ADR-0042）。默认/粒度：每次
+ * L2 orchestration 5 条；观测：prompt 中 FACT 行数；护栏：hard（超过即截断）。
+ */
+export const MEM0_PRIOR_CAP = 5;
+
+/**
+ * 单条 mem0 learner-prior 的字符上限。默认/粒度：每条 240 chars；观测：prompt 中
+ * 单条 FACT 长度；护栏：hard（换行压平后截断）。
+ */
+export const MEM0_PRIOR_ITEM_CHAR_CAP = 240;
+
+/**
+ * 完整 `<ADVISORY_ONLY>` 块的字符上限（含标签与 DATA_ONLY 声明）。默认/粒度：每次
+ * L2 orchestration 1,200 chars；观测：memoryPrior 字段长度；护栏：hard（二层截断）。
+ */
+export const MEM0_PRIOR_BLOCK_CHAR_CAP = 1_200;
+
+/**
  * P2 D2 / A8 — dark-ship flag for the `misconceptionRecurrence` selection signal
  * (candidate-signals.ts aggregateMisconceptionRecurrence).
  *
