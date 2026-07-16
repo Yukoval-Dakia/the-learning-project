@@ -13,11 +13,20 @@ services:
     # Rollback any entity = remove its line + recreate app/worker; the double-write never stopped
     # (events keep flowing), so the imperative OFF path resumes with zero data loss.
     environment:
+      # YUK-571 go-live state. Keep these non-secret flags in the tracked production
+      # override: a deploy from a fresh/temp main checkout must not silently fall
+      # back to the code defaults just because the local .env file was not copied.
+      PLACEMENT_PROBE_ENABLED: "true"
+      WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
       PROJECTION_IS_WRITER: "1"
       PROJECTION_IS_WRITER_ARTIFACT: "1"
       PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
   worker:
     environment:
+      # Mirror app exactly; ingestion enrollment runs in the worker, while the
+      # placement entrypoint runs in app. Repeating both makes process parity explicit.
+      PLACEMENT_PROBE_ENABLED: "true"
+      WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
       PROJECTION_IS_WRITER: "1"
       PROJECTION_IS_WRITER_ARTIFACT: "1"
       PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
