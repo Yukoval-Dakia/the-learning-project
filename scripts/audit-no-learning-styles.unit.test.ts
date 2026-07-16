@@ -42,4 +42,32 @@ describe('no-learning-styles audit', () => {
       ),
     ).toEqual([]);
   });
+
+  it('keeps comment markers inside string and template literals scannable', () => {
+    const violations = scanNoLearningStyles(
+      'fixture.ts',
+      [
+        "const url = 'https://site.com/learning-styles';",
+        "const marker = 'start/*VARK*/end';",
+        'const template = `https://site.com/visual learner`;',
+        "const afterMarker = '听觉型学习者';",
+      ].join('\n'),
+    );
+
+    expect(violations.map((violation) => violation.label)).toEqual([
+      'learning-style personalization',
+      'VAK/VARK taxonomy',
+      'modality learner type',
+      'Chinese modality learner type',
+    ]);
+  });
+
+  it('still ignores comments inside template expressions', () => {
+    expect(
+      scanNoLearningStyles(
+        'fixture.ts',
+        'const value = `${1 /* visual learner and VARK */} safe`;',
+      ),
+    ).toEqual([]);
+  });
 });

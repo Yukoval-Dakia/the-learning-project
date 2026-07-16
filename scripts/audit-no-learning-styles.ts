@@ -37,27 +37,100 @@ export interface NoLearningStylesViolation {
 }
 
 function codeLines(text: string): Array<{ line: number; value: string }> {
-  const rows: Array<{ line: number; value: string }> = [];
-  let inBlockComment = false;
-  for (const [index, rawLine] of text.split('\n').entries()) {
-    let value = '';
-    for (let cursor = 0; cursor < rawLine.length; cursor += 1) {
-      if (inBlockComment) {
-        if (rawLine[cursor] === '*' && rawLine[cursor + 1] === '/') {
-          inBlockComment = false;
-          cursor += 1;
-        }
+  type ScanContext =
+    | { mode: 'code' }
+    | { mode: 'string'; quote: "'" | '"' }
+    | { mode: 'template' }
+    | { mode: 'template_expression'; braceDepth: number };
+
+  const characters = text.split('');
+  const contexts: ScanContext[] = [{ mode: 'code' }];
+
+  for (let cursor = 0; cursor < characters.length; ) {
+    const context = contexts[contexts.length - 1];
+    const current = characters[cursor];
+    const next = characters[cursor + 1];
+
+    if (context.mode === 'string') {
+      if (current === '\\') {
+        cursor += Math.min(2, characters.length - cursor);
         continue;
       }
-      if (rawLine[cursor] === '/' && rawLine[cursor + 1] === '*') {
-        inBlockComment = true;
+      if (current === context.quote) contexts.pop();
+      cursor += 1;
+      continue;
+    }
+
+    if (context.mode === 'template') {
+      if (current === '\\') {
+        cursor += Math.min(2, characters.length - cursor);
+        continue;
+      }
+      if (current === '`') {
+        contexts.pop();
         cursor += 1;
         continue;
       }
-      if (rawLine[cursor] === '/' && rawLine[cursor + 1] === '/') break;
-      value += rawLine[cursor];
+      if (current === '$' && next === '{') {
+        contexts.push({ mode: 'template_expression', braceDepth: 1 });
+        cursor += 2;
+        continue;
+      }
+      cursor += 1;
+      continue;
     }
-    const trimmed = value.trim();
+
+    if (current === "'" || current === '"') {
+      contexts.push({ mode: 'string', quote: current });
+      cursor += 1;
+      continue;
+    }
+    if (current === '`') {
+      contexts.push({ mode: 'template' });
+      cursor += 1;
+      continue;
+    }
+
+    if (current === '/' && next === '/') {
+      while (cursor < characters.length && characters[cursor] !== '\n') {
+        if (characters[cursor] !== '\r') characters[cursor] = ' ';
+        cursor += 1;
+      }
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      characters[cursor] = ' ';
+      characters[cursor + 1] = ' ';
+      cursor += 2;
+      while (cursor < characters.length) {
+        if (characters[cursor] === '*' && characters[cursor + 1] === '/') {
+          characters[cursor] = ' ';
+          characters[cursor + 1] = ' ';
+          cursor += 2;
+          break;
+        }
+        if (characters[cursor] !== '\n' && characters[cursor] !== '\r') {
+          characters[cursor] = ' ';
+        }
+        cursor += 1;
+      }
+      continue;
+    }
+
+    if (context.mode === 'template_expression') {
+      if (current === '{') context.braceDepth += 1;
+      if (current === '}') {
+        context.braceDepth -= 1;
+        if (context.braceDepth === 0) contexts.pop();
+      }
+    }
+    cursor += 1;
+  }
+
+  const rows: Array<{ line: number; value: string }> = [];
+  for (const [index, line] of characters.join('').split('\n').entries()) {
+    const trimmed = line.trim();
     if (trimmed) rows.push({ line: index + 1, value: trimmed });
   }
   return rows;

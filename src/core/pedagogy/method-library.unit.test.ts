@@ -6,7 +6,7 @@ describe('pedagogy method library', () => {
     const ids = PEDAGOGY_METHOD_LIBRARY.map((method) => method.id);
 
     expect(ids).toEqual(PedagogyMethodId.options);
-    expect(new Set(ids)).toHaveLength(8);
+    expect(new Set(ids).size).toBe(8);
   });
 
   it('gives every method evidence and state-only indication guards', () => {
