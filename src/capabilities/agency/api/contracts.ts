@@ -1,5 +1,54 @@
 import { z } from 'zod';
 
+export const CreateLearningIntentBodySchema = z
+  .object({
+    topic: z.string().trim().min(1).max(120),
+  })
+  .strict();
+
+const LearningIntentKnowledgeNodeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  domain: z.string().nullable(),
+});
+
+const LearningIntentProposedKnowledgeNodeSchema = z.object({
+  temp_id: z.string().min(1),
+  name: z.string().min(1),
+  domain: z.string().nullable(),
+});
+
+const LearningIntentAtomicSchema = z.object({
+  knowledge_id: z.string().min(1),
+  title: z.string().min(1),
+  one_line_intent: z.string().min(1),
+});
+
+const LearningIntentLongSchema = z.object({
+  knowledge_ids: z.array(z.string().min(1)).min(1),
+  title: z.string().min(1),
+  one_line_intent: z.string().min(1),
+});
+
+export const LearningIntentProposalResponseSchema = z.object({
+  proposal_id: z.string().min(1),
+  topic: z.string().min(1),
+  plan_case: z.enum(['3a_topic_missing', '3b_children_missing', '3c_existing_graph']),
+  knowledge_node: LearningIntentKnowledgeNodeSchema,
+  proposed_knowledge: z
+    .object({
+      root: LearningIntentProposedKnowledgeNodeSchema.optional(),
+      children: z.array(LearningIntentProposedKnowledgeNodeSchema),
+    })
+    .optional(),
+  hub: z.object({
+    title: z.string().min(1),
+    summary_md: z.string().min(1),
+  }),
+  atomics: z.array(LearningIntentAtomicSchema).min(1),
+  longs: z.array(LearningIntentLongSchema),
+});
+
 export const AgentNotesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).optional(),
 });

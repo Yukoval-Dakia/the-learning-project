@@ -1,0 +1,125 @@
+.li-intent-card {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.li-intent-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.li-intent-help {
+  margin: var(--s-1) 0 0;
+}
+
+.li-intent-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s-2);
+}
+
+.li-intent-existing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  color: var(--ink-2);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-2);
+}
+
+.li-intent-input {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 var(--s-3);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  font: inherit;
+}
+
+.li-intent-input:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
+
+.li-intent-input:disabled {
+  color: var(--muted);
+  background: var(--paper-sunk);
+}
+
+.li-intent-error {
+  padding: var(--s-2) var(--s-3);
+  color: var(--coral-ink);
+  background: var(--coral-soft);
+  border-radius: var(--r-2);
+  font-size: 0.9rem;
+}
+
+.li-intent-preview {
+  display: grid;
+  gap: var(--s-3);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+.li-intent-preview-head,
+.li-intent-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.li-intent-hub {
+  margin-top: var(--s-1);
+  font-size: 1.2rem;
+}
+
+.li-intent-summary {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.li-intent-steps {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding-left: 1.4rem;
+}
+
+.li-intent-steps li {
+  padding-left: var(--s-1);
+}
+
+.li-intent-steps b,
+.li-intent-steps span {
+  display: block;
+}
+
+.li-intent-steps span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.li-intent-steps .is-long::marker {
+  color: var(--coral);
+}
+
+@media (max-width: 640px) {
+  .li-intent-form {
+    grid-template-columns: 1fr;
+  }
+
+  .li-intent-preview-head,
+  .li-intent-actions,
+  .li-intent-existing {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -36,6 +36,47 @@ const EV_ICON: Record<string, LoomIconName> = {
   record: 'record',
 };
 
+interface LearningItemPlanPreview {
+  hubTitle: string;
+  summary: string | null;
+  steps: Array<{ title: string; intent: string | null; kind: 'atomic' | 'long' }>;
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function learningItemStepOf(
+  value: unknown,
+  kind: 'atomic' | 'long',
+): LearningItemPlanPreview['steps'][number] | null {
+  const row = recordOf(value);
+  if (!row || typeof row.title !== 'string' || row.title.length === 0) return null;
+  return {
+    title: row.title,
+    intent: typeof row.one_line_intent === 'string' ? row.one_line_intent : null,
+    kind,
+  };
+}
+
+/** Display-only, defensive projection of the free-form learning_item proposed_change. */
+export function learningItemPlanPreviewOf(change: unknown): LearningItemPlanPreview | null {
+  const plan = recordOf(change);
+  const hub = recordOf(plan?.hub);
+  if (!hub || typeof hub.title !== 'string' || hub.title.length === 0) return null;
+  const atomics = Array.isArray(plan?.atomics) ? plan.atomics : [];
+  const longs = Array.isArray(plan?.longs) ? plan.longs : [];
+  const steps = [
+    ...atomics.map((row) => learningItemStepOf(row, 'atomic')),
+    ...longs.map((row) => learningItemStepOf(row, 'long')),
+  ].filter((row): row is LearningItemPlanPreview['steps'][number] => row !== null);
+  return {
+    hubTitle: hub.title,
+    summary: typeof hub.summary_md === 'string' ? hub.summary_md : null,
+    steps,
+  };
+}
+
 function EvidenceChip({
   er,
   count,
@@ -123,6 +164,8 @@ export function ProposalCard({
   const edgeTo = isEdge ? change?.to_knowledge_id : undefined;
   const rel = change?.relation_type;
   const confidence = typeof p.payload.confidence === 'number' ? p.payload.confidence : null;
+  const learningPlan =
+    p.kind === 'learning_item' ? learningItemPlanPreviewOf(p.payload.proposed_change) : null;
 
   return (
     <LoomCard
@@ -166,6 +209,29 @@ export function ProposalCard({
           ),
         )}
       </div>
+
+      {learningPlan && (
+        <div className="proposal-learning-plan">
+          <div className="proposal-learning-hub">
+            <span className="meta">学习主线</span>
+            <b className="serif">{learningPlan.hubTitle}</b>
+            {learningPlan.summary && <span>{learningPlan.summary}</span>}
+          </div>
+          {learningPlan.steps.length > 0 && (
+            <ol>
+              {learningPlan.steps.map((step) => (
+                <li key={`${step.kind}:${step.title}:${step.intent ?? ''}`}>
+                  <span className={`proposal-plan-dot ${step.kind}`} />
+                  <span>
+                    <b>{step.title}</b>
+                    {step.intent && <small>{step.intent}</small>}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
 
       {isEdge && edgeFrom && edgeTo && (
         <div className="edge-preview nowrap-meta">

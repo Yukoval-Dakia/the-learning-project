@@ -38,15 +38,18 @@ async function seedKnowledge(id: string, domain = 'yuwen') {
     .onConflictDoNothing();
 }
 
-async function seedActiveLearningItem(knowledgeIds: string[]) {
+async function seedOpenLearningItem(
+  knowledgeIds: string[],
+  status: 'pending' | 'in_progress' = 'pending',
+) {
   const now = new Date();
   await db.insert(learning_item).values({
     id: createId(),
     source: 'test',
-    title: 'active item',
+    title: 'open item',
     content: '',
     knowledge_ids: knowledgeIds,
-    status: 'active',
+    status,
     created_at: now,
     updated_at: now,
     version: 0,
@@ -112,7 +115,7 @@ describe('refillActiveLearningPools (YUK-474)', () => {
     delete process.env.QUESTION_SUPPLY_REFILL_ENABLED;
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]); // 零题 → 池见底，但 flag off 必须不动。
+    await seedOpenLearningItem([kid]); // genesis pending + 零题，但 flag off 必须不动。
     const { calls, dispatch } = captureDispatch();
     const out = await refillActiveLearningPools(db, { dispatch });
     expect(out).toEqual([]);
@@ -122,7 +125,7 @@ describe('refillActiveLearningPools (YUK-474)', () => {
   it('活跃学习 KC 池见底（0 题）→ 真 demandToSupplyTarget 建 frontier_zero target → dispatch', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]); // 零可用题。
+    await seedOpenLearningItem([kid]); // genesis pending + 零可用题。
     const { calls, dispatch } = captureDispatch();
     const out = await refillActiveLearningPools(db, { dispatch });
     expect(out).toHaveLength(1);
@@ -135,7 +138,7 @@ describe('refillActiveLearningPools (YUK-474)', () => {
   it('draft 题不算活跃池：只有 draft 题的 KC 仍触发 refill', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid]);
     await seedQuestion([kid], { draft_status: 'draft' }); // draft 不计入活跃池。
     const { calls, dispatch } = captureDispatch();
     const out = await refillActiveLearningPools(db, { dispatch });
@@ -147,7 +150,7 @@ describe('refillActiveLearningPools (YUK-474)', () => {
   it('池 ≥ 阈值（2 道 active 题）→ above-threshold，不 dispatch', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]);
+    await seedOpenLearningItem([kid], 'in_progress');
     await seedQuestion([kid]);
     await seedQuestion([kid]); // 2 道 active = 阈值。
     const { calls, dispatch } = captureDispatch();
@@ -173,7 +176,7 @@ describe('refillActiveLearningPools (YUK-474)', () => {
   it('refill 的 frontier_zero fingerprint 与 nightly 扫描器 R1 目标逐字相同（共享 7d cooldown 前提）', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]); // 零题 → nightly 也会产 R1 frontier_zero。
+    await seedOpenLearningItem([kid]); // genesis pending + 零题 → nightly 也会产 R1 frontier_zero。
 
     // refill 侧：真 demandToSupplyTarget（gap=阈值）。
     const refillTarget = await demandToSupplyTarget(
@@ -205,7 +208,7 @@ describe('refillActiveLearningPools (YUK-474)', () => {
   it('经真 dispatchSupplyTarget：同缺口第二次 refill 命中 7d cooldown → skip，不双 enqueue', async () => {
     const kid = createId();
     await seedKnowledge(kid);
-    await seedActiveLearningItem([kid]); // 零题，缺口不会被 fake 满足 → 第二次仍见底。
+    await seedOpenLearningItem([kid]); // genesis pending，缺口不会被 fake 满足 → 第二次仍见底。
 
     const enqueued: Array<{ queue: string }> = [];
     const enqueue: EnqueueFn = async (queue) => {

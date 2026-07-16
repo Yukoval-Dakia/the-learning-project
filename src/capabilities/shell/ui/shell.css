@@ -69,6 +69,70 @@
   padding: 1px 5px;
   word-break: break-all;
 }
+
+.inbox-loom .proposal-learning-plan {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+
+.inbox-loom .proposal-learning-hub,
+.inbox-loom .proposal-learning-hub > span,
+.inbox-loom .proposal-learning-hub > b {
+  display: block;
+}
+
+.inbox-loom .proposal-learning-hub > b {
+  margin-top: 2px;
+  font-size: var(--fs-h5);
+}
+
+.inbox-loom .proposal-learning-hub > span:last-child:not(.meta) {
+  margin-top: var(--s-1);
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+}
+
+.inbox-loom .proposal-learning-plan ol {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inbox-loom .proposal-learning-plan li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: var(--s-2);
+  align-items: start;
+}
+
+.inbox-loom .proposal-learning-plan li b,
+.inbox-loom .proposal-learning-plan li small {
+  display: block;
+}
+
+.inbox-loom .proposal-learning-plan li small {
+  margin-top: 2px;
+  color: var(--ink-4);
+  font-size: var(--fs-meta);
+}
+
+.inbox-loom .proposal-plan-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 7px;
+  background: var(--coral);
+  border-radius: var(--r-pill);
+}
+
+.inbox-loom .proposal-plan-dot.long {
+  background: var(--hard);
+}
 .inbox-loom .proposal-foot {
   display: flex;
   align-items: center;

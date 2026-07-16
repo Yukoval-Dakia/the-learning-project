@@ -16,6 +16,7 @@ import {
 // in the agency capability package; this shell only routes to them.
 import {
   type CompletionAcceptResult,
+  type EnqueueLearningIntentNoteFn,
   type LearningItemAcceptResult,
   type RelearnAcceptResult,
   acceptCompletionProposal,
@@ -221,6 +222,9 @@ export interface AcceptAiProposalOpts {
   user_note?: string;
   // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
+  // YUK-604 — swappable note_generate enqueue; DB tests inject a spy while
+  // production uses pg-boss with an artifact-keyed singleton window.
+  enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
   // YUK-227 S3 Slice C — image_candidate accept seams (download/VLM/enqueue/ledger).
   // DB tests inject stubs to drive the accept path without real R2 / model spend.
   imageCandidateDeps?: ImageCandidateAcceptDeps;

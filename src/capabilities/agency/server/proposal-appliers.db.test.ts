@@ -90,7 +90,10 @@ describe('learning_item proposal lifecycle', () => {
 
   it('accept materializes 1 hub + N atomic learning_items via acceptLearningIntent and records a single rate event', async () => {
     const { proposalId } = await seedLearningItemProposal();
-    const result = await acceptAiProposal(testDb(), proposalId);
+    const enqueueLearningIntentNote = vi.fn(async (_artifactId: string) => {});
+    const result = await acceptAiProposal(testDb(), proposalId, {
+      enqueueLearningIntentNote,
+    });
     expect(result.kind).toBe('learning_item');
     if (result.kind !== 'learning_item') throw new Error('unexpected result kind');
     expect(result.hub_learning_item_id).toBeTruthy();
@@ -99,6 +102,10 @@ describe('learning_item proposal lifecycle', () => {
     expect(result.hub_artifact_id).toBeTruthy();
     expect(result.atomic_artifact_ids).toHaveLength(2);
     expect(result.long_artifact_ids).toEqual([]);
+    expect(result.enqueued_note_generate_jobs).toBe(2);
+    expect(new Set(enqueueLearningIntentNote.mock.calls.map(([id]) => id))).toEqual(
+      new Set(result.atomic_artifact_ids),
+    );
 
     const lis = await testDb()
       .select()
@@ -150,6 +157,32 @@ describe('learning_item proposal lifecycle', () => {
       long_learning_item_ids: result.long_learning_item_ids,
       long_artifact_ids: result.long_artifact_ids,
     });
+  });
+
+  it('idempotent re-accept re-enqueues only note artifacts that are still pending', async () => {
+    const { proposalId } = await seedLearningItemProposal({ withLong: true });
+    const firstEnqueue = vi.fn(async (_artifactId: string) => {});
+    const first = await acceptAiProposal(testDb(), proposalId, {
+      enqueueLearningIntentNote: firstEnqueue,
+    });
+    expect(first.kind).toBe('learning_item');
+    if (first.kind !== 'learning_item') throw new Error('unexpected result kind');
+    expect(first.enqueued_note_generate_jobs).toBe(3);
+
+    await testDb()
+      .update(artifact)
+      .set({ generation_status: 'ready' })
+      .where(eq(artifact.id, first.atomic_artifact_ids[0]));
+
+    const retryEnqueue = vi.fn(async (_artifactId: string) => {});
+    const second = await acceptAiProposal(testDb(), proposalId, {
+      enqueueLearningIntentNote: retryEnqueue,
+    });
+    expect(second.kind).toBe('learning_item');
+    if (second.kind !== 'learning_item') throw new Error('unexpected result kind');
+    expect(second.idempotent).toBe(true);
+    expect(second.enqueued_note_generate_jobs).toBe(2);
+    expect(retryEnqueue).not.toHaveBeenCalledWith(first.atomic_artifact_ids[0]);
   });
 
   it('dismiss writes a generic rate event without materializing learning_items', async () => {

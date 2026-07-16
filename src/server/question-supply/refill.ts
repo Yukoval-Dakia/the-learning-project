@@ -1,7 +1,7 @@
 // YUK-474 — 动态供题 refill（池见底补题）。
 //
 // 角色（owner 2026-06-21 拍定，从 day-one 降级为 act/later）：当学习者**取题**（练习流首次
-// lazy-compose）时，其**活跃学习 KC**（learning_item status active/in_progress 引用的
+// lazy-compose）时，其**开放学习 KC**（learning_item status pending/in_progress 引用的
 // knowledge_ids）的**活跃池**（non-draft question）< 阈值 → 复用既有供给机器补题。
 // **不重写 dispatcher**——走 matcher 的 demandToSupplyTarget（Demand → QuestionSupplyTarget）
 // + dispatcher 的 dispatchSupplyTarget（route-plan → enqueue 既有 sourcing/quiz_gen 队列，自带
@@ -49,6 +49,7 @@
 //   GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
 
 import { newId } from '@/core/ids';
+import { LearningItemOpenStatus } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { learning_item } from '@/db/schema';
 import {
@@ -204,16 +205,15 @@ export async function refillThinPools(
 }
 
 /**
- * 加载活跃学习 KC：active learning item（status IN ['active','in_progress']）引用的全部
- * knowledge_ids。**与 target-discovery `loadFrontierKnowledge`:537-541 + stream-store
- * `collectComposerInputs` step 3 同款 learning_item 扫描**（约定式重复，三处一致；本扫描轻量、
- * 只读 knowledge_ids，不解析 mastery）。
+ * 加载开放学习 KC：pending/in_progress learning item 引用的全部 knowledge_ids。与
+ * target-discovery `loadFrontierKnowledge` + stream-store `collectComposerInputs` step 3 共享
+ * `LearningItemOpenStatus` 契约（本扫描轻量、只读 knowledge_ids，不解析 mastery）。
  */
 export async function activeLearningKnowledgeIds(db: Db): Promise<string[]> {
   const items = await db
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
-    .where(inArray(learning_item.status, ['active', 'in_progress']));
+    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
   return [...new Set(items.flatMap((i) => i.knowledge_ids ?? []).filter(Boolean))];
 }
 
