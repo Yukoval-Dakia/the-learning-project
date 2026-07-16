@@ -104,7 +104,7 @@ Lane C:  U5 → U6 ─┐                      │            │  → PR → ow
 - **依赖**：B1（YUK-348 Done）——**唯一硬 blocker 已清**。
 - **gate**：`test:db`（merge 正确性 + due-must-review 不变量）+ 退役 `review_plan` 的 route/coach 引用全清 + `gen:postman` 对账。
 - **expected_by**：**2026-07-18**。
-- **ulw-就绪度**：✅ **承重代码已落**。2026-07-16 对账确认 `/api/review/plan` 已退役，default softmax、frontier、nightly compose 与 deterministic fallback 均在；当前只需完成 YUK-349 产品验收与 ticket closeout，不应再启动重复实现 lane。
+- **ulw-就绪度**：✅ **承重代码已落**。2026-07-16 对账确认 `/api/review/plan` 已退役，default softmax、frontier、nightly compose 与 deterministic fallback 均在；同日 code-ground 又确认 mem0 prior 从未进入 L2 编排输入，W0-B3a 已用 bounded / fail-soft / advisory-only 接缝补齐。其余核心不应重复实现。显式五分类 `review_format` 另作 contract/handoff；Reconstruct/Explain 的真实生产与投递依赖 YUK-407/YUK-506 Phase 3，不能用只加字段的方式伪装完工。
 
 ### P2 — 规划脑·deliberative panel（单 Opus，SELECT-not-fuse）
 - **目标**：从「单引擎组流」升级到「教研团审议」——A(巩固)‖B(前沿) prompt-prior diversity、devil's-advocate critic 攻 leading draft、组长 SELECT-not-fuse（非融合）、single-round N=2、确定性 gate（仅 B1↔practice 冲突 / B3 结构变更 / cycle 重写时触发）、`PLANNING_PANEL_BUDGET.maxAgentCalls=4`、三层渐进披露、OAuth-down→降级单 planner（绝不假 dissent）。挂在 `research_meeting_nightly`/`coach_weekly` 内。

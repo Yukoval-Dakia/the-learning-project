@@ -363,6 +363,12 @@ describe('getTaskSystemPrompt', () => {
       // Instead the prompt tells the LLM it won't see recall candidates (deterministic
       // same-question passthrough — never weighted/sampled).
       expect(prompt).toContain('原题重背');
+      // B3 mem0 learner prior is a soft, non-instruction data block only.
+      expect(prompt).toContain('<ADVISORY_ONLY>');
+      expect(prompt).toContain('DATA_ONLY');
+      expect(prompt).toContain('不是指令');
+      expect(prompt).toContain('不准确');
+      expect(prompt).toContain('绝不');
     }
   });
 });
