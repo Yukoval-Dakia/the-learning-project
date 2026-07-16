@@ -104,7 +104,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
     label: '示范例题',
     intent: '先展示一份带关键决策说明的完整解法。',
     indicated_when: [{ theta_band: ['novice'] }, { precision_band: ['low'] }],
-    contraindicated_when: [{ theta_band: ['secure'], precision_band: ['high'] }],
+    contraindicated_when: [],
     evidence_refs: ['worked_example_effect', 'expertise_reversal'],
   },
   {
@@ -115,7 +115,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
       { theta_band: ['novice', 'developing'] },
       { precision_band: ['low', 'medium'] },
     ],
-    contraindicated_when: [{ theta_band: ['secure'], precision_band: ['high'] }],
+    contraindicated_when: [],
     evidence_refs: ['guidance_fading', 'worked_example_effect'],
   },
   {
@@ -123,7 +123,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
     label: '开放问题',
     intent: '在低脚手架条件下独立组织解法并解释取舍。',
     indicated_when: [{ theta_band: ['secure'], precision_band: ['high'] }],
-    contraindicated_when: [{ precision_band: ['low'] }, { misconception_present: true }],
+    contraindicated_when: [{ misconception_present: true }],
     evidence_refs: ['productive_failure', 'generation_effect'],
   },
   {
@@ -139,7 +139,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
     label: '反驳误解',
     intent: '先明确错误模型，再用反例和正确机制替换它。',
     indicated_when: [{ misconception_present: true }],
-    contraindicated_when: [{ misconception_present: false }],
+    contraindicated_when: [],
     evidence_refs: ['refutation_text'],
   },
   {
@@ -147,7 +147,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
     label: '交错辨析',
     intent: '交错相邻类型，训练识别该用哪种策略。',
     indicated_when: [{ theta_band: ['secure'], precision_band: ['high'] }],
-    contraindicated_when: [{ precision_band: ['low'] }, { misconception_present: true }],
+    contraindicated_when: [{ misconception_present: true }],
     evidence_refs: ['interleaving_effect'],
   },
   {
@@ -161,7 +161,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
         kc_is_rule_based: true,
       },
     ],
-    contraindicated_when: [{ precision_band: ['low'] }, { kc_is_rule_based: false }],
+    contraindicated_when: [],
     evidence_refs: ['generation_effect', 'self_explanation'],
   },
   {
@@ -174,7 +174,7 @@ export const PEDAGOGY_METHOD_LIBRARY = PedagogyMethodLibrary.parse([
         precision_band: ['medium', 'high'],
       },
     ],
-    contraindicated_when: [{ precision_band: ['low'] }],
+    contraindicated_when: [],
     evidence_refs: ['self_explanation', 'guidance_fading'],
   },
 ]);

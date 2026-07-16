@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { selectPedagogyCandidates } from './policy';
+import {
+  PEDAGOGY_METHOD_LIBRARY,
+  type PedagogyStateT,
+  PrecisionBand,
+  ThetaBand,
+} from './method-library';
+import { matchesStateGuard, selectPedagogyCandidates } from './policy';
+
+const ALL_PEDAGOGY_STATES: PedagogyStateT[] = ThetaBand.options.flatMap((theta_band) =>
+  PrecisionBand.options.flatMap((precision_band) =>
+    [false, true].flatMap((misconception_present) =>
+      [false, true].map((kc_is_rule_based) => ({
+        theta_band,
+        precision_band,
+        misconception_present,
+        kc_is_rule_based,
+      })),
+    ),
+  ),
+);
 
 describe('selectPedagogyCandidates', () => {
   it('keeps low-precision states inside the scaffolded candidate set', () => {
@@ -60,5 +79,19 @@ describe('selectPedagogyCandidates', () => {
     expect(() =>
       selectPedagogyCandidates({ ...state, learning_style: 'visual' } as never),
     ).toThrow();
+  });
+
+  it('keeps every contraindication reachable from an indicated state', () => {
+    for (const method of PEDAGOGY_METHOD_LIBRARY) {
+      for (const contraindication of method.contraindicated_when) {
+        const isOperational = ALL_PEDAGOGY_STATES.some(
+          (state) =>
+            method.indicated_when.some((indication) => matchesStateGuard(state, indication)) &&
+            matchesStateGuard(state, contraindication),
+        );
+
+        expect(isOperational, `${method.id}: ${JSON.stringify(contraindication)}`).toBe(true);
+      }
+    }
   });
 });
