@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { analyzeSource } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -37,101 +38,17 @@ export interface NoLearningStylesViolation {
 }
 
 function codeLines(text: string): Array<{ line: number; value: string }> {
-  type ScanContext =
-    | { mode: 'code' }
-    | { mode: 'string'; quote: "'" | '"' }
-    | { mode: 'template' }
-    | { mode: 'template_expression'; braceDepth: number };
-
-  const characters = text.split('');
-  const contexts: ScanContext[] = [{ mode: 'code' }];
-
-  for (let cursor = 0; cursor < characters.length; ) {
-    const context = contexts[contexts.length - 1];
-    const current = characters[cursor];
-    const next = characters[cursor + 1];
-
-    if (context.mode === 'string') {
-      if (current === '\\') {
-        cursor += Math.min(2, characters.length - cursor);
-        continue;
-      }
-      if (current === context.quote) contexts.pop();
-      cursor += 1;
-      continue;
-    }
-
-    if (context.mode === 'template') {
-      if (current === '\\') {
-        cursor += Math.min(2, characters.length - cursor);
-        continue;
-      }
-      if (current === '`') {
-        contexts.pop();
-        cursor += 1;
-        continue;
-      }
-      if (current === '$' && next === '{') {
-        contexts.push({ mode: 'template_expression', braceDepth: 1 });
-        cursor += 2;
-        continue;
-      }
-      cursor += 1;
-      continue;
-    }
-
-    if (current === "'" || current === '"') {
-      contexts.push({ mode: 'string', quote: current });
-      cursor += 1;
-      continue;
-    }
-    if (current === '`') {
-      contexts.push({ mode: 'template' });
-      cursor += 1;
-      continue;
-    }
-
-    if (current === '/' && next === '/') {
-      while (cursor < characters.length && characters[cursor] !== '\n') {
-        if (characters[cursor] !== '\r') characters[cursor] = ' ';
-        cursor += 1;
-      }
-      continue;
-    }
-
-    if (current === '/' && next === '*') {
-      characters[cursor] = ' ';
-      characters[cursor + 1] = ' ';
-      cursor += 2;
-      while (cursor < characters.length) {
-        if (characters[cursor] === '*' && characters[cursor + 1] === '/') {
-          characters[cursor] = ' ';
-          characters[cursor + 1] = ' ';
-          cursor += 2;
-          break;
-        }
-        if (characters[cursor] !== '\n' && characters[cursor] !== '\r') {
-          characters[cursor] = ' ';
-        }
-        cursor += 1;
-      }
-      continue;
-    }
-
-    if (context.mode === 'template_expression') {
-      if (current === '{') context.braceDepth += 1;
-      if (current === '}') {
-        context.braceDepth -= 1;
-        if (context.braceDepth === 0) contexts.pop();
-      }
-    }
-    cursor += 1;
-  }
-
+  const { commentMask } = analyzeSource(text);
   const rows: Array<{ line: number; value: string }> = [];
-  for (const [index, line] of characters.join('').split('\n').entries()) {
-    const trimmed = line.trim();
+  let offset = 0;
+  for (const [index, rawLine] of text.split('\n').entries()) {
+    let value = '';
+    for (let cursor = 0; cursor < rawLine.length; cursor += 1) {
+      if (commentMask[offset + cursor] === 0) value += rawLine[cursor];
+    }
+    const trimmed = value.trim();
     if (trimmed) rows.push({ line: index + 1, value: trimmed });
+    offset += rawLine.length + 1;
   }
   return rows;
 }

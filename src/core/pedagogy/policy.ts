@@ -58,7 +58,9 @@ export function selectPedagogyCandidates(input: PedagogyStateT): PedagogyPolicyR
   }
 
   if (candidates.length === 0) {
-    throw new Error('pedagogy policy produced no legal candidates');
+    throw new Error(
+      `pedagogy policy produced no legal candidates for state: ${JSON.stringify(state)}`,
+    );
   }
 
   return {
