@@ -51,12 +51,14 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/server/proposals/signals';
+import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 // Structural-minimal opts: the dispatch shell's AcceptAiProposalOpts is
 // structurally assignable to this (appliers only read decision/user_note).
 interface AgencyApplierOpts {
   decision?: string;
   user_note?: string;
+  enqueueLearningIntentNote?: EnqueueLearningIntentNoteFn;
 }
 
 export interface LearningItemAcceptResult {
@@ -75,7 +77,56 @@ export interface LearningItemAcceptResult {
   long_artifact_ids: string[];
   root_knowledge_id: string;
   created_knowledge_ids: string[];
+  enqueued_note_generate_jobs: number;
   idempotent?: boolean;
+}
+
+export type EnqueueLearningIntentNoteFn = (artifactId: string) => Promise<void>;
+
+const NOTE_GENERATE_SINGLETON_SECONDS = 24 * 60 * 60;
+
+async function defaultEnqueueLearningIntentNote(artifactId: string): Promise<void> {
+  const { getStartedBoss } = await import('@/server/boss/client');
+  const boss = await getStartedBoss();
+  await boss.send(
+    'note_generate',
+    { artifact_id: artifactId },
+    {
+      singletonKey: artifactId,
+      singletonSeconds: NOTE_GENERATE_SINGLETON_SECONDS,
+    },
+  );
+}
+
+/**
+ * Enqueue only still-pending note artifacts. Production uses an artifact-keyed
+ * singleton window, so an idempotent re-accept can recover a prior send failure
+ * without duplicating active work. Tests inject the send seam instead of
+ * starting pg-boss.
+ */
+export async function enqueueLearningIntentNotes(
+  db: Db,
+  artifactIds: string[],
+  enqueue?: EnqueueLearningIntentNoteFn,
+): Promise<number> {
+  if (artifactIds.length === 0) return 0;
+  if (!enqueue && !shouldEnqueueBackgroundJobs()) return 0;
+
+  const pending = await db
+    .select({ id: artifact.id })
+    .from(artifact)
+    .where(and(inArray(artifact.id, artifactIds), eq(artifact.generation_status, 'pending')));
+  const send = enqueue ?? defaultEnqueueLearningIntentNote;
+  let enqueued = 0;
+  for (const row of pending) {
+    try {
+      await send(row.id);
+      enqueued += 1;
+    } catch (err) {
+      console.warn(`note_generate enqueue failed for artifact ${row.id}:`, err);
+    }
+  }
+  return enqueued;
 }
 
 export interface CompletionAcceptResult {
@@ -135,16 +186,27 @@ export async function acceptLearningItemProposal(
     }
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     const summary = await summarizeLearningItemMaterialization(db, proposalId);
+    const enqueued = await enqueueLearningIntentNotes(
+      db,
+      [...summary.atomic_artifact_ids, ...summary.long_artifact_ids],
+      opts.enqueueLearningIntentNote,
+    );
     return {
       kind: 'learning_item',
       rate_event_id: existingRate.id,
       ...summary,
+      enqueued_note_generate_jobs: enqueued,
       idempotent: true,
     };
   }
 
   const result: LearningIntentMaterializeResult = await acceptLearningIntent({ db, proposalId });
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  const enqueued = await enqueueLearningIntentNotes(
+    db,
+    [...result.atomic_artifact_ids, ...result.long_artifact_ids],
+    opts.enqueueLearningIntentNote,
+  );
 
   const rateRows = await db
     .select({ id: event.id })
@@ -171,6 +233,7 @@ export async function acceptLearningItemProposal(
     long_artifact_ids: result.long_artifact_ids,
     root_knowledge_id: result.root_knowledge_id,
     created_knowledge_ids: result.created_knowledge_ids,
+    enqueued_note_generate_jobs: enqueued,
   };
 }
 

@@ -4,6 +4,8 @@ import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   AgentNotesQuerySchema,
   AgentNotesResponseSchema,
+  CreateLearningIntentBodySchema,
+  LearningIntentProposalResponseSchema,
   ProbeAnswerBodySchema,
   ProbeAnswerParamsSchema,
   ProbeAnswerResponseSchema,
@@ -28,6 +30,19 @@ export const agencyCapability = defineCapability({
         // M0 (YUK-313)：懒加载 thunk——manifest 保持纯元数据（unit 分区不拉 db），
         // server 组合根挂载时才解析 handler。
         load: () => import('./api/notes').then((m) => m.GET),
+      },
+      {
+        // YUK-604 — M5 teardown removed the only live caller of planLearningIntent.
+        // Restore the command in the owning capability; acceptance stays on the
+        // canonical /api/proposals/[id]/decisions route rather than reviving the
+        // bespoke legacy /learning-intents/[id]/accept shell.
+        method: 'POST',
+        path: '/api/learning-intents',
+        operationId: 'createLearningIntentProposal',
+        request: { body: CreateLearningIntentBodySchema },
+        responses: { 200: LearningIntentProposalResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/learning-intent-create').then((m) => m.POST),
       },
       {
         // 冷启 P0 (YUK-472)：at-entry 直写 goal（source='manual'），与 ADR-0025

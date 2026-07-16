@@ -1,6 +1,7 @@
 // Phase 2B — async per generated note artifact.
 //
-// Enqueued by /api/learning-intents/[id]/accept (one job per atomic/long artifact).
+// Enqueued by the canonical learning_item proposal accept path (one job per
+// atomic/long artifact).
 // Picks up { artifact_id }, loads context (artifact row + parent hub +
 // knowledge node), calls NoteGenerateTask, parses 5 semantic sections, UPDATEs
 // the artifact row to generation_status='ready' + body_blocks.

@@ -195,7 +195,7 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     buildNoteVerifyHandler(db, {}),
   );
 
-  // Phase 2B: NoteGenerateTask — enqueued by /api/learning-intents/[id]/accept,
+  // Phase 2B: NoteGenerateTask — enqueued by canonical learning_item proposal accept,
   // one job per atomic/long artifact. Each job runs ~30-60s LLM call and updates
   // the artifact row in place. batchSize=1 keeps mimo rate-limit friendly.
   await createJobQueue(boss, 'note_generate', EXPIRE_LLM);

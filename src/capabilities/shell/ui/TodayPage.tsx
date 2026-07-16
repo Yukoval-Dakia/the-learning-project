@@ -10,6 +10,7 @@
 // 见 CostRibbon 组件注释。
 
 import { AgentNotesBoard } from '@/capabilities/agency/ui/AgentNotesBoard';
+import { LearningIntentComposer } from '@/capabilities/agency/ui/LearningIntentComposer';
 import type { AgentNotesResponse } from '@/capabilities/agency/ui/types';
 import ColdStart from '@/capabilities/onboarding/ui/ColdStart';
 import { apiJson } from '@/ui/lib/api';
@@ -499,6 +500,12 @@ export default function TodayPage({ navigate }: TodayPageProps) {
             {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}
             {s.active_goal && <ProfileBand goal={s.active_goal} navigate={navigate} />}
+
+            <LearningIntentComposer
+              initialTopic={s.active_goal?.title ?? ''}
+              pendingCount={s.proposals.by_kind.learning_item ?? 0}
+              navigate={navigate}
+            />
 
             {threads.length > 0 && (
               <>
