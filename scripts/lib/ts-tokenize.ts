@@ -148,6 +148,8 @@ export type SourceAnalysis = {
    * in real code, not in a docstring.
    */
   codeMask: Uint8Array;
+  /** Per-char mask: 1 = comment, 0 = code or literal text. */
+  commentMask: Uint8Array;
   /** Spans of `sql`-tagged template literals (raw text incl. `${}` interpolations). */
   sqlSpans: SqlSpan[];
 };
@@ -177,6 +179,7 @@ function endsWithSqlTag(src: string, endExclusive: number): boolean {
 export function analyzeSource(src: string): SourceAnalysis {
   const n = src.length;
   const codeMask = new Uint8Array(n);
+  const commentMask = new Uint8Array(n);
   const sqlSpans: SqlSpan[] = [];
 
   let inLine = false;
@@ -196,12 +199,15 @@ export function analyzeSource(src: string): SourceAnalysis {
     const next = src[i + 1];
 
     if (inLine) {
+      commentMask[i] = 1;
       if (c === '\n') inLine = false;
       i += 1;
       continue;
     }
     if (inBlock) {
+      commentMask[i] = 1;
       if (c === '*' && next === '/') {
+        commentMask[i + 1] = 1;
         inBlock = false;
         i += 2;
         continue;
@@ -257,12 +263,14 @@ export function analyzeSource(src: string): SourceAnalysis {
     codeMask[i] = 1;
     if (c === '/' && next === '/') {
       codeMask[i] = 0;
+      commentMask[i] = 1;
       inLine = true;
       i += 1;
       continue;
     }
     if (c === '/' && next === '*') {
       codeMask[i] = 0;
+      commentMask[i] = 1;
       inBlock = true;
       i += 1;
       continue;
@@ -296,7 +304,7 @@ export function analyzeSource(src: string): SourceAnalysis {
     i += 1;
   }
 
-  return { codeMask, sqlSpans };
+  return { codeMask, commentMask, sqlSpans };
 }
 
 /** 1-based line number of `idx` in `src`. */
