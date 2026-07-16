@@ -4,7 +4,7 @@
 >
 > 更新于：2026-07-16　·　历史头部日志（2026-06-23 ~ 07-11，含 YUK-597 收伞段）已滚存 → `docs/planning/2026-07-07-plan-header-log-archive.md`（原文保真）。
 
-> **【更新 2026-07-16 · 驾驶舱 re-grounding：07-12→16 五波交付上板 + 生产/在飞实况重建 + stash 孤本抢救】** 看板停在 07-11 收伞，期间 main 落 **35+ PR、两个 program 全交付**：① **产品可用性硬化 UH**（总控 YUK-619，#790 主 PR + 26 单全 Done；计划/验收矩阵 `docs/planning/2026-07-13-product-usability-hardening.md`，容器级 usability gate + runbook `docs/agents/usability-container-smoke.md`；部署面 = 非 root 运行、mem0-init chown、pdfium.wasm、`GET /api/auth/check`）② **API 资源契约收敛 YUK-641~668**（28 单，#792-797+#800-820；152/152 路由声明 + OpenAPI 143 path + `audit:api-contracts`/`audit:no-learning-styles` 双 CI 门禁进 `pnpm test`；唯一尾巴 = legacy alias 删除，evidence-gated 刻意推迟）。另三波：**YUK-617 通电+cleanup 四刀**（#776-781，删 ~1000 行孤儿 + 端点批 ground-truth 纠偏救回 C6/C10/C7 活代码；尾巴见 NEXT）· **YUK-567 备课台 slice-1/2 全链通电**（#782-784，conjecture 卡→accept→probe 文本+图片作答→confirm/refute；edit-claim path deferred）· **YUK-476+614 档案露出**（#772/773，/today ProfileBand，day-one 软缺口闭合）· **YUK-634 + 学科网获取设计草案**（#787）。今日（07-16）：**#823 YUK-506 教学法安全脊 dark-ship merge**（13:48，src/core/pedagogy 无 runtime wiring，**未部署**）；部署窗 10:01 = `287e4e2a`（main@#820 + flag-persist deploy commit → 本 session cherry-pick 回 main = **PR #825**，全 gate 绿）；cloudflared 仍 crash-loop（YUK-615，RestartCount 2456+，fix owner-gated）；**YUK-604 Linear=Done 悖论**（impl 只在 codex worktree 分支未合 main，已评论待 owner 裁）；**stash@{0} 孤本抢救**：1918 行设计深稿（供题控制面研究 + owner Subject Control Plane proposal 原文）本 PR 归档入 `docs/design/`，spike 代码 patch 存 `.remember/tmp/stash0-rescue/`。（上一条 07-11 收伞【更新】已滚存 → 归档文件）
+> **【更新 2026-07-16 · 驾驶舱 re-grounding：07-12→16 五波交付上板 + 生产/在飞实况重建 + stash 孤本抢救】** 看板停在 07-11 收伞，期间 main 落 **35+ PR、两个 program 全交付**：① **产品可用性硬化 UH**（总控 YUK-619，#790 主 PR + 26 单全 Done；计划/验收矩阵 `docs/planning/2026-07-13-product-usability-hardening.md`，容器级 usability gate + runbook `docs/agents/usability-container-smoke.md`；部署面 = 非 root 运行、mem0-init chown、pdfium.wasm、`GET /api/auth/check`）② **API 资源契约收敛 YUK-641~668**（28 单，#792-797+#800-820；152/152 路由声明 + OpenAPI 143 path + `audit:api-contracts`/`audit:no-learning-styles` 双 CI 门禁进 `pnpm test`；唯一尾巴 = legacy alias 删除，evidence-gated 刻意推迟）。另三波：**YUK-617 通电+cleanup 四刀**（#776-781，删 ~1000 行孤儿 + 端点批 ground-truth 纠偏救回 C6/C10/C7 活代码；尾巴见 NEXT）· **YUK-567 备课台 slice-1/2 全链通电**（#782-784，conjecture 卡→accept→probe 文本+图片作答→confirm/refute；edit-claim path deferred）· **YUK-476+614 档案露出**（#772/773，/today ProfileBand，day-one 软缺口闭合）· **YUK-634 + 学科网获取设计草案**（#787）。今日（07-16）：**#823 YUK-506 教学法安全脊 dark-ship merge**（13:48，src/core/pedagogy 无 runtime wiring，**未部署**）；部署窗 10:01 = `287e4e2a`（main@#820 + flag-persist deploy commit → 本 session cherry-pick 回 main = **PR #825 已按政策自主 merge `e963b393`**：全 gate + 独立 opus review APPROVE 折入 + CI 绿 + threads 零）；cloudflared 仍 crash-loop（YUK-615，RestartCount 2456+，fix owner-gated）；**YUK-604 Linear=Done 悖论**（impl 只在 codex worktree 分支未合 main，已评论待 owner 裁）；**stash@{0} 孤本抢救**：1918 行设计深稿（供题控制面研究 + owner Subject Control Plane proposal 原文）本 PR 归档入 `docs/design/`，spike 代码 patch 存 `.remember/tmp/stash0-rescue/`。（上一条 07-11 收伞【更新】已滚存 → 归档文件）
 
 ## 🎯 主线方向（当前）
 
@@ -15,7 +15,7 @@
 ## NOW（当前 active 线）
 
 - **供给线主弧（active）**：三件套——① **YUK-604 pending-stall 收口悖论**：Linear 今日翻 Done 但 impl（2 commits）只在 codex worktree 分支 `yuk-604-learning-item-open-status` 未合 main，「激活语义 owner 判词」未见记录；已评论回填，**等 owner/该 lane 收口（开 PR 或翻回状态）**——在此之前供给脊柱断电在 main 上未修。② **学科网真题获取弧**：设计草案已入库（`docs/design/2026-07-13-question-supply-xueke-acquisition.md`），owner 已定全自动 (A)、headless 认证 linchpin 已验证 ✅；fork (b)-(d) + 4 条 follow-up 待 owner 拍角度后落 Linear（见 PARKED）。③ 供题控制面判词底稿已归档（本次抢救，见【更新】）。
-- **方向 B「可开始用」milestone — 代码+UI 硬化全齐，剩 gate 不变**：flag ①批 LIVE（07-06 翻、07-16 起固化进 tracked compose override，PR #825）；**剩 gate = 冷库零题（owner 上传/生成内容）→ 首次真实 placement 会话跑通**（空池 `sourcingNeeded:true` 走 quiz_gen 是设计态）。⚠️ 生产 = 本机 OrbStack compose（`tlp-deploy`），外部 ingress 断（YUK-615）。
+- **方向 B「可开始用」milestone — 代码+UI 硬化全齐，剩 gate 不变**：flag ①批 LIVE（07-06 翻、07-16 固化进 tracked compose override，#825 已合）；**剩 gate = 冷库零题（owner 上传/生成内容）→ 首次真实 placement 会话跑通**（空池 `sourcingNeeded:true` 走 quiz_gen 是设计态）。⚠️ 生产 = 本机 OrbStack compose（`tlp-deploy`），外部 ingress 断（YUK-615）。
 - **在飞活 lane：#824**（YUK-349 B3 mem0 advisory prior，07-16 当天开的 draft，MERGEABLE）——另一 lane 活跃工作，推进/review/转正归其 lane。
 
 ## NEXT（就绪，排队）
@@ -50,11 +50,12 @@
 
 ## 在飞（PRs / workflows / worktrees）
 
-- **PR 在飞**：**#825**（本 session：YUK-571 flag-persist cherry-pick 回 main，全 gate 绿，独立 review 中→按 07-07 政策 merge）· **#824**（YUK-349 draft，另一 lane 活跃）· **#821**（drift 周报，与 #823 冲突，建议 owner 关）· **#791**（dependabot batch）· 本 plan-sync docs PR。
-- **生产 = `287e4e2a`**（= main@#820 + flag-persist）：**#823（YUK-506 安全脊）未部署**——dark-ship 零 runtime 影响，#825 合后从 main 部署即一并携带。**外部 ingress 断**（YUK-615）。
+- **PR 在飞**：**#824**（YUK-349 draft，另一 lane 活跃；⚠️ 未解 bot threads：CodeRabbit kernel-facade Major + OCR double-serialization，merge 前须按 thread-check 纪律处理）· **#821**（drift 周报，与 #823 冲突，建议 owner 关；classifier 挡自动关）· **#791**（dependabot batch）· 本 plan-sync docs PR（#826）。**#825 已 merge**（`e963b393`，07-16 本 session：全 gate + 独立 review + CI 绿）。
+- **backlog-engine 2026-07-16 产物**（43 agents 全量 grooming）：**12 top drafts** + B 段 9 条低优 + C 段已跟踪映射 + **D 段 Linear 卫生批**（merge YUK-368→444 / close YUK-143/89/173 等）= `.remember/tmp/backlog-engine-2026-07-16.json`，**等 owner 批后才立单**（engine 合约不自行 file）；⚠️ draft#1（stash 抢救）已被本 PR 解决，勿重复立。
+- **生产 = `287e4e2a`**（= main@#820 + flag-persist）：**#823（YUK-506 安全脊）未部署**——dark-ship 零 runtime 影响；#825 已合，**下个部署窗直接从 main（`e963b393`）前滚即携 #823+#825**。**外部 ingress 断**（YUK-615，cloudflared crash-loop 2456+ 次，fix owner-gated）。
 - **未合分支悬挂**：codex worktree `yuk-604-learning-item-open-status`（2 commits，YUK-604 悖论见 NOW）。
 - **worktree 拓扑（07-16 实况）**：主工作树 + `tlp-deploy`（`287e4e2a`）+ `tlp-yuk599` / `tlp-yuk476` / `tlp-usability-hardening` / `tlp-pr787-fix` / `/private/tmp/tlp-yuk571` + codex×2（yuk-349 / yuk-604）+ cursor×2 + **`.claude/worktrees` 27 只契约波残留（可清）**。
-- **待 owner 清理分支**（squash-merge 后 guard 挡删）：yuk-249×2（+远端）· yuk-597~602 批 13 只 · `yuk-634-docx-bare-question-number` · `yuk-571-placement-go-live`（flag commit 已由 #825 收编）。
+- **待 owner 清理分支**（squash-merge 后 guard 挡删）：yuk-249×2（+远端）· yuk-597~602 批 13 只 · `yuk-634-docx-bare-question-number` · `yuk-571-placement-go-live`（flag commit 已由 #825 收编）· `yuk-571-persist-flags-main`（#825 已合）。
 
 ## ✅ 最近已落（防遗落，下次别重做）
 
