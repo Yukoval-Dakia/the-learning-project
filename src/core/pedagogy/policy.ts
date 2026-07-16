@@ -4,8 +4,10 @@ import {
   type PedagogyMethodIdT,
   PedagogyState,
   type PedagogyStateT,
-  type StateGuardT,
+  matchesStateGuard,
 } from './method-library';
+
+export { matchesStateGuard } from './method-library';
 
 export type PedagogyExclusionReason = 'contraindicated' | 'not_indicated';
 
@@ -19,21 +21,6 @@ export interface PedagogyPolicyResult {
   candidate_ids: PedagogyMethodIdT[];
   candidates: PedagogyMethodDefinitionT[];
   excluded: PedagogyPolicyExclusion[];
-}
-
-export function matchesStateGuard(state: PedagogyStateT, guard: StateGuardT): boolean {
-  if (guard.theta_band && !guard.theta_band.includes(state.theta_band)) return false;
-  if (guard.precision_band && !guard.precision_band.includes(state.precision_band)) return false;
-  if (
-    guard.misconception_present !== undefined &&
-    guard.misconception_present !== state.misconception_present
-  ) {
-    return false;
-  }
-  if (guard.kc_is_rule_based !== undefined && guard.kc_is_rule_based !== state.kc_is_rule_based) {
-    return false;
-  }
-  return true;
 }
 
 /**

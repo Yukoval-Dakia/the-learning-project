@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { PEDAGOGY_METHOD_LIBRARY, PedagogyMethodId, StateGuard } from './method-library';
+import {
+  PEDAGOGY_METHOD_LIBRARY,
+  PedagogyMethodId,
+  PedagogyMethodLibrary,
+  StateGuard,
+} from './method-library';
 
 describe('pedagogy method library', () => {
   it('contains the closed eight-method palette exactly once', () => {
@@ -26,5 +31,32 @@ describe('pedagogy method library', () => {
         learning_style: ['visual'],
       }).success,
     ).toBe(false);
+  });
+
+  it('rejects a method whose contraindications cover every indicated state', () => {
+    const invalidLibrary = PEDAGOGY_METHOD_LIBRARY.map((method) =>
+      method.id === 'refutation'
+        ? { ...method, contraindicated_when: [{ misconception_present: true }] }
+        : method,
+    );
+
+    expect(() => PedagogyMethodLibrary.parse(invalidLibrary)).toThrow(
+      'permanently unselectable pedagogy method: refutation',
+    );
+  });
+
+  it('rejects a contraindication that cannot overlap an indicated state', () => {
+    const invalidLibrary = PEDAGOGY_METHOD_LIBRARY.map((method) =>
+      method.id === 'worked_example'
+        ? {
+            ...method,
+            contraindicated_when: [{ theta_band: ['secure'], precision_band: ['high'] }],
+          }
+        : method,
+    );
+
+    expect(() => PedagogyMethodLibrary.parse(invalidLibrary)).toThrow(
+      'inert contraindication for pedagogy method: worked_example',
+    );
   });
 });

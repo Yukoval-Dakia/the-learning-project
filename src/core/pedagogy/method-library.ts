@@ -44,6 +44,34 @@ export const StateGuard = z
   .refine((guard) => Object.keys(guard).length > 0, 'state guard must constrain a signal');
 export type StateGuardT = z.infer<typeof StateGuard>;
 
+export function matchesStateGuard(state: PedagogyStateT, guard: StateGuardT): boolean {
+  if (guard.theta_band && !guard.theta_band.includes(state.theta_band)) return false;
+  if (guard.precision_band && !guard.precision_band.includes(state.precision_band)) return false;
+  if (
+    guard.misconception_present !== undefined &&
+    guard.misconception_present !== state.misconception_present
+  ) {
+    return false;
+  }
+  if (guard.kc_is_rule_based !== undefined && guard.kc_is_rule_based !== state.kc_is_rule_based) {
+    return false;
+  }
+  return true;
+}
+
+const PEDAGOGY_POLICY_STATE_SPACE: PedagogyStateT[] = ThetaBand.options.flatMap((theta_band) =>
+  PrecisionBand.options.flatMap((precision_band) =>
+    [false, true].flatMap((misconception_present) =>
+      [false, true].map((kc_is_rule_based) => ({
+        theta_band,
+        precision_band,
+        misconception_present,
+        kc_is_rule_based,
+      })),
+    ),
+  ),
+);
+
 export const PedagogyEvidenceRef = z.enum([
   'worked_example_effect',
   'guidance_fading',
@@ -69,7 +97,7 @@ export const PedagogyMethodDefinition = z
   .strict();
 export type PedagogyMethodDefinitionT = z.infer<typeof PedagogyMethodDefinition>;
 
-const PedagogyMethodLibrary = z
+export const PedagogyMethodLibrary = z
   .array(PedagogyMethodDefinition)
   .length(PedagogyMethodId.options.length)
   .superRefine((methods, ctx) => {
@@ -83,6 +111,30 @@ const PedagogyMethodLibrary = z
         });
       }
       seen.add(method.id);
+
+      const indicatedStates = PEDAGOGY_POLICY_STATE_SPACE.filter((state) =>
+        method.indicated_when.some((guard) => matchesStateGuard(state, guard)),
+      );
+      for (const [guardIndex, contraindication] of method.contraindicated_when.entries()) {
+        if (!indicatedStates.some((state) => matchesStateGuard(state, contraindication))) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `inert contraindication for pedagogy method: ${method.id}`,
+            path: [index, 'contraindicated_when', guardIndex],
+          });
+        }
+      }
+      if (
+        !indicatedStates.some((state) =>
+          method.contraindicated_when.every((guard) => !matchesStateGuard(state, guard)),
+        )
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `permanently unselectable pedagogy method: ${method.id}`,
+          path: [index, 'contraindicated_when'],
+        });
+      }
     }
     for (const id of PedagogyMethodId.options) {
       if (!seen.has(id)) {
