@@ -10,6 +10,17 @@ import { ContextBudgetTracker } from './context-throttle';
 // (partial result + truncation flag), never a throw.
 
 describe('ContextBudgetTracker — two-tier tool-call budget', () => {
+  it('rejects a warning threshold above its hard ceiling', () => {
+    const budget: ContextBudget = {
+      ...COPILOT_CONTEXT_BUDGET,
+      eventRows: { warning: 31, hard: 30 },
+    };
+
+    expect(() => new ContextBudgetTracker(budget)).toThrow(
+      'Invalid ContextBudget: eventRows warning (31) must be <= hard (30)',
+    );
+  });
+
   it('warns at the old watermark but only soft-stops at the hard ceiling', () => {
     const tracker = new ContextBudgetTracker(COPILOT_CONTEXT_BUDGET);
     for (let i = 0; i < COPILOT_CONTEXT_BUDGET.toolCalls.hard; i += 1) {

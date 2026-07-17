@@ -176,7 +176,16 @@ export class ContextBudgetTracker {
   private nodesPlusEdgesUsed = 0;
   private eventRowsUsed = 0;
 
-  constructor(private readonly budget: ContextBudget) {}
+  constructor(private readonly budget: ContextBudget) {
+    for (const dimension of ['toolCalls', 'nodesPlusEdges', 'eventRows'] as const) {
+      const threshold = this.thresholdFor(dimension);
+      if (threshold.warning > threshold.hard) {
+        throw new Error(
+          `Invalid ContextBudget: ${dimension} warning (${threshold.warning}) must be <= hard (${threshold.hard})`,
+        );
+      }
+    }
+  }
 
   /**
    * Tool-call hard gate, shaped like the existing proposal-cap `beforeExecute`.
