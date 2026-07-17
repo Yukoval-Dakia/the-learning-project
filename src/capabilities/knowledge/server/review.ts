@@ -78,7 +78,10 @@ async function buildReviewInput(db: Db) {
     }),
   );
 
-  const attempts = await getFailureAttempts(db, { limit: RECENT_MISTAKES_LIMIT });
+  const attempts = await getFailureAttempts(db, {
+    includeReviewFailures: true,
+    limit: RECENT_MISTAKES_LIMIT,
+  });
   const recent_mistakes = attempts.map((fa) => {
     const cause = effectiveCauseForFailureAttempt(fa);
     return {

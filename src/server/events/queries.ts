@@ -15,7 +15,7 @@
 // caller tx and produced orphan jobs).
 //
 // Read API:
-//   - getFailureAttempts(db, opts?) — failure attempts + chained judge (mistake view)
+//   - getFailureAttempts(db, opts?) — failed attempts/reviews + chained judge (mistake view)
 //   - getJudgeForAttempt(db, attemptEventId) — single chained judge
 //   - getRecentReviewEvents(db, opts?) — FSRS review log
 //   - getEventById(db, id) — single event for caused_by chain navigation
@@ -52,8 +52,9 @@ function hasActiveCorrectionStatus(status: CorrectionStatus | undefined): boolea
 
 // ============================================================================
 // FailureAttempt — user-facing "mistake" view projected from the event stream.
-// One row per attempt event with outcome='failure'; optional joined judge event
-// chained via caused_by_event_id reverse lookup.
+// The public name predates FSRS review events and is kept for compatibility. One
+// row is returned per attempt/review event with outcome='failure'; an optional
+// judge event is joined via caused_by_event_id reverse lookup.
 // ============================================================================
 
 export type FailureAttemptJudge = {
@@ -91,6 +92,12 @@ export interface GetFailureAttemptsOpts {
   limit?: number | null;
   questionIds?: string[];
   since?: Date;
+  /**
+   * Include FSRS `review` rows whose outcome is failure (`again`). Defaults to
+   * false so user-facing mistake/due readers keep their established attempt-only
+   * distribution; nightly knowledge/research consumers opt in deliberately.
+   */
+  includeReviewFailures?: boolean;
   // YUK-76 codex round-3 P1 — per-question SQL partition cap.
   //
   // When set, SQL filters via `ROW_NUMBER() OVER (PARTITION BY subject_id …)`
@@ -168,9 +175,32 @@ function newerEventRow(a: EventRow, b: EventRow): boolean {
   );
 }
 
+function failureEvidenceFromRow(row: EventRow): {
+  answer_md: string | null;
+  answer_image_refs: string[];
+  referenced_knowledge_ids: string[];
+} {
+  const payload = row.payload as {
+    answer_md?: string | null;
+    user_response_md?: string | null;
+    answer_image_refs?: string[];
+    referenced_knowledge_ids?: string[];
+  };
+  return {
+    // FSRS reviews call the same learner evidence `user_response_md`; normalize
+    // it onto the legacy mistake projection so every downstream consumer sees
+    // the answer rather than a false null.
+    answer_md:
+      row.action === 'review' ? (payload.user_response_md ?? null) : (payload.answer_md ?? null),
+    answer_image_refs: payload.answer_image_refs ?? [],
+    referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
+  };
+}
+
 /**
- * Returns failure attempts (with chained judges populated when present), ordered
- * by created_at desc. Default limit 100 matches legacy RECENT_MISTAKES_LIMIT.
+ * Returns failed attempts and, when includeReviewFailures is enabled, failed
+ * FSRS reviews (with chained judges populated when present), ordered by
+ * created_at desc. Default limit 100 matches legacy RECENT_MISTAKES_LIMIT.
  *
  * Two queries + JS join (vs single subquery): clearer code, well-bounded by limit.
  * Judge lookup uses `event_caused_by_idx`. Filter must keep outcome='failure' —
@@ -186,7 +216,9 @@ export async function getFailureAttempts(
   if (perQuestionLimit !== undefined && perQuestionLimit <= 0) return [];
   if (perQuestionLimit === undefined && !unbounded && limit <= 0) return [];
   const conditions = [
-    eq(event.action, 'attempt'),
+    opts.includeReviewFailures
+      ? inArray(event.action, ['attempt', 'review'])
+      : eq(event.action, 'attempt'),
     eq(event.subject_kind, 'question'),
     eq(event.outcome, 'failure'),
   ];
@@ -321,17 +353,13 @@ export async function getFailureAttempts(
   }
 
   return activeAttemptRows.map((a) => {
-    const payload = a.payload as {
-      answer_md: string | null;
-      answer_image_refs: string[];
-      referenced_knowledge_ids: string[];
-    };
+    const evidence = failureEvidenceFromRow(a);
     const result: FailureAttempt = {
       attempt_event_id: a.id,
       question_id: a.subject_id,
-      answer_md: payload.answer_md ?? null,
-      answer_image_refs: payload.answer_image_refs ?? [],
-      referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
+      answer_md: evidence.answer_md,
+      answer_image_refs: evidence.answer_image_refs,
+      referenced_knowledge_ids: evidence.referenced_knowledge_ids,
       created_at: a.created_at,
       correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
     };
@@ -465,7 +493,7 @@ export async function getFailureAttemptById(
   const attempt = rows[0];
   if (!attempt) return null;
   if (
-    attempt.action !== 'attempt' ||
+    (attempt.action !== 'attempt' && attempt.action !== 'review') ||
     attempt.subject_kind !== 'question' ||
     attempt.outcome !== 'failure'
   ) {
@@ -479,11 +507,7 @@ export async function getFailureAttemptById(
     return null;
   }
 
-  const payload = attempt.payload as {
-    answer_md: string | null;
-    answer_image_refs: string[];
-    referenced_knowledge_ids: string[];
-  };
+  const evidence = failureEvidenceFromRow(attempt);
   const [judge, userCause] = await Promise.all([
     getJudgeForAttempt(db, attempt.id),
     getUserCauseForAttempt(db, attempt.id),
@@ -491,9 +515,9 @@ export async function getFailureAttemptById(
   const failure: FailureAttempt = {
     attempt_event_id: attempt.id,
     question_id: attempt.subject_id,
-    answer_md: payload.answer_md ?? null,
-    answer_image_refs: payload.answer_image_refs ?? [],
-    referenced_knowledge_ids: payload.referenced_knowledge_ids ?? [],
+    answer_md: evidence.answer_md,
+    answer_image_refs: evidence.answer_image_refs,
+    referenced_knowledge_ids: evidence.referenced_knowledge_ids,
     created_at: attempt.created_at,
     correction_state: attemptTruth,
   };

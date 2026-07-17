@@ -199,11 +199,13 @@ export async function runKnowledgeEdgeProposeNightly(
     ? await getFailureAttempts(db, {
         afterCreatedAt: cursor.last_processed_at,
         afterEventId: cursor.last_processed_event_id,
+        includeReviewFailures: true,
         order: 'asc',
         limit: scanLimit,
       })
     : await getFailureAttempts(db, {
         since: new Date(Date.now() - FIRST_RUN_FALLBACK_WINDOW_MS),
+        includeReviewFailures: true,
         order: 'asc',
         limit: scanLimit,
       });

@@ -201,7 +201,10 @@ export async function runResearchMeetingDirector(
   // retryable DB fault that propagates so the nightly job's dayKey claim can gate a
   // retry). Mirrors the deterministic lane's PRE-LLM half. ──
   const since = new Date(now.getTime() - RESEARCH_MEETING_AGENT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const failures: FailureAttempt[] = await getFailureAttemptsFn(db, { since });
+  const failures: FailureAttempt[] = await getFailureAttemptsFn(db, {
+    includeReviewFailures: true,
+    since,
+  });
   const kcIds = [...new Set(failures.flatMap((f) => f.referenced_knowledge_ids))];
   const masteryByKnowledgeId =
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
