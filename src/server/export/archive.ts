@@ -470,19 +470,19 @@ export async function restoreFromArchive({
   // their elements have the object shape assumed by Object.keys / INSERT below.
   // Reject every malformed row before column inspection and, critically, before
   // entering the destructive transaction.
-  const validationErrors: string[] = [];
+  const tableValidationErrors: string[] = [];
   for (const [table, rows] of Object.entries(rawData)) {
     if (!Array.isArray(rows)) {
-      validationErrors.push(`${table}: not an array`);
+      tableValidationErrors.push(`${table}: not an array`);
     }
   }
-  if (validationErrors.length > 0) {
+  if (tableValidationErrors.length > 0) {
     return {
       status: 400,
       body: {
         error: 'data_validation_failed',
         message: 'Pre-flight validation caught issues; DB was NOT wiped.',
-        issues: validationErrors.slice(0, 20),
+        issues: tableValidationErrors.slice(0, 20),
       },
     };
   }
@@ -568,6 +568,7 @@ export async function restoreFromArchive({
   }
 
   // Pre-flight: catch inconsistent column shapes BEFORE we wipe the DB.
+  const columnValidationErrors: string[] = [];
   for (const t of FK_ORDER) {
     const rows = data[t];
     if (rows === undefined) continue;
@@ -576,7 +577,7 @@ export async function restoreFromArchive({
     for (let i = 1; i < rows.length; i++) {
       const cols = new Set(Object.keys(rows[i]));
       if (cols.size !== expectedCols.size) {
-        validationErrors.push(`${t}[${i}]: column count mismatch`);
+        columnValidationErrors.push(`${t}[${i}]: column count mismatch`);
         break;
       }
       let missing: string | null = null;
@@ -587,18 +588,18 @@ export async function restoreFromArchive({
         }
       }
       if (missing) {
-        validationErrors.push(`${t}[${i}]: missing column ${missing}`);
+        columnValidationErrors.push(`${t}[${i}]: missing column ${missing}`);
         break;
       }
     }
   }
-  if (validationErrors.length > 0) {
+  if (columnValidationErrors.length > 0) {
     return {
       status: 400,
       body: {
         error: 'data_validation_failed',
         message: 'Pre-flight validation caught issues; DB was NOT wiped.',
-        issues: validationErrors.slice(0, 20),
+        issues: columnValidationErrors.slice(0, 20),
       },
     };
   }
