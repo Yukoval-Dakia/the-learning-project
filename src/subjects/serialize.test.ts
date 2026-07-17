@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { mathProfile } from './math/profile';
@@ -7,11 +8,12 @@ import type { SubjectProfile } from './profile-schema';
 import { serializeProfileToTs } from './serialize';
 import { yuwenProfile } from './yuwen/profile';
 
-// Re-evaluate a serialized profile literal by writing it to a temp file UNDER
-// src/subjects/ (so the `import type { SubjectProfile } from '../profile'` header's
-// relative path is structurally valid; the `import type` is erased at runtime by
-// the vitest/esbuild transform) and dynamically importing it back.
-const tmpDir = mkdtempSync(join(__dirname, 'serialize-roundtrip-'));
+// Re-evaluate a serialized profile literal from the OS temp directory. The
+// `import type` header is erased by the vitest/esbuild transform, so fixtures do
+// not need to live under src/. Keeping them outside the source tree prevents
+// whole-tree audits in parallel workers from enumerating a file that disappears
+// during afterAll cleanup (YUK-613).
+const tmpDir = mkdtempSync(join(tmpdir(), 'serialize-roundtrip-'));
 
 afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });

@@ -316,11 +316,12 @@ export function validateReadGate(
 
 // ---------- CLI ----------
 
-function readFileOrNull(relPath: string): string | null {
+export function readFileOrNull(relPath: string): string | null {
   try {
     return readFileSync(join(REPO_ROOT, relPath), 'utf-8');
-  } catch {
-    return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
   }
 }
 
@@ -330,7 +331,10 @@ function main(): void {
   const unknown: UnknownHit[] = [];
   const jsTwins: JsTwin[] = [];
   for (const file of files) {
-    const src = readFileSync(join(REPO_ROOT, file), 'utf-8');
+    // A concurrent test may clean up an already-enumerated fixture. Skip only
+    // that ENOENT race; permissions and other read failures must still fail loud.
+    const src = readFileOrNull(file);
+    if (src === null) continue;
     if (src.includes('draft_status')) {
       const r = scanReads(file, src);
       hits.push(...r.hits);
