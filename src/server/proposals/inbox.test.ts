@@ -1077,7 +1077,8 @@ describe('proposal inbox reader', () => {
       created_at: new Date('2026-07-17T00:03:00.000Z'),
     });
 
-    const counts = await countPendingProposalInboxByKind(db);
+    const result = await countPendingProposalInboxByKind(db);
+    const counts = result.byKind;
     const projectedCounts = (await listProposalInboxRows(db, { status: 'pending' })).reduce<
       Record<string, number>
     >((acc, row) => {
@@ -1092,6 +1093,7 @@ describe('proposal inbox reader', () => {
       knowledge_mutation: 3,
     });
     expect(counts).toEqual(projectedCounts);
+    expect(result.hasMore).toBe(false);
   });
 
   it('counts in bounded batches and keeps decisions reachable behind an observation backlog', async () => {
@@ -1141,8 +1143,8 @@ describe('proposal inbox reader', () => {
     });
 
     await expect(countPendingProposalInboxByKind(db)).resolves.toEqual({
-      defer: 501,
-      knowledge_edge: 1,
+      byKind: { defer: 501, knowledge_edge: 1 },
+      hasMore: false,
     });
 
     const decisionPage = await listProposalInboxPage(db, {
@@ -1154,7 +1156,7 @@ describe('proposal inbox reader', () => {
     expect(decisionPage.next_cursor).toBeNull();
   });
 
-  it('fails visibly instead of scanning unbounded candidate batches', async () => {
+  it('returns a lower bound instead of failing Today at the candidate safety ceiling', async () => {
     const db = testDb();
     const rows: Array<typeof event.$inferInsert> = Array.from({ length: 501 }, (_, index) => ({
       id: `bounded_scan_${String(index).padStart(3, '0')}`,
@@ -1181,8 +1183,9 @@ describe('proposal inbox reader', () => {
     }));
     await db.insert(event).values(rows);
 
-    await expect(countPendingProposalInboxByKind(db, { maxBatches: 1 })).rejects.toThrow(
-      'pending proposal KPI exceeded safety limit (500 candidates)',
-    );
+    await expect(countPendingProposalInboxByKind(db, { maxBatches: 1 })).resolves.toEqual({
+      byKind: { defer: 500 },
+      hasMore: true,
+    });
   });
 });

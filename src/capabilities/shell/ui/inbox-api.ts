@@ -110,6 +110,8 @@ export interface ProposalInboxRow {
 interface ProposalPageWire {
   rows: ProposalInboxRow[];
   next_cursor: string | null;
+  /** Present on the merged Inbox response when the bounded C-lane preview has more rows. */
+  observation_truncated?: boolean;
 }
 
 const DECISION_PAGE_LIMIT = 500;
@@ -165,6 +167,7 @@ export async function listProposals(): Promise<ProposalPageWire> {
     // observation preview. A cursor for only one half would imply a unified
     // continuation that does not exist, so do not expose it.
     next_cursor: null,
+    observation_truncated: observationPage.next_cursor !== null,
   };
 }
 

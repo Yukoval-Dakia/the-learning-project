@@ -42,6 +42,7 @@ describe('listProposals', () => {
 
     expect(page.rows.map((row) => row.id)).toEqual(['decision_1', 'decision_2', 'observe_1']);
     expect(page.next_cursor).toBeNull();
+    expect(page.observation_truncated).toBe(true);
     expect(apiJsonMock).toHaveBeenNthCalledWith(
       1,
       '/api/proposals?lane=decision&limit=500&status=pending',

@@ -218,17 +218,24 @@ function proposalWhere() {
 }
 
 /**
- * Count the exact pending inbox projection by proposal kind without loading ranked pages.
+ * Count the pending inbox projection by proposal kind without loading ranked pages.
  *
  * SQL only removes proposals whose latest rate is terminal. Payload shape, correction folding,
  * rubric/topology verdicts, and legacy derivation stay on the same TypeScript/Zod path as the
  * interactive inbox. This keeps the count schema-proof while avoiding signal joins, sorting, and
- * materializing the accepted/dismissed history on every Today request.
+ * materializing the accepted/dismissed history on every Today request. `hasMore` is true only at
+ * the accident ceiling; in that case `byKind` is an explicit lower bound rather than a reason to
+ * fail the Today hot path.
  */
+export interface PendingProposalCountResult {
+  byKind: Partial<Record<AiProposalKindT, number>>;
+  hasMore: boolean;
+}
+
 export async function countPendingProposalInboxByKind(
   db: DbLike,
   options: { maxBatches?: number } = {},
-): Promise<Partial<Record<AiProposalKindT, number>>> {
+): Promise<PendingProposalCountResult> {
   const latestRate = alias(event, 'pending_count_latest_rate');
   const newerRate = alias(event, 'pending_count_newer_rate');
   const hasTerminalLatestRate = db
@@ -300,14 +307,12 @@ export async function countPendingProposalInboxByKind(
     const last: EventRow | undefined = candidateRows.at(-1);
     if (!last || !hasMore) break;
     if (batchCount >= maxBatches) {
-      throw new Error(
-        `pending proposal KPI exceeded safety limit (${maxBatches * batchSize} candidates)`,
-      );
+      return { byKind: counts, hasMore: true };
     }
     after = { created_at: last.created_at, id: last.id };
   }
 
-  return counts;
+  return { byKind: counts, hasMore: false };
 }
 
 // YUK-520 (A1 夜窗 digest) — windowed proposal count for the overnight-digest read

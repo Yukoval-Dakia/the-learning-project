@@ -13,9 +13,9 @@ export const TODAY_PROPOSAL_KPI_LIMIT = 500;
 export type ProposalKindCounts = Record<AiProposalKindT, number>;
 
 export interface TodayProposalKpi {
-  /** 全部 pending proposal 记录的未截断总数；保留 C 档以维持事实/冷启动证据。 */
+  /** 全部 pending proposal；`has_more` 时为已安全扫描部分的下界。 */
   total: number;
-  /** 真正需要学习者裁决的 pending proposal；C-strength observe-only 不计入。 */
+  /** 真正需要学习者裁决的 pending proposal；`has_more` 时为下界，C-strength 不计入。 */
   decision_total: number;
   by_kind: ProposalKindCounts;
   has_more: boolean;
@@ -29,6 +29,7 @@ function emptyKindCounts(): ProposalKindCounts {
 
 export function summarizeTodayProposalKpi(
   counts: Partial<Record<AiProposalKindT, number>>,
+  hasMore = false,
 ): TodayProposalKpi {
   const byKind = emptyKindCounts();
   let total = 0;
@@ -45,14 +46,15 @@ export function summarizeTodayProposalKpi(
     total,
     decision_total: decisionTotal,
     by_kind: byKind,
-    // This KPI is now an aggregate query, not a truncated inbox page. Keep the legacy fields in the
-    // public contract for compatibility while restoring their original meaning.
-    has_more: false,
+    // Normally exact. At the 50k candidate accident ceiling the counts are explicit lower bounds;
+    // keep serving Today and surface the existing truncation signal instead of throwing a 500.
+    has_more: hasMore,
     limit: TODAY_PROPOSAL_KPI_LIMIT,
     status: 'pending',
   };
 }
 
 export async function loadTodayProposalKpi(db: DbLike): Promise<TodayProposalKpi> {
-  return summarizeTodayProposalKpi(await countPendingProposalInboxByKind(db));
+  const result = await countPendingProposalInboxByKind(db);
+  return summarizeTodayProposalKpi(result.byKind, result.hasMore);
 }

@@ -266,6 +266,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   };
 
   const rows = q.data?.rows ?? [];
+  const observationTruncated = q.data?.observation_truncated === true;
   // 强度分桶：C-strength → moved（C 块折叠），其余 → decide（B 块逐条人审）。
   const { decide, moved } = useMemo(() => bucketPendingByTier(rows), [rows]);
 
@@ -434,10 +435,18 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         </section>
 
         {/* ── C 档 · 纯状态（折叠） ── */}
-        {moved.length > 0 && (
+        {(moved.length > 0 || observationTruncated) && (
           <section>
             <TierHead tier="C" count={moved.length} />
-            <TierCBlock items={moved} navigate={navigate} />
+            {observationTruncated && (
+              <LoomCard pad sunk>
+                <output className="meta">
+                  AI 观察当前显示前 {moved.length}{' '}
+                  条，还有更多记录未在本页展开；待裁决提议不受影响。
+                </output>
+              </LoomCard>
+            )}
+            {moved.length > 0 && <TierCBlock items={moved} navigate={navigate} />}
           </section>
         )}
       </Stateful>
