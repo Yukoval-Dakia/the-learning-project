@@ -113,6 +113,7 @@ interface ProposalPageWire {
 }
 
 const DECISION_PAGE_LIMIT = 500;
+const DECISION_MAX_PAGES = 20;
 const OBSERVATION_PAGE_LIMIT = 200;
 
 function listProposalPage(
@@ -129,11 +130,18 @@ async function listAllDecisionProposals(): Promise<ProposalInboxRow[]> {
   const rows: ProposalInboxRow[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
+  let pageCount = 0;
 
   while (true) {
+    pageCount += 1;
     const page = await listProposalPage('decision', DECISION_PAGE_LIMIT, cursor);
     rows.push(...page.rows);
     if (!page.next_cursor) return rows;
+    if (pageCount >= DECISION_MAX_PAGES) {
+      throw new Error(
+        `待裁决提议超过安全加载上限（${DECISION_MAX_PAGES * DECISION_PAGE_LIMIT} 条），请先处理或归档部分积压。`,
+      );
+    }
     if (seenCursors.has(page.next_cursor)) {
       throw new Error('提议分页游标重复，无法完整加载待裁决项。');
     }
@@ -153,7 +161,10 @@ export async function listProposals(): Promise<ProposalPageWire> {
   ]);
   return {
     rows: [...decisionRows, ...observationPage.rows],
-    next_cursor: observationPage.next_cursor,
+    // This response merges a fully consumed decision lane with one bounded
+    // observation preview. A cursor for only one half would imply a unified
+    // continuation that does not exist, so do not expose it.
+    next_cursor: null,
   };
 }
 

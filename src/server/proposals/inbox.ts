@@ -227,6 +227,7 @@ function proposalWhere() {
  */
 export async function countPendingProposalInboxByKind(
   db: DbLike,
+  options: { maxBatches?: number } = {},
 ): Promise<Partial<Record<AiProposalKindT, number>>> {
   const latestRate = alias(event, 'pending_count_latest_rate');
   const newerRate = alias(event, 'pending_count_newer_rate');
@@ -261,7 +262,9 @@ export async function countPendingProposalInboxByKind(
 
   const counts: Partial<Record<AiProposalKindT, number>> = {};
   const batchSize = 500;
+  const maxBatches = options.maxBatches ?? 100;
   let after: Pick<EventRow, 'created_at' | 'id'> | null = null;
+  let batchCount = 0;
 
   while (true) {
     const afterWhere: SQL | undefined = after
@@ -270,13 +273,16 @@ export async function countPendingProposalInboxByKind(
           and(eq(event.created_at, after.created_at), gt(event.id, after.id)),
         )
       : undefined;
-    const candidateRows: EventRow[] = await db
+    const loadedRows: EventRow[] = await db
       .select()
       .from(event)
       .where(and(proposalWhere(), notExists(hasTerminalLatestRate), afterWhere))
       .orderBy(asc(event.created_at), asc(event.id))
-      .limit(batchSize);
+      .limit(batchSize + 1);
+    const hasMore = loadedRows.length > batchSize;
+    const candidateRows = loadedRows.slice(0, batchSize);
     if (candidateRows.length === 0) break;
+    batchCount += 1;
 
     const correctionByProposal = await loadCorrectionDecisionByProposal(
       db,
@@ -292,7 +298,12 @@ export async function countPendingProposalInboxByKind(
     }
 
     const last: EventRow | undefined = candidateRows.at(-1);
-    if (!last || candidateRows.length < batchSize) break;
+    if (!last || !hasMore) break;
+    if (batchCount >= maxBatches) {
+      throw new Error(
+        `pending proposal KPI exceeded safety limit (${maxBatches * batchSize} candidates)`,
+      );
+    }
     after = { created_at: last.created_at, id: last.id };
   }
 

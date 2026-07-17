@@ -1153,4 +1153,36 @@ describe('proposal inbox reader', () => {
     expect(decisionPage.rows.map((row) => row.id)).toEqual(['decision_after_observations']);
     expect(decisionPage.next_cursor).toBeNull();
   });
+
+  it('fails visibly instead of scanning unbounded candidate batches', async () => {
+    const db = testDb();
+    const rows: Array<typeof event.$inferInsert> = Array.from({ length: 501 }, (_, index) => ({
+      id: `bounded_scan_${String(index).padStart(3, '0')}`,
+      actor_kind: 'agent',
+      actor_ref: 'dreaming',
+      action: 'experimental:proposal',
+      subject_kind: 'learning_item',
+      subject_id: `bounded_item_${index}`,
+      outcome: 'partial',
+      payload: {
+        ai_proposal: {
+          kind: 'defer',
+          target: { subject_kind: 'learning_item', subject_id: `bounded_item_${index}` },
+          reason_md: 'bounded scan fixture',
+          evidence_refs: [],
+          proposed_change: {
+            learning_item_id: `bounded_item_${index}`,
+            defer_until: '2026-07-18T00:00:00.000Z',
+            reason: 'low energy',
+          },
+        },
+      },
+      created_at: new Date(1_800_000_000_000 + index),
+    }));
+    await db.insert(event).values(rows);
+
+    await expect(countPendingProposalInboxByKind(db, { maxBatches: 1 })).rejects.toThrow(
+      'pending proposal KPI exceeded safety limit (500 candidates)',
+    );
+  });
 });
