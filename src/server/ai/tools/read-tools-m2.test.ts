@@ -16,6 +16,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { __resetBootstrapForTests, registerCoreTools } from './bootstrap';
 import {
+  MEMORY_BRIEF_STALE_AFTER_MS,
+  executeMemoryBrief,
   getLearningItemContextTool,
   getQuestionContextTool,
   getRecordContextTool,
@@ -551,6 +553,35 @@ describe('Foundation D M2 read tools', () => {
     });
     expect(brief.note?.recent_week_md).toContain('虚词');
     expect(brief.evidence?.recent_week_ids).toEqual(['rec_mistake']);
+    expect(brief.freshness.state).toBe('fresh');
+
+    const refreshedAt = BASE.getTime() + 5_000;
+    const justFresh = await executeMemoryBrief(
+      ctx(),
+      { scopeKey: 'global' },
+      () => new Date(refreshedAt + MEMORY_BRIEF_STALE_AFTER_MS - 1),
+    );
+    expect(justFresh.freshness).toEqual({
+      state: 'fresh',
+      age_ms: MEMORY_BRIEF_STALE_AFTER_MS - 1,
+      stale_after_ms: MEMORY_BRIEF_STALE_AFTER_MS,
+    });
+    const stale = await executeMemoryBrief(
+      ctx(),
+      { scopeKey: 'global' },
+      () => new Date(refreshedAt + MEMORY_BRIEF_STALE_AFTER_MS),
+    );
+    expect(stale.freshness.state).toBe('stale');
+    const missing = await executeMemoryBrief(
+      ctx(),
+      { scopeKey: 'subject:missing' },
+      () => new Date(refreshedAt),
+    );
+    expect(missing.freshness).toEqual({
+      state: 'missing',
+      age_ms: null,
+      stale_after_ms: MEMORY_BRIEF_STALE_AFTER_MS,
+    });
 
     const rows = await testDb()
       .select()

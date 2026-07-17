@@ -1241,6 +1241,15 @@ const MemoryBriefInputSchema = z.object({
   includeEvidence: z.boolean().optional(),
 });
 
+export const MEMORY_BRIEF_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+const MemoryBriefFreshnessSchema = z.object({
+  state: z.enum(['fresh', 'stale', 'missing']),
+  /** Age of refreshed_at at read time; null when the row/timestamp is absent. */
+  age_ms: z.number().int().nonnegative().nullable(),
+  stale_after_ms: z.number().int().positive(),
+});
+
 const MemoryBriefOutputSchema = z.object({
   note: z
     .object({
@@ -1259,6 +1268,9 @@ const MemoryBriefOutputSchema = z.object({
       version: z.number().int(),
     })
     .nullable(),
+  // YUK-378 — explicit reader-side signal. Dreaming/Coach must not silently
+  // treat a previous-night or never-built brief as current context.
+  freshness: MemoryBriefFreshnessSchema,
   evidence: z
     .object({
       recent_week_ids: z.array(z.string()),
@@ -1277,6 +1289,7 @@ type MemoryBriefOutput = z.infer<typeof MemoryBriefOutputSchema>;
 export async function executeMemoryBrief(
   ctx: ToolContext,
   raw: MemoryBriefInput,
+  now: () => Date = () => new Date(),
 ): Promise<MemoryBriefOutput> {
   const input = MemoryBriefInputSchema.parse(raw);
   const scopeKey = input.scopeKey ?? 'global';
@@ -1285,7 +1298,19 @@ export async function executeMemoryBrief(
     .from(memory_brief_note)
     .where(eq(memory_brief_note.scope_key, scopeKey))
     .limit(1);
-  if (!note) return MemoryBriefOutputSchema.parse({ note: null });
+  if (!note) {
+    return MemoryBriefOutputSchema.parse({
+      note: null,
+      freshness: {
+        state: 'missing',
+        age_ms: null,
+        stale_after_ms: MEMORY_BRIEF_STALE_AFTER_MS,
+      },
+    });
+  }
+  const ageMs = note.refreshed_at
+    ? Math.max(0, now().getTime() - note.refreshed_at.getTime())
+    : null;
   return MemoryBriefOutputSchema.parse({
     note: {
       id: note.id,
@@ -1298,6 +1323,14 @@ export async function executeMemoryBrief(
       refreshed_at: iso(note.refreshed_at),
       source_event_id: note.source_event_id ?? null,
       version: note.version,
+    },
+    freshness: {
+      state:
+        ageMs === null || ageMs >= MEMORY_BRIEF_STALE_AFTER_MS
+          ? ('stale' as const)
+          : ('fresh' as const),
+      age_ms: ageMs,
+      stale_after_ms: MEMORY_BRIEF_STALE_AFTER_MS,
     },
     ...(input.includeEvidence
       ? {
@@ -1453,7 +1486,7 @@ export const getLearningItemContextTool: DomainTool<GetLearningItemInput, GetLea
 export const queryMemoryBriefTool: DomainTool<MemoryBriefInput, MemoryBriefOutput> = {
   name: 'query_memory_brief',
   description:
-    'Read the current Dreaming-maintained memory brief note for global or subject scope, with optional evidence ids.',
+    'Read the Dreaming-maintained memory brief for global or subject scope. Treat freshness=stale/missing as low-confidence context and verify against source tools; optional evidence ids are available.',
   effect: 'read',
   inputSchema: MemoryBriefInputSchema,
   outputSchema: MemoryBriefOutputSchema,
@@ -1461,8 +1494,8 @@ export const queryMemoryBriefTool: DomainTool<MemoryBriefInput, MemoryBriefOutpu
   execute: executeMemoryBrief,
   summarize(input, output) {
     return output.note
-      ? `memory brief · ${input.scopeKey ?? 'global'} · v${output.note.version}`
-      : `memory brief · ${input.scopeKey ?? 'global'} · none`;
+      ? `memory brief · ${input.scopeKey ?? 'global'} · v${output.note.version} · ${output.freshness.state}`
+      : `memory brief · ${input.scopeKey ?? 'global'} · ${output.freshness.state}`;
   },
   mirrorEvent: 'when_user_visible',
 };

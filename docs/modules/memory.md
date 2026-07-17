@@ -1,6 +1,6 @@
 # Memory brief layer (`memory_brief_note`)
 
-> Last reviewed: 2026-05-31 (P5.2 / YUK-143)
+> Last reviewed: 2026-07-17 (YUK-378 reader freshness observability)
 >
 > Substrate decisions: [ADR-0015](../adr/0015-learning-record-memory-brief.md) (brief as
 > first-class entity) and [ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md) (Mem0 + brief
@@ -65,6 +65,20 @@ the `affected_scopes` freshness guard (freshness is already decided by the sweep
 Per-subject briefs are parallel-safe by construction: distinct `scope_key` rows guarded by
 `memory_brief_note_scope_key_unique` + distinct `memory.regen.<scope_key>` singleton locks, so
 `subject:A` and `subject:B` never clobber each other (BR-7).
+
+## Reader freshness contract (YUK-378)
+
+`query_memory_brief` returns a required top-level `freshness` block on every read:
+
+- `fresh` — `refreshed_at` is less than 24 hours old;
+- `stale` — the timestamp is missing or at least 24 hours old;
+- `missing` — no row exists for the requested scope.
+
+The block also carries `age_ms` and `stale_after_ms`. Tool summaries repeat the state, and the MCP
+bridge persists the full output in `tool_call_log.output_json`, including Dreaming/Coach reads that
+do not qualify for a user-visible `tool_use` mirror. The tool description tells agents to treat
+stale/missing briefs as low-confidence direction and verify against source tools. This is an
+observability/degradation signal only; it does not mutate the brief or block the night chain.
 
 ## Budgets (single source: `src/server/ai/tools/budgets.ts`)
 
