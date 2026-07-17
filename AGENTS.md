@@ -65,6 +65,7 @@ src/
     ingestion/   # 录入域：OCR / Vision rescue / 抽取 / 入库
     knowledge/   # 知识图谱域：树 + mesh + 提议 + 归因
     notes/       # Note artifact 域：block-tree 编辑器 + Living Note refine
+    onboarding/  # 冷启域：welcome / upload / placement / profile
     observability/ # AI 可观测性：admin 四页 + 今日成本条
     practice/    # 练习域：review / quiz / judge / paper / 题库
     shell/       # 工作台壳层：收件箱 + Today + Coach
@@ -88,6 +89,7 @@ docs/            # architecture / adr / modules / design / agents / superpowers
 | capability 契约 | [src/kernel/AGENTS.md](./src/kernel/AGENTS.md)、`src/kernel/manifest.ts` |
 | capability 包总览 | [src/capabilities/AGENTS.md](./src/capabilities/AGENTS.md)、`src/capabilities/index.ts` |
 | 录入 / OCR / rescue | `src/capabilities/ingestion/AGENTS.md` |
+| 冷启 / welcome / placement | `src/capabilities/onboarding/` |
 | 知识树 / mesh / 提议 | `src/capabilities/knowledge/AGENTS.md` |
 | 练习 / 判分 / 组卷 | `src/capabilities/practice/AGENTS.md` |
 | Note / artifact | `src/capabilities/notes/AGENTS.md` |
@@ -112,7 +114,7 @@ pnpm rw:web           # vite --config web/vite.config.ts
 pnpm worker:dev       # 独立 pg-boss worker 进程
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
-pnpm test             # 全量门禁：audit:profile + audit:draft-status + unit + db + migration
+pnpm test             # 全量门禁：6 个 audit + unit + db + migration（详见 CLAUDE.md）
 pnpm test:unit:watch  # 快速无-DB watch
 pnpm test:db:watch    # DB/API watch（需 Docker/OrbStack）
 pnpm build            # rw:web:build + esbuild 三产物（server/worker/migrate .cjs）

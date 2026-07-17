@@ -70,17 +70,28 @@ pnpm test:migration   # migration DDL smoke; owns its own testcontainer
 pnpm db:generate      # drizzle-kit generate (migrations from src/db/schema.ts)
 pnpm db:push          # drizzle-kit push (uses DATABASE_URL from .env)
 pnpm audit:schema     # 检查 schema 字段是否都有 write path（防漂移 lint）
+pnpm audit:dependencies # production dependency HIGH+ advisories（CI hard gate）
+pnpm audit:api-contracts # capability route contract / legacy allowlist / OpenAPI coverage
 pnpm audit:partition  # 检查 *.test.ts 在 unit/db 分区是否正确（file-level lint）
 pnpm audit:profile    # 检查所有 SubjectProfile 是否通过 schema + capability registry 验证
+pnpm audit:learner-copy # 学习者可见文案禁止泄漏内部实现术语
+pnpm audit:no-learning-styles # 生产代码禁止 VAK/VARK / learning-style 个性化
 pnpm audit:draft-status # 检查每个 question INSERT 都显式 set draft_status 或在 allowlist（防容器题漏进练习池）
+pnpm audit:draft-status-reads # pool 可见性读路径必须走共享 predicate（pnpm test 用 --strict）
 pnpm audit:relations  # KG 死边反向审计：每个 relation_type 是否有特化下游消费（诊断/推荐/复习），report-only
 pnpm audit:calibration # READ-ONLY V-A1-fwd retro-validation of live A1 SRT（forward-AUC θ̂ replay），report-only，永不翻 flag
 pnpm audit:mastery-provenance # 借用 provenance 消费纪律反查（MasteryProjection 读点 guard 检查），report-only，--strict 才非零 exit
+pnpm audit:fold-writes # fold-owned 表 raw write 反向审计，report-only，--strict 可 fail
+pnpm audit:flags      # *_ENABLED 代码 ↔ ledger 对账，report-only，--strict 可 fail
+pnpm audit:projection # DB projection 重放对账；非 allowlist drift 直接 fail
+pnpm audit:golden --kind=<kind> # retained projection golden 重放
+pnpm audit:judge-golden # frozen judge output → normalized result 重放，--strict 可 fail
+pnpm audit:judge-prompts # judge task × profile prompt snapshot 对账，--strict / --write
 ```
 
-Each `pnpm audit:*` script has its own allowlist format, CI-gate wiring, and (for `audit:draft-status`) a NULL-semantics gotcha — see the `audits-reference` skill for full mechanics before adding a new table/field/question-insert site or touching the allowlist JSONs. Quick pointer: `audit:schema`/`audit:draft-status` allowlists need `reason` + `resolves_when{kind,ref,expected_by}`; `audit:schema`/`audit:partition` are CI-gated remotely (`.github/workflows/ci-gate.yml`) and need a local manual run pre-PR; `pnpm test` covers `audit:profile`/`audit:draft-status`/`audit:draft-status-reads --strict` + unit/db/migration.
+Each `pnpm audit:*` script has its own allowlist format, CI-gate wiring, and (for `audit:draft-status`) a NULL-semantics gotcha — see the `audits-reference` skill for full mechanics before adding a new table/field/question-insert site or touching the allowlist JSONs. Quick pointer: `audit:schema`/`audit:draft-status` allowlists need `reason` + `resolves_when{kind,ref,expected_by}`; CI runs `audit:schema`, `audit:dependencies`, and `audit:partition` as standalone hard gates. `pnpm test` itself runs `audit:api-contracts` → `audit:profile` → `audit:learner-copy` → `audit:no-learning-styles` → `audit:draft-status` → `audit:draft-status-reads --strict`, then unit/db/migration tests.
 
-`/audit-drift` skill (`.claude/skills/audit-drift/SKILL.md`) scans ADR/planning-doc ↔ code drift, manual-trigger only — see the skill for details.
+`/audit-drift` skill (`.claude/skills/audit-drift/SKILL.md`) scans ADR/planning-doc ↔ code drift. It supports interactive and scheduled invocation; scheduled runs close findings into Linear and must not create per-run branches or PRs — see the skill for details.
 
 **Behavior change (2026-05-21)**: `pnpm test:watch` is now an alias for `pnpm test:unit:watch` (no longer full+docker). For a DB watch loop use `pnpm test:db:watch`.
 
@@ -109,6 +120,7 @@ Do not put tests that import `tests/helpers/db`, `@/db/client`, `postgres`, `dri
 - `src/capabilities/copilot/manifest.ts` — Copilot chat（SSE 4 路由，AF S4）+ D14 单人格编排者 + `copilotTools` 工具贡献制（启动期 `registerCapabilityCopilotTools` 聚合到 DomainTool registry）
 - `src/capabilities/observability/manifest.ts` — admin 四面（logs cost/jobs/jobs-by-id/tool_calls）+ subjects + today cost ribbon
 - `src/capabilities/ingestion/manifest.ts` — assets multipart upload → R2 + DB row + ingestion pipeline（`src/server/ingestion/`，`src/server/r2.ts`）
+- `src/capabilities/onboarding/manifest.ts` — cold-start welcome / upload / placement / profile pages
 - `src/capabilities/{knowledge,notes,practice,agency,shell}/manifest.ts` — domain CRUD + AI tasks；FSRS scheduling via `ts-fsrs` in `src/server/review/`
 - `server/app.ts` 直挂 `/api/health`（unauthenticated liveness probe）
 
@@ -130,6 +142,7 @@ src/
     ingestion/     # 录入域
     knowledge/     # 知识图谱域
     notes/         # Note artifact 域
+    onboarding/    # 冷启 welcome / upload / placement / profile 域
     practice/      # 练习域
     agency/        # 代理域
     shell/         # 工作台域
