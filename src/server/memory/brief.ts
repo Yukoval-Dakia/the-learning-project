@@ -5,6 +5,23 @@ import { event, memory_brief_note } from '@/db/schema';
 import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/server/ai/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
 
+// YUK-565 — reserved rollback-ledger actions that were written before
+// writeEvent began persisting insert-time opt-out intent as affected_scopes=[].
+// The action list handles those historical rows; the actor-qualified `correct`
+// clause preserves ordinary user corrections while excluding cascade tombstones.
+const LEGACY_INTERNAL_BRIEF_ACTIONS = [
+  'experimental:grading_checkpoint',
+  'experimental:state_snapshot',
+  'experimental:reproject_deferred',
+] as const;
+
+function excludesInternalBriefLedger() {
+  return sql`NOT (
+    ${inArray(event.action, [...LEGACY_INTERNAL_BRIEF_ACTIONS])}
+    OR (${eq(event.action, 'correct')} AND ${eq(event.actor_ref, 'cascade_revert')})
+  )`;
+}
+
 export const BRIEF_TEMPLATES = {
   global:
     'Summarize the learner globally: stable preferences, current focus, risks, and next useful prompts.',
@@ -91,7 +108,12 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
   const rows = await db
     .select()
     .from(event)
-    .where(sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`)
+    .where(
+      and(
+        sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
+        excludesInternalBriefLedger(),
+      ),
+    )
     .orderBy(desc(event.created_at))
     // P5.2 (BR-9) — single-source per-brief read cap. Byte-identical to the
     // prior hardcoded 50; budgets.ts is now the only place this number lives.
@@ -185,6 +207,7 @@ export async function scopeHasNewEvidence(db: Db, scopeKey: string): Promise<boo
     .where(
       and(
         sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
+        excludesInternalBriefLedger(),
         gt(event.created_at, briefLatest),
       ),
     )
