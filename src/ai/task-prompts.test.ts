@@ -1,3 +1,4 @@
+import { MetaCauseFields } from '@/core/schema/business';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { describe, expect, it } from 'vitest';
 import { tasks } from './registry';
@@ -185,6 +186,15 @@ describe('getTaskSystemPrompt', () => {
     expect(prompt).toContain('recurred_cross_item');
     expect(prompt).toContain('信心与表现是否脱节');
     expect(prompt).toContain('metacog_flag="regulation_gap" 且 meta_cause=null');
+  });
+
+  it('keeps both attribution prompts aligned with every meta-cause schema field', () => {
+    for (const task of ['AttributionTask', 'AttributionRerankTask'] as const) {
+      const prompt = getTaskSystemPrompt(task, resolveSubjectProfile('math'));
+      for (const field of MetaCauseFields.keyof().options) {
+        expect(prompt, `${task} missing ${field}`).toContain(`"${field}"`);
+      }
+    }
   });
 
   // Lane D (YUK-482): KnowledgeProposeTask prompt test removed — task deleted
