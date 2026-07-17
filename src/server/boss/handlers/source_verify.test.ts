@@ -159,6 +159,56 @@ describe('runSourceVerify', () => {
     expect((events[0].payload as Record<string, unknown>).failure_class).toBeUndefined();
   });
 
+  it('promotes an exact text mismatch when SemanticJudge establishes equivalence', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'] });
+    const runTaskFn = vi.fn(async (kind: string) => ({
+      text:
+        kind === 'SemanticJudgeTask'
+          ? semanticJudgeOutput('correct', 0.95)
+          : solverOutput('它指代所学习的内容'),
+    }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+
+    expect(result.status).toBe('verified');
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({ check: 'solve_check', verdict: 'pass' }),
+    );
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'active',
+    );
+  });
+
+  it('holds an unresolved exact mismatch for review when SemanticJudge is unavailable', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({ knowledgeIds: ['k1'] });
+    const runTaskFn = vi.fn(async (kind: string) => ({
+      text: kind === 'SemanticJudgeTask' ? 'not-json' : solverOutput('助词'),
+    }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+
+    expect(result.status).toBe('failed');
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({ check: 'solve_check', verdict: 'unsupported' }),
+    );
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'draft',
+    );
+    const [verifyEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:source_verify'));
+    expect(verifyEvent.payload).toMatchObject({
+      promoted: false,
+      overall: 'needs_review',
+      summary_md: 'tier-2 source verify needs review: exact answer mismatch remained unresolved',
+    });
+  });
+
   it('keeps the draft when solve_check fails (solver disagrees with reference)', async () => {
     const db = testDb();
     await seedKnowledge('k1');

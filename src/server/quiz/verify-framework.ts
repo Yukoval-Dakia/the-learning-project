@@ -140,6 +140,8 @@ export interface SolveCheckResult {
   reason: string;
   // Which comparison established the terminal verdict. Exact mismatches fall through to semantic.
   compared_by: 'normalize' | 'semantic' | 'none';
+  /** Exact candidates disagreed before the SemanticJudge fallback (YUK-612 audit signal). */
+  normalized_exact_mismatch?: boolean;
   // EFF-1 (YUK-554 review) — provenance/cost of the 1 (exact) or 2 (semantic: solver +
   // judge) LLM calls this check spent, in call order, when the runner reported them.
   // cost_usd is the SUM across legs; absent when no leg reported a number.
@@ -300,7 +302,9 @@ function stripLeadingChoiceLabel(value: string): string | null {
   // low-pri (YUK-554 review A2, skip 裁决): `.` here is not dotAll — a multi-line labelled
   // answer won't strip. Post-A1 the fallback candidates are first-line/first-sentence
   // (single-line) so this is moot in practice; not worth a behavior-bearing regex change.
-  const match = /^([A-F])(?:[\s.、:：)\]）-]+(.+)|\s*[(（\[【]\s*(.+?)\s*[)）\]】]\s*)$/iu.exec(
+  // Try the balanced-bracket shape first. Otherwise `A (content)` is consumed
+  // by the generic separator branch at the space and retains `(content)`.
+  const match = /^([A-F])(?:\s*[(（\[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/iu.exec(
     normalized,
   );
   const stripped = (match?.[2] ?? match?.[3])?.trim();
@@ -507,6 +511,7 @@ export async function runSolveCheck(
         ? 'normalized exact answers disagreed, but SemanticJudge fallback needs a Db handle; skipped'
         : 'open-question solve-check needs a Db handle for SemanticJudge; skipped',
       compared_by: 'none',
+      ...(normalizedExactMismatch ? { normalized_exact_mismatch: true } : {}),
       ...runProvenance(),
     };
   }
@@ -544,14 +549,25 @@ export async function runSolveCheck(
   const judged = await runSemanticJudge(semParams);
   const confidentlyDisagrees =
     judged.coarse_outcome === 'incorrect' && judged.confidence >= SOLVE_CHECK_SEMANTIC_THRESHOLD;
+  // For an exact mismatch, an unavailable judge or an additional low-confidence
+  // disagreement does not establish equivalence. Preserve it as `unsupported`
+  // so provenance-anchored tier 2 can hold for review instead of silently
+  // promoting; tier 3/4 continues treating unsupported as non-blocking.
+  const exactFallbackUnresolved =
+    normalizedExactMismatch &&
+    (judged.coarse_outcome === 'unsupported' ||
+      (judged.coarse_outcome === 'incorrect' && !confidentlyDisagrees));
   const fallbackPrefix = normalizedExactMismatch ? 'Normalized exact candidates disagreed; ' : '';
   return {
-    verdict: confidentlyDisagrees ? 'fail' : 'pass',
+    verdict: confidentlyDisagrees ? 'fail' : exactFallbackUnresolved ? 'unsupported' : 'pass',
     solver_final_answer: solverFinalAnswer,
     reason: confidentlyDisagrees
       ? `${fallbackPrefix}SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`
-      : `${fallbackPrefix}SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`,
+      : exactFallbackUnresolved
+        ? `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`
+        : `${fallbackPrefix}SemanticJudge did not confidently disagree (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — conservative pass`,
     compared_by: 'semantic',
+    ...(normalizedExactMismatch ? { normalized_exact_mismatch: true } : {}),
     ...runProvenance(),
   };
 }

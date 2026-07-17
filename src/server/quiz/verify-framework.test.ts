@@ -208,8 +208,12 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
   it.each([
     ['A（公元前 202 年）', '公元前 202 年'],
     ['B(answer)', 'answer'],
+    ['B (answer)', 'answer'],
+    ['B （answer）', 'answer'],
     ['C[choice]', 'choice'],
+    ['C [choice]', 'choice'],
     ['D【答案】', '答案'],
+    ['D 【答案】', '答案'],
   ])('extracts parenthesized choice content from %s', async (reference, solverAnswer) => {
     const question: SolveCheckQuestion = {
       ...exactQuestion,
@@ -521,8 +525,43 @@ describe('runSolveCheck — conservative non-fail behaviour (R2)', () => {
     const result = await runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile });
 
     expect(result).toMatchObject({ verdict: 'unsupported', compared_by: 'none' });
+    expect(result.normalized_exact_mismatch).toBe(true);
     expect(result.reason).toContain('SemanticJudge fallback needs a Db handle');
     expect(runTaskFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an exact mismatch unresolved when SemanticJudge is unavailable', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => ({
+      text: kind === 'SolutionGenerateTask' ? solverOutput('公元前 221 年') : 'not-json',
+    }));
+
+    const result = await runSolveCheck(exactQuestion, {
+      runTaskFn,
+      profile: fakeProfile,
+      db: fakeDb,
+    });
+
+    expect(result).toMatchObject({
+      verdict: 'unsupported',
+      compared_by: 'semantic',
+      normalized_exact_mismatch: true,
+    });
+  });
+
+  it('keeps an exact mismatch unresolved on a low-confidence semantic disagreement', async () => {
+    const runTaskFn = vi.fn(async (kind: string) => ({
+      text:
+        kind === 'SolutionGenerateTask'
+          ? solverOutput('公元前 221 年')
+          : semanticOutput('incorrect', SOLVE_CHECK_SEMANTIC_THRESHOLD - 0.1),
+    }));
+
+    await expect(
+      runSolveCheck(exactQuestion, { runTaskFn, profile: fakeProfile, db: fakeDb }),
+    ).resolves.toMatchObject({
+      verdict: 'unsupported',
+      normalized_exact_mismatch: true,
+    });
   });
 
   it('returns unsupported when the question has no reference answer — WITHOUT spending the solver call (EFF-3)', async () => {

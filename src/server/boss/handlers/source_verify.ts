@@ -79,7 +79,7 @@ export const DEDUP_OVERLAP_THRESHOLD = 0.7;
 export interface CheckOutcome {
   check: VerifyCheck;
   // pass = the check is satisfied; fail = a hard problem; unsupported = no signal
-  // (treated as non-blocking — conservative, mirrors solve-check semantics).
+  // (normally non-blocking; an unresolved exact mismatch is held in tier 2).
   verdict: 'pass' | 'fail' | 'unsupported';
   reason: string;
 }
@@ -283,7 +283,7 @@ function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
 /**
  * Verify a single sourced draft question against the tier-2 check set. Idempotent
  * per (question_id) via the chained verify event guard. Promotes draft→active +
- * FSRS-enrolls when every check passes (no check is 'fail').
+ * FSRS-enrolls when there is no hard fail or unresolved anchored exact mismatch.
  */
 export async function runSourceVerify(
   params: RunSourceVerifyParams,
@@ -350,6 +350,7 @@ export async function runSourceVerify(
     // source_consistency + dedup are deterministic; solve_check spends the LLM call.
     const tierChecks = checksForTier(2);
     const checks: CheckOutcome[] = [];
+    let unresolvedAnchoredExactMismatch = false;
 
     if (tierChecks.includes('structure_completeness')) {
       checks.push(checkStructureCompleteness(row));
@@ -377,15 +378,19 @@ export async function runSourceVerify(
         profile: { id: subjectProfile.id, full: subjectProfile },
         db,
       });
+      unresolvedAnchoredExactMismatch =
+        solveResult.verdict === 'unsupported' && solveResult.normalized_exact_mismatch === true;
       checks.push(solveCheckToOutcome(solveResult));
     }
 
-    // Option B gate: promote ONLY when no check is 'fail' AND every referenced
-    // knowledge point is still alive (F3). 'unsupported' (no signal) is non-blocking —
-    // conservative, so a question the solver couldn't independently solve is not killed
-    // (R2). A hard structural / consistency / dedup / solve fail — or an archived
-    // knowledge point — keeps the draft out of the pool.
-    const promote = knowledgeAlive && !checks.some((c) => c.verdict === 'fail');
+    // Option B gate: ordinary unsupported remains non-blocking (R2), but when an
+    // exact solver/reference mismatch survives because SemanticJudge was unavailable
+    // or still disagreed below threshold, a web-sourced answer is not safe to auto-
+    // promote. Keep it draft for review without relabelling the mismatch as a fail.
+    const promote =
+      knowledgeAlive &&
+      !unresolvedAnchoredExactMismatch &&
+      !checks.some((c) => c.verdict === 'fail');
 
     // solve_check owns its AI run inside runSolveCheck, so this handler holds no
     // single TaskTextResult; the verify event carries the per-check verdicts as its
@@ -407,9 +412,11 @@ export async function runSourceVerify(
       ? 'tier-2 source verify passed'
       : failingCheck
         ? `tier-2 source verify failed: ${failingCheck.check} — ${failingCheck.reason}`
-        : !knowledgeAlive
-          ? 'referenced knowledge point archived after sourcing; not promoted'
-          : 'tier-2 source verify did not promote';
+        : unresolvedAnchoredExactMismatch
+          ? 'tier-2 source verify needs review: exact answer mismatch remained unresolved'
+          : !knowledgeAlive
+            ? 'referenced knowledge point archived after sourcing; not promoted'
+            : 'tier-2 source verify did not promote';
     const unified = toUnifiedVerifyResult({
       source: 'source',
       promote,
