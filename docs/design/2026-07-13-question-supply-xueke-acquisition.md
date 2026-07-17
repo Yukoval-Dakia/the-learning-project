@@ -164,7 +164,12 @@ const QUESTION_LEADING = /^\s*(\d{1,3})\\?\.(?:\s+(.*))?$/;
 - **(c) 溯源→资格**：lean = P1 仅捕获归因，P2 才授信 mastery/placement。
 - **(d) verified-item-model**：lean = defer。
 
-### Follow-ups（待角度定后落 Linear）
+### Follow-ups（已落账：YUK-676）
+
+> 2026-07-17：四项已按轻量 capture 方案写入 YUK-676 checklist，并补齐设计锚点、
+> 代码落点与 owner gate。某项进入实施时再晋升为独立 sub-issue；P1 治理三件仍以
+> fork (b)/(c) 获 owner 采纳为前提，不将 capture 冒充批准。
+
 1. **阅读篇父题分组**（passage → composite parent）进 docx 文本线：现读文原文被吸进相邻题块（`compositeParentOnly` 概念已存在）。**下一个切块增量。**
 2. **数学/物理 MathType 卷** OCR-visual 线保真度验证（本 spike 未测的更坏情况）。
 3. **全自动获取的认证工程**（worker 侧 headless 浏览器 + 学科网 session/凭证 + 反爬 + 文件交接）。
