@@ -1,0 +1,29 @@
+# This remains a single-package repository. The root-only workspace file is the
+# canonical pnpm settings location and keeps security overrides effective on pnpm 11+.
+packages:
+  - '.'
+
+overrides:
+  'tmp@<0.2.6': '>=0.2.6'
+  'undici@<6.27.0': '>=6.27.0 <7'
+  'form-data@<3.0.5': '>=3.0.5 <4'
+  'form-data@>=4.0.0 <4.0.6': '>=4.0.6 <5'
+  'protobufjs@<=7.6.2': '>=7.6.3 <8'
+  '@grpc/grpc-js@>=1.14.0 <1.14.4': '>=1.14.4 <2'
+  'postcss@<8.5.10': '>=8.5.10 <9'
+  'uuid@<11.1.1': '>=11.1.1 <12'
+  'hono@<4.12.21': '>=4.12.21 <5'
+  'esbuild@<0.28.1': '>=0.28.1 <0.29'
+
+# pnpm 11 fails closed on dependency lifecycle scripts. Keep the executable/native
+# packages explicit, and record the reviewed no-op/optional scripts as denied so CI
+# never depends on an interactive `pnpm approve-builds` decision.
+allowBuilds:
+  '@biomejs/biome': true
+  '@google/genai': false
+  better-sqlite3: true
+  cpu-features: false
+  esbuild: true
+  protobufjs: false
+  sharp: true
+  ssh2: false
