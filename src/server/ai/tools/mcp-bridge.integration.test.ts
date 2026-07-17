@@ -3,7 +3,7 @@
 // (`parseEvent` inside `writeEvent`) and the resulting row + the
 // `tool_call_log.mirrored_event_id` linkage land on disk.
 
-import { event, tool_call_log } from '@/db/schema';
+import { event, memory_brief_note, tool_call_log } from '@/db/schema';
 import { writeEvent } from '@/server/events/queries';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -131,5 +131,36 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       .where(eq(tool_call_log.task_run_id, 'tr_mirror_e2e'));
     expect(tcl).toHaveLength(1);
     expect(tcl[0].mirrored_event_id).toBeNull();
+  });
+
+  it('persists stale memory-brief freshness for Dreaming without a user-visible mirror', async () => {
+    const staleAt = new Date('2000-01-01T00:00:00.000Z');
+    await testDb().insert(memory_brief_note).values({
+      id: 'brief_stale_e2e',
+      scope_key: 'global',
+      recent_week_md: 'Old directional context',
+      refreshed_at: staleAt,
+      created_at: staleAt,
+      updated_at: staleAt,
+    });
+
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx(), callerActor: { kind: 'agent', ref: 'dreaming' } },
+      serverName: 'loom_v2',
+      toolNames: ['query_memory_brief'],
+    });
+    await mockSdk.toolDefs[0].handler({ scopeKey: 'global' });
+
+    const [log] = await testDb()
+      .select()
+      .from(tool_call_log)
+      .where(eq(tool_call_log.task_run_id, 'tr_mirror_e2e'));
+    expect(log.output_json).toMatchObject({
+      freshness: {
+        state: 'stale',
+        stale_after_ms: 86_400_000,
+      },
+    });
+    expect(await testDb().select().from(event).where(eq(event.action, 'tool_use'))).toHaveLength(0);
   });
 });
