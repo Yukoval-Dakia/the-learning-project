@@ -9,7 +9,12 @@ import type { AiChangeRow } from '@/capabilities/notes/ui/notes-api';
 
 // ── /api/workbench/summary wire（workbench-summary.db.test.ts 同形态） ──
 export interface WorkbenchSummary {
-  proposals: { total: number; by_kind: Record<string, number>; status: string };
+  proposals: {
+    total: number;
+    decision_total: number;
+    by_kind: Record<string, number>;
+    status: string;
+  };
   kpi: {
     due_count: number;
     pending_attribution_count: number;

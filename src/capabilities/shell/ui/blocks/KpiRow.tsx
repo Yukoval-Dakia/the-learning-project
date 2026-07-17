@@ -42,13 +42,13 @@ function KpiCard({ kpi }: { kpi: Kpi }) {
 
 export function KpiRow({
   kpi,
-  proposalsTotal,
+  proposalsDecisionTotal,
   navigate,
 }: {
   kpi: { due_count: number; pending_attribution_count: number; knowledge_count: number };
-  // 第 4 卡数据源 /api/workbench/summary proposals.total（KPI 网格 4 列，第 4 列
-  // 原恒空——「AI 提议·待审」最高优先级信号从 KPI 层缺席，audit §3.2 HIGH）。
-  proposalsTotal: number;
+  // 第 4 卡只展示真正需要用户裁决的数量；C-strength pending 记录属于旁观事实，
+  // 不得制造虚假的待办积压。
+  proposalsDecisionTotal: number;
   navigate: (to: string) => void;
 }) {
   const cards: Kpi[] = [
@@ -80,7 +80,7 @@ export function KpiRow({
       key: 'proposals',
       label: 'AI 提议',
       icon: 'inbox',
-      value: proposalsTotal,
+      value: proposalsDecisionTotal,
       sub: '等待裁决的提议',
       onGo: () => navigate('/inbox'),
     },

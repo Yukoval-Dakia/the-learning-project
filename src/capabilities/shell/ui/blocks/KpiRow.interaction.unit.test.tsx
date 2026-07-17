@@ -11,7 +11,7 @@ describe('KpiRow fact values', () => {
     render(
       <KpiRow
         kpi={{ due_count: 12, pending_attribution_count: 3, knowledge_count: 27 }}
-        proposalsTotal={4}
+        proposalsDecisionTotal={4}
         navigate={vi.fn()}
       />,
     );
@@ -27,7 +27,7 @@ describe('KpiRow fact values', () => {
     const { rerender } = render(
       <KpiRow
         kpi={{ due_count: 12, pending_attribution_count: 3, knowledge_count: 27 }}
-        proposalsTotal={4}
+        proposalsDecisionTotal={4}
         navigate={navigate}
       />,
     );
@@ -35,7 +35,7 @@ describe('KpiRow fact values', () => {
     rerender(
       <KpiRow
         kpi={{ due_count: 7, pending_attribution_count: 3, knowledge_count: 27 }}
-        proposalsTotal={4}
+        proposalsDecisionTotal={4}
         navigate={navigate}
       />,
     );

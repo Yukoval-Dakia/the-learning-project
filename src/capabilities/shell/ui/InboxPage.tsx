@@ -30,7 +30,13 @@ import {
   listProposals,
   retractProposal,
 } from './inbox-api';
-import { TIER_META, autoAppliedState, bucketPendingByTier, undoRemainingMs } from './inbox-tier';
+import {
+  TIER_C_COPY,
+  TIER_META,
+  autoAppliedState,
+  bucketPendingByTier,
+  undoRemainingMs,
+} from './inbox-tier';
 import './shell.css';
 
 function tierIcon(name: string): LoomIconName {
@@ -198,12 +204,8 @@ function TierCBlock({
           <LoomIcon name="archive" size={16} />
         </span>
         <span>
-          <span className="co-t">{items.length} 项纯状态变更已自动处理</span>
-          <span className="co-s">
-            {open
-              ? 'snooze / 软归档 / 移到旁观 —— 都没占你的裁决队列'
-              : '展开看它们去哪了 · 不需要你裁决'}
-          </span>
+          <span className="co-t">{TIER_C_COPY.summary(items.length)}</span>
+          <span className="co-s">{open ? TIER_C_COPY.expanded : TIER_C_COPY.collapsed}</span>
         </span>
         <LoomIcon name="chevronDown" size={18} className="co-chev" />
       </button>
@@ -219,7 +221,7 @@ function TierCBlock({
                 <div className="co-row-body">
                   <div className="co-row-top">
                     <span className="co-row-title">{meta.label}</span>
-                    <span className="co-row-act">已自动处理</span>
+                    <span className="co-row-act">{TIER_C_COPY.itemState}</span>
                   </div>
                   <div className="co-row-text">{it.payload.reason_md}</div>
                 </div>

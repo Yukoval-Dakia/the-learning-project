@@ -76,14 +76,14 @@ function deriveThreads(s: WorkbenchSummary): Thread[] {
       route: '/practice',
     });
   }
-  if (s.proposals.total > 0) {
+  if (s.proposals.decision_total > 0) {
     threads.push({
       id: 'inbox',
       label: '裁决',
-      title: `${s.proposals.total} 条 AI 提议待审`,
+      title: `${s.proposals.decision_total} 条 AI 提议待审`,
       sub: '逐条查看，再决定采用或暂不采用。',
       cta: '去收件箱',
-      badge: `${s.proposals.total} 条`,
+      badge: `${s.proposals.decision_total} 条`,
       icon: 'inbox',
       tone: 'info',
       route: '/inbox',
@@ -495,7 +495,11 @@ export default function TodayPage({ navigate }: TodayPageProps) {
                 （cold_start=false）渲染，空夜态永不落 ColdStart。 */}
             <OvernightDigestBand navigate={navigate} />
 
-            <KpiRow kpi={s.kpi} proposalsTotal={s.proposals.total} navigate={navigate} />
+            <KpiRow
+              kpi={s.kpi}
+              proposalsDecisionTotal={s.proposals.decision_total}
+              navigate={navigate}
+            />
 
             {/* YUK-476 起始画像卡片：active goal 存在时露出 per-KC band 摘要 + /profile 持久入口。
                 无 active goal 时只省略画像，不影响其余工作台。 */}

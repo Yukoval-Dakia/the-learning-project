@@ -7,6 +7,7 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import { kindMeta } from '../inbox-api';
+import { isMovedOutKind } from '../inbox-tier';
 import type { WorkbenchSummary } from '../workbench-api';
 
 export function ProposalStrip({
@@ -17,7 +18,7 @@ export function ProposalStrip({
   navigate: (to: string) => void;
 }) {
   const breakdown = Object.entries(proposals.by_kind)
-    .filter(([, n]) => n > 0)
+    .filter(([kind, n]) => n > 0 && !isMovedOutKind(kind))
     .sort((a, b) => b[1] - a[1]);
   return (
     <LoomCard pad>
@@ -33,14 +34,14 @@ export function ProposalStrip({
           style={{ marginLeft: 'auto' }}
           onClick={() => navigate('/inbox')}
         >
-          去裁决
+          去收件箱
         </Btn>
       </div>
-      {proposals.total === 0 ? (
+      {proposals.decision_total === 0 ? (
         <div className="quiet-empty">没有待审提议。</div>
       ) : (
         <div className="prop-summary">
-          <div className="prop-summary-n serif tnum">{proposals.total}</div>
+          <div className="prop-summary-n serif tnum">{proposals.decision_total}</div>
           <div className="prop-summary-kinds">
             {breakdown.map(([k, n]) => {
               const meta = kindMeta(k);
