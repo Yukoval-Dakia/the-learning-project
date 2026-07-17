@@ -889,9 +889,13 @@ async function acceptNoteUpdateProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    // YUK-149 — the materialized patch, its accept rate event, and the learned
+    // proposal signal are one decision. Keep all three in the same transaction
+    // so a signal-write failure cannot leave an accepted proposal with a stale
+    // acceptance aggregate.
+    await recordProposalDecisionSignal(tx, proposal, 'accept', opts.user_note);
   });
 
-  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
   return {
     kind: 'note_update',
     rate_event_id: rateEventId,
