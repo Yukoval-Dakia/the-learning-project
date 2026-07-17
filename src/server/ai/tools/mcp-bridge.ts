@@ -89,7 +89,7 @@ export interface ToolInputInterceptResult {
   /**
    * Structured budget notice (any object). Merged verbatim into the tool
    * output as `context_budget`. Kept as `object` (not a named shape) so the
-   * bridge stays decoupled from the throttle's `ContextBudgetTruncation` type.
+   * bridge stays decoupled from the throttle's `ContextBudgetNotice` type.
    */
   truncationNote?: object | null;
   /**
