@@ -107,10 +107,55 @@ export interface ProposalInboxRow {
   signals: Record<string, unknown> | null;
 }
 
-export const listProposals = () =>
-  apiJson<{ rows: ProposalInboxRow[]; next_cursor: string | null }>(
-    '/api/proposals?status=pending',
-  );
+interface ProposalPageWire {
+  rows: ProposalInboxRow[];
+  next_cursor: string | null;
+}
+
+const DECISION_PAGE_LIMIT = 500;
+const OBSERVATION_PAGE_LIMIT = 200;
+
+function listProposalPage(
+  lane: 'decision' | 'observation',
+  limit: number,
+  cursor?: string,
+): Promise<ProposalPageWire> {
+  const query = new URLSearchParams({ lane, limit: String(limit), status: 'pending' });
+  if (cursor) query.set('cursor', cursor);
+  return apiJson<ProposalPageWire>(`/api/proposals?${query.toString()}`);
+}
+
+async function listAllDecisionProposals(): Promise<ProposalInboxRow[]> {
+  const rows: ProposalInboxRow[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  while (true) {
+    const page = await listProposalPage('decision', DECISION_PAGE_LIMIT, cursor);
+    rows.push(...page.rows);
+    if (!page.next_cursor) return rows;
+    if (seenCursors.has(page.next_cursor)) {
+      throw new Error('提议分页游标重复，无法完整加载待裁决项。');
+    }
+    seenCursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  }
+}
+
+/**
+ * Load every actionable proposal independently from the bounded observation preview. This prevents a
+ * large C-strength backlog from making Today advertise decisions that the Inbox cannot reach.
+ */
+export async function listProposals(): Promise<ProposalPageWire> {
+  const [decisionRows, observationPage] = await Promise.all([
+    listAllDecisionProposals(),
+    listProposalPage('observation', OBSERVATION_PAGE_LIMIT),
+  ]);
+  return {
+    rows: [...decisionRows, ...observationPage.rows],
+    next_cursor: observationPage.next_cursor,
+  };
+}
 
 export type ProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 

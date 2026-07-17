@@ -71,6 +71,23 @@ async function seedLearningItemProposal(id: string): Promise<void> {
   });
 }
 
+async function seedObservationProposal(id: string): Promise<void> {
+  await writeAiProposal(testDb(), {
+    id,
+    payload: {
+      kind: 'defer',
+      target: { subject_kind: 'learning_item', subject_id: `${id}_item` },
+      reason_md: 'Observe this scheduling suggestion.',
+      evidence_refs: [],
+      proposed_change: {
+        learning_item_id: `${id}_item`,
+        defer_until: '2026-07-18T00:00:00.000Z',
+        reason: 'low energy',
+      },
+    },
+  });
+}
+
 function listRequest(query = ''): Request {
   return new Request(`http://test/api/proposals${query}`);
 }
@@ -148,6 +165,19 @@ describe('GET /api/proposals (shell)', () => {
     expect(invalidRes.status).toBe(400);
   });
 
+  it('filters decision and observation lanes independently', async () => {
+    await seedLearningItemProposal('decision_p1');
+    await seedObservationProposal('observation_p1');
+
+    const decisionRes = await listProposals(listRequest('?status=pending&lane=decision'));
+    const decision = (await decisionRes.json()) as { rows: Array<{ id: string }> };
+    expect(decision.rows.map((row) => row.id)).toEqual(['decision_p1']);
+
+    const observationRes = await listProposals(listRequest('?status=pending&lane=observation'));
+    const observation = (await observationRes.json()) as { rows: Array<{ id: string }> };
+    expect(observation.rows.map((row) => row.id)).toEqual(['observation_p1']);
+  });
+
   // codex P2 / coderabbit major 回归：kind 过滤在读模型投影层执行，分页语义
   // 作用于「过滤后的流」——limit 数满页、next_cursor 续页不漏不重，而不是
   // 旧实现的页内 post-filter（next_cursor 指向未过滤流，跨页会漏行）。
@@ -188,6 +218,7 @@ describe('GET /api/proposals (shell)', () => {
     expect((await listProposals(listRequest('?status=bogus'))).status).toBe(400);
     expect((await listProposals(listRequest('?limit=0'))).status).toBe(400);
     expect((await listProposals(listRequest('?limit=abc'))).status).toBe(400);
+    expect((await listProposals(listRequest('?lane=bogus'))).status).toBe(400);
   });
 });
 

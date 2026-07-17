@@ -6,7 +6,11 @@
 import { type AiProposalPayloadT, aiProposalKinds } from '@/core/schema/proposal';
 import { db } from '@/db/client';
 import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
-import { type ProposalStatus, listProposalInboxPage } from '@/server/proposals/inbox';
+import {
+  type ProposalInboxLane,
+  type ProposalStatus,
+  listProposalInboxPage,
+} from '@/server/proposals/inbox';
 
 // P5.4 / YUK-143 (RB-8) — 'rubric_rejected' is queryable so the folded /
 // low-visibility bucket of rubric-rejected proposals is exposed to clients via
@@ -43,6 +47,12 @@ function parseKind(value: string | null): AiProposalPayloadT['kind'] | undefined
   throw new ApiError('validation_error', `invalid proposal kind: ${value}`, 400);
 }
 
+function parseLane(value: string | null): ProposalInboxLane | undefined {
+  if (value === null) return undefined;
+  if (value === 'decision' || value === 'observation') return value;
+  throw new ApiError('validation_error', `invalid proposal lane: ${value}`, 400);
+}
+
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
@@ -50,6 +60,7 @@ export async function GET(req: Request): Promise<Response> {
     const page = await listProposalInboxPage(db, {
       status: parseStatus(url.searchParams.get('status')),
       kind: parseKind(url.searchParams.get('kind')),
+      lane: parseLane(url.searchParams.get('lane')),
       limit,
       cursor: url.searchParams.get('cursor') ?? undefined,
     });

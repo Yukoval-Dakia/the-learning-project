@@ -1,6 +1,7 @@
 import {
   type AiProposalKindT,
   type AiProposalPayloadT,
+  aiProposalKindStrength,
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
@@ -12,7 +13,9 @@ import {
   loadProposalSignalsForRows,
 } from '@/server/proposals/signals';
 import {
+  type SQL,
   and,
+  asc,
   count,
   desc,
   eq,
@@ -64,9 +67,14 @@ export interface ListProposalInboxOpts {
   // （之前在路由层做页内 post-filter，next_cursor 指向未过滤流——codex P2 /
   // coderabbit major）。
   kind?: AiProposalPayloadT['kind'];
+  // decision excludes C-strength observe-only records. The Inbox uses this lane to guarantee that
+  // a large observation backlog cannot hide actionable rows behind the API page boundary.
+  lane?: ProposalInboxLane;
   limit?: number;
   cursor?: string;
 }
+
+export type ProposalInboxLane = 'decision' | 'observation';
 
 export interface LegacyKnowledgeProposalRow {
   id: string;
@@ -84,21 +92,25 @@ function toRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+const terminalRateStatus = {
+  accept: 'accepted',
+  reverse: 'accepted',
+  change_type: 'accepted',
+  dismiss: 'dismissed',
+  rollback: 'stale',
+} as const satisfies Record<string, ProposalStatus>;
+
+type TerminalRating = keyof typeof terminalRateStatus;
+const terminalRatings = Object.keys(terminalRateStatus) as TerminalRating[];
+
+function isTerminalRating(value: unknown): value is TerminalRating {
+  return typeof value === 'string' && Object.hasOwn(terminalRateStatus, value);
+}
+
 function rateStatus(rate: EventRow | undefined): ProposalStatus {
   if (!rate) return 'pending';
   const payload = toRecord(rate.payload);
-  switch (payload.rating) {
-    case 'accept':
-    case 'reverse':
-    case 'change_type':
-      return 'accepted';
-    case 'dismiss':
-      return 'dismissed';
-    case 'rollback':
-      return 'stale';
-    default:
-      return 'pending';
-  }
+  return isTerminalRating(payload.rating) ? terminalRateStatus[payload.rating] : 'pending';
 }
 
 // Read a verdict marker (sibling of ai_proposal on the propose event payload)
@@ -225,13 +237,7 @@ export async function countPendingProposalInboxByKind(
       and(
         eq(latestRate.action, 'rate'),
         eq(latestRate.caused_by_event_id, event.id),
-        inArray(sql<string>`${latestRate.payload}->>'rating'`, [
-          'accept',
-          'reverse',
-          'change_type',
-          'dismiss',
-          'rollback',
-        ]),
+        inArray(sql<string>`${latestRate.payload}->>'rating'`, terminalRatings),
         notExists(
           db
             .select({ one: sql`1` })
@@ -253,23 +259,41 @@ export async function countPendingProposalInboxByKind(
       ),
     );
 
-  const candidateRows = await db
-    .select()
-    .from(event)
-    .where(and(proposalWhere(), notExists(hasTerminalLatestRate)));
-  const correctionByProposal = await loadCorrectionDecisionByProposal(
-    db,
-    candidateRows.map((row) => row.id),
-  );
   const counts: Partial<Record<AiProposalKindT, number>> = {};
+  const batchSize = 500;
+  let after: Pick<EventRow, 'created_at' | 'id'> | null = null;
 
-  for (const row of candidateRows) {
-    if (deriveProposalStatus(row, correctionByProposal.get(row.id), undefined) !== 'pending') {
-      continue;
+  while (true) {
+    const afterWhere: SQL | undefined = after
+      ? or(
+          gt(event.created_at, after.created_at),
+          and(eq(event.created_at, after.created_at), gt(event.id, after.id)),
+        )
+      : undefined;
+    const candidateRows: EventRow[] = await db
+      .select()
+      .from(event)
+      .where(and(proposalWhere(), notExists(hasTerminalLatestRate), afterWhere))
+      .orderBy(asc(event.created_at), asc(event.id))
+      .limit(batchSize);
+    if (candidateRows.length === 0) break;
+
+    const correctionByProposal = await loadCorrectionDecisionByProposal(
+      db,
+      candidateRows.map((row) => row.id),
+    );
+    for (const row of candidateRows) {
+      if (deriveProposalStatus(row, correctionByProposal.get(row.id), undefined) !== 'pending') {
+        continue;
+      }
+      const payload = safeDeriveLegacyAiProposal(row);
+      if (!payload) continue;
+      counts[payload.kind] = (counts[payload.kind] ?? 0) + 1;
     }
-    const payload = safeDeriveLegacyAiProposal(row);
-    if (!payload) continue;
-    counts[payload.kind] = (counts[payload.kind] ?? 0) + 1;
+
+    const last: EventRow | undefined = candidateRows.at(-1);
+    if (!last || candidateRows.length < batchSize) break;
+    after = { created_at: last.created_at, id: last.id };
   }
 
   return counts;
@@ -615,9 +639,9 @@ export async function listProposalInboxRows(
 async function projectLoadedProposalRows(
   db: DbLike,
   loadedProposalRows: LoadedProposalEvent[],
-  filters: Pick<ListProposalInboxOpts, 'status' | 'kind'> = {},
+  filters: Pick<ListProposalInboxOpts, 'status' | 'kind' | 'lane'> = {},
 ): Promise<ProposalInboxRow[]> {
-  const { status, kind } = filters;
+  const { status, kind, lane } = filters;
   const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
   const latestRateByProposal = await loadLatestRateByProposal(
     db,
@@ -637,6 +661,9 @@ async function projectLoadedProposalRows(
     const payload = safeDeriveLegacyAiProposal(row);
     if (!payload) continue;
     if (kind && payload.kind !== kind) continue;
+    const observation = aiProposalKindStrength[payload.kind] === 'C';
+    if (lane === 'decision' && observation) continue;
+    if (lane === 'observation' && !observation) continue;
     out.push({
       id: row.id,
       kind: payload.kind,

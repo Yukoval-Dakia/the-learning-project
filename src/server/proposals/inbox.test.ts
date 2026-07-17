@@ -1093,4 +1093,64 @@ describe('proposal inbox reader', () => {
     });
     expect(counts).toEqual(projectedCounts);
   });
+
+  it('counts in bounded batches and keeps decisions reachable behind an observation backlog', async () => {
+    const db = testDb();
+    const observationRows: Array<typeof event.$inferInsert> = Array.from(
+      { length: 501 },
+      (_, index) => ({
+        id: `batched_defer_${String(index).padStart(3, '0')}`,
+        actor_kind: 'agent',
+        actor_ref: 'dreaming',
+        action: 'experimental:proposal',
+        subject_kind: 'learning_item',
+        subject_id: `item_${index}`,
+        outcome: 'partial',
+        payload: {
+          ai_proposal: {
+            kind: 'defer',
+            target: { subject_kind: 'learning_item', subject_id: `item_${index}` },
+            reason_md: 'observe only',
+            evidence_refs: [],
+            proposed_change: {
+              learning_item_id: `item_${index}`,
+              defer_until: '2026-07-18T00:00:00.000Z',
+              reason: 'low energy',
+            },
+          },
+        },
+        created_at: new Date('2026-07-17T01:00:00.000Z'),
+      }),
+    );
+    await db.insert(event).values(observationRows);
+    await writeAiProposal(db, {
+      id: 'decision_after_observations',
+      payload: {
+        kind: 'knowledge_edge',
+        target: { subject_kind: 'knowledge_edge', subject_id: null },
+        reason_md: 'This decision must remain reachable.',
+        evidence_refs: [],
+        proposed_change: {
+          from_knowledge_id: 'decision_from',
+          to_knowledge_id: 'decision_to',
+          relation_type: 'related_to',
+          weight: 1,
+        },
+      },
+      created_at: new Date('2026-07-17T00:00:00.000Z'),
+    });
+
+    await expect(countPendingProposalInboxByKind(db)).resolves.toEqual({
+      defer: 501,
+      knowledge_edge: 1,
+    });
+
+    const decisionPage = await listProposalInboxPage(db, {
+      status: 'pending',
+      lane: 'decision',
+      limit: 1,
+    });
+    expect(decisionPage.rows.map((row) => row.id)).toEqual(['decision_after_observations']);
+    expect(decisionPage.next_cursor).toBeNull();
+  });
 });
