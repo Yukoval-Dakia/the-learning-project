@@ -67,7 +67,22 @@ describe('listProposals', () => {
         next_cursor: 'd2',
       });
 
-    await expect(listProposals()).rejects.toThrow('提议分页游标重复');
+    await expect(listProposals()).rejects.toThrow('Duplicate decision cursor detected');
+  });
+
+  it('surfaces a repeated decision cursor even on the final allowed page', async () => {
+    apiJsonMock.mockImplementation(async (url) => {
+      if (String(url).includes('lane=observation')) return { rows: [], next_cursor: null };
+      const cursor = new URL(String(url), 'http://localhost').searchParams.get('cursor');
+      const page = cursor ? Number(cursor.slice(1)) : 1;
+      return {
+        rows: [proposal(`decision_${page}`, 'learning_item')],
+        next_cursor: page === 20 ? 'd20' : `d${page + 1}`,
+      };
+    });
+
+    await expect(listProposals()).rejects.toThrow('Duplicate decision cursor detected');
+    expect(apiJsonMock).toHaveBeenCalledTimes(21); // 20 decision pages + observation preview
   });
 
   it('keeps a bounded decision subset actionable when the page safety cap is reached', async () => {

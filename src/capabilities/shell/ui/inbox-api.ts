@@ -144,13 +144,13 @@ async function listAllDecisionProposals(): Promise<{
     const page = await listProposalPage('decision', DECISION_PAGE_LIMIT, cursor);
     rows.push(...page.rows);
     if (!page.next_cursor) return { rows, truncated: false };
+    if (seenCursors.has(page.next_cursor)) {
+      throw new Error('Duplicate decision cursor detected; unable to load all pending decisions.');
+    }
     if (pageCount >= DECISION_MAX_PAGES) {
       // Keep the loaded decisions actionable. Failing the whole Inbox here would
       // prevent the learner from reducing the very backlog that hit the guard.
       return { rows, truncated: true };
-    }
-    if (seenCursors.has(page.next_cursor)) {
-      throw new Error('提议分页游标重复，无法完整加载待裁决项。');
     }
     seenCursors.add(page.next_cursor);
     cursor = page.next_cursor;
