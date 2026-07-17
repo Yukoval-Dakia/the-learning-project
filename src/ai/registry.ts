@@ -24,14 +24,12 @@ export type Provider =
   | 'anthropic-sub';
 export type ModelId = string;
 
-// YUK-576 (registry 诚实化) — the two long-inactive declarative fields are GONE:
-//   - `budget.maxCost` DELETED. Zero read path existed; wiring it to the SDK's
-//     native `Options.maxBudgetUsd` is a one-liner, but both active lanes lack
-//     usable cost reporting (mimo returns no total_cost_usd; the OAuth flat
-//     subscription lane has no per-run billing), so a wired gate would never
-//     trip — a wired-but-inert lie. Re-add WITH the maxBudgetUsd wiring when a
-//     cost-reporting lane (e.g. anthropic direct pay-as-you-go) enters service.
-//   - `fallbackChain` DELETED (design doc 2026-07-07 §1.2, full-chain audit:
+// YUK-576 (registry 诚实化) removed the two long-inactive declarative fields.
+// YUK-590 re-adds `budget.maxCost` WITH its native SDK consumer, but only when
+// provider resolution selects the cost-reporting Anthropic direct API lane.
+// Mimo (no total_cost_usd) and flat subscription OAuth remain explicitly uncapped
+// by dollars, so the field cannot masquerade as an effective guard on those lanes.
+// `fallbackChain` remains deleted (design doc 2026-07-07 §1.2, full-chain audit:
 //     zero entries had a legitimate in-process consumption scenario). Durable
 //     jobs keep pg-boss redelivery as their single transient layer; the vision
 //     judges get same-target `transientRetries` below; a REAL cross-provider
@@ -39,6 +37,8 @@ export type ModelId = string;
 //     would land as env config (VISION_JUDGE_* family), not per-task chains.
 export interface TaskBudget {
   maxIterations: number;
+  /** Per-run USD ceiling, consumed as SDK maxBudgetUsd on cost-reporting lanes only. */
+  maxCost: number;
   /**
    * YUK-576 — in-process SAME-RESOLVED-TARGET retry budget for transient
    * failures (design doc §1.3/§2.3; consumed by runTask's retry loop in
@@ -70,7 +70,12 @@ export interface TaskDef {
   invocation?: 'auto' | 'manual_rescue_only';
 }
 
-const DEFAULT_BUDGET: TaskBudget = { maxIterations: 6, transientRetries: 0, timeout: 60_000 };
+const DEFAULT_BUDGET: TaskBudget = {
+  maxIterations: 6,
+  maxCost: 0.5,
+  transientRetries: 0,
+  timeout: 60_000,
+};
 
 // 模型选型规则（与 architecture § 五 对齐）：
 //   - Sonnet 主力（归因 / 变式 / 判分）

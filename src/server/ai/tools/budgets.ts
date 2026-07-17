@@ -9,9 +9,9 @@
 //
 // IO-free / no dependencies — pure constants + a small lookup. Counting unit is
 // node / edge / event-row for v1 (CB-6); token-level accounting remains a
-// future cost-meter feature (the registry's inactive `maxCost` was DELETED per
-// YUK-576 — when a cost-reporting lane enters service, wire the SDK-native
-// `Options.maxBudgetUsd` instead of resurrecting declarative metadata). No
+// future token-meter feature. YUK-590 wires registry `maxCost` to SDK-native
+// `Options.maxBudgetUsd` only on the cost-reporting Anthropic direct lane; this
+// context budget remains row/tool based and orthogonal to that USD guard. No
 // user-configurable budgets (CB-5) and no hard-reject circuit-breaker (§6):
 // over-budget degrades gracefully via the tracker below.
 

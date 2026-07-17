@@ -184,14 +184,25 @@ export async function induceConjecture(
   const taskRunIds: string[] = [];
   let costUsd = 0;
   for (let i = 0; i < samples; i++) {
-    const result = await runTaskFn('MindModelInductionTask', taskInput, {
-      override: { provider: 'anthropic-sub' as const },
-      outputFormat: zodToJsonSchemaOutputFormat(ConjectureDraft),
-    });
-    if (result.task_run_id) taskRunIds.push(result.task_run_id);
-    costUsd += result.cost_usd ?? 0;
-    const draft = parseSampleDraft(result);
-    if (draft) drafts.push(draft);
+    try {
+      const result = await runTaskFn('MindModelInductionTask', taskInput, {
+        override: { provider: 'anthropic-sub' as const },
+        outputFormat: zodToJsonSchemaOutputFormat(ConjectureDraft),
+      });
+      if (result.task_run_id) taskRunIds.push(result.task_run_id);
+      costUsd += result.cost_usd ?? 0;
+      const draft = parseSampleDraft(result);
+      if (draft) drafts.push(draft);
+    } catch (err) {
+      // Self-consistency samples are independent. A single provider/stream failure
+      // counts as non-agreement (the denominator remains `samples`) without
+      // discarding valid siblings; all-failed still hits the anti-fabrication guard.
+      console.warn('[induceConjecture] induction sample failed, skipping', {
+        sample: i + 1,
+        requested_samples: samples,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
   if (drafts.length === 0) {
     throw new Error('induceConjecture: no sample produced a valid ConjectureDraft');

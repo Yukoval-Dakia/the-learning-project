@@ -25,6 +25,12 @@ Scope issue: Linear YUK-576 (Medium) — registry 里的「声明性谎言」
 
 ### 1.1 `maxCost` → **删除**
 
+> **YUK-590 更新（2026-07-17）**：本节记录的是 YUK-576 当时的裁决。其明确写下的
+> 重新接线条件已经满足：Anthropic direct pay-as-you-go provider 可通过 runner override / 全局
+> provider switch 进入现役，并提供 SDK USD cost 信号。`TaskBudget.maxCost` 因此已连同
+> `Options.maxBudgetUsd` 条件消费一并恢复；mimo 与 flat OAuth lane 仍不写该 Options 字段。
+> 下文的“删除动作”保留为历史决策链，不再代表当前运行态。
+
 **决策：删除，不接线。**
 
 **Read-path 反查（grep + serena find_referencing_symbols）：** 全部命中 = `registry.ts:34/36/65`（类型 + DEFAULT_BUDGET + INACTIVE docblock）、`budgets.ts:12`（注释指涉）。零消费者；无 per-task 覆盖；`registry.test.ts` 无断言。
@@ -116,7 +122,7 @@ budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 90_000, transientRetries
 ### 2.2 `AgentRunError`（结构化错误载体，v3.1）
 
 runner 单发失败改抛 `AgentRunError extends Error`，字段：
-- `subtype: SDKResultError['subtype'] | 'api_error_result' | 'stream_no_terminal'`——`'api_error_result'` = success+is_error 终态（仅 opt-in 路径抛出，§2.4）；`'stream_no_terminal'` = 流结束无终态消息；
+- `subtype: SDKResultError['subtype'] | 'api_error_result' | 'stream_no_terminal'`——`'api_error_result'` = success+is_error 终态（YUK-590 起所有 `runTask` 路径都会抛出，§2.4）；`'stream_no_terminal'` = 流结束无终态消息；
 - `apiErrorStatus?: number | null`（仅 api_error_result；null = 连接类）；
 - `errors: string[]`（SDKResultError.errors 或 [result 错误文案]，**不再丢弃**，进 error_message 留痕）；
 - `taskRunId`。
@@ -138,6 +144,11 @@ message 保持 `[kind] Agent SDK errored: subtype=…` 格式（api_error_result
 | 其余未识别 | permanent（默认保守） | 白名单外不重试 |
 
 ### 2.4 success + `is_error` 分支（v3.1 证据后改判——原 breadcrumb-only 裁决的前提被推翻）
+
+> **YUK-590 更新（2026-07-17）**：下面三点保留 YUK-576 的原始范围裁决。当前运行态已经
+> 完成 follow-up：所有 `runTask` 调用都把 success+`is_error` 改判为失败；是否 opt-in 只决定
+> runner 是否再试，不再决定错误能否伪装成 success。非 opt-in / caller-pinned / env-pinned 路径
+> 均只运行一次、写 failure 并向 caller 抛出结构化 `AgentRunError`。
 
 原 v3 裁决（「不参与重试，仅 breadcrumb」）基于「该形态罕见/边缘」的隐含假设；实测它是 **API 错误的唯一终态形态**。v3.1 改判（保零回归的最小改动）：
 
@@ -334,9 +345,9 @@ WHERE status='running' AND started_at < now() - INTERVAL '1 hour'
 | 两个 vision judge 的结构化输出迁移 | follow-up（mustFix#9），coordinator 开 Linear |
 | watchdog 死过滤（error→failure）Linear 记录 | coordinator 开（修复本身随本 PR ship，§5.3） |
 | §7 enforcement audit-lint 建否 | follow-up 决策，coordinator 落 Linear |
-| 真 per-run cost meter / cost-reporting lane 时经 `Options.maxBudgetUsd` 接回 maxCost | 另立 issue（§1.1） |
-| success+`is_error` 的**全局**改判 failure（42 任务） | v3.1 已在 opt-in 路径行为化（§2.4）；全局改判影响所有 caller 语义（含修复「500-耗尽文案 → parse 失败 → 被 YUK-379 类判 permanent 不重投」的真 transient 误判）——超本单范围，follow-up（coordinator 落 Linear） |
-| `CLAUDE_CODE_MAX_RETRIES`（CLI 内部重试次数 env 开关，binary strings 实证存在） | v1 不使用（保 CLI 默认自吸收层）；未来若需收紧 CLI 退避窗（如同步路由想更快 fail-fast）是现成 lever——记录备查 |
+| 真 per-run cost meter / cost-reporting lane 时经 `Options.maxBudgetUsd` 接回 maxCost | YUK-590 已完成（仅 Anthropic direct；§1.1 更新） |
+| success+`is_error` 的**全局**改判 failure（42 任务） | YUK-590 已完成：所有 `runTask` 路径诚实写 failure + throw；仅 opt-in 路径允许 runner 再试（§2.4 更新） |
+| `CLAUDE_CODE_MAX_RETRIES`（CLI 内部重试次数 env 开关，binary strings 实证存在） | YUK-590 已完成：runner 子进程默认设 2（共 3 次 CLI 尝试），保留运维显式覆盖（含 0） |
 | agent handler 幂等性逐一审计 | 超范围（§6） |
 | streamTask / streamTaskCollecting 的进程内重试 | 故意不接（§1.2.2 表；byte-identical 红线） |
 | 失败尝试写 cost_ledger | 已裁定超范围（§3.3） |

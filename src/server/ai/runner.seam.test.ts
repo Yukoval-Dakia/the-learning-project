@@ -47,6 +47,7 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMock.tool,
 }));
 
+import { tasks } from '@/ai/registry';
 import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
 import { runTask, streamTaskCollecting } from './runner';
 
@@ -78,6 +79,57 @@ const SAMPLE_OUTPUT_FORMAT: JsonSchemaOutputFormat = {
 // AttributionTask is an un-migrated, no-tool task — a representative baseline for
 // the zero-regression assertions (it never sets ctx.outputFormat).
 const UNMIGRATED_KIND = 'AttributionTask';
+
+describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.messages = [successResult()];
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+    vi.stubEnv('CLAUDE_CODE_MAX_RETRIES', undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults the CLI internal retry ceiling to 2 while leaving non-cost-reporting mimo uncapped', async () => {
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as {
+      env: Record<string, string | undefined>;
+      maxBudgetUsd?: number;
+    };
+    expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
+    expect('maxBudgetUsd' in opts).toBe(false);
+  });
+
+  it('preserves an explicit operator CLAUDE_CODE_MAX_RETRIES override', async () => {
+    vi.stubEnv('CLAUDE_CODE_MAX_RETRIES', '0');
+
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as { env: Record<string, string | undefined> };
+    expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('0');
+  });
+
+  it('threads the registry maxCost into SDK maxBudgetUsd only on Anthropic direct', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test-key');
+
+    await runTask(
+      UNMIGRATED_KIND,
+      { q: 1 },
+      {
+        db: fakeDb,
+        override: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { maxBudgetUsd?: number };
+    expect(opts.maxBudgetUsd).toBe(tasks[UNMIGRATED_KIND].budget.maxCost);
+  });
+});
 
 describe('runTask — YUK-299 outputFormat seam', () => {
   beforeEach(() => {
@@ -302,6 +354,7 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
     const opts = mockSdk.capturedOptions as {
       env: Record<string, string | undefined>;
       model: string;
+      maxBudgetUsd?: number;
     };
     // Token set from its env var by NAME (dummy value, asserted by NAME only).
     expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('dummy-oauth-token-not-real');
@@ -312,6 +365,9 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
     expect(opts.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     // The lane defaults to Opus 4.8.
     expect(opts.model).toBe('claude-opus-4-8');
+    // Flat subscription quota is not a cost-reporting lane, so the registry's
+    // per-run USD ceiling must not masquerade as an effective SDK guardrail.
+    expect('maxBudgetUsd' in opts).toBe(false);
   });
 
   it('UNSETs the cloud-provider selectors (Bedrock/Vertex/AWS/Foundry) so they cannot outrank the OAuth token (Finding 1)', async () => {

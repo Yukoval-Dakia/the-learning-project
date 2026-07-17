@@ -148,6 +148,53 @@ describe('induceConjecture self-consistency', () => {
     );
   });
 
+  it('skips one failed induction sample and keeps requested samples as the confidence denominator', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const claim = '你把链式法则当成导数相乘';
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockRejectedValueOnce(new Error('transient sample failure'))
+      .mockResolvedValueOnce({ ...sample(claim), task_run_id: 'run_2', cost_usd: 0.2 })
+      .mockResolvedValueOnce({ ...sample(claim), task_run_id: 'run_3', cost_usd: 0.3 });
+
+    const result = await induceConjecture({ cells: [cell()], samples: 3, runTaskFn });
+
+    expect(result.draft.claim_md).toBe(claim);
+    expect(result.draft.agreement_count).toBe(2);
+    expect(result.confidence).toBeCloseTo(2 / 3, 5);
+    expect(result.samples).toBe(3);
+    expect(result.task_run_ids).toEqual(['run_2', 'run_3']);
+    expect(result.cost_usd).toBeCloseTo(0.5, 5);
+    expect(runTaskFn).toHaveBeenCalledTimes(3);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[induceConjecture] induction sample failed, skipping',
+      expect.objectContaining({
+        sample: 1,
+        requested_samples: 3,
+        error: 'transient sample failure',
+      }),
+    );
+  });
+
+  it('still fails closed when every induction sample throws', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warnSpy.mockClear();
+    const runTaskFn = vi
+      .fn<(kind: string, input: unknown, ctx: unknown) => Promise<TaskTextResult>>()
+      .mockRejectedValue(new Error('provider unavailable'));
+
+    await expect(induceConjecture({ cells: [cell()], samples: 2, runTaskFn })).rejects.toThrow(
+      /no sample produced a valid ConjectureDraft/,
+    );
+
+    expect(runTaskFn).toHaveBeenCalledTimes(2);
+    expect(
+      warnSpy.mock.calls.filter(
+        ([message]) => message === '[induceConjecture] induction sample failed, skipping',
+      ),
+    ).toHaveLength(2);
+  });
+
   // YUK-538 — new tests for semantic dedup (ClaimGroupingTask)
 
   it('dedup: three paraphrase claims → confidence 1.0, agreement_count 3', async () => {

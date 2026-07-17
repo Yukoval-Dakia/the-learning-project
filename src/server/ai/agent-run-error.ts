@@ -6,15 +6,13 @@
 // fixture provenance):
 //   - API-level errors (4xx / 429 / 5xx / connection-class) ALL terminate as
 //     `SDKResultSuccess { is_error: true, api_error_status: number | null }` —
-//     they NEVER surface as SDKResultError. The runner wraps that shape (on
-//     opt-in paths only, see runner.ts) as subtype 'api_error_result'.
+//     they NEVER surface as SDKResultError. The runner always wraps that shape
+//     as subtype 'api_error_result'; opt-in controls retry only, never truthfulness.
 //   - `api_error_status === null` is the connection-class marker (mid-stream
 //     socket drop; observed terminal in ~1.5s — the canonical fast transient).
-//   - 429 / 5xx are transient by semantics; empirically they arrive only after
-//     the CLI's internal api_retry ×10 exponential backoff (~3min), so for
-//     short-budget tasks the budget abort (permanent) or the elapsed gate
-//     independently blocks them — the rows are kept for honesty + future
-//     long-budget opt-ins.
+//   - 429 / 5xx are transient by semantics. YUK-590 caps the CLI's internal
+//     retry count at 2 by default so a terminal normally returns within loom's
+//     task budget; the elapsed gate still prevents slow sync-route double calls.
 //   - `error_during_execution` is PERMANENT (conservative default): probes
 //     proved API failures never land there; it presumably carries CLI-internal
 //     execution errors. `errors[]` is preserved into error_message for future
@@ -109,8 +107,8 @@ export function isTransientAgentFailure(err: unknown): boolean {
 
 /**
  * Narrow helper for the runner: does this terminal result message carry the
- * success+is_error API-error shape? (Extracted so both the opt-in failure
- * wrap and the non-opt-in breadcrumb read one predicate.)
+ * success+is_error API-error shape? Extracted so classification and the
+ * observability breadcrumb share one predicate.
  */
 export function isApiErrorSuccessResult(
   msg: Extract<SDKMessage, { type: 'result' }>,

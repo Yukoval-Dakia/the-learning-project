@@ -258,20 +258,21 @@ describe('runTask — YUK-576 transient retry loop', () => {
     expect(logMock.cost).toHaveBeenCalledTimes(1);
   });
 
-  // ── coordinator ack condition 1: non-opt-in byte-identical, pinned ─────────
-  it('non-opt-in + success+is_error: NO throw, NO retry, success row + breadcrumb (byte-identical)', async () => {
+  // ── YUK-590: every success+is_error terminal is an honest failed attempt ───
+  it('non-opt-in + success+is_error: throws without retry and records failure', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockSdk.messageQueues = [[API_ERROR_500_RESULT]];
 
-    const result = await runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb });
+    await expect(runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
+      /subtype=api_error_result http=500/,
+    );
 
-    // Same as today: the error text is returned as the run result…
-    expect(result.text).toContain('API Error: 500');
     expect(mockSdk.capturedOptions).toHaveLength(1); // zero retries
-    // …and the finish write still records success (unchanged semantics).
     const finished = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
-    expect(finished.status).toBe('success');
-    // NEW (approved): observability breadcrumb only.
+    expect(finished.status).toBe('failure');
+    expect(finished.finish_reason).toBe('error');
+    expect(finished.error_message).toContain('API Error: 500');
+    expect(logMock.cost).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('task_run_success_with_error_flag'),
       expect.objectContaining({ api_error_status: 500 }),
@@ -380,29 +381,35 @@ describe('runTask — YUK-576 transient retry loop', () => {
     // isolate the ctx gate specifically.
     mockSdk.messageQueues = [[API_ERROR_CONN_RESULT]];
 
-    const result = await runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb });
+    await expect(runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
+      /socket connection was closed/,
+    );
 
-    // Non-opt-in keeps today's semantics: error text returned, success row.
-    expect(result.text).toContain('socket connection was closed');
     expect(mockSdk.capturedOptions).toHaveLength(1);
+    const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
+    expect(finish.status).toBe('failure');
+    expect(finish.finish_reason).toBe('error');
   });
 
   it('opt-in but caller-pinned override → no retry (YUK-573 load-bearing regression)', async () => {
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
     mockSdk.messageQueues = [[API_ERROR_CONN_RESULT]];
 
-    const result = await runTask(
-      JUDGE_KIND,
-      { q: 1 },
-      {
-        db: fakeDb,
-        enableTransientRetry: true,
-        override: { provider: 'anthropic-sub' },
-      },
-    );
+    await expect(
+      runTask(
+        JUDGE_KIND,
+        { q: 1 },
+        {
+          db: fakeDb,
+          enableTransientRetry: true,
+          override: { provider: 'anthropic-sub' },
+        },
+      ),
+    ).rejects.toThrow(/socket connection was closed/);
 
-    expect(result.text).toContain('socket connection was closed');
     expect(mockSdk.capturedOptions).toHaveLength(1);
+    const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
+    expect(finish.finish_reason).toBe('error');
   });
 
   it('opt-in but global AI_PROVIDER_OVERRIDE set → no retry (env gate)', async () => {
@@ -410,10 +417,13 @@ describe('runTask — YUK-576 transient retry loop', () => {
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
     mockSdk.messageQueues = [[API_ERROR_CONN_RESULT]];
 
-    const result = await runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true });
+    await expect(
+      runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
+    ).rejects.toThrow(/socket connection was closed/);
 
-    expect(result.text).toContain('socket connection was closed');
     expect(mockSdk.capturedOptions).toHaveLength(1);
+    const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
+    expect(finish.finish_reason).toBe('error');
   });
 
   it('beforeRun runs exactly once (input transformed once, both attempts use it)', async () => {
@@ -436,8 +446,8 @@ describe('runTask — YUK-576 transient retry loop', () => {
 });
 
 // ─── coordinator ack condition 2: GLOBAL stream_no_terminal guard ────────────
-// This is the single non-opt-in behavior change in this PR (deliberate, ruled by
-// the coordinator): a stream that ends WITHOUT a terminal result message was
+// This is the earlier global honesty guard from YUK-576: a stream that ends
+// WITHOUT a terminal result message was
 // previously recorded as a silent success (empty text, stopReason 'unknown',
 // cost ledger written) — a lie in the observability plane. It now throws
 // AgentRunError('stream_no_terminal') and records a failure row, for EVERY
