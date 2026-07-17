@@ -173,11 +173,13 @@ export interface KnowledgeEdgeProposalDecisionResult {
 export type AcceptAiProposalResult =
   | {
       kind: 'knowledge_node';
-      result: Awaited<ReturnType<typeof acceptProposal>>;
+      result: Awaited<ReturnType<typeof acceptProposal>> | null;
+      idempotent?: boolean;
     }
   | {
       kind: 'knowledge_mutation';
-      result: Awaited<ReturnType<typeof acceptProposal>>;
+      result: Awaited<ReturnType<typeof acceptProposal>> | null;
+      idempotent?: boolean;
     }
   | KnowledgeEdgeProposalDecisionResult
   | VariantQuestionAcceptResult
@@ -697,7 +699,13 @@ async function dispatchAccept(
 ): Promise<AcceptAiProposalResult> {
   switch (proposal.kind) {
     case 'knowledge_node': {
-      assertPending(proposal);
+      if (proposal.status !== 'pending') {
+        // Idempotent re-accept: acceptAiProposal already confirmed the prior decision was
+        // 'accept' and refreshed the decision signal; return without re-applying (a second
+        // acceptProposal would re-run the knowledge mutation). YUK-681 P2: previously the
+        // decision-resource short-circuit hid this path from the HTTP route.
+        return { kind: 'knowledge_node', result: null, idempotent: true };
+      }
       if (opts.decision && opts.decision !== 'accept') {
         throw new ApiError(
           'validation_error',
@@ -710,7 +718,12 @@ async function dispatchAccept(
       return { kind: 'knowledge_node', result };
     }
     case 'knowledge_mutation': {
-      assertPending(proposal);
+      if (proposal.status !== 'pending') {
+        // Idempotent re-accept — see knowledge_node above. A second acceptProposal would
+        // re-run the mutation (worst case: re-apply a merge over 9 attribution surfaces),
+        // so return without re-applying. YUK-681 P2.
+        return { kind: 'knowledge_mutation', result: null, idempotent: true };
+      }
       if (opts.decision && opts.decision !== 'accept') {
         throw new ApiError(
           'validation_error',

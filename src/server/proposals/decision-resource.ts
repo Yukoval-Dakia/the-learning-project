@@ -87,16 +87,27 @@ export async function createProposalDecision(
       if (existingRate.decision !== input.decision) {
         throw conflict(proposalId, existingRate.decision);
       }
-      return {
-        proposal_id: proposalId,
-        proposal_kind: proposal.kind,
-        decision: input.decision,
-        decision_event_id: existingRate.id,
-        proposal_status: proposal.status,
-        created: false,
-        idempotent: true,
-        result: null,
-      };
+      // Only `accept` falls through to acceptAiProposal → the per-kind applier: that is where
+      // learning_item re-drives the best-effort note_generate enqueue on re-accept, the recovery
+      // path this early return previously made unreachable (YUK-681 P2). The audit confirmed all
+      // accept-family appliers self-guard re-accept idempotency, and the applier result carries
+      // `idempotent:true` for `resultIsIdempotent` below.
+      //
+      // reverse/change_type/dismiss have no re-drive hop, and acceptAiProposal's top guard only
+      // admits an existing `accept` decision — routing them through it would regress their
+      // same-decision idempotent replay from 200 to 409. Keep serving that replay here.
+      if (input.decision !== 'accept') {
+        return {
+          proposal_id: proposalId,
+          proposal_kind: proposal.kind,
+          decision: input.decision,
+          decision_event_id: existingRate.id,
+          proposal_status: proposal.status,
+          created: false,
+          idempotent: true,
+          result: null,
+        };
+      }
     }
   }
 
