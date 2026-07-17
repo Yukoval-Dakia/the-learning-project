@@ -68,8 +68,16 @@ async function main(): Promise<void> {
       }
     }
     process.exitCode = overlaps.length === 0 ? 0 : 1;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`audit:tree-mesh failed (operational error): ${message}`);
+    process.exitCode = 2;
   } finally {
-    await db.$client.end({ timeout: 5 });
+    try {
+      await db.$client.end({ timeout: 5 });
+    } catch {
+      // The pool may already be closed after an operational failure.
+    }
   }
 }
 

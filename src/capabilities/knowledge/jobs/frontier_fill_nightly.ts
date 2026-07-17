@@ -46,6 +46,7 @@ import {
   EdgeProposalSchema,
   loadPendingEdgeProposalKeys,
 } from '@/capabilities/knowledge/server/propose_edge';
+import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 // loadTreeSnapshot is the knowledge package's own tree reader (same-package import).
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 // CROSS-PACKAGE seam (YUK-349): learnableFrontier is a practice-package read.
@@ -319,7 +320,9 @@ export async function runFrontierFillAndWrite(
           .where(and(inArray(knowledge.id, proposedEndpointIds), isNull(knowledge.archived_at)))
       : [];
     const validEndpointIds = new Set(endpointRows.map((row) => row.id));
-    const parentById = new Map(endpointRows.map((row) => [row.id, row.parent_id]));
+    const treeParentLinks = endpointRows.flatMap((row) =>
+      row.parent_id ? [{ child_id: row.id, parent_id: row.parent_id }] : [],
+    );
 
     for (const p of parsed.proposals) {
       // ⑤ COST CAP — clamp to at most FRONTIER_FILL_MAX_PROPOSALS writes per run.
@@ -340,7 +343,7 @@ export async function runFrontierFillAndWrite(
         continue;
       }
 
-      if (parentById.get(from) === to || parentById.get(to) === from) {
+      if (isDirectTreePair(from, to, treeParentLinks)) {
         result.skipped_tree_redundancy += 1;
         continue;
       }

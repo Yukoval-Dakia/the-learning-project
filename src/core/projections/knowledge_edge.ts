@@ -204,6 +204,10 @@ export function foldKnowledgeEdge(
             to_knowledge_id: e.to_knowledge_id,
             relation_type: e.relation_type,
           })),
+          // This pure historical fold has no knowledge-node snapshot. The guarded
+          // write-through enforces the tree-pair invariant against live nodes; pass
+          // the empty fixture explicitly so omission can never disable the check by accident.
+          [],
         );
         if (verdict.status === 'reject') {
           throw new Error(

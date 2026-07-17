@@ -135,7 +135,7 @@ function isReachable(adj: Map<string, Set<string>>, start: string, target: strin
 export function checkEdgeTopology(
   candidate: TopologyEdge,
   existing: readonly TopologyEdge[],
-  treeParentLinks: readonly TreeParentLink[] = [],
+  treeParentLinks: readonly TreeParentLink[],
 ): TopologyVerdict {
   // Out of scope: only the learning-order relation forms a DAG to police here.
   if (candidate.relation_type !== ORDERED_RELATION) {

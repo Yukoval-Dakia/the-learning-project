@@ -705,6 +705,19 @@ export async function rewireKnowledgeEdges(
   // rewrites in this tx) and mutated in-memory as we archive/create within THIS call, so two edges
   // that TOGETHER form a cycle are caught.
   const livePrereq: TopologyEdge[] = await listAllLivePrerequisiteEdges(tx);
+  const endpointIds = [
+    ...new Set([
+      intoId,
+      ...touching.flatMap((edge) => [edge.from_knowledge_id, edge.to_knowledge_id]),
+    ]),
+  ];
+  const endpointRows = await tx
+    .select({ id: knowledge.id, parent_id: knowledge.parent_id })
+    .from(knowledge)
+    .where(inArray(knowledge.id, endpointIds));
+  const treeParentLinks = endpointRows.flatMap((row) =>
+    row.parent_id ? [{ child_id: row.id, parent_id: row.parent_id }] : [],
+  );
   const dropFromMesh = (from: string, to: string) => {
     const i = livePrereq.findIndex(
       (e) =>
@@ -749,6 +762,7 @@ export async function rewireKnowledgeEdges(
       const verdict = checkEdgeTopology(
         { from_knowledge_id: newFrom, to_knowledge_id: newTo, relation_type: 'prerequisite' },
         meshExcludingSelf,
+        treeParentLinks,
       );
       if (verdict.status === 'reject') {
         throw new Error(
