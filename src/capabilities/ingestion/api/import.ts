@@ -181,17 +181,22 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
     //    follow-up that needs a request-level subject signal first.
     const effectiveKnowledgeIds: string[][] = body.blocks.map((b) => b.knowledge_ids);
 
-    // Validate the resolved knowledge_ids exist and are not archived.
-    for (const ids of effectiveKnowledgeIds) {
-      for (const kid of ids) {
-        const rows = await db
-          .select({ id: knowledge.id })
-          .from(knowledge)
-          .where(and(eq(knowledge.id, kid), isNull(knowledge.archived_at)));
-        if (rows.length === 0) {
-          throw new ApiError('validation_error', `unknown or archived knowledge_id: ${kid}`, 400);
-        }
-      }
+    // Validate every distinct id in one round-trip, then preserve request order when reporting the
+    // first bad id. This stays in the pre-validation phase: the write transaction + FOR UPDATE
+    // double-submit guard below remain unchanged.
+    const requestedKnowledgeIds = [...new Set(effectiveKnowledgeIds.flat())];
+    const foundKnowledgeRows = await db
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(and(inArray(knowledge.id, requestedKnowledgeIds), isNull(knowledge.archived_at)));
+    const foundKnowledgeIds = new Set(foundKnowledgeRows.map((row) => row.id));
+    const missingKnowledgeId = requestedKnowledgeIds.find((id) => !foundKnowledgeIds.has(id));
+    if (missingKnowledgeId) {
+      throw new ApiError(
+        'validation_error',
+        `unknown or archived knowledge_id: ${missingKnowledgeId}`,
+        400,
+      );
     }
     const blockSubjectProfiles = await Promise.all(
       effectiveKnowledgeIds.map(async (ids) => resolveSubjectProfileForKnowledgeIds(db, ids)),
