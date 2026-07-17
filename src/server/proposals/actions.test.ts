@@ -320,6 +320,102 @@ describe('proposal lifecycle owner service', () => {
     expect(rateRows).toHaveLength(1);
   });
 
+  it('rolls back note materialization and rate when the decision signal write fails', async () => {
+    const db = testDb();
+    const now = new Date();
+    const cooldownKey = 'note_update:atomic_signal_failure';
+    await db.insert(artifact).values({
+      id: 'artifact_note_atomic',
+      type: 'note_atomic',
+      title: '原子接受',
+      parent_artifact_id: null,
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      source_ref: null,
+      body_blocks: {
+        type: 'doc',
+        content: [paragraphBlock('b1', '原文')],
+      } as never,
+      attrs: {} as never,
+      tool_kind: null,
+      tool_state: null,
+      generation_status: 'ready',
+      verification_status: 'verified',
+      verification_summary: null,
+      generated_by: { by: 'ai', task_kind: 'NoteGenerateTask' } as never,
+      verified_by: null,
+      history: [],
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await writeAiProposal(db, {
+      id: 'note_update_atomic_p1',
+      payload: {
+        kind: 'note_update',
+        target: { subject_kind: 'artifact', subject_id: 'artifact_note_atomic' },
+        reason_md: 'Atomic Living Note patch',
+        evidence_refs: [{ kind: 'artifact', id: 'artifact_note_atomic' }],
+        proposed_change: {
+          artifact_id: 'artifact_note_atomic',
+          source: 'note_refine',
+          patch: {
+            ops: [{ kind: 'append_block', block: paragraphBlock('b2', '不应落地') }],
+          },
+          summary: { ops_count: 1, new_blocks: 1 },
+        },
+        cooldown_key: cooldownKey,
+      },
+    });
+    // Force the final signal increment to fail deterministically. PostgreSQL
+    // integer overflow happens after the patch + rate writes inside the tx,
+    // proving those earlier writes roll back with it.
+    await db.insert(proposal_signals).values({
+      id: 'signal_at_integer_max',
+      kind: 'note_update',
+      cooldown_key: cooldownKey,
+      accept_count: 2_147_483_647,
+      dismiss_count: 0,
+      acceptance_rate: 1,
+      created_at: now,
+      updated_at: now,
+    });
+
+    await expect(acceptAiProposal(db, 'note_update_atomic_p1')).rejects.toThrow(
+      /INSERT INTO proposal_signals/,
+    );
+
+    const [unchanged] = await db
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, 'artifact_note_atomic'));
+    expect(unchanged.version).toBe(0);
+    expect(
+      (
+        unchanged.body_blocks as {
+          content: Array<{ attrs?: { id?: string } }>;
+        }
+      ).content.some((node) => node.attrs?.id === 'b2'),
+    ).toBe(false);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'note_update_atomic_p1')));
+    expect(rateRows).toHaveLength(0);
+    const applyRows = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:note_refine_apply'),
+          eq(event.caused_by_event_id, 'note_update_atomic_p1'),
+        ),
+      );
+    expect(applyRows).toHaveLength(0);
+  });
+
   // C1a (YUK-358, ADR-0040 决定1) — accept-path exemption. A human-approved
   // note_update patch that replaces a USER-VERIFIED block must still LAND. The
   // applyNotePatch user_verified guard fires for the AI mutator path but is
