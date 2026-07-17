@@ -118,7 +118,6 @@ Question (统一题库，single source of truth)
 | `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |
 | `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` | 否 | — | draft `question(source='mistake_variant')` |
 | `TeachingTurnTask` | mimo-v2.5-pro | `/api/teaching-sessions/*` | 否 | — | Active Teaching turn；`ask_check` 可落 `question(source='teaching_check')` |
-| `ReviewIntentTask` | mimo-v2.5-pro | Review Orchestrator | 否 | — | 一句话 session intent |
 | `KnowledgeReviewTask` | mimo-v2.5-pro | pg-boss `knowledge_maintenance_nightly` / manual maintenance | 是 | — | tree / mesh mutation proposal |
 | `VisionExtractTask` | mimo-v2.5 | `POST /api/ingestion/[id]/rescue` | 否 | 输入 | bbox blocks |
 | `VisionExtractTaskHeavy` | mimo-v2.5 | 同上（heavy manual rescue） | 否 | 输入 | bbox blocks |
@@ -165,7 +164,7 @@ Question (统一题库，single source of truth)
 
 **当前规则**（YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——AI 调用全走 capability manifest 声明的领域 route 或 pg-boss worker；下述规则语义不变，仅路由入口从 `app/api/ai/[task]` 改为各 capability 包 `manifest.ts` 声明的 route）：
 
-- ~~generic `app/api/ai/[task]` 仅接受 `ReviewIntentTask`，由 `runTask()` 返回 JSON。~~ 已退场；ReviewIntentTask 走 `/api/review/intent`（practice 包 manifest 声明）。
+- generic `/api/ai/[task]` 已整体退场；所有 task 由 capability 领域 route / worker 调用。
 - SubjectProfile-driven task **不能**走 generic route；必须走领域 route / worker，由该入口解析并传入正确 `SubjectProfile`。
 - `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route/worker，由入口注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 现由 `knowledge_maintenance_nightly` cron in-process 调 `streamReviewTask`（YUK-617 撤了冗余的 `/api/knowledge/review` HTTP route）。
 - `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口，不通过 generic route 暴露。
@@ -221,7 +220,6 @@ interface DomainTool<Input, Output> {
 > YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——下列 dispatch 规则的语义由各 capability 包 `manifest.ts` 声明的领域 route 承接（旧 `app/api/ai/[task]/route.ts` 描述保留作历史对照）。
 
 - ~~`app/api/ai/[task]/route.ts`~~（已退场；YUK-321 M5）：
-  - ~~`ReviewIntentTask` → `runTask()` → JSON~~ 走 `/api/review/intent`（practice 包）
   - ~~SubjectProfile-driven task → 400 `profile_required`~~ 走领域 route
   - ~~VisionExtract* manual-rescue task → 400 `requires_domain_route`~~ 走 ingestion rescue route
   - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route

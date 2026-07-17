@@ -22,7 +22,7 @@
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。
 
 ## ANTI-PATTERNS
-- generic `app/api/ai/[task]` **只允许 `ReviewIntentTask`**；profile-driven→`profile_required`，manual-rescue→`requires_domain_route`，`needsToolCall`→`tool_task_requires_domain_route`。新 task 走领域 route / worker。
+- generic `/api/ai/[task]` 已整体退场；新 task 走 capability 领域 route / worker，禁止复活通用 dispatch 入口。
 - 破坏性动作无直接 write tool——只能 propose，用户 accept 才执行。
 
 ## Switchable AI provider lane (YUK-365)

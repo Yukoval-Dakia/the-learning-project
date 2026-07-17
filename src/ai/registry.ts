@@ -474,18 +474,6 @@ export const tasks = {
     systemPrompt:
       '你是 SubjectProfile 评审员。输入是一个**草稿** SubjectProfile（JSON，在 input.draft）。你的工作是审阅这个草稿并提出**改进建议**，绝不直接发布、绝不修改任何文件或数据库（proposal-only）。\n审阅维度：\n- overbroad taxonomy（causeCategories 是否过于宽泛 / 重叠 / 缺关键错因）\n- missing capability（judgeCapabilities 是否覆盖 questionKinds 所需的判分能力）\n- route ambiguity（judgePolicy.preferredRoutes 是否含歧义或与 capabilities 不一致）\n- prompt-template drift（promptFragments / noteTemplate 是否偏离学科教学风格）\n- fixture gap（是否缺少代表性例题来源 exampleSources）\n严格输出 JSON（不要 markdown 代码块包裹），形如：\n{ "review_md": "<人读评审，markdown>", "patches": [{ "field": "<顶层字段名>", "suggestion": "<具体改法>", "impact": "<low|minor|high>" }], "blocking": <true 当存在必须修复的阻断问题，否则 false> }\n只提议，不发布；不要假装已应用任何修改。',
   },
-  ReviewIntentTask: {
-    kind: 'ReviewIntentTask',
-    description: 'Phase 2A — 看复习队列汇总生成一句话 session intent，≤80 字',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
-    needsToolCall: false,
-    isMultimodal: false,
-    allowedTools: [],
-    systemPrompt:
-      '你是学习陪练。看复习队列摘要 { total, by_priority, by_cause, top_knowledge_ids, has_never_reviewed, has_overdue_7d }，生成**一句话** session 开场白（≤80 字、纯文本、无 markdown），目的是让用户一眼看到今天该重点关注什么。\n要点：\n- 提及题数 + 1-2 个关键模式（最高 by_cause 错因类型、是否大量逾期）\n- 引导式语气（例：「今天 X 道，重点过 Y」而非「已为您安排」）\n- 禁止套话（「加油」「再接再厉」）、禁止 list / bullet / 数字开头\n- 队列空时本任务不会被调用，所以不用处理空队列',
-  },
   DreamingTask: {
     kind: 'DreamingTask',
     description:

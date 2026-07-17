@@ -1009,14 +1009,11 @@ export function getTaskSystemPrompt(
       return buildSelectionOrchestratorPrompt(profile);
     case 'SourcingTask':
       return buildSourcingPrompt(profile);
-    // Subject-neutral pass-throughs — no profile builder required.
-    // VisionExtract* runs OCR on raw images; ReviewIntent generates a
-    // session opener whose subject voice is already injected via summary
-    // payload, not prompt text. If any of these later needs a profile
-    // builder, add one above and remove the pass-through here.
+    // Subject-neutral pass-throughs — no profile builder required. If any of
+    // these later needs a profile builder, add one above and remove the
+    // pass-through here.
     case 'VisionExtractTask':
     case 'VisionExtractTaskHeavy':
-    case 'ReviewIntentTask':
     case 'DreamingTask':
     case 'CoachTask':
     case 'CopilotTask':

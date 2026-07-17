@@ -7,7 +7,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 ## 边界
 
 - **浏览器端** (`src/ai/`)：注册表 + SubjectProfile prompt builders。不持 API key，也没有通用 `runTask()` client helper。
-- **Server 端** (`app/api/ai/[task]` + `src/server/ai/`)：generic route 仅接受 `ReviewIntentTask`。SubjectProfile-driven、tool-calling、manual-rescue task 必须走领域 route / worker，由该入口解析 profile、注入工具或补齐 ingestion context。
+- **Server 端** (`server/` + `src/server/ai/`)：generic `/api/ai/[task]` route 已退场。所有 task 都走 capability 领域 route / worker，由该入口解析 profile、注入工具或补齐 ingestion context。
 - **Async worker** (`scripts/worker.ts` / pg-boss handlers)：复用同一个 runner 处理 OCR、归因、note generation、maintenance 等后台任务。
 
 这样 PWA 离线时本地复习 / 错题录入仍可用，需要 LLM 的能力自然走在线。
@@ -16,7 +16,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 1. 在 `registry.ts` 加 `TaskDef`（model / 预算 / 允许的 tool / 是否多模态）
 2. 在领域 route 或 pg-boss handler 中解析 `SubjectProfile`，再调用 `runTask()` / `runAgentTask()` / `streamTask()`
-3. 如需 HTTP 入口，先建领域入口（例如 `/api/knowledge/review`）；不要通过 generic `/api/ai/[task]` 暴露 profile-driven、manual-rescue 或半配置的 tool task
+3. 如需 HTTP 入口，建 capability 领域入口；不要复活 generic `/api/ai/[task]`
 4. 写 `event` / `tool_call_log` / `cost_ledger` 留痕
 
 破坏性操作（删错题、合并节点、reparent、archive）**没有直接 write tool**，只能 propose。用户 accept route 执行真实 mutation。
@@ -33,7 +33,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 - `src/server/ai/tools/bootstrap.ts` 注册统一 DomainTools；`mcp-bridge.ts` 能把任意 allowlist 包成 in-process MCP server，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
 - `src/server/ai/tools/knowledge-readers.ts`、`context-readers.ts`、`query-events.ts`、`query-mistakes.ts` 提供 read surface。
 - `src/server/ai/tools/proposal-tools.ts` 提供 T-D4 full 8：`propose_knowledge_edge`、`propose_knowledge_mutation`、`attribute_mistake`、`propose_variant`、`propose_learning_item_completion`、`propose_learning_item_relearn`、`propose_record_links`、`propose_record_promotion`。
-- generic `app/api/ai/[task]` 只允许 `ReviewIntentTask`；profile-driven task 返回 `profile_required`，manual-rescue task 返回 `requires_domain_route`，`needsToolCall: true` 返回 `tool_task_requires_domain_route`。
+- generic `/api/ai/[task]` 已整体退场；不要为新 task 建通用 dispatch 入口。
 - 尚未实现：公共/standalone MCP server、外部 MCP 消费、Copilot drawer / Dreaming / Coach 具体 runtime 接入。
 
 核心原则：
