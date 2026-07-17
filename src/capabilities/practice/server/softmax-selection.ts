@@ -34,7 +34,7 @@ import { question } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
 
 import {
-  buildSelectionOrchestratorInput,
+  buildSelectionOrchestratorTaskInput,
   parseSelectionOrchestratorOutput,
 } from '@/server/ai/selection-orchestrator';
 import {
@@ -42,7 +42,11 @@ import {
   type CollectedSignal,
   collectCandidateSignals,
 } from './candidate-signals';
-import { DEFAULT_TEMPERATURE, type SelectionPolicyConfig } from './selection-constants';
+import {
+  DEFAULT_TEMPERATURE,
+  MEM0_PRIOR_CAP,
+  type SelectionPolicyConfig,
+} from './selection-constants';
 import { type WeightedCandidate, sampleByWeight } from './selection-sampler';
 import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
 import {
@@ -61,12 +65,20 @@ type DbLike = Db | Tx;
 /** runTask 投影（只取 .text）——DI 便于 mock（测试不命中 live endpoint）。 */
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
+/** Read-only learner-memory prior loader. One invocation per L2 orchestration at most. */
+export type LoadMemoryPriorFn = () => Promise<readonly string[]>;
+
 /** 哪一级 fallback 触发了（观测/测试断言用）。'none' = softmax 主路全程成功。 */
 export type FallbackLevel = 'none' | 'statistical' | 'legacy';
 
 export interface ComposeSoftmaxDeps {
   /** L2 LLM 编排器。省略 → 默认动态 import runTask（production 路径）。 */
   runTaskFn?: RunTaskFn;
+  /**
+   * mem0 learner-prior loader。省略 → production 动态 import createMemoryClient +
+   * searchMemories；构造/搜索失败一律退空 prior，不改变 LLM fallback level。
+   */
+  loadMemoryPrior?: LoadMemoryPriorFn;
   /** Poisson 抽样 rng（默认 Math.random）；测试传 seeded rng 确定化。 */
   rng?: () => number;
 }
@@ -391,7 +403,12 @@ export async function composeSoftmaxStream(
     // 无可抽样非到期候选（全到期/全 recall/全卷）——无需调 LLM，直接空抽样。
     weighted = [];
   } else {
-    const llmResult = await tryLlmOrchestration(db, samplable, deps.runTaskFn);
+    const llmResult = await tryLlmOrchestration(
+      db,
+      samplable,
+      deps.runTaskFn,
+      deps.loadMemoryPrior,
+    );
     if (llmResult) {
       weighted = llmResult.weighted;
       arrangementByRef = llmResult.arrangementByRef;
@@ -518,18 +535,26 @@ async function tryLlmOrchestration(
   db: DbLike,
   samplable: CollectedSignal[],
   runTaskFn?: RunTaskFn,
+  loadMemoryPrior?: LoadMemoryPriorFn,
 ): Promise<{ weighted: WeightedCandidate[]; arrangementByRef: Map<string, number> } | null> {
   try {
-    const inputText = buildSelectionOrchestratorInput(samplable);
-    if (inputText.trim().length === 0) {
+    const candidateText = buildSelectionOrchestratorTaskInput(samplable).candidates;
+    if (candidateText.trim().length === 0) {
       // YUK-558 (register (a) / spec M2)：先前此处静默 return null → L1 统计 fallback 触发却无留痕。
       // 补结构化 warn，让「LLM 编排输入为空」这条 fallback 路径可观测（与下方 catch 的 L2-failure
       // warn 一道闭合两条 fallback 路径的可检测性——parse-empty 走 throw → catch，非独立分支）。
       console.warn('[softmax-selection] L2 empty-input → statistical fallback');
       return null;
     }
+
+    // B3 mem0 prior is advisory-only. Its entire lifecycle is isolated from the LLM fallback
+    // decision: client construction, embedding/search, or an injected loader may fail, but that
+    // failure only removes the optional memoryPrior field. In particular, do not let it reach the
+    // outer catch (which correctly means the L2 orchestration itself failed).
+    const memories = await loadMemoryPriorFailSoft(loadMemoryPrior);
+    const taskInput = buildSelectionOrchestratorTaskInput(samplable, memories);
     const fn = runTaskFn ?? (await defaultRunTaskFn());
-    const result = await fn('SelectionOrchestratorTask', { candidates: inputText }, { db });
+    const result = await fn('SelectionOrchestratorTask', taskInput, { db });
     const refIds = samplable.map((s) => s.refId);
     const parsed = parseSelectionOrchestratorOutput(result.text, refIds);
     // parse barrier 保证 parsed 非空（空编排 = throw → 下方 catch 的 L2-failure warn 接管观测，
@@ -562,6 +587,39 @@ async function tryLlmOrchestration(
     return null;
   }
 }
+
+const SELECTION_MEMORY_QUERY =
+  'learner practice preferences, recurring weaknesses, study habits, and helpful sequencing';
+
+async function loadMemoryPriorFailSoft(loader?: LoadMemoryPriorFn): Promise<readonly string[]> {
+  try {
+    return await (loader ?? defaultLoadMemoryPrior)();
+  } catch (err) {
+    console.warn('[softmax-selection] mem0 learner prior unavailable → continue without advisory', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+/** Production-only lazy loader: no mem0/native dependency enters the module graph before L2 runs. */
+const defaultLoadMemoryPrior: LoadMemoryPriorFn = async () => {
+  const [{ createMemoryClient }, { searchMemories }] = await Promise.all([
+    import('@/server/memory/client'),
+    import('@/server/memory/search-memories'),
+  ]);
+  // createMemoryClient may throw synchronously when env/config is unavailable. The caller's
+  // loadMemoryPriorFailSoft boundary intentionally covers this construction as well as search.
+  const client = createMemoryClient();
+  const result = await searchMemories(client, SELECTION_MEMORY_QUERY, {
+    topK: MEM0_PRIOR_CAP,
+    // No subject:* filter: attempt/review facts are generally global+topic scoped and a subject
+    // filter would silently discard the learner facts this advisory is meant to surface.
+  });
+  return (result.results ?? [])
+    .map((item) => item.memory)
+    .filter((memory): memory is string => typeof memory === 'string' && memory.trim().length > 0);
+};
 
 /** 默认 production runTask（动态 import 避免 server-only 模块进 unit graph）。 */
 async function defaultRunTaskFn(): Promise<RunTaskFn> {

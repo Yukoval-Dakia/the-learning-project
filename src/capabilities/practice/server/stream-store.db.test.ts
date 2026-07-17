@@ -21,8 +21,9 @@ import {
 } from '@/db/schema';
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { composeSoftmaxStream } from './softmax-selection';
 import {
   advanceStreamItem,
   collectComposerInputs,
@@ -1310,5 +1311,106 @@ describe('B3 learnable_frontier — store 层（YUK-349 #3）', () => {
     const refs = rows.map((r) => r.ref_id);
     expect(refs).toContain(dueId); // 到期 presence（铁律②）。
     expect(refs).toContain(frontierQ); // frontier 抽中并存活（quota=0 path 正确）。
+  });
+
+  it('B3a: runTask 实际输入含 advisory prior，loader 每轮 orchestration 只调用一次', async () => {
+    const { variantId } = await seedVariantCandidate();
+    const loadMemoryPrior = vi.fn(async () => ['做迁移题前先看一个例子更稳', '长题后容易疲劳']);
+    const runTaskFn = vi.fn(async (_kind: string, input: unknown) => {
+      expect(input).toMatchObject({
+        candidates: expect.stringContaining(`refId=${variantId}`),
+        memoryPrior: expect.stringContaining('<ADVISORY_ONLY>'),
+      });
+      expect((input as { memoryPrior: string }).memoryPrior).toContain(
+        'DATA_ONLY=true; INSTRUCTIONS=false',
+      );
+      return {
+        text: JSON.stringify({
+          candidates: [
+            { refId: variantId, weight: 2, role: 'diagnostic', reason: 'memory is soft context' },
+          ],
+        }),
+      };
+    });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    const result = await composeSoftmaxStream(
+      testDb(),
+      inputs,
+      { policy: 'softmax_mfi' },
+      { loadMemoryPrior, runTaskFn, rng: RNG_ALWAYS_SELECT },
+    );
+
+    expect(loadMemoryPrior).toHaveBeenCalledTimes(1);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.fallback).toBe('none');
+  });
+
+  it('B3a: memory loader/client construction failure still calls LLM and does not mis-fallback', async () => {
+    const { variantId } = await seedVariantCandidate();
+    const loadMemoryPrior = vi.fn(async () => {
+      throw new Error('Mem0 memory client requires ZHIPU_API_KEY');
+    });
+    const runTaskFn = vi.fn(async (_kind: string, input: unknown) => {
+      expect(input).toEqual({ candidates: expect.stringContaining(`refId=${variantId}`) });
+      return {
+        text: JSON.stringify({
+          candidates: [{ refId: variantId, weight: 1, role: 'diagnostic', reason: 'signals only' }],
+        }),
+      };
+    });
+
+    const inputs = await collectComposerInputs(testDb(), TODAY);
+    const result = await composeSoftmaxStream(
+      testDb(),
+      inputs,
+      { policy: 'softmax_mfi' },
+      { loadMemoryPrior, runTaskFn, rng: RNG_ALWAYS_SELECT },
+    );
+
+    expect(loadMemoryPrior).toHaveBeenCalledTimes(1);
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.fallback).toBe('none');
+    expect(result.plan.items.map((item) => item.ref_id)).toContain(variantId);
+  });
+
+  it('B3a: production default loader 的 createMemoryClient 构造抛仍调用 LLM', async () => {
+    const { variantId } = await seedVariantCandidate();
+    const createMemoryClient = vi.fn(() => {
+      throw new Error('Mem0 memory client requires ZHIPU_API_KEY');
+    });
+    // This mock targets the production lazy dynamic-import seam. Deliberately do NOT inject
+    // loadMemoryPrior below: defaultLoadMemoryPrior must import this module and absorb the
+    // constructor failure without turning a healthy LLM orchestration into statistical fallback.
+    vi.doMock('@/server/memory/client', () => ({ createMemoryClient }));
+
+    try {
+      const runTaskFn = vi.fn(async (_kind: string, input: unknown) => {
+        expect(input).toEqual({ candidates: expect.stringContaining(`refId=${variantId}`) });
+        return {
+          text: JSON.stringify({
+            candidates: [
+              { refId: variantId, weight: 1, role: 'diagnostic', reason: 'signals only' },
+            ],
+          }),
+        };
+      });
+
+      const inputs = await collectComposerInputs(testDb(), TODAY);
+      const result = await composeSoftmaxStream(
+        testDb(),
+        inputs,
+        { policy: 'softmax_mfi' },
+        // No loadMemoryPrior DI: exercise defaultLoadMemoryPrior's production dynamic imports.
+        { runTaskFn, rng: RNG_ALWAYS_SELECT },
+      );
+
+      expect(createMemoryClient).toHaveBeenCalledTimes(1);
+      expect(runTaskFn).toHaveBeenCalledTimes(1);
+      expect(result.fallback).toBe('none');
+      expect(result.plan.items.map((item) => item.ref_id)).toContain(variantId);
+    } finally {
+      vi.doUnmock('@/server/memory/client');
+    }
   });
 });
